@@ -1,3 +1,4 @@
+mod boot;
 mod config;
 mod ipc;
 mod listener;
