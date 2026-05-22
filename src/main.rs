@@ -49,10 +49,6 @@ fn main() {
     let addr = format!("127.0.0.1:{}", config.port);
     listener.add_tcp(&addr);
 
-    // The OS-assigned port is announced by the listener at bind time; pingora logs
-    // it via tracing. Mirror it on stdout so the integration test can parse it.
-    println!("brust: listening on {addr}");
-
     server.add_service(listener);
     server.run_forever();
 }

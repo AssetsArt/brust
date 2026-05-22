@@ -55,6 +55,11 @@ impl BackgroundService for BrustBoot {
         info!("brust: all workers ready");
         ready.notify_ready();
 
+        // Announce the listening address on stdout so the integration test (and
+        // operators) can discover the port only after workers are actually ready.
+        println!("brust: listening on 127.0.0.1:{}", self.config.port);
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+
         // Wait for shutdown.
         let _ = shutdown.changed().await;
         info!("brust: boot service shutting down");
