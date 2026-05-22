@@ -21,7 +21,7 @@ pub struct WorkerHandle {
 
 impl WorkerHandle {
     pub fn in_flight_guard(&self) -> InFlightGuard<'_> {
-        self.in_flight.fetch_add(1, Ordering::AcqRel);
+        self.in_flight.fetch_add(1, Ordering::Relaxed);
         InFlightGuard(&self.in_flight)
     }
 }
@@ -30,7 +30,7 @@ pub struct InFlightGuard<'a>(&'a AtomicU32);
 
 impl<'a> Drop for InFlightGuard<'a> {
     fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::AcqRel);
+        self.0.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
