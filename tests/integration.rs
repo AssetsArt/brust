@@ -5,7 +5,7 @@ use std::time::Duration;
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn serves_rendered_html() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_brust"))
-        .env("BRUST_PORT", "0")
+        .env("BRUST_PORT", "38123")
         .env("RUST_LOG", "brust=info")
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
