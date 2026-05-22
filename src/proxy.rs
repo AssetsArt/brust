@@ -57,11 +57,13 @@ pub async fn handle_path(brust: &Brust, path: &str) -> Response<Vec<u8>> {
             text_response(StatusCode::BAD_GATEWAY, b"unexpected upstream frame")
         }
         Err(e) => {
-            error!(worker_id = worker.id, error = %e, "recv_frame failed; worker likely dead");
-            // Skeleton: fail loud. The supervisor will notice on the next health check, but
-            // we don't have health checks yet, so we return 502 to the client. Subsequent
-            // requests routed to this worker will also fail; the process should be restarted
-            // by the operator.
+            error!(worker_id = worker.id, error = %e, "recv_frame failed; worker dead, exiting");
+            // Skeleton: fail loud. Schedule an exit after a short delay so the 502
+            // response can flush to the client before the process dies.
+            tokio::spawn(async {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                std::process::exit(1);
+            });
             text_response(StatusCode::BAD_GATEWAY, b"upstream connection lost")
         }
     }

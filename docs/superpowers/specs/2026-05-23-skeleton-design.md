@@ -423,8 +423,11 @@ use std::time::Duration;
 #[tokio::test]
 async fn serves_rendered_html() {
     // 1. Spawn brust as a child process
+    // NOTE: BRUST_PORT=0 (OS-assigned) is deferred — it requires pingora
+    // bound-port readback which is out of skeleton scope. The test uses a
+    // fixed port (38123) as a workaround; see "Known limitations" in §7.
     let mut child = Command::new(env!("CARGO_BIN_EXE_brust"))
-        .env("BRUST_PORT", "0")          // server logs the actual port chosen
+        .env("BRUST_PORT", "38123")      // fixed port; BRUST_PORT=0 deferred
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())        // surface worker errors to test output
         .spawn()
@@ -593,6 +596,15 @@ brust/
     └── components/
         └── HelloWorld.tsx
 ```
+
+### Known limitations
+
+- **`BRUST_PORT=0` (OS-assigned port) is deferred.** Pingora does not
+  expose the bound address after `run_server`, so the boot service cannot
+  read back the actual port and print it to stdout. The integration test
+  uses the fixed port `38123` (`BRUST_PORT=38123`) as a workaround.
+  Implementing port readback requires either a pingora API addition or a
+  pre-bind trick; deferred to a later sub-project.
 
 ### Deliberately not added yet
 
