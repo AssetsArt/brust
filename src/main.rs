@@ -1,3 +1,3 @@
 fn main() {
-    println!("Hello, world!");
+    println!("brust skeleton — not implemented yet");
 }
