@@ -199,4 +199,4 @@ runs it*: a long-lived worker instead of a one-shot spawn.
 - Benchmark harness vs. Astro / Bun.serve / spawn-per-conn baseline.
 - Remove `src/shutdown.rs` (already dead code under Bun).
 - Linux CI matrix to exercise tokio-uring path.
-- Wire 414 response for oversized requests.
+- ~~Wire 414 response for oversized requests.~~ Shipped in `docs/superpowers/plans/2026-05-23-wire-error-414.md`.

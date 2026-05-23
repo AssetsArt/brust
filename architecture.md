@@ -835,10 +835,10 @@ brust/
 │                                   are emitted inline via build_response;
 │                                   only 400/404/405/503 have helpers in http.rs.
 ├── src/http.rs                    parse_request (httparse), build_response,
-│                                   error_400/404/405/503. (error_414 is
-│                                   declared but unreachable today —
-│                                   read_full_request silently closes on
-│                                   over-cap; wiring 414 is a follow-up.)
+│                                   error_400/404/405/414/503. error_414 builds
+│                                   its response inline with Connection: close
+│                                   because the client's read cursor is mid-
+│                                   headers when oversize is detected.
 ├── src/io/{linux,other,mod}.rs    tokio-uring vs tokio TcpListener/TcpStream
 │                                   wrappers (current_thread runtimes on both)
 └── src/shutdown.rs                Notify-based shutdown handle (currently
