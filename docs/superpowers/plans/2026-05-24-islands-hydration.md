@@ -5,7 +5,11 @@
 **Goal:** Per-route components can opt sub-trees into client-side hydration via `<Island id="X" component={X} props={...} hydrate="load|idle|visible|interaction" />`. SSR renders the initial state inside a marker div; a build-time-emitted bootstrap script lazy-loads the per-island chunk + shared React runtime, then `hydrateRoot`s the marker on trigger fire.
 
 **Architecture:**
-- `island.config.ts` (user-supplied) maps `id` → `entry` (file path). At boot, `brust.serve()` reads it and runs `Bun.build` 4 times: once for the React-only runtime chunk, once each for `react/jsx-runtime` and `react-dom/client` wrappers (with React external), and N times for islands (with all three runtime modules external). Outputs land in `.brust/islands/`. A handwritten bootstrap template is copied to `.brust/islands/_bootstrap.js`.
+- `island.config.ts` (user-supplied) maps `id` → `entry` (file path). At boot, `brust.serve()` reads it and runs `Bun.build` 3 times for the shared runtime: one combined chunk `_react.js` that re-exports both `react` AND `react/jsx-runtime`, one chunk `_react-dom.js` for `react-dom/client` (with `react` external), and once per island (with `react`, `react/jsx-runtime`, `react-dom/client` all external). The importmap maps both `react` and `react/jsx-runtime` to the same `_react.js` URL — the browser fetches it once and slices different named exports per import. All builds use `minify: true` + `define: process.env.NODE_ENV = "production"` (without this Bun emits dev React → ~866 KB instead of ~50 KB). Outputs land in `.brust/islands/`. A handwritten bootstrap template is also built into `.brust/islands/_bootstrap.js`.
+
+**Spike findings (Task 1, commit `cd5f837`):**
+- `react/jsx-runtime` is a sub-path of the `react` package; `external: ['react']` externalises it too. So a separate `_jsx-runtime.js` chunk built from `export * from 'react/jsx-runtime'` with `react` external produces only a re-export shell (78 bytes) that the browser can't resolve — infinite import loop via importmap. Fix: re-export both `react` and `react/jsx-runtime` from the SAME entry wrapper; one chunk, two importmap entries pointing to it.
+- Without `define` + `minify`, Bun emits dev React (~71 KB) and dev react-dom (~866 KB). Production-mode flags shrink the latter to ~50 KB.
 - A new Rust native route `GET /_brust/islands/<file>` serves files from `.brust/islands/` with strict path-traversal protection.
 - `<Island>` (TS) renders `<div data-brust-island="<id>" data-props='...' data-hydrate="..."><Component {...props} /></div>` AND flips a module-scope `__brust_island_used` flag. `makeRenderer` checks the flag after `renderToString` and prepends `<script type="importmap">{...}</script><script type="module" src="/_brust/islands/_bootstrap.js" defer></script>` to the rendered HTML. Pages without islands ship zero JS.
 - Bootstrap.js queries `[data-brust-island]`, registers a trigger per marker (`load` / `idle` / `visible` / `interaction`), and on fire: `dynamic import('/_brust/islands/<id>.js')` then `hydrateRoot(marker, createElement(mod.default, JSON.parse(marker.dataset.props)))`.
@@ -27,12 +31,13 @@
 ## File Structure
 
 **New source files (committed):**
-- `runtime/islands/_entries/react.ts` — `export * from 'react'` wrapper for `Bun.build` (the React chunk)
-- `runtime/islands/_entries/jsx-runtime.ts` — `export * from 'react/jsx-runtime'` wrapper
-- `runtime/islands/_entries/react-dom.ts` — `export * from 'react-dom/client'` wrapper
+- `runtime/islands/_entries/react.ts` — combined wrapper exporting both `react` AND `react/jsx-runtime`. Built into `_react.js`. (See "Spike findings" — separate jsx-runtime chunk doesn't work.)
+- `runtime/islands/_entries/react-dom.ts` — `export * from 'react-dom/client'` wrapper. Built into `_react-dom.js` with `react` external.
 - `runtime/islands/bootstrap.ts` — handwritten client bootstrap (4 triggers + hydrate logic). Built once into `.brust/islands/_bootstrap.js`.
 - `runtime/islands/island.tsx` — exports `<Island>` component + module-scope `__brust_island_used` flag
 - `runtime/islands/build.ts` — `buildIslands(configPath)` async function that runs `Bun.build` for runtime + islands + bootstrap, emits to `.brust/islands/`
+
+**NOTE:** `runtime/islands/_entries/jsx-runtime.ts` was created in Task 1's spike but is no longer needed. Task 4 deletes it and amends `_entries/react.ts` to re-export both surfaces.
 
 **Modified source files:**
 - `runtime/index.ts` — re-export `Island` + `buildIslands` + types
@@ -41,9 +46,8 @@
 - `src/server.rs` — new native route `/_brust/islands/<file>` that reads from the configured directory; also add `IslandsDir` to State
 
 **Generated (gitignored — add to .gitignore):**
-- `.brust/islands/_react.js`
-- `.brust/islands/_jsx-runtime.js`
-- `.brust/islands/_react-dom.js`
+- `.brust/islands/_react.js` (combined react + react/jsx-runtime)
+- `.brust/islands/_react-dom.js` (react-dom/client)
 - `.brust/islands/_bootstrap.js`
 - `.brust/islands/<id>.js` (per island)
 
@@ -524,10 +528,34 @@ EOF
 
 This task implements the Bun.build orchestration: build 3 runtime chunks + N island chunks + copy bootstrap.
 
+- [ ] **Step 0: Amend the entry wrapper to combine react + react/jsx-runtime**
+
+The spike (Task 1) created `runtime/islands/_entries/{react.ts, jsx-runtime.ts, react-dom.ts}`. The plan now uses a SINGLE combined chunk for react + react/jsx-runtime.
+
+Delete the standalone jsx-runtime wrapper:
+```bash
+rm /Users/detoro/code/brust/runtime/islands/_entries/jsx-runtime.ts
+```
+
+Replace the contents of `runtime/islands/_entries/react.ts` with:
+```ts
+// Combined re-export. The browser's importmap maps BOTH `react` and
+// `react/jsx-runtime` to the chunk built from this file. Browser fetches
+// once; different import statements slice different named exports from
+// the same module.
+//
+// `export *` from `react` includes Fragment; `react/jsx-runtime` also
+// exports Fragment. We re-export only jsx + jsxs from jsx-runtime to
+// avoid the name collision (Fragment from react wins, which is the
+// same object).
+export * from 'react'
+export { jsx, jsxs } from 'react/jsx-runtime'
+```
+
 - [ ] **Step 1: Write `runtime/islands/build.ts`**
 
 ```ts
-import { mkdir, rm, copyFile, writeFile } from 'node:fs/promises'
+import { mkdir, rm } from 'node:fs/promises'
 import { dirname, isAbsolute, resolve } from 'node:path'
 
 export interface IslandsBuildResult {
@@ -558,20 +586,16 @@ export async function buildIslands(configPath: string): Promise<IslandsBuildResu
   await rm(outDir, { recursive: true, force: true })
   await mkdir(outDir, { recursive: true })
 
-  // Resolve the 3 entry wrappers relative to runtime/ (this file's dir).
-  // import.meta.dir is Bun-specific and points to runtime/islands/.
+  // import.meta.dir points to runtime/islands/.
   const entriesDir = resolve(import.meta.dir, '_entries')
 
-  // 1. React (no externals — bundles React itself).
+  // 1. Combined react + react/jsx-runtime (no externals — bundles React).
   await buildOne([`${entriesDir}/react.ts`], outDir, '_react.js', [])
 
-  // 2. jsx-runtime (react external — uses importmap at runtime).
-  await buildOne([`${entriesDir}/jsx-runtime.ts`], outDir, '_jsx-runtime.js', ['react'])
-
-  // 3. react-dom/client (react external).
+  // 2. react-dom/client (react external; consumes _react.js via importmap).
   await buildOne([`${entriesDir}/react-dom.ts`], outDir, '_react-dom.js', ['react'])
 
-  // 4. Per-island chunks (all 3 runtime modules external).
+  // 3. Per-island chunks (all 3 runtime specifiers external).
   const externals = ['react', 'react/jsx-runtime', 'react-dom/client']
   let count = 0
   for (const [id, rel] of Object.entries(cfg.islands)) {
@@ -582,18 +606,13 @@ export async function buildIslands(configPath: string): Promise<IslandsBuildResu
       )
     }
     const entry = isAbsolute(rel) ? rel : resolve(configDir, rel)
-    // Wrap each island so the chunk hydrates itself on import: the bootstrap
-    // calls dynamic-import(<id>.js), which immediately invokes hydrate.
-    // The wrapper file is generated per-island in a temp area; here we
-    // simply rely on Bun.build emitting <id>.js with the component as
-    // default export, and let the bootstrap call hydrateRoot.
     await buildOne([entry], outDir, `${id}.js`, externals)
     count++
   }
 
-  // 5. Bootstrap (no externals — small handwritten script).
+  // 4. Bootstrap (react + react-dom/client external; uses importmap).
   const bootstrapSrc = resolve(import.meta.dir, 'bootstrap.ts')
-  await buildOne([bootstrapSrc], outDir, '_bootstrap.js', [])
+  await buildOne([bootstrapSrc], outDir, '_bootstrap.js', externals)
 
   return { outDir, islandCount: count }
 }
@@ -611,7 +630,10 @@ async function buildOne(
     format: 'esm',
     target: 'browser',
     external,
-    minify: false,
+    minify: true,
+    define: {
+      'process.env.NODE_ENV': '"production"',
+    },
   })
   if (!result.success) {
     const messages = result.logs.map((l) => String(l)).join('\n')
@@ -626,6 +648,8 @@ function isValidIslandId(id: string): boolean {
   return /^[A-Za-z0-9_-]+$/.test(id)
 }
 ```
+
+**Note on bootstrap externals:** previously the plan listed `external: []` for bootstrap so it would self-contain React. But the spike showed that this would re-bundle React (50+ KB duplication of `_react.js`). Bootstrap now uses the same externals — its `import { hydrateRoot } from 'react-dom/client'` resolves via importmap to `_react-dom.js`. The bootstrap chunk itself is ~2 KB.
 
 - [ ] **Step 2: Re-export from `runtime/index.ts`**
 
@@ -894,8 +918,11 @@ const ISLANDS_IMPORTMAP_AND_BOOTSTRAP =
   '<script type="importmap">' +
   JSON.stringify({
     imports: {
+      // Both react and react/jsx-runtime resolve to the SAME chunk; the
+      // chunk re-exports both surfaces. Browser fetches it once and slices
+      // different named exports for each import statement.
       'react': '/_brust/islands/_react.js',
-      'react/jsx-runtime': '/_brust/islands/_jsx-runtime.js',
+      'react/jsx-runtime': '/_brust/islands/_react.js',
       'react-dom/client': '/_brust/islands/_react-dom.js',
     },
   }) +
@@ -1156,7 +1183,8 @@ test('island marker + importmap injected when route uses <Island>', async () => 
     // Importmap + bootstrap injected.
     expect(body).toContain('<script type="importmap">')
     expect(body).toContain('"/_brust/islands/_react.js"')
-    expect(body).toContain('"/_brust/islands/_jsx-runtime.js"')
+    // react/jsx-runtime also maps to _react.js (combined chunk).
+    expect(body).toContain('"react/jsx-runtime":"/_brust/islands/_react.js"')
     expect(body).toContain('"/_brust/islands/_react-dom.js"')
     expect(body).toContain('src="/_brust/islands/_bootstrap.js"')
   } finally {
@@ -1175,7 +1203,7 @@ test('island chunk + bootstrap served at /_brust/islands/<file>', async () => {
   })
   const port = await readPortLine(proc.stdout)
   try {
-    for (const file of ['Counter.js', '_bootstrap.js', '_react.js', '_jsx-runtime.js', '_react-dom.js']) {
+    for (const file of ['Counter.js', '_bootstrap.js', '_react.js', '_react-dom.js']) {
       const r = await fetch(`http://127.0.0.1:${port}/_brust/islands/${file}`)
       expect(r.status).toBe(200)
       expect(r.headers.get('content-type')).toBe('application/javascript; charset=utf-8')
