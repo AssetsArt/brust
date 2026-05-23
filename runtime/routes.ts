@@ -96,6 +96,9 @@ export interface RouteCall {
 /**
  * Build a render callback for a given routes table. The returned function is
  * what gets passed to `brust.registerRenderer(view, fn)` on the worker side.
+ *
+ * Wire format written to the SAB: [meta_len: u16 BE][meta JSON UTF-8][body bytes].
+ * meta = { status: number, headers?: Record<string, string> }.
  */
 export interface MakeRendererOptions {
   /** Lazy getter for the Bun Worker id. Called per-render so the value can be
@@ -122,32 +125,77 @@ export function makeRenderer(
 
     const workerId = opts.getWorkerId ? opts.getWorkerId() : null
 
-    let html: string
-    let status = 200
-    try {
-      // Loader runs first (if declared). Exceptions flow into the same catch
-      // as render exceptions — errorBoundary handles both uniformly.
-      const data = route.loader
-        ? await route.loader({ params: call.params, path: call.path })
-        : undefined
-      html = renderToString(
-        createElement(route.Component, { params: call.params, path: call.path, data, workerId }),
-      )
-    } catch (renderErr) {
-      if (!route.errorBoundary) throw renderErr
-      const boundary: ReactNode = createElement(route.errorBoundary, {
-        error: renderErr instanceof Error ? renderErr : new Error(String(renderErr)),
-      })
-      html = renderToString(boundary as any)
-      status = 500
+    // Terminal `next()` — runs loader (if any), then renderToString. Wraps both
+    // in a try/catch so errorBoundary catches both loader and render exceptions.
+    const terminal = async (): Promise<RouteResponse> => {
+      try {
+        const data = route.loader
+          ? await route.loader({ params: call.params, path: call.path, req: call.req })
+          : undefined
+        const html = renderToString(
+          createElement(route.Component, {
+            params: call.params,
+            path: call.path,
+            data,
+            workerId,
+            req: call.req,
+          }),
+        )
+        return { status: 200, body: html }
+      } catch (renderErr) {
+        if (!route.errorBoundary) throw renderErr
+        const boundary: ReactNode = createElement(route.errorBoundary, {
+          error: renderErr instanceof Error ? renderErr : new Error(String(renderErr)),
+        })
+        const html = renderToString(boundary as any)
+        return { status: 500, body: html }
+      }
     }
 
-    // Wire format: [status_u16_BE][body bytes].
-    view[0] = (status >> 8) & 0xff
-    view[1] = status & 0xff
-    const bodyView = view.subarray(2)
-    const { written } = encoder.encodeInto(html, bodyView)
+    // Compose middleware chain right-to-left so the first entry runs outermost.
+    // Each link calls the next via `next()`; returning without calling next()
+    // short-circuits the chain.
+    let chain = terminal
+    if (route.middleware && route.middleware.length > 0) {
+      for (let i = route.middleware.length - 1; i >= 0; i--) {
+        const mw = route.middleware[i]
+        const next = chain
+        chain = () => mw(call.req, next)
+      }
+    }
+
+    let response: RouteResponse
+    try {
+      response = await chain()
+    } catch (err) {
+      // A middleware (or terminal without errorBoundary) raised. Render as 500
+      // text/plain inside the envelope so the wire response is still valid.
+      console.error(`[brust] middleware/render uncaught:`, err)
+      response = {
+        status: 500,
+        body: 'internal error',
+      }
+    }
+
+    // Pack the meta JSON envelope: [meta_len u16 BE][meta JSON][body].
+    const meta = response.headers
+      ? { status: response.status, headers: response.headers }
+      : { status: response.status }
+    const metaBytes = encoder.encode(JSON.stringify(meta))
+    if (metaBytes.length > 0xffff) {
+      console.error(`[brust] meta too large: ${metaBytes.length} bytes`)
+      return 0
+    }
+    if (2 + metaBytes.length + 1 > view.length) {
+      console.error(`[brust] envelope > SAB capacity`)
+      return 0
+    }
+    view[0] = (metaBytes.length >> 8) & 0xff
+    view[1] = metaBytes.length & 0xff
+    view.set(metaBytes, 2)
+    const bodyView = view.subarray(2 + metaBytes.length)
+    const { written } = encoder.encodeInto(response.body, bodyView)
     if (written === undefined) return 0
-    return written + 2
+    return 2 + metaBytes.length + written
   }
 }
