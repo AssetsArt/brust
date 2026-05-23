@@ -1,0 +1,239 @@
+// scripts/benchmark.ts
+//
+// Reproducible benchmark driver. Compares Brust SSR against Bun.serve + React
+// renderToString on the same `HelloWorld` component. Writes a markdown summary
+// and raw JSON results under bench/.
+//
+// Usage:
+//   bun run bench                  # default: 120 conns, 10 s
+//   BENCH_CONN=200 BENCH_DUR=30s bun run bench
+//
+// Requires `oha` on PATH.
+
+import { spawn } from 'bun'
+import { mkdir, writeFile } from 'node:fs/promises'
+
+type Scenario = {
+  id: string                       // short id used in column headers, e.g. 'brust'
+  label: string                    // pretty label used in the markdown table
+  cmd: string[]                    // argv to start the server
+  env?: Record<string, string>     // extra env vars
+  expectedPortLog: RegExp          // regex with one capture group → port number
+}
+
+type Probe = {
+  path: string                     // request path, e.g. '/' or '/ping'
+}
+
+type Result = {
+  scenarioId: string
+  scenarioLabel: string
+  path: string
+  rps: number
+  p50ms: number | null
+  p95ms: number | null
+  p99ms: number | null
+  totalRequests: number
+  errors: number
+  ohaRaw: unknown                  // dropped into RESULTS.json verbatim
+}
+
+const CONN     = parseInt(process.env.BENCH_CONN ?? '120', 10)
+const DURATION = process.env.BENCH_DUR ?? '10s'
+const WARMUP_MS = 1000
+
+const SCENARIOS: Scenario[] = [
+  {
+    id: 'brust',
+    label: 'Brust (Rust HTTP + napi + SAB)',
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { BRUST_PORT: '38201' },
+    expectedPortLog: /listening on 127\.0\.0\.1:(\d+)/,
+  },
+  {
+    id: 'bun-serve',
+    label: 'Bun.serve + React renderToString',
+    cmd: ['bun', 'run', 'example/bun-serve-baseline/index.ts'],
+    env: { BUN_BASELINE_PORT: '38202' },
+    expectedPortLog: /listening on http:\/\/[^:]+:(\d+)/,
+  },
+]
+
+const PROBES: Probe[] = [
+  { path: '/ping' },
+  { path: '/' },
+]
+
+async function runScenario(s: Scenario, p: Probe): Promise<Result> {
+  const proc = spawn({
+    cmd: s.cmd,
+    env: { ...process.env, ...(s.env ?? {}) },
+    stdout: 'pipe',
+    stderr: 'inherit',
+  })
+
+  let port: number
+  try {
+    port = await readPort(proc.stdout, s.expectedPortLog)
+  } catch (e) {
+    proc.kill('SIGKILL')
+    throw new Error(`[${s.id}] failed to read port line: ${(e as Error).message}`)
+  }
+
+  // Warm-up window — let the worker pool finish boot, JIT settle, etc.
+  await new Promise((r) => setTimeout(r, WARMUP_MS))
+
+  const url = `http://127.0.0.1:${port}${p.path}`
+  let ohaJson: any
+  try {
+    ohaJson = await runOha(url, CONN, DURATION)
+  } finally {
+    proc.kill('SIGINT')
+    await proc.exited
+  }
+
+  // oha JSON shape (1.x):
+  //   summary.requestsPerSec      number
+  //   latencyPercentiles.p50      seconds (fractional)
+  //   latencyPercentiles.p95      seconds
+  //   latencyPercentiles.p99      seconds
+  //   statusCodeDistribution      Record<string, number>  (sum = total requests)
+  //   errorDistribution           Record<string, number>
+  const summary  = ohaJson.summary ?? {}
+  const percent  = ohaJson.latencyPercentiles ?? {}
+  const rps      = numberOf(summary.requestsPerSec, summary.requestPerSec) ?? 0
+  // oha 1.x does not expose totalRequests in summary; sum statusCodeDistribution instead
+  const statusDist = ohaJson.statusCodeDistribution ?? {}
+  const totalReq = Object.values(statusDist).reduce(
+    (acc: number, v: unknown) => acc + (typeof v === 'number' ? v : 0),
+    0,
+  )
+  // sum all error counts from errorDistribution
+  const errDist = ohaJson.errorDistribution ?? {}
+  const errors   = Object.values(errDist).reduce(
+    (acc: number, v: unknown) => acc + (typeof v === 'number' ? v : 0),
+    0,
+  )
+  const p50      = secondsToMs(percent.p50)
+  const p95      = secondsToMs(percent.p95)
+  const p99      = secondsToMs(percent.p99)
+
+  return {
+    scenarioId: s.id,
+    scenarioLabel: s.label,
+    path: p.path,
+    rps,
+    p50ms: p50,
+    p95ms: p95,
+    p99ms: p99,
+    totalRequests: totalReq,
+    errors,
+    ohaRaw: ohaJson,
+  }
+}
+
+async function readPort(stream: ReadableStream<Uint8Array>, pattern: RegExp): Promise<number> {
+  const reader = stream.getReader()
+  const decoder = new TextDecoder()
+  let acc = ''
+  const deadline = Date.now() + 5_000
+  while (Date.now() < deadline) {
+    const { value, done } = await reader.read()
+    if (done) throw new Error('server closed stdout before listening line')
+    acc += decoder.decode(value, { stream: true })
+    const m = acc.match(pattern)
+    if (m) {
+      reader.releaseLock()
+      return parseInt(m[1], 10)
+    }
+  }
+  reader.releaseLock()
+  throw new Error('timed out waiting for listening line')
+}
+
+async function runOha(url: string, conn: number, duration: string): Promise<any> {
+  const oha = spawn({
+    cmd: ['oha', '-c', String(conn), '-z', duration, '--no-tui', '--output-format', 'json', '-m', 'GET', url],
+    stdout: 'pipe',
+    stderr: 'pipe',
+  })
+  const [stdout, stderr] = await Promise.all([
+    new Response(oha.stdout).text(),
+    new Response(oha.stderr).text(),
+  ])
+  const exitCode = await oha.exited
+  if (exitCode !== 0) {
+    throw new Error(`oha exited ${exitCode}\nstderr: ${stderr}\nstdout: ${stdout.slice(0, 200)}`)
+  }
+  try {
+    return JSON.parse(stdout)
+  } catch (e) {
+    throw new Error(`oha did not return JSON. stdout head: ${stdout.slice(0, 200)}`)
+  }
+}
+
+function numberOf(...candidates: unknown[]): number | null {
+  for (const c of candidates) {
+    if (typeof c === 'number' && Number.isFinite(c)) return c
+  }
+  return null
+}
+
+function secondsToMs(sec: unknown): number | null {
+  if (typeof sec !== 'number' || !Number.isFinite(sec)) return null
+  return sec * 1000
+}
+
+function renderMarkdown(results: Result[]): string {
+  const date = new Date().toISOString().slice(0, 10)
+  const hardware = `${process.platform}/${process.arch}`
+  const node = typeof Bun !== 'undefined' ? `Bun ${Bun.version}` : 'Bun ?'
+  const lines: string[] = []
+  lines.push(`# Brust benchmarks — ${date}`)
+  lines.push('')
+  lines.push(`**Conditions:** \`oha -c ${CONN} -z ${DURATION} --no-tui --output-format json\``)
+  lines.push(`· runtime: ${node}`)
+  lines.push(`· host: ${hardware}`)
+  lines.push(`· warmup: ${WARMUP_MS} ms`)
+  lines.push('')
+  lines.push('| Scenario | Path | RPS | p50 (ms) | p95 (ms) | p99 (ms) | Total | Errors |')
+  lines.push('|---|---|---:|---:|---:|---:|---:|---:|')
+  for (const r of results) {
+    const fmt = (n: number | null) => (n == null ? '—' : n.toFixed(2))
+    lines.push(
+      `| ${r.scenarioLabel} | \`${r.path}\` | ${Math.round(r.rps).toLocaleString()} | ` +
+      `${fmt(r.p50ms)} | ${fmt(r.p95ms)} | ${fmt(r.p99ms)} | ` +
+      `${r.totalRequests.toLocaleString()} | ${r.errors} |`,
+    )
+  }
+  lines.push('')
+  lines.push('Generated by `bun run bench` — see `scripts/benchmark.ts`.')
+  return lines.join('\n') + '\n'
+}
+
+async function main() {
+  const results: Result[] = []
+  for (const s of SCENARIOS) {
+    for (const p of PROBES) {
+      console.log(`\n→ ${s.label}   ${p.path}   conn=${CONN}  dur=${DURATION}`)
+      const r = await runScenario(s, p)
+      results.push(r)
+      console.log(
+        `  rps=${r.rps.toFixed(0).padStart(7)}   ` +
+        `p50=${(r.p50ms ?? NaN).toFixed(2)}ms   ` +
+        `p99=${(r.p99ms ?? NaN).toFixed(2)}ms   ` +
+        `errors=${r.errors}`,
+      )
+    }
+  }
+
+  await mkdir('bench', { recursive: true })
+  await writeFile('bench/RESULTS.json', JSON.stringify(results, null, 2))
+  await writeFile('bench/RESULTS.md',   renderMarkdown(results))
+  console.log('\nWrote bench/RESULTS.md and bench/RESULTS.json')
+}
+
+main().catch((e) => {
+  console.error(e)
+  process.exit(1)
+})
