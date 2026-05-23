@@ -348,10 +348,12 @@ test('middleware injects x-render-ms response header + req.search reaches compon
   }
 }, 15_000)
 
-test('errorBoundary still returns 500 under the new envelope', async () => {
-  // Repeats the /crash test under the new wire format to make the regression
-  // path explicit. Status now flows through meta.status rather than the
-  // legacy 2-byte prefix.
+test('errorBoundary 500 path does not pick up middleware-only headers', async () => {
+  // /crash has no middleware; verifies that the chain-less terminal path
+  // still flows status 500 through meta.status (not the legacy 2-byte prefix)
+  // AND that no rogue middleware headers (e.g. x-render-ms from a global
+  // middleware that doesn't exist yet) leak into the response. Complements
+  // the existing /crash test which covers boundary HTML content.
   const proc = spawn({
     cmd: ['bun', 'run', 'example/hello-world/index.ts'],
     env: { ...process.env, BRUST_PORT: '38164', BRUST_WORKERS: '1', RUST_LOG: 'brust=info' },
@@ -362,6 +364,8 @@ test('errorBoundary still returns 500 under the new envelope', async () => {
   try {
     const r = await fetch(`http://127.0.0.1:${port}/crash`)
     expect(r.status).toBe(500)
+    expect(r.headers.get('content-type')).toBe('text/html; charset=utf-8')
+    expect(r.headers.get('x-render-ms')).toBeNull()
     const body = await r.text()
     expect(body).toContain('CrashBoundary')
   } finally {

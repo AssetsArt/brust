@@ -317,19 +317,19 @@ Pattern syntax is **matchit 0.8** (`/blog/{slug}`, not Express-style `:slug`).
 Bun parses `routes.tsx` at boot and ships the pattern array to Rust via
 `brust.registerRoutes(...)`; Rust builds a `matchit::Router<u32>` keyed by
 array-index = route id (`src/routes.rs`). URL matching happens entirely in
-Rust — `handle_conn` calls `routes.match_path(&path)` and either dispatches
-into the worker pool with a JSON envelope `{ route_id, path, params }` or
-responds 404 without consuming worker capacity. The tsfn type signature
-`Function<String, Promise<u32>>` is **unchanged**; only the `String` content
-is now an envelope instead of a raw path.
+Rust — `handle_conn` calls `routes.match_path(&method, &path, &request_buf)`
+which embeds a structured `req` (parsed once via httparse) in the envelope:
+`{ route_id, path, params, req: { method, url, headers, cookies, search } }`.
+Headers are lower-cased; cookies parsed from the `Cookie` header; search
+params decoded from the query string (`+` → space, `%xx` percent-decode).
+On no-match, Rust responds 404 without consuming worker capacity. The tsfn
+type signature `Function<String, Promise<u32>>` is **unchanged**; only the
+`String` content is now an envelope instead of a raw path.
 
-Rust now embeds a structured `req` in the envelope: `{ method, url, headers,
-cookies, search }` — headers lower-cased, cookies parsed from the `Cookie`
-header, search params decoded from the query string (`+` → space, `%xx`
-percent-decode). Worker-side dispatcher in `runtime/routes.ts::makeRenderer`
-parses the envelope, composes the per-route middleware chain around the
-terminal (loader + render), and writes `[meta_len u16 BE][meta JSON][body]`
-into the SAB. Component props now include `req: BrustRequest`.
+Worker-side dispatcher in `runtime/routes.ts::makeRenderer` parses the
+envelope, composes the per-route middleware chain around the terminal
+(loader + render), and writes `[meta_len u16 BE][meta JSON][body]` into the
+SAB. Component props include `req: BrustRequest`.
 
 **Per-route error recovery.** A route can declare
 `errorBoundary: ComponentType<{ error: Error }>`. When the component or loader
