@@ -1,6 +1,19 @@
 import { createElement, type ComponentType, type ReactNode } from 'react'
 import { renderToString } from 'react-dom/server'
 
+/** Structured view of the request, parsed once in Rust and shipped in the
+ * JSON envelope. Header names are lower-cased. Cookies are parsed from the
+ * Cookie header. `search` is the query string parsed as key→value (last
+ * occurrence wins on duplicates). */
+export interface BrustRequest {
+  method: string
+  /** Full request URL path including query string, e.g. `/foo?bar=1`. */
+  url: string
+  headers: Record<string, string>
+  cookies: Record<string, string>
+  search: Record<string, string>
+}
+
 export interface RouteContext<Params = Record<string, string>, Data = unknown> {
   params: Params
   path: string
@@ -9,6 +22,8 @@ export interface RouteContext<Params = Record<string, string>, Data = unknown> {
   /** Bun Worker id rendering this request. null before the first registerRenderer
    * return resolves (a brief window during boot). */
   workerId: number | null
+  /** Structured request shape. Available to components for read-only inspection. */
+  req: BrustRequest
 }
 
 export interface ErrorBoundaryProps {
@@ -22,6 +37,27 @@ export interface RouteCacheConfig {
   vary?: string[]
 }
 
+/** Shape returned by a middleware or by the terminal `next()` (loader + render).
+ * Middleware can short-circuit by returning a RouteResponse without calling next,
+ * or call next() and mutate the returned response (status, headers). */
+export interface RouteResponse {
+  status: number
+  body: string
+  /** Extra response headers. Names are case-insensitive on the wire; Rust
+   * deduplicates by lower-casing internally. Skips collisions with the fixed
+   * Content-Type / Content-Length / Connection lines. */
+  headers?: Record<string, string>
+}
+
+/** Middleware contract — Express/Koa-style chain. Receives a structured
+ * request and a `next()` that runs the rest of the chain (eventually the
+ * loader + render). Return a `RouteResponse` to short-circuit, or call
+ * `await next()` and return its (possibly mutated) result. */
+export type Middleware = (
+  req: BrustRequest,
+  next: () => Promise<RouteResponse>,
+) => Promise<RouteResponse>
+
 export interface Route<Params = Record<string, string>, Data = unknown> {
   /** matchit syntax — use `/blog/{slug}` for parameters (NOT Express-style `:slug`). */
   path: string
@@ -29,11 +65,15 @@ export interface Route<Params = Record<string, string>, Data = unknown> {
   /** Optional async function that runs in the worker before rendering. Its
    * return value becomes the component's `data` prop. Exceptions are caught
    * by `errorBoundary` if declared. */
-  loader?: (ctx: { params: Params; path: string }) => Promise<Data>
+  loader?: (ctx: { params: Params; path: string; req: BrustRequest }) => Promise<Data>
   /** Optional component invoked when Component or loader throws. */
   errorBoundary?: ComponentType<ErrorBoundaryProps>
   /** Opt-in cache. Omit for no caching (default for authed/personalised routes). */
   cache?: RouteCacheConfig
+  /** Per-route middleware chain. Runs in declaration order; each middleware
+   * wraps the next. Cache lookup happens BEFORE middleware runs — cached
+   * responses skip the chain entirely. */
+  middleware?: Middleware[]
 }
 
 /** Identity helper that pins the `routes` array's element type for the IDE
@@ -50,6 +90,7 @@ export interface RouteCall {
   route_id: number
   path: string
   params: Record<string, string>
+  req: BrustRequest
 }
 
 /**
