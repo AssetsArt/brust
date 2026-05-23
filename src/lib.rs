@@ -4,7 +4,6 @@ mod http;
 mod io;
 mod pool;
 mod server;
-mod shutdown;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -21,7 +20,6 @@ use tracing::error;
 use tracing_subscriber::EnvFilter;
 
 use crate::pool::{BufPtr, RendererTsfn, WorkerPool};
-use crate::shutdown::{install_sigint_handler, Shutdown};
 
 thread_local! {
     static WORKER_ID: Cell<Option<u32>> = const { Cell::new(None) };
@@ -30,7 +28,7 @@ thread_local! {
 struct State {
     pool: Arc<WorkerPool>,
     ready: Arc<Notify>,
-    shutdown: Arc<Shutdown>,
+    shutdown: Arc<Notify>,
     is_serving: AtomicBool,
     expected_workers: AtomicU32,
 }
@@ -50,7 +48,7 @@ fn state() -> &'static State {
         State {
             pool: Arc::new(WorkerPool::new()),
             ready: Arc::new(Notify::new()),
-            shutdown: Arc::new(Shutdown::new()),
+            shutdown: Arc::new(Notify::new()),
             is_serving: AtomicBool::new(false),
             expected_workers: AtomicU32::new(0),
         }
@@ -76,7 +74,11 @@ pub fn begin_serve(opts: ServeOptions) -> NapiResult<()> {
         .parse()
         .map_err(|e: std::net::AddrParseError| napi::Error::from_reason(e.to_string()))?;
 
-    install_sigint_handler(Arc::clone(&s.shutdown));
+    // Process shutdown is owned by the TS layer: runtime/index.ts installs
+    // process.on('SIGINT', () => process.exit(0)). Bun intercepts SIGINT before
+    // tokio::signal::ctrl_c() can fire in this process, so a Rust-side handler
+    // is a no-op under Bun. until_shutdown() below parks the calling Promise
+    // on s.shutdown forever; the parking ends when JS exits the process.
     server::start(
         addr,
         Arc::clone(&s.ready),
@@ -108,7 +110,7 @@ pub async fn until_ready(timeout_ms: u32) -> NapiResult<()> {
 
 #[napi]
 pub async fn until_shutdown() -> NapiResult<()> {
-    state().shutdown.wait().await;
+    state().shutdown.notified().await;
     Ok(())
 }
 
