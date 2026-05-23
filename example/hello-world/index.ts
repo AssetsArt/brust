@@ -22,7 +22,7 @@ if (!isWorker) {
 } else {
   brust.registerRenderer(async (path: string) => {
     return renderToString(
-      createElement(HelloWorld, { workerId: String(workerId()) })
+      createElement(HelloWorld, { workerId: workerId()?.toString() ?? '' })
     )
   })
 }
