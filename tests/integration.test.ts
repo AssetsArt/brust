@@ -781,6 +781,32 @@ test('action middleware: passes through with cookie', async () => {
   }
 }, 15_000)
 
+test('action-calling island page renders marker + importmap + bootstrap', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38170', RUST_LOG: 'brust=warn' },
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const html = await (await fetch(`http://127.0.0.1:${port}/note`)).text()
+    // Marker for the NoteForm island
+    expect(html).toContain('data-brust-island="NoteForm"')
+    expect(html).toContain('data-brust-hydrate="load"')
+    // Importmap + bootstrap script tags
+    expect(html).toContain('<script type="importmap">')
+    expect(html).toContain('/_brust/islands/_bootstrap.js')
+
+    // The NoteForm.js chunk is served from /_brust/islands.
+    const chunk = await fetch(`http://127.0.0.1:${port}/_brust/islands/NoteForm.js`)
+    expect(chunk.status).toBe(200)
+    expect(chunk.headers.get('content-type')).toContain('javascript')
+  } finally {
+    proc.kill('SIGINT')
+    await proc.exited
+  }
+}, 20_000)
+
 async function readPortLine(stream: ReadableStream<Uint8Array>): Promise<number> {
   const reader = stream.getReader()
   const decoder = new TextDecoder()
