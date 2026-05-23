@@ -60,6 +60,11 @@ pub fn build_response(
         if lower == "content-type" || lower == "content-length" || lower == "connection" {
             continue;
         }
+        if name.bytes().any(|b| b == b'\r' || b == b'\n' || b == b'\0')
+            || value.bytes().any(|b| b == b'\r' || b == b'\n' || b == b'\0')
+        {
+            continue;
+        }
         header.push_str(&format!("{name}: {value}\r\n"));
     }
     header.push_str("\r\n");
@@ -93,4 +98,65 @@ pub fn error_414() -> Vec<u8> {
 }
 pub fn error_503(msg: &str) -> Vec<u8> {
     build_response(503, "text/plain", &[], msg.as_bytes().to_vec())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn as_str(bytes: &[u8]) -> String {
+        String::from_utf8_lossy(bytes).into_owned()
+    }
+
+    #[test]
+    fn empty_extra_headers_produces_baseline_response() {
+        let bytes = build_response(200, "text/plain", &[], b"hi".to_vec());
+        let s = as_str(&bytes);
+        assert!(s.starts_with("HTTP/1.1 200 OK\r\n"));
+        assert!(s.contains("Content-Type: text/plain\r\n"));
+        assert!(s.contains("Content-Length: 2\r\n"));
+        assert!(s.contains("Connection: keep-alive\r\n"));
+        assert!(s.ends_with("\r\n\r\nhi"));
+    }
+
+    #[test]
+    fn normal_extra_header_appears_in_output() {
+        let extra = vec![("X-Foo".to_string(), "bar".to_string())];
+        let bytes = build_response(200, "text/plain", &extra, b"".to_vec());
+        assert!(as_str(&bytes).contains("X-Foo: bar\r\n"));
+    }
+
+    #[test]
+    fn collision_skip_is_case_insensitive() {
+        let extra = vec![
+            ("Content-Type".to_string(), "evil".to_string()),
+            ("CONTENT-LENGTH".to_string(), "0".to_string()),
+            ("connection".to_string(), "close".to_string()),
+        ];
+        let bytes = build_response(200, "text/plain", &extra, b"".to_vec());
+        let s = as_str(&bytes);
+        // None of the colliding entries should have been written.
+        assert!(!s.contains("Content-Type: evil"));
+        assert!(!s.contains("CONTENT-LENGTH: 0"));
+        assert!(!s.contains("connection: close"));
+        // The fixed lines remain.
+        assert_eq!(s.matches("Content-Type: text/plain").count(), 1);
+    }
+
+    #[test]
+    fn crlf_in_header_value_drops_entry() {
+        let extra = vec![("X-Evil".to_string(), "v\r\nSet-Cookie: x".to_string())];
+        let bytes = build_response(200, "text/plain", &extra, b"".to_vec());
+        let s = as_str(&bytes);
+        assert!(!s.contains("Set-Cookie"));
+        assert!(!s.contains("X-Evil"));
+    }
+
+    #[test]
+    fn crlf_in_header_name_drops_entry() {
+        let extra = vec![("X\r\nSet-Cookie: x".to_string(), "v".to_string())];
+        let bytes = build_response(200, "text/plain", &extra, b"".to_vec());
+        let s = as_str(&bytes);
+        assert!(!s.contains("Set-Cookie"));
+    }
 }
