@@ -41,6 +41,8 @@ pub fn build_response(
         403 => "Forbidden",
         404 => "Not Found",
         405 => "Method Not Allowed",
+        411 => "Length Required",
+        413 => "Payload Too Large",
         414 => "URI Too Long",
         500 => "Internal Server Error",
         502 => "Bad Gateway",
@@ -81,6 +83,25 @@ pub fn error_404() -> Vec<u8> {
 }
 pub fn error_405() -> Vec<u8> {
     build_response(405, "text/plain", &[], b"method not allowed".to_vec())
+}
+pub fn error_411() -> Vec<u8> {
+    build_response(411, "text/plain", &[], b"length required".to_vec())
+}
+pub fn error_413() -> Vec<u8> {
+    // Body might be partially read at this point — Connection: close so
+    // the client doesn't try to pipeline another request on this socket.
+    let body: &[u8] = b"payload too large";
+    let header = format!(
+        "HTTP/1.1 413 Payload Too Large\r\n\
+         Content-Type: text/plain\r\n\
+         Content-Length: {}\r\n\
+         Connection: close\r\n\
+         \r\n",
+        body.len(),
+    );
+    let mut out = header.into_bytes();
+    out.extend_from_slice(body);
+    out
 }
 pub fn error_414() -> Vec<u8> {
     let body: &[u8] = b"uri too long";

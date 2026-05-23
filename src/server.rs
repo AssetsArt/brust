@@ -22,6 +22,11 @@ struct ResponseMeta {
     status: u16,
     #[serde(default)]
     headers: std::collections::HashMap<String, String>,
+    /// JS-side override for the Content-Type header. Used by the action path
+    /// (sets 'application/json') and by middleware short-circuits returning
+    /// text. Absent on the render path → Rust uses the default.
+    #[serde(default, rename = "contentType")]
+    content_type: Option<String>,
 }
 
 enum ReadOutcome {
@@ -34,6 +39,11 @@ enum ReadOutcome {
 }
 
 const MAX_REQUEST_BYTES: usize = 16 * 1024;
+/// Cap on action body size. Mirrors the SAB capacity (256 KB default) so
+/// the largest action call fits in one SAB write. If the SAB is reconfigured
+/// larger by the user, this bound stays — action bodies don't get to grow
+/// past the renderer's working buffer.
+const MAX_ACTION_BODY_BYTES: usize = 256 * 1024;
 // Bound the accept-side queue so a slow worker pool triggers TCP backpressure instead of unbounded memory growth.
 const CONN_CHAN_CAP: usize = 1024;
 
@@ -124,10 +134,15 @@ async fn handle_conn(
             }
         };
 
-        // POST is only legal for /_brust/cache/invalidate; everything else
-        // requires GET. Move the gate further down so the path-aware POST
-        // dispatch can run first.
-        if method != "GET" && !(method == "POST" && path.starts_with("/_brust/cache/invalidate")) {
+        // POST is only legal for /_brust/cache/invalidate and /_brust/action/*;
+        // everything else requires GET. For action paths, 405 means "POST is the
+        // only allowed method here" — body must already have been consumed (or
+        // absent). The fixed `Connection: keep-alive` header in error_405 is
+        // correct because we haven't read a body yet.
+        if method != "GET"
+            && !(method == "POST" && path.starts_with("/_brust/cache/invalidate"))
+            && !(method == "POST" && path.starts_with("/_brust/action/"))
+        {
             let _ = s.write_all(http::error_405()).await;
             return;
         }
@@ -194,6 +209,158 @@ async fn handle_conn(
             }
         }
 
+        // Native-only route: server-function dispatch.
+        //   POST /_brust/action/<id>
+        // Body: JSON array of args. Worker decodes the array and calls fn(req, ...args).
+        // Status codes:
+        //   404 — id charset invalid or not in registry
+        //   405 — non-POST method (covered by outer method gate, but keep belt+suspenders)
+        //   411 — Content-Length missing
+        //   413 — Content-Length > SAB capacity
+        //   400 — body not valid UTF-8
+        // 5xx — fn throws / middleware throws (handled by the JS side via meta envelope)
+        if let Some(after) = path.strip_prefix("/_brust/action/") {
+            // The outer method gate has already rejected non-POST; the duplicate check
+            // here covers future refactors that might split the gate.
+            if method != "POST" {
+                let _ = s.write_all(http::error_405()).await;
+                return;
+            }
+            // Strip any query string from the id (action calls may add ?dryRun=1
+            // — the request still has the query string in req.search, but the id
+            // itself must be the bare segment).
+            let id = after.split('?').next().unwrap_or(after);
+            if !is_safe_action_id(id) {
+                let _ = s.write_all(http::error_404()).await;
+                continue;
+            }
+            if !crate::action_id_registered(id) {
+                let _ = s.write_all(http::error_404()).await;
+                continue;
+            }
+
+            // Locate the body in `buf`. parse_request only gave us method+path; we
+            // need to find \r\n\r\n to skip the headers, then read Content-Length bytes.
+            let header_end = match buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                Some(p) => p + 4,
+                None => {
+                    let _ = s.write_all(http::error_400()).await;
+                    return;
+                }
+            };
+            let content_length = match parse_content_length(&buf[..header_end]) {
+                Some(n) => n,
+                None => {
+                    let _ = s.write_all(http::error_411()).await;
+                    continue;
+                }
+            };
+            if content_length > MAX_ACTION_BODY_BYTES {
+                let _ = s.write_all(http::error_413()).await;
+                return;
+            }
+
+            // Body bytes already in buf? read_full_request only loops until headers
+            // complete; the body may be partially or fully buffered after \r\n\r\n.
+            let body_buffered = buf.len().saturating_sub(header_end);
+            if body_buffered < content_length {
+                // Read the rest of the body. Bound by content_length so we don't
+                // over-read into the next request on a keep-alive connection.
+                let need = content_length - body_buffered;
+                let mut read_so_far = 0usize;
+                while read_so_far < need {
+                    let n = match s.read_request(&mut buf).await {
+                        Ok(n) => n,
+                        Err(_) => {
+                            let _ = s.write_all(http::error_400()).await;
+                            return;
+                        }
+                    };
+                    if n == 0 {
+                        let _ = s.write_all(http::error_400()).await;
+                        return;
+                    }
+                    read_so_far += n;
+                }
+            }
+            let body_slice = &buf[header_end..header_end + content_length];
+            let body_str = match std::str::from_utf8(body_slice) {
+                Ok(s) => s,
+                Err(_) => {
+                    let _ = s.write_all(http::error_400()).await;
+                    continue;
+                }
+            };
+
+            let envelope_json = crate::routes::build_action_envelope(
+                &method, &path, id, body_str, &buf[..header_end],
+            );
+
+            let Some(entry) = pool.pick_least_busy() else {
+                let _ = s.write_all(http::error_503("no workers")).await;
+                return;
+            };
+            let _guard = entry.in_flight_guard();
+
+            match entry.tsfn.call_async(envelope_json).await {
+                Ok(promise) => match promise.await {
+                    Ok(n) => {
+                        let n = n as usize;
+                        if n < 16 || n > entry.buf_len {
+                            error!(worker_id = entry.id, written = n, capacity = entry.buf_len, "action oversized");
+                            let _ = s.write_all(http::build_response(500, "text/plain", &[], b"action oversized".to_vec())).await;
+                            return;
+                        }
+                        let raw: Vec<u8> = unsafe {
+                            std::slice::from_raw_parts(entry.buf_ptr.0, n).to_vec()
+                        };
+                        let meta_len = u16::from_be_bytes([raw[0], raw[1]]) as usize;
+                        if meta_len + 2 > n {
+                            error!(worker_id = entry.id, meta_len, total = n, "meta_len out of range");
+                            let _ = s.write_all(http::build_response(500, "text/plain", &[], b"invalid action envelope".to_vec())).await;
+                            return;
+                        }
+                        let meta_bytes = &raw[2..2 + meta_len];
+                        let meta: ResponseMeta = match serde_json::from_slice(meta_bytes) {
+                            Ok(m) => m,
+                            Err(e) => {
+                                error!(worker_id = entry.id, error = %e, "meta JSON parse failed");
+                                let _ = s.write_all(http::build_response(500, "text/plain", &[], b"invalid action envelope".to_vec())).await;
+                                return;
+                            }
+                        };
+                        let body = raw[2 + meta_len..].to_vec();
+                        let extra: Vec<(String, String)> = meta.headers.into_iter().collect();
+                        // Content-Type from meta override (JS sets 'application/json' for normal action
+                        // returns and 'text/plain' for middleware string short-circuits). Falls back to
+                        // 'application/json' when JS omits it — action endpoint never returns HTML.
+                        let ct = meta.content_type.as_deref().unwrap_or("application/json; charset=utf-8");
+                        let bytes = http::build_response(meta.status, ct, &extra, body);
+                        if s.write_all(bytes).await.is_err() {
+                            return;
+                        }
+                        continue;
+                    }
+                    Err(e) => {
+                        error!(worker_id = entry.id, error = %e, "action promise rejected");
+                        let msg = format!("action error: {e}");
+                        let _ = s.write_all(http::build_response(500, "text/plain", &[], msg.into_bytes())).await;
+                        return;
+                    }
+                },
+                Err(e) => {
+                    error!(worker_id = entry.id, error = %e, "tsfn call_async failed");
+                    let _ = s.write_all(http::build_response(502, "text/plain", &[], b"upstream call failed".to_vec())).await;
+                    pool.remove(entry.id);
+                    if pool.registered_count() == 0 {
+                        error!("all workers died");
+                        std::process::exit(1);
+                    }
+                    return;
+                }
+            }
+        }
+
         // Native-only route: cache invalidation.
         //   POST /_brust/cache/invalidate?path=/foo  → purge by (GET, /foo)
         //   POST /_brust/cache/invalidate?all=1      → clear all entries
@@ -256,13 +423,13 @@ async fn handle_conn(
         let cache_key = cache_config
             .as_ref()
             .map(|cfg| build_cache_key(&method, &path, cfg, &buf));
-        if let Some(key) = &cache_key {
-            if let Some(bytes) = cache.get(key) {
-                if s.write_all(bytes).await.is_err() {
-                    return;
-                }
-                continue;
+        if let Some(key) = &cache_key
+            && let Some(bytes) = cache.get(key)
+        {
+            if s.write_all(bytes).await.is_err() {
+                return;
             }
+            continue;
         }
 
         let Some(entry) = pool.pick_least_busy() else {
@@ -458,6 +625,32 @@ fn is_safe_island_filename(name: &str) -> bool {
         .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-'))
 }
 
+/// Extract `Content-Length` from a buffered HTTP request's headers. Returns
+/// None if the header is missing or unparseable. Caller has already ensured
+/// `\r\n\r\n` is present in `buf`.
+fn parse_content_length(buf: &[u8]) -> Option<usize> {
+    let mut headers = [httparse::EMPTY_HEADER; 64];
+    let mut req = httparse::Request::new(&mut headers);
+    let _ = req.parse(buf);
+    for h in req.headers.iter() {
+        if h.name.eq_ignore_ascii_case("content-length") {
+            let s = std::str::from_utf8(h.value).ok()?;
+            return s.trim().parse::<usize>().ok();
+        }
+    }
+    None
+}
+
+/// Mirrors src/lib.rs::is_safe_action_id. Belt-and-suspenders: the dispatch
+/// check that happens here is the only sanitization between the URL path and
+/// the action registry lookup.
+fn is_safe_action_id(id: &str) -> bool {
+    if id.is_empty() || id.len() > 128 {
+        return false;
+    }
+    id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -512,5 +705,50 @@ mod tests {
     #[test]
     fn unsafe_non_ascii_rejected() {
         assert!(!is_safe_island_filename("évil.js"));
+    }
+
+    #[test]
+    fn server_action_id_matches_lib_helper() {
+        // Sanity: server.rs and lib.rs both define is_safe_action_id. They must
+        // agree on every input — drifting between the two is a 404 / 200 split
+        // depending on call order, which is a security smell.
+        let cases = [
+            ("createNote", true),
+            ("a_b-c", true),
+            ("X", true),
+            ("", false),
+            ("a.b", false),
+            ("a/b", false),
+            ("..", false),
+            ("évil", false),
+            ("a b", false),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(is_safe_action_id(input), expected, "input={input:?}");
+        }
+    }
+
+    #[test]
+    fn parse_content_length_finds_header() {
+        let raw = b"POST /x HTTP/1.1\r\nHost: x\r\nContent-Length: 42\r\n\r\n";
+        assert_eq!(parse_content_length(raw), Some(42));
+    }
+
+    #[test]
+    fn parse_content_length_case_insensitive() {
+        let raw = b"POST /x HTTP/1.1\r\nHost: x\r\ncontent-length: 7\r\n\r\n";
+        assert_eq!(parse_content_length(raw), Some(7));
+    }
+
+    #[test]
+    fn parse_content_length_missing_returns_none() {
+        let raw = b"POST /x HTTP/1.1\r\nHost: x\r\n\r\n";
+        assert_eq!(parse_content_length(raw), None);
+    }
+
+    #[test]
+    fn parse_content_length_garbage_returns_none() {
+        let raw = b"POST /x HTTP/1.1\r\nHost: x\r\nContent-Length: NaN\r\n\r\n";
+        assert_eq!(parse_content_length(raw), None);
     }
 }
