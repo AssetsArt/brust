@@ -580,6 +580,164 @@ test('routes without <Island> ship no importmap or bootstrap', async () => {
   }
 }, 30_000)
 
+test('action endpoint: happy path returns JSON', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38150', RUST_LOG: 'brust=warn' },
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/createNote`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(['hi there']),
+    })
+    expect(resp.status).toBe(200)
+    expect(resp.headers.get('content-type')).toContain('application/json')
+    const body = await resp.json() as { id: string }
+    expect(body.id).toMatch(/^n-\d+$/)
+  } finally {
+    proc.kill('SIGINT')
+    await proc.exited
+  }
+}, 15_000)
+
+test('action endpoint: malformed JSON args → 400', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38151', RUST_LOG: 'brust=warn' },
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/createNote`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: 'not-json',
+    })
+    expect(resp.status).toBe(400)
+    const body = await resp.text()
+    expect(body).toContain('invalid args JSON')
+  } finally {
+    proc.kill('SIGINT')
+    await proc.exited
+  }
+}, 15_000)
+
+test('action endpoint: args not an array → 400', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38152', RUST_LOG: 'brust=warn' },
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/createNote`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: 'hi' }),
+    })
+    expect(resp.status).toBe(400)
+    const body = await resp.text()
+    expect(body).toContain('JSON array')
+  } finally {
+    proc.kill('SIGINT')
+    await proc.exited
+  }
+}, 15_000)
+
+test('action endpoint: unknown id → 404', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38153', RUST_LOG: 'brust=warn' },
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/missing`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify([]),
+    })
+    expect(resp.status).toBe(404)
+  } finally {
+    proc.kill('SIGINT')
+    await proc.exited
+  }
+}, 15_000)
+
+test('action endpoint: GET → 405', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38154', RUST_LOG: 'brust=warn' },
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/createNote`)
+    expect(resp.status).toBe(405)
+  } finally {
+    proc.kill('SIGINT')
+    await proc.exited
+  }
+}, 15_000)
+
+test('action endpoint: id with bad charset → 404', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38155', RUST_LOG: 'brust=warn' },
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    // Dot in the id should be rejected by is_safe_action_id.
+    const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/bad.id`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '[]',
+    })
+    expect(resp.status).toBe(404)
+  } finally {
+    proc.kill('SIGINT')
+    await proc.exited
+  }
+}, 15_000)
+
+test('action endpoint: missing Content-Length → 411', async () => {
+  // fetch always sets Content-Length, so use a raw socket like the 414 test.
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38156', RUST_LOG: 'brust=warn' },
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const chunks: Uint8Array[] = []
+    let resolveClose!: () => void
+    const closed = new Promise<void>((r) => { resolveClose = r })
+    const sock = await Bun.connect({
+      hostname: '127.0.0.1', port,
+      socket: {
+        data(_s, data) { chunks.push(new Uint8Array(data)) },
+        open() {}, close() { resolveClose() }, drain() {}, error() { resolveClose() },
+      },
+    })
+    // Hand-crafted request: no Content-Length, no body.
+    sock.write('POST /_brust/action/createNote HTTP/1.1\r\nHost: x\r\n\r\n')
+    await Promise.race([
+      closed,
+      new Promise<void>((r) => setTimeout(r, 1000)),
+    ])
+    sock.end()
+    const combined = Buffer.concat(chunks).toString('utf-8')
+    expect(combined.split('\r\n')[0]).toContain('411')
+  } finally {
+    proc.kill('SIGINT')
+    await proc.exited
+  }
+}, 15_000)
+
 async function readPortLine(stream: ReadableStream<Uint8Array>): Promise<number> {
   const reader = stream.getReader()
   const decoder = new TextDecoder()
