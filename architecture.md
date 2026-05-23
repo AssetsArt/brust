@@ -345,12 +345,33 @@ Middleware plan.
 
 ### Cache
 
-LRU keyed on `method + path + sorted query + vary_headers`. Per-route opt-out
-(`cache: false`) for authed/personalised pages. Programmatic invalidation via
-control socket (`brust-cli invalidate /path`). TTL-based eviction.
+Bounded LRU (1000 entries by default) keyed on
+`method + path + sorted_query + selected_vary_values`. **Opt-in per route** —
+omit the `cache:` field and the route bypasses the cache entirely. This trades
+performance for correctness: authed/personalised pages don't accidentally serve
+another user's HTML.
 
-Default key cannot capture session/cookie-dependent content unless declared in
-`vary`. Routes without `cache:` opt in at their own risk.
+```tsx
+{ path: '/blog/{slug}', Component: BlogPost,
+  cache: { ttl_seconds: 60, vary: ['accept-language'] } }
+```
+
+- **TTL** evicts entries lazily on read.
+- **`vary`** declares request headers that affect content. Each appears in the
+  cache key, so `accept-language: en` and `accept-language: th` cache separately.
+- **Hits** respond entirely from Rust — no napi tsfn call, no Bun Worker wakeup.
+- **Misses** call the worker as usual, then store the full response bytes
+  (status line + headers + body) so the next hit is one `write_all` away.
+
+Implementation: `src/cache.rs` wraps `lru::LruCache` behind
+`parking_lot::Mutex`; lookup + insert sit in `handle_conn` between
+`routes.match_path` and `pool.pick_least_busy`.
+
+**Not yet implemented:**
+
+- Control-socket invalidation (`brust-cli invalidate /path`) — lands with the CLI plan.
+- `brust.toml [cache]` section for capacity/default TTL — lands with that plan.
+- Cache stats endpoint (`hits`/`misses` are tracked but not surfaced).
 
 ### Islands (on-demand hydration)
 
@@ -918,11 +939,12 @@ Bun.serve baseline source: `example/bun-serve-baseline/index.ts`.
 - HTTP 414 emission on oversized requests
 - Declarative routing: `routes.tsx` + matchit radix tree + JSON envelope tsfn payload + per-route `errorBoundary`
 - Layered configuration: defaults < `brust.toml` (`[server]` + `[workers]`) < env (`runtime/config.ts`)
+- Per-route LRU cache (`cache: { ttl_seconds, vary? }`, 1000 entries, lazy TTL eviction)
 
 **Designed, not built:**
 
 - Loaders + nested routes + per-route cache field (`loader: ...`, `children: [...]`, `cache: ...`)
-- Cache (LRU, vary headers, TTL, control-socket invalidation)
+- Cache invalidation (control-socket / `brust-cli invalidate`) + `[cache]` TOML section + cache stats endpoint
 - Islands hydration (`"use island"`, lazy bootstrap, hydration triggers)
 - Server functions (`"use server"`, build-time RPC stub generation)
 - Agentic surface (MCP-style schemas auto-extracted at build time)
