@@ -278,6 +278,98 @@ test('cache stats endpoint reflects hits and misses', async () => {
   }
 }, 15_000)
 
+test('middleware short-circuits with 401 when cookie missing', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38161', BRUST_WORKERS: '1', RUST_LOG: 'brust=info' },
+    stdout: 'pipe',
+    stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}/protected`)
+    expect(r.status).toBe(401)
+    expect(await r.text()).toBe('unauthorised')
+    expect(r.headers.get('www-authenticate')).toBe('Cookie')
+  } finally {
+    proc.kill('SIGINT')
+    const exit = await proc.exited
+    expect(exit).toBe(0)
+  }
+}, 15_000)
+
+test('middleware lets request through when cookie present + req.cookies reaches component', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38162', BRUST_WORKERS: '1', RUST_LOG: 'brust=info' },
+    stdout: 'pipe',
+    stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}/protected`, {
+      headers: { cookie: 'user=alice; sid=xyz' },
+    })
+    expect(r.status).toBe(200)
+    // React 18 inserts <!-- --> between adjacent text nodes (text literal + {var}),
+    // so strip those before the substring check.
+    const body = (await r.text()).replace(/<!--\s*-->/g, '')
+    expect(body).toContain('signed in as alice')
+  } finally {
+    proc.kill('SIGINT')
+    const exit = await proc.exited
+    expect(exit).toBe(0)
+  }
+}, 15_000)
+
+test('middleware injects x-render-ms response header + req.search reaches component', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38163', BRUST_WORKERS: '1', RUST_LOG: 'brust=info' },
+    stdout: 'pipe',
+    stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}/with-header?name=brust`)
+    expect(r.status).toBe(200)
+    const ms = r.headers.get('x-render-ms')
+    expect(ms).not.toBeNull()
+    expect(Number(ms)).toBeGreaterThanOrEqual(0)
+    // React 18 inserts <!-- --> between adjacent text nodes (text literal + {var}),
+    // so strip those before the substring check.
+    const body = (await r.text()).replace(/<!--\s*-->/g, '')
+    expect(body).toContain('Hello, brust')
+  } finally {
+    proc.kill('SIGINT')
+    const exit = await proc.exited
+    expect(exit).toBe(0)
+  }
+}, 15_000)
+
+test('errorBoundary still returns 500 under the new envelope', async () => {
+  // Repeats the /crash test under the new wire format to make the regression
+  // path explicit. Status now flows through meta.status rather than the
+  // legacy 2-byte prefix.
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38164', BRUST_WORKERS: '1', RUST_LOG: 'brust=info' },
+    stdout: 'pipe',
+    stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}/crash`)
+    expect(r.status).toBe(500)
+    const body = await r.text()
+    expect(body).toContain('CrashBoundary')
+  } finally {
+    proc.kill('SIGINT')
+    const exit = await proc.exited
+    expect(exit).toBe(0)
+  }
+}, 15_000)
+
 async function readPortLine(stream: ReadableStream<Uint8Array>): Promise<number> {
   const reader = stream.getReader()
   const decoder = new TextDecoder()
