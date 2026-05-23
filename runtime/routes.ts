@@ -1,6 +1,7 @@
 import { createElement, type ComponentType, type ReactNode } from 'react'
 import { renderToString } from 'react-dom/server'
 import { consumeIslandUsedFlag } from './islands/island.tsx'
+import type { ActionDef } from './actions.ts'
 
 /** Structured view of the request, parsed once in Rust and shipped in the
  * JSON envelope. Header names are lower-cased. Cookies are parsed from the
@@ -48,6 +49,11 @@ export interface RouteResponse {
    * deduplicates by lower-casing internally. Skips collisions with the fixed
    * Content-Type / Content-Length / Connection lines. */
   headers?: Record<string, string>
+  /** Override the Content-Type emitted by Rust. Action returns set this to
+   * 'application/json; charset=utf-8'; middleware short-circuits with a
+   * raw string body can set 'text/plain'. Falls back to 'text/html' (render)
+   * or 'application/json' (action) when omitted. */
+  contentType?: string
 }
 
 /** Middleware contract — Express/Koa-style chain. Receives a structured
@@ -84,15 +90,27 @@ export function defineRoutes(routes: Route[]): Route[] {
   return routes
 }
 
-/** Wire-level shape of the JSON envelope produced by Rust `routes::match_path`.
- * Keep this struct in sync with src/routes.rs::RouteEnvelope.
+/** Wire-level shape of the JSON envelope produced by Rust. Discriminated
+ * union: render path (matched against a route) vs action path
+ * (POST /_brust/action/<id>). Keep these in sync with src/routes.rs
+ * RouteEnvelope / ActionEnvelope.
  */
-export interface RouteCall {
-  route_id: number
-  path: string
-  params: Record<string, string>
-  req: BrustRequest
-}
+export type RouteCall =
+  | {
+      kind: 'render'
+      route_id: number
+      path: string
+      params: Record<string, string>
+      req: BrustRequest
+    }
+  | {
+      kind: 'action'
+      action_id: string
+      /** Raw JSON args body (a JSON string). Worker parses it once,
+       * checks Array.isArray, then spreads into the action handler. */
+      args_json: string
+      req: BrustRequest
+    }
 
 /**
  * Build a render callback for a given routes table. The returned function is
@@ -105,6 +123,10 @@ export interface MakeRendererOptions {
   /** Lazy getter for the Bun Worker id. Called per-render so the value can be
    * resolved after `registerRenderer` returns. Returns null before that. */
   getWorkerId?: () => number | null
+  /** Action table the worker dispatches to when envelope.kind === 'action'.
+   * Pass the SAME array given to brust.registerActions on the main thread —
+   * the wire keys (ids) and the handler functions (fn) must agree. */
+  actions?: ActionDef[]
 }
 
 export function makeRenderer(
@@ -113,100 +135,206 @@ export function makeRenderer(
   opts: MakeRendererOptions = {},
 ): (envelopeJson: string) => Promise<number> {
   const encoder = new TextEncoder()
-  const byId = new Map<number, Route>()
-  routes.forEach((r, i) => byId.set(i, r))
+  const byRouteId = new Map<number, Route>()
+  routes.forEach((r, i) => byRouteId.set(i, r))
+  const byActionId = new Map<string, ActionDef>()
+  for (const a of opts.actions ?? []) byActionId.set(a.id, a)
 
   return async (envelopeJson: string): Promise<number> => {
     const call = JSON.parse(envelopeJson) as RouteCall
-    const route = byId.get(call.route_id)
-    if (!route) {
-      console.error(`[brust] unknown route_id=${call.route_id} for path=${call.path}`)
-      return 0
-    }
 
-    const workerId = opts.getWorkerId ? opts.getWorkerId() : null
-
-    // Terminal `next()` — runs loader (if any), then renderToString. Wraps both
-    // in a try/catch so errorBoundary catches both loader and render exceptions.
-    const terminal = async (): Promise<RouteResponse> => {
-      try {
-        const data = route.loader
-          ? await route.loader({ params: call.params, path: call.path, req: call.req })
-          : undefined
-        const html = renderToString(
-          createElement(route.Component, {
-            params: call.params,
-            path: call.path,
-            data,
-            workerId,
-            req: call.req,
-          }),
-        )
-        const wrapped = consumeIslandUsedFlag()
-          ? wrapWithIslandsBootstrap(html)
-          : html
-        return { status: 200, body: wrapped }
-      } catch (renderErr) {
-        if (!route.errorBoundary) throw renderErr
-        const boundary: ReactNode = createElement(route.errorBoundary, {
-          error: renderErr instanceof Error ? renderErr : new Error(String(renderErr)),
-        })
-        const html = renderToString(boundary)
-        // Drain the flag even on error path so it doesn't leak to the next render.
-        const wrapped = consumeIslandUsedFlag()
-          ? wrapWithIslandsBootstrap(html)
-          : html
-        return { status: 500, body: wrapped }
-      }
+    if (call.kind === 'render') {
+      return renderBranch(call, byRouteId, view, encoder, opts.getWorkerId)
     }
-
-    // Compose middleware chain right-to-left so the first entry runs outermost.
-    // Each link calls the next via `next()`; returning without calling next()
-    // short-circuits the chain. chain() is invoked once per request — terminal
-    // is not idempotent for loaders with side effects.
-    let chain = terminal
-    if (route.middleware && route.middleware.length > 0) {
-      for (let i = route.middleware.length - 1; i >= 0; i--) {
-        const mw = route.middleware[i]
-        const next = chain
-        chain = () => mw(call.req, next)
-      }
+    if (call.kind === 'action') {
+      return actionBranch(call, byActionId, view, encoder)
     }
-
-    let response: RouteResponse
-    try {
-      response = await chain()
-    } catch (err) {
-      // A middleware (or terminal without errorBoundary) raised. Render as 500
-      // text/plain inside the envelope so the wire response is still valid.
-      console.error(`[brust] middleware/render uncaught:`, err)
-      response = {
-        status: 500,
-        body: 'internal error',
-      }
-    }
-
-    // Pack the meta JSON envelope: [meta_len u16 BE][meta JSON][body].
-    const meta = response.headers
-      ? { status: response.status, headers: response.headers }
-      : { status: response.status }
-    const metaBytes = encoder.encode(JSON.stringify(meta))
-    if (metaBytes.length > 0xffff) {
-      console.error(`[brust] meta too large: ${metaBytes.length} bytes`)
-      return 0
-    }
-    if (2 + metaBytes.length > view.length) {
-      console.error(`[brust] envelope > SAB capacity`)
-      return 0
-    }
-    view[0] = (metaBytes.length >> 8) & 0xff
-    view[1] = metaBytes.length & 0xff
-    view.set(metaBytes, 2)
-    const bodyView = view.subarray(2 + metaBytes.length)
-    const { written } = encoder.encodeInto(response.body, bodyView)
-    if (written === undefined) return 0
-    return 2 + metaBytes.length + written
+    // Unknown kind — log and 500. Shouldn't happen unless Rust ships
+    // something out of band.
+    console.error(`[brust] unknown envelope kind in worker:`, (call as { kind?: string }).kind)
+    return packResponse(view, encoder, {
+      status: 500,
+      body: 'invalid envelope kind',
+      contentType: 'text/plain; charset=utf-8',
+    })
   }
+}
+
+async function renderBranch(
+  call: Extract<RouteCall, { kind: 'render' }>,
+  byId: Map<number, Route>,
+  view: Uint8Array,
+  encoder: TextEncoder,
+  getWorkerId?: () => number | null,
+): Promise<number> {
+  const route = byId.get(call.route_id)
+  if (!route) {
+    console.error(`[brust] unknown route_id=${call.route_id} for path=${call.path}`)
+    return 0
+  }
+  const workerId = getWorkerId ? getWorkerId() : null
+
+  const terminal = async (): Promise<RouteResponse> => {
+    try {
+      const data = route.loader
+        ? await route.loader({ params: call.params, path: call.path, req: call.req })
+        : undefined
+      const html = renderToString(
+        createElement(route.Component, {
+          params: call.params,
+          path: call.path,
+          data,
+          workerId,
+          req: call.req,
+        }),
+      )
+      const wrapped = consumeIslandUsedFlag()
+        ? wrapWithIslandsBootstrap(html)
+        : html
+      return { status: 200, body: wrapped }
+    } catch (renderErr) {
+      if (!route.errorBoundary) throw renderErr
+      const boundary: ReactNode = createElement(route.errorBoundary, {
+        error: renderErr instanceof Error ? renderErr : new Error(String(renderErr)),
+      })
+      const html = renderToString(boundary)
+      const wrapped = consumeIslandUsedFlag()
+        ? wrapWithIslandsBootstrap(html)
+        : html
+      return { status: 500, body: wrapped }
+    }
+  }
+
+  let chain = terminal
+  if (route.middleware && route.middleware.length > 0) {
+    for (let i = route.middleware.length - 1; i >= 0; i--) {
+      const mw = route.middleware[i]
+      const next = chain
+      chain = () => mw(call.req, next)
+    }
+  }
+
+  let response: RouteResponse
+  try {
+    response = await chain()
+  } catch (err) {
+    console.error(`[brust] middleware/render uncaught:`, err)
+    response = { status: 500, body: 'internal error' }
+  }
+  return packResponse(view, encoder, response)
+}
+
+async function actionBranch(
+  call: Extract<RouteCall, { kind: 'action' }>,
+  byId: Map<string, ActionDef>,
+  view: Uint8Array,
+  encoder: TextEncoder,
+): Promise<number> {
+  const def = byId.get(call.action_id)
+  if (!def) {
+    // Rust already 404s when the id isn't registered, but a race during
+    // hot-reload (or a desynced worker) could land here. Log and 404.
+    console.error(`[brust] unknown action_id=${call.action_id}`)
+    return packResponse(view, encoder, {
+      status: 404,
+      body: '{"error":{"message":"unknown action"}}',
+      contentType: 'application/json; charset=utf-8',
+    })
+  }
+
+  // Parse args BEFORE middleware so a malformed body 400s without running
+  // any user code.
+  let args: unknown[]
+  try {
+    const decoded = JSON.parse(call.args_json) as unknown
+    if (!Array.isArray(decoded)) {
+      return packResponse(view, encoder, {
+        status: 400,
+        body: '{"error":{"message":"args must be a JSON array"}}',
+        contentType: 'application/json; charset=utf-8',
+      })
+    }
+    args = decoded
+  } catch {
+    return packResponse(view, encoder, {
+      status: 400,
+      body: '{"error":{"message":"invalid args JSON"}}',
+      contentType: 'application/json; charset=utf-8',
+    })
+  }
+
+  const terminal = async (): Promise<RouteResponse> => {
+    try {
+      const result = await def.fn(call.req, ...args)
+      return {
+        status: 200,
+        body: result === undefined ? '' : JSON.stringify(result),
+        contentType: 'application/json; charset=utf-8',
+      }
+    } catch (err) {
+      console.error(`[brust] action ${def.id} threw:`, err)
+      const e = err instanceof Error ? err : new Error(String(err))
+      return {
+        status: 500,
+        body: JSON.stringify({ error: { message: e.message, name: e.name } }),
+        contentType: 'application/json; charset=utf-8',
+      }
+    }
+  }
+
+  let chain = terminal
+  if (def.middleware && def.middleware.length > 0) {
+    for (let i = def.middleware.length - 1; i >= 0; i--) {
+      const mw = def.middleware[i]
+      const next = chain
+      chain = () => mw(call.req, next)
+    }
+  }
+
+  let response: RouteResponse
+  try {
+    response = await chain()
+  } catch (err) {
+    console.error(`[brust] action middleware uncaught:`, err)
+    response = {
+      status: 500,
+      body: JSON.stringify({ error: { message: 'internal error' } }),
+      contentType: 'application/json; charset=utf-8',
+    }
+  }
+  return packResponse(view, encoder, response)
+}
+
+/** Pack a RouteResponse into the SAB and return the byte count.
+ * Wire format: [meta_len: u16 BE][meta JSON UTF-8][body bytes].
+ * meta = { status, headers?, contentType? } */
+function packResponse(
+  view: Uint8Array,
+  encoder: TextEncoder,
+  response: RouteResponse,
+): number {
+  const meta: { status: number; headers?: Record<string, string>; contentType?: string } = {
+    status: response.status,
+  }
+  if (response.headers) meta.headers = response.headers
+  if (response.contentType) meta.contentType = response.contentType
+
+  const metaBytes = encoder.encode(JSON.stringify(meta))
+  if (metaBytes.length > 0xffff) {
+    console.error(`[brust] meta too large: ${metaBytes.length} bytes`)
+    return 0
+  }
+  if (2 + metaBytes.length > view.length) {
+    console.error(`[brust] envelope > SAB capacity`)
+    return 0
+  }
+  view[0] = (metaBytes.length >> 8) & 0xff
+  view[1] = metaBytes.length & 0xff
+  view.set(metaBytes, 2)
+  const bodyView = view.subarray(2 + metaBytes.length)
+  const { written } = encoder.encodeInto(response.body, bodyView)
+  if (written === undefined) return 0
+  return 2 + metaBytes.length + written
 }
 
 const ISLANDS_IMPORTMAP_AND_BOOTSTRAP =
