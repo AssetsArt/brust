@@ -38,6 +38,7 @@ struct State {
     is_serving: AtomicBool,
     expected_workers: AtomicU32,
     islands_dir: parking_lot::RwLock<Option<std::path::PathBuf>>,
+    actions: parking_lot::RwLock<std::collections::HashSet<String>>,
 }
 
 static STATE: OnceCell<State> = OnceCell::new();
@@ -61,8 +62,13 @@ pub(crate) fn state() -> &'static State {
             is_serving: AtomicBool::new(false),
             expected_workers: AtomicU32::new(0),
             islands_dir: parking_lot::RwLock::new(None),
+            actions: parking_lot::RwLock::new(std::collections::HashSet::new()),
         }
     })
+}
+
+pub(crate) fn action_id_registered(id: &str) -> bool {
+    state().actions.read().contains(id)
 }
 
 #[napi(object)]
@@ -189,5 +195,62 @@ pub fn configure_islands_dir(path: String) -> NapiResult<()> {
     }
     *state().islands_dir.write() = Some(abs);
     Ok(())
+}
+
+/// Register the set of action ids that Rust will accept on
+/// /_brust/action/<id>. Called once at boot from the main thread.
+/// Validates charset and rejects duplicates. Replaces any previous set
+/// (no incremental registration in MVP — register once at boot).
+#[napi]
+pub fn register_actions(ids: Vec<String>) -> NapiResult<u32> {
+    use std::collections::HashSet;
+    let mut set: HashSet<String> = HashSet::with_capacity(ids.len());
+    for id in &ids {
+        if !is_safe_action_id(id) {
+            return Err(napi::Error::from_reason(format!(
+                "action id {id:?} contains invalid characters; allowed: [A-Za-z0-9_-]+"
+            )));
+        }
+        if !set.insert(id.clone()) {
+            return Err(napi::Error::from_reason(format!(
+                "action id {id:?} registered more than once"
+            )));
+        }
+    }
+    let len = set.len() as u32;
+    *state().actions.write() = set;
+    Ok(len)
+}
+
+/// Mirrors is_safe_island_filename's spirit but with no .js suffix.
+/// Allows [A-Za-z0-9_-]+ only — same charset as the TS-side island id check.
+fn is_safe_action_id(id: &str) -> bool {
+    if id.is_empty() || id.len() > 128 {
+        return false;
+    }
+    id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+}
+
+#[cfg(test)]
+mod action_id_tests {
+    use super::is_safe_action_id;
+
+    #[test] fn ascii_alphanumeric_passes() {
+        assert!(is_safe_action_id("createNote"));
+        assert!(is_safe_action_id("whoAmI"));
+        assert!(is_safe_action_id("a_b-c"));
+        assert!(is_safe_action_id("X"));
+        assert!(is_safe_action_id("123abc"));
+    }
+    #[test] fn empty_rejected() { assert!(!is_safe_action_id("")); }
+    #[test] fn too_long_rejected() {
+        let s: String = "a".repeat(129);
+        assert!(!is_safe_action_id(&s));
+    }
+    #[test] fn dot_rejected() { assert!(!is_safe_action_id("a.b")); }
+    #[test] fn slash_rejected() { assert!(!is_safe_action_id("a/b")); }
+    #[test] fn double_dot_rejected() { assert!(!is_safe_action_id("..")); }
+    #[test] fn non_ascii_rejected() { assert!(!is_safe_action_id("évil")); }
+    #[test] fn space_rejected() { assert!(!is_safe_action_id("a b")); }
 }
 
