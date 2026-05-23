@@ -1,9 +1,11 @@
 import { createElement, type ComponentType, type ReactNode } from 'react'
 import { renderToString } from 'react-dom/server'
 
-export interface RouteContext<Params = Record<string, string>> {
+export interface RouteContext<Params = Record<string, string>, Data = unknown> {
   params: Params
   path: string
+  /** Value returned by `route.loader`. Undefined if the route has no loader. */
+  data: Data
 }
 
 export interface ErrorBoundaryProps {
@@ -17,11 +19,15 @@ export interface RouteCacheConfig {
   vary?: string[]
 }
 
-export interface Route<Params = Record<string, string>> {
+export interface Route<Params = Record<string, string>, Data = unknown> {
   /** matchit syntax — use `/blog/{slug}` for parameters (NOT Express-style `:slug`). */
   path: string
-  Component: ComponentType<RouteContext<Params>>
-  /** Optional component invoked when Component (or, later, loader) throws. */
+  Component: ComponentType<RouteContext<Params, Data>>
+  /** Optional async function that runs in the worker before rendering. Its
+   * return value becomes the component's `data` prop. Exceptions are caught
+   * by `errorBoundary` if declared. */
+  loader?: (ctx: { params: Params; path: string }) => Promise<Data>
+  /** Optional component invoked when Component or loader throws. */
   errorBoundary?: ComponentType<ErrorBoundaryProps>
   /** Opt-in cache. Omit for no caching (default for authed/personalised routes). */
   cache?: RouteCacheConfig
@@ -66,8 +72,13 @@ export function makeRenderer(
     let html: string
     let status = 200
     try {
+      // Loader runs first (if declared). Exceptions flow into the same catch
+      // as render exceptions — errorBoundary handles both uniformly.
+      const data = route.loader
+        ? await route.loader({ params: call.params, path: call.path })
+        : undefined
       html = renderToString(
-        createElement(route.Component, { params: call.params, path: call.path }),
+        createElement(route.Component, { params: call.params, path: call.path, data }),
       )
     } catch (renderErr) {
       if (!route.errorBoundary) throw renderErr

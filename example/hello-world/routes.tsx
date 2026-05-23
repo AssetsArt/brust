@@ -7,7 +7,8 @@ import CacheTest     from './components/CacheTest'
 
 export const routes = defineRoutes([
   { path: '/',             Component: HelloWorld },
-  { path: '/blog/{slug}',  Component: BlogPost },
+  { path: '/blog/{slug}',  Component: BlogPost,
+    loader: async ({ params }) => ({ title: `Post: ${params.slug}` }) },
   { path: '/crash',        Component: Crash, errorBoundary: CrashBoundary },
   { path: '/cache-test',   Component: CacheTest, cache: { ttl_seconds: 60 } },
 ])
