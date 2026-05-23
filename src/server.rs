@@ -252,7 +252,7 @@ async fn handle_conn(
                 Some(n) => n,
                 None => {
                     let _ = s.write_all(http::error_411()).await;
-                    continue;
+                    return;
                 }
             };
             if content_length > MAX_ACTION_BODY_BYTES {
@@ -263,6 +263,10 @@ async fn handle_conn(
             // Body bytes already in buf? read_full_request only loops until headers
             // complete; the body may be partially or fully buffered after \r\n\r\n.
             let body_buffered = buf.len().saturating_sub(header_end);
+            // KNOWN LIMITATION: read_request appends all kernel bytes into buf, so if
+            // a client pipelines a second request after the body the extra bytes get
+            // dropped by the next buf.clear(). Acceptable for MVP — browsers don't
+            // pipeline. Revisit when introducing a bounded read_exact API.
             if body_buffered < content_length {
                 // Read the rest of the body. Bound by content_length so we don't
                 // over-read into the next request on a keep-alive connection.

@@ -224,6 +224,8 @@ pub fn register_actions(ids: Vec<String>) -> NapiResult<u32> {
 
 /// Mirrors is_safe_island_filename's spirit but with no .js suffix.
 /// Allows [A-Za-z0-9_-]+ only — same charset as the TS-side island id check.
+/// MUST stay in sync with src/server.rs::is_safe_action_id (covered by
+/// server_action_id_matches_lib_helper test).
 fn is_safe_action_id(id: &str) -> bool {
     if id.is_empty() || id.len() > 128 {
         return false;
