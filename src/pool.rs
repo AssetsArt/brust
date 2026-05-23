@@ -59,7 +59,7 @@ impl WorkerPool {
         let entries = self.entries.read();
         entries
             .iter()
-            .min_by_key(|e| e.in_flight.load(Ordering::Acquire))
+            .min_by_key(|e| e.in_flight.load(Ordering::Relaxed))
             .cloned()
     }
 
