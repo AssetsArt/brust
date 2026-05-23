@@ -839,12 +839,8 @@ brust/
 │                                   its response inline with Connection: close
 │                                   because the client's read cursor is mid-
 │                                   headers when oversize is detected.
-├── src/io/{linux,other,mod}.rs    tokio-uring vs tokio TcpListener/TcpStream
-│                                   wrappers (current_thread runtimes on both)
-└── src/shutdown.rs                Notify-based shutdown handle (currently
-                                    dead code under Bun — Bun intercepts SIGINT
-                                    before Rust's ctrl_c() handler fires;
-                                    actual exit happens via JS process.exit(0))
+└── src/io/{linux,other,mod}.rs    tokio-uring vs tokio TcpListener/TcpStream
+                                    wrappers (current_thread runtimes on both)
 ```
 
 Future splits when the API stabilises (e.g. `brust-cli` if/when one exists).
