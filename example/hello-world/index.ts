@@ -26,7 +26,7 @@ if (!isWorker) {
 } else {
   // 256KB shared buffer per worker — Rust captures the backing-store pointer at
   // register time and reads from it after every render call.
-  const sab = new SharedArrayBuffer(64 * 1024)
+  const sab = new SharedArrayBuffer(256 * 1024)
   const view = new Uint8Array(sab)
   const encoder = new TextEncoder()
 
