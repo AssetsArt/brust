@@ -1,0 +1,22 @@
+import type { BrustRequest } from '../../runtime/routes.ts'
+
+/** Demo action: pretend to insert a note and return a generated id. */
+export async function createNote(req: BrustRequest, text: string): Promise<{ id: string }> {
+  if (typeof text !== 'string') throw new Error('text must be a string')
+  if (text.length > 1000) throw new Error('text too long (max 1000)')
+  // Real apps would call into a DB here. We synthesise an id for the demo.
+  return { id: 'n-' + Date.now() }
+}
+
+/** Demo action: returns whoever the `user` cookie says they are, or null. */
+export async function whoAmI(req: BrustRequest): Promise<{ user: string | null }> {
+  return { user: req.cookies['user'] ?? null }
+}
+
+/** Demo action: gated by an auth middleware in routes registration. */
+export async function deleteNote(req: BrustRequest, noteId: string): Promise<{ ok: true }> {
+  if (typeof noteId !== 'string' || noteId.length === 0) {
+    throw new Error('noteId must be a non-empty string')
+  }
+  return { ok: true }
+}

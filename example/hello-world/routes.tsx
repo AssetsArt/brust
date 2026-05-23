@@ -6,6 +6,8 @@ import CrashBoundary from './components/CrashBoundary'
 import CacheTest     from './components/CacheTest'
 import Protected     from './components/Protected'
 import WithHeader    from './components/WithHeader'
+import NotePage      from './components/NotePage'
+import WhoAmIPage    from './components/WhoAmIPage'
 
 // Auth middleware: 401 short-circuit if no `user` cookie.
 const authRequired: Middleware = async (req, next) => {
@@ -35,4 +37,6 @@ export const routes = defineRoutes([
   { path: '/cache-test',   Component: CacheTest, cache: { ttl_seconds: 60 } },
   { path: '/protected',    Component: Protected,    middleware: [authRequired] },
   { path: '/with-header',  Component: WithHeader,   middleware: [timeIt] },
+  { path: '/note',         Component: NotePage },
+  { path: '/whoami',       Component: WhoAmIPage },
 ])

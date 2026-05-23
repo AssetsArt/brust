@@ -1,5 +1,20 @@
-import { brust, isWorker, loadConfig, makeRenderer, buildIslands } from '../../runtime/index.ts'
+import { brust, isWorker, loadConfig, makeRenderer, buildIslands, defineActions, type Middleware } from '../../runtime/index.ts'
 import { routes } from './routes'
+import { createNote, whoAmI, deleteNote } from './actions'
+
+// Auth middleware to demo on the deleteNote action.
+const requireUser: Middleware = async (req, next) => {
+  if (!req.cookies['user']) {
+    return { status: 401, body: 'login required' }
+  }
+  return next()
+}
+
+const actions = defineActions([
+  { id: 'createNote', fn: createNote },
+  { id: 'whoAmI',     fn: whoAmI },
+  { id: 'deleteNote', fn: deleteNote, middleware: [requireUser] },
+])
 
 if (!isWorker) {
   const { port, workers, cacheMaxEntries } = await loadConfig()
@@ -19,6 +34,8 @@ if (!isWorker) {
   // Workers will load the same routes.tsx, so route_id (= array index) is
   // stable across main thread and every worker.
   brust.registerRoutes(routes)
+  brust.registerActions(actions)
+  console.log(`[brust] main: registered ${actions.length} action(s)`)
 
   await brust.serve({
     port,
@@ -31,6 +48,6 @@ if (!isWorker) {
 
   // Lazy getter — wid is null until registerRenderer returns.
   let wid: number | null = null
-  const renderer = makeRenderer(routes, view, { getWorkerId: () => wid })
+  const renderer = makeRenderer(routes, view, { actions, getWorkerId: () => wid })
   wid = brust.registerRenderer(view, renderer)
 }
