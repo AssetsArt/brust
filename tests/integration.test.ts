@@ -148,9 +148,9 @@ test('errorBoundary renders when a route component throws', async () => {
   const port = await readPortLine(proc.stdout)
   try {
     const resp = await fetch(`http://127.0.0.1:${port}/crash`)
-    // Status is 200 even on errorBoundary recovery — see plan note.
-    // Middleware plan introduces a richer tsfn return so 500 becomes possible.
-    expect(resp.status).toBe(200)
+    // errorBoundary now returns 500 — the worker encodes the status in the
+    // 2-byte SAB prefix that Rust reads before building the response.
+    expect(resp.status).toBe(500)
     const body = await resp.text()
     expect(body).toContain('CrashBoundary')
     expect(body).toContain('intentional crash for test')
