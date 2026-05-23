@@ -444,9 +444,12 @@ fn is_safe_island_filename(name: &str) -> bool {
     if !name.ends_with(".js") {
         return false;
     }
-    if name.starts_with('.') || name.is_empty() {
+    // Drop leading-dot files (.env.js, etc).
+    if name.starts_with('.') {
         return false;
     }
+    // `..` substring also rejects names like `a..b.js` — intentional belt
+    // and suspenders against any traversal-shaped input.
     if name.contains('/') || name.contains('\\') || name.contains("..") {
         return false;
     }
