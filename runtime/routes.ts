@@ -59,13 +59,12 @@ export function makeRenderer(
     const call = JSON.parse(envelopeJson) as RouteCall
     const route = byId.get(call.route_id)
     if (!route) {
-      // Rust matched against the router but this worker's `routes` array doesn't
-      // include this id. Indicates that registerRoutes(main) and makeRenderer(worker)
-      // received different arrays — surface loudly rather than HTTP-500 silently.
       console.error(`[brust] unknown route_id=${call.route_id} for path=${call.path}`)
       return 0
     }
+
     let html: string
+    let status = 200
     try {
       html = renderToString(
         createElement(route.Component, { params: call.params, path: call.path }),
@@ -76,8 +75,15 @@ export function makeRenderer(
         error: renderErr instanceof Error ? renderErr : new Error(String(renderErr)),
       })
       html = renderToString(boundary as any)
+      status = 500
     }
-    const { written } = encoder.encodeInto(html, view)
-    return written ?? 0
+
+    // Wire format: [status_u16_BE][body bytes].
+    view[0] = (status >> 8) & 0xff
+    view[1] = status & 0xff
+    const bodyView = view.subarray(2)
+    const { written } = encoder.encodeInto(html, bodyView)
+    if (written === undefined) return 0
+    return written + 2
   }
 }

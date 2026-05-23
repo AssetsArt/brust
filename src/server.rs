@@ -156,16 +156,20 @@ async fn handle_conn(
             Ok(promise) => match promise.await {
                 Ok(n) => {
                     let n = n as usize;
-                    if n == 0 || n > entry.buf_len {
+                    // n must include the 2-byte status prefix + at least 1 body byte.
+                    if n < 3 || n > entry.buf_len {
                         error!(worker_id = entry.id, written = n, capacity = entry.buf_len, "render oversized or empty");
                         let _ = s.write_all(http::build_response(500, "text/plain", b"render oversized".to_vec())).await;
                         return;
                     }
                     // SAFETY: see pool.rs BufPtr safety argument.
-                    let body: Vec<u8> = unsafe {
+                    let raw: Vec<u8> = unsafe {
                         std::slice::from_raw_parts(entry.buf_ptr.0, n).to_vec()
                     };
-                    let bytes = http::build_response(200, "text/html; charset=utf-8", body);
+                    // First 2 bytes (big-endian) carry the HTTP status code.
+                    let status = u16::from_be_bytes([raw[0], raw[1]]);
+                    let body = raw[2..].to_vec();
+                    let bytes = http::build_response(status, "text/html; charset=utf-8", body);
                     if let (Some(key), Some(cfg)) = (cache_key, cache_config.as_ref()) {
                         cache.insert(key, bytes.clone(), Duration::from_secs(cfg.ttl_seconds));
                     }

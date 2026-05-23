@@ -28,13 +28,17 @@ if (!isWorker) {
   const dec = new TextDecoder()
   const id = brust.registerRenderer(view, async (envelopeJson) => {
     const written = await renderer(envelopeJson)
-    if (wid === '') return written
-    const html = dec.decode(view.subarray(0, written))
+    if (wid === '' || written < 2) return written
+    // The first 2 bytes are the status prefix; the body starts at offset 2.
+    const html = dec.decode(view.subarray(2, written))
     const patched = html.replace('worker_id=', `worker_id=${wid}`)
     if (patched === html) return written
+    // Re-encode the patched body back into the SAB, preserving the prefix.
     const enc2 = new TextEncoder()
-    const { written: w2 } = enc2.encodeInto(patched, view)
-    return w2 ?? 0
+    const bodyView = view.subarray(2)
+    const { written: w2 } = enc2.encodeInto(patched, bodyView)
+    if (w2 === undefined) return 0
+    return w2 + 2
   })
   wid = String(id)
 }
