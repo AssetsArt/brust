@@ -3,6 +3,7 @@
 mod http;
 mod io;
 mod pool;
+mod server;
 mod shutdown;
 
 use napi_derive::napi;
