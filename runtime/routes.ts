@@ -6,6 +6,9 @@ export interface RouteContext<Params = Record<string, string>, Data = unknown> {
   path: string
   /** Value returned by `route.loader`. Undefined if the route has no loader. */
   data: Data
+  /** Bun Worker id rendering this request. null before the first registerRenderer
+   * return resolves (a brief window during boot). */
+  workerId: number | null
 }
 
 export interface ErrorBoundaryProps {
@@ -53,9 +56,16 @@ export interface RouteCall {
  * Build a render callback for a given routes table. The returned function is
  * what gets passed to `brust.registerRenderer(view, fn)` on the worker side.
  */
+export interface MakeRendererOptions {
+  /** Lazy getter for the Bun Worker id. Called per-render so the value can be
+   * resolved after `registerRenderer` returns. Returns null before that. */
+  getWorkerId?: () => number | null
+}
+
 export function makeRenderer(
   routes: Route[],
   view: Uint8Array,
+  opts: MakeRendererOptions = {},
 ): (envelopeJson: string) => Promise<number> {
   const encoder = new TextEncoder()
   const byId = new Map<number, Route>()
@@ -69,6 +79,8 @@ export function makeRenderer(
       return 0
     }
 
+    const workerId = opts.getWorkerId ? opts.getWorkerId() : null
+
     let html: string
     let status = 200
     try {
@@ -78,7 +90,7 @@ export function makeRenderer(
         ? await route.loader({ params: call.params, path: call.path })
         : undefined
       html = renderToString(
-        createElement(route.Component, { params: call.params, path: call.path, data }),
+        createElement(route.Component, { params: call.params, path: call.path, data, workerId }),
       )
     } catch (renderErr) {
       if (!route.errorBoundary) throw renderErr
