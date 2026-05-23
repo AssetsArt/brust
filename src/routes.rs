@@ -137,6 +137,10 @@ fn build_request_envelope(
 
     let mut headers: HashMap<String, String> = HashMap::new();
     let mut cookies: HashMap<String, String> = HashMap::new();
+    // Note: when a request carries multiple `Cookie:` headers (rare in
+    // practice but legal per RFC 6265 §5.4), all cookies are merged into
+    // `cookies`, but `headers["cookie"]` retains only the last raw line.
+    // Apps falling back to the raw header string will miss earlier cookies.
     for h in req.headers.iter() {
         if h.name.is_empty() {
             continue;
@@ -216,4 +220,115 @@ fn url_decode(s: &str) -> String {
         }
     }
     String::from_utf8(out).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn url_decode_passes_through_ascii() {
+        assert_eq!(url_decode("abc"), "abc");
+        assert_eq!(url_decode(""), "");
+    }
+
+    #[test]
+    fn url_decode_plus_to_space() {
+        assert_eq!(url_decode("a+b"), "a b");
+    }
+
+    #[test]
+    fn url_decode_percent_hex_both_cases() {
+        assert_eq!(url_decode("%41"), "A");
+        assert_eq!(url_decode("%4f"), "O");
+        assert_eq!(url_decode("%4F"), "O");
+    }
+
+    #[test]
+    fn url_decode_multibyte_utf8() {
+        assert_eq!(url_decode("%E2%9C%93"), "\u{2713}");
+    }
+
+    #[test]
+    fn url_decode_trailing_percent_passes_through() {
+        assert_eq!(url_decode("%"), "%");
+        assert_eq!(url_decode("a%"), "a%");
+    }
+
+    #[test]
+    fn url_decode_short_escape_passes_through() {
+        // Only 1 trailing nibble — bounds check fails, falls through literally.
+        assert_eq!(url_decode("%4"), "%4");
+    }
+
+    #[test]
+    fn url_decode_invalid_hex_passes_through() {
+        assert_eq!(url_decode("%ZZ"), "%ZZ");
+        assert_eq!(url_decode("%G1"), "%G1");
+    }
+
+    #[test]
+    fn url_decode_invalid_utf8_collapses_to_empty() {
+        // %FF%FE is not valid UTF-8 — current contract collapses to "".
+        assert_eq!(url_decode("%FF%FE"), "");
+    }
+
+    #[test]
+    fn envelope_parses_cookies_from_single_header() {
+        let raw = b"GET /x HTTP/1.1\r\nHost: x\r\nCookie: user=alice; sid=xyz\r\n\r\n";
+        let env = build_request_envelope("GET", "/x", "", raw);
+        assert_eq!(env.cookies.get("user").map(|s| s.as_str()), Some("alice"));
+        assert_eq!(env.cookies.get("sid").map(|s| s.as_str()), Some("xyz"));
+    }
+
+    #[test]
+    fn envelope_merges_cookies_across_multiple_cookie_headers() {
+        // RFC 6265 §5.4 allows a single Cookie header per request, but
+        // some proxies fold/split. Both cookies should appear in the map.
+        let raw = b"GET /x HTTP/1.1\r\nHost: x\r\nCookie: a=1\r\nCookie: b=2\r\n\r\n";
+        let env = build_request_envelope("GET", "/x", "", raw);
+        assert_eq!(env.cookies.get("a").map(|s| s.as_str()), Some("1"));
+        assert_eq!(env.cookies.get("b").map(|s| s.as_str()), Some("2"));
+    }
+
+    #[test]
+    fn envelope_parses_search_with_key_only_and_empty_value() {
+        let env = build_request_envelope(
+            "GET",
+            "/x?name=brust&flag&empty=",
+            "name=brust&flag&empty=",
+            b"",
+        );
+        assert_eq!(env.search.get("name").map(|s| s.as_str()), Some("brust"));
+        assert_eq!(env.search.get("flag").map(|s| s.as_str()), Some(""));
+        assert_eq!(env.search.get("empty").map(|s| s.as_str()), Some(""));
+    }
+
+    #[test]
+    fn envelope_parses_search_with_percent_and_plus() {
+        let env = build_request_envelope(
+            "GET",
+            "/x?greet=hello+world&unicode=%E2%9C%93",
+            "greet=hello+world&unicode=%E2%9C%93",
+            b"",
+        );
+        assert_eq!(
+            env.search.get("greet").map(|s| s.as_str()),
+            Some("hello world"),
+        );
+        assert_eq!(
+            env.search.get("unicode").map(|s| s.as_str()),
+            Some("\u{2713}"),
+        );
+    }
+
+    #[test]
+    fn envelope_empty_request_safe() {
+        let env = build_request_envelope("GET", "/x", "", b"");
+        assert_eq!(env.method, "GET");
+        assert_eq!(env.url, "/x");
+        assert!(env.headers.is_empty());
+        assert!(env.cookies.is_empty());
+        assert!(env.search.is_empty());
+    }
 }
