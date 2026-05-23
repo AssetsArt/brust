@@ -376,10 +376,17 @@ Implementation: `src/cache.rs` wraps `lru::LruCache` behind
 
 **Capacity:** configurable via `[cache] max_entries = N` in `brust.toml` (default 1000). Plumbed through `BrustConfig.cacheMaxEntries` → `brust.configureCache({ maxEntries })`.
 
+**Invalidation.** Two native endpoints purge cached entries:
+
+- `POST /_brust/cache/invalidate?path=/foo` — drops every entry whose key has `(method=GET, path=/foo)`, regardless of query string or vary values. Returns `{"removed": N}`.
+- `POST /_brust/cache/invalidate?all=1` — clears the entire cache. Returns `{"removed": N}`.
+
+`GET` returns 405; POST without `path` or `all` returns 400. Both calls preserve hits/misses counters (they're lifetime totals). The endpoint is *unauthenticated* by design — apps running Brust in untrusted environments should reverse-proxy and gate the `/_brust/*` prefix externally, or wrap their own auth middleware on the surrounding deploy.
+
 **Not yet implemented:**
 
-- Control-socket invalidation (`brust-cli invalidate /path`) — lands with the CLI plan.
-- Default TTL fallback in `[cache]` — for routes that opt in without specifying `ttl_seconds`. Probably not needed; revisit if asked.
+- `brust-cli invalidate` — project tooling, separate from the native endpoint above.
+- Default TTL fallback in `[cache]` — semantics deferred; no current consumer.
 
 ### Islands (on-demand hydration)
 
@@ -969,6 +976,7 @@ Bun.serve baseline source: `example/bun-serve-baseline/index.ts`.
 - Layered configuration: defaults < `brust.toml` (`[server]` + `[workers]`) < env (`runtime/config.ts`)
 - Per-route LRU cache (`cache: { ttl_seconds, vary? }`, lazy TTL eviction, configurable capacity via `[cache] max_entries`)
 - Cache observability: `GET /_brust/cache/stats` returns `{hits, misses, len, capacity}` as JSON
+- Cache invalidation: `POST /_brust/cache/invalidate?path=/foo` (purge by path) and `?all=1` (clear all) — returns `{"removed": N}` JSON; hits/misses counters survive
 - Richer tsfn return: meta JSON envelope in SAB (`[meta_len u16 BE][meta JSON][body]`, `meta = {status, headers?}`)
 - Per-route loaders (`loader: ({ params, path, req }) => Promise<data>`, result lands as component `data` prop)
 - Structured `req` in envelope (`{ method, url, headers, cookies, search }` parsed once in Rust via httparse)
@@ -977,7 +985,8 @@ Bun.serve baseline source: `example/bun-serve-baseline/index.ts`.
 **Designed, not built:**
 
 - Loaders + nested routes (`children: [...]`) — nested routes still pending
-- Cache invalidation (control-socket / `brust-cli invalidate`) + default TTL fallback in `[cache]`
+- `brust-cli invalidate` (project tooling — separate from the native endpoint that just shipped)
+- Default TTL fallback in `[cache]` (semantics deferred — no current consumer)
 - Islands hydration (`"use island"`, lazy bootstrap, hydration triggers)
 - Server functions (`"use server"`, build-time RPC stub generation)
 - Agentic surface (MCP-style schemas auto-extracted at build time)
