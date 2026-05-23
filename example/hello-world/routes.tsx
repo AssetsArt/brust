@@ -20,7 +20,7 @@ const authRequired: Middleware = async (req, next) => {
 }
 
 // Header-mutation middleware: measure render time + tag the response.
-const timeIt: Middleware = async (req, next) => {
+const timeIt: Middleware = async (_req, next) => {
   const t0 = Date.now()
   const res = await next()
   res.headers = { ...(res.headers ?? {}), 'x-render-ms': String(Date.now() - t0) }
