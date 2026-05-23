@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 const CACHE_CAPACITY: usize = 1000;
 
@@ -35,11 +35,18 @@ impl CachedEntry {
     }
 }
 
+/// Stats snapshot. Serialized to JSON by the /_brust/cache/stats native route.
+#[derive(Debug, Clone, Serialize)]
+pub struct CacheStats {
+    pub hits: u64,
+    pub misses: u64,
+    pub len: usize,
+    pub capacity: usize,
+}
+
 pub struct LruCache {
     inner: Mutex<lru::LruCache<CacheKey, CachedEntry>>,
-    #[allow(dead_code)] // surfaced via napi in a follow-up
     hits: AtomicU64,
-    #[allow(dead_code)]
     misses: AtomicU64,
 }
 
@@ -56,7 +63,13 @@ impl LruCache {
 
     pub fn get(&self, key: &CacheKey) -> Option<Vec<u8>> {
         let mut guard = self.inner.lock();
-        let entry = guard.get(key)?;
+        let entry = match guard.get(key) {
+            Some(e) => e,
+            None => {
+                self.misses.fetch_add(1, Ordering::Relaxed);
+                return None;
+            }
+        };
         if entry.is_expired() {
             guard.pop(key);
             self.misses.fetch_add(1, Ordering::Relaxed);
@@ -74,6 +87,22 @@ impl LruCache {
             ttl,
         };
         self.inner.lock().put(key, entry);
+    }
+
+    pub fn stats(&self) -> CacheStats {
+        let guard = self.inner.lock();
+        CacheStats {
+            hits: self.hits.load(Ordering::Relaxed),
+            misses: self.misses.load(Ordering::Relaxed),
+            len: guard.len(),
+            capacity: guard.cap().get(),
+        }
+    }
+
+    /// Resize the LRU. If shrinking below current length, excess LRU entries
+    /// are evicted. Safe to call at any time; no-op if `max == capacity`.
+    pub fn resize(&self, max: NonZeroUsize) {
+        self.inner.lock().resize(max);
     }
 }
 

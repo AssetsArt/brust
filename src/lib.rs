@@ -159,6 +159,15 @@ pub fn register_routes(configs: Vec<String>) -> NapiResult<u32> {
 }
 
 #[napi]
+pub fn configure_cache(max_entries: u32) -> NapiResult<()> {
+    use std::num::NonZeroUsize;
+    let n = NonZeroUsize::new(max_entries as usize)
+        .ok_or_else(|| napi::Error::from_reason("cache max_entries must be > 0"))?;
+    state().cache.resize(n);
+    Ok(())
+}
+
+#[napi]
 pub fn is_worker() -> bool {
     std::env::var("BRUST_WORKER_ID").is_ok()
 }

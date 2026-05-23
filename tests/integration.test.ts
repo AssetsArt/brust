@@ -236,6 +236,48 @@ test('cache-test route returns same body on second hit (cache hit)', async () =>
   }
 }, 15_000)
 
+test('cache stats endpoint reflects hits and misses', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: {
+      ...process.env,
+      BRUST_PORT: '38151',
+      BRUST_WORKERS: '1',
+      RUST_LOG: 'brust=info',
+    },
+    stdout: 'pipe',
+    stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    // Initially zero.
+    const r0 = await fetch(`http://127.0.0.1:${port}/_brust/cache/stats`)
+    expect(r0.status).toBe(200)
+    expect(r0.headers.get('content-type')).toBe('application/json')
+    const s0 = await r0.json() as { hits: number, misses: number, len: number, capacity: number }
+    expect(s0.hits).toBe(0)
+    expect(s0.misses).toBe(0)
+    expect(s0.len).toBe(0)
+    expect(s0.capacity).toBe(1000)
+
+    // First /cache-test = miss + insert.
+    await fetch(`http://127.0.0.1:${port}/cache-test`)
+    // Second = hit.
+    await fetch(`http://127.0.0.1:${port}/cache-test`)
+
+    const r1 = await fetch(`http://127.0.0.1:${port}/_brust/cache/stats`)
+    const s1 = await r1.json() as { hits: number, misses: number, len: number, capacity: number }
+    expect(s1.hits).toBeGreaterThanOrEqual(1)
+    expect(s1.misses).toBeGreaterThanOrEqual(1)
+    expect(s1.len).toBeGreaterThanOrEqual(1)
+    expect(s1.capacity).toBe(1000)
+  } finally {
+    proc.kill('SIGINT')
+    const exit = await proc.exited
+    expect(exit).toBe(0)
+  }
+}, 15_000)
+
 async function readPortLine(stream: ReadableStream<Uint8Array>): Promise<number> {
   const reader = stream.getReader()
   const decoder = new TextDecoder()

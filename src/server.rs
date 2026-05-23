@@ -125,6 +125,17 @@ async fn handle_conn(
             continue;
         }
 
+        // Native-only route: cache observability. JSON of hits/misses/len/capacity.
+        if path == "/_brust/cache/stats" {
+            let stats = cache.stats();
+            let json = serde_json::to_string(&stats).unwrap_or_else(|_| String::from("{}"));
+            let bytes = http::build_response(200, "application/json", json.into_bytes());
+            if s.write_all(bytes).await.is_err() {
+                return;
+            }
+            continue;
+        }
+
         let (envelope_json, route_id) = match routes.match_path(&path) {
             MatchResult::Matched { envelope_json, route_id } => (envelope_json, route_id),
             MatchResult::NoMatch => {

@@ -2,9 +2,12 @@ import { brust, isWorker, loadConfig, makeRenderer } from '../../runtime/index.t
 import { routes } from './routes'
 
 if (!isWorker) {
-  const { port, workers } = await loadConfig()
+  const { port, workers, cacheMaxEntries } = await loadConfig()
   console.log(`[brust] main: spawning ${workers} worker threads`)
 
+  if (cacheMaxEntries !== undefined) {
+    brust.configureCache({ maxEntries: cacheMaxEntries })
+  }
   // Install the route table in Rust *before* serve() boots the accept loop.
   // Workers will load the same routes.tsx, so route_id (= array index) is
   // stable across main thread and every worker.

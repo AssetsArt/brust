@@ -53,6 +53,12 @@ export const brust = {
     const configs = routes.map((r) => JSON.stringify({ path: r.path, cache: r.cache ?? null }))
     return (native as any).registerRoutes(configs)
   },
+  /** Set the response cache capacity (entries). Default is 1000.
+   * Safe to call at any time; if shrinking below current size, excess
+   * LRU entries are evicted. */
+  configureCache(opts: { maxEntries: number }): void {
+    ; (native as any).configureCache(opts.maxEntries)
+  },
   // Register a renderer for this Bun Worker. `buf` MUST be backed by a SharedArrayBuffer
   // (or any ArrayBuffer the worker keeps rooted) — Rust captures the backing-store
   // pointer once here and reuses it for every render call. The buffer is held alive

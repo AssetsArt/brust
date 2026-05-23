@@ -7,6 +7,8 @@ export interface BrustConfig {
   port: number
   /** Bun Worker count for render dispatch. Default floor(availableParallelism * 1.8). */
   workers: number
+  /** Cache capacity (entries). Undefined → Rust default of 1000. */
+  cacheMaxEntries?: number
 }
 
 export class BrustConfigError extends Error {
@@ -52,7 +54,7 @@ export async function loadConfig(cwd: string = process.cwd()): Promise<BrustConf
   const port = fromEnv.port ?? fromToml.port ?? DEFAULT_PORT
   const workers = fromEnv.workers ?? fromToml.workers ?? defaultWorkers()
 
-  return { port, workers }
+  return { port, workers, cacheMaxEntries: fromToml.cacheMaxEntries }
 }
 
 function extractFromToml(parsed: unknown, file: string): Partial<BrustConfig> {
@@ -93,6 +95,23 @@ function extractFromToml(parsed: unknown, file: string): Partial<BrustConfig> {
         )
       }
       out.workers = count
+    }
+  }
+
+  if ('cache' in root) {
+    const cache = root.cache
+    if (cache === null || typeof cache !== 'object') {
+      throw new BrustConfigError(`${file}: [cache] must be a table`, file)
+    }
+    const maxEntries = (cache as Record<string, unknown>).max_entries
+    if (maxEntries !== undefined) {
+      if (typeof maxEntries !== 'number' || !Number.isInteger(maxEntries) || maxEntries < 1) {
+        throw new BrustConfigError(
+          `${file}: cache.max_entries must be a positive integer (got ${JSON.stringify(maxEntries)})`,
+          file,
+        )
+      }
+      out.cacheMaxEntries = maxEntries
     }
   }
 
