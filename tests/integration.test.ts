@@ -375,6 +375,124 @@ test('errorBoundary 500 path does not pick up middleware-only headers', async ()
   }
 }, 15_000)
 
+test('invalidate by path drops a cached entry', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: {
+      ...process.env,
+      BRUST_PORT: '38171',
+      BRUST_WORKERS: '1',
+      RUST_LOG: 'brust=info',
+    },
+    stdout: 'pipe',
+    stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    // Warm the cache for /cache-test (CacheTest's body contains a counter
+    // that changes on re-render; cache hit returns identical bytes).
+    const first = await fetch(`http://127.0.0.1:${port}/cache-test`)
+    const firstBody = await first.text()
+    expect(first.status).toBe(200)
+
+    // Hit again → cache hit → identical body.
+    const cached = await fetch(`http://127.0.0.1:${port}/cache-test`)
+    expect(await cached.text()).toBe(firstBody)
+
+    // Invalidate just that path.
+    const inv = await fetch(`http://127.0.0.1:${port}/_brust/cache/invalidate?path=/cache-test`, {
+      method: 'POST',
+    })
+    expect(inv.status).toBe(200)
+    expect(inv.headers.get('content-type')).toBe('application/json')
+    const body = await inv.json() as { removed: number }
+    expect(body.removed).toBeGreaterThanOrEqual(1)
+
+    // Next request re-renders (counter advances) → body must differ from firstBody.
+    const reRender = await fetch(`http://127.0.0.1:${port}/cache-test`)
+    expect(reRender.status).toBe(200)
+    expect(await reRender.text()).not.toBe(firstBody)
+  } finally {
+    proc.kill('SIGINT')
+    const exit = await proc.exited
+    expect(exit).toBe(0)
+  }
+}, 15_000)
+
+test('invalidate all clears every entry + reports correct removed count', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: {
+      ...process.env,
+      BRUST_PORT: '38172',
+      BRUST_WORKERS: '1',
+      RUST_LOG: 'brust=info',
+    },
+    stdout: 'pipe',
+    stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    // Warm /cache-test (only cached route in the example).
+    await fetch(`http://127.0.0.1:${port}/cache-test`)
+    const beforeStats = await (await fetch(`http://127.0.0.1:${port}/_brust/cache/stats`)).json() as {
+      hits: number, misses: number, len: number, capacity: number,
+    }
+    expect(beforeStats.len).toBeGreaterThanOrEqual(1)
+
+    const inv = await fetch(`http://127.0.0.1:${port}/_brust/cache/invalidate?all=1`, {
+      method: 'POST',
+    })
+    expect(inv.status).toBe(200)
+    const body = await inv.json() as { removed: number }
+    expect(body.removed).toBe(beforeStats.len)
+
+    const afterStats = await (await fetch(`http://127.0.0.1:${port}/_brust/cache/stats`)).json() as {
+      hits: number, misses: number, len: number,
+    }
+    expect(afterStats.len).toBe(0)
+    // Counters are preserved (hits/misses survive clear).
+    expect(afterStats.hits).toBe(beforeStats.hits)
+    expect(afterStats.misses).toBe(beforeStats.misses)
+  } finally {
+    proc.kill('SIGINT')
+    const exit = await proc.exited
+    expect(exit).toBe(0)
+  }
+}, 15_000)
+
+test('invalidate endpoint rejects GET and unsupported queries', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: {
+      ...process.env,
+      BRUST_PORT: '38173',
+      BRUST_WORKERS: '1',
+      RUST_LOG: 'brust=info',
+    },
+    stdout: 'pipe',
+    stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    // GET on the invalidate endpoint must not work (POST-only).
+    const wrongMethod = await fetch(`http://127.0.0.1:${port}/_brust/cache/invalidate?path=/x`)
+    expect(wrongMethod.status).toBe(405)
+
+    // POST without path or all=1 returns 400.
+    const missingParams = await fetch(`http://127.0.0.1:${port}/_brust/cache/invalidate`, {
+      method: 'POST',
+    })
+    expect(missingParams.status).toBe(400)
+    const body = await missingParams.json() as { error: string }
+    expect(body.error).toContain('missing')
+  } finally {
+    proc.kill('SIGINT')
+    const exit = await proc.exited
+    expect(exit).toBe(0)
+  }
+}, 15_000)
+
 async function readPortLine(stream: ReadableStream<Uint8Array>): Promise<number> {
   const reader = stream.getReader()
   const decoder = new TextDecoder()
