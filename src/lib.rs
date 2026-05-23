@@ -2,6 +2,7 @@
 
 mod http;
 mod io;
+mod pool;
 
 use napi_derive::napi;
 
