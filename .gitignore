@@ -6,3 +6,6 @@ runtime/index.d.ts
 
 # Local app config. Check in brust.example.toml; ignore brust.toml.
 brust.toml
+
+# Brust build output
+.brust/

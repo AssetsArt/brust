@@ -1,4 +1,4 @@
-import { brust, isWorker, loadConfig, makeRenderer } from '../../runtime/index.ts'
+import { brust, isWorker, loadConfig, makeRenderer, buildIslands } from '../../runtime/index.ts'
 import { routes } from './routes'
 
 if (!isWorker) {
@@ -8,6 +8,13 @@ if (!isWorker) {
   if (cacheMaxEntries !== undefined) {
     brust.configureCache({ maxEntries: cacheMaxEntries })
   }
+  // Build islands BEFORE serve(): emits .brust/islands/<id>.js plus the
+  // shared React runtime + bootstrap chunks.
+  const islands = await buildIslands(
+    new URL('./island.config.ts', import.meta.url).pathname,
+  )
+  brust.configureIslandsDir(islands.outDir)
+  console.log(`[brust] main: built ${islands.islandCount} island chunk(s)`)
   // Install the route table in Rust *before* serve() boots the accept loop.
   // Workers will load the same routes.tsx, so route_id (= array index) is
   // stable across main thread and every worker.
