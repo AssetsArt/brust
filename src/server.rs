@@ -11,6 +11,15 @@ use crate::io::{run_io, spawn, IO_NAME, TcpListener, TcpStream};
 use crate::pool::WorkerPool;
 use crate::routes::{MatchResult, RouteTable};
 
+use serde::Deserialize;
+
+#[derive(Debug, Deserialize)]
+struct ResponseMeta {
+    status: u16,
+    #[serde(default)]
+    headers: std::collections::HashMap<String, String>,
+}
+
 enum ReadOutcome {
     /// Headers complete (`\r\n\r\n` seen) — `buf` contains the full request.
     Complete,
@@ -167,8 +176,10 @@ async fn handle_conn(
             Ok(promise) => match promise.await {
                 Ok(n) => {
                     let n = n as usize;
-                    // n must include the 2-byte status prefix + at least 1 body byte.
-                    if n < 3 || n > entry.buf_len {
+                    // Envelope layout: [meta_len: u16 BE][meta JSON UTF-8][body bytes].
+                    // Minimum valid frame: 2 bytes meta_len + at least the smallest
+                    // JSON object {"status":200} (15 bytes). Tighten the check to >= 17.
+                    if n < 17 || n > entry.buf_len {
                         error!(worker_id = entry.id, written = n, capacity = entry.buf_len, "render oversized or empty");
                         let _ = s.write_all(http::build_response(500, "text/plain", &[], b"render oversized".to_vec())).await;
                         return;
@@ -177,10 +188,27 @@ async fn handle_conn(
                     let raw: Vec<u8> = unsafe {
                         std::slice::from_raw_parts(entry.buf_ptr.0, n).to_vec()
                     };
-                    // First 2 bytes (big-endian) carry the HTTP status code.
-                    let status = u16::from_be_bytes([raw[0], raw[1]]);
-                    let body = raw[2..].to_vec();
-                    let bytes = http::build_response(status, "text/html; charset=utf-8", &[], body);
+                    let meta_len = u16::from_be_bytes([raw[0], raw[1]]) as usize;
+                    if meta_len + 2 > n {
+                        error!(worker_id = entry.id, meta_len, total = n, "meta_len out of range");
+                        let _ = s.write_all(http::build_response(500, "text/plain", &[], b"invalid render envelope".to_vec())).await;
+                        return;
+                    }
+                    let meta_bytes = &raw[2..2 + meta_len];
+                    let meta: ResponseMeta = match serde_json::from_slice(meta_bytes) {
+                        Ok(m) => m,
+                        Err(e) => {
+                            error!(worker_id = entry.id, error = %e, "meta JSON parse failed");
+                            let _ = s.write_all(http::build_response(500, "text/plain", &[], b"invalid render envelope".to_vec())).await;
+                            return;
+                        }
+                    };
+                    let body = raw[2 + meta_len..].to_vec();
+                    let extra: Vec<(String, String)> = meta
+                        .headers
+                        .into_iter()
+                        .collect();
+                    let bytes = http::build_response(meta.status, "text/html; charset=utf-8", &extra, body);
                     if let (Some(key), Some(cfg)) = (cache_key, cache_config.as_ref()) {
                         cache.insert(key, bytes.clone(), Duration::from_secs(cfg.ttl_seconds));
                     }
