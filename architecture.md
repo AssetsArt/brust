@@ -367,11 +367,14 @@ Implementation: `src/cache.rs` wraps `lru::LruCache` behind
 `parking_lot::Mutex`; lookup + insert sit in `handle_conn` between
 `routes.match_path` and `pool.pick_least_busy`.
 
+**Observability:** `GET /_brust/cache/stats` returns `{hits, misses, len, capacity}` as JSON (native route, bypasses worker pool).
+
+**Capacity:** configurable via `[cache] max_entries = N` in `brust.toml` (default 1000). Plumbed through `BrustConfig.cacheMaxEntries` → `brust.configureCache({ maxEntries })`.
+
 **Not yet implemented:**
 
 - Control-socket invalidation (`brust-cli invalidate /path`) — lands with the CLI plan.
-- `brust.toml [cache]` section for capacity/default TTL — lands with that plan.
-- Cache stats endpoint (`hits`/`misses` are tracked but not surfaced).
+- Default TTL fallback in `[cache]` — for routes that opt in without specifying `ttl_seconds`. Probably not needed; revisit if asked.
 
 ### Islands (on-demand hydration)
 
@@ -802,6 +805,9 @@ Layered, low → high precedence:
 
    [workers]
    count = 18
+
+   [cache]
+   max_entries = 5000   # default 1000
    ```
 
    See `example/hello-world/brust.example.toml`.
@@ -814,8 +820,7 @@ Layered, low → high precedence:
 The loader is in `runtime/config.ts` and exposes `loadConfig(cwd?)` plus the
 `BrustConfig` type for app code that wants to read the merged config directly.
 
-Roadmap sections: `[cache]` (Cache plan), `[build]` (build pipeline plan when
-the CLI lands).
+Roadmap sections: `[build]` (build pipeline plan when the CLI lands).
 
 ### Project tooling
 
@@ -939,14 +944,15 @@ Bun.serve baseline source: `example/bun-serve-baseline/index.ts`.
 - HTTP 414 emission on oversized requests
 - Declarative routing: `routes.tsx` + matchit radix tree + JSON envelope tsfn payload + per-route `errorBoundary`
 - Layered configuration: defaults < `brust.toml` (`[server]` + `[workers]`) < env (`runtime/config.ts`)
-- Per-route LRU cache (`cache: { ttl_seconds, vary? }`, 1000 entries, lazy TTL eviction)
+- Per-route LRU cache (`cache: { ttl_seconds, vary? }`, lazy TTL eviction, configurable capacity via `[cache] max_entries`)
+- Cache observability: `GET /_brust/cache/stats` returns `{hits, misses, len, capacity}` as JSON
 - Richer tsfn return: status prefix in SAB (`errorBoundary` recoveries now return HTTP 500)
 - Per-route loaders (`loader: ({ params, path }) => Promise<data>`, result lands as component `data` prop)
 
 **Designed, not built:**
 
 - Loaders + nested routes + per-route cache field (`loader: ...`, `children: [...]`, `cache: ...`)
-- Cache invalidation (control-socket / `brust-cli invalidate`) + `[cache]` TOML section + cache stats endpoint
+- Cache invalidation (control-socket / `brust-cli invalidate`) + default TTL fallback in `[cache]`
 - Islands hydration (`"use island"`, lazy bootstrap, hydration triggers)
 - Server functions (`"use server"`, build-time RPC stub generation)
 - Agentic surface (MCP-style schemas auto-extracted at build time)
