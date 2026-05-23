@@ -632,13 +632,13 @@ Per-route override via `middleware: [...]` on a route entry. Middleware runs
 in the Bun Worker thread alongside the loader/render, so it sees the same
 `req` shape.
 
-**Mechanism gap:** the current tsfn contract returns only `u32` (body
-length); there is no channel for response headers or status. For
-middleware to actually mutate headers/status, the contract must evolve to
-either a richer return value (e.g. a struct `{ status, headers, body_len }`
-encoded into a fixed prefix of the SAB) or a separate tsfn handle dedicated
-to response metadata. The API surface above is the target; the wire format
-is unsettled.
+**Mechanism gap (partially closed):** the tsfn signature still returns
+`u32` (total bytes), but the SAB layout is now `[status: u16 BE][body]` —
+Rust reads the prefix and uses it when calling `build_response`. This
+unlocks status-side middleware (errorBoundary returns 500 today). Response
+header mutation still has no channel — the follow-up extends the prefix to
+`[meta_len: u16][meta JSON][body]` carrying a `{status, headers}` struct,
+and lands alongside TS-side `(req, next) => res` composition.
 
 ### Forms & multipart
 
@@ -940,6 +940,7 @@ Bun.serve baseline source: `example/bun-serve-baseline/index.ts`.
 - Declarative routing: `routes.tsx` + matchit radix tree + JSON envelope tsfn payload + per-route `errorBoundary`
 - Layered configuration: defaults < `brust.toml` (`[server]` + `[workers]`) < env (`runtime/config.ts`)
 - Per-route LRU cache (`cache: { ttl_seconds, vary? }`, 1000 entries, lazy TTL eviction)
+- Richer tsfn return: status prefix in SAB (`errorBoundary` recoveries now return HTTP 500)
 
 **Designed, not built:**
 
@@ -948,7 +949,7 @@ Bun.serve baseline source: `example/bun-serve-baseline/index.ts`.
 - Islands hydration (`"use island"`, lazy bootstrap, hydration triggers)
 - Server functions (`"use server"`, build-time RPC stub generation)
 - Agentic surface (MCP-style schemas auto-extracted at build time)
-- Middleware (per-route + global, short-circuit on `Response`)
+- Middleware: response header mutation channel + TS-side composition (per-route + global, short-circuit on `Response`)
 - Forms & multipart (streaming uploads, dedicated multipart code path in server-fn stubs)
 - Real-time: WebSockets (per-route upgrade) + SSE / streaming responses
 - HTML Streaming (`renderToPipeableStream` over SAB multi-chunk signals)
