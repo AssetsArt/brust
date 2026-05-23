@@ -118,7 +118,7 @@ async fn handle_conn(
 
         // Native-only route: bypass napi pool so benchmarks can isolate TCP+HTTP cost from React SSR cost.
         if path == "/ping" {
-            let bytes = http::build_response(200, "text/plain", b"pong\n".to_vec());
+            let bytes = http::build_response(200, "text/plain", &[], b"pong\n".to_vec());
             if s.write_all(bytes).await.is_err() {
                 return;
             }
@@ -129,7 +129,7 @@ async fn handle_conn(
         if path == "/_brust/cache/stats" {
             let stats = cache.stats();
             let json = serde_json::to_string(&stats).unwrap_or_else(|_| String::from("{}"));
-            let bytes = http::build_response(200, "application/json", json.into_bytes());
+            let bytes = http::build_response(200, "application/json", &[], json.into_bytes());
             if s.write_all(bytes).await.is_err() {
                 return;
             }
@@ -170,7 +170,7 @@ async fn handle_conn(
                     // n must include the 2-byte status prefix + at least 1 body byte.
                     if n < 3 || n > entry.buf_len {
                         error!(worker_id = entry.id, written = n, capacity = entry.buf_len, "render oversized or empty");
-                        let _ = s.write_all(http::build_response(500, "text/plain", b"render oversized".to_vec())).await;
+                        let _ = s.write_all(http::build_response(500, "text/plain", &[], b"render oversized".to_vec())).await;
                         return;
                     }
                     // SAFETY: see pool.rs BufPtr safety argument.
@@ -180,7 +180,7 @@ async fn handle_conn(
                     // First 2 bytes (big-endian) carry the HTTP status code.
                     let status = u16::from_be_bytes([raw[0], raw[1]]);
                     let body = raw[2..].to_vec();
-                    let bytes = http::build_response(status, "text/html; charset=utf-8", body);
+                    let bytes = http::build_response(status, "text/html; charset=utf-8", &[], body);
                     if let (Some(key), Some(cfg)) = (cache_key, cache_config.as_ref()) {
                         cache.insert(key, bytes.clone(), Duration::from_secs(cfg.ttl_seconds));
                     }
@@ -191,13 +191,13 @@ async fn handle_conn(
                 Err(e) => {
                     error!(worker_id = entry.id, error = %e, "render promise rejected");
                     let msg = format!("render error: {e}");
-                    let _ = s.write_all(http::build_response(500, "text/plain", msg.into_bytes())).await;
+                    let _ = s.write_all(http::build_response(500, "text/plain", &[], msg.into_bytes())).await;
                     return;
                 }
             },
             Err(e) => {
                 error!(worker_id = entry.id, error = %e, "tsfn call_async failed");
-                let _ = s.write_all(http::build_response(502, "text/plain", b"upstream call failed".to_vec())).await;
+                let _ = s.write_all(http::build_response(502, "text/plain", &[], b"upstream call failed".to_vec())).await;
                 pool.remove(entry.id);
                 if pool.registered_count() == 0 {
                     error!("all workers died");

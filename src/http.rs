@@ -26,10 +26,19 @@ pub enum ParseError {
     Invalid,
 }
 
-pub fn build_response(status: u16, content_type: &str, body: Vec<u8>) -> Vec<u8> {
+pub fn build_response(
+    status: u16,
+    content_type: &str,
+    extra_headers: &[(String, String)],
+    body: Vec<u8>,
+) -> Vec<u8> {
     let status_text = match status {
         200 => "OK",
+        301 => "Moved Permanently",
+        302 => "Found",
         400 => "Bad Request",
+        401 => "Unauthorized",
+        403 => "Forbidden",
         404 => "Not Found",
         405 => "Method Not Allowed",
         414 => "URI Too Long",
@@ -38,27 +47,35 @@ pub fn build_response(status: u16, content_type: &str, body: Vec<u8>) -> Vec<u8>
         503 => "Service Unavailable",
         _ => "Unknown",
     };
-    let header = format!(
+    let mut header = format!(
         "HTTP/1.1 {status} {status_text}\r\n\
          Content-Type: {content_type}\r\n\
          Content-Length: {}\r\n\
-         Connection: keep-alive\r\n\
-         \r\n",
+         Connection: keep-alive\r\n",
         body.len(),
     );
+    for (name, value) in extra_headers {
+        // Skip names that would collide with the fixed lines above.
+        let lower = name.to_ascii_lowercase();
+        if lower == "content-type" || lower == "content-length" || lower == "connection" {
+            continue;
+        }
+        header.push_str(&format!("{name}: {value}\r\n"));
+    }
+    header.push_str("\r\n");
     let mut out = header.into_bytes();
     out.extend_from_slice(&body);
     out
 }
 
 pub fn error_400() -> Vec<u8> {
-    build_response(400, "text/plain", b"bad request".to_vec())
+    build_response(400, "text/plain", &[], b"bad request".to_vec())
 }
 pub fn error_404() -> Vec<u8> {
-    build_response(404, "text/plain", b"not found".to_vec())
+    build_response(404, "text/plain", &[], b"not found".to_vec())
 }
 pub fn error_405() -> Vec<u8> {
-    build_response(405, "text/plain", b"method not allowed".to_vec())
+    build_response(405, "text/plain", &[], b"method not allowed".to_vec())
 }
 pub fn error_414() -> Vec<u8> {
     let body: &[u8] = b"uri too long";
@@ -75,5 +92,5 @@ pub fn error_414() -> Vec<u8> {
     out
 }
 pub fn error_503(msg: &str) -> Vec<u8> {
-    build_response(503, "text/plain", msg.as_bytes().to_vec())
+    build_response(503, "text/plain", &[], msg.as_bytes().to_vec())
 }
