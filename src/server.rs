@@ -22,6 +22,7 @@ pub fn start(addr: SocketAddr, ready: Arc<Notify>, pool: Arc<WorkerPool>) {
 
         ready.notified().await; // wait until all workers have registered
         println!("[brust] listening on {addr} (io: {IO_NAME})");
+        let _ = std::io::Write::flush(&mut std::io::stdout());
 
         loop {
             match listener.accept().await {

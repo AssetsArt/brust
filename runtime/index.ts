@@ -10,9 +10,10 @@ export interface ServeOptions {
 
 export type RenderFn = (path: string) => Promise<string>
 
-// native.isWorker is a napi fn (not a getter); call once at module load —
-// the env var BRUST_WORKER_ID is stable for the module's lifetime.
-export const isWorker: boolean = (native as any).isWorker()
+// Bun Workers run in the same OS process as the main thread; the `env` option
+// only patches the JS-visible process.env, not the native OS environment that
+// Rust reads via std::env::var.  Read the flag here in JS instead.
+export const isWorker: boolean = process.env.BRUST_WORKER_ID !== undefined
 
 // native.workerId() reads a thread-local set by registerRenderer, so it must
 // be re-evaluated at the point of use (not cached at module load).
@@ -35,6 +36,9 @@ export const brust = {
         env: { ...process.env, BRUST_WORKER_ID: String(i) },
       })
     }
+    // Bun Workers intercept SIGINT before Rust's ctrl_c() handler fires.
+    // Install a JS-level handler so the process actually exits on SIGINT.
+    process.on('SIGINT', () => process.exit(0))
     await (native as any).untilReady(opts.bootTimeoutMs ?? 5000)
     await (native as any).untilShutdown()
   },

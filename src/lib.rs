@@ -109,11 +109,9 @@ pub async fn until_shutdown() -> NapiResult<()> {
 
 #[napi]
 pub fn register_renderer(f: Function<String, Promise<String>>) -> NapiResult<u32> {
-    if !is_worker() {
-        return Err(napi::Error::from_reason(
-            "registerRenderer only allowed in worker context",
-        ));
-    }
+    // NOTE: is_worker() reads std::env::var which is not patched by Bun's Worker
+    // env option (Bun Workers share the OS process).  The TS layer is responsible
+    // for only calling registerRenderer from a worker context; we skip the guard.
     let tsfn: RendererTsfn = f.build_threadsafe_function().build()?;
     let id = state().pool.register(tsfn);
     WORKER_ID.with(|cell| cell.set(Some(id)));
