@@ -42,7 +42,7 @@ pub fn build_response(status: u16, content_type: &str, body: Vec<u8>) -> Vec<u8>
         "HTTP/1.1 {status} {status_text}\r\n\
          Content-Type: {content_type}\r\n\
          Content-Length: {}\r\n\
-         Connection: close\r\n\
+         Connection: keep-alive\r\n\
          \r\n",
         body.len(),
     );

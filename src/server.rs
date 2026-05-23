@@ -63,64 +63,70 @@ pub fn start(addr: SocketAddr, ready: Arc<Notify>, pool: Arc<WorkerPool>, worker
 
 async fn handle_conn(mut s: TcpStream, pool: Arc<WorkerPool>) {
     let mut buf = Vec::with_capacity(4096);
-    if !read_full_request(&mut s, &mut buf).await {
-        let _ = s.write_all(http::error_400()).await;
-        return;
-    }
-
-    let (method, path) = match parse_request(&buf) {
-        Ok(r) => (r.method.to_owned(), r.path.to_owned()),
-        Err(ParseError::Incomplete) | Err(ParseError::Invalid) => {
-            let _ = s.write_all(http::error_400()).await;
+    loop {
+        buf.clear();
+        // EOF / read error / oversized request → silently close (client may have hung up cleanly).
+        if !read_full_request(&mut s, &mut buf).await {
             return;
         }
-    };
 
-    if method != "GET" {
-        let _ = s.write_all(http::error_405()).await;
-        return;
-    }
-
-    // Native-only route: bypass napi pool so benchmarks can isolate TCP+HTTP cost from React SSR cost.
-    if path == "/ping" {
-        let bytes = http::build_response(200, "text/plain", b"pong\n".to_vec());
-        let _ = s.write_all(bytes).await;
-        let _ = s.shutdown().await;
-        return;
-    }
-
-    let Some(entry) = pool.pick_least_busy() else {
-        let _ = s.write_all(http::error_503("no workers")).await;
-        return;
-    };
-    let _guard = entry.in_flight_guard();
-
-    let path_arg = path.clone();
-    match entry.tsfn.call_async(path_arg).await {
-        Ok(promise) => match promise.await {
-            Ok(html) => {
-                let bytes = http::build_response(200, "text/html; charset=utf-8", html.into_bytes());
-                let _ = s.write_all(bytes).await;
+        let (method, path) = match parse_request(&buf) {
+            Ok(r) => (r.method.to_owned(), r.path.to_owned()),
+            Err(ParseError::Incomplete) | Err(ParseError::Invalid) => {
+                let _ = s.write_all(http::error_400()).await;
+                return;
             }
+        };
+
+        if method != "GET" {
+            let _ = s.write_all(http::error_405()).await;
+            return;
+        }
+
+        // Native-only route: bypass napi pool so benchmarks can isolate TCP+HTTP cost from React SSR cost.
+        if path == "/ping" {
+            let bytes = http::build_response(200, "text/plain", b"pong\n".to_vec());
+            if s.write_all(bytes).await.is_err() {
+                return;
+            }
+            continue;
+        }
+
+        let Some(entry) = pool.pick_least_busy() else {
+            let _ = s.write_all(http::error_503("no workers")).await;
+            return;
+        };
+        let _guard = entry.in_flight_guard();
+
+        let path_arg = path.clone();
+        match entry.tsfn.call_async(path_arg).await {
+            Ok(promise) => match promise.await {
+                Ok(html) => {
+                    let bytes = http::build_response(200, "text/html; charset=utf-8", html.into_bytes());
+                    if s.write_all(bytes).await.is_err() {
+                        return;
+                    }
+                }
+                Err(e) => {
+                    error!(worker_id = entry.id, error = %e, "render promise rejected");
+                    let msg = format!("render error: {e}");
+                    let _ = s.write_all(http::build_response(500, "text/plain", msg.into_bytes())).await;
+                    return;
+                }
+            },
             Err(e) => {
-                error!(worker_id = entry.id, error = %e, "render promise rejected");
-                let msg = format!("render error: {e}");
-                let _ = s.write_all(http::build_response(500, "text/plain", msg.into_bytes())).await;
-            }
-        },
-        Err(e) => {
-            error!(worker_id = entry.id, error = %e, "tsfn call_async failed");
-            let _ = s.write_all(http::build_response(502, "text/plain", b"upstream call failed".to_vec())).await;
-            // worker tsfn likely dead — remove from pool
-            pool.remove(entry.id);
-            if pool.registered_count() == 0 {
-                error!("all workers died");
-                std::process::exit(1);
+                error!(worker_id = entry.id, error = %e, "tsfn call_async failed");
+                let _ = s.write_all(http::build_response(502, "text/plain", b"upstream call failed".to_vec())).await;
+                // worker tsfn likely dead — remove from pool
+                pool.remove(entry.id);
+                if pool.registered_count() == 0 {
+                    error!("all workers died");
+                    std::process::exit(1);
+                }
+                return;
             }
         }
     }
-
-    let _ = s.shutdown().await;
 }
 
 async fn read_full_request(s: &mut TcpStream, buf: &mut Vec<u8>) -> bool {
