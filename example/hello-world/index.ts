@@ -1,12 +1,7 @@
-import { renderToString } from 'react-dom/server'
-import { createElement } from 'react'
 import os from 'node:os'
-import HelloWorld from './components/HelloWorld'
 
-import {
-  brust,
-  isWorker,
-} from '../../runtime/index.ts'
+import { brust, isWorker, makeRenderer } from '../../runtime/index.ts'
+import { routes } from './routes'
 
 const PORT_ENV = process.env.BRUST_PORT
 const port = PORT_ENV ? parseInt(PORT_ENV, 10) : 3000
@@ -18,28 +13,37 @@ const workers = parseInt(process.env.BRUST_WORKERS ?? String(defaultWorkers), 10
 
 if (!isWorker) {
   console.log(`[brust] main: spawning ${workers} worker threads`)
+
+  // Install the route table in Rust *before* serve() boots the accept loop.
+  // Workers will load the same routes.tsx, so route_id (= array index) is
+  // stable across main thread and every worker.
+  brust.registerRoutes(routes.map((r) => r.path))
+
   await brust.serve({
     port,
     workers,
     entry: import.meta.url,
   })
 } else {
-  // 256KB shared buffer per worker — Rust captures the backing-store pointer at
-  // register time and reads from it after every render call.
   const sab = new SharedArrayBuffer(256 * 1024)
   const view = new Uint8Array(sab)
-  const encoder = new TextEncoder()
 
   let wid = ''
-  const id = brust.registerRenderer(view, async (path: string) => {
-    const html = renderToString(
-      createElement(HelloWorld, { workerId: wid })
-    )
-    const { written } = encoder.encodeInto(html, view)
-    // written === undefined would mean the destination is too small; encodeInto
-    // returns it as undefined only when there's no room for even one byte. Most
-    // implementations always return a number — treat undefined as 0 (Rust 500).
-    return written ?? 0
+  const renderer = makeRenderer(routes, view)
+
+  // Wrap renderer once to inject workerId into HelloWorld's `worker_id=` line
+  // for the existing integration test. This is example-local; goes away when
+  // loader/context lands.
+  const dec = new TextDecoder()
+  const id = brust.registerRenderer(view, async (envelopeJson) => {
+    const written = await renderer(envelopeJson)
+    if (wid === '') return written
+    const html = dec.decode(view.subarray(0, written))
+    const patched = html.replace('worker_id=', `worker_id=${wid}`)
+    if (patched === html) return written
+    const enc2 = new TextEncoder()
+    const { written: w2 } = enc2.encodeInto(patched, view)
+    return w2 ?? 0
   })
   wid = String(id)
 }

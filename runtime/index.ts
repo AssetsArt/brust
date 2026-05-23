@@ -44,6 +44,10 @@ export const brust = {
     await (native as any).untilReady(opts.bootTimeoutMs ?? 5000)
     await (native as any).untilShutdown()
   },
+  /** Install the route table in Rust. MUST be called before `serve()`. */
+  registerRoutes(patterns: string[]): number {
+    return (native as any).registerRoutes(patterns)
+  },
   // Register a renderer for this Bun Worker. `buf` MUST be backed by a SharedArrayBuffer
   // (or any ArrayBuffer the worker keeps rooted) — Rust captures the backing-store
   // pointer once here and reuses it for every render call. The buffer is held alive
@@ -52,3 +56,6 @@ export const brust = {
     return (native as any).registerRenderer(buf, fn)
   },
 }
+
+export { defineRoutes, makeRenderer } from './routes.ts'
+export type { Route, RouteCall, RouteContext, ErrorBoundaryProps } from './routes.ts'

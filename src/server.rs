@@ -7,6 +7,7 @@ use tracing::{error, warn};
 use crate::http::{self, parse_request, ParseError};
 use crate::io::{run_io, spawn, IO_NAME, TcpListener, TcpStream};
 use crate::pool::WorkerPool;
+use crate::routes::{MatchResult, RouteTable};
 
 enum ReadOutcome {
     /// Headers complete (`\r\n\r\n` seen) — `buf` contains the full request.
@@ -21,7 +22,13 @@ const MAX_REQUEST_BYTES: usize = 16 * 1024;
 // Bound the accept-side queue so a slow worker pool triggers TCP backpressure instead of unbounded memory growth.
 const CONN_CHAN_CAP: usize = 1024;
 
-pub fn start(addr: SocketAddr, ready: Arc<Notify>, pool: Arc<WorkerPool>, workers: usize) {
+pub fn start(
+    addr: SocketAddr,
+    ready: Arc<Notify>,
+    pool: Arc<WorkerPool>,
+    routes: Arc<RouteTable>,
+    workers: usize,
+) {
     run_io(move || async move {
         let listener = match TcpListener::bind(addr).await {
             Ok(l) => l,
@@ -37,9 +44,10 @@ pub fn start(addr: SocketAddr, ready: Arc<Notify>, pool: Arc<WorkerPool>, worker
         for _ in 0..workers {
             let rx = rx.clone();
             let pool = pool.clone();
+            let routes = routes.clone();
             spawn(async move {
                 while let Ok(stream) = rx.recv_async().await {
-                    handle_conn(stream, pool.clone()).await;
+                    handle_conn(stream, pool.clone(), routes.clone()).await;
                 }
             });
         }
@@ -70,7 +78,7 @@ pub fn start(addr: SocketAddr, ready: Arc<Notify>, pool: Arc<WorkerPool>, worker
     });
 }
 
-async fn handle_conn(mut s: TcpStream, pool: Arc<WorkerPool>) {
+async fn handle_conn(mut s: TcpStream, pool: Arc<WorkerPool>, routes: Arc<RouteTable>) {
     let mut buf = Vec::with_capacity(4096);
     loop {
         buf.clear();
@@ -108,13 +116,21 @@ async fn handle_conn(mut s: TcpStream, pool: Arc<WorkerPool>) {
             continue;
         }
 
+        let envelope_json = match routes.match_path(&path) {
+            MatchResult::Matched { envelope_json, .. } => envelope_json,
+            MatchResult::NoMatch => {
+                let _ = s.write_all(http::error_404()).await;
+                continue;
+            }
+        };
+
         let Some(entry) = pool.pick_least_busy() else {
             let _ = s.write_all(http::error_503("no workers")).await;
             return;
         };
         let _guard = entry.in_flight_guard();
 
-        match entry.tsfn.call_async(path).await {
+        match entry.tsfn.call_async(envelope_json).await {
             Ok(promise) => match promise.await {
                 Ok(n) => {
                     let n = n as usize;

@@ -3,6 +3,7 @@
 mod http;
 mod io;
 mod pool;
+mod routes;
 mod server;
 
 use std::net::SocketAddr;
@@ -20,6 +21,7 @@ use tracing::error;
 use tracing_subscriber::EnvFilter;
 
 use crate::pool::{BufPtr, RendererTsfn, WorkerPool};
+use crate::routes::RouteTable;
 
 thread_local! {
     static WORKER_ID: Cell<Option<u32>> = const { Cell::new(None) };
@@ -31,6 +33,7 @@ struct State {
     shutdown: Arc<Notify>,
     is_serving: AtomicBool,
     expected_workers: AtomicU32,
+    routes: Arc<RouteTable>,
 }
 
 static STATE: OnceCell<State> = OnceCell::new();
@@ -51,6 +54,7 @@ fn state() -> &'static State {
             shutdown: Arc::new(Notify::new()),
             is_serving: AtomicBool::new(false),
             expected_workers: AtomicU32::new(0),
+            routes: Arc::new(RouteTable::new()),
         }
     })
 }
@@ -83,6 +87,7 @@ pub fn begin_serve(opts: ServeOptions) -> NapiResult<()> {
         addr,
         Arc::clone(&s.ready),
         Arc::clone(&s.pool),
+        Arc::clone(&s.routes),
         opts.workers as usize,
     );
     Ok(())
@@ -133,6 +138,14 @@ pub fn register_renderer(
     let id = state().pool.register(tsfn, buf_ptr, buf_len);
     WORKER_ID.with(|cell| cell.set(Some(id)));
     Ok(id)
+}
+
+#[napi]
+pub fn register_routes(patterns: Vec<String>) -> NapiResult<u32> {
+    state()
+        .routes
+        .install(&patterns)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
 #[napi]
