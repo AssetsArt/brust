@@ -154,6 +154,12 @@ async fn handle_conn(
         // Response: 200 application/json {"removed": N}. Path mismatch on
         // ?path= is not an error; returns {"removed":0}.
         if path.starts_with("/_brust/cache/invalidate") {
+            // Endpoint is POST-only. The outer method gate already rejects
+            // methods other than GET and POST; here we further reject GET.
+            if method != "POST" {
+                let _ = s.write_all(http::error_405()).await;
+                return;
+            }
             let query = path.split_once('?').map(|(_, q)| q).unwrap_or("");
             let mut target_path: Option<String> = None;
             let mut clear_all = false;
