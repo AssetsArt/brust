@@ -20,13 +20,56 @@ pub struct RequestEnvelope {
 }
 
 /// JSON envelope shipped across the tsfn boundary for each render call.
-/// Worker JS deserializes this and uses `route_id` to pick the component.
+/// `kind: "render"` discriminates from the action variant; JS dispatcher
+/// switches on this field. See ActionEnvelope below for the other variant.
 #[derive(Serialize)]
 pub struct RouteEnvelope<'a> {
+    pub kind: &'static str,
     pub route_id: u32,
     pub path: &'a str,
     pub params: HashMap<&'a str, &'a str>,
     pub req: RequestEnvelope,
+}
+
+/// JSON envelope shipped across the tsfn boundary for each action call.
+/// Mirrors RouteEnvelope but carries a string action_id (not numeric route_id)
+/// and the raw JSON args body — JS dispatcher parses it once after middleware.
+/// `kind: "action"` discriminates from the render variant.
+#[derive(Serialize)]
+pub struct ActionEnvelope<'a> {
+    pub kind: &'static str,
+    pub action_id: &'a str,
+    /// Raw UTF-8 JSON body sent by the client. JS calls JSON.parse on this
+    /// inside the action branch of makeRenderer. Validated as UTF-8 by Rust
+    /// before reaching here; structural validation (must parse to an array)
+    /// happens in JS so the 400 error envelope can flow through the standard
+    /// SAB return path.
+    pub args_json: &'a str,
+    pub req: RequestEnvelope,
+}
+
+/// Build an ActionEnvelope JSON string. Mirrors `match_path` for the render
+/// case. Caller has already validated the action_id charset and registry
+/// membership; this function only assembles the envelope.
+pub fn build_action_envelope(
+    method: &str,
+    full_path: &str,
+    action_id: &str,
+    args_json: &str,
+    raw_request: &[u8],
+) -> String {
+    let (_, query) = match full_path.split_once('?') {
+        Some((p, q)) => (p, q),
+        None => (full_path, ""),
+    };
+    let req = build_request_envelope(method, full_path, query, raw_request);
+    let env = ActionEnvelope {
+        kind: "action",
+        action_id,
+        args_json,
+        req,
+    };
+    serde_json::to_string(&env).unwrap()
 }
 
 /// Outcome of a match against the radix tree.
@@ -101,6 +144,7 @@ impl RouteTable {
                 }
                 let req = build_request_envelope(method, full_path, query, raw_request);
                 let envelope = RouteEnvelope {
+                    kind: "render",
                     route_id: *matched.value,
                     path: full_path,
                     params,
@@ -330,5 +374,64 @@ mod tests {
         assert!(env.headers.is_empty());
         assert!(env.cookies.is_empty());
         assert!(env.search.is_empty());
+    }
+
+    #[test]
+    fn render_envelope_has_kind_discriminant() {
+        let table = RouteTable::new();
+        let cfg = RouteConfig { path: "/foo".into(), cache: None };
+        table.install_with_config(&[cfg]).unwrap();
+        let raw = b"GET /foo HTTP/1.1\r\nHost: x\r\n\r\n";
+        let result = table.match_path("GET", "/foo", raw);
+        match result {
+            MatchResult::Matched { envelope_json, .. } => {
+                let parsed: serde_json::Value = serde_json::from_str(&envelope_json).unwrap();
+                assert_eq!(parsed["kind"], "render");
+                assert_eq!(parsed["route_id"], 0);
+                assert_eq!(parsed["path"], "/foo");
+            }
+            MatchResult::NoMatch => panic!("expected match for /foo"),
+        }
+    }
+
+    #[test]
+    fn action_envelope_serializes_with_kind_action() {
+        let req = build_request_envelope(
+            "POST",
+            "/_brust/action/createNote",
+            "",
+            b"POST /_brust/action/createNote HTTP/1.1\r\nHost: x\r\n\r\n",
+        );
+        let env = ActionEnvelope {
+            kind: "action",
+            action_id: "createNote",
+            args_json: r#"["hello"]"#,
+            req,
+        };
+        let json = serde_json::to_string(&env).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["kind"], "action");
+        assert_eq!(parsed["action_id"], "createNote");
+        assert_eq!(parsed["args_json"], r#"["hello"]"#);
+        assert_eq!(parsed["req"]["method"], "POST");
+    }
+
+    #[test]
+    fn action_envelope_args_json_preserves_quotes() {
+        let req = build_request_envelope("POST", "/_brust/action/x", "", b"");
+        let env = ActionEnvelope {
+            kind: "action",
+            action_id: "x",
+            args_json: r#"["hi \"there\"", 42]"#,
+            req,
+        };
+        let json = serde_json::to_string(&env).unwrap();
+        // args_json is shipped as a JSON string field, so the outer serialise
+        // escapes the inner quotes once. Reparsing the outer JSON and then
+        // parsing the inner string should recover the original array.
+        let outer: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let inner: serde_json::Value = serde_json::from_str(outer["args_json"].as_str().unwrap()).unwrap();
+        assert_eq!(inner[0], r#"hi "there""#);
+        assert_eq!(inner[1], 42);
     }
 }
