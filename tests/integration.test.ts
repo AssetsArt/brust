@@ -112,7 +112,8 @@ test('routes /blog/:slug renders BlogPost with the slug param', async () => {
     expect(resp.status).toBe(200)
     const body = await resp.text()
     expect(body).toContain('BlogPost')
-    expect(body).toContain('hello-world')   // the slug appears in the rendered HTML
+    expect(body).toContain('hello-world')             // the slug appears in the rendered HTML
+    expect(body).toContain('Post: hello-world')       // the loader-produced title appears
   } finally {
     proc.kill('SIGINT')
     const exit = await proc.exited
