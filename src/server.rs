@@ -120,7 +120,10 @@ async fn handle_conn(
             }
         };
 
-        if method != "GET" {
+        // POST is only legal for /_brust/cache/invalidate; everything else
+        // requires GET. Move the gate further down so the path-aware POST
+        // dispatch can run first.
+        if method != "GET" && !(method == "POST" && path.starts_with("/_brust/cache/invalidate")) {
             let _ = s.write_all(http::error_405()).await;
             return;
         }
@@ -139,6 +142,50 @@ async fn handle_conn(
             let stats = cache.stats();
             let json = serde_json::to_string(&stats).unwrap_or_else(|_| String::from("{}"));
             let bytes = http::build_response(200, "application/json", &[], json.into_bytes());
+            if s.write_all(bytes).await.is_err() {
+                return;
+            }
+            continue;
+        }
+
+        // Native-only route: cache invalidation.
+        //   POST /_brust/cache/invalidate?path=/foo  → purge by (GET, /foo)
+        //   POST /_brust/cache/invalidate?all=1      → clear all entries
+        // Response: 200 application/json {"removed": N}. Path mismatch on
+        // ?path= is not an error; returns {"removed":0}.
+        if path.starts_with("/_brust/cache/invalidate") {
+            let query = path.split_once('?').map(|(_, q)| q).unwrap_or("");
+            let mut target_path: Option<String> = None;
+            let mut clear_all = false;
+            for pair in query.split('&') {
+                if pair.is_empty() {
+                    continue;
+                }
+                match pair.split_once('=') {
+                    Some(("path", v)) => target_path = Some(percent_decode(v)),
+                    Some(("all", v)) if v == "1" || v == "true" => clear_all = true,
+                    _ => {}
+                }
+            }
+            let removed = if clear_all {
+                cache.clear()
+            } else if let Some(p) = target_path {
+                // Invalidate the GET variant; this server doesn't cache POST.
+                cache.invalidate_path("GET", &p)
+            } else {
+                let bytes = http::build_response(
+                    400,
+                    "application/json",
+                    &[],
+                    br#"{"error":"missing path or all parameter"}"#.to_vec(),
+                );
+                if s.write_all(bytes).await.is_err() {
+                    return;
+                }
+                continue;
+            };
+            let body = format!(r#"{{"removed":{removed}}}"#);
+            let bytes = http::build_response(200, "application/json", &[], body.into_bytes());
             if s.write_all(bytes).await.is_err() {
                 return;
             }
@@ -260,6 +307,41 @@ fn sort_query(query: &str) -> String {
     let mut pairs: Vec<&str> = query.split('&').filter(|p| !p.is_empty()).collect();
     pairs.sort_unstable();
     pairs.join("&")
+}
+
+/// Minimal percent-decode for query-string values in native endpoints.
+/// Handles `%xx` and `+` → space; unrecognised escapes pass through.
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'+' => {
+                out.push(b' ');
+                i += 1;
+            }
+            b'%' if i + 2 < bytes.len() => {
+                let hi = (bytes[i + 1] as char).to_digit(16);
+                let lo = (bytes[i + 2] as char).to_digit(16);
+                match (hi, lo) {
+                    (Some(h), Some(l)) => {
+                        out.push(((h << 4) | l) as u8);
+                        i += 3;
+                    }
+                    _ => {
+                        out.push(bytes[i]);
+                        i += 1;
+                    }
+                }
+            }
+            b => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8(out).unwrap_or_default()
 }
 
 fn lookup_vary_headers(request_buf: &[u8], vary: &[String]) -> Vec<String> {
