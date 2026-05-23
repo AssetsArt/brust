@@ -147,14 +147,15 @@ export function makeRenderer(
         const boundary: ReactNode = createElement(route.errorBoundary, {
           error: renderErr instanceof Error ? renderErr : new Error(String(renderErr)),
         })
-        const html = renderToString(boundary as any)
+        const html = renderToString(boundary)
         return { status: 500, body: html }
       }
     }
 
     // Compose middleware chain right-to-left so the first entry runs outermost.
     // Each link calls the next via `next()`; returning without calling next()
-    // short-circuits the chain.
+    // short-circuits the chain. chain() is invoked once per request — terminal
+    // is not idempotent for loaders with side effects.
     let chain = terminal
     if (route.middleware && route.middleware.length > 0) {
       for (let i = route.middleware.length - 1; i >= 0; i--) {
@@ -186,7 +187,7 @@ export function makeRenderer(
       console.error(`[brust] meta too large: ${metaBytes.length} bytes`)
       return 0
     }
-    if (2 + metaBytes.length + 1 > view.length) {
+    if (2 + metaBytes.length > view.length) {
       console.error(`[brust] envelope > SAB capacity`)
       return 0
     }
