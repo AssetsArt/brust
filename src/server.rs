@@ -8,6 +8,15 @@ use crate::http::{self, parse_request, ParseError};
 use crate::io::{run_io, spawn, IO_NAME, TcpListener, TcpStream};
 use crate::pool::WorkerPool;
 
+enum ReadOutcome {
+    /// Headers complete (`\r\n\r\n` seen) — `buf` contains the full request.
+    Complete,
+    /// Read error or EOF before any complete headers — close silently.
+    ClosedBeforeHeaders,
+    /// Buffer grew past `MAX_REQUEST_BYTES` without seeing `\r\n\r\n`.
+    Oversize,
+}
+
 const MAX_REQUEST_BYTES: usize = 16 * 1024;
 // Bound the accept-side queue so a slow worker pool triggers TCP backpressure instead of unbounded memory growth.
 const CONN_CHAN_CAP: usize = 1024;
@@ -65,9 +74,16 @@ async fn handle_conn(mut s: TcpStream, pool: Arc<WorkerPool>) {
     let mut buf = Vec::with_capacity(4096);
     loop {
         buf.clear();
-        // EOF / read error / oversized request → silently close (client may have hung up cleanly).
-        if !read_full_request(&mut s, &mut buf).await {
-            return;
+        match read_full_request(&mut s, &mut buf).await {
+            ReadOutcome::Complete => {}
+            ReadOutcome::ClosedBeforeHeaders => return,
+            ReadOutcome::Oversize => {
+                // Don't keep-alive: client's read cursor is mid-headers; the next
+                // bytes on the wire would be misparsed as a new request. error_414()
+                // emits Connection: close so the client knows not to reuse the socket.
+                let _ = s.write_all(http::error_414()).await;
+                return;
+            }
         }
 
         let (method, path) = match parse_request(&buf) {
@@ -141,23 +157,21 @@ async fn handle_conn(mut s: TcpStream, pool: Arc<WorkerPool>) {
     }
 }
 
-async fn read_full_request(s: &mut TcpStream, buf: &mut Vec<u8>) -> bool {
+async fn read_full_request(s: &mut TcpStream, buf: &mut Vec<u8>) -> ReadOutcome {
     while buf.len() < MAX_REQUEST_BYTES {
         let n = match s.read_request(buf).await {
             Ok(n) => n,
             Err(e) => {
                 warn!(error = %e, "read failed");
-                return false;
+                return ReadOutcome::ClosedBeforeHeaders;
             }
         };
         if n == 0 {
-            return false; // EOF before complete request
+            return ReadOutcome::ClosedBeforeHeaders;
         }
-        // check for end-of-headers
         if buf.windows(4).any(|w| w == b"\r\n\r\n") {
-            return true;
+            return ReadOutcome::Complete;
         }
     }
-    // request too large
-    false
+    ReadOutcome::Oversize
 }

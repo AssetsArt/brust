@@ -61,7 +61,18 @@ pub fn error_405() -> Vec<u8> {
     build_response(405, "text/plain", b"method not allowed".to_vec())
 }
 pub fn error_414() -> Vec<u8> {
-    build_response(414, "text/plain", b"uri too long".to_vec())
+    let body: &[u8] = b"uri too long";
+    let header = format!(
+        "HTTP/1.1 414 URI Too Long\r\n\
+         Content-Type: text/plain\r\n\
+         Content-Length: {}\r\n\
+         Connection: close\r\n\
+         \r\n",
+        body.len(),
+    );
+    let mut out = header.into_bytes();
+    out.extend_from_slice(body);
+    out
 }
 pub fn error_503(msg: &str) -> Vec<u8> {
     build_response(503, "text/plain", msg.as_bytes().to_vec())
