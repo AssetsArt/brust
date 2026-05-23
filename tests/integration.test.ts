@@ -493,6 +493,93 @@ test('invalidate endpoint rejects GET and unsupported queries', async () => {
   }
 }, 15_000)
 
+test('island marker + importmap injected when route uses <Island>', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38181', BRUST_WORKERS: '1', RUST_LOG: 'brust=info' },
+    stdout: 'pipe',
+    stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}/`)
+    expect(r.status).toBe(200)
+    const body = await r.text()
+    // Marker present, with id + JSON props + hydrate trigger.
+    expect(body).toContain('data-brust-island="Counter"')
+    expect(body).toContain('data-brust-hydrate="load"')
+    expect(body).toContain('data-brust-props="{')
+    // Importmap + bootstrap injected.
+    expect(body).toContain('<script type="importmap">')
+    expect(body).toContain('"/_brust/islands/_react.js"')
+    // react/jsx-runtime also maps to _react.js (combined chunk).
+    expect(body).toContain('"react/jsx-runtime":"/_brust/islands/_react.js"')
+    expect(body).toContain('"/_brust/islands/_react-dom.js"')
+    expect(body).toContain('src="/_brust/islands/_bootstrap.js"')
+  } finally {
+    proc.kill('SIGINT')
+    const exit = await proc.exited
+    expect(exit).toBe(0)
+  }
+}, 30_000)
+
+test('island chunk + bootstrap served at /_brust/islands/<file>', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38182', BRUST_WORKERS: '1', RUST_LOG: 'brust=info' },
+    stdout: 'pipe',
+    stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    for (const file of ['Counter.js', '_bootstrap.js', '_react.js', '_react-dom.js']) {
+      const r = await fetch(`http://127.0.0.1:${port}/_brust/islands/${file}`)
+      expect(r.status).toBe(200)
+      expect(r.headers.get('content-type')).toBe('application/javascript; charset=utf-8')
+      expect(r.headers.get('cache-control')).toBe('public, max-age=3600')
+      const body = await r.text()
+      expect(body.length).toBeGreaterThan(0)
+    }
+
+    // 404 + path-traversal safety.
+    const missing = await fetch(`http://127.0.0.1:${port}/_brust/islands/missing.js`)
+    expect(missing.status).toBe(404)
+
+    const traversal = await fetch(`http://127.0.0.1:${port}/_brust/islands/..%2Fetc%2Fpasswd.js`)
+    expect(traversal.status).toBe(404)
+
+    const noExt = await fetch(`http://127.0.0.1:${port}/_brust/islands/Counter`)
+    expect(noExt.status).toBe(404)
+  } finally {
+    proc.kill('SIGINT')
+    const exit = await proc.exited
+    expect(exit).toBe(0)
+  }
+}, 30_000)
+
+test('routes without <Island> ship no importmap or bootstrap', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38183', BRUST_WORKERS: '1', RUST_LOG: 'brust=info' },
+    stdout: 'pipe',
+    stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    // /blog/{slug} doesn't use <Island>.
+    const r = await fetch(`http://127.0.0.1:${port}/blog/test-slug`)
+    expect(r.status).toBe(200)
+    const body = await r.text()
+    expect(body).not.toContain('data-brust-island')
+    expect(body).not.toContain('<script type="importmap">')
+    expect(body).not.toContain('_bootstrap.js')
+  } finally {
+    proc.kill('SIGINT')
+    const exit = await proc.exited
+    expect(exit).toBe(0)
+  }
+}, 30_000)
+
 async function readPortLine(stream: ReadableStream<Uint8Array>): Promise<number> {
   const reader = stream.getReader()
   const decoder = new TextDecoder()
