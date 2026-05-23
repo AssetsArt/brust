@@ -336,7 +336,7 @@ Middleware plan.
 
 **Designed but not yet built** (each gets its own plan):
 
-- `loader: async (req, params) => {...}` — defers to the Loader/Server-fn plan.
+- `loader` carrying full `req` (cookies, headers, search params) — lands with the Middleware Header-Mutation plan. The data-passing half (loader → `data` prop) is shipped.
 - `children: [...]` — nested routes. Follow-up.
 - `cache: { vary, ttl_seconds }` — Cache plan.
 - `middleware: [...]` per-route — Middleware plan.
@@ -941,6 +941,7 @@ Bun.serve baseline source: `example/bun-serve-baseline/index.ts`.
 - Layered configuration: defaults < `brust.toml` (`[server]` + `[workers]`) < env (`runtime/config.ts`)
 - Per-route LRU cache (`cache: { ttl_seconds, vary? }`, 1000 entries, lazy TTL eviction)
 - Richer tsfn return: status prefix in SAB (`errorBoundary` recoveries now return HTTP 500)
+- Per-route loaders (`loader: ({ params, path }) => Promise<data>`, result lands as component `data` prop)
 
 **Designed, not built:**
 
