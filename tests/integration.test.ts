@@ -96,6 +96,68 @@ test('returns 414 when request exceeds MAX_REQUEST_BYTES', async () => {
   expect(exit).toBe(0)
 }, 15_000)
 
+test('routes /blog/:slug renders BlogPost with the slug param', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38131', RUST_LOG: 'brust=info' },
+    stdout: 'pipe',
+    stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const resp = await fetch(`http://127.0.0.1:${port}/blog/hello-world`)
+    expect(resp.status).toBe(200)
+    const body = await resp.text()
+    expect(body).toContain('BlogPost')
+    expect(body).toContain('hello-world')   // the slug appears in the rendered HTML
+  } finally {
+    proc.kill('SIGINT')
+    const exit = await proc.exited
+    expect(exit).toBe(0)
+  }
+}, 15_000)
+
+test('unknown path returns 404', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38132', RUST_LOG: 'brust=info' },
+    stdout: 'pipe',
+    stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const resp = await fetch(`http://127.0.0.1:${port}/no/such/path`)
+    expect(resp.status).toBe(404)
+  } finally {
+    proc.kill('SIGINT')
+    const exit = await proc.exited
+    expect(exit).toBe(0)
+  }
+}, 15_000)
+
+test('errorBoundary renders when a route component throws', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38133', RUST_LOG: 'brust=info' },
+    stdout: 'pipe',
+    stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const resp = await fetch(`http://127.0.0.1:${port}/crash`)
+    // Status is 200 even on errorBoundary recovery — see plan note.
+    // Middleware plan introduces a richer tsfn return so 500 becomes possible.
+    expect(resp.status).toBe(200)
+    const body = await resp.text()
+    expect(body).toContain('CrashBoundary')
+    expect(body).toContain('intentional crash for test')
+  } finally {
+    proc.kill('SIGINT')
+    const exit = await proc.exited
+    expect(exit).toBe(0)
+  }
+}, 15_000)
+
 async function readPortLine(stream: ReadableStream<Uint8Array>): Promise<number> {
   const reader = stream.getReader()
   const decoder = new TextDecoder()
