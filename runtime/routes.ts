@@ -205,14 +205,7 @@ async function renderBranch(
     }
   }
 
-  let chain = terminal
-  if (route.middleware && route.middleware.length > 0) {
-    for (let i = route.middleware.length - 1; i >= 0; i--) {
-      const mw = route.middleware[i]
-      const next = chain
-      chain = () => mw(call.req, next)
-    }
-  }
+  const chain = composeChain(call.req, route.middleware, terminal)
 
   let response: RouteResponse
   try {
@@ -234,6 +227,9 @@ async function actionBranch(
   if (!def) {
     // Rust already 404s when the id isn't registered, but a race during
     // hot-reload (or a desynced worker) could land here. Log and 404.
+    // NOTE: asymmetric with renderBranch (which returns 0 to delegate to
+    // Rust's HTML 404). Action clients always expect JSON, so we ship a
+    // JSON envelope here even when Rust would have 404'd first.
     console.error(`[brust] unknown action_id=${call.action_id}`)
     return packResponse(view, encoder, {
       status: 404,
@@ -282,14 +278,7 @@ async function actionBranch(
     }
   }
 
-  let chain = terminal
-  if (def.middleware && def.middleware.length > 0) {
-    for (let i = def.middleware.length - 1; i >= 0; i--) {
-      const mw = def.middleware[i]
-      const next = chain
-      chain = () => mw(call.req, next)
-    }
-  }
+  const chain = composeChain(call.req, def.middleware, terminal)
 
   let response: RouteResponse
   try {
@@ -305,9 +294,33 @@ async function actionBranch(
   return packResponse(view, encoder, response)
 }
 
+/** Right-to-left compose a middleware chain. Each middleware wraps the next;
+ * the terminal step ends up at the innermost call. Returning without calling
+ * next() short-circuits. Used identically by render + action branches. */
+function composeChain(
+  req: BrustRequest,
+  mws: Middleware[] | undefined,
+  terminal: () => Promise<RouteResponse>,
+): () => Promise<RouteResponse> {
+  if (!mws || mws.length === 0) return terminal
+  let chain = terminal
+  for (let i = mws.length - 1; i >= 0; i--) {
+    const mw = mws[i]
+    const next = chain
+    chain = () => mw(req, next)
+  }
+  return chain
+}
+
 /** Pack a RouteResponse into the SAB and return the byte count.
  * Wire format: [meta_len: u16 BE][meta JSON UTF-8][body bytes].
- * meta = { status, headers?, contentType? } */
+ * meta = { status, headers?, contentType? }
+ *
+ * MUST remain synchronous — Rust per-worker call serialisation (via
+ * pool.pick_least_busy + in_flight_guard) only holds if the JS handler
+ * doesn't yield between SAB writes. If this ever becomes async (e.g.,
+ * for compression), revisit the pool dispatch invariants first.
+ */
 function packResponse(
   view: Uint8Array,
   encoder: TextEncoder,
