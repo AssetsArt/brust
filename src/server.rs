@@ -9,8 +9,9 @@ use crate::io::{run_io, spawn, IO_NAME, TcpListener, TcpStream};
 use crate::pool::WorkerPool;
 
 const MAX_REQUEST_BYTES: usize = 16 * 1024;
+const CONN_CHAN_CAP: usize = 1024;
 
-pub fn start(addr: SocketAddr, ready: Arc<Notify>, pool: Arc<WorkerPool>) {
+pub fn start(addr: SocketAddr, ready: Arc<Notify>, pool: Arc<WorkerPool>, workers: usize) {
     run_io(move || async move {
         let listener = match TcpListener::bind(addr).await {
             Ok(l) => l,
@@ -20,17 +21,37 @@ pub fn start(addr: SocketAddr, ready: Arc<Notify>, pool: Arc<WorkerPool>) {
             }
         };
 
-        ready.notified().await; // wait until all workers have registered
+        let (tx, rx) = flume::bounded::<TcpStream>(CONN_CHAN_CAP);
+
+        // Pre-spawn N TCP worker tasks. Each loops on rx.recv_async() and
+        // calls handle_conn for every stream it receives. Workers exit only
+        // when all Senders drop (i.e. accept loop has exited).
+        for _ in 0..workers {
+            let rx = rx.clone();
+            let pool = pool.clone();
+            spawn(async move {
+                while let Ok(stream) = rx.recv_async().await {
+                    handle_conn(stream, pool.clone()).await;
+                }
+            });
+        }
+        // Drop the original Receiver. Only the worker clones remain; if all
+        // workers exit, tx.send_async() will return Err(Disconnected) and the
+        // defensive guard below will fire. Without this drop, the original rx
+        // here keeps the channel "connected" forever, masking worker death.
+        drop(rx);
+
+        ready.notified().await; // wait until all napi workers have registered
         println!("[brust] listening on {addr} (io: {IO_NAME})");
         let _ = std::io::Write::flush(&mut std::io::stdout());
 
         loop {
             match listener.accept().await {
                 Ok((stream, _peer)) => {
-                    let pool = pool.clone();
-                    spawn(async move {
-                        handle_conn(stream, pool).await;
-                    });
+                    if tx.send_async(stream).await.is_err() {
+                        error!("all conn workers died");
+                        std::process::exit(1);
+                    }
                 }
                 Err(e) => {
                     error!(error = %e, "accept failed");
