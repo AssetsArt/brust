@@ -10,8 +10,10 @@ export interface ServeOptions {
 
 // Render callback writes HTML bytes into the worker's pre-registered SharedArrayBuffer
 // (passed once at register time) and resolves with the number of bytes written.
+// The argument is a JSON envelope `{ route_id, path, params }` produced by Rust's
+// route table — not a raw path. See runtime/routes.ts::RouteCall.
 // Resolve 0 → Rust treats it as oversized/error and returns HTTP 500.
-export type RenderFn = (path: string) => Promise<number>
+export type RenderFn = (envelopeJson: string) => Promise<number>
 
 // Bun Workers run in the same OS process as the main thread; the `env` option
 // only patches the JS-visible process.env, not the native OS environment that

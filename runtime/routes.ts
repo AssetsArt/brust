@@ -11,6 +11,7 @@ export interface ErrorBoundaryProps {
 }
 
 export interface Route<Params = Record<string, string>> {
+  /** matchit syntax — use `/blog/{slug}` for parameters (NOT Express-style `:slug`). */
   path: string
   Component: ComponentType<RouteContext<Params>>
   /** Optional component invoked when Component (or, later, loader) throws. */
@@ -48,7 +49,13 @@ export function makeRenderer(
   return async (envelopeJson: string): Promise<number> => {
     const call = JSON.parse(envelopeJson) as RouteCall
     const route = byId.get(call.route_id)
-    if (!route) return 0
+    if (!route) {
+      // Rust matched against the router but this worker's `routes` array doesn't
+      // include this id. Indicates that registerRoutes(main) and makeRenderer(worker)
+      // received different arrays — surface loudly rather than HTTP-500 silently.
+      console.error(`[brust] unknown route_id=${call.route_id} for path=${call.path}`)
+      return 0
+    }
     let html: string
     try {
       html = renderToString(

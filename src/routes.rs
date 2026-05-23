@@ -15,6 +15,7 @@ pub struct RouteEnvelope<'a> {
 /// Outcome of a match against the radix tree.
 pub enum MatchResult {
     Matched {
+        #[allow(dead_code)] // Carried for future Rust-side middleware/logging; JS reads it via envelope_json.
         route_id: u32,
         envelope_json: String,
     },
