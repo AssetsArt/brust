@@ -9,6 +9,7 @@ use crate::io::{run_io, spawn, IO_NAME, TcpListener, TcpStream};
 use crate::pool::WorkerPool;
 
 const MAX_REQUEST_BYTES: usize = 16 * 1024;
+// Bound the accept-side queue so a slow worker pool triggers TCP backpressure instead of unbounded memory growth.
 const CONN_CHAN_CAP: usize = 1024;
 
 pub fn start(addr: SocketAddr, ready: Arc<Notify>, pool: Arc<WorkerPool>, workers: usize) {
@@ -23,9 +24,7 @@ pub fn start(addr: SocketAddr, ready: Arc<Notify>, pool: Arc<WorkerPool>, worker
 
         let (tx, rx) = flume::bounded::<TcpStream>(CONN_CHAN_CAP);
 
-        // Pre-spawn N TCP worker tasks. Each loops on rx.recv_async() and
-        // calls handle_conn for every stream it receives. Workers exit only
-        // when all Senders drop (i.e. accept loop has exited).
+        // Workers exit only when all Senders drop (i.e. accept loop has exited).
         for _ in 0..workers {
             let rx = rx.clone();
             let pool = pool.clone();
