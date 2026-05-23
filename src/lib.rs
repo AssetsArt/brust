@@ -77,7 +77,12 @@ pub fn begin_serve(opts: ServeOptions) -> NapiResult<()> {
         .map_err(|e: std::net::AddrParseError| napi::Error::from_reason(e.to_string()))?;
 
     install_sigint_handler(Arc::clone(&s.shutdown));
-    server::start(addr, Arc::clone(&s.ready), Arc::clone(&s.pool), opts.workers as usize);
+    server::start(
+        addr,
+        Arc::clone(&s.ready),
+        Arc::clone(&s.pool),
+        opts.workers as usize,
+    );
     Ok(())
 }
 
