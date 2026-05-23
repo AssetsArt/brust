@@ -1,5 +1,6 @@
 import { createElement, type ComponentType, type ReactNode } from 'react'
 import { renderToString } from 'react-dom/server'
+import { consumeIslandUsedFlag } from './islands/island.tsx'
 
 /** Structured view of the request, parsed once in Rust and shipped in the
  * JSON envelope. Header names are lower-cased. Cookies are parsed from the
@@ -141,14 +142,21 @@ export function makeRenderer(
             req: call.req,
           }),
         )
-        return { status: 200, body: html }
+        const wrapped = consumeIslandUsedFlag()
+          ? wrapWithIslandsBootstrap(html)
+          : html
+        return { status: 200, body: wrapped }
       } catch (renderErr) {
         if (!route.errorBoundary) throw renderErr
         const boundary: ReactNode = createElement(route.errorBoundary, {
           error: renderErr instanceof Error ? renderErr : new Error(String(renderErr)),
         })
         const html = renderToString(boundary)
-        return { status: 500, body: html }
+        // Drain the flag even on error path so it doesn't leak to the next render.
+        const wrapped = consumeIslandUsedFlag()
+          ? wrapWithIslandsBootstrap(html)
+          : html
+        return { status: 500, body: wrapped }
       }
     }
 
@@ -199,4 +207,26 @@ export function makeRenderer(
     if (written === undefined) return 0
     return 2 + metaBytes.length + written
   }
+}
+
+const ISLANDS_IMPORTMAP_AND_BOOTSTRAP =
+  '<script type="importmap">' +
+  JSON.stringify({
+    imports: {
+      // Both react and react/jsx-runtime resolve to the SAME chunk; the
+      // chunk re-exports both surfaces. Browser fetches it once and slices
+      // different named exports for each import statement.
+      'react': '/_brust/islands/_react.js',
+      'react/jsx-runtime': '/_brust/islands/_react.js',
+      'react-dom/client': '/_brust/islands/_react-dom.js',
+    },
+  }) +
+  '</script>' +
+  '<script type="module" src="/_brust/islands/_bootstrap.js" defer></script>'
+
+/** Prepend the importmap + bootstrap <script> tags to the rendered HTML.
+ * Browsers tolerate <script> before <html>; this works for full-document
+ * SSR (`<html><body>...`) and for body fragments alike. */
+function wrapWithIslandsBootstrap(html: string): string {
+  return ISLANDS_IMPORTMAP_AND_BOOTSTRAP + html
 }
