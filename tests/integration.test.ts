@@ -22,6 +22,11 @@ test('serves rendered html via worker pool', async () => {
   expect(body).toContain('Hello from Brust')
   expect(body).toMatch(/worker_id=\d+/)
 
+  const ping = await fetch(`http://127.0.0.1:${port}/ping`)
+  expect(ping.status).toBe(200)
+  expect(ping.headers.get('content-type')).toBe('text/plain')
+  expect(await ping.text()).toBe('pong\n')
+
   proc.kill('SIGINT')
   const exit = await proc.exited
   expect(exit).toBe(0)

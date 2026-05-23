@@ -81,6 +81,14 @@ async fn handle_conn(mut s: TcpStream, pool: Arc<WorkerPool>) {
         return;
     }
 
+    // Native-only route: bypass napi pool so benchmarks can isolate TCP+HTTP cost from React SSR cost.
+    if path == "/ping" {
+        let bytes = http::build_response(200, "text/plain", b"pong\n".to_vec());
+        let _ = s.write_all(bytes).await;
+        let _ = s.shutdown().await;
+        return;
+    }
+
     let Some(entry) = pool.pick_least_busy() else {
         let _ = s.write_all(http::error_503("no workers")).await;
         return;
