@@ -22,5 +22,11 @@
     "@types/bun": "latest"
   },
   "module": "index.ts",
-  "type": "module"
+  "type": "module",
+  "scripts": {
+    "build":       "cd runtime && bun run build",
+    "build:debug": "cd runtime && bun run build:debug",
+    "test":        "bun test tests/integration.test.ts",
+    "dev":         "bun run app/index.ts"
+  }
 }
