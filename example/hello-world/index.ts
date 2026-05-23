@@ -1,12 +1,12 @@
 import { renderToString } from 'react-dom/server'
 import { createElement } from 'react'
-import HelloWorld from '../runtime/components/HelloWorld'
+import HelloWorld from './components/HelloWorld'
 
 import {
   brust,
   isWorker,
   workerId,
-} from '../runtime/index.ts'
+} from '../../runtime/index.ts'
 
 const PORT_ENV = process.env.BRUST_PORT
 const port = PORT_ENV ? parseInt(PORT_ENV, 10) : 3000

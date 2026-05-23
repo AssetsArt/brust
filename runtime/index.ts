@@ -30,7 +30,7 @@ export const brust = {
     })
     for (let i = 0; i < opts.workers; i++) {
       // Bun.Worker requires the JS entry (post-bundling). For the skeleton,
-      // app/index.ts is a TS file that Bun executes directly.
+      // the entry is a TS file that Bun executes directly.
       new Worker(opts.entry, {
         env: { ...process.env, BRUST_WORKER_ID: String(i) },
       })

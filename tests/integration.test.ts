@@ -3,7 +3,7 @@ import { spawn } from 'bun'
 
 test('serves rendered html via worker pool', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'app/index.ts'],
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
     env: {
       ...process.env,
       BRUST_PORT: '38123',
