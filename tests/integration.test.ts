@@ -606,7 +606,7 @@ test('action endpoint: happy path returns JSON', async () => {
 test('action endpoint: malformed JSON args → 400', async () => {
   const proc = spawn({
     cmd: ['bun', 'run', 'example/hello-world/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38151', RUST_LOG: 'brust=warn' },
+    env: { ...process.env, BRUST_PORT: '38157', RUST_LOG: 'brust=warn' },
     stdout: 'pipe', stderr: 'inherit',
   })
   const port = await readPortLine(proc.stdout)
