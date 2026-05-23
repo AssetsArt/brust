@@ -375,6 +375,72 @@ The `hydrate` prop name is reserved by Brust on island components. If you need
 a user-facing prop called `hydrate`, rename it or wrap the island in another
 component.
 
+### Server functions
+
+Functions that exist only on the server but can be called from a client-side
+island as if they were local. Same Rust/TS types on both sides, no separate
+API schema to maintain. Similar to Dioxus `#[server]`, TanStack Start
+`serverFn`, Next.js Server Actions.
+
+```tsx
+// actions/posts.ts
+"use server"
+
+import { db } from '../db'
+
+export async function createComment(postId: string, body: string): Promise<Comment> {
+  return await db.comments.insert({ postId, body })
+}
+```
+
+```tsx
+// components/CommentForm.tsx
+"use island"
+import { createComment } from '../actions/posts'
+
+export default function CommentForm({ postId }: { postId: string }) {
+  const [body, setBody] = useState('')
+  return (
+    <form onSubmit={async (e) => {
+      e.preventDefault()
+      await createComment(postId, body)    // auto RPC, same types
+      setBody('')
+    }}>
+      <textarea value={body} onChange={e => setBody(e.target.value)} />
+      <button>Post</button>
+    </form>
+  )
+}
+```
+
+How it works:
+
+1. Build-time scanner finds files with `"use server"`. Each exported async
+   function gets a deterministic id from `hash(file_path + fn_name)`.
+2. **Server bundle:** the implementation is registered behind
+   `/_brust/action/<id>`. Args come in as JSON; return value goes out as JSON.
+3. **Client bundle:** the import is rewritten to an RPC stub —
+   ```ts
+   export const createComment = (...args) =>
+     fetch('/_brust/action/<id>', { method: 'POST', body: JSON.stringify(args) })
+       .then(r => r.json())
+   ```
+   The original function body is removed; DB drivers and secrets never ship
+   to the client.
+4. The HTTP round-trip uses the same Brust accept loop + worker pool as page
+   rendering — no separate transport, no API gateway in front.
+
+Trade-offs:
+
+- ✅ End-to-end type safety without a duplicate schema
+- ✅ Server-only code (DB, secrets) literally not in the client bundle
+- ✅ Same auth/session context as the rest of the request
+- ⚠️ Each call = one HTTP round-trip. Not for hot loops; batch on the client.
+- ⚠️ Args/return must be JSON-serialisable (richer encoder for `Date`/`Map`/
+  `bigint` is a roadmap item).
+- ⚠️ Distinct from `loader:` on routes. Loaders fire on page render; server
+  fns fire on client interaction.
+
 ### Client JS budget (target)
 
 | Scenario | JS sent to client |
@@ -511,6 +577,7 @@ Bun.serve baseline comparator: `example/bun-serve-baseline/index.ts`.
 - Cache (LRU, vary headers, TTL, control-socket invalidation)
 - Routing (`routes.tsx` + radix tree + per-route cache config)
 - Islands hydration (`"use island"`, lazy bootstrap, hydration triggers)
+- Server functions (`"use server"`, build-time RPC stub generation)
 - Single-binary deploy (`bun build --compile`)
 - TOML configuration
 - Retry on tsfn failure, PING/PONG health checks
