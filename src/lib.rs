@@ -1,2 +1,8 @@
-// placeholder — will be replaced in Task 2
-pub fn _placeholder() {}
+#![deny(clippy::all)]
+
+use napi_derive::napi;
+
+#[napi]
+pub fn hello() -> String {
+    "hello from brust".to_string()
+}
