@@ -1,4 +1,5 @@
 /target
+node_modules/
 runtime/*.node
 runtime/index.js
 runtime/index.d.ts
