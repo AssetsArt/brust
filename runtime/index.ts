@@ -61,3 +61,6 @@ export const brust = {
 
 export { defineRoutes, makeRenderer } from './routes.ts'
 export type { Route, RouteCall, RouteContext, ErrorBoundaryProps } from './routes.ts'
+
+export { loadConfig, BrustConfigError } from './config.ts'
+export type { BrustConfig } from './config.ts'
