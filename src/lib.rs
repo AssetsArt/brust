@@ -1,5 +1,6 @@
 #![deny(clippy::all)]
 
+mod cache;
 mod http;
 mod io;
 mod pool;
@@ -20,6 +21,7 @@ use tokio::sync::Notify;
 use tracing::error;
 use tracing_subscriber::EnvFilter;
 
+use crate::cache::LruCache;
 use crate::pool::{BufPtr, RendererTsfn, WorkerPool};
 use crate::routes::RouteTable;
 
@@ -31,9 +33,10 @@ struct State {
     pool: Arc<WorkerPool>,
     ready: Arc<Notify>,
     shutdown: Arc<Notify>,
+    routes: Arc<RouteTable>,
+    cache: Arc<LruCache>,
     is_serving: AtomicBool,
     expected_workers: AtomicU32,
-    routes: Arc<RouteTable>,
 }
 
 static STATE: OnceCell<State> = OnceCell::new();
@@ -52,9 +55,10 @@ fn state() -> &'static State {
             pool: Arc::new(WorkerPool::new()),
             ready: Arc::new(Notify::new()),
             shutdown: Arc::new(Notify::new()),
+            routes: Arc::new(RouteTable::new()),
+            cache: Arc::new(LruCache::new()),
             is_serving: AtomicBool::new(false),
             expected_workers: AtomicU32::new(0),
-            routes: Arc::new(RouteTable::new()),
         }
     })
 }
@@ -88,6 +92,7 @@ pub fn begin_serve(opts: ServeOptions) -> NapiResult<()> {
         Arc::clone(&s.ready),
         Arc::clone(&s.pool),
         Arc::clone(&s.routes),
+        Arc::clone(&s.cache),
         opts.workers as usize,
     );
     Ok(())
@@ -141,10 +146,15 @@ pub fn register_renderer(
 }
 
 #[napi]
-pub fn register_routes(patterns: Vec<String>) -> NapiResult<u32> {
+pub fn register_routes(configs: Vec<String>) -> NapiResult<u32> {
+    let parsed: Vec<crate::routes::RouteConfig> = configs
+        .iter()
+        .map(|s| serde_json::from_str(s))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| napi::Error::from_reason(format!("invalid route config: {e}")))?;
     state()
         .routes
-        .install(&patterns)
+        .install_with_config(&parsed)
         .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 

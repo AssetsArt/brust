@@ -10,12 +10,21 @@ export interface ErrorBoundaryProps {
   error: Error
 }
 
+export interface RouteCacheConfig {
+  /** Time-to-live in seconds. */
+  ttl_seconds: number
+  /** Request headers that affect content. Each becomes part of the cache key. */
+  vary?: string[]
+}
+
 export interface Route<Params = Record<string, string>> {
   /** matchit syntax — use `/blog/{slug}` for parameters (NOT Express-style `:slug`). */
   path: string
   Component: ComponentType<RouteContext<Params>>
   /** Optional component invoked when Component (or, later, loader) throws. */
   errorBoundary?: ComponentType<ErrorBoundaryProps>
+  /** Opt-in cache. Omit for no caching (default for authed/personalised routes). */
+  cache?: RouteCacheConfig
 }
 
 /** Identity helper that pins the `routes` array's element type for the IDE

@@ -1,9 +1,11 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::sync::Notify;
 use tracing::{error, warn};
 
+use crate::cache::{CacheConfig, CacheKey, LruCache};
 use crate::http::{self, parse_request, ParseError};
 use crate::io::{run_io, spawn, IO_NAME, TcpListener, TcpStream};
 use crate::pool::WorkerPool;
@@ -27,6 +29,7 @@ pub fn start(
     ready: Arc<Notify>,
     pool: Arc<WorkerPool>,
     routes: Arc<RouteTable>,
+    cache: Arc<LruCache>,
     workers: usize,
 ) {
     run_io(move || async move {
@@ -45,9 +48,10 @@ pub fn start(
             let rx = rx.clone();
             let pool = pool.clone();
             let routes = routes.clone();
+            let cache = cache.clone();
             spawn(async move {
                 while let Ok(stream) = rx.recv_async().await {
-                    handle_conn(stream, pool.clone(), routes.clone()).await;
+                    handle_conn(stream, pool.clone(), routes.clone(), cache.clone()).await;
                 }
             });
         }
@@ -78,7 +82,12 @@ pub fn start(
     });
 }
 
-async fn handle_conn(mut s: TcpStream, pool: Arc<WorkerPool>, routes: Arc<RouteTable>) {
+async fn handle_conn(
+    mut s: TcpStream,
+    pool: Arc<WorkerPool>,
+    routes: Arc<RouteTable>,
+    cache: Arc<LruCache>,
+) {
     let mut buf = Vec::with_capacity(4096);
     loop {
         buf.clear();
@@ -116,13 +125,26 @@ async fn handle_conn(mut s: TcpStream, pool: Arc<WorkerPool>, routes: Arc<RouteT
             continue;
         }
 
-        let envelope_json = match routes.match_path(&path) {
-            MatchResult::Matched { envelope_json, .. } => envelope_json,
+        let (envelope_json, route_id) = match routes.match_path(&path) {
+            MatchResult::Matched { envelope_json, route_id } => (envelope_json, route_id),
             MatchResult::NoMatch => {
                 let _ = s.write_all(http::error_404()).await;
                 continue;
             }
         };
+
+        let cache_config = routes.cache_for(route_id);
+        let cache_key = cache_config
+            .as_ref()
+            .map(|cfg| build_cache_key(&method, &path, cfg, &buf));
+        if let Some(key) = &cache_key {
+            if let Some(bytes) = cache.get(key) {
+                if s.write_all(bytes).await.is_err() {
+                    return;
+                }
+                continue;
+            }
+        }
 
         let Some(entry) = pool.pick_least_busy() else {
             let _ = s.write_all(http::error_503("no workers")).await;
@@ -139,14 +161,14 @@ async fn handle_conn(mut s: TcpStream, pool: Arc<WorkerPool>, routes: Arc<RouteT
                         let _ = s.write_all(http::build_response(500, "text/plain", b"render oversized".to_vec())).await;
                         return;
                     }
-                    // SAFETY: backing store of the worker's SharedArrayBuffer is process-global,
-                    // alive as long as the Bun Worker holds its module-scope reference. The Worker
-                    // has already returned from the render callback (we're past promise.await),
-                    // so no concurrent writer; reading n bytes is safe.
+                    // SAFETY: see pool.rs BufPtr safety argument.
                     let body: Vec<u8> = unsafe {
                         std::slice::from_raw_parts(entry.buf_ptr.0, n).to_vec()
                     };
                     let bytes = http::build_response(200, "text/html; charset=utf-8", body);
+                    if let (Some(key), Some(cfg)) = (cache_key.clone(), cache_config.as_ref()) {
+                        cache.insert(key, bytes.clone(), Duration::from_secs(cfg.ttl_seconds));
+                    }
                     if s.write_all(bytes).await.is_err() {
                         return;
                     }
@@ -161,7 +183,6 @@ async fn handle_conn(mut s: TcpStream, pool: Arc<WorkerPool>, routes: Arc<RouteT
             Err(e) => {
                 error!(worker_id = entry.id, error = %e, "tsfn call_async failed");
                 let _ = s.write_all(http::build_response(502, "text/plain", b"upstream call failed".to_vec())).await;
-                // worker tsfn likely dead — remove from pool
                 pool.remove(entry.id);
                 if pool.registered_count() == 0 {
                     error!("all workers died");
@@ -171,6 +192,49 @@ async fn handle_conn(mut s: TcpStream, pool: Arc<WorkerPool>, routes: Arc<RouteT
             }
         }
     }
+}
+
+fn build_cache_key(method: &str, full_path: &str, cfg: &CacheConfig, request_buf: &[u8]) -> CacheKey {
+    let (path_only, query) = match full_path.split_once('?') {
+        Some((p, q)) => (p, q),
+        None => (full_path, ""),
+    };
+    let sorted_query = sort_query(query);
+    let vary_values = lookup_vary_headers(request_buf, &cfg.vary);
+    CacheKey {
+        method: method.to_string(),
+        path: path_only.to_string(),
+        sorted_query,
+        vary_values,
+    }
+}
+
+fn sort_query(query: &str) -> String {
+    if query.is_empty() {
+        return String::new();
+    }
+    let mut pairs: Vec<&str> = query.split('&').filter(|p| !p.is_empty()).collect();
+    pairs.sort_unstable();
+    pairs.join("&")
+}
+
+fn lookup_vary_headers(request_buf: &[u8], vary: &[String]) -> Vec<String> {
+    if vary.is_empty() {
+        return Vec::new();
+    }
+    let mut headers = [httparse::EMPTY_HEADER; 32];
+    let mut req = httparse::Request::new(&mut headers);
+    let _ = req.parse(request_buf);
+    vary.iter()
+        .map(|name| {
+            req.headers
+                .iter()
+                .find(|h| h.name.eq_ignore_ascii_case(name))
+                .and_then(|h| std::str::from_utf8(h.value).ok())
+                .unwrap_or("")
+                .to_string()
+        })
+        .collect()
 }
 
 async fn read_full_request(s: &mut TcpStream, buf: &mut Vec<u8>) -> ReadOutcome {

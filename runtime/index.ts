@@ -46,9 +46,12 @@ export const brust = {
     await (native as any).untilReady(opts.bootTimeoutMs ?? 5000)
     await (native as any).untilShutdown()
   },
-  /** Install the route table in Rust. MUST be called before `serve()`. */
-  registerRoutes(patterns: string[]): number {
-    return (native as any).registerRoutes(patterns)
+  /** Install the route table in Rust. MUST be called before `serve()`.
+   * Pass an array of routes from `defineRoutes(...)` — each is JSON-encoded
+   * with its optional cache config. */
+  registerRoutes(routes: Array<{ path: string, cache?: { ttl_seconds: number, vary?: string[] } }>): number {
+    const configs = routes.map((r) => JSON.stringify({ path: r.path, cache: r.cache ?? null }))
+    return (native as any).registerRoutes(configs)
   },
   // Register a renderer for this Bun Worker. `buf` MUST be backed by a SharedArrayBuffer
   // (or any ArrayBuffer the worker keeps rooted) — Rust captures the backing-store
@@ -60,7 +63,7 @@ export const brust = {
 }
 
 export { defineRoutes, makeRenderer } from './routes.ts'
-export type { Route, RouteCall, RouteContext, ErrorBoundaryProps } from './routes.ts'
+export type { Route, RouteCall, RouteContext, ErrorBoundaryProps, RouteCacheConfig } from './routes.ts'
 
 export { loadConfig, BrustConfigError } from './config.ts'
 export type { BrustConfig } from './config.ts'

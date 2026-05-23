@@ -205,6 +205,36 @@ test('reads port and workers from brust.toml at cwd', async () => {
   }
 }, 15_000)
 
+test('cache-test route returns same body on second hit (cache hit)', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: {
+      ...process.env,
+      BRUST_PORT: '38141',
+      BRUST_WORKERS: '1',
+      RUST_LOG: 'brust=info',
+    },
+    stdout: 'pipe',
+    stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const first  = await fetch(`http://127.0.0.1:${port}/cache-test`)
+    const firstBody = await first.text()
+    expect(first.status).toBe(200)
+    expect(firstBody).toMatch(/render=\d+/)
+
+    const second = await fetch(`http://127.0.0.1:${port}/cache-test`)
+    const secondBody = await second.text()
+    expect(second.status).toBe(200)
+    expect(secondBody).toBe(firstBody)
+  } finally {
+    proc.kill('SIGINT')
+    const exit = await proc.exited
+    expect(exit).toBe(0)
+  }
+}, 15_000)
+
 async function readPortLine(stream: ReadableStream<Uint8Array>): Promise<number> {
   const reader = stream.getReader()
   const decoder = new TextDecoder()

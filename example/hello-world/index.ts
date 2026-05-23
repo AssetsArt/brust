@@ -8,7 +8,7 @@ if (!isWorker) {
   // Install the route table in Rust *before* serve() boots the accept loop.
   // Workers will load the same routes.tsx, so route_id (= array index) is
   // stable across main thread and every worker.
-  brust.registerRoutes(routes.map((r) => r.path))
+  brust.registerRoutes(routes)
 
   await brust.serve({
     port,

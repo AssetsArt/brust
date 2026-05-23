@@ -1,7 +1,10 @@
 use std::collections::HashMap;
 
 use parking_lot::RwLock;
+use serde::Deserialize;
 use serde::Serialize;
+
+use crate::cache::CacheConfig;
 
 /// JSON envelope shipped across the tsfn boundary for each render call.
 /// Worker JS deserializes this and uses `route_id` to pick the component.
@@ -15,16 +18,23 @@ pub struct RouteEnvelope<'a> {
 /// Outcome of a match against the radix tree.
 pub enum MatchResult {
     Matched {
-        #[allow(dead_code)] // Carried for future Rust-side middleware/logging; JS reads it via envelope_json.
         route_id: u32,
         envelope_json: String,
     },
     NoMatch,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct RouteConfig {
+    pub path: String,
+    #[serde(default)]
+    pub cache: Option<CacheConfig>,
+}
+
 #[derive(Default)]
 pub struct RouteTable {
     inner: RwLock<matchit::Router<u32>>,
+    cache_configs: RwLock<Vec<Option<CacheConfig>>>,
 }
 
 impl RouteTable {
@@ -32,25 +42,32 @@ impl RouteTable {
         Self::default()
     }
 
-    /// Replace the route set. Patterns are inserted in array order; the array
-    /// index becomes the `route_id` value matched against by the worker
-    /// dispatcher. Called once during boot.
-    pub fn install(&self, patterns: &[String]) -> Result<u32, RouteInstallError> {
+    /// Replace the route set + per-route cache configs. Patterns are inserted
+    /// in array order; index = route_id.
+    pub fn install_with_config(
+        &self,
+        configs: &[RouteConfig],
+    ) -> Result<u32, RouteInstallError> {
         let mut router = matchit::Router::new();
-        for (idx, pattern) in patterns.iter().enumerate() {
+        let mut caches: Vec<Option<CacheConfig>> = Vec::with_capacity(configs.len());
+        for (idx, c) in configs.iter().enumerate() {
             router
-                .insert(pattern.clone(), idx as u32)
+                .insert(c.path.clone(), idx as u32)
                 .map_err(|e| RouteInstallError::Insert {
-                    pattern: pattern.clone(),
+                    pattern: c.path.clone(),
                     reason: e.to_string(),
                 })?;
+            caches.push(c.cache.clone());
         }
         *self.inner.write() = router;
-        Ok(patterns.len() as u32)
+        *self.cache_configs.write() = caches;
+        Ok(configs.len() as u32)
     }
 
-    /// Match a request path. Returns a fully serialized JSON envelope ready to
-    /// hand to the tsfn, or `NoMatch`.
+    pub fn cache_for(&self, route_id: u32) -> Option<CacheConfig> {
+        self.cache_configs.read().get(route_id as usize).and_then(|c| c.clone())
+    }
+
     pub fn match_path(&self, path: &str) -> MatchResult {
         let router = self.inner.read();
         match router.at(path) {
@@ -64,8 +81,6 @@ impl RouteTable {
                     path,
                     params,
                 };
-                // serde_json::to_string cannot fail in practice — no IO, all
-                // values are valid &str. Unwrap is safe.
                 let envelope_json = serde_json::to_string(&envelope).unwrap();
                 MatchResult::Matched {
                     route_id: *matched.value,
