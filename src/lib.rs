@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::cell::Cell;
 use std::time::Duration;
 
-use napi::bindgen_prelude::{Function, Promise};
+use napi::bindgen_prelude::{Function, Promise, Uint8Array};
 use napi::Result as NapiResult;
 use napi_derive::napi;
 use once_cell::sync::OnceCell;
@@ -20,7 +20,7 @@ use tokio::sync::Notify;
 use tracing::error;
 use tracing_subscriber::EnvFilter;
 
-use crate::pool::{RendererTsfn, WorkerPool};
+use crate::pool::{BufPtr, RendererTsfn, WorkerPool};
 use crate::shutdown::{install_sigint_handler, Shutdown};
 
 thread_local! {
@@ -113,12 +113,22 @@ pub async fn until_shutdown() -> NapiResult<()> {
 }
 
 #[napi]
-pub fn register_renderer(f: Function<String, Promise<String>>) -> NapiResult<u32> {
+pub fn register_renderer(
+    mut buf: Uint8Array,
+    f: Function<String, Promise<u32>>,
+) -> NapiResult<u32> {
     // NOTE: is_worker() reads std::env::var which is not patched by Bun's Worker
     // env option (Bun Workers share the OS process).  The TS layer is responsible
     // for only calling registerRenderer from a worker context; we skip the guard.
+    //
+    // Capture the SAB backing-store pointer + length here. The Bun Worker keeps the
+    // SAB rooted in its module scope, so the backing store outlives every render call.
+    let (buf_ptr, buf_len) = unsafe {
+        let slice = buf.as_mut();
+        (BufPtr(slice.as_mut_ptr()), slice.len())
+    };
     let tsfn: RendererTsfn = f.build_threadsafe_function().build()?;
-    let id = state().pool.register(tsfn);
+    let id = state().pool.register(tsfn, buf_ptr, buf_len);
     WORKER_ID.with(|cell| cell.set(Some(id)));
     Ok(id)
 }
@@ -132,3 +142,4 @@ pub fn is_worker() -> bool {
 pub fn worker_id() -> Option<u32> {
     WORKER_ID.with(|cell| cell.get())
 }
+

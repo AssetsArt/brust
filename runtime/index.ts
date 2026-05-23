@@ -8,7 +8,10 @@ export interface ServeOptions {
   bootTimeoutMs?: number
 }
 
-export type RenderFn = (path: string) => Promise<string>
+// Render callback writes HTML bytes into the worker's pre-registered SharedArrayBuffer
+// (passed once at register time) and resolves with the number of bytes written.
+// Resolve 0 → Rust treats it as oversized/error and returns HTTP 500.
+export type RenderFn = (path: string) => Promise<number>
 
 // Bun Workers run in the same OS process as the main thread; the `env` option
 // only patches the JS-visible process.env, not the native OS environment that
@@ -41,7 +44,11 @@ export const brust = {
     await (native as any).untilReady(opts.bootTimeoutMs ?? 5000)
     await (native as any).untilShutdown()
   },
-  registerRenderer(fn: RenderFn): number {
-    return (native as any).registerRenderer(fn)
+  // Register a renderer for this Bun Worker. `buf` MUST be backed by a SharedArrayBuffer
+  // (or any ArrayBuffer the worker keeps rooted) — Rust captures the backing-store
+  // pointer once here and reuses it for every render call. The buffer is held alive
+  // by the worker's module scope; do not let it go out of scope.
+  registerRenderer(buf: Uint8Array, fn: RenderFn): number {
+    return (native as any).registerRenderer(buf, fn)
   },
 }

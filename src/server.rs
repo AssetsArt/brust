@@ -100,8 +100,21 @@ async fn handle_conn(mut s: TcpStream, pool: Arc<WorkerPool>) {
 
         match entry.tsfn.call_async(path).await {
             Ok(promise) => match promise.await {
-                Ok(html) => {
-                    let bytes = http::build_response(200, "text/html; charset=utf-8", html.into_bytes());
+                Ok(n) => {
+                    let n = n as usize;
+                    if n == 0 || n > entry.buf_len {
+                        error!(worker_id = entry.id, written = n, capacity = entry.buf_len, "render oversized or empty");
+                        let _ = s.write_all(http::build_response(500, "text/plain", b"render oversized".to_vec())).await;
+                        return;
+                    }
+                    // SAFETY: backing store of the worker's SharedArrayBuffer is process-global,
+                    // alive as long as the Bun Worker holds its module-scope reference. The Worker
+                    // has already returned from the render callback (we're past promise.await),
+                    // so no concurrent writer; reading n bytes is safe.
+                    let body: Vec<u8> = unsafe {
+                        std::slice::from_raw_parts(entry.buf_ptr.0, n).to_vec()
+                    };
+                    let bytes = http::build_response(200, "text/html; charset=utf-8", body);
                     if s.write_all(bytes).await.is_err() {
                         return;
                     }

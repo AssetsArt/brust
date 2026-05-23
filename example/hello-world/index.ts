@@ -24,11 +24,22 @@ if (!isWorker) {
     entry: import.meta.url,
   })
 } else {
+  // 256KB shared buffer per worker — Rust captures the backing-store pointer at
+  // register time and reads from it after every render call.
+  const sab = new SharedArrayBuffer(256 * 1024)
+  const view = new Uint8Array(sab)
+  const encoder = new TextEncoder()
+
   let wid = ''
-  const id = brust.registerRenderer(async (path: string) => {
-    return renderToString(
+  const id = brust.registerRenderer(view, async (path: string) => {
+    const html = renderToString(
       createElement(HelloWorld, { workerId: wid })
     )
+    const { written } = encoder.encodeInto(html, view)
+    // written === undefined would mean the destination is too small; encodeInto
+    // returns it as undefined only when there's no room for even one byte. Most
+    // implementations always return a number — treat undefined as 0 (Rust 500).
+    return written ?? 0
   })
   wid = String(id)
 }
