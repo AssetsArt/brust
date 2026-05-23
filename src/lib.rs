@@ -37,11 +37,12 @@ struct State {
     cache: Arc<LruCache>,
     is_serving: AtomicBool,
     expected_workers: AtomicU32,
+    islands_dir: parking_lot::RwLock<Option<std::path::PathBuf>>,
 }
 
 static STATE: OnceCell<State> = OnceCell::new();
 
-fn state() -> &'static State {
+pub(crate) fn state() -> &'static State {
     STATE.get_or_init(|| {
         let _ = tracing_subscriber::fmt()
             .with_env_filter(
@@ -59,6 +60,7 @@ fn state() -> &'static State {
             cache: Arc::new(LruCache::new()),
             is_serving: AtomicBool::new(false),
             expected_workers: AtomicU32::new(0),
+            islands_dir: parking_lot::RwLock::new(None),
         }
     })
 }
@@ -175,5 +177,17 @@ pub fn is_worker() -> bool {
 #[napi]
 pub fn worker_id() -> Option<u32> {
     WORKER_ID.with(|cell| cell.get())
+}
+
+#[napi]
+pub fn configure_islands_dir(path: String) -> NapiResult<()> {
+    let abs = std::path::PathBuf::from(&path);
+    if !abs.is_absolute() {
+        return Err(napi::Error::from_reason(format!(
+            "islands_dir must be an absolute path (got {path:?})"
+        )));
+    }
+    *state().islands_dir.write() = Some(abs);
+    Ok(())
 }
 

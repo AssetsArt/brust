@@ -13,6 +13,10 @@ use crate::routes::{MatchResult, RouteTable};
 
 use serde::Deserialize;
 
+fn current_islands_dir() -> Option<std::path::PathBuf> {
+    crate::state().islands_dir.read().clone()
+}
+
 #[derive(Debug, Deserialize)]
 struct ResponseMeta {
     status: u16,
@@ -146,6 +150,48 @@ async fn handle_conn(
                 return;
             }
             continue;
+        }
+
+        // Native-only route: serve built island chunks from .brust/islands/.
+        // Strict path-traversal protection: filename must match ^[A-Za-z0-9_.-]+\.js$
+        // and is joined to the configured islands_dir (no .. allowed).
+        if let Some(file) = path.strip_prefix("/_brust/islands/") {
+            // Strip any query string (chunks aren't parameterized, but be defensive).
+            let file = file.split('?').next().unwrap_or(file);
+            if !is_safe_island_filename(file) {
+                let _ = s.write_all(http::error_404()).await;
+                continue;
+            }
+            let dir = match current_islands_dir() {
+                Some(d) => d,
+                None => {
+                    let _ = s.write_all(http::error_404()).await;
+                    continue;
+                }
+            };
+            let file_path = dir.join(file);
+            match tokio::fs::read(&file_path).await {
+                Ok(bytes) => {
+                    let extra = [(
+                        "Cache-Control".to_string(),
+                        "public, max-age=3600".to_string(),
+                    )];
+                    let resp = http::build_response(
+                        200,
+                        "application/javascript; charset=utf-8",
+                        &extra,
+                        bytes,
+                    );
+                    if s.write_all(resp).await.is_err() {
+                        return;
+                    }
+                    continue;
+                }
+                Err(_) => {
+                    let _ = s.write_all(http::error_404()).await;
+                    continue;
+                }
+            }
         }
 
         // Native-only route: cache invalidation.
@@ -389,4 +435,79 @@ async fn read_full_request(s: &mut TcpStream, buf: &mut Vec<u8>) -> ReadOutcome 
         }
     }
     ReadOutcome::Oversize
+}
+
+/// Reject filenames containing path separators, leading dots, or anything
+/// outside `[A-Za-z0-9_.-]`. The filename MUST end in `.js`. This is the
+/// only sanitization between the request line and `tokio::fs::read`.
+fn is_safe_island_filename(name: &str) -> bool {
+    if !name.ends_with(".js") {
+        return false;
+    }
+    if name.starts_with('.') || name.is_empty() {
+        return false;
+    }
+    if name.contains('/') || name.contains('\\') || name.contains("..") {
+        return false;
+    }
+    name
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-'))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn safe_filenames_pass() {
+        assert!(is_safe_island_filename("Counter.js"));
+        assert!(is_safe_island_filename("_react.js"));
+        assert!(is_safe_island_filename("_jsx-runtime.js"));
+        assert!(is_safe_island_filename("a.b.c.js"));
+        assert!(is_safe_island_filename("Foo-Bar_123.js"));
+    }
+
+    #[test]
+    fn unsafe_empty_rejected() {
+        assert!(!is_safe_island_filename(""));
+    }
+
+    #[test]
+    fn unsafe_no_extension_rejected() {
+        assert!(!is_safe_island_filename("Counter"));
+        assert!(!is_safe_island_filename("Counter.ts"));
+    }
+
+    #[test]
+    fn unsafe_dot_prefix_rejected() {
+        assert!(!is_safe_island_filename(".env.js"));
+    }
+
+    #[test]
+    fn unsafe_traversal_rejected() {
+        assert!(!is_safe_island_filename("../etc/passwd.js"));
+        assert!(!is_safe_island_filename("..passwd.js"));
+    }
+
+    #[test]
+    fn unsafe_separators_rejected() {
+        assert!(!is_safe_island_filename("sub/file.js"));
+        assert!(!is_safe_island_filename("sub\\file.js"));
+    }
+
+    #[test]
+    fn unsafe_spaces_rejected() {
+        assert!(!is_safe_island_filename("file with space.js"));
+    }
+
+    #[test]
+    fn unsafe_percent_rejected() {
+        assert!(!is_safe_island_filename("file%20.js"));
+    }
+
+    #[test]
+    fn unsafe_non_ascii_rejected() {
+        assert!(!is_safe_island_filename("évil.js"));
+    }
 }
