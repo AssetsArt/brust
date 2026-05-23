@@ -515,12 +515,14 @@ Bun.serve baseline comparator: `example/bun-serve-baseline/index.ts`.
 - TOML configuration
 - Retry on tsfn failure, PING/PONG health checks
 
-**Deferred:**
+**Deferred (no design yet):**
 
 - Streaming SSR (`renderToPipeableStream`)
 - Multi-thread tokio runtime (Brust is single-thread Rust today)
 - N slots per worker for loader-bound workloads
-- HTTP/2, TLS termination
+- HTTP/2
+- TLS termination
+- Hot reload (dev mode)
 - Graceful shutdown / drain (SIGINT handled JS-side via `process.exit`)
 
 ---
