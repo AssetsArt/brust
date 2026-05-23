@@ -451,6 +451,23 @@ The `hydrate` prop name is reserved by Brust on island components. If you need
 a user-facing prop called `hydrate`, rename it or wrap the island in another
 component.
 
+**Status (MVP shipped):**
+
+- `<Island id component props hydrate?>` runtime component (from `runtime/islands/island.tsx`) embeds the SSR HTML inside a `data-brust-island` marker and flips a module-scope flag.
+- `makeRenderer` auto-injects an importmap + `<script type="module" src="/_brust/islands/_bootstrap.js" defer>` when any island rendered. Pages without islands ship zero JS.
+- `buildIslands(configPath)` (from `runtime/islands/build.ts`) at boot reads `island.config.ts` and runs `Bun.build` 3+N times: 1 combined chunk for `react`+`react/jsx-runtime` (`_react.js`, ~7 KB minified), 1 `react-dom/client` chunk (`_react-dom.js`, ~136 KB minified, externalises `react`), N island chunks (all 3 runtime modules external), 1 bootstrap. Output lands in `.brust/islands/`. All builds use `minify: true` + `define: process.env.NODE_ENV = "production"`.
+- Rust native route `GET /_brust/islands/<file>` serves chunks with `Cache-Control: public, max-age=3600`. Strict filename-safety check rejects path-traversal, hidden files, non-JS, and anything outside `[A-Za-z0-9_.-]+\.js`.
+- 4 hydration triggers shipped: `load` / `idle` / `visible` / `interaction`.
+
+**MVP-scope simplifications (vs the architecture vision above):**
+
+- `<Island>` is a manual wrapper. The `"use island"` directive + auto-detection at JSX call sites is deferred — users explicitly wrap.
+- Each island's `id` must be listed in `island.config.ts` (single source of truth for the build).
+- Filenames are predictable (`<id>.js`), not content-hashed. Production deployments should fingerprint or wrap with a CDN.
+- React + react/jsx-runtime live in one chunk (`_react.js`); the importmap maps both bare specifiers to that URL. `react-dom/client` is its own chunk. Per-island bundle = component + its imports only.
+- No CSS extraction, no `"use server"` auto-rewrite (separate plan), no nested islands, no hot reload.
+- `runtime/package.json` uses `peerDependencies` for `react` + `react-dom` so the root app's single copy is the only one Bun installs (avoids dispatcher-null SSR crash when two physical React copies coexist).
+
 ### Server functions
 
 Functions that exist only on the server but can be called from a client-side
@@ -981,13 +998,17 @@ Bun.serve baseline source: `example/bun-serve-baseline/index.ts`.
 - Per-route loaders (`loader: ({ params, path, req }) => Promise<data>`, result lands as component `data` prop)
 - Structured `req` in envelope (`{ method, url, headers, cookies, search }` parsed once in Rust via httparse)
 - Per-route middleware chain (`middleware: [(req, next) => RouteResponse, ...]` — short-circuit + post-`next()` header mutation; CRLF-injection-guarded)
+- Islands hydration MVP: `<Island id component props hydrate?>` + `buildIslands(configPath)` + `/_brust/islands/<file>` static route + handwritten bootstrap with 4 triggers (load/idle/visible/interaction) + shared React runtime via importmap
 
 **Designed, not built:**
 
 - Loaders + nested routes (`children: [...]`) — nested routes still pending
 - `brust-cli invalidate` (project tooling — separate from the native endpoint that just shipped)
 - Default TTL fallback in `[cache]` (semantics deferred — no current consumer)
-- Islands hydration (`"use island"`, lazy bootstrap, hydration triggers)
+- Islands: `"use island"` directive + auto-detection at JSX call sites (MVP uses manual `<Island>` wrapper)
+- Islands: content-hashed filenames + production caching strategy
+- Islands: CSS extraction per chunk
+- Islands: hot reload during dev
 - Server functions (`"use server"`, build-time RPC stub generation)
 - Agentic surface (MCP-style schemas auto-extracted at build time)
 - Global middleware (`app/middleware.ts`) + response-header *deletion* channel — per-route + set/override is shipped
