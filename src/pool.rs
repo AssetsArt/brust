@@ -6,7 +6,8 @@ use napi::threadsafe_function::ThreadsafeFunction;
 use parking_lot::RwLock;
 
 /// Renderer signature: takes a path (String) and returns Promise<String>.
-pub type RendererTsfn = ThreadsafeFunction<String, Promise<String>>;
+/// CalleeHandled = false matches what Function::build_threadsafe_function().build() produces.
+pub type RendererTsfn = ThreadsafeFunction<String, Promise<String>, String, napi::Status, false>;
 
 pub struct TsfnEntry {
     pub id: u32,
