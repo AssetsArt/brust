@@ -3,3 +3,6 @@ node_modules/
 runtime/*.node
 runtime/index.js
 runtime/index.d.ts
+
+# Local app config. Check in brust.example.toml; ignore brust.toml.
+brust.toml

@@ -1,0 +1,13 @@
+# Example brust.toml. Copy to brust.toml at your project root and edit.
+# Env vars BRUST_PORT and BRUST_WORKERS override any value here.
+
+[server]
+# TCP port to bind on (1..65535). Default: 3000.
+port = 3000
+
+[workers]
+# Bun Worker count for render dispatch.
+# Default (omit this key): floor(os.availableParallelism() * 1.8).
+# Pinning this is useful in containers where availableParallelism
+# reports the host count, not the cgroup limit.
+count = 18

@@ -770,13 +770,31 @@ correctly? The build needs to embed the cdylib alongside the user bundle.
 
 ### Configuration
 
-Today, env-only:
+Layered, low → high precedence:
 
-- `BRUST_PORT` — default 3000
-- `BRUST_WORKERS` — default `floor(os.availableParallelism() * 1.8)`
-- `BRUST_WORKER_ID` — set per Worker; do not set manually
+1. **Built-in defaults.** Port `3000`, workers `floor(os.availableParallelism() * 1.8)`.
+2. **`brust.toml` at the project root.** Optional. Schema (extends as subsystems land):
 
-Roadmap: `brust.toml` with `[server]`, `[workers]`, `[cache]`, `[build]` sections.
+   ```toml
+   [server]
+   port = 3000
+
+   [workers]
+   count = 18
+   ```
+
+   See `example/hello-world/brust.example.toml`.
+
+3. **Environment variables.** Override TOML and defaults.
+   - `BRUST_PORT` — TCP port.
+   - `BRUST_WORKERS` — Bun Worker count.
+   - `BRUST_WORKER_ID` — set per Worker by the framework; do not set manually.
+
+The loader is in `runtime/config.ts` and exposes `loadConfig(cwd?)` plus the
+`BrustConfig` type for app code that wants to read the merged config directly.
+
+Roadmap sections: `[cache]` (Cache plan), `[build]` (build pipeline plan when
+the CLI lands).
 
 ### Project tooling
 
@@ -899,6 +917,7 @@ Bun.serve baseline source: `example/bun-serve-baseline/index.ts`.
 - Benchmark harness (`scripts/benchmark.ts`, `bun run bench`)
 - HTTP 414 emission on oversized requests
 - Declarative routing: `routes.tsx` + matchit radix tree + JSON envelope tsfn payload + per-route `errorBoundary`
+- Layered configuration: defaults < `brust.toml` (`[server]` + `[workers]`) < env (`runtime/config.ts`)
 
 **Designed, not built:**
 
@@ -913,7 +932,7 @@ Bun.serve baseline source: `example/bun-serve-baseline/index.ts`.
 - HTML Streaming (`renderToPipeableStream` over SAB multi-chunk signals)
 - Navigation (intercept Link, JSON page fetches over `/_brust/page/*`)
 - Single-binary deploy (`bun build --compile`) — feasibility unknown until tested with the `.node` bundling path
-- TOML configuration
+- TOML configuration `[cache]` + `[build]` sections (the `[server]` + `[workers]` part is shipped)
 - Project tooling: `brust new` / `dev` / `build` / `invalidate`
 - Retry on tsfn failure, PING/PONG health checks
 
