@@ -1,5 +1,8 @@
 import { test, expect } from 'bun:test'
 import { spawn } from 'bun'
+import { mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 test('serves rendered html via worker pool', async () => {
   const proc = spawn({
@@ -155,6 +158,50 @@ test('errorBoundary renders when a route component throws', async () => {
     proc.kill('SIGINT')
     const exit = await proc.exited
     expect(exit).toBe(0)
+  }
+}, 15_000)
+
+test('reads port and workers from brust.toml at cwd', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'brust-toml-'))
+  try {
+    const projectRoot = process.cwd()
+    const tomlBody = [
+      '[server]',
+      'port = 38125',
+      '',
+      '[workers]',
+      'count = 2',
+      '',
+    ].join('\n')
+    await writeFile(join(dir, 'brust.toml'), tomlBody)
+
+    const proc = spawn({
+      cmd: ['bun', 'run', join(projectRoot, 'example/hello-world/index.ts')],
+      cwd: dir,
+      env: {
+        // Strip env overrides so TOML is the only source of truth.
+        ...Object.fromEntries(Object.entries(process.env).filter(
+          ([k]) => k !== 'BRUST_PORT' && k !== 'BRUST_WORKERS',
+        )),
+        RUST_LOG: 'brust=info',
+      },
+      stdout: 'pipe',
+      stderr: 'inherit',
+    })
+
+    const port = await readPortLine(proc.stdout)
+    try {
+      expect(port).toBe(38125)
+      const resp = await fetch(`http://127.0.0.1:${port}/`)
+      expect(resp.status).toBe(200)
+      expect(await resp.text()).toContain('Hello from Brust')
+    } finally {
+      proc.kill('SIGINT')
+      const exit = await proc.exited
+      expect(exit).toBe(0)
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true })
   }
 }, 15_000)
 
