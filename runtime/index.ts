@@ -59,6 +59,11 @@ export const brust = {
   configureCache(opts: { maxEntries: number }): void {
     ; (native as any).configureCache(opts.maxEntries)
   },
+  /** Tell Rust where to read `/_brust/islands/<file>` from. Called once at
+   * boot after buildIslands() emits chunks. Path must be absolute. */
+  configureIslandsDir(dir: string): void {
+    ; (native as any).configureIslandsDir(dir)
+  },
   // Register a renderer for this Bun Worker. `buf` MUST be backed by a SharedArrayBuffer
   // (or any ArrayBuffer the worker keeps rooted) — Rust captures the backing-store
   // pointer once here and reuses it for every render call. The buffer is held alive
@@ -85,3 +90,6 @@ export type { BrustConfig } from './config.ts'
 
 export { Island } from './islands/island.tsx'
 export type { IslandProps, HydrateTrigger } from './islands/island.tsx'
+
+export { buildIslands } from './islands/build.ts'
+export type { IslandsBuildResult, IslandsConfig } from './islands/build.ts'
