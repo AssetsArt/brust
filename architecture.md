@@ -298,49 +298,50 @@ roadmap.
 
 ```tsx
 // routes.tsx
-export const routes = [
-  { path: "/",            component: () => import("./pages/Home") },
-  { path: "/blog/:slug",  component: () => import("./pages/Blog"),
-    loader: async (req, { slug }) => ({ post: await db.getPost(slug) }),
-    cache:  { vary: ["accept-language"], ttl_seconds: 60 },
-  },
-  { path: "/app", component: () => import("./pages/App"), cache: false,
-    children: [
-      { path: "settings", component: () => import("./pages/Settings") },
-      { path: "profile",  component: () => import("./pages/Profile")  },
-    ],
-    errorBoundary: () => import("./pages/AppError"),  // catches 4xx/5xx
-  },
-]
+import { defineRoutes } from 'brust/runtime'
+import HelloWorld    from './components/HelloWorld'
+import BlogPost      from './components/BlogPost'
+import Crash         from './components/Crash'
+import CrashBoundary from './components/CrashBoundary'
+
+export const routes = defineRoutes([
+  { path: '/',             Component: HelloWorld },
+  { path: '/blog/{slug}',  Component: BlogPost },
+  { path: '/crash',        Component: Crash, errorBoundary: CrashBoundary },
+])
 ```
 
-Routes declare routing + data + cache. Islands are declared at point of use in
-JSX ([Islands](#islands-on-demand-hydration)) — no per-route islands manifest.
+Pattern syntax is **matchit 0.8** (`/blog/{slug}`, not Express-style `:slug`).
+`defineRoutes` is an identity helper that pins the array's element type.
 
-Bun parses `routes.tsx` at boot and sends the patterns to Rust over a
-dedicated napi call; Rust builds a radix tree. URL matching happens in Rust
-(no JS re-entry for matching). Worker dispatch then needs a `route_id` rather
-than a raw path — the current tsfn signature (`Function<String, Promise<u32>>`,
-where the `String` is the path) evolves to carry `(route_id, params, headers)`,
-likely as a JSON-encoded argument until something tighter is justified.
+Bun parses `routes.tsx` at boot and ships the pattern array to Rust via
+`brust.registerRoutes(...)`; Rust builds a `matchit::Router<u32>` keyed by
+array-index = route id (`src/routes.rs`). URL matching happens entirely in
+Rust — `handle_conn` calls `routes.match_path(&path)` and either dispatches
+into the worker pool with a JSON envelope `{ route_id, path, params }` or
+responds 404 without consuming worker capacity. The tsfn type signature
+`Function<String, Promise<u32>>` is **unchanged**; only the `String` content
+is now an envelope instead of a raw path.
 
-**State:**
-- **Loader → props.** Loader return value becomes the page component's `props`
-  on both server (initial render) and client (after navigation). No separate
-  data-fetch hook.
-- **Server → client hydration.** Loader data ships once as JSON inline next to
-  the marker for the page; client navigation fetches fresh JSON. No re-fetch
-  on first hydration.
-- **URL state.** `params` come from the path. Query string + search params are
-  on the `req` argument; no special primitive — apps reach for `useState`
-  inside islands when they need local state.
+Worker-side dispatcher lives in `runtime/routes.ts::makeRenderer`. It parses
+the envelope, picks the matching component by route_id, and renders with
+`{ params, path }` as props.
 
-**Custom error pages:**
-- `errorBoundary` on a route catches thrown loader errors, HTTP 4xx from the
-  loader return, and render exceptions in that subtree. Defaults to a built-in
-  page if not declared.
-- Global `app/_404.tsx` and `app/_500.tsx` if present override the built-ins
-  outside any route subtree.
+**Per-route error recovery.** A route can declare
+`errorBoundary: ComponentType<{ error: Error }>`. When the component throws
+inside `renderToString`, the worker catches the exception and renders the
+`errorBoundary` in its place. **HTTP status stays 200** in this branch —
+promoting it to 500 needs the richer tsfn return type introduced by the
+Middleware plan.
+
+**Designed but not yet built** (each gets its own plan):
+
+- `loader: async (req, params) => {...}` — defers to the Loader/Server-fn plan.
+- `children: [...]` — nested routes. Follow-up.
+- `cache: { vary, ttl_seconds }` — Cache plan.
+- `middleware: [...]` per-route — Middleware plan.
+- Global `app/_404.tsx` / `app/_500.tsx` overrides — Middleware follow-up.
+- Client-side navigation (`/_brust/page/*`) — Navigation plan.
 
 ### Cache
 
@@ -895,10 +896,13 @@ Bun.serve baseline source: `example/bun-serve-baseline/index.ts`.
 - Auto-tuned worker count: `floor(os.availableParallelism() * 1.8)`
 - Integration test + 100-burst manual smoke check
 - Bun.serve baseline comparator (`example/bun-serve-baseline/`)
+- Benchmark harness (`scripts/benchmark.ts`, `bun run bench`)
+- HTTP 414 emission on oversized requests
+- Declarative routing: `routes.tsx` + matchit radix tree + JSON envelope tsfn payload + per-route `errorBoundary`
 
 **Designed, not built:**
 
-- Routing + state + custom error pages (`routes.tsx` + radix tree + per-route cache + errorBoundary)
+- Loaders + nested routes + per-route cache field (`loader: ...`, `children: [...]`, `cache: ...`)
 - Cache (LRU, vary headers, TTL, control-socket invalidation)
 - Islands hydration (`"use island"`, lazy bootstrap, hydration triggers)
 - Server functions (`"use server"`, build-time RPC stub generation)
