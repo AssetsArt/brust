@@ -276,7 +276,7 @@ workers ≈ 58k; 24 workers ≈ 65k (plateau).
 The HTTP and dispatch layers above are real. The user-facing parts below are
 roadmap.
 
-### Routing
+### Routing, state, errors
 
 ```tsx
 // routes.tsx
@@ -291,13 +291,31 @@ export const routes = [
       { path: "settings", component: () => import("./pages/Settings") },
       { path: "profile",  component: () => import("./pages/Profile")  },
     ],
+    errorBoundary: () => import("./pages/AppError"),  // catches 4xx/5xx
   },
 ]
 ```
 
-Routes declare only routing + data + cache. Islands are declared at point of
-use in JSX (see [Islands](#islands-on-demand-hydration)) — no per-route islands
-manifest to keep in sync.
+Routes declare routing + data + cache. Islands are declared at point of use in
+JSX ([Islands](#islands-on-demand-hydration)) — no per-route islands manifest.
+
+**State:**
+- **Loader → props.** Loader return value becomes the page component's `props`
+  on both server (initial render) and client (after navigation). No separate
+  data-fetch hook.
+- **Server → client hydration.** Loader data ships once as JSON inline next to
+  the marker for the page; client navigation fetches fresh JSON. No re-fetch
+  on first hydration.
+- **URL state.** `params` come from the path. Query string + search params are
+  on the `req` argument; no special primitive — apps reach for `useState`
+  inside islands when they need local state.
+
+**Custom error pages:**
+- `errorBoundary` on a route catches thrown loader errors, HTTP 4xx from the
+  loader return, and render exceptions in that subtree. Defaults to a built-in
+  page if not declared.
+- Global `app/_404.tsx` and `app/_500.tsx` if present override the built-ins
+  outside any route subtree.
 
 At boot, Bun parses `routes.tsx` and sends route patterns to Rust over a
 dedicated napi call. Rust builds a radix tree. URL matching happens in Rust;
@@ -441,6 +459,164 @@ Trade-offs:
 - ⚠️ Distinct from `loader:` on routes. Loaders fire on page render; server
   fns fire on client interaction.
 
+### Middleware
+
+Request/response interceptors that wrap routes (or all routes). Run in
+declaration order; each is `async` and may short-circuit by returning a
+`Response` directly.
+
+```tsx
+// middleware.ts
+export const middleware = [
+  async (req, next) => {
+    const t0 = Date.now()
+    const res = await next()
+    res.headers.set('x-render-ms', String(Date.now() - t0))
+    return res
+  },
+  async (req, next) => {
+    if (req.url.pathname.startsWith('/app') && !req.session.user) {
+      return Response.redirect('/login', 302)
+    }
+    return next()
+  },
+]
+```
+
+Per-route override via `middleware: [...]` on a route entry. Middleware runs
+in the Bun Worker thread alongside the loader/render, so it sees the same
+`req` shape and can mutate response headers before they hit Rust.
+
+### Forms & multipart
+
+Form posts decode automatically. `multipart/form-data` exposes file streams
+without buffering whole uploads in memory.
+
+```tsx
+// actions/upload.ts
+"use server"
+
+export async function uploadAvatar(form: FormData): Promise<{ url: string }> {
+  const file = form.get('avatar') as File
+  const buf  = await file.arrayBuffer()         // or stream via .stream()
+  const url  = await storage.put(file.name, buf)
+  return { url }
+}
+```
+
+```tsx
+// components/AvatarUpload.tsx — "use island"
+<form
+  onSubmit={async (e) => {
+    e.preventDefault()
+    const data = new FormData(e.currentTarget)
+    const { url } = await uploadAvatar(data)
+    setAvatar(url)
+  }}
+  encType="multipart/form-data"
+>
+  <input type="file" name="avatar" accept="image/*" />
+  <button>Upload</button>
+</form>
+```
+
+Server fns accept `FormData` directly as an argument type. Large uploads
+stream through Rust without copying the body into the JS heap until the
+handler asks for it.
+
+### Authentication
+
+Brust ships a thin session primitive — cookie-backed, opaque token, server-side
+store pluggable (Redis, SQLite, memory for dev). Auth is wired through
+middleware; routes consume `req.session`.
+
+```tsx
+// auth.ts
+import { sessionStore } from 'brust/auth'
+
+export const sessions = sessionStore({
+  store:    'redis://localhost:6379',     // or { kind: 'memory' } for dev
+  cookie:   { name: 'sid', secure: true, sameSite: 'lax' },
+  maxAgeMs: 7 * 24 * 60 * 60 * 1000,
+})
+
+// middleware.ts
+export const middleware = [sessions.middleware, /* ... */]
+
+// actions/auth.ts — "use server"
+export async function login(email: string, password: string) {
+  const user = await db.users.verify(email, password)
+  if (!user) throw new Error('invalid credentials')
+  await req.session.set({ userId: user.id })       // ambient `req`, see below
+  return { ok: true }
+}
+```
+
+Inside server fns and loaders, `req` is available through async-local storage
+(no need to thread it as an argument). OAuth/OIDC providers are out of scope
+for v1; the session primitive is the building block apps wire those on top of.
+
+### Real-time: WebSockets, SSE, streams
+
+Three primitives, one accept loop:
+
+```tsx
+// routes.tsx
+{
+  path: "/ws/chat/:room",
+  websocket: () => import("./ws/chat"),      // upgrade-only route
+},
+{
+  path: "/events",
+  sse: async (req) => {
+    return new ReadableStream({
+      start(controller) {
+        const id = setInterval(() => {
+          controller.enqueue(`data: ${JSON.stringify({ now: Date.now() })}\n\n`)
+        }, 1000)
+        req.signal.addEventListener('abort', () => clearInterval(id))
+      },
+    })
+  },
+},
+```
+
+```tsx
+// ws/chat.ts
+export default {
+  async open(socket, { room }) { socket.subscribe(`room:${room}`) },
+  async message(socket, data) { socket.publish(`room:${socket.room}`, data) },
+  async close(socket)         { /* cleanup */ },
+}
+```
+
+- **WebSocket:** Rust handles the HTTP/1.1 upgrade and hands the raw TCP
+  connection to the worker, which runs the per-route ws handler in Bun's
+  WebSocket API. One ws connection pins to one worker for the connection's
+  lifetime (no migration mid-session).
+- **SSE / streaming responses:** route returns a `ReadableStream`. Rust pipes
+  chunks to the client with `Content-Type: text/event-stream` (or whatever the
+  route sets); backpressure handled by the underlying TCP write.
+- **No pub/sub bus built in** — apps can wire Redis pub/sub, NATS, or in-memory
+  channels behind the per-route handlers.
+
+### HTML Streaming
+
+`renderToPipeableStream` writes the page as chunks while loaders are still
+resolving — useful for Suspense + slow data. Compared to the current
+`renderToString` path, the SAB layout needs to switch to "write-many,
+signal-many" (intermediate length signals as chunks land).
+
+The integration shape:
+
+1. Worker calls `renderToPipeableStream(<App />, { onShellReady, onAllReady })`.
+2. On each chunk, Worker writes into SAB and `tsfn.callback(chunk_len)`.
+3. Rust pumps each chunk to the client with chunked transfer-encoding.
+4. Final signal `0` closes the response.
+
+Currently deferred from build because most pages don't benefit (latency win
+small relative to render time), but the API surface above is the target.
+
 ### Client JS budget (target)
 
 | Scenario | JS sent to client |
@@ -481,12 +657,34 @@ Today, env-only:
 
 Roadmap: `brust.toml` with `[server]`, `[workers]`, `[cache]`, `[build]` sections.
 
-### Streaming SSR
+### Project tooling
 
-`renderToString` produces a complete HTML blob — fits the SAB-write-once
-model. React 18's `renderToPipeableStream` would need a multi-write protocol
-(repeated SAB writes with intermediate signals, or socket-style streaming).
-Deferred; latency win on content-heavy pages is small relative to render time.
+A small CLI ships with the framework:
+
+| Command | Does |
+|---|---|
+| `brust new <name>` | Scaffold a starter project (entry, `routes.tsx`, sample page, `brust.toml`) |
+| `brust dev`        | Run the dev server with hot reload (rebuild Rust if changed, restart Bun workers on JS/TSX edit) |
+| `brust build`      | Production build: TS transformer (`"use island"` / `"use server"`), client bundle, `bun build --compile` |
+| `brust invalidate <path>` | Talk to a running server's control socket to evict a cache entry |
+
+The CLI is itself a Bun script; no separate Rust binary needed beyond the
+cdylib.
+
+### Native clients
+
+React components written for Brust target the web by default. Two paths to
+non-browser clients on the roadmap:
+
+- **Desktop:** wrap Brust's HTTP layer in a Tauri or Electron shell; the
+  React tree is the same code. No new framework primitives needed.
+- **Mobile:** React Native compat is **not** automatic — RN uses a different
+  renderer (`react-native` package, not `react-dom`). Apps that want shared
+  code must split UI primitives behind a platform-agnostic abstraction
+  (the project chooses; Brust does not impose one).
+
+This is an option, not a feature. We don't plan to invest framework effort
+beyond making sure the server side stays usable from any HTTP client.
 
 ### Retry / health / error path
 
@@ -574,22 +772,28 @@ Bun.serve baseline comparator: `example/bun-serve-baseline/index.ts`.
 
 **Designed, not built:**
 
+- Routing + state + custom error pages (`routes.tsx` + radix tree + per-route cache + errorBoundary)
 - Cache (LRU, vary headers, TTL, control-socket invalidation)
-- Routing (`routes.tsx` + radix tree + per-route cache config)
 - Islands hydration (`"use island"`, lazy bootstrap, hydration triggers)
 - Server functions (`"use server"`, build-time RPC stub generation)
+- Middleware (per-route + global, short-circuit on `Response`)
+- Forms & multipart (streaming uploads, `FormData` server-fn args)
+- Authentication (cookie session, pluggable store, middleware-wired)
+- Real-time: WebSockets (per-route upgrade) + SSE / streaming responses
+- HTML Streaming (`renderToPipeableStream` over SAB multi-chunk signals)
+- Navigation (intercept Link, JSON page fetches over `/_brust/page/*`)
 - Single-binary deploy (`bun build --compile`)
 - TOML configuration
+- Project tooling: `brust new` / `dev` / `build` / `invalidate`
 - Retry on tsfn failure, PING/PONG health checks
 
 **Deferred (no design yet):**
 
-- Streaming SSR (`renderToPipeableStream`)
 - Multi-thread tokio runtime (Brust is single-thread Rust today)
 - N slots per worker for loader-bound workloads
 - HTTP/2
 - TLS termination
-- Hot reload (dev mode)
+- Native client wrapper (Tauri / RN) beyond noting it as an option
 - Graceful shutdown / drain (SIGINT handled JS-side via `process.exit`)
 
 ---
