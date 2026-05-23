@@ -1,6 +1,7 @@
 #![deny(clippy::all)]
 
 mod http;
+mod io;
 
 use napi_derive::napi;
 

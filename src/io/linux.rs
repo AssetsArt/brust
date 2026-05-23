@@ -1,0 +1,53 @@
+#![cfg(target_os = "linux")]
+
+use std::future::Future;
+use std::net::SocketAddr;
+
+pub const IO_NAME: &str = "tokio-uring";
+
+pub fn run_io<F, Fut>(f: F)
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: Future<Output = ()>,
+{
+    std::thread::spawn(move || {
+        tokio_uring::start(async move { f().await });
+    });
+}
+
+pub fn spawn<F: Future<Output = ()> + 'static>(f: F) {
+    tokio_uring::spawn(f);
+}
+
+pub struct TcpListener(tokio_uring::net::TcpListener);
+pub struct TcpStream(tokio_uring::net::TcpStream);
+
+impl TcpListener {
+    pub async fn bind(addr: SocketAddr) -> std::io::Result<Self> {
+        tokio_uring::net::TcpListener::bind(addr).map(Self)
+    }
+
+    pub async fn accept(&self) -> std::io::Result<(TcpStream, SocketAddr)> {
+        let (s, addr) = self.0.accept().await?;
+        Ok((TcpStream(s), addr))
+    }
+}
+
+impl TcpStream {
+    pub async fn read_request(&mut self, buf: &mut Vec<u8>) -> std::io::Result<usize> {
+        // tokio-uring read takes ownership; we swap the buffer
+        let owned = std::mem::take(buf);
+        let (res, returned) = self.0.read(owned).await;
+        *buf = returned;
+        res
+    }
+
+    pub async fn write_all(&mut self, bytes: Vec<u8>) -> std::io::Result<()> {
+        let (res, _) = self.0.write_all(bytes).await;
+        res
+    }
+
+    pub async fn shutdown(&mut self) -> std::io::Result<()> {
+        self.0.shutdown(std::net::Shutdown::Both)
+    }
+}
