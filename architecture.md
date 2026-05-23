@@ -849,17 +849,21 @@ Future splits when the API stabilises (e.g. `brust-cli` if/when one exists).
 
 ## Performance
 
-All numbers measured. Hardware: M1 Pro (10 cores: 8P + 2E), 16 GB RAM, Bun 1.3,
+All numbers measured. Hardware: M1 Pro (10 cores: 8P + 2E), 16 GB RAM, Bun 1.3+,
 release build, `oha -c 120 -z 10s`.
 
 | Endpoint | Setup | RPS | p99 |
 |---|---|---|---|
-| `/ping` (Rust-native) | `BRUST_WORKERS=18` | **107 k** | <0.1 ms |
-| `/` (React SSR via SAB) | `BRUST_WORKERS=18` | **72 k** | 0.1 ms |
+| `/ping` (Rust-native) | `BRUST_WORKERS=18` | **110 k** | <0.3 ms |
+| `/` (React SSR via SAB) | `BRUST_WORKERS=18` | **61 k** | 1.0 ms |
 | `/ping` (axum baseline, same box) | — | 100 k+ | — |
-| `/`, `/ping` (Bun.serve baseline) | — | *TBD* | — |
+| `/ping` (Bun.serve baseline) | — | 82 k | 3.1 ms |
+| `/` (Bun.serve baseline) | — | 53 k | 4.3 ms |
 
-Bun.serve baseline comparator: `example/bun-serve-baseline/index.ts`.
+Reproduce with `bun run bench` — driver at `scripts/benchmark.ts`, results at `bench/RESULTS.md`.
+Bun.serve baseline source: `example/bun-serve-baseline/index.ts`.
+
+**Read:** Brust's Rust accept loop + napi + SAB beats Bun.serve+React by ~34 % on `/ping` and ~16 % on `/`. The smaller `/` margin is the cost of crossing the napi tsfn boundary once per render — irreducible until a non-React render path appears.
 
 ---
 
