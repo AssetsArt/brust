@@ -104,10 +104,105 @@ impl LruCache {
     pub fn resize(&self, max: NonZeroUsize) {
         self.inner.lock().resize(max);
     }
+
+    /// Remove every entry whose key has the given method + path (regardless
+    /// of query string or vary values). Returns the number of entries
+    /// removed. Hits/misses counters are NOT reset.
+    pub fn invalidate_path(&self, method: &str, path: &str) -> usize {
+        let mut guard = self.inner.lock();
+        // lru 0.12 has no remove-by-predicate. Snapshot the matching keys,
+        // then pop each. Allocation cost is proportional to matches, not
+        // total cache size.
+        let to_remove: Vec<CacheKey> = guard
+            .iter()
+            .filter(|(k, _)| k.method == method && k.path == path)
+            .map(|(k, _)| k.clone())
+            .collect();
+        for k in &to_remove {
+            guard.pop(k);
+        }
+        to_remove.len()
+    }
+
+    /// Remove every entry. Hits/misses counters are NOT reset (they
+    /// represent lifetime totals; operators wanting a fresh window can
+    /// scrape `/stats` and compute deltas).
+    pub fn clear(&self) -> usize {
+        let mut guard = self.inner.lock();
+        let removed = guard.len();
+        guard.clear();
+        removed
+    }
 }
 
 impl Default for LruCache {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn key(method: &str, path: &str, query: &str) -> CacheKey {
+        CacheKey {
+            method: method.to_string(),
+            path: path.to_string(),
+            sorted_query: query.to_string(),
+            vary_values: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn invalidate_path_removes_only_matching_entries() {
+        let c = LruCache::new();
+        c.insert(key("GET", "/a", ""), b"a".to_vec(), Duration::from_secs(60));
+        c.insert(key("GET", "/a", "x=1"), b"a-x".to_vec(), Duration::from_secs(60));
+        c.insert(key("GET", "/b", ""), b"b".to_vec(), Duration::from_secs(60));
+
+        let removed = c.invalidate_path("GET", "/a");
+        assert_eq!(removed, 2);
+        assert!(c.get(&key("GET", "/a", "")).is_none());
+        assert!(c.get(&key("GET", "/a", "x=1")).is_none());
+        assert_eq!(c.get(&key("GET", "/b", "")), Some(b"b".to_vec()));
+    }
+
+    #[test]
+    fn invalidate_path_no_match_returns_zero() {
+        let c = LruCache::new();
+        c.insert(key("GET", "/a", ""), b"a".to_vec(), Duration::from_secs(60));
+        assert_eq!(c.invalidate_path("GET", "/missing"), 0);
+        assert_eq!(c.invalidate_path("POST", "/a"), 0);
+        assert_eq!(c.stats().len, 1);
+    }
+
+    #[test]
+    fn clear_removes_all_entries_and_returns_count() {
+        let c = LruCache::new();
+        c.insert(key("GET", "/a", ""), b"a".to_vec(), Duration::from_secs(60));
+        c.insert(key("GET", "/b", ""), b"b".to_vec(), Duration::from_secs(60));
+        c.insert(key("GET", "/c", ""), b"c".to_vec(), Duration::from_secs(60));
+        let removed = c.clear();
+        assert_eq!(removed, 3);
+        assert_eq!(c.stats().len, 0);
+    }
+
+    #[test]
+    fn invalidate_and_clear_preserve_hits_and_misses() {
+        let c = LruCache::new();
+        c.insert(key("GET", "/a", ""), b"a".to_vec(), Duration::from_secs(60));
+        let _ = c.get(&key("GET", "/a", "")); // hit
+        let _ = c.get(&key("GET", "/missing", "")); // miss
+        assert_eq!(c.stats().hits, 1);
+        assert_eq!(c.stats().misses, 1);
+
+        c.invalidate_path("GET", "/a");
+        assert_eq!(c.stats().hits, 1);
+        assert_eq!(c.stats().misses, 1);
+
+        c.clear();
+        assert_eq!(c.stats().hits, 1);
+        assert_eq!(c.stats().misses, 1);
     }
 }
