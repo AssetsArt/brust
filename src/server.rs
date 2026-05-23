@@ -136,7 +136,7 @@ async fn handle_conn(
             continue;
         }
 
-        let (envelope_json, route_id) = match routes.match_path(&path) {
+        let (envelope_json, route_id) = match routes.match_path(&method, &path, &buf) {
             MatchResult::Matched { envelope_json, route_id } => (envelope_json, route_id),
             MatchResult::NoMatch => {
                 let _ = s.write_all(http::error_404()).await;
