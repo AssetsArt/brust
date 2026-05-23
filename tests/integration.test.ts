@@ -738,6 +738,49 @@ test('action endpoint: missing Content-Length → 411', async () => {
   }
 }, 15_000)
 
+test('action middleware: short-circuits without cookie', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38158', RUST_LOG: 'brust=warn' },
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/deleteNote`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(['n-123']),
+    })
+    expect(resp.status).toBe(401)
+    expect(await resp.text()).toBe('login required')
+  } finally {
+    proc.kill('SIGINT')
+    await proc.exited
+  }
+}, 15_000)
+
+test('action middleware: passes through with cookie', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38159', RUST_LOG: 'brust=warn' },
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/deleteNote`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Cookie': 'user=alice' },
+      body: JSON.stringify(['n-123']),
+    })
+    expect(resp.status).toBe(200)
+    const body = await resp.json() as { ok: boolean }
+    expect(body.ok).toBe(true)
+  } finally {
+    proc.kill('SIGINT')
+    await proc.exited
+  }
+}, 15_000)
+
 async function readPortLine(stream: ReadableStream<Uint8Array>): Promise<number> {
   const reader = stream.getReader()
   const decoder = new TextDecoder()
