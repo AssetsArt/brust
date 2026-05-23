@@ -82,3 +82,6 @@ export type {
 
 export { loadConfig, BrustConfigError } from './config.ts'
 export type { BrustConfig } from './config.ts'
+
+export { Island } from './islands/island.tsx'
+export type { IslandProps, HydrateTrigger } from './islands/island.tsx'
