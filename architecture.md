@@ -342,10 +342,6 @@ likely as a JSON-encoded argument until something tighter is justified.
 - Global `app/_404.tsx` and `app/_500.tsx` if present override the built-ins
   outside any route subtree.
 
-At boot, Bun parses `routes.tsx` and sends route patterns to Rust over a
-dedicated napi call. Rust builds a radix tree. URL matching happens in Rust;
-loader + component dispatch in Bun.
-
 ### Cache
 
 LRU keyed on `method + path + sorted query + vary_headers`. Per-route opt-out
@@ -477,7 +473,8 @@ Trade-offs:
 
 - ✅ End-to-end type safety without a duplicate schema
 - ✅ Server-only code (DB, secrets) literally not in the client bundle
-- ✅ Same auth/session context as the rest of the request
+- ✅ Same request context as a page render — any middleware applied to the
+  matched route applies to the server-fn call too
 - ⚠️ Each call = one HTTP round-trip. Not for hot loops; batch on the client.
 - ⚠️ Args/return must be JSON-serialisable (richer encoder for `Date`/`Map`/
   `bigint` is a roadmap item). `FormData` is a special case, see
@@ -572,9 +569,9 @@ export lets authors trim, narrow, or annotate.
 - ✅ AI-first design — no DOM scraping; agents get typed, stable contracts
 - ✅ Schema co-evolves with code (build-time extraction, not hand-maintained)
 - ✅ Reuses existing types from server fns & loaders
-- ✅ Agents inherit the user's auth/session and any rate-limits — no separate
-  agent-only ACL surface; the same middleware that protects users protects
-  agents
+- ✅ Agents inherit the user's full request context (cookies, headers, any
+  middleware-applied auth or rate-limits) — no separate agent-only ACL
+  surface; the same middleware that protects users protects agents
 - ⚠️ Schema is a public API surface — versioning matters; breaking changes
   to a server-fn signature break agents the same way they break clients
 - ⚠️ Agent-specific concerns (per-agent rate limits, audit logging, consent
@@ -597,13 +594,17 @@ export const middleware = [
     return res
   },
   async (req, next) => {
-    if (req.url.pathname.startsWith('/app') && !req.session.user) {
+    if (req.url.pathname.startsWith('/app') && !req.headers.get('authorization')) {
       return Response.redirect('/login', 302)
     }
     return next()
   },
 ]
 ```
+
+Brust does not ship a session/auth primitive — apps wire their own middleware
+(cookie parsing, session store, OAuth providers, etc.). The middleware
+contract above is intentionally generic.
 
 Per-route override via `middleware: [...]` on a route entry. Middleware runs
 in the Bun Worker thread alongside the loader/render, so it sees the same
@@ -718,11 +719,12 @@ The integration shape:
 1. Worker calls `renderToPipeableStream(<App />, { onShellReady, onAllReady })`.
 2. Each chunk is encoded into the SAB at **offset 0** (the SAB is reused
    per chunk; no growing cursor).
-3. Worker signals the chunk length via a new tsfn variant — `Callback`-style
-   `Function<u32, ()>` invoked multiple times — instead of the
-   `Function<String, Promise<u32>>` used for `renderToString`. The streaming
-   renderer is registered through a separate entry point so both contracts
-   coexist.
+3. Worker signals the chunk length via a new tsfn variant —
+   `Function<u32, Promise<()>>`, invoked multiple times — instead of the
+   `Function<String, Promise<u32>>` used for `renderToString`. The Promise
+   on each call is what gives the Worker an explicit ack channel. The
+   streaming renderer is registered through a separate entry point so both
+   contracts coexist.
 4. Rust drains the SAB into the socket (chunked transfer-encoding) **before**
    acknowledging the signal; only after the chunk is on the wire does the
    Worker write the next one.
