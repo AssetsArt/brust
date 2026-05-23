@@ -6,6 +6,11 @@ React on the server. Rust everywhere else. One Bun host process, Rust loaded as
 a `.node` native module via napi-rs. Renders dispatched into Bun Worker threads;
 HTML returned through per-worker SharedArrayBuffer.
 
+Agent-first: every route ships a machine-readable schema (server fns =
+tools, loaders = resources) so AI agents can drive the app without scraping
+the DOM. The framework already knows the structure; the schema is extracted
+at build time.
+
 ---
 
 ## Why Brust
@@ -459,6 +464,101 @@ Trade-offs:
 - ⚠️ Distinct from `loader:` on routes. Loaders fire on page render; server
   fns fire on client interaction.
 
+### Agentic surface (MCP-style page schemas)
+
+Pages expose their structure as machine-readable schemas — content, inputs,
+and actions — so AI agents can drive a page without scraping HTML. Same idea
+as Model Context Protocol, applied to web routes: a page is a resource, the
+server functions it triggers are tools.
+
+The framework already knows everything an agent would need:
+
+- the route tree (paths, params)
+- per-route loader types (what data the page consumes)
+- the server fns the page imports (the tools the page can invoke)
+- the islands rendered (the interactive surface)
+
+A build-time extractor walks the import graph and emits a schema per route.
+Apps don't write the schema by hand.
+
+**Per-route schema:**
+
+```json
+GET /_brust/agentic/blog/:slug
+
+{
+  "path":        "/blog/:slug",
+  "description": "Read a blog post and post comments",
+  "params":      { "slug": { "type": "string" } },
+  "content": {
+    "post": {
+      "source": "loader",
+      "schema": { "title": "string", "body": "string", "author": "string" }
+    }
+  },
+  "actions": [
+    {
+      "id":          "createComment",
+      "description": "Post a comment on this post",
+      "args":        { "postId": "string", "body": "string" },
+      "returns":     { "id": "string", "createdAt": "string" }
+    }
+  ],
+  "islands": [
+    { "name":   "CommentForm",
+      "inputs": [{ "name": "body", "kind": "textarea", "maxLength": 5000 }] }
+  ]
+}
+```
+
+**Global manifest:**
+
+```
+GET /_brust/agentic/manifest
+
+{
+  "name":   "my-app",
+  "routes": [ /* all routes */ ],
+  "tools":  [ /* all "use server" functions, route-agnostic */ ]
+}
+```
+
+**Invoking actions** uses the existing server-fn endpoint
+`/_brust/action/<id>` — the same one client islands call. Agents pass JSON
+args and receive JSON. No separate transport.
+
+**MCP compatibility:** the manifest can be served through an MCP-compliant
+endpoint so any MCP client (Claude desktop, Cursor, custom agents) can
+discover and call into a Brust app without bespoke integration. Each Brust
+app effectively *is* an MCP server.
+
+**Author overrides:**
+
+```tsx
+// pages/Blog.tsx
+export const agentic = {
+  description: "Read a blog post and post comments",
+  actions:     ['createComment'],   // narrow from the import-graph default
+  hide:        ['internalDebugFn'], // explicitly exclude
+}
+```
+
+Default: every server fn the page imports + every island it renders. The
+export lets authors trim, narrow, or annotate.
+
+**Trade-offs:**
+
+- ✅ AI-first design — no DOM scraping; agents get typed, stable contracts
+- ✅ Schema co-evolves with code (build-time extraction, not hand-maintained)
+- ✅ Reuses existing types from server fns & loaders
+- ⚠️ Schema is a public API surface — versioning matters; breaking changes
+  to a server-fn signature break agents the same way they break clients
+- ⚠️ Auth identical to user requests — middleware decides what each caller
+  can invoke
+- ⚠️ Agent-specific concerns (per-agent rate limits, audit logging, consent
+  prompts before destructive actions) are middleware territory; the
+  framework doesn't impose a policy
+
 ### Middleware
 
 Request/response interceptors that wrap routes (or all routes). Run in
@@ -776,6 +876,7 @@ Bun.serve baseline comparator: `example/bun-serve-baseline/index.ts`.
 - Cache (LRU, vary headers, TTL, control-socket invalidation)
 - Islands hydration (`"use island"`, lazy bootstrap, hydration triggers)
 - Server functions (`"use server"`, build-time RPC stub generation)
+- Agentic surface (MCP-style schemas auto-extracted at build time)
 - Middleware (per-route + global, short-circuit on `Response`)
 - Forms & multipart (streaming uploads, `FormData` server-fn args)
 - Authentication (cookie session, pluggable store, middleware-wired)
