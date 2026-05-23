@@ -166,7 +166,7 @@ async fn handle_conn(
                         std::slice::from_raw_parts(entry.buf_ptr.0, n).to_vec()
                     };
                     let bytes = http::build_response(200, "text/html; charset=utf-8", body);
-                    if let (Some(key), Some(cfg)) = (cache_key.clone(), cache_config.as_ref()) {
+                    if let (Some(key), Some(cfg)) = (cache_key, cache_config.as_ref()) {
                         cache.insert(key, bytes.clone(), Duration::from_secs(cfg.ttl_seconds));
                     }
                     if s.write_all(bytes).await.is_err() {
@@ -222,7 +222,10 @@ fn lookup_vary_headers(request_buf: &[u8], vary: &[String]) -> Vec<String> {
     if vary.is_empty() {
         return Vec::new();
     }
-    let mut headers = [httparse::EMPTY_HEADER; 32];
+    // 64-header ceiling: enough for Apache-default-shaped requests; a vary header
+    // beyond this is silently treated as missing, which would cause a cache key
+    // collision across variants. Bump if real traffic ever hits the cap.
+    let mut headers = [httparse::EMPTY_HEADER; 64];
     let mut req = httparse::Request::new(&mut headers);
     let _ = req.parse(request_buf);
     vary.iter()
