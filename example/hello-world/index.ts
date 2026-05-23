@@ -6,7 +6,6 @@ import HelloWorld from './components/HelloWorld'
 import {
   brust,
   isWorker,
-  workerId,
 } from '../../runtime/index.ts'
 
 const PORT_ENV = process.env.BRUST_PORT
@@ -25,9 +24,11 @@ if (!isWorker) {
     entry: import.meta.url,
   })
 } else {
-  brust.registerRenderer(async (path: string) => {
+  let wid = ''
+  const id = brust.registerRenderer(async (path: string) => {
     return renderToString(
-      createElement(HelloWorld, { workerId: workerId()?.toString() ?? '' })
+      createElement(HelloWorld, { workerId: wid })
     )
   })
+  wid = String(id)
 }

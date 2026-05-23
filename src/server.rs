@@ -98,8 +98,7 @@ async fn handle_conn(mut s: TcpStream, pool: Arc<WorkerPool>) {
         };
         let _guard = entry.in_flight_guard();
 
-        let path_arg = path.clone();
-        match entry.tsfn.call_async(path_arg).await {
+        match entry.tsfn.call_async(path).await {
             Ok(promise) => match promise.await {
                 Ok(html) => {
                     let bytes = http::build_response(200, "text/html; charset=utf-8", html.into_bytes());
