@@ -6,10 +6,12 @@ React on the server. Rust everywhere else. One Bun host process, Rust loaded as
 a `.node` native module via napi-rs. Renders dispatched into Bun Worker threads;
 HTML returned through per-worker SharedArrayBuffer.
 
-Agent-first: every route ships a machine-readable schema (server fns =
-tools, loaders = resources) so AI agents can drive the app without scraping
-the DOM. The framework already knows the structure; the schema is extracted
-at build time.
+Designed agent-first: routes are designed to ship machine-readable schemas
+(server fns as tools, loaders as resources) so AI agents can drive the app
+without scraping the DOM. The framework already has the structural knowledge —
+loader types, server-fn signatures, island markers — that a schema extractor
+needs. The extractor and the schema endpoints themselves are still on the
+roadmap (see [Agentic surface](#agentic-surface-mcp-style-page-schemas)).
 
 ---
 
@@ -53,7 +55,7 @@ Bun process (one OS process)
     brust.serve({ port, workers, entry })
       ├─ napi.beginServe(...)          → spawn Rust accept thread
       ├─ for i in 0..N: new Worker(entry, env=BRUST_WORKER_ID=i)
-      └─ await napi.untilReady(timeout)
+      └─ await napi.untilReady(timeout)   # all workers registered, or exit(1)
 
   Worker threads × N  (= floor(os.availableParallelism() * 1.8))
     Each:
@@ -101,18 +103,22 @@ T4   if /ping       → write static response, loop to T3
                                                             (no JS, no napi)
 T5   else           → pool.pick_least_busy()   # atomic scan, N entries
                       in_flight_guard.++
-T6                  → entry.tsfn.call_async(path).await
+T6                  → entry.tsfn.call_async(path).await   # → Promise<u32>
+                       │     tsfn dispatch failure here → 502 + pool.remove(id)
                        │
                        └→ Bun Worker thread wakes:
                             renderToString(...)
                             TextEncoder.encodeInto(html, sabView)
-                            return written   # u32, bytes
-T7   Rust receives  → n = await result
-                       body = unsafe slice from entry.buf_ptr, len=n
-                       (zero copy across "IPC" — same address space)
-T8                  → bytes = build_response(200, "text/html", body)
+                            return written            # u32, bytes
+T7   Rust            → .await on Promise → n
+                       Promise rejection here → 500 ("render error: {msg}");
+                       worker stays in pool
+T8                  → if n outside (0, buf_len] → 500 ("render oversized")
+                       else body = unsafe { from_raw_parts(buf_ptr, n).to_vec() }
+                       (no V8 marshal; one Rust-local memcpy to detach body)
+T9                  → bytes = build_response(200, "text/html", body)
                        s.write_all(bytes).await
-T9                  → loop to T3 on the same TCP connection (keep-alive)
+T10                 → loop to T3 on the same TCP connection (keep-alive)
 ```
 
 ---
@@ -124,9 +130,15 @@ T9                  → loop to T3 on the same TCP connection (keep-alive)
                                 ──────────────            ────────         ─────────────────
 arg (path)         encode UTF-8 → tsfn queue      → cross-thread     → String (alloc, ~50 B)
 render output      renderToString  → SAB write    → -                → raw ptr deref
-                   (TextEncoder.encodeInto)         (no marshal)       (slice::from_raw_parts)
+                   (TextEncoder.encodeInto)         (no V8 marshal)    (slice::from_raw_parts)
 signal             return u32 written            → resolve Promise  → await yields u32
 ```
+
+The "no V8 marshal" row means napi doesn't re-encode or copy the rendered HTML
+when crossing the JS→Rust boundary — the bytes already sit in shared memory
+that Rust reads via the pointer captured at register time. It does *not* mean
+the whole `/` path is zero-copy end to end; the table below counts every copy
+that still happens.
 
 **Copy count, /  endpoint:**
 
@@ -134,12 +146,12 @@ signal             return u32 written            → resolve Promise  → await 
 |---|---|---|
 | path: V8 → Rust (`String`) | ~50 | unavoidable, tiny |
 | html: V8 → SAB (`TextEncoder.encodeInto`) | full body | inside Worker, one pass UTF-8 |
-| SAB → response `Vec<u8>` | full body | Rust local memcpy, ~10 GB/s on M1 |
+| SAB → response `Vec<u8>` (`from_raw_parts(..).to_vec()`) | full body | Rust local memcpy, ~10 GB/s on M1 |
 | response `Vec<u8>` → kernel | full body | `write_all` syscall, unavoidable |
 
 `build_response` still allocates one `Vec<u8>` and copies the body into it. The
-final response buffer + header could be sent with `writev` to drop that copy; we
-have not done it yet (see Roadmap).
+final response buffer + header could be sent with `writev` to drop the
+SAB→Vec memcpy; we have not done it yet (see Roadmap).
 
 ---
 
@@ -163,7 +175,7 @@ Render call:
 ```
 
 **Slot size:** 256 KB per worker. 18 workers on M1 Pro = 4.5 MB total. Comfortably in L2/L3.
-**Oversize:** render > 256 KB → Worker returns 0 → Rust responds HTTP 500. No fallback path yet; future option is dynamic resize or socket-style spillover.
+**Oversize:** Worker resolves with `0` (its self-reported "too big" sentinel) or with any value outside `(0, slot_size]` → Rust responds HTTP 500. No fallback path yet; future option is dynamic resize or a separate socket-style spillover frame.
 
 **Cross-thread safety:**
 
@@ -271,8 +283,9 @@ scheduler.
 
 Empirical sweet spot on M1 Pro (10 cores: 8P + 2E). napi workers spend ~45% of
 wall time in V8 GC, IPC, and thread-park; oversubscribing by 1.8× keeps CPU
-saturated during those pauses. Measured: 18 workers ≈ 65k RPS React SSR; 8
-workers ≈ 58k; 24 workers ≈ 65k (plateau).
+saturated during those pauses. Measured (see Performance table for full
+numbers): 18 workers ≈ 72k RPS React SSR; 8 workers ≈ 58k; >24 workers
+plateaus then regresses on scheduler thrash.
 
 ---
 
@@ -303,6 +316,13 @@ export const routes = [
 
 Routes declare routing + data + cache. Islands are declared at point of use in
 JSX ([Islands](#islands-on-demand-hydration)) — no per-route islands manifest.
+
+Bun parses `routes.tsx` at boot and sends the patterns to Rust over a
+dedicated napi call; Rust builds a radix tree. URL matching happens in Rust
+(no JS re-entry for matching). Worker dispatch then needs a `route_id` rather
+than a raw path — the current tsfn signature (`Function<String, Promise<u32>>`,
+where the `String` is the path) evolves to carry `(route_id, params, headers)`,
+likely as a JSON-encoded argument until something tighter is justified.
 
 **State:**
 - **Loader → props.** Loader return value becomes the page component's `props`
@@ -460,7 +480,8 @@ Trade-offs:
 - ✅ Same auth/session context as the rest of the request
 - ⚠️ Each call = one HTTP round-trip. Not for hot loops; batch on the client.
 - ⚠️ Args/return must be JSON-serialisable (richer encoder for `Date`/`Map`/
-  `bigint` is a roadmap item).
+  `bigint` is a roadmap item). `FormData` is a special case, see
+  [Forms & multipart](#forms--multipart).
 - ⚠️ Distinct from `loader:` on routes. Loaders fire on page render; server
   fns fire on client interaction.
 
@@ -551,10 +572,11 @@ export lets authors trim, narrow, or annotate.
 - ✅ AI-first design — no DOM scraping; agents get typed, stable contracts
 - ✅ Schema co-evolves with code (build-time extraction, not hand-maintained)
 - ✅ Reuses existing types from server fns & loaders
+- ✅ Agents inherit the user's auth/session and any rate-limits — no separate
+  agent-only ACL surface; the same middleware that protects users protects
+  agents
 - ⚠️ Schema is a public API surface — versioning matters; breaking changes
   to a server-fn signature break agents the same way they break clients
-- ⚠️ Auth identical to user requests — middleware decides what each caller
-  can invoke
 - ⚠️ Agent-specific concerns (per-agent rate limits, audit logging, consent
   prompts before destructive actions) are middleware territory; the
   framework doesn't impose a policy
@@ -585,7 +607,15 @@ export const middleware = [
 
 Per-route override via `middleware: [...]` on a route entry. Middleware runs
 in the Bun Worker thread alongside the loader/render, so it sees the same
-`req` shape and can mutate response headers before they hit Rust.
+`req` shape.
+
+**Mechanism gap:** the current tsfn contract returns only `u32` (body
+length); there is no channel for response headers or status. For
+middleware to actually mutate headers/status, the contract must evolve to
+either a richer return value (e.g. a struct `{ status, headers, body_len }`
+encoded into a fixed prefix of the SAB) or a separate tsfn handle dedicated
+to response metadata. The API surface above is the target; the wire format
+is unsettled.
 
 ### Forms & multipart
 
@@ -620,41 +650,14 @@ export async function uploadAvatar(form: FormData): Promise<{ url: string }> {
 </form>
 ```
 
-Server fns accept `FormData` directly as an argument type. Large uploads
-stream through Rust without copying the body into the JS heap until the
-handler asks for it.
-
-### Authentication
-
-Brust ships a thin session primitive — cookie-backed, opaque token, server-side
-store pluggable (Redis, SQLite, memory for dev). Auth is wired through
-middleware; routes consume `req.session`.
-
-```tsx
-// auth.ts
-import { sessionStore } from 'brust/auth'
-
-export const sessions = sessionStore({
-  store:    'redis://localhost:6379',     // or { kind: 'memory' } for dev
-  cookie:   { name: 'sid', secure: true, sameSite: 'lax' },
-  maxAgeMs: 7 * 24 * 60 * 60 * 1000,
-})
-
-// middleware.ts
-export const middleware = [sessions.middleware, /* ... */]
-
-// actions/auth.ts — "use server"
-export async function login(email: string, password: string) {
-  const user = await db.users.verify(email, password)
-  if (!user) throw new Error('invalid credentials')
-  await req.session.set({ userId: user.id })       // ambient `req`, see below
-  return { ok: true }
-}
-```
-
-Inside server fns and loaders, `req` is available through async-local storage
-(no need to thread it as an argument). OAuth/OIDC providers are out of scope
-for v1; the session primitive is the building block apps wire those on top of.
+Server fns accept `FormData` as an argument type via a **dedicated
+multipart code path in the generated RPC stub** — the stub detects a
+`FormData` arg and sends the request as `multipart/form-data` instead of
+JSON. Args other than `FormData` continue to use the JSON path described in
+[Server functions](#server-functions); the two paths share the same
+`/_brust/action/<id>` endpoint, differentiated by `Content-Type`. Large
+uploads stream through Rust without copying the body into the JS heap
+until the handler asks for it.
 
 ### Real-time: WebSockets, SSE, streams
 
@@ -690,10 +693,13 @@ export default {
 }
 ```
 
-- **WebSocket:** Rust handles the HTTP/1.1 upgrade and hands the raw TCP
-  connection to the worker, which runs the per-route ws handler in Bun's
-  WebSocket API. One ws connection pins to one worker for the connection's
-  lifetime (no migration mid-session).
+- **WebSocket:** Rust handles the HTTP/1.1 upgrade and the post-upgrade frame
+  loop on its own thread; messages are dispatched into the worker via a new
+  tsfn variant (`Function<WsMessage, Promise<WsReply>>`), not by handing the
+  raw TCP fd into V8. One ws connection pins to one worker for the
+  connection's lifetime (no migration mid-session). The exact wire shape for
+  binary frames is still open; UTF-8 text messages can ride the same SAB +
+  signal trick used for renders.
 - **SSE / streaming responses:** route returns a `ReadableStream`. Rust pipes
   chunks to the client with `Content-Type: text/event-stream` (or whatever the
   route sets); backpressure handled by the underlying TCP write.
@@ -704,15 +710,27 @@ export default {
 
 `renderToPipeableStream` writes the page as chunks while loaders are still
 resolving — useful for Suspense + slow data. Compared to the current
-`renderToString` path, the SAB layout needs to switch to "write-many,
-signal-many" (intermediate length signals as chunks land).
+`renderToString` path, the SAB acts as a one-chunk pipe rather than a
+single-shot buffer.
 
 The integration shape:
 
 1. Worker calls `renderToPipeableStream(<App />, { onShellReady, onAllReady })`.
-2. On each chunk, Worker writes into SAB and `tsfn.callback(chunk_len)`.
-3. Rust pumps each chunk to the client with chunked transfer-encoding.
-4. Final signal `0` closes the response.
+2. Each chunk is encoded into the SAB at **offset 0** (the SAB is reused
+   per chunk; no growing cursor).
+3. Worker signals the chunk length via a new tsfn variant — `Callback`-style
+   `Function<u32, ()>` invoked multiple times — instead of the
+   `Function<String, Promise<u32>>` used for `renderToString`. The streaming
+   renderer is registered through a separate entry point so both contracts
+   coexist.
+4. Rust drains the SAB into the socket (chunked transfer-encoding) **before**
+   acknowledging the signal; only after the chunk is on the wire does the
+   Worker write the next one.
+5. Final signal `0` closes the response.
+
+Ordering relies on napi's tsfn FIFO guarantee for calls from the same JS
+context. Backpressure is implicit: the Worker can't enqueue the next signal
+until the current one's `await` resumes after the Rust write.
 
 Currently deferred from build because most pages don't benefit (latency win
 small relative to render time), but the API surface above is the target.
@@ -803,16 +821,22 @@ One crate, `cdylib`:
 ```
 brust/
 ├── Cargo.toml                     edition 2024, napi 3.x, flume 0.11,
-│                                   parking_lot, httparse, tracing,
+│                                   parking_lot, httparse, thiserror,
+│                                   tracing, once_cell,
 │                                   tokio (mac) / tokio-uring (linux)
 ├── src/lib.rs                     napi exports: beginServe, untilReady,
 │                                   untilShutdown, registerRenderer,
 │                                   isWorker, workerId
 ├── src/pool.rs                    WorkerPool, TsfnEntry, BufPtr (Send+Sync)
 ├── src/server.rs                  accept loop, handle_conn, read_full_request,
-│                                   keep-alive request loop
+│                                   keep-alive request loop. 500/502 statuses
+│                                   are emitted inline via build_response;
+│                                   only 400/404/405/503 have helpers in http.rs.
 ├── src/http.rs                    parse_request (httparse), build_response,
-│                                   error_400/404/405/414/500/502/503
+│                                   error_400/404/405/503. (error_414 is
+│                                   declared but unreachable today —
+│                                   read_full_request silently closes on
+│                                   over-cap; wiring 414 is a follow-up.)
 ├── src/io/{linux,other,mod}.rs    tokio-uring vs tokio TcpListener/TcpStream
 │                                   wrappers (current_thread runtimes on both)
 └── src/shutdown.rs                Notify-based shutdown handle (currently
@@ -878,12 +902,11 @@ Bun.serve baseline comparator: `example/bun-serve-baseline/index.ts`.
 - Server functions (`"use server"`, build-time RPC stub generation)
 - Agentic surface (MCP-style schemas auto-extracted at build time)
 - Middleware (per-route + global, short-circuit on `Response`)
-- Forms & multipart (streaming uploads, `FormData` server-fn args)
-- Authentication (cookie session, pluggable store, middleware-wired)
+- Forms & multipart (streaming uploads, dedicated multipart code path in server-fn stubs)
 - Real-time: WebSockets (per-route upgrade) + SSE / streaming responses
 - HTML Streaming (`renderToPipeableStream` over SAB multi-chunk signals)
 - Navigation (intercept Link, JSON page fetches over `/_brust/page/*`)
-- Single-binary deploy (`bun build --compile`)
+- Single-binary deploy (`bun build --compile`) — feasibility unknown until tested with the `.node` bundling path
 - TOML configuration
 - Project tooling: `brust new` / `dev` / `build` / `invalidate`
 - Retry on tsfn failure, PING/PONG health checks
