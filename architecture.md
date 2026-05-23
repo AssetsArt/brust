@@ -323,24 +323,29 @@ responds 404 without consuming worker capacity. The tsfn type signature
 `Function<String, Promise<u32>>` is **unchanged**; only the `String` content
 is now an envelope instead of a raw path.
 
-Worker-side dispatcher lives in `runtime/routes.ts::makeRenderer`. It parses
-the envelope, picks the matching component by route_id, and renders with
-`{ params, path }` as props.
+Rust now embeds a structured `req` in the envelope: `{ method, url, headers,
+cookies, search }` — headers lower-cased, cookies parsed from the `Cookie`
+header, search params decoded from the query string (`+` → space, `%xx`
+percent-decode). Worker-side dispatcher in `runtime/routes.ts::makeRenderer`
+parses the envelope, composes the per-route middleware chain around the
+terminal (loader + render), and writes `[meta_len u16 BE][meta JSON][body]`
+into the SAB. Component props now include `req: BrustRequest`.
 
 **Per-route error recovery.** A route can declare
-`errorBoundary: ComponentType<{ error: Error }>`. When the component throws
-inside `renderToString`, the worker catches the exception and renders the
-`errorBoundary` in its place. **HTTP status stays 200** in this branch —
-promoting it to 500 needs the richer tsfn return type introduced by the
-Middleware plan.
+`errorBoundary: ComponentType<{ error: Error }>`. When the component or loader
+throws, the worker catches the exception, renders the `errorBoundary` in its
+place, and sets `meta.status = 500` — clients see a real 500 response.
+Uncaught middleware errors collapse to a plain text/plain 500 via the
+chain's outer try/catch.
 
 **Designed but not yet built** (each gets its own plan):
 
-- `loader` carrying full `req` (cookies, headers, search params) — lands with the Middleware Header-Mutation plan. The data-passing half (loader → `data` prop) is shipped.
+- `cache` ✅ shipped (per-route, opt-in, TTL + vary).
+- `middleware: [...]` ✅ shipped (per-route chain, short-circuit, header mutation).
+- `loader` receiving full `req` ✅ shipped.
 - `children: [...]` — nested routes. Follow-up.
-- `cache: { vary, ttl_seconds }` — Cache plan.
-- `middleware: [...]` per-route — Middleware plan.
 - Global `app/_404.tsx` / `app/_500.tsx` overrides — Middleware follow-up.
+- Global `app/middleware.ts` — Middleware follow-up.
 - Client-side navigation (`/_brust/page/*`) — Navigation plan.
 
 ### Cache
@@ -605,43 +610,61 @@ export lets authors trim, narrow, or annotate.
 
 ### Middleware
 
-Request/response interceptors that wrap routes (or all routes). Run in
-declaration order; each is `async` and may short-circuit by returning a
-`Response` directly.
+Per-route interceptors that wrap loader + render. Each is `async (req, next) =>
+Promise<RouteResponse>` and runs in declaration order — entry `[0]` is the
+outermost layer, wrapping `[1]`, ..., wrapping the terminal (loader + render).
+A middleware may short-circuit by returning a `RouteResponse` without calling
+`next()`, or call `next()` and mutate the returned response (status, headers).
 
 ```tsx
-// middleware.ts
-export const middleware = [
-  async (req, next) => {
-    const t0 = Date.now()
-    const res = await next()
-    res.headers.set('x-render-ms', String(Date.now() - t0))
-    return res
-  },
-  async (req, next) => {
-    if (req.url.pathname.startsWith('/app') && !req.headers.get('authorization')) {
-      return Response.redirect('/login', 302)
+import { defineRoutes, type Middleware } from 'brust'
+
+const authRequired: Middleware = async (req, next) => {
+  if (!req.cookies['user']) {
+    return {
+      status: 401,
+      body: 'unauthorised',
+      headers: { 'WWW-Authenticate': 'Cookie' },
     }
-    return next()
-  },
-]
+  }
+  return next()
+}
+
+const timeIt: Middleware = async (_req, next) => {
+  const t0 = Date.now()
+  const res = await next()
+  res.headers = { ...(res.headers ?? {}), 'x-render-ms': String(Date.now() - t0) }
+  return res
+}
+
+export const routes = defineRoutes([
+  { path: '/protected',   Component: Secret, middleware: [authRequired] },
+  { path: '/with-header', Component: Page,   middleware: [timeIt] },
+])
 ```
 
 Brust does not ship a session/auth primitive — apps wire their own middleware
-(cookie parsing, session store, OAuth providers, etc.). The middleware
-contract above is intentionally generic.
+(cookie parsing, session store, OAuth providers, etc.). `RouteResponse` is a
+plain object `{ status, body, headers? }`; `BrustRequest` carries
+`{ method, url, headers, cookies, search }` parsed once in Rust.
 
-Per-route override via `middleware: [...]` on a route entry. Middleware runs
-in the Bun Worker thread alongside the loader/render, so it sees the same
-`req` shape.
+**Mechanism (shipped):** SAB layout is `[meta_len: u16 BE][meta JSON][body]`
+where `meta = {status, headers?}`. Rust deserializes the meta JSON, then
+builds the wire response via `build_response(meta.status, ..., extra_headers,
+body)`. The `extra_headers` slice drops CRLF-injected entries and skips
+collisions against the fixed `Content-Type` / `Content-Length` /
+`Connection` lines. Cached responses store the full wire bytes built after
+meta parsing — so middleware-mutated headers cache correctly.
 
-**Mechanism gap (partially closed):** the tsfn signature still returns
-`u32` (total bytes), but the SAB layout is now `[status: u16 BE][body]` —
-Rust reads the prefix and uses it when calling `build_response`. This
-unlocks status-side middleware (errorBoundary returns 500 today). Response
-header mutation still has no channel — the follow-up extends the prefix to
-`[meta_len: u16][meta JSON][body]` carrying a `{status, headers}` struct,
-and lands alongside TS-side `(req, next) => res` composition.
+**Cache + middleware interaction:** cache lookup happens *before* middleware
+runs. A route that combines `cache: {...}` with personalising middleware
+(e.g. `x-request-id`, per-user headers) replays the *first* renderer's
+headers on every hit. Combine route caching only with deterministic middleware.
+
+**Designed, not built (follow-ups):**
+- Global `app/middleware.ts` array (currently per-route only).
+- Header *deletion* (current channel is set/override only — no way to drop a fixed header).
+- `req` extensions: file uploads / streaming bodies, parsed `Accept-Language`, etc.
 
 ### Forms & multipart
 
@@ -946,17 +969,19 @@ Bun.serve baseline source: `example/bun-serve-baseline/index.ts`.
 - Layered configuration: defaults < `brust.toml` (`[server]` + `[workers]`) < env (`runtime/config.ts`)
 - Per-route LRU cache (`cache: { ttl_seconds, vary? }`, lazy TTL eviction, configurable capacity via `[cache] max_entries`)
 - Cache observability: `GET /_brust/cache/stats` returns `{hits, misses, len, capacity}` as JSON
-- Richer tsfn return: status prefix in SAB (`errorBoundary` recoveries now return HTTP 500)
-- Per-route loaders (`loader: ({ params, path }) => Promise<data>`, result lands as component `data` prop)
+- Richer tsfn return: meta JSON envelope in SAB (`[meta_len u16 BE][meta JSON][body]`, `meta = {status, headers?}`)
+- Per-route loaders (`loader: ({ params, path, req }) => Promise<data>`, result lands as component `data` prop)
+- Structured `req` in envelope (`{ method, url, headers, cookies, search }` parsed once in Rust via httparse)
+- Per-route middleware chain (`middleware: [(req, next) => RouteResponse, ...]` — short-circuit + post-`next()` header mutation; CRLF-injection-guarded)
 
 **Designed, not built:**
 
-- Loaders + nested routes + per-route cache field (`loader: ...`, `children: [...]`, `cache: ...`)
+- Loaders + nested routes (`children: [...]`) — nested routes still pending
 - Cache invalidation (control-socket / `brust-cli invalidate`) + default TTL fallback in `[cache]`
 - Islands hydration (`"use island"`, lazy bootstrap, hydration triggers)
 - Server functions (`"use server"`, build-time RPC stub generation)
 - Agentic surface (MCP-style schemas auto-extracted at build time)
-- Middleware: response header mutation channel + TS-side composition (per-route + global, short-circuit on `Response`)
+- Global middleware (`app/middleware.ts`) + response-header *deletion* channel — per-route + set/override is shipped
 - Forms & multipart (streaming uploads, dedicated multipart code path in server-fn stubs)
 - Real-time: WebSockets (per-route upgrade) + SSE / streaming responses
 - HTML Streaming (`renderToPipeableStream` over SAB multi-chunk signals)
