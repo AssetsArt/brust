@@ -23,7 +23,7 @@ export function workerId(): number | null {
 
 export const brust = {
   async serve(opts: ServeOptions): Promise<void> {
-    ;(native as any).beginServe({
+    ; (native as any).beginServe({
       port: opts.port,
       workers: opts.workers,
       entry: opts.entry,
@@ -32,7 +32,6 @@ export const brust = {
       // Bun.Worker requires the JS entry (post-bundling). For the skeleton,
       // app/index.ts is a TS file that Bun executes directly.
       new Worker(opts.entry, {
-        // @ts-expect-error - Bun supports `env` per Worker; types may lag
         env: { ...process.env, BRUST_WORKER_ID: String(i) },
       })
     }
