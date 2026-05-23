@@ -177,9 +177,10 @@ async fn handle_conn(
                 Ok(n) => {
                     let n = n as usize;
                     // Envelope layout: [meta_len: u16 BE][meta JSON UTF-8][body bytes].
-                    // Minimum valid frame: 2 bytes meta_len + at least the smallest
-                    // JSON object {"status":200} (15 bytes). Tighten the check to >= 17.
-                    if n < 17 || n > entry.buf_len {
+                    // Minimum valid frame: 2 bytes meta_len + smallest JSON object
+                    // {"status":200} (14 bytes) + 0 body bytes = 16. Empty bodies are
+                    // legal (status 204/304, components returning null) and must not 500.
+                    if n < 16 || n > entry.buf_len {
                         error!(worker_id = entry.id, written = n, capacity = entry.buf_len, "render oversized or empty");
                         let _ = s.write_all(http::build_response(500, "text/plain", &[], b"render oversized".to_vec())).await;
                         return;
