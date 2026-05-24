@@ -736,14 +736,16 @@ export async function uploadAvatar(form: FormData): Promise<{ url: string }> {
 </form>
 ```
 
-Server fns accept `FormData` as an argument type via a **dedicated
-multipart code path in the generated RPC stub** — the stub detects a
-`FormData` arg and sends the request as `multipart/form-data` instead of
-JSON. Args other than `FormData` continue to use the JSON path described in
-[Server functions](#server-functions); the two paths share the same
-`/_brust/action/<id>` endpoint, differentiated by `Content-Type`. Large
-uploads stream through Rust without copying the body into the JS heap
-until the handler asks for it.
+Form actions declare `(req: BrustRequest, fd: FormData) => R` and the
+client calls them via `formAction<F>(id)` from `runtime/client`, which
+mirrors `action<F>(id)` but sends the body as `multipart/form-data` or
+`application/x-www-form-urlencoded` instead of JSON. JSON args continue
+to use the path described in [Server functions](#server-functions); the
+two paths share the same `/_brust/action/<id>` endpoint, differentiated
+by `Content-Type`. Wire-level, the action envelope carries
+`content_type` + `body_text` / `body_b64` (multipart payloads are
+base64-encoded through the JSON envelope), with the same 256 KB body
+cap as JSON actions. Streaming uploads remain a roadmap item.
 
 ### Real-time: WebSockets, SSE, streams
 
@@ -1015,6 +1017,7 @@ Bun.serve baseline source: `example/bun-serve-baseline/index.ts`.
 - Islands hydration MVP: `<Island id component props hydrate?>` + `buildIslands(configPath)` + `/_brust/islands/<file>` static route + handwritten bootstrap with 4 triggers (load/idle/visible/interaction) + shared React runtime via importmap
 - Server functions MVP: async functions invokable from islands via `POST /_brust/action/<id>` (JSON args/return). Reuses the renderer tsfn via a `kind: 'render' | 'action'` envelope discriminant. Action-specific middleware (action def's own chain). Client helper `action<F>(id)` from `runtime/client` preserves types via TS generics + `import type` erase. New Rust napi `register_actions(ids: Vec<String>)`; new server.rs branch with charset/length/utf-8 guards and dedicated 404/405/411/413 error paths. Meta envelope grows optional `contentType` (camelCase) so action returns ship as `application/json`. ResponseMeta becomes the Content-Type override channel for any future need.
 - `"use server"` directive + boot-time scanner — file-level directive. `brust.scanActions({ roots? })` walks the project, finds files whose first statement is `'use server'`, imports them, and registers all named function exports as actions. Middleware attaches per-action via `withMiddleware([mws], fn)`. Replaces the manual `defineActions` / `brust.registerActions` API.
+- Forms & Multipart — `POST /_brust/action/<id>` accepts `multipart/form-data` and `application/x-www-form-urlencoded` bodies in addition to JSON. Handlers declare `(req: BrustRequest, fd: FormData) => R` for form actions. Client helper `formAction<F>(id)` mirrors `action<F>(id)`. Wire-level: `ActionEnvelope.args_json` replaced by `content_type` + `body_text` / `body_b64`; multipart bodies are base64-encoded for transport through the JSON envelope. 256 KB body cap unchanged.
 
 **Designed, not built:**
 
@@ -1027,7 +1030,6 @@ Bun.serve baseline source: `example/bun-serve-baseline/index.ts`.
 - Islands: hot reload during dev
 - Agentic surface (MCP-style schemas auto-extracted at build time)
 - Global middleware (`app/middleware.ts`) + response-header *deletion* channel — per-route + set/override is shipped
-- Forms & multipart (streaming uploads, dedicated multipart code path in server-fn stubs)
 - Real-time: WebSockets (per-route upgrade) + SSE / streaming responses
 - HTML Streaming (`renderToPipeableStream` over SAB multi-chunk signals)
 - Navigation (intercept Link, JSON page fetches over `/_brust/page/*`)
