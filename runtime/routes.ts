@@ -1,4 +1,4 @@
-import { createElement, type ComponentType, type ReactNode } from 'react'
+import { createContext, createElement, useContext, type ComponentType, type ReactNode } from 'react'
 import { renderToString } from 'react-dom/server'
 import { consumeIslandUsedFlag } from './islands/island.tsx'
 import type { ActionDef } from './actions.ts'
@@ -66,21 +66,67 @@ export type Middleware = (
 ) => Promise<RouteResponse>
 
 export interface Route<Params = Record<string, string>, Data = unknown> {
-  /** matchit syntax — use `/blog/{slug}` for parameters (NOT Express-style `:slug`). */
-  path: string
+  /** Relative path segment (matchit syntax). Empty string `''` = layout-only
+   * (this node contributes nothing to the path; children attach to ancestors).
+   * Mutually exclusive with `index: true`. */
+  path?: string
+  /** Index route — matches the parent path exactly. Must be a leaf (no
+   * `children`, no `path`). Mutually exclusive with `path`. */
+  index?: boolean
   Component: ComponentType<RouteContext<Params, Data>>
   /** Optional async function that runs in the worker before rendering. Its
    * return value becomes the component's `data` prop. Exceptions are caught
-   * by `errorBoundary` if declared. */
+   * by `errorBoundary` if declared (inherited from closest ancestor). */
   loader?: (ctx: { params: Params; path: string; req: BrustRequest }) => Promise<Data>
-  /** Optional component invoked when Component or loader throws. */
+  /** Optional component invoked when Component or loader throws. Inherited
+   * by descendants when they don't define their own. */
   errorBoundary?: ComponentType<ErrorBoundaryProps>
-  /** Opt-in cache. Omit for no caching (default for authed/personalised routes). */
+  /** Opt-in cache. Cache config from the leaf only — parent's cache is
+   * ignored when the route is reached as part of a chain. */
   cache?: RouteCacheConfig
-  /** Per-route middleware chain. Runs in declaration order; each middleware
-   * wraps the next. Cache lookup happens BEFORE middleware runs — cached
-   * responses skip the chain entirely. */
+  /** Per-route middleware chain. Runs in declaration order; concatenated
+   * with parent middlewares (parent runs before child). Cache lookup
+   * still happens BEFORE any middleware (existing rule). */
   middleware?: Middleware[]
+  /** Nested children. Each child's path is composed with this node's path
+   * via `joinPath` (see flattenRoutes). */
+  children?: Route[]
+}
+
+/** Internal post-flatten representation. Each FlatRoute is a single leaf or
+ * index route in the user's nested tree. Indexed by Rust's route_id (array
+ * position). Consumed by `makeRenderer` and structurally compatible with
+ * `brust.registerRoutes` (reads only `fullPath` and `cache`). */
+export interface FlatRoute {
+  /** Full path Rust matches against. Composed from the chain via joinPath. */
+  fullPath: string
+  /** Chain of Route nodes from root to leaf, inclusive. Renderer walks
+   * this top-down. */
+  chain: Route[]
+  /** Concatenated middleware from root → leaf. composeChain wraps right-to-left,
+   * so the first element here becomes the outermost wrap (runs first). */
+  middleware: Middleware[]
+  /** Closest errorBoundary in the chain (leaf wins; falls back up the chain). */
+  errorBoundary?: ComponentType<ErrorBoundaryProps>
+  /** Cache from the leaf only — no parent inheritance. */
+  cache?: RouteCacheConfig
+}
+
+/** Internal React context that carries the next-deeper rendered element to
+ * the parent's <Outlet />. Default `null` means "no child to render" —
+ * `<Outlet />` from a leaf route or a flat route renders nothing. */
+export const OutletContext = createContext<ReactNode>(null)
+
+/** Renders the matched child route inside a parent layout. Read via
+ * React context; falls back to null at the leaf or in a flat (non-nested)
+ * route. Use inside a parent Component:
+ *
+ *     function AdminLayout() {
+ *       return <div><nav>…</nav><main><Outlet /></main></div>
+ *     }
+ */
+export function Outlet(): ReactNode {
+  return useContext(OutletContext)
 }
 
 /** Identity helper that pins the `routes` array's element type for the IDE

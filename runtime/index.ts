@@ -112,7 +112,7 @@ export const brust = {
   },
 }
 
-export { defineRoutes, makeRenderer } from './routes.ts'
+export { defineRoutes, makeRenderer, Outlet } from './routes.ts'
 export type {
   Route,
   RouteCall,
