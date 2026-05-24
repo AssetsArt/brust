@@ -8,7 +8,10 @@
 //   bun run bench                  # default: 120 conns, 10 s
 //   BENCH_CONN=200 BENCH_DUR=30s bun run bench
 //
-// Requires `oha` on PATH.
+// Requires `oha` on PATH AND a release-built napi addon:
+//   cd runtime && bun run build    # NOT build:debug — debug build is ~2x slower
+// The bench process can't tell which build is loaded, so the renderer prints a
+// reminder at the top of every run.
 
 import { spawn } from 'bun'
 import { mkdir, writeFile } from 'node:fs/promises'
@@ -23,12 +26,17 @@ type Scenario = {
 
 type Probe = {
   path: string                     // request path, e.g. '/' or '/ping'
+  method?: 'GET' | 'POST'          // default GET
+  body?: string                    // request body (POST only)
+  contentType?: string             // Content-Type header (POST only)
+  scenarios?: string[]             // restrict probe to scenarios whose id is listed; omit to run on all
 }
 
 type Result = {
   scenarioId: string
   scenarioLabel: string
   path: string
+  method: 'GET' | 'POST'
   rps: number
   p50ms: number | null
   p95ms: number | null
@@ -47,7 +55,10 @@ const SCENARIOS: Scenario[] = [
     id: 'brust',
     label: 'Brust (Rust HTTP + napi + SAB)',
     cmd: ['bun', 'run', 'example/hello-world/index.ts'],
-    env: { BRUST_PORT: '38201' },
+    // BRUST_WORKERS=18 matches the session-3 headline numbers (M1 Pro 10c, 8 perf + 2 eff cores).
+    // Bumping past CPU count helps /ping (Rust-native, bypasses napi pool) absorb more
+    // concurrent connections, and lets / amortise napi crossings over more JS contexts.
+    env: { BRUST_PORT: '38201', BRUST_WORKERS: '18' },
     expectedPortLog: /listening on 127\.0\.0\.1:(\d+)/,
   },
   {
@@ -62,6 +73,14 @@ const SCENARIOS: Scenario[] = [
 const PROBES: Probe[] = [
   { path: '/ping' },
   { path: '/' },
+  // Server-function dispatch — brust-only (no equivalent on the bun-serve baseline).
+  {
+    path: '/_brust/action/createNote',
+    method: 'POST',
+    body: '["hi"]',
+    contentType: 'application/json',
+    scenarios: ['brust'],
+  },
 ]
 
 async function runScenario(s: Scenario, p: Probe): Promise<Result> {
@@ -86,7 +105,7 @@ async function runScenario(s: Scenario, p: Probe): Promise<Result> {
   const url = `http://127.0.0.1:${port}${p.path}`
   let ohaJson: any
   try {
-    ohaJson = await runOha(url, CONN, DURATION)
+    ohaJson = await runOha(url, CONN, DURATION, p)
   } finally {
     proc.kill('SIGINT')
     await proc.exited
@@ -122,6 +141,7 @@ async function runScenario(s: Scenario, p: Probe): Promise<Result> {
     scenarioId: s.id,
     scenarioLabel: s.label,
     path: p.path,
+    method: p.method ?? 'GET',
     rps,
     p50ms: p50,
     p95ms: p95,
@@ -151,9 +171,17 @@ async function readPort(stream: ReadableStream<Uint8Array>, pattern: RegExp): Pr
   throw new Error('timed out waiting for listening line')
 }
 
-async function runOha(url: string, conn: number, duration: string): Promise<any> {
+async function runOha(url: string, conn: number, duration: string, probe: Probe): Promise<any> {
+  const method = probe.method ?? 'GET'
+  const args: string[] = ['-c', String(conn), '-z', duration, '--no-tui', '--output-format', 'json', '-m', method]
+  if (method === 'POST') {
+    if (!probe.body) throw new Error('POST probe requires body')
+    args.push('-d', probe.body)
+    if (probe.contentType) args.push('-T', probe.contentType)
+  }
+  args.push(url)
   const oha = spawn({
-    cmd: ['oha', '-c', String(conn), '-z', duration, '--no-tui', '--output-format', 'json', '-m', 'GET', url],
+    cmd: ['oha', ...args],
     stdout: 'pipe',
     stderr: 'pipe',
   })
@@ -195,13 +223,14 @@ function renderMarkdown(results: Result[]): string {
   lines.push(`· runtime: ${node}`)
   lines.push(`· host: ${hardware}`)
   lines.push(`· warmup: ${WARMUP_MS} ms`)
+  lines.push(`· build: release (\`cd runtime && bun run build\`)`)
   lines.push('')
-  lines.push('| Scenario | Path | RPS | p50 (ms) | p95 (ms) | p99 (ms) | Total | Errors |')
-  lines.push('|---|---|---:|---:|---:|---:|---:|---:|')
+  lines.push('| Scenario | Method | Path | RPS | p50 (ms) | p95 (ms) | p99 (ms) | Total | Errors |')
+  lines.push('|---|---|---|---:|---:|---:|---:|---:|---:|')
   for (const r of results) {
     const fmt = (n: number | null) => (n == null ? '—' : n.toFixed(2))
     lines.push(
-      `| ${r.scenarioLabel} | \`${r.path}\` | ${Math.round(r.rps).toLocaleString()} | ` +
+      `| ${r.scenarioLabel} | ${r.method} | \`${r.path}\` | ${Math.round(r.rps).toLocaleString()} | ` +
       `${fmt(r.p50ms)} | ${fmt(r.p95ms)} | ${fmt(r.p99ms)} | ` +
       `${r.totalRequests.toLocaleString()} | ${r.errors} |`,
     )
@@ -212,10 +241,17 @@ function renderMarkdown(results: Result[]): string {
 }
 
 async function main() {
+  console.log(
+    'Reminder: bench requires a release-built napi addon.\n' +
+    '  cd runtime && bun run build     # release, optimised\n' +
+    '  cd runtime && bun run build:debug   # ~2x slower, debug only\n',
+  )
   const results: Result[] = []
   for (const s of SCENARIOS) {
     for (const p of PROBES) {
-      console.log(`\n→ ${s.label}   ${p.path}   conn=${CONN}  dur=${DURATION}`)
+      if (p.scenarios && !p.scenarios.includes(s.id)) continue
+      const method = p.method ?? 'GET'
+      console.log(`\n→ ${s.label}   ${method} ${p.path}   conn=${CONN}  dur=${DURATION}`)
       const r = await runScenario(s, p)
       results.push(r)
       console.log(

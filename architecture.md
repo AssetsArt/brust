@@ -959,16 +959,17 @@ release build, `oha -c 120 -z 10s`.
 
 | Endpoint | Setup | RPS | p99 |
 |---|---|---|---|
-| `/ping` (Rust-native) | `BRUST_WORKERS=18` | **110 k** | <0.3 ms |
-| `/` (React SSR via SAB) | `BRUST_WORKERS=18` | **61 k** | 1.0 ms |
+| `/ping` (Rust-native) | `BRUST_WORKERS=18` | **117 k** | 0.24 ms |
+| `/` (React SSR via SAB) | `BRUST_WORKERS=18` | **55 k** | 1.2 ms |
+| `POST /_brust/action/createNote` (server fn dispatch) | `BRUST_WORKERS=18` | **61 k** | 0.54 ms |
 | `/ping` (axum baseline, same box) | — | 100 k+ | — |
-| `/ping` (Bun.serve baseline) | — | 82 k | 3.1 ms |
-| `/` (Bun.serve baseline) | — | 53 k | 4.3 ms |
+| `/ping` (Bun.serve baseline) | — | 86 k | 2.6 ms |
+| `/` (Bun.serve baseline) | — | 40 k | 3.6 ms |
 
 Reproduce with `bun run bench` — driver at `scripts/benchmark.ts`, results at `bench/RESULTS.md`.
 Bun.serve baseline source: `example/bun-serve-baseline/index.ts`.
 
-**Read:** Brust's Rust accept loop + napi + SAB beats Bun.serve+React by ~34 % on `/ping` and ~16 % on `/`. The smaller `/` margin is the cost of crossing the napi tsfn boundary once per render — irreducible until a non-React render path appears.
+**Read:** Brust's Rust accept loop + napi + SAB beats Bun.serve+React by ~35 % on `/ping` and ~37 % on `/`. The smaller `/` margin is the cost of crossing the napi tsfn boundary once per render — irreducible until a non-React render path appears. The action endpoint outpaces React-SSR (61 k vs 55 k) because the JS handler returns a JSON object with no React render tree to serialise; both share the same SAB envelope path so the gap is React render cost, not envelope overhead.
 
 ---
 
