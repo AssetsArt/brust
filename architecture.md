@@ -1021,6 +1021,7 @@ Bun.serve baseline source: `example/bun-serve-baseline/index.ts`.
 - `"use server"` directive + boot-time scanner — file-level directive. `brust.scanActions({ roots? })` walks the project, finds files whose first statement is `'use server'`, imports them, and registers all named function exports as actions. Middleware attaches per-action via `withMiddleware([mws], fn)`. Replaces the manual `defineActions` / `brust.registerActions` API.
 - Forms & Multipart — `POST /_brust/action/<id>` accepts `multipart/form-data` and `application/x-www-form-urlencoded` bodies in addition to JSON. Handlers declare `(req: BrustRequest, fd: FormData) => R` for form actions. Client helper `formAction<F>(id)` mirrors `action<F>(id)`. Wire-level: `ActionEnvelope.args_json` replaced by `content_type` + `body_text` / `body_b64`; multipart bodies are base64-encoded for transport through the JSON envelope. 256 KB body cap unchanged.
 - Nested routes — `Route.children: Route[]` with React Router-style relative child paths. `<Outlet />` component renders the matched child inside a parent layout. Index routes (`{ index: true, Component }`) match the parent path exactly; layout-only parents (`path: ''`) share middleware/layout without contributing a path segment. `errorBoundary` inherits up the chain (leaf wins). Middleware composes parent → child. Each `Component` sees only its own loader's data. Rust route table unchanged — flattening happens in `defineRoutes` (JS-side) so Rust still sees a flat list.
+- Agentic surface (MCP) — Mounts a Model Context Protocol 2025-06-18 server at `POST /_brust/mcp`. Server actions (discovered by `brust.scanActions()`) become MCP **tools**; route loaders become **resources** at `brust:///<path-template>`. Schemas are extracted at boot via the TypeScript compiler API (`runtime/mcp/extractor.ts`) and cached to `.brust/mcp-manifest.json`. Capabilities declared by the server: tools, resources, prompts (empty), logging. Transport: POST-only (SSE leg for streaming notifications is deferred). Authentication: tool calls flow through the action's existing middleware chain — gated tools still 401 (surfaced as `isError: true` in the MCP response). Worker bootstrap reads the persisted manifest via `brust.loadMcpManifest()` and constructs the `McpServer` from the example app's entry file.
 
 **Designed, not built:**
 
@@ -1030,7 +1031,6 @@ Bun.serve baseline source: `example/bun-serve-baseline/index.ts`.
 - Islands: content-hashed filenames + production caching strategy
 - Islands: CSS extraction per chunk
 - Islands: hot reload during dev
-- Agentic surface (MCP-style schemas auto-extracted at build time)
 - Global middleware (`app/middleware.ts`) + response-header *deletion* channel — per-route + set/override is shipped
 - Real-time: WebSockets (per-route upgrade) + SSE / streaming responses
 - HTML Streaming (`renderToPipeableStream` over SAB multi-chunk signals)
