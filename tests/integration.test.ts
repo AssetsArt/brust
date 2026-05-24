@@ -873,6 +873,145 @@ test('action-calling island page renders marker + importmap + bootstrap', async 
   }
 }, 20_000)
 
+test('action endpoint: form-urlencoded body → FormData arg', async () => {
+  // pingAction takes no args; the framework parses the form-urlencoded body
+  // into FormData and spreads [FormData] into pingAction, which ignores its
+  // args and returns void. Confirms the form-urlencoded path reaches the handler.
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38186', RUST_LOG: 'brust=warn' },
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/pingAction`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'unused=field',
+    })
+    expect(resp.status).toBe(200)
+    expect(await resp.text()).toBe('')
+  } finally {
+    proc.kill('SIGINT')
+    await proc.exited
+  }
+}, 15_000)
+
+test('action endpoint: multipart body → FormData with File', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38187', RUST_LOG: 'brust=warn' },
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const fd = new FormData()
+    fd.append('file', new File(['hello'], 'greeting.txt', { type: 'text/plain' }))
+    const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/uploadAvatar`, {
+      method: 'POST',
+      body: fd,
+    })
+    expect(resp.status).toBe(200)
+    const body = await resp.json() as { name: string, size: number }
+    expect(body.name).toBe('greeting.txt')
+    expect(body.size).toBe(5)
+  } finally {
+    proc.kill('SIGINT')
+    await proc.exited
+  }
+}, 15_000)
+
+test('action endpoint: unsupported Content-Type → 415', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38188', RUST_LOG: 'brust=warn' },
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/createNote`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/xml' },
+      body: '<x/>',
+    })
+    expect(resp.status).toBe(415)
+  } finally {
+    proc.kill('SIGINT')
+    await proc.exited
+  }
+}, 15_000)
+
+test('action endpoint: malformed multipart body → 400', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38189', RUST_LOG: 'brust=warn' },
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/uploadAvatar`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'multipart/form-data; boundary=does-not-match' },
+      body: 'not-actually-multipart',
+    })
+    expect(resp.status).toBe(400)
+    const text = await resp.text()
+    expect(text).toContain('invalid request body')
+  } finally {
+    proc.kill('SIGINT')
+    await proc.exited
+  }
+}, 15_000)
+
+test('action endpoint: JSON path still works after wire-format refactor', async () => {
+  // Sanity test — duplicates the createNote happy path from session 5 but
+  // proves the body_text refactor preserved JSON semantics.
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38190', RUST_LOG: 'brust=warn' },
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/createNote`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(['hello after refactor']),
+    })
+    expect(resp.status).toBe(200)
+    const body = await resp.json() as { id: string }
+    expect(body.id).toMatch(/^n-\d+$/)
+  } finally {
+    proc.kill('SIGINT')
+    await proc.exited
+  }
+}, 15_000)
+
+test('action endpoint: middleware short-circuits a multipart action', async () => {
+  // deleteNote is JSON-shape with requireUser middleware. Posting multipart
+  // to it without a cookie should still 401 — middleware runs before body
+  // parsing reaches the handler.
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38191', RUST_LOG: 'brust=warn' },
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const fd = new FormData()
+    fd.append('noteId', 'n-1')
+    const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/deleteNote`, {
+      method: 'POST',
+      body: fd,
+    })
+    expect(resp.status).toBe(401)
+    expect(await resp.text()).toBe('login required')
+  } finally {
+    proc.kill('SIGINT')
+    await proc.exited
+  }
+}, 15_000)
+
 async function readPortLine(stream: ReadableStream<Uint8Array>): Promise<number> {
   const reader = stream.getReader()
   const decoder = new TextDecoder()
