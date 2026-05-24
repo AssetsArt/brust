@@ -38,6 +38,15 @@ enum ReadOutcome {
     Oversize,
 }
 
+/// Whether to continue the keep-alive loop or close the connection after a
+/// worker dispatch attempt. CloseConn covers every failure path (oversized
+/// envelope, invalid meta, promise reject, tsfn failure) — by the time the
+/// helper returns CloseConn it has already written the error response.
+enum DispatchControl {
+    Continue,
+    CloseConn,
+}
+
 const MAX_REQUEST_BYTES: usize = 16 * 1024;
 /// Cap on action body size. Mirrors the SAB capacity (256 KB default) so
 /// the largest action call fits in one SAB write. If the SAB is reconfigured
@@ -300,68 +309,22 @@ async fn handle_conn(
                 &method, &path, id, body_str, &buf[..header_end],
             );
 
-            let Some(entry) = pool.pick_least_busy() else {
-                let _ = s.write_all(http::error_503("no workers")).await;
-                return;
-            };
-            let _guard = entry.in_flight_guard();
-
-            match entry.tsfn.call_async(envelope_json).await {
-                Ok(promise) => match promise.await {
-                    Ok(n) => {
-                        let n = n as usize;
-                        if n < 16 || n > entry.buf_len {
-                            error!(worker_id = entry.id, written = n, capacity = entry.buf_len, "action oversized");
-                            let _ = s.write_all(http::build_response(500, "text/plain", &[], b"action oversized".to_vec())).await;
-                            return;
-                        }
-                        let raw: Vec<u8> = unsafe {
-                            std::slice::from_raw_parts(entry.buf_ptr.0, n).to_vec()
-                        };
-                        let meta_len = u16::from_be_bytes([raw[0], raw[1]]) as usize;
-                        if meta_len + 2 > n {
-                            error!(worker_id = entry.id, meta_len, total = n, "meta_len out of range");
-                            let _ = s.write_all(http::build_response(500, "text/plain", &[], b"invalid action envelope".to_vec())).await;
-                            return;
-                        }
-                        let meta_bytes = &raw[2..2 + meta_len];
-                        let meta: ResponseMeta = match serde_json::from_slice(meta_bytes) {
-                            Ok(m) => m,
-                            Err(e) => {
-                                error!(worker_id = entry.id, error = %e, "meta JSON parse failed");
-                                let _ = s.write_all(http::build_response(500, "text/plain", &[], b"invalid action envelope".to_vec())).await;
-                                return;
-                            }
-                        };
-                        let body = raw[2 + meta_len..].to_vec();
-                        let extra: Vec<(String, String)> = meta.headers.into_iter().collect();
-                        // Content-Type from meta override (JS sets 'application/json' for normal action
-                        // returns and 'text/plain' for middleware string short-circuits). Falls back to
-                        // 'application/json' when JS omits it — action endpoint never returns HTML.
-                        let ct = meta.content_type.as_deref().unwrap_or("application/json; charset=utf-8");
-                        let bytes = http::build_response(meta.status, ct, &extra, body);
-                        if s.write_all(bytes).await.is_err() {
-                            return;
-                        }
-                        continue;
-                    }
-                    Err(e) => {
-                        error!(worker_id = entry.id, error = %e, "action promise rejected");
-                        let msg = format!("action error: {e}");
-                        let _ = s.write_all(http::build_response(500, "text/plain", &[], msg.into_bytes())).await;
-                        return;
-                    }
-                },
-                Err(e) => {
-                    error!(worker_id = entry.id, error = %e, "tsfn call_async failed");
-                    let _ = s.write_all(http::build_response(502, "text/plain", &[], b"upstream call failed".to_vec())).await;
-                    pool.remove(entry.id);
-                    if pool.registered_count() == 0 {
-                        error!("all workers died");
-                        std::process::exit(1);
-                    }
-                    return;
-                }
+            // Action endpoint never caches, so on_success is a no-op. Content-Type
+            // is taken from meta if present (JS sets 'application/json' for normal
+            // returns and 'text/plain' for middleware string short-circuits).
+            match dispatch_to_worker_and_send_meta_response(
+                &mut s,
+                &pool,
+                envelope_json,
+                "action",
+                "application/json; charset=utf-8",
+                true,
+                |_| {},
+            )
+            .await
+            {
+                DispatchControl::Continue => continue,
+                DispatchControl::CloseConn => return,
             }
         }
 
@@ -436,74 +399,156 @@ async fn handle_conn(
             continue;
         }
 
-        let Some(entry) = pool.pick_least_busy() else {
-            let _ = s.write_all(http::error_503("no workers")).await;
-            return;
-        };
-        let _guard = entry.in_flight_guard();
-
-        match entry.tsfn.call_async(envelope_json).await {
-            Ok(promise) => match promise.await {
-                Ok(n) => {
-                    let n = n as usize;
-                    // Envelope layout: [meta_len: u16 BE][meta JSON UTF-8][body bytes].
-                    // Minimum valid frame: 2 bytes meta_len + smallest JSON object
-                    // {"status":200} (14 bytes) + 0 body bytes = 16. Empty bodies are
-                    // legal (status 204/304, components returning null) and must not 500.
-                    if n < 16 || n > entry.buf_len {
-                        error!(worker_id = entry.id, written = n, capacity = entry.buf_len, "render oversized or empty");
-                        let _ = s.write_all(http::build_response(500, "text/plain", &[], b"render oversized".to_vec())).await;
-                        return;
-                    }
-                    // SAFETY: see pool.rs BufPtr safety argument.
-                    let raw: Vec<u8> = unsafe {
-                        std::slice::from_raw_parts(entry.buf_ptr.0, n).to_vec()
-                    };
-                    let meta_len = u16::from_be_bytes([raw[0], raw[1]]) as usize;
-                    if meta_len + 2 > n {
-                        error!(worker_id = entry.id, meta_len, total = n, "meta_len out of range");
-                        let _ = s.write_all(http::build_response(500, "text/plain", &[], b"invalid render envelope".to_vec())).await;
-                        return;
-                    }
-                    let meta_bytes = &raw[2..2 + meta_len];
-                    let meta: ResponseMeta = match serde_json::from_slice(meta_bytes) {
-                        Ok(m) => m,
-                        Err(e) => {
-                            error!(worker_id = entry.id, error = %e, "meta JSON parse failed");
-                            let _ = s.write_all(http::build_response(500, "text/plain", &[], b"invalid render envelope".to_vec())).await;
-                            return;
-                        }
-                    };
-                    let body = raw[2 + meta_len..].to_vec();
-                    let extra: Vec<(String, String)> = meta
-                        .headers
-                        .into_iter()
-                        .collect();
-                    let bytes = http::build_response(meta.status, "text/html; charset=utf-8", &extra, body);
-                    if let (Some(key), Some(cfg)) = (cache_key, cache_config.as_ref()) {
-                        cache.insert(key, bytes.clone(), Duration::from_secs(cfg.ttl_seconds));
-                    }
-                    if s.write_all(bytes).await.is_err() {
-                        return;
-                    }
-                }
-                Err(e) => {
-                    error!(worker_id = entry.id, error = %e, "render promise rejected");
-                    let msg = format!("render error: {e}");
-                    let _ = s.write_all(http::build_response(500, "text/plain", &[], msg.into_bytes())).await;
-                    return;
+        // Render path still hardcodes text/html (prefer_meta_content_type=false).
+        // The cache.insert hook receives the final response bytes; clone-into-vec
+        // only happens when a cache key was actually built.
+        let cache_for_closure = cache.clone();
+        match dispatch_to_worker_and_send_meta_response(
+            &mut s,
+            &pool,
+            envelope_json,
+            "render",
+            "text/html; charset=utf-8",
+            false,
+            move |bytes| {
+                if let (Some(key), Some(cfg)) = (cache_key, cache_config) {
+                    cache_for_closure.insert(
+                        key,
+                        bytes.to_vec(),
+                        Duration::from_secs(cfg.ttl_seconds),
+                    );
                 }
             },
-            Err(e) => {
-                error!(worker_id = entry.id, error = %e, "tsfn call_async failed");
-                let _ = s.write_all(http::build_response(502, "text/plain", &[], b"upstream call failed".to_vec())).await;
-                pool.remove(entry.id);
-                if pool.registered_count() == 0 {
-                    error!("all workers died");
-                    std::process::exit(1);
+        )
+        .await
+        {
+            DispatchControl::Continue => continue,
+            DispatchControl::CloseConn => return,
+        }
+    }
+}
+
+/// Shared dispatch for both the action and render branches: pick a worker,
+/// hold the in-flight guard, call the tsfn, decode the SAB-encoded envelope,
+/// build the HTTP response, and write it to the stream. Every failure path
+/// writes its own error response before returning CloseConn.
+///
+/// `prefer_meta_content_type = true` lets the worker override Content-Type via
+/// `ResponseMeta.contentType` (used by the action path; render path keeps the
+/// MVP behavior of hardcoded `text/html`). `on_success` runs synchronously on
+/// the final response bytes immediately before write — used by the render path
+/// for cache.insert. Returning a value from on_success is not supported because
+/// the helper owns the bytes from here on.
+async fn dispatch_to_worker_and_send_meta_response<F>(
+    s: &mut TcpStream,
+    pool: &Arc<crate::pool::WorkerPool>,
+    envelope_json: String,
+    label: &'static str,
+    default_content_type: &'static str,
+    prefer_meta_content_type: bool,
+    on_success: F,
+) -> DispatchControl
+where
+    F: FnOnce(&[u8]),
+{
+    let Some(entry) = pool.pick_least_busy() else {
+        let _ = s.write_all(http::error_503("no workers")).await;
+        return DispatchControl::CloseConn;
+    };
+    let _guard = entry.in_flight_guard();
+
+    match entry.tsfn.call_async(envelope_json).await {
+        Ok(promise) => match promise.await {
+            Ok(n) => {
+                let n = n as usize;
+                // Envelope layout: [meta_len: u16 BE][meta JSON UTF-8][body bytes].
+                // Minimum valid frame: 2 bytes meta_len + smallest JSON object
+                // {"status":200} (14 bytes) + 0 body bytes = 16. Empty bodies are
+                // legal (action returning undefined, status 204/304, render of
+                // components returning null) and must not 500.
+                if n < 16 || n > entry.buf_len {
+                    error!(worker_id = entry.id, written = n, capacity = entry.buf_len, "{label} oversized");
+                    let _ = s
+                        .write_all(http::build_response(
+                            500,
+                            "text/plain",
+                            &[],
+                            format!("{label} oversized").into_bytes(),
+                        ))
+                        .await;
+                    return DispatchControl::CloseConn;
                 }
-                return;
+                // SAFETY: see pool.rs BufPtr safety argument.
+                let raw: Vec<u8> =
+                    unsafe { std::slice::from_raw_parts(entry.buf_ptr.0, n).to_vec() };
+                let meta_len = u16::from_be_bytes([raw[0], raw[1]]) as usize;
+                if meta_len + 2 > n {
+                    error!(worker_id = entry.id, meta_len, total = n, "{label} meta_len out of range");
+                    let _ = s
+                        .write_all(http::build_response(
+                            500,
+                            "text/plain",
+                            &[],
+                            format!("invalid {label} envelope").into_bytes(),
+                        ))
+                        .await;
+                    return DispatchControl::CloseConn;
+                }
+                let meta_bytes = &raw[2..2 + meta_len];
+                let meta: ResponseMeta = match serde_json::from_slice(meta_bytes) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        error!(worker_id = entry.id, error = %e, "{label} meta JSON parse failed");
+                        let _ = s
+                            .write_all(http::build_response(
+                                500,
+                                "text/plain",
+                                &[],
+                                format!("invalid {label} envelope").into_bytes(),
+                            ))
+                            .await;
+                        return DispatchControl::CloseConn;
+                    }
+                };
+                let body = raw[2 + meta_len..].to_vec();
+                let extra: Vec<(String, String)> = meta.headers.into_iter().collect();
+                let ct: &str = if prefer_meta_content_type {
+                    meta.content_type.as_deref().unwrap_or(default_content_type)
+                } else {
+                    default_content_type
+                };
+                let bytes = http::build_response(meta.status, ct, &extra, body);
+                on_success(&bytes);
+                if s.write_all(bytes).await.is_err() {
+                    return DispatchControl::CloseConn;
+                }
+                DispatchControl::Continue
             }
+            Err(e) => {
+                error!(worker_id = entry.id, error = %e, "{label} promise rejected");
+                let msg = format!("{label} error: {e}");
+                let _ = s
+                    .write_all(http::build_response(500, "text/plain", &[], msg.into_bytes()))
+                    .await;
+                DispatchControl::CloseConn
+            }
+        },
+        Err(e) => {
+            error!(worker_id = entry.id, error = %e, "{label} tsfn call_async failed");
+            let _ = s
+                .write_all(http::build_response(
+                    502,
+                    "text/plain",
+                    &[],
+                    b"upstream call failed".to_vec(),
+                ))
+                .await;
+            pool.remove(entry.id);
+            if pool.registered_count() == 0 {
+                error!("all workers died");
+                std::process::exit(1);
+            }
+            DispatchControl::CloseConn
         }
     }
 }
