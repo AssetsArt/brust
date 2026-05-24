@@ -12,10 +12,12 @@ export interface ServeOptions {
    * `serve` calls the internal action registry before the listener binds.
    * Optional — omit if the app has no server actions. */
   actions?: ActionDef[]
-  /** MCP support — when present, requests to POST /_brust/mcp are dispatched
-   * through a JSON-RPC server backed by this manifest. Main process builds it
-   * via brust.buildMcpManifest; workers load it from disk via
-   * brust.loadMcpManifest (called automatically inside brust.serve). */
+  /** MCP support — pass a manifest built via brust.buildMcpManifest. brust.serve
+   * does NOT auto-wire MCP into workers; the worker branch of the entry file must
+   * call brust.loadMcpManifest() + makeMcpServer() itself and pass the McpServer
+   * to makeRenderer via `opts.mcp`. See example/hello-world/index.ts for the
+   * pattern. The field here is currently unused inside serve() and is reserved
+   * for future IPC-based propagation of the manifest. */
   mcp?: { manifest: import('./mcp/manifest.ts').McpManifest }
 }
 
@@ -110,9 +112,10 @@ export const brust = {
   },
   /** Extract the MCP manifest from TypeScript source using the compiler API,
    * write it to `.brust/mcp-manifest.json`, and return it. Call once in the
-   * main process after `brust.registerRoutes(routes)`. Workers read the
-   * persisted manifest automatically via `brust.loadMcpManifest` (called
-   * inside `brust.serve` on the worker side). */
+   * main process after `brust.registerRoutes(routes)`. Workers must read the
+   * persisted manifest themselves via `brust.loadMcpManifest()` in the worker
+   * branch and pass an `McpServer` (built via `makeMcpServer`) to
+   * `makeRenderer` via `opts.mcp`. See example/hello-world/index.ts. */
   async buildMcpManifest(opts: {
     serverFiles: string[]
     routesFile: string
