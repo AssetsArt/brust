@@ -312,7 +312,9 @@ export const routes = defineRoutes([
 ```
 
 Pattern syntax is **matchit 0.8** (`/blog/{slug}`, not Express-style `:slug`).
-`defineRoutes` is an identity helper that pins the array's element type.
+`defineRoutes` pins the array's element type and flattens any nested
+`children: [...]` into the flat list Rust sees (Rust's route table is
+unchanged — nesting is a JS-side authoring convenience).
 
 Bun parses `routes.tsx` at boot and ships the pattern array to Rust via
 `brust.registerRoutes(...)`; Rust builds a `matchit::Router<u32>` keyed by
@@ -343,7 +345,7 @@ chain's outer try/catch.
 - `cache` ✅ shipped (per-route, opt-in, TTL + vary).
 - `middleware: [...]` ✅ shipped (per-route chain, short-circuit, header mutation).
 - `loader` receiving full `req` ✅ shipped.
-- `children: [...]` — nested routes. Follow-up.
+- `children: [...]` ✅ shipped (nested routes with `<Outlet />`, index routes, layout-only parents).
 - Global `app/_404.tsx` / `app/_500.tsx` overrides — Middleware follow-up.
 - Global `app/middleware.ts` — Middleware follow-up.
 - Client-side navigation (`/_brust/page/*`) — Navigation plan.
@@ -1018,10 +1020,10 @@ Bun.serve baseline source: `example/bun-serve-baseline/index.ts`.
 - Server functions MVP: async functions invokable from islands via `POST /_brust/action/<id>` (JSON args/return). Reuses the renderer tsfn via a `kind: 'render' | 'action'` envelope discriminant. Action-specific middleware (action def's own chain). Client helper `action<F>(id)` from `runtime/client` preserves types via TS generics + `import type` erase. New Rust napi `register_actions(ids: Vec<String>)`; new server.rs branch with charset/length/utf-8 guards and dedicated 404/405/411/413 error paths. Meta envelope grows optional `contentType` (camelCase) so action returns ship as `application/json`. ResponseMeta becomes the Content-Type override channel for any future need.
 - `"use server"` directive + boot-time scanner — file-level directive. `brust.scanActions({ roots? })` walks the project, finds files whose first statement is `'use server'`, imports them, and registers all named function exports as actions. Middleware attaches per-action via `withMiddleware([mws], fn)`. Replaces the manual `defineActions` / `brust.registerActions` API.
 - Forms & Multipart — `POST /_brust/action/<id>` accepts `multipart/form-data` and `application/x-www-form-urlencoded` bodies in addition to JSON. Handlers declare `(req: BrustRequest, fd: FormData) => R` for form actions. Client helper `formAction<F>(id)` mirrors `action<F>(id)`. Wire-level: `ActionEnvelope.args_json` replaced by `content_type` + `body_text` / `body_b64`; multipart bodies are base64-encoded for transport through the JSON envelope. 256 KB body cap unchanged.
+- Nested routes — `Route.children: Route[]` with React Router-style relative child paths. `<Outlet />` component renders the matched child inside a parent layout. Index routes (`{ index: true, Component }`) match the parent path exactly; layout-only parents (`path: ''`) share middleware/layout without contributing a path segment. `errorBoundary` inherits up the chain (leaf wins). Middleware composes parent → child. Each `Component` sees only its own loader's data. Rust route table unchanged — flattening happens in `defineRoutes` (JS-side) so Rust still sees a flat list.
 
 **Designed, not built:**
 
-- Loaders + nested routes (`children: [...]`) — nested routes still pending
 - `brust-cli invalidate` (project tooling — separate from the native endpoint that just shipped)
 - Default TTL fallback in `[cache]` (semantics deferred — no current consumer)
 - Islands: `"use island"` directive + auto-detection at JSX call sites (MVP uses manual `<Island>` wrapper)
