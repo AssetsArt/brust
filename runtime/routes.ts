@@ -249,6 +249,11 @@ export type RouteCall =
       body_b64?: string
       req: BrustRequest
     }
+  | {
+      kind: 'mcp'
+      body_text: string
+      req: BrustRequest
+    }
 
 /**
  * Build a render callback for a given routes table. The returned function is
@@ -287,6 +292,9 @@ export function makeRenderer(
     }
     if (call.kind === 'action') {
       return actionBranch(call, byActionId, view, encoder)
+    }
+    if (call.kind === 'mcp') {
+      return mcpBranch(call, view, encoder)
     }
     // Unknown kind — log and 500. Shouldn't happen unless Rust ships
     // something out of band.
@@ -469,6 +477,19 @@ async function actionBranch(
     }
   }
   return packResponse(view, encoder, response)
+}
+
+async function mcpBranch(
+  call: Extract<RouteCall, { kind: 'mcp' }>,
+  view: Uint8Array,
+  encoder: TextEncoder,
+): Promise<number> {
+  // Stubbed — real implementation in Task 4+ via runtime/mcp/server.ts
+  return packResponse(view, encoder, {
+    status: 501,
+    body: '{"jsonrpc":"2.0","error":{"code":-32603,"message":"mcp not configured"}}',
+    contentType: 'application/json; charset=utf-8',
+  })
 }
 
 /** Right-to-left compose a middleware chain. Each middleware wraps the next;
