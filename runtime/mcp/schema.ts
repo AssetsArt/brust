@@ -102,8 +102,12 @@ export function tsTypeToJsonSchema(type: ts.Type, opts: ToJsonSchemaOptions = {}
 
 function unwrapPromise(type: ts.Type, checker?: ts.TypeChecker): ts.Type | null | undefined {
   // Returns: ts.Type unwrapped; null = unwrap result is void; undefined = not a Promise.
+  // getPromisedTypeOfPromise exists at runtime on every supported TS 5.x but is
+  // absent from the public TypeChecker typings — cast to access without losing
+  // strict-mode coverage elsewhere.
   if (!checker) return undefined
-  const inner = checker.getPromisedTypeOfPromise(type)
+  const inner = (checker as unknown as { getPromisedTypeOfPromise(t: ts.Type): ts.Type | undefined })
+    .getPromisedTypeOfPromise(type)
   if (inner === undefined) return undefined
   if (inner.flags & ts.TypeFlags.Void) return null
   return inner
