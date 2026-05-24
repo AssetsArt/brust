@@ -54,6 +54,35 @@ pub struct ActionEnvelope<'a> {
     pub req: RequestEnvelope,
 }
 
+/// MCP JSON-RPC request envelope. `kind: "mcp"` discriminates from render
+/// and action variants. body_text carries the raw JSON-RPC payload — the
+/// JS worker parses it once and dispatches by method.
+#[derive(Serialize)]
+pub struct McpEnvelope<'a> {
+    pub kind: &'static str,
+    pub body_text: &'a str,
+    pub req: RequestEnvelope,
+}
+
+pub fn build_mcp_envelope(
+    method: &str,
+    full_path: &str,
+    body_text: &str,
+    raw_request: &[u8],
+) -> String {
+    let (_, query) = match full_path.split_once('?') {
+        Some((p, q)) => (p, q),
+        None => (full_path, ""),
+    };
+    let req = build_request_envelope(method, full_path, query, raw_request);
+    let env = McpEnvelope {
+        kind: "mcp",
+        body_text,
+        req,
+    };
+    serde_json::to_string(&env).unwrap()
+}
+
 /// Build an ActionEnvelope JSON string. Mirrors `match_path` for the render
 /// case. Caller has already validated the action_id charset and registry
 /// membership; this function only assembles the envelope.
@@ -478,5 +507,28 @@ mod tests {
         let inner: serde_json::Value = serde_json::from_str(outer["body_text"].as_str().unwrap()).unwrap();
         assert_eq!(inner[0], r#"hi "there""#);
         assert_eq!(inner[1], 42);
+    }
+
+    #[test]
+    fn mcp_envelope_serialises_kind_mcp() {
+        let json = build_mcp_envelope(
+            "POST",
+            "/_brust/mcp",
+            r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#,
+            b"POST /_brust/mcp HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n\r\n",
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["kind"], "mcp");
+        assert_eq!(parsed["body_text"], r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#);
+        assert_eq!(parsed["req"]["method"], "POST");
+    }
+
+    #[test]
+    fn mcp_envelope_preserves_inner_quotes() {
+        let inner = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"x","arguments":{"text":"hi \"there\""}}}"#;
+        let json = build_mcp_envelope("POST", "/_brust/mcp", inner, b"");
+        let outer: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let recovered: serde_json::Value = serde_json::from_str(outer["body_text"].as_str().unwrap()).unwrap();
+        assert_eq!(recovered["params"]["arguments"]["text"], r#"hi "there""#);
     }
 }
