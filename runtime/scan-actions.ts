@@ -1,3 +1,4 @@
+import { relative } from 'node:path'
 import type { ActionDef, ActionFn } from './actions.ts'
 import { isValidActionId, getActionMiddleware } from './actions.ts'
 
@@ -90,4 +91,78 @@ export async function collectExports(filePath: string): Promise<ActionDef[]> {
     )
   }
   return defs
+}
+
+export interface ScanOptions {
+  /** Glob roots to scan from. Default: ['./']. Pass an explicit root (e.g.
+   * `import.meta.dirname`) when the project layout includes sibling subtrees
+   * you don't want scanned — typical for example apps inside a larger repo. */
+  roots?: string[]
+  /** Ignore globs (matched against the path relative to each root). Override
+   * the default array if you need a different policy — there's no merge.
+   * Default covers build outputs and test patterns. */
+  ignore?: string[]
+}
+
+const DEFAULT_IGNORE = Object.freeze([
+  'node_modules/**',
+  '.brust/**',
+  'dist/**',
+  'build/**',
+  'tests/**',
+  '__tests__/**',
+  '*.test.ts',
+  '*.test.tsx',
+  '*.spec.ts',
+  '*.spec.tsx',
+])
+
+const FILE_PATTERN = '**/*.{ts,tsx,js,jsx,mjs,cjs}'
+
+async function findCandidateFiles(opts: ScanOptions): Promise<string[]> {
+  const roots = opts.roots ?? ['./']
+  const ignore = opts.ignore ?? [...DEFAULT_IGNORE]
+  const ignoreGlobs = ignore.map((p) => new Bun.Glob(p))
+  const out: string[] = []
+  for (const root of roots) {
+    const glob = new Bun.Glob(FILE_PATTERN)
+    for await (const f of glob.scan({ cwd: root, dot: false, absolute: true })) {
+      const rel = relative(root, f)
+      if (ignoreGlobs.some((g) => g.match(rel))) continue
+      out.push(f)
+    }
+  }
+  return out
+}
+
+/** Walk the project, find files whose first statement is `'use server'`,
+ * import each, and return all named function exports as ActionDef[].
+ * Throws on duplicate ids across files. Always returns an array sorted
+ * by id for deterministic logging. */
+export async function scanActions(opts: ScanOptions = {}): Promise<ActionDef[]> {
+  const candidates = await findCandidateFiles(opts)
+  // Run directive checks in parallel — file IO scales well there.
+  const directiveChecks = await Promise.all(
+    candidates.map(async (p) => ({ path: p, isServer: await hasUseServerDirective(p) })),
+  )
+  const serverFiles = directiveChecks.filter((c) => c.isServer).map((c) => c.path)
+
+  // Serial imports — heavy module side effects shouldn't all fire at once.
+  const byId = new Map<string, string>()
+  const all: ActionDef[] = []
+  for (const file of serverFiles) {
+    const defs = await collectExports(file)
+    for (const def of defs) {
+      const prior = byId.get(def.id)
+      if (prior) {
+        throw new Error(
+          `Duplicate action "${def.id}" — defined in both ${prior} and ${file}. Rename one.`,
+        )
+      }
+      byId.set(def.id, file)
+      all.push(def)
+    }
+  }
+  all.sort((a, b) => a.id.localeCompare(b.id))
+  return all
 }
