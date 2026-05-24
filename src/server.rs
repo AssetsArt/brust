@@ -368,14 +368,16 @@ async fn handle_conn(
         // Native-only route: MCP JSON-RPC server.
         //   POST /_brust/mcp
         // Body: JSON-RPC request. Worker dispatches by method.
-        // Status codes:
+        // Status codes (in execution order):
         //   405 — non-POST method
+        //   415 — Content-Type not application/json
         //   411 — Content-Length missing
         //   413 — Content-Length > SAB capacity
-        //   415 — Content-Type not application/json
-        //   400 — body not valid UTF-8
+        //   400 — malformed headers / body read failure / body not valid UTF-8
         //   200 — JSON-RPC response (errors carried inside the body)
         if path == "/_brust/mcp" {
+            // The outer method gate already rejects non-POST; the duplicate check here
+            // covers future refactors that might split the gate.
             if method != "POST" {
                 let _ = s.write_all(http::error_405()).await;
                 return;
@@ -393,11 +395,13 @@ async fn handle_conn(
                 Some(n) => n,
                 None => { let _ = s.write_all(http::error_411()).await; return; }
             };
+            // Same cap as action — single global body envelope limit (SAB capacity).
             if content_length > MAX_ACTION_BODY_BYTES {
                 let _ = s.write_all(http::error_413()).await;
                 return;
             }
             let body_buffered = buf.len().saturating_sub(header_end);
+            // Same pipeline caveat as the action branch — see comment near line 276.
             if body_buffered < content_length {
                 let need = content_length - body_buffered;
                 let mut read_so_far = 0usize;
