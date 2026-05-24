@@ -1,3 +1,6 @@
+import type { ActionDef, ActionFn } from './actions.ts'
+import { isValidActionId, getActionMiddleware } from './actions.ts'
+
 const DIRECTIVE_HEAD_BYTES = 512
 
 /** Remove leading whitespace, line comments (`//`), and block comments
@@ -42,4 +45,49 @@ export async function hasUseServerDirective(filePath: string): Promise<boolean> 
   const head = await f.slice(0, DIRECTIVE_HEAD_BYTES).text()
   const stripped = stripLeadingTrivia(head)
   return USE_SERVER_PATTERN.test(stripped)
+}
+
+/** Dynamically import `filePath` and collect every named function export as
+ * an ActionDef. Skips non-function exports silently. Throws on:
+ *   - default export (must be named)
+ *   - class export (calling a class without `new` would 500 at dispatch)
+ *   - invalid id charset
+ *   - zero function exports (likely a bug — file marked 'use server' but
+ *     publishes nothing).
+ * Middleware metadata installed by withMiddleware is preserved. */
+export async function collectExports(filePath: string): Promise<ActionDef[]> {
+  const mod = (await import(filePath)) as Record<string, unknown>
+  const defs: ActionDef[] = []
+  for (const [name, value] of Object.entries(mod)) {
+    if (typeof value !== 'function') continue
+    // typeof class{} is 'function' in JS; reject explicitly so an accidental
+    // `export class Foo {}` in a 'use server' file fails loudly at scan,
+    // not with a confusing 500 at dispatch.
+    if (Function.prototype.toString.call(value).startsWith('class ')) {
+      throw new Error(
+        `${filePath}: export "${name}" is a class. Actions must be plain async functions, not class constructors.`,
+      )
+    }
+    if (name === 'default') {
+      throw new Error(
+        `${filePath}: default exports are not action-eligible. Use named export.`,
+      )
+    }
+    if (!isValidActionId(name)) {
+      throw new Error(
+        `${filePath}: export "${name}" has invalid id (must match [A-Za-z0-9_-]+, 1-128 chars).`,
+      )
+    }
+    defs.push({
+      id: name,
+      fn: value as ActionFn,
+      middleware: getActionMiddleware(value),
+    })
+  }
+  if (defs.length === 0) {
+    throw new Error(
+      `${filePath}: marked 'use server' but exports no functions.`,
+    )
+  }
+  return defs
 }
