@@ -58,9 +58,15 @@ export function makeMcpServer(opts: McpServerOptions): McpServer {
         case 'resources/read':
           return handleResourcesRead(rpc, opts, req)
         case 'prompts/list':
+          return makeResult(rpc.id ?? null, { prompts: [] })
         case 'prompts/get':
+          return makeError(rpc.id ?? null, -32601, 'no prompts configured')
         case 'logging/setLevel':
-          return makeError(rpc.id ?? null, -32601, `${rpc.method} not implemented yet`)
+          // Accept the level; no notifications emitted (SSE deferred).
+          return makeResult(rpc.id ?? null, {})
+        case 'notifications/roots/list_changed':
+          // No-op accept (it's a notification, no response).
+          return ''
         default:
           return makeError(rpc.id ?? null, -32601, `method not found: ${rpc.method}`)
       }
