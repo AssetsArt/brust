@@ -9,6 +9,12 @@ import WithHeader    from './components/WithHeader'
 import NotePage      from './components/NotePage'
 import AvatarPage    from './components/AvatarPage'
 import WhoAmIPage    from './components/WhoAmIPage'
+import AdminLayout         from './components/AdminLayout'
+import AdminDashboard      from './components/AdminDashboard'
+import AdminUsers          from './components/AdminUsers'
+import AdminUserDetail     from './components/AdminUserDetail'
+import AdminUserThrow      from './components/AdminUserThrow'
+import AdminErrorBoundary  from './components/AdminErrorBoundary'
 
 // Auth middleware: 401 short-circuit if no `user` cookie.
 const authRequired: Middleware = async (req, next) => {
@@ -41,4 +47,16 @@ export const routes = defineRoutes([
   { path: '/note',         Component: NotePage },
   { path: '/avatar',       Component: AvatarPage },
   { path: '/whoami',       Component: WhoAmIPage },
+  {
+    path: '/admin',
+    Component: AdminLayout,
+    middleware: [authRequired],
+    errorBoundary: AdminErrorBoundary,
+    children: [
+      { index: true,             Component: AdminDashboard },
+      { path: 'users',           Component: AdminUsers },
+      { path: 'users/throw',     Component: AdminUserThrow },
+      { path: 'users/{id}',      Component: AdminUserDetail },
+    ],
+  },
 ])
