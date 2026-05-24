@@ -271,6 +271,8 @@ export interface MakeRendererOptions {
    * module top-level and pass the resulting array here — the wire keys (ids)
    * and the handler functions (fn) must agree across both ends. */
   actions?: ActionDef[]
+  /** MCP server instance — built once per worker at module top-level. */
+  mcp?: import('./mcp/server.ts').McpServer
 }
 
 export function makeRenderer(
@@ -294,7 +296,7 @@ export function makeRenderer(
       return actionBranch(call, byActionId, view, encoder)
     }
     if (call.kind === 'mcp') {
-      return mcpBranch(call, view, encoder)
+      return mcpBranch(call, view, encoder, opts.mcp)
     }
     // Unknown kind — log and 500. Shouldn't happen unless Rust ships
     // something out of band.
@@ -483,11 +485,27 @@ async function mcpBranch(
   call: Extract<RouteCall, { kind: 'mcp' }>,
   view: Uint8Array,
   encoder: TextEncoder,
+  mcp: import('./mcp/server.ts').McpServer | undefined,
 ): Promise<number> {
-  // Stubbed — real implementation in Task 4+ via runtime/mcp/server.ts
+  if (!mcp) {
+    return packResponse(view, encoder, {
+      status: 501,
+      body: '{"jsonrpc":"2.0","error":{"code":-32603,"message":"mcp not configured"}}',
+      contentType: 'application/json; charset=utf-8',
+    })
+  }
+  const responseJson = await mcp.handleRequest(call.body_text, call.req)
+  if (responseJson === '') {
+    // Notification — no response body. Return 204 No Content via meta envelope.
+    return packResponse(view, encoder, {
+      status: 204,
+      body: '',
+      contentType: 'application/json; charset=utf-8',
+    })
+  }
   return packResponse(view, encoder, {
-    status: 501,
-    body: '{"jsonrpc":"2.0","error":{"code":-32603,"message":"mcp not configured"}}',
+    status: 200,
+    body: responseJson,
     contentType: 'application/json; charset=utf-8',
   })
 }
