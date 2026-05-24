@@ -17,12 +17,6 @@ export interface ActionDef<F extends ActionFn = ActionFn> {
   middleware?: Middleware[]
 }
 
-/** Identity helper that pins the actions array's element type. Parallels
- * defineRoutes. Use to keep TS inference happy across the boundary. */
-export function defineActions(actions: ActionDef[]): ActionDef[] {
-  return actions
-}
-
 /** Mirrors is_safe_action_id in src/lib.rs and src/server.rs.
  * Allowed: [A-Za-z0-9_-]+ only, max 128 chars. */
 export function isValidActionId(id: string): boolean {

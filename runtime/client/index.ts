@@ -32,7 +32,9 @@ type DropReq<F> = F extends (req: any, ...args: infer A) => infer R
  *   const createNote = action<typeof srv.createNote>('createNote')
  *   const { id } = await createNote('hello')  // typed Promise<{ id: string }>
  *
- * @param id  The action id registered via brust.registerActions.
+ * @param id  The action id — matches the named export from a `'use server'`
+ *            file discovered by `brust.scanActions()`. Use `withMiddleware`
+ *            to attach per-action middleware on the server side.
  */
 export function action<F extends ServerFn>(id: string): DropReq<F> {
   return (async (...args: unknown[]) => {

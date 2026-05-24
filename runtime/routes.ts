@@ -124,8 +124,9 @@ export interface MakeRendererOptions {
    * resolved after `registerRenderer` returns. Returns null before that. */
   getWorkerId?: () => number | null
   /** Action table the worker dispatches to when envelope.kind === 'action'.
-   * Pass the SAME array given to brust.registerActions on the main thread —
-   * the wire keys (ids) and the handler functions (fn) must agree. */
+   * Both the main process and each worker call `brust.scanActions(...)` at
+   * module top-level and pass the resulting array here — the wire keys (ids)
+   * and the handler functions (fn) must agree across both ends. */
   actions?: ActionDef[]
 }
 
