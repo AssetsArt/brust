@@ -38,3 +38,12 @@ export const deleteNote = withMiddleware(
 export async function pingAction(_req: BrustRequest): Promise<void> {
   // intentionally empty
 }
+
+/** Demo form action: receives a multipart FormData containing a `file` field.
+ * Returns the file's name + size — no actual storage in the demo. */
+export async function uploadAvatar(_req: BrustRequest, fd: FormData): Promise<{ name: string, size: number }> {
+  const file = fd.get('file')
+  if (!(file instanceof File)) throw new Error('file field required (multipart File)')
+  if (file.size > 200 * 1024) throw new Error('file too big (max 200 KB)')
+  return { name: file.name, size: file.size }
+}

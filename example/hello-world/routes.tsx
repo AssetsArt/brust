@@ -7,6 +7,7 @@ import CacheTest     from './components/CacheTest'
 import Protected     from './components/Protected'
 import WithHeader    from './components/WithHeader'
 import NotePage      from './components/NotePage'
+import AvatarPage    from './components/AvatarPage'
 import WhoAmIPage    from './components/WhoAmIPage'
 
 // Auth middleware: 401 short-circuit if no `user` cookie.
@@ -38,5 +39,6 @@ export const routes = defineRoutes([
   { path: '/protected',    Component: Protected,    middleware: [authRequired] },
   { path: '/with-header',  Component: WithHeader,   middleware: [timeIt] },
   { path: '/note',         Component: NotePage },
+  { path: '/avatar',       Component: AvatarPage },
   { path: '/whoami',       Component: WhoAmIPage },
 ])
