@@ -55,8 +55,8 @@ pub struct ActionEnvelope<'a> {
 }
 
 /// MCP JSON-RPC request envelope. `kind: "mcp"` discriminates from render
-/// and action variants. body_text carries the raw JSON-RPC payload — the
-/// JS worker parses it once and dispatches by method.
+/// and action variants at the JS dispatcher; the JS-side `mcpBranch` then
+/// parses `body_text` and switches on the JSON-RPC `method` field.
 #[derive(Serialize)]
 pub struct McpEnvelope<'a> {
     pub kind: &'static str,
