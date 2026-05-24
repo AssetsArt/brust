@@ -551,92 +551,43 @@ Trade-offs:
 - Stack trace in error envelope via `BRUST_DEBUG_ERRORS=1`
 - Shared `runtime/client` chunk via importmap (today every island bundles its own ~1 KB copy)
 
-### Agentic surface (MCP-style page schemas)
+### Agentic surface (MCP)
 
-Pages expose their structure as machine-readable schemas — content, inputs,
-and actions — so AI agents can drive a page without scraping HTML. Same idea
-as Model Context Protocol, applied to web routes: a page is a resource, the
-server functions it triggers are tools.
+**Shipped — see the Built list at the bottom of this document.** Brust mounts
+a Model Context Protocol 2025-06-18 server at `POST /_brust/mcp` so any MCP
+client (Claude desktop, Cursor, custom agents) can discover and call into a
+Brust app without bespoke integration. Each Brust app effectively *is* an
+MCP server.
 
-The framework already knows everything an agent would need:
+The framework already knows everything an agent needs:
 
-- the route tree (paths, params)
-- per-route loader types (what data the page consumes)
-- the server fns the page imports (the tools the page can invoke)
-- the islands rendered (the interactive surface)
+- the route tree (paths, params) → exposed as MCP **resources**
+- per-route loader types (what data the page consumes) → resource shape
+- the server fns the app imports (the tools the page can invoke) → MCP **tools**
 
-A build-time extractor walks the import graph and emits a schema per route.
-Apps don't write the schema by hand.
+A boot-time extractor (`runtime/mcp/extractor.ts`) uses the TypeScript
+compiler API to walk every `'use server'` file and the routes module, then
+caches the result at `.brust/mcp-manifest.json`. Apps don't write the schema
+by hand.
 
-**Per-route schema:**
+**Endpoints:**
 
-```json
-GET /_brust/agentic/blog/:slug
+- `POST /_brust/mcp` — JSON-RPC 2.0. Capabilities declared on initialize:
+  `tools`, `resources`, `prompts` (empty), `logging`. Transport is POST-only
+  for MVP; the SSE leg for streaming notifications is deferred.
 
-{
-  "path":        "/blog/:slug",
-  "description": "Read a blog post and post comments",
-  "params":      { "slug": { "type": "string" } },
-  "content": {
-    "post": {
-      "source": "loader",
-      "schema": { "title": "string", "body": "string", "author": "string" }
-    }
-  },
-  "actions": [
-    {
-      "id":          "createComment",
-      "description": "Post a comment on this post",
-      "args":        { "postId": "string", "body": "string" },
-      "returns":     { "id": "string", "createdAt": "string" }
-    }
-  ],
-  "islands": [
-    { "name":   "CommentForm",
-      "inputs": [{ "name": "body", "kind": "textarea", "maxLength": 5000 }] }
-  ]
-}
-```
+**Invoking actions** flows through the existing action runtime — the same
+middleware chain that protects `/_brust/action/<id>` protects `tools/call`.
+Middleware rejections surface as `isError: true` on the MCP response.
 
-**Global manifest:**
-
-```
-GET /_brust/agentic/manifest
-
-{
-  "name":   "my-app",
-  "routes": [ /* all routes */ ],
-  "tools":  [ /* all "use server" functions, route-agnostic */ ]
-}
-```
-
-**Invoking actions** uses the existing server-fn endpoint
-`/_brust/action/<id>` — the same one client islands call. Agents pass JSON
-args and receive JSON. No separate transport.
-
-**MCP compatibility:** the manifest can be served through an MCP-compliant
-endpoint so any MCP client (Claude desktop, Cursor, custom agents) can
-discover and call into a Brust app without bespoke integration. Each Brust
-app effectively *is* an MCP server.
-
-**Author overrides:**
-
-```tsx
-// pages/Blog.tsx
-export const agentic = {
-  description: "Read a blog post and post comments",
-  actions:     ['createComment'],   // narrow from the import-graph default
-  hide:        ['internalDebugFn'], // explicitly exclude
-}
-```
-
-Default: every server fn the page imports + every island it renders. The
-export lets authors trim, narrow, or annotate.
+**Resource URIs:** `brust://<route-fullPath>` — e.g. `brust:///blog/{slug}`.
+`resources/read` extracts `{param}` captures and invokes the leaf loader.
 
 **Trade-offs:**
 
 - ✅ AI-first design — no DOM scraping; agents get typed, stable contracts
-- ✅ Schema co-evolves with code (build-time extraction, not hand-maintained)
+- ✅ Schema co-evolves with code (TS compiler API extraction at boot, not
+  hand-maintained)
 - ✅ Reuses existing types from server fns & loaders
 - ✅ Agents inherit the user's full request context (cookies, headers, any
   middleware-applied auth or rate-limits) — no separate agent-only ACL
@@ -646,6 +597,9 @@ export lets authors trim, narrow, or annotate.
 - ⚠️ Agent-specific concerns (per-agent rate limits, audit logging, consent
   prompts before destructive actions) are middleware territory; the
   framework doesn't impose a policy
+- ⚠️ FormData params on tool inputSchemas expand to the full DOM FormData
+  shape; agents see a verbose-but-functional schema. Future: a class-name
+  blocklist in the schema converter.
 
 ### Middleware
 

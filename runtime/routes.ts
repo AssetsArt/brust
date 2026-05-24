@@ -490,7 +490,7 @@ async function mcpBranch(
   if (!mcp) {
     return packResponse(view, encoder, {
       status: 501,
-      body: '{"jsonrpc":"2.0","error":{"code":-32603,"message":"mcp not configured"}}',
+      body: '{"jsonrpc":"2.0","id":null,"error":{"code":-32603,"message":"mcp not configured"}}',
       contentType: 'application/json; charset=utf-8',
     })
   }
