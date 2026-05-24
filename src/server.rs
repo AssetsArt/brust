@@ -690,6 +690,23 @@ fn parse_content_length(buf: &[u8]) -> Option<usize> {
     None
 }
 
+/// Extract `Content-Type` from a buffered HTTP request's headers. Returns
+/// None if the header is missing. Whitespace-trimmed. Preserves the
+/// parameter part (e.g. `; boundary=...`) since the JS side needs it
+/// to parse multipart bodies. Caller has already ensured `\r\n\r\n` is
+/// present in `buf`.
+fn parse_content_type(buf: &[u8]) -> Option<String> {
+    let mut headers = [httparse::EMPTY_HEADER; 64];
+    let mut req = httparse::Request::new(&mut headers);
+    let _ = req.parse(buf);
+    for h in req.headers.iter() {
+        if h.name.eq_ignore_ascii_case("content-type") {
+            return std::str::from_utf8(h.value).ok().map(|s| s.trim().to_string());
+        }
+    }
+    None
+}
+
 /// Mirrors src/lib.rs::is_safe_action_id. Belt-and-suspenders: the dispatch
 /// check that happens here is the only sanitization between the URL path and
 /// the action registry lookup.
@@ -799,5 +816,38 @@ mod tests {
     fn parse_content_length_garbage_returns_none() {
         let raw = b"POST /x HTTP/1.1\r\nHost: x\r\nContent-Length: NaN\r\n\r\n";
         assert_eq!(parse_content_length(raw), None);
+    }
+
+    #[test]
+    fn parse_content_type_finds_header() {
+        let raw = b"POST /x HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n\r\n";
+        assert_eq!(parse_content_type(raw), Some("application/json".to_string()));
+    }
+
+    #[test]
+    fn parse_content_type_case_insensitive_name() {
+        let raw = b"POST /x HTTP/1.1\r\nHost: x\r\ncontent-type: text/plain\r\n\r\n";
+        assert_eq!(parse_content_type(raw), Some("text/plain".to_string()));
+    }
+
+    #[test]
+    fn parse_content_type_preserves_parameters() {
+        let raw = b"POST /x HTTP/1.1\r\nHost: x\r\nContent-Type: multipart/form-data; boundary=abc123\r\n\r\n";
+        assert_eq!(
+            parse_content_type(raw),
+            Some("multipart/form-data; boundary=abc123".to_string()),
+        );
+    }
+
+    #[test]
+    fn parse_content_type_trims_whitespace() {
+        let raw = b"POST /x HTTP/1.1\r\nHost: x\r\nContent-Type:   application/json  \r\n\r\n";
+        assert_eq!(parse_content_type(raw), Some("application/json".to_string()));
+    }
+
+    #[test]
+    fn parse_content_type_missing_returns_none() {
+        let raw = b"POST /x HTTP/1.1\r\nHost: x\r\n\r\n";
+        assert_eq!(parse_content_type(raw), None);
     }
 }

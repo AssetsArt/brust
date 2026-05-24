@@ -44,6 +44,7 @@ pub fn build_response(
         411 => "Length Required",
         413 => "Payload Too Large",
         414 => "URI Too Long",
+        415 => "Unsupported Media Type",
         500 => "Internal Server Error",
         502 => "Bad Gateway",
         503 => "Service Unavailable",
@@ -117,6 +118,10 @@ pub fn error_414() -> Vec<u8> {
     out.extend_from_slice(body);
     out
 }
+pub fn error_415() -> &'static [u8] {
+    static B: &[u8] = b"HTTP/1.1 415 Unsupported Media Type\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    B
+}
 pub fn error_503(msg: &str) -> Vec<u8> {
     build_response(503, "text/plain", &[], msg.as_bytes().to_vec())
 }
@@ -179,5 +184,15 @@ mod tests {
         let bytes = build_response(200, "text/plain", &extra, b"".to_vec());
         let s = as_str(&bytes);
         assert!(!s.contains("Set-Cookie"));
+    }
+
+    #[test]
+    fn error_415_status_line() {
+        let resp = error_415();
+        let s = std::str::from_utf8(resp).unwrap();
+        assert!(s.starts_with("HTTP/1.1 415 Unsupported Media Type\r\n"));
+        assert!(s.contains("Content-Length: 0"));
+        // 415 closes the connection because the body may not have been fully read.
+        assert!(s.contains("Connection: close"));
     }
 }
