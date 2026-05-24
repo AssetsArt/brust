@@ -54,18 +54,19 @@ export function tsTypeToJsonSchema(type: ts.Type, opts: ToJsonSchemaOptions = {}
   if (symbol?.name === 'Date') return { type: 'string', format: 'date-time' }
   // Array / Tuple / Object
   if (opts.checker) {
-    const typeAsAny = type as any
-    if (typeAsAny.typeArguments && opts.checker.isArrayType?.(type)) {
-      const inner = typeAsAny.typeArguments[0]
+    if (opts.checker.isArrayType?.(type)) {
+      const args = opts.checker.getTypeArguments(type as ts.TypeReference)
+      const inner = args[0]
       return { type: 'array', items: tsTypeToJsonSchema(inner, opts) ?? {} }
     }
     // Tuple
     if (opts.checker.isTupleType?.(type)) {
-      const args = typeAsAny.typeArguments ?? []
+      const args = opts.checker.getTypeArguments(type as ts.TypeReference) ?? []
+      const target = (type as any).target
       return {
         type: 'array',
         prefixItems: args.map((t: ts.Type) => tsTypeToJsonSchema(t, opts) ?? {}),
-        minItems: args.length,
+        minItems: target?.minLength ?? args.length,
         maxItems: args.length,
       }
     }
@@ -101,14 +102,9 @@ export function tsTypeToJsonSchema(type: ts.Type, opts: ToJsonSchemaOptions = {}
 
 function unwrapPromise(type: ts.Type, checker?: ts.TypeChecker): ts.Type | null | undefined {
   // Returns: ts.Type unwrapped; null = unwrap result is void; undefined = not a Promise.
-  const symbol = type.getSymbol()
-  if (symbol?.name === 'Promise') {
-    const args = (type as any).typeArguments
-    if (args && args.length === 1) {
-      const inner = args[0] as ts.Type
-      if (inner.flags & ts.TypeFlags.Void) return null
-      return inner
-    }
-  }
-  return undefined
+  if (!checker) return undefined
+  const inner = checker.getPromisedTypeOfPromise(type)
+  if (inner === undefined) return undefined
+  if (inner.flags & ts.TypeFlags.Void) return null
+  return inner
 }

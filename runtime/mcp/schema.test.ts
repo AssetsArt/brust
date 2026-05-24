@@ -105,3 +105,13 @@ test('schema: Date → string date-time', () => {
   const { type, checker } = typeOf('const x: Date = new Date()', 'x')
   expect(tsTypeToJsonSchema(type, { checker })).toEqual({ type: 'string', format: 'date-time' })
 })
+
+test('schema: tuple with optional trailing element', () => {
+  const { type, checker } = typeOf('const x: [string, number?] = [""]', 'x')
+  expect(tsTypeToJsonSchema(type, { checker })).toEqual({
+    type: 'array',
+    prefixItems: [{ type: 'string' }, { type: 'number' }],
+    minItems: 1,
+    maxItems: 2,
+  })
+})
