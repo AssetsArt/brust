@@ -112,6 +112,90 @@ export interface FlatRoute {
   cache?: RouteCacheConfig
 }
 
+/** Compose a child's relative path onto a parent's base path.
+ *  - `rel === ''` (layout-only child) → returns `base` unchanged
+ *  - `rel` starts with `/` (absolute) → returns `rel` (only valid when base === '';
+ *    flattenRoutes rejects this case otherwise)
+ *  - otherwise → strip any trailing `/` from base, append `/${rel}` */
+export function joinPath(base: string, rel: string): string {
+  if (rel === '') return base
+  if (rel.startsWith('/')) return rel
+  const trimmedBase = base.endsWith('/') ? base.slice(0, -1) : base
+  return `${trimmedBase}/${rel}`
+}
+
+/** Validate a Route node's structural invariants in the context of its
+ * parent's basePath. Throws with a useful message at module top-level —
+ * route bugs fail loudly before brust.serve binds. */
+function validateRoute(r: Route, basePath: string): void {
+  if (r.index === true && r.path !== undefined) {
+    throw new Error(`route under "${basePath}": cannot set both index and path`)
+  }
+  if (r.index === true && r.children && r.children.length > 0) {
+    throw new Error(`route under "${basePath}": index route cannot have children`)
+  }
+  if (!r.index && r.path === undefined && !(r.children && r.children.length > 0)) {
+    throw new Error(`route under "${basePath}": must have path, index, or children`)
+  }
+  if (r.path !== undefined && r.path.startsWith('/') && basePath !== '') {
+    // Absolute children under a non-empty parent are a footgun (the child
+    // escapes the parent's URL space). Only allowed when the parent is
+    // layout-only (basePath === '').
+    throw new Error(
+      `route under "${basePath}": absolute child path "${r.path}" must be under a pathless ('') parent`,
+    )
+  }
+}
+
+/** Walk the nested route tree, emitting one FlatRoute per leaf or index node.
+ * Composes paths, middleware, errorBoundary, and cache per the rules in
+ * the design spec (§3). */
+export function flattenRoutes(routes: Route[]): FlatRoute[] {
+  const out: FlatRoute[] = []
+  walkRoutes(routes, [], '', out)
+  return out
+}
+
+function walkRoutes(
+  routes: Route[],
+  parentChain: Route[],
+  basePath: string,
+  out: FlatRoute[],
+): void {
+  for (const r of routes) {
+    validateRoute(r, basePath)
+    const chain = [...parentChain, r]
+
+    if (r.index === true) {
+      out.push(makeFlat(chain, basePath))
+      continue
+    }
+
+    const ownPath = r.path ?? ''
+    const myPath = joinPath(basePath, ownPath)
+
+    if (r.children && r.children.length > 0) {
+      walkRoutes(r.children, chain, myPath, out)
+    } else {
+      // Leaf with a path (validated above).
+      out.push(makeFlat(chain, myPath))
+    }
+  }
+}
+
+function makeFlat(chain: Route[], fullPath: string): FlatRoute {
+  const middleware: Middleware[] = []
+  for (const r of chain) {
+    if (r.middleware) middleware.push(...r.middleware)
+  }
+  let errorBoundary: ComponentType<ErrorBoundaryProps> | undefined
+  for (const r of chain) {
+    if (r.errorBoundary) errorBoundary = r.errorBoundary
+  }
+  const cache = chain[chain.length - 1].cache
+  return { fullPath, chain, middleware, errorBoundary, cache }
+}
+
 /** Internal React context that carries the next-deeper rendered element to
  * the parent's <Outlet />. Default `null` means "no child to render" —
  * `<Outlet />` from a leaf route or a flat route renders nothing. */
