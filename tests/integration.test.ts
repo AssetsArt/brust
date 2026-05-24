@@ -1114,6 +1114,189 @@ test('nested routes: flat route still renders (no regression)', async () => {
   }
 }, 15_000)
 
+async function mcpRequest(port: number, method: string, params?: unknown, headers: Record<string, string> = {}): Promise<any> {
+  const resp = await fetch(`http://127.0.0.1:${port}/_brust/mcp`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...headers },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+  })
+  return { status: resp.status, body: await resp.json() }
+}
+
+test('mcp: initialize returns server capabilities', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38197', RUST_LOG: 'brust=warn' },
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const { status, body } = await mcpRequest(port, 'initialize', {
+      protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '0' },
+    })
+    expect(status).toBe(200)
+    expect(body.result.protocolVersion).toBe('2025-06-18')
+    expect(body.result.serverInfo.name).toBe('brust')
+    expect(body.result.capabilities.tools).toBeDefined()
+    expect(body.result.capabilities.resources).toBeDefined()
+  } finally {
+    proc.kill('SIGINT')
+    await proc.exited
+  }
+}, 15_000)
+
+test('mcp: tools/list returns all scanned actions', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38198', RUST_LOG: 'brust=warn' },
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const { body } = await mcpRequest(port, 'tools/list')
+    const names = body.result.tools.map((t: any) => t.name).sort()
+    expect(names).toContain('createNote')
+    expect(names).toContain('whoAmI')
+    expect(names).toContain('deleteNote')
+    expect(names).toContain('pingAction')
+    expect(names).toContain('uploadAvatar')
+  } finally {
+    proc.kill('SIGINT')
+    await proc.exited
+  }
+}, 15_000)
+
+test('mcp: tools/call createNote happy path', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38199', RUST_LOG: 'brust=warn' },
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const { body } = await mcpRequest(port, 'tools/call', {
+      name: 'createNote',
+      arguments: { text: 'hello via mcp' },
+    })
+    expect(body.result.isError).toBe(false)
+    const result = JSON.parse(body.result.content[0].text)
+    expect(result.id).toMatch(/^n-\d+$/)
+  } finally {
+    proc.kill('SIGINT')
+    await proc.exited
+  }
+}, 15_000)
+
+test('mcp: tools/call middleware-gated action without cookie → isError', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38200', RUST_LOG: 'brust=warn' },
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const { body } = await mcpRequest(port, 'tools/call', {
+      name: 'deleteNote',
+      arguments: { noteId: 'n-1' },
+    })
+    expect(body.result.isError).toBe(true)
+    expect(body.result.content[0].text).toContain('login required')
+  } finally {
+    proc.kill('SIGINT')
+    await proc.exited
+  }
+}, 15_000)
+
+test('mcp: tools/call with cookie passes middleware', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38201', RUST_LOG: 'brust=warn' },
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const { body } = await mcpRequest(port, 'tools/call', {
+      name: 'deleteNote',
+      arguments: { noteId: 'n-1' },
+    }, { 'cookie': 'user=alice' })
+    expect(body.result.isError).toBe(false)
+    const result = JSON.parse(body.result.content[0].text)
+    expect(result.ok).toBe(true)
+  } finally {
+    proc.kill('SIGINT')
+    await proc.exited
+  }
+}, 15_000)
+
+test('mcp: resources/list returns loaders', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38202', RUST_LOG: 'brust=warn' },
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const { body } = await mcpRequest(port, 'resources/list')
+    const uris = body.result.resources.map((r: any) => r.uri)
+    expect(uris).toContain('brust:///blog/{slug}')
+  } finally {
+    proc.kill('SIGINT')
+    await proc.exited
+  }
+}, 15_000)
+
+test('mcp: resources/read fetches loader output', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38203', RUST_LOG: 'brust=warn' },
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const { body } = await mcpRequest(port, 'resources/read', { uri: 'brust:///blog/hello' })
+    expect(body.result.contents).toHaveLength(1)
+    const content = body.result.contents[0]
+    expect(content.uri).toBe('brust:///blog/hello')
+    const data = JSON.parse(content.text)
+    expect(data.title).toBe('Post: hello')
+  } finally {
+    proc.kill('SIGINT')
+    await proc.exited
+  }
+}, 15_000)
+
+test('mcp: prompts/list returns empty', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38204', RUST_LOG: 'brust=warn' },
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const { body } = await mcpRequest(port, 'prompts/list')
+    expect(body.result.prompts).toEqual([])
+  } finally {
+    proc.kill('SIGINT')
+    await proc.exited
+  }
+}, 15_000)
+
+test('mcp: unknown method returns -32601', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38205', RUST_LOG: 'brust=warn' },
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const { body } = await mcpRequest(port, 'nonexistentMethod')
+    expect(body.error.code).toBe(-32601)
+  } finally {
+    proc.kill('SIGINT')
+    await proc.exited
+  }
+}, 15_000)
+
 async function readPortLine(stream: ReadableStream<Uint8Array>): Promise<number> {
   const reader = stream.getReader()
   const decoder = new TextDecoder()
