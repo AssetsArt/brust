@@ -618,7 +618,7 @@ test('action endpoint: malformed JSON args → 400', async () => {
     })
     expect(resp.status).toBe(400)
     const body = await resp.text()
-    expect(body).toContain('invalid args JSON')
+    expect(body).toContain('invalid request body')
   } finally {
     proc.kill('SIGINT')
     await proc.exited

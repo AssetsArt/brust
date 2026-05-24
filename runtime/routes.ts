@@ -106,9 +106,15 @@ export type RouteCall =
   | {
       kind: 'action'
       action_id: string
-      /** Raw JSON args body (a JSON string). Worker parses it once,
-       * checks Array.isArray, then spreads into the action handler. */
-      args_json: string
+      /** Request's Content-Type, lowercased + trimmed. '' means the header
+       * was missing. JS dispatcher branches on this. */
+      content_type: string
+      /** UTF-8 text body — present for application/json and
+       * application/x-www-form-urlencoded. Mutually exclusive with body_b64. */
+      body_text?: string
+      /** Base64-encoded binary body — present for multipart/form-data.
+       * JS decodes via Buffer.from(s, 'base64') before parsing. */
+      body_b64?: string
       req: BrustRequest
     }
 
@@ -239,23 +245,45 @@ async function actionBranch(
     })
   }
 
-  // Parse args BEFORE middleware so a malformed body 400s without running
+  // Decode the body into the args array that will be spread into the handler.
+  // Three paths: multipart (body_b64), form-urlencoded (body_text), or JSON (body_text).
+  // Body decode happens BEFORE middleware so a malformed body 400s without running
   // any user code.
   let args: unknown[]
   try {
-    const decoded = JSON.parse(call.args_json) as unknown
-    if (!Array.isArray(decoded)) {
-      return packResponse(view, encoder, {
-        status: 400,
-        body: '{"error":{"message":"args must be a JSON array"}}',
-        contentType: 'application/json; charset=utf-8',
+    if (call.body_b64 !== undefined) {
+      // Multipart path — base64 → bytes → Web Request.formData()
+      const bytes = Buffer.from(call.body_b64, 'base64')
+      const synthReq = new Request('http://x', {
+        method: 'POST',
+        headers: { 'Content-Type': call.content_type },
+        body: bytes,
       })
+      const fd = await synthReq.formData()
+      args = [fd]
+    } else if (call.content_type.toLowerCase().startsWith('application/x-www-form-urlencoded')) {
+      // Form-urlencoded path — URLSearchParams → FormData
+      const params = new URLSearchParams(call.body_text ?? '')
+      const fd = new FormData()
+      for (const [k, v] of params) fd.append(k, v)
+      args = [fd]
+    } else {
+      // JSON path (default — empty or application/json content type).
+      const decoded = JSON.parse(call.body_text ?? '') as unknown
+      if (!Array.isArray(decoded)) {
+        return packResponse(view, encoder, {
+          status: 400,
+          body: '{"error":{"message":"args must be a JSON array"}}',
+          contentType: 'application/json; charset=utf-8',
+        })
+      }
+      args = decoded
     }
-    args = decoded
-  } catch {
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
     return packResponse(view, encoder, {
       status: 400,
-      body: '{"error":{"message":"invalid args JSON"}}',
+      body: JSON.stringify({ error: { message: `invalid request body: ${msg}` } }),
       contentType: 'application/json; charset=utf-8',
     })
   }

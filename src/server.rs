@@ -297,16 +297,52 @@ async fn handle_conn(
                 }
             }
             let body_slice = &buf[header_end..header_end + content_length];
-            let body_str = match std::str::from_utf8(body_slice) {
-                Ok(s) => s,
-                Err(_) => {
-                    let _ = s.write_all(http::error_400()).await;
-                    continue;
+
+            // Detect Content-Type and route to the right body-encoding path.
+            // ct_lower is ASCII-lowercased so 'application/JSON; charset=UTF-8'
+            // (legal per RFC 7231) is accepted on the JSON branch.
+            let content_type = parse_content_type(&buf[..header_end]).unwrap_or_default();
+            let ct_lower = content_type.to_ascii_lowercase();
+
+            let body_text_string: Option<String>;
+            let body_b64_string: Option<String>;
+
+            if ct_lower.is_empty()
+                || ct_lower.starts_with("application/json")
+                || ct_lower.starts_with("application/x-www-form-urlencoded")
+            {
+                // Text body — UTF-8 validated.
+                match std::str::from_utf8(body_slice) {
+                    Ok(s) => {
+                        body_text_string = Some(s.to_string());
+                        body_b64_string = None;
+                    }
+                    Err(_) => {
+                        let _ = s.write_all(http::error_400()).await;
+                        continue;
+                    }
                 }
-            };
+            } else if ct_lower.starts_with("multipart/form-data") {
+                // Binary body. base64-encode for transport through the JSON envelope.
+                use base64::Engine as _;
+                let b64 = base64::engine::general_purpose::STANDARD.encode(body_slice);
+                body_text_string = None;
+                body_b64_string = Some(b64);
+            } else {
+                // Unsupported Content-Type — close the connection because the
+                // body may have been partially read.
+                let _ = s.write_all(http::error_415().to_vec()).await;
+                return;
+            }
 
             let envelope_json = crate::routes::build_action_envelope(
-                &method, &path, id, body_str, &buf[..header_end],
+                &method,
+                &path,
+                id,
+                &content_type,
+                body_text_string.as_deref(),
+                body_b64_string.as_deref(),
+                &buf[..header_end],
             );
 
             // Action endpoint never caches, so on_success is a no-op. Content-Type

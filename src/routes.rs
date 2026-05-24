@@ -31,20 +31,25 @@ pub struct RouteEnvelope<'a> {
     pub req: RequestEnvelope,
 }
 
-/// JSON envelope shipped across the tsfn boundary for each action call.
 /// Mirrors RouteEnvelope but carries a string action_id (not numeric route_id)
-/// and the raw JSON args body — JS dispatcher parses it once after middleware.
-/// `kind: "action"` discriminates from the render variant.
+/// and a content-type-aware body. `kind: "action"` discriminates from the
+/// render variant. Exactly ONE of body_text / body_b64 is Some, decided by
+/// the request's Content-Type header (see src/server.rs).
 #[derive(Serialize)]
 pub struct ActionEnvelope<'a> {
     pub kind: &'static str,
     pub action_id: &'a str,
-    /// Raw UTF-8 JSON body sent by the client. JS calls JSON.parse on this
-    /// inside the action branch of makeRenderer. Validated as UTF-8 by Rust
-    /// before reaching here; structural validation (must parse to an array)
-    /// happens in JS so the 400 error envelope can flow through the standard
-    /// SAB return path.
-    pub args_json: &'a str,
+    /// Request's Content-Type header, lowercased + trimmed. Empty string
+    /// means the header was missing. JS dispatcher branches on this.
+    pub content_type: &'a str,
+    /// UTF-8-validated text body. Present for application/json and
+    /// application/x-www-form-urlencoded. Absent for multipart.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body_text: Option<&'a str>,
+    /// Base64-encoded binary body. Present for multipart/form-data.
+    /// JS decodes via Buffer.from(s, 'base64') before parsing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body_b64: Option<&'a str>,
     pub req: RequestEnvelope,
 }
 
@@ -55,7 +60,9 @@ pub fn build_action_envelope(
     method: &str,
     full_path: &str,
     action_id: &str,
-    args_json: &str,
+    content_type: &str,
+    body_text: Option<&str>,
+    body_b64: Option<&str>,
     raw_request: &[u8],
 ) -> String {
     let (_, query) = match full_path.split_once('?') {
@@ -66,7 +73,9 @@ pub fn build_action_envelope(
     let env = ActionEnvelope {
         kind: "action",
         action_id,
-        args_json,
+        content_type,
+        body_text,
+        body_b64,
         req,
     };
     serde_json::to_string(&env).unwrap()
@@ -395,42 +404,75 @@ mod tests {
     }
 
     #[test]
-    fn action_envelope_serializes_with_kind_action() {
-        let req = build_request_envelope(
+    fn action_envelope_json_path() {
+        let json = build_action_envelope(
             "POST",
             "/_brust/action/createNote",
-            "",
+            "createNote",
+            "application/json",
+            Some(r#"["hello"]"#),
+            None,
             b"POST /_brust/action/createNote HTTP/1.1\r\nHost: x\r\n\r\n",
         );
-        let env = ActionEnvelope {
-            kind: "action",
-            action_id: "createNote",
-            args_json: r#"["hello"]"#,
-            req,
-        };
-        let json = serde_json::to_string(&env).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["kind"], "action");
         assert_eq!(parsed["action_id"], "createNote");
-        assert_eq!(parsed["args_json"], r#"["hello"]"#);
+        assert_eq!(parsed["content_type"], "application/json");
+        assert_eq!(parsed["body_text"], r#"["hello"]"#);
+        // body_b64 must be absent on the JSON path (skip_serializing_if).
+        assert!(parsed.get("body_b64").is_none());
         assert_eq!(parsed["req"]["method"], "POST");
     }
 
     #[test]
-    fn action_envelope_args_json_preserves_quotes() {
-        let req = build_request_envelope("POST", "/_brust/action/x", "", b"");
-        let env = ActionEnvelope {
-            kind: "action",
-            action_id: "x",
-            args_json: r#"["hi \"there\"", 42]"#,
-            req,
-        };
-        let json = serde_json::to_string(&env).unwrap();
-        // args_json is shipped as a JSON string field, so the outer serialise
-        // escapes the inner quotes once. Reparsing the outer JSON and then
-        // parsing the inner string should recover the original array.
+    fn action_envelope_form_urlencoded_path() {
+        let json = build_action_envelope(
+            "POST",
+            "/_brust/action/registerUser",
+            "registerUser",
+            "application/x-www-form-urlencoded",
+            Some("name=Alice&age=30"),
+            None,
+            b"POST /_brust/action/registerUser HTTP/1.1\r\nHost: x\r\n\r\n",
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["content_type"], "application/x-www-form-urlencoded");
+        assert_eq!(parsed["body_text"], "name=Alice&age=30");
+        assert!(parsed.get("body_b64").is_none());
+    }
+
+    #[test]
+    fn action_envelope_multipart_path() {
+        let json = build_action_envelope(
+            "POST",
+            "/_brust/action/uploadAvatar",
+            "uploadAvatar",
+            "multipart/form-data; boundary=abc",
+            None,
+            Some("LS1hYmMNCkNvbnRlbnQt"),
+            b"POST /_brust/action/uploadAvatar HTTP/1.1\r\nHost: x\r\n\r\n",
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["content_type"], "multipart/form-data; boundary=abc");
+        assert_eq!(parsed["body_b64"], "LS1hYmMNCkNvbnRlbnQt");
+        assert!(parsed.get("body_text").is_none());
+    }
+
+    #[test]
+    fn action_envelope_quoting_preserved() {
+        // Pinned: actionBranch in JS does JSON.parse(body_text). Any quote loss
+        // between Rust → napi → JS surfaces as a parse error in production.
+        let json = build_action_envelope(
+            "POST",
+            "/_brust/action/x",
+            "x",
+            "application/json",
+            Some(r#"["hi \"there\"", 42]"#),
+            None,
+            b"",
+        );
         let outer: serde_json::Value = serde_json::from_str(&json).unwrap();
-        let inner: serde_json::Value = serde_json::from_str(outer["args_json"].as_str().unwrap()).unwrap();
+        let inner: serde_json::Value = serde_json::from_str(outer["body_text"].as_str().unwrap()).unwrap();
         assert_eq!(inner[0], r#"hi "there""#);
         assert_eq!(inner[1], 42);
     }
