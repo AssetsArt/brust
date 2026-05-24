@@ -39,8 +39,9 @@ pub struct RouteEnvelope<'a> {
 pub struct ActionEnvelope<'a> {
     pub kind: &'static str,
     pub action_id: &'a str,
-    /// Request's Content-Type header, lowercased + trimmed. Empty string
-    /// means the header was missing. JS dispatcher branches on this.
+    /// Request's Content-Type header, whitespace-trimmed (case PRESERVED —
+    /// JS lowercases defensively at the dispatch point). Empty string means
+    /// the header was missing. JS dispatcher branches on this.
     pub content_type: &'a str,
     /// UTF-8-validated text body. Present for application/json and
     /// application/x-www-form-urlencoded. Absent for multipart.
@@ -436,6 +437,7 @@ mod tests {
             b"POST /_brust/action/registerUser HTTP/1.1\r\nHost: x\r\n\r\n",
         );
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["kind"], "action");
         assert_eq!(parsed["content_type"], "application/x-www-form-urlencoded");
         assert_eq!(parsed["body_text"], "name=Alice&age=30");
         assert!(parsed.get("body_b64").is_none());
@@ -453,6 +455,7 @@ mod tests {
             b"POST /_brust/action/uploadAvatar HTTP/1.1\r\nHost: x\r\n\r\n",
         );
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["kind"], "action");
         assert_eq!(parsed["content_type"], "multipart/form-data; boundary=abc");
         assert_eq!(parsed["body_b64"], "LS1hYmMNCkNvbnRlbnQt");
         assert!(parsed.get("body_text").is_none());

@@ -106,8 +106,9 @@ export type RouteCall =
   | {
       kind: 'action'
       action_id: string
-      /** Request's Content-Type, lowercased + trimmed. '' means the header
-       * was missing. JS dispatcher branches on this. */
+      /** Request's Content-Type, whitespace-trimmed (case preserved by Rust;
+       * the dispatch points below lowercase defensively). '' means the header
+       * was missing. */
       content_type: string
       /** UTF-8 text body — present for application/json and
        * application/x-www-form-urlencoded. Mutually exclusive with body_b64. */
