@@ -513,7 +513,7 @@ async function mcpBranch(
 /** Right-to-left compose a middleware chain. Each middleware wraps the next;
  * the terminal step ends up at the innermost call. Returning without calling
  * next() short-circuits. Used identically by render + action branches. */
-function composeChain(
+export function composeChain(
   req: BrustRequest,
   mws: Middleware[] | undefined,
   terminal: () => Promise<RouteResponse>,
