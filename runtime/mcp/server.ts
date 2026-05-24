@@ -166,8 +166,11 @@ async function handleResourcesRead(rpc: JsonRpcRequest, opts: McpServerOptions, 
   }
   const requestedPath = params.uri.slice(prefix.length)
 
-  // Match against the routes. Walk opts.routes to find one whose fullPath
-  // pattern matches the URI's path portion.
+  // Match against the routes. matchUriPath does the {param} capture that the
+  // manifest's pre-computed ResourceSchema.routeIndex cannot do alone — both
+  // index spaces stay aligned because the extractor builds resources in the
+  // same opts.routes order the server consumes, so a divergence would mean
+  // routes were rebuilt without a matching brust.buildMcpManifest call.
   const match = matchUriPath(requestedPath, opts.routes)
   if (!match) {
     return makeError(rpc.id ?? null, -32601, `no route matches URI ${params.uri}`)
