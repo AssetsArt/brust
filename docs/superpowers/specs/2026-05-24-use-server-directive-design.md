@@ -95,7 +95,7 @@ $ cargo test --lib
 | Scanner timing | **Boot-time only** (parallel to `buildIslands`) | Boot is the existing build seam. Avoids coupling to Bun.build plugin API. No watch/HMR loop yet. |
 | Manual API | **Removed from user surface** | User asked for "zero manual registration". `defineActions` / `registerActions` keep existing names but become internal-only (re-exports dropped from `runtime/index.ts`). |
 | Middleware binding | **`withMiddleware([...], fn)` wrapper** | Explicit, no naming-convention magic. Function identity preserved (return type is `F`), middleware metadata lives on a property the scanner reads. |
-| Action id | **Bare export name** (`fn.name`) | Smallest mental model. Cross-file duplicates throw at scan time with both paths. |
+| Action id | **Bare export name** (the binding key from `Object.entries(mod)`) | Smallest mental model. Cross-file duplicates throw at scan time with both paths. NOTE: id comes from the export-binding name, NOT `fn.name` — `fn.name` is empty for `withMiddleware`-wrapped arrows because the JS NamedEvaluation rule only fires for bare function/arrow RHS, not for call expressions. The export key is always correct. |
 | Scanner implementation | **Bun.glob + dynamic import** | Reuses Bun's filesystem APIs. No AST parser needed because dynamic import gives us function refs directly. |
 
 ### Out of scope (deferred)
@@ -145,6 +145,8 @@ shape Next.js uses. Implementation detail in §3.
 
 ```ts
 // runtime/actions.ts (already exists; add this export)
+const BRUST_MW_KEY = '__brustMiddleware'
+
 export function withMiddleware<F extends (...args: never[]) => unknown>(
   mws: readonly Middleware[],
   fn: F,
@@ -152,7 +154,15 @@ export function withMiddleware<F extends (...args: never[]) => unknown>(
   if (!Array.isArray(mws) || mws.some((m) => typeof m !== 'function')) {
     throw new TypeError('withMiddleware expects an array of middleware functions')
   }
-  Object.defineProperty(fn, '__brustMiddleware', {
+  // Reject double-wrap explicitly so users get a clear message instead of
+  // the cryptic "Attempting to change value of a readonly property" that
+  // a re-`defineProperty` would throw on a non-configurable slot.
+  if ((fn as { [BRUST_MW_KEY]?: unknown })[BRUST_MW_KEY] !== undefined) {
+    throw new Error(
+      'withMiddleware called twice on the same function — compose middleware in a single call instead',
+    )
+  }
+  Object.defineProperty(fn, BRUST_MW_KEY, {
     value: Object.freeze([...mws]),
     enumerable: false,
     writable: false,
@@ -168,16 +178,30 @@ Notes:
   code that imports `typeof srv.deleteNote` sees the original arg/return types.
 - Metadata stored as a non-enumerable, non-writable property → JSON.stringify
   skips it; nothing mutates it after creation.
-- `Object.freeze` on the middleware array makes appending impossible after
-  scan, which would otherwise be a race-shaped hazard.
+- `Object.freeze` on the array elements: the array itself is frozen (no push /
+  splice), but the middleware functions inside aren't deep-frozen. That's
+  fine — middleware is invoke-only, never mutated.
+- Double-wrap throws a clear error. Users who really want to layer middleware
+  should call `withMiddleware([...a, ...b], fn)` once.
 
 ### 2.3 `brust.scanActions(options?)`
 
 ```ts
 type ScanOptions = {
-  /** Glob roots to scan from, relative to cwd. Default: ['./'].  */
+  /** Glob roots to scan from, relative to cwd. Default: ['./'].
+   *  ⚠ Pass an explicit root (e.g. `import.meta.dirname`) whenever the project
+   *  layout includes sibling subtrees you don't want scanned — typical when an
+   *  example app sits inside a larger repo. */
   roots?: string[]
-  /** Globs to ignore. Default: ['node_modules/**', '.brust/**', 'dist/**', 'build/**']. */
+  /** Globs to ignore. Default covers build outputs AND common test patterns —
+   *  real-world apps often have server-shaped functions in test fixtures
+   *  (e.g. `tests/handlers.test.ts`). Override the array (not merge) if you
+   *  need a different policy.
+   *  Default: [
+   *    'node_modules/**', '.brust/**', 'dist/**', 'build/**',
+   *    'tests/**', '__tests__/**', '*.test.ts', '*.test.tsx',
+   *    '*.spec.ts', '*.spec.tsx',
+   *  ] */
   ignore?: string[]
 }
 
@@ -385,16 +409,32 @@ means both ends see the same `actions` array.
 After this change, `await brust.scanActions()` replaces `defineActions`. It's
 also called at module top-level, so:
 
-- **Main process** scans → registers ids with Rust via internal call → starts
-  serve loop.
+- **Main process** scans → registers ids with Rust via internal call →
+  starts serve loop.
 - **Each worker process** scans → uses the array to build the renderer's
-  `actions` map.
+  `actions` map. Worker does NOT call `registerActions` against Rust — Rust
+  state is process-global to main, and workers don't share that registry.
+  Each worker just needs the in-memory map to dispatch by `action_id` when
+  the envelope arrives.
 
-Because workers spawn from the same `entry` file as main (see `brust.serve`
-docstring + Bun Worker model), they import the same `index.ts`, hit the same
+**Cost accounting:** with `workers: N` you pay N+1 directory walks + N+1
+sets of dynamic-imports at boot, one per JS context. For ~10 server files
+and 4 workers, that's ~5 ms × 5 = ~25 ms total scan time at boot. Acceptable
+for an MVP. Future optimisation: emit `.brust/actions/manifest.ts` once
+from main, have workers `import` the manifest instead of re-scanning. Out
+of scope for this MVP — see §11.
+
+Because workers spawn from the same `entry` file as main (`new Worker(opts.entry, ...)`
+in `runtime/index.ts`), they import the same `index.ts`, hit the same
 top-level `await brust.scanActions()`, and find the same files in the same
 order (sort is deterministic). The two ends end up with structurally-equal
 arrays — same length, same ids, same middleware metadata.
+
+**Function identity is per-process.** Each worker's JS context produces a
+fresh function instance for `createNote`, distinct from main's. Nothing
+relies on reference equality between contexts: action dispatch uses the
+id-keyed map, and middleware arrays are invoked through `composeChain`,
+never compared. Safe.
 
 **Verification at boot:** Rust's action registry sees ids from main. Worker
 sees actions from its own scan. If they diverge (e.g., a file is added
@@ -544,8 +584,11 @@ Spawn `bun test` in a temp directory with a controlled file layout:
 
 - After deleting all `defineActions`/`registerActions` calls from the example
   app and adding `'use server'` to actions.ts:
-  - All 8 existing action tests still pass (happy path, 400, 404, 405, 411,
-    413, undefined return, middleware short-circuit, middleware pass-through).
+  - All 11 existing action tests in `tests/integration.test.ts` still pass
+    (happy path, malformed JSON 400, non-array 400, unknown id 404, GET 405,
+    bad charset 404, missing CL 411, undefined return 200, CL > 256 KB 413,
+    middleware short-circuit 401, middleware pass-through 200) PLUS the
+    `/note` island wiring test that exercises action invocation end-to-end.
   - Boot log line `[brust] scanActions found N actions` appears in stdout.
 
 ### 8.3 Negative integration test (boot failure)
@@ -566,7 +609,7 @@ Spawn `bun test` in a temp directory with a controlled file layout:
 | Boot time grows with N server files (each `await import`) | Low | Serial import for safety; flip to parallel if benchmarks ever show >50 ms. Document the budget. |
 | A `'use server'` file imports a heavy module (e.g. database client) that runs at top-level | Med | Acknowledged as user responsibility — same as today's top-level imports. Document in spec. |
 | Two workers race to register different action sets after a dev-loop file rename | Low | Unknown id at dispatch → JSON 404 (existing handler). Restart workers fixes it. |
-| `fn.name` is empty for some pattern (e.g. anonymous IIFE assigned to export) | Low | `collectExports` skips entries with empty `name`. Documented as "named exports only" in §2.1. |
+| Double-wrap with `withMiddleware` produces a confusing error | Low | The helper detects prior `__brustMiddleware` and throws a clear "called twice on the same function — compose in a single call instead" (§2.2). |
 
 ---
 
