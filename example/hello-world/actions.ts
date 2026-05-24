@@ -20,3 +20,10 @@ export async function deleteNote(req: BrustRequest, noteId: string): Promise<{ o
   }
   return { ok: true }
 }
+
+/** Demo action that returns nothing — exercises the empty-body wire path
+ * (status 200, Content-Length: 0). Real use cases: fire-and-forget analytics
+ * pings, log events. */
+export async function pingAction(_req: BrustRequest): Promise<void> {
+  // intentionally empty
+}

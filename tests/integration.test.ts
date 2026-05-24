@@ -738,6 +738,72 @@ test('action endpoint: missing Content-Length → 411', async () => {
   }
 }, 15_000)
 
+test('action endpoint: undefined return → 200 with empty body', async () => {
+  // pingAction returns void → JS terminal sends body: '' with status 200.
+  // Verifies the wire roundtrip handles Content-Length: 0 cleanly.
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38184', RUST_LOG: 'brust=warn' },
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/pingAction`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify([]),
+    })
+    expect(resp.status).toBe(200)
+    expect(resp.headers.get('content-type')).toBe('application/json; charset=utf-8')
+    expect(resp.headers.get('content-length')).toBe('0')
+    expect(await resp.text()).toBe('')
+  } finally {
+    proc.kill('SIGINT')
+    await proc.exited
+  }
+}, 15_000)
+
+test('action endpoint: Content-Length > 256 KB → 413', async () => {
+  // Server rejects oversized bodies BEFORE reading them: parse_content_length
+  // returns > MAX_ACTION_BODY_BYTES (256 KB) and writes 413 immediately.
+  // Use a raw socket so we can claim a large Content-Length without actually
+  // sending the bytes — the server should 413 from headers alone.
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38185', RUST_LOG: 'brust=warn' },
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const chunks: Uint8Array[] = []
+    let resolveClose!: () => void
+    const closed = new Promise<void>((r) => { resolveClose = r })
+    const sock = await Bun.connect({
+      hostname: '127.0.0.1', port,
+      socket: {
+        data(_s, data) { chunks.push(new Uint8Array(data)) },
+        open() {}, close() { resolveClose() }, drain() {}, error() { resolveClose() },
+      },
+    })
+    sock.write(
+      'POST /_brust/action/createNote HTTP/1.1\r\n' +
+      'Host: x\r\n' +
+      'Content-Length: 300000\r\n' +
+      '\r\n',
+    )
+    await Promise.race([
+      closed,
+      new Promise<void>((r) => setTimeout(r, 1000)),
+    ])
+    sock.end()
+    const combined = Buffer.concat(chunks).toString('utf-8')
+    expect(combined.split('\r\n')[0]).toContain('413')
+  } finally {
+    proc.kill('SIGINT')
+    await proc.exited
+  }
+}, 15_000)
+
 test('action middleware: short-circuits without cookie', async () => {
   const proc = spawn({
     cmd: ['bun', 'run', 'example/hello-world/index.ts'],

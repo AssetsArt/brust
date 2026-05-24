@@ -1,6 +1,6 @@
 import { brust, isWorker, loadConfig, makeRenderer, buildIslands, defineActions, type Middleware } from '../../runtime/index.ts'
 import { routes } from './routes'
-import { createNote, whoAmI, deleteNote } from './actions'
+import { createNote, whoAmI, deleteNote, pingAction } from './actions'
 
 // Auth middleware to demo on the deleteNote action.
 const requireUser: Middleware = async (req, next) => {
@@ -14,6 +14,7 @@ const actions = defineActions([
   { id: 'createNote', fn: createNote },
   { id: 'whoAmI',     fn: whoAmI },
   { id: 'deleteNote', fn: deleteNote, middleware: [requireUser] },
+  { id: 'pingAction', fn: pingAction },
 ])
 
 if (!isWorker) {
