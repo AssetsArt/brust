@@ -76,10 +76,10 @@ export const brust = {
     await (native as any).untilShutdown()
   },
   /** Install the route table in Rust. MUST be called before `serve()`.
-   * Pass an array of routes from `defineRoutes(...)` — each is JSON-encoded
-   * with its optional cache config. */
-  registerRoutes(routes: Array<{ path: string, cache?: { ttl_seconds: number, vary?: string[] } }>): number {
-    const configs = routes.map((r) => JSON.stringify({ path: r.path, cache: r.cache ?? null }))
+   * Pass an array of FlatRoutes from `defineRoutes(...)` — each is JSON-encoded
+   * with its optional cache config. Rust matches against `fullPath`. */
+  registerRoutes(routes: import('./routes.ts').FlatRoute[]): number {
+    const configs = routes.map((r) => JSON.stringify({ path: r.fullPath, cache: r.cache ?? null }))
     return (native as any).registerRoutes(configs)
   },
   /** Set the response cache capacity (entries). Default is 1000.

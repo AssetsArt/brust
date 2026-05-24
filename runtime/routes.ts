@@ -213,11 +213,12 @@ export function Outlet(): ReactNode {
   return useContext(OutletContext)
 }
 
-/** Identity helper that pins the `routes` array's element type for the IDE
- * and ensures route_ids are stable across worker reloads (they = array index).
- */
-export function defineRoutes(routes: Route[]): Route[] {
-  return routes
+/** Process the user's nested route tree into a flat array for the renderer
+ * and Rust route table. Each leaf/index node becomes one FlatRoute. Indices
+ * are stable across worker reloads (= array position), matching Rust's
+ * route_id semantics. */
+export function defineRoutes(routes: Route[]): FlatRoute[] {
+  return flattenRoutes(routes)
 }
 
 /** Wire-level shape of the JSON envelope produced by Rust. Discriminated
@@ -268,12 +269,12 @@ export interface MakeRendererOptions {
 }
 
 export function makeRenderer(
-  routes: Route[],
+  routes: FlatRoute[],
   view: Uint8Array,
   opts: MakeRendererOptions = {},
 ): (envelopeJson: string) => Promise<number> {
   const encoder = new TextEncoder()
-  const byRouteId = new Map<number, Route>()
+  const byRouteId = new Map<number, FlatRoute>()
   routes.forEach((r, i) => byRouteId.set(i, r))
   const byActionId = new Map<string, ActionDef>()
   for (const a of opts.actions ?? []) byActionId.set(a.id, a)
@@ -300,39 +301,55 @@ export function makeRenderer(
 
 async function renderBranch(
   call: Extract<RouteCall, { kind: 'render' }>,
-  byId: Map<number, Route>,
+  byId: Map<number, FlatRoute>,
   view: Uint8Array,
   encoder: TextEncoder,
   getWorkerId?: () => number | null,
 ): Promise<number> {
-  const route = byId.get(call.route_id)
-  if (!route) {
+  const flat = byId.get(call.route_id)
+  if (!flat) {
     console.error(`[brust] unknown route_id=${call.route_id} for path=${call.path}`)
     return 0
   }
   const workerId = getWorkerId ? getWorkerId() : null
+  const chainNodes = flat.chain
 
   const terminal = async (): Promise<RouteResponse> => {
     try {
-      const data = route.loader
-        ? await route.loader({ params: call.params, path: call.path, req: call.req })
-        : undefined
-      const html = renderToString(
-        createElement(route.Component, {
+      // 1. Run loaders top-down (parent → leaf). Each Component receives ONLY
+      //    its own loader's data — no merge, no inheritance.
+      const datas: unknown[] = new Array(chainNodes.length)
+      for (let i = 0; i < chainNodes.length; i++) {
+        const r = chainNodes[i]
+        datas[i] = r.loader
+          ? await r.loader({ params: call.params, path: call.path, req: call.req })
+          : undefined
+      }
+
+      // 2. Build the React element bottom-up. Each level wraps the deeper level
+      //    via <OutletContext.Provider value={renderedChild}>; <Outlet /> in any
+      //    parent Component returns that value.
+      let element: ReactNode = null
+      for (let i = chainNodes.length - 1; i >= 0; i--) {
+        const r = chainNodes[i]
+        const node = createElement(r.Component, {
           params: call.params,
           path: call.path,
-          data,
+          data: datas[i],
           workerId,
           req: call.req,
-        }),
-      )
+        })
+        element = createElement(OutletContext.Provider, { value: element }, node)
+      }
+
+      const html = renderToString(element)
       const wrapped = consumeIslandUsedFlag()
         ? wrapWithIslandsBootstrap(html)
         : html
       return { status: 200, body: wrapped }
     } catch (renderErr) {
-      if (!route.errorBoundary) throw renderErr
-      const boundary: ReactNode = createElement(route.errorBoundary, {
+      if (!flat.errorBoundary) throw renderErr
+      const boundary: ReactNode = createElement(flat.errorBoundary, {
         error: renderErr instanceof Error ? renderErr : new Error(String(renderErr)),
       })
       const html = renderToString(boundary)
@@ -343,7 +360,7 @@ async function renderBranch(
     }
   }
 
-  const chain = composeChain(call.req, route.middleware, terminal)
+  const chain = composeChain(call.req, flat.middleware, terminal)
 
   let response: RouteResponse
   try {
