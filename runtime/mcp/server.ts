@@ -54,7 +54,9 @@ export function makeMcpServer(opts: McpServerOptions): McpServer {
         case 'tools/call':
           return handleToolsCall(rpc, opts, req)
         case 'resources/list':
+          return handleResourcesList(rpc, opts)
         case 'resources/read':
+          return handleResourcesRead(rpc, opts, req)
         case 'prompts/list':
         case 'prompts/get':
         case 'logging/setLevel':
@@ -140,6 +142,82 @@ async function handleToolsCall(rpc: JsonRpcRequest, opts: McpServerOptions, req:
     content: [{ type: 'text', text: response.body || '' }],
     isError: false,
   })
+}
+
+async function handleResourcesList(rpc: JsonRpcRequest, opts: McpServerOptions): Promise<string> {
+  const resources = opts.manifest.resources.map((r) => ({
+    uri: r.uriTemplate,
+    name: r.name,
+    description: r.description,
+    mimeType: 'application/json',
+  }))
+  return makeResult(rpc.id ?? null, { resources })
+}
+
+async function handleResourcesRead(rpc: JsonRpcRequest, opts: McpServerOptions, req: BrustRequest): Promise<string> {
+  const params = rpc.params as { uri?: string } | undefined
+  if (!params || typeof params.uri !== 'string') {
+    return makeError(rpc.id ?? null, -32602, 'resources/read: uri required')
+  }
+  // Strip the brust:// scheme.
+  const prefix = 'brust://'
+  if (!params.uri.startsWith(prefix)) {
+    return makeError(rpc.id ?? null, -32602, `unsupported URI scheme: ${params.uri}`)
+  }
+  const requestedPath = params.uri.slice(prefix.length)
+
+  // Match against the routes. Walk opts.routes to find one whose fullPath
+  // pattern matches the URI's path portion.
+  const match = matchUriPath(requestedPath, opts.routes)
+  if (!match) {
+    return makeError(rpc.id ?? null, -32601, `no route matches URI ${params.uri}`)
+  }
+  const route = opts.routes[match.routeIndex]
+  const leaf = route.chain[route.chain.length - 1]
+  if (!leaf.loader) {
+    return makeError(rpc.id ?? null, -32603, `route ${route.fullPath} has no loader`)
+  }
+  try {
+    const data = await leaf.loader({ params: match.params, path: requestedPath, req })
+    return makeResult(rpc.id ?? null, {
+      contents: [{
+        uri: params.uri,
+        mimeType: 'application/json',
+        text: JSON.stringify(data),
+      }],
+    })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return makeError(rpc.id ?? null, -32603, `loader error: ${msg}`)
+  }
+}
+
+interface UriMatch {
+  routeIndex: number
+  params: Record<string, string>
+}
+
+function matchUriPath(requestedPath: string, routes: FlatRoute[]): UriMatch | null {
+  // Simple param matching: split both into segments and match.
+  const reqSegs = requestedPath.split('/').filter((s) => s.length > 0)
+  for (let i = 0; i < routes.length; i++) {
+    const fr = routes[i]
+    const routeSegs = fr.fullPath.split('/').filter((s) => s.length > 0)
+    if (reqSegs.length !== routeSegs.length) continue
+    const params: Record<string, string> = {}
+    let matched = true
+    for (let j = 0; j < reqSegs.length; j++) {
+      const rseg = routeSegs[j]
+      if (rseg.startsWith('{') && rseg.endsWith('}')) {
+        params[rseg.slice(1, -1)] = reqSegs[j]
+      } else if (rseg !== reqSegs[j]) {
+        matched = false
+        break
+      }
+    }
+    if (matched) return { routeIndex: i, params }
+  }
+  return null
 }
 
 export function makeResult(id: number | string | null, result: unknown): string {
