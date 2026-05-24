@@ -331,7 +331,7 @@ async fn handle_conn(
             } else {
                 // Unsupported Content-Type — close the connection because the
                 // body may have been partially read.
-                let _ = s.write_all(http::error_415().to_vec()).await;
+                let _ = s.write_all(http::error_415()).await;
                 return;
             }
 
