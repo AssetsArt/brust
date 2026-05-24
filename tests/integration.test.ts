@@ -1012,6 +1012,108 @@ test('action endpoint: middleware short-circuits a multipart action', async () =
   }
 }, 15_000)
 
+test('nested routes: index route renders parent layout + dashboard', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38192', RUST_LOG: 'brust=warn' },
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const resp = await fetch(`http://127.0.0.1:${port}/admin`, {
+      headers: { 'cookie': 'user=alice' },
+    })
+    expect(resp.status).toBe(200)
+    const body = await resp.text()
+    expect(body).toContain('AdminLayout')
+    expect(body).toContain('AdminDashboard')
+  } finally {
+    proc.kill('SIGINT')
+    await proc.exited
+  }
+}, 15_000)
+
+test('nested routes: child path inherits parent middleware (401 without cookie)', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38193', RUST_LOG: 'brust=warn' },
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const resp = await fetch(`http://127.0.0.1:${port}/admin/users`)
+    expect(resp.status).toBe(401)
+  } finally {
+    proc.kill('SIGINT')
+    await proc.exited
+  }
+}, 15_000)
+
+test('nested routes: param child renders with id from path', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38194', RUST_LOG: 'brust=warn' },
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const resp = await fetch(`http://127.0.0.1:${port}/admin/users/42`, {
+      headers: { 'cookie': 'user=alice' },
+    })
+    expect(resp.status).toBe(200)
+    const body = await resp.text()
+    expect(body).toContain('AdminLayout')
+    expect(body).toContain('AdminUserDetail')
+    // React 18 SSR may insert comment markers between text nodes, so
+    // grep for the id value itself (42), not the literal 'id=42'.
+    expect(body).toMatch(/id\D*42/)
+  } finally {
+    proc.kill('SIGINT')
+    await proc.exited
+  }
+}, 15_000)
+
+test('nested routes: parent errorBoundary catches child throw', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38195', RUST_LOG: 'brust=warn' },
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const resp = await fetch(`http://127.0.0.1:${port}/admin/users/throw`, {
+      headers: { 'cookie': 'user=alice' },
+    })
+    expect(resp.status).toBe(500)
+    const body = await resp.text()
+    expect(body).toContain('AdminErrorBoundary')
+    expect(body).toContain('intentional admin child throw')
+  } finally {
+    proc.kill('SIGINT')
+    await proc.exited
+  }
+}, 15_000)
+
+test('nested routes: flat route still renders (no regression)', async () => {
+  // Sanity test: the existing flat `/` route still works after the
+  // flatten + chain-walker refactor.
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38196', RUST_LOG: 'brust=warn' },
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const resp = await fetch(`http://127.0.0.1:${port}/`)
+    expect(resp.status).toBe(200)
+    const body = await resp.text()
+    expect(body).toContain('Hello from Brust')
+  } finally {
+    proc.kill('SIGINT')
+    await proc.exited
+  }
+}, 15_000)
+
 async function readPortLine(stream: ReadableStream<Uint8Array>): Promise<number> {
   const reader = stream.getReader()
   const decoder = new TextDecoder()
