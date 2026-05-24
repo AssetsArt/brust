@@ -12,6 +12,11 @@ export interface ServeOptions {
    * `serve` calls the internal action registry before the listener binds.
    * Optional — omit if the app has no server actions. */
   actions?: ActionDef[]
+  /** MCP support — when present, requests to POST /_brust/mcp are dispatched
+   * through a JSON-RPC server backed by this manifest. Main process builds it
+   * via brust.buildMcpManifest; workers load it from disk via
+   * brust.loadMcpManifest (called automatically inside brust.serve). */
+  mcp?: { manifest: import('./mcp/manifest.ts').McpManifest }
 }
 
 // Render callback writes HTML bytes into the worker's pre-registered SharedArrayBuffer
@@ -94,14 +99,40 @@ export const brust = {
     ; (native as any).configureIslandsDir(dir)
   },
   /** Walk the project for files marked `'use server'`, import them, and
-   * return all named function exports as ActionDef[]. Both the main
-   * process and each worker should call this once at module top-level
-   * and pass the result to `brust.serve({ actions, ... })` (main) and
-   * `makeRenderer(..., { actions, ... })` (worker). See ScanOptions for
-   * roots / ignore overrides. */
-  async scanActions(opts?: import('./scan-actions.ts').ScanOptions): Promise<ActionDef[]> {
+   * return all named function exports as ActionDef[] plus the list of source
+   * files (needed by brust.buildMcpManifest). Both the main process and each
+   * worker should call this once at module top-level and pass `actions` to
+   * `brust.serve({ actions, ... })` (main) and `makeRenderer(..., { actions,
+   * ... })` (worker). See ScanOptions for roots / ignore overrides. */
+  async scanActions(opts?: import('./scan-actions.ts').ScanOptions): Promise<import('./scan-actions.ts').ScanActionsResult> {
     const { scanActions } = await import('./scan-actions.ts')
     return scanActions(opts)
+  },
+  /** Extract the MCP manifest from TypeScript source using the compiler API,
+   * write it to `.brust/mcp-manifest.json`, and return it. Call once in the
+   * main process after `brust.registerRoutes(routes)`. Workers read the
+   * persisted manifest automatically via `brust.loadMcpManifest` (called
+   * inside `brust.serve` on the worker side). */
+  async buildMcpManifest(opts: {
+    serverFiles: string[]
+    routesFile: string
+    sourceRoots: string[]
+    actions: import('./actions.ts').ActionDef[]
+    routes: import('./routes.ts').FlatRoute[]
+    cwd?: string
+  }): Promise<import('./mcp/manifest.ts').McpManifest> {
+    const { extractMcpManifest } = await import('./mcp/extractor.ts')
+    const { writeManifest } = await import('./mcp/manifest.ts')
+    const m = await extractMcpManifest(opts)
+    await writeManifest(opts.cwd ?? process.cwd(), m)
+    return m
+  },
+  /** Read the MCP manifest from `.brust/mcp-manifest.json`. Returns null if
+   * the file does not exist (i.e. the main process hasn't called
+   * `brust.buildMcpManifest` yet). Throws if the file is malformed. */
+  async loadMcpManifest(cwd: string = process.cwd()): Promise<import('./mcp/manifest.ts').McpManifest | null> {
+    const { readManifest } = await import('./mcp/manifest.ts')
+    return readManifest(cwd)
   },
   // Register a renderer for this Bun Worker. `buf` MUST be backed by a SharedArrayBuffer
   // (or any ArrayBuffer the worker keeps rooted) — Rust captures the backing-store
@@ -126,7 +157,7 @@ export type {
 
 export { withMiddleware, isValidActionId } from './actions.ts'
 export type { ActionDef, ActionFn } from './actions.ts'
-export type { ScanOptions } from './scan-actions.ts'
+export type { ScanOptions, ScanActionsResult } from './scan-actions.ts'
 
 export { loadConfig, BrustConfigError } from './config.ts'
 export type { BrustConfig } from './config.ts'

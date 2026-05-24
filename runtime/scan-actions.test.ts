@@ -208,7 +208,7 @@ test('scanActions: finds one server file with two exports', async () => {
     await writeFixture(dir, 'plain.ts',
       `export async function notAnAction() {}\n`,
     )
-    const defs = await scanActions({ roots: [dir] })
+    const { actions: defs } = await scanActions({ roots: [dir] })
     expect(defs.map((d) => d.id)).toEqual(['a', 'b'])  // alphabetical sort
   } finally {
     await rm(dir, { recursive: true, force: true })
@@ -226,7 +226,7 @@ test('scanActions: ignores node_modules by default', async () => {
     await Bun.write(join(nm, 'evil.ts'),
       `'use server'\nexport async function evil(_req) {}\n`,
     )
-    const defs = await scanActions({ roots: [dir] })
+    const { actions: defs } = await scanActions({ roots: [dir] })
     expect(defs.map((d) => d.id)).toEqual(['a'])
   } finally {
     await rm(dir, { recursive: true, force: true })
@@ -246,7 +246,7 @@ test('scanActions: ignores test patterns by default', async () => {
     await Bun.write(join(subTests, 'fixture.ts'),
       `'use server'\nexport async function alsoSkipped(_req) {}\n`,
     )
-    const defs = await scanActions({ roots: [dir] })
+    const { actions: defs } = await scanActions({ roots: [dir] })
     expect(defs.map((d) => d.id)).toEqual(['a'])
   } finally {
     await rm(dir, { recursive: true, force: true })
@@ -263,7 +263,7 @@ test('scanActions: custom ignore replaces defaults', async () => {
       `'use server'\nexport async function fromTest(_req) {}\n`,
     )
     // Custom ignore omits the test pattern → test file IS scanned.
-    const defs = await scanActions({ roots: [dir], ignore: ['node_modules/**'] })
+    const { actions: defs } = await scanActions({ roots: [dir], ignore: ['node_modules/**'] })
     expect(defs.map((d) => d.id).sort()).toEqual(['a', 'fromTest'])
   } finally {
     await rm(dir, { recursive: true, force: true })
@@ -279,7 +279,7 @@ test('scanActions: duplicate id across files throws with both paths', async () =
     const pathB = await writeFixture(dir, 'two.ts',
       `'use server'\nexport async function dupe(_req) {}\n`,
     )
-    await expect(scanActions({ roots: [dir] })).rejects.toThrow(
+    await expect(scanActions({ roots: [dir] })).rejects.toThrow(  // return shape doesn't matter — throws before returning
       new RegExp(`Duplicate action "dupe".*${pathA}.*${pathB}|Duplicate action "dupe".*${pathB}.*${pathA}`),
     )
   } finally {
@@ -293,7 +293,7 @@ test('scanActions: sorted alphabetical for deterministic boot logs', async () =>
     await writeFixture(dir, 'z.ts',
       `'use server'\nexport async function zebra(_req) {}\nexport async function apple(_req) {}\n`,
     )
-    const defs = await scanActions({ roots: [dir] })
+    const { actions: defs } = await scanActions({ roots: [dir] })
     expect(defs.map((d) => d.id)).toEqual(['apple', 'zebra'])
   } finally {
     await rm(dir, { recursive: true, force: true })

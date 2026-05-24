@@ -135,11 +135,19 @@ async function findCandidateFiles(opts: ScanOptions): Promise<string[]> {
   return out
 }
 
+export interface ScanActionsResult {
+  actions: ActionDef[]
+  /** Absolute paths of files that had a `'use server'` directive — needed by
+   * `brust.buildMcpManifest` to feed the TypeScript compiler API extractor. */
+  sourceFiles: string[]
+}
+
 /** Walk the project, find files whose first statement is `'use server'`,
- * import each, and return all named function exports as ActionDef[].
- * Throws on duplicate ids across files. Always returns an array sorted
- * by id for deterministic logging. */
-export async function scanActions(opts: ScanOptions = {}): Promise<ActionDef[]> {
+ * import each, and return all named function exports as ActionDef[] plus the
+ * list of server source files.
+ * Throws on duplicate ids across files. Always returns actions sorted by id
+ * for deterministic logging. */
+export async function scanActions(opts: ScanOptions = {}): Promise<ScanActionsResult> {
   const candidates = await findCandidateFiles(opts)
   // Run directive checks in parallel — file IO scales well there.
   const directiveChecks = await Promise.all(
@@ -164,5 +172,5 @@ export async function scanActions(opts: ScanOptions = {}): Promise<ActionDef[]> 
     }
   }
   all.sort((a, b) => a.id.localeCompare(b.id))
-  return all
+  return { actions: all, sourceFiles: serverFiles }
 }
