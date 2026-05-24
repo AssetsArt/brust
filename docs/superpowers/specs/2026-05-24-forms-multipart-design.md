@@ -200,39 +200,40 @@ sub-project:
 
 ```rust
 // 1. Parse the Content-Type header (default to empty if missing).
-let content_type = parse_content_type(&buf[..header_end]).unwrap_or("").to_string();
+let content_type = parse_content_type(&buf[..header_end]).unwrap_or_default();
 
-// 2. Branch on content_type.
-let (body_text, body_b64): (Option<String>, Option<String>) = match content_type.as_str() {
-    "" | "application/json" | "application/json; charset=utf-8" => {
-        // Existing path: UTF-8 validation required.
-        match std::str::from_utf8(body_slice) {
-            Ok(s) => (Some(s.to_string()), None),
-            Err(_) => { error_400; continue; }
-        }
+// 2. Branch on content_type. ASCII-lowercase the prefix for case-insensitive
+//    matching (RFC 7231 says CT values are case-insensitive for type/subtype).
+let ct_lower = content_type.to_ascii_lowercase();
+let (body_text, body_b64): (Option<String>, Option<String>) = if ct_lower.is_empty()
+    || ct_lower.starts_with("application/json")
+    || ct_lower.starts_with("application/x-www-form-urlencoded")
+{
+    // Text body — UTF-8 validated.
+    match std::str::from_utf8(body_slice) {
+        Ok(s) => (Some(s.to_string()), None),
+        Err(_) => { error_400; continue; }
     }
-    ct if ct.starts_with("application/x-www-form-urlencoded") => {
-        // Text body, UTF-8.
-        match std::str::from_utf8(body_slice) {
-            Ok(s) => (Some(s.to_string()), None),
-            Err(_) => { error_400; continue; }
-        }
-    }
-    ct if ct.starts_with("multipart/form-data") => {
-        // Binary body. base64-encode for transport through the JSON envelope.
-        let b64 = base64::engine::general_purpose::STANDARD.encode(body_slice);
-        (None, Some(b64))
-    }
-    _ => {
-        // Unsupported Content-Type → 415.
-        let _ = s.write_all(http::error_415()).await;
-        return;
-    }
+} else if ct_lower.starts_with("multipart/form-data") {
+    // Binary body. base64-encode for transport through the JSON envelope.
+    let b64 = base64::engine::general_purpose::STANDARD.encode(body_slice);
+    (None, Some(b64))
+} else {
+    // Unsupported Content-Type → 415.
+    let _ = s.write_all(http::error_415()).await;
+    return;
 };
 ```
 
-Add `base64 = "0.22"` to `Cargo.toml` (already a transitive dep via
-`napi-rs`, verify and use if so).
+Add `base64 = "0.22"` to `Cargo.toml` — it is NOT currently a transitive
+dep of `napi-rs` (verified against `Cargo.lock`). Roughly 30 KB of code,
+well-audited, single-purpose.
+
+**Case-fold rationale:** the existing pre-MVP dispatcher accepts any
+Content-Type (it just UTF-8-validates the body). The new spec narrows
+that to a closed set — using `starts_with` against the ASCII-lowercase
+form keeps `application/JSON; charset=UTF-8` and similar valid
+variants accepted, matching what real-world clients send.
 
 ### 3.2 `parse_content_type` helper
 
@@ -275,8 +276,11 @@ build_action_envelope(method, path, id, content_type, body_text, body_b64, heade
 ```
 
 `body_text` and `body_b64` are passed as `Option<&str>` — exactly one is
-`Some`. Update the existing 3 unit tests + add 3 new ones for the new
-shape branches.
+`Some`. Update every existing envelope unit test (grep
+`build_action_envelope` and `ActionEnvelope` in `src/routes.rs#[cfg(test)]`
+to find them — count may be 2 or 3 depending on session 5's final state)
+and add 3 new tests for the new shape branches: JSON path, form-urlencoded
+path, multipart path.
 
 ### 3.5 Method gating unchanged
 
