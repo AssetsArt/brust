@@ -146,6 +146,12 @@ export interface Route<Params = Record<string, string>, Data = unknown> {
 The `Params` generic stays as-is (`Record<string, string>` default). Type-aware
 path composition is out of scope (§1 Out-of-scope #3).
 
+**Params are shared across the chain.** matchit returns ALL params from the
+composed pattern (`/admin/{org}/users/{id}` → `{ org, id }`). The renderer
+passes the same params object to every Component in the chain, so a parent's
+Component can read `params.id` defined by a descendant's path segment. This
+matches React Router's behaviour.
+
 ### 2.2 New `FlatRoute` (internal)
 
 ```ts
@@ -275,6 +281,14 @@ function validateRoute(r: Route, basePath: string): void {
   if (!r.index && r.path === undefined && !(r.children && r.children.length > 0)) {
     throw new Error(`route under "${basePath}": must have path, index, or children`)
   }
+  if (r.path !== undefined && r.path.startsWith('/') && basePath !== '') {
+    // Absolute children under a non-empty parent are a footgun (the child
+    // escapes the parent's URL space). Only allowed when the parent is
+    // layout-only (basePath === '').
+    throw new Error(
+      `route under "${basePath}": absolute child path "${r.path}" must be under a pathless ('') parent`,
+    )
+  }
 }
 
 export function defineRoutes(routes: Route[]): FlatRoute[] {
@@ -292,7 +306,12 @@ export function defineRoutes(routes: Route[]): FlatRoute[] {
 | `''` (layout-only) | `/users` | `/users` |
 | `''` (layout-only) | `users` | `/users` (joinPath turns `'' + '/' + 'users'` into `/users`) |
 | `/admin` | (index) | `/admin` |
-| `/admin` | `/orgs/{org}` (absolute) | `/orgs/{org}` (override) |
+
+Absolute child paths (children whose `path` starts with `/`) are NOT in MVP
+scope. `joinPath`'s `rel.startsWith('/')` branch exists in the algorithm for
+the `'' + '/users'` layout-only case, but a leading-slash child under a
+non-empty parent is a footgun (looks like nesting but escapes the parent).
+Validation flags this — see §3.2.
 
 ### 3.2 Validation errors
 
@@ -300,7 +319,14 @@ export function defineRoutes(routes: Route[]): FlatRoute[] {
 - A route has both `index: true` and `path`
 - An index route has `children`
 - A route is missing all of `index`, `path`, `children`
-- Two leaf routes resolve to the same `fullPath` (handled by `matchit::Router::insert` returning an error — surfaces from Rust's `registerRoutes` napi call)
+- A non-empty parent has a child whose `path` starts with `/` (absolute
+  child under a non-root parent — outside MVP scope)
+- Two leaf routes resolve to the same `fullPath` — caught by `matchit::Router::insert`
+  returning a duplicate-pattern error, which propagates as `RouteInstallError::Insert`
+  from `register_routes` (Rust) through napi to a JS throw at `brust.registerRoutes(routes)`.
+  Process exits at boot.
+- A composed pattern has duplicate param names (e.g. parent `/users/{id}` + child
+  `posts/{id}`) — matchit returns `InsertError::Conflict`; same surfacing path as above.
 
 ---
 
@@ -383,6 +409,13 @@ A FlatRoute's `middleware` field is the concatenation of `r.middleware`
 arrays along the chain (root → leaf). The existing `composeChain` helper
 in `runtime/routes.ts` takes a `Middleware[]` and produces the chain
 function — no change to that helper.
+
+**Why root → leaf is the correct order:** `composeChain` iterates the array
+right-to-left and wraps each middleware around the next inner step. So the
+FIRST element in the array becomes the OUTERMOST wrap — i.e., it runs first.
+Putting the parent's middleware first in `flat.middleware` therefore makes
+the parent's middleware run before the child's. Verified against the
+existing helper's implementation.
 
 The renderBranch passes `flat.middleware` instead of `route.middleware`:
 
