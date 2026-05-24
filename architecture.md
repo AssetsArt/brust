@@ -537,14 +537,14 @@ Trade-offs:
   fns fire on client interaction.
 
 **MVP scope simplifications (documented inline in plan + spec):**
-- Manual `brust.registerActions([...])` — no `"use server"` directive scanner
+- `"use server"` directive + boot-time scanner discovers actions; `withMiddleware([...], fn)` attaches per-action middleware. No build-time client-side auto-rewrite yet — islands call actions via the `action<F>(id)` helper from `runtime/client`.
 - JSON-only — `FormData`/multipart is the Forms plan's job
 - Action-specific middleware (no route-middleware inheritance via `X-Brust-Route`)
 - Errors return `{ "error": { "message", "name" } }` JSON envelope on non-2xx; no stack-trace mode
 - `runtime/client/action<F>(id)` helper bundled into each island chunk (~1 KB); shared chunk is a future optimisation
 
 **Designed, not built (follow-ups):**
-- `"use server"` directive + auto-rewrite (closes the architecture vision gap; manual `registerActions` would also be optional)
+- Build-time client-side auto-rewrite: `import { fn } from './actions'` on the client rewritten to an RPC stub, removing the need for the `action<F>(id)` helper
 - Per-route middleware inheritance via X-Brust-Route header (defer until proven need)
 - Stack trace in error envelope via `BRUST_DEBUG_ERRORS=1`
 - Shared `runtime/client` chunk via importmap (today every island bundles its own ~1 KB copy)
@@ -1013,7 +1013,8 @@ Bun.serve baseline source: `example/bun-serve-baseline/index.ts`.
 - Structured `req` in envelope (`{ method, url, headers, cookies, search }` parsed once in Rust via httparse)
 - Per-route middleware chain (`middleware: [(req, next) => RouteResponse, ...]` — short-circuit + post-`next()` header mutation; CRLF-injection-guarded)
 - Islands hydration MVP: `<Island id component props hydrate?>` + `buildIslands(configPath)` + `/_brust/islands/<file>` static route + handwritten bootstrap with 4 triggers (load/idle/visible/interaction) + shared React runtime via importmap
-- Server functions MVP: `brust.registerActions([{ id, fn, middleware? }])` registers async functions invokable from islands via `POST /_brust/action/<id>` (JSON args/return). Reuses the renderer tsfn via a `kind: 'render' | 'action'` envelope discriminant. Action-specific middleware (action def's own chain). Client helper `action<F>(id)` from `runtime/client` preserves types via TS generics + `import type` erase. New Rust napi `register_actions(ids: Vec<String>)`; new server.rs branch with charset/length/utf-8 guards and dedicated 404/405/411/413 error paths. Meta envelope grows optional `contentType` (camelCase) so action returns ship as `application/json`. ResponseMeta becomes the Content-Type override channel for any future need.
+- Server functions MVP: async functions invokable from islands via `POST /_brust/action/<id>` (JSON args/return). Reuses the renderer tsfn via a `kind: 'render' | 'action'` envelope discriminant. Action-specific middleware (action def's own chain). Client helper `action<F>(id)` from `runtime/client` preserves types via TS generics + `import type` erase. New Rust napi `register_actions(ids: Vec<String>)`; new server.rs branch with charset/length/utf-8 guards and dedicated 404/405/411/413 error paths. Meta envelope grows optional `contentType` (camelCase) so action returns ship as `application/json`. ResponseMeta becomes the Content-Type override channel for any future need.
+- `"use server"` directive + boot-time scanner — file-level directive. `brust.scanActions({ roots? })` walks the project, finds files whose first statement is `'use server'`, imports them, and registers all named function exports as actions. Middleware attaches per-action via `withMiddleware([mws], fn)`. Replaces the manual `defineActions` / `brust.registerActions` API.
 
 **Designed, not built:**
 
@@ -1021,7 +1022,6 @@ Bun.serve baseline source: `example/bun-serve-baseline/index.ts`.
 - `brust-cli invalidate` (project tooling — separate from the native endpoint that just shipped)
 - Default TTL fallback in `[cache]` (semantics deferred — no current consumer)
 - Islands: `"use island"` directive + auto-detection at JSX call sites (MVP uses manual `<Island>` wrapper)
-- `"use server"` directive + auto-rewrite + build-time RPC stub generation (MVP uses manual `brust.registerActions` array; the deferred directive would auto-detect)
 - Islands: content-hashed filenames + production caching strategy
 - Islands: CSS extraction per chunk
 - Islands: hot reload during dev
