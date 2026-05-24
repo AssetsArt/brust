@@ -48,7 +48,7 @@ test('manifest: readManifest rejects version mismatch', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'brust-mcp-'))
   try {
     await Bun.write(join(dir, '.brust', 'mcp-manifest.json'), JSON.stringify({ version: 999, tools: [], resources: [] }))
-    expect(readManifest(dir)).rejects.toThrow(/version mismatch/)
+    await expect(readManifest(dir)).rejects.toThrow(/version mismatch/)
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
@@ -58,7 +58,7 @@ test('manifest: readManifest rejects malformed JSON', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'brust-mcp-'))
   try {
     await Bun.write(join(dir, '.brust', 'mcp-manifest.json'), '{not json')
-    expect(readManifest(dir)).rejects.toThrow()
+    await expect(readManifest(dir)).rejects.toThrow()
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
