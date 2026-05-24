@@ -143,14 +143,15 @@ async fn handle_conn(
             }
         };
 
-        // POST is only legal for /_brust/cache/invalidate and /_brust/action/*;
-        // everything else requires GET. For action paths, 405 means "POST is the
-        // only allowed method here" — body must already have been consumed (or
-        // absent). The fixed `Connection: keep-alive` header in error_405 is
-        // correct because we haven't read a body yet.
+        // POST is only legal for /_brust/cache/invalidate, /_brust/action/*,
+        // and /_brust/mcp; everything else requires GET. For action paths, 405
+        // means "POST is the only allowed method here" — body must already have
+        // been consumed (or absent). The fixed `Connection: keep-alive` header
+        // in error_405 is correct because we haven't read a body yet.
         if method != "GET"
             && !(method == "POST" && path.starts_with("/_brust/cache/invalidate"))
             && !(method == "POST" && path.starts_with("/_brust/action/"))
+            && !(method == "POST" && path == "/_brust/mcp")
         {
             let _ = s.write_all(http::error_405()).await;
             return;
@@ -353,6 +354,77 @@ async fn handle_conn(
                 &pool,
                 envelope_json,
                 "action",
+                "application/json; charset=utf-8",
+                true,
+                |_| {},
+            )
+            .await
+            {
+                DispatchControl::Continue => continue,
+                DispatchControl::CloseConn => return,
+            }
+        }
+
+        // Native-only route: MCP JSON-RPC server.
+        //   POST /_brust/mcp
+        // Body: JSON-RPC request. Worker dispatches by method.
+        // Status codes:
+        //   405 — non-POST method
+        //   411 — Content-Length missing
+        //   413 — Content-Length > SAB capacity
+        //   415 — Content-Type not application/json
+        //   400 — body not valid UTF-8
+        //   200 — JSON-RPC response (errors carried inside the body)
+        if path == "/_brust/mcp" {
+            if method != "POST" {
+                let _ = s.write_all(http::error_405()).await;
+                return;
+            }
+            let header_end = match buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                Some(p) => p + 4,
+                None => { let _ = s.write_all(http::error_400()).await; return; }
+            };
+            let content_type = parse_content_type(&buf[..header_end]).unwrap_or_default();
+            if !content_type.to_ascii_lowercase().starts_with("application/json") {
+                let _ = s.write_all(http::error_415()).await;
+                return;
+            }
+            let content_length = match parse_content_length(&buf[..header_end]) {
+                Some(n) => n,
+                None => { let _ = s.write_all(http::error_411()).await; return; }
+            };
+            if content_length > MAX_ACTION_BODY_BYTES {
+                let _ = s.write_all(http::error_413()).await;
+                return;
+            }
+            let body_buffered = buf.len().saturating_sub(header_end);
+            if body_buffered < content_length {
+                let need = content_length - body_buffered;
+                let mut read_so_far = 0usize;
+                while read_so_far < need {
+                    let n = match s.read_request(&mut buf).await {
+                        Ok(n) => n,
+                        Err(_) => { let _ = s.write_all(http::error_400()).await; return; }
+                    };
+                    if n == 0 { let _ = s.write_all(http::error_400()).await; return; }
+                    read_so_far += n;
+                }
+            }
+            let body_slice = &buf[header_end..header_end + content_length];
+            let body_str = match std::str::from_utf8(body_slice) {
+                Ok(s) => s,
+                Err(_) => { let _ = s.write_all(http::error_400()).await; continue; }
+            };
+
+            let envelope_json = crate::routes::build_mcp_envelope(
+                &method, &path, body_str, &buf[..header_end],
+            );
+
+            match dispatch_to_worker_and_send_meta_response(
+                &mut s,
+                &pool,
+                envelope_json,
+                "mcp",
                 "application/json; charset=utf-8",
                 true,
                 |_| {},
