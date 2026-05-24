@@ -9,7 +9,8 @@ export interface ExtractOptions {
   serverFiles: string[]
   /** The routes module file (e.g. example/hello-world/routes.tsx). */
   routesFile: string
-  /** The user's source roots (for tsconfig resolution). */
+  /** The user's source roots. Reserved for future tsconfig/baseUrl/paths
+   * resolution; currently ignored — pass at least one for forward compat. */
   sourceRoots: string[]
   /** Result of `await brust.scanActions(...)` — maps action ids to ActionDef. */
   actions: ActionDef[]
@@ -28,6 +29,8 @@ export async function extractMcpManifest(opts: ExtractOptions): Promise<McpManif
       allowJs: false,
       noEmit: true,
       skipLibCheck: true,
+      // Required: TS 5.x collapses string | null to plain string without strict
+      // null checks, which would silently drop the null variant from the schema.
       strictNullChecks: true,
     },
   })
@@ -106,7 +109,8 @@ function toolFromSignature(
     const t = checker.getTypeAtLocation(p)
     const schema = tsTypeToJsonSchema(t, { checker }) ?? {}
     properties[pname] = schema
-    if (!p.questionToken) required.push(pname)
+    // Rest params (...args) are always optional at the call site — never required.
+    if (!p.questionToken && !p.dotDotDotToken) required.push(pname)
   }
   const inputSchema: JsonSchema = { type: 'object', properties }
   if (required.length > 0) inputSchema.required = required
@@ -145,6 +149,8 @@ function getJsdoc(node: ts.Node): string | undefined {
   const tags = ts.getJSDocCommentsAndTags(node)
   if (tags.length === 0) return undefined
   const first = tags[0]
-  if (ts.isJSDoc(first) && typeof first.comment === 'string') return first.comment
+  // JSDoc `comment` can be either a string or a NodeArray<JSDocComment> when
+  // inline tags like {@link} are present — ts.getTextOfJSDocComment normalises.
+  if (ts.isJSDoc(first)) return ts.getTextOfJSDocComment(first.comment) ?? undefined
   return undefined
 }
