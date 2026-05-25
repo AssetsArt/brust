@@ -721,11 +721,16 @@ async fn handle_conn(
             let ws_stream = tokio_tungstenite::WebSocketStream::from_raw_socket(
                 inner, Role::Server, None,
             ).await;
-            crate::ws::ws_conn_task(
-                ws_stream, conn_id, send_rx,
-                30_000,            // pingMs default — per-route forwarding is a follow-up
-                1_048_576,         // 1 MB max msg — per-route forwarding is a follow-up
-            ).await;
+            // Spawn ws_conn_task as a detached task so handle_conn returns and
+            // the accept-worker can take other connections. The per-conn task
+            // owns the WebSocketStream + sends to TCP independently.
+            crate::io::spawn(async move {
+                crate::ws::ws_conn_task(
+                    ws_stream, conn_id, send_rx,
+                    30_000,            // pingMs default — per-route forwarding is a follow-up
+                    1_048_576,         // 1 MB max msg — per-route forwarding is a follow-up
+                ).await;
+            });
             return;
         }
 

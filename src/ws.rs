@@ -177,8 +177,9 @@ where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
     let (mut ws_sink, mut ws_stream) = ws.split();
-    let mut ping_tick =
-        tokio::time::interval(Duration::from_millis(ping_interval_ms.max(1)));
+    let mut ping_tick = tokio::time::interval(
+        Duration::from_millis(ping_interval_ms.max(1)),
+    );
     let mut last_pong = Instant::now();
     let pong_timeout = Duration::from_millis(ping_interval_ms.saturating_mul(2));
     let mut close_fired = false;

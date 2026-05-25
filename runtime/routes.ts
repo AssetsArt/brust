@@ -429,7 +429,16 @@ export function makeRenderer(
       }
     }
     if (call.kind === 'ws') {
-      return wsBranch(call, view, encoder, routes)
+      try {
+        return await wsBranch(call, view, encoder, routes)
+      } catch (err) {
+        // Only meaningful for setup-time errors (BigInt coerce, dynamic
+        // import resolve, napi shim build). Once handleWsConn has started,
+        // this 500 packResponse is irrelevant — Rust already wrote 101
+        // headers and the conn is live.
+        console.error('[brust] wsBranch uncaught:', err)
+        return packResponse(view, encoder, { status: 500, body: '', contentType: 'text/plain' })
+      }
     }
     // Unknown kind — log and 500. Shouldn't happen unless Rust ships
     // something out of band.
@@ -748,24 +757,93 @@ async function wsBranch(
   encoder: TextEncoder,
   routes: FlatRoute[],
 ): Promise<number> {
-  // Inject NEVER_ABORTS into req — once Task 12 wires the real handler,
-  // the middleware chain will need it. Same pattern as sseBranch Task 12.
-  ;(call.req as BrustRequest).signal = NEVER_ABORTS
+  // Coerce conn_id from JSON.parse number → BigInt (same fix as sseBranch
+  // Task 12; native binding requires BigInt since conn_ids are u64).
+  ;(call as any).conn_id = BigInt(call.conn_id)
 
-  // Stub — Task 12 replaces this with full middleware compose +
-  // handleWsConn. Signal 503 so Rust returns a regular HTTP error
-  // response instead of hanging waiting for the open signal.
+  // Find matching FlatRoute by literal fullPath (Rust path_is_ws gates
+  // dispatch — same literal-match contract as SSE).
+  const pathOnly = call.req.url.split('?')[0]
+  const flat = routes.find((r) => r.fullPath === pathOnly)
+  const leaf = flat?.chain[flat.chain.length - 1]
+
+  // Build napi shim around the 4 napiWs* native fns. The registerHandlers
+  // shim adapts from struct-arg callbacks (WsMessageArg / WsCloseArg —
+  // Task 4 deviation: napi-rs rejected tuple Function args) to the
+  // positional-arg handleWsConn API.
   const native = await import('./index.js')
-  ;(native as any).napiWsSignalOpen(
-    call.conn_id,
-    503,
-    Buffer.from('ws handler not configured'),
-    'text/plain; charset=utf-8',
-    '',
-  )
-  return packResponse(view, encoder, {
-    status: 200, body: '', contentType: 'text/plain',
+  const napi = {
+    send: (conn_id: bigint, bytes: Uint8Array, isBinary: boolean) =>
+      (native as any).napiWsSend(
+        conn_id,
+        Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+        isBinary,
+      ),
+    close: (conn_id: bigint, code: number, reason: string) =>
+      (native as any).napiWsClose(conn_id, code, reason),
+    signalOpen: (conn_id: bigint, status: number, body: string, ct: string, subprotocol: string) => {
+      const bodyBytes = encoder.encode(body)
+      ;(native as any).napiWsSignalOpen(
+        conn_id, status,
+        Buffer.from(bodyBytes.buffer, bodyBytes.byteOffset, bodyBytes.byteLength),
+        ct, subprotocol,
+      )
+    },
+    registerHandlers: (
+      conn_id: bigint,
+      onMessage: (data: Uint8Array, isBinary: boolean) => void,
+      onClose: (code: number, reason: string) => void,
+    ) => {
+      // napi-rs delivers struct args (WsMessageArg / WsCloseArg) — adapt
+      // back to positional for handleWsConn's contract.
+      ;(native as any).napiWsRegisterHandlers(
+        conn_id,
+        (arg: { data: Uint8Array; isBinary: boolean }) => onMessage(arg.data, arg.isBinary),
+        (arg: { code: number; reason: string }) => onClose(arg.code, arg.reason),
+      )
+    },
+  }
+
+  if (!flat || !leaf || !leaf.websocket) {
+    // Defensive — Rust path_is_ws gates dispatch.
+    napi.signalOpen(call.conn_id, 404, 'not found', 'text/plain; charset=utf-8', '')
+    return packResponse(view, encoder, { status: 200, body: '', contentType: 'text/plain' })
+  }
+
+  // Inject NEVER_ABORTS into req for middleware. There's no per-conn
+  // AbortController for WS — handleWsConn doesn't create one because
+  // lifecycle is via registered onMessage/onClose callbacks rather than
+  // awaiting on a request signal.
+  call.req.signal = NEVER_ABORTS
+
+  // Run middleware chain with a 101 placeholder terminal that signals
+  // "ready to upgrade". The terminal does NOT call route.websocket —
+  // handleWsConn does that after middleware approves.
+  const placeholderTerminal: () => Promise<RouteResponse> = async () => ({
+    status: 101, body: '', contentType: 'application/octet-stream',
   })
+  const chain = composeChain(call.req, flat.middleware, placeholderTerminal)
+  const verdict = await chain()
+
+  if (verdict.status >= 400) {
+    napi.signalOpen(
+      call.conn_id, verdict.status, verdict.body,
+      verdict.contentType ?? 'text/plain; charset=utf-8',
+      '',
+    )
+    return packResponse(view, encoder, { status: 200, body: '', contentType: 'text/plain' })
+  }
+
+  // Middleware OK — invoke handleWsConn. It signals open 101 itself
+  // (with the chosen subprotocol) and registers handlers.
+  const { handleWsConn } = await import('./ws/handler.ts')
+  const routeShim: Route = {
+    path: flat.fullPath,
+    websocket: leaf.websocket,
+    wsOptions: leaf.wsOptions,
+  }
+  await handleWsConn(call, routeShim, napi)
+  return packResponse(view, encoder, { status: 200, body: '', contentType: 'application/octet-stream' })
 }
 
 /** Right-to-left compose a middleware chain. Each middleware wraps the next;

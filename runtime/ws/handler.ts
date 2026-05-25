@@ -80,10 +80,13 @@ export async function handleWsConn(
 
   // Pick subprotocol (route declares; client requests; first match wins).
   const chosen = pickSubprotocol(call.client_subprotocols, route.wsOptions?.subprotocols)
-  napi.signalOpen(call.conn_id, 101, '', '', chosen ?? '')
 
-  // After signalOpen returns, Rust writes 101 + handshake and the conn is
-  // live. Build the socket + register handlers.
+  // CRITICAL ORDERING: register handlers BEFORE signalOpen(101). Once
+  // signalOpen fires, Rust writes the 101 response, the client sees
+  // OPEN immediately, and may send frames that hit ws_conn_task's
+  // on_message lookup. If on_message is still None at that point the
+  // frame is silently dropped. Build the socket + install handlers
+  // first; only then unblock Rust by signalling 101.
   const closed = { v: false }
   const socket = new WsSocketImpl(call.conn_id, napi, closed)
 
@@ -109,6 +112,8 @@ export async function handleWsConn(
       }
     },
   )
+
+  napi.signalOpen(call.conn_id, 101, '', '', chosen ?? '')
 
   // Fire author's open hook. Throws here close the conn 1011.
   if (handlers.open) {
