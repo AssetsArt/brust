@@ -3,6 +3,15 @@ import { renderToString } from 'react-dom/server'
 import { consumeIslandUsedFlag } from './islands/island.tsx'
 import type { ActionDef } from './actions.ts'
 
+// Permanently-unaborted AbortSignal sentinel for non-SSE routes.
+// The controller is held in module scope and never .abort()-ed, keeping
+// the signal alive in the unaborted state. Do NOT use AbortSignal.abort()
+// — that creates an already-aborted signal which would fire any
+// addEventListener('abort') listener synchronously and break defensive
+// cleanup code.
+const _neverAbortsController = new AbortController()
+export const NEVER_ABORTS: AbortSignal = _neverAbortsController.signal
+
 /** Structured view of the request, parsed once in Rust and shipped in the
  * JSON envelope. Header names are lower-cased. Cookies are parsed from the
  * Cookie header. `search` is the query string parsed as key→value (last
@@ -14,6 +23,11 @@ export interface BrustRequest {
   headers: Record<string, string>
   cookies: Record<string, string>
   search: Record<string, string>
+  /** AbortSignal that fires when the client disconnects mid-request.
+   * SSE-only in MVP — non-SSE routes receive NEVER_ABORTS (a permanently-
+   * unaborted shared sentinel; signal.aborted === false forever). Real
+   * disconnect detection for render/action is a follow-up. */
+  signal: AbortSignal
 }
 
 export interface RouteContext<Params = Record<string, string>, Data = unknown> {
@@ -73,7 +87,7 @@ export interface Route<Params = Record<string, string>, Data = unknown> {
   /** Index route — matches the parent path exactly. Must be a leaf (no
    * `children`, no `path`). Mutually exclusive with `path`. */
   index?: boolean
-  Component: ComponentType<RouteContext<Params, Data>>
+  Component?: ComponentType<RouteContext<Params, Data>>
   /** Optional async function that runs in the worker before rendering. Its
    * return value becomes the component's `data` prop. Exceptions are caught
    * by `errorBoundary` if declared (inherited from closest ancestor). */
@@ -91,6 +105,17 @@ export interface Route<Params = Record<string, string>, Data = unknown> {
   /** Nested children. Each child's path is composed with this node's path
    * via `joinPath` (see flattenRoutes). */
   children?: Route[]
+  /** When set, this route streams a text/event-stream response. Cannot
+   * coexist with Component, loader, or children (validated at defineRoutes
+   * time). The framework auto-sends Content-Type, Cache-Control,
+   * X-Accel-Buffering, plus a `: ping\n\n` heartbeat every 15s (opt-out
+   * via sseOptions). The author returns ReadableStream<Uint8Array | string>;
+   * string chunks are UTF-8 encoded. Listen on req.signal for disconnect. */
+  sse?: (req: BrustRequest) => ReadableStream<Uint8Array | string> | Promise<ReadableStream<Uint8Array | string>>
+  sseOptions?: {
+    /** Auto-emit `: ping\n\n` every N ms. Default 15000. Set 0 to disable. */
+    heartbeatMs?: number
+  }
 }
 
 /** Internal post-flatten representation. Each FlatRoute is a single leaf or
@@ -144,6 +169,18 @@ function validateRoute(r: Route, basePath: string): void {
     throw new Error(
       `route under "${basePath}": absolute child path "${r.path}" must be under a pathless ('') parent`,
     )
+  }
+  if (r.sse) {
+    const where = r.path ?? '(no path)'
+    if (r.Component !== undefined) {
+      throw new Error(`Route ${where}: 'sse' cannot coexist with 'Component'`)
+    }
+    if (r.loader !== undefined) {
+      throw new Error(`Route ${where}: 'sse' cannot coexist with 'loader'`)
+    }
+    if (r.children !== undefined) {
+      throw new Error(`Route ${where}: 'sse' cannot have nested children`)
+    }
   }
 }
 
@@ -254,6 +291,11 @@ export type RouteCall =
       body_text: string
       req: BrustRequest
     }
+  | {
+      kind: 'sse'
+      conn_id: bigint
+      req: BrustRequest
+    }
 
 /**
  * Build a render callback for a given routes table. The returned function is
@@ -297,6 +339,9 @@ export function makeRenderer(
     }
     if (call.kind === 'mcp') {
       return mcpBranch(call, view, encoder, opts.mcp)
+    }
+    if (call.kind === 'sse') {
+      return sseBranch(call, view, encoder)
     }
     // Unknown kind — log and 500. Shouldn't happen unless Rust ships
     // something out of band.
@@ -342,7 +387,7 @@ async function renderBranch(
       let element: ReactNode = null
       for (let i = chainNodes.length - 1; i >= 0; i--) {
         const r = chainNodes[i]
-        const node = createElement(r.Component, {
+        const node = createElement(r.Component!, {
           params: call.params,
           path: call.path,
           data: datas[i],
@@ -507,6 +552,23 @@ async function mcpBranch(
     status: 200,
     body: responseJson,
     contentType: 'application/json; charset=utf-8',
+  })
+}
+
+async function sseBranch(
+  call: Extract<RouteCall, { kind: 'sse' }>,
+  view: Uint8Array,
+  encoder: TextEncoder,
+): Promise<number> {
+  // Stub — Task 12 replaces this with full middleware compose + handleSseStream.
+  // Signal open with 501 so the Rust side returns a regular HTTP error response
+  // instead of hanging waiting for the open signal.
+  const { signalOpen } = await import('./sse/handler.ts')
+  signalOpen(call.conn_id, 501, '{"error":"sse handler not configured"}', 'application/json; charset=utf-8')
+  return packResponse(view, encoder, {
+    status: 200,
+    body: '',
+    contentType: 'text/event-stream',
   })
 }
 
