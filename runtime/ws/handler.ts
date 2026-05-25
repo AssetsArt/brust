@@ -69,9 +69,17 @@ export async function handleWsConn(
 ): Promise<void> {
   // Load the handler module. Failure here → 500 signalOpen (Rust writes
   // regular HTTP error response since 101 hasn't been sent yet).
+  //
+  // Accept either a direct WsHandlers object OR a module wrapper exposing
+  // the handlers via `default`. The latter is what `() => import('./x.ts')`
+  // produces, which is the most common author pattern — refusing it would
+  // silently no-op the handler (no method on the module-namespace object
+  // matches WsHandlers' method names).
   let handlers: WsHandlers
   try {
-    handlers = await route.websocket!()
+    const loaded = await route.websocket!()
+    const maybeDefault = (loaded as { default?: WsHandlers }).default
+    handlers = (maybeDefault && typeof maybeDefault === 'object') ? maybeDefault : (loaded as WsHandlers)
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     napi.signalOpen(call.conn_id, 500, `ws handler import failed: ${msg}`, 'text/plain; charset=utf-8', '')
