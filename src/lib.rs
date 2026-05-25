@@ -5,6 +5,7 @@ mod http;
 mod io;
 mod pool;
 mod routes;
+pub mod sse;
 mod server;
 
 use std::net::SocketAddr;
