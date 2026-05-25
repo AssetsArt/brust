@@ -28,9 +28,12 @@ export async function handleSseStream(
   route: Route,
   napi: SseNapi,
 ): Promise<void> {
-  // 1. Create per-conn AbortController; install on req.signal.
+  // 1. Create per-conn AbortController + a fresh request object whose signal
+  //    points at it. We spread call.req rather than mutating in place so the
+  //    underlying envelope object (potentially reused by makeRenderer in the
+  //    future) is never modified — the SSE-specific signal lives on a copy.
   const controller = new AbortController()
-  ;(call.req as Mutable<BrustRequest>).signal = controller.signal
+  const req: BrustRequest = { ...call.req, signal: controller.signal }
 
   // 2. Wire Rust→JS abort.
   napi.registerAbort(call.conn_id, () => controller.abort())
@@ -38,7 +41,7 @@ export async function handleSseStream(
   // 3. Open the user's stream. Throw → signal 500 and close.
   let stream: ReadableStream<Uint8Array | string>
   try {
-    stream = await route.sse!(call.req)
+    stream = await route.sse!(req)
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     napi.signalOpen(call.conn_id, 500, `sse handler threw: ${msg}`, 'text/plain; charset=utf-8')
@@ -83,5 +86,3 @@ export async function handleSseStream(
 export function signalOpen(_conn_id: bigint, _status: number, _body: string, _ct: string): void {
   throw new Error('signalOpen called without napi injection — sseBranch stub still active (Task 12 should have removed this call)')
 }
-
-type Mutable<T> = { -readonly [P in keyof T]: T[P] }

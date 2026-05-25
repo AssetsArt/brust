@@ -43,7 +43,7 @@ test('handler: chunks forwarded as bytes; string chunks utf-8 encoded', async ()
 
 test('handler: heartbeat fires after heartbeatMs', async () => {
   const { napi, writes } = makeNapi()
-  let closeStreamLater: (() => void) | null = null
+  let closeStreamLater: (() => void) | undefined
   const route: Route = {
     path: '/x',
     sseOptions: { heartbeatMs: 50 },
@@ -63,17 +63,24 @@ test('handler: heartbeat fires after heartbeatMs', async () => {
 test('handler: abort cancels reader + clears interval + closes', async () => {
   const fx = makeNapi()
   let opened = false
+  // Capture the per-conn req that handleSseStream passes into route.sse —
+  // since the handler spreads call.req into a new object, the AbortController's
+  // signal lives on that copy, not on the outer call.req.
+  let observedReq: BrustRequest | undefined
   const route: Route = {
     path: '/x',
     sseOptions: { heartbeatMs: 1000 },
-    sse: () => new ReadableStream({
-      async pull(c) {
-        if (opened) return
-        opened = true
-        // never enqueue — simulates idle stream
-        await new Promise(() => {})  // pending forever
-      },
-    }),
+    sse: (r) => {
+      observedReq = r
+      return new ReadableStream({
+        async pull(c) {
+          if (opened) return
+          opened = true
+          // never enqueue — simulates idle stream
+          await new Promise(() => {})  // pending forever
+        },
+      })
+    },
   } as Route
   const call: SseCall = { kind: 'sse', conn_id: 3n, req: makeReq() }
   const p = handleSseStream(call, route, fx.napi)
@@ -81,8 +88,8 @@ test('handler: abort cancels reader + clears interval + closes', async () => {
   fx.fireAbort()
   await p
   expect(fx.napi.close).toHaveBeenCalledTimes(1)
-  // req.signal should be aborted now.
-  expect((call.req as BrustRequest).signal.aborted).toBe(true)
+  // The req passed into route.sse should have its signal aborted now.
+  expect(observedReq?.signal.aborted).toBe(true)
 })
 
 test('handler: handler-thrown error closes the conn without crashing', async () => {
@@ -98,7 +105,7 @@ test('handler: handler-thrown error closes the conn without crashing', async () 
 
 test('handler: heartbeatMs=0 disables the interval', async () => {
   const fx = makeNapi()
-  let close: (() => void) | null = null
+  let close: (() => void) | undefined
   const route: Route = {
     path: '/x',
     sseOptions: { heartbeatMs: 0 },
