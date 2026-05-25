@@ -36,7 +36,7 @@ class WsSocketImpl implements WsSocket {
 
   async send(data: string | Uint8Array): Promise<void> {
     if (this.closed.v) throw new Error(`ws conn ${this.id}: already closed`)
-    const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data
+    const bytes = typeof data === 'string' ? encoder.encode(data) : data
     const isBinary = typeof data !== 'string'
     await this.napi.send(this.id, bytes, isBinary)
   }
@@ -49,11 +49,18 @@ class WsSocketImpl implements WsSocket {
 }
 
 const decoder = new TextDecoder('utf-8')
+const encoder = new TextEncoder()
 
 /**
  * Per-connection JS driver for WebSocket routes. Caller (wsBranch) is
  * responsible for running middleware FIRST and only invoking this on a 101
  * verdict — the signalOpen call here is always 101.
+ *
+ * Ordering note: handlers.open is *called* before any message can fire,
+ * but if open is async it is NOT guaranteed to *complete* before the first
+ * message arrives. Handlers that initialise per-connection state in open
+ * and read it in message should await any setup synchronously inside open,
+ * or guard reads in message against missing state.
  */
 export async function handleWsConn(
   call: WsCall,
