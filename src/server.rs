@@ -595,6 +595,141 @@ async fn handle_conn(
             return;
         }
 
+        // WS branch — dispatched when the matched route was registered via
+        // brust.registerWsPaths. Method MUST be GET; the Upgrade/Connection
+        // headers + Sec-WebSocket-Key + Sec-WebSocket-Version must validate
+        // per RFC 6455 before we accept the upgrade.
+        if crate::ws::path_is_ws(&path) {
+            if method != "GET" {
+                let _ = s.write_all(http::error_405()).await;
+                return;
+            }
+            let header_end = match buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                Some(p) => p + 4,
+                None => {
+                    let _ = s.write_all(http::error_400()).await;
+                    return;
+                }
+            };
+            let handshake = match crate::ws::parse_ws_handshake(&buf[..header_end]) {
+                Ok(h) => h,
+                Err(_) => {
+                    // Any header validation failure → 400 (we don't externally
+                    // differentiate missing-Upgrade vs bad-version; logs would).
+                    let _ = s.write_all(http::error_400()).await;
+                    return;
+                }
+            };
+
+            // Register conn in REGISTRY.
+            let conn_id = crate::sse::next_conn_id();
+            let (send_tx, send_rx) = tokio::sync::mpsc::channel::<crate::ws::WsOutgoing>(32);
+            let (open_tx, open_rx) = tokio::sync::oneshot::channel::<crate::ws::WsOpenSignal>();
+            crate::ws::registry().lock().insert(conn_id, crate::ws::WsConn {
+                send_tx,
+                open_tx: Some(open_tx),
+                on_message: None,
+                on_close: None,
+            });
+
+            // Pick a worker and dispatch.
+            let Some(entry) = pool.pick_least_busy() else {
+                let _ = s.write_all(http::error_500()).await;
+                crate::ws::registry().lock().remove(&conn_id);
+                return;
+            };
+            let envelope_json = crate::routes::build_ws_envelope(
+                &method, &path, &buf[..header_end], conn_id,
+                handshake.client_subprotocols.clone(),
+            );
+
+            // TODO(Task 7): replace with crate::pool::dispatch_ws(entry, envelope_json)
+            // Same pattern as SSE Task 5 → Task 6 refactor.
+            {
+                let _guard = entry.in_flight_guard();
+                if let Err(e) = entry.tsfn.call_async(envelope_json).await {
+                    error!(worker_id = entry.id, error = %e, "ws tsfn call_async failed");
+                    let _ = s.write_all(http::error_500()).await;
+                    crate::ws::registry().lock().remove(&conn_id);
+                    return;
+                }
+            }
+
+            // Await open verdict with 30s timeout. Distinguish sender-drop (JS
+            // crash) from timeout for diagnosability.
+            let open = match tokio::time::timeout(std::time::Duration::from_secs(30), open_rx).await {
+                Ok(Ok(signal)) => signal,
+                Ok(Err(_)) => {
+                    warn!(conn_id, "ws open_tx sender dropped before signal — JS crash?");
+                    let _ = s.write_all(http::error_500()).await;
+                    crate::ws::registry().lock().remove(&conn_id);
+                    return;
+                }
+                Err(_) => {
+                    warn!(conn_id, "ws open signal timeout (30s)");
+                    let _ = s.write_all(http::error_500()).await;
+                    crate::ws::registry().lock().remove(&conn_id);
+                    return;
+                }
+            };
+
+            if open.status != 101 {
+                // Middleware rejection — write a regular HTTP response.
+                let body = open.body;
+                let head = format!(
+                    "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    open.status,
+                    http::status_reason(open.status),
+                    open.content_type,
+                    body.len(),
+                );
+                let mut resp: Vec<u8> = head.into_bytes();
+                resp.extend_from_slice(&body);
+                let _ = s.write_all(resp).await;
+                crate::ws::registry().lock().remove(&conn_id);
+                return;
+            }
+
+            // 101: write manual handshake response then wrap with tungstenite.
+            let accept = crate::ws::compute_sec_accept(&handshake.sec_websocket_key);
+            let mut handshake_resp = String::with_capacity(256);
+            handshake_resp.push_str("HTTP/1.1 101 Switching Protocols\r\n");
+            handshake_resp.push_str("Upgrade: websocket\r\n");
+            handshake_resp.push_str("Connection: Upgrade\r\n");
+            handshake_resp.push_str(&format!("Sec-WebSocket-Accept: {}\r\n", accept));
+            if !open.subprotocol.is_empty() {
+                handshake_resp.push_str(&format!("Sec-WebSocket-Protocol: {}\r\n", open.subprotocol));
+            }
+            handshake_resp.push_str("\r\n");
+            if s.write_all(handshake_resp.into_bytes()).await.is_err() {
+                crate::ws::registry().lock().remove(&conn_id);
+                return;
+            }
+
+            // Wrap the stream with tokio-tungstenite in Server role. The handshake
+            // is already done so we use from_raw_socket (skips the built-in
+            // handshake which would otherwise expect to read the request line).
+            //
+            // Platform note: WebSocketStream<S> requires S: AsyncRead + AsyncWrite +
+            // Unpin. crate::io::TcpStream is a newtype wrapper; we extract the inner
+            // tokio::net::TcpStream (which satisfies all three traits) via into_inner().
+            // into_inner() is only available on non-Linux targets (other.rs); on Linux
+            // tokio_uring::TcpStream does NOT impl AsyncRead/AsyncWrite and needs the
+            // same SseIo-style abstraction SSE Task 5 introduced — REPORT NEEDS_CONTEXT
+            // if compile fails there.
+            use tokio_tungstenite::tungstenite::protocol::Role;
+            let inner = s.into_inner();
+            let ws_stream = tokio_tungstenite::WebSocketStream::from_raw_socket(
+                inner, Role::Server, None,
+            ).await;
+            crate::ws::ws_conn_task(
+                ws_stream, conn_id, send_rx,
+                30_000,            // pingMs default — per-route forwarding is a follow-up
+                1_048_576,         // 1 MB max msg — per-route forwarding is a follow-up
+            ).await;
+            return;
+        }
+
         let (envelope_json, route_id) = match routes.match_path(&method, &path, &buf) {
             MatchResult::Matched { envelope_json, route_id } => (envelope_json, route_id),
             MatchResult::NoMatch => {

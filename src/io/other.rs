@@ -55,6 +55,16 @@ impl TcpStream {
     pub async fn shutdown(&mut self) -> std::io::Result<()> {
         self.0.shutdown().await
     }
+
+    /// Unwrap the inner tokio stream. Used by the WS branch in server.rs to
+    /// hand off to `tokio_tungstenite::WebSocketStream::from_raw_socket`,
+    /// which requires `AsyncRead + AsyncWrite + Unpin` (satisfied by
+    /// `tokio::net::TcpStream` but not by this newtype wrapper).
+    /// Only available on non-Linux targets; on Linux the uring stream does
+    /// not impl AsyncRead/AsyncWrite — that path needs a WsIo abstraction.
+    pub fn into_inner(self) -> tokio::net::TcpStream {
+        self.0
+    }
 }
 
 impl crate::io::SseIo for TcpStream {
