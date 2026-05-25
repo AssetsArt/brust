@@ -145,6 +145,162 @@ pub fn path_is_ws(path: &str) -> bool {
     WS_PATHS.get().map_or(false, |s| s.lock().contains(path))
 }
 
+use futures::{SinkExt, StreamExt};
+use std::borrow::Cow;
+use std::time::{Duration, Instant};
+use tokio_tungstenite::{
+    tungstenite::protocol::{frame::CloseFrame, Message},
+    WebSocketStream,
+};
+
+/// Per-connection driver loop. Owns the WebSocketStream after the 101
+/// handshake completes. Selects between outgoing sends (JS-pushed),
+/// incoming frames (tokio-tungstenite Stream), and a ping ticker.
+///
+/// on_close fires EXACTLY ONCE per connection for peer-initiated,
+/// timeout, error, shutdown, and oversize closes. It does NOT fire
+/// when the author calls socket.close() — that path is signalled by
+/// the Close frame being enqueued via send_tx and recognized by the
+/// is_close flag below.
+///
+/// The S generic is the underlying transport — typically TcpStream on
+/// non-Linux, but the trait bound (AsyncRead + AsyncWrite + Unpin) is
+/// what tokio-tungstenite's WebSocketStream<S> requires.
+pub async fn ws_conn_task<S>(
+    ws: WebSocketStream<S>,
+    conn_id: u64,
+    mut send_rx: mpsc::Receiver<WsOutgoing>,
+    ping_interval_ms: u64,
+    max_msg_bytes: usize,
+)
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    let (mut ws_sink, mut ws_stream) = ws.split();
+    let mut ping_tick =
+        tokio::time::interval(Duration::from_millis(ping_interval_ms.max(1)));
+    let mut last_pong = Instant::now();
+    let pong_timeout = Duration::from_millis(ping_interval_ms.saturating_mul(2));
+    let mut close_fired = false;
+
+    loop {
+        tokio::select! {
+            biased;   // give outgoing sends priority to drain the queue
+            Some(out) = send_rx.recv() => {
+                let msg = match out.frame {
+                    WsFrameKind::Text(s) => Message::Text(s),
+                    WsFrameKind::Binary(b) => Message::Binary(b),
+                    WsFrameKind::Close(c, r) => Message::Close(Some(CloseFrame {
+                        code: c.into(),
+                        reason: Cow::Owned(r),
+                    })),
+                };
+                let is_close = matches!(msg, Message::Close(_));
+                if ws_sink.send(msg).await.is_err() { break; }
+                // ack.send may Err if napi_ws_close dropped the receiver
+                // (RFC 6455 close is fire-and-forget from the initiator);
+                // discard per the WsOutgoing.ack contract.
+                let _ = out.ack.send(());
+                if is_close { break; }
+            }
+            Some(msg_result) = ws_stream.next() => {
+                let msg = match msg_result {
+                    Ok(m) => m,
+                    Err(_) => {
+                        if !close_fired {
+                            fire_on_close(conn_id, 1006, "abnormal closure".to_string());
+                            close_fired = true;
+                        }
+                        break;
+                    }
+                };
+                match msg {
+                    Message::Text(s) => {
+                        if s.len() > max_msg_bytes {
+                            if !close_fired {
+                                fire_on_close(conn_id, 1009, "message too big".to_string());
+                                close_fired = true;
+                            }
+                            let _ = ws_sink.send(Message::Close(Some(CloseFrame {
+                                code: 1009.into(),
+                                reason: Cow::Borrowed("message too big"),
+                            }))).await;
+                            break;
+                        }
+                        fire_on_message(conn_id, s.into_bytes(), false);
+                    }
+                    Message::Binary(b) => {
+                        if b.len() > max_msg_bytes {
+                            if !close_fired {
+                                fire_on_close(conn_id, 1009, "message too big".to_string());
+                                close_fired = true;
+                            }
+                            let _ = ws_sink.send(Message::Close(Some(CloseFrame {
+                                code: 1009.into(),
+                                reason: Cow::Borrowed("message too big"),
+                            }))).await;
+                            break;
+                        }
+                        fire_on_message(conn_id, b, true);
+                    }
+                    Message::Ping(p) => { let _ = ws_sink.send(Message::Pong(p)).await; }
+                    Message::Pong(_) => { last_pong = Instant::now(); }
+                    Message::Close(cf) => {
+                        let code = cf.as_ref().map_or(1005u16, |c| u16::from(c.code));
+                        let reason = cf.map_or(String::new(), |c| c.reason.into_owned());
+                        if !close_fired {
+                            fire_on_close(conn_id, code, reason);
+                            close_fired = true;
+                        }
+                        break;
+                    }
+                    Message::Frame(_) => {}
+                }
+            }
+            _ = ping_tick.tick() => {
+                if ping_interval_ms == 0 { continue; }
+                if last_pong.elapsed() > pong_timeout {
+                    if !close_fired {
+                        fire_on_close(conn_id, 1011, "pong timeout".to_string());
+                        close_fired = true;
+                    }
+                    let _ = ws_sink.send(Message::Close(Some(CloseFrame {
+                        code: 1011.into(),
+                        reason: Cow::Borrowed("pong timeout"),
+                    }))).await;
+                    break;
+                }
+                let _ = ws_sink.send(Message::Ping(Vec::new())).await;
+            }
+        }
+    }
+
+    let _ = ws_sink.close().await;
+    registry().lock().remove(&conn_id);
+}
+
+fn fire_on_message(conn_id: u64, data: Vec<u8>, is_binary: bool) {
+    // Take the closure reference under the lock and invoke it while the lock
+    // is held. This is acceptable because the closure just enqueues a JS
+    // event via a NonBlocking tsfn call (see napi_ws_register_handlers) —
+    // no JS code runs under the lock.
+    let reg = registry().lock();
+    if let Some(conn) = reg.get(&conn_id) {
+        if let Some(cb) = conn.on_message.as_ref() {
+            cb(data, is_binary);
+        }
+    }
+}
+
+fn fire_on_close(conn_id: u64, code: u16, reason: String) {
+    let reg = registry().lock();
+    if let Some(conn) = reg.get(&conn_id) {
+        if let Some(cb) = conn.on_close.as_ref() {
+            cb(code, reason);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
