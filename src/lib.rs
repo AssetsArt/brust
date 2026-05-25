@@ -467,6 +467,11 @@ pub fn napi_ws_register_handlers(
     if let Some(conn) = reg.get_mut(&conn_id) {
         conn.on_message = Some(on_message_box);
         conn.on_close = Some(on_close_box);
+    } else {
+        // Silent miss would leave JS thinking handlers are installed while
+        // Rust dropped them — a black hole. Warn so timing races between
+        // registration and teardown are diagnosable in integration smoke.
+        tracing::warn!(conn_id, "napi_ws_register_handlers: conn not in registry");
     }
     Ok(())
 }

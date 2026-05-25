@@ -91,7 +91,11 @@ pub enum WsFrameKind {
 pub struct WsOutgoing {
     pub frame: WsFrameKind,
     /// Resolved after the wire write completes; backpressure handle for the
-    /// JS Promise returned by napi_ws_send.
+    /// JS Promise returned by napi_ws_send. The per-conn task MUST discard
+    /// the result of `ack.send(())` — napi_ws_close intentionally drops the
+    /// receiver (fire-and-forget on Close frames, per RFC 6455 close
+    /// semantics), so a `Err(())` from `send` is normal and not an error.
+    /// Use `let _ = ack.send(());`, never `ack.send(()).unwrap()` or `?`.
     pub ack: oneshot::Sender<()>,
 }
 
