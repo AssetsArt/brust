@@ -543,21 +543,11 @@ async fn handle_conn(
                 &method, &path, &buf[..header_end], conn_id,
             );
 
-            // TODO(Task 6): replace with crate::pool::dispatch_sse(entry, envelope_json, conn_id)
-            // For now, fire the tsfn call directly. The JS side branches on kind: 'sse' and
-            // runs the entire lifecycle there. call_async mirrors how render/action/mcp dispatch.
-            //
-            // in_flight_guard counts only the dispatch enqueue, not the entire SSE lifetime —
-            // a long-lived stream must not make `pick_least_busy` see this worker as busy for
-            // all subsequent HTTP requests. Drop the guard the moment the tsfn handoff completes.
-            {
-                let _guard = entry.in_flight_guard();
-                if let Err(e) = entry.tsfn.call_async(envelope_json).await {
-                    error!(worker_id = entry.id, error = %e, "sse tsfn call_async failed");
-                    let _ = s.write_all(http::error_500()).await;
-                    crate::sse::registry().lock().remove(&conn_id);
-                    return;
-                }
+            if let Err(e) = crate::pool::dispatch_sse(entry.clone(), envelope_json).await {
+                error!(worker_id = entry.id, error = %e, "sse tsfn call_async failed");
+                let _ = s.write_all(http::error_500()).await;
+                crate::sse::registry().lock().remove(&conn_id);
+                return;
             }
 
             // Await the open signal with timeout. Distinguish sender-dropped (JS crash)
