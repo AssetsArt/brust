@@ -192,3 +192,37 @@ test('flattenRoutes accepts sse + middleware', () => {
     ] as Route[]),
   ).not.toThrow()
 })
+
+// ----- WS validation tests (Task 10) -----
+
+test('flattenRoutes rejects websocket + Component', () => {
+  expect(() =>
+    flattenRoutes([
+      { path: '/x', websocket: async () => ({}), Component: C },
+    ] as Route[]),
+  ).toThrow(/cannot coexist with 'Component'/)
+})
+
+test('flattenRoutes rejects websocket + loader', () => {
+  expect(() =>
+    flattenRoutes([
+      { path: '/x', websocket: async () => ({}), loader: async () => ({}) },
+    ] as Route[]),
+  ).toThrow(/cannot coexist with 'loader'/)
+})
+
+test('flattenRoutes rejects websocket + sse', () => {
+  expect(() =>
+    flattenRoutes([
+      { path: '/x', websocket: async () => ({}), sse: () => new ReadableStream() },
+    ] as Route[]),
+  ).toThrow(/cannot coexist with 'sse'/)
+})
+
+test('flattenRoutes accepts websocket + middleware', () => {
+  expect(() =>
+    flattenRoutes([
+      { path: '/x', websocket: async () => ({}), middleware: [] },
+    ] as Route[]),
+  ).not.toThrow()
+})
