@@ -158,3 +158,37 @@ test('flattenRoutes: throws on absolute child path under non-empty parent', () =
     ]),
   ).toThrow(/absolute child path/)
 })
+
+// ----- SSE validation tests (Task 9) -----
+
+test('flattenRoutes rejects sse + Component', () => {
+  expect(() =>
+    flattenRoutes([
+      { path: '/x', sse: () => new ReadableStream(), Component: C },
+    ] as Route[]),
+  ).toThrow(/cannot coexist with 'Component'/)
+})
+
+test('flattenRoutes rejects sse + loader', () => {
+  expect(() =>
+    flattenRoutes([
+      { path: '/x', sse: () => new ReadableStream(), loader: async () => ({}) },
+    ] as Route[]),
+  ).toThrow(/cannot coexist with 'loader'/)
+})
+
+test('flattenRoutes rejects sse + children', () => {
+  expect(() =>
+    flattenRoutes([
+      { path: '/x', sse: () => new ReadableStream(), children: [{ path: 'y', Component: C }] },
+    ] as Route[]),
+  ).toThrow(/nested children/)
+})
+
+test('flattenRoutes accepts sse + middleware', () => {
+  expect(() =>
+    flattenRoutes([
+      { path: '/x', sse: () => new ReadableStream(), middleware: [] },
+    ] as Route[]),
+  ).not.toThrow()
+})
