@@ -83,6 +83,32 @@ pub fn build_mcp_envelope(
     serde_json::to_string(&env).unwrap()
 }
 
+/// SSE request envelope. `kind: "sse"` discriminates from render/action/mcp.
+/// `conn_id` is the Rust-assigned monotonic id; the worker carries it back via
+/// napi_sse_write / napi_sse_close / napi_sse_signal_open so Rust can correlate
+/// chunks/lifecycle to the per-connection task.
+#[derive(Serialize)]
+pub struct SseEnvelope {
+    pub kind: &'static str,
+    pub conn_id: u64,
+    pub req: RequestEnvelope,
+}
+
+pub fn build_sse_envelope(
+    method: &str,
+    full_path: &str,
+    raw_request: &[u8],
+    conn_id: u64,
+) -> String {
+    let (_, query) = match full_path.split_once('?') {
+        Some((p, q)) => (p, q),
+        None => (full_path, ""),
+    };
+    let req = build_request_envelope(method, full_path, query, raw_request);
+    let env = SseEnvelope { kind: "sse", conn_id, req };
+    serde_json::to_string(&env).unwrap()
+}
+
 /// Build an ActionEnvelope JSON string. Mirrors `match_path` for the render
 /// case. Caller has already validated the action_id charset and registry
 /// membership; this function only assembles the envelope.
@@ -530,5 +556,33 @@ mod tests {
         let outer: serde_json::Value = serde_json::from_str(&json).unwrap();
         let recovered: serde_json::Value = serde_json::from_str(outer["body_text"].as_str().unwrap()).unwrap();
         assert_eq!(recovered["params"]["arguments"]["text"], r#"hi "there""#);
+    }
+
+    #[test]
+    fn sse_envelope_serialises_kind_sse_and_conn_id() {
+        let json = build_sse_envelope(
+            "GET",
+            "/sse-counter",
+            b"GET /sse-counter HTTP/1.1\r\nHost: x\r\nAccept: text/event-stream\r\n\r\n",
+            42u64,
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["kind"], "sse");
+        assert_eq!(parsed["conn_id"], 42);
+        assert_eq!(parsed["req"]["method"], "GET");
+        assert_eq!(parsed["req"]["url"], "/sse-counter");
+    }
+
+    #[test]
+    fn sse_envelope_preserves_query_string() {
+        let json = build_sse_envelope(
+            "GET",
+            "/events?topic=news",
+            b"GET /events?topic=news HTTP/1.1\r\nHost: x\r\n\r\n",
+            7u64,
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["conn_id"], 7);
+        assert_eq!(parsed["req"]["url"], "/events?topic=news");
     }
 }
