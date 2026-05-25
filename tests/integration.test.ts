@@ -1510,3 +1510,185 @@ test('sse: POST to an SSE route returns 405', async () => {
     proc.kill('SIGINT'); await proc.exited
   }
 }, 15_000)
+
+// ----- WS integration tests -----
+
+function makeWsClient(port: number, path: string, subprotocols?: string[]): { ws: WebSocket, opened: Promise<void>, closed: Promise<{ code: number, reason: string }>, messages: Promise<(string | ArrayBuffer)[]> } {
+  const url = `ws://127.0.0.1:${port}${path}`
+  const ws = subprotocols ? new WebSocket(url, subprotocols) : new WebSocket(url)
+  let resolveOpen: () => void
+  let resolveClose: (v: { code: number, reason: string }) => void
+  let resolveMessages: (v: (string | ArrayBuffer)[]) => void
+  const opened = new Promise<void>((r) => { resolveOpen = r })
+  const closed = new Promise<{ code: number, reason: string }>((r) => { resolveClose = r })
+  const msgs: (string | ArrayBuffer)[] = []
+  const messages = new Promise<(string | ArrayBuffer)[]>((r) => { resolveMessages = r })
+  ws.binaryType = 'arraybuffer'
+  ws.onopen = () => { resolveOpen() }
+  ws.onmessage = (e) => { msgs.push(e.data as string | ArrayBuffer) }
+  ws.onclose = (e) => { resolveMessages(msgs); resolveClose({ code: e.code, reason: e.reason }) }
+  ws.onerror = () => { /* swallow; close will fire */ }
+  return { ws, opened, closed, messages }
+}
+
+const WS_ENV = (port: string) => ({
+  ...process.env,
+  BRUST_PORT: port,
+  BRUST_WORKERS: '1',         // critical — colocate handler + probe action
+  RUST_LOG: 'brust=warn',
+})
+
+test('ws: handshake + echo', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: WS_ENV('38220'),
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const c = makeWsClient(port, '/ws/echo')
+    await c.opened
+    c.ws.send('hello')
+    await new Promise((r) => setTimeout(r, 200))
+    c.ws.close()
+    const got = await c.messages
+    expect(got).toContain('hello')
+  } finally {
+    proc.kill('SIGINT'); await proc.exited
+  }
+}, 15_000)
+
+test('ws: binary frame round-trip', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: WS_ENV('38221'),
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const c = makeWsClient(port, '/ws/echo')
+    await c.opened
+    c.ws.send(new Uint8Array([1, 2, 3]).buffer)
+    await new Promise((r) => setTimeout(r, 200))
+    c.ws.close()
+    const got = await c.messages
+    expect(got.length).toBeGreaterThan(0)
+    expect(got[0]).toBeInstanceOf(ArrayBuffer)
+    const bytes = new Uint8Array(got[0] as ArrayBuffer)
+    expect(Array.from(bytes)).toEqual([1, 2, 3])
+  } finally {
+    proc.kill('SIGINT'); await proc.exited
+  }
+}, 15_000)
+
+test('ws: server-initiated close fires client onclose with code 4000', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: WS_ENV('38222'),
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const c = makeWsClient(port, '/ws/server-close')
+    const closed = await c.closed
+    expect(closed.code).toBe(4000)
+    expect(closed.reason).toBe('bye')
+  } finally {
+    proc.kill('SIGINT'); await proc.exited
+  }
+}, 15_000)
+
+test('ws: middleware reject returns 401 + no upgrade', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: WS_ENV('38223'),
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const resp = await fetch(`http://127.0.0.1:${port}/ws/gated`, {
+      method: 'GET',
+      headers: {
+        'Upgrade': 'websocket',
+        'Connection': 'Upgrade',
+        'Sec-WebSocket-Key': 'dGhlIHNhbXBsZSBub25jZQ==',
+        'Sec-WebSocket-Version': '13',
+      },
+    })
+    expect(resp.status).toBe(401)
+    expect(resp.headers.get('content-type') ?? '').not.toContain('websocket')
+  } finally {
+    proc.kill('SIGINT'); await proc.exited
+  }
+}, 15_000)
+
+test('ws: middleware pass with cookie completes handshake + echo', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: WS_ENV('38224'),
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/gated`, { headers: { cookie: 'user=alice' } } as any)
+    const got: string[] = []
+    let closed = false
+    ws.onopen = () => { ws.send('hi') }
+    ws.onmessage = (e) => { got.push(e.data as string); ws.close() }
+    ws.onclose = () => { closed = true }
+    await new Promise((r) => setTimeout(r, 1500))
+    expect(got).toContain('hi')
+    expect(closed).toBe(true)
+  } finally {
+    proc.kill('SIGINT'); await proc.exited
+  }
+}, 15_000)
+
+test('ws: subprotocol negotiation picks first match in route order', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: WS_ENV('38225'),
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    // route declares ['chat.v2', 'chat.v1']
+    // client requests ['chat.v0', 'chat.v1']
+    // chat.v1 is the first route-declared subprotocol that also appears
+    // in the client list → server picks chat.v1.
+    const c = makeWsClient(port, '/ws/protocols', ['chat.v0', 'chat.v1'])
+    await c.opened
+    expect(c.ws.protocol).toBe('chat.v1')
+    c.ws.close()
+  } finally {
+    proc.kill('SIGINT'); await proc.exited
+  }
+}, 15_000)
+
+test('ws: client clean close fires server on_close with 1000', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: WS_ENV('38226'),
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const c = makeWsClient(port, '/ws/echo')
+    await c.opened
+    c.ws.close()
+    await new Promise((r) => setTimeout(r, 500))
+
+    // BRUST_WORKERS=1 ensures the probe action lands on the same JS
+    // context that ran the WS handler.
+    const probe = await fetch(`http://127.0.0.1:${port}/_brust/action/lastWsClose`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '[]',
+    })
+    expect(probe.status).toBe(200)
+    const { code } = await probe.json() as { code: number, reason: string }
+    expect(code).toBe(1000)
+  } finally {
+    proc.kill('SIGINT'); await proc.exited
+  }
+}, 15_000)
