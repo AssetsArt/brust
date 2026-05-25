@@ -106,3 +106,25 @@ pub async fn dispatch_sse(
             napi::Error::from_reason(format!("sse dispatch failed: {e}"))
         })
 }
+
+/// Dispatch a WS envelope to the worker. Single long-lived tsfn call:
+/// the JS side branches on `kind: 'ws'`, runs middleware, signals open
+/// (101 or 4xx) via napi_ws_signal_open, then registers handler
+/// callbacks via napi_ws_register_handlers. The Rust side holds an
+/// in_flight_guard ONLY for the duration of the call_async handoff —
+/// the per-conn task in src/ws.rs::ws_conn_task owns the rest of the
+/// connection's lifetime independently of the worker pool.
+///
+/// Returns Err if the tsfn enqueue itself fails (e.g. worker dead).
+/// Open-signal timeout + middleware reject handling are caller concerns.
+pub async fn dispatch_ws(
+    entry: Arc<TsfnEntry>,
+    envelope_json: String,
+) -> Result<(), napi::Error> {
+    let _guard = entry.in_flight_guard();
+    entry.tsfn.call_async(envelope_json).await
+        .map(|_| ())
+        .map_err(|e| {
+            napi::Error::from_reason(format!("ws dispatch failed: {e}"))
+        })
+}

@@ -647,16 +647,11 @@ async fn handle_conn(
                 client_subprotocols,
             );
 
-            // TODO(Task 7): replace with crate::pool::dispatch_ws(entry, envelope_json)
-            // Same pattern as SSE Task 5 → Task 6 refactor.
-            {
-                let _guard = entry.in_flight_guard();
-                if let Err(e) = entry.tsfn.call_async(envelope_json).await {
-                    error!(worker_id = entry.id, error = %e, "ws tsfn call_async failed");
-                    let _ = s.write_all(http::error_500()).await;
-                    crate::ws::registry().lock().remove(&conn_id);
-                    return;
-                }
+            if let Err(e) = crate::pool::dispatch_ws(entry.clone(), envelope_json).await {
+                error!(worker_id = entry.id, error = %e, "ws dispatch failed");
+                let _ = s.write_all(http::error_500()).await;
+                crate::ws::registry().lock().remove(&conn_id);
+                return;
             }
 
             // Await open verdict with 30s timeout. Distinguish sender-drop (JS
