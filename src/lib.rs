@@ -7,6 +7,7 @@ mod pool;
 mod routes;
 pub mod sse;
 mod server;
+pub mod ws;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
