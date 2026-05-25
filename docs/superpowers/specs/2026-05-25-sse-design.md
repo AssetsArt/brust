@@ -38,33 +38,30 @@ Three layers; one new directory under `runtime/`; no new Rust deps.
 Browser                         Rust (tokio)                          Worker JS (Bun)
 ────────                        ────────────                          ──────────────
 GET /events           ───→   accept conn
-Accept: text/event-stream    validate (GET + Accept text/event-stream)
+Accept: text/event-stream    validate (GET + Accept rules — see §6)
                              assign conn_id (AtomicU64)
-                             dispatch_sse_open(envelope) ─────────→   resolve Route by path
+                             dispatch_sse(envelope, conn_id) ─────→   resolve Route by path
                                                                        run middleware chain
-                             ← Promise<{status, body, contentType}>    → return open verdict
+                                                                       napi_sse_signal_open(conn_id, status, body, ct) ←
+                             ← open signal received (oneshot)            (chain short-circuits 4xx OR reaches 200 terminal)
                              if 4xx → write that response + close
-                             else → write 200 + SSE headers
-                             dispatch_sse_stream(envelope, conn_id) →   route.sse(req) → ReadableStream
-                                                                       glue: reader loop + heartbeat
-                             napi.write(conn_id, bytes) ←──────────   await per chunk (Promise = backpressure)
+                             else → write 200 + SSE headers           glue: await route.sse(req) → ReadableStream
+                                                                            reader loop + heartbeat
+                             napi_sse_write(conn_id, bytes) ←──────   await per chunk (Promise = backpressure)
                                 ↓
                              TCP socket flush
                              ────────────
 Client TCP close      ───→   peek/read → Err/0
-                             drop sender, signal abort_rx ─────────→   glue: AbortController.abort()
+                             abort_tx dropped ───────────────────→   napi-registered callback fires
+                                                                       glue: AbortController.abort()
                                                                        clearInterval(heartbeat); reader.cancel()
 ```
 
-**Connection identity:** `conn_id: u64`, monotonic per server, assigned by Rust. Stored in `DashMap<u64, SseConn>` registry. Both sides carry it; all NAPI calls reference it.
+**Connection identity:** `conn_id: u64`, monotonic per server, assigned by Rust. Stored in a `parking_lot::Mutex<HashMap<u64, SseConn>>` registry (see §3 for the no-new-dep justification). Both sides carry it; all NAPI calls reference it.
 
-**Worker assignment:** stream pinned to the worker that opened it. No migration. Pool dispatch is round-robin at `dispatch_sse_open` time.
+**Worker assignment:** stream stays on the worker chosen at `dispatch_sse` time. No migration. `pool.pick_least_busy()` picks once; its `in_flight_guard` stays alive for the entire connection (the tsfn call doesn't return until the stream ends), so that worker's `in_flight` counter reflects the open stream.
 
-**Open contract (the awkward bit):** middleware can reject. Headers are sent ONLY after middleware approves. Two-phase dispatch:
-1. `dispatch_sse_open` — sync response; middleware runs here; returns `{status, body}` like a regular request.
-2. If status 200 → Rust writes SSE headers, then `dispatch_sse_stream` opens the persistent stream.
-
-This costs one extra tsfn roundtrip per SSE conn (~hundreds of µs at most) for honest HTTP semantics.
+**Open contract:** middleware can reject AFTER the dispatch has started but BEFORE any HTTP response has been written. The single dispatch carries an open signal back through `napi_sse_signal_open` so Rust knows whether to write SSE headers or a regular error response. See §5 for the full mechanics. No second dispatch, no sticky pool primitive.
 
 ## 3. Module layout
 
@@ -74,8 +71,8 @@ brust/
 │   ├── routes.rs         # +SseEnvelope, +build_sse_envelope, +tests
 │   ├── server.rs         # +route /sse-* paths, +write_sse_response_headers helper
 │   ├── sse.rs            # NEW: REGISTRY, SseConn, sse_conn_task, peek_for_close
-│   ├── napi.rs           # +napi_sse_write, +napi_sse_close, +napi_sse_register_abort
-│   └── pool.rs           # +dispatch_sse_open, +dispatch_sse_stream (new tsfn shape)
+│   ├── napi.rs           # +napi_sse_write, +napi_sse_close, +napi_sse_register_abort, +napi_sse_signal_open
+│   └── pool.rs           # +dispatch_sse (single long-lived tsfn call per conn)
 ├── runtime/
 │   ├── routes.ts         # +Route.sse, +Route.sseOptions, +RouteCall 'sse' variant,
 │   │                     #   +sseBranch, +defineRoutes validation rejecting sse+Component/loader
@@ -91,7 +88,7 @@ brust/
 └── architecture.md       # promote "Real-time: SSE" entry from Designed→Built
 ```
 
-No `Cargo.toml` change (tokio's `mpsc`, `oneshot`, and `DashMap` are already in the dep tree from existing infra; if `dashmap` is not present, use `parking_lot::RwLock<HashMap>` — same complexity, no new dep).
+No `Cargo.toml` change. REGISTRY uses `parking_lot::Mutex<HashMap<u64, SseConn>>` (parking_lot is already at `Cargo.toml:13`). `tokio::sync::{mpsc, oneshot}` are already enabled via the `sync` feature on the existing `tokio` dep. `DashMap` was considered for finer-grained locking but is not justified at MVP scale — revisit if benchmarks show contention.
 
 No `runtime/package.json` change.
 
@@ -138,7 +135,9 @@ export interface Route {
 | `Last-Event-ID` request header | ❌ | Author reads `req.headers['last-event-id']` |
 | Disconnect detection | ✅ via `req.signal` AbortSignal | Author wires cleanup in abort listener |
 
-**`req.signal` is new on `BrustRequest`.** SSE-only in MVP — populated from the JS glue side using a per-connection `AbortController`. Non-SSE routes (action, render) get `req.signal` as a pre-aborted no-op `AbortSignal` so the field is always present and never throws on access, but only SSE actually fires it on disconnect. Extending real disconnect detection to render/action is a follow-up.
+**`req.signal` is new on `BrustRequest`.** SSE-only in MVP — populated from the JS glue side using a per-connection `AbortController`. Non-SSE routes (action, render) receive a **permanently-unaborted** shared sentinel signal so the field is always present (`req.signal.aborted === false`, listeners never fire) but disconnect detection is not actually wired for those paths. Extending real disconnect detection to render/action is a follow-up.
+
+Implementation: `runtime/routes.ts` exports `const NEVER_ABORTS = new AbortController().signal` (module constant — the controller is held in scope but never `.abort()`-ed, keeping the signal alive in the unaborted state). Action and render envelope handlers set `req.signal = NEVER_ABORTS` before invoking middleware. **Do not** use `AbortSignal.abort()` — that creates an already-aborted signal which would fire any `addEventListener('abort', ...)` listener synchronously, breaking defensive cleanup code.
 
 ## 5. Wire format
 
@@ -175,25 +174,44 @@ napi_sse_register_abort(env, conn_id: u64, cb: JsFunction) -> ()
 - `napi_sse_close` — removes from REGISTRY, drops sender. Rust task notices on next select-loop iteration and closes TCP.
 - `napi_sse_register_abort` — JS calls this with a callback. When Rust detects client disconnect, it invokes the callback (via tsfn). The callback fires the JS-side `AbortController.abort()`.
 
-### Two-phase tsfn dispatch
+### Single-dispatch tsfn with reverse-direction "open signal"
 
-The existing `dispatch_to_worker_and_send_meta_response` doesn't fit. New paths:
+The existing `dispatch_to_worker_and_send_meta_response` doesn't fit (it expects a synchronous SAB-buffered response). SSE uses **one** tsfn dispatch per connection — middleware verdict comes back through a NAPI callback BEFORE Rust writes any response headers.
 
 ```rust
-// src/pool.rs (or src/sse.rs)
-pub struct SseOpenResult {
+// src/sse.rs
+pub struct SseOpenSignal {
     pub status: u16,
     pub body: Vec<u8>,
     pub content_type: String,   // e.g. "text/plain" for 401 body
 }
-pub async fn dispatch_sse_open(pool, envelope_json) -> SseOpenResult
-pub fn dispatch_sse_stream(pool, envelope_json, conn_id) -> impl Future<Output=()>
-// fire-and-forget; worker holds the stream
+
+pub fn dispatch_sse(pool, envelope_json, conn_id, open_tx: oneshot::Sender<SseOpenSignal>)
+    -> impl Future<Output=()>
+// One tsfn call for the entire SSE lifetime.
+// Worker first runs middleware, then calls napi_sse_signal_open(conn_id, status, body, ct)
+// which the Rust side routes to open_tx. Rust waits on open_tx; if status 200 it writes
+// SSE response headers and continues to feed bytes; if >=400 it writes a regular HTTP
+// response and closes. Worker, after signaling open, continues into the reader loop on
+// the SAME tsfn call.
 ```
 
-Both run on the same worker — `pool.acquire_sticky()` pins a worker for the duration of `dispatch_sse_open`'s response → `dispatch_sse_stream` invocation, so middleware-side state (e.g. a Map<sessionId, user> populated by login middleware) can carry into the stream handler without serialization. The sticky binding is released when `dispatch_sse_stream` finishes (i.e. stream ends).
+```rust
+// src/napi.rs
+napi_sse_signal_open(env, conn_id: u64, status: u32, body: Buffer, content_type: String) -> ()
+// Routes into REGISTRY[conn_id].open_tx (replaces the abort_tx union OR sits alongside
+// — implementer's call). Single-shot; second call is a no-op.
+```
 
-**Important: middleware must NOT invoke `route.sse(req)` in its terminal.** The composed chain's terminal returns a 200 placeholder; the actual stream handler runs in `handleSseStream` (separate worker entry) only after middleware approves. This keeps middleware semantics identical to action/render and prevents double-invocation of `route.sse`.
+**Why single dispatch over two-phase:**
+- No new pool sticky-binding primitive needed (current `pool.pick_least_busy()` returns one `Arc<TsfnEntry>`; we call its tsfn exactly once and the JS side stays on that worker for the connection's lifetime).
+- No envelope re-serialization.
+- Middleware state lives in the same JS closure as the stream handler — no cross-call carry needed.
+- Symmetric: action/render also use one tsfn call per request; SSE is just "longer-lived" one.
+
+**Middleware semantics inside the single dispatch.** The composed chain's terminal returns a 200 placeholder `{status:200, body:'', contentType:'text/event-stream'}`. The glue:
+1. Runs the composed middleware chain. If it short-circuits with 4xx (no terminal call), the glue invokes `napi.signalOpen(conn_id, status, body, contentType)` and returns. Rust writes the error response and closes.
+2. If middleware passes through to the terminal (200), the glue invokes `napi.signalOpen(conn_id, 200, EMPTY, 'text/event-stream')`, then `await route.sse!(req)`, then enters the reader loop. Author's `route.sse` runs *once*, after middleware approves.
 
 ### HTTP response headers (Rust auto-writes after middleware passes)
 
@@ -216,11 +234,13 @@ Then chunk bytes flow.
 2. If method != GET → write `error_405`, close.
 3. If path doesn't match any route → fall through to existing 404 logic.
 4. If matched route has no `sse` field → existing action/render dispatch (unchanged).
-5. If matched route has `sse` field but `Accept` header doesn't contain `text/event-stream` → 406. (Document this as strict; some apps may want to relax — defer.)
+5. If matched route has `sse` field, validate `Accept`: accept the request if the header is missing, contains `text/event-stream`, OR equals `*/*` (default curl). Reject with 406 only when an explicit Accept lists a specific non-SSE type. Rationale: default `curl URL` (no `-H 'accept:'` flag) sends `Accept: */*`; rejecting that hurts dev ergonomics for no real benefit. Browsers' `EventSource` always sets `Accept: text/event-stream` so production behavior is unchanged.
 6. Assign `conn_id` from `NEXT_CONN_ID.fetch_add(1, Ordering::Relaxed)`.
-7. `dispatch_sse_open(envelope_json)` → middleware runs, returns `{status, body, contentType}`.
-8. If `status >= 400`: write a regular HTTP response with body/contentType, close. **No SSE headers sent.**
-9. If status 200: write SSE response headers, spawn `sse_conn_task`, register in REGISTRY, `dispatch_sse_stream(envelope_json, conn_id)`.
+7. Spawn `sse_conn_task` (per-conn tokio task), register in REGISTRY with an `open_tx: oneshot::Sender<SseOpenSignal>`.
+8. `dispatch_sse(envelope_json, conn_id)` — one tsfn call that lives for the connection's lifetime. Worker runs middleware first, then calls `napi_sse_signal_open(conn_id, status, body, ct)` which routes into `open_tx`.
+9. Rust task awaits `open_rx`:
+   - If `status >= 400`: write a regular HTTP response with body/contentType, close TCP. **No SSE headers sent.**
+   - If status 200: write SSE response headers; worker proceeds (on the same tsfn call) into the reader loop.
 
 ### `sse_conn_task` (per-connection tokio task)
 
@@ -314,7 +334,7 @@ const encoder = new TextEncoder()
 const PING_FRAME = encoder.encode(': ping\n\n')
 ```
 
-The middleware composition happens in `dispatch_sse_open` (separate worker entry), not here — `handleSseStream` runs only AFTER middleware has approved.
+The middleware composition runs at the top of `handleSseStream` itself (one entry point per dispatch). After the chain resolves, the glue signals open via `napi.signalOpen(conn_id, status, body, contentType)` and — on status 200 — falls through into `await route.sse(req)` and the reader loop on the same tsfn call.
 
 ## 7. Limits & out-of-scope
 
@@ -325,6 +345,8 @@ The middleware composition happens in `dispatch_sse_open` (separate worker entry
 | Heartbeat interval | 15 000 ms | `sseOptions.heartbeatMs` per route | 0 disables |
 | Chunk size cap | none | — | Large chunks (>1 MB) work but waste memory in queue |
 | Connection idle timeout | none | — | Rely on heartbeat + client/proxy timeouts |
+| Heartbeat timer count | N (one `setInterval` per SSE conn in worker JS) | — | Centralization to a single Rust ticker walking REGISTRY is a follow-up perf option; saves N timers at the cost of one Rust→JS dispatch per tick per conn |
+| tsfn handles for abort callbacks | N (one tsfn per SSE conn from `napi_sse_register_abort`) | — | Bun's tsfn pool doesn't document a hard cap; at ~10k conns the V8/napi handle footprint is real (few MB). Follow-up: replace with a single demux tsfn that takes `conn_id` and routes to a JS-side `Map<conn_id, AbortController>` — one tsfn total |
 
 **Out of scope for MVP** (documented as limitations, not bugs):
 
@@ -344,6 +366,8 @@ The middleware composition happens in `dispatch_sse_open` (separate worker entry
 | Rust unit | `peek_for_close` on paired UnixStream (FIN, RST) | 2 | `src/sse.rs` `#[cfg(test)]` |
 | Runtime unit | Glue — chunks forwarded, heartbeat fires, abort cancels reader + clears interval, error path closes, heartbeatMs=0 disables interval | 5 | `runtime/sse/handler.test.ts` |
 | Integration | 6 tests at ports 38210-38215 (see §1 success criteria 1-6) | 6 | `tests/integration.test.ts` |
+
+**Integration test worker setup (important):** every SSE integration test MUST spawn the example app with `env: { ...process.env, BRUST_PORT: '...', BRUST_WORKERS: '1', RUST_LOG: 'brust=warn' }`. Default `BRUST_WORKERS=18` spawns 18 separate Bun Worker contexts with isolated JS state — the SSE handler runs on one worker, but a follow-up probe action (e.g. `lastSseAbort()` in success criterion 3) gets dispatched by `pool.pick_least_busy()` to whichever worker is least loaded, almost certainly NOT the SSE worker. Probe reads a fresh (zeroed) module global and the test silently passes-or-fails. Single-worker mode aligns the SSE handler and the probe action onto the same JS context.
 
 **Test totals after ship:** 63 Rust unit + 77 runtime unit + 56 integration = **196 tests** (vs. 179 today).
 
@@ -413,9 +437,9 @@ kill %1
 1. Rust `SseEnvelope` + builder + unit tests (~30 min)
 2. Rust `sse.rs` skeleton — REGISTRY, conn_id counter, SseConn struct, unit tests (~1 h)
 3. Rust `peek_for_close` helper + tests (~30 min)
-4. NAPI `napi_sse_write`/`close`/`register_abort` (~1.5 h) — **load-bearing**
+4. NAPI `napi_sse_write` / `_close` / `_register_abort` / `_signal_open` (~2 h) — **load-bearing**
 5. Rust `server.rs` route dispatch — accept GET + SSE Accept; write headers; spawn task (~1.5 h) — **load-bearing**
-6. Pool — `dispatch_sse_open` + `dispatch_sse_stream` (new tsfn shape) (~2 h) — **load-bearing**
+6. Pool — single `dispatch_sse` long-lived tsfn call per conn + Rust-side oneshot for open signal routing (~1.5 h) — **load-bearing**
 7. JS `RouteCall 'sse'` variant + sseBranch stub (~30 min)
 8. JS `runtime/sse/handler.ts` glue + 5 unit tests (~2 h) — **load-bearing**
 9. JS `defineRoutes` validation for sse+Component/loader/children (~30 min)
