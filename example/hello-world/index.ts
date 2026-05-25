@@ -33,6 +33,13 @@ if (!isWorker) {
     brust.registerSsePaths(ssePaths)
     console.log(`[brust] main: registered ${ssePaths.length} sse path(s): ${ssePaths.join(', ')}`)
   }
+  const wsPaths = routes
+    .filter((r) => r.chain[r.chain.length - 1].websocket !== undefined)
+    .map((r) => r.fullPath)
+  if (wsPaths.length > 0) {
+    brust.registerWsPaths(wsPaths)
+    console.log(`[brust] main: registered ${wsPaths.length} ws path(s): ${wsPaths.join(', ')}`)
+  }
   console.log(`[brust] main: scanActions found ${actions.length} action(s): ${actions.map((a) => a.id).join(', ')}`)
 
   // Build MCP manifest (main process only — workers read it from disk).

@@ -98,6 +98,13 @@ export const brust = {
   registerSsePaths(paths: string[]): void {
     ; (native as any).napiRegisterSsePaths(paths)
   },
+  /** Register the list of literal route paths that should be dispatched as
+   * WebSocket upgrades. Call from the main process after defineRoutes.
+   * MVP supports only literal paths — parameterized routes (e.g.
+   * `/ws/chat/{room}`) are a follow-up. */
+  registerWsPaths(paths: string[]): void {
+    ;(native as any).napiRegisterWsPaths(paths)
+  },
   /** Set the response cache capacity (entries). Default is 1000.
    * Safe to call at any time; if shrinking below current size, excess
    * LRU entries are evicted. */

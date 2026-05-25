@@ -65,4 +65,10 @@ export const routes = defineRoutes([
   { path: '/sse-counter', sse: (req) => counterStream(req) },
   { path: '/sse-gated',   middleware: [authRequired], sse: (req) => counterStream(req) },
   { path: '/sse-idle',    sseOptions: { heartbeatMs: 100 }, sse: (req) => idleStream(req) },
+  // WS demo routes.
+  { path: '/ws/echo',          websocket: () => import('./ws-echo.ts') },
+  { path: '/ws/gated',         middleware: [authRequired], websocket: () => import('./ws-echo.ts') },
+  { path: '/ws/server-close',  websocket: () => import('./ws-server-close.ts') },
+  { path: '/ws/protocols',     websocket: () => import('./ws-echo.ts'),
+    wsOptions: { subprotocols: ['chat.v2', 'chat.v1'] } },
 ])

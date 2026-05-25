@@ -56,3 +56,11 @@ export async function uploadAvatar(_req: BrustRequest, fd: FormData): Promise<{ 
 export async function lastSseAbort(_req: BrustRequest): Promise<{ ts: number }> {
   return { ts: (globalThis as { __lastSseAbort?: number }).__lastSseAbort ?? 0 }
 }
+
+/** Probe: returns the last WS close code/reason recorded by the ws-echo
+ * handler. Used by integration test 7 (client clean close → on_close 1000).
+ * Relies on BRUST_WORKERS=1 in the test env so the probe action lands on
+ * the same JS context that ran the WS handler. */
+export async function lastWsClose(_req: BrustRequest): Promise<{ code: number, reason: string }> {
+  return (globalThis as { __lastWsClose?: { code: number, reason: string } }).__lastWsClose ?? { code: 0, reason: '' }
+}
