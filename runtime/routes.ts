@@ -31,6 +31,43 @@ export interface BrustRequest {
   signal: AbortSignal
 }
 
+/** Handler module shape — what `() => Promise<WsHandlers>` resolves to.
+ *  open/message/close are all OPTIONAL — a no-op WebSocket (handshake
+ *  only, e.g. liveness probe) is a valid use case. */
+export interface WsHandlers {
+  /** Called once after the 101 handshake completes. Use this to record
+   * the socket in your in-memory map, send a hello frame, etc.
+   * Throwing here closes the conn with 1011 (Internal Error); on_close
+   * does NOT fire (we never reached steady state). */
+  open?: (socket: WsSocket, ctx: { req: BrustRequest; subprotocol: string | null }) => void | Promise<void>
+  /** Called per incoming message frame. data is string for Text frames,
+   * Uint8Array for Binary. Throwing here is logged but the conn stays
+   * open — one bad message shouldn't kill the conn; wrap in try/catch
+   * for strict-close semantics. */
+  message?: (socket: WsSocket, data: string | Uint8Array) => void | Promise<void>
+  /** Called exactly ONCE when the conn closes EXCEPT when the author
+   * called socket.close themselves. Code/reason from the RFC 6455
+   * close frame; 1006 for abnormal (RST), 1011 for pong timeout,
+   * 1001 for server shutdown. */
+  close?: (socket: WsSocket, code: number, reason: string) => void
+}
+
+/** The only handle the author touches inside a WsHandlers callback. */
+export interface WsSocket {
+  /** Send a frame. Text if data is string, Binary if Uint8Array. Returns
+   * a Promise that resolves when the TCP write completes (cooperative
+   * backpressure, same model as SSE napi.write). Rejects with a clear
+   * error if the conn is already closed. */
+  send(data: string | Uint8Array): Promise<void>
+  /** Initiate close with optional code (default 1000) and reason (default
+   * ''). Idempotent — second call is a no-op. on_close does NOT fire
+   * after this call. */
+  close(code?: number, reason?: string): void
+  /** Stable per-conn identifier. Useful as a Map key in author's
+   * in-memory connection registry. */
+  readonly id: bigint
+}
+
 export interface RouteContext<Params = Record<string, string>, Data = unknown> {
   params: Params
   path: string
@@ -117,6 +154,23 @@ export interface Route<Params = Record<string, string>, Data = unknown> {
     /** Auto-emit `: ping\n\n` every N ms. Default 15000. Set 0 to disable. */
     heartbeatMs?: number
   }
+  /** When set, this route accepts WebSocket upgrades. Cannot coexist
+   * with Component, loader, sse, or children (validated at defineRoutes
+   * time). The factory is invoked lazily by the WS dispatch path and
+   * cached per worker. The handler module exports WsHandlers. */
+  websocket?: () => Promise<WsHandlers>
+  wsOptions?: {
+    /** Server-initiated ping interval in ms. Default 30000. Set 0 to disable.
+     * Pong timeout = 2× pingMs; conn closes with code 1011 if no pong by then. */
+    pingMs?: number
+    /** Max message size in bytes. Default 1 048 576 (1 MB). Larger frames
+     * close the conn with 1009 (Message Too Big). */
+    maxMessageBytes?: number
+    /** Subprotocols the route supports (Sec-WebSocket-Protocol). Client's
+     * requested list is intersected with this; first match (in this declared
+     * order) wins and is reflected in Sec-WebSocket-Protocol response. */
+    subprotocols?: string[]
+  }
 }
 
 /** Internal post-flatten representation. Each FlatRoute is a single leaf or
@@ -181,6 +235,21 @@ function validateRoute(r: Route, basePath: string): void {
     }
     if (r.children !== undefined) {
       throw new Error(`Route ${where}: 'sse' cannot have nested children`)
+    }
+  }
+  if (r.websocket) {
+    const where = r.path ?? '(no path)'
+    if (r.Component !== undefined) {
+      throw new Error(`Route ${where}: 'websocket' cannot coexist with 'Component'`)
+    }
+    if (r.loader !== undefined) {
+      throw new Error(`Route ${where}: 'websocket' cannot coexist with 'loader'`)
+    }
+    if (r.sse !== undefined) {
+      throw new Error(`Route ${where}: 'websocket' cannot coexist with 'sse'`)
+    }
+    if (r.children !== undefined) {
+      throw new Error(`Route ${where}: 'websocket' cannot have nested children`)
     }
   }
 }
@@ -297,6 +366,12 @@ export type RouteCall =
       conn_id: bigint
       req: BrustRequest
     }
+  | {
+      kind: 'ws'
+      conn_id: bigint
+      client_subprotocols: string[]
+      req: BrustRequest
+    }
 
 /**
  * Build a render callback for a given routes table. The returned function is
@@ -352,6 +427,9 @@ export function makeRenderer(
         console.error('[brust] sseBranch uncaught:', err)
         return packResponse(view, encoder, { status: 500, body: '', contentType: 'text/plain' })
       }
+    }
+    if (call.kind === 'ws') {
+      return wsBranch(call, view, encoder, routes)
     }
     // Unknown kind — log and 500. Shouldn't happen unless Rust ships
     // something out of band.
@@ -662,6 +740,32 @@ async function sseBranch(
   }
   await handleSseStream(call, routeShim, napi)
   return packResponse(view, encoder, { status: 200, body: '', contentType: 'text/event-stream' })
+}
+
+async function wsBranch(
+  call: Extract<RouteCall, { kind: 'ws' }>,
+  view: Uint8Array,
+  encoder: TextEncoder,
+  routes: FlatRoute[],
+): Promise<number> {
+  // Inject NEVER_ABORTS into req — once Task 12 wires the real handler,
+  // the middleware chain will need it. Same pattern as sseBranch Task 12.
+  ;(call.req as BrustRequest).signal = NEVER_ABORTS
+
+  // Stub — Task 12 replaces this with full middleware compose +
+  // handleWsConn. Signal 503 so Rust returns a regular HTTP error
+  // response instead of hanging waiting for the open signal.
+  const native = await import('./index.js')
+  ;(native as any).napiWsSignalOpen(
+    call.conn_id,
+    503,
+    Buffer.from('ws handler not configured'),
+    'text/plain; charset=utf-8',
+    '',
+  )
+  return packResponse(view, encoder, {
+    status: 200, body: '', contentType: 'text/plain',
+  })
 }
 
 /** Right-to-left compose a middleware chain. Each middleware wraps the next;
