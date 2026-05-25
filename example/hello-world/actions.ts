@@ -47,3 +47,12 @@ export async function uploadAvatar(_req: BrustRequest, fd: FormData): Promise<{ 
   if (file.size > 200 * 1024) throw new Error('file too big (max 200 KB)')
   return { name: file.name, size: file.size }
 }
+
+/** Probe action: returns the timestamp at which the SSE counter handler
+ * last observed req.signal abort. Used by SSE integration test 3 to
+ * confirm the client-disconnect → req.signal abort pipeline. The probe
+ * relies on BRUST_WORKERS=1 in the test environment so the probe action
+ * lands on the same JS context that ran the SSE handler. */
+export async function lastSseAbort(_req: BrustRequest): Promise<{ ts: number }> {
+  return { ts: (globalThis as { __lastSseAbort?: number }).__lastSseAbort ?? 0 }
+}

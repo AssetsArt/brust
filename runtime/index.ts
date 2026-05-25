@@ -89,6 +89,15 @@ export const brust = {
     const configs = routes.map((r) => JSON.stringify({ path: r.fullPath, cache: r.cache ?? null }))
     return (native as any).registerRoutes(configs)
   },
+  /** Register the list of literal route paths that should be dispatched as
+   * SSE (text/event-stream) instead of going through the render pipeline.
+   * Call from the main process after defineRoutes — the worker only needs
+   * the call if it also accepts SSE traffic, but in the current model the
+   * main accept loop owns dispatch so this is main-only. MVP supports only
+   * literal paths; parameterized routes (e.g. `/sse/{room}`) are a follow-up. */
+  registerSsePaths(paths: string[]): void {
+    ; (native as any).napiRegisterSsePaths(paths)
+  },
   /** Set the response cache capacity (entries). Default is 1000.
    * Safe to call at any time; if shrinking below current size, excess
    * LRU entries are evicted. */

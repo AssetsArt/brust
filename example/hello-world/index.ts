@@ -23,6 +23,16 @@ if (!isWorker) {
   // Workers will load the same routes.tsx, so route_id (= array index) is
   // stable across main thread and every worker.
   brust.registerRoutes(routes)
+  // Tell Rust which literal paths are SSE — the accept loop dispatches
+  // those via the SSE branch (long-lived tsfn call) instead of the render
+  // pipeline. MVP supports literal paths only.
+  const ssePaths = routes
+    .filter((r) => r.chain[r.chain.length - 1].sse !== undefined)
+    .map((r) => r.fullPath)
+  if (ssePaths.length > 0) {
+    brust.registerSsePaths(ssePaths)
+    console.log(`[brust] main: registered ${ssePaths.length} sse path(s): ${ssePaths.join(', ')}`)
+  }
   console.log(`[brust] main: scanActions found ${actions.length} action(s): ${actions.map((a) => a.id).join(', ')}`)
 
   // Build MCP manifest (main process only — workers read it from disk).

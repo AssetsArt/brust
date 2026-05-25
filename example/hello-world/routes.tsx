@@ -1,4 +1,5 @@
 import { defineRoutes, type Middleware } from '../../runtime/routes.ts'
+import { counterStream, idleStream } from './sse-counter.ts'
 import HelloWorld    from './components/HelloWorld'
 import BlogPost      from './components/BlogPost'
 import Crash         from './components/Crash'
@@ -59,4 +60,9 @@ export const routes = defineRoutes([
       { path: 'users/{id}',      Component: AdminUserDetail },
     ],
   },
+  // SSE demo routes — counter closes after 3 frames; gated requires
+  // user cookie; idle uses a 100ms heartbeat for the integration test.
+  { path: '/sse-counter', sse: (req) => counterStream(req) },
+  { path: '/sse-gated',   middleware: [authRequired], sse: (req) => counterStream(req) },
+  { path: '/sse-idle',    sseOptions: { heartbeatMs: 100 }, sse: (req) => idleStream(req) },
 ])
