@@ -255,7 +255,12 @@ pub async fn napi_sse_write(conn_id: BigInt, bytes: Buffer) -> NapiResult<()> {
     if tx.send(frame).await.is_err() {
         return Err(napi::Error::from_reason(format!("conn {} channel closed", conn_id)));
     }
-    let _ = ack_rx.await; // Resolves when Rust task acknowledges TCP write
+    // Propagate ack errors so the JS reader loop aborts immediately instead
+    // of enqueuing more frames into a torn-down conn (the next tx.send would
+    // catch it eventually but several frames could be lost in the meantime).
+    ack_rx.await.map_err(|_| napi::Error::from_reason(
+        format!("conn {} ack dropped — TCP write failed or conn torn down", conn_id)
+    ))?;
     Ok(())
 }
 
@@ -273,7 +278,7 @@ pub fn napi_sse_close(conn_id: BigInt) -> NapiResult<()> {
 #[napi]
 pub fn napi_sse_register_abort(conn_id: BigInt, cb: Function<(), ()>) -> NapiResult<()> {
     let conn_id = bigint_to_u64(&conn_id)?;
-    let tsfn = cb.build_threadsafe_function::<()>().build()?;
+    let tsfn = cb.build_threadsafe_function().build()?;
     let mut reg = crate::sse::registry().lock();
     if let Some(conn) = reg.get_mut(&conn_id) {
         conn.abort_cb = Some(Box::new(move || {
@@ -312,9 +317,12 @@ pub fn napi_sse_signal_open(
 /// conn_ids cross the JS/Rust boundary as BigInt because JS Number tops out
 /// at 2^53 while conn_ids are monotonic u64 from an AtomicU64.
 fn bigint_to_u64(b: &BigInt) -> NapiResult<u64> {
-    let (signed, value, _lossless) = b.get_u64();
+    let (signed, value, lossless) = b.get_u64();
     if signed {
         return Err(napi::Error::from_reason("conn_id must be non-negative"));
+    }
+    if !lossless {
+        return Err(napi::Error::from_reason("conn_id overflows u64"));
     }
     Ok(value)
 }
