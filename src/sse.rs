@@ -52,9 +52,24 @@ pub fn registry() -> &'static Registry {
     REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+use tokio::io::{AsyncRead, AsyncReadExt};
+
+/// Awaits the next byte from `stream` and returns when the peer has closed
+/// the connection (FIN or RST). On any error (including non-existent data
+/// after FIN) the future resolves. The function does NOT consume application
+/// bytes — by spec, SSE clients never send body after the initial request,
+/// so any read here means "the connection is going away."
+pub async fn peek_for_close<S: AsyncRead + Unpin>(stream: &mut S) -> () {
+    let mut byte = [0u8; 1];
+    // read returns Ok(0) on clean FIN; Err on RST or other failures.
+    let _ = stream.read(&mut byte).await;
+    // Either way, we treat it as "close imminent" and return.
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::net::UnixStream;
 
     #[test]
     fn next_conn_id_is_monotonic_and_unique() {
@@ -80,5 +95,33 @@ mod tests {
         let removed = registry().lock().remove(&id);
         assert!(removed.is_some());
         assert!(!registry().lock().contains_key(&id));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn peek_for_close_returns_when_peer_shuts_down() {
+        let (a, b) = UnixStream::pair().expect("pair");
+        // Spawn the peek future on the `a` end.
+        let peek = tokio::spawn(async move {
+            let mut a = a;
+            peek_for_close(&mut a).await
+        });
+        // Peer cleanly closes `b` end.
+        drop(b);
+        // Should resolve quickly.
+        let timed = tokio::time::timeout(std::time::Duration::from_secs(1), peek).await;
+        assert!(timed.is_ok(), "peek_for_close should resolve on peer shutdown");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn peek_for_close_does_not_resolve_while_peer_alive() {
+        let (a, b) = UnixStream::pair().expect("pair");
+        let peek = tokio::spawn(async move {
+            let mut a = a;
+            peek_for_close(&mut a).await
+        });
+        // Peer is still alive — peek should NOT resolve within a short window.
+        let timed = tokio::time::timeout(std::time::Duration::from_millis(150), peek).await;
+        assert!(timed.is_err(), "peek_for_close should still be pending");
+        drop(b);
     }
 }
