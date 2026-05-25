@@ -14,7 +14,8 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::cell::Cell;
 use std::time::Duration;
 
-use napi::bindgen_prelude::{Function, Promise, Uint8Array};
+use napi::bindgen_prelude::{BigInt, Buffer, Function, Promise, Uint8Array};
+use napi::threadsafe_function::ThreadsafeFunctionCallMode;
 use napi::Result as NapiResult;
 use napi_derive::napi;
 use once_cell::sync::OnceCell;
@@ -232,6 +233,90 @@ fn is_safe_action_id(id: &str) -> bool {
         return false;
     }
     id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+}
+
+// ----- SSE NAPI bridge -----
+
+/// Enqueue one SSE frame for the given connection. Returns a Promise that
+/// resolves when the Rust-side per-conn task has finished the TCP write —
+/// cooperative backpressure for the JS reader loop.
+#[napi]
+pub async fn napi_sse_write(conn_id: BigInt, bytes: Buffer) -> NapiResult<()> {
+    let conn_id = bigint_to_u64(&conn_id)?;
+    let frame_tx = {
+        let reg = crate::sse::registry().lock();
+        reg.get(&conn_id).map(|c| c.frame_tx.clone())
+    };
+    let Some(tx) = frame_tx else {
+        return Err(napi::Error::from_reason(format!("conn {} not registered", conn_id)));
+    };
+    let (ack_tx, ack_rx) = tokio::sync::oneshot::channel::<()>();
+    let frame = crate::sse::SseFrame { bytes: bytes.to_vec(), ack: ack_tx };
+    if tx.send(frame).await.is_err() {
+        return Err(napi::Error::from_reason(format!("conn {} channel closed", conn_id)));
+    }
+    let _ = ack_rx.await; // Resolves when Rust task acknowledges TCP write
+    Ok(())
+}
+
+/// Drop the connection's sender, which signals the per-conn task to exit
+/// and close the TCP socket. Idempotent — a missing conn is a no-op.
+#[napi]
+pub fn napi_sse_close(conn_id: BigInt) -> NapiResult<()> {
+    let conn_id = bigint_to_u64(&conn_id)?;
+    let _ = crate::sse::registry().lock().remove(&conn_id);
+    Ok(())
+}
+
+/// JS provides a callback that fires once when Rust detects client disconnect.
+/// Stored as a thread-safe wrapper on the SseConn.
+#[napi]
+pub fn napi_sse_register_abort(conn_id: BigInt, cb: Function<(), ()>) -> NapiResult<()> {
+    let conn_id = bigint_to_u64(&conn_id)?;
+    let tsfn = cb.build_threadsafe_function::<()>().build()?;
+    let mut reg = crate::sse::registry().lock();
+    if let Some(conn) = reg.get_mut(&conn_id) {
+        conn.abort_cb = Some(Box::new(move || {
+            // Fire-and-forget — non-blocking call into JS.
+            let _ = tsfn.call((), ThreadsafeFunctionCallMode::NonBlocking);
+        }));
+    }
+    Ok(())
+}
+
+/// JS reports the middleware open verdict. Single-shot — a second call is
+/// dropped (open_tx is taken on first use).
+#[napi]
+pub fn napi_sse_signal_open(
+    conn_id: BigInt,
+    status: u32,
+    body: Buffer,
+    content_type: String,
+) -> NapiResult<()> {
+    let conn_id = bigint_to_u64(&conn_id)?;
+    let open_tx = {
+        let mut reg = crate::sse::registry().lock();
+        reg.get_mut(&conn_id).and_then(|c| c.open_tx.take())
+    };
+    if let Some(tx) = open_tx {
+        let _ = tx.send(crate::sse::SseOpenSignal {
+            status: status as u16,
+            body: body.to_vec(),
+            content_type,
+        });
+    }
+    Ok(())
+}
+
+/// Convert a NAPI BigInt to u64, rejecting negative values.
+/// conn_ids cross the JS/Rust boundary as BigInt because JS Number tops out
+/// at 2^53 while conn_ids are monotonic u64 from an AtomicU64.
+fn bigint_to_u64(b: &BigInt) -> NapiResult<u64> {
+    let (signed, value, _lossless) = b.get_u64();
+    if signed {
+        return Err(napi::Error::from_reason("conn_id must be non-negative"));
+    }
+    Ok(value)
 }
 
 #[cfg(test)]
