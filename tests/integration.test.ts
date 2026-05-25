@@ -1312,3 +1312,201 @@ async function readPortLine(stream: ReadableStream<Uint8Array>): Promise<number>
     }
   }
 }
+
+// ----- SSE integration tests -----
+
+async function openSseConn(port: number, path: string, headers: Record<string, string> = {}) {
+  const ctrl = new AbortController()
+  const resp = await fetch(`http://127.0.0.1:${port}${path}`, {
+    method: 'GET',
+    headers: { accept: 'text/event-stream', ...headers },
+    signal: ctrl.signal,
+  })
+  return { resp, ctrl }
+}
+
+const _TICK = Symbol('tick')
+
+async function readAllText(resp: Response, maxBytes = 4096, maxMs = 2000): Promise<string> {
+  const reader = resp.body!.getReader()
+  const chunks: Uint8Array[] = []
+  const start = Date.now()
+  let total = 0
+  while (Date.now() - start < maxMs) {
+    const r = await Promise.race([
+      reader.read(),
+      new Promise<typeof _TICK>((resolve) =>
+        setTimeout(() => resolve(_TICK), 100)),
+    ])
+    // _TICK means the 100ms poll expired but budget remains — keep looping.
+    if (r === _TICK) continue
+    // Real reader result: done=true means stream closed.
+    if (r.done) break
+    if (r.value) {
+      chunks.push(r.value)
+      total += r.value.byteLength
+      if (total >= maxBytes) break
+    }
+  }
+  reader.cancel().catch(() => {})
+  // Concatenate chunks then decode
+  let bufLen = 0
+  for (const c of chunks) bufLen += c.byteLength
+  const all = new Uint8Array(bufLen)
+  let off = 0
+  for (const c of chunks) { all.set(c, off); off += c.byteLength }
+  return new TextDecoder().decode(all)
+}
+
+const SSE_ENV = (port: string) => ({
+  ...process.env,
+  BRUST_PORT: port,
+  BRUST_WORKERS: '1',         // critical — see SSE spec §8
+  RUST_LOG: 'brust=warn',
+})
+
+test('sse: 3 data frames in order then close', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: SSE_ENV('38210'),
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const { resp } = await openSseConn(port, '/sse-counter')
+    expect(resp.status).toBe(200)
+    expect(resp.headers.get('content-type')).toContain('text/event-stream')
+    const text = await readAllText(resp)
+    expect(text).toContain('data: 1\n\n')
+    expect(text).toContain('data: 2\n\n')
+    expect(text).toContain('data: 3\n\n')
+    expect(text.indexOf('data: 1')).toBeLessThan(text.indexOf('data: 2'))
+    expect(text.indexOf('data: 2')).toBeLessThan(text.indexOf('data: 3'))
+  } finally {
+    proc.kill('SIGINT'); await proc.exited
+  }
+}, 15_000)
+
+test('sse: heartbeat ping arrives on idle stream', async () => {
+  // /sse-idle uses sseOptions.heartbeatMs=100 so we don't wait 15s for
+  // the default heartbeat. Stream never enqueues data, so any bytes
+  // observed must be the framework's `: ping\n\n` heartbeat.
+  // Bun's fetch API buffers SSE body chunks until the stream closes, so
+  // we use a raw TCP socket (same pattern as the 414/411 tests) to observe
+  // frames as they arrive from the wire.
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: SSE_ENV('38215'),
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const rawChunks: Uint8Array[] = []
+    let resolveClose!: () => void
+    const closed = new Promise<void>((r) => { resolveClose = r })
+    const sock = await Bun.connect({
+      hostname: '127.0.0.1',
+      port,
+      socket: {
+        data(_s, d) { rawChunks.push(new Uint8Array(d)) },
+        open(s) {
+          s.write('GET /sse-idle HTTP/1.1\r\nHost: 127.0.0.1\r\nAccept: text/event-stream\r\n\r\n')
+        },
+        close() { resolveClose() },
+        drain() {},
+        error() { resolveClose() },
+      },
+    })
+    // Wait 350ms — at 100ms heartbeat interval we expect 2-3 pings.
+    await Promise.race([closed, new Promise((r) => setTimeout(r, 350))])
+    sock.end()
+    const raw = Buffer.concat(rawChunks.map((c) => Buffer.from(c))).toString('utf-8')
+    // Must contain SSE response headers + at least one heartbeat frame.
+    expect(raw).toContain('text/event-stream')
+    expect(raw).toContain(': ping')
+  } finally {
+    proc.kill('SIGINT'); await proc.exited
+  }
+}, 15_000)
+
+test('sse: client disconnect fires req.signal abort within 1s', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: SSE_ENV('38211'),
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const { resp, ctrl } = await openSseConn(port, '/sse-counter')
+    expect(resp.status).toBe(200)
+    ctrl.abort()
+    await new Promise((r) => setTimeout(r, 1000))
+
+    // BRUST_WORKERS=1 ensures the probe action lands on the same JS
+    // context that ran the SSE handler — so __lastSseAbort is set.
+    const probe = await fetch(`http://127.0.0.1:${port}/_brust/action/lastSseAbort`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '[]',
+    })
+    expect(probe.status).toBe(200)
+    const { ts } = await probe.json() as { ts: number }
+    expect(ts).toBeGreaterThan(0)
+  } finally {
+    proc.kill('SIGINT'); await proc.exited
+  }
+}, 15_000)
+
+test('sse: middleware reject returns 401 + non-SSE content-type', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: SSE_ENV('38212'),
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const { resp } = await openSseConn(port, '/sse-gated')
+    expect(resp.status).toBe(401)
+    expect(resp.headers.get('content-type') ?? '').not.toContain('text/event-stream')
+  } finally {
+    proc.kill('SIGINT'); await proc.exited
+  }
+}, 15_000)
+
+test('sse: middleware pass with cookie streams normally', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: SSE_ENV('38213'),
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const { resp } = await openSseConn(port, '/sse-gated', { cookie: 'user=alice' })
+    expect(resp.status).toBe(200)
+    expect(resp.headers.get('content-type')).toContain('text/event-stream')
+    const text = await readAllText(resp)
+    expect(text).toContain('data: 1\n\n')
+    expect(text).toContain('data: 3\n\n')
+  } finally {
+    proc.kill('SIGINT'); await proc.exited
+  }
+}, 15_000)
+
+test('sse: POST to an SSE route returns 405', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: SSE_ENV('38214'),
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const resp = await fetch(`http://127.0.0.1:${port}/sse-counter`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '',
+    })
+    expect(resp.status).toBe(405)
+  } finally {
+    proc.kill('SIGINT'); await proc.exited
+  }
+}, 15_000)
