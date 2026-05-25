@@ -582,6 +582,7 @@ mod tests {
             7u64,
         );
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["kind"], "sse");
         assert_eq!(parsed["conn_id"], 7);
         assert_eq!(parsed["req"]["url"], "/events?topic=news");
     }
