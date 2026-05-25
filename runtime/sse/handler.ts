@@ -80,9 +80,3 @@ export async function handleSseStream(
     try { reader.releaseLock() } catch {}
   }
 }
-
-/** Legacy stub used by sseBranch's placeholder until Task 12 wires the real napi.
- * Will be removed when Task 12 replaces sseBranch's body. */
-export function signalOpen(_conn_id: bigint, _status: number, _body: string, _ct: string): void {
-  throw new Error('signalOpen called without napi injection — sseBranch stub still active (Task 12 should have removed this call)')
-}

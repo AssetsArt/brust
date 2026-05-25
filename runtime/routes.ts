@@ -1,5 +1,6 @@
 import { createContext, createElement, useContext, type ComponentType, type ReactNode } from 'react'
 import { renderToString } from 'react-dom/server'
+import { Buffer } from 'node:buffer'
 import { consumeIslandUsedFlag } from './islands/island.tsx'
 import type { ActionDef } from './actions.ts'
 
@@ -341,7 +342,12 @@ export function makeRenderer(
       return mcpBranch(call, view, encoder, opts.mcp)
     }
     if (call.kind === 'sse') {
-      return sseBranch(call, view, encoder)
+      try {
+        return await sseBranch(call, view, encoder, routes)
+      } catch (err) {
+        console.error('[brust] sseBranch uncaught:', err)
+        return packResponse(view, encoder, { status: 500, body: '', contentType: 'text/plain' })
+      }
     }
     // Unknown kind — log and 500. Shouldn't happen unless Rust ships
     // something out of band.
@@ -573,17 +579,79 @@ async function sseBranch(
   call: Extract<RouteCall, { kind: 'sse' }>,
   view: Uint8Array,
   encoder: TextEncoder,
+  routes: FlatRoute[],
 ): Promise<number> {
-  // Stub — Task 12 replaces this with full middleware compose + handleSseStream.
-  // Signal open with 501 so the Rust side returns a regular HTTP error response
-  // instead of hanging waiting for the open signal.
-  const { signalOpen } = await import('./sse/handler.ts')
-  signalOpen(call.conn_id, 501, '{"error":"sse handler not configured"}', 'application/json; charset=utf-8')
-  return packResponse(view, encoder, {
-    status: 200,
-    body: '',
-    contentType: 'text/event-stream',
+  // conn_id crosses the boundary as a JSON number (u64) but napiSse* fns
+  // require BigInt. Coerce once here; reassign on the call object so
+  // handleSseStream (which reads call.conn_id directly) also gets bigint.
+  ;(call as any).conn_id = BigInt((call as any).conn_id)
+
+  // Find matching FlatRoute by literal path (MVP — exact match; Rust's
+  // path_is_sse gates dispatch so we only see registered paths). Strip
+  // query string before matching.
+  const pathOnly = call.req.url.split('?')[0]
+  const flat = routes.find((r) => r.fullPath === pathOnly)
+  const leaf = flat?.chain[flat.chain.length - 1]
+
+  // Build napi shim around the four napiSse* native fns. signalOpen
+  // wraps the body string in a Buffer (the Rust side takes Buffer).
+  const native = await import('./index.js')
+  const napi = {
+    write: (conn_id: bigint, bytes: Uint8Array) =>
+      (native as any).napiSseWrite(conn_id, Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)),
+    close: (conn_id: bigint) =>
+      (native as any).napiSseClose(conn_id),
+    registerAbort: (conn_id: bigint, cb: () => void) =>
+      (native as any).napiSseRegisterAbort(conn_id, cb),
+    signalOpen: (conn_id: bigint, status: number, body: string, ct: string) => {
+      const bodyBytes = encoder.encode(body)
+      ;(native as any).napiSseSignalOpen(
+        conn_id, status,
+        Buffer.from(bodyBytes.buffer, bodyBytes.byteOffset, bodyBytes.byteLength),
+        ct,
+      )
+    },
+  }
+
+  if (!flat || !leaf || !leaf.sse) {
+    // Defensive — shouldn't reach here since Rust gates by path_is_sse.
+    napi.signalOpen(call.conn_id, 404, 'not found', 'text/plain; charset=utf-8')
+    napi.close(call.conn_id)
+    return packResponse(view, encoder, { status: 200, body: '', contentType: 'text/plain' })
+  }
+
+  // Inject NEVER_ABORTS into req for the middleware run. handleSseStream
+  // will overwrite with a per-conn AbortController.signal afterward.
+  call.req.signal = NEVER_ABORTS
+
+  // Run middleware chain with a 200 placeholder terminal. The terminal
+  // does NOT invoke leaf.sse — handleSseStream does that after middleware
+  // approves. This keeps middleware semantics identical to action/render.
+  const placeholderTerminal: () => Promise<RouteResponse> = async () => ({
+    status: 200, body: '', contentType: 'text/event-stream',
   })
+  const chain = composeChain(call.req, flat.middleware, placeholderTerminal)
+  const verdict = await chain()
+
+  if (verdict.status >= 400) {
+    napi.signalOpen(
+      call.conn_id, verdict.status, verdict.body,
+      verdict.contentType ?? 'text/plain; charset=utf-8',
+    )
+    napi.close(call.conn_id)
+    return packResponse(view, encoder, { status: 200, body: '', contentType: 'text/plain' })
+  }
+
+  // Middleware OK — invoke handleSseStream which signals open 200 itself
+  // and runs the reader loop until done or aborted.
+  const { handleSseStream } = await import('./sse/handler.ts')
+  const routeShim: Route = {
+    path: flat.fullPath,
+    sse: leaf.sse,
+    sseOptions: leaf.sseOptions,
+  }
+  await handleSseStream(call, routeShim, napi)
+  return packResponse(view, encoder, { status: 200, body: '', contentType: 'text/event-stream' })
 }
 
 /** Right-to-left compose a middleware chain. Each middleware wraps the next;
