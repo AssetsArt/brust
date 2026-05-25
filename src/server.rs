@@ -539,7 +539,6 @@ async fn handle_conn(
                 crate::sse::registry().lock().remove(&conn_id);
                 return;
             };
-            let _guard = entry.in_flight_guard();
             let envelope_json = crate::routes::build_sse_envelope(
                 &method, &path, &buf[..header_end], conn_id,
             );
@@ -547,18 +546,33 @@ async fn handle_conn(
             // TODO(Task 6): replace with crate::pool::dispatch_sse(entry, envelope_json, conn_id)
             // For now, fire the tsfn call directly. The JS side branches on kind: 'sse' and
             // runs the entire lifecycle there. call_async mirrors how render/action/mcp dispatch.
-            let tsfn_result = entry.tsfn.call_async(envelope_json).await;
-            if let Err(e) = tsfn_result {
-                error!(worker_id = entry.id, error = %e, "sse tsfn call_async failed");
-                let _ = s.write_all(http::error_500()).await;
-                crate::sse::registry().lock().remove(&conn_id);
-                return;
+            //
+            // in_flight_guard counts only the dispatch enqueue, not the entire SSE lifetime —
+            // a long-lived stream must not make `pick_least_busy` see this worker as busy for
+            // all subsequent HTTP requests. Drop the guard the moment the tsfn handoff completes.
+            {
+                let _guard = entry.in_flight_guard();
+                if let Err(e) = entry.tsfn.call_async(envelope_json).await {
+                    error!(worker_id = entry.id, error = %e, "sse tsfn call_async failed");
+                    let _ = s.write_all(http::error_500()).await;
+                    crate::sse::registry().lock().remove(&conn_id);
+                    return;
+                }
             }
 
-            // Await the open signal with timeout.
+            // Await the open signal with timeout. Distinguish sender-dropped (JS crash)
+            // from timeout (genuinely slow middleware) in the logs so Task 13 smoke
+            // failures are diagnosable.
             let open = match tokio::time::timeout(std::time::Duration::from_secs(30), open_rx).await {
                 Ok(Ok(signal)) => signal,
-                _ => {
+                Ok(Err(_)) => {
+                    warn!(conn_id, "sse open_tx sender dropped before signal — JS crash?");
+                    let _ = s.write_all(http::error_500()).await;
+                    crate::sse::registry().lock().remove(&conn_id);
+                    return;
+                }
+                Err(_) => {
+                    warn!(conn_id, "sse open signal timeout (30s)");
                     let _ = s.write_all(http::error_500()).await;
                     crate::sse::registry().lock().remove(&conn_id);
                     return;
@@ -588,7 +602,6 @@ async fn handle_conn(
                 return;
             }
             crate::sse::sse_conn_task(s, conn_id, frame_rx).await;
-            drop(_guard);   // in_flight decrement happens here
             return;
         }
 
