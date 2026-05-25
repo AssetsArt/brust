@@ -327,6 +327,161 @@ pub fn napi_register_sse_paths(paths: Vec<String>) -> NapiResult<()> {
     Ok(())
 }
 
+// ----- WS NAPI bridge -----
+
+/// Argument struct for the JS on_message callback. napi-rs does not accept
+/// tuple type parameters for Function<(A, B), R> so we use an object payload
+/// instead. Task 5 + Task 9 must construct a matching TS type.
+#[napi(object)]
+pub struct WsMessageArg {
+    pub data: Buffer,
+    pub is_binary: bool,
+}
+
+/// Argument struct for the JS on_close callback.
+#[napi(object)]
+pub struct WsCloseArg {
+    pub code: u32,
+    pub reason: String,
+}
+
+/// JS reports the middleware verdict + chosen subprotocol. Single-shot;
+/// second call is a no-op (the Option is taken).
+#[napi]
+pub fn napi_ws_signal_open(
+    conn_id: BigInt,
+    status: u32,
+    body: Buffer,
+    content_type: String,
+    subprotocol: String,
+) -> NapiResult<()> {
+    let conn_id = bigint_to_u64(&conn_id)?;
+    let open_tx = {
+        let mut reg = crate::ws::registry().lock();
+        reg.get_mut(&conn_id).and_then(|c| c.open_tx.take())
+    };
+    if let Some(tx) = open_tx {
+        let _ = tx.send(crate::ws::WsOpenSignal {
+            status: status as u16,
+            body: body.to_vec(),
+            content_type,
+            subprotocol,
+        });
+    }
+    Ok(())
+}
+
+/// Send one frame. is_binary=false → Text frame (UTF-8 validated before
+/// enqueue), true → Binary frame. Returns Promise<()> resolving after the
+/// TCP write completes — cooperative backpressure, mirrors napi_sse_write.
+#[napi]
+pub async fn napi_ws_send(conn_id: BigInt, data: Buffer, is_binary: bool) -> NapiResult<()> {
+    let conn_id = bigint_to_u64(&conn_id)?;
+    let send_tx = {
+        let reg = crate::ws::registry().lock();
+        reg.get(&conn_id).map(|c| c.send_tx.clone())
+    };
+    let Some(tx) = send_tx else {
+        return Err(napi::Error::from_reason(format!("ws conn {} not registered", conn_id)));
+    };
+    let (ack_tx, ack_rx) = tokio::sync::oneshot::channel::<()>();
+    let frame = if is_binary {
+        crate::ws::WsFrameKind::Binary(data.to_vec())
+    } else {
+        let s = String::from_utf8(data.to_vec()).map_err(|_| {
+            napi::Error::from_reason(format!(
+                "ws conn {} text frame not valid utf-8",
+                conn_id
+            ))
+        })?;
+        crate::ws::WsFrameKind::Text(s)
+    };
+    let outgoing = crate::ws::WsOutgoing { frame, ack: ack_tx };
+    if tx.send(outgoing).await.is_err() {
+        return Err(napi::Error::from_reason(format!(
+            "ws conn {} send channel closed",
+            conn_id
+        )));
+    }
+    // Propagate ack errors so JS sees TCP write failures immediately (same fix
+    // as SSE Task 4 polish — commit a78ce75).
+    ack_rx.await.map_err(|_| {
+        napi::Error::from_reason(format!(
+            "ws conn {} send ack dropped — TCP write failed or conn torn down",
+            conn_id
+        ))
+    })?;
+    Ok(())
+}
+
+/// Initiate close. code defaults applied client-side (default 1000);
+/// reason capped at 123 bytes (RFC 6455) at the JS layer.
+/// Idempotent — missing conn is a silent no-op.
+#[napi]
+pub async fn napi_ws_close(conn_id: BigInt, code: u32, reason: String) -> NapiResult<()> {
+    let conn_id = bigint_to_u64(&conn_id)?;
+    let send_tx = {
+        let reg = crate::ws::registry().lock();
+        reg.get(&conn_id).map(|c| c.send_tx.clone())
+    };
+    let Some(tx) = send_tx else {
+        return Ok(());
+    };
+    let (ack_tx, _ack_rx) = tokio::sync::oneshot::channel::<()>();
+    let frame = crate::ws::WsFrameKind::Close(code as u16, reason);
+    // Fire-and-forget on the ack — per-conn task drops the sender after
+    // writing the Close frame; the ack may not arrive depending on race.
+    let _ = tx.send(crate::ws::WsOutgoing { frame, ack: ack_tx }).await;
+    Ok(())
+}
+
+/// JS registers per-conn callbacks. Each Function arg is converted to a tsfn
+/// then wrapped in a Box<dyn Fn> closure, matching the field shape Task 3
+/// chose to keep cargo test --lib happy without napi linker symbols.
+///
+/// Uses struct-payload form (WsMessageArg / WsCloseArg) because napi-rs
+/// does not accept tuple type parameters for Function<(A, B), R>.
+/// Task 5 + Task 9 must use matching TS object shapes.
+///
+/// Single-shot registration; a second call replaces both handlers.
+#[napi]
+pub fn napi_ws_register_handlers(
+    conn_id: BigInt,
+    on_message: Function<WsMessageArg, ()>,
+    on_close: Function<WsCloseArg, ()>,
+) -> NapiResult<()> {
+    let conn_id = bigint_to_u64(&conn_id)?;
+    let on_message_tsfn = on_message.build_threadsafe_function().build()?;
+    let on_close_tsfn = on_close.build_threadsafe_function().build()?;
+    let on_message_box: Box<dyn Fn(Vec<u8>, bool) + Send + Sync + 'static> =
+        Box::new(move |bytes, is_binary| {
+            let arg = WsMessageArg { data: Buffer::from(bytes), is_binary };
+            on_message_tsfn.call(arg, ThreadsafeFunctionCallMode::NonBlocking);
+        });
+    let on_close_box: Box<dyn Fn(u16, String) + Send + Sync + 'static> =
+        Box::new(move |code, reason| {
+            let arg = WsCloseArg { code: code as u32, reason };
+            on_close_tsfn.call(arg, ThreadsafeFunctionCallMode::NonBlocking);
+        });
+    let mut reg = crate::ws::registry().lock();
+    if let Some(conn) = reg.get_mut(&conn_id) {
+        conn.on_message = Some(on_message_box);
+        conn.on_close = Some(on_close_box);
+    }
+    Ok(())
+}
+
+/// Boot-time registry of literal WS paths. Mirror of napi_register_sse_paths.
+/// Call once before begin_serve; exact-match only (parameterized routes are a
+/// follow-up).
+#[napi]
+pub fn napi_register_ws_paths(paths: Vec<String>) -> NapiResult<()> {
+    for p in paths {
+        crate::ws::register_ws_path(p);
+    }
+    Ok(())
+}
+
 /// Convert a NAPI BigInt to u64, rejecting negative values.
 /// conn_ids cross the JS/Rust boundary as BigInt because JS Number tops out
 /// at 2^53 while conn_ids are monotonic u64 from an AtomicU64.
