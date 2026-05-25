@@ -51,3 +51,20 @@ impl TcpStream {
         self.0.shutdown(std::net::Shutdown::Both)
     }
 }
+
+impl crate::io::SseIo for TcpStream {
+    async fn write_bytes(&mut self, bytes: Vec<u8>) -> std::io::Result<()> {
+        let (res, _) = self.0.write_all(bytes).await;
+        res
+    }
+
+    async fn read_one_byte(&mut self) -> std::io::Result<usize> {
+        let buf = vec![0u8; 1];
+        let (res, _) = self.0.read(buf).await;
+        res.map(|n| n)
+    }
+
+    async fn shutdown_conn(&mut self) -> std::io::Result<()> {
+        self.0.shutdown(std::net::Shutdown::Both)
+    }
+}

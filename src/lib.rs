@@ -313,6 +313,19 @@ pub fn napi_sse_signal_open(
     Ok(())
 }
 
+/// Register literal SSE paths. Rust's accept loop will match incoming GET
+/// requests against this set; matched requests enter the SSE dispatch branch
+/// instead of the normal render path. Call once at boot before begin_serve.
+/// Only exact-match (literal) paths are supported — parameterized routes
+/// (e.g. `/sse/{room}`) require a matchit-rs follow-up.
+#[napi]
+pub fn napi_register_sse_paths(paths: Vec<String>) -> NapiResult<()> {
+    for p in paths {
+        crate::sse::register_sse_path(p);
+    }
+    Ok(())
+}
+
 /// Convert a NAPI BigInt to u64, rejecting negative values.
 /// conn_ids cross the JS/Rust boundary as BigInt because JS Number tops out
 /// at 2^53 while conn_ids are monotonic u64 from an AtomicU64.

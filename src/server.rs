@@ -490,6 +490,108 @@ async fn handle_conn(
             continue;
         }
 
+        // SSE branch — dispatched when the matched route was registered as an SSE
+        // path via brust.registerSsePaths. Method MUST be GET; Accept must allow
+        // text/event-stream (default-curl `*/*` is accepted for dev ergonomics).
+        if crate::sse::path_is_sse(&path) {
+            if method != "GET" {
+                let _ = s.write_all(http::error_405()).await;
+                return;
+            }
+            let header_end = match buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                Some(p) => p + 4,
+                None => {
+                    let _ = s.write_all(http::error_400()).await;
+                    return;
+                }
+            };
+            let accept = parse_header_value(&buf[..header_end], "accept").unwrap_or_default();
+            let accept_lower = accept.to_ascii_lowercase();
+            let accept_ok = accept_lower.is_empty()
+                || accept_lower.contains("text/event-stream")
+                || accept_lower.trim() == "*/*";
+            if !accept_ok {
+                // 406 Not Acceptable — build as Vec<u8> to match TcpStream::write_all signature.
+                let body = b"406 Not Acceptable";
+                let head = format!(
+                    "HTTP/1.1 406 Not Acceptable\r\nContent-Length: {}\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n",
+                    body.len(),
+                );
+                let mut resp: Vec<u8> = head.into_bytes();
+                resp.extend_from_slice(body);
+                let _ = s.write_all(resp).await;
+                return;
+            }
+
+            // Register conn in REGISTRY.
+            let conn_id = crate::sse::next_conn_id();
+            let (frame_tx, frame_rx) = tokio::sync::mpsc::channel::<crate::sse::SseFrame>(32);
+            let (open_tx, open_rx) = tokio::sync::oneshot::channel::<crate::sse::SseOpenSignal>();
+            crate::sse::registry().lock().insert(conn_id, crate::sse::SseConn {
+                frame_tx,
+                open_tx: Some(open_tx),
+                abort_cb: None,
+            });
+
+            // Pick a worker and dispatch.
+            let Some(entry) = pool.pick_least_busy() else {
+                let _ = s.write_all(http::error_500()).await;
+                crate::sse::registry().lock().remove(&conn_id);
+                return;
+            };
+            let _guard = entry.in_flight_guard();
+            let envelope_json = crate::routes::build_sse_envelope(
+                &method, &path, &buf[..header_end], conn_id,
+            );
+
+            // TODO(Task 6): replace with crate::pool::dispatch_sse(entry, envelope_json, conn_id)
+            // For now, fire the tsfn call directly. The JS side branches on kind: 'sse' and
+            // runs the entire lifecycle there. call_async mirrors how render/action/mcp dispatch.
+            let tsfn_result = entry.tsfn.call_async(envelope_json).await;
+            if let Err(e) = tsfn_result {
+                error!(worker_id = entry.id, error = %e, "sse tsfn call_async failed");
+                let _ = s.write_all(http::error_500()).await;
+                crate::sse::registry().lock().remove(&conn_id);
+                return;
+            }
+
+            // Await the open signal with timeout.
+            let open = match tokio::time::timeout(std::time::Duration::from_secs(30), open_rx).await {
+                Ok(Ok(signal)) => signal,
+                _ => {
+                    let _ = s.write_all(http::error_500()).await;
+                    crate::sse::registry().lock().remove(&conn_id);
+                    return;
+                }
+            };
+
+            if open.status >= 400 {
+                // Middleware rejection — write a regular HTTP response with the body.
+                let body = open.body;
+                let head = format!(
+                    "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    open.status,
+                    http::status_reason(open.status),
+                    open.content_type,
+                    body.len(),
+                );
+                let mut resp: Vec<u8> = head.into_bytes();
+                resp.extend_from_slice(&body);
+                let _ = s.write_all(resp).await;
+                crate::sse::registry().lock().remove(&conn_id);
+                return;
+            }
+
+            // Open OK — write SSE headers, hand the socket to the per-conn task.
+            if crate::sse::write_sse_response_headers(&mut s).await.is_err() {
+                crate::sse::registry().lock().remove(&conn_id);
+                return;
+            }
+            crate::sse::sse_conn_task(s, conn_id, frame_rx).await;
+            drop(_guard);   // in_flight decrement happens here
+            return;
+        }
+
         let (envelope_json, route_id) = match routes.match_path(&method, &path, &buf) {
             MatchResult::Matched { envelope_json, route_id } => (envelope_json, route_id),
             MatchResult::NoMatch => {
@@ -813,6 +915,20 @@ fn parse_content_type(buf: &[u8]) -> Option<String> {
     let _ = req.parse(buf);
     for h in req.headers.iter() {
         if h.name.eq_ignore_ascii_case("content-type") {
+            return std::str::from_utf8(h.value).ok().map(|s| s.trim().to_string());
+        }
+    }
+    None
+}
+
+/// Parse a header value by name (case-insensitive). Returns the trimmed value
+/// if present. Used for Accept-header validation in the SSE branch.
+fn parse_header_value(buf: &[u8], name: &str) -> Option<String> {
+    let mut headers = [httparse::EMPTY_HEADER; 64];
+    let mut req = httparse::Request::new(&mut headers);
+    let _ = req.parse(buf);
+    for h in req.headers.iter() {
+        if h.name.eq_ignore_ascii_case(name) {
             return std::str::from_utf8(h.value).ok().map(|s| s.trim().to_string());
         }
     }

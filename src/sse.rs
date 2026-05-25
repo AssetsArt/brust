@@ -59,11 +59,73 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 /// after FIN) the future resolves. The function does NOT consume application
 /// bytes — by spec, SSE clients never send body after the initial request,
 /// so any read here means "the connection is going away."
+///
+/// This overload is used by the unit tests which pass tokio `UnixStream`.
 pub async fn peek_for_close<S: AsyncRead + Unpin>(stream: &mut S) -> () {
     let mut byte = [0u8; 1];
     // read returns Ok(0) on clean FIN; Err on RST or other failures.
     let _ = stream.read(&mut byte).await;
     // Either way, we treat it as "close imminent" and return.
+}
+
+const SSE_HEADER_BLOCK: &[u8] = b"\
+HTTP/1.1 200 OK\r\n\
+Content-Type: text/event-stream\r\n\
+Cache-Control: no-store\r\n\
+Connection: keep-alive\r\n\
+X-Accel-Buffering: no\r\n\
+\r\n";
+
+pub async fn write_sse_response_headers<S: crate::io::SseIo>(
+    stream: &mut S,
+) -> std::io::Result<()> {
+    stream.write_bytes(SSE_HEADER_BLOCK.to_vec()).await
+}
+
+/// Per-connection driver loop. Owns the TCP stream after the open-signal
+/// arrives + headers are written. Forwards frames to the wire, ack-ing
+/// each one so JS Promises resolve. Exits on peer close OR sender drop.
+pub async fn sse_conn_task<S: crate::io::SseIo>(
+    mut stream: S,
+    conn_id: u64,
+    mut frame_rx: mpsc::Receiver<SseFrame>,
+) {
+    loop {
+        tokio::select! {
+            maybe_frame = frame_rx.recv() => {
+                match maybe_frame {
+                    Some(frame) => {
+                        if stream.write_bytes(frame.bytes).await.is_err() { break; }
+                        let _ = frame.ack.send(());
+                    }
+                    None => break,  // sender dropped — graceful close
+                }
+            }
+            _ = stream.read_one_byte() => break,
+        }
+    }
+    // Cleanup: remove from REGISTRY and fire abort callback if set.
+    let conn = registry().lock().remove(&conn_id);
+    if let Some(mut c) = conn {
+        if let Some(cb) = c.abort_cb.take() { cb(); }
+    }
+    let _ = stream.shutdown_conn().await;
+}
+
+/// MVP: exact-match only. Routes like `/sse/{room}` are not supported
+/// until a follow-up wires matchit-rs in front of this. Authors with
+/// parameterized SSE routes should split into separate literal routes.
+static SSE_PATHS: OnceLock<Mutex<std::collections::HashSet<String>>> = OnceLock::new();
+
+pub fn register_sse_path(path: String) {
+    SSE_PATHS
+        .get_or_init(|| Mutex::new(std::collections::HashSet::new()))
+        .lock()
+        .insert(path);
+}
+
+pub fn path_is_sse(path: &str) -> bool {
+    SSE_PATHS.get().map_or(false, |s| s.lock().contains(path))
 }
 
 #[cfg(test)]

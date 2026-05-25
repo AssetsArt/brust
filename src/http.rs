@@ -137,6 +137,29 @@ pub fn error_503(msg: &str) -> Vec<u8> {
     build_response(503, "text/plain", &[], msg.as_bytes().to_vec())
 }
 
+pub fn error_500() -> Vec<u8> {
+    let body = b"500 Internal Server Error";
+    let head = format!(
+        "HTTP/1.1 500 Internal Server Error\r\nContent-Length: {}\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n",
+        body.len(),
+    );
+    [head.as_bytes(), body].concat()
+}
+
+/// Reason phrase for the few status codes the SSE branch emits manually.
+/// Generic-purpose helper but currently only used by SSE error responses.
+pub fn status_reason(status: u16) -> &'static str {
+    match status {
+        200 => "OK",
+        401 => "Unauthorized",
+        403 => "Forbidden",
+        404 => "Not Found",
+        405 => "Method Not Allowed",
+        500 => "Internal Server Error",
+        _ => "Unknown",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
