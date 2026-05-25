@@ -366,6 +366,12 @@ async function renderBranch(
     console.error(`[brust] unknown route_id=${call.route_id} for path=${call.path}`)
     return 0
   }
+  // BrustRequest.signal is required by the type. The envelope from Rust
+  // doesn't carry one; populate with the permanently-unaborted sentinel so
+  // middleware/loaders/components can safely read req.signal.aborted on
+  // non-SSE routes (always false; listeners never fire). SSE branch
+  // overwrites with a per-conn AbortController.signal (handler.ts).
+  call.req.signal = NEVER_ABORTS
   const workerId = getWorkerId ? getWorkerId() : null
   const chainNodes = flat.chain
 
@@ -447,6 +453,10 @@ async function actionBranch(
       contentType: 'application/json; charset=utf-8',
     })
   }
+  // Populate req.signal with the permanently-unaborted sentinel (see
+  // renderBranch comment). Action handlers reading req.signal.aborted
+  // always see false; the SSE branch is where real disconnect lives.
+  call.req.signal = NEVER_ABORTS
 
   // Decode the body into the args array that will be spread into the handler.
   // Three paths: multipart (body_b64), form-urlencoded (body_text), or JSON (body_text).
@@ -539,6 +549,10 @@ async function mcpBranch(
       contentType: 'application/json; charset=utf-8',
     })
   }
+  // Populate req.signal with the permanently-unaborted sentinel (see
+  // renderBranch comment). MCP handler reading req.signal.aborted always
+  // sees false; the SSE branch is where real disconnect lives.
+  call.req.signal = NEVER_ABORTS
   const responseJson = await mcp.handleRequest(call.body_text, call.req)
   if (responseJson === '') {
     // Notification — no response body. Return 204 No Content via meta envelope.
