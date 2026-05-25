@@ -203,10 +203,14 @@ where
                 let _ = out.ack.send(());
                 if is_close { break; }
             }
-            Some(msg_result) = ws_stream.next() => {
-                let msg = match msg_result {
-                    Ok(m) => m,
-                    Err(_) => {
+            next = ws_stream.next() => {
+                // Detect clean stream end (None) explicitly. Without this,
+                // the Some(...) pattern would silently skip and the task
+                // would spin on the ping_tick arm forever, attempting to
+                // send Ping frames into a closed stream.
+                let msg = match next {
+                    Some(Ok(m)) => m,
+                    Some(Err(_)) | None => {
                         if !close_fired {
                             fire_on_close(conn_id, 1006, "abnormal closure".to_string());
                             close_fired = true;
@@ -270,7 +274,9 @@ where
                     }))).await;
                     break;
                 }
-                let _ = ws_sink.send(Message::Ping(Vec::new())).await;
+                // Match the send arm — break on send error so we don't loop
+                // sending Pings to a dead socket.
+                if ws_sink.send(Message::Ping(Vec::new())).await.is_err() { break; }
             }
         }
     }
