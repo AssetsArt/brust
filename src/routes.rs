@@ -109,6 +109,37 @@ pub fn build_sse_envelope(
     serde_json::to_string(&env).unwrap()
 }
 
+/// WS upgrade request envelope. `kind: "ws"` discriminates from
+/// render/action/mcp/sse. `conn_id` is the Rust-assigned monotonic id
+/// (shared with SSE via the same NEXT_CONN_ID counter; separate
+/// REGISTRY tables avoid collision). `client_subprotocols` is the
+/// comma-split `Sec-WebSocket-Protocol` request value (trimmed); JS
+/// picks the first match against `route.wsOptions.subprotocols` and
+/// signals back via napi_ws_signal_open.
+#[derive(Serialize)]
+pub struct WsEnvelope {
+    pub kind: &'static str,
+    pub conn_id: u64,
+    pub client_subprotocols: Vec<String>,
+    pub req: RequestEnvelope,
+}
+
+pub fn build_ws_envelope(
+    method: &str,
+    full_path: &str,
+    raw_request: &[u8],
+    conn_id: u64,
+    client_subprotocols: Vec<String>,
+) -> String {
+    let (_, query) = match full_path.split_once('?') {
+        Some((p, q)) => (p, q),
+        None => (full_path, ""),
+    };
+    let req = build_request_envelope(method, full_path, query, raw_request);
+    let env = WsEnvelope { kind: "ws", conn_id, client_subprotocols, req };
+    serde_json::to_string(&env).unwrap()
+}
+
 /// Build an ActionEnvelope JSON string. Mirrors `match_path` for the render
 /// case. Caller has already validated the action_id charset and registry
 /// membership; this function only assembles the envelope.
@@ -585,5 +616,38 @@ mod tests {
         assert_eq!(parsed["kind"], "sse");
         assert_eq!(parsed["conn_id"], 7);
         assert_eq!(parsed["req"]["url"], "/events?topic=news");
+    }
+
+    #[test]
+    fn ws_envelope_serialises_kind_ws_and_conn_id() {
+        let json = build_ws_envelope(
+            "GET",
+            "/ws/chat",
+            b"GET /ws/chat HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n",
+            42u64,
+            vec!["chat.v2".to_string(), "chat.v1".to_string()],
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["kind"], "ws");
+        assert_eq!(parsed["conn_id"], 42);
+        assert_eq!(parsed["req"]["method"], "GET");
+        assert_eq!(parsed["req"]["url"], "/ws/chat");
+        assert_eq!(parsed["client_subprotocols"][0], "chat.v2");
+        assert_eq!(parsed["client_subprotocols"][1], "chat.v1");
+    }
+
+    #[test]
+    fn ws_envelope_empty_subprotocols() {
+        let json = build_ws_envelope(
+            "GET",
+            "/ws/echo",
+            b"GET /ws/echo HTTP/1.1\r\nHost: x\r\n\r\n",
+            7u64,
+            vec![],
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["kind"], "ws");
+        assert_eq!(parsed["conn_id"], 7);
+        assert!(parsed["client_subprotocols"].as_array().unwrap().is_empty());
     }
 }
