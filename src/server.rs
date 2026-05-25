@@ -638,9 +638,13 @@ async fn handle_conn(
                 crate::ws::registry().lock().remove(&conn_id);
                 return;
             };
+            // Destructure so client_subprotocols moves into the envelope
+            // and sec_websocket_key is still available for compute_sec_accept
+            // on the 101 happy path. Avoids an unnecessary Vec<String> clone.
+            let crate::ws::ParsedHandshake { sec_websocket_key, client_subprotocols } = handshake;
             let envelope_json = crate::routes::build_ws_envelope(
                 &method, &path, &buf[..header_end], conn_id,
-                handshake.client_subprotocols.clone(),
+                client_subprotocols,
             );
 
             // TODO(Task 7): replace with crate::pool::dispatch_ws(entry, envelope_json)
@@ -691,7 +695,7 @@ async fn handle_conn(
             }
 
             // 101: write manual handshake response then wrap with tungstenite.
-            let accept = crate::ws::compute_sec_accept(&handshake.sec_websocket_key);
+            let accept = crate::ws::compute_sec_accept(&sec_websocket_key);
             let mut handshake_resp = String::with_capacity(256);
             handshake_resp.push_str("HTTP/1.1 101 Switching Protocols\r\n");
             handshake_resp.push_str("Upgrade: websocket\r\n");
