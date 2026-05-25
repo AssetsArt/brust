@@ -345,6 +345,10 @@ export function makeRenderer(
       try {
         return await sseBranch(call, view, encoder, routes)
       } catch (err) {
+        // Only meaningful for setup-time errors (BigInt coerce, dynamic
+        // import resolve, napi shim build). Once handleSseStream has
+        // started streaming, this 500 packResponse is irrelevant — Rust
+        // already wrote 200 headers and frames.
         console.error('[brust] sseBranch uncaught:', err)
         return packResponse(view, encoder, { status: 500, body: '', contentType: 'text/plain' })
       }
@@ -589,12 +593,18 @@ async function sseBranch(
   // Find matching FlatRoute by literal path (MVP — exact match; Rust's
   // path_is_sse gates dispatch so we only see registered paths). Strip
   // query string before matching.
+  // Rust's path_is_sse uses the same literal-match registration as this
+  // find — trailing-slash divergence (or any other normalization) fails
+  // in lockstep on both sides, never producing silent half-state.
   const pathOnly = call.req.url.split('?')[0]
   const flat = routes.find((r) => r.fullPath === pathOnly)
   const leaf = flat?.chain[flat.chain.length - 1]
 
   // Build napi shim around the four napiSse* native fns. signalOpen
   // wraps the body string in a Buffer (the Rust side takes Buffer).
+  // Dynamic import is consistent with mcpBranch/actionBranch — defers
+  // loading the native binding until the dispatch path actually fires
+  // and avoids any circular-import risk during module init.
   const native = await import('./index.js')
   const napi = {
     write: (conn_id: bigint, bytes: Uint8Array) =>
