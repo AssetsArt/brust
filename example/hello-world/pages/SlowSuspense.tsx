@@ -1,4 +1,5 @@
-import { Suspense, createElement } from 'react'
+import { Suspense } from 'react'
+import Layout from '../components/Layout'
 
 // Cache the resolved promise per process so reloads don't pile up new ones.
 let cached: Promise<string> | null = null
@@ -13,22 +14,26 @@ function slowFetch(): Promise<string> {
 
 function SlowChild(): JSX.Element {
   const promise = slowFetch()
-  // React 18 SSR Suspense: throw a Promise to suspend the renderer until it resolves.
+  // React 18 SSR Suspense: throw the Promise to suspend until it settles.
   if ((promise as any).status !== 'fulfilled') {
     promise.then((v) => { (promise as any).status = 'fulfilled'; (promise as any).value = v })
     throw promise
   }
-  return createElement('p', { 'data-testid': 'slow-content' }, (promise as any).value)
+  return <p data-testid="slow-content">{(promise as any).value}</p>
 }
 
 export default function SlowSuspense(): JSX.Element {
-  return createElement('html', null,
-    createElement('head', null, createElement('title', null, 'slow-suspense')),
-    createElement('body', null,
-      createElement('h1', null, 'Streaming demo'),
-      createElement(Suspense, { fallback: createElement('p', { 'data-testid': 'spinner' }, 'loading...') },
-        createElement(SlowChild),
-      ),
-    ),
+  return (
+    <Layout title="Streaming demo">
+      <h1>Streaming demo</h1>
+      <p>
+        The shell (this layout + the fallback below) ships in the first
+        chunk under <code>Transfer-Encoding: chunked</code>. The resolved
+        content streams in as a later chunk, ~200 ms after handshake.
+      </p>
+      <Suspense fallback={<p data-testid="spinner">loading...</p>}>
+        <SlowChild />
+      </Suspense>
+    </Layout>
   )
 }

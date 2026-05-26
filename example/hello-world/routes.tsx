@@ -4,6 +4,7 @@ import { counterStream } from './sse-counter.ts'
 import HelloWorld    from './pages/HelloWorld'
 import BlogPost      from './pages/BlogPost'
 import SlowSuspense  from './pages/SlowSuspense'
+import Profile       from './pages/Profile'
 
 /** Minimal demo — one route per major Brust feature. Failure-mode + auth +
  * cache + nested-route variants used by the integration tests live in
@@ -20,6 +21,11 @@ export const routes = defineRoutes([
   // HTML Streaming + Suspense — the page ships a shell with a Spinner, then
   // streams the resolved content as a second chunk (~200ms).
   { path: '/slow-suspense', Component: SlowSuspense },
+
+  // Async page + async-data child — Profile is `async function`, and its
+  // <Bio /> child uses `use(promise)` inside Suspense so the bio streams
+  // in as a separate chunk while the shell ships immediately.
+  { path: '/profile/{user}', Component: Profile },
 
   // Server-Sent Events — `/sse-counter` emits 3 frames then closes; open
   // it with a browser EventSource to see them live.
