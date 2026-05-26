@@ -1,4 +1,4 @@
-import { Outlet } from '../../../runtime/index.ts'
+import { Outlet } from '../../../../runtime/index.ts'
 
 export default function AdminLayout() {
   return (

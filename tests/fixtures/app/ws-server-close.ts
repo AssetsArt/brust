@@ -1,4 +1,4 @@
-import type { WsHandlers } from '../../runtime/routes.ts'
+import type { WsHandlers } from '../../../runtime/routes.ts'
 
 /** Demo WS handler that closes immediately on open with a custom code.
  * Used by integration test 3 to verify server-initiated close

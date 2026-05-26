@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { action, BrustActionError } from '../../../runtime/client/index.ts'
+import { action, BrustActionError } from '../../../../runtime/client/index.ts'
 import type * as srv from '../actions'
 
 const createNote = action<typeof srv.createNote>('createNote')

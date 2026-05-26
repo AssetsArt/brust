@@ -1,4 +1,4 @@
-import type { ErrorBoundaryProps } from '../../../runtime/routes.ts'
+import type { ErrorBoundaryProps } from '../../../../runtime/routes.ts'
 
 export default function AdminErrorBoundary({ error }: ErrorBoundaryProps) {
   return (

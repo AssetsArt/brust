@@ -1,4 +1,4 @@
-import { Island } from '../../../runtime/index.ts'
+import { Island } from '../../../../runtime/index.ts'
 import AvatarUpload from './AvatarUpload'
 
 export default function AvatarPage() {

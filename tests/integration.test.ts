@@ -6,7 +6,7 @@ import { join } from 'node:path'
 
 test('serves rendered html via worker pool', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: {
       ...process.env,
       BRUST_PORT: '38123',
@@ -37,7 +37,7 @@ test('serves rendered html via worker pool', async () => {
 
 test('returns 414 when request exceeds MAX_REQUEST_BYTES', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: {
       ...process.env,
       BRUST_PORT: '38124',
@@ -101,7 +101,7 @@ test('returns 414 when request exceeds MAX_REQUEST_BYTES', async () => {
 
 test('routes /blog/:slug renders BlogPost with the slug param', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38131', RUST_LOG: 'brust=info' },
     stdout: 'pipe',
     stderr: 'inherit',
@@ -123,7 +123,7 @@ test('routes /blog/:slug renders BlogPost with the slug param', async () => {
 
 test('unknown path returns 404', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38132', RUST_LOG: 'brust=info' },
     stdout: 'pipe',
     stderr: 'inherit',
@@ -141,7 +141,7 @@ test('unknown path returns 404', async () => {
 
 test('errorBoundary renders when a route component throws', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38133', RUST_LOG: 'brust=info' },
     stdout: 'pipe',
     stderr: 'inherit',
@@ -178,7 +178,7 @@ test('reads port and workers from brust.toml at cwd', async () => {
     await writeFile(join(dir, 'brust.toml'), tomlBody)
 
     const proc = spawn({
-      cmd: ['bun', 'run', join(projectRoot, 'example/hello-world/index.ts')],
+      cmd: ['bun', 'run', join(projectRoot, 'tests/fixtures/app/index.ts')],
       cwd: dir,
       env: {
         // Strip env overrides so TOML is the only source of truth.
@@ -209,7 +209,7 @@ test('reads port and workers from brust.toml at cwd', async () => {
 
 test('cache-test route returns same body on second hit (cache hit)', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: {
       ...process.env,
       BRUST_PORT: '38141',
@@ -239,7 +239,7 @@ test('cache-test route returns same body on second hit (cache hit)', async () =>
 
 test('cache stats endpoint reflects hits and misses', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: {
       ...process.env,
       BRUST_PORT: '38151',
@@ -281,7 +281,7 @@ test('cache stats endpoint reflects hits and misses', async () => {
 
 test('middleware short-circuits with 401 when cookie missing', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38161', BRUST_WORKERS: '1', RUST_LOG: 'brust=info' },
     stdout: 'pipe',
     stderr: 'inherit',
@@ -301,7 +301,7 @@ test('middleware short-circuits with 401 when cookie missing', async () => {
 
 test('middleware lets request through when cookie present + req.cookies reaches component', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38162', BRUST_WORKERS: '1', RUST_LOG: 'brust=info' },
     stdout: 'pipe',
     stderr: 'inherit',
@@ -325,7 +325,7 @@ test('middleware lets request through when cookie present + req.cookies reaches 
 
 test('middleware injects x-render-ms response header + req.search reaches component', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38163', BRUST_WORKERS: '1', RUST_LOG: 'brust=info' },
     stdout: 'pipe',
     stderr: 'inherit',
@@ -355,7 +355,7 @@ test('errorBoundary 500 path does not pick up middleware-only headers', async ()
   // middleware that doesn't exist yet) leak into the response. Complements
   // the existing /crash test which covers boundary HTML content.
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38164', BRUST_WORKERS: '1', RUST_LOG: 'brust=info' },
     stdout: 'pipe',
     stderr: 'inherit',
@@ -377,7 +377,7 @@ test('errorBoundary 500 path does not pick up middleware-only headers', async ()
 
 test('invalidate by path drops a cached entry', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: {
       ...process.env,
       BRUST_PORT: '38171',
@@ -421,7 +421,7 @@ test('invalidate by path drops a cached entry', async () => {
 
 test('invalidate all clears every entry + reports correct removed count', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: {
       ...process.env,
       BRUST_PORT: '38172',
@@ -463,7 +463,7 @@ test('invalidate all clears every entry + reports correct removed count', async 
 
 test('invalidate endpoint rejects GET and unsupported queries', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: {
       ...process.env,
       BRUST_PORT: '38173',
@@ -495,7 +495,7 @@ test('invalidate endpoint rejects GET and unsupported queries', async () => {
 
 test('island marker + importmap injected when route uses <Island>', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38181', BRUST_WORKERS: '1', RUST_LOG: 'brust=info' },
     stdout: 'pipe',
     stderr: 'inherit',
@@ -525,7 +525,7 @@ test('island marker + importmap injected when route uses <Island>', async () => 
 
 test('island chunk + bootstrap served at /_brust/islands/<file>', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38182', BRUST_WORKERS: '1', RUST_LOG: 'brust=info' },
     stdout: 'pipe',
     stderr: 'inherit',
@@ -559,7 +559,7 @@ test('island chunk + bootstrap served at /_brust/islands/<file>', async () => {
 
 test('routes without <Island> ship no importmap or bootstrap', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38183', BRUST_WORKERS: '1', RUST_LOG: 'brust=info' },
     stdout: 'pipe',
     stderr: 'inherit',
@@ -582,7 +582,7 @@ test('routes without <Island> ship no importmap or bootstrap', async () => {
 
 test('action endpoint: happy path returns JSON', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38150', RUST_LOG: 'brust=warn' },
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -605,7 +605,7 @@ test('action endpoint: happy path returns JSON', async () => {
 
 test('action endpoint: malformed JSON args → 400', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38157', RUST_LOG: 'brust=warn' },
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -627,7 +627,7 @@ test('action endpoint: malformed JSON args → 400', async () => {
 
 test('action endpoint: args not an array → 400', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38152', RUST_LOG: 'brust=warn' },
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -649,7 +649,7 @@ test('action endpoint: args not an array → 400', async () => {
 
 test('action endpoint: unknown id → 404', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38153', RUST_LOG: 'brust=warn' },
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -669,7 +669,7 @@ test('action endpoint: unknown id → 404', async () => {
 
 test('action endpoint: GET → 405', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38154', RUST_LOG: 'brust=warn' },
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -685,7 +685,7 @@ test('action endpoint: GET → 405', async () => {
 
 test('action endpoint: id with bad charset → 404', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38155', RUST_LOG: 'brust=warn' },
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -707,7 +707,7 @@ test('action endpoint: id with bad charset → 404', async () => {
 test('action endpoint: missing Content-Length → 411', async () => {
   // fetch always sets Content-Length, so use a raw socket like the 414 test.
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38156', RUST_LOG: 'brust=warn' },
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -742,7 +742,7 @@ test('action endpoint: undefined return → 200 with empty body', async () => {
   // pingAction returns void → JS terminal sends body: '' with status 200.
   // Verifies the wire roundtrip handles Content-Length: 0 cleanly.
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38184', RUST_LOG: 'brust=warn' },
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -769,7 +769,7 @@ test('action endpoint: Content-Length > 256 KB → 413', async () => {
   // Use a raw socket so we can claim a large Content-Length without actually
   // sending the bytes — the server should 413 from headers alone.
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38185', RUST_LOG: 'brust=warn' },
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -806,7 +806,7 @@ test('action endpoint: Content-Length > 256 KB → 413', async () => {
 
 test('action middleware: short-circuits without cookie', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38158', RUST_LOG: 'brust=warn' },
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -827,7 +827,7 @@ test('action middleware: short-circuits without cookie', async () => {
 
 test('action middleware: passes through with cookie', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38159', RUST_LOG: 'brust=warn' },
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -849,7 +849,7 @@ test('action middleware: passes through with cookie', async () => {
 
 test('action-calling island page renders marker + importmap + bootstrap', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38170', RUST_LOG: 'brust=warn' },
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -878,7 +878,7 @@ test('action endpoint: form-urlencoded body → FormData arg', async () => {
   // into FormData and spreads [FormData] into pingAction, which ignores its
   // args and returns void. Confirms the form-urlencoded path reaches the handler.
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38186', RUST_LOG: 'brust=warn' },
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -899,7 +899,7 @@ test('action endpoint: form-urlencoded body → FormData arg', async () => {
 
 test('action endpoint: multipart body → FormData with File', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38187', RUST_LOG: 'brust=warn' },
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -923,7 +923,7 @@ test('action endpoint: multipart body → FormData with File', async () => {
 
 test('action endpoint: unsupported Content-Type → 415', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38188', RUST_LOG: 'brust=warn' },
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -943,7 +943,7 @@ test('action endpoint: unsupported Content-Type → 415', async () => {
 
 test('action endpoint: malformed multipart body → 400', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38189', RUST_LOG: 'brust=warn' },
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -967,7 +967,7 @@ test('action endpoint: JSON path still works after wire-format refactor', async 
   // Sanity test — duplicates the createNote happy path from session 5 but
   // proves the body_text refactor preserved JSON semantics.
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38190', RUST_LOG: 'brust=warn' },
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -992,7 +992,7 @@ test('action endpoint: middleware short-circuits a multipart action', async () =
   // to it without a cookie should still 401 — middleware runs before body
   // parsing reaches the handler.
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38191', RUST_LOG: 'brust=warn' },
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -1014,7 +1014,7 @@ test('action endpoint: middleware short-circuits a multipart action', async () =
 
 test('nested routes: index route renders parent layout + dashboard', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38192', RUST_LOG: 'brust=warn' },
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -1035,7 +1035,7 @@ test('nested routes: index route renders parent layout + dashboard', async () =>
 
 test('nested routes: child path inherits parent middleware (401 without cookie)', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38193', RUST_LOG: 'brust=warn' },
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -1051,7 +1051,7 @@ test('nested routes: child path inherits parent middleware (401 without cookie)'
 
 test('nested routes: param child renders with id from path', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38194', RUST_LOG: 'brust=warn' },
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -1075,7 +1075,7 @@ test('nested routes: param child renders with id from path', async () => {
 
 test('nested routes: parent errorBoundary catches child throw', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38195', RUST_LOG: 'brust=warn' },
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -1098,7 +1098,7 @@ test('nested routes: flat route still renders (no regression)', async () => {
   // Sanity test: the existing flat `/` route still works after the
   // flatten + chain-walker refactor.
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38196', RUST_LOG: 'brust=warn' },
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -1125,7 +1125,7 @@ async function mcpRequest(port: number, method: string, params?: unknown, header
 
 test('mcp: initialize returns server capabilities', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38197', RUST_LOG: 'brust=warn' },
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -1147,7 +1147,7 @@ test('mcp: initialize returns server capabilities', async () => {
 
 test('mcp: tools/list returns all scanned actions', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38198', RUST_LOG: 'brust=warn' },
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -1168,7 +1168,7 @@ test('mcp: tools/list returns all scanned actions', async () => {
 
 test('mcp: tools/call createNote happy path', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38199', RUST_LOG: 'brust=warn' },
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -1189,7 +1189,7 @@ test('mcp: tools/call createNote happy path', async () => {
 
 test('mcp: tools/call middleware-gated action without cookie → isError', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38200', RUST_LOG: 'brust=warn' },
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -1209,7 +1209,7 @@ test('mcp: tools/call middleware-gated action without cookie → isError', async
 
 test('mcp: tools/call with cookie passes middleware', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38201', RUST_LOG: 'brust=warn' },
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -1230,7 +1230,7 @@ test('mcp: tools/call with cookie passes middleware', async () => {
 
 test('mcp: resources/list returns loaders', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38202', RUST_LOG: 'brust=warn' },
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -1247,7 +1247,7 @@ test('mcp: resources/list returns loaders', async () => {
 
 test('mcp: resources/read fetches loader output', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38203', RUST_LOG: 'brust=warn' },
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -1267,7 +1267,7 @@ test('mcp: resources/read fetches loader output', async () => {
 
 test('mcp: prompts/list returns empty', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38204', RUST_LOG: 'brust=warn' },
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -1283,7 +1283,7 @@ test('mcp: prompts/list returns empty', async () => {
 
 test('mcp: unknown method returns -32601', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38205', RUST_LOG: 'brust=warn' },
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -1367,7 +1367,7 @@ const SSE_ENV = (port: string) => ({
 
 test('sse: 3 data frames in order then close', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: SSE_ENV('38210'),
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -1395,7 +1395,7 @@ test('sse: heartbeat ping arrives on idle stream', async () => {
   // we use a raw TCP socket (same pattern as the 414/411 tests) to observe
   // frames as they arrive from the wire.
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: SSE_ENV('38215'),
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -1431,7 +1431,7 @@ test('sse: heartbeat ping arrives on idle stream', async () => {
 
 test('sse: client disconnect fires req.signal abort within 1s', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: SSE_ENV('38211'),
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -1459,7 +1459,7 @@ test('sse: client disconnect fires req.signal abort within 1s', async () => {
 
 test('sse: middleware reject returns 401 + non-SSE content-type', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: SSE_ENV('38212'),
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -1475,7 +1475,7 @@ test('sse: middleware reject returns 401 + non-SSE content-type', async () => {
 
 test('sse: middleware pass with cookie streams normally', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: SSE_ENV('38213'),
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -1494,7 +1494,7 @@ test('sse: middleware pass with cookie streams normally', async () => {
 
 test('sse: POST to an SSE route returns 405', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: SSE_ENV('38214'),
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -1540,7 +1540,7 @@ const WS_ENV = (port: string) => ({
 
 test('ws: handshake + echo', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: WS_ENV('38220'),
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -1560,7 +1560,7 @@ test('ws: handshake + echo', async () => {
 
 test('ws: binary frame round-trip', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: WS_ENV('38221'),
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -1583,7 +1583,7 @@ test('ws: binary frame round-trip', async () => {
 
 test('ws: server-initiated close fires client onclose with code 4000', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: WS_ENV('38222'),
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -1600,7 +1600,7 @@ test('ws: server-initiated close fires client onclose with code 4000', async () 
 
 test('ws: middleware reject returns 401 + no upgrade', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: WS_ENV('38223'),
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -1624,7 +1624,7 @@ test('ws: middleware reject returns 401 + no upgrade', async () => {
 
 test('ws: middleware pass with cookie completes handshake + echo', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: WS_ENV('38224'),
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -1646,7 +1646,7 @@ test('ws: middleware pass with cookie completes handshake + echo', async () => {
 
 test('ws: subprotocol negotiation picks first match in route order', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: WS_ENV('38225'),
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -1667,7 +1667,7 @@ test('ws: subprotocol negotiation picks first match in route order', async () =>
 
 test('ws: client clean close fires server on_close with 1000', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: WS_ENV('38226'),
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -1704,7 +1704,7 @@ const STREAM_ENV = (port: string) => ({
 
 test('streaming: single-chunk regression — / uses Content-Length, not chunked', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: STREAM_ENV('38230'),
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -1723,7 +1723,7 @@ test('streaming: single-chunk regression — / uses Content-Length, not chunked'
 
 test('streaming: /slow-suspense uses Transfer-Encoding: chunked + shell-before-resolved', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: STREAM_ENV('38231'),
     stdout: 'pipe', stderr: 'inherit',
   })
@@ -1758,7 +1758,7 @@ test('streaming: /slow-suspense uses Transfer-Encoding: chunked + shell-before-r
 
 test('streaming: mid-stream disconnect — second request to same worker still succeeds', async () => {
   const proc = spawn({
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: STREAM_ENV('38232'),
     stdout: 'pipe', stderr: 'inherit',
   })

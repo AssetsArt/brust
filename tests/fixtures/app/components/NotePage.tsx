@@ -1,4 +1,4 @@
-import { Island } from '../../../runtime/index.ts'
+import { Island } from '../../../../runtime/index.ts'
 import NoteForm from './NoteForm'
 
 export default function NotePage() {

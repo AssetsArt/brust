@@ -1,4 +1,4 @@
-import type { RouteContext } from '../../../runtime/routes.ts'
+import type { RouteContext } from '../../../../runtime/routes.ts'
 
 export default function AdminUserDetail({ params }: RouteContext<{ id: string }>) {
   return (

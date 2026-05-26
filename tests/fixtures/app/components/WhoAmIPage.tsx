@@ -1,4 +1,4 @@
-import { Island } from '../../../runtime/index.ts'
+import { Island } from '../../../../runtime/index.ts'
 import WhoAmI from './WhoAmI'
 
 export default function WhoAmIPage() {

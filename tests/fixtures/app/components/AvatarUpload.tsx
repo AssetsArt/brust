@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { formAction, BrustActionError } from '../../../runtime/client/index.ts'
+import { formAction, BrustActionError } from '../../../../runtime/client/index.ts'
 import type * as srv from '../actions'
 
 const uploadAvatar = formAction<typeof srv.uploadAvatar>('uploadAvatar')

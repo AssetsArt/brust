@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { action } from '../../../runtime/client/index.ts'
+import { action } from '../../../../runtime/client/index.ts'
 import type * as srv from '../actions'
 
 const whoAmI = action<typeof srv.whoAmI>('whoAmI')

@@ -1,6 +1,6 @@
 'use server'
-import { withMiddleware } from '../../runtime/index.ts'
-import type { BrustRequest, Middleware } from '../../runtime/index.ts'
+import { withMiddleware } from '../../../runtime/index.ts'
+import type { BrustRequest, Middleware } from '../../../runtime/index.ts'
 
 const requireUser: Middleware = async (req, next) => {
   if (!req.cookies['user']) {
