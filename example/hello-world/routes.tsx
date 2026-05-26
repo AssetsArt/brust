@@ -16,6 +16,7 @@ import AdminUsers          from './components/AdminUsers'
 import AdminUserDetail     from './components/AdminUserDetail'
 import AdminUserThrow      from './components/AdminUserThrow'
 import AdminErrorBoundary  from './components/AdminErrorBoundary'
+import SlowSuspense        from './components/SlowSuspense'
 
 // Auth middleware: 401 short-circuit if no `user` cookie.
 const authRequired: Middleware = async (req, next) => {
@@ -65,6 +66,7 @@ export const routes = defineRoutes([
   { path: '/sse-counter', sse: (req) => counterStream(req) },
   { path: '/sse-gated',   middleware: [authRequired], sse: (req) => counterStream(req) },
   { path: '/sse-idle',    sseOptions: { heartbeatMs: 100 }, sse: (req) => idleStream(req) },
+  { path: '/slow-suspense', Component: SlowSuspense },
   // WS demo routes.
   { path: '/ws/echo',          websocket: () => import('./ws-echo.ts') },
   { path: '/ws/gated',         middleware: [authRequired], websocket: () => import('./ws-echo.ts') },
