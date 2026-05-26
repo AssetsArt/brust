@@ -1692,3 +1692,97 @@ test('ws: client clean close fires server on_close with 1000', async () => {
     proc.kill('SIGINT'); await proc.exited
   }
 }, 15_000)
+
+// ----- HTML Streaming integration tests -----
+
+const STREAM_ENV = (port: string) => ({
+  ...process.env,
+  BRUST_PORT: port,
+  BRUST_WORKERS: '1',
+  RUST_LOG: 'brust=warn',
+})
+
+test('streaming: single-chunk regression — / uses Content-Length, not chunked', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: STREAM_ENV('38230'),
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const resp = await fetch(`http://127.0.0.1:${port}/`)
+    expect(resp.status).toBe(200)
+    expect(resp.headers.get('content-length')).not.toBeNull()
+    expect(resp.headers.get('transfer-encoding')).toBeNull()
+    const body = await resp.text()
+    expect(body.length).toBeGreaterThan(0)
+  } finally {
+    proc.kill('SIGINT'); await proc.exited
+  }
+}, 15_000)
+
+test('streaming: /slow-suspense uses Transfer-Encoding: chunked + shell-before-resolved', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: STREAM_ENV('38231'),
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const resp = await fetch(`http://127.0.0.1:${port}/slow-suspense`)
+    expect(resp.status).toBe(200)
+    expect(resp.headers.get('transfer-encoding')).toBe('chunked')
+    expect(resp.headers.get('content-length')).toBeNull()
+    // Read the body progressively — assert spinner arrives before resolved content
+    // (proves streaming, not buffered).
+    const reader = resp.body!.getReader()
+    const decoder = new TextDecoder()
+    let acc = ''
+    let sawSpinnerBeforeResolved = false
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      acc += decoder.decode(value, { stream: true })
+      if (!sawSpinnerBeforeResolved
+          && acc.includes('loading...')
+          && !acc.includes('Resolved after 200ms')) {
+        sawSpinnerBeforeResolved = true
+      }
+    }
+    expect(sawSpinnerBeforeResolved).toBe(true)
+    expect(acc).toContain('Resolved after 200ms')
+  } finally {
+    proc.kill('SIGINT'); await proc.exited
+  }
+}, 15_000)
+
+test('streaming: mid-stream disconnect — second request to same worker still succeeds', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    env: STREAM_ENV('38232'),
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    // First request: open the chunked stream, then abort mid-flight.
+    const ac = new AbortController()
+    const first = fetch(`http://127.0.0.1:${port}/slow-suspense`, { signal: ac.signal })
+      .catch((e: Error) => ({ aborted: true, msg: e.message }))
+    // Give the server time to commit headers + first chunk before we abort.
+    await new Promise((r) => setTimeout(r, 100))
+    ac.abort()
+    await first  // resolves to { aborted: true } via the .catch
+
+    // Wait a beat for slot Drop guard to fire.
+    await new Promise((r) => setTimeout(r, 200))
+
+    // Second request to the SAME worker (BRUST_WORKERS=1) MUST succeed —
+    // proves RenderSlotGuard cleared the leaked slot on the cancelled request.
+    const resp = await fetch(`http://127.0.0.1:${port}/`)
+    expect(resp.status).toBe(200)
+    const body = await resp.text()
+    expect(body.length).toBeGreaterThan(0)
+  } finally {
+    proc.kill('SIGINT'); await proc.exited
+  }
+}, 15_000)
