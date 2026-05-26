@@ -1,0 +1,1292 @@
+# brust build CLI + dist pipeline Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Add a `brust build` CLI that emits a self-contained `./dist/` directory; `bun run ./dist/index.js` then boots the pre-built server without any build work at startup. Lays foundation for future Tailwind v4, component CSS imports, and dev/watch sub-projects.
+
+**Architecture:** Two new modules under `runtime/cli/` (CLI dispatcher + build orchestrator + two Bun.build plugins). A single env flag `BRUST_PREBUILT=1`, injected as a banner into the bundled `dist/index.js`, makes `brust.run()` branch between dev mode (existing behaviour) and prebuilt mode (skip filesystem scans, load pre-built artifacts). Native `.node` resolution and action discovery are handled by Bun.build resolve plugins that alias problem modules during bundling — keeping the runtime API surface unchanged.
+
+**Tech Stack:** TypeScript, Bun.build, napi-rs (no Rust changes), node:fs/path, existing `scanActions` + `buildIslands` + `buildMcpManifest` helpers.
+
+**Spec:** `docs/superpowers/specs/2026-05-26-build-cli-and-dist-pipeline-design.md`
+
+**Baselines to preserve:** Rust 93 / Runtime 103 / Integration 70 — all must stay green. After this plan: Integration 70+~3 new tests.
+
+---
+
+## Important context for every task
+
+Before each subagent dispatch, the agent MUST be given:
+
+- **Working directory:** `/Users/detoro/code/brust`
+- **Branch:** `main` (project convention: user works on main directly with explicit consent — do NOT create feature branches without asking)
+- **The repo's bootstrap chunk is rebuilt every server boot** — local source edits to `runtime/islands/bootstrap.ts` are picked up next server start.
+- **Commit message convention:** terse subject line (`feat(cli):`, `chore(cli):`, `test(cli):`, `docs(cli):`), Thai or English body optional. The `commit-msg` hook occasionally auto-rewrites messages — after each commit, run `git log -1 --format=%B` to verify; if it doesn't match, `git commit --amend -m <heredoc>` immediately.
+- **No defensive coding** for impossible cases. No backwards-compat shims unless task says so. Terse code, minimal comments.
+- **Tests use real subprocess + curl pattern** (see `tests/integration.test.ts` for the established style).
+
+---
+
+## File structure
+
+**New files:**
+
+| File | Responsibility |
+|---|---|
+| `runtime/cli/index.ts` | CLI dispatcher. Shebang `#!/usr/bin/env bun`. Parses `argv`, dispatches `build` subcommand. |
+| `runtime/cli/build.ts` | Orchestrates: validate entry → clobber outDir → scanActions → buildIslands → buildMcpManifest → generate prebuilt-actions file → Bun.build with plugins → copy `.node`. Exports `runBuild(args: string[])`. |
+| `runtime/cli/native-shim-plugin.ts` | Bun.build plugin: replaces `runtime/index.js` with inline shim that resolves the native binary from `BRUST_DIST_DIR/native/`. |
+| `runtime/cli/actions-prebuilt-plugin.ts` | Bun.build plugin: aliases `runtime/scan-actions.ts` → a generated prebuilt file that returns a hard-coded `ActionDef[]` instead of walking the filesystem. |
+| `tests/cli-build.test.ts` | Integration: build the example app to a temp dir, spawn `bun run dist/index.js`, smoke every major path, verify error exit on missing entry. |
+
+**Modified files:**
+
+| File | Change |
+|---|---|
+| `runtime/islands/build.ts` | `buildIslands(configPath)` → `buildIslands(configPath, options?: { outDir?: string })`. Default `outDir` unchanged (`<cwd>/.brust/islands`). |
+| `runtime/index.ts` | `brust.run()` checks `process.env.BRUST_PREBUILT === '1'`. Prebuilt branch: skip `buildIslands` + `buildMcpManifest`, configure islands dir from `BRUST_DIST_DIR/islands`, load `mcp-manifest.json` from `BRUST_DIST_DIR`, call `scanActions()` (which is plugin-aliased in the bundle). |
+| `package.json` | Add `"bin": { "brust": "./runtime/cli/index.ts" }`. |
+| `architecture.md` | Promote "Project tooling: `brust build`" to Built list. Update Status bullet. |
+
+**No Rust changes. No napi changes. No public API breakage.**
+
+---
+
+## Action id manifest decision (committed)
+
+Spec deferred A vs B. **Decision: Option B** — Bun.build resolve plugin aliases `scan-actions.ts` to a generated prebuilt variant. The plugin works at build time so the bundled `brust.run()` calls `scanActions()` exactly as today, but the bundle's copy of `scanActions` returns a pre-baked list instead of walking the filesystem.
+
+Rationale: avoids post-build path resolution (the JSON-manifest approach would need to import original source paths at runtime, which is fragile in a bundled context). Plugin approach is local to the build phase and leaves runtime code unchanged.
+
+**Implementation shape** (referenced from multiple tasks below):
+
+The build step writes `<outDir>/_actions-prebuilt.ts`:
+
+```ts
+// AUTO-GENERATED by brust build — do not edit.
+import { getActionMiddleware } from '<ABS_PATH>/runtime/actions.ts'
+import * as __mod0 from '<ABS_PATH_TO_ACTION_FILE_0>'
+import * as __mod1 from '<ABS_PATH_TO_ACTION_FILE_1>'
+// … one __modN per scanned 'use server' file
+
+import type { ActionDef } from '<ABS_PATH>/runtime/actions.ts'
+import type { ScanOptions, ScanActionsResult } from '<ABS_PATH>/runtime/scan-actions.ts'
+
+// Re-export auxiliaries that other modules might import from scan-actions.ts.
+// (Even if nothing in the runtime bundle uses them, keeping the surface
+//  identical avoids "x is not exported" bundling errors.)
+export { stripLeadingTrivia, hasUseServerDirective, collectExports } from '<ABS_PATH>/runtime/scan-actions.ts'
+export type { ScanOptions, ScanActionsResult } from '<ABS_PATH>/runtime/scan-actions.ts'
+
+const PREBUILT: ActionDef[] = [
+  { id: '<ID_0>', fn: __mod0['<ID_0>'] as any, middleware: getActionMiddleware(__mod0['<ID_0>']) },
+  { id: '<ID_1>', fn: __mod1['<ID_1>'] as any, middleware: getActionMiddleware(__mod1['<ID_1>']) },
+  // … sorted by id ascending (mirror scan-actions.ts:174 sort order)
+]
+
+export async function scanActions(_opts: ScanOptions = {}): Promise<ScanActionsResult> {
+  return { actions: PREBUILT, sourceFiles: [] }
+}
+```
+
+`sourceFiles` is `[]` in prebuilt mode (used only by `buildMcpManifest`, which is skipped in prebuilt mode anyway).
+
+The plugin's `onResolve` maps any import that resolves to `runtime/scan-actions.ts` → the generated file path.
+
+---
+
+## Task 1 — `buildIslands` accepts optional `outDir`
+
+**Files:**
+- Modify: `runtime/islands/build.ts` (single function signature change + plumbing)
+
+This is a backwards-compatible API extension. Default behaviour is unchanged.
+
+- [ ] **Step 1: Read the current file**
+
+Run: `cat runtime/islands/build.ts` to confirm the starting state.
+
+Expected: file has `buildIslands(configPath: string)` signature with hardcoded `outDir = resolve(process.cwd(), '.brust/islands')` at line ~28.
+
+- [ ] **Step 2: Extend the signature**
+
+In `runtime/islands/build.ts`, replace the function declaration and the outDir line:
+
+```ts
+export interface BuildIslandsOptions {
+  /** Override the output directory. Default: `<cwd>/.brust/islands`. */
+  outDir?: string
+}
+
+export async function buildIslands(
+  configPath: string,
+  options: BuildIslandsOptions = {},
+): Promise<IslandsBuildResult> {
+  const absConfig = isAbsolute(configPath) ? configPath : resolve(process.cwd(), configPath)
+  const configDir = dirname(absConfig)
+  const mod = await import(absConfig)
+  const cfg = (mod.default ?? mod) as IslandsConfig
+  if (!cfg || typeof cfg !== 'object' || !cfg.islands) {
+    throw new Error(`island config at ${absConfig} must export { islands: Record<string, string> }`)
+  }
+
+  const outDir = options.outDir
+    ? (isAbsolute(options.outDir) ? options.outDir : resolve(process.cwd(), options.outDir))
+    : resolve(process.cwd(), '.brust/islands')
+  await rm(outDir, { recursive: true, force: true })
+  await mkdir(outDir, { recursive: true })
+
+  // (rest of the function unchanged)
+```
+
+Also add to the export list at the bottom of `runtime/index.ts` (find the existing `export { buildIslands } from './islands/build.ts'` line near line 287; just below it add the type export):
+
+```ts
+export type { IslandsBuildResult, IslandsConfig, BuildIslandsOptions } from './islands/build.ts'
+```
+
+- [ ] **Step 3: Run the existing baselines to confirm no regression**
+
+Run: `bun test runtime/ 2>&1 | tail -5`
+Expected: 103 pass (current baseline). If a runtime test referenced `IslandsBuildResult` directly the count may include those — anything green is fine.
+
+Run: `bun test tests/integration.test.ts 2>&1 | tail -5`
+Expected: 70 pass.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add runtime/islands/build.ts runtime/index.ts
+git commit -m "$(cat <<'EOF'
+feat(islands): optional outDir on buildIslands
+
+Backwards-compatible signature change preparing for `brust build` which
+needs to emit islands into ./dist/islands/ instead of .brust/islands/.
+Default unchanged.
+EOF
+)"
+git log -1 --format=%B
+```
+
+If the log output doesn't match what was written (commit-msg hook quirk), immediately `git commit --amend -m <same heredoc>`.
+
+---
+
+## Task 2 — CLI scaffold (dispatcher + bin entry)
+
+**Files:**
+- Create: `runtime/cli/index.ts`
+- Modify: `package.json`
+
+A tiny dispatcher that errors out on unknown subcommands. Routes `build` to a (still empty) handler.
+
+- [ ] **Step 1: Make the `runtime/cli/` directory and the dispatcher**
+
+```bash
+mkdir -p runtime/cli
+```
+
+Write `runtime/cli/index.ts`:
+
+```ts
+#!/usr/bin/env bun
+const [, , subcommand, ...rest] = process.argv
+
+switch (subcommand) {
+  case 'build': {
+    const { runBuild } = await import('./build.ts')
+    await runBuild(rest)
+    break
+  }
+  default: {
+    if (!subcommand) {
+      console.error('brust: missing subcommand. Try: brust build')
+    } else {
+      console.error(`brust: unknown subcommand "${subcommand}". Try: brust build`)
+    }
+    process.exit(1)
+  }
+}
+```
+
+- [ ] **Step 2: Stub the build orchestrator so the dispatcher compiles**
+
+Write `runtime/cli/build.ts` (minimal — Task 5 fills it in):
+
+```ts
+export async function runBuild(_args: string[]): Promise<void> {
+  throw new Error('brust build: not implemented (task 5 lands the real implementation)')
+}
+```
+
+- [ ] **Step 3: Add `bin` to `package.json`**
+
+Read the file first, then edit to insert the `"bin"` entry. Place it right after `"name"` so it's near related metadata:
+
+```json
+{
+  "name": "brust",
+  "version": "0.1.0",
+  "private": true,
+  "bin": {
+    "brust": "./runtime/cli/index.ts"
+  },
+  …
+}
+```
+
+(The exact placement is whichever the surrounding JSON allows; keep the rest of the file unchanged.)
+
+- [ ] **Step 4: Make the CLI executable**
+
+```bash
+chmod +x runtime/cli/index.ts
+```
+
+- [ ] **Step 5: Smoke-test the dispatcher**
+
+```bash
+bun runtime/cli/index.ts
+```
+
+Expected stderr: `brust: missing subcommand. Try: brust build`
+Expected exit: 1 (verify via `echo $?` if needed).
+
+```bash
+bun runtime/cli/index.ts foobar
+```
+
+Expected stderr: `brust: unknown subcommand "foobar". Try: brust build`
+Expected exit: 1.
+
+```bash
+bun runtime/cli/index.ts build
+```
+
+Expected: throws `Error: brust build: not implemented (task 5 lands the real implementation)`.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add runtime/cli/index.ts runtime/cli/build.ts package.json
+git commit -m "$(cat <<'EOF'
+feat(cli): scaffold brust CLI dispatcher
+
+Adds runtime/cli/index.ts (shebang + argv parsing) and stub build
+orchestrator. package.json gets bin entry so bun x brust resolves.
+Real implementation in tasks 3-5.
+EOF
+)"
+git log -1 --format=%B
+```
+
+---
+
+## Task 3 — Native-shim Bun.build plugin
+
+**Files:**
+- Create: `runtime/cli/native-shim-plugin.ts`
+
+A Bun.build plugin that intercepts `runtime/index.js` and replaces it with an inline shim that resolves the native binary from `BRUST_DIST_DIR/native/`.
+
+- [ ] **Step 1: Write the plugin**
+
+Write `runtime/cli/native-shim-plugin.ts`:
+
+```ts
+import { resolve } from 'node:path'
+import type { BunPlugin } from 'bun'
+
+/** Bun.build plugin that replaces `runtime/index.js` (the napi-rs platform
+ * shim, 469 lines of conditional require()s) with a single shim that resolves
+ * the native binary from `BRUST_DIST_DIR/native/index.<platform>-<arch>.node`.
+ *
+ * The shim relies on the bundle banner having set BRUST_DIST_DIR; if that env
+ * is missing (shouldn't happen post-build) it falls back to import.meta.dir. */
+export function nativeShimPlugin(repoRoot: string): BunPlugin {
+  const targetPath = resolve(repoRoot, 'runtime/index.js')
+
+  const SHIM = `
+import { createRequire } from 'node:module'
+import { join } from 'node:path'
+
+const require_ = createRequire(import.meta.url)
+const { platform, arch } = process
+const binaryName = \`index.\${platform}-\${arch}.node\`
+const dir = process.env.BRUST_DIST_DIR ?? import.meta.dir
+const absPath = join(dir, 'native', binaryName)
+
+let nativeBinding
+try {
+  nativeBinding = require_(absPath)
+} catch (cause) {
+  throw new Error(
+    \`brust: no native binary for \${platform}-\${arch} at \${absPath}. \` +
+    \`Run \\\`brust build\\\` on the target platform.\`,
+    { cause },
+  )
+}
+
+module.exports = nativeBinding
+`.trim()
+
+  return {
+    name: 'brust-native-shim',
+    setup(build) {
+      build.onLoad({ filter: /.*runtime[\\/]index\.js$/ }, (args) => {
+        // Only rewrite the canonical napi-rs shim; ignore any same-named file
+        // elsewhere in node_modules (Bun resolves real paths, so this guard
+        // is just belt-and-braces).
+        if (args.path !== targetPath) return undefined
+        return { contents: SHIM, loader: 'js' }
+      })
+    },
+  }
+}
+```
+
+- [ ] **Step 2: Verify it type-checks**
+
+Bun runs `.ts` directly so there's no separate compile step. Validate the file imports cleanly:
+
+```bash
+bun -e "import('./runtime/cli/native-shim-plugin.ts').then(m => console.log(typeof m.nativeShimPlugin))"
+```
+
+Expected output: `function`
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add runtime/cli/native-shim-plugin.ts
+git commit -m "$(cat <<'EOF'
+feat(cli): Bun.build plugin for native .node resolution
+
+Replaces runtime/index.js (469-line napi-rs platform shim) with a single
+inline shim during bundling. The shim resolves the binary from
+BRUST_DIST_DIR/native/ at runtime, with a clear error if the platform's
+binary wasn't copied during build.
+EOF
+)"
+git log -1 --format=%B
+```
+
+---
+
+## Task 4 — Actions-prebuilt Bun.build plugin
+
+**Files:**
+- Create: `runtime/cli/actions-prebuilt-plugin.ts`
+
+The plugin and the file generator. The build orchestrator (Task 5) will:
+1. Call `scanActions()` to discover server actions.
+2. Pass the result to `writePrebuiltActionsFile(outFilePath, scanResult)` from this module.
+3. Pass the absolute path of the written file to `actionsPrebuiltPlugin(generatedFilePath, repoRoot)`.
+
+- [ ] **Step 1: Write the plugin module**
+
+Write `runtime/cli/actions-prebuilt-plugin.ts`:
+
+```ts
+import { writeFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
+import type { BunPlugin } from 'bun'
+import type { ScanActionsResult } from '../scan-actions.ts'
+
+/** Write a TypeScript file that re-exports `scanActions` as a pure function
+ * returning a hard-coded ActionDef[]. Bundle this file via `actionsPrebuiltPlugin`
+ * below to satisfy `import { scanActions } from './scan-actions.ts'` lookups
+ * inside the runtime bundle without walking the filesystem at runtime.
+ *
+ * `idToSourcePath` maps each discovered action id → absolute path of the
+ * `'use server'` file it was exported from. The orchestrator builds this map
+ * by calling `collectExports(sourceFile)` for every file in `scan.sourceFiles`.
+ *
+ * `repoRoot` is the absolute path of the brust repo (where `runtime/` lives).
+ * `outPath` is where to write the generated file (e.g. <outDir>/_actions-prebuilt.ts).
+ */
+export async function writePrebuiltActionsFileWithMap(
+  outPath: string,
+  idToSourcePath: Map<string, string>,
+  repoRoot: string,
+): Promise<void> {
+  const actionsPath = resolve(repoRoot, 'runtime/actions.ts')
+  const scanPath = resolve(repoRoot, 'runtime/scan-actions.ts')
+
+  // Stable file order = stable import order = deterministic builds.
+  const filePaths = [...new Set(idToSourcePath.values())].sort()
+  const fileToVar = new Map<string, string>()
+  filePaths.forEach((p, i) => fileToVar.set(p, `__mod${i}`))
+
+  const imports = filePaths
+    .map((p, i) => `import * as __mod${i} from ${JSON.stringify(p)}`)
+    .join('\n')
+
+  const sortedIds = [...idToSourcePath.keys()].sort((a, b) => a.localeCompare(b))
+  const entries = sortedIds
+    .map((id) => {
+      const v = fileToVar.get(idToSourcePath.get(id)!)!
+      const key = JSON.stringify(id)
+      return `  { id: ${key}, fn: (${v}[${key}] as any), middleware: getActionMiddleware(${v}[${key}]) }`
+    })
+    .join(',\n')
+
+  const src = `// AUTO-GENERATED by brust build — do not edit.
+import { getActionMiddleware } from ${JSON.stringify(actionsPath)}
+import type { ActionDef } from ${JSON.stringify(actionsPath)}
+import type { ScanOptions, ScanActionsResult } from ${JSON.stringify(scanPath)}
+${imports}
+
+// Re-export auxiliaries so any bundle import from scan-actions.ts still resolves.
+export { stripLeadingTrivia, hasUseServerDirective, collectExports } from ${JSON.stringify(scanPath)}
+export type { ScanOptions, ScanActionsResult } from ${JSON.stringify(scanPath)}
+
+const PREBUILT: ActionDef[] = [
+${entries}
+]
+
+export async function scanActions(_opts: ScanOptions = {}): Promise<ScanActionsResult> {
+  return { actions: PREBUILT, sourceFiles: [] }
+}
+`
+  await writeFile(outPath, src, 'utf-8')
+}
+
+/** Bun.build plugin that aliases `runtime/scan-actions.ts` to the generated
+ * prebuilt file. Combined with `writePrebuiltActionsFileWithMap` this makes
+ * the bundled `scanActions()` return a hard-coded list. */
+export function actionsPrebuiltPlugin(
+  generatedFilePath: string,
+  repoRoot: string,
+): BunPlugin {
+  const targetPath = resolve(repoRoot, 'runtime/scan-actions.ts')
+
+  return {
+    name: 'brust-actions-prebuilt',
+    setup(build) {
+      build.onResolve({ filter: /.*/ }, (args) => {
+        // Match the canonical scan-actions.ts file regardless of how it's
+        // imported (relative './scan-actions.ts' from runtime/index.ts, etc.).
+        // Resolve the import to an absolute path and compare.
+        const resolved = resolve(args.importer ? args.importer.replace(/\/[^/]*$/, '') : repoRoot, args.path)
+        if (resolved === targetPath || resolved + '.ts' === targetPath) {
+          return { path: generatedFilePath }
+        }
+        // Default resolution for everything else.
+        return undefined
+      })
+    },
+  }
+}
+```
+
+- [ ] **Step 2: Smoke check the module loads**
+
+```bash
+bun -e "import('./runtime/cli/actions-prebuilt-plugin.ts').then(m => console.log(typeof m.actionsPrebuiltPlugin, typeof m.writePrebuiltActionsFileWithMap))"
+```
+
+Expected: `function function`
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add runtime/cli/actions-prebuilt-plugin.ts
+git commit -m "$(cat <<'EOF'
+feat(cli): actions prebuilt plugin + generator
+
+writePrebuiltActionsFileWithMap emits a TS file that re-exports
+scanActions() as a pure function returning a hard-coded ActionDef[].
+actionsPrebuiltPlugin aliases runtime/scan-actions.ts to that file
+during Bun.build so the bundled scanActions() returns the pre-baked
+list instead of walking the filesystem at boot.
+EOF
+)"
+git log -1 --format=%B
+```
+
+---
+
+## Task 5 — Build orchestrator
+
+**Files:**
+- Modify: `runtime/cli/build.ts` (replace stub with real implementation)
+
+The orchestrator wires everything together. It:
+1. Validates entry + resolves outDir
+2. Clobbers outDir
+3. Scans actions and rediscovers per-file id ownership (for the prebuilt-actions map)
+4. Builds islands into `<outDir>/islands/` (if `island.config.ts` exists)
+5. Builds MCP manifest into `<outDir>/mcp-manifest.json` (if `routes.tsx` exists)
+6. Writes `<outDir>/_actions-prebuilt.ts` (always, even if empty)
+7. Runs Bun.build on the entry with both plugins + banner
+8. Copies the current-platform native binary
+
+- [ ] **Step 1: Replace the stub with the orchestrator**
+
+Replace the contents of `runtime/cli/build.ts` with:
+
+```ts
+import { existsSync } from 'node:fs'
+import { copyFile, mkdir, readdir, rm } from 'node:fs/promises'
+import path, { isAbsolute, resolve } from 'node:path'
+import { actionsPrebuiltPlugin, writePrebuiltActionsFileWithMap } from './actions-prebuilt-plugin.ts'
+import { nativeShimPlugin } from './native-shim-plugin.ts'
+
+/** repoRoot = the directory that contains runtime/. This file lives at
+ * runtime/cli/build.ts so two dirname() steps get us there. */
+const REPO_ROOT = path.resolve(import.meta.dir, '..', '..')
+
+interface ParsedArgs {
+  entry: string         // absolute path to the entry file
+  outDir: string        // absolute path to the output dir
+}
+
+function parseArgs(args: string[]): ParsedArgs {
+  let entry: string | undefined
+  let outDir: string | undefined
+
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]
+    if (a === '--out-dir') {
+      outDir = args[++i]
+      if (!outDir) {
+        console.error('brust build: --out-dir requires a value')
+        process.exit(1)
+      }
+    } else if (a.startsWith('--out-dir=')) {
+      outDir = a.slice('--out-dir='.length)
+    } else if (a.startsWith('-')) {
+      console.error(`brust build: unknown flag "${a}"`)
+      process.exit(1)
+    } else if (entry === undefined) {
+      entry = a
+    } else {
+      console.error(`brust build: unexpected positional argument "${a}"`)
+      process.exit(1)
+    }
+  }
+
+  const cwd = process.cwd()
+  const entryPath = entry
+    ? (isAbsolute(entry) ? entry : resolve(cwd, entry))
+    : resolve(cwd, 'index.ts')
+
+  if (!existsSync(entryPath)) {
+    console.error(`brust build: no entry file at ${entryPath}; pass a path or create ./index.ts`)
+    process.exit(1)
+  }
+
+  const outPath = outDir
+    ? (isAbsolute(outDir) ? outDir : resolve(cwd, outDir))
+    : resolve(cwd, 'dist')
+
+  return { entry: entryPath, outDir: outPath }
+}
+
+export async function runBuild(args: string[]): Promise<void> {
+  const { entry, outDir } = parseArgs(args)
+  const entryDir = path.dirname(entry)
+
+  console.log(`[brust build] entry:  ${entry}`)
+  console.log(`[brust build] outDir: ${outDir}`)
+
+  // 1. Clobber outDir.
+  await rm(outDir, { recursive: true, force: true })
+  await mkdir(outDir, { recursive: true })
+
+  // 2. Scan actions + rediscover id→source mapping for the prebuilt plugin.
+  const { scanActions, collectExports } = await import('../scan-actions.ts')
+  const scan = await scanActions({ roots: [entryDir] })
+  console.log(`[brust build] actions: discovered ${scan.actions.length} (${scan.actions.map((a) => a.id).join(', ') || '(none)'})`)
+
+  const idToSource = new Map<string, string>()
+  for (const file of scan.sourceFiles) {
+    const defs = await collectExports(file)
+    for (const def of defs) idToSource.set(def.id, file)
+  }
+
+  // 3. Build islands (if config exists).
+  const islandConfig = path.join(entryDir, 'island.config.ts')
+  if (existsSync(islandConfig)) {
+    const { buildIslands } = await import('../islands/build.ts')
+    const islandsOutDir = path.join(outDir, 'islands')
+    const result = await buildIslands(islandConfig, { outDir: islandsOutDir })
+    console.log(`[brust build] islands: ${result.islandCount} chunk(s) → ${islandsOutDir}`)
+  } else {
+    console.log(`[brust build] islands: skipped (no island.config.ts)`)
+  }
+
+  // 4. MCP manifest (if routes.tsx exists).
+  const routesFile = path.join(entryDir, 'routes.tsx')
+  if (existsSync(routesFile)) {
+    const { extractMcpManifest } = await import('../mcp/extractor.ts')
+    const { routes } = await import(routesFile)
+    const manifest = await extractMcpManifest({
+      serverFiles: scan.sourceFiles,
+      routesFile,
+      sourceRoots: [entryDir],
+      actions: scan.actions,
+      routes,
+    })
+    const manifestPath = path.join(outDir, 'mcp-manifest.json')
+    await Bun.write(manifestPath, JSON.stringify(manifest, null, 2))
+    console.log(`[brust build] mcp:     ${manifest.tools.length} tools + ${manifest.resources.length} resources → ${manifestPath}`)
+  } else {
+    console.log(`[brust build] mcp:     skipped (no routes.tsx)`)
+  }
+
+  // 5. Generate the prebuilt-actions file (always — empty list if no actions).
+  const prebuiltActionsPath = path.join(outDir, '_actions-prebuilt.ts')
+  await writePrebuiltActionsFileWithMap(prebuiltActionsPath, idToSource, REPO_ROOT)
+
+  // 6. Bun.build the server bundle with both plugins + banner.
+  const banner =
+    `process.env.BRUST_PREBUILT = '1';\n` +
+    `process.env.BRUST_DIST_DIR = import.meta.dir;\n`
+
+  const result = await Bun.build({
+    entrypoints: [entry],
+    outdir: outDir,
+    naming: 'index.js',
+    target: 'bun',
+    format: 'esm',
+    minify: true,
+    banner,
+    plugins: [
+      nativeShimPlugin(REPO_ROOT),
+      actionsPrebuiltPlugin(prebuiltActionsPath, REPO_ROOT),
+    ],
+  })
+
+  if (!result.success) {
+    console.error('brust build: Bun.build failed')
+    for (const m of result.logs) console.error(String(m))
+    process.exit(1)
+  }
+  console.log(`[brust build] bundle:  ${path.join(outDir, 'index.js')}`)
+
+  // 7. Copy the current-platform native binary.
+  const nativeDir = path.join(outDir, 'native')
+  await mkdir(nativeDir, { recursive: true })
+
+  // napi-rs emits `runtime/index.<platform>-<arch>[-libc].node`. We copy
+  // every `index.*.node` we find in runtime/ so a multi-platform pre-build
+  // (CI matrix) Just Works without further wiring; in single-platform local
+  // builds this is just one file.
+  const runtimeDir = path.join(REPO_ROOT, 'runtime')
+  const nodeFiles = (await readdir(runtimeDir)).filter(
+    (f) => /^index\..+\.node$/.test(f),
+  )
+  if (nodeFiles.length === 0) {
+    console.error(
+      `brust build: no native binary found in ${runtimeDir}. ` +
+      `Run \`bun --filter runtime run build\` (or :debug) first.`,
+    )
+    process.exit(1)
+  }
+  for (const f of nodeFiles) {
+    await copyFile(path.join(runtimeDir, f), path.join(nativeDir, f))
+    console.log(`[brust build] native:  ${f}`)
+  }
+
+  console.log(`[brust build] done.`)
+}
+```
+
+- [ ] **Step 2: Verify the example app builds without errors**
+
+```bash
+bun runtime/cli/index.ts build example/hello-world/index.ts --out-dir /tmp/brust-dist-task5
+```
+
+Expected output lines (paraphrased):
+```
+[brust build] entry:  …/example/hello-world/index.ts
+[brust build] outDir: /tmp/brust-dist-task5
+[brust build] actions: discovered 0 ((none))
+[brust build] islands: 1 chunk(s) → /tmp/brust-dist-task5/islands
+[brust build] mcp:     N tools + M resources → /tmp/brust-dist-task5/mcp-manifest.json
+[brust build] bundle:  /tmp/brust-dist-task5/index.js
+[brust build] native:  index.darwin-arm64.node
+[brust build] done.
+```
+
+(The exact tool/resource counts depend on the demo. As long as nothing errors, it's fine.)
+
+- [ ] **Step 3: Inspect the dist tree**
+
+```bash
+ls -la /tmp/brust-dist-task5/ /tmp/brust-dist-task5/islands/ /tmp/brust-dist-task5/native/
+head -5 /tmp/brust-dist-task5/index.js
+```
+
+Expected:
+- `index.js` (top of file contains the banner: `process.env.BRUST_PREBUILT = '1';`)
+- `_actions-prebuilt.ts` (generated file)
+- `mcp-manifest.json`
+- `islands/_react.js`, `islands/_react-dom.js`, `islands/_bootstrap.js`, `islands/Counter.js`
+- `native/index.darwin-arm64.node`
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add runtime/cli/build.ts
+git commit -m "$(cat <<'EOF'
+feat(cli): brust build orchestrator
+
+Drives the full build: arg parsing → clobber outDir → scan actions →
+build islands (if island.config.ts present) → emit MCP manifest (if
+routes.tsx present) → generate prebuilt-actions file → Bun.build with
+native-shim and actions-prebuilt plugins → copy native .node files.
+
+Banner injects BRUST_PREBUILT=1 and BRUST_DIST_DIR=import.meta.dir so
+the runtime branches into prebuilt mode at boot.
+EOF
+)"
+git log -1 --format=%B
+```
+
+---
+
+## Task 6 — `brust.run()` prebuilt-mode branch
+
+**Files:**
+- Modify: `runtime/index.ts` (the `brust.run()` method, around lines 182-262)
+
+In prebuilt mode, skip `buildIslands` and `buildMcpManifest`. Configure the islands dir from `BRUST_DIST_DIR/islands/` and read `mcp-manifest.json` from `BRUST_DIST_DIR`. `scanActions` is plugin-aliased in the bundle so the call returns the pre-baked list.
+
+- [ ] **Step 1: Edit the `run()` method**
+
+In `runtime/index.ts`, replace the body of `async run(opts: ...)` (the whole function from line ~182 down to the closing brace at line ~262). New body:
+
+```ts
+async run(opts: {
+  routes: import('./routes.ts').FlatRoute[]
+  entry: string
+  scanRoot?: string
+  /** Overrides merged into the underlying `serve()` call (main thread). */
+  serve?: Partial<Omit<ServeOptions, 'entry' | 'actions' | 'mcp'>>
+  /** Per-worker SAB size in bytes. Default 256 KB. */
+  sabBytes?: number
+}): Promise<void> {
+  const { existsSync } = await import('node:fs')
+  const { fileURLToPath } = await import('node:url')
+  const path = await import('node:path')
+
+  const prebuilt = process.env.BRUST_PREBUILT === '1'
+  const distDir = process.env.BRUST_DIST_DIR
+
+  const scanRoot = opts.scanRoot ?? path.dirname(fileURLToPath(opts.entry))
+  // scanActions is plugin-aliased in prebuilt bundles → returns pre-baked
+  // list with sourceFiles=[]. In dev mode it walks the filesystem.
+  const { actions, sourceFiles } = await this.scanActions({ roots: [scanRoot] })
+
+  if (!isWorker) {
+    const { port, workers, cacheMaxEntries } = await loadConfig()
+    console.log(`[brust] main: spawning ${workers} worker threads`)
+    if (cacheMaxEntries !== undefined) this.configureCache({ maxEntries: cacheMaxEntries })
+
+    if (prebuilt) {
+      // Pre-built islands live at <distDir>/islands.
+      const prebuiltIslandsDir = path.join(distDir!, 'islands')
+      if (existsSync(prebuiltIslandsDir)) {
+        this.configureIslandsDir(prebuiltIslandsDir)
+        console.log(`[brust] main: using pre-built islands at ${prebuiltIslandsDir}`)
+      }
+    } else {
+      const islandConfig = path.join(scanRoot, 'island.config.ts')
+      if (existsSync(islandConfig)) {
+        const { buildIslands: build } = await import('./islands/build.ts')
+        const islands = await build(islandConfig)
+        this.configureIslandsDir(islands.outDir)
+        console.log(`[brust] main: built ${islands.islandCount} island chunk(s)`)
+      }
+    }
+
+    this.registerRoutes(opts.routes)
+    const ssePaths = opts.routes
+      .filter((r) => r.chain[r.chain.length - 1].sse !== undefined)
+      .map((r) => r.fullPath)
+    if (ssePaths.length > 0) {
+      this.registerSsePaths(ssePaths)
+      console.log(`[brust] main: registered ${ssePaths.length} sse path(s): ${ssePaths.join(', ')}`)
+    }
+    const wsPaths = opts.routes
+      .filter((r) => r.chain[r.chain.length - 1].websocket !== undefined)
+      .map((r) => r.fullPath)
+    if (wsPaths.length > 0) {
+      this.registerWsPaths(wsPaths)
+      console.log(`[brust] main: registered ${wsPaths.length} ws path(s): ${wsPaths.join(', ')}`)
+    }
+    console.log(`[brust] main: scanActions found ${actions.length} action(s): ${actions.map((a) => a.id).join(', ')}`)
+
+    let mcpManifest: import('./mcp/manifest.ts').McpManifest
+    if (prebuilt) {
+      const manifestPath = path.join(distDir!, 'mcp-manifest.json')
+      mcpManifest = JSON.parse(await Bun.file(manifestPath).text())
+      console.log(`[brust] main: loaded pre-built mcp manifest (${mcpManifest.tools.length} tools + ${mcpManifest.resources.length} resources)`)
+    } else {
+      mcpManifest = await this.buildMcpManifest({
+        serverFiles: sourceFiles,
+        routesFile: path.join(scanRoot, 'routes.tsx'),
+        sourceRoots: [scanRoot],
+        actions,
+        routes: opts.routes,
+      })
+      console.log(`[brust] main: mcp manifest has ${mcpManifest.tools.length} tools + ${mcpManifest.resources.length} resources`)
+    }
+
+    await this.serve({
+      port,
+      workers,
+      entry: opts.entry,
+      actions,
+      mcp: { manifest: mcpManifest },
+      ...opts.serve,
+    })
+  } else {
+    const sab = new SharedArrayBuffer(opts.sabBytes ?? 256 * 1024)
+    const view = new Uint8Array(sab)
+
+    let mcpManifest: import('./mcp/manifest.ts').McpManifest | null
+    if (prebuilt) {
+      const manifestPath = path.join(distDir!, 'mcp-manifest.json')
+      mcpManifest = existsSync(manifestPath)
+        ? JSON.parse(await Bun.file(manifestPath).text())
+        : null
+    } else {
+      mcpManifest = await this.loadMcpManifest()
+    }
+    let mcpServer: import('./mcp/server.ts').McpServer | undefined
+    if (mcpManifest) {
+      const { makeMcpServer } = await import('./mcp/server.ts')
+      mcpServer = makeMcpServer({ manifest: mcpManifest, actions, routes: opts.routes })
+      console.log(`[brust] worker: mcp server ready (${mcpManifest.tools.length} tools)`)
+    }
+
+    const { makeRenderer: make } = await import('./routes.ts')
+    let wid: number | null = null
+    const renderer = make(opts.routes, view, { actions, getWorkerId: () => wid, mcp: mcpServer })
+    wid = this.registerRenderer(view, renderer)
+  }
+},
+```
+
+- [ ] **Step 2: Confirm dev mode still works**
+
+```bash
+BRUST_PORT=38290 BRUST_WORKERS=1 bun run example/hello-world/index.ts &
+sleep 1
+curl -fsS http://127.0.0.1:38290/ping
+curl -fsS -I http://127.0.0.1:38290/ | head -3
+kill %1
+wait 2>/dev/null
+```
+
+Expected:
+- `pong`
+- `HTTP/1.1 200 OK` on `/`
+
+If the server fails to start, inspect logs. The dev branch should be unchanged so any failure here is a bug in the edit.
+
+- [ ] **Step 3: Confirm baselines**
+
+```bash
+bun test runtime/ 2>&1 | tail -5
+bun test tests/integration.test.ts 2>&1 | tail -5
+cargo test --lib 2>&1 | tail -3
+```
+
+Expected: 103 / 70 / 93 pass — same as before.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add runtime/index.ts
+git commit -m "$(cat <<'EOF'
+feat(runtime): brust.run() prebuilt-mode branch
+
+Reads BRUST_PREBUILT/BRUST_DIST_DIR (set by the dist banner). In
+prebuilt mode: skip buildIslands, configure islands dir from
+<distDir>/islands; skip buildMcpManifest, load the pre-built JSON from
+<distDir>/mcp-manifest.json. scanActions runs unchanged — in the
+bundled context it's plugin-aliased to a pre-baked list, in dev mode
+it walks the filesystem as before.
+EOF
+)"
+git log -1 --format=%B
+```
+
+---
+
+## Task 7 — Integration test: build + run + smoke
+
+**Files:**
+- Create: `tests/cli-build.test.ts`
+
+End-to-end test: build the example app to a temp dir, spawn `bun run dist/index.js`, smoke every major path, verify clean error on missing entry. Mirrors the subprocess+curl pattern in `tests/integration.test.ts`.
+
+- [ ] **Step 1: Write the test**
+
+Write `tests/cli-build.test.ts`:
+
+```ts
+import { test, expect, afterAll } from 'bun:test'
+import { spawn, $ } from 'bun'
+import { existsSync } from 'node:fs'
+import { mkdtemp } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+
+const REPO = path.resolve(import.meta.dir, '..')
+
+let distDir: string
+let proc: ReturnType<typeof spawn> | undefined
+
+afterAll(async () => {
+  if (proc) {
+    proc.kill('SIGINT')
+    await proc.exited
+  }
+})
+
+test('brust build emits a complete dist tree from example/hello-world', async () => {
+  distDir = await mkdtemp(path.join(tmpdir(), 'brust-dist-cli-test-'))
+
+  const result = await $`bun ${path.join(REPO, 'runtime/cli/index.ts')} build ${path.join(REPO, 'example/hello-world/index.ts')} --out-dir ${distDir}`.nothrow()
+  expect(result.exitCode).toBe(0)
+
+  expect(existsSync(path.join(distDir, 'index.js'))).toBe(true)
+  expect(existsSync(path.join(distDir, 'mcp-manifest.json'))).toBe(true)
+  expect(existsSync(path.join(distDir, '_actions-prebuilt.ts'))).toBe(true)
+  expect(existsSync(path.join(distDir, 'islands/_bootstrap.js'))).toBe(true)
+  expect(existsSync(path.join(distDir, 'islands/_react.js'))).toBe(true)
+  expect(existsSync(path.join(distDir, 'islands/Counter.js'))).toBe(true)
+
+  const triple = `${process.platform}-${process.arch}`
+  expect(existsSync(path.join(distDir, 'native', `index.${triple}.node`))).toBe(true)
+
+  const bundle = await Bun.file(path.join(distDir, 'index.js')).text()
+  expect(bundle).toContain("process.env.BRUST_PREBUILT")
+  expect(bundle).toContain("BRUST_DIST_DIR")
+}, 60_000)
+
+test('bun run dist/index.js serves all major paths', async () => {
+  const port = 38291
+  proc = spawn({
+    cmd: ['bun', 'run', path.join(distDir, 'index.js')],
+    env: {
+      ...process.env,
+      BRUST_PORT: String(port),
+      BRUST_WORKERS: '1',
+      RUST_LOG: 'brust=warn',
+    },
+    stdout: 'pipe',
+    stderr: 'inherit',
+  })
+  await waitForPort(port, 10_000)
+
+  // /ping — Rust-native route
+  const ping = await fetch(`http://127.0.0.1:${port}/ping`)
+  expect(ping.status).toBe(200)
+  expect(await ping.text()).toBe('pong\n')
+
+  // / — React SSR through the worker pool
+  const home = await fetch(`http://127.0.0.1:${port}/`)
+  expect(home.status).toBe(200)
+  const homeBody = await home.text()
+  expect(homeBody).toMatch(/Hello/i)
+
+  // Island chunk served from dist/islands
+  const counter = await fetch(`http://127.0.0.1:${port}/_brust/islands/Counter.js`)
+  expect(counter.status).toBe(200)
+  expect(counter.headers.get('content-type')).toContain('javascript')
+
+  // MCP initialize roundtrip
+  const mcp = await fetch(`http://127.0.0.1:${port}/_brust/mcp`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: { protocolVersion: '2025-06-18', capabilities: {} },
+    }),
+  })
+  expect(mcp.status).toBe(200)
+  const mcpBody = await mcp.json() as any
+  expect(mcpBody.jsonrpc).toBe('2.0')
+  expect(mcpBody.id).toBe(1)
+  expect(mcpBody.result).toBeDefined()
+}, 30_000)
+
+test('brust build with missing entry exits 1 with a clear message', async () => {
+  const result = await $`bun ${path.join(REPO, 'runtime/cli/index.ts')} build /no/such/entry.ts`.nothrow()
+  expect(result.exitCode).toBe(1)
+  expect(result.stderr.toString()).toContain('no entry file at /no/such/entry.ts')
+})
+
+test('brust (no subcommand) exits 1', async () => {
+  const result = await $`bun ${path.join(REPO, 'runtime/cli/index.ts')}`.nothrow()
+  expect(result.exitCode).toBe(1)
+  expect(result.stderr.toString()).toContain('missing subcommand')
+})
+
+async function waitForPort(port: number, timeoutMs: number): Promise<void> {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const r = await fetch(`http://127.0.0.1:${port}/ping`)
+      if (r.ok) return
+    } catch {
+      // not ready yet
+    }
+    await new Promise((r) => setTimeout(r, 100))
+  }
+  throw new Error(`port ${port} did not start within ${timeoutMs}ms`)
+}
+```
+
+- [ ] **Step 2: Run the new test**
+
+```bash
+bun test tests/cli-build.test.ts 2>&1 | tail -20
+```
+
+Expected: 4 tests pass.
+
+If anything fails, read the error carefully. Common issues:
+- `Counter.js` missing → island config not picked up (check `example/hello-world/island.config.ts` still has `Counter`)
+- Bundle missing banner → check Task 5 step 1 wrote `banner:` into Bun.build options
+- Native binary missing → run `bun --filter runtime run build` first (the binary should already exist if the repo is set up, but rebuild if needed)
+- Port already in use → bump `38291` to a free port
+- Bundle import fails → check that the native-shim plugin's `filter` regex matches `runtime/index.js` on this platform
+
+- [ ] **Step 3: Re-run all baselines to confirm no regression**
+
+```bash
+bun test runtime/ 2>&1 | tail -5
+bun test tests/ 2>&1 | tail -10
+cargo test --lib 2>&1 | tail -3
+```
+
+Expected: 103 / 70 + new 4 = 74 / 93 — all pass.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add tests/cli-build.test.ts
+git commit -m "$(cat <<'EOF'
+test(cli): integration test for brust build → dist run
+
+Builds the example/hello-world app to a temp dir, spawns
+bun run <dist>/index.js, and smokes:
+  - /ping (Rust-native)
+  - / (React SSR via worker pool)
+  - /_brust/islands/Counter.js (chunk served from dist/islands)
+  - /_brust/mcp initialize roundtrip
+Plus error-path tests for missing entry and missing subcommand.
+EOF
+)"
+git log -1 --format=%B
+```
+
+---
+
+## Task 8 — Manual real-browser smoke (Chrome DevTools MCP)
+
+**Files:** none. Documentation step only — produce evidence the prebuilt bundle works in a real browser. Session 9's lesson: unit tests can't catch React-Root unmounting or DOM-swap bugs.
+
+- [ ] **Step 1: Build to a known temp dir**
+
+```bash
+rm -rf /tmp/brust-dist-smoke
+bun runtime/cli/index.ts build example/hello-world/index.ts --out-dir /tmp/brust-dist-smoke
+```
+
+Expected: successful build with no errors.
+
+- [ ] **Step 2: Boot the prebuilt server on a free port**
+
+```bash
+BRUST_PORT=38292 BRUST_WORKERS=2 bun run /tmp/brust-dist-smoke/index.js &
+sleep 1
+curl -fsS http://127.0.0.1:38292/ping
+```
+
+Expected: `pong`
+
+- [ ] **Step 3: Open in Chrome DevTools MCP and navigate**
+
+Use the `mcp__plugin_chrome-devtools-mcp_chrome-devtools__*` tools to:
+
+1. `new_page` → navigate to `http://127.0.0.1:38292/`
+2. Wait for load, screenshot
+3. Click the "Blog" nav link (SPA nav via `/_brust/page/`)
+4. Click "Profile" link
+5. Click back to "Home" → verify Counter hydrates (click it, count increments)
+6. `list_console_messages` → expect no errors
+
+Report findings inline. If any test fails (hydration broken, console errors, navigation hang), STOP and report — this is a regression.
+
+- [ ] **Step 4: Tear down**
+
+```bash
+kill %1
+wait 2>/dev/null
+```
+
+- [ ] **Step 5: No commit** (this task only produces verification evidence; no files changed).
+
+---
+
+## Task 9 — Update architecture.md
+
+**Files:**
+- Modify: `architecture.md`
+
+Promote `brust build` from "Designed, not built" to "Built". Update the Status section bullet.
+
+- [ ] **Step 1: Find the Status > Built list**
+
+`architecture.md` has a `## Status` section near the bottom (around line 953). Read it to find the right insertion point and to check for any current wording about `brust build`.
+
+```bash
+grep -n "brust build\|Project tooling\|## Status\|Designed, not built\|Built:" architecture.md
+```
+
+- [ ] **Step 2: Add the new Built bullet**
+
+In the **Built:** list (right after the Navigation interceptor bullet, around line 986), add a new bullet. The exact text:
+
+```markdown
+- `brust build` CLI emits a self-contained `./dist/` directory (`index.js` bundled with `Bun.build`, `islands/*` from pre-built chunks, `mcp-manifest.json`, `native/index.<triple>.node`). Run-phase: `bun run ./dist/index.js` boots without further build work. Two Bun.build plugins (native-shim, actions-prebuilt) replace the napi-rs platform shim and the filesystem-walking action scanner with prebuilt-aware variants during bundling. Banner injects `BRUST_PREBUILT=1` + `BRUST_DIST_DIR=import.meta.dir` so the runtime's `brust.run()` skips the build steps it would normally run on each boot. Single platform per build; multi-platform output is a CI matrix concern not in scope. Dev flow (`bun run example/hello-world/index.ts`) unchanged.
+```
+
+- [ ] **Step 3: Remove the matching "Designed, not built" entry**
+
+In the **Designed, not built:** list (~line 988+), find the bullet that currently says:
+
+```
+- Project tooling: `brust new` / `dev` / `build` / `invalidate`
+```
+
+Replace it with (note `build` is removed from the list):
+
+```
+- Project tooling: `brust new` / `dev` / `invalidate` (other three still designed-not-built)
+```
+
+If the exact wording differs, adapt minimally — the goal is "`build` no longer in the not-built list".
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add architecture.md
+git commit -m "$(cat <<'EOF'
+docs(architecture): brust build CLI shipped — promote to Built list
+
+Adds Built bullet describing the dist pipeline; removes `build` from
+the "designed not built" Project tooling line (new/dev/invalidate
+remain unimplemented).
+EOF
+)"
+git log -1 --format=%B
+```
+
+---
+
+## Task 10 — Final verification + push
+
+- [ ] **Step 1: Run the full baseline matrix**
+
+```bash
+cargo test --lib 2>&1 | tail -5
+bun test runtime/ 2>&1 | tail -5
+bun test tests/ 2>&1 | tail -10
+```
+
+Expected: 93 / 103 / 74 (= 70 prior + 4 new) — all pass.
+
+- [ ] **Step 2: Confirm dev mode + prebuilt mode both still work**
+
+```bash
+# dev mode
+BRUST_PORT=38293 BRUST_WORKERS=1 bun run example/hello-world/index.ts &
+sleep 1
+curl -fsS http://127.0.0.1:38293/ping
+kill %1
+wait 2>/dev/null
+
+# prebuilt mode (rebuild + run)
+rm -rf /tmp/brust-dist-final
+bun runtime/cli/index.ts build example/hello-world/index.ts --out-dir /tmp/brust-dist-final
+BRUST_PORT=38294 BRUST_WORKERS=1 bun run /tmp/brust-dist-final/index.js &
+sleep 1
+curl -fsS http://127.0.0.1:38294/ping
+kill %1
+wait 2>/dev/null
+```
+
+Expected: both `pong`.
+
+- [ ] **Step 3: Review the full commit chain**
+
+```bash
+git log --oneline f39f997..HEAD
+```
+
+Expected: ~7 commits in order:
+1. `feat(islands): optional outDir on buildIslands` (Task 1)
+2. `feat(cli): scaffold brust CLI dispatcher` (Task 2)
+3. `feat(cli): Bun.build plugin for native .node resolution` (Task 3)
+4. `feat(cli): actions prebuilt plugin + generator` (Task 4)
+5. `feat(cli): brust build orchestrator` (Task 5)
+6. `feat(runtime): brust.run() prebuilt-mode branch` (Task 6)
+7. `test(cli): integration test for brust build → dist run` (Task 7)
+8. `docs(architecture): brust build CLI shipped — promote to Built list` (Task 9)
+
+(Task 8 was verification-only with no commit.)
+
+- [ ] **Step 4: Push to origin/main**
+
+This project has standing consent for `git push origin main` after clean commits. Push:
+
+```bash
+git push origin main
+```
+
+- [ ] **Step 5: Report**
+
+Print to the user:
+- Final commit SHA (`git log -1 --format=%H`)
+- Baselines (93 / 103 / 74)
+- Confirmation that both dev and prebuilt modes were smoke-tested
+
+---
+
+## Acceptance criteria (mirrors spec §Acceptance criteria)
+
+The plan is done when:
+
+1. `bun runtime/cli/index.ts build example/hello-world/index.ts --out-dir /tmp/brust-dist` succeeds.
+2. `/tmp/brust-dist/` contains `index.js`, `mcp-manifest.json`, `islands/<expected files>`, `native/index.<triple>.node`.
+3. `bun run /tmp/brust-dist/index.js` boots, listens, and serves `/ping`, `/`, `/_brust/islands/Counter.js`, `/_brust/mcp` (initialize) — all 200.
+4. `tests/cli-build.test.ts` passes (4 tests).
+5. `bun run example/hello-world/index.ts` (dev mode) still works identically to today.
+6. Baselines: Rust 93 / Runtime 103 / Integration 70 + 4 new — all green.
+7. Chrome MCP smoke on prebuilt bundle: Home → Blog → Profile → Home, Counter hydrates, no console errors.
+
+---
+
+## Risks & mitigation (for the executing agent)
+
+| Risk | What to do |
+|---|---|
+| Bun.build `onResolve` plugin signature has changed in current Bun version | Read the Bun docs (`bun build` plugin API) and adapt the plugin. The core idea (alias an absolute path on resolve) is stable; the function shape may need tweaks. |
+| `runtime/index.js` filter regex doesn't match on Windows | Out of scope — Brust currently targets macOS/Linux. If the test fails on a Windows runner, that's a separate concern. |
+| `Bun.file(manifestPath).text()` in prebuilt mode is slow | It's a one-time boot cost; not worth optimising in MVP. |
+| Banner injection breaks Bun.build's module wrapping | If Bun rejects the `banner` option, switch to wrapping the entry: build a tiny wrapper file `<outDir>/_entry.ts` that sets the env vars then imports the real entry, and bundle that instead. |
+| Action prebuilt file's import paths use absolute paths and break across machines | dist is rebuilt per machine, so absolute paths are fine. If you want portability, switch to relative paths in `_actions-prebuilt.ts` — they need to resolve from the file's *own* location to the user's source files, which spans the entryDir → action file tree. Defer until needed. |
+| Existing `buildIslands` callers break because of the signature change | The change is backwards-compatible (new arg is optional with default = old behaviour). Existing callers (`runtime/index.ts` line ~206) pass only `configPath`. If Task 1 broke something, the wrong default was wired. |
