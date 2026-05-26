@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use napi::bindgen_prelude::Promise;
 use napi::threadsafe_function::ThreadsafeFunction;
 use parking_lot::RwLock;
+use tokio::sync::mpsc;
 
 /// Renderer signature: takes path (String), writes bytes into the worker's pre-registered
 /// SharedArrayBuffer, returns Promise<u32> = bytes written (0 = oversized error).
@@ -22,12 +23,30 @@ pub struct BufPtr(pub *mut u8);
 unsafe impl Send for BufPtr {}
 unsafe impl Sync for BufPtr {}
 
+/// One chunk delivered from a worker's `napi_render_chunk` call to handle_conn's
+/// per-request chunk loop. `ack` resolves the worker's awaiting Promise so the
+/// next chunk can be written into the SAB without overlapping.
+pub enum RenderChunk {
+    /// Chunk body (first chunk includes meta prefix per spec §4).
+    Bytes { data: Vec<u8>, ack: tokio::sync::oneshot::Sender<()> },
+    /// `napi_render_chunk(_, 0)` — close the channel, terminate the response.
+    Final { ack: tokio::sync::oneshot::Sender<()> },
+}
+
+/// Per-worker per-request slot. Installed by handle_conn BEFORE calling
+/// `tsfn.call_async`; cleared by `RenderSlotGuard::drop` on exit (RAII —
+/// survives panic, cancellation, early returns).
+pub struct RenderSlot {
+    pub chunk_tx: mpsc::Sender<RenderChunk>,
+}
+
 pub struct TsfnEntry {
     pub id: u32,
     pub tsfn: RendererTsfn,
     pub buf_ptr: BufPtr,
     pub buf_len: usize,
     pub in_flight: AtomicU32,
+    pub render_slot: parking_lot::Mutex<Option<RenderSlot>>,
 }
 
 impl TsfnEntry {
@@ -38,6 +57,21 @@ impl TsfnEntry {
 }
 
 pub struct InFlightGuard(Arc<TsfnEntry>);
+
+/// RAII guard that clears `TsfnEntry::render_slot` on Drop. Use as
+/// `let _slot_guard = RenderSlotGuard { entry: &entry };` in handle_conn
+/// after installing the slot. Survives panic + tokio cancellation +
+/// early returns — all paths that would otherwise leak the sender and
+/// strand the next request on this worker.
+pub struct RenderSlotGuard<'e> {
+    pub entry: &'e Arc<TsfnEntry>,
+}
+
+impl Drop for RenderSlotGuard<'_> {
+    fn drop(&mut self) {
+        self.entry.render_slot.lock().take();
+    }
+}
 
 impl Drop for InFlightGuard {
     fn drop(&mut self) {
@@ -64,6 +98,7 @@ impl WorkerPool {
             buf_ptr,
             buf_len,
             in_flight: AtomicU32::new(0),
+            render_slot: parking_lot::Mutex::new(None),
         });
         self.entries.write().push(entry);
         id
@@ -127,4 +162,45 @@ pub async fn dispatch_ws(
         .map_err(|e| {
             napi::Error::from_reason(format!("ws dispatch failed: {e}"))
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::sync::{mpsc, oneshot};
+
+    #[test]
+    fn render_slot_set_clear_round_trip() {
+        let slot_mu: parking_lot::Mutex<Option<RenderSlot>> = parking_lot::Mutex::new(None);
+        assert!(slot_mu.lock().is_none());
+        let (tx, _rx) = mpsc::channel::<RenderChunk>(1);
+        *slot_mu.lock() = Some(RenderSlot { chunk_tx: tx });
+        assert!(slot_mu.lock().is_some());
+        let taken = slot_mu.lock().take();
+        assert!(taken.is_some());
+        assert!(slot_mu.lock().is_none());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn render_chunk_enum_bytes_ack_round_trip() {
+        let (tx, mut rx) = mpsc::channel::<RenderChunk>(1);
+        let (ack_tx, ack_rx) = oneshot::channel::<()>();
+        tx.send(RenderChunk::Bytes { data: vec![1, 2, 3], ack: ack_tx }).await.unwrap();
+        let got = rx.recv().await.unwrap();
+        match got {
+            RenderChunk::Bytes { data, ack } => {
+                assert_eq!(data, vec![1, 2, 3]);
+                ack.send(()).unwrap();
+            }
+            _ => panic!("expected Bytes variant"),
+        }
+        ack_rx.await.unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn render_chunk_enum_final_ack_drop_returns_err() {
+        let (ack_tx, ack_rx) = oneshot::channel::<()>();
+        drop(ack_tx);
+        assert!(ack_rx.await.is_err());
+    }
 }
