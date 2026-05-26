@@ -581,6 +581,52 @@ async function navigationBranch(
     return
   }
 
+  // Run the middleware chain before rendering — mirrors the render branch's
+  // middleware pattern. A short-circuit verdict is emitted as the navigation
+  // response (client treats any non-2xx as a fallback trigger → full reload).
+  const NAV_MARKER: unique symbol = Symbol.for('brust.streamRender')
+  type NavMarkerResponse = RouteResponse & { _brustStream?: typeof NAV_MARKER }
+  const navTerminal: () => Promise<NavMarkerResponse> = async () => ({
+    status: 200,
+    body: '',
+    contentType: 'application/json; charset=utf-8',
+    _brustStream: NAV_MARKER,
+  })
+
+  // navigationBranch receives a 'navigation' call, but composeChain only
+  // needs req + middleware — cast to satisfy the type.
+  const navChain = composeChain(
+    (call as unknown as Extract<RouteCall, { kind: 'render' }>).req,
+    flat.middleware,
+    navTerminal,
+  )
+
+  let navVerdict: NavMarkerResponse
+  try {
+    navVerdict = await navChain() as NavMarkerResponse
+  } catch (err) {
+    console.error('[brust] navigation middleware threw:', err)
+    await emitSingleChunkResponse(view, napi, workerId, encoder, {
+      status: 500,
+      contentType: 'application/json; charset=utf-8',
+      body: '{"error":"middleware threw"}',
+    })
+    return
+  }
+
+  if (navVerdict._brustStream !== NAV_MARKER) {
+    // Middleware short-circuited — emit the verdict. Client's non-2xx check
+    // triggers the full-reload fallback so the user hits the real route and
+    // sees the middleware's challenge page.
+    await emitSingleChunkResponse(view, napi, workerId, encoder, {
+      status: navVerdict.status,
+      contentType: navVerdict.contentType ?? 'application/json; charset=utf-8',
+      body: navVerdict.body,
+      headers: navVerdict.headers,
+    })
+    return
+  }
+
   try {
     const element = await buildRenderElement(call as any, flat, getWorkerId)
     if (!element) throw new Error('render setup failed')
@@ -621,15 +667,15 @@ async function navigationBranch(
   }
 }
 
-/** Build the React element for a render call: runs loaders top-down, builds
- * the element bottom-up wrapping in OutletContext.Provider so nested routes
- * receive the deeper element via <Outlet />. Also runs the middleware chain;
- * the terminal returns a synthesised "render-only" element wrapped in any
- * short-circuit/redirect markers via the middleware-applied transform.
+/** Build the React element for a render or navigation call: runs loaders
+ * top-down, builds the element bottom-up wrapping in OutletContext.Provider
+ * so nested routes receive the deeper element via <Outlet />. The caller
+ * (render branch or navigationBranch) is responsible for running the
+ * middleware chain BEFORE calling this — this helper assumes middleware
+ * has already passed.
  *
- * Throws on setup failure (loader throw, middleware throw, etc.). The caller
- * synthesises a 500 in that case — renderBranchStreaming is reserved for
- * actual element-tree rendering where Suspense + errorBoundary apply.
+ * Throws on setup failure (loader throw, etc.). The caller synthesises a 500
+ * in that case.
  */
 async function buildRenderElement(
   call: Extract<RouteCall, { kind: 'render' }>,

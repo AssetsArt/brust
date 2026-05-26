@@ -1095,3 +1095,21 @@ All cross-references resolved.
 ---
 
 **Total: 6 tasks; ~6-8 hours engineering; 4 runtime unit + 3 integration + 3 Rust = 10 new tests → 264 total.**
+
+---
+
+## Follow-up corrections (T7, 2026-05-26)
+
+Final whole-chain review of the shipped navigation interceptor (commits dbe7300..a024b32) identified two correctness gaps that were addressed in a follow-up commit.
+
+### Task 3 correction — `navigationBranch` must run the middleware chain
+
+The original Task 3 implementation skipped `composeChain` in `navigationBranch`. This was a security gap: auth-guarded routes (e.g., `/admin/dashboard` with `authRequired` middleware) would return their rendered content through `/_brust/page/{path}` even without the required cookie.
+
+**Correction shipped in T7:** `navigationBranch` now mirrors the render branch's middleware pattern — `composeChain` runs with a `Symbol.for('brust.streamRender')` marker terminal, the verdict is awaited, and a short-circuit verdict (status, body, headers from middleware) is emitted as the navigation response. The client treats any non-2xx as a fallback trigger and reloads, so the user sees the middleware's challenge at the real URL. Middleware throws emit a 500 JSON envelope.
+
+A new integration test (port 38243) verifies that `/_brust/page/admin/dashboard` without a cookie returns 401 and does not leak the rendered admin content. Total integration tests: 70 (was 69).
+
+### Task 4 correction — `swapMainContent` uses `DOMParser + importNode`
+
+The original Task 4 implementation used `Range.createContextualFragment`. The shipped T4 fixup switched to `DOMParser('text/html') + importNode` (the inert-parse approach, where scripts in the fragment are not executed during parsing). The trust-boundary commentary is preserved. Spec §7 has been updated to show the correct implementation.

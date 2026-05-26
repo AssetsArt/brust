@@ -1866,3 +1866,26 @@ test('nav: page without <main> falls back to shipping full HTML in html field', 
     proc.kill('SIGINT'); await proc.exited
   }
 }, 15_000)
+
+test('nav: /_brust/page/<protected> without cookie returns middleware verdict (401)', async () => {
+  // /admin (index) is guarded by authRequired middleware on the parent layout
+  // (no cookie → 401). The navigation endpoint must honour middleware
+  // short-circuits, otherwise it would leak guarded content via the JSON envelope.
+  const proc = spawn({
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
+    env: NAV_ENV('38243'),
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const resp = await fetch(`http://127.0.0.1:${port}/_brust/page/admin`)
+    // Middleware short-circuits with 401 before render happens — the client
+    // will treat any non-2xx as a fallback trigger (full reload).
+    expect(resp.status).toBe(401)
+    // The response body should NOT contain the rendered admin dashboard.
+    const body = await resp.text()
+    expect(body).not.toContain('Admin Dashboard')
+  } finally {
+    proc.kill('SIGINT'); await proc.exited
+  }
+}, 15_000)

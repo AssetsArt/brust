@@ -163,7 +163,7 @@ if (call.kind === 'navigation') {
 }
 ```
 
-`navigationBranch` reuses the existing `buildRenderElement` helper (factored from `renderBranchStreaming` in T5 of HTML Streaming) to construct the React element + run loaders + apply middleware. It then renders synchronously via `renderToString` (the JSON response is small enough not to need streaming) and extracts `<main>` + `<title>`.
+`navigationBranch` MUST run the middleware chain (via `composeChain`) before calling `buildRenderElement` — otherwise auth-guarded routes would leak their content via the JSON envelope. It reuses the same stream-marker terminal pattern as the render branch: if middleware short-circuits, the verdict (status + body + headers) is emitted directly and the client's non-2xx check triggers a full-reload fallback so the user hits the real middleware challenge. Only if the marker comes back through does the function proceed to `buildRenderElement` + `renderToString`.
 
 ```typescript
 async function navigationBranch(
@@ -177,6 +177,35 @@ async function navigationBranch(
     })
     return
   }
+
+  // Run middleware chain BEFORE rendering — same stream-marker pattern as the
+  // render branch. Short-circuit verdict → emit as navigation response (client
+  // sees non-2xx → full-reload fallback). Middleware throw → 500 JSON envelope.
+  const NAV_MARKER = Symbol.for('brust.streamRender')
+  const navChain = composeChain(call.req, flat.middleware, async () => ({
+    status: 200, body: '', contentType: 'application/json; charset=utf-8',
+    _brustStream: NAV_MARKER,
+  }))
+  let verdict
+  try {
+    verdict = await navChain()
+  } catch (err) {
+    await emitSingleChunkResponse(view, napi, workerId, encoder, {
+      status: 500, contentType: 'application/json; charset=utf-8',
+      body: '{"error":"middleware threw"}',
+    })
+    return
+  }
+  if (verdict._brustStream !== NAV_MARKER) {
+    await emitSingleChunkResponse(view, napi, workerId, encoder, {
+      status: verdict.status,
+      contentType: verdict.contentType ?? 'application/json; charset=utf-8',
+      body: verdict.body,
+      headers: verdict.headers,
+    })
+    return
+  }
+
   try {
     const element = await buildRenderElement(call, flat, getWorkerId)
     if (!element) throw new Error('render setup failed')
@@ -217,7 +246,7 @@ The navigation variant has the SAME fields as render — Rust's `rewrite_envelop
 
 ## 7. Client interceptor + island re-hydration
 
-**Refactor `runtime/islands/bootstrap.ts`** — extract the existing markers-scan-and-hydrate loop into a reusable function, expose it via `window.__brustHydrate` so the interceptor can call it:
+**Refactor `runtime/islands/bootstrap.ts`** — extract the existing markers-scan-and-hydrate loop into a reusable function, exported from the module so the interceptor can call it directly:
 
 ```typescript
 function hydrateMarkersIn(root: ParentNode = document.body): void {
@@ -235,14 +264,15 @@ hydrateMarkersIn(document.body)  // initial-load entry — same behaviour as tod
 
 ```typescript
 function swapMainContent(main: HTMLElement, html: string): void {
-  // Parse the trusted server response via the standard browser parser
-  // and replace <main>'s children. Same trust assumption as the initial
-  // server-rendered response.
-  const range = document.createRange()
-  range.selectNodeContents(main)
-  range.deleteContents()
-  const fragment = range.createContextualFragment(html)
-  main.appendChild(fragment)
+  // Parse the trusted server response via DOMParser (inert parse — scripts
+  // in the fragment are not executed during parsing) then importNode the
+  // children into the live document and replace <main>'s children.
+  // Same trust assumption as the initial server-rendered response — XSS in
+  // server-rendered React would propagate either way.
+  const doc = new DOMParser().parseFromString(html, 'text/html')
+  main.replaceChildren(
+    ...Array.from(doc.body.childNodes).map((n) => document.importNode(n, true))
+  )
 }
 ```
 
