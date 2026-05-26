@@ -5,8 +5,10 @@ export type HydrateTrigger = 'load' | 'idle' | 'visible' | 'interaction'
 
 export interface IslandProps<P> {
   /** Stable id — must match a key in the user's island.config.ts so the
-   * client bootstrap can resolve the chunk URL `/_brust/islands/<id>.js`. */
-  id: string
+   * client bootstrap can resolve the chunk URL `/_brust/islands/<id>.js`.
+   * If omitted, falls back to `component.name`. Pass an explicit `id`
+   * when running a build that mangles function names. */
+  id?: string
   /** Component rendered server-side INSIDE the marker. Same component
    * the client chunk default-exports — SSR HTML must match the post-hydrate
    * tree to avoid React reconciliation warnings. */
@@ -37,11 +39,18 @@ export function Island<P extends Record<string, unknown>>({
   hydrate = 'load',
 }: IslandProps<P>): ReactNode {
   __used = true
+  const resolvedId = id ?? Component.name
+  if (!resolvedId) {
+    throw new Error(
+      '<Island> requires an `id` prop because the component has no `.name` ' +
+      '(anonymous default export or minified function). Pass id="..." explicitly.',
+    )
+  }
   const propsJson = JSON.stringify(props)
   return createElement(
     'div',
     {
-      'data-brust-island': id,
+      'data-brust-island': resolvedId,
       'data-brust-props': propsJson,
       'data-brust-hydrate': hydrate,
     },

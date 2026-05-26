@@ -17,7 +17,6 @@ export default function HelloWorld({ workerId }: RouteContext) {
         boots React in the browser. Everything else stays static HTML.
       </p>
       <Island
-        id="Counter"
         component={Counter}
         props={{ start: 0, label: 'clicks' }}
         hydrate="load"
