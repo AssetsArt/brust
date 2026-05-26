@@ -58,6 +58,24 @@ function registerActionsInternal(actions: Array<{ id: string }>): number {
   return (native as any).registerActions(actions.map((a) => a.id))
 }
 
+/** Read and schema-validate a prebuilt mcp-manifest.json at an absolute path.
+ *  Returns null if the file does not exist. Throws on malformed JSON or version mismatch. */
+async function readManifestFromPath(
+  absolutePath: string,
+): Promise<import('./mcp/manifest.ts').McpManifest | null> {
+  const f = Bun.file(absolutePath)
+  if (!(await f.exists())) return null
+  const text = await f.text()
+  let parsed: unknown
+  try { parsed = JSON.parse(text) } catch (e) {
+    throw new Error(`mcp-manifest.json is malformed: ${e instanceof Error ? e.message : String(e)}`)
+  }
+  if (!parsed || typeof parsed !== 'object' || (parsed as { version?: unknown }).version !== 1) {
+    throw new Error(`mcp-manifest.json version mismatch (expected 1)`)
+  }
+  return parsed as import('./mcp/manifest.ts').McpManifest
+}
+
 export const brust = {
   async serve(opts: ServeOptions): Promise<void> {
     if (opts.actions && opts.actions.length > 0) {
@@ -239,11 +257,13 @@ export const brust = {
       }
       console.log(`[brust] main: scanActions found ${actions.length} action(s): ${actions.map((a) => a.id).join(', ')}`)
 
-      let mcpManifest: import('./mcp/manifest.ts').McpManifest
+      let mcpManifest: import('./mcp/manifest.ts').McpManifest | null
       if (prebuilt) {
         const manifestPath = path.join(distDir!, 'mcp-manifest.json')
-        mcpManifest = JSON.parse(await Bun.file(manifestPath).text())
-        console.log(`[brust] main: loaded pre-built mcp manifest (${mcpManifest.tools.length} tools + ${mcpManifest.resources.length} resources)`)
+        mcpManifest = await readManifestFromPath(manifestPath)
+        if (mcpManifest) {
+          console.log(`[brust] main: loaded pre-built mcp manifest (${mcpManifest.tools.length} tools + ${mcpManifest.resources.length} resources)`)
+        }
       } else {
         mcpManifest = await this.buildMcpManifest({
           serverFiles: sourceFiles,
@@ -260,7 +280,7 @@ export const brust = {
         workers,
         entry: opts.entry,
         actions,
-        mcp: { manifest: mcpManifest },
+        ...(mcpManifest ? { mcp: { manifest: mcpManifest } } : {}),
         ...opts.serve,
       })
     } else {
@@ -270,9 +290,7 @@ export const brust = {
       let mcpManifest: import('./mcp/manifest.ts').McpManifest | null
       if (prebuilt) {
         const manifestPath = path.join(distDir!, 'mcp-manifest.json')
-        mcpManifest = existsSync(manifestPath)
-          ? JSON.parse(await Bun.file(manifestPath).text())
-          : null
+        mcpManifest = await readManifestFromPath(manifestPath)
       } else {
         mcpManifest = await this.loadMcpManifest()
       }
