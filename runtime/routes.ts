@@ -2,6 +2,7 @@ import { createContext, createElement, useContext, type ComponentType, type Reac
 import { renderToString } from 'react-dom/server'
 import { Buffer } from 'node:buffer'
 import { consumeIslandUsedFlag } from './islands/island.tsx'
+import { ISLANDS_IMPORTMAP_AND_BOOTSTRAP } from './islands/importmap.ts'
 import type { ActionDef } from './actions.ts'
 
 // Permanently-unaborted AbortSignal sentinel for non-SSE routes.
@@ -901,21 +902,6 @@ function packResponse(
   if (written === undefined) return 0
   return 2 + metaBytes.length + written
 }
-
-const ISLANDS_IMPORTMAP_AND_BOOTSTRAP =
-  '<script type="importmap">' +
-  JSON.stringify({
-    imports: {
-      // Both react and react/jsx-runtime resolve to the SAME chunk; the
-      // chunk re-exports both surfaces. Browser fetches it once and slices
-      // different named exports for each import statement.
-      'react': '/_brust/islands/_react.js',
-      'react/jsx-runtime': '/_brust/islands/_react.js',
-      'react-dom/client': '/_brust/islands/_react-dom.js',
-    },
-  }) +
-  '</script>' +
-  '<script type="module" src="/_brust/islands/_bootstrap.js" defer></script>'
 
 /** Prepend the importmap + bootstrap <script> tags to the rendered HTML.
  * Browsers tolerate <script> before <html>; this works for full-document
