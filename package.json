@@ -2,6 +2,9 @@
   "name": "brust",
   "version": "0.1.0",
   "private": true,
+  "bin": {
+    "brust": "./runtime/cli/index.ts"
+  },
   "napi": {
     "binaryName": "brust",
     "targets": [
