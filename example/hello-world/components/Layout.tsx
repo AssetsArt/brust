@@ -67,7 +67,7 @@ export default function Layout({ title, children }: LayoutProps) {
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>{title} · Brust demo</title>
+        <title>{`${title} · Brust demo`}</title>
         <style>{STYLES}</style>
       </head>
       <body>
