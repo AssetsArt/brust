@@ -752,10 +752,8 @@ export default {
 
 ### HTML Streaming
 
-`renderToPipeableStream` writes the page as chunks while loaders are still
-resolving — useful for Suspense + slow data. Compared to the current
-`renderToString` path, the SAB acts as a one-chunk pipe rather than a
-single-shot buffer.
+**Shipped.** `renderToPipeableStream` writes the page as chunks while loaders are still
+resolving — useful for Suspense + slow data. Auto-detected per request: routes whose tree has no pending Suspense at `onShellReady` emit a single-chunk Content-Length response (byte-identical to the prior renderToString path for no-Suspense pages); routes with pending Suspense stream via HTTP/1.1 chunked transfer-encoding.
 
 The integration shape:
 
@@ -777,8 +775,7 @@ Ordering relies on napi's tsfn FIFO guarantee for calls from the same JS
 context. Backpressure is implicit: the Worker can't enqueue the next signal
 until the current one's `await` resumes after the Rust write.
 
-Currently deferred from build because most pages don't benefit (latency win
-small relative to render time), but the API surface above is the target.
+Shipped in 2026-05. Spec: `docs/superpowers/specs/2026-05-26-html-streaming-design.md`. Implementation plan: `docs/superpowers/plans/2026-05-26-html-streaming.md`.
 
 ### Client JS budget (target)
 
@@ -978,6 +975,7 @@ Bun.serve baseline source: `example/bun-serve-baseline/index.ts`.
 - Agentic surface (MCP) — Mounts a Model Context Protocol 2025-06-18 server at `POST /_brust/mcp`. Server actions (discovered by `brust.scanActions()`) become MCP **tools**; route loaders become **resources** at `brust:///<path-template>`. Schemas are extracted at boot via the TypeScript compiler API (`runtime/mcp/extractor.ts`) and cached to `.brust/mcp-manifest.json`. Capabilities declared by the server: tools, resources, prompts (empty), logging. Transport: POST-only (SSE leg for streaming notifications is deferred). Authentication: tool calls flow through the action's existing middleware chain — gated tools still 401 (surfaced as `isError: true` in the MCP response). Worker bootstrap reads the persisted manifest via `brust.loadMcpManifest()` and constructs the `McpServer` from the example app's entry file.
 - Real-time: SSE — `Route.sse: (req) => ReadableStream<Uint8Array \| string>` serves long-lived `text/event-stream` responses. Connections multiplex on each worker via an out-of-band NAPI channel (one tsfn call per conn for the entire stream lifetime + per-chunk `napiSseWrite` with cooperative TCP backpressure through a `oneshot` ack) — no SAB per connection. Middleware runs once pre-open via a reverse-direction `napiSseSignalOpen` callback that the per-conn Rust task awaits on a `oneshot`; Rust writes SSE headers only after the 200 verdict. Auto-emitted: `Content-Type: text/event-stream`, `Cache-Control: no-store`, `X-Accel-Buffering: no`, and a `: ping\n\n` heartbeat every 15 s (opt-out via `sseOptions.heartbeatMs=0`). `req.signal` is a real `AbortSignal` on SSE routes that fires on client disconnect; non-SSE routes receive a permanently-unaborted shared sentinel (`NEVER_ABORTS`) so the field is always present without firing spurious abort listeners. Boot wiring: `brust.registerSsePaths(routes.filter(.sse).map(.fullPath))` tells Rust which literal paths to gate. MVP supports literal SSE paths only — parameterized routes (`/sse/{room}`) and pub/sub broadcast are out of scope, designed jointly with the future WebSocket sub-project.
 - Real-time: WebSockets (RFC 6455) — `Route.websocket: () => Promise<WsHandlers>` serves WS upgrades. Rust validates the handshake headers, dispatches a single long-lived tsfn call to a worker, runs middleware via the existing chain (returns 4xx OR 101 + chosen subprotocol via `napiWsSignalOpen`), then on 101 writes the manual handshake response (Sec-WebSocket-Accept + optional Sec-WebSocket-Protocol) and wraps the TCP stream with `tokio_tungstenite::WebSocketStream::from_raw_socket(Role::Server)`. Per-conn task runs a `tokio::select!` over outgoing sends (JS-pushed via mpsc, ack via oneshot for backpressure), incoming frames (Text → string, Binary → Uint8Array), and a ping ticker (default 30 s; 2× window pong timeout closes with 1011). Author surface: `WsHandlers { open, message, close }` + `WsSocket { send, close, id }`. `on_close` fires exactly once for peer/timeout/error/oversize closes; author-initiated `socket.close` skips it. Subprotocol negotiation picks the first route-declared protocol that appears in the client's list. `handleWsConn` accepts handlers in either shape — direct `WsHandlers` OR a module wrapper exposing them via `default` — so the common `() => import('./x.ts')` pattern works without a `.then(m => m.default)` chain. Boot wiring: `brust.registerWsPaths(routes.filter(.websocket).map(.fullPath))`. Two new Rust deps: `tokio-tungstenite` 0.21 (default-features=false) for frame parsing + `sha1` for Sec-WebSocket-Accept. MVP supports literal WS paths only; parameterized routes (`/ws/chat/{room}`), pub/sub broadcast, `permessage-deflate`, client-mode WS, and TLS termination are deferred.
+- HTML Streaming (`renderToPipeableStream` + auto-detect Suspense) — Worker registers a single streaming renderer (`Promise<()>`). Chunks flow through a side channel: `napiRenderChunk(workerId, len: u32)` where `len=0` is the final signal. Per-worker `render_slot: Mutex<Option<RenderSlot>>` carries the chunk channel; lifecycle is RAII-clamped by `RenderSlotGuard` so tokio cancellation can't leak the slot. JS-side: `runtime/render/stream.ts` runs a buffering `Writable` sink — `onShellReady` checks an `allReadyFired` flag set by `onAllReady` (set synchronously when no Suspense is pending; React 18 internal `pendingSuspenseBoundaries` isn't exposed on the stream return value). No-Suspense path waits for `onAllReady`, checks `consumeIslandUsedFlag()`, emits one chunk with conditional bootstrap (preserves prior behavior). Suspense path commits chunked headers at `onShellReady` and always includes the islands bootstrap (~500 bytes overhead — late islands inside pending Suspense haven't rendered yet). `dispatch_to_worker_and_stream_chunks` is the unified dispatch for both render and action branches; sse/ws bypass the chunk channel entirely. Cache layer only stores single-chunk responses (chunked framing is ambiguous post-decode). Worker-death detection preserved: `RenderOutcome::EnqueueFailed` triggers `pool.remove` + `exit(1)` on empty pool; `PromiseRejected` keeps the worker alive.
 
 **Designed, not built:**
 
@@ -988,7 +986,6 @@ Bun.serve baseline source: `example/bun-serve-baseline/index.ts`.
 - Islands: CSS extraction per chunk
 - Islands: hot reload during dev
 - Global middleware (`app/middleware.ts`) + response-header *deletion* channel — per-route + set/override is shipped
-- HTML Streaming (`renderToPipeableStream` over SAB multi-chunk signals)
 - Navigation (intercept Link, JSON page fetches over `/_brust/page/*`)
 - Single-binary deploy (`bun build --compile`) — feasibility unknown until tested with the `.node` bundling path
 - TOML configuration `[cache]` + `[build]` sections (the `[server]` + `[workers]` part is shipped)
