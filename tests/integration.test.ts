@@ -1786,3 +1786,85 @@ test('streaming: mid-stream disconnect — second request to same worker still s
     proc.kill('SIGINT'); await proc.exited
   }
 }, 15_000)
+
+// ----- Navigation interceptor integration tests -----
+
+const NAV_ENV = (port: string) => ({
+  ...process.env,
+  BRUST_PORT: port,
+  BRUST_WORKERS: '1',
+  RUST_LOG: 'brust=warn',
+})
+
+test('nav: /_brust/page/blog/x returns JSON {html, title} with <main> inner only', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
+    env: NAV_ENV('38240'),
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const resp = await fetch(`http://127.0.0.1:${port}/_brust/page/blog/welcome`)
+    expect(resp.status).toBe(200)
+    expect(resp.headers.get('content-type') ?? '').toContain('application/json')
+    const body = await resp.json() as { html: string; title: string }
+    expect(typeof body.html).toBe('string')
+    expect(typeof body.title).toBe('string')
+    // <main> chrome excluded — no header/footer literals
+    expect(body.html).not.toContain('<header')
+    expect(body.html).not.toContain('<footer')
+    // Page-specific content present
+    expect(body.html).toContain('Post: welcome')
+    expect(body.html).toContain('welcome')
+    // Title carries the page name
+    expect(body.title.length).toBeGreaterThan(0)
+  } finally {
+    proc.kill('SIGINT'); await proc.exited
+  }
+}, 15_000)
+
+test('nav: /_brust/page/<unknown> returns 404 with JSON error envelope', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
+    env: NAV_ENV('38241'),
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const resp = await fetch(`http://127.0.0.1:${port}/_brust/page/this/path/does/not/exist`)
+    expect(resp.status).toBe(404)
+    expect(resp.headers.get('content-type') ?? '').toContain('application/json')
+    const body = await resp.json() as { error: string }
+    expect(body.error).toBe('not found')
+  } finally {
+    proc.kill('SIGINT'); await proc.exited
+  }
+}, 15_000)
+
+test('nav: page without <main> falls back to shipping full HTML in html field', async () => {
+  // The fixture's /cache-test route renders CacheTest, which is a bare
+  // fragment (<h1>CacheTest</h1><p>render=N</p>) with no <main> wrapper.
+  // The navigation branch detects the missing <main> and ships the full
+  // rendered HTML instead, so the client interceptor fires its no-main
+  // fallback. (/crash was the plan's original choice but renderToString
+  // does not honour errorBoundary — it propagates the throw as a 500.)
+  const proc = spawn({
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
+    env: NAV_ENV('38242'),
+    stdout: 'pipe', stderr: 'inherit',
+  })
+  const port = await readPortLine(proc.stdout)
+  try {
+    const resp = await fetch(`http://127.0.0.1:${port}/_brust/page/cache-test`)
+    expect(resp.status).toBe(200)
+    expect(resp.headers.get('content-type') ?? '').toContain('application/json')
+    const body = await resp.json() as { html: string; title: string }
+    expect(body.html.length).toBeGreaterThan(0)
+    // Full HTML fallback — no <main> in the response, but the
+    // CacheTest content is present.
+    expect(body.html).not.toContain('<main')
+    expect(body.html).toContain('CacheTest')
+  } finally {
+    proc.kill('SIGINT'); await proc.exited
+  }
+}, 15_000)
