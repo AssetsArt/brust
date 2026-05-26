@@ -42,6 +42,12 @@ pub fn split_meta(buf: &[u8]) -> Result<(&[u8], &[u8]), &'static str> {
 
 /// Format an HTTP/1.1 chunked-encoded chunk: `<hex_len>\r\n<bytes>\r\n`.
 /// Empty `body` (len=0) returns the terminator (`0\r\n\r\n`).
+///
+/// Allocates one Vec per call. This matches the spec's per-chunk
+/// write_all pattern (§7) — one alloc + one socket write + one drop per
+/// chunk is acceptable cost given chunks are typically 4-64 KB. If
+/// benchmarks ever show alloc pressure here, the signature can shift to
+/// `(&[u8], &mut Vec<u8>)` without changing call sites materially.
 pub fn format_chunk_framed(body: &[u8]) -> Vec<u8> {
     if body.is_empty() {
         return b"0\r\n\r\n".to_vec();
@@ -102,7 +108,7 @@ fn status_reason(code: u16) -> &'static str {
         405 => "Method Not Allowed",
         500 => "Internal Server Error",
         503 => "Service Unavailable",
-        _ => "OK",
+        _ => "",
     }
 }
 
