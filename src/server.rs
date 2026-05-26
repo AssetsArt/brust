@@ -804,14 +804,27 @@ where
     }
     let _slot_guard = crate::pool::RenderSlotGuard { entry: &entry };
 
-    // Compose enqueue + Promise.await into a single Future. `tsfn.call_async`
-    // returns Future<Output = Result<Promise<()>, _>> — the inner Promise is
-    // the actual JS return value. Awaiting only the outer Future would
-    // "complete" the renderer before JS has run a single line.
+    // Distinguish the two failure layers so we can react differently:
+    // - EnqueueFailed → napi bridge dead, remove worker from pool.
+    // - PromiseRejected → JS-level error, worker still alive.
+    enum RenderOutcome {
+        /// napi bridge enqueue failed — worker is dead, remove it.
+        EnqueueFailed(napi::Error),
+        /// JS Promise rejected — JS-level error, worker is still alive.
+        PromiseRejected(napi::Error),
+        /// JS Promise resolved successfully.
+        Resolved,
+    }
+
     let entry_for_future = Arc::clone(&entry);
     let render_future = async move {
-        let promise = entry_for_future.tsfn.call_async(envelope_json).await?;
-        promise.await
+        match entry_for_future.tsfn.call_async(envelope_json).await {
+            Err(e) => RenderOutcome::EnqueueFailed(e),
+            Ok(promise) => match promise.await {
+                Err(e) => RenderOutcome::PromiseRejected(e),
+                Ok(()) => RenderOutcome::Resolved,
+            },
+        }
     };
     tokio::pin!(render_future);
 
@@ -896,14 +909,16 @@ where
                     }
                 }
             }
-            result = &mut render_future => {
-                match result {
-                    Ok(_promise_result) => {
+            outcome = &mut render_future => {
+                match outcome {
+                    RenderOutcome::Resolved => {
                         let dropped = chunk_rx.len();
-                        warn!(
-                            worker_id = entry.id, label, dropped,
-                            "worker returned without Final signal",
-                        );
+                        if dropped > 0 {
+                            warn!(
+                                worker_id = entry.id, label, dropped,
+                                "worker returned without Final signal; queued chunks dropped",
+                            );
+                        }
                         if chunked {
                             // C5: emit terminator so browser doesn't see
                             // ERR_INCOMPLETE_CHUNKED_ENCODING.
@@ -915,12 +930,33 @@ where
                         }
                         break;
                     }
-                    Err(e) => {
-                        error!(worker_id = entry.id, label, error = %e, "render tsfn rejected");
+                    RenderOutcome::PromiseRejected(e) => {
+                        error!(worker_id = entry.id, label, error = %e,
+                               "render tsfn JS Promise rejected — worker still alive");
                         if !headers_written {
                             let _ = s.write_all(http::error_500()).await;
                         }
+                        // Mid-stream: hang up; client sees ERR_INCOMPLETE_CHUNKED_ENCODING.
+                        // Worker stays in pool.
                         break;
+                    }
+                    RenderOutcome::EnqueueFailed(e) => {
+                        error!(worker_id = entry.id, label, error = %e,
+                               "render tsfn enqueue failed — worker dead, removing from pool");
+                        pool.remove(entry.id);
+                        if pool.registered_count() == 0 {
+                            error!("no workers left after enqueue failure — terminating process");
+                            std::process::exit(1);
+                        }
+                        if !headers_written {
+                            let _ = s.write_all(http::build_response(
+                                502,
+                                "text/plain",
+                                &[],
+                                b"bad gateway".to_vec(),
+                            )).await;
+                        }
+                        return DispatchControl::CloseConn;
                     }
                 }
             }
