@@ -68,6 +68,13 @@ function concatBuffers(parts: Uint8Array[], withBootstrap: boolean): Uint8Array 
 export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<void> {
   const { element, view, workerId, napi, errorBoundary } = args
 
+  // Reset the islands flag at the start of every render — the streaming path
+  // (which doesn't read the flag at the end) would otherwise leak its setting
+  // to the next render. consumeIslandUsedFlag() reads-and-resets so calling
+  // here is safe; the actual read for the buffering path happens at _final
+  // time and sees only flips made during THIS render's React work.
+  consumeIslandUsedFlag()
+
   return new Promise<void>((resolve, reject) => {
     let finalSent = false
     const sendFinal = async () => {
@@ -124,9 +131,6 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
     // Whether onAllReady has fired — set synchronously by React when there
     // is no pending Suspense (fires in the same tick as onShellReady).
     let allReadyFired = false
-    // Whether the streaming path has already been started from onShellReady.
-    let streamingStarted = false
-
     let stream: ReturnType<typeof renderToPipeableStream>
     try {
       stream = renderToPipeableStream(element, {
@@ -143,7 +147,6 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
               return
             }
             // onAllReady hasn't fired yet → pending Suspense → streaming path.
-            streamingStarted = true
             mode = 'streaming'
             const flushed = concatBuffers(buffer, true)
             buffer.length = 0
@@ -154,6 +157,10 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
             headerSent = new Promise<void>((res, rej) => {
               resolveHeader = res; rejectHeader = rej
             })
+            // Attach a no-op catch so a synchronous rejection from the IIFE doesn't
+            // fire Node's unhandledRejection before a downstream await subscribes.
+            // The actual error still flows through reject() of the outer Promise.
+            headerSent.catch(() => {})
             // Pipe immediately so React can keep flushing resolved Suspense data.
             stream.pipe(sink)
             ;(async () => {
