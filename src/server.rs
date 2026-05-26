@@ -716,6 +716,43 @@ async fn handle_conn(
             return;
         }
 
+        // Navigation interceptor: client-side SPA navigation fetches arrive at
+        // /_brust/page/{real_path} and want a JSON {html, title} envelope back
+        // (the JS-side `navigationBranch` handles the serialisation). We strip
+        // the prefix, resolve the underlying route, and re-discriminate the
+        // envelope's `kind` so the same dispatch_to_worker_and_stream_chunks
+        // helper carries the request through to the worker.
+        if let Some(stripped) = path.strip_prefix("/_brust/page") {
+            if method != "GET" {
+                let _ = s.write_all(http::error_405()).await;
+                continue;
+            }
+            let real_path = if stripped.is_empty() { "/" } else { stripped };
+            let (envelope_json, _route_id) = match routes.match_path(&method, real_path, &buf) {
+                MatchResult::Matched { envelope_json, route_id } => {
+                    let nav_envelope = crate::routes::rewrite_envelope_kind(envelope_json, "navigation");
+                    (nav_envelope, route_id)
+                }
+                MatchResult::NoMatch => {
+                    let body = br#"{"error":"not found"}"#.to_vec();
+                    let _ = s.write_all(http::build_response(
+                        404, "application/json; charset=utf-8", &[], body,
+                    )).await;
+                    continue;
+                }
+            };
+            match dispatch_to_worker_and_stream_chunks(
+                &mut s,
+                &pool,
+                envelope_json,
+                "navigation",
+                |_| {},
+            ).await {
+                DispatchControl::Continue => continue,
+                DispatchControl::CloseConn => return,
+            }
+        }
+
         let (envelope_json, route_id) = match routes.match_path(&method, &path, &buf) {
             MatchResult::Matched { envelope_json, route_id } => (envelope_json, route_id),
             MatchResult::NoMatch => {
