@@ -2,6 +2,7 @@
 import * as native from './index.js'
 import type { ActionDef } from './actions.ts'
 import { isValidActionId } from './actions.ts'
+import { loadConfig } from './config.ts'
 
 export interface ServeOptions {
   port: number
@@ -160,6 +161,104 @@ export const brust = {
   // by the worker's module scope; do not let it go out of scope.
   registerRenderer(buf: Uint8Array, fn: RenderFn): number {
     return (native as any).registerRenderer(buf, fn)
+  },
+
+  /**
+   * One-call lifecycle: scans actions, builds islands (if `island.config.ts` is
+   * present), registers routes + SSE/WS paths, builds the MCP manifest, then
+   * branches to `serve()` (main thread) or registers a renderer (worker
+   * thread). Replaces ~70 lines of boilerplate; the lower-level helpers
+   * (`scanActions`, `registerRoutes`, `makeRenderer`, etc.) are still exported
+   * for apps that need finer control.
+   *
+   * Conventions assumed (override via the corresponding option if your layout
+   * differs):
+   *   - `<scanRoot>/island.config.ts` — used by `buildIslands` if present
+   *   - `<scanRoot>/routes.tsx`       — referenced by the MCP manifest builder
+   *
+   * `scanRoot` defaults to the directory of `entry` so the typical caller
+   * passes only `{ routes, entry: import.meta.url }`.
+   */
+  async run(opts: {
+    routes: import('./routes.ts').FlatRoute[]
+    entry: string
+    scanRoot?: string
+    /** Overrides merged into the underlying `serve()` call (main thread). */
+    serve?: Partial<Omit<ServeOptions, 'entry' | 'actions' | 'mcp'>>
+    /** Per-worker SAB size in bytes. Default 256 KB. */
+    sabBytes?: number
+  }): Promise<void> {
+    const { existsSync } = await import('node:fs')
+    const { fileURLToPath } = await import('node:url')
+    const path = await import('node:path')
+
+    const scanRoot = opts.scanRoot ?? path.dirname(fileURLToPath(opts.entry))
+    const { actions, sourceFiles } = await this.scanActions({ roots: [scanRoot] })
+
+    if (!isWorker) {
+      const { port, workers, cacheMaxEntries } = await loadConfig()
+      console.log(`[brust] main: spawning ${workers} worker threads`)
+      if (cacheMaxEntries !== undefined) this.configureCache({ maxEntries: cacheMaxEntries })
+
+      const islandConfig = path.join(scanRoot, 'island.config.ts')
+      if (existsSync(islandConfig)) {
+        const { buildIslands: build } = await import('./islands/build.ts')
+        const islands = await build(islandConfig)
+        this.configureIslandsDir(islands.outDir)
+        console.log(`[brust] main: built ${islands.islandCount} island chunk(s)`)
+      }
+
+      this.registerRoutes(opts.routes)
+      const ssePaths = opts.routes
+        .filter((r) => r.chain[r.chain.length - 1].sse !== undefined)
+        .map((r) => r.fullPath)
+      if (ssePaths.length > 0) {
+        this.registerSsePaths(ssePaths)
+        console.log(`[brust] main: registered ${ssePaths.length} sse path(s): ${ssePaths.join(', ')}`)
+      }
+      const wsPaths = opts.routes
+        .filter((r) => r.chain[r.chain.length - 1].websocket !== undefined)
+        .map((r) => r.fullPath)
+      if (wsPaths.length > 0) {
+        this.registerWsPaths(wsPaths)
+        console.log(`[brust] main: registered ${wsPaths.length} ws path(s): ${wsPaths.join(', ')}`)
+      }
+      console.log(`[brust] main: scanActions found ${actions.length} action(s): ${actions.map((a) => a.id).join(', ')}`)
+
+      const mcpManifest = await this.buildMcpManifest({
+        serverFiles: sourceFiles,
+        routesFile: path.join(scanRoot, 'routes.tsx'),
+        sourceRoots: [scanRoot],
+        actions,
+        routes: opts.routes,
+      })
+      console.log(`[brust] main: mcp manifest has ${mcpManifest.tools.length} tools + ${mcpManifest.resources.length} resources`)
+
+      await this.serve({
+        port,
+        workers,
+        entry: opts.entry,
+        actions,
+        mcp: { manifest: mcpManifest },
+        ...opts.serve,
+      })
+    } else {
+      const sab = new SharedArrayBuffer(opts.sabBytes ?? 256 * 1024)
+      const view = new Uint8Array(sab)
+
+      const mcpManifest = await this.loadMcpManifest()
+      let mcpServer: import('./mcp/server.ts').McpServer | undefined
+      if (mcpManifest) {
+        const { makeMcpServer } = await import('./mcp/server.ts')
+        mcpServer = makeMcpServer({ manifest: mcpManifest, actions, routes: opts.routes })
+        console.log(`[brust] worker: mcp server ready (${mcpManifest.tools.length} tools)`)
+      }
+
+      const { makeRenderer: make } = await import('./routes.ts')
+      let wid: number | null = null
+      const renderer = make(opts.routes, view, { actions, getWorkerId: () => wid, mcp: mcpServer })
+      wid = this.registerRenderer(view, renderer)
+    }
   },
 }
 
