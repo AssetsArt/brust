@@ -4,6 +4,7 @@ mod cache;
 mod http;
 mod io;
 mod pool;
+pub mod render_stream;
 mod routes;
 pub mod sse;
 mod server;
