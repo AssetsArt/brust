@@ -90,7 +90,7 @@ test('post-shell crash → onError logged + final still fires (no hang)', async 
   const origErr = console.error
   console.error = consoleSpy
   const { chunks, napi } = makeMockNapi()
-  function Bad() { throw new Error('post-shell-boom') }
+  function Bad(): never { throw new Error('post-shell-boom') }
   const elem = createElement(Suspense,
     { fallback: createElement('span', null, 'loading') },
     createElement(Bad),

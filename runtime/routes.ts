@@ -126,7 +126,13 @@ export interface Route<Params = Record<string, string>, Data = unknown> {
   /** Index route — matches the parent path exactly. Must be a leaf (no
    * `children`, no `path`). Mutually exclusive with `path`. */
   index?: boolean
-  Component?: ComponentType<RouteContext<Params, Data>>
+  /** TypeScript can't infer per-entry generics inside a `defineRoutes([...])`
+   * literal, so the array would force every Component to accept the default
+   * `RouteContext<Record<string, string>, unknown>` shape — components that
+   * narrow `Params` / `Data` would fail to type-check. Keep the field
+   * permissive here; each component self-declares its expected props. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  Component?: ComponentType<any>
   /** Optional async function that runs in the worker before rendering. Its
    * return value becomes the component's `data` prop. Exceptions are caught
    * by `errorBoundary` if declared (inherited from closest ancestor). */
