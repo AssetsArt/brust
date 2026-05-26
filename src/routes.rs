@@ -362,6 +362,19 @@ fn url_decode(s: &str) -> String {
     String::from_utf8(out).unwrap_or_default()
 }
 
+/// Swap `"kind":"<old>"` → `"kind":"<new>"` in a JS-built JSON envelope
+/// string. The envelope's field order is stable (the JS builder always
+/// emits `kind` first), so a single targeted substring replace is correct
+/// and cheaper than a parse-rewrite-serialise round-trip. Returns the input
+/// unchanged if the `"kind":"render"` substring isn't found (defensive).
+pub fn rewrite_envelope_kind(envelope_json: String, new_kind: &str) -> String {
+    envelope_json.replacen(
+        r#""kind":"render""#,
+        &format!(r#""kind":"{}""#, new_kind),
+        1,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -649,5 +662,31 @@ mod tests {
         assert_eq!(parsed["kind"], "ws");
         assert_eq!(parsed["conn_id"], 7);
         assert!(parsed["client_subprotocols"].as_array().unwrap().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod rewrite_envelope_kind_tests {
+    use super::rewrite_envelope_kind;
+
+    #[test]
+    fn swap_render_to_navigation() {
+        let envelope = r#"{"kind":"render","path":"/blog/x","route_id":2}"#.to_string();
+        let out = rewrite_envelope_kind(envelope, "navigation");
+        assert_eq!(out, r#"{"kind":"navigation","path":"/blog/x","route_id":2}"#);
+    }
+
+    #[test]
+    fn replaces_only_first_occurrence() {
+        let envelope = r#"{"kind":"render","data":"\"kind\":\"render\""}"#.to_string();
+        let out = rewrite_envelope_kind(envelope, "navigation");
+        assert_eq!(out, r#"{"kind":"navigation","data":"\"kind\":\"render\""}"#);
+    }
+
+    #[test]
+    fn missing_kind_returns_input_unchanged() {
+        let envelope = r#"{"foo":"bar"}"#.to_string();
+        let out = rewrite_envelope_kind(envelope, "navigation");
+        assert_eq!(out, r#"{"foo":"bar"}"#);
     }
 }
