@@ -7,6 +7,7 @@ import { Window } from 'happy-dom'
 // via a module-level variable populated in beforeAll.
 let isInternalLink: (a: HTMLAnchorElement, e: MouseEvent) => boolean
 let hydrateMarkersIn: (root?: ParentNode) => void
+let swapMainContent: (main: HTMLElement, html: string) => void
 
 beforeAll(async () => {
   const win = new Window({ url: 'http://localhost/' })
@@ -24,6 +25,7 @@ beforeAll(async () => {
     Event:             win.Event,
     HTMLElement:       win.HTMLElement,
     HTMLAnchorElement: (win as unknown as Record<string, unknown>).HTMLAnchorElement,
+    DOMParser:         (win as unknown as Record<string, unknown>).DOMParser,
     // IntersectionObserver intentionally absent — registerTrigger guards with typeof check
     // AbortController is provided natively by bun
   })
@@ -33,6 +35,7 @@ beforeAll(async () => {
   const mod = await import('./bootstrap')
   isInternalLink  = mod.isInternalLink
   hydrateMarkersIn = mod.hydrateMarkersIn
+  swapMainContent = mod.swapMainContent
 })
 
 function makeLink(href: string, attrs: Partial<{ target: string; download: string; 'data-brust-no-intercept': string }> = {}): HTMLAnchorElement {
@@ -91,6 +94,25 @@ test('hydrateMarkersIn(root) only scans within the given root subtree', () => {
     document.body.removeChild(root)
   }
 })
+
+test('swapMainContent terminates and replaces children with parsed HTML', () => {
+  const main = document.createElement('main')
+  const oldChild = document.createElement('p')
+  oldChild.textContent = 'old'
+  main.appendChild(oldChild)
+  document.body.appendChild(main)
+
+  try {
+    swapMainContent(main as unknown as HTMLElement, '<h1>new title</h1><p>two</p>')
+    // Loop terminates AND old children are gone, new children present.
+    expect(main.children.length).toBe(2)
+    expect(main.querySelector('h1')?.textContent).toBe('new title')
+    expect(main.children[1]?.textContent).toBe('two')
+    expect(main.contains(oldChild)).toBe(false)
+  } finally {
+    document.body.removeChild(main)
+  }
+}, 5_000)
 
 test('hydrateMarkersIn is idempotent — second call on same root does not re-tag', () => {
   const root = document.createElement('div')

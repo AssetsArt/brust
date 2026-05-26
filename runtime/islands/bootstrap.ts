@@ -13,8 +13,14 @@
 //   3. Listen for popstate (back / forward) and run the same swap path
 //      without pushing a new entry.
 
-import { hydrateRoot } from 'react-dom/client'
+import { hydrateRoot, type Root } from 'react-dom/client'
 import { createElement } from 'react'
+
+// Track React roots created by hydrateOne so we can unmount them before
+// removing their DOM in swapMainContent. Without this, removing the DOM
+// out from under a live root causes React's scheduler to keep posting
+// work to a detached subtree, which manifests as a hung tab.
+const islandRoots = new WeakMap<HTMLElement, Root>()
 
 type Trigger = 'load' | 'idle' | 'visible' | 'interaction'
 
@@ -83,9 +89,24 @@ async function hydrateOne(el: HTMLElement): Promise<void> {
       console.error(`[brust] island "${id}": chunk has no default-exported component`)
       return
     }
-    hydrateRoot(el, createElement(Component, props))
+    const root = hydrateRoot(el, createElement(Component, props))
+    islandRoots.set(el, root)
   } catch (e) {
     console.error(`[brust] island "${id}": hydration failed`, e)
+  }
+}
+
+/** Unmount any React roots that live inside `root`. Must run BEFORE
+ * removing or replacing their DOM, otherwise React's scheduler keeps
+ * posting work to detached nodes and the tab hangs. */
+function unmountIslandsIn(root: ParentNode): void {
+  const markers = root.querySelectorAll<HTMLElement>('[data-brust-island]')
+  for (const el of Array.from(markers)) {
+    const r = islandRoots.get(el)
+    if (r) {
+      try { r.unmount() } catch (e) { console.warn('[brust] island unmount failed', e) }
+      islandRoots.delete(el)
+    }
   }
 }
 
@@ -108,19 +129,16 @@ export function hydrateMarkersIn(root: ParentNode = document.body): void {
 /** Replace `main`'s children with HTML from a trusted Brust server
  * response. The trust boundary: the HTML originates from the same Brust
  * server that produced the initial page load. We use DOMParser (not
- * Range.createContextualFragment / innerHTML) because DOMParser produces
- * an INERT document — <script> tags are parsed but never executed.
- * Server-rendered HTML inside <main> isn't expected to contain <script>
- * today, but the inert-by-default parse is the right default. */
+ * Range.createContextualFragment) because DOMParser produces an INERT
+ * document — <script> tags are parsed but never executed. */
 export function swapMainContent(main: HTMLElement, html: string): void {
   const parsed = new DOMParser().parseFromString(`<body>${html}</body>`, 'text/html')
-  // Replace main's children with the parsed body's children. importNode
-  // copies the nodes into the live document so they participate in event
-  // dispatch + layout from the moment they're appended.
   while (main.firstChild) main.removeChild(main.firstChild)
-  const parsedBody = parsed.body
-  while (parsedBody.firstChild) {
-    main.appendChild(document.importNode(parsedBody.firstChild, true))
+  // Snapshot children before iterating: importNode clones (does NOT remove
+  // from source), so iterating on parsed.body.firstChild directly would
+  // infinite-loop. Array.from gives a fixed-length live snapshot to walk.
+  for (const node of Array.from(parsed.body.childNodes)) {
+    main.appendChild(document.importNode(node, true))
   }
 }
 
@@ -158,6 +176,7 @@ async function navigate(url: URL, push: boolean): Promise<void> {
     const { html, title } = await resp.json() as { html: string; title: string }
     const main = document.querySelector('main')
     if (!main) throw new Error('navigation: no <main> element')
+    unmountIslandsIn(main as HTMLElement)
     swapMainContent(main as HTMLElement, html)
     if (title) document.title = title
     if (push) history.pushState({}, '', url.href)
