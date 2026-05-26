@@ -21,12 +21,13 @@ export interface ServeOptions {
   mcp?: { manifest: import('./mcp/manifest.ts').McpManifest }
 }
 
-// Render callback writes HTML bytes into the worker's pre-registered SharedArrayBuffer
-// (passed once at register time) and resolves with the number of bytes written.
-// The argument is a JSON envelope `{ route_id, path, params }` produced by Rust's
-// route table — not a raw path. See runtime/routes.ts::RouteCall.
-// Resolve 0 → Rust treats it as oversized/error and returns HTTP 500.
-export type RenderFn = (envelopeJson: string) => Promise<number>
+// Render callback. The body bytes flow through `napi.renderChunk(workerId, len)`
+// — one or more Bytes chunks followed by a Final chunk (len=0). The returned
+// Promise just signals "renderer callback returned" so Rust's dispatch loop
+// can fall through to terminator/cleanup. The argument is a JSON envelope
+// `{ route_id, path, params }` produced by Rust's route table — see
+// runtime/routes.ts::RouteCall.
+export type RenderFn = (envelopeJson: string) => Promise<void>
 
 // Bun Workers run in the same OS process as the main thread; the `env` option
 // only patches the JS-visible process.env, not the native OS environment that

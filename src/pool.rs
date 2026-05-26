@@ -6,10 +6,12 @@ use napi::threadsafe_function::ThreadsafeFunction;
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
 
-/// Renderer signature: takes path (String), writes bytes into the worker's pre-registered
-/// SharedArrayBuffer, returns Promise<u32> = bytes written (0 = oversized error).
+/// Renderer signature: takes the envelope JSON (String) and resolves with no value.
+/// The HTML/body bytes flow via `napi_render_chunk` through the per-worker
+/// `RenderSlot.chunk_tx` channel — the Promise just signals "renderer
+/// callback returned" so handle_conn can fall through to terminator/cleanup.
 /// CalleeHandled = false matches what Function::build_threadsafe_function().build() produces.
-pub type RendererTsfn = ThreadsafeFunction<String, Promise<u32>, String, napi::Status, false>;
+pub type RendererTsfn = ThreadsafeFunction<String, Promise<()>, String, napi::Status, false>;
 
 /// Raw pointer to the worker's SharedArrayBuffer backing store. Send+Sync because the
 /// backing store is process-global memory (V8 allocates SAB backing outside the GC heap)

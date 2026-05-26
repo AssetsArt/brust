@@ -12,6 +12,13 @@ export interface RenderBranchStreamingArgs {
     renderChunk: (workerId: bigint, len: number, sabBytes: Uint8Array) => Promise<void>
   }
   errorBoundary: ComponentType<{ error: Error }>
+  /** Status for the successful (non-error) render. Default 200. Used by
+   * middleware-wrapped routes that want to set a non-200 status before
+   * the component runs (e.g. 201 from a server action redirect). */
+  status?: number
+  /** Extra response headers injected by middleware (e.g. `x-render-ms`).
+   * Merged into the meta envelope's `headers` map. */
+  headers?: Record<string, string>
 }
 
 const encoder = new TextEncoder()
@@ -67,6 +74,8 @@ function concatBuffers(parts: Uint8Array[], withBootstrap: boolean): Uint8Array 
 
 export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<void> {
   const { element, view, workerId, napi, errorBoundary } = args
+  const successStatus = args.status ?? 200
+  const extraHeaders = args.headers ?? {}
 
   // Reset the islands flag at the start of every render — the streaming path
   // (which doesn't read the flag at the end) would otherwise leak its setting
@@ -112,7 +121,7 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
           if (mode === 'buffering') {
             const islandsUsed = consumeIslandUsedFlag()
             const body = concatBuffers(buffer, islandsUsed)
-            const meta = makeMeta({ status: 200, streaming: false })
+            const meta = makeMeta({ status: successStatus, streaming: false, headers: extraHeaders })
             const len = encodeFirstChunk(view, meta, body)
             await napi.renderChunk(workerId, len, view)
             await sendFinal()
@@ -150,7 +159,7 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
             mode = 'streaming'
             const flushed = concatBuffers(buffer, true)
             buffer.length = 0
-            const meta = makeMeta({ status: 200, streaming: true })
+            const meta = makeMeta({ status: successStatus, streaming: true, headers: extraHeaders })
             // Send header chunk and pipe concurrently — writes gate on headerSent.
             let resolveHeader!: () => void
             let rejectHeader!: (e: unknown) => void

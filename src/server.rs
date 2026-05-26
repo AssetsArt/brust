@@ -11,22 +11,8 @@ use crate::io::{run_io, spawn, IO_NAME, TcpListener, TcpStream};
 use crate::pool::WorkerPool;
 use crate::routes::{MatchResult, RouteTable};
 
-use serde::Deserialize;
-
 fn current_islands_dir() -> Option<std::path::PathBuf> {
     crate::state().islands_dir.read().clone()
-}
-
-#[derive(Debug, Deserialize)]
-struct ResponseMeta {
-    status: u16,
-    #[serde(default)]
-    headers: std::collections::HashMap<String, String>,
-    /// JS-side override for the Content-Type header. Used by the action path
-    /// (sets 'application/json') and by middleware short-circuits returning
-    /// text. Absent on the render path → Rust uses the default.
-    #[serde(default, rename = "contentType")]
-    content_type: Option<String>,
 }
 
 enum ReadOutcome {
@@ -346,16 +332,14 @@ async fn handle_conn(
                 &buf[..header_end],
             );
 
-            // Action endpoint never caches, so on_success is a no-op. Content-Type
-            // is taken from meta if present (JS sets 'application/json' for normal
-            // returns and 'text/plain' for middleware string short-circuits).
-            match dispatch_to_worker_and_send_meta_response(
+            // Action endpoint never caches — no-op on_success closure. Content-Type
+            // is carried in the per-chunk meta JSON (JS sets 'application/json' for
+            // normal returns and 'text/plain' for middleware string short-circuits).
+            match dispatch_to_worker_and_stream_chunks(
                 &mut s,
                 &pool,
                 envelope_json,
                 "action",
-                "application/json; charset=utf-8",
-                true,
                 |_| {},
             )
             .await
@@ -424,13 +408,11 @@ async fn handle_conn(
                 &method, &path, body_str, &buf[..header_end],
             );
 
-            match dispatch_to_worker_and_send_meta_response(
+            match dispatch_to_worker_and_stream_chunks(
                 &mut s,
                 &pool,
                 envelope_json,
                 "mcp",
-                "application/json; charset=utf-8",
-                true,
                 |_| {},
             )
             .await
@@ -755,17 +737,17 @@ async fn handle_conn(
             continue;
         }
 
-        // Render path still hardcodes text/html (prefer_meta_content_type=false).
-        // The cache.insert hook receives the final response bytes; clone-into-vec
-        // only happens when a cache key was actually built.
+        // Render path receives the final response bytes via on_success when
+        // the response collapsed to a single Content-Length chunk (the only
+        // shape we cache — Suspense streams are never cached). The cache key
+        // and config move into the closure, so they're only inserted when a
+        // cache key was actually built for this request.
         let cache_for_closure = cache.clone();
-        match dispatch_to_worker_and_send_meta_response(
+        match dispatch_to_worker_and_stream_chunks(
             &mut s,
             &pool,
             envelope_json,
             "render",
-            "text/html; charset=utf-8",
-            false,
             move |bytes| {
                 if let (Some(key), Some(cfg)) = (cache_key, cache_config) {
                     cache_for_closure.insert(
@@ -784,24 +766,21 @@ async fn handle_conn(
     }
 }
 
-/// Shared dispatch for both the action and render branches: pick a worker,
-/// hold the in-flight guard, call the tsfn, decode the SAB-encoded envelope,
-/// build the HTTP response, and write it to the stream. Every failure path
-/// writes its own error response before returning CloseConn.
+/// Shared dispatch for the action, mcp, and render branches: pick a worker,
+/// install a RenderSlot, kick off the tsfn (Promise<()>) WITHOUT awaiting,
+/// loop the chunk channel writing to the socket as chunks arrive. Cache
+/// inserts only on the single-chunk (streaming:false) path because Suspense
+/// streams are inherently un-cacheable as a whole-response shape.
 ///
-/// `prefer_meta_content_type = true` lets the worker override Content-Type via
-/// `ResponseMeta.contentType` (used by the action path; render path keeps the
-/// MVP behavior of hardcoded `text/html`). `on_success` runs synchronously on
-/// the final response bytes immediately before write — used by the render path
-/// for cache.insert. Returning a value from on_success is not supported because
-/// the helper owns the bytes from here on.
-async fn dispatch_to_worker_and_send_meta_response<F>(
+/// The helper races `render_future` against `chunk_rx.recv()` in a `biased`
+/// select so chunks (the load-bearing path) always win when both are ready.
+/// Both terminal paths drain the necessary cleanup: chunked → emit terminator,
+/// content-length → flush buffered single response.
+async fn dispatch_to_worker_and_stream_chunks<F>(
     s: &mut TcpStream,
     pool: &Arc<crate::pool::WorkerPool>,
     envelope_json: String,
     label: &'static str,
-    default_content_type: &'static str,
-    prefer_meta_content_type: bool,
     on_success: F,
 ) -> DispatchControl
 where
@@ -811,102 +790,147 @@ where
         let _ = s.write_all(http::error_503("no workers")).await;
         return DispatchControl::CloseConn;
     };
-    let _guard = entry.in_flight_guard();
+    let _busy_guard = entry.in_flight_guard();
 
-    match entry.tsfn.call_async(envelope_json).await {
-        Ok(promise) => match promise.await {
-            Ok(n) => {
-                let n = n as usize;
-                // Envelope layout: [meta_len: u16 BE][meta JSON UTF-8][body bytes].
-                // Minimum valid frame: 2 bytes meta_len + smallest JSON object
-                // {"status":200} (14 bytes) + 0 body bytes = 16. Empty bodies are
-                // legal (action returning undefined, status 204/304, render of
-                // components returning null) and must not 500.
-                if n < 16 || n > entry.buf_len {
-                    error!(worker_id = entry.id, written = n, capacity = entry.buf_len, "{label} oversized");
-                    let _ = s
-                        .write_all(http::build_response(
-                            500,
-                            "text/plain",
-                            &[],
-                            format!("{label} oversized").into_bytes(),
-                        ))
-                        .await;
-                    return DispatchControl::CloseConn;
-                }
-                // SAFETY: see pool.rs BufPtr safety argument.
-                let raw: Vec<u8> =
-                    unsafe { std::slice::from_raw_parts(entry.buf_ptr.0, n).to_vec() };
-                let meta_len = u16::from_be_bytes([raw[0], raw[1]]) as usize;
-                if meta_len + 2 > n {
-                    error!(worker_id = entry.id, meta_len, total = n, "{label} meta_len out of range");
-                    let _ = s
-                        .write_all(http::build_response(
-                            500,
-                            "text/plain",
-                            &[],
-                            format!("invalid {label} envelope").into_bytes(),
-                        ))
-                        .await;
-                    return DispatchControl::CloseConn;
-                }
-                let meta_bytes = &raw[2..2 + meta_len];
-                let meta: ResponseMeta = match serde_json::from_slice(meta_bytes) {
-                    Ok(m) => m,
-                    Err(e) => {
-                        error!(worker_id = entry.id, error = %e, "{label} meta JSON parse failed");
-                        let _ = s
-                            .write_all(http::build_response(
-                                500,
-                                "text/plain",
-                                &[],
-                                format!("invalid {label} envelope").into_bytes(),
-                            ))
-                            .await;
-                        return DispatchControl::CloseConn;
+    let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::channel::<crate::pool::RenderChunk>(1);
+    {
+        let mut slot = entry.render_slot.lock();
+        debug_assert!(
+            slot.is_none(),
+            "worker {} double-dispatch (JS thread should serialise)",
+            entry.id,
+        );
+        *slot = Some(crate::pool::RenderSlot { chunk_tx });
+    }
+    let _slot_guard = crate::pool::RenderSlotGuard { entry: &entry };
+
+    // Compose enqueue + Promise.await into a single Future. `tsfn.call_async`
+    // returns Future<Output = Result<Promise<()>, _>> — the inner Promise is
+    // the actual JS return value. Awaiting only the outer Future would
+    // "complete" the renderer before JS has run a single line.
+    let entry_for_future = Arc::clone(&entry);
+    let render_future = async move {
+        let promise = entry_for_future.tsfn.call_async(envelope_json).await?;
+        promise.await
+    };
+    tokio::pin!(render_future);
+
+    let mut headers_written = false;
+    let mut chunked = false;
+    let mut buffered_meta: Option<crate::render_stream::ChunkMeta> = None;
+    let mut buffered_body: Vec<u8> = Vec::new();
+    let mut response_bytes_for_cache: Vec<u8> = Vec::new();
+
+    loop {
+        tokio::select! {
+            biased;
+            Some(chunk) = chunk_rx.recv() => {
+                match chunk {
+                    crate::pool::RenderChunk::Bytes { data, ack } => {
+                        if !headers_written {
+                            let (meta_slice, body) = match crate::render_stream::split_meta(&data) {
+                                Ok(x) => x,
+                                Err(e) => {
+                                    error!(worker_id = entry.id, label, error = e, "split_meta failed");
+                                    let _ = s.write_all(http::error_500()).await;
+                                    let _ = ack.send(());
+                                    return DispatchControl::CloseConn;
+                                }
+                            };
+                            let parsed: crate::render_stream::ChunkMeta =
+                                match serde_json::from_slice(meta_slice) {
+                                    Ok(m) => m,
+                                    Err(e) => {
+                                        error!(worker_id = entry.id, label, error = %e, "meta JSON parse failed");
+                                        let _ = s.write_all(http::error_500()).await;
+                                        let _ = ack.send(());
+                                        return DispatchControl::CloseConn;
+                                    }
+                                };
+                            chunked = parsed.streaming;
+                            if chunked {
+                                let head = crate::render_stream::build_chunked_response_head(&parsed);
+                                if s.write_all(head).await.is_err() {
+                                    let _ = ack.send(());
+                                    return DispatchControl::CloseConn;
+                                }
+                                let framed = crate::render_stream::format_chunk_framed(body);
+                                if s.write_all(framed).await.is_err() {
+                                    let _ = ack.send(());
+                                    return DispatchControl::CloseConn;
+                                }
+                            } else {
+                                buffered_meta = Some(parsed);
+                                buffered_body.extend_from_slice(body);
+                            }
+                            headers_written = true;
+                        } else if chunked {
+                            let framed = crate::render_stream::format_chunk_framed(&data);
+                            if s.write_all(framed).await.is_err() {
+                                let _ = ack.send(());
+                                return DispatchControl::CloseConn;
+                            }
+                        } else {
+                            warn!(
+                                worker_id = entry.id, label,
+                                "non-streaming worker emitted extra chunk; appending",
+                            );
+                            buffered_body.extend_from_slice(&data);
+                        }
+                        let _ = ack.send(());
                     }
-                };
-                let body = raw[2 + meta_len..].to_vec();
-                let extra: Vec<(String, String)> = meta.headers.into_iter().collect();
-                let ct: &str = if prefer_meta_content_type {
-                    meta.content_type.as_deref().unwrap_or(default_content_type)
-                } else {
-                    default_content_type
-                };
-                let bytes = http::build_response(meta.status, ct, &extra, body);
-                on_success(&bytes);
-                if s.write_all(bytes).await.is_err() {
-                    return DispatchControl::CloseConn;
+                    crate::pool::RenderChunk::Final { ack } => {
+                        if chunked {
+                            let term = crate::render_stream::format_chunk_framed(b"");
+                            let _ = s.write_all(term).await;
+                        } else if let Some(meta) = buffered_meta.take() {
+                            let resp = crate::render_stream::build_single_response_bytes(&meta, &buffered_body);
+                            response_bytes_for_cache = resp.clone();
+                            if s.write_all(resp).await.is_err() {
+                                let _ = ack.send(());
+                                return DispatchControl::CloseConn;
+                            }
+                        }
+                        let _ = ack.send(());
+                        break;
+                    }
                 }
-                DispatchControl::Continue
             }
-            Err(e) => {
-                error!(worker_id = entry.id, error = %e, "{label} promise rejected");
-                let msg = format!("{label} error: {e}");
-                let _ = s
-                    .write_all(http::build_response(500, "text/plain", &[], msg.into_bytes()))
-                    .await;
-                DispatchControl::CloseConn
+            result = &mut render_future => {
+                match result {
+                    Ok(_promise_result) => {
+                        let dropped = chunk_rx.len();
+                        warn!(
+                            worker_id = entry.id, label, dropped,
+                            "worker returned without Final signal",
+                        );
+                        if chunked {
+                            // C5: emit terminator so browser doesn't see
+                            // ERR_INCOMPLETE_CHUNKED_ENCODING.
+                            let _ = s.write_all(crate::render_stream::format_chunk_framed(b"")).await;
+                        } else if let Some(meta) = buffered_meta.take() {
+                            let resp = crate::render_stream::build_single_response_bytes(&meta, &buffered_body);
+                            response_bytes_for_cache = resp.clone();
+                            let _ = s.write_all(resp).await;
+                        }
+                        break;
+                    }
+                    Err(e) => {
+                        error!(worker_id = entry.id, label, error = %e, "render tsfn rejected");
+                        if !headers_written {
+                            let _ = s.write_all(http::error_500()).await;
+                        }
+                        break;
+                    }
+                }
             }
-        },
-        Err(e) => {
-            error!(worker_id = entry.id, error = %e, "{label} tsfn call_async failed");
-            let _ = s
-                .write_all(http::build_response(
-                    502,
-                    "text/plain",
-                    &[],
-                    b"upstream call failed".to_vec(),
-                ))
-                .await;
-            pool.remove(entry.id);
-            if pool.registered_count() == 0 {
-                error!("all workers died");
-                std::process::exit(1);
-            }
-            DispatchControl::CloseConn
         }
     }
+
+    if !response_bytes_for_cache.is_empty() {
+        on_success(&response_bytes_for_cache);
+    }
+    DispatchControl::Continue
 }
 
 fn build_cache_key(method: &str, full_path: &str, cfg: &CacheConfig, request_buf: &[u8]) -> CacheKey {
