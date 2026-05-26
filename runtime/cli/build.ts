@@ -122,7 +122,11 @@ export async function runBuild(args: string[]): Promise<void> {
     naming: 'index.js',
     target: 'bun',
     format: 'esm',
-    minify: true,
+    // Preserve function/class identifiers. The Island component falls back to
+    // `Component.name` for the chunk id when no explicit `id` prop is passed,
+    // so mangled names would point at non-existent files. Whitespace + syntax
+    // minification still apply.
+    minify: { whitespace: true, syntax: true, identifiers: false },
     banner,
     plugins: [
       nativeShimPlugin(REPO_ROOT),
