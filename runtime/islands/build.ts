@@ -14,9 +14,17 @@ export interface IslandsConfig {
   islands: Record<string, string>
 }
 
+export interface BuildIslandsOptions {
+  /** Override the output directory. Default: `<cwd>/.brust/islands`. */
+  outDir?: string
+}
+
 /** Build the runtime chunks + all island chunks + bootstrap. Returns the
  * absolute output directory; caller passes it to `brust.configureIslandsDir`. */
-export async function buildIslands(configPath: string): Promise<IslandsBuildResult> {
+export async function buildIslands(
+  configPath: string,
+  options: BuildIslandsOptions = {},
+): Promise<IslandsBuildResult> {
   const absConfig = isAbsolute(configPath) ? configPath : resolve(process.cwd(), configPath)
   const configDir = dirname(absConfig)
   const mod = await import(absConfig)
@@ -25,7 +33,9 @@ export async function buildIslands(configPath: string): Promise<IslandsBuildResu
     throw new Error(`island config at ${absConfig} must export { islands: Record<string, string> }`)
   }
 
-  const outDir = resolve(process.cwd(), '.brust/islands')
+  const outDir = options.outDir
+    ? (isAbsolute(options.outDir) ? options.outDir : resolve(process.cwd(), options.outDir))
+    : resolve(process.cwd(), '.brust/islands')
   await rm(outDir, { recursive: true, force: true })
   await mkdir(outDir, { recursive: true })
 

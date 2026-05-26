@@ -285,4 +285,4 @@ export { Island } from './islands/island.tsx'
 export type { IslandProps, HydrateTrigger } from './islands/island.tsx'
 
 export { buildIslands } from './islands/build.ts'
-export type { IslandsBuildResult, IslandsConfig } from './islands/build.ts'
+export type { IslandsBuildResult, IslandsConfig, BuildIslandsOptions } from './islands/build.ts'
