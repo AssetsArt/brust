@@ -192,7 +192,12 @@ export const brust = {
     const { fileURLToPath } = await import('node:url')
     const path = await import('node:path')
 
+    const prebuilt = process.env.BRUST_PREBUILT === '1'
+    const distDir = process.env.BRUST_DIST_DIR
+
     const scanRoot = opts.scanRoot ?? path.dirname(fileURLToPath(opts.entry))
+    // scanActions is plugin-aliased in prebuilt bundles → returns pre-baked
+    // list with sourceFiles=[]. In dev mode it walks the filesystem.
     const { actions, sourceFiles } = await this.scanActions({ roots: [scanRoot] })
 
     if (!isWorker) {
@@ -200,12 +205,21 @@ export const brust = {
       console.log(`[brust] main: spawning ${workers} worker threads`)
       if (cacheMaxEntries !== undefined) this.configureCache({ maxEntries: cacheMaxEntries })
 
-      const islandConfig = path.join(scanRoot, 'island.config.ts')
-      if (existsSync(islandConfig)) {
-        const { buildIslands: build } = await import('./islands/build.ts')
-        const islands = await build(islandConfig)
-        this.configureIslandsDir(islands.outDir)
-        console.log(`[brust] main: built ${islands.islandCount} island chunk(s)`)
+      if (prebuilt) {
+        // Pre-built islands live at <distDir>/islands.
+        const prebuiltIslandsDir = path.join(distDir!, 'islands')
+        if (existsSync(prebuiltIslandsDir)) {
+          this.configureIslandsDir(prebuiltIslandsDir)
+          console.log(`[brust] main: using pre-built islands at ${prebuiltIslandsDir}`)
+        }
+      } else {
+        const islandConfig = path.join(scanRoot, 'island.config.ts')
+        if (existsSync(islandConfig)) {
+          const { buildIslands: build } = await import('./islands/build.ts')
+          const islands = await build(islandConfig)
+          this.configureIslandsDir(islands.outDir)
+          console.log(`[brust] main: built ${islands.islandCount} island chunk(s)`)
+        }
       }
 
       this.registerRoutes(opts.routes)
@@ -225,14 +239,21 @@ export const brust = {
       }
       console.log(`[brust] main: scanActions found ${actions.length} action(s): ${actions.map((a) => a.id).join(', ')}`)
 
-      const mcpManifest = await this.buildMcpManifest({
-        serverFiles: sourceFiles,
-        routesFile: path.join(scanRoot, 'routes.tsx'),
-        sourceRoots: [scanRoot],
-        actions,
-        routes: opts.routes,
-      })
-      console.log(`[brust] main: mcp manifest has ${mcpManifest.tools.length} tools + ${mcpManifest.resources.length} resources`)
+      let mcpManifest: import('./mcp/manifest.ts').McpManifest
+      if (prebuilt) {
+        const manifestPath = path.join(distDir!, 'mcp-manifest.json')
+        mcpManifest = JSON.parse(await Bun.file(manifestPath).text())
+        console.log(`[brust] main: loaded pre-built mcp manifest (${mcpManifest.tools.length} tools + ${mcpManifest.resources.length} resources)`)
+      } else {
+        mcpManifest = await this.buildMcpManifest({
+          serverFiles: sourceFiles,
+          routesFile: path.join(scanRoot, 'routes.tsx'),
+          sourceRoots: [scanRoot],
+          actions,
+          routes: opts.routes,
+        })
+        console.log(`[brust] main: mcp manifest has ${mcpManifest.tools.length} tools + ${mcpManifest.resources.length} resources`)
+      }
 
       await this.serve({
         port,
@@ -246,7 +267,15 @@ export const brust = {
       const sab = new SharedArrayBuffer(opts.sabBytes ?? 256 * 1024)
       const view = new Uint8Array(sab)
 
-      const mcpManifest = await this.loadMcpManifest()
+      let mcpManifest: import('./mcp/manifest.ts').McpManifest | null
+      if (prebuilt) {
+        const manifestPath = path.join(distDir!, 'mcp-manifest.json')
+        mcpManifest = existsSync(manifestPath)
+          ? JSON.parse(await Bun.file(manifestPath).text())
+          : null
+      } else {
+        mcpManifest = await this.loadMcpManifest()
+      }
       let mcpServer: import('./mcp/server.ts').McpServer | undefined
       if (mcpManifest) {
         const { makeMcpServer } = await import('./mcp/server.ts')
