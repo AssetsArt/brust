@@ -8,7 +8,7 @@ export default function HelloWorld({ workerId }: RouteContext) {
     <Layout title="Home">
       <h1>Hello from Brust</h1>
       <p>
-        Rendered on <code>worker_id={workerId ?? 0}</code> and shipped as
+        Rendered on <code>{`worker_id=${workerId ?? 0}`}</code> and shipped as
         a single chunk with <code>Content-Length</code> (no streaming
         needed — no <code>&lt;Suspense&gt;</code> in this tree).
       </p>

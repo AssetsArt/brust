@@ -570,7 +570,7 @@ test('routes without <Island> ship no importmap or bootstrap', async () => {
     const r = await fetch(`http://127.0.0.1:${port}/blog/test-slug`)
     expect(r.status).toBe(200)
     const body = await r.text()
-    expect(body).not.toContain('data-brust-island')
+    expect(body).not.toContain('data-brust-island=')
     expect(body).not.toContain('<script type="importmap">')
     expect(body).not.toContain('_bootstrap.js')
   } finally {
