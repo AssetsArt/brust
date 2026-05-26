@@ -605,8 +605,24 @@ async function emitSingleChunkResponse(
   const metaBytes = encoder.encode(meta)
   const total = 2 + metaBytes.length + bodyBytes.length
   if (total > view.length) {
-    console.error(`[brust] single-chunk response ${total}b exceeds SAB ${view.length}b`)
-    // Best-effort: emit a Final so Rust's loop exits, then return.
+    console.error(`[brust] single-chunk response ${total}b exceeds SAB ${view.length}b — emitting 500`)
+    // Emit a proper 500 plain-text response so the client doesn't hang on
+    // TCP timeout waiting for a body that never comes. The fallback body is
+    // small enough to always fit in the SAB.
+    const errBody = encoder.encode('response body too large')
+    const errMeta = JSON.stringify({
+      status: 500,
+      contentType: 'text/plain; charset=utf-8',
+      headers: {},
+      streaming: false,
+    })
+    const errMetaBytes = encoder.encode(errMeta)
+    const errTotal = 2 + errMetaBytes.length + errBody.length
+    view[0] = (errMetaBytes.length >> 8) & 0xff
+    view[1] = errMetaBytes.length & 0xff
+    view.set(errMetaBytes, 2)
+    view.set(errBody, 2 + errMetaBytes.length)
+    await napi.renderChunk(workerId, errTotal, view)
     await napi.renderChunk(workerId, 0, view)
     return
   }
