@@ -1,7 +1,6 @@
 import { writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import type { BunPlugin } from 'bun'
-import type { ScanActionsResult } from '../scan-actions.ts'
 
 /** Write a TypeScript file that re-exports `scanActions` as a pure function
  * returning a hard-coded ActionDef[]. Bundle this file via `actionsPrebuiltPlugin`
@@ -75,6 +74,12 @@ export function actionsPrebuiltPlugin(
     name: 'brust-actions-prebuilt',
     setup(build) {
       build.onResolve({ filter: /.*/ }, (args) => {
+        // The generated file re-exports symbols from scan-actions.ts. Without this
+        // guard those re-exports would self-redirect back into the generated file,
+        // creating a circular module graph where the re-exported bindings resolve
+        // to `undefined`.
+        if (args.importer === generatedFilePath) return undefined
+
         // Match the canonical scan-actions.ts file regardless of how it's
         // imported (relative './scan-actions.ts' from runtime/index.ts, etc.).
         // Resolve the import to an absolute path and compare.
