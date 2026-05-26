@@ -164,8 +164,11 @@ export interface Route<Params = Record<string, string>, Data = unknown> {
   /** When set, this route accepts WebSocket upgrades. Cannot coexist
    * with Component, loader, sse, or children (validated at defineRoutes
    * time). The factory is invoked lazily by the WS dispatch path and
-   * cached per worker. The handler module exports WsHandlers. */
-  websocket?: () => Promise<WsHandlers>
+   * cached per worker. The handler module may export `WsHandlers`
+   * directly OR as a `default` (the common `() => import('./ws-foo')`
+   * pattern returns a module namespace `{ default: WsHandlers }`);
+   * `handleWsConn` unwraps `.default` defensively at call time. */
+  websocket?: () => Promise<WsHandlers | { default: WsHandlers }>
   wsOptions?: {
     /** Server-initiated ping interval in ms. Default 30000. Set 0 to disable.
      * Pong timeout = 2× pingMs; conn closes with code 1011 if no pong by then. */
