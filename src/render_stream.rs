@@ -112,6 +112,23 @@ fn status_reason(code: u16) -> &'static str {
     }
 }
 
+/// Bounds check + slot lookup for napi_render_chunk. Returns the cloned
+/// chunk_tx if the slot is set and `len <= buf_len`. Factored out for
+/// unit testing — the NAPI fn itself wraps this in await + send.
+pub fn check_chunk_dispatch(
+    render_slot: &parking_lot::Mutex<Option<crate::pool::RenderSlot>>,
+    len: u32,
+    buf_len: usize,
+) -> Result<tokio::sync::mpsc::Sender<crate::pool::RenderChunk>, String> {
+    if (len as usize) > buf_len {
+        return Err(format!("chunk len {} exceeds SAB capacity {}", len, buf_len));
+    }
+    let slot = render_slot.lock();
+    slot.as_ref()
+        .map(|s| s.chunk_tx.clone())
+        .ok_or_else(|| "no in-flight render for this worker".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -213,5 +230,26 @@ mod tests {
         assert!(s.contains("Transfer-Encoding: chunked\r\n"));
         assert!(s.contains("X-Render-Ms: 12\r\n"));
         assert!(s.ends_with("\r\n\r\n"));
+    }
+
+    #[test]
+    fn len_bounds_check_rejects_oversize() {
+        let slot = parking_lot::Mutex::new(None);
+        let err = check_chunk_dispatch(&slot, 1_000_000, 256 * 1024).unwrap_err();
+        assert!(err.contains("exceeds SAB capacity"));
+    }
+
+    #[test]
+    fn slot_missing_returns_err() {
+        let slot = parking_lot::Mutex::new(None);
+        let err = check_chunk_dispatch(&slot, 5, 256 * 1024).unwrap_err();
+        assert!(err.contains("no in-flight render"));
+    }
+
+    #[test]
+    fn slot_present_returns_sender() {
+        let (tx, _rx) = tokio::sync::mpsc::channel::<crate::pool::RenderChunk>(1);
+        let slot = parking_lot::Mutex::new(Some(crate::pool::RenderSlot { chunk_tx: tx }));
+        assert!(check_chunk_dispatch(&slot, 5, 256 * 1024).is_ok());
     }
 }

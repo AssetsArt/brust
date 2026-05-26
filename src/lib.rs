@@ -488,6 +488,45 @@ pub fn napi_register_ws_paths(paths: Vec<String>) -> NapiResult<()> {
     Ok(())
 }
 
+/// Worker-driven render chunk delivery. Worker calls this once per chunk
+/// it wants to emit; final call uses `len = 0` to close the channel.
+///
+/// Contract (spec §5.2):
+/// - `len > 0`: read SAB[0..len], send Bytes through render_slot.chunk_tx,
+///   await ack. Resolves after Rust writes the chunk to the socket.
+/// - `len == 0`: send Final, await ack. Closes the response.
+/// - Bounds violation (len > buf_len) → NAPI Err.
+/// - Slot empty (no in-flight render for this worker) → NAPI Err.
+/// - Ack receiver dropped (handle_conn torn down mid-stream) → NAPI Err
+///   (NOT hang — worker's sink propagates via cb(err) to renderer Promise).
+#[napi]
+pub async fn napi_render_chunk(worker_id: u32, len: u32) -> NapiResult<()> {
+    let entry = state().pool.entry(worker_id)
+        .ok_or_else(|| napi::Error::from_reason(format!("worker {} not registered", worker_id)))?;
+    let chunk_tx = crate::render_stream::check_chunk_dispatch(
+        &entry.render_slot, len, entry.buf_len,
+    ).map_err(napi::Error::from_reason)?;
+
+    let (ack_tx, ack_rx) = tokio::sync::oneshot::channel::<()>();
+    let chunk = if len == 0 {
+        crate::pool::RenderChunk::Final { ack: ack_tx }
+    } else {
+        // SAFETY: BufPtr is the SAB backing-store pointer pinned at register
+        // time (see pool.rs::BufPtr docstring). `len` is bounds-checked above.
+        let data = unsafe {
+            std::slice::from_raw_parts(entry.buf_ptr.0, len as usize)
+        }.to_vec();
+        crate::pool::RenderChunk::Bytes { data, ack: ack_tx }
+    };
+    chunk_tx.send(chunk).await.map_err(|_|
+        napi::Error::from_reason("render chunk channel closed (handle_conn gone)")
+    )?;
+    ack_rx.await.map_err(|_|
+        napi::Error::from_reason("ack dropped — handle_conn torn down mid-chunk")
+    )?;
+    Ok(())
+}
+
 /// Convert a NAPI BigInt to u64, rejecting negative values.
 /// conn_ids cross the JS/Rust boundary as BigInt because JS Number tops out
 /// at 2^53 while conn_ids are monotonic u64 from an AtomicU64.

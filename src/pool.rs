@@ -116,6 +116,10 @@ impl WorkerPool {
             .cloned()
     }
 
+    pub fn entry(&self, id: u32) -> Option<Arc<TsfnEntry>> {
+        self.entries.read().iter().find(|e| e.id == id).cloned()
+    }
+
     pub fn remove(&self, id: u32) {
         self.entries.write().retain(|e| e.id != id);
     }
