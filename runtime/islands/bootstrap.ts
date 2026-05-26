@@ -107,15 +107,21 @@ export function hydrateMarkersIn(root: ParentNode = document.body): void {
 
 /** Replace `main`'s children with HTML from a trusted Brust server
  * response. The trust boundary: the HTML originates from the same Brust
- * server that produced the initial page load, parsed by the standard
- * browser HTML parser exactly as the initial response was. No untrusted
- * user input enters this code path. */
+ * server that produced the initial page load. We use DOMParser (not
+ * Range.createContextualFragment / innerHTML) because DOMParser produces
+ * an INERT document — <script> tags are parsed but never executed.
+ * Server-rendered HTML inside <main> isn't expected to contain <script>
+ * today, but the inert-by-default parse is the right default. */
 export function swapMainContent(main: HTMLElement, html: string): void {
-  const range = document.createRange()
-  range.selectNodeContents(main)
-  range.deleteContents()
-  const fragment = range.createContextualFragment(html)
-  main.appendChild(fragment)
+  const parsed = new DOMParser().parseFromString(`<body>${html}</body>`, 'text/html')
+  // Replace main's children with the parsed body's children. importNode
+  // copies the nodes into the live document so they participate in event
+  // dispatch + layout from the moment they're appended.
+  while (main.firstChild) main.removeChild(main.firstChild)
+  const parsedBody = parsed.body
+  while (parsedBody.firstChild) {
+    main.appendChild(document.importNode(parsedBody.firstChild, true))
+  }
 }
 
 /** Classifier — true iff the event should be intercepted as a SPA
@@ -129,7 +135,10 @@ export function isInternalLink(a: HTMLAnchorElement, event: MouseEvent): boolean
   if (a.dataset.brustNoIntercept !== undefined) return false
   const url = new URL(a.href, location.href)
   if (url.origin !== location.origin) return false
-  if (url.pathname === location.pathname && url.hash) return false
+  // Same-pathname links: hash-only changes use the browser's native scroll;
+  // hash-absent same-URL clicks (e.g., logo back to current page) are
+  // redundant — let the browser handle them as no-ops (no SPA refetch).
+  if (url.pathname === location.pathname && url.search === location.search) return false
   if (url.pathname.startsWith('/_brust/')) return false
   return true
 }

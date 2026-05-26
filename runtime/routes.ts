@@ -589,6 +589,12 @@ async function navigationBranch(
     // Extract <main> inner content. If the page didn't render a <main>,
     // ship the full HTML — the client's no-main check will fire its
     // full-reload fallback.
+    //
+    // Known limitation: the lazy regex truncates at the first </main>, so
+    // a page that renders nested <main> elements (invalid per the HTML
+    // spec but allowed by React) would lose content after the inner
+    // </main>. A future task can replace this with stack-counting
+    // extraction or DOMParser if real apps hit it.
     const mainMatch = fullHtml.match(/<main[^>]*>([\s\S]*?)<\/main>/i)
     const innerHtml = mainMatch ? mainMatch[1] : fullHtml
 

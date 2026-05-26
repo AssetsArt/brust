@@ -59,6 +59,8 @@ test('isInternalLink rejects external origin, _blank, modifier-click, anchor, /_
   const a = makeLink('/x')
   expect(isInternalLink(a, new MouseEvent('click', { button: 0, metaKey: true }))).toBe(false)
   expect(isInternalLink(a, new MouseEvent('click', { button: 0, ctrlKey: true }))).toBe(false)
+  expect(isInternalLink(a, new MouseEvent('click', { button: 0, shiftKey: true }))).toBe(false)
+  expect(isInternalLink(a, new MouseEvent('click', { button: 0, altKey: true }))).toBe(false)
   expect(isInternalLink(a, new MouseEvent('click', { button: 1 }))).toBe(false)
   const anchor = makeLink(`${location.origin}${location.pathname}#section`)
   expect(isInternalLink(anchor, plainClick())).toBe(false)
@@ -80,13 +82,14 @@ test('hydrateMarkersIn(root) only scans within the given root subtree', () => {
   inside.setAttribute('data-brust-props', '{}')
   root.appendChild(inside)
 
-  hydrateMarkersIn(root)
-
-  expect(inside.hasAttribute('data-brust-hydrated')).toBe(true)
-  expect(outside.hasAttribute('data-brust-hydrated')).toBe(false)
-
-  document.body.removeChild(outside)
-  document.body.removeChild(root)
+  try {
+    hydrateMarkersIn(root)
+    expect(inside.hasAttribute('data-brust-hydrated')).toBe(true)
+    expect(outside.hasAttribute('data-brust-hydrated')).toBe(false)
+  } finally {
+    document.body.removeChild(outside)
+    document.body.removeChild(root)
+  }
 })
 
 test('hydrateMarkersIn is idempotent — second call on same root does not re-tag', () => {
@@ -97,12 +100,14 @@ test('hydrateMarkersIn is idempotent — second call on same root does not re-ta
   root.appendChild(marker)
   document.body.appendChild(root)
 
-  hydrateMarkersIn(root)
-  expect(marker.getAttribute('data-brust-hydrated')).toBe('1')
+  try {
+    hydrateMarkersIn(root)
+    expect(marker.getAttribute('data-brust-hydrated')).toBe('1')
 
-  marker.setAttribute('data-brust-hydrated', 'seen')
-  hydrateMarkersIn(root)
-  expect(marker.getAttribute('data-brust-hydrated')).toBe('seen')
-
-  document.body.removeChild(root)
+    marker.setAttribute('data-brust-hydrated', 'seen')
+    hydrateMarkersIn(root)
+    expect(marker.getAttribute('data-brust-hydrated')).toBe('seen')
+  } finally {
+    document.body.removeChild(root)
+  }
 })
