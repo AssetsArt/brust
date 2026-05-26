@@ -3,12 +3,15 @@
 // /_brust/islands/_bootstrap.js. Loaded by makeRenderer-injected <script>.
 //
 // Responsibilities:
-// 1. Find every <... data-brust-island="<id>" data-brust-props="..." data-brust-hydrate="..."> marker.
-// 2. Register the trigger declared in data-brust-hydrate.
-// 3. On fire: dynamic import('/_brust/islands/<id>.js'), then hydrateRoot.
-//
-// React/jsx-runtime/react-dom are resolved via the importmap that
-// makeRenderer also injects.
+//   1. Hydrate every <... data-brust-island="<id>" ...> marker under a
+//      given root (default: document.body) — exposed as hydrateMarkersIn
+//      so the navigation interceptor can re-run it on the new <main>
+//      after a navigation swap.
+//   2. Intercept internal <a href> clicks → fetch /_brust/page/{path} →
+//      swap <main> in place → update title → re-hydrate islands →
+//      history.pushState. Any failure falls back to a full reload.
+//   3. Listen for popstate (back / forward) and run the same swap path
+//      without pushing a new entry.
 
 import { hydrateRoot } from 'react-dom/client'
 import { createElement } from 'react'
@@ -86,9 +89,15 @@ async function hydrateOne(el: HTMLElement): Promise<void> {
   }
 }
 
-function bootstrap(): void {
-  const markers = document.querySelectorAll<HTMLElement>('[data-brust-island]')
+/** Scan `root` for un-hydrated island markers and register their hydration
+ * triggers. Exposed so the navigation interceptor can call it on the
+ * freshly-swapped <main> subtree after a SPA navigation. The
+ * `data-brust-hydrated` attribute on each marker is the idempotence guard
+ * — a second call on the same root no-ops for already-hydrated markers. */
+export function hydrateMarkersIn(root: ParentNode = document.body): void {
+  const markers = root.querySelectorAll<HTMLElement>('[data-brust-island]:not([data-brust-hydrated])')
   for (const el of Array.from(markers)) {
+    el.setAttribute('data-brust-hydrated', '1')
     const trig = (el.getAttribute('data-brust-hydrate') ?? 'load') as Trigger
     registerTrigger(el, trig, () => {
       void hydrateOne(el)
@@ -96,8 +105,85 @@ function bootstrap(): void {
   }
 }
 
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', bootstrap)
-} else {
-  bootstrap()
+/** Replace `main`'s children with HTML from a trusted Brust server
+ * response. The trust boundary: the HTML originates from the same Brust
+ * server that produced the initial page load, parsed by the standard
+ * browser HTML parser exactly as the initial response was. No untrusted
+ * user input enters this code path. */
+export function swapMainContent(main: HTMLElement, html: string): void {
+  const range = document.createRange()
+  range.selectNodeContents(main)
+  range.deleteContents()
+  const fragment = range.createContextualFragment(html)
+  main.appendChild(fragment)
+}
+
+/** Classifier — true iff the event should be intercepted as a SPA
+ * navigation. Exported for unit testing. */
+export function isInternalLink(a: HTMLAnchorElement, event: MouseEvent): boolean {
+  if (event.defaultPrevented) return false
+  if (event.button !== 0) return false
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return false
+  if (a.target && a.target !== '_self') return false
+  if (a.hasAttribute('download')) return false
+  if (a.dataset.brustNoIntercept !== undefined) return false
+  const url = new URL(a.href, location.href)
+  if (url.origin !== location.origin) return false
+  if (url.pathname === location.pathname && url.hash) return false
+  if (url.pathname.startsWith('/_brust/')) return false
+  return true
+}
+
+let inFlight: AbortController | null = null
+
+async function navigate(url: URL, push: boolean): Promise<void> {
+  inFlight?.abort()
+  const ac = new AbortController()
+  inFlight = ac
+  try {
+    const resp = await fetch(`/_brust/page${url.pathname}${url.search}`, {
+      signal: ac.signal,
+      headers: { 'Accept': 'application/json' },
+    })
+    if (!resp.ok) throw new Error(`navigation: status ${resp.status}`)
+    const { html, title } = await resp.json() as { html: string; title: string }
+    const main = document.querySelector('main')
+    if (!main) throw new Error('navigation: no <main> element')
+    swapMainContent(main as HTMLElement, html)
+    if (title) document.title = title
+    if (push) history.pushState({}, '', url.href)
+    window.scrollTo(0, 0)
+    hydrateMarkersIn(main as HTMLElement)
+  } catch (err) {
+    if ((err as Error).name === 'AbortError') return
+    console.warn('[brust] SPA navigation failed, falling back to full reload:', err)
+    location.href = url.href
+  } finally {
+    if (inFlight === ac) inFlight = null
+  }
+}
+
+function installInterceptor(): void {
+  document.addEventListener('click', (e) => {
+    const target = e.target as HTMLElement | null
+    const a = target?.closest('a') as HTMLAnchorElement | null
+    if (!a || !isInternalLink(a, e)) return
+    e.preventDefault()
+    void navigate(new URL(a.href, location.href), /* push */ true)
+  })
+  window.addEventListener('popstate', () => {
+    void navigate(new URL(location.href), /* push */ false)
+  })
+}
+
+if (typeof document !== 'undefined') {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+      hydrateMarkersIn(document.body)
+      installInterceptor()
+    })
+  } else {
+    hydrateMarkersIn(document.body)
+    installInterceptor()
+  }
 }

@@ -17,19 +17,20 @@
     "smol-toml": "^1.3.1"
   },
   "devDependencies": {
+    "@types/bun": "latest",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
-    "typescript": "^5.5.0",
-    "@types/bun": "latest"
+    "happy-dom": "^20.9.0",
+    "typescript": "^5.5.0"
   },
   "module": "index.ts",
   "type": "module",
   "scripts": {
-    "build":        "cd runtime && bun run build",
-    "build:debug":  "cd runtime && bun run build:debug",
-    "test":         "bun test tests/integration.test.ts",
-    "dev":          "bun run example/hello-world/index.ts",
+    "build": "cd runtime && bun run build",
+    "build:debug": "cd runtime && bun run build:debug",
+    "test": "bun test tests/integration.test.ts",
+    "dev": "bun run example/hello-world/index.ts",
     "dev:baseline": "bun run example/bun-serve-baseline/index.ts",
-    "bench":        "bun run scripts/benchmark.ts"
+    "bench": "bun run scripts/benchmark.ts"
   }
 }
