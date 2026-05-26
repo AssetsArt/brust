@@ -1,5 +1,5 @@
 import { Island } from '../../../runtime/index.ts'
-import Counter from './Counter'
+import Counter from '../components/Counter'
 import type { RouteContext } from '../../../runtime/routes.ts'
 
 export default function HelloWorld({ workerId }: RouteContext) {

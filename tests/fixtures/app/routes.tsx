@@ -2,9 +2,9 @@ import { defineRoutes, type Middleware } from '../../../runtime/routes.ts'
 import { counterStream, idleStream } from './sse-streams.ts'
 
 // Demo components re-used by the showcase routes (kept clean in example/).
-import HelloWorld   from '../../../example/hello-world/components/HelloWorld'
-import BlogPost     from '../../../example/hello-world/components/BlogPost'
-import SlowSuspense from '../../../example/hello-world/components/SlowSuspense'
+import HelloWorld   from '../../../example/hello-world/pages/HelloWorld'
+import BlogPost     from '../../../example/hello-world/pages/BlogPost'
+import SlowSuspense from '../../../example/hello-world/pages/SlowSuspense'
 
 // Test-only components — these mount routes that exercise failure modes,
 // middleware, cache, nested routes, and the various server-action paths.

@@ -40,11 +40,12 @@ example/hello-world/
 ├── sse-counter.ts       # SSE handler for /sse-counter
 ├── ws-echo.ts           # WS handler for /ws/echo
 ├── brust.example.toml   # config template — copy to brust.toml to use
-└── components/
-    ├── HelloWorld.tsx   # root page; embeds <Counter />
-    ├── BlogPost.tsx     # consumes loader data + params
-    ├── Counter.tsx      # client-hydrated island
-    └── SlowSuspense.tsx # <Suspense> with a 200 ms-resolving child
+├── pages/               # route-mounted components — one per `Component:` in routes.tsx
+│   ├── HelloWorld.tsx   # root page; embeds <Counter />
+│   ├── BlogPost.tsx     # consumes loader data + params
+│   └── SlowSuspense.tsx # <Suspense> with a 200 ms-resolving child
+└── components/          # reusable building blocks used inside pages
+    └── Counter.tsx      # client-hydrated island
 ```
 
 The entry is small on purpose — `brust.run({ routes, entry: import.meta.url })`

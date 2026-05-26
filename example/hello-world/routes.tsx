@@ -1,9 +1,9 @@
 import { defineRoutes } from '../../runtime/routes.ts'
 import { counterStream } from './sse-counter.ts'
 
-import HelloWorld    from './components/HelloWorld'
-import BlogPost      from './components/BlogPost'
-import SlowSuspense  from './components/SlowSuspense'
+import HelloWorld    from './pages/HelloWorld'
+import BlogPost      from './pages/BlogPost'
+import SlowSuspense  from './pages/SlowSuspense'
 
 /** Minimal demo — one route per major Brust feature. Failure-mode + auth +
  * cache + nested-route variants used by the integration tests live in
