@@ -1815,9 +1815,8 @@ test('nav: /_brust/page/blog/x returns JSON {html, title} with <main> inner only
     expect(body.html).not.toContain('<footer')
     // Page-specific content present
     expect(body.html).toContain('Post: welcome')
-    expect(body.html).toContain('welcome')
     // Title carries the page name
-    expect(body.title.length).toBeGreaterThan(0)
+    expect(body.title).toContain('Post: welcome')
   } finally {
     proc.kill('SIGINT'); await proc.exited
   }
@@ -1859,7 +1858,6 @@ test('nav: page without <main> falls back to shipping full HTML in html field', 
     expect(resp.status).toBe(200)
     expect(resp.headers.get('content-type') ?? '').toContain('application/json')
     const body = await resp.json() as { html: string; title: string }
-    expect(body.html.length).toBeGreaterThan(0)
     // Full HTML fallback — no <main> in the response, but the
     // CacheTest content is present.
     expect(body.html).not.toContain('<main')
