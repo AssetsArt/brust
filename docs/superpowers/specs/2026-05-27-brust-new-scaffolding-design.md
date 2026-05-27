@@ -1,7 +1,7 @@
 # `brust new` Scaffolding — Design
 
 **Date:** 2026-05-27
-**Status:** Designed, awaiting plan
+**Status:** Shipped (with known end-to-end limitation — see "Known limitations" below)
 **Scope:** New CLI subcommand `brust new <name>` that scaffolds a working brust app into a fresh directory: one template, one motion, opinionated defaults. Output mirrors `example/hello-world` (Tailwind v4 + one island + one route) but stripped of the demo variety so a new user has the smallest possible starting surface.
 
 ---
@@ -422,11 +422,27 @@ Skip a dedicated unit test for `resolveBrustRef`. It's covered transitively by t
 
 The implementation is done when:
 
-1. `bun runtime/cli/index.ts new my-app` (run from this repo) creates `./my-app/` with all expected files.
-2. `cd my-app && bun install` succeeds against the file: ref.
-3. `cd my-app && bun run dev` (which resolves the `brust` bin from `node_modules/.bin/brust`) boots, serves `/`, returns HTML with the Counter island. The test harness exercises this exact motion.
-4. All 6 test scenarios pass.
-5. `architecture.md` gains a "Built — `brust new` scaffolding" bullet under the existing Built list.
+1. `bun runtime/cli/index.ts new my-app` (run from this repo) creates `./my-app/` with all expected files. **✅ Shipped.**
+2. `cd my-app && bun install` succeeds against the file: ref. **✅ Empirically confirmed during implementation (probe-app).**
+3. **DEFERRED** — `cd my-app && bun run dev` boots, serves `/`, returns HTML with the Counter island. Blocked by the dual-React limitation below. Also tested `bun run build` + `bun run dist/index.js` — fails for the same reason. Will be unlocked by the workspace restructure follow-up.
+4. The trimmed test set passes (parseArgs unit + resolveBrustRef + copyTemplate + 4 CLI scenarios = 20 tests total). **✅ All 20 pass.**
+5. `architecture.md` gains a "Built — `brust new` scaffolding" bullet under the existing Built list, with the limitation called out. **✅ Shipped.**
+
+---
+
+## Known limitations
+
+**Scaffolded projects cannot run end-to-end yet** (neither `bun run dev` nor `bun run build` + `bun run dist/index.js`) until the brust repo is restructured.
+
+**Cause:** Bun's `file:` install symlinks individual source files back to `/abs/path/to/brust/runtime/*.ts`. React resolution follows the symlink to the real path and finds the brust repo's `node_modules/react`, which is a different physical copy than the scaffold's `node_modules/react`. Result: dual-React, which surfaces as `null is not an object (evaluating 'dispatcher.useState')` on the first `useState` call inside any island/page rendered server-side.
+
+**Build mode same problem:** `brust build`'s bundler ingests both react copies (different physical paths → not deduplicated), so the bundled `dist/index.js` carries two React instances and crashes identically.
+
+**Verified empirically:** the scaffold + install + boot sequence completes without error to the `accept`/`/ping` stages; the 500 only fires when a route renders a component that calls `useState`. Stack trace: `useState (<scaffold>/node_modules/react/...)` calling into `renderWithHooks (<brust-repo>/node_modules/react-dom/...)`.
+
+**Fix is a separate sub-project:** move brust to a Bun workspace where `example/hello-world` is a workspace member with its own `react`/`react-dom` deps, and the brust root no longer materializes those packages in its own `node_modules`. Then a `file:` install of brust into a scaffolded project resolves react through the scaffold's tree only.
+
+**Until then, what works:** the scaffolder code (`runNew`, `parseArgs`, `resolveBrustRef`, `copyTemplate`), the template, the CLI dispatch wiring, and the emitted project tree are all correct and tested. A user can scaffold a project and use it as a starting point for editing once the workspace fix lands.
 
 ---
 

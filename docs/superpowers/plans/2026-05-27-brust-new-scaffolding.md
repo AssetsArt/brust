@@ -799,6 +799,8 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 ## Task 7: `runNew` orchestrator + CLI wiring + integration test
 
+> **As shipped:** the orchestrator and CLI wiring landed as written. The heavy `bun install + bun run dev + curl /` test was DEFERRED — empirically blocked by the dual-React limitation (see the spec's `Known limitations` section). Replaced with a lighter `brust new: scaffold emits the expected tree and content` assertion that verifies file tree, package.json shape, and substitution leakage. The boot smoke will re-land when the workspace restructure follow-up unblocks it.
+
 **Files:**
 - Modify: `runtime/cli/new.ts` (replace `runNew` body)
 - Modify: `runtime/cli/index.ts` (add `case 'new'`)
