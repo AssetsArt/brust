@@ -8,7 +8,7 @@
 
 import { renderToString } from 'react-dom/server'
 import { createElement } from 'react'
-import HelloWorld from '../hello-world/components/HelloWorld'
+import HelloWorld from '../hello-world/pages/HelloWorld'
 
 const port = parseInt(process.env.BUN_BASELINE_PORT ?? '3001', 10)
 
@@ -22,7 +22,7 @@ const server = Bun.serve({
       })
     }
     const html = renderToString(
-      createElement(HelloWorld, { workerId: '0' }),
+      createElement(HelloWorld, { workerId: 0 } as any),
     )
     return new Response(html, {
       headers: { 'Content-Type': 'text/html; charset=utf-8' },
