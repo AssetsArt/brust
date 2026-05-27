@@ -9,6 +9,7 @@ const REPO = path.resolve(import.meta.dir, '..')
 
 let distDir: string
 let proc: ReturnType<typeof spawn> | undefined
+const port = 38291
 
 afterAll(async () => {
   if (proc) {
@@ -44,7 +45,6 @@ test('brust build → run → smoke all major paths', async () => {
   expect(bundle).toContain("BRUST_DIST_DIR")
 
   // 4. Boot the prebuilt server
-  const port = 38291
   proc = spawn({
     cmd: ['bun', 'run', path.join(distDir, 'index.js')],
     env: {
@@ -98,6 +98,41 @@ test('brust (no subcommand) exits 1', async () => {
   const result = await $`bun ${path.join(REPO, 'runtime/cli/index.ts')}`.nothrow()
   expect(result.exitCode).toBe(1)
   expect(result.stderr.toString()).toContain('missing subcommand')
+})
+
+test('brust build emits dist/css/app.css with compiled Tailwind', async () => {
+  expect(existsSync(`${distDir}/css/app.css`)).toBe(true)
+  const css = await Bun.file(`${distDir}/css/app.css`).text()
+  // Tailwind v4 preflight signature — `*,` selector prefix (with optional spaces around comma).
+  expect(css).toMatch(/\*,\s*::(?:before|after|backdrop)/)
+  // A utility class actually used by the migrated example app.
+  expect(css).toContain('.flex')
+})
+
+test('GET /_brust/css/app.css serves with correct headers', async () => {
+  const r = await fetch(`http://127.0.0.1:${port}/_brust/css/app.css`)
+  expect(r.status).toBe(200)
+  expect(r.headers.get('content-type') ?? '').toMatch(/^text\/css/)
+  expect(r.headers.get('cache-control') ?? '').toMatch(/max-age=3600/)
+  const text = await r.text()
+  expect(text.length).toBeGreaterThan(100)
+})
+
+test('SSR HTML contains <link rel="stylesheet"> immediately before </head>', async () => {
+  const html = await (await fetch(`http://127.0.0.1:${port}/`)).text()
+  const linkTag = '<link rel="stylesheet" href="/_brust/css/app.css">'
+  const linkIdx = html.indexOf(linkTag)
+  const headEnd = html.indexOf('</head>')
+  expect(linkIdx).toBeGreaterThan(-1)
+  expect(headEnd).toBeGreaterThan(-1)
+  expect(linkIdx).toBeLessThan(headEnd)
+  // Nothing between the link tag and </head> (allowing 0 chars of slack).
+  expect(headEnd - (linkIdx + linkTag.length)).toBe(0)
+})
+
+test('GET /_brust/css/..%2Fetc%2Fpasswd is 404', async () => {
+  const r = await fetch(`http://127.0.0.1:${port}/_brust/css/..%2Fetc%2Fpasswd`)
+  expect(r.status).toBe(404)
 })
 
 async function waitForPort(port: number, timeoutMs: number): Promise<void> {
