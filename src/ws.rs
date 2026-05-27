@@ -54,31 +54,48 @@ pub fn parse_ws_handshake(headers: &[u8]) -> Result<ParsedHandshake, HandshakeEr
     for line in text.lines() {
         let lc = line.to_ascii_lowercase();
         if let Some(rest) = lc.strip_prefix("upgrade:") {
-            if rest.contains("websocket") { upgrade_ok = true; }
+            if rest.contains("websocket") {
+                upgrade_ok = true;
+            }
         } else if let Some(rest) = lc.strip_prefix("connection:") {
-            if rest.contains("upgrade") { connection_upgrade_ok = true; }
+            if rest.contains("upgrade") {
+                connection_upgrade_ok = true;
+            }
         } else if lc.starts_with("sec-websocket-key:") {
             // Preserve original-case base64 value, not the lowercased one.
             if let Some((_, val)) = line.split_once(':') {
                 sec_websocket_key = Some(val.trim().to_string());
             }
         } else if let Some(rest) = lc.strip_prefix("sec-websocket-version:") {
-            if rest.trim() == "13" { version_ok = true; }
+            if rest.trim() == "13" {
+                version_ok = true;
+            }
         } else if lc.starts_with("sec-websocket-protocol:") {
             if let Some((_, val)) = line.split_once(':') {
                 for sp in val.split(',') {
                     let trimmed = sp.trim();
-                    if !trimmed.is_empty() { subprotocols.push(trimmed.to_string()); }
+                    if !trimmed.is_empty() {
+                        subprotocols.push(trimmed.to_string());
+                    }
                 }
             }
         }
     }
 
-    if !upgrade_ok { return Err(HandshakeError::MissingUpgrade); }
-    if !connection_upgrade_ok { return Err(HandshakeError::MissingConnectionUpgrade); }
-    if !version_ok { return Err(HandshakeError::BadVersion); }
+    if !upgrade_ok {
+        return Err(HandshakeError::MissingUpgrade);
+    }
+    if !connection_upgrade_ok {
+        return Err(HandshakeError::MissingConnectionUpgrade);
+    }
+    if !version_ok {
+        return Err(HandshakeError::BadVersion);
+    }
     let key = sec_websocket_key.ok_or(HandshakeError::MissingKey)?;
-    Ok(ParsedHandshake { sec_websocket_key: key, client_subprotocols: subprotocols })
+    Ok(ParsedHandshake {
+        sec_websocket_key: key,
+        client_subprotocols: subprotocols,
+    })
 }
 
 /// One outgoing frame from JS → Rust per-conn task.
@@ -104,7 +121,7 @@ pub struct WsOpenSignal {
     pub status: u16,
     pub body: Vec<u8>,
     pub content_type: String,
-    pub subprotocol: String,   // "" if no subprotocol negotiated
+    pub subprotocol: String, // "" if no subprotocol negotiated
 }
 
 /// Per-connection state stored in REGISTRY.
@@ -149,8 +166,8 @@ use futures::{SinkExt, StreamExt};
 use std::borrow::Cow;
 use std::time::{Duration, Instant};
 use tokio_tungstenite::{
-    tungstenite::protocol::{frame::CloseFrame, Message},
     WebSocketStream,
+    tungstenite::protocol::{Message, frame::CloseFrame},
 };
 
 /// Per-connection driver loop. Owns the WebSocketStream after the 101
@@ -172,14 +189,11 @@ pub async fn ws_conn_task<S>(
     mut send_rx: mpsc::Receiver<WsOutgoing>,
     ping_interval_ms: u64,
     max_msg_bytes: usize,
-)
-where
+) where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
     let (mut ws_sink, mut ws_stream) = ws.split();
-    let mut ping_tick = tokio::time::interval(
-        Duration::from_millis(ping_interval_ms.max(1)),
-    );
+    let mut ping_tick = tokio::time::interval(Duration::from_millis(ping_interval_ms.max(1)));
     let mut last_pong = Instant::now();
     let pong_timeout = Duration::from_millis(ping_interval_ms.saturating_mul(2));
     let mut close_fired = false;
@@ -334,19 +348,28 @@ mod tests {
     fn parse_handshake_with_subprotocols() {
         let raw = b"GET /ws HTTP/1.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: k==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: chat.v2, chat.v1\r\n\r\n";
         let h = parse_ws_handshake(raw).unwrap();
-        assert_eq!(h.client_subprotocols, vec!["chat.v2".to_string(), "chat.v1".to_string()]);
+        assert_eq!(
+            h.client_subprotocols,
+            vec!["chat.v2".to_string(), "chat.v1".to_string()]
+        );
     }
 
     #[test]
     fn parse_handshake_rejects_missing_upgrade() {
         let raw = b"GET /ws HTTP/1.1\r\nConnection: Upgrade\r\nSec-WebSocket-Key: k==\r\nSec-WebSocket-Version: 13\r\n\r\n";
-        assert_eq!(parse_ws_handshake(raw).unwrap_err(), HandshakeError::MissingUpgrade);
+        assert_eq!(
+            parse_ws_handshake(raw).unwrap_err(),
+            HandshakeError::MissingUpgrade
+        );
     }
 
     #[test]
     fn parse_handshake_rejects_bad_version() {
         let raw = b"GET /ws HTTP/1.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: k==\r\nSec-WebSocket-Version: 8\r\n\r\n";
-        assert_eq!(parse_ws_handshake(raw).unwrap_err(), HandshakeError::BadVersion);
+        assert_eq!(
+            parse_ws_handshake(raw).unwrap_err(),
+            HandshakeError::BadVersion
+        );
     }
 
     #[test]
@@ -361,12 +384,15 @@ mod tests {
         let (send_tx, _send_rx) = mpsc::channel(32);
         let (open_tx, _open_rx) = oneshot::channel::<WsOpenSignal>();
         let id = crate::sse::next_conn_id();
-        registry().lock().insert(id, WsConn {
-            send_tx,
-            open_tx: Some(open_tx),
-            on_message: None,
-            on_close: None,
-        });
+        registry().lock().insert(
+            id,
+            WsConn {
+                send_tx,
+                open_tx: Some(open_tx),
+                on_message: None,
+                on_close: None,
+            },
+        );
         assert!(registry().lock().contains_key(&id));
         let removed = registry().lock().remove(&id);
         assert!(removed.is_some());

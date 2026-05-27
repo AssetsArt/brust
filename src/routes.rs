@@ -105,7 +105,11 @@ pub fn build_sse_envelope(
         None => (full_path, ""),
     };
     let req = build_request_envelope(method, full_path, query, raw_request);
-    let env = SseEnvelope { kind: "sse", conn_id, req };
+    let env = SseEnvelope {
+        kind: "sse",
+        conn_id,
+        req,
+    };
     serde_json::to_string(&env).unwrap()
 }
 
@@ -136,7 +140,12 @@ pub fn build_ws_envelope(
         None => (full_path, ""),
     };
     let req = build_request_envelope(method, full_path, query, raw_request);
-    let env = WsEnvelope { kind: "ws", conn_id, client_subprotocols, req };
+    let env = WsEnvelope {
+        kind: "ws",
+        conn_id,
+        client_subprotocols,
+        req,
+    };
     serde_json::to_string(&env).unwrap()
 }
 
@@ -197,10 +206,7 @@ impl RouteTable {
 
     /// Replace the route set + per-route cache configs. Patterns are inserted
     /// in array order; index = route_id.
-    pub fn install_with_config(
-        &self,
-        configs: &[RouteConfig],
-    ) -> Result<u32, RouteInstallError> {
+    pub fn install_with_config(&self, configs: &[RouteConfig]) -> Result<u32, RouteInstallError> {
         let mut router = matchit::Router::new();
         let mut caches: Vec<Option<CacheConfig>> = Vec::with_capacity(configs.len());
         for (idx, c) in configs.iter().enumerate() {
@@ -218,15 +224,13 @@ impl RouteTable {
     }
 
     pub fn cache_for(&self, route_id: u32) -> Option<CacheConfig> {
-        self.cache_configs.read().get(route_id as usize).and_then(|c| c.clone())
+        self.cache_configs
+            .read()
+            .get(route_id as usize)
+            .and_then(|c| c.clone())
     }
 
-    pub fn match_path(
-        &self,
-        method: &str,
-        full_path: &str,
-        raw_request: &[u8],
-    ) -> MatchResult {
+    pub fn match_path(&self, method: &str, full_path: &str, raw_request: &[u8]) -> MatchResult {
         let (path_only, query) = match full_path.split_once('?') {
             Some((p, q)) => (p, q),
             None => (full_path, ""),
@@ -306,10 +310,7 @@ fn build_request_envelope(
             }
             match pair.split_once('=') {
                 Some((k, v)) => {
-                    search.insert(
-                        url_decode(k),
-                        url_decode(v),
-                    );
+                    search.insert(url_decode(k), url_decode(v));
                 }
                 None => {
                     search.insert(url_decode(pair), String::new());
@@ -488,7 +489,10 @@ mod tests {
     #[test]
     fn render_envelope_has_kind_discriminant() {
         let table = RouteTable::new();
-        let cfg = RouteConfig { path: "/foo".into(), cache: None };
+        let cfg = RouteConfig {
+            path: "/foo".into(),
+            cache: None,
+        };
         table.install_with_config(&[cfg]).unwrap();
         let raw = b"GET /foo HTTP/1.1\r\nHost: x\r\n\r\n";
         let result = table.match_path("GET", "/foo", raw);
@@ -574,7 +578,8 @@ mod tests {
             b"",
         );
         let outer: serde_json::Value = serde_json::from_str(&json).unwrap();
-        let inner: serde_json::Value = serde_json::from_str(outer["body_text"].as_str().unwrap()).unwrap();
+        let inner: serde_json::Value =
+            serde_json::from_str(outer["body_text"].as_str().unwrap()).unwrap();
         assert_eq!(inner[0], r#"hi "there""#);
         assert_eq!(inner[1], 42);
     }
@@ -589,7 +594,10 @@ mod tests {
         );
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["kind"], "mcp");
-        assert_eq!(parsed["body_text"], r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#);
+        assert_eq!(
+            parsed["body_text"],
+            r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#
+        );
         assert_eq!(parsed["req"]["method"], "POST");
     }
 
@@ -598,7 +606,8 @@ mod tests {
         let inner = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"x","arguments":{"text":"hi \"there\""}}}"#;
         let json = build_mcp_envelope("POST", "/_brust/mcp", inner, b"");
         let outer: serde_json::Value = serde_json::from_str(&json).unwrap();
-        let recovered: serde_json::Value = serde_json::from_str(outer["body_text"].as_str().unwrap()).unwrap();
+        let recovered: serde_json::Value =
+            serde_json::from_str(outer["body_text"].as_str().unwrap()).unwrap();
         assert_eq!(recovered["params"]["arguments"]["text"], r#"hi "there""#);
     }
 
@@ -673,7 +682,10 @@ mod rewrite_envelope_kind_tests {
     fn swap_render_to_navigation() {
         let envelope = r#"{"kind":"render","path":"/blog/x","route_id":2}"#.to_string();
         let out = rewrite_envelope_kind(envelope, "navigation");
-        assert_eq!(out, r#"{"kind":"navigation","path":"/blog/x","route_id":2}"#);
+        assert_eq!(
+            out,
+            r#"{"kind":"navigation","path":"/blog/x","route_id":2}"#
+        );
     }
 
     #[test]

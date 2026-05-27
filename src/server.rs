@@ -6,8 +6,8 @@ use tokio::sync::Notify;
 use tracing::{error, warn};
 
 use crate::cache::{CacheConfig, CacheKey, LruCache};
-use crate::http::{self, parse_request, ParseError};
-use crate::io::{run_io, spawn, IO_NAME, TcpListener, TcpStream};
+use crate::http::{self, ParseError, parse_request};
+use crate::io::{IO_NAME, TcpListener, TcpStream, run_io, spawn};
 use crate::pool::WorkerPool;
 use crate::routes::{MatchResult, RouteTable};
 
@@ -231,12 +231,7 @@ async fn handle_conn(
                         "Cache-Control".to_string(),
                         "public, max-age=3600".to_string(),
                     )];
-                    let resp = http::build_response(
-                        200,
-                        "text/css; charset=utf-8",
-                        &extra,
-                        bytes,
-                    );
+                    let resp = http::build_response(200, "text/css; charset=utf-8", &extra, bytes);
                     if s.write_all(resp).await.is_err() {
                         return;
                     }
@@ -412,16 +407,25 @@ async fn handle_conn(
             }
             let header_end = match buf.windows(4).position(|w| w == b"\r\n\r\n") {
                 Some(p) => p + 4,
-                None => { let _ = s.write_all(http::error_400()).await; return; }
+                None => {
+                    let _ = s.write_all(http::error_400()).await;
+                    return;
+                }
             };
             let content_type = parse_content_type(&buf[..header_end]).unwrap_or_default();
-            if !content_type.to_ascii_lowercase().starts_with("application/json") {
+            if !content_type
+                .to_ascii_lowercase()
+                .starts_with("application/json")
+            {
                 let _ = s.write_all(http::error_415()).await;
                 return;
             }
             let content_length = match parse_content_length(&buf[..header_end]) {
                 Some(n) => n,
-                None => { let _ = s.write_all(http::error_411()).await; return; }
+                None => {
+                    let _ = s.write_all(http::error_411()).await;
+                    return;
+                }
             };
             // Same cap as action — single global body envelope limit (SAB capacity).
             if content_length > MAX_ACTION_BODY_BYTES {
@@ -436,30 +440,32 @@ async fn handle_conn(
                 while read_so_far < need {
                     let n = match s.read_request(&mut buf).await {
                         Ok(n) => n,
-                        Err(_) => { let _ = s.write_all(http::error_400()).await; return; }
+                        Err(_) => {
+                            let _ = s.write_all(http::error_400()).await;
+                            return;
+                        }
                     };
-                    if n == 0 { let _ = s.write_all(http::error_400()).await; return; }
+                    if n == 0 {
+                        let _ = s.write_all(http::error_400()).await;
+                        return;
+                    }
                     read_so_far += n;
                 }
             }
             let body_slice = &buf[header_end..header_end + content_length];
             let body_str = match std::str::from_utf8(body_slice) {
                 Ok(s) => s,
-                Err(_) => { let _ = s.write_all(http::error_400()).await; continue; }
+                Err(_) => {
+                    let _ = s.write_all(http::error_400()).await;
+                    continue;
+                }
             };
 
-            let envelope_json = crate::routes::build_mcp_envelope(
-                &method, &path, body_str, &buf[..header_end],
-            );
+            let envelope_json =
+                crate::routes::build_mcp_envelope(&method, &path, body_str, &buf[..header_end]);
 
-            match dispatch_to_worker_and_stream_chunks(
-                &mut s,
-                &pool,
-                envelope_json,
-                "mcp",
-                |_| {},
-            )
-            .await
+            match dispatch_to_worker_and_stream_chunks(&mut s, &pool, envelope_json, "mcp", |_| {})
+                .await
             {
                 DispatchControl::Continue => continue,
                 DispatchControl::CloseConn => return,
@@ -553,11 +559,14 @@ async fn handle_conn(
             let conn_id = crate::sse::next_conn_id();
             let (frame_tx, frame_rx) = tokio::sync::mpsc::channel::<crate::sse::SseFrame>(32);
             let (open_tx, open_rx) = tokio::sync::oneshot::channel::<crate::sse::SseOpenSignal>();
-            crate::sse::registry().lock().insert(conn_id, crate::sse::SseConn {
-                frame_tx,
-                open_tx: Some(open_tx),
-                abort_cb: None,
-            });
+            crate::sse::registry().lock().insert(
+                conn_id,
+                crate::sse::SseConn {
+                    frame_tx,
+                    open_tx: Some(open_tx),
+                    abort_cb: None,
+                },
+            );
 
             // Pick a worker and dispatch.
             let Some(entry) = pool.pick_least_busy() else {
@@ -565,9 +574,8 @@ async fn handle_conn(
                 crate::sse::registry().lock().remove(&conn_id);
                 return;
             };
-            let envelope_json = crate::routes::build_sse_envelope(
-                &method, &path, &buf[..header_end], conn_id,
-            );
+            let envelope_json =
+                crate::routes::build_sse_envelope(&method, &path, &buf[..header_end], conn_id);
 
             if let Err(e) = crate::pool::dispatch_sse(entry.clone(), envelope_json).await {
                 error!(worker_id = entry.id, error = %e, "sse tsfn call_async failed");
@@ -579,10 +587,14 @@ async fn handle_conn(
             // Await the open signal with timeout. Distinguish sender-dropped (JS crash)
             // from timeout (genuinely slow middleware) in the logs so Task 13 smoke
             // failures are diagnosable.
-            let open = match tokio::time::timeout(std::time::Duration::from_secs(30), open_rx).await {
+            let open = match tokio::time::timeout(std::time::Duration::from_secs(30), open_rx).await
+            {
                 Ok(Ok(signal)) => signal,
                 Ok(Err(_)) => {
-                    warn!(conn_id, "sse open_tx sender dropped before signal — JS crash?");
+                    warn!(
+                        conn_id,
+                        "sse open_tx sender dropped before signal — JS crash?"
+                    );
                     let _ = s.write_all(http::error_500()).await;
                     crate::sse::registry().lock().remove(&conn_id);
                     return;
@@ -613,7 +625,10 @@ async fn handle_conn(
             }
 
             // Open OK — write SSE headers, hand the socket to the per-conn task.
-            if crate::sse::write_sse_response_headers(&mut s).await.is_err() {
+            if crate::sse::write_sse_response_headers(&mut s)
+                .await
+                .is_err()
+            {
                 crate::sse::registry().lock().remove(&conn_id);
                 return;
             }
@@ -651,12 +666,15 @@ async fn handle_conn(
             let conn_id = crate::sse::next_conn_id();
             let (send_tx, send_rx) = tokio::sync::mpsc::channel::<crate::ws::WsOutgoing>(32);
             let (open_tx, open_rx) = tokio::sync::oneshot::channel::<crate::ws::WsOpenSignal>();
-            crate::ws::registry().lock().insert(conn_id, crate::ws::WsConn {
-                send_tx,
-                open_tx: Some(open_tx),
-                on_message: None,
-                on_close: None,
-            });
+            crate::ws::registry().lock().insert(
+                conn_id,
+                crate::ws::WsConn {
+                    send_tx,
+                    open_tx: Some(open_tx),
+                    on_message: None,
+                    on_close: None,
+                },
+            );
 
             // Pick a worker and dispatch.
             let Some(entry) = pool.pick_least_busy() else {
@@ -667,9 +685,15 @@ async fn handle_conn(
             // Destructure so client_subprotocols moves into the envelope
             // and sec_websocket_key is still available for compute_sec_accept
             // on the 101 happy path. Avoids an unnecessary Vec<String> clone.
-            let crate::ws::ParsedHandshake { sec_websocket_key, client_subprotocols } = handshake;
+            let crate::ws::ParsedHandshake {
+                sec_websocket_key,
+                client_subprotocols,
+            } = handshake;
             let envelope_json = crate::routes::build_ws_envelope(
-                &method, &path, &buf[..header_end], conn_id,
+                &method,
+                &path,
+                &buf[..header_end],
+                conn_id,
                 client_subprotocols,
             );
 
@@ -682,10 +706,14 @@ async fn handle_conn(
 
             // Await open verdict with 30s timeout. Distinguish sender-drop (JS
             // crash) from timeout for diagnosability.
-            let open = match tokio::time::timeout(std::time::Duration::from_secs(30), open_rx).await {
+            let open = match tokio::time::timeout(std::time::Duration::from_secs(30), open_rx).await
+            {
                 Ok(Ok(signal)) => signal,
                 Ok(Err(_)) => {
-                    warn!(conn_id, "ws open_tx sender dropped before signal — JS crash?");
+                    warn!(
+                        conn_id,
+                        "ws open_tx sender dropped before signal — JS crash?"
+                    );
                     let _ = s.write_all(http::error_500()).await;
                     crate::ws::registry().lock().remove(&conn_id);
                     return;
@@ -723,7 +751,8 @@ async fn handle_conn(
             handshake_resp.push_str("Connection: Upgrade\r\n");
             handshake_resp.push_str(&format!("Sec-WebSocket-Accept: {}\r\n", accept));
             if !open.subprotocol.is_empty() {
-                handshake_resp.push_str(&format!("Sec-WebSocket-Protocol: {}\r\n", open.subprotocol));
+                handshake_resp
+                    .push_str(&format!("Sec-WebSocket-Protocol: {}\r\n", open.subprotocol));
             }
             handshake_resp.push_str("\r\n");
             if s.write_all(handshake_resp.into_bytes()).await.is_err() {
@@ -744,18 +773,19 @@ async fn handle_conn(
             // if compile fails there.
             use tokio_tungstenite::tungstenite::protocol::Role;
             let inner = s.into_inner();
-            let ws_stream = tokio_tungstenite::WebSocketStream::from_raw_socket(
-                inner, Role::Server, None,
-            ).await;
+            let ws_stream =
+                tokio_tungstenite::WebSocketStream::from_raw_socket(inner, Role::Server, None)
+                    .await;
             // Spawn ws_conn_task as a detached task so handle_conn returns and
             // the accept-worker can take other connections. The per-conn task
             // owns the WebSocketStream + sends to TCP independently.
             crate::io::spawn(async move {
                 crate::ws::ws_conn_task(
                     ws_stream, conn_id, send_rx,
-                    30_000,            // pingMs default — per-route forwarding is a follow-up
-                    1_048_576,         // 1 MB max msg — per-route forwarding is a follow-up
-                ).await;
+                    30_000,    // pingMs default — per-route forwarding is a follow-up
+                    1_048_576, // 1 MB max msg — per-route forwarding is a follow-up
+                )
+                .await;
             });
             return;
         }
@@ -773,15 +803,24 @@ async fn handle_conn(
             }
             let real_path = if stripped.is_empty() { "/" } else { stripped };
             let (envelope_json, _route_id) = match routes.match_path(&method, real_path, &buf) {
-                MatchResult::Matched { envelope_json, route_id } => {
-                    let nav_envelope = crate::routes::rewrite_envelope_kind(envelope_json, "navigation");
+                MatchResult::Matched {
+                    envelope_json,
+                    route_id,
+                } => {
+                    let nav_envelope =
+                        crate::routes::rewrite_envelope_kind(envelope_json, "navigation");
                     (nav_envelope, route_id)
                 }
                 MatchResult::NoMatch => {
                     let body = br#"{"error":"not found"}"#.to_vec();
-                    let _ = s.write_all(http::build_response(
-                        404, "application/json; charset=utf-8", &[], body,
-                    )).await;
+                    let _ = s
+                        .write_all(http::build_response(
+                            404,
+                            "application/json; charset=utf-8",
+                            &[],
+                            body,
+                        ))
+                        .await;
                     continue;
                 }
             };
@@ -791,14 +830,19 @@ async fn handle_conn(
                 envelope_json,
                 "navigation",
                 |_| {},
-            ).await {
+            )
+            .await
+            {
                 DispatchControl::Continue => continue,
                 DispatchControl::CloseConn => return,
             }
         }
 
         let (envelope_json, route_id) = match routes.match_path(&method, &path, &buf) {
-            MatchResult::Matched { envelope_json, route_id } => (envelope_json, route_id),
+            MatchResult::Matched {
+                envelope_json,
+                route_id,
+            } => (envelope_json, route_id),
             MatchResult::NoMatch => {
                 let _ = s.write_all(http::error_404()).await;
                 continue;
@@ -1050,7 +1094,12 @@ where
     DispatchControl::Continue
 }
 
-fn build_cache_key(method: &str, full_path: &str, cfg: &CacheConfig, request_buf: &[u8]) -> CacheKey {
+fn build_cache_key(
+    method: &str,
+    full_path: &str,
+    cfg: &CacheConfig,
+    request_buf: &[u8],
+) -> CacheKey {
     let (path_only, query) = match full_path.split_once('?') {
         Some((p, q)) => (p, q),
         None => (full_path, ""),
@@ -1166,8 +1215,7 @@ fn is_safe_island_filename(name: &str) -> bool {
     if name.contains('/') || name.contains('\\') || name.contains("..") {
         return false;
     }
-    name
-        .bytes()
+    name.bytes()
         .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-'))
 }
 
@@ -1184,8 +1232,7 @@ fn is_safe_css_filename(name: &str) -> bool {
     if name.contains('/') || name.contains('\\') || name.contains("..") {
         return false;
     }
-    name
-        .bytes()
+    name.bytes()
         .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-'))
 }
 
@@ -1216,7 +1263,9 @@ fn parse_content_type(buf: &[u8]) -> Option<String> {
     let _ = req.parse(buf);
     for h in req.headers.iter() {
         if h.name.eq_ignore_ascii_case("content-type") {
-            return std::str::from_utf8(h.value).ok().map(|s| s.trim().to_string());
+            return std::str::from_utf8(h.value)
+                .ok()
+                .map(|s| s.trim().to_string());
         }
     }
     None
@@ -1230,7 +1279,9 @@ fn parse_header_value(buf: &[u8], name: &str) -> Option<String> {
     let _ = req.parse(buf);
     for h in req.headers.iter() {
         if h.name.eq_ignore_ascii_case(name) {
-            return std::str::from_utf8(h.value).ok().map(|s| s.trim().to_string());
+            return std::str::from_utf8(h.value)
+                .ok()
+                .map(|s| s.trim().to_string());
         }
     }
     None
@@ -1243,7 +1294,8 @@ fn is_safe_action_id(id: &str) -> bool {
     if id.is_empty() || id.len() > 128 {
         return false;
     }
-    id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+    id.bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
 }
 
 #[cfg(test)]
@@ -1350,7 +1402,10 @@ mod tests {
     #[test]
     fn parse_content_type_finds_header() {
         let raw = b"POST /x HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n\r\n";
-        assert_eq!(parse_content_type(raw), Some("application/json".to_string()));
+        assert_eq!(
+            parse_content_type(raw),
+            Some("application/json".to_string())
+        );
     }
 
     #[test]
@@ -1371,7 +1426,10 @@ mod tests {
     #[test]
     fn parse_content_type_trims_whitespace() {
         let raw = b"POST /x HTTP/1.1\r\nHost: x\r\nContent-Type:   application/json  \r\n\r\n";
-        assert_eq!(parse_content_type(raw), Some("application/json".to_string()));
+        assert_eq!(
+            parse_content_type(raw),
+            Some("application/json".to_string())
+        );
     }
 
     #[test]

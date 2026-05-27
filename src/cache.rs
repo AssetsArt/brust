@@ -158,7 +158,11 @@ mod tests {
     fn invalidate_path_removes_only_matching_entries() {
         let c = LruCache::new();
         c.insert(key("GET", "/a", ""), b"a".to_vec(), Duration::from_secs(60));
-        c.insert(key("GET", "/a", "x=1"), b"a-x".to_vec(), Duration::from_secs(60));
+        c.insert(
+            key("GET", "/a", "x=1"),
+            b"a-x".to_vec(),
+            Duration::from_secs(60),
+        );
         c.insert(key("GET", "/b", ""), b"b".to_vec(), Duration::from_secs(60));
 
         let removed = c.invalidate_path("GET", "/a");

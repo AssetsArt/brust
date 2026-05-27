@@ -30,9 +30,14 @@ unsafe impl Sync for BufPtr {}
 /// next chunk can be written into the SAB without overlapping.
 pub enum RenderChunk {
     /// Chunk body (first chunk includes meta prefix per spec §4).
-    Bytes { data: Vec<u8>, ack: tokio::sync::oneshot::Sender<()> },
+    Bytes {
+        data: Vec<u8>,
+        ack: tokio::sync::oneshot::Sender<()>,
+    },
     /// `napi_render_chunk(_, 0)` — close the channel, terminate the response.
-    Final { ack: tokio::sync::oneshot::Sender<()> },
+    Final {
+        ack: tokio::sync::oneshot::Sender<()>,
+    },
 }
 
 /// Per-worker per-request slot. Installed by handle_conn BEFORE calling
@@ -136,16 +141,14 @@ impl WorkerPool {
 ///
 /// Returns Err if the tsfn enqueue itself fails (e.g. worker dead).
 /// Open-signal timeout + middleware reject handling are caller concerns.
-pub async fn dispatch_sse(
-    entry: Arc<TsfnEntry>,
-    envelope_json: String,
-) -> Result<(), napi::Error> {
+pub async fn dispatch_sse(entry: Arc<TsfnEntry>, envelope_json: String) -> Result<(), napi::Error> {
     let _guard = entry.in_flight_guard();
-    entry.tsfn.call_async(envelope_json).await
+    entry
+        .tsfn
+        .call_async(envelope_json)
+        .await
         .map(|_| ())
-        .map_err(|e| {
-            napi::Error::from_reason(format!("sse dispatch failed: {e}"))
-        })
+        .map_err(|e| napi::Error::from_reason(format!("sse dispatch failed: {e}")))
 }
 
 /// Dispatch a WS envelope to the worker. Single long-lived tsfn call:
@@ -158,16 +161,14 @@ pub async fn dispatch_sse(
 ///
 /// Returns Err if the tsfn enqueue itself fails (e.g. worker dead).
 /// Open-signal timeout + middleware reject handling are caller concerns.
-pub async fn dispatch_ws(
-    entry: Arc<TsfnEntry>,
-    envelope_json: String,
-) -> Result<(), napi::Error> {
+pub async fn dispatch_ws(entry: Arc<TsfnEntry>, envelope_json: String) -> Result<(), napi::Error> {
     let _guard = entry.in_flight_guard();
-    entry.tsfn.call_async(envelope_json).await
+    entry
+        .tsfn
+        .call_async(envelope_json)
+        .await
         .map(|_| ())
-        .map_err(|e| {
-            napi::Error::from_reason(format!("ws dispatch failed: {e}"))
-        })
+        .map_err(|e| napi::Error::from_reason(format!("ws dispatch failed: {e}")))
 }
 
 #[cfg(test)]
@@ -191,7 +192,12 @@ mod tests {
     async fn render_chunk_enum_bytes_ack_round_trip() {
         let (tx, mut rx) = mpsc::channel::<RenderChunk>(1);
         let (ack_tx, ack_rx) = oneshot::channel::<()>();
-        tx.send(RenderChunk::Bytes { data: vec![1, 2, 3], ack: ack_tx }).await.unwrap();
+        tx.send(RenderChunk::Bytes {
+            data: vec![1, 2, 3],
+            ack: ack_tx,
+        })
+        .await
+        .unwrap();
         let got = rx.recv().await.unwrap();
         match got {
             RenderChunk::Bytes { data, ack } => {

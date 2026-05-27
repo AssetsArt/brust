@@ -1,4 +1,4 @@
-use httparse::{Request as HttpRequest, Status, EMPTY_HEADER};
+use httparse::{EMPTY_HEADER, Request as HttpRequest, Status};
 
 pub struct ParsedRequest<'a> {
     pub method: &'a str,
@@ -64,7 +64,9 @@ pub fn build_response(
             continue;
         }
         if name.bytes().any(|b| b == b'\r' || b == b'\n' || b == b'\0')
-            || value.bytes().any(|b| b == b'\r' || b == b'\n' || b == b'\0')
+            || value
+                .bytes()
+                .any(|b| b == b'\r' || b == b'\n' || b == b'\0')
         {
             continue;
         }

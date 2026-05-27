@@ -34,9 +34,13 @@ impl Default for ChunkMeta {
 /// into (meta_slice, body_slice). Returns Err if the meta_len field is
 /// missing or exceeds the buffer.
 pub fn split_meta(buf: &[u8]) -> Result<(&[u8], &[u8]), &'static str> {
-    if buf.len() < 2 { return Err("first chunk too short for meta_len header"); }
+    if buf.len() < 2 {
+        return Err("first chunk too short for meta_len header");
+    }
     let meta_len = u16::from_be_bytes([buf[0], buf[1]]) as usize;
-    if 2 + meta_len > buf.len() { return Err("meta_len exceeds chunk size"); }
+    if 2 + meta_len > buf.len() {
+        return Err("meta_len exceeds chunk size");
+    }
     Ok((&buf[2..2 + meta_len], &buf[2 + meta_len..]))
 }
 
@@ -67,7 +71,8 @@ pub fn build_chunked_response_head(meta: &ChunkMeta) -> Vec<u8> {
         meta.status,
         status_reason(meta.status),
         meta.content_type,
-    ).into_bytes();
+    )
+    .into_bytes();
     for (k, v) in &meta.headers {
         out.extend_from_slice(format!("{}: {}\r\n", k, v).as_bytes());
     }
@@ -85,7 +90,8 @@ pub fn build_single_response_bytes(meta: &ChunkMeta, body: &[u8]) -> Vec<u8> {
         status_reason(meta.status),
         meta.content_type,
         body.len(),
-    ).into_bytes();
+    )
+    .into_bytes();
     for (k, v) in &meta.headers {
         out.extend_from_slice(format!("{}: {}\r\n", k, v).as_bytes());
     }
@@ -121,7 +127,10 @@ pub fn check_chunk_dispatch(
     buf_len: usize,
 ) -> Result<tokio::sync::mpsc::Sender<crate::pool::RenderChunk>, String> {
     if (len as usize) > buf_len {
-        return Err(format!("chunk len {} exceeds SAB capacity {}", len, buf_len));
+        return Err(format!(
+            "chunk len {} exceeds SAB capacity {}",
+            len, buf_len
+        ));
     }
     let slot = render_slot.lock();
     slot.as_ref()

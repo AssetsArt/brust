@@ -6,19 +6,19 @@ mod io;
 mod pool;
 pub mod render_stream;
 mod routes;
-pub mod sse;
 mod server;
+pub mod sse;
 pub mod ws;
 
+use std::cell::Cell;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::cell::Cell;
 use std::time::Duration;
 
+use napi::Result as NapiResult;
 use napi::bindgen_prelude::{BigInt, Buffer, Function, Promise, Uint8Array};
 use napi::threadsafe_function::ThreadsafeFunctionCallMode;
-use napi::Result as NapiResult;
 use napi_derive::napi;
 use once_cell::sync::OnceCell;
 use tokio::sync::Notify;
@@ -42,7 +42,7 @@ struct State {
     is_serving: AtomicBool,
     expected_workers: AtomicU32,
     islands_dir: parking_lot::RwLock<Option<std::path::PathBuf>>,
-    css_dir:     parking_lot::RwLock<Option<std::path::PathBuf>>,
+    css_dir: parking_lot::RwLock<Option<std::path::PathBuf>>,
     actions: parking_lot::RwLock<std::collections::HashSet<String>>,
 }
 
@@ -52,8 +52,7 @@ pub(crate) fn state() -> &'static State {
     STATE.get_or_init(|| {
         let _ = tracing_subscriber::fmt()
             .with_env_filter(
-                EnvFilter::try_from_default_env()
-                    .unwrap_or_else(|_| EnvFilter::new("brust=info")),
+                EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("brust=info")),
             )
             .with_target(false)
             .with_writer(std::io::stderr)
@@ -67,7 +66,7 @@ pub(crate) fn state() -> &'static State {
             is_serving: AtomicBool::new(false),
             expected_workers: AtomicU32::new(0),
             islands_dir: parking_lot::RwLock::new(None),
-            css_dir:     parking_lot::RwLock::new(None),
+            css_dir: parking_lot::RwLock::new(None),
             actions: parking_lot::RwLock::new(std::collections::HashSet::new()),
         }
     })
@@ -139,10 +138,7 @@ pub async fn until_shutdown() -> NapiResult<()> {
 }
 
 #[napi]
-pub fn register_renderer(
-    mut buf: Uint8Array,
-    f: Function<String, Promise<()>>,
-) -> NapiResult<u32> {
+pub fn register_renderer(mut buf: Uint8Array, f: Function<String, Promise<()>>) -> NapiResult<u32> {
     // NOTE: is_worker() reads std::env::var which is not patched by Bun's Worker
     // env option (Bun Workers share the OS process).  The TS layer is responsible
     // for only calling registerRenderer from a worker context; we skip the guard.
@@ -248,7 +244,8 @@ fn is_safe_action_id(id: &str) -> bool {
     if id.is_empty() || id.len() > 128 {
         return false;
     }
-    id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+    id.bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
 }
 
 // ----- SSE NAPI bridge -----
@@ -264,19 +261,31 @@ pub async fn napi_sse_write(conn_id: BigInt, bytes: Buffer) -> NapiResult<()> {
         reg.get(&conn_id).map(|c| c.frame_tx.clone())
     };
     let Some(tx) = frame_tx else {
-        return Err(napi::Error::from_reason(format!("conn {} not registered", conn_id)));
+        return Err(napi::Error::from_reason(format!(
+            "conn {} not registered",
+            conn_id
+        )));
     };
     let (ack_tx, ack_rx) = tokio::sync::oneshot::channel::<()>();
-    let frame = crate::sse::SseFrame { bytes: bytes.to_vec(), ack: ack_tx };
+    let frame = crate::sse::SseFrame {
+        bytes: bytes.to_vec(),
+        ack: ack_tx,
+    };
     if tx.send(frame).await.is_err() {
-        return Err(napi::Error::from_reason(format!("conn {} channel closed", conn_id)));
+        return Err(napi::Error::from_reason(format!(
+            "conn {} channel closed",
+            conn_id
+        )));
     }
     // Propagate ack errors so the JS reader loop aborts immediately instead
     // of enqueuing more frames into a torn-down conn (the next tx.send would
     // catch it eventually but several frames could be lost in the meantime).
-    ack_rx.await.map_err(|_| napi::Error::from_reason(
-        format!("conn {} ack dropped — TCP write failed or conn torn down", conn_id)
-    ))?;
+    ack_rx.await.map_err(|_| {
+        napi::Error::from_reason(format!(
+            "conn {} ack dropped — TCP write failed or conn torn down",
+            conn_id
+        ))
+    })?;
     Ok(())
 }
 
@@ -397,17 +406,17 @@ pub async fn napi_ws_send(conn_id: BigInt, data: Buffer, is_binary: bool) -> Nap
         reg.get(&conn_id).map(|c| c.send_tx.clone())
     };
     let Some(tx) = send_tx else {
-        return Err(napi::Error::from_reason(format!("ws conn {} not registered", conn_id)));
+        return Err(napi::Error::from_reason(format!(
+            "ws conn {} not registered",
+            conn_id
+        )));
     };
     let (ack_tx, ack_rx) = tokio::sync::oneshot::channel::<()>();
     let frame = if is_binary {
         crate::ws::WsFrameKind::Binary(data.to_vec())
     } else {
         let s = String::from_utf8(data.to_vec()).map_err(|_| {
-            napi::Error::from_reason(format!(
-                "ws conn {} text frame not valid utf-8",
-                conn_id
-            ))
+            napi::Error::from_reason(format!("ws conn {} text frame not valid utf-8", conn_id))
         })?;
         crate::ws::WsFrameKind::Text(s)
     };
@@ -470,12 +479,18 @@ pub fn napi_ws_register_handlers(
     let on_close_tsfn = on_close.build_threadsafe_function().build()?;
     let on_message_box: Box<dyn Fn(Vec<u8>, bool) + Send + Sync + 'static> =
         Box::new(move |bytes, is_binary| {
-            let arg = WsMessageArg { data: Buffer::from(bytes), is_binary };
+            let arg = WsMessageArg {
+                data: Buffer::from(bytes),
+                is_binary,
+            };
             on_message_tsfn.call(arg, ThreadsafeFunctionCallMode::NonBlocking);
         });
     let on_close_box: Box<dyn Fn(u16, String) + Send + Sync + 'static> =
         Box::new(move |code, reason| {
-            let arg = WsCloseArg { code: code as u32, reason };
+            let arg = WsCloseArg {
+                code: code as u32,
+                reason,
+            };
             on_close_tsfn.call(arg, ThreadsafeFunctionCallMode::NonBlocking);
         });
     let mut reg = crate::ws::registry().lock();
@@ -515,11 +530,13 @@ pub fn napi_register_ws_paths(paths: Vec<String>) -> NapiResult<()> {
 ///   (NOT hang — worker's sink propagates via cb(err) to renderer Promise).
 #[napi]
 pub async fn napi_render_chunk(worker_id: u32, len: u32) -> NapiResult<()> {
-    let entry = state().pool.entry(worker_id)
+    let entry = state()
+        .pool
+        .entry(worker_id)
         .ok_or_else(|| napi::Error::from_reason(format!("worker {} not registered", worker_id)))?;
-    let chunk_tx = crate::render_stream::check_chunk_dispatch(
-        &entry.render_slot, len, entry.buf_len,
-    ).map_err(napi::Error::from_reason)?;
+    let chunk_tx =
+        crate::render_stream::check_chunk_dispatch(&entry.render_slot, len, entry.buf_len)
+            .map_err(napi::Error::from_reason)?;
 
     let (ack_tx, ack_rx) = tokio::sync::oneshot::channel::<()>();
     let chunk = if len == 0 {
@@ -527,17 +544,16 @@ pub async fn napi_render_chunk(worker_id: u32, len: u32) -> NapiResult<()> {
     } else {
         // SAFETY: BufPtr is the SAB backing-store pointer pinned at register
         // time (see pool.rs::BufPtr docstring). `len` is bounds-checked above.
-        let data = unsafe {
-            std::slice::from_raw_parts(entry.buf_ptr.0, len as usize)
-        }.to_vec();
+        let data = unsafe { std::slice::from_raw_parts(entry.buf_ptr.0, len as usize) }.to_vec();
         crate::pool::RenderChunk::Bytes { data, ack: ack_tx }
     };
-    chunk_tx.send(chunk).await.map_err(|_|
-        napi::Error::from_reason("render chunk channel closed (handle_conn gone)")
-    )?;
-    ack_rx.await.map_err(|_|
-        napi::Error::from_reason("ack dropped — handle_conn torn down mid-chunk")
-    )?;
+    chunk_tx
+        .send(chunk)
+        .await
+        .map_err(|_| napi::Error::from_reason("render chunk channel closed (handle_conn gone)"))?;
+    ack_rx
+        .await
+        .map_err(|_| napi::Error::from_reason("ack dropped — handle_conn torn down mid-chunk"))?;
     Ok(())
 }
 
@@ -559,22 +575,41 @@ fn bigint_to_u64(b: &BigInt) -> NapiResult<u64> {
 mod action_id_tests {
     use super::is_safe_action_id;
 
-    #[test] fn ascii_alphanumeric_passes() {
+    #[test]
+    fn ascii_alphanumeric_passes() {
         assert!(is_safe_action_id("createNote"));
         assert!(is_safe_action_id("whoAmI"));
         assert!(is_safe_action_id("a_b-c"));
         assert!(is_safe_action_id("X"));
         assert!(is_safe_action_id("123abc"));
     }
-    #[test] fn empty_rejected() { assert!(!is_safe_action_id("")); }
-    #[test] fn too_long_rejected() {
+    #[test]
+    fn empty_rejected() {
+        assert!(!is_safe_action_id(""));
+    }
+    #[test]
+    fn too_long_rejected() {
         let s: String = "a".repeat(129);
         assert!(!is_safe_action_id(&s));
     }
-    #[test] fn dot_rejected() { assert!(!is_safe_action_id("a.b")); }
-    #[test] fn slash_rejected() { assert!(!is_safe_action_id("a/b")); }
-    #[test] fn double_dot_rejected() { assert!(!is_safe_action_id("..")); }
-    #[test] fn non_ascii_rejected() { assert!(!is_safe_action_id("évil")); }
-    #[test] fn space_rejected() { assert!(!is_safe_action_id("a b")); }
+    #[test]
+    fn dot_rejected() {
+        assert!(!is_safe_action_id("a.b"));
+    }
+    #[test]
+    fn slash_rejected() {
+        assert!(!is_safe_action_id("a/b"));
+    }
+    #[test]
+    fn double_dot_rejected() {
+        assert!(!is_safe_action_id(".."));
+    }
+    #[test]
+    fn non_ascii_rejected() {
+        assert!(!is_safe_action_id("évil"));
+    }
+    #[test]
+    fn space_rejected() {
+        assert!(!is_safe_action_id("a b"));
+    }
 }
-

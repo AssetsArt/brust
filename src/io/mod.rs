@@ -1,8 +1,8 @@
 #[cfg(target_os = "linux")]
-pub use self::linux::{run_io, spawn, TcpListener, TcpStream, IO_NAME};
+pub use self::linux::{IO_NAME, TcpListener, TcpStream, run_io, spawn};
 
 #[cfg(not(target_os = "linux"))]
-pub use self::other::{run_io, spawn, TcpListener, TcpStream, IO_NAME};
+pub use self::other::{IO_NAME, TcpListener, TcpStream, run_io, spawn};
 
 #[cfg(target_os = "linux")]
 mod linux;
@@ -21,11 +21,8 @@ pub trait SseIo: Send + 'static {
         bytes: Vec<u8>,
     ) -> impl std::future::Future<Output = std::io::Result<()>> + Send;
 
-    fn read_one_byte(
-        &mut self,
-    ) -> impl std::future::Future<Output = std::io::Result<usize>> + Send;
+    fn read_one_byte(&mut self)
+    -> impl std::future::Future<Output = std::io::Result<usize>> + Send;
 
-    fn shutdown_conn(
-        &mut self,
-    ) -> impl std::future::Future<Output = std::io::Result<()>> + Send;
+    fn shutdown_conn(&mut self) -> impl std::future::Future<Output = std::io::Result<()>> + Send;
 }

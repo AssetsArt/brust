@@ -8,8 +8,8 @@
 
 use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::{mpsc, oneshot};
 
 pub static NEXT_CONN_ID: AtomicU64 = AtomicU64::new(1);
@@ -107,7 +107,9 @@ pub async fn sse_conn_task<S: crate::io::SseIo>(
     // Cleanup: remove from REGISTRY and fire abort callback if set.
     let conn = registry().lock().remove(&conn_id);
     if let Some(mut c) = conn {
-        if let Some(cb) = c.abort_cb.take() { cb(); }
+        if let Some(cb) = c.abort_cb.take() {
+            cb();
+        }
     }
     let _ = stream.shutdown_conn().await;
 }
@@ -148,11 +150,14 @@ mod tests {
         let (frame_tx, _frame_rx) = mpsc::channel(32);
         let (open_tx, _open_rx) = oneshot::channel::<SseOpenSignal>();
         let id = next_conn_id();
-        registry().lock().insert(id, SseConn {
-            frame_tx,
-            open_tx: Some(open_tx),
-            abort_cb: None,
-        });
+        registry().lock().insert(
+            id,
+            SseConn {
+                frame_tx,
+                open_tx: Some(open_tx),
+                abort_cb: None,
+            },
+        );
         assert!(registry().lock().contains_key(&id));
         let removed = registry().lock().remove(&id);
         assert!(removed.is_some());
@@ -171,7 +176,10 @@ mod tests {
         drop(b);
         // Should resolve quickly.
         let timed = tokio::time::timeout(std::time::Duration::from_secs(1), peek).await;
-        assert!(timed.is_ok(), "peek_for_close should resolve on peer shutdown");
+        assert!(
+            timed.is_ok(),
+            "peek_for_close should resolve on peer shutdown"
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
