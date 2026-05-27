@@ -16,3 +16,24 @@ export function configureCssEnabled(hrefs: readonly string[]): void {
 export function getCssHrefs(): readonly string[] {
   return cssHrefs.slice()
 }
+
+const routeHrefs = new Map<string, readonly string[]>()
+
+/** Set the CSS hrefs to inject for a specific route. Replaces any previous
+ * list for that route. Called from brust.run() main after the component
+ * manifest loads. Keys are route.fullPath strings (e.g. '/' or '/blog/{slug}'). */
+export function configureCssHrefsForRoute(routePath: string, hrefs: readonly string[]): void {
+  routeHrefs.set(routePath, hrefs.slice())
+}
+
+/** Returns the CSS hrefs for a specific route, or [] when none configured.
+ * Defensive copy on the way out. */
+export function getCssHrefsForRoute(routePath: string): readonly string[] {
+  return (routeHrefs.get(routePath) ?? []).slice()
+}
+
+/** @internal — used by the unit test suite to wipe both global and per-route state. */
+export function _resetCssForTests(): void {
+  cssHrefs = []
+  routeHrefs.clear()
+}

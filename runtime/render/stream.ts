@@ -4,7 +4,7 @@ import { Writable } from 'node:stream'
 import { consumeIslandUsedFlag } from '../islands/island.tsx'
 import { ISLANDS_IMPORTMAP_AND_BOOTSTRAP } from '../islands/importmap.ts'
 import { injectCssLink } from './inject-css-link.ts'
-import { getCssHrefs } from '../css.ts'
+import { getCssHrefs, getCssHrefsForRoute } from '../css.ts'
 import { injectDevClient } from './inject-dev-client.ts'
 import { getDevClientSnippet } from '../dev/inject.ts'
 
@@ -23,6 +23,9 @@ export interface RenderBranchStreamingArgs {
   /** Extra response headers injected by middleware (e.g. `x-render-ms`).
    * Merged into the meta envelope's `headers` map. */
   headers?: Record<string, string>
+  /** The matched route's fullPath (e.g. '/' or '/blog/{slug}'). Used to
+   * combine global CSS hrefs with per-route CSS hrefs before injection. */
+  routePath?: string
 }
 
 const encoder = new TextEncoder()
@@ -125,7 +128,8 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
           if (mode === 'buffering') {
             const islandsUsed = consumeIslandUsedFlag()
             let body = concatBuffers(buffer, islandsUsed)
-            body = injectCssLink(body, getCssHrefs())
+            const perRouteHrefs = args.routePath ? getCssHrefsForRoute(args.routePath) : []
+            body = injectCssLink(body, [...getCssHrefs(), ...perRouteHrefs])
             body = injectDevClient(body, getDevClientSnippet())
             const meta = makeMeta({ status: successStatus, streaming: false, headers: extraHeaders })
             const len = encodeFirstChunk(view, meta, body)
@@ -165,7 +169,8 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
             mode = 'streaming'
             let flushed = concatBuffers(buffer, true)
             buffer.length = 0
-            flushed = injectCssLink(flushed, getCssHrefs())
+            const perRouteHrefs = args.routePath ? getCssHrefsForRoute(args.routePath) : []
+            flushed = injectCssLink(flushed, [...getCssHrefs(), ...perRouteHrefs])
             flushed = injectDevClient(flushed, getDevClientSnippet())
             const meta = makeMeta({ status: successStatus, streaming: true, headers: extraHeaders })
             // Send header chunk and pipe concurrently — writes gate on headerSent.

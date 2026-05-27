@@ -509,6 +509,7 @@ export function makeRenderer(
         element, view, workerId, napi, errorBoundary,
         status: verdict.status,
         headers: verdict.headers,
+        routePath: flat.fullPath,
       })
       return
     }
