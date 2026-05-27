@@ -107,6 +107,17 @@ export async function runBuild(args: string[]): Promise<void> {
     console.log(`[brust build] mcp:     skipped (no routes.tsx)`)
   }
 
+  // 4.5. CSS — Tailwind v4 if app.css is present.
+  const appCssPath = path.join(entryDir, 'app.css')
+  if (existsSync(appCssPath)) {
+    const { buildCss } = await import('../css/build.ts')
+    const cssOutDir = path.join(outDir, 'css')
+    await buildCss({ entry: appCssPath, outDir: cssOutDir })
+    console.log(`[brust build] css:     ${cssOutDir}/app.css`)
+  } else {
+    console.log(`[brust build] css:     skipped (no app.css)`)
+  }
+
   // 5. Generate the prebuilt-actions file (always — empty list if no actions).
   const prebuiltActionsPath = path.join(outDir, '_actions-prebuilt.ts')
   await writePrebuiltActionsFileWithMap(prebuiltActionsPath, idToSource, REPO_ROOT)
