@@ -3,6 +3,7 @@ import * as native from './index.js'
 import type { ActionDef } from './actions.ts'
 import { isValidActionId } from './actions.ts'
 import { loadConfig } from './config.ts'
+import { configureCssEnabled } from './css.ts'
 
 export interface ServeOptions {
   port: number
@@ -136,6 +137,11 @@ export const brust = {
   configureIslandsDir(dir: string): void {
     ; (native as any).configureIslandsDir(dir)
   },
+  /** Tell Rust where to read `/_brust/css/<file>` from. Called from the
+   * main thread when CSS is configured. Path must be absolute. */
+  configureCssDir(dir: string): void {
+    ; (native as any).configureCssDir(dir)
+  },
   /** Walk the project for files marked `'use server'`, import them, and
    * return all named function exports as ActionDef[] plus the list of source
    * files (needed by brust.buildMcpManifest). Both the main process and each
@@ -240,6 +246,26 @@ export const brust = {
         }
       }
 
+      // CSS pipeline — opt-in via convention: <scanRoot>/app.css.
+      if (prebuilt) {
+        const prebuiltCssDir = path.join(distDir!, 'css')
+        if (existsSync(prebuiltCssDir)) {
+          this.configureCssDir(prebuiltCssDir)
+          configureCssEnabled(['/_brust/css/app.css'])
+          console.log(`[brust] main: using pre-built CSS at ${prebuiltCssDir}`)
+        }
+      } else {
+        const appCssPath = path.join(scanRoot, 'app.css')
+        if (existsSync(appCssPath)) {
+          const { buildCss } = await import('./css/build.ts')
+          const cssOutDir = path.join(process.cwd(), '.brust', 'css')
+          await buildCss({ entry: appCssPath, outDir: cssOutDir })
+          this.configureCssDir(cssOutDir)
+          configureCssEnabled(['/_brust/css/app.css'])
+          console.log(`[brust] main: built CSS → ${cssOutDir}/app.css`)
+        }
+      }
+
       this.registerRoutes(opts.routes)
       const ssePaths = opts.routes
         .filter((r) => r.chain[r.chain.length - 1].sse !== undefined)
@@ -284,6 +310,18 @@ export const brust = {
         ...opts.serve,
       })
     } else {
+      // Worker: detect CSS the same way main did (no compile, no configureCssDir
+      // — Rust state is shared, but the per-worker renderer needs the hrefs).
+      if (prebuilt) {
+        if (existsSync(path.join(distDir!, 'css'))) {
+          configureCssEnabled(['/_brust/css/app.css'])
+        }
+      } else {
+        if (existsSync(path.join(scanRoot, 'app.css'))) {
+          configureCssEnabled(['/_brust/css/app.css'])
+        }
+      }
+
       const sab = new SharedArrayBuffer(opts.sabBytes ?? 256 * 1024)
       const view = new Uint8Array(sab)
 
