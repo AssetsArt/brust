@@ -1,6 +1,8 @@
 import { test, expect } from 'bun:test'
-import { parseArgs, resolveBrustRef } from '../runtime/cli/new.ts'
+import { parseArgs, resolveBrustRef, copyTemplate } from '../runtime/cli/new.ts'
 import path from 'node:path'
+import { mkdtemp, rm, readFile, readdir } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 
 test('parseArgs: positional name → targetDir = cwd/<name>', () => {
   const result = parseArgs(['my-app'])
@@ -66,4 +68,59 @@ test('resolveBrustRef: detects source tree (this repo)', () => {
   expect(path.isAbsolute(dir)).toBe(true)
   expect(Bun.file(path.join(dir, 'Cargo.toml')).size).toBeGreaterThan(0)
   expect(Bun.file(path.join(dir, 'runtime/cli/index.ts')).size).toBeGreaterThan(0)
+})
+
+test('copyTemplate: strips .tmpl suffix and substitutes', async () => {
+  const tmpl = await mkdtemp(path.join(tmpdir(), 'brust-tmpl-src-'))
+  const target = await mkdtemp(path.join(tmpdir(), 'brust-tmpl-dst-'))
+  try {
+    await Bun.write(path.join(tmpl, 'a.txt'), 'static content\n')
+    await Bun.write(path.join(tmpl, 'b.txt.tmpl'), 'name=__PROJECT_NAME__\n')
+    await Bun.write(path.join(tmpl, '_gitignore'), 'node_modules/\n')
+
+    await copyTemplate({
+      templateDir: tmpl,
+      targetDir: target,
+      substitutions: { __PROJECT_NAME__: 'hello' },
+    })
+
+    expect(await readFile(path.join(target, 'a.txt'), 'utf8')).toBe('static content\n')
+    expect(await readFile(path.join(target, 'b.txt'), 'utf8')).toBe('name=hello\n')
+    expect(await readFile(path.join(target, '.gitignore'), 'utf8')).toBe('node_modules/\n')
+    const entries = await readdir(target)
+    expect(entries).not.toContain('_gitignore')
+    expect(entries).not.toContain('b.txt.tmpl')
+  } finally {
+    await rm(tmpl, { recursive: true, force: true })
+    await rm(target, { recursive: true, force: true })
+  }
+})
+
+test('copyTemplate: recurses into subdirectories', async () => {
+  const tmpl = await mkdtemp(path.join(tmpdir(), 'brust-tmpl-src-'))
+  const target = await mkdtemp(path.join(tmpdir(), 'brust-tmpl-dst-'))
+  try {
+    await Bun.write(path.join(tmpl, 'sub/nested.txt'), 'deep\n')
+    await Bun.write(path.join(tmpl, 'sub/deep.tmpl'), 'X=__X__')
+
+    await copyTemplate({
+      templateDir: tmpl,
+      targetDir: target,
+      substitutions: { __X__: '42' },
+    })
+
+    expect(await readFile(path.join(target, 'sub/nested.txt'), 'utf8')).toBe('deep\n')
+    expect(await readFile(path.join(target, 'sub/deep'), 'utf8')).toBe('X=42')
+  } finally {
+    await rm(tmpl, { recursive: true, force: true })
+    await rm(target, { recursive: true, force: true })
+  }
+})
+
+test('copyTemplate: throws if templateDir missing', async () => {
+  await expect(copyTemplate({
+    templateDir: '/no/such/dir',
+    targetDir: '/tmp/whatever',
+    substitutions: {},
+  })).rejects.toThrow(/template directory/)
 })
