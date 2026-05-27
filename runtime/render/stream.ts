@@ -3,6 +3,8 @@ import { createElement, type ReactNode, type ComponentType } from 'react'
 import { Writable } from 'node:stream'
 import { consumeIslandUsedFlag } from '../islands/island.tsx'
 import { ISLANDS_IMPORTMAP_AND_BOOTSTRAP } from '../islands/importmap.ts'
+import { injectCssLink } from './inject-css-link.ts'
+import { getCssHrefs } from '../css.ts'
 
 export interface RenderBranchStreamingArgs {
   element: ReactNode
@@ -120,7 +122,8 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
         try {
           if (mode === 'buffering') {
             const islandsUsed = consumeIslandUsedFlag()
-            const body = concatBuffers(buffer, islandsUsed)
+            let body = concatBuffers(buffer, islandsUsed)
+            body = injectCssLink(body, getCssHrefs())
             const meta = makeMeta({ status: successStatus, streaming: false, headers: extraHeaders })
             const len = encodeFirstChunk(view, meta, body)
             await napi.renderChunk(workerId, len, view)
@@ -157,8 +160,9 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
             }
             // onAllReady hasn't fired yet → pending Suspense → streaming path.
             mode = 'streaming'
-            const flushed = concatBuffers(buffer, true)
+            let flushed = concatBuffers(buffer, true)
             buffer.length = 0
+            flushed = injectCssLink(flushed, getCssHrefs())
             const meta = makeMeta({ status: successStatus, streaming: true, headers: extraHeaders })
             // Send header chunk and pipe concurrently — writes gate on headerSent.
             let resolveHeader!: () => void
