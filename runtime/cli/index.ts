@@ -12,11 +12,16 @@ switch (subcommand) {
     await runDev(rest)
     break
   }
+  case 'new': {
+    const { runNew } = await import('./new.ts')
+    await runNew(rest)
+    break
+  }
   default: {
     if (!subcommand) {
-      console.error('brust: missing subcommand. Try: brust build | brust dev')
+      console.error('brust: missing subcommand. Try: brust build | brust dev | brust new')
     } else {
-      console.error(`brust: unknown subcommand "${subcommand}". Try: brust build | brust dev`)
+      console.error(`brust: unknown subcommand "${subcommand}". Try: brust build | brust dev | brust new`)
     }
     process.exit(1)
   }

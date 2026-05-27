@@ -3,6 +3,10 @@ import { parseArgs, resolveBrustRef, copyTemplate } from '../runtime/cli/new.ts'
 import path from 'node:path'
 import { mkdtemp, rm, readFile, readdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import { spawn, $ } from 'bun'
+import { existsSync } from 'node:fs'
+
+const REPO = path.resolve(import.meta.dir, '..')
 
 test('parseArgs: positional name → targetDir = cwd/<name>', () => {
   const result = parseArgs(['my-app'])
@@ -124,3 +128,130 @@ test('copyTemplate: throws if templateDir missing', async () => {
     substitutions: {},
   })).rejects.toThrow(/template directory/)
 })
+
+test('brust new: missing name → exit 1', async () => {
+  const result = await $`bun ${path.join(REPO, 'runtime/cli/index.ts')} new`.nothrow()
+  expect(result.exitCode).toBe(1)
+  expect(result.stderr.toString()).toContain('missing project name')
+})
+
+test('brust new: invalid name → exit 1', async () => {
+  const result = await $`bun ${path.join(REPO, 'runtime/cli/index.ts')} new MyApp`.nothrow()
+  expect(result.exitCode).toBe(1)
+  expect(result.stderr.toString()).toContain('invalid project name')
+})
+
+test('brust new: non-empty target dir → exit 1', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'brust-new-nonempty-'))
+  try {
+    await Bun.write(path.join(dir, 'something'), 'x')
+    const result = await $`bun ${path.join(REPO, 'runtime/cli/index.ts')} new test --dir ${dir}`.nothrow()
+    expect(result.exitCode).toBe(1)
+    expect(result.stderr.toString()).toContain('not empty')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('brust new: scaffold → install → bun run dev → curl /', async () => {
+  // Prerequisite: native binary built. Skip with clear message if not.
+  const nativeFiles = (await readdir(path.join(REPO, 'runtime'))).filter((f) => /^index\..+\.node$/.test(f))
+  if (nativeFiles.length === 0) {
+    console.warn('SKIP: native .node binary not built. Run `cd runtime && bun run build` first.')
+    return
+  }
+
+  const parent = await mkdtemp(path.join(tmpdir(), 'brust-new-parent-'))
+  const projectDir = path.join(parent, 'test-app')
+  let proc: ReturnType<typeof spawn> | undefined
+  const port = 38292
+
+  try {
+    // 1. Scaffold
+    const scaffold = await $`bun ${path.join(REPO, 'runtime/cli/index.ts')} new test-app --dir ${projectDir}`.nothrow()
+    expect(scaffold.exitCode).toBe(0)
+
+    // 2. File tree
+    expect(existsSync(path.join(projectDir, 'package.json'))).toBe(true)
+    expect(existsSync(path.join(projectDir, 'tsconfig.json'))).toBe(true)
+    expect(existsSync(path.join(projectDir, '.gitignore'))).toBe(true)
+    expect(existsSync(path.join(projectDir, 'index.ts'))).toBe(true)
+    expect(existsSync(path.join(projectDir, 'routes.tsx'))).toBe(true)
+    expect(existsSync(path.join(projectDir, 'island.config.ts'))).toBe(true)
+    expect(existsSync(path.join(projectDir, 'app.css'))).toBe(true)
+    expect(existsSync(path.join(projectDir, 'README.md'))).toBe(true)
+    expect(existsSync(path.join(projectDir, 'pages/Home.tsx'))).toBe(true)
+    expect(existsSync(path.join(projectDir, 'components/Layout.tsx'))).toBe(true)
+    expect(existsSync(path.join(projectDir, 'components/Counter.tsx'))).toBe(true)
+    // No .tmpl leaks
+    expect(existsSync(path.join(projectDir, 'package.json.tmpl'))).toBe(false)
+    expect(existsSync(path.join(projectDir, 'pages/Home.tsx.tmpl'))).toBe(false)
+    expect(existsSync(path.join(projectDir, '_gitignore'))).toBe(false)
+
+    // 3. package.json content
+    const pkg = JSON.parse(await readFile(path.join(projectDir, 'package.json'), 'utf8'))
+    expect(pkg.name).toBe('test-app')
+    expect(pkg.dependencies.brust).toMatch(/^file:/)
+    const brustPath = pkg.dependencies.brust.slice('file:'.length)
+    expect(existsSync(path.join(brustPath, 'Cargo.toml'))).toBe(true)
+    expect(pkg.scripts.dev).toBe('brust dev')
+    expect(pkg.scripts.build).toBe('brust build')
+
+    // 4. No substitution leakage
+    const allFiles = await collectFiles(projectDir)
+    for (const f of allFiles) {
+      const content = await readFile(f, 'utf8').catch(() => '')
+      expect(content, `placeholder leaked in ${f}`).not.toContain('__PROJECT_NAME__')
+      expect(content, `placeholder leaked in ${f}`).not.toContain('__BRUST_DEP__')
+    }
+
+    // 5. bun install
+    const install = await $`bun install`.cwd(projectDir).nothrow()
+    expect(install.exitCode).toBe(0)
+
+    // 6. bun run dev
+    proc = spawn({
+      cmd: ['bun', 'run', 'dev'],
+      cwd: projectDir,
+      env: { ...process.env, BRUST_PORT: String(port), BRUST_WORKERS: '1', RUST_LOG: 'brust=warn' },
+      stdout: 'pipe',
+      stderr: 'inherit',
+    })
+    await waitForPort(port, 15_000)
+
+    // 7. curl /
+    const home = await fetch(`http://127.0.0.1:${port}/`)
+    expect(home.status).toBe(200)
+    expect(await home.text()).toContain('Welcome to brust')
+  } finally {
+    if (proc) {
+      proc.kill('SIGINT')
+      await proc.exited
+    }
+    await rm(parent, { recursive: true, force: true })
+  }
+}, 120_000)
+
+async function collectFiles(dir: string): Promise<string[]> {
+  const out: string[] = []
+  const entries = await readdir(dir, { withFileTypes: true })
+  for (const ent of entries) {
+    if (ent.name === 'node_modules' || ent.name === '.git') continue
+    const p = path.join(dir, ent.name)
+    if (ent.isDirectory()) out.push(...await collectFiles(p))
+    else if (ent.isFile()) out.push(p)
+  }
+  return out
+}
+
+async function waitForPort(port: number, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    try {
+      const r = await fetch(`http://127.0.0.1:${port}/ping`)
+      if (r.ok) return
+    } catch {}
+    await Bun.sleep(100)
+  }
+  throw new Error(`port ${port} never came up within ${timeoutMs}ms`)
+}

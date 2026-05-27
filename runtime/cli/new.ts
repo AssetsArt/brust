@@ -1,6 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs'
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
+
+const TEMPLATE_DIR = join(import.meta.dir, 'templates', 'minimal')
 
 const NAME_RE = /^[a-z0-9][a-z0-9_-]*$/
 const MAX_NAME_LEN = 50
@@ -137,6 +139,62 @@ function applySubstitutions(text: string, subs: Record<string, string>): string 
   return out
 }
 
-export async function runNew(_args: string[]): Promise<void> {
-  throw new Error('not implemented')
+export async function runNew(args: string[]): Promise<void> {
+  let parsed: ParsedNewArgs
+  try {
+    parsed = parseArgs(args)
+  } catch (e) {
+    console.error(e instanceof Error ? e.message : String(e))
+    process.exit(1)
+  }
+
+  const { projectName, targetDir } = parsed
+
+  const targetExisted = existsSync(targetDir)
+  if (targetExisted) {
+    const entries = await readdir(targetDir)
+    if (entries.length > 0) {
+      console.error(`brust new: target directory "${targetDir}" is not empty`)
+      process.exit(1)
+    }
+  }
+
+  let brustRef: BrustRef
+  try {
+    brustRef = resolveBrustRef()
+  } catch (e) {
+    console.error(e instanceof Error ? e.message : String(e))
+    process.exit(1)
+  }
+
+  try {
+    await copyTemplate({
+      templateDir: TEMPLATE_DIR,
+      targetDir,
+      substitutions: {
+        __PROJECT_NAME__: projectName,
+        __BRUST_DEP__: JSON.stringify(brustRef.spec),
+      },
+    })
+  } catch (e) {
+    if (!targetExisted) {
+      await rm(targetDir, { recursive: true, force: true }).catch(() => {})
+    }
+    console.error(`brust new: failed to scaffold (${e instanceof Error ? e.message : String(e)})`)
+    process.exit(1)
+  }
+
+  printNextSteps(projectName, targetDir)
+}
+
+function printNextSteps(name: string, targetDir: string): void {
+  const cwd = process.cwd()
+  const displayPath = targetDir.startsWith(cwd + '/')
+    ? './' + targetDir.slice(cwd.length + 1)
+    : targetDir
+  console.log(`Created ${name} at ${targetDir}\n`)
+  console.log(`Next:`)
+  console.log(`  cd ${displayPath}`)
+  console.log(`  bun install`)
+  console.log(`  bun run dev`)
 }
