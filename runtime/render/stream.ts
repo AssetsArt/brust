@@ -5,6 +5,8 @@ import { consumeIslandUsedFlag } from '../islands/island.tsx'
 import { ISLANDS_IMPORTMAP_AND_BOOTSTRAP } from '../islands/importmap.ts'
 import { injectCssLink } from './inject-css-link.ts'
 import { getCssHrefs } from '../css.ts'
+import { injectDevClient } from './inject-dev-client.ts'
+import { getDevClientSnippet } from '../dev/inject.ts'
 
 export interface RenderBranchStreamingArgs {
   element: ReactNode
@@ -124,6 +126,7 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
             const islandsUsed = consumeIslandUsedFlag()
             let body = concatBuffers(buffer, islandsUsed)
             body = injectCssLink(body, getCssHrefs())
+            body = injectDevClient(body, getDevClientSnippet())
             const meta = makeMeta({ status: successStatus, streaming: false, headers: extraHeaders })
             const len = encodeFirstChunk(view, meta, body)
             await napi.renderChunk(workerId, len, view)
@@ -163,6 +166,7 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
             let flushed = concatBuffers(buffer, true)
             buffer.length = 0
             flushed = injectCssLink(flushed, getCssHrefs())
+            flushed = injectDevClient(flushed, getDevClientSnippet())
             const meta = makeMeta({ status: successStatus, streaming: true, headers: extraHeaders })
             // Send header chunk and pipe concurrently — writes gate on headerSent.
             let resolveHeader!: () => void
