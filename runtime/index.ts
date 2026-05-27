@@ -253,6 +253,47 @@ export const brust = {
       console.log(`[brust] main: spawning ${workers} worker threads`)
       if (cacheMaxEntries !== undefined) this.configureCache({ maxEntries: cacheMaxEntries })
 
+      // Component CSS pipeline. Must run BEFORE buildIslands so the Bun.plugin
+      // is active during island bundling — otherwise Bun's default loader would
+      // see .module.css imports as separate asset outputs, producing duplicate-
+      // output-path errors when an island and its module share a basename
+      // (e.g. Counter.tsx + Counter.module.css → both want to emit Counter.js).
+      {
+        const { readComponentCssManifest } = await import('./css/manifest.ts')
+        const { cssLoaderPlugin } = await import('./css/component-loader.ts')
+        let manifest: import('./css/manifest.ts').ComponentCssManifest | null = null
+
+        if (prebuilt) {
+          const manifestPath = path.join(distDir!, 'css', 'component-manifest.json')
+          manifest = await readComponentCssManifest(manifestPath)
+        } else {
+          const { scanCssImports } = await import('./css/scan-imports.ts')
+          const scan = await scanCssImports(scanRoot)
+          if (scan.size > 0) {
+            const { buildComponentCss } = await import('./css/component-build.ts')
+            const routeForCss = opts.routes.map((r) => ({
+              fullPath: r.fullPath,
+              componentSource: path.join(scanRoot, 'routes.tsx'),
+            }))
+            const cssOutDir = path.join(process.cwd(), '.brust', 'css')
+            manifest = await buildComponentCss({
+              scanRoot,
+              outDir: cssOutDir,
+              tailwindCompile: null,
+              routes: routeForCss,
+            })
+            console.log(`[brust] main: built ${Object.keys(manifest.modules).length} component CSS chunk(s)`)
+          }
+        }
+
+        if (manifest) {
+          Bun.plugin(cssLoaderPlugin(manifest))
+          for (const [routePath, hrefs] of Object.entries(manifest.routeChunks)) {
+            configureCssHrefsForRoute(routePath, hrefs)
+          }
+        }
+      }
+
       if (prebuilt) {
         // Pre-built islands live at <distDir>/islands.
         const prebuiltIslandsDir = path.join(distDir!, 'islands')
@@ -287,45 +328,6 @@ export const brust = {
           this.configureCssDir(cssOutDir)
           configureCssEnabled(['/_brust/css/app.css'])
           console.log(`[brust] main: built CSS → ${cssOutDir}/app.css`)
-        }
-      }
-
-      // Component CSS pipeline. Loads the manifest (built earlier by `brust build`
-      // in prebuilt mode, or freshly via buildComponentCss in dev mode) and
-      // registers the Bun.plugin so .module.css imports resolve to a JSON map.
-      {
-        const { readComponentCssManifest } = await import('./css/manifest.ts')
-        const { cssLoaderPlugin } = await import('./css/component-loader.ts')
-        let manifest: import('./css/manifest.ts').ComponentCssManifest | null = null
-
-        if (prebuilt) {
-          const manifestPath = path.join(distDir!, 'css', 'component-manifest.json')
-          manifest = await readComponentCssManifest(manifestPath)
-        } else {
-          const { scanCssImports } = await import('./css/scan-imports.ts')
-          const scan = await scanCssImports(scanRoot)
-          if (scan.size > 0) {
-            const { buildComponentCss } = await import('./css/component-build.ts')
-            const routeForCss = opts.routes.map((r) => ({
-              fullPath: r.fullPath,
-              componentSource: path.join(scanRoot, 'routes.tsx'),
-            }))
-            const cssOutDir = path.join(process.cwd(), '.brust', 'css')
-            manifest = await buildComponentCss({
-              scanRoot,
-              outDir: cssOutDir,
-              tailwindCompile: null,
-              routes: routeForCss,
-            })
-            console.log(`[brust] main: built ${Object.keys(manifest.modules).length} component CSS chunk(s)`)
-          }
-        }
-
-        if (manifest) {
-          Bun.plugin(cssLoaderPlugin(manifest))
-          for (const [routePath, hrefs] of Object.entries(manifest.routeChunks)) {
-            configureCssHrefsForRoute(routePath, hrefs)
-          }
         }
       }
 
