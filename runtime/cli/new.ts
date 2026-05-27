@@ -1,4 +1,5 @@
-import { isAbsolute, resolve } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 
 const NAME_RE = /^[a-z0-9][a-z0-9_-]*$/
 const MAX_NAME_LEN = 50
@@ -46,6 +47,43 @@ export function parseArgs(args: string[]): ParsedNewArgs {
     : resolve(cwd, name)
 
   return { projectName: name, targetDir }
+}
+
+export interface BrustRef {
+  kind: 'file' | 'version'
+  spec: string  // JSON-encoded string value (e.g. "file:/abs" or "^0.1.0")
+}
+
+function hasSourceMarkers(dir: string): boolean {
+  return existsSync(join(dir, 'Cargo.toml'))
+    && existsSync(join(dir, 'src'))
+    && existsSync(join(dir, 'runtime/cli/index.ts'))
+}
+
+export function resolveBrustRef(startDir: string = import.meta.dir): BrustRef {
+  let dir = startDir
+  while (true) {
+    const pkgPath = join(dir, 'package.json')
+    if (existsSync(pkgPath)) {
+      try {
+        const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'))
+        if (pkg.name === 'brust') {
+          if (hasSourceMarkers(dir)) {
+            return { kind: 'file', spec: `file:${dir}` }
+          }
+          const version = typeof pkg.version === 'string' ? pkg.version : '0.0.0'
+          return { kind: 'version', spec: `^${version}` }
+        }
+      } catch {
+        // malformed package.json — keep walking
+      }
+    }
+    const parent = dirname(dir)
+    if (parent === dir) {
+      throw new Error('brust new: cannot locate the brust package — is your installation intact?')
+    }
+    dir = parent
+  }
 }
 
 export async function runNew(_args: string[]): Promise<void> {

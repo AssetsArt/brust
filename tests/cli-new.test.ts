@@ -1,5 +1,5 @@
 import { test, expect } from 'bun:test'
-import { parseArgs } from '../runtime/cli/new.ts'
+import { parseArgs, resolveBrustRef } from '../runtime/cli/new.ts'
 import path from 'node:path'
 
 test('parseArgs: positional name → targetDir = cwd/<name>', () => {
@@ -55,4 +55,15 @@ test('parseArgs: digit-start name is valid', () => {
 test('parseArgs: name too long throws', () => {
   const long = 'a'.repeat(51)
   expect(() => parseArgs([long])).toThrow(/too long/)
+})
+
+test('resolveBrustRef: detects source tree (this repo)', () => {
+  const ref = resolveBrustRef()
+  expect(ref.kind).toBe('file')
+  expect(ref.spec).toMatch(/^file:/)
+  // Must point at an absolute path that contains Cargo.toml + src + runtime/cli/index.ts.
+  const dir = ref.spec.slice('file:'.length)
+  expect(path.isAbsolute(dir)).toBe(true)
+  expect(Bun.file(path.join(dir, 'Cargo.toml')).size).toBeGreaterThan(0)
+  expect(Bun.file(path.join(dir, 'runtime/cli/index.ts')).size).toBeGreaterThan(0)
 })
