@@ -42,6 +42,7 @@ struct State {
     is_serving: AtomicBool,
     expected_workers: AtomicU32,
     islands_dir: parking_lot::RwLock<Option<std::path::PathBuf>>,
+    css_dir:     parking_lot::RwLock<Option<std::path::PathBuf>>,
     actions: parking_lot::RwLock<std::collections::HashSet<String>>,
 }
 
@@ -66,6 +67,7 @@ pub(crate) fn state() -> &'static State {
             is_serving: AtomicBool::new(false),
             expected_workers: AtomicU32::new(0),
             islands_dir: parking_lot::RwLock::new(None),
+            css_dir:     parking_lot::RwLock::new(None),
             actions: parking_lot::RwLock::new(std::collections::HashSet::new()),
         }
     })
@@ -198,6 +200,18 @@ pub fn configure_islands_dir(path: String) -> NapiResult<()> {
         )));
     }
     *state().islands_dir.write() = Some(abs);
+    Ok(())
+}
+
+#[napi]
+pub fn configure_css_dir(path: String) -> NapiResult<()> {
+    let abs = std::path::PathBuf::from(&path);
+    if !abs.is_absolute() {
+        return Err(napi::Error::from_reason(format!(
+            "css_dir must be an absolute path (got {path:?})"
+        )));
+    }
+    *state().css_dir.write() = Some(abs);
     Ok(())
 }
 

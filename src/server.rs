@@ -15,6 +15,10 @@ fn current_islands_dir() -> Option<std::path::PathBuf> {
     crate::state().islands_dir.read().clone()
 }
 
+fn current_css_dir() -> Option<std::path::PathBuf> {
+    crate::state().css_dir.read().clone()
+}
+
 enum ReadOutcome {
     /// Headers complete (`\r\n\r\n` seen) — `buf` contains the full request.
     Complete,
@@ -190,6 +194,46 @@ async fn handle_conn(
                     let resp = http::build_response(
                         200,
                         "application/javascript; charset=utf-8",
+                        &extra,
+                        bytes,
+                    );
+                    if s.write_all(resp).await.is_err() {
+                        return;
+                    }
+                    continue;
+                }
+                Err(_) => {
+                    let _ = s.write_all(http::error_404()).await;
+                    continue;
+                }
+            }
+        }
+
+        // Native-only route: serve pre-built CSS chunks from the configured
+        // css_dir. Strict path-traversal protection mirrors the islands route.
+        if let Some(file) = path.strip_prefix("/_brust/css/") {
+            let file = file.split('?').next().unwrap_or(file);
+            if !is_safe_css_filename(file) {
+                let _ = s.write_all(http::error_404()).await;
+                continue;
+            }
+            let dir = match current_css_dir() {
+                Some(d) => d,
+                None => {
+                    let _ = s.write_all(http::error_404()).await;
+                    continue;
+                }
+            };
+            let file_path = dir.join(file);
+            match tokio::fs::read(&file_path).await {
+                Ok(bytes) => {
+                    let extra = [(
+                        "Cache-Control".to_string(),
+                        "public, max-age=3600".to_string(),
+                    )];
+                    let resp = http::build_response(
+                        200,
+                        "text/css; charset=utf-8",
                         &extra,
                         bytes,
                     );
@@ -1127,6 +1171,24 @@ fn is_safe_island_filename(name: &str) -> bool {
         .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-'))
 }
 
+/// Mirrors `is_safe_island_filename` but accepts `.css` extension. Keep the
+/// two functions structurally identical — anything that's safe as an island
+/// chunk filename is also safe as a CSS asset filename, modulo extension.
+fn is_safe_css_filename(name: &str) -> bool {
+    if !name.ends_with(".css") {
+        return false;
+    }
+    if name.starts_with('.') {
+        return false;
+    }
+    if name.contains('/') || name.contains('\\') || name.contains("..") {
+        return false;
+    }
+    name
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-'))
+}
+
 /// Extract `Content-Length` from a buffered HTTP request's headers. Returns
 /// None if the header is missing or unparseable. Caller has already ensured
 /// `\r\n\r\n` is present in `buf`.
@@ -1316,5 +1378,41 @@ mod tests {
     fn parse_content_type_missing_returns_none() {
         let raw = b"POST /x HTTP/1.1\r\nHost: x\r\n\r\n";
         assert_eq!(parse_content_type(raw), None);
+    }
+
+    #[test]
+    fn safe_css_filenames_pass() {
+        assert!(is_safe_css_filename("app.css"));
+        assert!(is_safe_css_filename("_a.css"));
+        assert!(is_safe_css_filename("Foo-Bar_123.css"));
+        assert!(is_safe_css_filename("a.b.css"));
+    }
+
+    #[test]
+    fn unsafe_css_empty_rejected() {
+        assert!(!is_safe_css_filename(""));
+    }
+
+    #[test]
+    fn unsafe_css_wrong_ext_rejected() {
+        assert!(!is_safe_css_filename("app.js"));
+        assert!(!is_safe_css_filename("app"));
+    }
+
+    #[test]
+    fn unsafe_css_dot_prefix_rejected() {
+        assert!(!is_safe_css_filename(".env.css"));
+    }
+
+    #[test]
+    fn unsafe_css_traversal_rejected() {
+        assert!(!is_safe_css_filename("../etc/passwd.css"));
+        assert!(!is_safe_css_filename("..passwd.css"));
+    }
+
+    #[test]
+    fn unsafe_css_separators_rejected() {
+        assert!(!is_safe_css_filename("sub/app.css"));
+        assert!(!is_safe_css_filename("sub\\app.css"));
     }
 }
