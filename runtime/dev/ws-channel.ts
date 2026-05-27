@@ -45,18 +45,23 @@ let workerListenerInstalled = false
 
 /** Worker-side: install a message listener that receives `dev-broadcast`
  * envelopes from the main process and forwards them to this worker's
- * local clients. Idempotent. */
+ * local clients. Idempotent. After install, posts `brust-worker-ready`
+ * back to the parent so spawnAll() knows the worker is ready to relay
+ * broadcasts (avoids a race where `reload` is dispatched before the
+ * fresh worker's listener is wired). */
 export function installWorkerBroadcastListener(): void {
   if (workerListenerInstalled) return
   workerListenerInstalled = true
-  // self === globalThis in Worker context. addEventListener is the safe
-  // pattern (doesn't clobber any existing onmessage assignment).
   ;(globalThis as any).addEventListener('message', (e: MessageEvent) => {
     const data: any = (e as any).data
     if (data && data.type === 'dev-broadcast' && typeof data.json === 'string') {
       void broadcastLocal(data.json)
     }
   })
+  // Signal readiness to parent (main thread). In a Worker context,
+  // postMessage targets the parent.
+  try { (globalThis as any).postMessage({ type: 'brust-worker-ready' }) }
+  catch { /* not in a worker (unit test); harmless */ }
 }
 
 /** Main-side: relay the message to every worker via postMessage. Each

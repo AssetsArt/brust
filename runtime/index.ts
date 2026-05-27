@@ -326,7 +326,7 @@ export const brust = {
         const coordinator = new Coordinator({
           workers: {
             terminateAll: termWorkers,
-            spawnAll: async () => { spawnWorkers() },
+            spawnAll: async () => { await spawnWorkers() },
           },
           buildCss: async () => {
             const appCss = pathModule.join(scanRoot, 'app.css')

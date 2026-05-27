@@ -48,20 +48,36 @@ export async function terminateAll(): Promise<void> {
 
 /** Spawn `count` fresh Workers using the entry + env captured at
  * registerInitialPool time. Each worker gets BRUST_WORKER_ID=i.
- * Workers self-register their renderers with Rust on import (existing
- * brust.run worker branch behavior). */
-export function spawnAll(): void {
+ * Resolves only after every fresh worker reports `brust-worker-ready`
+ * via postMessage — so the caller (coordinator) doesn't broadcast
+ * `reload` against workers whose message listeners aren't installed
+ * yet. Falls back after a 5s grace if a worker never signals. */
+export async function spawnAll(): Promise<void> {
   if (state.entry === null || state.baseEnv === null) {
     throw new Error('worker-registry: spawnAll called before registerInitialPool')
   }
   const fresh: Worker[] = []
+  const readies: Promise<void>[] = []
   for (let i = 0; i < state.count; i++) {
     const w = new Worker(state.entry, {
       env: { ...state.baseEnv, BRUST_WORKER_ID: String(i) },
     })
     fresh.push(w)
+    readies.push(new Promise<void>((resolve) => {
+      const onMsg = (e: MessageEvent) => {
+        const d: any = (e as any).data
+        if (d && d.type === 'brust-worker-ready') {
+          ;(w as any).removeEventListener?.('message', onMsg)
+          resolve()
+        }
+      }
+      ;(w as any).addEventListener?.('message', onMsg)
+      // Grace: don't hang forever if a worker crashes before reporting.
+      setTimeout(resolve, 5000)
+    }))
   }
   state.workers = fresh
+  await Promise.all(readies)
 }
 
 /** Test helper. */
