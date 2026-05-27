@@ -386,7 +386,8 @@ export const brust = {
         const { buildDevClientTag } = await import('./dev/client.ts')
         const { configureDevClientSnippet } = await import('./dev/inject.ts')
         configureDevClientSnippet(buildDevClientTag())
-        const { createDevWsRoute } = await import('./dev/ws-channel.ts')
+        const { createDevWsRoute, installWorkerBroadcastListener } = await import('./dev/ws-channel.ts')
+        installWorkerBroadcastListener()
         const devRoute = createDevWsRoute()
         workerRoutes = [
           { ...devRoute, fullPath: devRoute.path!, chain: [devRoute as any] } as any,
