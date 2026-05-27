@@ -63,20 +63,22 @@ pub fn parse_ws_handshake(headers: &[u8]) -> Result<ParsedHandshake, HandshakeEr
             }
         } else if lc.starts_with("sec-websocket-key:") {
             // Preserve original-case base64 value, not the lowercased one.
-            if let Some((_, val)) = line.split_once(':') {
-                sec_websocket_key = Some(val.trim().to_string());
-            }
+            let Some((_, val)) = line.split_once(':') else {
+                continue;
+            };
+            sec_websocket_key = Some(val.trim().to_string());
         } else if let Some(rest) = lc.strip_prefix("sec-websocket-version:") {
             if rest.trim() == "13" {
                 version_ok = true;
             }
         } else if lc.starts_with("sec-websocket-protocol:") {
-            if let Some((_, val)) = line.split_once(':') {
-                for sp in val.split(',') {
-                    let trimmed = sp.trim();
-                    if !trimmed.is_empty() {
-                        subprotocols.push(trimmed.to_string());
-                    }
+            let Some((_, val)) = line.split_once(':') else {
+                continue;
+            };
+            for sp in val.split(',') {
+                let trimmed = sp.trim();
+                if !trimmed.is_empty() {
+                    subprotocols.push(trimmed.to_string());
                 }
             }
         }
@@ -124,6 +126,9 @@ pub struct WsOpenSignal {
     pub subprotocol: String, // "" if no subprotocol negotiated
 }
 
+pub type WsMessageCallback = Box<dyn Fn(Vec<u8>, bool) + Send + Sync + 'static>;
+pub type WsCloseCallback = Box<dyn Fn(u16, String) + Send + Sync + 'static>;
+
 /// Per-connection state stored in REGISTRY.
 ///
 /// `on_message` and `on_close` are boxed closures rather than bare
@@ -134,9 +139,9 @@ pub struct WsConn {
     pub send_tx: mpsc::Sender<WsOutgoing>,
     pub open_tx: Option<oneshot::Sender<WsOpenSignal>>,
     /// Called with (payload: Vec<u8>, is_binary: bool) for each incoming frame.
-    pub on_message: Option<Box<dyn Fn(Vec<u8>, bool) + Send + Sync + 'static>>,
+    pub on_message: Option<WsMessageCallback>,
     /// Called with (code: u16, reason: String) when the connection closes.
-    pub on_close: Option<Box<dyn Fn(u16, String) + Send + Sync + 'static>>,
+    pub on_close: Option<WsCloseCallback>,
 }
 
 pub type Registry = Mutex<HashMap<u64, WsConn>>;
@@ -159,7 +164,7 @@ pub fn register_ws_path(path: String) {
 }
 
 pub fn path_is_ws(path: &str) -> bool {
-    WS_PATHS.get().map_or(false, |s| s.lock().contains(path))
+    WS_PATHS.get().is_some_and(|s| s.lock().contains(path))
 }
 
 use futures::{SinkExt, StreamExt};
@@ -196,7 +201,6 @@ pub async fn ws_conn_task<S>(
     let mut ping_tick = tokio::time::interval(Duration::from_millis(ping_interval_ms.max(1)));
     let mut last_pong = Instant::now();
     let pong_timeout = Duration::from_millis(ping_interval_ms.saturating_mul(2));
-    let mut close_fired = false;
 
     loop {
         tokio::select! {
@@ -226,20 +230,14 @@ pub async fn ws_conn_task<S>(
                 let msg = match next {
                     Some(Ok(m)) => m,
                     Some(Err(_)) | None => {
-                        if !close_fired {
-                            fire_on_close(conn_id, 1006, "abnormal closure".to_string());
-                            close_fired = true;
-                        }
+                        fire_on_close(conn_id, 1006, "abnormal closure".to_string());
                         break;
                     }
                 };
                 match msg {
                     Message::Text(s) => {
                         if s.len() > max_msg_bytes {
-                            if !close_fired {
-                                fire_on_close(conn_id, 1009, "message too big".to_string());
-                                close_fired = true;
-                            }
+                            fire_on_close(conn_id, 1009, "message too big".to_string());
                             let _ = ws_sink.send(Message::Close(Some(CloseFrame {
                                 code: 1009.into(),
                                 reason: Cow::Borrowed("message too big"),
@@ -250,10 +248,7 @@ pub async fn ws_conn_task<S>(
                     }
                     Message::Binary(b) => {
                         if b.len() > max_msg_bytes {
-                            if !close_fired {
-                                fire_on_close(conn_id, 1009, "message too big".to_string());
-                                close_fired = true;
-                            }
+                            fire_on_close(conn_id, 1009, "message too big".to_string());
                             let _ = ws_sink.send(Message::Close(Some(CloseFrame {
                                 code: 1009.into(),
                                 reason: Cow::Borrowed("message too big"),
@@ -267,10 +262,7 @@ pub async fn ws_conn_task<S>(
                     Message::Close(cf) => {
                         let code = cf.as_ref().map_or(1005u16, |c| u16::from(c.code));
                         let reason = cf.map_or(String::new(), |c| c.reason.into_owned());
-                        if !close_fired {
-                            fire_on_close(conn_id, code, reason);
-                            close_fired = true;
-                        }
+                        fire_on_close(conn_id, code, reason);
                         break;
                     }
                     Message::Frame(_) => {}
@@ -279,10 +271,7 @@ pub async fn ws_conn_task<S>(
             _ = ping_tick.tick() => {
                 if ping_interval_ms == 0 { continue; }
                 if last_pong.elapsed() > pong_timeout {
-                    if !close_fired {
-                        fire_on_close(conn_id, 1011, "pong timeout".to_string());
-                        close_fired = true;
-                    }
+                    fire_on_close(conn_id, 1011, "pong timeout".to_string());
                     let _ = ws_sink.send(Message::Close(Some(CloseFrame {
                         code: 1011.into(),
                         reason: Cow::Borrowed("pong timeout"),
@@ -306,19 +295,15 @@ fn fire_on_message(conn_id: u64, data: Vec<u8>, is_binary: bool) {
     // event via a NonBlocking tsfn call (see napi_ws_register_handlers) —
     // no JS code runs under the lock.
     let reg = registry().lock();
-    if let Some(conn) = reg.get(&conn_id) {
-        if let Some(cb) = conn.on_message.as_ref() {
-            cb(data, is_binary);
-        }
+    if let Some(cb) = reg.get(&conn_id).and_then(|c| c.on_message.as_ref()) {
+        cb(data, is_binary);
     }
 }
 
 fn fire_on_close(conn_id: u64, code: u16, reason: String) {
     let reg = registry().lock();
-    if let Some(conn) = reg.get(&conn_id) {
-        if let Some(cb) = conn.on_close.as_ref() {
-            cb(code, reason);
-        }
+    if let Some(cb) = reg.get(&conn_id).and_then(|c| c.on_close.as_ref()) {
+        cb(code, reason);
     }
 }
 

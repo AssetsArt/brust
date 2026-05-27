@@ -52,6 +52,7 @@ impl TcpStream {
         self.0.write_all(&bytes).await
     }
 
+    #[allow(dead_code)]
     pub async fn shutdown(&mut self) -> std::io::Result<()> {
         self.0.shutdown().await
     }

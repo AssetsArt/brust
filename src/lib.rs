@@ -477,22 +477,20 @@ pub fn napi_ws_register_handlers(
     let conn_id = bigint_to_u64(&conn_id)?;
     let on_message_tsfn = on_message.build_threadsafe_function().build()?;
     let on_close_tsfn = on_close.build_threadsafe_function().build()?;
-    let on_message_box: Box<dyn Fn(Vec<u8>, bool) + Send + Sync + 'static> =
-        Box::new(move |bytes, is_binary| {
-            let arg = WsMessageArg {
-                data: Buffer::from(bytes),
-                is_binary,
-            };
-            on_message_tsfn.call(arg, ThreadsafeFunctionCallMode::NonBlocking);
-        });
-    let on_close_box: Box<dyn Fn(u16, String) + Send + Sync + 'static> =
-        Box::new(move |code, reason| {
-            let arg = WsCloseArg {
-                code: code as u32,
-                reason,
-            };
-            on_close_tsfn.call(arg, ThreadsafeFunctionCallMode::NonBlocking);
-        });
+    let on_message_box: crate::ws::WsMessageCallback = Box::new(move |bytes, is_binary| {
+        let arg = WsMessageArg {
+            data: Buffer::from(bytes),
+            is_binary,
+        };
+        on_message_tsfn.call(arg, ThreadsafeFunctionCallMode::NonBlocking);
+    });
+    let on_close_box: crate::ws::WsCloseCallback = Box::new(move |code, reason| {
+        let arg = WsCloseArg {
+            code: code as u32,
+            reason,
+        };
+        on_close_tsfn.call(arg, ThreadsafeFunctionCallMode::NonBlocking);
+    });
     let mut reg = crate::ws::registry().lock();
     if let Some(conn) = reg.get_mut(&conn_id) {
         conn.on_message = Some(on_message_box);

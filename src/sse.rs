@@ -105,11 +105,12 @@ pub async fn sse_conn_task<S: crate::io::SseIo>(
         }
     }
     // Cleanup: remove from REGISTRY and fire abort callback if set.
-    let conn = registry().lock().remove(&conn_id);
-    if let Some(mut c) = conn {
-        if let Some(cb) = c.abort_cb.take() {
-            cb();
-        }
+    if let Some(cb) = registry()
+        .lock()
+        .remove(&conn_id)
+        .and_then(|mut c| c.abort_cb.take())
+    {
+        cb();
     }
     let _ = stream.shutdown_conn().await;
 }
@@ -127,7 +128,7 @@ pub fn register_sse_path(path: String) {
 }
 
 pub fn path_is_sse(path: &str) -> bool {
-    SSE_PATHS.get().map_or(false, |s| s.lock().contains(path))
+    SSE_PATHS.get().is_some_and(|s| s.lock().contains(path))
 }
 
 #[cfg(test)]

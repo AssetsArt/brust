@@ -47,6 +47,7 @@ impl TcpStream {
         res
     }
 
+    #[allow(dead_code)]
     pub async fn shutdown(&mut self) -> std::io::Result<()> {
         self.0.shutdown(std::net::Shutdown::Both)
     }
