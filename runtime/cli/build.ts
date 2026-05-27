@@ -118,6 +118,36 @@ export async function runBuild(args: string[]): Promise<void> {
     console.log(`[brust build] css:     skipped (no app.css)`)
   }
 
+  // 4.6. Component CSS — Lightning CSS + Modules.
+  {
+    const { scanCssImports } = await import('../css/scan-imports.ts')
+    const scan = await scanCssImports(entryDir)
+    if (scan.size > 0) {
+      const { buildComponentCss } = await import('../css/component-build.ts')
+      const routesFile = path.join(entryDir, 'routes.tsx')
+      let routeForCss: { fullPath: string; componentSource: string }[] = []
+      if (existsSync(routesFile)) {
+        try {
+          const { routes } = await import(routesFile)
+          routeForCss = (routes as any[]).map((r) => ({
+            fullPath: r.fullPath,
+            componentSource: routesFile,
+          }))
+        } catch { /* if routes import fails, skip — manifest still emits modules */ }
+      }
+      const cssOutDir = path.join(outDir, 'css')
+      const manifest = await buildComponentCss({
+        scanRoot: entryDir,
+        outDir: cssOutDir,
+        tailwindCompile: null,
+        routes: routeForCss,
+      })
+      console.log(`[brust build] css-mod: ${Object.keys(manifest.modules).length} chunk(s) → ${cssOutDir}/components/`)
+    } else {
+      console.log(`[brust build] css-mod: skipped (no component CSS imports)`)
+    }
+  }
+
   // 5. Generate the prebuilt-actions file (always — empty list if no actions).
   const prebuiltActionsPath = path.join(outDir, '_actions-prebuilt.ts')
   await writePrebuiltActionsFileWithMap(prebuiltActionsPath, idToSource, REPO_ROOT)

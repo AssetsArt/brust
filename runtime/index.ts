@@ -3,7 +3,7 @@ import * as native from './index.js'
 import type { ActionDef } from './actions.ts'
 import { isValidActionId } from './actions.ts'
 import { loadConfig } from './config.ts'
-import { configureCssEnabled } from './css.ts'
+import { configureCssEnabled, configureCssHrefsForRoute } from './css.ts'
 
 export interface ServeOptions {
   port: number
@@ -290,6 +290,45 @@ export const brust = {
         }
       }
 
+      // Component CSS pipeline. Loads the manifest (built earlier by `brust build`
+      // in prebuilt mode, or freshly via buildComponentCss in dev mode) and
+      // registers the Bun.plugin so .module.css imports resolve to a JSON map.
+      {
+        const { readComponentCssManifest } = await import('./css/manifest.ts')
+        const { cssLoaderPlugin } = await import('./css/component-loader.ts')
+        let manifest: import('./css/manifest.ts').ComponentCssManifest | null = null
+
+        if (prebuilt) {
+          const manifestPath = path.join(distDir!, 'css', 'component-manifest.json')
+          manifest = await readComponentCssManifest(manifestPath)
+        } else {
+          const { scanCssImports } = await import('./css/scan-imports.ts')
+          const scan = await scanCssImports(scanRoot)
+          if (scan.size > 0) {
+            const { buildComponentCss } = await import('./css/component-build.ts')
+            const routeForCss = opts.routes.map((r) => ({
+              fullPath: r.fullPath,
+              componentSource: path.join(scanRoot, 'routes.tsx'),
+            }))
+            const cssOutDir = path.join(process.cwd(), '.brust', 'css')
+            manifest = await buildComponentCss({
+              scanRoot,
+              outDir: cssOutDir,
+              tailwindCompile: null,
+              routes: routeForCss,
+            })
+            console.log(`[brust] main: built ${Object.keys(manifest.modules).length} component CSS chunk(s)`)
+          }
+        }
+
+        if (manifest) {
+          Bun.plugin(cssLoaderPlugin(manifest))
+          for (const [routePath, hrefs] of Object.entries(manifest.routeChunks)) {
+            configureCssHrefsForRoute(routePath, hrefs)
+          }
+        }
+      }
+
       this.registerRoutes(routes)
       const ssePaths = routes
         .filter((r) => r.chain[r.chain.length - 1].sse !== undefined)
@@ -403,6 +442,22 @@ export const brust = {
       } else {
         if (existsSync(path.join(scanRoot, 'app.css'))) {
           configureCssEnabled(['/_brust/css/app.css'])
+        }
+      }
+
+      // Worker: register the component CSS Bun.plugin so .module.css imports
+      // resolve to the same hash map main saw. (Workers don't seed
+      // configureCssHrefsForRoute — that's a renderer concern only on the
+      // main thread.)
+      {
+        const { readComponentCssManifest } = await import('./css/manifest.ts')
+        const { cssLoaderPlugin } = await import('./css/component-loader.ts')
+        const manifestPath = prebuilt
+          ? path.join(distDir!, 'css', 'component-manifest.json')
+          : path.join(process.cwd(), '.brust', 'css', 'component-manifest.json')
+        const manifest = await readComponentCssManifest(manifestPath)
+        if (manifest) {
+          Bun.plugin(cssLoaderPlugin(manifest))
         }
       }
 
