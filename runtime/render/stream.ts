@@ -169,9 +169,28 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
             mode = 'streaming'
             let flushed = concatBuffers(buffer, true)
             buffer.length = 0
+            // Streaming-only placement note: in the buffering branch we splice
+            // <link> + dev <script> immediately before </head> (which is in the
+            // accumulated body bytes). In streaming we can't — the first chunk
+            // here is just the bootstrap prepend; </head> arrives in a later
+            // React chunk that bypasses injection entirely. So we append the
+            // link + dev tags after the bootstrap, before React's <!DOCTYPE>.
+            // Browsers fetch the stylesheets and execute the script regardless
+            // of position; quirks-mode is already engaged by the bootstrap
+            // script's position so no new penalty.
             const perRouteHrefs = args.routePath ? getCssHrefsForRoute(args.routePath) : []
-            flushed = injectCssLink(flushed, [...getCssHrefs(), ...perRouteHrefs])
-            flushed = injectDevClient(flushed, getDevClientSnippet())
+            const streamHrefs = [...getCssHrefs(), ...perRouteHrefs]
+            const linkTagsStr = streamHrefs
+              .map((h) => `<link rel="stylesheet" href="${h}">`)
+              .join('')
+            const devTag = getDevClientSnippet() ?? ''
+            if (linkTagsStr.length > 0 || devTag.length > 0) {
+              const prepend = encoder.encode(linkTagsStr + devTag)
+              const out = new Uint8Array(flushed.length + prepend.length)
+              out.set(flushed, 0)
+              out.set(prepend, flushed.length)
+              flushed = out
+            }
             const meta = makeMeta({ status: successStatus, streaming: true, headers: extraHeaders })
             // Send header chunk and pipe concurrently — writes gate on headerSent.
             let resolveHeader!: () => void
