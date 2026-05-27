@@ -1,0 +1,16 @@
+import { Island } from 'brust'
+import Layout from '../components/Layout'
+import Counter from '../components/Counter'
+
+export default function Home() {
+  return (
+    <Layout title="__PROJECT_NAME__">
+      <h1 className="text-3xl font-bold mb-4">Welcome to brust</h1>
+      <p className="mb-4 text-gray-700">
+        Edit <code className="bg-gray-100 px-1 rounded">pages/Home.tsx</code> and save —
+        <code className="bg-gray-100 px-1 rounded ml-1">brust dev</code> will reload.
+      </p>
+      <Island component={Counter} props={{ start: 0, label: 'clicks' }} hydrate="load" />
+    </Layout>
+  )
+}
