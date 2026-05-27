@@ -31,7 +31,7 @@ export default function SlowSuspense(): JSX.Element {
         chunk under <code>Transfer-Encoding: chunked</code>. The resolved
         content streams in as a later chunk, ~200 ms after handshake.
       </p>
-      <Suspense fallback={<p data-testid="spinner">loading...</p>}>
+      <Suspense fallback={<p data-testid="spinner" className="text-gray-500 italic">loading...</p>}>
         <SlowChild />
       </Suspense>
     </Layout>

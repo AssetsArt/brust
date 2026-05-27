@@ -1,0 +1,33 @@
+@import "tailwindcss";
+
+/* Scan all TS / TSX under the example for class candidates. The
+ * @source path is relative to this file. */
+@source "./**/*.{tsx,ts}";
+
+/* Project palette + serif/mono stack. The custom --color-brand drives
+ * the terracotta accent used on links and the brand mark. */
+@theme {
+  --color-brand: #8a3324;
+  --color-paper: #fafaf7;
+  --color-ink: #1a1a1a;
+  --color-line: #e7e5df;
+  --color-soft: #f0eee8;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+               "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "SF Mono", Menlo, Consolas, monospace;
+}
+
+/* Body defaults that Tailwind's preflight doesn't cover — mirror the
+ * inline STYLES block in the pre-migration Layout. */
+@layer base {
+  body {
+    @apply font-sans text-ink bg-paper leading-relaxed;
+  }
+  main code, main pre {
+    @apply bg-soft px-1.5 py-0.5 rounded text-[13px] font-mono;
+  }
+  main pre {
+    @apply p-3 overflow-x-auto;
+  }
+}

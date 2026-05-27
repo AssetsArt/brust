@@ -34,7 +34,7 @@ export default function Profile({ params }: RouteContext<{ user: string }>) {
         the fallback ships in the shell and the resolved markup streams
         in as a separate chunk ~150 ms later.
       </p>
-      <Suspense fallback={<p data-testid="bio-fallback">loading bio...</p>}>
+      <Suspense fallback={<p data-testid="bio-fallback" className="text-gray-500 italic">loading bio...</p>}>
         <Bio promise={fetchBio(params.user)} />
       </Suspense>
     </Layout>
