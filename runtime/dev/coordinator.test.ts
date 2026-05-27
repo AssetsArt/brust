@@ -63,6 +63,44 @@ describe('Coordinator', () => {
     expect(calls.find((c) => c.type === 'reload' || c.type === 'css-update' || c.type === 'ok')).toBeUndefined()
   })
 
+  test('component-css change → buildComponentCss + css-update (no reload)', async () => {
+    const baseManifest: any = {
+      version: 1,
+      modules: { '/p/x.module.css': { chunk: '/_brust/css/components/x.css', exports: { primary: 'primary_a' } } },
+      routeChunks: {},
+    }
+    const deps = makeDeps({
+      buildComponentCss: mock(() => Promise.resolve()),
+      snapshotComponentCss: mock(() => Promise.resolve(baseManifest)),
+    })
+    const c = new Coordinator(deps)
+    await c.handleChange({ paths: ['/p/x.module.css'], kind: 'component-css' as any })
+    const calls = deps.broadcast.mock.calls.map((c: any) => c[0])
+    expect(calls[0].type).toBe('building')
+    expect(calls.find((c: any) => c.type === 'css-update')).toBeDefined()
+    expect(calls.find((c: any) => c.type === 'reload')).toBeUndefined()
+  })
+
+  test('component-css with exports-set change → reload (not css-update)', async () => {
+    let snap = 0
+    const before: any = {
+      version: 1, routeChunks: {},
+      modules: { '/p/x.module.css': { chunk: '/c.css', exports: { primary: 'p_a' } } },
+    }
+    const after: any = {
+      version: 1, routeChunks: {},
+      modules: { '/p/x.module.css': { chunk: '/c.css', exports: { primary: 'p_a', secondary: 's_a' } } },
+    }
+    const deps = makeDeps({
+      buildComponentCss: mock(() => Promise.resolve()),
+      snapshotComponentCss: mock(() => Promise.resolve(snap++ === 0 ? before : after)),
+    })
+    const c = new Coordinator(deps)
+    await c.handleChange({ paths: ['/p/x.module.css'], kind: 'component-css' as any })
+    const calls = deps.broadcast.mock.calls.map((c: any) => c[0])
+    expect(calls.find((c: any) => c.type === 'reload')).toBeDefined()
+  })
+
   test('single-flight: change-while-building is dropped', async () => {
     let releaseTerm!: () => void
     const deps = makeDeps({

@@ -382,6 +382,33 @@ export const brust = {
               await buildIslands(islandConfig)
             }
           },
+          buildComponentCss: async () => {
+            const { scanCssImports } = await import('./css/scan-imports.ts')
+            const scan = await scanCssImports(scanRoot)
+            if (scan.size === 0) return
+            const { buildComponentCss } = await import('./css/component-build.ts')
+            const { cssLoaderPlugin } = await import('./css/component-loader.ts')
+            const routeForCss = opts.routes.map((r) => ({
+              fullPath: r.fullPath,
+              componentSource: pathModule.join(scanRoot, 'routes.tsx'),
+            }))
+            const cssOutDir = pathModule.join(process.cwd(), '.brust', 'css')
+            const manifest = await buildComponentCss({
+              scanRoot,
+              outDir: cssOutDir,
+              tailwindCompile: null,
+              routes: routeForCss,
+            })
+            Bun.plugin(cssLoaderPlugin(manifest))
+            for (const [rp, hrefs] of Object.entries(manifest.routeChunks)) {
+              configureCssHrefsForRoute(rp, hrefs)
+            }
+          },
+          snapshotComponentCss: async () => {
+            const { readComponentCssManifest } = await import('./css/manifest.ts')
+            const p = pathModule.join(process.cwd(), '.brust', 'css', 'component-manifest.json')
+            return await readComponentCssManifest(p)
+          },
           broadcast,
           tui: { appendEvent: (l) => tui.appendEvent(l) },
         })

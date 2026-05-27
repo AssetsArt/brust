@@ -8,6 +8,8 @@ export interface CoordinatorDeps {
   }
   buildCss: () => Promise<void>
   buildIslands: () => Promise<void>
+  buildComponentCss?: () => Promise<void>
+  snapshotComponentCss?: () => Promise<import('../css/manifest.ts').ComponentCssManifest | null>
   broadcast: (msg: DevMessage) => Promise<void> | void
   tui: { appendEvent(line: string): void }
 }
@@ -46,6 +48,23 @@ export class Coordinator {
             href: '/_brust/css/app.css?v=' + Date.now(),
           })
           break
+        case 'component-css': {
+          const before = await this.deps.snapshotComponentCss?.()
+          await this.deps.buildComponentCss?.()
+          const after = await this.deps.snapshotComponentCss?.()
+          if (!exportsEqualForChanged(before ?? null, after ?? null, ev.paths)) {
+            await this.deps.broadcast({ type: 'reload' })
+          } else {
+            const chunks = chunksForPaths(after ?? null, ev.paths)
+            for (const c of chunks) {
+              await this.deps.broadcast({
+                type: 'css-update',
+                href: `${c}?v=${Date.now()}`,
+              })
+            }
+          }
+          break
+        }
       }
       const ms = (performance.now() - started) | 0
       this.deps.tui.appendEvent(`  → ok (${ms}ms)`)
@@ -65,8 +84,40 @@ export class Coordinator {
 
 function formatStart(ev: { paths: string[]; kind: ChangeKind }): string {
   const icon = ev.kind === 'css' ? '⎈' : '⏵'
-  const label = ev.kind === 'css'     ? 'css update'
-              : ev.kind === 'islands' ? 'islands rebuild'
+  const label = ev.kind === 'css'           ? 'css update'
+              : ev.kind === 'component-css' ? 'component css update'
+              : ev.kind === 'islands'       ? 'islands rebuild'
               : 'hotreload'
   return `${icon} ${label} ${ev.paths[0]}`
+}
+
+function exportsEqualForChanged(
+  before: import('../css/manifest.ts').ComponentCssManifest | null,
+  after:  import('../css/manifest.ts').ComponentCssManifest | null,
+  paths: string[],
+): boolean {
+  if (!before || !after) return false
+  for (const p of paths) {
+    const b = before.modules[p]?.exports ?? null
+    const a = after.modules[p]?.exports  ?? null
+    if (b === null && a === null) continue
+    if (b === null || a === null) return false
+    const bk = Object.keys(b).sort().join(',')
+    const ak = Object.keys(a).sort().join(',')
+    if (bk !== ak) return false
+  }
+  return true
+}
+
+function chunksForPaths(
+  manifest: import('../css/manifest.ts').ComponentCssManifest | null,
+  paths: string[],
+): string[] {
+  if (!manifest) return []
+  const out = new Set<string>()
+  for (const p of paths) {
+    const c = manifest.modules[p]?.chunk
+    if (c) out.add(c)
+  }
+  return Array.from(out)
 }

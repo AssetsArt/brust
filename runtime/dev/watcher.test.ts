@@ -18,6 +18,9 @@ describe('runtime/dev/watcher classifyPath', () => {
     ['/proj/foo.test.ts', null],
     ['/proj/foo.test.tsx', null],
     ['/proj/README.md', null],
+    ['/proj/components/Button.module.css', 'component-css'],
+    ['/proj/components/styles.css', 'component-css'],
+    ['/proj/components/Button.module.css.d.ts', null],
   ]
   for (const [path, expected] of cases) {
     test(`classifyPath(${path}) = ${expected ?? 'null'}`, () => {

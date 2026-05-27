@@ -1,7 +1,7 @@
 import { watch, type FSWatcher } from 'node:fs'
 import path from 'node:path'
 
-export type ChangeKind = 'ts' | 'css' | 'html' | 'islands'
+export type ChangeKind = 'ts' | 'css' | 'component-css' | 'html' | 'islands'
 
 const IGNORE_DIR_SEGMENTS = new Set(['node_modules', '.git', '.brust', 'dist'])
 const TS_RE = /\.(tsx?|jsx?)$/
@@ -20,6 +20,10 @@ export function classifyPath(absPath: string, root: string): ChangeKind | null {
   const base = path.basename(absPath)
   if (base === 'island.config.ts') return 'islands'
   if (base === 'app.css') return 'css'
+  // skip generated module type declarations
+  if (absPath.endsWith('.module.css.d.ts')) return null
+  // any other .css (including .module.css) is component CSS
+  if (absPath.endsWith('.css')) return 'component-css'
   if (absPath.endsWith('.html')) return 'html'
   if (TS_RE.test(absPath)) return 'ts'
   return null
@@ -75,7 +79,7 @@ export interface Watcher {
  * that subsumes the others). */
 export function createWatcher(opts: CreateWatcherOptions): Watcher {
   const debounceMs = opts.debounceMs ?? 50
-  const kindPriority: ChangeKind[] = ['islands', 'ts', 'html', 'css']
+  const kindPriority: ChangeKind[] = ['islands', 'ts', 'html', 'css', 'component-css']
 
   const coalesce = _testCoalesce(debounceMs, (paths) => {
     const kinds = new Set<ChangeKind>()
