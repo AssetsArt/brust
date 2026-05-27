@@ -90,12 +90,18 @@ export const brust = {
       workers: opts.workers,
       entry: opts.entry,
     })
+    const baseEnv = { ...process.env }
+    const workersArr: Worker[] = []
     for (let i = 0; i < opts.workers; i++) {
       // Bun.Worker requires the JS entry (post-bundling). For the skeleton,
       // the entry is a TS file that Bun executes directly.
-      new Worker(opts.entry, {
-        env: { ...process.env, BRUST_WORKER_ID: String(i) },
-      })
+      workersArr.push(new Worker(opts.entry, {
+        env: { ...baseEnv, BRUST_WORKER_ID: String(i) },
+      }))
+    }
+    if (process.env.BRUST_DEV === '1') {
+      const { registerInitialPool } = await import('./dev/worker-registry.ts')
+      registerInitialPool(workersArr, opts.entry, opts.workers, baseEnv as Record<string, string>)
     }
     // Bun Workers intercept SIGINT before Rust's ctrl_c() handler fires.
     // Install a JS-level handler so the process actually exits on SIGINT.
@@ -211,6 +217,10 @@ export const brust = {
     serve?: Partial<Omit<ServeOptions, 'entry' | 'actions' | 'mcp'>>
     /** Per-worker SAB size in bytes. Default 256 KB. */
     sabBytes?: number
+    /** When true, prepend the dev WS route, install file watcher, set the
+     * dev-client snippet, and start the TUI. Default false.
+     * Also activated by BRUST_DEV=1 environment variable. */
+    dev?: boolean
   }): Promise<void> {
     const { existsSync } = await import('node:fs')
     const { fileURLToPath } = await import('node:url')
@@ -220,6 +230,20 @@ export const brust = {
     const distDir = process.env.BRUST_DIST_DIR
 
     const scanRoot = opts.scanRoot ?? path.dirname(fileURLToPath(opts.entry))
+
+    const dev = opts.dev === true || process.env.BRUST_DEV === '1'
+    let routes = opts.routes
+    if (dev) {
+      const { createDevWsRoute } = await import('./dev/ws-channel.ts')
+      const { buildDevClientTag } = await import('./dev/client.ts')
+      const { configureDevClientSnippet } = await import('./dev/inject.ts')
+      const devRoute = createDevWsRoute()
+      routes = [
+        { ...devRoute, fullPath: devRoute.path!, chain: [devRoute as any] } as any,
+        ...opts.routes,
+      ]
+      configureDevClientSnippet(buildDevClientTag())
+    }
     // scanActions is plugin-aliased in prebuilt bundles → returns pre-baked
     // list with sourceFiles=[]. In dev mode it walks the filesystem.
     const { actions, sourceFiles } = await this.scanActions({ roots: [scanRoot] })
@@ -266,15 +290,15 @@ export const brust = {
         }
       }
 
-      this.registerRoutes(opts.routes)
-      const ssePaths = opts.routes
+      this.registerRoutes(routes)
+      const ssePaths = routes
         .filter((r) => r.chain[r.chain.length - 1].sse !== undefined)
         .map((r) => r.fullPath)
       if (ssePaths.length > 0) {
         this.registerSsePaths(ssePaths)
         console.log(`[brust] main: registered ${ssePaths.length} sse path(s): ${ssePaths.join(', ')}`)
       }
-      const wsPaths = opts.routes
+      const wsPaths = routes
         .filter((r) => r.chain[r.chain.length - 1].websocket !== undefined)
         .map((r) => r.fullPath)
       if (wsPaths.length > 0) {
@@ -282,6 +306,52 @@ export const brust = {
         console.log(`[brust] main: registered ${wsPaths.length} ws path(s): ${wsPaths.join(', ')}`)
       }
       console.log(`[brust] main: scanActions found ${actions.length} action(s): ${actions.map((a) => a.id).join(', ')}`)
+
+      if (dev) {
+        const { createWatcher } = await import('./dev/watcher.ts')
+        const { Coordinator } = await import('./dev/coordinator.ts')
+        const { broadcast } = await import('./dev/ws-channel.ts')
+        const { Tui } = await import('./dev/tui.ts')
+        const { terminateAll: termWorkers, spawnAll: spawnWorkers } = await import('./dev/worker-registry.ts')
+        const fsModule = await import('node:fs')
+        const pathModule = await import('node:path')
+
+        const tui = new Tui({
+          isTty: process.stdout.isTTY === true,
+          write: (s: string) => process.stdout.write(s),
+        })
+        tui.updateStatus({ port, workers, watching: [scanRoot] })
+        tui.appendEvent(`▶ serving on http://127.0.0.1:${port}`)
+
+        const coordinator = new Coordinator({
+          workers: {
+            terminateAll: termWorkers,
+            spawnAll: async () => { spawnWorkers() },
+          },
+          buildCss: async () => {
+            const appCss = pathModule.join(scanRoot, 'app.css')
+            if (fsModule.existsSync(appCss)) {
+              const { buildCss } = await import('./css/build.ts')
+              const outDir = pathModule.join(process.cwd(), '.brust', 'css')
+              await buildCss({ entry: appCss, outDir })
+            }
+          },
+          buildIslands: async () => {
+            const islandConfig = pathModule.join(scanRoot, 'island.config.ts')
+            if (fsModule.existsSync(islandConfig)) {
+              const { buildIslands } = await import('./islands/build.ts')
+              await buildIslands(islandConfig)
+            }
+          },
+          broadcast,
+          tui: { appendEvent: (l) => tui.appendEvent(l) },
+        })
+
+        createWatcher({
+          root: scanRoot,
+          onChange: (ev) => { void coordinator.handleChange(ev) },
+        })
+      }
 
       let mcpManifest: import('./mcp/manifest.ts').McpManifest | null
       if (prebuilt) {
@@ -296,7 +366,7 @@ export const brust = {
           routesFile: path.join(scanRoot, 'routes.tsx'),
           sourceRoots: [scanRoot],
           actions,
-          routes: opts.routes,
+          routes,
         })
         console.log(`[brust] main: mcp manifest has ${mcpManifest.tools.length} tools + ${mcpManifest.resources.length} resources`)
       }
@@ -310,6 +380,19 @@ export const brust = {
         ...opts.serve,
       })
     } else {
+      // Worker branch
+      let workerRoutes = opts.routes
+      if (dev) {
+        const { buildDevClientTag } = await import('./dev/client.ts')
+        const { configureDevClientSnippet } = await import('./dev/inject.ts')
+        configureDevClientSnippet(buildDevClientTag())
+        const { createDevWsRoute } = await import('./dev/ws-channel.ts')
+        const devRoute = createDevWsRoute()
+        workerRoutes = [
+          { ...devRoute, fullPath: devRoute.path!, chain: [devRoute as any] } as any,
+          ...opts.routes,
+        ]
+      }
       // Worker: detect CSS the same way main did (no compile, no configureCssDir
       // — Rust state is shared, but the per-worker renderer needs the hrefs).
       if (prebuilt) {
@@ -335,13 +418,13 @@ export const brust = {
       let mcpServer: import('./mcp/server.ts').McpServer | undefined
       if (mcpManifest) {
         const { makeMcpServer } = await import('./mcp/server.ts')
-        mcpServer = makeMcpServer({ manifest: mcpManifest, actions, routes: opts.routes })
+        mcpServer = makeMcpServer({ manifest: mcpManifest, actions, routes: workerRoutes })
         console.log(`[brust] worker: mcp server ready (${mcpManifest.tools.length} tools)`)
       }
 
       const { makeRenderer: make } = await import('./routes.ts')
       let wid: number | null = null
-      const renderer = make(opts.routes, view, { actions, getWorkerId: () => wid, mcp: mcpServer })
+      const renderer = make(workerRoutes, view, { actions, getWorkerId: () => wid, mcp: mcpServer })
       wid = this.registerRenderer(view, renderer)
     }
   },
