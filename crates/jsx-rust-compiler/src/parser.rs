@@ -56,7 +56,11 @@ pub fn parse(source: &str, path: &str) -> Result<ParsedSource, ParseError> {
             }
             Ok(ParsedSource { module, source_map: cm })
         }
-        Err(err) => Err(ParseError::Swc(format!("{err:?}"))),
+        Err(err) => {
+            // Drain any recovered errors too; T2 will surface them in diagnostics.
+            let _recovered = parser.take_errors();
+            Err(ParseError::Swc(format!("{err:?}")))
+        }
     }
 }
 
