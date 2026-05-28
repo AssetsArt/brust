@@ -1,7 +1,7 @@
-pub mod parser;
+mod emit;
 mod ir;
 mod lower;
-mod emit;
+pub mod parser;
 
 pub fn compile(source: &str) -> Result<String, CompileError> {
     compile_with_path(source, "<stdin>")
@@ -30,36 +30,66 @@ pub struct CompileError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ErrorKind {
-    #[error("parse error: {0}")] Parse(String),
-    #[error("expected single `export default function`, found other top-level statement")] UnexpectedStatement,
-    #[error("function body must be a single `return <jsx>;`")] BodyMustBeSingleReturn,
-    #[error("unsupported function parameter pattern")] UnsupportedParam,
-    #[error("custom component `<{0}/>` not supported in Phase A1")] CustomComponentNotSupported(String),
-    #[error("namespaced JSX element not supported")] NamespacedElementNotSupported,
-    #[error("member-expression JSX element not supported")] MemberComponentNotSupported,
-    #[error("fragments not supported in Phase A1")] FragmentNotSupported,
-    #[error("namespaced attribute not supported")] NamespacedAttrNotSupported,
-    #[error("event handler `{0}` not supported (handled by islands in Phase A3)")] EventHandlerNotSupported(String),
-    #[error("`ref` attribute not supported")] RefAttributeNotSupported,
-    #[error("JSX in attribute position not supported")] JsxInAttrNotSupported,
-    #[error("spread attribute not supported")] SpreadAttributeNotSupported,
-    #[error("spread child not supported")] SpreadChildNotSupported,
-    #[error("unresolved identifier `{0}`")] UnresolvedIdent(String),
-    #[error("bare identifier `{0}` in JSX not supported in Phase A1")] BareIdentNotSupported(String),
-    #[error("computed member access not supported")] ComputedAccessNotSupported,
-    #[error("template literals not supported in Phase A1")] TemplateLiteralNotSupported,
-    #[error("function call expression not supported in Phase A1")] CallExpressionNotSupported,
-    #[error("complex expression (binary/conditional/unary) not supported in Phase A1")] ComplexExpressionNotSupported,
-    #[error("`.map((item, idx) => …)` two-arg form not supported in Phase A1")] MapIndexParamNotSupported,
-    #[error("`.map(...)` shape not supported — expect `(ident) => <JSXElement>`")] MapShapeNotSupported,
-    #[error("non-integer numeric literal not supported in Phase A1")] NonIntegerNumericNotSupported,
-    #[error("void element `<{0}>` cannot have children")] VoidElementHasChildren(String),
-    #[error("unknown attribute rename `{0}` — uppercase letters require a rename-table entry")] UnknownAttributeRename(String),
-    #[error("prop `{0}` used as both value and collection — type conflict")] PropTypeConflict(String),
+    #[error("parse error: {0}")]
+    Parse(String),
+    #[error("expected single `export default function`, found other top-level statement")]
+    UnexpectedStatement,
+    #[error("function body must be a single `return <jsx>;`")]
+    BodyMustBeSingleReturn,
+    #[error("unsupported function parameter pattern")]
+    UnsupportedParam,
+    #[error("custom component `<{0}/>` not supported in Phase A1")]
+    CustomComponentNotSupported(String),
+    #[error("namespaced JSX element not supported")]
+    NamespacedElementNotSupported,
+    #[error("member-expression JSX element not supported")]
+    MemberComponentNotSupported,
+    #[error("fragments not supported in Phase A1")]
+    FragmentNotSupported,
+    #[error("namespaced attribute not supported")]
+    NamespacedAttrNotSupported,
+    #[error("event handler `{0}` not supported (handled by islands in Phase A3)")]
+    EventHandlerNotSupported(String),
+    #[error("`ref` attribute not supported")]
+    RefAttributeNotSupported,
+    #[error("JSX in attribute position not supported")]
+    JsxInAttrNotSupported,
+    #[error("spread attribute not supported")]
+    SpreadAttributeNotSupported,
+    #[error("spread child not supported")]
+    SpreadChildNotSupported,
+    #[error("unresolved identifier `{0}`")]
+    UnresolvedIdent(String),
+    #[error("bare identifier `{0}` in JSX not supported in Phase A1")]
+    BareIdentNotSupported(String),
+    #[error("computed member access not supported")]
+    ComputedAccessNotSupported,
+    #[error("template literals not supported in Phase A1")]
+    TemplateLiteralNotSupported,
+    #[error("function call expression not supported in Phase A1")]
+    CallExpressionNotSupported,
+    #[error("complex expression (binary/conditional/unary) not supported in Phase A1")]
+    ComplexExpressionNotSupported,
+    #[error("`.map((item, idx) => …)` two-arg form not supported in Phase A1")]
+    MapIndexParamNotSupported,
+    #[error("`.map(...)` shape not supported — expect `(ident) => <JSXElement>`")]
+    MapShapeNotSupported,
+    #[error("non-integer numeric literal not supported in Phase A1")]
+    NonIntegerNumericNotSupported,
+    #[error("void element `<{0}>` cannot have children")]
+    VoidElementHasChildren(String),
+    #[error("unknown attribute rename `{0}` — uppercase letters require a rename-table entry")]
+    UnknownAttributeRename(String),
+    #[error("prop `{0}` used as both value and collection — type conflict")]
+    PropTypeConflict(String),
 }
 
 impl CompileError {
-    pub(crate) fn from_lower(err: lower::LowerError, path: &str, parsed: &parser::ParsedSource) -> Self {
+    pub(crate) fn from_lower(
+        err: lower::LowerError,
+        path: &str,
+        parsed: &parser::ParsedSource,
+    ) -> Self {
         let (line, col) = span_to_line_col(&err.span, parsed);
         Self {
             path: path.to_string(),
@@ -83,6 +113,9 @@ mod tests {
     fn parse_error_formats_with_path() {
         let err = compile_with_path("export default function;", "fixtures/bad.tsx").unwrap_err();
         let formatted = format!("{err}");
-        assert!(formatted.starts_with("fixtures/bad.tsx:0:0: parse error:"), "got: {formatted}");
+        assert!(
+            formatted.starts_with("fixtures/bad.tsx:0:0: parse error:"),
+            "got: {formatted}"
+        );
     }
 }

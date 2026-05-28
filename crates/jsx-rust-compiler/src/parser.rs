@@ -1,10 +1,10 @@
-use swc_core::common::{sync::Lrc, FileName, SourceMap};
+use swc_core::common::{FileName, SourceMap, sync::Lrc};
 use swc_core::ecma::ast::Module;
 // `Capturing` was moved behind the `unstable` feature gate in swc_ecma_parser 41
 // (underlying swc_core 68); the upstream `examples/typescript.rs` itself comments
 // it out as optional and passes the lexer directly to `Parser::new_from`. We
 // follow the upstream example here.
-use swc_core::ecma::parser::{lexer::Lexer, Parser, StringInput, Syntax, TsSyntax};
+use swc_core::ecma::parser::{Parser, StringInput, Syntax, TsSyntax, lexer::Lexer};
 
 pub struct ParsedSource {
     pub module: Module,
@@ -54,7 +54,10 @@ pub fn parse(source: &str, path: &str) -> Result<ParsedSource, ParseError> {
             if let Some(first) = errs.into_iter().next() {
                 return Err(ParseError::Swc(format!("{first:?}")));
             }
-            Ok(ParsedSource { module, source_map: cm })
+            Ok(ParsedSource {
+                module,
+                source_map: cm,
+            })
         }
         Err(err) => {
             // Drain any recovered errors too; T2 will surface them in diagnostics.
@@ -84,7 +87,8 @@ mod tests {
 
     #[test]
     fn accepts_typescript_destructured_props() {
-        let src = "export default function Hi({ a, b }: { a: string; b: string }) { return <div/>; }";
+        let src =
+            "export default function Hi({ a, b }: { a: string; b: string }) { return <div/>; }";
         let parsed = parse(src, "<test>").unwrap();
         assert_eq!(parsed.module.body.len(), 1);
     }

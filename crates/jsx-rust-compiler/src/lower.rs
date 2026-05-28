@@ -1,7 +1,7 @@
-use swc_core::common::Span;
 use crate::ErrorKind;
-use crate::parser::ParsedSource;
 use crate::ir::Component;
+use crate::parser::ParsedSource;
+use swc_core::common::Span;
 
 pub struct LowerError {
     pub span: Span,
