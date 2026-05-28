@@ -222,13 +222,14 @@ fn lower_params(function: &Function) -> Result<ParamShape, LowerError> {
 
 fn lower_element(el: &JSXElement, scope: &Scope) -> Result<JsxNode, LowerError> {
     let tag = lower_element_name(&el.opening.name)?;
-    // T6 adds: void-element children check, attr renames, whitespace normalization, on*/ref/key
-    let attrs = el
-        .opening
-        .attrs
-        .iter()
-        .map(|a| lower_attr_t4(a, scope))
-        .collect::<Result<Vec<_>, _>>()?;
+    // T6: attr precedence (key drop, ref/on*/uppercase rejection, rename table),
+    // void-element children check, whitespace-only JSXText filtering.
+    let mut attrs = Vec::new();
+    for a in &el.opening.attrs {
+        if let Some(attr) = lower_attr(a, scope)? {
+            attrs.push(attr);
+        }
+    }
 
     let mut children = Vec::new();
     for child in &el.children {
@@ -237,10 +238,58 @@ fn lower_element(el: &JSXElement, scope: &Scope) -> Result<JsxNode, LowerError> 
         }
     }
 
+    // T6: void element with non-empty (post-filter) children → error.
+    if is_void_element(&tag) && !children.is_empty() {
+        return Err(LowerError::at(
+            el.opening.span,
+            ErrorKind::VoidElementHasChildren(tag),
+        ));
+    }
+
     Ok(JsxNode::Element {
         tag,
         attrs,
         children,
+    })
+}
+
+/// HTML void elements per spec §4 / WHATWG. T6 rejects children on these.
+fn is_void_element(tag: &str) -> bool {
+    matches!(
+        tag,
+        "area"
+            | "base"
+            | "br"
+            | "col"
+            | "embed"
+            | "hr"
+            | "img"
+            | "input"
+            | "keygen"
+            | "link"
+            | "meta"
+            | "param"
+            | "source"
+            | "track"
+            | "wbr"
+    )
+}
+
+/// React → HTML attribute rename table. Names not listed here that contain an
+/// uppercase letter are rejected as `UnknownAttributeRename`.
+fn rename_attr(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "className" => "class",
+        "htmlFor" => "for",
+        "charSet" => "charset",
+        "tabIndex" => "tabindex",
+        "crossOrigin" => "crossorigin",
+        "readOnly" => "readonly",
+        "maxLength" => "maxlength",
+        "colSpan" => "colspan",
+        "rowSpan" => "rowspan",
+        "srcSet" => "srcset",
+        _ => return None,
     })
 }
 
@@ -268,7 +317,17 @@ fn lower_element_name(name: &JSXElementName) -> Result<String, LowerError> {
     }
 }
 
-fn lower_attr_t4(attr: &JSXAttrOrSpread, scope: &Scope) -> Result<JsxAttr, LowerError> {
+/// Lower a JSX attribute with full T6 precedence:
+///
+/// 1. `key` → drop (return `Ok(None)`) — React-only; not part of HTML output.
+/// 2. `ref` → `RefAttributeNotSupported`.
+/// 3. `on[A-Z]…` → `EventHandlerNotSupported(name)` — Phase A3 will route these
+///    through islands; for static SSR they're rejected.
+/// 4. Name in rename table → emit with the renamed key.
+/// 5. Name has any uppercase letter (not in rename table) →
+///    `UnknownAttributeRename(name)` — catches `fooBar`, typos like `Class`.
+/// 6. Otherwise → emit verbatim (lowercase HTML attribute, `data-*`, `aria-*`).
+fn lower_attr(attr: &JSXAttrOrSpread, scope: &Scope) -> Result<Option<JsxAttr>, LowerError> {
     match attr {
         JSXAttrOrSpread::SpreadElement(s) => Err(LowerError::at(
             s.dot3_token,
@@ -276,7 +335,7 @@ fn lower_attr_t4(attr: &JSXAttrOrSpread, scope: &Scope) -> Result<JsxAttr, Lower
         )),
         JSXAttrOrSpread::JSXAttr(jsx_attr) => {
             // `JSXAttrName::Ident` wraps `IdentName` (NOT `Ident`) in swc_ecma_ast 25.
-            let name = match &jsx_attr.name {
+            let raw_name = match &jsx_attr.name {
                 JSXAttrName::Ident(name) => name.sym.to_string(),
                 JSXAttrName::JSXNamespacedName(n) => {
                     return Err(LowerError::at(
@@ -285,8 +344,42 @@ fn lower_attr_t4(attr: &JSXAttrOrSpread, scope: &Scope) -> Result<JsxAttr, Lower
                     ));
                 }
             };
-            // T6 promotes this to full attr-precedence handling.
-            //
+
+            // Precedence: REJECTS / DROPS first, RENAMES second, PASSTHROUGH last.
+            // 1. key — silently dropped (React-only).
+            if raw_name == "key" {
+                return Ok(None);
+            }
+            // 2. ref — Phase A1 has no DOM nodes to ref into.
+            if raw_name == "ref" {
+                return Err(LowerError::at(
+                    jsx_attr.span,
+                    ErrorKind::RefAttributeNotSupported,
+                ));
+            }
+            // 3. on[A-Z]… event handler — explicit pre-uppercase-check so it
+            //    surfaces the more-specific error instead of UnknownAttributeRename.
+            if is_event_handler(&raw_name) {
+                return Err(LowerError::at(
+                    jsx_attr.span,
+                    ErrorKind::EventHandlerNotSupported(raw_name),
+                ));
+            }
+            // 4. Rename table (className → class, etc.).
+            // 5. Uppercase-in-name but not in table → UnknownAttributeRename.
+            let final_name = match rename_attr(&raw_name) {
+                Some(renamed) => renamed.to_string(),
+                None => {
+                    if raw_name.chars().any(|c| c.is_ascii_uppercase()) {
+                        return Err(LowerError::at(
+                            jsx_attr.span,
+                            ErrorKind::UnknownAttributeRename(raw_name),
+                        ));
+                    }
+                    raw_name
+                }
+            };
+
             // swc_ecma_ast 25's `JSXAttrValue` is `Str | JSXExprContainer | JSXElement |
             // JSXFragment` — it does NOT have a `Lit` variant (the older swc shape the plan
             // listing was written against). Numeric attribute values (`tabIndex={5}`) arrive
@@ -323,15 +416,30 @@ fn lower_attr_t4(attr: &JSXAttrOrSpread, scope: &Scope) -> Result<JsxAttr, Lower
                     ));
                 }
             };
-            Ok(JsxAttr { name, value })
+            Ok(Some(JsxAttr {
+                name: final_name,
+                value,
+            }))
         }
     }
+}
+
+/// Match the `on[A-Z].*` event-handler pattern (`onClick`, `onMouseOver`, …).
+///
+/// Crucially, plain `on` (no following uppercase) is NOT an event handler — it
+/// falls through to the standard rename/uppercase check, which will accept it
+/// verbatim (it's a valid HTML attribute, e.g. on SVG).
+fn is_event_handler(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars.next() == Some('o')
+        && chars.next() == Some('n')
+        && matches!(chars.next(), Some(c) if c.is_ascii_uppercase())
 }
 
 fn lower_child(child: &JSXElementChild, scope: &Scope) -> Result<Option<JsxNode>, LowerError> {
     match child {
         JSXElementChild::JSXText(text) => {
-            let cleaned = normalize_whitespace_t3(&text.value);
+            let cleaned = normalize_jsx_text(&text.value);
             if cleaned.is_empty() {
                 Ok(None)
             } else {
@@ -492,13 +600,19 @@ fn arrow_jsx_body(arrow: &ArrowExpr) -> Result<&JSXElement, LowerError> {
     }
 }
 
-fn normalize_whitespace_t3(s: &str) -> String {
-    // Static-only T3 rule: drop whitespace-only nodes. T6 will refine.
+/// React-style JSX text normalization (spec §4.6, T6 refinement).
+///
+/// - Whitespace-only JSXText → empty string (caller drops the node).
+/// - JSXText with non-ws content → collapse all runs of `\s+` (spaces, tabs,
+///   newlines) to a single space and trim leading/trailing whitespace.
+///
+/// `split_whitespace().join(" ")` is sufficient for A1 fixtures because none
+/// of them require preserving leading/trailing space at text-element boundaries.
+fn normalize_jsx_text(s: &str) -> String {
     if s.trim().is_empty() {
-        String::new()
-    } else {
-        s.trim().to_string()
+        return String::new();
     }
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Lower a JS expression (in JSX `{expr}` position) to an IR `Expr`.
@@ -1202,5 +1316,148 @@ mod tests {
                 expected_fields
             ))))
         );
+    }
+
+    // T6 — whitespace normalization, attr renames, void-element rejection.
+
+    #[test]
+    fn drops_whitespace_only_jsx_text() {
+        // The text gaps around the inner <p/> are pure whitespace and must be
+        // dropped, leaving the outer <div> with exactly 1 child: <p/>.
+        let src = "export default function X() { return <div>   \n   <p/>   </div>; }";
+        let parsed = parse(src, "<test>").unwrap();
+        let c = lower(&parsed).unwrap();
+        match &c.root {
+            JsxNode::Element { tag, children, .. } => {
+                assert_eq!(tag, "div");
+                assert_eq!(
+                    children.len(),
+                    1,
+                    "expected just the <p/>, got {children:?}"
+                );
+                match &children[0] {
+                    JsxNode::Element { tag, .. } => assert_eq!(tag, "p"),
+                    other => panic!("expected <p/> child, got {other:?}"),
+                }
+            }
+            _ => panic!("expected root element"),
+        }
+    }
+
+    #[test]
+    fn collapses_internal_whitespace_to_single_space() {
+        let src = "export default function X() { return <p>foo   bar\n  baz</p>; }";
+        let parsed = parse(src, "<test>").unwrap();
+        let c = lower(&parsed).unwrap();
+        match &c.root {
+            JsxNode::Element { children, .. } => {
+                assert_eq!(children.len(), 1);
+                match &children[0] {
+                    JsxNode::Text(s) => assert_eq!(s, "foo bar baz"),
+                    other => panic!("expected Text, got {other:?}"),
+                }
+            }
+            _ => panic!("expected root element"),
+        }
+    }
+
+    #[test]
+    fn renames_classname_to_class() {
+        let src = r#"export default function X() { return <div className="x"/>; }"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let c = lower(&parsed).unwrap();
+        match &c.root {
+            JsxNode::Element { attrs, .. } => {
+                assert_eq!(attrs.len(), 1);
+                assert_eq!(attrs[0].name, "class");
+                match &attrs[0].value {
+                    AttrValue::Static(s) => assert_eq!(s, "x"),
+                    other => panic!("expected Static(\"x\"), got {other:?}"),
+                }
+            }
+            _ => panic!("expected root element"),
+        }
+    }
+
+    #[test]
+    fn renames_htmlfor_to_for() {
+        let src = r#"export default function X() { return <label htmlFor="x"/>; }"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let c = lower(&parsed).unwrap();
+        match &c.root {
+            JsxNode::Element { attrs, .. } => {
+                assert_eq!(attrs.len(), 1);
+                assert_eq!(attrs[0].name, "for");
+                match &attrs[0].value {
+                    AttrValue::Static(s) => assert_eq!(s, "x"),
+                    other => panic!("expected Static(\"x\"), got {other:?}"),
+                }
+            }
+            _ => panic!("expected root element"),
+        }
+    }
+
+    #[test]
+    fn drops_key_attribute() {
+        // `key` is a React-only attribute — must be filtered before emit.
+        let src = r#"export default function X() { return <li key="a"/>; }"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let c = lower(&parsed).unwrap();
+        match &c.root {
+            JsxNode::Element { tag, attrs, .. } => {
+                assert_eq!(tag, "li");
+                assert!(
+                    attrs.is_empty(),
+                    "expected key to be dropped, got {attrs:?}"
+                );
+            }
+            _ => panic!("expected root element"),
+        }
+    }
+
+    #[test]
+    fn rejects_ref_attribute() {
+        let src = r#"export default function X() { return <div ref="x"/>; }"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let err = lower(&parsed).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::RefAttributeNotSupported),
+            "got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn rejects_onclick_handler() {
+        // `{x}` needs `x` in scope, so use destructured props.
+        let src = r#"export default function X({ x }) { return <button onClick={x}/>; }"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let err = lower(&parsed).unwrap_err();
+        match err.kind {
+            ErrorKind::EventHandlerNotSupported(name) => assert_eq!(name, "onClick"),
+            other => panic!("expected EventHandlerNotSupported(\"onClick\"), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_uppercase_attr() {
+        let src = r#"export default function X() { return <div fooBar="x"/>; }"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let err = lower(&parsed).unwrap_err();
+        match err.kind {
+            ErrorKind::UnknownAttributeRename(name) => assert_eq!(name, "fooBar"),
+            other => panic!("expected UnknownAttributeRename(\"fooBar\"), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_br_with_children() {
+        let src = r#"export default function X() { return <br>hi</br>; }"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let err = lower(&parsed).unwrap_err();
+        match err.kind {
+            ErrorKind::VoidElementHasChildren(tag) => assert_eq!(tag, "br"),
+            other => panic!("expected VoidElementHasChildren(\"br\"), got {other:?}"),
+        }
     }
 }
