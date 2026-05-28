@@ -1013,6 +1013,7 @@ Bun.serve baseline source: `example/bun-serve-baseline/index.ts`.
 - **`brust dev` tooling (partial)** — CLI subcommand for end-user hot-reload DX. File watcher on TS/TSX/HTML/CSS/`island.config.ts` (no Rust). Synthetic `/_brust/dev` WS route prepended in dev mode; main-side `broadcast()` relays via `worker.postMessage` to workers, each worker forwards to its locally-connected dev clients. Dev client (`~80` LOC) inlined as `<script>` before `</head>` — connects WS, handles `reload`/`css-update`/`error`/`ok` messages, manages a red full-screen overlay on build errors. Hand-rolled ANSI TUI with plain-log fallback. Single-flight coordinator (change-during-build dropped). **Currently ships:** CSS edit → `<link>` hot-swap via `?v=<ms>` (no page reload); CSS / `app.css` syntax error → red overlay + auto-clear on next successful build; `SIGINT` clean exit. **Known limitation:** TS/HTML edits broadcast `reload` correctly but the Rust `WorkerPool` retains stale renderer entries after `Worker.terminate`, so the post-respawn server can hang on dispatch. Fix requires a small Rust napi (`napi_clear_pool`) — deferred. CSS-only workflows are usable today.
 - **Component CSS imports + CSS Modules (partial)** — `import './foo.css'` (side-effect) and `import styles from './foo.module.css'` (hashed class-name map) for end-users. Build-time pipeline: scan TS/TSX with TypeScript compiler API → process each `.css`/`.module.css` through `lightningcss` (modules pattern `[local]_[hash]`) → emit `<distDir>/css/components/<sha8>.css` + co-located `.module.css.d.ts` → manifest at `<distDir>/css/component-manifest.json` maps source path → chunk + exports, plus `route.fullPath` → ordered chunk hrefs. A `Bun.plugin` registered in main + workers (before `buildIslands`) reads the manifest and resolves `.module.css` imports to `export default <name-map>` JS; SSR + client hydrate see identical hashes. Renderer combines `app.css` (global) + per-route chunks for the matched route and passes them to `injectCssLink`. Dev watcher distinguishes `component-css` from `app.css`; coordinator hot-swaps the link href on content-only edits and full-reloads on exports name-set change. Zero Rust changes. **Known limitation:** Bun's bundler emits `.module.css` as an additional output chunk with `[name]` derived by stripping at the first dot, which collides with same-basename entries (`Counter.tsx` + `Counter.module.css` → both want `Counter.js`). Verified via standalone spike — Bun bug, not a brust design issue. **Workaround:** route-level (non-island) components can import `.module.css` freely; islands stay on Tailwind/inline styles. Example demo (Counter migration) deferred until the upstream Bun behavior is resolved.
 - **`brust new` scaffolding (partial)** — `brust new <name> [--dir <path>]` creates a fresh project at `./<name>/` from `runtime/cli/templates/minimal/`. Single template: TypeScript + Tailwind v4 + one hydrated island, plus `package.json`, `tsconfig.json`, `.gitignore`, `README.md`. `runtime/cli/new.ts` parses args, validates the project name (`/^[a-z0-9][a-z0-9_-]*$/`, max 50), checks the target dir is empty, resolves the brust dependency reference (`file:<abspath>` when the CLI runs from the brust source tree — detected via Cargo.toml + src/ + runtime/cli/index.ts markers — otherwise `^<version>`), copies the template with `__PROJECT_NAME__` and `__BRUST_DEP__` substitutions, renames `_gitignore` → `.gitignore`, strips `.tmpl` suffixes, prints next-steps. Root `package.json` gained an `exports` map (`'.'` → `./runtime/index.ts`, `'./routes'` → `./runtime/routes.ts`) so templates can `import from 'brust'`. 20 tests cover parseArgs, resolveBrustRef, copyTemplate, and the scaffold-output file tree. **Known limitation:** scaffolded projects can be created and `bun install`-ed but cannot run end-to-end (neither `bun run dev` nor `bun run build` + `bun run dist/index.js`) — dual-React copy. Bun's `file:` install symlinks individual source files back to the brust repo; React resolution from those symlinked files finds the brust repo's `node_modules/react` while user code (Counter.tsx etc) finds the scaffold's `node_modules/react` — two physical instances, `useState` hits `dispatcher null`. Fix is a separate sub-project: move brust to a Bun workspace where `example/hello-world` is a workspace member with its own React deps, removing React from the brust root's materialized `node_modules`.
+- **Sub-project J — Native dynamic routes via minijinja** — `native: true` flag on a route compiles its JSX into a minijinja template at build time and renders it in Rust at request time. `jsx-rustc` (the `jsx-rust-compiler` crate's CLI, parser + IR + lower carried over from A1 T0–T6, emit target swapped to minijinja) writes `.brust/jinja/<Component.name>.jinja` during `brust build` / `brust dev`. Boot-time `napi_load_jinja_templates(".brust/jinja")` populates `crate::jinja::ENV: OnceLock<Environment>` (chainable undefined mode). Per request: JS worker runs the loader, `JSON.stringify`s the result into the SAB at offset 0, calls `napiRenderJinja(workerId, dataLen, name)`; Rust renders, assembles `[meta_len u16 BE][meta JSON][body]`, ships via `RenderChunk::BytesAndFinal` — the existing `BytesAndFinal` arm at `server.rs:1053` handles framing + write identically to a JS-produced chunk. Composes with `loader` + `middleware`; rejects `sse` / `websocket` / `children` / `cache`. Boot-time mismatch between `routes.tsx` and `.brust/jinja/*.jinja` logs a warning (`napi_list_native_templates`); request to a missing template 500s. See the Sub-project J section below for full architecture.
 
 **Designed, not built:**
 
@@ -1027,6 +1028,7 @@ Bun.serve baseline source: `example/bun-serve-baseline/index.ts`.
 - TOML configuration `[cache]` + `[build]` sections (the `[server]` + `[workers]` part is shipped)
 - Project tooling: `brust invalidate` (`build`, `dev` partial, `new` partial — see Built list); end-to-end usability of scaffolded projects waits on a brust-repo workspace restructure (see `brust new` limitation in the Built list)
 - Retry on tsfn failure, PING/PONG health checks
+- Sub-project J v2.x: cache integration for native routes (boot-time warn → hard panic), nested loader composition for native routes, hot reload of `.brust/jinja/` templates in dev, dev-mode React fallback when `.jinja` is missing, streaming render via `Environment::stream`, loader-side prop validation via jsx-rustc, JSX subset beyond A1 T0–T6 (conditional rendering, Fragment, custom components), adjacent-Text node merging in the emitter
 
 **Deferred (no design yet):**
 
@@ -1039,29 +1041,77 @@ Bun.serve baseline source: `example/bun-serve-baseline/index.ts`.
 
 ---
 
-## Sub-project A1 + A1.1 — JSX→Rust compiler (2026-05-28)
+## Sub-project J — Native dynamic routes via minijinja (2026-05-29)
 
-**Path A** (chosen 2026-05-28, motivated by Spike B's hand-written maud measurement of **104,053 RPS** vs current React-rendered `/` at **29,005 RPS** — 3.6× ceiling). Phase A1 shipped a `crates/jsx-rust-compiler/` workspace member: swc_core 68 parser + maud 0.27 emitter for a constrained JSX dialect (function components + destructured props + lowercase HTML + `{ident/member}` + `xs.map((item) => <JSX>)`).
+**Shipped.** Routes flagged `native: true` are compiled at build time from their JSX source into minijinja templates and rendered in Rust at request time — no React, no JS render-tree, no per-request `renderToString`. The page's loader still runs in the JS worker (full middleware + `req` access), but its return value is shipped over SAB as JSON and rendered against a pre-loaded minijinja `Environment` inside the napi call. Earlier exploration on this surface (Sub-project A1's JSX→Rust compiler + A1.1 render benches + A2.3's hardcoded short-circuit) has been retired and replaced by Sub-project J; the `jsx-rust-compiler` crate's parser + IR + lower (A1 T0–T6) carry forward verbatim, only the emit target changes.
 
-A1.1 measures the **render-only single-core throughput** of the compiled output to falsify the perf hypothesis ("machine-generated maud is within noise of hand-written maud, so the compiler doesn't bottleneck the render path"). Bench harness: `crates/jsx-rust-compiler/src/bin/jsx-bench.rs`, N=5 trials × M=200_000 renders each, M1 Pro, `--release`. Numbers from 3 consecutive runs (median across them):
+### Authoring
 
-| Fixture | median ns/render | implied single-core RPS | range |
-|---|---:|---:|---|
-| `static_hello` (3 static elements, no props) | ~18 ns | ~55 M | [16..40] |
-| `props_hello` (2 expr interpolations + 3-char escape) | ~74 ns | ~13 M | [67..92] |
-| `list_nav` (`for` loop, 2 items, 4 expr interps) | ~35 ns | ~28 M | [35..36] |
+```tsx
+// pages/Profile.tsx
+export default function Profile({ user }: { user: string }) {
+  return <div><h1>Hello, {user}!</h1></div>
+}
 
-The render-only numbers are **~150–500× higher than `/ping`'s 111k RPS ceiling**, which is exactly what we want to see: render() inside the napi worker is essentially free compared to HTTP framing + napi crossing + response writing. The compiler is not the limit; Spike B's 104k full-cycle measurement is dominated by everything OUTSIDE render. Hypothesis confirmed — the perf ceiling Spike B demonstrated is reachable from machine-generated code, not just hand-written templates.
+// routes.tsx
+import Profile from './pages/Profile'
+export const routes = defineRoutes([
+  { path: '/u/{name}', Component: Profile, native: true,
+    loader: async ({ params }) => ({ user: params.name }) },
+])
+```
 
-**What this does NOT measure** (and why the headline RPS comparison should be eyeballed, not literally believed):
-- No HTTP framing / response writing / accept-loop scheduling
-- No napi crossing (the render() runs in-process, not through `RenderChunk` plumbing)
-- No `Content-Length` header math
-- Real-server RPS through this code path is bounded by everything in `request_lifecycle`, NOT by render() itself
+The `Component` body is real React code — same as a non-native route. `jsx-rustc` parses the JSX subset (function components + destructured props + lowercase HTML + `{ident/member}` + `xs.map((item) => <JSX>)`) and emits a `.brust/jinja/Profile.jinja` template. The loader's return value is the template's variable scope. `native: true` composes with `loader` + `middleware`; it rejects `sse` / `websocket` / `children` / `cache` (cache integration for native routes is a v2.x follow-up).
 
-**Suggested next steps:** A2 (napi bridge so loader data flows into Rust render via `napi_render_compiled(route_id, data_json)`) integrates the compiler into the actual request path. Until A2 lands, A1+A1.1 ship as standalone tooling — useful for prototyping and proving the perf claim, not yet wired into traffic.
+### Build pipeline
 
-Numbers, fixtures, and bench source are committed under `crates/jsx-rust-compiler/`. Re-run with `cargo run --release -p jsx-rust-compiler --features bench --bin jsx-bench`.
+`runtime/cli/build.ts` (and `dev.ts` watcher) scans `routes.tsx` for entries with `native: true`, resolves each `Component`'s source path by AST-walking the routes module's `ImportDeclaration`s via swc, then spawns `jsx-rustc <source.tsx> --target jinja -o .brust/jinja/<Name>.jinja`. The output directory is gitignored alongside `.brust/css/` and friends. A `_manifest.json` lists every built template so the runtime can validate at boot. The build is dialect-strict — any JSX construct outside A1 T0-T6's covered subset (conditional rendering, Fragment, custom components) errors at build time.
+
+### Runtime — boot
+
+The main thread calls `napi_load_jinja_templates(".brust/jinja")` once during startup. The Rust side reads every `*.jinja` file, builds a `minijinja::Environment` (chainable undefined mode — chained access through optional props doesn't error, but direct render of an undefined var does), and stores it in `crate::jinja::ENV: OnceLock<Environment>`. A companion `napi_list_native_templates()` returns the loaded template names so the JS bootstrap can warn (today) / panic (future) on routes whose `Component.name` doesn't appear in the manifest.
+
+### Runtime — per request
+
+1. Accept loop matches the request via `routes.match_path`; the per-route envelope's `nativeTemplate: string` field is set by `RouteTable::native_template_for(route_id)`.
+2. Existing `dispatch_to_worker_and_stream_chunks` path ships the envelope to the chosen Bun Worker via the renderer tsfn — same SAB, same per-worker `render_slot`.
+3. Worker dispatcher in `runtime/routes.ts` sees `nativeTemplate` set, branches off the React path: runs middleware → runs the loader → `JSON.stringify(data ?? {})` → writes the JSON bytes into the SAB at offset 0 → calls `napiRenderJinja(workerId, dataLen, templateName)`.
+4. Rust `napi_render_jinja` reads `&sab[0..dataLen]` (BufPtr already captured at register time), passes it as the variable scope to `Environment::get_template(name)?.render(...)`, and assembles `[meta_len: u16 BE][meta JSON][body]` in the same SAB-envelope shape JS produces in `emitSingleChunkResponse` (`runtime/routes.ts:818-862`).
+5. The bytes ship as `RenderChunk::BytesAndFinal { data, ack }` through the existing chunk channel.
+6. The per-conn task at `server.rs:1053` (the `BytesAndFinal` arm) calls `split_meta(&data)` unconditionally — the same path JS-produced chunks already take — then `build_single_response_bytes(&meta, body)` frames the wire HTTP/1.1 response and writes it to the socket. No new IPC primitive; no bypass.
+
+### What `jsx-rust-compiler` keeps from A1
+
+| A1 task | Status in J |
+|---|---|
+| T0 — bootstrap (Cargo + swc_core 68) | KEEP |
+| T1 — swc parser (TsSyntax tsx: true) | KEEP |
+| T2 — `CompileError` / `ErrorKind` taxonomy | KEEP (relax `VoidElementHasChildren` — jinja accepts void with content) |
+| T3 — IR + zero-prop happy-path lower | KEEP |
+| T4 — destructured props + ident/member exprs + type inference | KEEP |
+| T5 — `.map((item) => <JSX>)` lowering | KEEP |
+| T6 — attr rename precedence + whitespace | KEEP attr rename + whitespace; relax void check |
+| T7 — IR → string emit | **REPLACED** with `emit_jinja.rs` |
+| T8 — fixtures + golden_emit | REWRITTEN for jinja |
+| T9 — golden_render | REWRITTEN against minijinja |
+| T10 — `jsx-rustc` CLI | UNCHANGED at arg level; output extension `.jinja` |
+
+The A1.1 render-only bench (`crates/jsx-rust-compiler/src/bin/jsx-bench.rs`) was retired alongside the prior emit target — render throughput now lives in the real request path, not a synthetic harness. Spec acceptance §11.7 sets a **≥60k RPS floor** on `/jinja-test/X` measured via `oha -c 120 -z 10s` (90k+ stretch goal).
+
+### Suggested next steps (v2.x deferrals)
+
+Spec §12 + §14 acknowledge the following as out of scope for v2 and tracked as follow-ups:
+
+- Cache integration for native routes (today the `cache` field is rejected at validation time; reviewer Fix 1's boot-time warn matures into a hard panic).
+- Nested loader composition for children of native routes (today only the leaf's loader runs).
+- Hot reload of `.brust/jinja/` templates during `brust dev` (today `ENV` is a `OnceLock`; template edits require a restart).
+- Dev-mode React fallback when the matching `.jinja` is missing (today the boot warning becomes a request-time 500).
+- Streaming render via `Environment::stream` (today renders sync to a String).
+- Loader-side prop validation via jsx-rustc parsing the loader's return type.
+- JSX subset beyond A1's T0–T6: conditional rendering (`{cond && <X/>}`), `Fragment`, custom components.
+- Spec §5 adjacent-Text node merging — the current emitter doesn't merge adjacent text; `lower.rs` handles the common case.
+
+Spec: `docs/superpowers/specs/2026-05-28-minijinja-dynamic-routes-design.md`. Plan: `docs/superpowers/plans/2026-05-29-minijinja-dynamic-routes-plan.md`.
 
 ---
 
