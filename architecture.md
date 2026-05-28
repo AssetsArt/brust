@@ -941,19 +941,23 @@ Future splits when the API stabilises (e.g. `brust-cli` if/when one exists).
 All numbers measured. Hardware: M1 Pro (10 cores: 8P + 2E), 16 GB RAM, Bun 1.3+,
 release build, `oha -c 120 -z 10s`.
 
-| Endpoint | Setup | RPS | p99 |
+Numbers below are **N=5 medians** unless noted otherwise. Single-run bench
+variance on `/` is ±5–10 % RPS and ±25 % p99 — anchor claims to medians, not
+single samples.
+
+| Endpoint | Setup | RPS (N=5 med) | p99 (N=5 med) |
 |---|---|---|---|
-| `/ping` (Rust-native) | default workers (10) | **108 k** | 0.15 ms |
-| `/` (React SSR via SAB) | default workers (10) | **29 k** | 2.01 ms |
-| `POST /_brust/action/createNote` (server fn dispatch) | default workers (10) | **110 k** | 0.16 ms |
+| `/ping` (Rust-native) | default workers (10) | **112 k** | 0.15 ms |
+| `/` (React SSR via SAB) | default workers (10) | **30 k** | 1.74 ms |
+| `POST /_brust/action/createNote` (server fn dispatch) | default workers (10) | **111 k** | 0.16 ms |
 | `/ping` (axum baseline, same box) | — | 100 k+ | — |
-| `/ping` (Bun.serve baseline) | — | 88 k | 2.56 ms |
-| `/` (Bun.serve baseline) | — | 17.1 k | 7.51 ms |
+| `/ping` (Bun.serve baseline) | — | 89 k | 2.54 ms |
+| `/` (Bun.serve baseline) | — | 17.7 k | 7.52 ms |
 
 Reproduce with `bun run bench` — driver at `scripts/benchmark.ts`, results at `bench/RESULTS.md`.
 Bun.serve baseline source: `example/bun-serve-baseline/index.ts`.
 
-**Read:** Brust's Rust accept loop + napi + SAB beats Bun.serve+React by ~23 % on `/ping` and 69 % on `/`. After the 2026-05-28 buffering-path napi-merge (`napi_render_chunk_final` + `RenderChunk::BytesAndFinal`), single-chunk renders go through one tsfn round-trip instead of two — c=1 p50 dropped 11 µs and c=120 `/` RPS climbed 23k → 29k. The action endpoint and `/ping` are near-identical (110 k vs 108 k) because both are single-call napi/SAB envelope paths with no React render tree to serialise; the gap to React-SSR (29 k) is the React render cost itself, not envelope overhead. The `/` row is still down vs the pre-2026-05-24 baseline (55 k → 29 k); the residual is the demo-component growth (Tailwind v4 + Layout wrapper) — see [post-mortem 2026-05-28](./docs/superpowers/post-mortems/2026-05-28-slash-route-p99-regression.md).
+**Read:** Brust's Rust accept loop + napi + SAB beats Bun.serve+React by ~26 % on `/ping` and ~70 % on `/`. The 2026-05-28 buffering-path napi-merge (`napi_render_chunk_final` + `RenderChunk::BytesAndFinal`) collapsed single-chunk renders from two tsfn round-trips to one — N=5 medians vs the pre-merge baseline (`a54394e`) show `/` RPS 23,193 → 29,993 (**+29 %**, ranges non-overlapping) and p99 2.80 ms → 1.74 ms (**−38 %**). c=1 p50 dropped 11 µs (148 µs → 137 µs) — the per-request round-trip cost. The action endpoint and `/ping` are near-identical (111 k vs 112 k) because both are single-call napi/SAB envelope paths with no React render tree to serialise; the gap to React-SSR (30 k) is the React render cost itself, not envelope overhead. The `/` row is still down vs the pre-2026-05-24 baseline (55 k → 30 k); the residual is the demo-component growth (Tailwind v4 + Layout wrapper) — see [post-mortem 2026-05-28](./docs/superpowers/post-mortems/2026-05-28-slash-route-p99-regression.md).
 
 ---
 

@@ -225,14 +225,18 @@ function renderMarkdown(results: Result[]): string {
   lines.push(`· warmup: ${WARMUP_MS} ms`)
   lines.push(`· build: release (\`cd runtime && bun run build\`)`)
   lines.push('')
-  lines.push('| Scenario | Method | Path | RPS | p50 (ms) | p95 (ms) | p99 (ms) | Total | Errors |')
-  lines.push('|---|---|---|---:|---:|---:|---:|---:|---:|')
+  // Note on omitted columns: oha's `errorDistribution` counts requests that
+  // didn't complete before `-z` elapsed (in-flight at the deadline) — that's
+  // a duration-boundary truncation, NOT actual HTTP/connection failures. The
+  // raw count is still in RESULTS.json under `errors` if anyone needs it.
+  lines.push('| Scenario | Method | Path | RPS | p50 (ms) | p95 (ms) | p99 (ms) | Total |')
+  lines.push('|---|---|---|---:|---:|---:|---:|---:|')
   for (const r of results) {
     const fmt = (n: number | null) => (n == null ? '—' : n.toFixed(2))
     lines.push(
       `| ${r.scenarioLabel} | ${r.method} | \`${r.path}\` | ${Math.round(r.rps).toLocaleString()} | ` +
       `${fmt(r.p50ms)} | ${fmt(r.p95ms)} | ${fmt(r.p99ms)} | ` +
-      `${r.totalRequests.toLocaleString()} | ${r.errors} |`,
+      `${r.totalRequests.toLocaleString()} |`,
     )
   }
   lines.push('')
@@ -258,7 +262,7 @@ async function main() {
         `  rps=${r.rps.toFixed(0).padStart(7)}   ` +
         `p50=${(r.p50ms ?? NaN).toFixed(2)}ms   ` +
         `p99=${(r.p99ms ?? NaN).toFixed(2)}ms   ` +
-        `errors=${r.errors}`,
+        `total=${r.totalRequests.toLocaleString()}`,
       )
     }
   }

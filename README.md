@@ -8,32 +8,37 @@ are dispatched into Bun Worker threads through `ThreadsafeFunction`, and HTML
 flows back via per-worker `SharedArrayBuffer`.
 
 ```
-107,570 RPS  GET /ping              (p50 0.09ms · p99 0.15ms)
-109,508 RPS  POST server action     (p50 0.09ms · p99 0.16ms)
- 28,866 RPS  GET / (SSR React)      (p50 0.28ms · p99 2.01ms)
+113,432 RPS  GET /ping              (p50 0.09ms · p99 0.15ms)
+110,927 RPS  POST server action     (p50 0.09ms · p99 0.15ms)
+ 28,728 RPS  GET / (SSR React)      (p50 0.28ms · p99 1.84ms)
 ```
 
 Benchmarked with `oha -c 120 -z 10s` on darwin/arm64 (M1 Pro, 10c), Bun 1.4 —
-re-run on 2026-05-28 after the buffering-path napi-merge fix. Full table in
-[`bench/RESULTS.md`](./bench/RESULTS.md). Same hardware: Bun.serve +
-`renderToString` does 17.1k RPS on `/`. The Rust HTTP layer is where the
-headroom lives — `/ping` and the server-action POST path (both cross the
-napi+SAB boundary) sustain >100k RPS.
+single representative run; full table in [`bench/RESULTS.md`](./bench/RESULTS.md).
+Same hardware: Bun.serve + `renderToString` does 17.8k RPS on `/`. The Rust HTTP
+layer is where the headroom lives — `/ping` and the server-action POST path
+(both cross the napi+SAB boundary) sustain >110k RPS.
 
-The `/` SSR row is honestly down from the pre-CSS-pipeline 54k. Two 2026-05-28
+The `/` SSR row is down from the pre-CSS-pipeline 54k. Two 2026-05-28
 investigations recovered most of the ground:
 
 - **Worker-count default oversubscription** (see [post-mortem](./docs/superpowers/post-mortems/2026-05-28-slash-route-p99-regression.md)).
   `floor(availableParallelism * 1.8)` was tuned for I/O-bound renders and
   oversubscribed perf cores on CPU-bound React work, amplifying p99 ~6× under
-  load. Fix dropped the multiplier to `1.0`; p99 on `/` went 17.85 ms → 2.42 ms.
-- **Buffering-path napi merge** (this commit set). Profile of `/` at c=1
-  showed the two napi crossings per buffering render = ~90% of brust runtime
-  overhead (70µs of the 73µs measured). Added `napi_render_chunk_final`
-  binding + `RenderChunk::BytesAndFinal` variant so buffering responses
-  complete in one tsfn round-trip instead of two. c=1 p50 148µs → 137µs;
-  c=120 `/` RPS 23k → 29k (+25%), p99 2.42 ms → 2.01 ms. Streaming-path
-  responses unchanged (separate close is still needed there).
+  load. Fix dropped the multiplier to `1.0`; p99 on `/` went ~18 ms → ~3 ms.
+- **Buffering-path napi merge** (commits `fb7d661` + `c2d3b1d`). Profile of `/`
+  at c=1 showed the two napi crossings per buffering render were the dominant
+  cost (~90% of brust runtime overhead, 70 µs of the 73 µs measured). Added
+  `napi_render_chunk_final` binding + `RenderChunk::BytesAndFinal` variant so
+  buffering responses complete in one tsfn round-trip instead of two. **N=5
+  medians**: c=120 `/` RPS 23,193 → 29,993 (**+29 %**, no overlap in 5-run
+  ranges); p99 2.80 ms → 1.74 ms (**−38 %**); p50 0.35 ms → 0.28 ms. c=1 p50
+  148 µs → 137 µs. Streaming-path responses unchanged (separate close still
+  needed there).
+
+`/ping`, POST, and the Bun.serve baseline are unchanged across the napi-merge
+(within ±5 % bench noise) — they're the control surfaces that confirm the `/`
+delta is the napi-merge itself, not host drift.
 
 The handoff's earlier guess (per-request CSS injection) was falsified by
 the c=1 latency profile.
