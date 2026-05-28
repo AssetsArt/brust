@@ -530,6 +530,15 @@ export function makeRenderer(
       // JSON-encodes the result into the SAB, then invokes napiRenderJinja
       // which performs the minijinja render Rust-side and emits a 200 chunk
       // through the same render-chunk channel as the React path.
+      //
+      // KNOWN LIMITATION: middleware can short-circuit by returning a
+      // RouteResponse without next() — that's the verdict._brustStream / status
+      // path above and works for native routes. But middleware that calls
+      // next() then mutates status/headers (e.g. adds Cache-Control) is NOT
+      // forwarded; napi_render_jinja hardcodes status: 200 and empty headers.
+      // Spec §4 doesn't define post-next() mutation semantics for native;
+      // deferred to v2.x. If your middleware needs to mutate, use a React
+      // route for now.
       if (flat.nativeTemplate !== undefined) {
         let data: unknown = {}
         const leaf = flat.chain[flat.chain.length - 1]
