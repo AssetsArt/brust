@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import { copyFile, mkdir, readdir, rm } from 'node:fs/promises'
 import path, { isAbsolute, resolve } from 'node:path'
 import { actionsPrebuiltPlugin, writePrebuiltActionsFileWithMap } from './actions-prebuilt-plugin.ts'
+import { emitNativeTemplates } from './native-routes-emit.ts'
 import { nativeShimPlugin } from './native-shim-plugin.ts'
 
 /** repoRoot = the directory that contains runtime/. This file lives at
@@ -90,9 +91,11 @@ export async function runBuild(args: string[]): Promise<void> {
 
   // 4. MCP manifest (if routes.tsx exists).
   const routesFile = path.join(entryDir, 'routes.tsx')
+  let loadedRoutes: any[] | undefined
   if (existsSync(routesFile)) {
     const { extractMcpManifest } = await import('../mcp/extractor.ts')
     const { routes } = await import(routesFile)
+    loadedRoutes = routes
     const manifest = await extractMcpManifest({
       serverFiles: scan.sourceFiles,
       routesFile,
@@ -105,6 +108,21 @@ export async function runBuild(args: string[]): Promise<void> {
     console.log(`[brust build] mcp:     ${manifest.tools.length} tools + ${manifest.resources.length} resources → ${manifestPath}`)
   } else {
     console.log(`[brust build] mcp:     skipped (no routes.tsx)`)
+  }
+
+  // 4.1. Sub-project J — emit .brust/jinja/<Name>.jinja templates for every
+  // native: true route. Pipeline runs even if no native routes exist (writes
+  // an empty manifest) so consumers can rely on the output dir's presence.
+  {
+    const jinjaDir = path.join(entryDir, '.brust/jinja')
+    await emitNativeTemplates({
+      entryFile: entry,
+      flatRoutes: (loadedRoutes ?? []) as { nativeTemplate?: string }[],
+      outDir: jinjaDir,
+      repoRoot: REPO_ROOT,
+    })
+    const nativeCount = (loadedRoutes ?? []).filter((r: any) => r?.nativeTemplate).length
+    console.log(`[brust build] jinja:   ${nativeCount} template(s) → ${jinjaDir}`)
   }
 
   // 4.5. CSS — Tailwind v4 if app.css is present.

@@ -1,6 +1,11 @@
 import { existsSync } from 'node:fs'
-import { isAbsolute, resolve } from 'node:path'
+import path, { dirname, isAbsolute, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { emitNativeTemplates } from './native-routes-emit.ts'
+
+/** repoRoot = the directory that contains runtime/. This file lives at
+ * runtime/cli/dev.ts so two dirname() steps get us there. */
+const REPO_ROOT = path.resolve(import.meta.dir, '..', '..')
 
 interface ParsedArgs {
   entry: string
@@ -44,6 +49,28 @@ export async function runDev(args: string[]): Promise<void> {
   const { entry, port } = parseArgs(args)
   process.env.BRUST_DEV = '1'
   if (port !== undefined) process.env.BRUST_PORT = String(port)
+
+  // Sub-project J — emit .brust/jinja/<Name>.jinja templates BEFORE handing
+  // off to the user's entry. The runtime loads these on boot. Dev-mode HMR
+  // on .tsx edit is deferred per spec §12 (restart-to-reload for v2).
+  const entryDir = dirname(entry)
+  const routesFile = path.join(entryDir, 'routes.tsx')
+  let loadedRoutes: any[] = []
+  if (existsSync(routesFile)) {
+    try {
+      const mod = await import(routesFile)
+      loadedRoutes = mod.routes ?? []
+    } catch (err) {
+      console.warn(`[brust dev] failed to pre-load routes for jinja emit: ${(err as Error).message}`)
+    }
+  }
+  await emitNativeTemplates({
+    entryFile: entry,
+    flatRoutes: loadedRoutes as { nativeTemplate?: string }[],
+    outDir: path.join(entryDir, '.brust/jinja'),
+    repoRoot: REPO_ROOT,
+  })
+
   // Hand off to the user's entry. It calls brust.run() which, with
   // BRUST_DEV=1, enables dev wiring without requiring user edits.
   await import(pathToFileURL(entry).href)
