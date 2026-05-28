@@ -431,6 +431,9 @@ export function makeRenderer(
     renderChunk: async (workerId: bigint, len: number, _sabBytes: Uint8Array): Promise<void> => {
       await (native as any).napiRenderChunk(Number(workerId), len)
     },
+    renderChunkFinal: async (workerId: bigint, len: number, _sabBytes: Uint8Array): Promise<void> => {
+      await (native as any).napiRenderChunkFinal(Number(workerId), len)
+    },
   }
 
   return async (envelopeJson: string): Promise<void> => {
@@ -601,6 +604,9 @@ async function navigationBranch(
     renderChunk: async (wid: bigint, len: number, _view: Uint8Array): Promise<void> => {
       await (native as any).napiRenderChunk(Number(wid), len)
     },
+    renderChunkFinal: async (wid: bigint, len: number, _view: Uint8Array): Promise<void> => {
+      await (native as any).napiRenderChunkFinal(Number(wid), len)
+    },
   }
 
   const flat = byRouteId.get(call.route_id)
@@ -756,7 +762,10 @@ async function buildRenderElement(
  * branches and by setup-failure fallbacks in the render branch. */
 async function emitSingleChunkResponse(
   view: Uint8Array,
-  napi: { renderChunk: (w: bigint, len: number, view: Uint8Array) => Promise<void> },
+  napi: {
+    renderChunk:      (w: bigint, len: number, view: Uint8Array) => Promise<void>
+    renderChunkFinal: (w: bigint, len: number, view: Uint8Array) => Promise<void>
+  },
   workerId: bigint,
   encoder: TextEncoder,
   resp: { status: number; contentType: string; body: string | Uint8Array; headers?: Record<string, string> },
@@ -788,16 +797,14 @@ async function emitSingleChunkResponse(
     view[1] = errMetaBytes.length & 0xff
     view.set(errMetaBytes, 2)
     view.set(errBody, 2 + errMetaBytes.length)
-    await napi.renderChunk(workerId, errTotal, view)
-    await napi.renderChunk(workerId, 0, view)
+    await napi.renderChunkFinal(workerId, errTotal, view)
     return
   }
   view[0] = (metaBytes.length >> 8) & 0xff
   view[1] = metaBytes.length & 0xff
   view.set(metaBytes, 2)
   view.set(bodyBytes, 2 + metaBytes.length)
-  await napi.renderChunk(workerId, total, view)
-  await napi.renderChunk(workerId, 0, view)
+  await napi.renderChunkFinal(workerId, total, view)
 }
 
 /** Plain response object shape returned by action/mcp branches and consumed

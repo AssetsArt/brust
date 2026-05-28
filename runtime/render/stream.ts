@@ -13,7 +13,8 @@ export interface RenderBranchStreamingArgs {
   view: Uint8Array
   workerId: bigint
   napi: {
-    renderChunk: (workerId: bigint, len: number, sabBytes: Uint8Array) => Promise<void>
+    renderChunk:      (workerId: bigint, len: number, sabBytes: Uint8Array) => Promise<void>
+    renderChunkFinal: (workerId: bigint, len: number, sabBytes: Uint8Array) => Promise<void>
   }
   errorBoundary: ComponentType<{ error: Error }>
   /** Status for the successful (non-error) render. Default 200. Used by
@@ -133,8 +134,9 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
             body = injectDevClient(body, getDevClientSnippet())
             const meta = makeMeta({ status: successStatus, streaming: false, headers: extraHeaders })
             const len = encodeFirstChunk(view, meta, body)
-            await napi.renderChunk(workerId, len, view)
-            await sendFinal()
+            await napi.renderChunkFinal(workerId, len, view)
+            finalSent = true
+            resolve()
             mode = 'done'
           } else if (mode === 'streaming') {
             if (headerSent) await headerSent
@@ -224,8 +226,9 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
             ;(async () => {
               try {
                 const len = encodeFirstChunk(view, meta, encoder.encode(html))
-                await napi.renderChunk(workerId, len, view)
-                await sendFinal()
+                await napi.renderChunkFinal(workerId, len, view)
+                finalSent = true
+                resolve()
               } catch (e) { reject(e) }
             })()
           } catch (e2) {
@@ -237,8 +240,9 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
             ;(async () => {
               try {
                 const len = encodeFirstChunk(view, meta, encoder.encode('Internal Server Error'))
-                await napi.renderChunk(workerId, len, view)
-                await sendFinal()
+                await napi.renderChunkFinal(workerId, len, view)
+                finalSent = true
+                resolve()
               } catch (e) { reject(e) }
             })()
           }
@@ -254,8 +258,9 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
       ;(async () => {
         try {
           const len = encodeFirstChunk(view, meta, encoder.encode('Internal Server Error'))
-          await napi.renderChunk(workerId, len, view)
-          await sendFinal()
+          await napi.renderChunkFinal(workerId, len, view)
+          finalSent = true
+          resolve()
         } catch (ee) { reject(ee) }
       })()
     }

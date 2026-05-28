@@ -3,12 +3,15 @@ import { createElement, Suspense } from 'react'
 import { renderBranchStreaming, makeMeta } from './stream'
 
 function makeMockNapi() {
-  const chunks: Array<{ len: number, bytes: Uint8Array | null }> = []
+  const chunks: Array<{ len: number, bytes: Uint8Array | null, final: boolean }> = []
   return {
     chunks,
     napi: {
       async renderChunk(_workerId: bigint, len: number, sabBytes: Uint8Array) {
-        chunks.push({ len, bytes: len === 0 ? null : sabBytes.slice(0, len) })
+        chunks.push({ len, bytes: len === 0 ? null : sabBytes.slice(0, len), final: false })
+      },
+      async renderChunkFinal(_workerId: bigint, len: number, sabBytes: Uint8Array) {
+        chunks.push({ len, bytes: sabBytes.slice(0, len), final: true })
       },
     },
   }
@@ -30,8 +33,8 @@ test('streaming=false when no Suspense; single chunk + final; no bootstrap if no
     view, workerId: 0n, napi,
     errorBoundary: () => createElement('div', null, 'oops'),
   })
-  expect(chunks.length).toBe(2)
-  expect(chunks[1].len).toBe(0)
+  expect(chunks.length).toBe(1)
+  expect(chunks[0].final).toBe(true)
   const { metaJson, body } = decodeMeta(chunks[0].bytes!)
   expect(JSON.parse(metaJson).streaming).toBe(false)
   const bodyStr = new TextDecoder().decode(body)
@@ -76,8 +79,8 @@ test('pre-shell crash → 500 + errorBoundary + final fires', async () => {
     errorBoundary: ({ error }: { error: Error }) =>
       createElement('div', null, 'caught: ' + error.message),
   })
-  expect(chunks.length).toBe(2)
-  expect(chunks[1].len).toBe(0)
+  expect(chunks.length).toBe(1)
+  expect(chunks[0].final).toBe(true)
   const { metaJson, body } = decodeMeta(chunks[0].bytes!)
   const parsed = JSON.parse(metaJson)
   expect(parsed.status).toBe(500)
@@ -100,7 +103,11 @@ test('post-shell crash → onError logged + final still fires (no hang)', async 
     errorBoundary: () => createElement('div', null, 'caught'),
   })
   console.error = origErr
-  expect(chunks[chunks.length - 1].len).toBe(0)
+  // Last chunk is either renderChunkFinal (buffering path — synchronous Bad
+  // throw inside Suspense lets onAllReady fire before the microtask) OR a
+  // streaming len=0 close. Accept either as "final fired".
+  const last = chunks[chunks.length - 1]
+  expect(last.final === true || last.len === 0).toBe(true)
   expect(consoleSpy.mock.calls.length).toBeGreaterThan(0)
 })
 
@@ -113,13 +120,34 @@ test('errorBoundary itself throws → plain-text fallback + final fires', async 
     view, workerId: 0n, napi,
     errorBoundary: BadBoundary,
   })
-  expect(chunks.length).toBe(2)
-  expect(chunks[1].len).toBe(0)
+  expect(chunks.length).toBe(1)
+  expect(chunks[0].final).toBe(true)
   const { metaJson, body } = decodeMeta(chunks[0].bytes!)
   const parsed = JSON.parse(metaJson)
   expect(parsed.status).toBe(500)
   expect(parsed.contentType).toContain('text/plain')
   expect(new TextDecoder().decode(body)).toBe('Internal Server Error')
+})
+
+test('buffering path uses renderChunkFinal once — not renderChunk + renderChunk(0) [perf contract]', async () => {
+  const calls: string[] = []
+  const napi = {
+    async renderChunk(_w: bigint, len: number, _v: Uint8Array) {
+      calls.push(`renderChunk(${len})`)
+    },
+    async renderChunkFinal(_w: bigint, len: number, _v: Uint8Array) {
+      calls.push(`renderChunkFinal(${len})`)
+    },
+  }
+  await renderBranchStreaming({
+    element: createElement('div', null, 'pinned'),
+    view, workerId: 0n, napi,
+    errorBoundary: () => createElement('div', null, 'err'),
+  })
+  expect(calls.length).toBe(1)
+  expect(calls[0]).toMatch(/^renderChunkFinal\(\d+\)$/)
+  // Pin: the old wire pattern (Bytes-then-Final) must not regress here.
+  expect(calls).not.toContain('renderChunk(0)')
 })
 
 test('makeMeta defaults: contentType=text/html, headers={}, given status+streaming', () => {
