@@ -29,6 +29,12 @@ pub struct RouteEnvelope<'a> {
     pub path: &'a str,
     pub params: HashMap<&'a str, &'a str>,
     pub req: RequestEnvelope,
+    /// Sub-project J — when the route was registered with `native: true`,
+    /// the JS-side ships `nativeTemplate: Component.name`. JS dispatcher
+    /// branches on the presence of this field to call `napiRenderJinja`
+    /// instead of the React render path.
+    #[serde(skip_serializing_if = "Option::is_none", rename = "nativeTemplate")]
+    pub native_template: Option<&'a str>,
 }
 
 /// Mirrors RouteEnvelope but carries a string action_id (not numeric route_id)
@@ -191,12 +197,20 @@ pub struct RouteConfig {
     pub path: String,
     #[serde(default)]
     pub cache: Option<CacheConfig>,
+    /// Sub-project J — JS-side ships `nativeTemplate: Component.name` when
+    /// the route has `native: true`. Rust uses this name to dispatch via
+    /// minijinja instead of React. See spec §3 + §4.
+    #[serde(default, rename = "nativeTemplate")]
+    pub native_template: Option<String>,
 }
 
 #[derive(Default)]
 pub struct RouteTable {
     inner: RwLock<matchit::Router<u32>>,
     cache_configs: RwLock<Vec<Option<CacheConfig>>>,
+    /// Sub-project J — per-route-id native template name (parallel to
+    /// `cache_configs`). Index = route_id. `None` ⇒ React-rendered route.
+    native_templates: RwLock<Vec<Option<String>>>,
 }
 
 impl RouteTable {
@@ -209,6 +223,7 @@ impl RouteTable {
     pub fn install_with_config(&self, configs: &[RouteConfig]) -> Result<u32, RouteInstallError> {
         let mut router = matchit::Router::new();
         let mut caches: Vec<Option<CacheConfig>> = Vec::with_capacity(configs.len());
+        let mut natives: Vec<Option<String>> = Vec::with_capacity(configs.len());
         for (idx, c) in configs.iter().enumerate() {
             router
                 .insert(c.path.clone(), idx as u32)
@@ -217,9 +232,11 @@ impl RouteTable {
                     reason: e.to_string(),
                 })?;
             caches.push(c.cache.clone());
+            natives.push(c.native_template.clone());
         }
         *self.inner.write() = router;
         *self.cache_configs.write() = caches;
+        *self.native_templates.write() = natives;
         Ok(configs.len() as u32)
     }
 
@@ -230,6 +247,21 @@ impl RouteTable {
             .and_then(|c| c.clone())
     }
 
+    /// Sub-project J — per-route-id lookup of the native template name.
+    /// Returns `None` when the route is React-rendered (no `native: true`).
+    ///
+    /// T3 ships this as a public getter; the production caller (worker
+    /// dispatch branching on `native: true` from the envelope JSON) lands
+    /// in T4 (runtime side). Allowed-dead until then; the unit test
+    /// `route_table_natives_indexed_by_route_id` covers behavior.
+    #[allow(dead_code)]
+    pub fn native_template_for(&self, route_id: u32) -> Option<String> {
+        self.native_templates
+            .read()
+            .get(route_id as usize)
+            .and_then(|n| n.clone())
+    }
+
     pub fn match_path(&self, method: &str, full_path: &str, raw_request: &[u8]) -> MatchResult {
         let (path_only, query) = match full_path.split_once('?') {
             Some((p, q)) => (p, q),
@@ -238,21 +270,28 @@ impl RouteTable {
         let router = self.inner.read();
         match router.at(path_only) {
             Ok(matched) => {
+                let route_id = *matched.value;
                 let mut params: HashMap<&str, &str> = HashMap::new();
                 for (k, v) in matched.params.iter() {
                     params.insert(k, v);
                 }
                 let req = build_request_envelope(method, full_path, query, raw_request);
+                let native = self
+                    .native_templates
+                    .read()
+                    .get(route_id as usize)
+                    .and_then(|n| n.clone());
                 let envelope = RouteEnvelope {
                     kind: "render",
-                    route_id: *matched.value,
+                    route_id,
                     path: full_path,
                     params,
                     req,
+                    native_template: native.as_deref(),
                 };
                 let envelope_json = serde_json::to_string(&envelope).unwrap();
                 MatchResult::Matched {
-                    route_id: *matched.value,
+                    route_id,
                     envelope_json,
                 }
             }
@@ -492,6 +531,7 @@ mod tests {
         let cfg = RouteConfig {
             path: "/foo".into(),
             cache: None,
+            native_template: None,
         };
         table.install_with_config(&[cfg]).unwrap();
         let raw = b"GET /foo HTTP/1.1\r\nHost: x\r\n\r\n";
@@ -671,6 +711,72 @@ mod tests {
         assert_eq!(parsed["kind"], "ws");
         assert_eq!(parsed["conn_id"], 7);
         assert!(parsed["client_subprotocols"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn route_table_natives_indexed_by_route_id() {
+        let table = RouteTable::new();
+        let cfgs = vec![
+            RouteConfig {
+                path: "/a".into(),
+                cache: None,
+                native_template: None,
+            },
+            RouteConfig {
+                path: "/b".into(),
+                cache: None,
+                native_template: Some("Profile".into()),
+            },
+            RouteConfig {
+                path: "/c".into(),
+                cache: None,
+                native_template: None,
+            },
+        ];
+        table.install_with_config(&cfgs).unwrap();
+        assert_eq!(table.native_template_for(0), None);
+        assert_eq!(table.native_template_for(1), Some("Profile".to_string()));
+        assert_eq!(table.native_template_for(2), None);
+    }
+
+    #[test]
+    fn envelope_includes_native_template_when_set() {
+        let table = RouteTable::new();
+        let cfgs = vec![RouteConfig {
+            path: "/x".into(),
+            cache: None,
+            native_template: Some("MyPage".into()),
+        }];
+        table.install_with_config(&cfgs).unwrap();
+        let raw = b"GET /x HTTP/1.1\r\nHost: x\r\n\r\n";
+        let result = table.match_path("GET", "/x", raw);
+        match result {
+            MatchResult::Matched { envelope_json, .. } => {
+                let parsed: serde_json::Value = serde_json::from_str(&envelope_json).unwrap();
+                assert_eq!(parsed["nativeTemplate"], "MyPage");
+            }
+            _ => panic!("expected match"),
+        }
+    }
+
+    #[test]
+    fn envelope_omits_native_template_when_unset() {
+        let table = RouteTable::new();
+        let cfgs = vec![RouteConfig {
+            path: "/y".into(),
+            cache: None,
+            native_template: None,
+        }];
+        table.install_with_config(&cfgs).unwrap();
+        let raw = b"GET /y HTTP/1.1\r\nHost: x\r\n\r\n";
+        let result = table.match_path("GET", "/y", raw);
+        match result {
+            MatchResult::Matched { envelope_json, .. } => {
+                let parsed: serde_json::Value = serde_json::from_str(&envelope_json).unwrap();
+                assert!(parsed.get("nativeTemplate").is_none());
+            }
+            _ => panic!("expected match"),
+        }
     }
 }
 
