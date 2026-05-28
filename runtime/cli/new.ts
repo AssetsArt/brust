@@ -58,8 +58,14 @@ export interface BrustRef {
 }
 
 function hasSourceMarkers(dir: string): boolean {
+  // Post-2026-05-28 workspace refactor: brust source layout is
+  //   <root>/Cargo.toml         (workspace)
+  //   <root>/crates/brust/      (the brust cdylib crate)
+  //   <root>/runtime/cli/...
+  // Pre-refactor layout had `<root>/src/` instead of `<root>/crates/brust/`;
+  // we no longer check `<root>/src` because the workspace root never has one.
   return existsSync(join(dir, 'Cargo.toml'))
-    && existsSync(join(dir, 'src'))
+    && existsSync(join(dir, 'crates/brust/src'))
     && existsSync(join(dir, 'runtime/cli/index.ts'))
 }
 
