@@ -3,6 +3,10 @@
 mod cache;
 mod http;
 mod io;
+// T3 wires `napi_render_jinja` + boot-time `napi_load_jinja_templates`; until
+// then the symbols read as dead code under `-D warnings`.
+#[allow(dead_code)]
+mod jinja;
 mod pool;
 pub mod render_stream;
 mod routes;
