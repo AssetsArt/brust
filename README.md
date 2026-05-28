@@ -8,29 +8,35 @@ are dispatched into Bun Worker threads through `ThreadsafeFunction`, and HTML
 flows back via per-worker `SharedArrayBuffer`.
 
 ```
-104,953 RPS  GET /ping              (p50 0.09ms · p99 0.15ms)
-110,372 RPS  POST server action     (p50 0.09ms · p99 0.16ms)
- 23,062 RPS  GET / (SSR React)      (p50 0.36ms · p99 2.42ms)
+107,570 RPS  GET /ping              (p50 0.09ms · p99 0.15ms)
+109,508 RPS  POST server action     (p50 0.09ms · p99 0.16ms)
+ 28,866 RPS  GET / (SSR React)      (p50 0.28ms · p99 2.01ms)
 ```
 
 Benchmarked with `oha -c 120 -z 10s` on darwin/arm64 (M1 Pro, 10c), Bun 1.4 —
-re-run on 2026-05-28 after the worker-default fix. Full table in
+re-run on 2026-05-28 after the buffering-path napi-merge fix. Full table in
 [`bench/RESULTS.md`](./bench/RESULTS.md). Same hardware: Bun.serve +
-`renderToString` does 17.7k RPS on `/`. The Rust HTTP layer is where the
+`renderToString` does 17.1k RPS on `/`. The Rust HTTP layer is where the
 headroom lives — `/ping` and the server-action POST path (both cross the
 napi+SAB boundary) sustain >100k RPS.
 
-The `/` SSR row is honestly down from the pre-CSS-pipeline 54k. Investigation
-on 2026-05-28 (see [post-mortem](./docs/superpowers/post-mortems/2026-05-28-slash-route-p99-regression.md))
-showed two independent causes: (a) the demo component grew (Tailwind v4 +
-`Layout` wrapper) — the Bun.serve baseline using the same component dropped
-proportionally (40k → 17.7k), proving the work itself got more expensive;
-(b) the worker-count default formula (`floor(availableParallelism * 1.8)`,
-~18 on M1 Pro) was tuned for I/O-bound renders and oversubscribed perf cores
-on CPU-bound React work, amplifying p99 ~6× under load. Fix dropped the
-multiplier to `1.0` (one worker per CPU); p99 on `/` went 17.85ms → 2.42ms
-and RPS recovered 16k → 23k. The handoff's earlier guess (per-request CSS
-injection) was falsified by the c=1 latency profile.
+The `/` SSR row is honestly down from the pre-CSS-pipeline 54k. Two 2026-05-28
+investigations recovered most of the ground:
+
+- **Worker-count default oversubscription** (see [post-mortem](./docs/superpowers/post-mortems/2026-05-28-slash-route-p99-regression.md)).
+  `floor(availableParallelism * 1.8)` was tuned for I/O-bound renders and
+  oversubscribed perf cores on CPU-bound React work, amplifying p99 ~6× under
+  load. Fix dropped the multiplier to `1.0`; p99 on `/` went 17.85 ms → 2.42 ms.
+- **Buffering-path napi merge** (this commit set). Profile of `/` at c=1
+  showed the two napi crossings per buffering render = ~90% of brust runtime
+  overhead (70µs of the 73µs measured). Added `napi_render_chunk_final`
+  binding + `RenderChunk::BytesAndFinal` variant so buffering responses
+  complete in one tsfn round-trip instead of two. c=1 p50 148µs → 137µs;
+  c=120 `/` RPS 23k → 29k (+25%), p99 2.42 ms → 2.01 ms. Streaming-path
+  responses unchanged (separate close is still needed there).
+
+The handoff's earlier guess (per-request CSS injection) was falsified by
+the c=1 latency profile.
 
 ---
 

@@ -943,17 +943,17 @@ release build, `oha -c 120 -z 10s`.
 
 | Endpoint | Setup | RPS | p99 |
 |---|---|---|---|
-| `/ping` (Rust-native) | default workers (10) | **105 k** | 0.15 ms |
-| `/` (React SSR via SAB) | default workers (10) | **23 k** | 2.42 ms |
+| `/ping` (Rust-native) | default workers (10) | **108 k** | 0.15 ms |
+| `/` (React SSR via SAB) | default workers (10) | **29 k** | 2.01 ms |
 | `POST /_brust/action/createNote` (server fn dispatch) | default workers (10) | **110 k** | 0.16 ms |
 | `/ping` (axum baseline, same box) | — | 100 k+ | — |
-| `/ping` (Bun.serve baseline) | — | 89 k | 2.56 ms |
-| `/` (Bun.serve baseline) | — | 17.7 k | 7.51 ms |
+| `/ping` (Bun.serve baseline) | — | 88 k | 2.56 ms |
+| `/` (Bun.serve baseline) | — | 17.1 k | 7.51 ms |
 
 Reproduce with `bun run bench` — driver at `scripts/benchmark.ts`, results at `bench/RESULTS.md`.
 Bun.serve baseline source: `example/bun-serve-baseline/index.ts`.
 
-**Read:** Brust's Rust accept loop + napi + SAB beats Bun.serve+React by ~17 % on `/ping` and 30 % on `/`. The smaller `/` margin is the cost of crossing the napi tsfn boundary once per render — irreducible until a non-React render path appears. The action endpoint and `/ping` are now near-identical (110 k vs 105 k) because both are single-call napi/SAB envelope paths with no React render tree to serialise; the gap to React-SSR (23 k) is the React render cost itself, not envelope overhead. The `/` row dropped vs the pre-2026-05-24 baseline (55 k → 23 k); see [post-mortem 2026-05-28](./docs/superpowers/post-mortems/2026-05-28-slash-route-p99-regression.md) for the demo-component growth + worker over-subscription story.
+**Read:** Brust's Rust accept loop + napi + SAB beats Bun.serve+React by ~23 % on `/ping` and 69 % on `/`. After the 2026-05-28 buffering-path napi-merge (`napi_render_chunk_final` + `RenderChunk::BytesAndFinal`), single-chunk renders go through one tsfn round-trip instead of two — c=1 p50 dropped 11 µs and c=120 `/` RPS climbed 23k → 29k. The action endpoint and `/ping` are near-identical (110 k vs 108 k) because both are single-call napi/SAB envelope paths with no React render tree to serialise; the gap to React-SSR (29 k) is the React render cost itself, not envelope overhead. The `/` row is still down vs the pre-2026-05-24 baseline (55 k → 29 k); the residual is the demo-component growth (Tailwind v4 + Layout wrapper) — see [post-mortem 2026-05-28](./docs/superpowers/post-mortems/2026-05-28-slash-route-p99-regression.md).
 
 ---
 
