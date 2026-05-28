@@ -9,8 +9,7 @@ use pretty_assertions::assert_eq;
 fn render_fixture(name: &str, ctx: minijinja::Value) -> String {
     let input_path = format!("fixtures/{name}.tsx");
     let input = std::fs::read_to_string(&input_path).expect(&input_path);
-    let jinja_src =
-        compile(&input).unwrap_or_else(|e| panic!("compile failed for {name}: {e}"));
+    let jinja_src = compile(&input).unwrap_or_else(|e| panic!("compile failed for {name}: {e}"));
 
     let mut env = Environment::new();
     env.set_undefined_behavior(UndefinedBehavior::Chainable);

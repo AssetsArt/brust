@@ -337,10 +337,7 @@ mod tests {
                 path: vec!["address".into(), "city".into()],
             })],
         };
-        assert_eq!(
-            emit(&component(ir)),
-            "<span>{{ user.address.city }}</span>"
-        );
+        assert_eq!(emit(&component(ir)), "<span>{{ user.address.city }}</span>");
     }
 
     #[test]
