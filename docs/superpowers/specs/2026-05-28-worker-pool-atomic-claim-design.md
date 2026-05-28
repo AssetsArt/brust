@@ -73,8 +73,10 @@ Other paths unaffected: SSE/WS continue to use `pick_least_busy` (they don't nee
 /// slot and decrements in_flight in a single deterministic order. Holds an
 /// Arc to the entry so the guard remains valid even if the pool removes the
 /// entry concurrently.
+#[must_use = "RenderClaim must be held for the lifetime of the render; \
+              dropping it immediately frees the worker and breaks the invariant"]
 pub struct RenderClaim {
-    pub entry: Arc<TsfnEntry>,
+    entry: Arc<TsfnEntry>,
 }
 
 impl RenderClaim {
@@ -83,8 +85,13 @@ impl RenderClaim {
 
 impl Drop for RenderClaim {
     fn drop(&mut self) {
+        // Order is load-bearing: clear slot FIRST so the invariant
+        // `in_flight >= render_slot_count` holds at every observable point.
+        // Reversing creates a window where in_flight=0 while slot=Some,
+        // which a concurrent try_claim_render would read as "idle" then
+        // find the slot occupied. Don't swap these two lines.
         self.entry.render_slot.lock().take();
-        self.entry.in_flight.fetch_sub(1, Ordering::AcqRel);
+        self.entry.in_flight.fetch_sub(1, Ordering::Relaxed);
     }
 }
 ```
@@ -109,18 +116,37 @@ impl WorkerPool {
     pub fn try_claim_render(
         &self,
         chunk_tx: tokio::sync::mpsc::Sender<RenderChunk>,
-    ) -> Option<RenderClaim> {
+    ) -> ClaimResult {
+        // Lock ordering discipline: ALWAYS acquire `entries` (RwLock) BEFORE
+        // any per-entry `render_slot` (Mutex). Inverting this order risks
+        // deadlock if any future code path takes them the other way.
         let entries = self.entries.read();
+        if entries.is_empty() {
+            return ClaimResult::PoolEmpty;
+        }
         for entry in entries.iter() {
             let mut slot = entry.render_slot.lock();
             if slot.is_some() { continue; }
-            entry.in_flight.fetch_add(1, Ordering::AcqRel);
+            // in_flight is a load hint used by SSE/WS pick_least_busy; slot
+            // correctness is guaranteed by the per-entry mutex, NOT by this
+            // counter. Relaxed matches InFlightGuard's existing ordering.
+            entry.in_flight.fetch_add(1, Ordering::Relaxed);
             *slot = Some(RenderSlot { chunk_tx });
             drop(slot);
-            return Some(RenderClaim { entry: Arc::clone(entry) });
+            return ClaimResult::Claimed(RenderClaim { entry: Arc::clone(entry) });
         }
-        None
+        ClaimResult::AllBusy
     }
+}
+
+/// Outcome of `try_claim_render`. Distinguishing the two failure modes
+/// lets the dispatcher emit different log/metric tags and 503 bodies so
+/// operators can tell "no workers registered" (misconfiguration) from
+/// "all workers busy" (genuine overload).
+pub enum ClaimResult {
+    Claimed(RenderClaim),
+    PoolEmpty,
+    AllBusy,
 }
 ```
 
@@ -135,9 +161,16 @@ Notes:
 ```rust
 let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::channel::<RenderChunk>(1);
 
-let Some(claim) = pool.try_claim_render(chunk_tx) else {
-    let _ = s.write_all(http::error_503("all workers busy")).await;
-    return DispatchControl::CloseConn;
+let claim = match pool.try_claim_render(chunk_tx) {
+    crate::pool::ClaimResult::Claimed(c) => c,
+    crate::pool::ClaimResult::PoolEmpty => {
+        let _ = s.write_all(http::error_503("no workers")).await;
+        return DispatchControl::CloseConn;
+    }
+    crate::pool::ClaimResult::AllBusy => {
+        let _ = s.write_all(http::error_503("all workers busy")).await;
+        return DispatchControl::CloseConn;
+    }
 };
 let entry = Arc::clone(claim.entry());
 // `claim` holds slot + in_flight until dropped (RAII).
@@ -196,15 +229,15 @@ All in `src/pool.rs` `mod tests` (existing test module pattern).
 
 | # | Name | Verifies |
 |---|---|---|
-| T1 | `try_claim_render_returns_none_when_empty` | Empty pool → None. |
-| T2 | `try_claim_render_claims_idle_worker` | One registered worker, slot=None → returns Some, slot becomes Some, in_flight=1. |
-| T3 | `try_claim_render_second_returns_other_idle_worker` | Two workers, claim once → second claim returns the other worker, not the same one. |
-| T4 | `try_claim_render_all_busy_returns_none` | All workers' slots are Some → returns None. |
+| T1 | `try_claim_render_returns_pool_empty` | Empty pool → `ClaimResult::PoolEmpty`. |
+| T2 | `try_claim_render_claims_idle_worker` | One registered worker, slot=None → returns `Claimed(_)`, slot becomes Some, in_flight=1. |
+| T3 | `try_claim_render_second_returns_other_idle_worker` | Two workers, claim once → second claim returns `Claimed(other_entry)`. Verify entry IDs differ. |
+| T4 | `try_claim_render_all_busy_returns_all_busy` | All workers' slots are Some → returns `ClaimResult::AllBusy`. |
 | T5 | `render_claim_drop_releases_slot_and_decrements_in_flight` | Drop the claim → slot=None, in_flight=0. |
-| T6 | `try_claim_render_after_drop_reuses_worker` | Claim, drop, claim again → second claim succeeds on the same worker (or any worker — at minimum, succeeds). |
-| T7 | **Property test** — race: `try_claim_render` from N tokio tasks vs M registered workers, M < N. Asserts: (1) at most M concurrent successful claims, (2) every successful claim corresponds to a distinct worker, (3) after all claims drop, all workers' slots are None and in_flight values are 0. Use `tokio::test(flavor = "multi_thread")` so the scheduler actually overlaps the tasks. |
+| T6 | `try_claim_render_after_drop_reuses_worker` | Claim, drop, claim again → second claim succeeds. |
+| T7 | **Property test** — race: `try_claim_render` from N tasks vs M registered workers, M < N. Uses `tokio::test(flavor = "multi_thread", worker_threads = 4)` AND `tokio::sync::Barrier::new(N)` so every task awaits the barrier before calling `try_claim_render`, forcing simultaneous contention. Asserts: (1) exactly M `Claimed(_)` results and N-M `AllBusy` results, (2) every `Claimed(_)` result has a unique `entry.id`, (3) after all claims drop, every worker's slot=None and in_flight=0. **MUST also be runnable under `cargo test --release` and pass there** — the debug_assert in the old path was the only thing surfacing the bug at low contention; release builds rely on this test to catch regression. |
 
-T7 is the critical regression-prevention test. Without it, the fix could silently regress to the TOCTOU pattern.
+T7 is the critical regression-prevention test. Without the barrier + multi-thread runtime, tokio may serialize the tasks and the test could pass on buggy code at low concurrency by accident.
 
 Manual smoke (not codified): `bun run example/hello-world/index.ts`, run `oha -c 200 -z 5s http://127.0.0.1:3000/`, observe no 500s, no panics, no stuck connections.
 
@@ -233,7 +266,11 @@ The implementation is done when:
 
 ---
 
+## Coverage gaps (deliberate)
+
+- **No integration-level test for the server.rs change.** Pool unit tests (T1–T7) cover `try_claim_render` in isolation. The deletion of `RenderSlotGuard` usage in `dispatch_to_worker_and_stream_chunks` and the restructured caller arm get manual smoke only (`oha -c 200 -z 5s`). Acceptable for MVP because the slot-install code path is small and the change is mechanical; if a regression surfaces later, add a higher-level test then.
+
 ## Open questions for plan-time
 
 1. Should `try_claim_render` rotate the scan start index across calls to spread load? **Default no**, fairness is acceptable with FIFO claiming.
-2. Should the 503 response body / log message be a specific string to support ops dashboards filtering? **Default yes**, use `"all workers busy"` so it's grep-able and distinct from the existing `"no workers"` (no workers registered at all).
+2. ~~Should the 503 response body / log message be a specific string to support ops dashboards filtering?~~ **Resolved:** use `"no workers"` for `PoolEmpty` (matches today's string) and `"all workers busy"` for `AllBusy`. Distinct, grep-able.
