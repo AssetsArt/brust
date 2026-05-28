@@ -116,10 +116,6 @@ export const brust = {
     const configs = routes.map((r) => JSON.stringify({
       path: r.fullPath,
       cache: r.cache ?? null,
-      // A2.3 — when set, server.rs short-circuits and renders via
-      // compiled_routes::render_by_name(<name>, "{}") instead of dispatching
-      // to a JS worker. Name = JSX component's function.name.
-      staticRender: r.staticRender ?? null,
     }))
     return (native as any).registerRoutes(configs)
   },

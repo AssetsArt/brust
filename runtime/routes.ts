@@ -171,15 +171,6 @@ export interface Route<Params = Record<string, string>, Data = unknown> {
    * pattern returns a module namespace `{ default: WsHandlers }`);
    * `handleWsConn` unwraps `.default` defensively at call time. */
   websocket?: () => Promise<WsHandlers | { default: WsHandlers }>
-  /** A2.3 — opt-in: this route is statically renderable. `Component` is
-   * still required (it's the JSX file the build pipeline compiled into the
-   * brust cdylib; the function's `name` is the registry key into
-   * `crates/brust/src/compiled_routes::render_by_name`). When set, Rust
-   * short-circuits BEFORE the JS worker dispatch — no tsfn, no napi
-   * round-trip. Cannot coexist with `loader`, `middleware`, `sse`,
-   * `websocket`, or `children` in A2.3; future phases will support loader
-   * return value as the `data_json` arg. */
-  static?: boolean
   wsOptions?: {
     /** Server-initiated ping interval in ms. Default 30000. Set 0 to disable.
      * Pong timeout = 2× pingMs; conn closes with code 1011 if no pong by then. */
@@ -211,10 +202,6 @@ export interface FlatRoute {
   errorBoundary?: ComponentType<ErrorBoundaryProps>
   /** Cache from the leaf only — no parent inheritance. */
   cache?: RouteCacheConfig
-  /** A2.3 — component name (Component.name) when the leaf declared
-   * `static: true`. Shipped to Rust via `staticRender` in the route config
-   * JSON; Rust short-circuits BEFORE the JS worker dispatch when set. */
-  staticRender?: string
 }
 
 /** Compose a child's relative path onto a parent's base path.
@@ -249,35 +236,6 @@ function validateRoute(r: Route, basePath: string): void {
     throw new Error(
       `route under "${basePath}": absolute child path "${r.path}" must be under a pathless ('') parent`,
     )
-  }
-  // A2.3 — check `static: true` before `sse`/`websocket`/`Component`-aware
-  // blocks so that static-specific exclusion messages win (otherwise
-  // `static: true, sse: …` would error with the sse block's "cannot coexist
-  // with Component" instead of the more accurate "static cannot coexist
-  // with sse").
-  if (r.static === true) {
-    const where = r.path ?? '(no path)'
-    if (r.Component === undefined) {
-      throw new Error(`Route ${where}: 'static: true' requires 'Component'`)
-    }
-    if (!r.Component.name || r.Component.name.length === 0) {
-      throw new Error(`Route ${where}: 'static: true' Component must be a named function (got anonymous)`)
-    }
-    if (r.loader !== undefined) {
-      throw new Error(`Route ${where}: 'static: true' cannot coexist with 'loader' in A2.3`)
-    }
-    if (r.sse !== undefined) {
-      throw new Error(`Route ${where}: 'static: true' cannot coexist with 'sse'`)
-    }
-    if (r.websocket !== undefined) {
-      throw new Error(`Route ${where}: 'static: true' cannot coexist with 'websocket'`)
-    }
-    if (r.children !== undefined) {
-      throw new Error(`Route ${where}: 'static: true' cannot have nested children`)
-    }
-    if (r.middleware !== undefined && r.middleware.length > 0) {
-      throw new Error(`Route ${where}: 'static: true' cannot coexist with 'middleware' in A2.3`)
-    }
   }
   if (r.sse) {
     const where = r.path ?? '(no path)'
@@ -355,13 +313,7 @@ function makeFlat(chain: Route[], fullPath: string): FlatRoute {
   }
   const leaf = chain[chain.length - 1]
   const cache = leaf.cache
-  // A2.3 — when `static: true`, the leaf's Component.name is the registry
-  // key Rust uses for short-circuit dispatch. validateRoute enforces both
-  // Component and a non-empty .name when static is set.
-  const staticRender = leaf.static === true && leaf.Component
-    ? leaf.Component.name
-    : undefined
-  return { fullPath, chain, middleware, errorBoundary, cache, staticRender }
+  return { fullPath, chain, middleware, errorBoundary, cache }
 }
 
 /** Internal React context that carries the next-deeper rendered element to
@@ -540,11 +492,6 @@ export function makeRenderer(
         })
         return
       }
-
-      // A2.3 superseded the A2.2 JS dispatcher branch — `static: true`
-      // routes are now short-circuited in `server.rs` BEFORE tsfn dispatch,
-      // so JS workers never see them and there's no `flat.staticRender`
-      // check needed here. Falling through to the React renderer.
 
       let element: ReactNode
       let errorBoundary: ComponentType<{ error: Error }>

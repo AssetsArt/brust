@@ -8,9 +8,6 @@ import SlowSuspense from '../../../example/hello-world/pages/SlowSuspense'
 
 // Test-only components — these mount routes that exercise failure modes,
 // middleware, cache, nested routes, and the various server-action paths.
-// A2.3 — JSX file the brust build pipeline compiles into the cdylib.
-import StaticHello         from '../../../crates/brust/src/compiled_routes/static_hello'
-
 import Crash               from './components/Crash'
 import CrashBoundary       from './components/CrashBoundary'
 import CacheTest           from './components/CacheTest'
@@ -91,9 +88,4 @@ export const routes = defineRoutes([
   { path: '/ws/server-close',  websocket: () => import('./ws-server-close.ts') },
   { path: '/ws/protocols',     websocket: () => import('./ws-echo.ts'),
     wsOptions: { subprotocols: ['chat.v2', 'chat.v1'] } },
-
-  // A2.3 — Rust short-circuit route. server.rs renders directly via
-  // compiled_routes::render_by_name("StaticHello", "{}") and frames the
-  // response; no JS worker is dispatched.
-  { path: '/_test/rust-static',  Component: StaticHello, static: true },
 ])

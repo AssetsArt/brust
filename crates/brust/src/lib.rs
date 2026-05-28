@@ -1,7 +1,6 @@
 #![deny(clippy::all)]
 
 mod cache;
-mod compiled_routes;
 mod http;
 mod io;
 mod pool;
@@ -167,23 +166,6 @@ pub fn register_routes(configs: Vec<String>) -> NapiResult<u32> {
         .routes
         .install_with_config(&parsed)
         .map_err(|e| napi::Error::from_reason(e.to_string()))
-}
-
-/// A2.1 — render a compiled route by name. JS workers call this when the
-/// matched route has a `rustCompiled` marker (see runtime/routes.ts). `name`
-/// is the registry key (e.g. "static_hello"); `data_json` is the loader's
-/// return value serialized as JSON (currently unused for prop-less fixtures).
-///
-/// Returns the rendered HTML as a `Buffer` of UTF-8 bytes. Unknown name →
-/// `napi::Error` so the JS side can shape a 500 response.
-#[napi]
-pub fn napi_render_compiled(name: String, data_json: String) -> NapiResult<Buffer> {
-    match crate::compiled_routes::render_by_name(&name, &data_json) {
-        Some(html) => Ok(Buffer::from(html.into_bytes())),
-        None => Err(napi::Error::from_reason(format!(
-            "unknown compiled route name: {name}"
-        ))),
-    }
 }
 
 #[napi]
