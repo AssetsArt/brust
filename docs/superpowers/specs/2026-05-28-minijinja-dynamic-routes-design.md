@@ -2,9 +2,11 @@
 
 **Date:** 2026-05-28
 **Branch:** `refactor/cargo-workspace`
-**Parent:** `e2f4d24` (v2 → this v2.1 in-place; v1 was `f8c5f6f`)
+**Parent:** `8208a76` (v2.1 → this v2.2 in-place; v2 was `e2f4d24`, v1 was `f8c5f6f`)
 **Replaces:** A1 maud emit target, A2.0–A2.3 static-render chain. **Does NOT replace jsx-rust-compiler**; the crate is repurposed as the JSX→jinja transformer.
 **v2 → v2.1 changes**: reviewer (`a7fc61cbddb59263b`) flagged 2 unresolved blockers (SAB framing + migration ordering) and 5 FIX/OQ items. v2.1 applies all inline. SIGN-OFF v2 was `not-ready`; this v2.1 addresses each finding by section number — see §3, §6, §13, §15 for the specific corrections.
+
+**v2.1 → v2.2 change**: user-facing API field renamed from `jinja: true` → `native: true` to keep the API engine-agnostic (the engine is an implementation detail; the user just declares "this route is rendered natively, not via React"). All FlatRoute / RouteConfig / registerRoutes field names follow (`nativeTemplate`, `native_template`). Internal Rust symbols (jinja.rs, napi_render_jinja, .brust/jinja/) keep engine-specific naming — they're implementation, not API. See §13.1 for the reasoning.
 
 ---
 
@@ -22,7 +24,7 @@ This means:
 1. User writes plain JSX in their `pages/*.tsx` files (familiar, no jinja syntax to learn).
 2. `brust build` / `brust dev` invokes the JSX→jinja transform, dumps `.brust/jinja/<Name>.jinja`.
 3. brust runtime loads all `.brust/jinja/*.jinja` into a minijinja `Environment` at startup.
-4. Routes mark `jinja: true`; Component.name keys into the template registry.
+4. Routes mark `native: true`; Component.name keys into the template registry.
 5. Loader runs in JS, data flows via SAB to Rust (same channel as actions), Rust renders, returns framed bytes.
 
 The maud emitter from A1 is **removed** from jsx-rust-compiler. The crate's parser (`parser.rs`), IR (`ir.rs`), lowering (`lower.rs`) stay intact. A new `emit_jinja.rs` replaces `emit.rs`. CLI `jsx-rustc` keeps the same args but emits `.jinja` instead of `.rs`.
@@ -52,13 +54,13 @@ and registers:
 import Profile from './pages/Profile'
 
 defineRoutes([
-  { path: '/profile/{user}', Component: Profile, jinja: true,
+  { path: '/profile/{user}', Component: Profile, native: true,
     loader: async ({ params }) => ({ user: params.user, joinedAt: '2026-05-28' }) },
 ])
 ```
 
 The framework:
-1. At `brust build`/`brust dev`, scans routes; for each `jinja: true` entry, compiles its Component's source `.tsx` via the (renamed/extended) `jsx-rustc` → writes `.brust/jinja/Profile.jinja`:
+1. At `brust build`/`brust dev`, scans routes; for each `native: true` entry, compiles its Component's source `.tsx` via the (renamed/extended) `jsx-rustc` → writes `.brust/jinja/Profile.jinja`:
    ```jinja
    <div><h1>{{ user }}</h1><p>Joined {{ joinedAt }}</p></div>
    ```
@@ -101,13 +103,13 @@ Reviewer Blocker 3 explicit: cleanup table is exhaustively cross-checked against
 | `crates/brust/Cargo.toml` | `-maud` `-jsx-rust-compiler` (build-dep) `+minijinja = "2"` |
 | `crates/brust/build.rs` | drop the `compiled_routes/*.tsx` scan; build script is back to just `napi-build::setup()` |
 | `crates/brust/src/lib.rs` | `-mod compiled_routes` `-fn napi_render_compiled` `+mod jinja` `+fn napi_render_jinja` |
-| `crates/brust/src/routes.rs` | `RouteConfig.static_render` → `RouteConfig.jinja_template`; `RouteTable.static_renders/static_prebuilt` → `RouteTable.jinja_templates: RwLock<Vec<Option<String>>>` |
+| `crates/brust/src/routes.rs` | `RouteConfig.static_render` → `RouteConfig.native_template`; `RouteTable.static_renders/static_prebuilt` → `RouteTable.native_templates: RwLock<Vec<Option<String>>>` |
 | `crates/brust/src/server.rs` | drop A2.3 short-circuit branch; drop the bench-only `/_jinja-test/{name}` handler in uncommitted wd; render dispatch flow unchanged (still goes through `dispatch_to_worker_and_stream_chunks`) |
-| `runtime/routes.ts` | `static?: boolean` → `jinja?: boolean`; `staticRender` → `jinjaTemplate`; validateRoute block rewritten; A2.2-era stale comment block removed |
-| `runtime/routes.test.ts` | 7 validation tests renamed/rewritten; `staticRender` assertion → `jinjaTemplate` |
+| `runtime/routes.ts` | `static?: boolean` → `native?: boolean`; `staticRender` → `nativeTemplate`; validateRoute block rewritten; A2.2-era stale comment block removed |
+| `runtime/routes.test.ts` | 7 validation tests renamed/rewritten; `staticRender` assertion → `nativeTemplate` |
 | `runtime/index.ts` | `registerRoutes` payload field renamed |
-| `runtime/cli/build.ts` and `runtime/cli/dev.ts` | NEW pass: scan routes for `jinja: true`, resolve Component source path, invoke jsx-rustc, write `.brust/jinja/<Name>.jinja`. Re-run on TS edit during `dev` |
-| `example/hello-world/routes.tsx` | migrate `/_rust-static` route (`static: true`) to `jinja: true` + a real loader |
+| `runtime/cli/build.ts` and `runtime/cli/dev.ts` | NEW pass: scan routes for `native: true`, resolve Component source path, invoke jsx-rustc, write `.brust/jinja/<Name>.jinja`. Re-run on TS edit during `dev` |
+| `example/hello-world/routes.tsx` | migrate `/_rust-static` route (`static: true`) to `native: true` + a real loader |
 | `tests/fixtures/app/routes.tsx` | same migration |
 | `architecture.md` | replace Sub-project A1 + A1.1 section with a Sub-project J (jinja) section; rewrite numbers; remove dangling line 1062 reference to `napi_render_compiled` |
 
@@ -150,14 +152,14 @@ Reviewer Fix 6: v1 framed jsx-rust-compiler as "standalone tooling, useful for f
 USER'S PROJECT TREE:
   pages/
     Profile.tsx                 ← user-authored JSX (default-exported function component)
-  routes.tsx                    ← { path, Component: Profile, jinja: true, loader }
+  routes.tsx                    ← { path, Component: Profile, native: true, loader }
   .brust/
     css/                        ← (existing — built CSS extraction)
     jinja/                      ← NEW — JSX-compiled jinja templates
       Profile.jinja             ← <div><h1>{{ user }}</h1>...</div>
 
 BRUST BUILD (runtime/cli/build.ts):
-  1. scan routes for `jinja: true` entries
+  1. scan routes for `native: true` entries
   2. resolve each Component's source path (file the import points to)
   3. invoke `jsx-rustc <pages/Profile.tsx> --target jinja -o .brust/jinja/Profile.jinja`
   4. write a manifest `.brust/jinja/_manifest.json` listing built templates
@@ -170,7 +172,7 @@ BRUST RUNTIME (boot):
 BRUST RUNTIME (per request):
   TCP → Rust accept → match_path → route_id → cache check
                                     ↓
-                          (route has jinjaTemplate?)
+                          (route has nativeTemplate?)
                                     ↓ yes
                          dispatch_to_worker (existing tsfn)
                                     ↓
@@ -214,22 +216,22 @@ interface Route {
    * `.brust/jinja/<Component.name>.jinja` at boot. Compatible with
    * `loader` and `middleware`; rejects `sse`, `websocket`, `children`,
    * `cache` (cache is deferred). */
-  jinja?: boolean
+  native?: boolean
   // ... existing fields
 }
 ```
 
 Validation (`validateRoute`):
-- `jinja: true` requires `Component` and `Component.name` non-empty (named function or named class).
+- `native: true` requires `Component` and `Component.name` non-empty (named function or named class).
 - ALLOWS `loader` (whole point — loader feeds data).
 - ALLOWS `middleware`.
 - REJECTS `sse`, `websocket`, `children`, `cache`, `static` (last as cleanup).
 
-`FlatRoute.jinjaTemplate?: string` = `leaf.Component.name` when `leaf.jinja === true`.
+`FlatRoute.nativeTemplate?: string` = `leaf.Component.name` when `leaf.jinja === true`.
 
-`registerRoutes` payload gains `jinjaTemplate: r.jinjaTemplate ?? null`.
+`registerRoutes` payload gains `nativeTemplate: r.nativeTemplate ?? null`.
 
-**Reviewer OQ 1 + 2 resolved**: keep `jinja: true` + Component.name as key, because Component IS the source file the compiler consumes. The minifier-name-mangling concern is real but addressed at build time: jsx-rustc reads the function name from the `export default function Foo(...)` AST node, NOT from minified output. The runtime registry key matches that AST-time name (which is preserved in user source). For routes registered AFTER bundling, the FlatRoute carries the build-time name in `jinjaTemplate` field — not Component.name at runtime. So minifiers can rename Component all they like; the registry still hits.
+**Reviewer OQ 1 + 2 resolved**: keep `native: true` + Component.name as key, because Component IS the source file the compiler consumes. The minifier-name-mangling concern is real but addressed at build time: jsx-rustc reads the function name from the `export default function Foo(...)` AST node, NOT from minified output. The runtime registry key matches that AST-time name (which is preserved in user source). For routes registered AFTER bundling, the FlatRoute carries the build-time name in `nativeTemplate` field — not Component.name at runtime. So minifiers can rename Component all they like; the registry still hits.
 
 **Reviewer Fix 2 (Component footgun) resolved**: Component IS executable React code. In dev mode, brust MAY fall back to React render if `.brust/jinja/<Name>.jinja` is missing (future enhancement). In prod, render is via jinja. The Component is real, not a marker — kills the footgun. Documentation will note: "Component is the source. Its function body is what jsx-rustc analyzes."
 
@@ -316,7 +318,7 @@ static ENV: OnceLock<Environment<'static>> = OnceLock::new();
 /// Called by `brust::run()` before serving. `dir` is `.brust/jinja/` resolved
 /// relative to the entry's CWD.
 ///
-/// v2.1: lenient on missing dir. A user with zero `jinja: true` routes won't
+/// v2.1: lenient on missing dir. A user with zero `native: true` routes won't
 /// have `.brust/jinja/` and must boot cleanly. Missing dir → empty Env;
 /// `UnknownTemplate` fires per-request only if a route claims a template
 /// that never landed. Parse errors on individual files DO panic — those are
@@ -364,7 +366,7 @@ pub enum RenderError {
 }
 
 /// Boot-time helper: lists registered templates, for use by `registerRoutes`
-/// to verify every `jinja: true` route's Component.name maps to a built
+/// to verify every `native: true` route's Component.name maps to a built
 /// template. Reviewer Fix 1.
 pub fn registered_templates() -> Vec<String> {
     ENV.get()
@@ -373,7 +375,7 @@ pub fn registered_templates() -> Vec<String> {
 }
 ```
 
-A napi shim exposes `napiListJinjaTemplates() -> Vec<String>` so the JS side can validate every `jinja: true` Component.name exists in the registered set. v2.1 scopes this to a startup warning (not panic — reviewer Fix 1 acceptance): brust's `registerRoutes` JS-side caller iterates `flat.filter(r => r.jinjaTemplate)` and warns on any name NOT present in `napiListJinjaTemplates()`. Mismatched routes still fall back to a 500 at request time (logged by name in `dispatch_to_worker_and_stream_chunks`); pre-flight panic is a v2.x follow-up.
+A napi shim exposes `napiListJinjaTemplates() -> Vec<String>` so the JS side can validate every `native: true` Component.name exists in the registered set. v2.1 scopes this to a startup warning (not panic — reviewer Fix 1 acceptance): brust's `registerRoutes` JS-side caller iterates `flat.filter(r => r.nativeTemplate)` and warns on any name NOT present in `napiListJinjaTemplates()`. Mismatched routes still fall back to a 500 at request time (logged by name in `dispatch_to_worker_and_stream_chunks`); pre-flight panic is a v2.x follow-up.
 
 ### `napi_render_jinja`
 
@@ -433,12 +435,12 @@ import { spawnSync } from 'node:child_process'
 import { dirname, resolve, basename, extname } from 'node:path'
 
 const flat = flattenRoutes(userRoutes)
-const jinjaRoutes = flat.filter(r => r.jinjaTemplate !== undefined)
+const nativeRoutes = flat.filter(r => r.nativeTemplate !== undefined)
 const outDir = resolve(cwd, '.brust/jinja')
 mkdirSync(outDir, { recursive: true })
 
-for (const r of jinjaRoutes) {
-  const componentName = r.jinjaTemplate!
+for (const r of nativeRoutes) {
+  const componentName = r.nativeTemplate!
   const sourcePath = resolveComponentSource(r) // walk r.chain, find leaf's Component import
   const outPath = resolve(outDir, `${componentName}.jinja`)
   
@@ -448,7 +450,7 @@ for (const r of jinjaRoutes) {
 
 // Manifest for the runtime to verify against
 writeFileSync(resolve(outDir, '_manifest.json'), JSON.stringify({
-  templates: jinjaRoutes.map(r => r.jinjaTemplate),
+  templates: nativeRoutes.map(r => r.nativeTemplate),
   generatedAt: new Date().toISOString(),
 }))
 ```
@@ -465,12 +467,12 @@ Plan-time bikeshed: keep `--target=` as future-proofing OR drop entirely. Lean t
 
 ### Component-source resolution (v2.1 reviewer OQ 1)
 
-The build script needs to map each `jinja: true` route's Component to its `.tsx` source path. At runtime `Component` is a JS function reference; at build time we need the file path.
+The build script needs to map each `native: true` route's Component to its `.tsx` source path. At runtime `Component` is a JS function reference; at build time we need the file path.
 
 **v2.1 picks option (i) — build-time AST scan of routes module.** Algorithm:
 
 1. `runtime/cli/build.ts` already loads the user's routes module (via dynamic `import()`) to call `defineRoutes` and get the FlatRoute list. v2.1 ADDS a parallel pass: parse the routes module's source with swc (already a workspace dep via `jsx-rust-compiler`) → collect `ImportDeclaration` nodes → build a `Map<localName, resolvedPath>`.
-2. For each route with `jinja: true`, look up `flat.chain.last().Component` by NAME (Component.name at AST time, which is the imported local name in routes.tsx).
+2. For each route with `native: true`, look up `flat.chain.last().Component` by NAME (Component.name at AST time, which is the imported local name in routes.tsx).
 3. The resolved path becomes the `jsx-rustc` input.
 4. Cache resolved-path → built-jinja in `.brust/jinja/_manifest.json` so unchanged sources skip recompile.
 
@@ -482,12 +484,12 @@ The fancier options (Vite plugin injecting `Component.__source`; explicit `compo
 
 ## 8. Server dispatch (server.rs)
 
-Render dispatch flow is **unchanged** in shape from current main. The A2.3 short-circuit is removed; render goes through `dispatch_to_worker_and_stream_chunks` like any React route. The difference: the envelope JSON gains a `jinja_template` field; the JS worker reads it and branches to the SAB-write path instead of the React render path.
+Render dispatch flow is **unchanged** in shape from current main. The A2.3 short-circuit is removed; render goes through `dispatch_to_worker_and_stream_chunks` like any React route. The difference: the envelope JSON gains a `native_template` field; the JS worker reads it and branches to the SAB-write path instead of the React render path.
 
 ```rust
 let envelope_json = build_render_envelope(
     method, full_path, query, raw_request,
-    /* NEW */ jinja_template: routes.jinja_template_for(route_id),
+    /* NEW */ native_template: routes.native_template_for(route_id),
 );
 dispatch_to_worker_and_stream_chunks(envelope_json, "render", cache_wanted, on_success).await
 ```
@@ -496,7 +498,7 @@ No `static_prebuilt`, no `static_render`, no short-circuit. Reviewer Blocker 2 (
 
 ## 9. Worker-side dispatcher (`runtime/routes.ts`)
 
-The worker's render branch currently calls `renderBranchStreaming(element, ...)` (React path). After v2, it branches on `flat.jinjaTemplate`:
+The worker's render branch currently calls `renderBranchStreaming(element, ...)` (React path). After v2, it branches on `flat.nativeTemplate`:
 
 ```ts
 if (call.kind === 'render') {
@@ -504,7 +506,7 @@ if (call.kind === 'render') {
   // ... middleware chain runs (unchanged)
   // verdict._brustStream check (unchanged)
 
-  if (flat.jinjaTemplate !== undefined) {
+  if (flat.nativeTemplate !== undefined) {
     // NEW jinja path
     let data: unknown = {}
     if (flat.chain.some(r => r.loader)) {
@@ -523,9 +525,9 @@ if (call.kind === 'render') {
     }
     view.set(dataBytes, 0)
     try {
-      await (native as any).napiRenderJinja(Number(workerId), dataBytes.length, flat.jinjaTemplate)
+      await (native as any).napiRenderJinja(Number(workerId), dataBytes.length, flat.nativeTemplate)
     } catch (err) {
-      console.error(`[brust] napiRenderJinja failed for "${flat.jinjaTemplate}":`, err)
+      console.error(`[brust] napiRenderJinja failed for "${flat.nativeTemplate}":`, err)
       await emitSingleChunkResponse(view, napi, workerId, encoder, {
         status: 500, contentType: 'text/html; charset=utf-8', body: 'internal error',
       })
@@ -600,20 +602,20 @@ In a separate `tests/jinja-protocol.test.ts` (or inside the napi shim's `#[cfg(t
 1. `cargo build --workspace` succeeds.
 2. `cargo test --workspace --lib` passes; counts re-verified.
 3. `bun run build` produces a `.node` with `napiRenderJinja` exported.
-4. `bun test runtime/` passes; new validation tests cover `jinja: true`.
+4. `bun test runtime/` passes; new validation tests cover `native: true`.
 5. `bun test tests/jinja-route.test.ts` passes.
 6. `bun test tests/integration.test.ts -t 'serves rendered html'` passes (React unchanged).
 7. **Reviewer Fix 3 (lowered bar)**: `oha -c 120 -z 10s -m GET /jinja-test/X` measures **≥60,000 RPS** on M1 Pro (floor). 90k+ is a stretch goal; numbers below 60k blocked.
 8. `cargo clippy -p brust --lib -- -D warnings` clean; same for `-p jsx-rust-compiler`.
-9. `grep -rn -E 'maud|static: true|staticRender|rustCompiled|napi_render_compiled|compiled_routes' --include='*.rs' --include='*.ts' --include='*.tsx' --include='*.toml'` returns ZERO hits across the tree (reviewer Blocker 3 — exhaustive).
-10. `.brust/jinja/_manifest.json` lists every `jinja: true` route's Component.name; `bun run build` produces a `.jinja` file for each.
-11. **Reviewer Fix 1**: at brust boot, `napiListJinjaTemplates()` must include every `jinja: true` route's Component.name. Mismatch logs a warning and the route falls back to 500 at runtime; in v2 this is dev-time noise, not a panic. Future: pre-flight validation panics on boot.
+9. `grep -rn -E 'maud|static: true|staticRender|rustCompiled|napi_render_compiled|compiled_routes|jinja: true|jinja\?:|jinjaTemplate' --include='*.rs' --include='*.ts' --include='*.tsx' --include='*.toml'` returns ZERO hits across the tree (reviewer Blocker 3 — exhaustive; v2.2 adds the jinja API tokens since v2.1's renames moved them to `native`).
+10. `.brust/jinja/_manifest.json` lists every `native: true` route's Component.name; `bun run build` produces a `.jinja` file for each.
+11. **Reviewer Fix 1**: at brust boot, `napiListJinjaTemplates()` must include every `native: true` route's Component.name. Mismatch logs a warning and the route falls back to 500 at runtime; in v2 this is dev-time noise, not a panic. Future: pre-flight validation panics on boot.
 
 ## 12. Known limitations (shipped state)
 
 - Per-app templates committed under user's `pages/*.tsx`, built to `.brust/jinja/`. Brust framework ships zero templates (no built-ins). Future: framework-supplied templates (error pages, layouts) live in `brust/templates/` and merge into the user's Environment.
-- Cache integration deferred (`cache` field rejected when `jinja: true`).
-- Nested `loader` for children of a `jinja: true` route is not composited (only leaf's loader runs). Composition is a follow-up.
+- Cache integration deferred (`cache` field rejected when `native: true`).
+- Nested `loader` for children of a `native: true` route is not composited (only leaf's loader runs). Composition is a follow-up.
 - minijinja's `Strict` undefined mode means typos in templates fail loudly at render — a feature, but breaks if a loader sometimes returns `{}`. Recommendation: loader return value should always include the keys the template references; use `{% if x is defined %}` to gate optional vars.
 - `Component` body is REAL React code. Best practice: write Components that work as both React (for unit testing the JSX shape) AND get analyzed by jsx-rustc (for jinja output). Documentation to make this explicit. **In dev mode v2.1 does NOT fall back to React on missing template** — boot logs a warning, missing template renders 500 at request time. The dev-mode React fallback is a v2.x follow-up. (v2 previously stated this inconsistently in §13.5 — v2.1 collapses to one answer here.)
 - `jsx-rust-compiler` loses the maud emit target. Past A1+A1.1 work (the maud-only T7-T11) is partially retired. The IR + parser + lower (T0-T6) are preserved verbatim.
@@ -622,7 +624,7 @@ In a separate `tests/jinja-protocol.test.ts` (or inside the napi shim's `#[cfg(t
 
 ## 13. Open questions resolved at plan-time
 
-1. **Field name**: `jinja: true` (per user's "true แบบ static: true"). Open to plan-time bikeshed but no functional impact.
+1. **Field name** (v2.2): `native: true`. v2/v2.1 used `jinja: true` which exposed the implementation engine in the user-facing API. v2.2 switches to `native: true` because (a) it's engine-agnostic — future render strategies (compile-to-bytes, htmx, etc.) can live under the same flag without breaking users' route definitions; (b) brust's own server.rs already uses "native-only route" vernacular for paths handled by Rust without JS dispatch (see `/ping` comment at server.rs:150); (c) parallel to `static: true`'s established pattern. Internal Rust symbols (`jinja.rs`, `napi_render_jinja`, `.brust/jinja/`) keep the engine-specific naming — they're implementation details, not API surface.
 2. **Registry key**: `Component.name` (Reviewer OQ 1+2 — keeping). Minifier safety addressed §4.
 3. **Template directory**: `.brust/jinja/` (user direction — under user's project, like `.brust/css/`).
 4. **Maud target retire**: full retire — no `--target=maud` flag in v2. Plan can resurrect if needed; no current consumer.
@@ -661,8 +663,8 @@ v2.1 reorders: brust sheds its build-dependency on jsx-rust-compiler BEFORE jsx-
 
 2. **brust crate — remove A2.3 + rename fields** (single commit):
    - remove the A2.3 short-circuit branch from `crates/brust/src/server.rs` (~30 lines around the existing pattern)
-   - in `crates/brust/src/routes.rs`: rename `RouteConfig.static_render` → `RouteConfig.jinja_template`; rename `RouteTable.static_renders` → `RouteTable.jinja_templates`; delete `RouteTable.static_prebuilt`; delete `static_render_for_path` and friends
-   - `crates/brust/src/server.rs`: switch dispatch to read `routes.jinja_template_for(route_id)` and weave it into the envelope JSON
+   - in `crates/brust/src/routes.rs`: rename `RouteConfig.static_render` → `RouteConfig.native_template`; rename `RouteTable.static_renders` → `RouteTable.native_templates`; delete `RouteTable.static_prebuilt`; delete `static_render_for_path` and friends
+   - `crates/brust/src/server.rs`: switch dispatch to read `routes.native_template_for(route_id)` and weave it into the envelope JSON
    - `cargo test --workspace --lib` green; A2.3 tests no longer apply.
 
 3. **jsx-rust-compiler — swap emit target** (single commit):
@@ -677,13 +679,13 @@ v2.1 reorders: brust sheds its build-dependency on jsx-rust-compiler BEFORE jsx-
    - add `minijinja = "2"` to `crates/brust/Cargo.toml` `[dependencies]`
    - add `crates/brust/src/jinja.rs` (Environment loader + render)
    - add `napi_render_jinja` to `crates/brust/src/lib.rs` per §6
-   - add `napi_list_jinja_templates` napi fn for boot-time validation (reviewer Fix 1 follow-up)
+   - add `napi_list_native_templates` napi fn for boot-time validation (reviewer Fix 1 follow-up)
    - `cargo test --workspace --lib` green; bun cdylib regenerates with new napi symbols.
 
 5. **Runtime JS — `static?` → `jinja?` + worker dispatcher branch** (single commit):
-   - edit `runtime/routes.ts`: rename `static?` → `jinja?`, `staticRender` → `jinjaTemplate`; update `validateRoute`; insert the worker-side jinja branch per §9
+   - edit `runtime/routes.ts`: rename `static?` → `jinja?`, `staticRender` → `nativeTemplate`; update `validateRoute`; insert the worker-side jinja branch per §9
    - edit `runtime/routes.test.ts`: rename + rewrite the 7 validation tests
-   - edit `runtime/index.ts`: rename `staticRender` → `jinjaTemplate` in `registerRoutes` payload
+   - edit `runtime/index.ts`: rename `staticRender` → `nativeTemplate` in `registerRoutes` payload
    - `bun test runtime/` green.
 
 6. **Build CLI — jsx-rustc spawn pass** (single commit):
@@ -693,7 +695,7 @@ v2.1 reorders: brust sheds its build-dependency on jsx-rust-compiler BEFORE jsx-
    - smoke against `example/hello-world/` to verify a `.brust/jinja/HelloPage.jinja` lands.
 
 7. **Example + tests** (single commit):
-   - migrate `example/hello-world/routes.tsx` to `jinja: true` + real loader
+   - migrate `example/hello-world/routes.tsx` to `native: true` + real loader
    - migrate `tests/fixtures/app/routes.tsx` similarly
    - add `tests/jinja-route.test.ts` (E2E: build → spawn brust → curl → assert bytes)
    - delete `tests/rust-compiled-route.test.ts`
