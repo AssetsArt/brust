@@ -1297,6 +1297,129 @@ test('mcp: unknown method returns -32601', async () => {
   }
 }, 15_000)
 
+// ----- writev zero-copy response: byte-equivalence -----
+//
+// Sub-project M (2026-05-28): uncached buffering responses now write
+// [response_head, body_slice] via write_vectored — no userspace body memcpy.
+// Cached responses still go through the build_single_response_bytes path.
+// Both must produce a wire-equivalent shape (same status, same header set in
+// the same order, Content-Length matching body length, no Transfer-Encoding).
+// fetch() reframes headers, so we read raw socket bytes.
+test('writev path: uncached and cached buffering responses share wire shape', async () => {
+  const proc = spawn({
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
+    env: { ...process.env, BRUST_PORT: '38199', RUST_LOG: 'brust=warn' },
+    stdout: 'pipe',
+    stderr: 'inherit',
+  })
+  try {
+    const port = await readPortLine(proc.stdout)
+
+    // `/` is uncached → goes through the new vectored path.
+    const uncachedBytes = await rawRequest(
+      port,
+      `GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n`,
+    )
+    // `/cache-test` is cached → first request goes through the concat path
+    // (cache miss → build_single_response_bytes → insert).
+    const cachedBytes = await rawRequest(
+      port,
+      `GET /cache-test HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n`,
+    )
+
+    const uncached = parseHttpResponse(uncachedBytes)
+    const cached = parseHttpResponse(cachedBytes)
+
+    // Both paths emit a normal 200 response.
+    expect(uncached.status).toBe(200)
+    expect(cached.status).toBe(200)
+
+    // Both paths must declare Content-Length (single-chunk Content-Length
+    // response, NOT chunked transfer encoding).
+    expect(uncached.headers.get('content-length')).toBeTruthy()
+    expect(cached.headers.get('content-length')).toBeTruthy()
+    expect(uncached.headers.has('transfer-encoding')).toBe(false)
+    expect(cached.headers.has('transfer-encoding')).toBe(false)
+
+    // Content-Length must match actual body byte length.
+    expect(uncached.body.length).toBe(parseInt(uncached.headers.get('content-length')!, 10))
+    expect(cached.body.length).toBe(parseInt(cached.headers.get('content-length')!, 10))
+
+    // Both paths emit Content-Type before Content-Length (build_single_response_head_only
+    // and build_single_response_bytes share the same head-building code path,
+    // so header order is locked).
+    expect(uncached.headerOrder.slice(0, 2)).toEqual(['content-type', 'content-length'])
+    expect(cached.headerOrder.slice(0, 2)).toEqual(['content-type', 'content-length'])
+  } finally {
+    proc.kill('SIGINT')
+    await proc.exited
+  }
+}, 15_000)
+
+async function rawRequest(port: number, request: string): Promise<Uint8Array> {
+  // Brust's HTTP server always responds with `Connection: keep-alive` regardless
+  // of the request's Connection header — it loops until the client closes the
+  // socket or sends invalid bytes. We can't rely on `sock.on('end')` to detect
+  // "response complete". Instead: collect chunks, debounce on a 200ms quiet
+  // period, then close from our side. For these tiny responses (~5 KB), one
+  // TCP segment lands well within that window.
+  const net = await import('node:net')
+  return await new Promise((resolve, reject) => {
+    const sock = net.createConnection({ port, host: '127.0.0.1' }, () => {
+      sock.write(request)
+    })
+    const chunks: Uint8Array[] = []
+    let quietTimer: ReturnType<typeof setTimeout> | undefined
+    const finish = () => {
+      if (quietTimer) clearTimeout(quietTimer)
+      sock.destroy()
+      const total = chunks.reduce((a, b) => a + b.length, 0)
+      const out = new Uint8Array(total)
+      let off = 0
+      for (const c of chunks) { out.set(c, off); off += c.length }
+      resolve(out)
+    }
+    sock.on('data', (d: Buffer) => {
+      chunks.push(new Uint8Array(d))
+      if (quietTimer) clearTimeout(quietTimer)
+      quietTimer = setTimeout(finish, 200)
+    })
+    sock.on('end', finish)
+    sock.on('error', reject)
+  })
+}
+
+function parseHttpResponse(bytes: Uint8Array): {
+  status: number
+  headers: Map<string, string>
+  headerOrder: string[]
+  body: Uint8Array
+} {
+  let end = -1
+  for (let i = 0; i + 3 < bytes.length; i++) {
+    if (bytes[i] === 13 && bytes[i + 1] === 10 && bytes[i + 2] === 13 && bytes[i + 3] === 10) {
+      end = i; break
+    }
+  }
+  if (end < 0) throw new Error('no header terminator in response')
+  const headerText = new TextDecoder('utf-8').decode(bytes.subarray(0, end))
+  const body = bytes.subarray(end + 4)
+  const lines = headerText.split('\r\n')
+  const statusLine = lines[0]
+  const status = parseInt(statusLine.split(' ')[1], 10)
+  const headers = new Map<string, string>()
+  const headerOrder: string[] = []
+  for (let i = 1; i < lines.length; i++) {
+    const idx = lines[i].indexOf(':')
+    if (idx < 0) continue
+    const name = lines[i].slice(0, idx).toLowerCase().trim()
+    const value = lines[i].slice(idx + 1).trim()
+    headers.set(name, value)
+    headerOrder.push(name)
+  }
+  return { status, headers, headerOrder, body }
+}
+
 async function readPortLine(stream: ReadableStream<Uint8Array>): Promise<number> {
   const reader = stream.getReader()
   const decoder = new TextDecoder()
