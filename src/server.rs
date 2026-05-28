@@ -911,23 +911,21 @@ async fn dispatch_to_worker_and_stream_chunks<F>(
 where
     F: FnOnce(&[u8]),
 {
-    let Some(entry) = pool.pick_least_busy() else {
-        let _ = s.write_all(http::error_503("no workers")).await;
-        return DispatchControl::CloseConn;
-    };
-    let _busy_guard = entry.in_flight_guard();
-
     let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::channel::<crate::pool::RenderChunk>(1);
-    {
-        let mut slot = entry.render_slot.lock();
-        debug_assert!(
-            slot.is_none(),
-            "worker {} double-dispatch (JS thread should serialise)",
-            entry.id,
-        );
-        *slot = Some(crate::pool::RenderSlot { chunk_tx });
-    }
-    let _slot_guard = crate::pool::RenderSlotGuard { entry: &entry };
+
+    let claim = match pool.try_claim_render(chunk_tx) {
+        crate::pool::ClaimResult::Claimed(c) => c,
+        crate::pool::ClaimResult::PoolEmpty => {
+            let _ = s.write_all(http::error_503("no workers")).await;
+            return DispatchControl::CloseConn;
+        }
+        crate::pool::ClaimResult::AllBusy => {
+            let _ = s.write_all(http::error_503("all workers busy")).await;
+            return DispatchControl::CloseConn;
+        }
+    };
+    let entry = std::sync::Arc::clone(claim.entry());
+    // `claim` holds slot + in_flight until the function returns (RAII).
 
     // Distinguish the two failure layers so we can react differently:
     // - EnqueueFailed → napi bridge dead, remove worker from pool.

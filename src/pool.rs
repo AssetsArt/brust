@@ -40,9 +40,10 @@ pub enum RenderChunk {
     },
 }
 
-/// Per-worker per-request slot. Installed by handle_conn BEFORE calling
-/// `tsfn.call_async`; cleared by `RenderSlotGuard::drop` on exit (RAII —
-/// survives panic, cancellation, early returns).
+/// Per-worker per-request slot. Installed atomically by
+/// `WorkerPool::try_claim_render` BEFORE calling `tsfn.call_async`;
+/// cleared by `RenderClaim::drop` on exit (RAII — survives panic,
+/// cancellation, early returns).
 pub struct RenderSlot {
     pub chunk_tx: mpsc::Sender<RenderChunk>,
 }
@@ -71,21 +72,6 @@ impl TsfnEntry {
 }
 
 pub struct InFlightGuard(Arc<TsfnEntry>);
-
-/// RAII guard that clears `TsfnEntry::render_slot` on Drop. Use as
-/// `let _slot_guard = RenderSlotGuard { entry: &entry };` in handle_conn
-/// after installing the slot. Survives panic + tokio cancellation +
-/// early returns — all paths that would otherwise leak the sender and
-/// strand the next request on this worker.
-pub struct RenderSlotGuard<'e> {
-    pub entry: &'e Arc<TsfnEntry>,
-}
-
-impl Drop for RenderSlotGuard<'_> {
-    fn drop(&mut self) {
-        self.entry.render_slot.lock().take();
-    }
-}
 
 impl Drop for InFlightGuard {
     fn drop(&mut self) {
