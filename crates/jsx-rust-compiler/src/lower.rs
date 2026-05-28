@@ -2,10 +2,11 @@ use std::collections::BTreeMap;
 
 use swc_core::common::{Span, Spanned};
 use swc_core::ecma::ast::{
-    AssignPatProp, BindingIdent, BlockStmt, DefaultDecl, ExportDefaultDecl, Expr as SwcExpr,
-    FnExpr, Function, JSXAttrName, JSXAttrOrSpread, JSXAttrValue, JSXElement, JSXElementChild,
-    JSXElementName, JSXExpr, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem,
-    ObjectPatProp, ParenExpr, Pat, ReturnStmt, Stmt,
+    ArrowExpr, AssignPatProp, BindingIdent, BlockStmt, BlockStmtOrExpr, CallExpr, Callee,
+    DefaultDecl, ExportDefaultDecl, Expr as SwcExpr, FnExpr, Function, JSXAttrName,
+    JSXAttrOrSpread, JSXAttrValue, JSXElement, JSXElementChild, JSXElementName, JSXExpr, Lit,
+    MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, ObjectPatProp, ParenExpr, Pat,
+    ReturnStmt, Stmt,
 };
 
 use crate::ErrorKind;
@@ -30,8 +31,10 @@ impl LowerError {
 /// `named_param` holds the single binding from `function X(props)` (bare-ident
 /// reference of `props` itself is rejected; `props.x` is accepted in T5+).
 /// `map_bindings` is a stack — pushed before lowering a `.map((item) => …)`
-/// body and popped after. T4 only initializes it empty; T5 will push entries.
-#[derive(Debug, Default)]
+/// body and popped after. T5 uses clone-and-extend (clone the scope, push the
+/// new iter binding, recurse) rather than `&mut Scope` to keep all the
+/// existing `&Scope` signatures additive.
+#[derive(Debug, Default, Clone)]
 struct Scope {
     destructured: Vec<String>,
     named_param: Option<String>,
@@ -347,8 +350,145 @@ fn lower_child(child: &JSXElementChild, scope: &Scope) -> Result<Option<JsxNode>
             // `{}` empty container as a child — treat as a dropped (no-op) node,
             // matching React's runtime behavior; no IR shape needed.
             JSXExpr::JSXEmptyExpr(_) => Ok(None),
-            JSXExpr::Expr(e) => Ok(Some(JsxNode::Expr(lower_expr(e, scope)?))),
+            JSXExpr::Expr(e) => {
+                // T5: recognize `xs.map((item) => <JSX>)` BEFORE the generic
+                // `Call` → `CallExpressionNotSupported` fallback fires in
+                // `lower_expr`. A `Map` node only makes sense in JSX child
+                // position, so the routing happens here.
+                if let SwcExpr::Call(call) = e.as_ref()
+                    && is_dot_map_call(call)
+                {
+                    return Ok(Some(lower_call_as_map(call, scope)?));
+                }
+                Ok(Some(JsxNode::Expr(lower_expr(e, scope)?)))
+            }
         },
+    }
+}
+
+/// Cheap shape test: is this `obj.map(arrow)`?
+///
+/// Both the `.map` callee and the single-arrow argument must be present.
+/// Full validation (arity, body kind, arg shape) happens in `lower_call_as_map`,
+/// which can then emit the right diagnostic.
+fn is_dot_map_call(call: &CallExpr) -> bool {
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    let SwcExpr::Member(member) = callee.as_ref() else {
+        return false;
+    };
+    let MemberProp::Ident(ident) = &member.prop else {
+        return false;
+    };
+    ident.sym.as_ref() == "map"
+}
+
+/// Lower `obj.map((ident) => <JSXElement>)` into `JsxNode::Map`.
+///
+/// Reject paths:
+/// - args.len() != 1, or arg is spread, or arg is not an arrow → `MapShapeNotSupported`
+/// - arrow has 0 params or > 1 param (the explicit (item, idx) form) →
+///   `MapShapeNotSupported` / `MapIndexParamNotSupported`
+/// - arrow param is not a plain `BindingIdent` (e.g. destructured) →
+///   `MapShapeNotSupported`
+/// - arrow body is not a `<JSXElement>` (either as expr body or as the sole
+///   `return <JSX>;` in a block body) → `MapShapeNotSupported`
+fn lower_call_as_map(call: &CallExpr, scope: &Scope) -> Result<JsxNode, LowerError> {
+    // Source object: `obj` of the `.map` member.
+    let Callee::Expr(callee) = &call.callee else {
+        return Err(LowerError::at(call.span, ErrorKind::MapShapeNotSupported));
+    };
+    let SwcExpr::Member(member) = callee.as_ref() else {
+        return Err(LowerError::at(call.span, ErrorKind::MapShapeNotSupported));
+    };
+    let source = lower_expr(&member.obj, scope)?;
+
+    // Args: exactly one, not spread, must be an arrow.
+    if call.args.len() != 1 {
+        return Err(LowerError::at(call.span, ErrorKind::MapShapeNotSupported));
+    }
+    let arg = &call.args[0];
+    if arg.spread.is_some() {
+        return Err(LowerError::at(call.span, ErrorKind::MapShapeNotSupported));
+    }
+    let SwcExpr::Arrow(arrow) = arg.expr.as_ref() else {
+        return Err(LowerError::at(call.span, ErrorKind::MapShapeNotSupported));
+    };
+
+    let binding = arrow_binding(arrow)?;
+
+    // Body: accept either `(item) => <JSX>` (Expr body) or
+    // `(item) => { return <JSX>; }` (Block body with single return).
+    let jsx_body = arrow_jsx_body(arrow)?;
+
+    // Clone-and-extend the scope with the new iter binding. Keeps the rest of
+    // the lowering on `&Scope`; no `&mut` plumbing required.
+    let mut inner_scope = scope.clone();
+    inner_scope.map_bindings.push(binding.clone());
+    let body = lower_element(jsx_body, &inner_scope)?;
+
+    Ok(JsxNode::Map {
+        source,
+        binding,
+        body: Box::new(body),
+    })
+}
+
+/// Extract the single `(item)` ident binding from an arrow.
+fn arrow_binding(arrow: &ArrowExpr) -> Result<String, LowerError> {
+    match arrow.params.len() {
+        0 => Err(LowerError::at(arrow.span, ErrorKind::MapShapeNotSupported)),
+        1 => match &arrow.params[0] {
+            Pat::Ident(BindingIdent { id, .. }) => Ok(id.sym.to_string()),
+            other => Err(LowerError::at(
+                other.span(),
+                ErrorKind::MapShapeNotSupported,
+            )),
+        },
+        // 2+ params is the `(item, idx)` form: explicitly distinguished.
+        _ => Err(LowerError::at(
+            arrow.span,
+            ErrorKind::MapIndexParamNotSupported,
+        )),
+    }
+}
+
+/// Extract a `&JSXElement` from an arrow body, accepting both forms.
+///
+/// `(item) => <JSX>` lowers as `BlockStmtOrExpr::Expr(JSXElement)`.
+/// `(item) => (<JSX>)` lowers as `BlockStmtOrExpr::Expr(Paren(JSXElement))` —
+/// strip Paren wrappers since they're trivial.
+/// `(item) => { return <JSX>; }` lowers as `BlockStmtOrExpr::BlockStmt(...)`.
+fn arrow_jsx_body(arrow: &ArrowExpr) -> Result<&JSXElement, LowerError> {
+    match arrow.body.as_ref() {
+        BlockStmtOrExpr::Expr(expr) => match strip_paren(expr.as_ref()) {
+            SwcExpr::JSXElement(el) => Ok(el),
+            other => Err(LowerError::at(
+                other.span(),
+                ErrorKind::MapShapeNotSupported,
+            )),
+        },
+        BlockStmtOrExpr::BlockStmt(block) => {
+            if block.stmts.len() != 1 {
+                return Err(LowerError::at(block.span, ErrorKind::MapShapeNotSupported));
+            }
+            match &block.stmts[0] {
+                Stmt::Return(ReturnStmt {
+                    arg: Some(expr), ..
+                }) => match strip_paren(expr.as_ref()) {
+                    SwcExpr::JSXElement(el) => Ok(el),
+                    other => Err(LowerError::at(
+                        other.span(),
+                        ErrorKind::MapShapeNotSupported,
+                    )),
+                },
+                other => Err(LowerError::at(
+                    other.span(),
+                    ErrorKind::MapShapeNotSupported,
+                )),
+            }
+        }
     }
 }
 
@@ -569,12 +709,24 @@ fn infer_props_types(node: &JsxNode, props: &mut PropsShape) -> Result<(), Lower
             Ok(())
         }
         JsxNode::Expr(e) => infer_from_expr(e, props),
-        JsxNode::Map { source, body, .. } => {
-            // T5 will refine: the `source` informs `VecOf` inference and the
-            // body's `MapMember` references inform the element struct. For
-            // T4 we still walk so any `Field`/`MemberAccess` references in
-            // the source contribute to top-level props.
-            infer_from_expr(source, props)?;
+        JsxNode::Map {
+            source,
+            binding,
+            body,
+        } => {
+            // T5: seed the source root as `VecOf(Struct(fields))` BEFORE walking
+            // the body. The fields are collected from `MapMember { root: binding,
+            // path }` references inside the body — this avoids a `PropTypeConflict`
+            // that would arise if the body's MapMembers were misread as
+            // top-level prop refs.
+            let mut element_fields: BTreeMap<String, PropType> = BTreeMap::new();
+            collect_map_member_fields(body, binding, &mut element_fields);
+            let element_struct = PropType::Struct(element_fields);
+            seed_vec_at_source(props, source, element_struct, source)?;
+
+            // Walk the body for any non-MapMember refs (e.g. `Field(x)` from an
+            // outer prop captured by closure). MapMember refs are no-ops at this
+            // stage since they target the binding, not a prop name.
             infer_props_types(body, props)
         }
     }
@@ -597,6 +749,112 @@ fn infer_from_expr(expr: &crate::ir::Expr, props: &mut PropsShape) -> Result<(),
         | crate::ir::Expr::MapMember { .. }
         | crate::ir::Expr::StaticText(_)
         | crate::ir::Expr::StaticNum(_) => Ok(()),
+    }
+}
+
+/// Walk a JsxNode subtree collecting `MapMember { root == binding, path }`
+/// references and merging them into `fields` as the binding-local struct shape.
+fn collect_map_member_fields(
+    node: &JsxNode,
+    binding: &str,
+    fields: &mut BTreeMap<String, PropType>,
+) {
+    match node {
+        JsxNode::Empty | JsxNode::Text(_) => {}
+        JsxNode::Element {
+            attrs, children, ..
+        } => {
+            for a in attrs {
+                if let AttrValue::Expr(e) = &a.value {
+                    collect_map_member_from_expr(e, binding, fields);
+                }
+            }
+            for c in children {
+                collect_map_member_fields(c, binding, fields);
+            }
+        }
+        JsxNode::Expr(e) => collect_map_member_from_expr(e, binding, fields),
+        JsxNode::Map { source, body, .. } => {
+            // Nested maps: only inherit MapMember refs whose root matches
+            // OUR binding (the outer one). The inner Map handles its own
+            // binding in its own seeding pass.
+            collect_map_member_from_expr(source, binding, fields);
+            collect_map_member_fields(body, binding, fields);
+        }
+    }
+}
+
+fn collect_map_member_from_expr(
+    expr: &crate::ir::Expr,
+    binding: &str,
+    fields: &mut BTreeMap<String, PropType>,
+) {
+    match expr {
+        crate::ir::Expr::MapMember { root, path } if root == binding => {
+            // Build a Struct chain for the path and merge into fields.
+            let chain = build_struct_chain(path);
+            merge_field(fields, path.first().expect("path non-empty"), chain);
+        }
+        crate::ir::Expr::MapBinding(name) if name == binding => {
+            // Bare binding reference — yields a String (the binding itself).
+            // Marker only; specific field merge happens via MapMember above.
+        }
+        _ => {}
+    }
+}
+
+fn merge_field(fields: &mut BTreeMap<String, PropType>, key: &str, incoming: PropType) {
+    match fields.get_mut(key) {
+        None => {
+            // The chain is rooted at `key`, but here we want to insert the
+            // VALUE under `key`. The chain we built was `Struct{key => …}`;
+            // strip the wrapper and insert the inner value.
+            if let PropType::Struct(mut inner) = incoming
+                && let Some(value) = inner.remove(key)
+            {
+                fields.insert(key.to_string(), value);
+            }
+        }
+        Some(existing) => {
+            // Best-effort merge; on cross-shape conflict we ignore silently
+            // (the outer merge_into will catch any real prop-level conflict).
+            if let PropType::Struct(mut inner) = incoming
+                && let Some(value) = inner.remove(key)
+                && let (PropType::Struct(ex_map), PropType::Struct(in_map)) = (existing, value)
+            {
+                for (k, v) in in_map {
+                    ex_map.entry(k).or_insert(v);
+                }
+            }
+        }
+    }
+}
+
+/// Seed `props.types[<source root>]` with `VecOf(element_struct)`. If the source
+/// is a `MemberAccess`, build a nested Struct chain whose leaf is the VecOf.
+fn seed_vec_at_source(
+    props: &mut PropsShape,
+    source: &crate::ir::Expr,
+    element_struct: PropType,
+    _expr_for_span: &crate::ir::Expr,
+) -> Result<(), LowerError> {
+    match source {
+        crate::ir::Expr::Field(name) => {
+            merge_type(props, name, PropType::VecOf(Box::new(element_struct)))
+        }
+        crate::ir::Expr::MemberAccess { root, path } => {
+            // Build a Struct chain ending in VecOf(element_struct).
+            let mut current = PropType::VecOf(Box::new(element_struct));
+            for seg in path.iter().rev() {
+                let mut map = BTreeMap::new();
+                map.insert(seg.clone(), current);
+                current = PropType::Struct(map);
+            }
+            merge_type(props, root, current)
+        }
+        // Map sourced from a MapBinding/MapMember (nested map binding) or a
+        // literal — leave inference alone. Top-level props don't gain info.
+        _ => Ok(()),
     }
 }
 
@@ -819,5 +1077,130 @@ mod tests {
             ErrorKind::BareIdentNotSupported(name) => assert_eq!(name, "props"),
             other => panic!("expected BareIdentNotSupported, got {other:?}"),
         }
+    }
+
+    // T5 — .map((item) => <JSX>) lowering and Vec<XsItem> inference
+
+    #[test]
+    fn lowers_map_one_arg() {
+        let src = r#"export default function ListNav({ items }) {
+  return <ul>{items.map((item) => (<li>{item.label}</li>))}</ul>;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let c = lower(&parsed).unwrap();
+        match &c.root {
+            JsxNode::Element { tag, children, .. } => {
+                assert_eq!(tag, "ul");
+                assert_eq!(children.len(), 1);
+                match &children[0] {
+                    JsxNode::Map {
+                        source,
+                        binding,
+                        body,
+                    } => {
+                        assert_eq!(binding, "item");
+                        match source {
+                            crate::ir::Expr::Field(name) => assert_eq!(name, "items"),
+                            other => panic!("expected Field(\"items\"), got {other:?}"),
+                        }
+                        match body.as_ref() {
+                            JsxNode::Element { tag, .. } => assert_eq!(tag, "li"),
+                            other => panic!("expected <li> body, got {other:?}"),
+                        }
+                    }
+                    other => panic!("expected JsxNode::Map, got {other:?}"),
+                }
+            }
+            other => panic!("expected root element, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn lowers_map_with_member_body() {
+        let src = r#"export default function UsersList({ users }) {
+  return <ul>{users.map((u) => (<li>{u.name.first}</li>))}</ul>;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let c = lower(&parsed).unwrap();
+        // Body should contain a MapMember{root:"u", path:["name","first"]}
+        let map_body = match &c.root {
+            JsxNode::Element { children, .. } => match &children[0] {
+                JsxNode::Map { body, .. } => body,
+                other => panic!("expected Map, got {other:?}"),
+            },
+            other => panic!("expected element, got {other:?}"),
+        };
+        let li_children = match map_body.as_ref() {
+            JsxNode::Element { children, .. } => children,
+            other => panic!("expected <li> element, got {other:?}"),
+        };
+        match &li_children[0] {
+            JsxNode::Expr(crate::ir::Expr::MapMember { root, path }) => {
+                assert_eq!(root, "u");
+                assert_eq!(path, &vec!["name".to_string(), "first".to_string()]);
+            }
+            other => panic!("expected MapMember, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_map_two_arg() {
+        let src = r#"export default function X({ items }) {
+  return <ul>{items.map((item, idx) => <li/>)}</ul>;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let err = lower(&parsed).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::MapIndexParamNotSupported),
+            "got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn rejects_map_zero_arg() {
+        let src = r#"export default function X({ items }) {
+  return <ul>{items.map(() => <li/>)}</ul>;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let err = lower(&parsed).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::MapShapeNotSupported),
+            "got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn rejects_map_non_jsx_body() {
+        let src = r#"export default function X({ items }) {
+  return <ul>{items.map((item) => item.name)}</ul>;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let err = lower(&parsed).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::MapShapeNotSupported),
+            "got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn infers_vec_of_struct_for_map_member_paths() {
+        let src = r#"export default function ListNav({ items }) {
+  return <ul>{items.map((item) => (<li><a href={item.href}>{item.label}</a></li>))}</ul>;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let c = lower(&parsed).unwrap();
+        // Expected: props.types["items"] = VecOf(Struct{href: OwnedString, label: OwnedString})
+        let mut expected_fields = BTreeMap::new();
+        expected_fields.insert("href".to_string(), PropType::OwnedString);
+        expected_fields.insert("label".to_string(), PropType::OwnedString);
+        assert_eq!(
+            c.props.types.get("items"),
+            Some(&PropType::VecOf(Box::new(PropType::Struct(
+                expected_fields
+            ))))
+        );
     }
 }
