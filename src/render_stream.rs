@@ -80,22 +80,32 @@ pub fn build_chunked_response_head(meta: &ChunkMeta) -> Vec<u8> {
     out
 }
 
-/// Build a complete single-chunk HTTP/1.1 response with Content-Length.
-/// Bytes-identical to today's renderToString wire shape for no-Suspense
-/// routes (spec §1 criterion #1).
-pub fn build_single_response_bytes(meta: &ChunkMeta, body: &[u8]) -> Vec<u8> {
+/// Build the response status line + headers (no body bytes), terminated by
+/// the blank line. Same wire shape as `build_single_response_bytes`'s output
+/// up to (and excluding) the body — used by the vectored-write path on the
+/// buffering hot path where the body remains in its owned source buffer.
+pub fn build_single_response_head_only(meta: &ChunkMeta, body_len: usize) -> Vec<u8> {
     let mut out = format!(
         "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\n",
         meta.status,
         status_reason(meta.status),
         meta.content_type,
-        body.len(),
+        body_len,
     )
     .into_bytes();
     for (k, v) in &meta.headers {
         out.extend_from_slice(format!("{}: {}\r\n", k, v).as_bytes());
     }
     out.extend_from_slice(b"\r\n");
+    out
+}
+
+/// Build a complete single-chunk HTTP/1.1 response with Content-Length.
+/// Bytes-identical to today's renderToString wire shape for no-Suspense
+/// routes (spec §1 criterion #1). Header bytes from
+/// `build_single_response_head_only` followed by the body.
+pub fn build_single_response_bytes(meta: &ChunkMeta, body: &[u8]) -> Vec<u8> {
+    let mut out = build_single_response_head_only(meta, body.len());
     out.extend_from_slice(body);
     out
 }
@@ -260,5 +270,64 @@ mod tests {
         let (tx, _rx) = tokio::sync::mpsc::channel::<crate::pool::RenderChunk>(1);
         let slot = parking_lot::Mutex::new(Some(crate::pool::RenderSlot { chunk_tx: tx }));
         assert!(check_chunk_dispatch(&slot, 5, 256 * 1024).is_ok());
+    }
+
+    #[test]
+    fn build_single_response_head_only_format() {
+        let meta = ChunkMeta {
+            status: 200,
+            content_type: "text/html; charset=utf-8".to_string(),
+            headers: Default::default(),
+            streaming: false,
+        };
+        let head = build_single_response_head_only(&meta, 42);
+        let s = std::str::from_utf8(&head).unwrap();
+        assert!(s.starts_with("HTTP/1.1 200 OK\r\n"));
+        assert!(s.contains("Content-Type: text/html; charset=utf-8\r\n"));
+        assert!(s.contains("Content-Length: 42\r\n"));
+        assert!(s.ends_with("\r\n\r\n"));
+        // No body bytes — head ends at the blank line.
+        assert_eq!(s.matches("\r\n\r\n").count(), 1);
+    }
+
+    #[test]
+    fn build_single_response_bytes_equals_head_plus_body() {
+        // Refactor safety net: build_single_response_bytes must remain byte-identical
+        // to build_single_response_head_only(...).concat(body) for every body shape.
+        let meta = ChunkMeta {
+            status: 200,
+            content_type: "text/html; charset=utf-8".to_string(),
+            headers: [("X-Render-Ms".to_string(), "12".to_string())].into(),
+            streaming: false,
+        };
+        for body in [b"".as_slice(), b"<html>x</html>".as_slice(), &vec![b'a'; 4096]] {
+            let combined = build_single_response_bytes(&meta, body);
+            let head = build_single_response_head_only(&meta, body.len());
+            let expected: Vec<u8> = head.iter().chain(body.iter()).copied().collect();
+            assert_eq!(combined, expected, "mismatch for body_len={}", body.len());
+        }
+    }
+
+    #[test]
+    fn head_only_includes_extra_headers_in_alphabetical_order() {
+        let meta = ChunkMeta {
+            status: 200,
+            content_type: "text/html".to_string(),
+            headers: [
+                ("Z-Last".to_string(), "z".to_string()),
+                ("A-First".to_string(), "a".to_string()),
+                ("M-Mid".to_string(), "m".to_string()),
+            ].into(),
+            streaming: false,
+        };
+        let head = build_single_response_head_only(&meta, 0);
+        let s = std::str::from_utf8(&head).unwrap();
+        let a_pos = s.find("A-First: a").unwrap();
+        let m_pos = s.find("M-Mid: m").unwrap();
+        let z_pos = s.find("Z-Last: z").unwrap();
+        assert!(a_pos < m_pos && m_pos < z_pos, "BTreeMap iteration should be alphabetical");
+        // Headers come before the blank line.
+        let blank_pos = s.find("\r\n\r\n").unwrap();
+        assert!(z_pos < blank_pos);
     }
 }
