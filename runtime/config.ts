@@ -5,7 +5,7 @@ import { parse as parseToml } from 'smol-toml'
 export interface BrustConfig {
   /** TCP port to bind on. Default 3000. */
   port: number
-  /** Bun Worker count for render dispatch. Default floor(availableParallelism * 1.8). */
+  /** Bun Worker count for render dispatch. Default `availableParallelism()`. */
   workers: number
   /** Cache capacity (entries). Undefined → Rust default of 1000. */
   cacheMaxEntries?: number
@@ -19,14 +19,18 @@ export class BrustConfigError extends Error {
 }
 
 const DEFAULT_PORT = 3000
-const defaultWorkers = (): number => Math.floor(os.availableParallelism() * 1.8)
+// One worker per CPU. Bumping the multiplier above 1 was tuned for I/O-bound
+// renders; on CPU-bound React work (typical) it over-subscribes and amplifies
+// p99 tail. Users with Suspense-heavy / await-heavy renders can override via
+// BRUST_WORKERS or workers.count in brust.toml.
+const defaultWorkers = (): number => os.availableParallelism()
 
 const CONFIG_BASENAME = 'brust.toml'
 
 /**
  * Resolve Brust configuration. Precedence (low → high): defaults < TOML < env.
  *
- * - Defaults: { port: 3000, workers: floor(availableParallelism * 1.8) }
+ * - Defaults: { port: 3000, workers: availableParallelism() }
  * - TOML: brust.toml at `cwd` (missing file is fine — only a present file with
  *   wrong shape is an error).
  * - Env: BRUST_PORT and BRUST_WORKERS override either source.

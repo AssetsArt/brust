@@ -55,10 +55,10 @@ const SCENARIOS: Scenario[] = [
     id: 'brust',
     label: 'Brust (Rust HTTP + napi + SAB)',
     cmd: ['bun', 'run', 'example/hello-world/index.ts'],
-    // BRUST_WORKERS=18 matches the session-3 headline numbers (M1 Pro 10c, 8 perf + 2 eff cores).
-    // Bumping past CPU count helps /ping (Rust-native, bypasses napi pool) absorb more
-    // concurrent connections, and lets / amortise napi crossings over more JS contexts.
-    env: { BRUST_PORT: '38201', BRUST_WORKERS: '18' },
+    // No BRUST_WORKERS override — use the runtime default (availableParallelism()).
+    // Earlier benches pinned 18 (the old `* 1.8` default) which oversubscribed on
+    // CPU-bound React renders and amplified p99 ~6×; see post-mortem 2026-05-28.
+    env: { BRUST_PORT: '38201' },
     expectedPortLog: /listening on 127\.0\.0\.1:(\d+)/,
   },
   {

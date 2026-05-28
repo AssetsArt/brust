@@ -8,23 +8,29 @@ are dispatched into Bun Worker threads through `ThreadsafeFunction`, and HTML
 flows back via per-worker `SharedArrayBuffer`.
 
 ```
-127,113 RPS  GET /ping              (p50 0.13ms · p99 0.22ms)
-121,013 RPS  POST server action     (p50 0.14ms · p99 0.23ms)
- 16,301 RPS  GET / (SSR React)      (p50 0.58ms · p99 17.85ms)
+104,953 RPS  GET /ping              (p50 0.09ms · p99 0.15ms)
+110,372 RPS  POST server action     (p50 0.09ms · p99 0.16ms)
+ 23,062 RPS  GET / (SSR React)      (p50 0.36ms · p99 2.42ms)
 ```
 
-Benchmarked with `oha -c 120 -z 10s` on darwin/arm64, Bun 1.4 — re-run on
-2026-05-28 after the atomic-claim fix. Full table in [`bench/RESULTS.md`](./bench/RESULTS.md).
-Same hardware: Bun.serve + `renderToString` does 17k RPS on `/`. The Rust HTTP
-layer is where the headroom lives — `/ping` and the server-action POST path
-(both bypass React but cross the napi+SAB boundary) sustain >120k RPS.
+Benchmarked with `oha -c 120 -z 10s` on darwin/arm64 (M1 Pro, 10c), Bun 1.4 —
+re-run on 2026-05-28 after the worker-default fix. Full table in
+[`bench/RESULTS.md`](./bench/RESULTS.md). Same hardware: Bun.serve +
+`renderToString` does 17.7k RPS on `/`. The Rust HTTP layer is where the
+headroom lives — `/ping` and the server-action POST path (both cross the
+napi+SAB boundary) sustain >100k RPS.
 
-The `/` SSR number is honestly down from the pre-CSS-pipeline 54k. The drop
-appears to come from features that landed between the May-24 bench and now
-(CSS-link injection, dev-client injection, Tailwind v4 in the example) — not
-from the atomic-claim refactor (POST through the same worker pool actually
-doubled). Investigating the per-request injection overhead is a tracked
-follow-up.
+The `/` SSR row is honestly down from the pre-CSS-pipeline 54k. Investigation
+on 2026-05-28 (see [post-mortem](./docs/superpowers/post-mortems/2026-05-28-slash-route-p99-regression.md))
+showed two independent causes: (a) the demo component grew (Tailwind v4 +
+`Layout` wrapper) — the Bun.serve baseline using the same component dropped
+proportionally (40k → 17.7k), proving the work itself got more expensive;
+(b) the worker-count default formula (`floor(availableParallelism * 1.8)`,
+~18 on M1 Pro) was tuned for I/O-bound renders and oversubscribed perf cores
+on CPU-bound React work, amplifying p99 ~6× under load. Fix dropped the
+multiplier to `1.0` (one worker per CPU); p99 on `/` went 17.85ms → 2.42ms
+and RPS recovered 16k → 23k. The handoff's earlier guess (per-request CSS
+injection) was falsified by the c=1 latency profile.
 
 ---
 

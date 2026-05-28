@@ -174,7 +174,7 @@ Render call:
     Rust reads body at ptr, len = written
 ```
 
-**Slot size:** 256 KB per worker. 18 workers on M1 Pro = 4.5 MB total. Comfortably in L2/L3.
+**Slot size:** 256 KB per worker. 10 workers on M1 Pro = 2.5 MB total. Comfortably in L2/L3.
 **Oversize:** Worker resolves with `0` (its self-reported "too big" sentinel) or with any value outside `(0, slot_size]` → Rust responds HTTP 500. No fallback path yet; future option is dynamic resize or a separate socket-style spillover frame.
 
 **Cross-thread safety:**
@@ -294,17 +294,20 @@ the atomic-claim refactor closes it. Regression test: `try_claim_render_race_no_
 
 Each worker pre-loads its render closure once at boot. No cold start per
 request. Each worker has an isolated V8 heap; GC in one worker does not pause
-others. `renderToString` is synchronous and CPU-bound; one worker per ~0.55
-cores (1/1.8) gives true parallel rendering with no contention beyond the OS
-scheduler.
+others. `renderToString` is synchronous and CPU-bound; one worker per CPU
+gives true parallel rendering with no contention beyond the OS scheduler.
 
-**Why floor(availableParallelism * 1.8)?**
+**Why `availableParallelism()`?**
 
-Empirical sweet spot on M1 Pro (10 cores: 8P + 2E). napi workers spend ~45% of
-wall time in V8 GC, IPC, and thread-park; oversubscribing by 1.8× keeps CPU
-saturated during those pauses. Measured (see Performance table for full
-numbers): 18 workers ≈ 72k RPS React SSR; 8 workers ≈ 58k; >24 workers
-plateaus then regresses on scheduler thrash.
+CPU-bound React renders saturate one core per worker. Oversubscribing the
+scheduler (the previous `* 1.8` default → 18 workers on a 10-core M1 Pro)
+worked when components were tiny and most worker time was V8 GC / IPC /
+thread-park — pure I/O wait. Once per-render work grew to ~150 µs (heavier
+component, more DOM), the extra workers competed for the same 8 perf cores
+and amplified p99 ~6× under load (`/` p99 17.85 ms → 2.42 ms after dropping
+the multiplier; see [post-mortem 2026-05-28](./docs/superpowers/post-mortems/2026-05-28-slash-route-p99-regression.md)).
+Users with Suspense-heavy or await-heavy renders can override via
+`BRUST_WORKERS` or `workers.count` in `brust.toml`.
 
 ---
 
@@ -837,7 +840,7 @@ correctly? The build needs to embed the cdylib alongside the user bundle.
 
 Layered, low → high precedence:
 
-1. **Built-in defaults.** Port `3000`, workers `floor(os.availableParallelism() * 1.8)`.
+1. **Built-in defaults.** Port `3000`, workers `os.availableParallelism()`.
 2. **`brust.toml` at the project root.** Optional. Schema (extends as subsystems land):
 
    ```toml
@@ -845,7 +848,7 @@ Layered, low → high precedence:
    port = 3000
 
    [workers]
-   count = 18
+   count = 10
 
    [cache]
    max_entries = 5000   # default 1000
@@ -940,17 +943,17 @@ release build, `oha -c 120 -z 10s`.
 
 | Endpoint | Setup | RPS | p99 |
 |---|---|---|---|
-| `/ping` (Rust-native) | `BRUST_WORKERS=18` | **117 k** | 0.24 ms |
-| `/` (React SSR via SAB) | `BRUST_WORKERS=18` | **55 k** | 1.2 ms |
-| `POST /_brust/action/createNote` (server fn dispatch) | `BRUST_WORKERS=18` | **61 k** | 0.54 ms |
+| `/ping` (Rust-native) | default workers (10) | **105 k** | 0.15 ms |
+| `/` (React SSR via SAB) | default workers (10) | **23 k** | 2.42 ms |
+| `POST /_brust/action/createNote` (server fn dispatch) | default workers (10) | **110 k** | 0.16 ms |
 | `/ping` (axum baseline, same box) | — | 100 k+ | — |
-| `/ping` (Bun.serve baseline) | — | 86 k | 2.6 ms |
-| `/` (Bun.serve baseline) | — | 40 k | 3.6 ms |
+| `/ping` (Bun.serve baseline) | — | 89 k | 2.56 ms |
+| `/` (Bun.serve baseline) | — | 17.7 k | 7.51 ms |
 
 Reproduce with `bun run bench` — driver at `scripts/benchmark.ts`, results at `bench/RESULTS.md`.
 Bun.serve baseline source: `example/bun-serve-baseline/index.ts`.
 
-**Read:** Brust's Rust accept loop + napi + SAB beats Bun.serve+React by ~35 % on `/ping` and ~37 % on `/`. The smaller `/` margin is the cost of crossing the napi tsfn boundary once per render — irreducible until a non-React render path appears. The action endpoint outpaces React-SSR (61 k vs 55 k) because the JS handler returns a JSON object with no React render tree to serialise; both share the same SAB envelope path so the gap is React render cost, not envelope overhead.
+**Read:** Brust's Rust accept loop + napi + SAB beats Bun.serve+React by ~17 % on `/ping` and 30 % on `/`. The smaller `/` margin is the cost of crossing the napi tsfn boundary once per render — irreducible until a non-React render path appears. The action endpoint and `/ping` are now near-identical (110 k vs 105 k) because both are single-call napi/SAB envelope paths with no React render tree to serialise; the gap to React-SSR (23 k) is the React render cost itself, not envelope overhead. The `/` row dropped vs the pre-2026-05-24 baseline (55 k → 23 k); see [post-mortem 2026-05-28](./docs/superpowers/post-mortems/2026-05-28-slash-route-p99-regression.md) for the demo-component growth + worker over-subscription story.
 
 ---
 
