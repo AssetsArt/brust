@@ -59,28 +59,27 @@ fn find_default_export(module: &Module) -> Result<(String, &FnExpr), LowerError>
         match item {
             ModuleItem::ModuleDecl(ModuleDecl::Import(_)) => continue,
             ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultDecl(ExportDefaultDecl {
-                decl,
+                decl: DefaultDecl::Fn(fn_expr),
                 ..
             })) => {
-                if let DefaultDecl::Fn(fn_expr) = decl {
-                    let name = fn_expr
-                        .ident
-                        .as_ref()
-                        .map(|i| i.sym.to_string())
-                        .unwrap_or_else(|| "Anonymous".to_string());
-                    if found.is_some() {
-                        return Err(LowerError::at(
-                            fn_expr.function.span,
-                            ErrorKind::UnexpectedStatement,
-                        ));
-                    }
-                    found = Some((name, fn_expr));
-                } else {
+                let name = fn_expr
+                    .ident
+                    .as_ref()
+                    .map(|i| i.sym.to_string())
+                    .unwrap_or_else(|| "Anonymous".to_string());
+                if found.is_some() {
                     return Err(LowerError::at(
-                        span_of_item(item),
+                        fn_expr.function.span,
                         ErrorKind::UnexpectedStatement,
                     ));
                 }
+                found = Some((name, fn_expr));
+            }
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultDecl(_)) => {
+                return Err(LowerError::at(
+                    span_of_item(item),
+                    ErrorKind::UnexpectedStatement,
+                ));
             }
             _ => {
                 return Err(LowerError::at(

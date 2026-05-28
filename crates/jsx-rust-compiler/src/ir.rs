@@ -1,3 +1,7 @@
+// T3 declares the full IR; T4-T7 fill in the variants. The dead_code allow
+// is scoped to this module rather than the whole crate.
+#![allow(dead_code)]
+
 use std::collections::BTreeMap;
 
 #[derive(Debug, Default)]
@@ -11,7 +15,7 @@ pub struct Component {
 pub struct PropsShape {
     /// Top-level destructured prop names, in declaration order.
     pub bindings: Vec<String>,
-    /// Inferred struct types: prop name → ProptInfo (String leaf or nested struct).
+    /// Inferred struct types: prop name → PropType (String leaf or nested struct).
     pub types: BTreeMap<String, PropType>,
 }
 
