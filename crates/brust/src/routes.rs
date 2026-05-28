@@ -268,18 +268,6 @@ impl RouteTable {
             .and_then(|c| c.clone())
     }
 
-    /// A2.3 — returns the static-render component name for a route, if any.
-    /// Caller uses this to short-circuit BEFORE dispatching to the JS worker
-    /// pool: render directly via `compiled_routes::render_by_name`, frame
-    /// response with `build_single_response_bytes`, write to socket, skip
-    /// tsfn entirely.
-    pub fn static_render_for(&self, route_id: u32) -> Option<String> {
-        self.static_renders
-            .read()
-            .get(route_id as usize)
-            .and_then(|n| n.clone())
-    }
-
     /// A2.3 — single-pass path-only lookup that returns the pre-rendered
     /// framed HTTP response for a static route, if any. Per-request path is:
     /// matchit walk → static_prebuilt index → Arc clone → write_all(bytes).
