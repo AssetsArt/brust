@@ -943,7 +943,13 @@ where
 
     let entry_for_future = Arc::clone(&entry);
     let render_future = async move {
-        match entry_for_future.tsfn.call_async(envelope_json).await {
+        match entry_for_future
+            .tsfn
+            .as_ref()
+            .expect("tsfn is None — only legal in cfg(test) register_for_test; production register always supplies Some")
+            .call_async(envelope_json)
+            .await
+        {
             Err(e) => RenderOutcome::EnqueueFailed(e),
             Ok(promise) => match promise.await {
                 Err(e) => RenderOutcome::PromiseRejected(e),

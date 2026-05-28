@@ -569,6 +569,25 @@ fn bigint_to_u64(b: &BigInt) -> NapiResult<u64> {
     Ok(value)
 }
 
+/// Test-only stub for napi runtime symbols that `ThreadsafeFunction::Drop`
+/// references. The crate is `cdylib` so the napi C runtime symbols are
+/// resolved by the host (Bun) at load time — they aren't linked into the
+/// test binary. Test code uses `WorkerPool::register_for_test` which sets
+/// `tsfn: None`, so the real Drop path never runs at test runtime; this
+/// stub exists purely to satisfy the static linker.
+///
+/// If a test ever ends up invoking this stub, that's a test-design bug —
+/// dispatch paths that would call `_napi_release_threadsafe_function`
+/// should never be reachable from test code.
+#[cfg(test)]
+#[unsafe(no_mangle)]
+unsafe extern "C" fn napi_release_threadsafe_function(
+    _func: *mut std::ffi::c_void,
+    _mode: i32,
+) -> i32 {
+    0
+}
+
 #[cfg(test)]
 mod action_id_tests {
     use super::is_safe_action_id;

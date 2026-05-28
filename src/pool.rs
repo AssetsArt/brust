@@ -49,7 +49,14 @@ pub struct RenderSlot {
 
 pub struct TsfnEntry {
     pub id: u32,
-    pub tsfn: RendererTsfn,
+    /// `Option` so `#[cfg(test)] WorkerPool::register_for_test` can build
+    /// an entry without a real napi `ThreadsafeFunction` (the crate is
+    /// `cdylib`; napi C runtime symbols are resolved by the Bun host at
+    /// load time and aren't linked into the `cargo test` binary).
+    /// Production `WorkerPool::register` always sets `Some(...)`; the
+    /// three dispatch sites (`dispatch_sse`, `dispatch_ws`, server.rs
+    /// render dispatch) unwrap via `.as_ref().expect(...)`.
+    pub tsfn: Option<RendererTsfn>,
     pub buf_ptr: BufPtr,
     pub buf_len: usize,
     pub in_flight: AtomicU32,
@@ -86,6 +93,39 @@ impl Drop for InFlightGuard {
     }
 }
 
+/// RAII guard returned by `WorkerPool::try_claim_render`. Holds the per-
+/// worker render slot + the in_flight counter for the lifetime of the
+/// guard. Drop atomically clears both.
+#[must_use = "RenderClaim must be held for the lifetime of the render; \
+              dropping it immediately frees the worker and breaks the invariant"]
+pub struct RenderClaim {
+    entry: Arc<TsfnEntry>,
+}
+
+impl RenderClaim {
+    pub fn entry(&self) -> &Arc<TsfnEntry> {
+        &self.entry
+    }
+}
+
+impl Drop for RenderClaim {
+    fn drop(&mut self) {
+        // Order load-bearing: clear slot FIRST so the invariant
+        // `in_flight >= render_slot_count` holds at every observable point.
+        self.entry.render_slot.lock().take();
+        self.entry.in_flight.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+/// Outcome of `WorkerPool::try_claim_render`. Distinguishes "no workers
+/// registered" from "every worker mid-render" so dispatchers can emit
+/// different 503 bodies.
+pub enum ClaimResult {
+    Claimed(RenderClaim),
+    PoolEmpty,
+    AllBusy,
+}
+
 #[derive(Default)]
 pub struct WorkerPool {
     entries: RwLock<Vec<Arc<TsfnEntry>>>,
@@ -101,7 +141,7 @@ impl WorkerPool {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let entry = Arc::new(TsfnEntry {
             id,
-            tsfn,
+            tsfn: Some(tsfn),
             buf_ptr,
             buf_len,
             in_flight: AtomicU32::new(0),
@@ -121,6 +161,36 @@ impl WorkerPool {
             .iter()
             .min_by_key(|e| e.in_flight.load(Ordering::Relaxed))
             .cloned()
+    }
+
+    /// Atomically reserve an idle render worker and install the chunk
+    /// sender. Returns Claimed/PoolEmpty/AllBusy.
+    ///
+    /// Lock ordering: ALWAYS acquire `entries` (RwLock read) BEFORE the
+    /// per-entry `render_slot` (Mutex). Inverting risks deadlock.
+    pub fn try_claim_render(
+        &self,
+        chunk_tx: tokio::sync::mpsc::Sender<RenderChunk>,
+    ) -> ClaimResult {
+        let entries = self.entries.read();
+        if entries.is_empty() {
+            return ClaimResult::PoolEmpty;
+        }
+        for entry in entries.iter() {
+            let mut slot = entry.render_slot.lock();
+            if slot.is_some() {
+                continue;
+            }
+            // in_flight is a load hint; slot correctness comes from the mutex.
+            // Relaxed matches InFlightGuard's existing ordering.
+            entry.in_flight.fetch_add(1, Ordering::Relaxed);
+            *slot = Some(RenderSlot { chunk_tx });
+            drop(slot);
+            return ClaimResult::Claimed(RenderClaim {
+                entry: Arc::clone(entry),
+            });
+        }
+        ClaimResult::AllBusy
     }
 
     pub fn entry(&self, id: u32) -> Option<Arc<TsfnEntry>> {
@@ -145,6 +215,8 @@ pub async fn dispatch_sse(entry: Arc<TsfnEntry>, envelope_json: String) -> Resul
     let _guard = entry.in_flight_guard();
     entry
         .tsfn
+        .as_ref()
+        .expect("tsfn is None — only legal in cfg(test) register_for_test; production register always supplies Some")
         .call_async(envelope_json)
         .await
         .map(|_| ())
@@ -165,10 +237,32 @@ pub async fn dispatch_ws(entry: Arc<TsfnEntry>, envelope_json: String) -> Result
     let _guard = entry.in_flight_guard();
     entry
         .tsfn
+        .as_ref()
+        .expect("tsfn is None — only legal in cfg(test) register_for_test; production register always supplies Some")
         .call_async(envelope_json)
         .await
         .map(|_| ())
         .map_err(|e| napi::Error::from_reason(format!("ws dispatch failed: {e}")))
+}
+
+#[cfg(test)]
+impl WorkerPool {
+    /// Register a worker with `tsfn: None` for pool-logic unit tests.
+    /// Production code always sets `Some(...)`; tests using this helper
+    /// MUST NOT call dispatch paths that unwrap tsfn.
+    pub fn register_for_test(&self) -> u32 {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let entry = Arc::new(TsfnEntry {
+            id,
+            tsfn: None,
+            buf_ptr: BufPtr(std::ptr::null_mut()),
+            buf_len: 0,
+            in_flight: AtomicU32::new(0),
+            render_slot: parking_lot::Mutex::new(None),
+        });
+        self.entries.write().push(entry);
+        id
+    }
 }
 
 #[cfg(test)]
@@ -214,5 +308,105 @@ mod tests {
         let (ack_tx, ack_rx) = oneshot::channel::<()>();
         drop(ack_tx);
         assert!(ack_rx.await.is_err());
+    }
+
+    #[test]
+    fn try_claim_render_returns_pool_empty() {
+        let pool = WorkerPool::new();
+        let (tx, _rx) = tokio::sync::mpsc::channel::<RenderChunk>(1);
+        match pool.try_claim_render(tx) {
+            ClaimResult::PoolEmpty => {}
+            _ => panic!("expected PoolEmpty"),
+        }
+    }
+
+    #[test]
+    fn try_claim_render_claims_idle_worker() {
+        let pool = WorkerPool::new();
+        let id = pool.register_for_test();
+        let (tx, _rx) = tokio::sync::mpsc::channel::<RenderChunk>(1);
+        let claim = match pool.try_claim_render(tx) {
+            ClaimResult::Claimed(c) => c,
+            _ => panic!("expected Claimed"),
+        };
+        assert_eq!(claim.entry().id, id);
+        assert!(claim.entry().render_slot.lock().is_some());
+        assert_eq!(claim.entry().in_flight.load(Ordering::Relaxed), 1);
+        drop(claim);
+    }
+
+    #[test]
+    fn try_claim_render_second_returns_other_idle_worker() {
+        let pool = WorkerPool::new();
+        let id0 = pool.register_for_test();
+        let id1 = pool.register_for_test();
+        let (tx0, _rx0) = tokio::sync::mpsc::channel::<RenderChunk>(1);
+        let (tx1, _rx1) = tokio::sync::mpsc::channel::<RenderChunk>(1);
+
+        let c0 = match pool.try_claim_render(tx0) {
+            ClaimResult::Claimed(c) => c,
+            _ => panic!(),
+        };
+        let c1 = match pool.try_claim_render(tx1) {
+            ClaimResult::Claimed(c) => c,
+            _ => panic!(),
+        };
+        assert_ne!(c0.entry().id, c1.entry().id);
+        let mut ids = [c0.entry().id, c1.entry().id];
+        ids.sort();
+        assert_eq!(ids, [id0, id1]);
+    }
+
+    #[test]
+    fn try_claim_render_all_busy_returns_all_busy() {
+        let pool = WorkerPool::new();
+        let _id = pool.register_for_test();
+        let (tx0, _rx0) = tokio::sync::mpsc::channel::<RenderChunk>(1);
+        let (tx1, _rx1) = tokio::sync::mpsc::channel::<RenderChunk>(1);
+        let _c0 = match pool.try_claim_render(tx0) {
+            ClaimResult::Claimed(c) => c,
+            _ => panic!(),
+        };
+        match pool.try_claim_render(tx1) {
+            ClaimResult::AllBusy => {}
+            _ => panic!("expected AllBusy"),
+        }
+    }
+
+    #[test]
+    fn render_claim_drop_releases_slot_and_decrements_in_flight() {
+        let pool = WorkerPool::new();
+        let _id = pool.register_for_test();
+        let entry = pool.entries.read()[0].clone();
+        {
+            let (tx, _rx) = tokio::sync::mpsc::channel::<RenderChunk>(1);
+            let _claim = match pool.try_claim_render(tx) {
+                ClaimResult::Claimed(c) => c,
+                _ => panic!(),
+            };
+            assert!(entry.render_slot.lock().is_some());
+            assert_eq!(entry.in_flight.load(Ordering::Relaxed), 1);
+        }
+        // Drop ran here.
+        assert!(entry.render_slot.lock().is_none());
+        assert_eq!(entry.in_flight.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn try_claim_render_after_drop_reuses_worker() {
+        let pool = WorkerPool::new();
+        let _id = pool.register_for_test();
+        let (tx0, _rx0) = tokio::sync::mpsc::channel::<RenderChunk>(1);
+        let (tx1, _rx1) = tokio::sync::mpsc::channel::<RenderChunk>(1);
+        {
+            let _c0 = match pool.try_claim_render(tx0) {
+                ClaimResult::Claimed(c) => c,
+                _ => panic!(),
+            };
+        }
+        match pool.try_claim_render(tx1) {
+            ClaimResult::Claimed(_) => {}
+            _ => panic!("expected reuse"),
+        }
     }
 }
