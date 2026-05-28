@@ -2,9 +2,10 @@ import { defineRoutes, type Middleware } from '../../../runtime/routes.ts'
 import { counterStream, idleStream } from './sse-streams.ts'
 
 // Demo components re-used by the showcase routes (kept clean in example/).
-import HelloWorld   from '../../../example/hello-world/pages/HelloWorld'
-import BlogPost     from '../../../example/hello-world/pages/BlogPost'
-import SlowSuspense from '../../../example/hello-world/pages/SlowSuspense'
+import HelloWorld    from '../../../example/hello-world/pages/HelloWorld'
+import BlogPost      from '../../../example/hello-world/pages/BlogPost'
+import SlowSuspense  from '../../../example/hello-world/pages/SlowSuspense'
+import NativeProfile from '../../../example/hello-world/pages/NativeProfile'
 
 // Test-only components — these mount routes that exercise failure modes,
 // middleware, cache, nested routes, and the various server-action paths.
@@ -47,6 +48,20 @@ export const routes = defineRoutes([
   { path: '/blog/{slug}',  Component: BlogPost,
     loader: async ({ params }) => ({ title: `Post: ${params.slug}` }) },
   { path: '/slow-suspense', Component: SlowSuspense },
+
+  // Sub-project J — `native: true` E2E coverage. NativeProfile.tsx is
+  // compiled to .brust/jinja/NativeProfile.jinja at build time; this
+  // route exercises the full pipeline: loader → SAB → minijinja →
+  // single-chunk response.
+  {
+    path: '/_test/native/{user}',
+    Component: NativeProfile,
+    native: true,
+    loader: async ({ params }) => ({
+      user: params.user,
+      greeting: `Hello, ${params.user}`,
+    }),
+  },
 
   // Test-only routes — failure modes + middleware + cache.
   { path: '/crash',        Component: Crash, errorBoundary: CrashBoundary },
