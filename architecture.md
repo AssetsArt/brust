@@ -140,22 +140,16 @@ that Rust reads via the pointer captured at register time. It does *not* mean
 the whole `/` path is zero-copy end to end; the table below counts every copy
 that still happens.
 
-**Copy count, /  endpoint (uncached, post Sub-project M):**
+**Copy count, /  endpoint:**
 
 | Where | Bytes | Notes |
 |---|---|---|
 | path: V8 → Rust (`String`) | ~50 | unavoidable, tiny |
 | html: V8 → SAB (`TextEncoder.encodeInto`) | full body | inside Worker, one pass UTF-8 |
-| SAB → channel `Vec<u8>` (`from_raw_parts(..).to_vec()`) | full body | Rust local memcpy, ~10 GB/s on M1 — architecturally required (SAB reused by worker's next render) |
-| channel `Vec<u8>` → kernel | full body | `write_vectored` syscall via `[head, body_slice]` — no userspace memcpy of the body |
+| SAB → response `Vec<u8>` (`from_raw_parts(..).to_vec()`) | full body | Rust local memcpy, ~10 GB/s on M1 |
+| response `Vec<u8>` → kernel | full body | `write_all` syscall |
 
-Sub-project M (2026-05-28, [spec](docs/superpowers/specs/2026-05-28-writev-zero-copy-response-design.md)) eliminated two pre-existing memcpys on uncached buffering responses: `build_single_response_bytes`'s `extend_from_slice(body)` and the unconditional `response_bytes_for_cache = resp.clone()`. Cached routes still pay one body memcpy (in `build_single_response_bytes`); reducing the cache-path memcpy is a follow-up. Inspired by [nylon-ring](https://github.com/AssetsArt/nylon-ring)'s `NrVec<u8>` zero-copy ownership-transfer philosophy.
-
-`build_response` still allocates one `Vec<u8>` and copies the body into it on
-the non-render paths (`/ping`, error responses, cache hits which are stored
-as full wire bytes). For uncached render paths, Sub-project M replaced the
-body memcpy with a vectored write via `[head, body_slice]`, eliminating the
-SAB→Vec body copy on the bench hot path.
+`build_response` still allocates one `Vec<u8>` and copies the body into it. Sub-project M (2026-05-28, [post-mortem](docs/superpowers/post-mortems/2026-05-28-writev-zero-copy-response.md)) attempted to replace this memcpy with `writev` (inspired by [nylon-ring](https://github.com/AssetsArt/nylon-ring)'s `NrVec<u8>` zero-copy ownership-transfer philosophy); macOS bench measured +8 % p99 regression so the writev path was reverted. The kept architectural improvement: `cache_wanted: bool` plumbing in `dispatch_to_worker_and_stream_chunks` that skips an unconditional `response_bytes_for_cache.clone()` on uncached routes — bench-neutral but cleaner.
 
 ---
 

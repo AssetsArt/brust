@@ -47,27 +47,6 @@ impl TcpStream {
         res
     }
 
-    /// Compatibility stub on Linux. tokio-uring's `writev` expects owned
-    /// `BoundedBuf`-conforming buffers; our buffering hot path holds a
-    /// borrowed body slice into channel-delivered `data: Vec<u8>`. For
-    /// now, concat into a single Vec and write in one call — preserving
-    /// current Linux behavior. Real io_uring writev support is deferred
-    /// to a future sub-project once a Linux bench baseline exists (spec
-    /// "Known limitations §1").
-    #[allow(dead_code)]
-    pub async fn write_all_vectored(
-        &mut self,
-        bufs: &mut [std::io::IoSlice<'_>],
-    ) -> std::io::Result<()> {
-        let total: usize = bufs.iter().map(|s| s.len()).sum();
-        let mut merged: Vec<u8> = Vec::with_capacity(total);
-        for s in bufs.iter() {
-            merged.extend_from_slice(s);
-        }
-        let (res, _) = self.0.write_all(merged).await;
-        res
-    }
-
     #[allow(dead_code)]
     pub async fn shutdown(&mut self) -> std::io::Result<()> {
         self.0.shutdown(std::net::Shutdown::Both)

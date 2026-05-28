@@ -1038,23 +1038,13 @@ where
                             let term = crate::render_stream::format_chunk_framed(b"");
                             let _ = s.write_all(term).await;
                         } else if let Some(meta) = buffered_meta.take() {
+                            let resp = crate::render_stream::build_single_response_bytes(&meta, &buffered_body);
                             if cache_wanted {
-                                let resp = crate::render_stream::build_single_response_bytes(&meta, &buffered_body);
                                 response_bytes_for_cache = resp.clone();
-                                if s.write_all(resp).await.is_err() {
-                                    let _ = ack.send(());
-                                    return DispatchControl::CloseConn;
-                                }
-                            } else {
-                                let head = crate::render_stream::build_single_response_head_only(&meta, buffered_body.len());
-                                let mut slices = [
-                                    std::io::IoSlice::new(&head),
-                                    std::io::IoSlice::new(&buffered_body),
-                                ];
-                                if s.write_all_vectored(&mut slices).await.is_err() {
-                                    let _ = ack.send(());
-                                    return DispatchControl::CloseConn;
-                                }
+                            }
+                            if s.write_all(resp).await.is_err() {
+                                let _ = ack.send(());
+                                return DispatchControl::CloseConn;
                             }
                         }
                         let _ = ack.send(());
@@ -1106,30 +1096,19 @@ where
                             // No cache write-back in chunked mode (matches existing Final arm).
                         } else {
                             // Canonical buffering use-case: single Content-Length response.
+                            // Build the response bytes once; clone only when the cache needs
+                            // an owned copy independent of the write_all transfer. The plan's
+                            // original writev path was measured slower on macOS (per
+                            // 2026-05-28 N=5 medians — see plan T7 BLOCKED #2 mitigation),
+                            // so we keep the concat write but preserve the cache-clone skip
+                            // for the uncached hot path.
+                            let resp = crate::render_stream::build_single_response_bytes(&parsed, body);
                             if cache_wanted {
-                                // Build full bytes once for both the write and the cache insert.
-                                // Clone preserved here — cache needs an owned copy independent of
-                                // the write_all transfer. Reducing this clone is a separate
-                                // sub-project (see spec "Known limitations §3").
-                                let resp = crate::render_stream::build_single_response_bytes(&parsed, body);
                                 response_bytes_for_cache = resp.clone();
-                                if s.write_all(resp).await.is_err() {
-                                    let _ = ack.send(());
-                                    return DispatchControl::CloseConn;
-                                }
-                            } else {
-                                // Uncached hot path — vectored write, no body memcpy.
-                                // `data` (containing `body` as a sub-slice) is owned by this
-                                // match arm and lives until the arm exits, well past the await.
-                                let head = crate::render_stream::build_single_response_head_only(&parsed, body.len());
-                                let mut slices = [
-                                    std::io::IoSlice::new(&head),
-                                    std::io::IoSlice::new(body),
-                                ];
-                                if s.write_all_vectored(&mut slices).await.is_err() {
-                                    let _ = ack.send(());
-                                    return DispatchControl::CloseConn;
-                                }
+                            }
+                            if s.write_all(resp).await.is_err() {
+                                let _ = ack.send(());
+                                return DispatchControl::CloseConn;
                             }
                         }
 
@@ -1153,18 +1132,11 @@ where
                             // ERR_INCOMPLETE_CHUNKED_ENCODING.
                             let _ = s.write_all(crate::render_stream::format_chunk_framed(b"")).await;
                         } else if let Some(meta) = buffered_meta.take() {
+                            let resp = crate::render_stream::build_single_response_bytes(&meta, &buffered_body);
                             if cache_wanted {
-                                let resp = crate::render_stream::build_single_response_bytes(&meta, &buffered_body);
                                 response_bytes_for_cache = resp.clone();
-                                let _ = s.write_all(resp).await;
-                            } else {
-                                let head = crate::render_stream::build_single_response_head_only(&meta, buffered_body.len());
-                                let mut slices = [
-                                    std::io::IoSlice::new(&head),
-                                    std::io::IoSlice::new(&buffered_body),
-                                ];
-                                let _ = s.write_all_vectored(&mut slices).await;
                             }
+                            let _ = s.write_all(resp).await;
                         }
                         break;
                     }

@@ -1297,15 +1297,14 @@ test('mcp: unknown method returns -32601', async () => {
   }
 }, 15_000)
 
-// ----- writev zero-copy response: byte-equivalence -----
+// ----- buffering response: uncached vs cached wire-shape smoke -----
 //
-// Sub-project M (2026-05-28): uncached buffering responses now write
-// [response_head, body_slice] via write_vectored — no userspace body memcpy.
-// Cached responses still go through the build_single_response_bytes path.
-// Both must produce a wire-equivalent shape (same status, same header set in
-// the same order, Content-Length matching body length, no Transfer-Encoding).
-// fetch() reframes headers, so we read raw socket bytes.
-test('writev path: uncached and cached buffering responses share wire shape', async () => {
+// Sub-project M (2026-05-28): dispatch helper grew a `cache_wanted: bool`
+// parameter to skip an unconditional response_bytes_for_cache.clone() on
+// uncached routes. Both paths must still produce equivalent HTTP/1.1 wire
+// shape (same status, header order, Content-Length matching body bytes, no
+// Transfer-Encoding). fetch() reframes headers, so we read raw socket bytes.
+test('buffering: uncached and cached responses share wire shape', async () => {
   const proc = spawn({
     cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: { ...process.env, BRUST_PORT: '38199', RUST_LOG: 'brust=warn' },
