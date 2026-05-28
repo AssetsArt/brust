@@ -226,3 +226,54 @@ test('flattenRoutes accepts websocket + middleware', () => {
     ] as Route[]),
   ).not.toThrow()
 })
+
+// ----- A2.2 rustCompiled validation tests -----
+
+test('flattenRoutes accepts rustCompiled as the only render mechanism', () => {
+  const flat = flattenRoutes([
+    { path: '/', rustCompiled: 'static_hello' },
+  ] as Route[])
+  expect(flat.length).toBe(1)
+  expect(flat[0]!.rustCompiled).toBe('static_hello')
+  expect(flat[0]!.fullPath).toBe('/')
+})
+
+test('flattenRoutes rejects rustCompiled + Component', () => {
+  expect(() =>
+    flattenRoutes([
+      { path: '/x', rustCompiled: 'static_hello', Component: C },
+    ] as Route[]),
+  ).toThrow(/cannot coexist with 'Component'/)
+})
+
+test('flattenRoutes rejects rustCompiled + loader (in A2.2)', () => {
+  expect(() =>
+    flattenRoutes([
+      { path: '/x', rustCompiled: 'static_hello', loader: async () => ({}) },
+    ] as Route[]),
+  ).toThrow(/cannot coexist with 'loader'/)
+})
+
+test('flattenRoutes rejects rustCompiled + middleware (in A2.2)', () => {
+  expect(() =>
+    flattenRoutes([
+      { path: '/x', rustCompiled: 'static_hello', middleware: [async (_, next) => next()] },
+    ] as Route[]),
+  ).toThrow(/cannot coexist with 'middleware'/)
+})
+
+test('flattenRoutes rejects rustCompiled + sse', () => {
+  expect(() =>
+    flattenRoutes([
+      { path: '/x', rustCompiled: 'static_hello', sse: () => new ReadableStream() },
+    ] as Route[]),
+  ).toThrow(/cannot coexist with 'sse'/)
+})
+
+test('flattenRoutes rejects rustCompiled + children', () => {
+  expect(() =>
+    flattenRoutes([
+      { path: '/x', rustCompiled: 'static_hello', children: [{ path: 'y', Component: C }] },
+    ] as Route[]),
+  ).toThrow(/nested children/)
+})

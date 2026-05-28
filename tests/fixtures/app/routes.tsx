@@ -88,4 +88,8 @@ export const routes = defineRoutes([
   { path: '/ws/server-close',  websocket: () => import('./ws-server-close.ts') },
   { path: '/ws/protocols',     websocket: () => import('./ws-echo.ts'),
     wsOptions: { subprotocols: ['chat.v2', 'chat.v1'] } },
+
+  // A2.2 — rustCompiled route. Bypasses React; dispatcher calls
+  // napiRenderCompiled('static_hello', '{}') and ships the rendered bytes.
+  { path: '/_test/rust-static',  rustCompiled: 'static_hello' },
 ])

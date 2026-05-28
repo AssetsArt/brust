@@ -171,6 +171,14 @@ export interface Route<Params = Record<string, string>, Data = unknown> {
    * pattern returns a module namespace `{ default: WsHandlers }`);
    * `handleWsConn` unwraps `.default` defensively at call time. */
   websocket?: () => Promise<WsHandlers | { default: WsHandlers }>
+  /** A2.2 — opt-in: render this route via a Rust-compiled fixture instead
+   * of React. The string must match a key in `crates/brust/src/compiled_routes`
+   * (e.g. `"static_hello"`). Cannot coexist with `Component`, `loader`, `sse`,
+   * `websocket`, `children`, or `middleware` in A2.2; future phases will
+   * support loader-data + middleware. The framework auto-sends
+   * `Content-Type: text/html; charset=utf-8` and `Content-Length`; the body
+   * is the bytes returned by `napiRenderCompiled(rustCompiled, "{}")`. */
+  rustCompiled?: string
   wsOptions?: {
     /** Server-initiated ping interval in ms. Default 30000. Set 0 to disable.
      * Pong timeout = 2× pingMs; conn closes with code 1011 if no pong by then. */
@@ -202,6 +210,10 @@ export interface FlatRoute {
   errorBoundary?: ComponentType<ErrorBoundaryProps>
   /** Cache from the leaf only — no parent inheritance. */
   cache?: RouteCacheConfig
+  /** A2.2 — when present, dispatcher calls `napiRenderCompiled(rustCompiled, "{}")`
+   * and ships the bytes via emitSingleChunkResponse instead of going through
+   * React's renderToPipeableStream. Validated as leaf-only at flatten time. */
+  rustCompiled?: string
 }
 
 /** Compose a child's relative path onto a parent's base path.
@@ -247,6 +259,27 @@ function validateRoute(r: Route, basePath: string): void {
     }
     if (r.children !== undefined) {
       throw new Error(`Route ${where}: 'sse' cannot have nested children`)
+    }
+  }
+  if (r.rustCompiled) {
+    const where = r.path ?? '(no path)'
+    if (r.Component !== undefined) {
+      throw new Error(`Route ${where}: 'rustCompiled' cannot coexist with 'Component'`)
+    }
+    if (r.loader !== undefined) {
+      throw new Error(`Route ${where}: 'rustCompiled' cannot coexist with 'loader' in A2.2`)
+    }
+    if (r.sse !== undefined) {
+      throw new Error(`Route ${where}: 'rustCompiled' cannot coexist with 'sse'`)
+    }
+    if (r.websocket !== undefined) {
+      throw new Error(`Route ${where}: 'rustCompiled' cannot coexist with 'websocket'`)
+    }
+    if (r.children !== undefined) {
+      throw new Error(`Route ${where}: 'rustCompiled' cannot have nested children`)
+    }
+    if (r.middleware !== undefined && r.middleware.length > 0) {
+      throw new Error(`Route ${where}: 'rustCompiled' cannot coexist with 'middleware' in A2.2`)
     }
   }
   if (r.websocket) {
@@ -312,7 +345,8 @@ function makeFlat(chain: Route[], fullPath: string): FlatRoute {
     if (r.errorBoundary) errorBoundary = r.errorBoundary
   }
   const cache = chain[chain.length - 1].cache
-  return { fullPath, chain, middleware, errorBoundary, cache }
+  const rustCompiled = chain[chain.length - 1].rustCompiled
+  return { fullPath, chain, middleware, errorBoundary, cache, rustCompiled }
 }
 
 /** Internal React context that carries the next-deeper rendered element to
@@ -434,6 +468,10 @@ export function makeRenderer(
     renderChunkFinal: async (workerId: bigint, len: number, _sabBytes: Uint8Array): Promise<void> => {
       await (native as any).napiRenderChunkFinal(Number(workerId), len)
     },
+    // A2.2 — sync; returns Buffer of rendered HTML, throws on unknown name.
+    napiRenderCompiled: (name: string, dataJson: string): Buffer => {
+      return (native as any).napiRenderCompiled(name, dataJson) as Buffer
+    },
   }
 
   return async (envelopeJson: string): Promise<void> => {
@@ -489,6 +527,27 @@ export function makeRenderer(
           body: verdict.body,
           headers: verdict.headers,
         })
+        return
+      }
+
+      // A2.2 — short-circuit before React path. Validation guarantees there's
+      // no loader/middleware here, so we pass an empty data envelope. Future
+      // phases will thread loader return value as the data_json arg.
+      if (flat.rustCompiled !== undefined) {
+        try {
+          const bytes = napi.napiRenderCompiled(flat.rustCompiled, '{}')
+          await emitSingleChunkResponse(view, napi, workerId, encoder, {
+            status: verdict.status,
+            contentType: 'text/html; charset=utf-8',
+            body: bytes,
+            headers: verdict.headers,
+          })
+        } catch (err) {
+          console.error(`[brust] rustCompiled render failed for "${flat.rustCompiled}":`, err)
+          await emitSingleChunkResponse(view, napi, workerId, encoder, {
+            status: 500, contentType: 'text/html; charset=utf-8', body: 'internal error',
+          })
+        }
         return
       }
 
