@@ -1,13 +1,9 @@
-export default function ListNav({ items }) {
+export default function ListNav({ items }: { items: { href: string; label: string }[] }) {
   return (
-    <nav>
-      <ul>
-        {items.map((item) => (
-          <li>
-            <a href={item.href}>{item.label}</a>
-          </li>
-        ))}
-      </ul>
-    </nav>
+    <ul>
+      {items.map((item) => (
+        <li><a href={item.href}>{item.label}</a></li>
+      ))}
+    </ul>
   )
 }

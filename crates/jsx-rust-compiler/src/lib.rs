@@ -1,4 +1,4 @@
-mod emit;
+mod emit_jinja;
 mod ir;
 mod lower;
 pub mod parser;
@@ -16,7 +16,7 @@ pub fn compile_with_path(source: &str, path: &str) -> Result<String, CompileErro
     })?;
 
     let ir = lower::lower(&parsed).map_err(|e| CompileError::from_lower(e, path, &parsed))?;
-    Ok(emit::emit(&ir))
+    Ok(emit_jinja::emit(&ir))
 }
 
 #[derive(Debug, thiserror::Error)]
