@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/brust",
+    "crates/jsx-rust-compiler",
 ]
 
 # Workspace-level release profile applies to every member crate. Kept identical
