@@ -25,6 +25,10 @@ tokio-tungstenite  = { version = "0.21", default-features = false }
 sha1               = "0.10"
 futures            = "0.3"
 bytes              = "1"
+# A2.0 — compiled_routes/ .tsx fixtures emit Rust that imports maud.
+# build.rs runs jsx_rust_compiler::compile() at build time, writes results into
+# $OUT_DIR/compiled_routes/, which lib.rs include!s. Cdylib gains ~20KB.
+maud               = "0.27"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 tokio-uring = "0.5"
@@ -34,4 +38,5 @@ tokio       = { version = "1", features = ["rt", "macros", "signal", "sync", "ti
 tokio       = { version = "1", features = ["rt", "macros", "net", "io-util", "time", "sync", "signal", "fs"] }
 
 [build-dependencies]
-napi-build = "2"
+napi-build        = "2"
+jsx-rust-compiler = { path = "../jsx-rust-compiler" }

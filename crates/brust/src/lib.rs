@@ -1,6 +1,7 @@
 #![deny(clippy::all)]
 
 mod cache;
+mod compiled_routes;
 mod http;
 mod io;
 mod pool;
