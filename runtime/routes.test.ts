@@ -227,3 +227,56 @@ test('flattenRoutes accepts websocket + middleware', () => {
   ).not.toThrow()
 })
 
+// ----- Sub-project J `native: true` validation tests -----
+
+function NamedPage() { return null }
+
+test('flattenRoutes accepts native: true + Component (NamedPage)', () => {
+  const flat = flattenRoutes([
+    { path: '/', Component: NamedPage, native: true },
+  ] as Route[])
+  expect(flat.length).toBe(1)
+  expect(flat[0]!.nativeTemplate).toBe('NamedPage')
+})
+
+test('flattenRoutes accepts native: true + Component + loader', () => {
+  const flat = flattenRoutes([
+    { path: '/', Component: NamedPage, native: true, loader: async () => ({ x: 1 }) },
+  ] as Route[])
+  expect(flat[0]!.nativeTemplate).toBe('NamedPage')
+})
+
+test('flattenRoutes accepts native: true + middleware', () => {
+  const flat = flattenRoutes([
+    { path: '/', Component: NamedPage, native: true, middleware: [async (_, next) => next()] },
+  ] as Route[])
+  expect(flat[0]!.nativeTemplate).toBe('NamedPage')
+})
+
+test('flattenRoutes rejects native: true without Component', () => {
+  expect(() => flattenRoutes([{ path: '/x', native: true } as Route])).toThrow(/'native: true' requires 'Component'/)
+})
+
+test('flattenRoutes rejects native: true with anonymous Component', () => {
+  const anon = (function () { return (function () { return null }) })() as unknown
+  expect(() => flattenRoutes([{ path: '/x', Component: anon as never, native: true } as Route])).toThrow(/must be a named function/)
+})
+
+test('flattenRoutes rejects native: true + sse', () => {
+  expect(() => flattenRoutes([
+    { path: '/x', Component: NamedPage, native: true, sse: () => new ReadableStream() } as Route,
+  ])).toThrow(/cannot coexist with 'sse'/)
+})
+
+test('flattenRoutes rejects native: true + children', () => {
+  expect(() => flattenRoutes([
+    { path: '/x', Component: NamedPage, native: true, children: [{ path: 'y', Component: NamedPage }] } as Route,
+  ])).toThrow(/nested children/)
+})
+
+test('flattenRoutes rejects native: true + cache (deferred)', () => {
+  expect(() => flattenRoutes([
+    { path: '/x', Component: NamedPage, native: true, cache: { ttl_seconds: 60 } } as Route,
+  ])).toThrow(/cannot coexist with 'cache'/)
+})
+

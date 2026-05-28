@@ -183,6 +183,11 @@ export interface Route<Params = Record<string, string>, Data = unknown> {
      * order) wins and is reflected in Sec-WebSocket-Protocol response. */
     subprotocols?: string[]
   }
+  /** Sub-project J — render this route via the native (jinja) engine, not React.
+   * `Component` is REQUIRED (the JSX file is the source jsx-rustc compiles
+   * into `.brust/jinja/<Component.name>.jinja`). Loader-friendly: the loader's
+   * return value becomes the template context. */
+  native?: boolean
 }
 
 /** Internal post-flatten representation. Each FlatRoute is a single leaf or
@@ -202,6 +207,9 @@ export interface FlatRoute {
   errorBoundary?: ComponentType<ErrorBoundaryProps>
   /** Cache from the leaf only — no parent inheritance. */
   cache?: RouteCacheConfig
+  /** Sub-project J — Component.name when leaf had `native: true`. Captured
+   * at flatten time (build-time AST identifier), so minifier-safe. */
+  nativeTemplate?: string
 }
 
 /** Compose a child's relative path onto a parent's base path.
@@ -236,6 +244,28 @@ function validateRoute(r: Route, basePath: string): void {
     throw new Error(
       `route under "${basePath}": absolute child path "${r.path}" must be under a pathless ('') parent`,
     )
+  }
+  if (r.native === true) {
+    const where = r.path ?? '(no path)'
+    if (r.Component === undefined) {
+      throw new Error(`Route ${where}: 'native: true' requires 'Component'`)
+    }
+    if (!r.Component.name || r.Component.name.length === 0) {
+      throw new Error(`Route ${where}: 'native: true' Component must be a named function (got anonymous)`)
+    }
+    if (r.sse !== undefined) {
+      throw new Error(`Route ${where}: 'native: true' cannot coexist with 'sse'`)
+    }
+    if (r.websocket !== undefined) {
+      throw new Error(`Route ${where}: 'native: true' cannot coexist with 'websocket'`)
+    }
+    if (r.children !== undefined) {
+      throw new Error(`Route ${where}: 'native: true' cannot have nested children`)
+    }
+    if (r.cache !== undefined) {
+      throw new Error(`Route ${where}: 'native: true' cannot coexist with 'cache' (deferred)`)
+    }
+    // loader + middleware are EXPLICITLY allowed.
   }
   if (r.sse) {
     const where = r.path ?? '(no path)'
@@ -313,7 +343,10 @@ function makeFlat(chain: Route[], fullPath: string): FlatRoute {
   }
   const leaf = chain[chain.length - 1]
   const cache = leaf.cache
-  return { fullPath, chain, middleware, errorBoundary, cache }
+  const nativeTemplate = leaf.native === true && leaf.Component
+    ? leaf.Component.name
+    : undefined
+  return { fullPath, chain, middleware, errorBoundary, cache, nativeTemplate }
 }
 
 /** Internal React context that carries the next-deeper rendered element to
@@ -490,6 +523,46 @@ export function makeRenderer(
           body: verdict.body,
           headers: verdict.headers,
         })
+        return
+      }
+
+      // Sub-project J — native: true branch. Runs the leaf's loader (if any),
+      // JSON-encodes the result into the SAB, then invokes napiRenderJinja
+      // which performs the minijinja render Rust-side and emits a 200 chunk
+      // through the same render-chunk channel as the React path.
+      if (flat.nativeTemplate !== undefined) {
+        let data: unknown = {}
+        const leaf = flat.chain[flat.chain.length - 1]
+        if (leaf.loader) {
+          const ctx = { params: call.params, path: call.path, req: call.req }
+          try {
+            data = await leaf.loader(ctx as any)
+          } catch (err) {
+            console.error(`[brust] loader failed for native route ${flat.fullPath}:`, err)
+            await emitSingleChunkResponse(view, napi, workerId, encoder, {
+              status: 500, contentType: 'text/html; charset=utf-8', body: 'internal error',
+            })
+            return
+          }
+        }
+        const json = JSON.stringify(data ?? {})
+        const dataBytes = encoder.encode(json)
+        if (dataBytes.length > view.length) {
+          await emitSingleChunkResponse(view, napi, workerId, encoder, {
+            status: 413, contentType: 'text/plain; charset=utf-8',
+            body: 'loader data too large for SAB',
+          })
+          return
+        }
+        view.set(dataBytes, 0)
+        try {
+          await (native as any).napiRenderJinja(Number(workerId), dataBytes.length, flat.nativeTemplate)
+        } catch (err) {
+          console.error(`[brust] napiRenderJinja failed for "${flat.nativeTemplate}":`, err)
+          await emitSingleChunkResponse(view, napi, workerId, encoder, {
+            status: 500, contentType: 'text/html; charset=utf-8', body: 'internal error',
+          })
+        }
         return
       }
 
