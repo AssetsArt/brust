@@ -409,4 +409,103 @@ mod tests {
             _ => panic!("expected reuse"),
         }
     }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn try_claim_render_race_no_concurrent_double_claim() {
+        use std::sync::Arc;
+        use tokio::sync::Barrier;
+
+        const M: usize = 4;  // workers
+        const N: usize = 16; // concurrent claim attempts
+
+        let pool = Arc::new(WorkerPool::new());
+        for _ in 0..M {
+            pool.register_for_test();
+        }
+
+        // start_barrier: every task waits here before calling try_claim_render —
+        //                forces simultaneous contention at the claim point.
+        // hold_barrier:  every task waits here AFTER claiming/AllBusying and
+        //                BEFORE dropping. This guarantees that while any claim
+        //                is live, no other task has yet had a chance to release
+        //                its claim, so claimed_ids reflects the concurrent claim
+        //                state, not sequential reuse.
+        let start_barrier = Arc::new(Barrier::new(N));
+        let hold_barrier = Arc::new(Barrier::new(N));
+        let mut handles = Vec::new();
+        for _ in 0..N {
+            let pool = Arc::clone(&pool);
+            let start = Arc::clone(&start_barrier);
+            let hold = Arc::clone(&hold_barrier);
+            handles.push(tokio::spawn(async move {
+                start.wait().await;
+                let (tx, _rx) = tokio::sync::mpsc::channel::<RenderChunk>(1);
+                let outcome = match pool.try_claim_render(tx) {
+                    ClaimResult::Claimed(c) => {
+                        let id = c.entry().id;
+                        // Hold the claim until every task is past the claim attempt.
+                        hold.wait().await;
+                        drop(c);
+                        Some(id)
+                    }
+                    ClaimResult::AllBusy => {
+                        hold.wait().await;
+                        None
+                    }
+                    ClaimResult::PoolEmpty => panic!("pool was registered with {M} workers"),
+                };
+                outcome
+            }));
+        }
+
+        let mut claimed_ids = Vec::new();
+        let mut all_busy_count = 0usize;
+        for h in handles {
+            match h.await.unwrap() {
+                Some(id) => claimed_ids.push(id),
+                None => all_busy_count += 1,
+            }
+        }
+
+        // (1) Exactly M concurrent claims, N-M AllBusy. The hold barrier
+        // ensures no claim was released before every contender attempted,
+        // so this measures concurrent state — not sequential reuse.
+        assert_eq!(
+            claimed_ids.len(),
+            M,
+            "expected {M} concurrent claims, got {} (ids: {:?})",
+            claimed_ids.len(),
+            claimed_ids,
+        );
+        assert_eq!(all_busy_count, N - M);
+
+        // (2) Each successful concurrent claim corresponds to a distinct worker.
+        // This is the core anti-TOCTOU assertion: two tasks must not have
+        // both observed the same worker as idle.
+        let mut sorted = claimed_ids.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(
+            sorted.len(),
+            M,
+            "duplicate ids in concurrent claimed set: {:?}",
+            claimed_ids,
+        );
+
+        // (3) After all tasks finish (claims released after hold barrier),
+        // every slot is None and every in_flight is 0.
+        for entry in pool.entries.read().iter() {
+            assert!(
+                entry.render_slot.lock().is_none(),
+                "worker {} slot still held",
+                entry.id,
+            );
+            assert_eq!(
+                entry.in_flight.load(Ordering::Relaxed),
+                0,
+                "worker {} in_flight not drained",
+                entry.id,
+            );
+        }
+    }
 }
