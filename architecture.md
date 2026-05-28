@@ -267,11 +267,30 @@ N Bun Worker threads, one per V8 isolate
 
 Brust manages:
   - registration on worker startup (Worker calls napi `register_renderer(view, fn)`)
-  - least-busy selection on every render (atomic counter scan, N ≤ ~64 in practice)
+  - atomic claim on every render (`try_claim_render` — picks first idle worker,
+    installs render_slot, increments in_flight under one per-entry mutex)
+  - least-busy selection for SSE/WS dispatch (atomic counter scan; renders
+    don't use this path — claim is exclusive, not load-balanced)
   - in-flight counter (RAII guard increments on enter, decrements on drop)
   - removal on tsfn failure (worker tsfn dead → drop entry)
   - process::exit(1) if all entries die (no respawn yet)
 ```
+
+**Render dispatch is atomic-claim.** `WorkerPool::try_claim_render` picks the first
+worker whose `render_slot` is `None` under a per-entry `parking_lot::Mutex`,
+installs the chunk sender, and increments `in_flight` in one critical section.
+The returned `RenderClaim` is an RAII guard whose `Drop` clears the slot then
+decrements `in_flight` (order is load-bearing — preserves the invariant
+`in_flight ≥ render_slot_count` at every observable point). Two concurrent
+renders cannot claim the same worker because the per-entry mutex serializes
+the check-and-install. Returns `ClaimResult::PoolEmpty` (no workers registered)
+or `ClaimResult::AllBusy` (every worker mid-render) — distinct 503 bodies so
+operators can tell misconfiguration from overload. SSE/WS dispatch continues to
+use `pick_least_busy` because their per-conn task model doesn't share the SAB
+chunk channel. The earlier `pick_least_busy + slot install` sequence allowed a
+TOCTOU race (two pickers both observing `in_flight=0` and `slot=None` on the
+same entry, the second overwriting the first's `chunk_tx` silently in release);
+the atomic-claim refactor closes it. Regression test: `try_claim_render_race_no_concurrent_double_claim` in `src/pool.rs` runs 16 contender tasks against 4 workers under a multi-thread tokio runtime + two-phase barrier and verifies exactly 4 distinct concurrent claims.
 
 Each worker pre-loads its render closure once at boot. No cold start per
 request. Each worker has an isolated V8 heap; GC in one worker does not pause
