@@ -131,9 +131,19 @@ The `len == 0` case is degenerate (buffering finalize with no content) but legal
 
 ### `src/server.rs` (additive match arm)
 
-In `dispatch_to_worker_and_stream_chunks`'s chunk loop (around line 970), add a third match arm for `BytesAndFinal`. Body matches the existing `Bytes` path's buffering branch (parse meta, buffer body, `headers_written = true`) followed by the existing `Final` path's non-chunked branch (`build_single_response_bytes` + `write_all` + ack + break).
+In `dispatch_to_worker_and_stream_chunks`'s chunk loop (around line 970), add a third match arm for `BytesAndFinal`. The arm must produce **byte-identical wire output** to the sequence `Bytes { data, ack₁ }` followed by `Final { ack₂ }` for the same `data`. Concretely:
 
-This is the "buffering" use-case only — the arm must reject the `chunked == true` case explicitly (a chunked-mode worker sending `BytesAndFinal` is a misuse; warn and proceed as if it sent Bytes-then-Final).
+1. **Parse meta from `data`** (`split_meta` + `serde_json::from_slice`). On parse error: write `http::error_500()`, ack, return `DispatchControl::CloseConn` — same as the existing `Bytes` arm's error path.
+2. **Branch on `parsed.streaming`:**
+   - **`streaming == false` (canonical buffering use-case):**
+     - Build the response: `let resp = build_single_response_bytes(&parsed, body);`
+     - **Set the cache write-back source: `response_bytes_for_cache = resp.clone();`** — `dispatch_to_worker_and_stream_chunks` calls `on_success(&response_bytes_for_cache)` after the loop (around `server.rs:1095-1097`); skipping this is a silent cache regression. The existing `Final` non-chunked branch at `server.rs:1029-1030` does this exact assignment; the merged arm must replicate it.
+     - `s.write_all(resp).await` — on error: ack, return `DispatchControl::CloseConn`.
+   - **`streaming == true` (misuse — a chunked-mode worker sending `BytesAndFinal`):**
+     - Emit chunked headers (`build_chunked_response_head`), one framed body chunk (`format_chunk_framed(body)`), and the chunked terminator (`format_chunk_framed(b"")`). This is the byte-equivalent of what Bytes-then-Final would produce in chunked mode.
+     - Log at WARN: "BytesAndFinal received in streaming mode — emitting chunked + terminator". The misuse is non-fatal but indicates a caller bug worth surfacing.
+     - The cache write-back is **skipped in chunked mode** (matches the existing `Final` arm: `response_bytes_for_cache` is only populated for non-chunked finals; chunked responses bypass the response cache).
+3. **`ack.send(())` and `break`** — same as the existing `Final` arm's terminal flow.
 
 Test coverage for the new arm lives at the Rust unit-test layer (existing `src/pool.rs` tests + a new test exercising the variant) and at the integration layer (existing buffering-path tests pass unchanged because the response wire format is identical).
 
@@ -164,7 +174,7 @@ Four call-sites change inside `renderBranchStreaming`:
 4. Outer catch (currently lines 255–258):
    - Same as (2).
 
-`sendFinal()` stays — the streaming-path `_final` branch (line 141) still uses it after the last body chunk.
+`sendFinal()` stays — the streaming-path `_final` branch (line 141) still uses it after the last body chunk, and the function definition (lines 96-101) is unchanged. The `finalSent` guard inside `sendFinal` prevents double-firing if any code path accidentally invokes both `renderChunkFinal` and `sendFinal`; the new buffering-path call-sites set `finalSent = true` before resolving to keep that guard meaningful.
 
 ### `runtime/routes.ts`
 
@@ -182,6 +192,17 @@ napi: {
 ```
 
 `emitSingleChunkResponse` (lines 759-801) replaces both pairs of `renderChunk + renderChunk(_, 0)` calls (error path 791-792, content path 799-800) with single `renderChunkFinal` calls.
+
+**`emitSingleChunkResponse` parameter type update.** The function's current `napi` parameter type (line 759) is `napi: { renderChunk: (w: bigint, len: number, view: Uint8Array) => Promise<void> }`. It must be widened to include `renderChunkFinal`:
+
+```ts
+napi: {
+  renderChunk:      (w: bigint, len: number, view: Uint8Array) => Promise<void>
+  renderChunkFinal: (w: bigint, len: number, view: Uint8Array) => Promise<void>
+}
+```
+
+A strict TypeScript build will otherwise reject the new call. Both existing call-sites (lines 431-440 and 601-610) already gain `renderChunkFinal` in the wrapper object above, so the type widening is the only signature change needed.
 
 ## Behavior / concurrency invariants
 
@@ -230,7 +251,7 @@ After the impl lands, re-run the profile (the same `performance.now()` instrumen
 
 1. `cargo test --lib` and `cargo test --lib --release` green.
 2. `bun test runtime/` green (188 → 189+ with the new tests added).
-3. `bun run bench` shows c=1 `/` latency drop ≥ 15µs (the conservative lower bound of the expected range).
+3. `bun run bench` shows c=1 `/` latency drop ≥ 10µs on the M1 Pro host (the measured tsfn+channel+Promise round-trip cost). Host-dependent — the absolute µs save scales with whatever the host's pure napi overhead is; the architectural contract is "one fewer crossing per buffering render", not a specific µs number.
 4. `bun run bench` p99 on `/` does not regress beyond ±10% of the post-fix baseline (2.42ms).
 5. The HTTP response bytes for a `/` request are byte-identical before and after (smoke: `curl -s http://127.0.0.1:38201/ | wc -c` returns the same length pre- and post-fix).
 6. Streaming routes (`/slow-suspense`) still complete successfully (smoke: `curl -N` shows progressive output).
