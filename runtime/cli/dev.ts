@@ -64,8 +64,9 @@ export async function runDev(args: string[]): Promise<void> {
       console.warn(`[brust dev] failed to pre-load routes for jinja emit: ${(err as Error).message}`)
     }
   }
+  // Spec §7 — scan routes.tsx (where page imports live), not the app entry.
   await emitNativeTemplates({
-    entryFile: entry,
+    entryFile: existsSync(routesFile) ? routesFile : entry,
     flatRoutes: loadedRoutes as { nativeTemplate?: string }[],
     outDir: path.join(entryDir, '.brust/jinja'),
     repoRoot: REPO_ROOT,

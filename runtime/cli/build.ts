@@ -115,8 +115,14 @@ export async function runBuild(args: string[]): Promise<void> {
   // an empty manifest) so consumers can rely on the output dir's presence.
   {
     const jinjaDir = path.join(entryDir, '.brust/jinja')
+    // Spec §7 Component-source resolution: scan the routes module's source for
+    // ImportDeclarations, NOT the app entry's. The app entry only imports the
+    // routes module + brust; the page components are imported by routes.tsx.
+    // If routes.tsx doesn't exist (no routes module), we still write an empty
+    // manifest below — scanner falls back to passing a dummy path that produces
+    // an empty importMap (no native routes to emit anyway).
     await emitNativeTemplates({
-      entryFile: entry,
+      entryFile: existsSync(routesFile) ? routesFile : entry,
       flatRoutes: (loadedRoutes ?? []) as { nativeTemplate?: string }[],
       outDir: jinjaDir,
       repoRoot: REPO_ROOT,
