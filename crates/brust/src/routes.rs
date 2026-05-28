@@ -191,12 +191,27 @@ pub struct RouteConfig {
     pub path: String,
     #[serde(default)]
     pub cache: Option<CacheConfig>,
+    /// A2.3 — when set, the route renders via Rust-compiled fixture instead of
+    /// dispatching to a JS worker. Value is the component name (key into
+    /// `crates/brust/src/compiled_routes::render_by_name`). JS ships this via
+    /// `staticRender: Component.name` when the route has `static: true`.
+    #[serde(default, rename = "staticRender")]
+    pub static_render: Option<String>,
 }
 
 #[derive(Default)]
 pub struct RouteTable {
     inner: RwLock<matchit::Router<u32>>,
     cache_configs: RwLock<Vec<Option<CacheConfig>>>,
+    static_renders: RwLock<Vec<Option<String>>>,
+    /// A2.3 perf — pre-rendered framed HTTP/1.1 response per static route.
+    /// Computed at `install_with_config` time when a route has `static: true`
+    /// (component name is known and `render_by_name` is callable). Per-request
+    /// path: matchit lookup → Arc clone → `write_all(bytes)`. No render, no
+    /// String alloc, no header format. Closes the gap to /ping's pre-baked
+    /// `b"pong\n"` literal path. Falls back to live render when entry is
+    /// None (registry miss at install — error surfaced via 500).
+    static_prebuilt: RwLock<Vec<Option<std::sync::Arc<Vec<u8>>>>>,
 }
 
 impl RouteTable {
@@ -209,6 +224,8 @@ impl RouteTable {
     pub fn install_with_config(&self, configs: &[RouteConfig]) -> Result<u32, RouteInstallError> {
         let mut router = matchit::Router::new();
         let mut caches: Vec<Option<CacheConfig>> = Vec::with_capacity(configs.len());
+        let mut statics: Vec<Option<String>> = Vec::with_capacity(configs.len());
+        let mut prebuilt: Vec<Option<std::sync::Arc<Vec<u8>>>> = Vec::with_capacity(configs.len());
         for (idx, c) in configs.iter().enumerate() {
             router
                 .insert(c.path.clone(), idx as u32)
@@ -217,9 +234,30 @@ impl RouteTable {
                     reason: e.to_string(),
                 })?;
             caches.push(c.cache.clone());
+            statics.push(c.static_render.clone());
+
+            // A2.3 — pre-render the framed response so the request path is
+            // just a matchit lookup + Arc clone + write_all. Falls through
+            // to `None` if the registry doesn't recognize the component
+            // (validation drift between JS routes and Rust build pipeline);
+            // server.rs treats that as a 500.
+            let pre = c.static_render.as_deref().and_then(|name| {
+                crate::compiled_routes::render_by_name(name, "{}").map(|html| {
+                    let bytes = crate::http::build_response(
+                        200,
+                        "text/html; charset=utf-8",
+                        &[],
+                        html.into_bytes(),
+                    );
+                    std::sync::Arc::new(bytes)
+                })
+            });
+            prebuilt.push(pre);
         }
         *self.inner.write() = router;
         *self.cache_configs.write() = caches;
+        *self.static_renders.write() = statics;
+        *self.static_prebuilt.write() = prebuilt;
         Ok(configs.len() as u32)
     }
 
@@ -228,6 +266,36 @@ impl RouteTable {
             .read()
             .get(route_id as usize)
             .and_then(|c| c.clone())
+    }
+
+    /// A2.3 — returns the static-render component name for a route, if any.
+    /// Caller uses this to short-circuit BEFORE dispatching to the JS worker
+    /// pool: render directly via `compiled_routes::render_by_name`, frame
+    /// response with `build_single_response_bytes`, write to socket, skip
+    /// tsfn entirely.
+    pub fn static_render_for(&self, route_id: u32) -> Option<String> {
+        self.static_renders
+            .read()
+            .get(route_id as usize)
+            .and_then(|n| n.clone())
+    }
+
+    /// A2.3 — single-pass path-only lookup that returns the pre-rendered
+    /// framed HTTP response for a static route, if any. Per-request path is:
+    /// matchit walk → static_prebuilt index → Arc clone → write_all(bytes).
+    /// No render, no String alloc, no header format. Falls through to the
+    /// worker dispatch when the path didn't match a `static: true` route.
+    pub fn static_prebuilt_for_path(&self, full_path: &str) -> Option<std::sync::Arc<Vec<u8>>> {
+        let path_only = match full_path.split_once('?') {
+            Some((p, _)) => p,
+            None => full_path,
+        };
+        let router = self.inner.read();
+        let route_id = router.at(path_only).ok()?.value;
+        self.static_prebuilt
+            .read()
+            .get(*route_id as usize)
+            .and_then(|p| p.clone())
     }
 
     pub fn match_path(&self, method: &str, full_path: &str, raw_request: &[u8]) -> MatchResult {
@@ -492,6 +560,7 @@ mod tests {
         let cfg = RouteConfig {
             path: "/foo".into(),
             cache: None,
+            static_render: None,
         };
         table.install_with_config(&[cfg]).unwrap();
         let raw = b"GET /foo HTTP/1.1\r\nHost: x\r\n\r\n";

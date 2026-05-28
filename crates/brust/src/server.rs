@@ -156,6 +156,27 @@ async fn handle_conn(
             continue;
         }
 
+        // A2.3 — `static: true` short-circuit hoisted to the same level as
+        // /ping: ~700 lines of intermediate early-out branches (SSE/WS/
+        // _brust/* etc.) are skipped. `static_render_for_path` does only a
+        // matchit lookup + index — no envelope JSON, no params, no headers
+        // parsed. Cdylib-resident render fn does the bytes; framing is a
+        // single `format!()` + `write_all`. Cache is bypassed intentionally
+        // (rendered output is already baked in; LRU is pure overhead).
+        if let Some(prebuilt) = routes.static_prebuilt_for_path(&path) {
+            // Pre-baked at install time (see RouteTable::install_with_config).
+            // Per-request cost = Arc clone + write_all. No render, no format.
+            // Tokio's AsyncWriteExt::write_all takes Vec<u8>; clone the inner
+            // bytes (`Vec<u8>::clone` is one memcpy of 200 bytes) rather than
+            // unwrapping the Arc — multiple concurrent connections share the
+            // same Arc handle.
+            let bytes = (*prebuilt).clone();
+            if s.write_all(bytes).await.is_err() {
+                return;
+            }
+            continue;
+        }
+
         // Native-only route: cache observability. JSON of hits/misses/len/capacity.
         if path == "/_brust/cache/stats" {
             let stats = cache.stats();
@@ -846,6 +867,9 @@ async fn handle_conn(
                 DispatchControl::CloseConn => return,
             }
         }
+
+        // (A2.3 short-circuit is hoisted to the /ping level above — by the
+        // time control reaches here, the path is known to need a worker.)
 
         let (envelope_json, route_id) = match routes.match_path(&method, &path, &buf) {
             MatchResult::Matched {

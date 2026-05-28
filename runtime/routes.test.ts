@@ -227,53 +227,67 @@ test('flattenRoutes accepts websocket + middleware', () => {
   ).not.toThrow()
 })
 
-// ----- A2.2 rustCompiled validation tests -----
+// ----- A2.3 `static: true` validation tests -----
 
-test('flattenRoutes accepts rustCompiled as the only render mechanism', () => {
+function NamedComponent() { return null }
+
+test('flattenRoutes accepts static: true + Component (NamedComponent)', () => {
   const flat = flattenRoutes([
-    { path: '/', rustCompiled: 'static_hello' },
+    { path: '/', Component: NamedComponent, static: true },
   ] as Route[])
   expect(flat.length).toBe(1)
-  expect(flat[0]!.rustCompiled).toBe('static_hello')
+  expect(flat[0]!.staticRender).toBe('NamedComponent')
   expect(flat[0]!.fullPath).toBe('/')
 })
 
-test('flattenRoutes rejects rustCompiled + Component', () => {
+test('flattenRoutes rejects static: true without Component', () => {
   expect(() =>
     flattenRoutes([
-      { path: '/x', rustCompiled: 'static_hello', Component: C },
-    ] as Route[]),
-  ).toThrow(/cannot coexist with 'Component'/)
+      { path: '/x', static: true } as Route,
+    ]),
+  ).toThrow(/'static: true' requires 'Component'/)
 })
 
-test('flattenRoutes rejects rustCompiled + loader (in A2.2)', () => {
+test('flattenRoutes rejects static: true with anonymous Component', () => {
+  // JS infers function names from binding context — `Component: () => null`
+  // becomes name "Component". Wrap in an IIFE-returned anonymous fn to keep
+  // .name empty. Cast through `unknown` because Route's Component is typed.
+  const anon = (function () { return (function () { return null }) })() as unknown
   expect(() =>
     flattenRoutes([
-      { path: '/x', rustCompiled: 'static_hello', loader: async () => ({}) },
+      { path: '/x', Component: anon as never, static: true } as Route,
+    ]),
+  ).toThrow(/must be a named function/)
+})
+
+test('flattenRoutes rejects static: true + loader (in A2.3)', () => {
+  expect(() =>
+    flattenRoutes([
+      { path: '/x', Component: NamedComponent, static: true, loader: async () => ({}) },
     ] as Route[]),
   ).toThrow(/cannot coexist with 'loader'/)
 })
 
-test('flattenRoutes rejects rustCompiled + middleware (in A2.2)', () => {
+test('flattenRoutes rejects static: true + middleware (in A2.3)', () => {
   expect(() =>
     flattenRoutes([
-      { path: '/x', rustCompiled: 'static_hello', middleware: [async (_, next) => next()] },
+      { path: '/x', Component: NamedComponent, static: true, middleware: [async (_, next) => next()] },
     ] as Route[]),
   ).toThrow(/cannot coexist with 'middleware'/)
 })
 
-test('flattenRoutes rejects rustCompiled + sse', () => {
+test('flattenRoutes rejects static: true + sse', () => {
   expect(() =>
     flattenRoutes([
-      { path: '/x', rustCompiled: 'static_hello', sse: () => new ReadableStream() },
+      { path: '/x', Component: NamedComponent, static: true, sse: () => new ReadableStream() },
     ] as Route[]),
   ).toThrow(/cannot coexist with 'sse'/)
 })
 
-test('flattenRoutes rejects rustCompiled + children', () => {
+test('flattenRoutes rejects static: true + children', () => {
   expect(() =>
     flattenRoutes([
-      { path: '/x', rustCompiled: 'static_hello', children: [{ path: 'y', Component: C }] },
+      { path: '/x', Component: NamedComponent, static: true, children: [{ path: 'y', Component: C }] },
     ] as Route[]),
   ).toThrow(/nested children/)
 })

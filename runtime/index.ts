@@ -113,7 +113,14 @@ export const brust = {
    * Pass an array of FlatRoutes from `defineRoutes(...)` — each is JSON-encoded
    * with its optional cache config. Rust matches against `fullPath`. */
   registerRoutes(routes: import('./routes.ts').FlatRoute[]): number {
-    const configs = routes.map((r) => JSON.stringify({ path: r.fullPath, cache: r.cache ?? null }))
+    const configs = routes.map((r) => JSON.stringify({
+      path: r.fullPath,
+      cache: r.cache ?? null,
+      // A2.3 — when set, server.rs short-circuits and renders via
+      // compiled_routes::render_by_name(<name>, "{}") instead of dispatching
+      // to a JS worker. Name = JSX component's function.name.
+      staticRender: r.staticRender ?? null,
+    }))
     return (native as any).registerRoutes(configs)
   },
   /** Register the list of literal route paths that should be dispatched as

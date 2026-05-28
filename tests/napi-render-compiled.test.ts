@@ -17,9 +17,9 @@ const native = require('../runtime/index.darwin-arm64.node') as {
 const EXPECTED_HTML =
   '<div><h1>Hello from compiled Rust</h1><p>This page is statically generated.</p></div>'
 
-test('napiRenderCompiled("static_hello", "{}") returns expected HTML bytes', () => {
+test('napiRenderCompiled("StaticHello", "{}") returns expected HTML bytes', () => {
   expect(typeof native.napiRenderCompiled).toBe('function')
-  const buf = native.napiRenderCompiled!('static_hello', '{}')
+  const buf = native.napiRenderCompiled!('StaticHello', '{}')
   expect(buf).toBeInstanceOf(Buffer)
   expect(buf.toString('utf8')).toBe(EXPECTED_HTML)
 })

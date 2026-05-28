@@ -12,15 +12,18 @@ pub mod static_hello {
     include!(concat!(env!("OUT_DIR"), "/compiled_routes/static_hello.rs"));
 }
 
-/// A2.1 — name-to-render dispatch. JS workers call this via the
-/// `napi_render_compiled` shim in `lib.rs`. `data_json` is the loader-produced
-/// data shape (currently unused for static fixtures); future Props-typed
-/// fixtures will deserialize into the fixture-specific `Props` struct.
+/// A2.3 — Component-name → render dispatch. Key is the JSX component
+/// function's identity (`Component.name` from the JS side, which is the
+/// PascalCase identifier the .tsx file `export default`s). `data_json` is
+/// the loader-produced data shape (currently unused for prop-less
+/// fixtures); A2.x will deserialize it into the fixture's `Props` struct.
 ///
-/// Returns `Some(html)` on hit, `None` on unknown name (caller maps to 404).
+/// Returns `Some(html)` on hit, `None` on unknown name (caller maps to 500
+/// since validation should have caught registry-vs-fixture drift at config
+/// time).
 pub fn render_by_name(name: &str, _data_json: &str) -> Option<String> {
     match name {
-        "static_hello" => {
+        "StaticHello" => {
             let props = static_hello::Props {};
             Some(static_hello::render(&props).into_string())
         }
@@ -45,7 +48,7 @@ mod tests {
     #[test]
     fn render_by_name_static_hello_hit() {
         assert_eq!(
-            render_by_name("static_hello", "{}"),
+            render_by_name("StaticHello", "{}"),
             Some(EXPECTED_STATIC_HELLO.to_string())
         );
     }
