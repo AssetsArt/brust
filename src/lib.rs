@@ -555,6 +555,40 @@ pub async fn napi_render_chunk(worker_id: u32, len: u32) -> NapiResult<()> {
     Ok(())
 }
 
+/// Buffering-path finalizer: equivalent to `napi_render_chunk(_, len)` followed
+/// by `napi_render_chunk(_, 0)` but in a single tsfn crossing. Cuts JS-side
+/// per-request overhead by one full Promise+await cycle.
+///
+/// Streaming-path callers MUST NOT use this — they send N body chunks then a
+/// separate `Final`. Calling this with `streaming=true` meta is logged at WARN
+/// on the Rust side and falls back to emitting chunked headers + framed body
+/// + chunked terminator (byte-equivalent to Bytes-then-Final in chunked mode).
+///
+/// Same error semantics as `napi_render_chunk`.
+#[napi]
+pub async fn napi_render_chunk_final(worker_id: u32, len: u32) -> NapiResult<()> {
+    let entry = state()
+        .pool
+        .entry(worker_id)
+        .ok_or_else(|| napi::Error::from_reason(format!("worker {} not registered", worker_id)))?;
+    let chunk_tx =
+        crate::render_stream::check_chunk_dispatch(&entry.render_slot, len, entry.buf_len)
+            .map_err(napi::Error::from_reason)?;
+
+    let (ack_tx, ack_rx) = tokio::sync::oneshot::channel::<()>();
+    // SAFETY: same as napi_render_chunk — BufPtr pinned at register time
+    // (see pool.rs::BufPtr docstring), `len` is bounds-checked above.
+    let data = unsafe { std::slice::from_raw_parts(entry.buf_ptr.0, len as usize) }.to_vec();
+    chunk_tx
+        .send(crate::pool::RenderChunk::BytesAndFinal { data, ack: ack_tx })
+        .await
+        .map_err(|_| napi::Error::from_reason("render chunk channel closed (handle_conn gone)"))?;
+    ack_rx
+        .await
+        .map_err(|_| napi::Error::from_reason("ack dropped — handle_conn torn down mid-chunk"))?;
+    Ok(())
+}
+
 /// Convert a NAPI BigInt to u64, rejecting negative values.
 /// conn_ids cross the JS/Rust boundary as BigInt because JS Number tops out
 /// at 2^53 while conn_ids are monotonic u64 from an AtomicU64.

@@ -1036,6 +1036,63 @@ where
                         let _ = ack.send(());
                         break;
                     }
+                    crate::pool::RenderChunk::BytesAndFinal { data, ack } => {
+                        // Buffering-path single-call: parse meta, build full response,
+                        // write to socket, populate cache write-back, ack. Byte-equivalent
+                        // to Bytes-then-Final for the same `data`.
+                        let (meta_slice, body) = match crate::render_stream::split_meta(&data) {
+                            Ok(x) => x,
+                            Err(e) => {
+                                error!(worker_id = entry.id, label, error = e, "split_meta failed (BytesAndFinal)");
+                                let _ = s.write_all(http::error_500()).await;
+                                let _ = ack.send(());
+                                return DispatchControl::CloseConn;
+                            }
+                        };
+                        let parsed: crate::render_stream::ChunkMeta = match serde_json::from_slice(meta_slice) {
+                            Ok(m) => m,
+                            Err(e) => {
+                                error!(worker_id = entry.id, label, error = %e, "meta JSON parse failed (BytesAndFinal)");
+                                let _ = s.write_all(http::error_500()).await;
+                                let _ = ack.send(());
+                                return DispatchControl::CloseConn;
+                            }
+                        };
+
+                        if parsed.streaming {
+                            // Misuse: streaming-meta in a buffering call. Emit byte-equivalent
+                            // chunked headers + framed body + chunked terminator so the wire
+                            // output still matches Bytes-then-Final in chunked mode.
+                            warn!(
+                                worker_id = entry.id, label,
+                                "BytesAndFinal received in streaming mode — emitting chunked + terminator",
+                            );
+                            let head = crate::render_stream::build_chunked_response_head(&parsed);
+                            if s.write_all(head).await.is_err() {
+                                let _ = ack.send(());
+                                return DispatchControl::CloseConn;
+                            }
+                            let framed = crate::render_stream::format_chunk_framed(body);
+                            if s.write_all(framed).await.is_err() {
+                                let _ = ack.send(());
+                                return DispatchControl::CloseConn;
+                            }
+                            let term = crate::render_stream::format_chunk_framed(b"");
+                            let _ = s.write_all(term).await;
+                            // No cache write-back in chunked mode (matches existing Final arm).
+                        } else {
+                            // Canonical buffering use-case: single Content-Length response.
+                            let resp = crate::render_stream::build_single_response_bytes(&parsed, body);
+                            response_bytes_for_cache = resp.clone();
+                            if s.write_all(resp).await.is_err() {
+                                let _ = ack.send(());
+                                return DispatchControl::CloseConn;
+                            }
+                        }
+
+                        let _ = ack.send(());
+                        break;
+                    }
                 }
             }
             outcome = &mut render_future => {

@@ -38,6 +38,13 @@ pub enum RenderChunk {
     Final {
         ack: tokio::sync::oneshot::Sender<()>,
     },
+    /// Combined Bytes + Final. Buffering-path callers use this to eliminate
+    /// one tsfn round-trip per render. handle_conn processes this as the
+    /// byte-equivalent of Bytes-then-Final consecutive sends.
+    BytesAndFinal {
+        data: Vec<u8>,
+        ack: tokio::sync::oneshot::Sender<()>,
+    },
 }
 
 /// Per-worker per-request slot. Installed atomically by
@@ -401,7 +408,7 @@ mod tests {
         use std::sync::Arc;
         use tokio::sync::Barrier;
 
-        const M: usize = 4;  // workers
+        const M: usize = 4; // workers
         const N: usize = 16; // concurrent claim attempts
 
         let pool = Arc::new(WorkerPool::new());
@@ -493,5 +500,37 @@ mod tests {
                 entry.id,
             );
         }
+    }
+
+    fn chunk_kind(c: &RenderChunk) -> &'static str {
+        match c {
+            RenderChunk::Bytes { .. } => "Bytes",
+            RenderChunk::Final { .. } => "Final",
+            RenderChunk::BytesAndFinal { .. } => "BytesAndFinal",
+        }
+    }
+
+    #[tokio::test]
+    async fn bytes_and_final_round_trips_through_channel() {
+        let (tx, mut rx) = mpsc::channel::<RenderChunk>(1);
+        let (ack_tx, ack_rx) = tokio::sync::oneshot::channel::<()>();
+        let payload = b"hello world".to_vec();
+
+        tx.send(RenderChunk::BytesAndFinal {
+            data: payload.clone(),
+            ack: ack_tx,
+        })
+        .await
+        .unwrap();
+
+        let received = rx.recv().await.expect("chunk should arrive");
+        match received {
+            RenderChunk::BytesAndFinal { data, ack } => {
+                assert_eq!(data, payload);
+                ack.send(()).expect("ack receiver should still be alive");
+            }
+            other => panic!("expected BytesAndFinal, got {}", chunk_kind(&other)),
+        }
+        ack_rx.await.expect("ack should resolve");
     }
 }
