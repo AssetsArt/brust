@@ -2,8 +2,9 @@
 
 **Date:** 2026-05-28
 **Branch:** `refactor/cargo-workspace`
-**Parent:** `f8c5f6f` (spec v1 — superseded by this v2 in-place)
+**Parent:** `e2f4d24` (v2 → this v2.1 in-place; v1 was `f8c5f6f`)
 **Replaces:** A1 maud emit target, A2.0–A2.3 static-render chain. **Does NOT replace jsx-rust-compiler**; the crate is repurposed as the JSX→jinja transformer.
+**v2 → v2.1 changes**: reviewer (`a7fc61cbddb59263b`) flagged 2 unresolved blockers (SAB framing + migration ordering) and 5 FIX/OQ items. v2.1 applies all inline. SIGN-OFF v2 was `not-ready`; this v2.1 addresses each finding by section number — see §3, §6, §13, §15 for the specific corrections.
 
 ---
 
@@ -93,7 +94,7 @@ Reviewer Blocker 3 explicit: cleanup table is exhaustively cross-checked against
 
 | Path | Diff |
 |---|---|
-| `crates/jsx-rust-compiler/Cargo.toml` | `-maud` (dev-dep) `-bench` feature flag |
+| `crates/jsx-rust-compiler/Cargo.toml` | `-maud` (dev-dep) `-bench` feature flag `+minijinja` (dev-dep, drives the new golden_render_jinja tests) |
 | `crates/jsx-rust-compiler/src/lib.rs` | `-mod emit` `+mod emit_jinja`; `compile` returns jinja source |
 | `crates/jsx-rust-compiler/src/bin/jsx-rustc.rs` | unchanged at the arg level, but now writes `.jinja` not `.rs` |
 | `crates/jsx-rust-compiler/src/bin/jsx-bench.rs` | retired (was maud-render bench) OR kept as `bench-jinja` that bench-renders via minijinja against the new goldens |
@@ -184,14 +185,20 @@ BRUST RUNTIME (per request):
                           Rust:
                              - read &sab[0..len] (BufPtr already registered)
                              - jinja::render(templateName, &sab[0..len]) → String
-                             - http::build_response(200, "text/html; charset=utf-8", &[], html.bytes())
-                             - send framed bytes via RenderChunk::BytesAndFinal (existing chunk channel)
-                          per-conn task:
+                             - build ChunkMeta { status: 200, content_type, ... } → serialize to JSON
+                             - assemble Vec<u8>:
+                                 [meta_len: u16 BE]
+                                 [meta JSON UTF-8]
+                                 [body bytes]
+                             - send via RenderChunk::BytesAndFinal { data, ack }
+                          per-conn task (UNCHANGED):
                              - receives RenderChunk::BytesAndFinal
-                             - writes to TCP (existing path)
+                             - split_meta(&data) → (meta, body)
+                             - build_single_response_bytes(&meta, body) → framed HTTP/1.1
+                             - write_all to TCP
 ```
 
-**Reviewer Blocker 1 resolved**: Rust calls `http::build_response()` to produce the FULL framed HTTP/1.1 bytes, then ships them as `RenderChunk::BytesAndFinal { data, ack }` on the existing chunk channel. The per-conn task `write_all`s those bytes verbatim — identical treatment to the bytes JS produces via `emitSingleChunkResponse`. NOT a new IPC primitive; the bytes-direction stays JS→Rust→TCP (Rust just inserts itself as a middleware that builds the body instead of being a dumb pipe). The previous spec's contradiction (build_response + per-conn task) is now explicit: Rust frames AND sends-to-channel. NOT `write_all` directly to socket.
+**Reviewer Blocker 1 resolved (v2.1)**: Earlier v2 said Rust calls `http::build_response()` to produce framed HTTP/1.1 bytes and ships them via `RenderChunk::BytesAndFinal`. The v2.1 reviewer empirically verified that's wrong — the per-conn task at `server.rs:1031` (Bytes arm) and `server.rs:1101` (BytesAndFinal arm) calls `split_meta(&data)` unconditionally, which parses `[meta_len: u16 BE][meta JSON][body]` (`render_stream.rs:33-45`). Raw `HTTP/1.1 200 OK\r\n...` bytes prefix-decode to `meta_len = 0x4854 ('HT')`, fail bounds check, hit error_500 (`server.rs:1109`), connection close. v2.1 corrects: Rust builds the SAME `[meta_len][meta JSON][body]` shape JS produces in `emitSingleChunkResponse` (`runtime/routes.ts:818-862`), ships it via `RenderChunk::BytesAndFinal`, and the per-conn task's existing `split_meta` + `build_single_response_bytes` path handles cache write-back + framing + TCP write identically to a JS-produced chunk. No new IPC primitive. No bypass.
 
 ## 4. JS API
 
@@ -295,39 +302,53 @@ Rendered HTML:
 ## 6. Rust API — `crates/brust/src/jinja.rs`
 
 ```rust
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::OnceLock;
 
 use minijinja::{Environment, UndefinedBehavior};
-use parking_lot::RwLock;
 
-static ENV: OnceLock<RwLock<Environment<'static>>> = OnceLock::new();
+// v2.1: OnceLock (not RwLock<OnceLock>) — hot reload is deferred per §13.7.
+// If hot reload lands in v2.x, swap to RwLock<Environment<'static>> in a
+// follow-up; the change is contained to this module.
+static ENV: OnceLock<Environment<'static>> = OnceLock::new();
 
 /// Boot-time: load every `.brust/jinja/*.jinja` into the static Environment.
 /// Called by `brust::run()` before serving. `dir` is `.brust/jinja/` resolved
-/// relative to the entry's CWD (or wherever the runtime points it).
+/// relative to the entry's CWD.
 ///
-/// Failures (missing dir, unreadable file, parse error) panic — these are
-/// developer-time bugs the build pipeline failed to catch.
+/// v2.1: lenient on missing dir. A user with zero `jinja: true` routes won't
+/// have `.brust/jinja/` and must boot cleanly. Missing dir → empty Env;
+/// `UnknownTemplate` fires per-request only if a route claims a template
+/// that never landed. Parse errors on individual files DO panic — those are
+/// real build-pipeline drift.
 pub fn load_from(dir: &Path) -> Vec<String> {
     let mut env = Environment::new();
-    env.set_undefined_behavior(UndefinedBehavior::Strict); // reviewer OQ 3
+    // v2.1: Chainable (not Strict) — minijinja chains undefined through
+    // `obj.nested.field` without erroring at the chain, only on direct render.
+    // Loaders that omit optional keys can use `{% if x is defined %}` guards;
+    // Strict mode errored on the `x` evaluation itself, making the guard
+    // unusable. Reviewer OQ 4.
+    env.set_undefined_behavior(UndefinedBehavior::Chainable);
     let mut names = Vec::new();
+
+    if !dir.exists() {
+        ENV.set(env).expect("jinja env initialized once");
+        return names;
+    }
 
     // Read all .jinja files in dir; templates owned by the environment as
     // 'static via leaking each source string (small set, one-time leak).
     // ... (full impl in plan)
 
-    ENV.set(RwLock::new(env)).expect("jinja env initialized once");
+    ENV.set(env).expect("jinja env initialized once");
     names
 }
 
 /// Per-request render: `data_json` is a slice of UTF-8 bytes from SAB.
-/// Returns the rendered HTML; caller wraps in HTTP response.
+/// Returns the rendered HTML; caller wraps in `[meta_len][meta JSON][body]`
+/// per §3 and ships via RenderChunk::BytesAndFinal.
 pub fn render(name: &str, data_json: &[u8]) -> Result<String, RenderError> {
-    let env_lock = ENV.get().ok_or(RenderError::NotLoaded)?;
-    let env = env_lock.read();
+    let env = ENV.get().ok_or(RenderError::NotLoaded)?;
     let tmpl = env.get_template(name).map_err(|_| RenderError::UnknownTemplate)?;
     let value: serde_json::Value = serde_json::from_slice(data_json)
         .map_err(|e| RenderError::BadJson(e.to_string()))?;
@@ -352,7 +373,7 @@ pub fn registered_templates() -> Vec<String> {
 }
 ```
 
-A napi shim exposes `napiListJinjaTemplates() -> Vec<String>` so the JS-side `defineRoutes` can validate every `jinja: true` Component.name exists in the registered set (reviewer Fix 1).
+A napi shim exposes `napiListJinjaTemplates() -> Vec<String>` so the JS side can validate every `jinja: true` Component.name exists in the registered set. v2.1 scopes this to a startup warning (not panic — reviewer Fix 1 acceptance): brust's `registerRoutes` JS-side caller iterates `flat.filter(r => r.jinjaTemplate)` and warns on any name NOT present in `napiListJinjaTemplates()`. Mismatched routes still fall back to a 500 at request time (logged by name in `dispatch_to_worker_and_stream_chunks`); pre-flight panic is a v2.x follow-up.
 
 ### `napi_render_jinja`
 
@@ -364,25 +385,35 @@ pub async fn napi_render_jinja(
     data_len: u32,
     template_name: String,
 ) -> NapiResult<()> {
-    // 1. Get the worker's BufPtr + total_len from the pool.
+    // 1. Get the worker's (BufPtr, total_len) + chunk_tx from the pool
+    //    (mirrors napi_render_chunk_final at crates/brust/src/lib.rs:570).
     // 2. Bounds-check: data_len <= total_len.
     // 3. SAFETY: BufPtr is pinned at register time; slice up to data_len.
-    // 4. Call jinja::render(&template_name, sab_slice)
-    // 5. Match RenderError to HTTP status:
-    //      - NotLoaded → 500 (boot bug)
-    //      - UnknownTemplate → 500 (config drift — Fix 1 catches at boot)
-    //      - BadJson → 500 (loader bug)
-    //      - Render → 500 (template bug)
-    // 6. Build framed response via http::build_response(status, "text/html; ...", &[], html.into_bytes()).
-    // 7. Send via RenderChunk::BytesAndFinal { data, ack: ack_tx } on the
-    //    worker's chunk_tx (mirrors how napi_render_chunk_final works at
-    //    crates/brust/src/lib.rs:570).
+    // 4. Call jinja::render(&template_name, sab_slice) → String.
+    //    On RenderError, build a synthetic 500 ChunkMeta + body "internal
+    //    error" and proceed to step 5 with that shape — the per-conn task
+    //    must still receive a final chunk to release the worker.
+    // 5. Build ChunkMeta { status: 200, content_type: "text/html; ...",
+    //    headers: empty, streaming: false } → serde_json::to_vec.
+    // 6. Assemble Vec<u8> in this exact order (matches split_meta at
+    //    crates/brust/src/render_stream.rs:33-45):
+    //      [meta_len: u16 BE]  (2 bytes)
+    //      [meta JSON UTF-8]   (meta_len bytes)
+    //      [body bytes]        (html.as_bytes())
+    // 7. Send via RenderChunk::BytesAndFinal { data: vec, ack: ack_tx } on
+    //    the worker's chunk_tx (same as napi_render_chunk_final).
     // 8. await ack_rx (per-conn task ack semantics unchanged).
+    //
+    // The per-conn task at server.rs:1101 will then split_meta() the
+    // assembled bytes, call build_single_response_bytes(&meta, body) to
+    // produce the framed HTTP/1.1 wire bytes, write_all to TCP, and on
+    // cache_wanted hit invoke the on_success closure with the framed
+    // bytes — cache write-back works identically to JS-produced chunks.
     ...
 }
 ```
 
-Reviewer's Blocker 1: this routes the rendered bytes through the SAME `RenderChunk` channel + ack semantics as existing chunks — no new IPC primitive, no direct socket write from napi. The bytes Rust ships look identical to the bytes JS would have shipped via `emitSingleChunkResponse`. Per-conn task can't tell the difference.
+This routes the rendered bytes through the SAME `RenderChunk` channel + ack semantics + cache hooks as existing chunks. `napi_render_jinja` does NOT call `http::build_response` (that lives in the per-conn task path). NOT a new IPC primitive.
 
 ### SAB protocol
 
@@ -426,11 +457,28 @@ For dev mode (`brust dev`): the watcher already exists for TS edits. When a rout
 
 ### `jsx-rustc` CLI changes
 
-- Add `--target=jinja|maud` (default jinja in v2 once maud target is removed)
-- Output extension follows target (`.jinja` for jinja, `.rs` for maud)
-- All other args unchanged
+- `--target=jinja` accepted but defaults to jinja (only target in v2.1).
+- Output extension defaults to `.jinja`.
+- All other args unchanged.
 
-For v2 cleanup: maud target is removed entirely; the `--target` flag accepts only `jinja` (or omit it — implicit). Plan can decide whether to keep the flag as future-proofing or drop it.
+Plan-time bikeshed: keep `--target=` as future-proofing OR drop entirely. Lean toward keeping (free option, no maintenance burden for "accepts one value").
+
+### Component-source resolution (v2.1 reviewer OQ 1)
+
+The build script needs to map each `jinja: true` route's Component to its `.tsx` source path. At runtime `Component` is a JS function reference; at build time we need the file path.
+
+**v2.1 picks option (i) — build-time AST scan of routes module.** Algorithm:
+
+1. `runtime/cli/build.ts` already loads the user's routes module (via dynamic `import()`) to call `defineRoutes` and get the FlatRoute list. v2.1 ADDS a parallel pass: parse the routes module's source with swc (already a workspace dep via `jsx-rust-compiler`) → collect `ImportDeclaration` nodes → build a `Map<localName, resolvedPath>`.
+2. For each route with `jinja: true`, look up `flat.chain.last().Component` by NAME (Component.name at AST time, which is the imported local name in routes.tsx).
+3. The resolved path becomes the `jsx-rustc` input.
+4. Cache resolved-path → built-jinja in `.brust/jinja/_manifest.json` so unchanged sources skip recompile.
+
+Limitations:
+- Routes registered dynamically (e.g. `const r = await fetchRoutes()`) can't be statically resolved. The build pipeline warns + skips them; they'd fall back to React render OR error at boot (TBD in plan).
+- Re-export chains (`export { default as Profile } from './Profile'`) require a recursive resolver. v2.1 supports single-hop imports; deeper chains land in a v2.x follow-up.
+
+The fancier options (Vite plugin injecting `Component.__source`; explicit `componentSource: '/path/x.tsx'` field on the route) are deferred — the AST-scan approach has zero user-facing surface and works for the example app + test fixtures shape.
 
 ## 8. Server dispatch (server.rs)
 
@@ -567,7 +615,7 @@ In a separate `tests/jinja-protocol.test.ts` (or inside the napi shim's `#[cfg(t
 - Cache integration deferred (`cache` field rejected when `jinja: true`).
 - Nested `loader` for children of a `jinja: true` route is not composited (only leaf's loader runs). Composition is a follow-up.
 - minijinja's `Strict` undefined mode means typos in templates fail loudly at render — a feature, but breaks if a loader sometimes returns `{}`. Recommendation: loader return value should always include the keys the template references; use `{% if x is defined %}` to gate optional vars.
-- `Component` body is REAL React code. Best practice: write Components that work as both React (for unit testing the JSX shape) AND get analyzed by jsx-rustc (for jinja output). Documentation to make this explicit. In dev mode v2 does NOT fall back to React on missing template — future enhancement.
+- `Component` body is REAL React code. Best practice: write Components that work as both React (for unit testing the JSX shape) AND get analyzed by jsx-rustc (for jinja output). Documentation to make this explicit. **In dev mode v2.1 does NOT fall back to React on missing template** — boot logs a warning, missing template renders 500 at request time. The dev-mode React fallback is a v2.x follow-up. (v2 previously stated this inconsistently in §13.5 — v2.1 collapses to one answer here.)
 - `jsx-rust-compiler` loses the maud emit target. Past A1+A1.1 work (the maud-only T7-T11) is partially retired. The IR + parser + lower (T0-T6) are preserved verbatim.
 - SAB size cap = per-worker registered length (currently ~64KB). Loader payloads larger than that get 413 — most apps stay well under.
 - Hot reload of templates during `brust dev`: SUPPORTED in spec but plan-time decision on whether to land in v2 or follow-up. The minijinja Environment is wrapped in `RwLock` so the runtime can swap templates without restarting.
@@ -579,10 +627,11 @@ In a separate `tests/jinja-protocol.test.ts` (or inside the napi shim's `#[cfg(t
 3. **Template directory**: `.brust/jinja/` (user direction — under user's project, like `.brust/css/`).
 4. **Maud target retire**: full retire — no `--target=maud` flag in v2. Plan can resurrect if needed; no current consumer.
 5. **Component-as-marker footgun**: resolved — Component IS the source, not a marker. Reviewer Fix 2.
-6. **Undefined behavior**: minijinja `Strict` mode (reviewer OQ 3). Templates that reference undefined vars fail at render → 500.
-7. **Migration atomicity**: single commit fine since the swap is symmetric (maud target → jinja target, static path → jinja path) — none of the cleanup leaves an intermediate broken state. Reviewer Blocker 2 addressed.
-8. **Hot reload of templates in dev**: spec aspires; plan can defer to v2.1. Wrap minijinja Environment in `RwLock` so the reload path doesn't require a restart.
-9. **Pre-flight template validation**: log-only in v2 (reviewer Fix 1 deferred to v2.1; deferred again here for scope discipline).
+6. **Undefined behavior**: v2.1 picks `Chainable` (not `Strict`). Templates can chain through optional props without error; direct render of undefined vars still errors. Trade: looser than v2 Strict, but `{% if x is defined %}` works. Reviewer OQ 4.
+7. **Migration atomicity**: 8 commits, ordered per §15 v2.1 — brust drops jsx-rust-compiler build-dep BEFORE jsx-rust-compiler swaps emit target. Reviewer Blocker 2 addressed empirically.
+8. **Hot reload of templates in dev**: deferred to v2.x. v2.1 uses `OnceLock<Environment>` (not `RwLock`) — no hot-reload contortions in the runtime.
+9. **Pre-flight template validation**: v2.1 = startup warning via `napiListJinjaTemplates()`; mismatched routes still 500 at request time. Pre-flight panic is v2.x.
+10. **Component-source resolution** (v2.1 reviewer OQ 1): build-time AST scan of the routes module via swc. See §7 last subsection.
 
 ## 14. Out of scope (acceptable deferrals)
 
@@ -594,21 +643,68 @@ In a separate `tests/jinja-protocol.test.ts` (or inside the napi shim's `#[cfg(t
 - minijinja extensions (custom filters, autoescape per-template) — defaults are fine for v2.
 - v2 only supports JSX subset already covered by A1 (T0–T6 lowering). Conditional rendering, Fragment, custom components: deferred to A4-jinja.
 
-## 15. Migration step ordering (responding to reviewer Blocker 2)
+## 15. Migration step ordering (v2.1 — reviewer Blocker 2 resolved)
 
-Reviewer's concern: cargo build red between intermediate file-write steps. v2 answers: the cleanup is a clean swap, not delete-then-add, so each file edit individually keeps the build green. The order below produces a green build at EVERY intermediate commit (proven by mental simulation; verified at plan time):
+Reviewer v2.1 empirically verified that the v2 ordering breaks `cargo build -p brust` between step 1 and step 3: `crates/brust/Cargo.toml:45` has `jsx-rust-compiler = { path = "../jsx-rust-compiler" }` as `[build-dependencies]`, `build.rs` calls `compile_with_path()` on every `src/compiled_routes/*.tsx` and writes the result to `$OUT_DIR/compiled_routes/<stem>.rs`, and `src/compiled_routes/mod.rs:12` does `include!(concat!(env!("OUT_DIR"), "/compiled_routes/static_hello.rs"))`. If step 1 lands first (jsx-rust-compiler emits jinja), brust's build.rs writes `<div>{{ name }}</div>` to a `.rs` file and `include!` chokes.
 
-1. **jsx-rust-compiler**: replace `emit.rs` with `emit_jinja.rs` (mod boundary unchanged); rewrite fixtures + goldens to expected.jinja shape; `cargo test -p jsx-rust-compiler` green.
-2. **brust crate**: add `+minijinja = "2"` to Cargo.toml; add `mod jinja; mod jinja_routes;` to lib.rs; add `napi_render_jinja` stub fn. Build still green (the new code compiles; old code untouched).
-3. **brust crate cleanup**: remove `napi_render_compiled` (and its callers — only the deleted Bun test references it); remove `mod compiled_routes`; remove `mod dynamic_routes`; delete the related files. cargo build green.
-4. **brust crate routes.rs**: rename `static_render` field → `jinja_template` (consistent rename via sed/Edit replace_all); rename `static_renders` → `jinja_templates`; remove `static_prebuilt`; remove `static_render_for` and `static_prebuilt_for_path`. cargo build green.
-5. **brust crate server.rs**: remove the A2.3 short-circuit + the uncommitted `/_jinja-test` hardcoded handler. cargo build green.
-6. **Runtime JS**: edit `runtime/routes.ts` to rename `static?` → `jinja?` + `staticRender` → `jinjaTemplate`; update validateRoute; update the worker dispatcher. `bun run build` regenerates `.node` + `.d.ts`; `bun test runtime/` runs.
-7. **Build CLI**: extend `runtime/cli/build.ts` + `runtime/cli/dev.ts` to scan + spawn `jsx-rustc` + emit `.brust/jinja/`.
-8. **Example + tests**: migrate routes to `jinja: true`; rewrite `tests/jinja-route.test.ts`; delete `tests/napi-render-compiled.test.ts` + `tests/rust-compiled-route.test.ts`.
-9. **Documentation**: rewrite `architecture.md` Sub-project A1/A1.1 section as Sub-project J; commit.
+v2.1 reorders: brust sheds its build-dependency on jsx-rust-compiler BEFORE jsx-rust-compiler swaps its emit target. The order below is empirically green at every step (verified by mental walk-through against the actual file references the reviewer cited):
 
-Each step lands in 1–2 commits. The final tree state is what §10 / §11 reference.
+1. **brust crate — drop the build-dep + compiled_routes path** (single commit):
+   - `cargo rm jsx-rust-compiler --build` in `crates/brust/Cargo.toml`
+   - drop the `compile_routes()` call in `crates/brust/build.rs` (back to just `napi-build::setup()`)
+   - remove `mod compiled_routes;` from `crates/brust/src/lib.rs`
+   - remove the `napi_render_compiled` fn from `crates/brust/src/lib.rs`
+   - delete `crates/brust/src/compiled_routes/` (mod.rs + static_hello.tsx)
+   - delete `crates/brust/src/dynamic_routes.rs` (uncommitted in wd) AND the `/_jinja-test/` hardcoded handler in `server.rs` (also uncommitted)
+   - delete `tests/napi-render-compiled.test.ts` (references the removed napi symbol)
+   - `cargo test -p brust --lib` green; bun cdylib regenerates without the removed napi fn.
+
+2. **brust crate — remove A2.3 + rename fields** (single commit):
+   - remove the A2.3 short-circuit branch from `crates/brust/src/server.rs` (~30 lines around the existing pattern)
+   - in `crates/brust/src/routes.rs`: rename `RouteConfig.static_render` → `RouteConfig.jinja_template`; rename `RouteTable.static_renders` → `RouteTable.jinja_templates`; delete `RouteTable.static_prebuilt`; delete `static_render_for_path` and friends
+   - `crates/brust/src/server.rs`: switch dispatch to read `routes.jinja_template_for(route_id)` and weave it into the envelope JSON
+   - `cargo test --workspace --lib` green; A2.3 tests no longer apply.
+
+3. **jsx-rust-compiler — swap emit target** (single commit):
+   - replace `src/emit.rs` with `src/emit_jinja.rs` (mod boundary unchanged)
+   - rewrite `fixtures/*.expected.{rs,html}` to `fixtures/*.expected.jinja`
+   - rewrite `tests/golden_emit.rs` to `tests/golden_emit_jinja.rs`
+   - rewrite `tests/golden_render/` to `tests/golden_render_jinja/` (consumes minijinja; add minijinja to `[dev-dependencies]`)
+   - the maud-bench bin (`src/bin/jsx-bench.rs`) is removed in this commit
+   - `cargo test -p jsx-rust-compiler` green.
+
+4. **brust crate — add minijinja + napi_render_jinja** (single commit):
+   - add `minijinja = "2"` to `crates/brust/Cargo.toml` `[dependencies]`
+   - add `crates/brust/src/jinja.rs` (Environment loader + render)
+   - add `napi_render_jinja` to `crates/brust/src/lib.rs` per §6
+   - add `napi_list_jinja_templates` napi fn for boot-time validation (reviewer Fix 1 follow-up)
+   - `cargo test --workspace --lib` green; bun cdylib regenerates with new napi symbols.
+
+5. **Runtime JS — `static?` → `jinja?` + worker dispatcher branch** (single commit):
+   - edit `runtime/routes.ts`: rename `static?` → `jinja?`, `staticRender` → `jinjaTemplate`; update `validateRoute`; insert the worker-side jinja branch per §9
+   - edit `runtime/routes.test.ts`: rename + rewrite the 7 validation tests
+   - edit `runtime/index.ts`: rename `staticRender` → `jinjaTemplate` in `registerRoutes` payload
+   - `bun test runtime/` green.
+
+6. **Build CLI — jsx-rustc spawn pass** (single commit):
+   - extend `runtime/cli/build.ts` + `runtime/cli/dev.ts` per §7
+   - dev mode: watcher re-runs `jsx-rustc` on TS edit
+   - add `.brust/jinja/` to `.gitignore`
+   - smoke against `example/hello-world/` to verify a `.brust/jinja/HelloPage.jinja` lands.
+
+7. **Example + tests** (single commit):
+   - migrate `example/hello-world/routes.tsx` to `jinja: true` + real loader
+   - migrate `tests/fixtures/app/routes.tsx` similarly
+   - add `tests/jinja-route.test.ts` (E2E: build → spawn brust → curl → assert bytes)
+   - delete `tests/rust-compiled-route.test.ts`
+   - full test sweep green.
+
+8. **Documentation** (single commit):
+   - rewrite `architecture.md` Sub-project A1 + A1.1 section as Sub-project J
+   - remove the dangling `napi_render_compiled` reference at ~line 1062
+   - update `Suggested next steps` with the new state.
+
+8 commits total. Each lands cleanly without breaking the previous step's build state. The reviewer's specific concern about `cargo build -p brust` going red after the jsx-rust-compiler emit swap is addressed by making step 1 the brust-side de-coupling.
 
 ---
 
