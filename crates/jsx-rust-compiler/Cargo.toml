@@ -10,9 +10,21 @@ path = "src/lib.rs"
 name = "jsx-rustc"
 path = "src/bin/jsx-rustc.rs"
 
+# A1.1 — bench harness. Needs maud (which only the bin's compiled fixtures
+# import, but bins need it in regular [dependencies] to be visible).
+[[bin]]
+name = "jsx-bench"
+path = "src/bin/jsx-bench.rs"
+required-features = ["bench"]
+
+[features]
+default = []
+bench   = ["dep:maud"]
+
 [dependencies]
 swc_core  = { version = "68", features = ["ecma_ast", "ecma_parser_typescript", "ecma_visit", "common"] }
 thiserror = "1"
+maud      = { version = "0.27", optional = true }
 
 [dev-dependencies]
 maud              = "0.27"

@@ -1039,4 +1039,30 @@ Bun.serve baseline source: `example/bun-serve-baseline/index.ts`.
 
 ---
 
+## Sub-project A1 + A1.1 — JSX→Rust compiler (2026-05-28)
+
+**Path A** (chosen 2026-05-28, motivated by Spike B's hand-written maud measurement of **104,053 RPS** vs current React-rendered `/` at **29,005 RPS** — 3.6× ceiling). Phase A1 shipped a `crates/jsx-rust-compiler/` workspace member: swc_core 68 parser + maud 0.27 emitter for a constrained JSX dialect (function components + destructured props + lowercase HTML + `{ident/member}` + `xs.map((item) => <JSX>)`).
+
+A1.1 measures the **render-only single-core throughput** of the compiled output to falsify the perf hypothesis ("machine-generated maud is within noise of hand-written maud, so the compiler doesn't bottleneck the render path"). Bench harness: `crates/jsx-rust-compiler/src/bin/jsx-bench.rs`, N=5 trials × M=200_000 renders each, M1 Pro, `--release`. Numbers from 3 consecutive runs (median across them):
+
+| Fixture | median ns/render | implied single-core RPS | range |
+|---|---:|---:|---|
+| `static_hello` (3 static elements, no props) | ~18 ns | ~55 M | [16..40] |
+| `props_hello` (2 expr interpolations + 3-char escape) | ~74 ns | ~13 M | [67..92] |
+| `list_nav` (`for` loop, 2 items, 4 expr interps) | ~35 ns | ~28 M | [35..36] |
+
+The render-only numbers are **~150–500× higher than `/ping`'s 111k RPS ceiling**, which is exactly what we want to see: render() inside the napi worker is essentially free compared to HTTP framing + napi crossing + response writing. The compiler is not the limit; Spike B's 104k full-cycle measurement is dominated by everything OUTSIDE render. Hypothesis confirmed — the perf ceiling Spike B demonstrated is reachable from machine-generated code, not just hand-written templates.
+
+**What this does NOT measure** (and why the headline RPS comparison should be eyeballed, not literally believed):
+- No HTTP framing / response writing / accept-loop scheduling
+- No napi crossing (the render() runs in-process, not through `RenderChunk` plumbing)
+- No `Content-Length` header math
+- Real-server RPS through this code path is bounded by everything in `request_lifecycle`, NOT by render() itself
+
+**Suggested next steps:** A2 (napi bridge so loader data flows into Rust render via `napi_render_compiled(route_id, data_json)`) integrates the compiler into the actual request path. Until A2 lands, A1+A1.1 ship as standalone tooling — useful for prototyping and proving the perf claim, not yet wired into traffic.
+
+Numbers, fixtures, and bench source are committed under `crates/jsx-rust-compiler/`. Re-run with `cargo run --release -p jsx-rust-compiler --features bench --bin jsx-bench`.
+
+---
+
 *Brust — Built to burst.*
