@@ -71,8 +71,8 @@ crates/jsx-rust-compiler/
 │   └── list_nav.expected.html
 └── tests/
     ├── golden_emit.rs     # for each fixture: assert compile(input) == expected.rs
-    └── golden_render/     # each fixture is a #[path = "..."] mod + a #[test] fn
-        ├── mod.rs
+    └── golden_render/     # cargo integration-test "directory" form: needs main.rs (NOT mod.rs)
+        ├── main.rs        # mod static_hello; mod props_hello; mod list_nav;
         ├── static_hello.rs   # includes ../../fixtures/static_hello.expected.rs via #[path]
         ├── props_hello.rs
         └── list_nav.rs
@@ -97,19 +97,25 @@ members = [
 ```toml
 # crates/jsx-rust-compiler/Cargo.toml
 [dependencies]
-swc_core   = { version = "68", features = ["ecma_ast", "ecma_parser", "ecma_visit", "common"] }
+swc_core   = { version = "68", features = ["ecma_ast", "ecma_parser_typescript", "ecma_visit", "common"] }
 thiserror  = "1"
 ```
 
-`swc_core` 68 (released as of crates.io max_stable 2026-05) bundles internally-consistent versions of `swc_common`, `swc_ecma_ast`, `swc_ecma_parser`, `swc_ecma_visit`. The serde compat issue that burned the prior session (`serde::__private` removed in serde 1.0.220+, used by `swc_common` 6.x via `swc_core` 13) is the explicit reason the swc team rolled the bundle — verify in T1 by running `cargo build -p jsx-rust-compiler` with the workspace's existing `serde = "1"`. If T1 fails to build, see §15.1 BLOCKED fallback.
+**Important** (reviewer-flagged): swc_core's `ecma_parser` feature does NOT enable TypeScript parsing — the inner `swc_ecma_parser` is declared with `default-features = false`, so the `typescript` cargo feature stays off and `Syntax::Typescript(_)` is `#[cfg]`-gated out of the enum. The `ecma_parser_typescript` feature is the correct one: it pulls `["__parser", "swc_ecma_parser/typescript"]` and re-enables the variant.
+
+`swc_core` 68 bundles internally-consistent versions of `swc_common`, `swc_ecma_ast` (25.x), `swc_ecma_parser` (41.x), `swc_ecma_visit`. swc_core 68 resolves to `serde 1.0.228` internally (verified via `cargo fetch` + lockfile inspection); the workspace's existing `serde = "1"` is compatible. The bundle version-locks its internals, so the `serde::__private` failure that burned the prior session (swc_core 13 era) does NOT apply here. The likely remaining failure modes (proc-macro2 conflict, lockfile divergence) are covered by §15.1.
 
 ### 4.2 Parser invocation
 
-Use `swc_ecma_parser::lexer::Lexer` + `Parser` configured for `TsConfig { tsx: true, .. Default::default() }`. Input: `&str`. Output: `swc_ecma_ast::Module`. Errors: collect via `Vec<swc_ecma_parser::error::Error>`, surface the first as a `CompileError::Parse { span, message }` carrying the byte range.
+Use `swc_ecma_parser::lexer::Lexer` + `Parser` configured for `Syntax::Typescript(TsSyntax { tsx: true, ..Default::default() })`. Input: `&str`. Output: `swc_ecma_ast::Module`. Errors: collect via `Vec<swc_ecma_parser::error::Error>`, surface the first as a `CompileError::Parse { span, message }` carrying the byte range.
+
+(`TsConfig` is a historical name — in `swc_ecma_parser` 41.x the type is `TsSyntax`; older versions had a `#[deprecated] type TsConfig = TsSyntax` alias, but bundled 41 has no alias.)
 
 ### 4.3 What we accept from the swc AST
 
-A `Module` whose only statement at top level is a single `ExportDefaultDecl { decl: FnExpr { … } }` — equivalent to `export default function Name(props) { return <JSX>; }`. Imports are silently accepted but unused (v2 change — v1 errored on imports; v2 is lenient since real files have type imports). Other top-level statements → `CompileError::UnexpectedStatement { span }`.
+A `Module` whose only statement at top level (apart from `ImportDecl`s) is a single `ExportDefaultDecl { decl: DefaultDecl::Fn(FnExpr { ident, function }) }` — equivalent to `export default function Name(props) { return <JSX>; }`. The variant wrapper `DefaultDecl::Fn(...)` is required; matching `ExportDefaultDecl { decl: FnExpr { … } }` directly fails because `decl` is a `DefaultDecl` enum, not a `FnExpr`.
+
+Imports (`ModuleDecl::Import(_)`) are silently accepted but unused (v2 change — v1 errored on imports; v2 is lenient since real files have type imports). Other top-level statements → `CompileError::UnexpectedStatement { span }`.
 
 The function body must be a single `ReturnStmt` returning a single `JSXElement` (optionally wrapped in `ParenExpr`). Multiple statements / locals / `if`s in the body → `CompileError::BodyMustBeSingleReturn { span }`.
 
@@ -132,7 +138,7 @@ The lowering pass (`src/lower.rs`) walks the swc AST and produces our small IR. 
 `JSXFragment`: `FragmentNotSupported { span }`.
 
 `JSXAttr.name`:
-- `JSXAttrName::Ident(name)`: passed through; the emitter handles renames (§4.5).
+- `JSXAttrName::Ident(IdentName)`: passed through; the emitter handles renames (§4.5). Note: this variant wraps `IdentName` (span + Atom only), not `Ident` — no syntax context, no `.to_id()`. Only `.sym` matters.
 - `JSXAttrName::JSXNamespacedName(_)`: `NamespacedAttrNotSupported { span }`.
 
 `JSXAttrName::Ident` starting with `on` + uppercase next char (e.g. `onClick`, `onSubmit`): `EventHandlerNotSupported { span, name }`. Detected BEFORE rename-table lookup. (Reviewer-flagged precedence; v2 makes it explicit.)
@@ -158,6 +164,8 @@ Element children: lowered in order, each child is one of:
 - `JSXElement`: recurse.
 - `JSXFragment`: `FragmentNotSupported`.
 - `JSXSpreadChild`: `SpreadChildNotSupported`.
+
+**Void-element children check** (reviewer-flagged — moved from §6 trivia into a lowering rule): after the parent element's name is lowered, if the lowered name matches the void-element table (`area, base, br, col, embed, hr, img, input, keygen, link, meta, param, source, track, wbr`) and `children` is non-empty (after whitespace-only filter per §4.6), emit `VoidElementHasChildren { span, name }`. This is the ONLY trigger for that error kind.
 
 `EXPR` rules (both child position and attribute-value position):
 - `Expr::Ident(name)`:
@@ -212,11 +220,11 @@ Three failing inputs would break: (a) preformatted `<pre>` content — React pre
 
 (v2 change — whole section rewritten.)
 
-Each compiled fixture produces a Rust file of this shape:
+Each compiled fixture produces a Rust file of this shape. The emitter always emits exactly `use maud::{html, Markup};` — `Render` and `PreEscaped` are NOT used by any A1-supported construct (no raw-HTML injection in this phase). The shape illustration below uses the canonical import set:
 
 ```rust
 // === GENERATED by jsx-rust-compiler; do not edit. ===
-use maud::{html, Markup, Render, PreEscaped};
+use maud::{html, Markup};
 
 pub struct Props {
     pub title: String,
@@ -247,7 +255,8 @@ pub fn render(props: &Props) -> Markup {
 |---|---|
 | Element `<tag attrs>children</tag>` | `tag attrs { children }` |
 | Self-closing void `<br/>` | `br;` |
-| Empty attribute `disabled` | `disabled;` (maud's boolean form) |
+| Empty attribute `disabled` on void element | `input disabled;` |
+| Empty attribute `disabled` on non-void element | `button disabled { ... }` (maud accepts boolean attrs in any element form; the `;` shown elsewhere in this table is the void-element-terminator, not part of the attribute) |
 | Static attr `name="v"` | `name="v"` — maud will HTML-escape on render |
 | Dynamic attr `name={expr}` | `name=(<emit_expr>)` |
 | Renamed attr `className={x}` | `class=(<emit_expr>)` |
@@ -256,15 +265,18 @@ pub fn render(props: &Props) -> Markup {
 | Map child | `@for binding in &<source_path> { <body> }` |
 | Number-literal text | `(value)` (i64) or `("value")` (str of fractional, see §5.2) |
 
-`<emit_expr>` translation:
+`<emit_expr>` translation. **Canonical rule** (reviewer-flagged §5.1↔§10 inconsistency): the emitter emits NO explicit `&` prefix on field/member accesses. The render signature is `fn render(props: &Props) -> Markup`, so `props.title` already yields `&String`/`&T` via field projection through a reference; maud's `Render` blanket impl covers it. Adding `&` produces `&&String`, which works but is needlessly obscure.
+
 | IR | Rust |
 |---|---|
-| `Field(name)` | `&props.name` for `&String`; `props.name` for `Copy` types like i64 |
-| `MapBinding(name)` | `&name` for `&String`; `name` for `Copy` |
-| `MemberAccess { root, path }` where root is destructured prop | `&props.<root>.<path0>.<path1>...` for `&String` |
-| `MemberAccess` where root is map binding | `&<root>.<path0>...` |
+| `Field(name)` | `props.name` (yields `&FieldType` via projection through `&Props`) |
+| `MapBinding(name)` | `name` (binding from `for name in &props.xs` is already `&XsItem`) |
+| `MemberAccess { root, path }` where root is destructured prop | `props.<root>.<path0>.<path1>...` |
+| `MemberAccess` where root is map binding | `<root>.<path0>...` |
 | `StaticText(s)` | `(<emit_static_str>)` — see §5.2 |
 | `StaticNum(n)` | `(n)` (i64) |
+
+All fixture expected emits in §10 follow this canonical rule.
 
 ### 5.2 Numeric and string-literal emit
 
@@ -288,16 +300,25 @@ If two paths conflict (e.g. `{items}` text and `{items.map(...)}`) → `PropType
 
 ### 5.4 Nested member path → struct emit
 
-For a JSX referencing `{user.address.city}` where `user` is a destructured prop, generate:
+**Naming rule** (reviewer-flagged inconsistency fixed): for a JSX referencing `{user.address.city}` where `user` is a destructured prop, the generated struct name at each intermediate level is the PascalCase concatenation of the segments traversed from the root prop down to (but not including) the current leaf field. The root prop's type name is just the PascalCased root prop name.
+
+Applied to `{user.address.city}`:
 ```rust
-pub struct UserAddress { pub city: String }
-pub struct UserData { pub address: UserAddress }
-pub struct Props { pub user: UserData }
+pub struct UserAddress { pub city: String }   // intermediate: root="user", segments=["address"] → "User" + "Address"
+pub struct User       { pub address: UserAddress }   // root: just "User"
+pub struct Props      { pub user: User }
 ```
 
-Naming: each intermediate becomes `<PathPascalCased>` joined. Leaf assumed `String`. If multiple use sites name overlapping fields, merge field lists; if one path bottoms at `String` and another at a struct (e.g. `{x}` and `{x.y}`), → `PropTypeConflict`.
+For `{user.address.city}` AND `{user.name}` in the same component:
+```rust
+pub struct UserAddress { pub city: String }
+pub struct User       { pub address: UserAddress, pub name: String }
+pub struct Props      { pub user: User }
+```
 
-A1 fixtures keep depth ≤ 2 (`item.href`, `item.label`) so the nested-struct logic is tested but not load-bearing.
+If multiple use sites name overlapping fields, merge field lists. If one path bottoms at `String` and another at a struct (e.g. `{user}` and `{user.name}`), → `PropTypeConflict`.
+
+A1 fixtures keep depth ≤ 2 (`item.href`, `item.label` inside a map binding) so the nested-struct logic is exercised once (via the `ItemsItem` generated type in `list_nav`) but not load-bearing.
 
 ### 5.5 Empty `Props` and zero-prop components
 
@@ -395,10 +416,10 @@ To update goldens: `UPDATE_GOLDEN=1 cargo test -p jsx-rust-compiler --test golde
 
 ### 9.3 Integration — golden render (`tests/golden_render/`)
 
-(v2 change — `#[path = "..."]` mod hardened per reviewer.) `tests/golden_render/mod.rs` is a `mod` aggregator; one sub-module per fixture:
+(v2 change — `#[path = "..."]` mod hardened per reviewer.) Cargo's integration-test "directory" form requires `main.rs` (NOT `mod.rs`) for the entry file — a `tests/golden_render/mod.rs` without a sibling `tests/golden_render.rs` is silently skipped by `cargo test`. The directory becomes one test binary named `golden_render`. Sub-files are declared as modules from `main.rs`:
 
 ```rust
-// tests/golden_render/mod.rs
+// tests/golden_render/main.rs
 mod static_hello;
 mod props_hello;
 mod list_nav;
@@ -607,19 +628,23 @@ Expected HTML — fixture test calls render with `items = [{href:"/a", label:"Al
 
 ## 15. Blocked fallback (per ny-auto-pipeline discipline)
 
-### 15.1 swc_core 68 fails to compile against workspace serde
+### 15.1 swc_core 68 fails to compile in the workspace
 
-Symptom: `cargo build -p jsx-rust-compiler` errors with anything mentioning `serde::__private`, `serde_derive` macro mismatch, or any `swc_common`-internal compat.
+(v2 reviewer-flagged: the prior session's serde-`__private` failure was a swc_core 13 era issue. swc_core 68 has it fixed and resolves `serde 1.0.228` internally — pinning serde DOWN to 1.0.215 would actively break the build. This section is rewritten around the real likely failure modes.)
 
-First diagnostic step (debug-mantra step 3, falsify): build with `cargo build -p jsx-rust-compiler --verbose` and inspect which crate is failing. If it's NOT swc, the failure is elsewhere and §15.1 doesn't apply.
+Symptom: `cargo build -p jsx-rust-compiler` errors during the swc-graph compile.
 
-Recovery order, attempt in sequence:
-1. Add a workspace-level resolver pin: `serde = "=1.0.215"` in `crates/jsx-rust-compiler/Cargo.toml` (NOT the workspace root — local to the compiler crate). Verify brust crate still builds with the default `serde = "1"` resolution. Cargo's resolver MAY downgrade workspace-wide; if it does, this approach is dead.
-2. Pin to the LATEST serde that swc_core 68 builds against — likely the 1.0.219 line per swc's known compat tables. Document the pin in `Cargo.toml` with a comment.
-3. Drop `swc_core` and use the lower-level crates directly: `swc_ecma_parser = "version_pulled_in_by_swc_core_68"` + `swc_ecma_ast` + `swc_common` separately. Smaller surface, but loses the bundled-version guarantee.
-4. ESCALATE to advisor — the compat issue may have changed shape since swc_core 68 was uploaded. The two-attempts rule applies here per ny-auto-pipeline: if (1) AND (2) both fail and (3) introduces new compat noise, advisor must adjudicate before pivoting back to hand-rolled.
+First diagnostic step (debug-mantra step 3, falsify): `cargo build -p jsx-rust-compiler --verbose 2>&1 | head -60` and identify which crate failed. If the failing crate is NOT in the swc graph, the issue is local to our code and §15.1 doesn't apply.
 
-The HARD floor before hand-rolling: two real attempts on the same swc-compat root cause must fail. Only then does v1's hand-rolled approach come back on the table, and only with explicit advisor sign-off.
+Likely failure modes + recovery, in order of probability:
+
+1. **proc-macro2 / quote / syn version conflict** with another workspace dep that pins a major version. Recovery: `cargo tree -p jsx-rust-compiler -i proc-macro2` to find the conflicting branch. Bump our own constraint (or relax it to `"*"` for direct deps that don't pin major) until cargo can pick a single working version.
+2. **Edition / rustc version too old**. swc_core 68 may require a newer rustc minimum than the workspace's `edition = "2024"` toolchain supports. Recovery: `rustc --version` to confirm; the workspace `crates/brust/Cargo.toml` already pins `edition = "2024"`, which requires rustc ≥ 1.85 — swc_core 68 should be within that. If a newer minimum is required, document in §12 known limitations and add a `rust-version` field to `crates/jsx-rust-compiler/Cargo.toml`.
+3. **Lockfile divergence** between an in-repo `Cargo.lock` and what swc_core 68 expects. Recovery: `rm Cargo.lock && cargo build -p jsx-rust-compiler` to regenerate from constraint solving; commit the new lockfile.
+4. **NOT covered by §15.1**: serde version. swc_core 68 internally satisfies its own serde requirement. The workspace's `serde = "1"` SemVer-resolves to 1.0.x compatible with swc_core 68 by construction. Do NOT pin serde unless cargo's error message specifically names serde at a wrong version; even then, the pin must be UP (allow newer), not DOWN.
+5. ESCALATE to advisor — if 1–3 fail in sequence and the error mode is truly novel, advisor adjudicates. Per ny-auto-pipeline two-attempts rule, BLOCKED-twice on the same root cause triggers advisor.
+
+The HARD floor before pivoting parser strategy: two real attempts on independent root causes must fail. Pivoting back to v1's hand-rolled approach requires explicit advisor sign-off — user direction is SWC + maud, and we don't override that on our own.
 
 ### 15.2 maud golden HTML doesn't match expectation
 
