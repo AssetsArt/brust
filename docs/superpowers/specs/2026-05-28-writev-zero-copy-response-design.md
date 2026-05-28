@@ -49,19 +49,19 @@ Two userspace memcpys of the body, three allocations of body-size buffers (`data
 data: Vec<u8>                       // owned, [meta_len u16 BE][meta JSON][body]
   ↓ split_meta
   body: &[u8]                       // slice into data
-  ↓ build_single_response_head_only
-  head: Vec<u8>                     // alloc, ~120-200 B; NO body bytes
   ↓ if route has cache_config:
-      let owned_resp = build_single_response_bytes(&parsed, body)  // ONE alloc+memcpy (was two: build+clone)
-      on_success(&owned_resp)
-      s.write_all(owned_resp).await
+      let resp = build_single_response_bytes(&parsed, body)    // alloc + body memcpy
+      s.write_all(resp.clone()).await                          // clone + write
+      response_bytes_for_cache = resp                          // forwarded to on_success
     else:
+      let head = build_single_response_head_only(&parsed, body.len())  // alloc, ~120-200 B; NO body bytes
       s.write_all_vectored([&head, body]).await   // ★ kernel scatter-gather, no body memcpy
       // no on_success call — uncached routes skip the closure entirely
 ```
 
-Cached routes: ONE body memcpy (down from two — clone() is dropped, build happens once).
-Uncached routes: ZERO body memcpys (down from two).
+**Cached routes:** unchanged at two body memcpys per req (`build` + `clone`). The cached path is not optimized in this sub-project — sharded cache + (head, body) pair-storage is a separate sub-project, see "Known limitations §3".
+
+**Uncached routes:** ZERO body memcpys (down from two — `build` and `clone` both skipped). This is the bench hot path: `/` and `POST /_brust/action/createNote` both run uncached at HEAD `66f04d3`.
 
 ### Components affected
 
@@ -142,17 +142,26 @@ impl TcpStream {
     /// and advancing as bytes are written. Returns `WriteZero` if the
     /// kernel reports zero bytes written with bufs non-empty (treated as
     /// connection closed).
+    ///
+    /// `tokio::io::AsyncWriteExt::write_vectored` requires the `io-util`
+    /// feature, which `Cargo.toml` already enables on `cfg(not(linux))`.
+    /// Verified via tokio src: `tokio/src/net/tcp/stream.rs` sets
+    /// `is_write_vectored = true` and delegates to mio's
+    /// `poll_write_vectored`, which calls `writev(2)`.
     pub async fn write_all_vectored(
         &mut self,
-        bufs: &mut [IoSlice<'_>],
+        bufs: &mut [std::io::IoSlice<'_>],
     ) -> std::io::Result<()> {
         use tokio::io::AsyncWriteExt;
+        // `IoSlice::advance_slices` takes `&mut &mut [IoSlice]` — we need
+        // to rebind through a mutable local so we can pass `&mut bufs`.
+        let mut bufs: &mut [std::io::IoSlice<'_>] = bufs;
         while !bufs.is_empty() {
             let n = self.0.write_vectored(bufs).await?;
             if n == 0 {
                 return Err(std::io::ErrorKind::WriteZero.into());
             }
-            IoSlice::advance_slices(&mut bufs, n);
+            std::io::IoSlice::advance_slices(&mut bufs, n);
         }
         Ok(())
     }
@@ -197,6 +206,9 @@ impl TcpStream {
     // Canonical buffering use-case: single Content-Length response.
     if cache_wanted {
         // Build full bytes once for both the write and the cache insert.
+        // Clone preserved here — cache needs an owned copy independent of
+        // the write_all transfer. Reducing this clone is a separate
+        // sub-project (see "Known limitations §3").
         let resp = crate::render_stream::build_single_response_bytes(&parsed, body);
         if s.write_all(resp.clone()).await.is_err() {
             let _ = ack.send(());
@@ -205,6 +217,8 @@ impl TcpStream {
         response_bytes_for_cache = resp;
     } else {
         // Uncached hot path — vectored write, no body memcpy.
+        // `data` (containing `body` as a sub-slice) is owned by this match
+        // arm and lives until the arm exits, well past the await.
         let head = crate::render_stream::build_single_response_head_only(&parsed, body.len());
         let mut slices = [
             std::io::IoSlice::new(&head),
@@ -268,7 +282,7 @@ Call sites in `handle_conn`:
 ### Rust unit tests (`src/render_stream.rs`)
 
 - **T1** `build_single_response_head_only_format`: status line + content-type + content-length + blank line; verify NO body bytes appear.
-- **T2** `build_single_response_bytes_equals_head_plus_body`: assert `build_single_response_bytes(&m, &b) == [build_single_response_head_only(&m, b.len()), b].concat()`. This is the refactor-safety net.
+- **T2** `build_single_response_bytes_equals_head_plus_body`: assert `build_single_response_bytes(&m, &b) == [build_single_response_head_only(&m, b.len()), b].concat()` for three bodies: empty (`b""`, locks `Content-Length: 0` formatting), small (`b"<html>x</html>"`), and large (4 KB). This is the refactor-safety net.
 - **T3** `head_only_includes_extra_headers_in_order`: BTreeMap iteration order preserved (alphabetical) and emitted before the blank line.
 
 ### Rust unit tests (`src/io/{linux,other}.rs`)
@@ -278,13 +292,16 @@ Call sites in `handle_conn`:
 - **T6** `write_all_vectored_empty_input_returns_ok`: zero slices → immediate `Ok(())`, no syscalls.
 - (Linux stub: tested implicitly by the integration test below; the fallback's behavior is "concat then write_all" which is already covered by existing tests.)
 
-### Rust integration test (`tests/writev_byte_equivalence.rs`)
+### Bun integration test (`tests/integration.test.ts`)
 
-- **T7** Spin up brust with a minimal route, run two requests:
-  1. First with vectored path active (new code, no cache config)
-  2. Second with non-vectored path active (cache config present)
-- Capture bytes off the wire (use `tokio::net::TcpStream::connect`, send raw HTTP/1.1 GET, read response).
-- Assert: byte-for-byte equality of status line + headers + body across both paths.
+(Rust integration tests can't link against brust internals — `Cargo.toml:7` declares `crate-type = ["cdylib"]` only. Brust's existing test harness uses bun to spawn the cdylib-loaded app and exercises it over real HTTP via `fetch`; T7 follows that pattern.)
+
+- **T7** `byte-for-byte: vectored uncached path matches non-vectored cached path` — add to the existing `tests/integration.test.ts` suite (alongside the existing `serves rendered html via worker pool` test which already spawns `tests/fixtures/app/index.ts`).
+  1. Spawn the fixture app on a fresh `BRUST_PORT`.
+  2. The fixture already has both shapes: `/` (uncached → new vectored path), and `/cache-test` (cached → existing concat path) at `tests/fixtures/app/routes.tsx`. Add a route, if needed, that emits an identical response body to both for direct comparison; otherwise compare structural invariants.
+  3. Use raw `node:net` socket (or `Bun.connect`) to send a raw `GET / HTTP/1.1\r\nHost: ...\r\n\r\n` and read the *exact bytes* back — `fetch` re-frames and normalises headers, so it's unsuitable.
+  4. Repeat for the cached route. The first cached-route request goes through `build_single_response_bytes`; a second cached-route request is served from `cache.get()` (bypassing the new path entirely).
+  5. Parse status line + headers (case-insensitive) + body separately. Assert: status, content-length, content-type, body bytes are identical across both shapes. Header **order** is allowed to differ within the standard header set (the new path may emit Content-Type before Content-Length where the old emitted them together) — `build_single_response_head_only` is structured to keep order identical, but we tolerate ordering drift to avoid an over-strict regression test.
 
 ### Bun runtime tests
 
@@ -321,7 +338,7 @@ No change. The `runtime/render/stream.ts` buffering / streaming logic and the JS
 ## Open questions resolved at plan-time
 
 - **Q: Does tokio's `AsyncWriteExt::write_vectored` exist on `tokio::net::TcpStream`?**
-  A: Yes — via `AsyncWrite::poll_write_vectored` + the `AsyncWriteExt` extension trait. `TcpStream` implements `AsyncWrite` with vectored support (delegates to `writev(2)` syscall internally).
+  A: Yes — verified via `tokio-1.x/src/net/tcp/stream.rs` which sets `is_write_vectored = true` and delegates to mio's `poll_write_vectored`, calling `writev(2)`. Lives behind `tokio` crate feature `io-util` which `Cargo.toml:34` already enables on `cfg(not(linux))`. No new feature flags needed.
 
 - **Q: Is `IoSlice::advance_slices` available?**
   A: Yes, stable since Rust 1.81. Cargo.toml's `edition = "2024"` requires Rust 1.85+. Safe.
