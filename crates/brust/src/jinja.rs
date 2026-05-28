@@ -45,8 +45,9 @@ pub fn load_from(dir: &Path) -> Vec<String> {
                 .to_string();
             let source = std::fs::read_to_string(&path)
                 .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-            // SAFETY: OnceLock<Environment<'static>> requires 'static template
-            // sources + names. Hot reload deferred per spec §13.7.
+            // NOTE: OnceLock<Environment<'static>> requires 'static template
+            // sources + names; Box::leak is the bounded one-time leak per spec
+            // §6 (template count = route count). Hot reload deferred per §13.7.
             let source_static: &'static str = Box::leak(source.into_boxed_str());
             let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
             env.add_template(name_static, source_static)
