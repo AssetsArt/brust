@@ -8,15 +8,23 @@ are dispatched into Bun Worker threads through `ThreadsafeFunction`, and HTML
 flows back via per-worker `SharedArrayBuffer`.
 
 ```
-116,576 RPS  GET /ping              (p50 0.15ms · p99 0.24ms)
- 54,828 RPS  GET / (SSR React)      (p50 0.28ms · p99 1.23ms)
- 61,032 RPS  POST server action     (p50 0.29ms · p99 0.54ms)
+127,113 RPS  GET /ping              (p50 0.13ms · p99 0.22ms)
+121,013 RPS  POST server action     (p50 0.14ms · p99 0.23ms)
+ 16,301 RPS  GET / (SSR React)      (p50 0.58ms · p99 17.85ms)
 ```
 
-Benchmarked with `oha -c 120 -z 10s` on darwin/arm64, Bun 1.4. Full table in
-[`bench/RESULTS.md`](./bench/RESULTS.md). Same hardware: Bun.serve +
-`renderToString` does 40k RPS on `/`. The Rust HTTP layer is where the headroom
-lives.
+Benchmarked with `oha -c 120 -z 10s` on darwin/arm64, Bun 1.4 — re-run on
+2026-05-28 after the atomic-claim fix. Full table in [`bench/RESULTS.md`](./bench/RESULTS.md).
+Same hardware: Bun.serve + `renderToString` does 17k RPS on `/`. The Rust HTTP
+layer is where the headroom lives — `/ping` and the server-action POST path
+(both bypass React but cross the napi+SAB boundary) sustain >120k RPS.
+
+The `/` SSR number is honestly down from the pre-CSS-pipeline 54k. The drop
+appears to come from features that landed between the May-24 bench and now
+(CSS-link injection, dev-client injection, Tailwind v4 in the example) — not
+from the atomic-claim refactor (POST through the same worker pool actually
+doubled). Investigating the per-request injection overhead is a tracked
+follow-up.
 
 ---
 
