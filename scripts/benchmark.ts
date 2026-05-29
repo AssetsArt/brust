@@ -13,8 +13,11 @@
 // The bench process can't tell which build is loaded, so the renderer prints a
 // reminder at the top of every run.
 
-import { spawn } from 'bun'
+import { spawn, spawnSync } from 'bun'
 import { mkdir, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import path from 'node:path'
+import { emitNativeTemplates } from '../runtime/cli/native-routes-emit.ts'
 
 type Scenario = {
   id: string                       // short id used in column headers, e.g. 'brust'
@@ -73,7 +76,20 @@ const SCENARIOS: Scenario[] = [
 const PROBES: Probe[] = [
   { path: '/ping' },
   { path: '/' },
-  // Server-function dispatch — brust-only (no equivalent on the bun-serve baseline).
+  // Sub-project J — `native: true` route. Compiled to jinja at build time,
+  // rendered Rust-side via minijinja with loader-supplied template context.
+  // Goes through `dispatch_to_worker_and_stream_chunks` like every JS-bridged
+  // path; comparable cost to actions and React no-Suspense routes.
+  // Brust-only — no bun-serve equivalent.
+  {
+    path: '/native-profile/World',
+    scenarios: ['brust'],
+  },
+  // Server-function dispatch — brust-only. REQUIRES `example/hello-world/actions.ts`
+  // to actually register createNote. Without it, the path hits Rust's
+  // `error_404` short-circuit at server.rs:272 (unknown action id) instead
+  // of going through dispatch — measuring the wrong path and reporting
+  // ~110k inflated RPS (see commit history for the 2026-05-29 honest-numbers fix).
   {
     path: '/_brust/action/createNote',
     method: 'POST',
@@ -244,12 +260,54 @@ function renderMarkdown(results: Result[]): string {
   return lines.join('\n') + '\n'
 }
 
+async function preflightJinja(): Promise<void> {
+  // Sub-project J — emit .brust/jinja/<Name>.jinja for example/hello-world's
+  // native: true routes BEFORE the brust scenario boots. Runtime loads from
+  // process.cwd() + '.brust/jinja', and `bun run example/hello-world/index.ts`
+  // runs with cwd = repo root, so emit to <repo>/.brust/jinja.
+  //
+  // Without this, /native-profile/{user} 500s because the registry is empty.
+  const REPO_ROOT = process.cwd()
+  const exampleDir = path.resolve(REPO_ROOT, 'example/hello-world')
+  const routesFile = path.join(exampleDir, 'routes.tsx')
+  if (!existsSync(routesFile)) {
+    console.warn('[bench] pre-flight: no routes.tsx in example/hello-world — skipping jinja emit')
+    return
+  }
+  // Ensure jsx-rustc binary exists (release preferred). emitNativeTemplates
+  // throws clearly if it's missing AND there are native routes to emit.
+  const jsxRustcDebug = path.join(REPO_ROOT, 'target/debug/jsx-rustc')
+  const jsxRustcRelease = path.join(REPO_ROOT, 'target/release/jsx-rustc')
+  if (!existsSync(jsxRustcDebug) && !existsSync(jsxRustcRelease)) {
+    console.log('[bench] pre-flight: building jsx-rustc')
+    const r = spawnSync({
+      cmd: ['cargo', 'build', '-p', 'jsx-rust-compiler', '--bin', 'jsx-rustc'],
+      cwd: REPO_ROOT,
+      stdout: 'inherit',
+      stderr: 'inherit',
+    })
+    if (r.exitCode !== 0) throw new Error('cargo build -p jsx-rust-compiler --bin jsx-rustc failed')
+  }
+  const mod = await import(routesFile)
+  const flatRoutes = (mod.routes ?? []) as { nativeTemplate?: string }[]
+  const outDir = path.resolve(REPO_ROOT, '.brust/jinja')
+  await emitNativeTemplates({
+    entryFile: routesFile,
+    flatRoutes,
+    outDir,
+    repoRoot: REPO_ROOT,
+  })
+  const builtCount = flatRoutes.filter((r) => r.nativeTemplate).length
+  console.log(`[bench] pre-flight: emitted ${builtCount} jinja template(s) → ${outDir}`)
+}
+
 async function main() {
   console.log(
     'Reminder: bench requires a release-built napi addon.\n' +
     '  cd runtime && bun run build     # release, optimised\n' +
     '  cd runtime && bun run build:debug   # ~2x slower, debug only\n',
   )
+  await preflightJinja()
   const results: Result[] = []
   for (const s of SCENARIOS) {
     for (const p of PROBES) {
