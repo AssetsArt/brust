@@ -24,6 +24,29 @@ test('pathInto walks dotted paths and handles edge cases', () => {
   expect(pathInto(whole, '')).toBe(whole)
 })
 
+test('pathInto returns undefined for inherited / prototype keys (no chain walk)', () => {
+  // Defense against prototype-chain reads + the downstream JSON.stringify(fn)
+  // → undefined → entityEncode crash (T7 review HIGH-B).
+  expect(pathInto({ a: 1 }, 'constructor')).toBeUndefined()
+  expect(pathInto({ a: 1 }, '__proto__')).toBeUndefined()
+  expect(pathInto({ a: 1 }, 'toString')).toBeUndefined()
+  expect(pathInto({ a: 1 }, '__proto__.constructor')).toBeUndefined()
+  // primitives mid-path don't traverse to String.prototype etc.
+  expect(pathInto({ s: 'hi' }, 's.length')).toBeUndefined()
+  // arrays: own indexed access still works
+  expect(pathInto({ xs: [{ n: 7 }] }, 'xs.0')).toEqual({ n: 7 })
+})
+
+test('resolveIslandContext: a function-valued prop never crashes (serializes null)', () => {
+  // If pathInto somehow yields a non-serializable value, JSON.stringify returns
+  // undefined; the `?? null` / `?? "null"` guards keep entityEncode safe.
+  const manifest: NativeIslandEntry[] = [
+    { id: 'Fn', propsPath: 'fn', ssr: false, hydrate: 'load', sourcePath: '/x' },
+  ]
+  const out = resolveIslandContext(manifest, { fn: () => 1 })
+  expect(out.island_Fn_props).toBe(entityEncode('null'))
+})
+
 test('entityEncode escapes & < > " in the right order, no double-encode', () => {
   // input contains literal backslashes (from the escaped quotes in JSON);
   // those pass through unchanged. Only & < > " are touched.
@@ -88,4 +111,14 @@ test('loadIslandManifest: reads from jinjaDir, missing file → null, caches rea
   // second call hits cache: returns equal data (same object identity from cache)
   const second = loadIslandManifest('page', dir)
   expect(second).toBe(first)
+})
+
+test('loadIslandManifest: malformed JSON → null (no throw), cached', () => {
+  // T7 review HIGH-A: a present-but-malformed manifest must degrade to null,
+  // not throw out of the fast-lane native branch.
+  const dir = mkdtempSync(path.join(tmpdir(), 'brust-islands-bad-'))
+  writeFileSync(path.join(dir, 'broken.islands.json'), '{ not valid json ]')
+  expect(loadIslandManifest('broken', dir)).toBeNull()
+  // cached as null → second call also null, no re-read/throw
+  expect(loadIslandManifest('broken', dir)).toBeNull()
 })

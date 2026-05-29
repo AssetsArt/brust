@@ -24,14 +24,21 @@ export interface NativeIslandEntry {
   sourcePath: string
 }
 
-/** Walk a dotted path into `data`. Each segment is read via optional access
- * so a missing segment (or nullish `data`) yields `undefined`. An empty path
- * returns `data` itself. */
+/** Walk a dotted path into `data`. Each segment must be an OWN enumerable
+ * property — inherited keys (`constructor`, `__proto__`, `toString`, …) yield
+ * `undefined` rather than traversing the prototype chain. This blocks both
+ * prototype-pollution-style reads AND the downstream crash where a resolved
+ * function (`Object`) makes `JSON.stringify` return `undefined`. A missing
+ * segment, a nullish/primitive cursor, or a non-own key all yield `undefined`.
+ * An empty path returns `data` itself. */
 export function pathInto(data: unknown, propsPath: string): unknown {
   if (propsPath === '') return data
   let cur: unknown = data
   for (const seg of propsPath.split('.')) {
-    cur = (cur as any)?.[seg]
+    if (cur == null || typeof cur !== 'object' || !Object.hasOwn(cur, seg)) {
+      return undefined
+    }
+    cur = (cur as Record<string, unknown>)[seg]
   }
   return cur
 }
@@ -68,14 +75,17 @@ export function loadIslandManifest(
   const dir = jinjaDir ?? path.resolve(process.cwd(), '.brust/jinja')
   const abs = path.resolve(dir, `${templateName}.islands.json`)
   if (manifestCache.has(abs)) return manifestCache.get(abs)!
-  let raw: string
+  let parsed: NativeIslandEntry[] | null
   try {
-    raw = readFileSync(abs, 'utf8')
+    // JSON.parse is INSIDE the try: a present-but-malformed manifest must
+    // degrade to null (cached), not throw out of the fast-lane native branch
+    // (which runs past the request try/catch — an unguarded throw there is an
+    // unhandled rejection that hangs the request instead of a clean fallback).
+    parsed = JSON.parse(readFileSync(abs, 'utf8')) as NativeIslandEntry[]
   } catch {
     manifestCache.set(abs, null)
     return null
   }
-  const parsed = JSON.parse(raw) as NativeIslandEntry[]
   manifestCache.set(abs, parsed)
   return parsed
 }
@@ -91,7 +101,10 @@ export function resolveIslandContext(
   const out: Record<string, string> = {}
   for (const entry of manifest) {
     const props = pathInto(data, entry.propsPath)
-    out['island_' + entry.id + '_props'] = entityEncode(JSON.stringify(props ?? null))
+    // `?? null` handles undefined props; the `?? 'null'` belt-and-braces covers
+    // the case where JSON.stringify itself returns undefined (e.g. a function
+    // value), so entityEncode never receives undefined.
+    out['island_' + entry.id + '_props'] = entityEncode(JSON.stringify(props ?? null) ?? 'null')
   }
   return out
 }
