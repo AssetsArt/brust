@@ -1,6 +1,6 @@
 // DOM is not available in bun's default environment. We install happy-dom
 // globals in beforeAll so this file is self-contained (no --preload needed).
-import { test, expect, beforeAll } from 'bun:test'
+import { test, expect, beforeAll, beforeEach, mock } from 'bun:test'
 import { Window } from 'happy-dom'
 
 // isInternalLink and hydrateMarkersIn are imported lazily (after DOM is up)
@@ -8,8 +8,37 @@ import { Window } from 'happy-dom'
 let isInternalLink: (a: HTMLAnchorElement, e: MouseEvent) => boolean
 let hydrateMarkersIn: (root?: ParentNode) => void
 let swapMainContent: (main: HTMLElement, html: string) => void
+let hydrateOne: (el: HTMLElement) => Promise<void>
+let unmountIslandsIn: (root: ParentNode) => void
+
+// react-dom/client is a STATIC top-level binding in bootstrap.ts, so the mock
+// must be registered before `await import('./bootstrap')` runs (below) for it
+// to rewire createRoot/hydrateRoot. Spies live at module scope so the
+// per-test branch assertions can read call counts; beforeEach clears them so
+// one test's calls don't leak into the next ("NOT createRoot" assertions).
+const unmountSpy = mock(() => {})
+const renderSpy = mock(() => {})
+const createRootSpy = mock(() => ({ render: renderSpy, unmount: unmountSpy }))
+const hydrateRootSpy = mock(() => ({ unmount: unmountSpy }))
+
+beforeEach(() => {
+  unmountSpy.mockClear()
+  renderSpy.mockClear()
+  createRootSpy.mockClear()
+  hydrateRootSpy.mockClear()
+})
 
 beforeAll(async () => {
+  // Registered before the bootstrap import below so the static binding picks
+  // up the spies. The chunk module (/_brust/islands/<id>.js) is also mocked so
+  // hydrateOne's dynamic import resolves to a trivial component in test.
+  mock.module('react-dom/client', () => ({
+    createRoot: createRootSpy,
+    hydrateRoot: hydrateRootSpy,
+  }))
+  mock.module('/_brust/islands/Counter.js', () => ({ default: () => null }))
+  mock.module('/_brust/islands/Server.js', () => ({ default: () => null }))
+
   const win = new Window({ url: 'http://localhost/' })
   // happy-dom 20.9.0 leaves win.SyntaxError/TypeError undefined, which
   // crashes its own querySelectorAll :not() implementation. Patch them.
@@ -36,6 +65,8 @@ beforeAll(async () => {
   isInternalLink  = mod.isInternalLink
   hydrateMarkersIn = mod.hydrateMarkersIn
   swapMainContent = mod.swapMainContent
+  hydrateOne = mod.hydrateOne
+  unmountIslandsIn = mod.unmountIslandsIn
 })
 
 function makeLink(href: string, attrs: Partial<{ target: string; download: string; 'data-brust-no-intercept': string }> = {}): HTMLAnchorElement {
@@ -129,6 +160,59 @@ test('hydrateMarkersIn is idempotent — second call on same root does not re-ta
     marker.setAttribute('data-brust-hydrated', 'seen')
     hydrateMarkersIn(root)
     expect(marker.getAttribute('data-brust-hydrated')).toBe('seen')
+  } finally {
+    document.body.removeChild(root)
+  }
+})
+
+// hydrateOne is driven directly (not via hydrateMarkersIn) because the `load`
+// trigger fires `void hydrateOne(el)` as a detached microtask — awaiting the
+// call here makes the createRoot-vs-hydrateRoot branch deterministic.
+function makeMarker(id: string, csr: boolean): HTMLElement {
+  const el = document.createElement('div')
+  el.setAttribute('data-brust-island', id)
+  el.setAttribute('data-brust-props', '{}')
+  if (csr) el.setAttribute('data-brust-csr', '')
+  return el as unknown as HTMLElement
+}
+
+test('hydrateOne: client-only marker (data-brust-csr) uses createRoot+render, NOT hydrateRoot', async () => {
+  const el = makeMarker('Counter', /* csr */ true)
+  await hydrateOne(el)
+  expect(createRootSpy).toHaveBeenCalledTimes(1)
+  expect(createRootSpy).toHaveBeenCalledWith(el)
+  expect(renderSpy).toHaveBeenCalledTimes(1)
+  expect(hydrateRootSpy).not.toHaveBeenCalled()
+})
+
+test('hydrateOne: server marker (no data-brust-csr) uses hydrateRoot, NOT createRoot', async () => {
+  const el = makeMarker('Server', /* csr */ false)
+  await hydrateOne(el)
+  expect(hydrateRootSpy).toHaveBeenCalledTimes(1)
+  expect(hydrateRootSpy).toHaveBeenCalledWith(el, expect.anything())
+  expect(createRootSpy).not.toHaveBeenCalled()
+  expect(renderSpy).not.toHaveBeenCalled()
+})
+
+test('unmountIslandsIn unmounts a root created via the createRoot (CSR) path', async () => {
+  const root = document.createElement('div')
+  const el = makeMarker('Counter', /* csr */ true)
+  root.appendChild(el)
+  document.body.appendChild(root)
+
+  try {
+    // hydrateOne registers the createRoot-returned Root in islandRoots, so the
+    // marker under `root` is now a tracked CSR root.
+    await hydrateOne(el)
+    expect(createRootSpy).toHaveBeenCalledTimes(1)
+    expect(unmountSpy).not.toHaveBeenCalled()
+
+    // unmountIslandsIn must find that root and unmount it — the same parity
+    // path swapMainContent relies on to avoid hanging detached React roots.
+    // createRoot's Root carries the same .unmount() as hydrateRoot's, so the
+    // existing islandRoots/unmountIslandsIn machinery needs no special-casing.
+    unmountIslandsIn(root as unknown as ParentNode)
+    expect(unmountSpy).toHaveBeenCalledTimes(1)
   } finally {
     document.body.removeChild(root)
   }
