@@ -114,7 +114,12 @@ export async function runBuild(args: string[]): Promise<void> {
   // native: true route. Pipeline runs even if no native routes exist (writes
   // an empty manifest) so consumers can rely on the output dir's presence.
   {
-    const jinjaDir = path.join(entryDir, '.brust/jinja')
+    // outDir must align with the runtime's loadJinjaOnce which reads from
+    // `process.cwd() + '.brust/jinja'`. Existing CSS pipeline uses cwd too
+    // (see boot log: "built CSS → <cwd>/.brust/css/app.css"). entryDir
+    // diverges when user runs `bun run dev <entry>` from a different dir;
+    // cwd is the single source of truth for both pipelines.
+    const jinjaDir = path.join(process.cwd(), '.brust/jinja')
     // Spec §7 Component-source resolution: scan the routes module's source for
     // ImportDeclarations, NOT the app entry's. The app entry only imports the
     // routes module + brust; the page components are imported by routes.tsx.

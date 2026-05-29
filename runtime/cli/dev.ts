@@ -65,10 +65,14 @@ export async function runDev(args: string[]): Promise<void> {
     }
   }
   // Spec §7 — scan routes.tsx (where page imports live), not the app entry.
+  // outDir = process.cwd() to align with the runtime's loadJinjaOnce which
+  // reads from `cwd + '.brust/jinja'`. When user runs `bun run dev
+  // example/hello-world/index.ts` from repo root, cwd != entryDir; writing
+  // to entryDir would put templates somewhere the runtime never looks.
   await emitNativeTemplates({
     entryFile: existsSync(routesFile) ? routesFile : entry,
     flatRoutes: loadedRoutes as { nativeTemplate?: string }[],
-    outDir: path.join(entryDir, '.brust/jinja'),
+    outDir: path.join(process.cwd(), '.brust/jinja'),
     repoRoot: REPO_ROOT,
   })
 
