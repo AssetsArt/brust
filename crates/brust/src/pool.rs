@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use napi::bindgen_prelude::{Either, Promise};
 use napi::threadsafe_function::ThreadsafeFunction;
@@ -77,6 +77,12 @@ pub struct TsfnEntry {
     pub buf_ptr: BufPtr,
     pub buf_len: usize,
     pub in_flight: AtomicU32,
+    /// Lock-free exclusivity gate. A render claims the worker by CAS-ing this
+    /// `true → false`; `RenderClaim::drop` restores it to `true`. This replaces
+    /// `render_slot.is_some()` as the busy check — the mutex below is now only
+    /// touched to STORE/CLEAR the chunk_tx for streaming paths, and fast-lane
+    /// claims skip it entirely.
+    pub idle: AtomicBool,
     pub render_slot: parking_lot::Mutex<Option<RenderSlot>>,
 }
 
@@ -102,6 +108,10 @@ impl Drop for InFlightGuard {
               dropping it immediately frees the worker and breaks the invariant"]
 pub struct RenderClaim {
     entry: Arc<TsfnEntry>,
+    /// `true` → claimed via the fast lane (no chunk_tx stored in render_slot);
+    /// drop skips the mutex entirely. `false` → streaming claim; drop clears
+    /// the slot under the mutex.
+    lockfree: bool,
 }
 
 impl RenderClaim {
@@ -112,9 +122,13 @@ impl RenderClaim {
 
 impl Drop for RenderClaim {
     fn drop(&mut self) {
-        // Order load-bearing: clear slot FIRST so the invariant
-        // `in_flight >= render_slot_count` holds at every observable point.
-        self.entry.render_slot.lock().take();
+        // Clear slot FIRST (streaming claims only) so the invariant
+        // `in_flight >= render_slot_count` holds at every observable point,
+        // THEN release the idle gate, THEN decrement in_flight.
+        if !self.lockfree {
+            self.entry.render_slot.lock().take();
+        }
+        self.entry.idle.store(true, Ordering::Release);
         self.entry.in_flight.fetch_sub(1, Ordering::Relaxed);
     }
 }
@@ -147,6 +161,7 @@ impl WorkerPool {
             buf_ptr,
             buf_len,
             in_flight: AtomicU32::new(0),
+            idle: AtomicBool::new(true),
             render_slot: parking_lot::Mutex::new(None),
         });
         self.entries.write().push(entry);
@@ -179,17 +194,48 @@ impl WorkerPool {
             return ClaimResult::PoolEmpty;
         }
         for entry in entries.iter() {
-            let mut slot = entry.render_slot.lock();
-            if slot.is_some() {
+            // Lock-free exclusivity: CAS idle true→false. Acquire pairs with the
+            // Release store in RenderClaim::drop so the next claimer sees a clean
+            // worker. The mutex below is touched ONLY to store chunk_tx (the
+            // streaming path needs it for napi_render_chunk).
+            if entry
+                .idle
+                .compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed)
+                .is_err()
+            {
                 continue;
             }
-            // in_flight is a load hint; slot correctness comes from the mutex.
-            // Relaxed matches InFlightGuard's existing ordering.
             entry.in_flight.fetch_add(1, Ordering::Relaxed);
-            *slot = Some(RenderSlot { chunk_tx });
-            drop(slot);
+            *entry.render_slot.lock() = Some(RenderSlot { chunk_tx });
             return ClaimResult::Claimed(RenderClaim {
                 entry: Arc::clone(entry),
+                lockfree: false,
+            });
+        }
+        ClaimResult::AllBusy
+    }
+
+    /// Fast-lane claim: reserve an idle worker via the lock-free `idle` CAS but
+    /// do NOT store a chunk_tx (no mutex touched at all). For single-chunk
+    /// dispatch (action/native) where the worker takes the fast lane and never
+    /// calls `napi_render_chunk`. Drop releases `idle` without locking.
+    pub fn try_claim_render_lockfree(&self) -> ClaimResult {
+        let entries = self.entries.read();
+        if entries.is_empty() {
+            return ClaimResult::PoolEmpty;
+        }
+        for entry in entries.iter() {
+            if entry
+                .idle
+                .compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed)
+                .is_err()
+            {
+                continue;
+            }
+            entry.in_flight.fetch_add(1, Ordering::Relaxed);
+            return ClaimResult::Claimed(RenderClaim {
+                entry: Arc::clone(entry),
+                lockfree: true,
             });
         }
         ClaimResult::AllBusy
@@ -260,6 +306,7 @@ impl WorkerPool {
             buf_ptr: BufPtr(Box::leak(vec![0u8; 256*1024].into_boxed_slice()).as_mut_ptr()),
             buf_len: 256 * 1024,
             in_flight: AtomicU32::new(0),
+            idle: AtomicBool::new(true),
             render_slot: parking_lot::Mutex::new(None),
         });
         self.entries.write().push(entry);
