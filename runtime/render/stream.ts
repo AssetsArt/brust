@@ -1,4 +1,7 @@
-import { renderToPipeableStream, renderToString } from 'react-dom/server'
+// react-dom/server.node: React 19's Node-streams SSR build (renderToPipeableStream).
+// Bun routes bare 'react-dom/server' to the web-streams build, which lacks it. Pin
+// every react-dom/server import to .node so one build loads. See routes.ts for detail.
+import { renderToPipeableStream, renderToString } from 'react-dom/server.node'
 import { createElement, type ReactNode, type ComponentType } from 'react'
 import { Writable } from 'node:stream'
 import { consumeIslandUsedFlag } from '../islands/island.tsx'
