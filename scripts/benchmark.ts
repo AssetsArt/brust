@@ -93,6 +93,17 @@ const PROBES: Probe[] = [
     path: '/native-profile/World',
     scenarios: ['brust'],
   },
+  // Sub-project J / Phase A3 — native: true route WITH islands. Same jinja
+  // fast lane as /native-profile, plus per-island work in the SAME loader
+  // crossing: one CLIENT-ONLY island (a props string, ~free server-side) and
+  // one SERVER island (`renderToString`'d in the worker). The delta vs
+  // /native-profile ≈ the ssr island's renderToString cost (the client-only
+  // island adds only an entity-encoded props string). No new napi crossing.
+  // Brust-only.
+  {
+    path: '/native-islands',
+    scenarios: ['brust'],
+  },
   // Server-function dispatch — brust-only. REQUIRES `example/hello-world/actions.ts`
   // to actually register createNote. Without it, the path hits Rust's
   // `error_404` short-circuit at server.rs:272 (unknown action id) instead
@@ -116,6 +127,7 @@ function rowLabel(scenarioId: string, path: string): string {
     if (path === '/ping') return 'Brust (Rust only)'
     if (path === '/') return 'Brust (React SSR)'
     if (path.startsWith('/native-profile')) return 'Brust (native jinja)'
+    if (path.startsWith('/native-islands')) return 'Brust (native + islands)'
     if (path.startsWith('/_brust/action')) return 'Brust (server action)'
     return 'Brust'
   }
@@ -338,11 +350,16 @@ async function preflightJinja(): Promise<void> {
   const mod = await import(routesFile)
   const flatRoutes = (mod.routes ?? []) as { nativeTemplate?: string }[]
   const outDir = path.resolve(REPO_ROOT, '.brust/jinja')
+  // A native route with islands (e.g. /native-islands) requires the island
+  // config so emitNativeTemplates can validate ids, enrich the manifest with
+  // sourcePath, and bake the bootstrap. Without it, emit THROWS on that route.
+  const islandConfig = path.join(exampleDir, 'island.config.ts')
   await emitNativeTemplates({
     entryFile: routesFile,
     flatRoutes,
     outDir,
     repoRoot: REPO_ROOT,
+    islandConfigPath: existsSync(islandConfig) ? islandConfig : undefined,
   })
   const builtCount = flatRoutes.filter((r) => r.nativeTemplate).length
   console.log(`[bench] pre-flight: emitted ${builtCount} jinja template(s) → ${outDir}`)
