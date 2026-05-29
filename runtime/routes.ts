@@ -450,7 +450,7 @@ export function makeRenderer(
   routes: FlatRoute[],
   view: Uint8Array,
   opts: MakeRendererOptions = {},
-): (envelopeJsonOrLen: number | string) => Promise<void> {
+): (envelopeJsonOrLen: number | string) => Promise<number> {
   const encoder = new TextEncoder()
   const decoder = new TextDecoder()
   const byRouteId = new Map<number, FlatRoute>()
@@ -471,7 +471,7 @@ export function makeRenderer(
     },
   }
 
-  return async (envelopeJsonOrLen: number | string): Promise<void> => {
+  return async (envelopeJsonOrLen: number | string): Promise<number> => {
     const envelopeJson = typeof envelopeJsonOrLen === 'number'
       ? decoder.decode(view.subarray(0, envelopeJsonOrLen))
       : envelopeJsonOrLen
@@ -486,7 +486,7 @@ export function makeRenderer(
         await emitSingleChunkResponse(view, napi, workerId, encoder, {
           status: 404, contentType: 'text/plain; charset=utf-8', body: 'not found',
         })
-        return
+        return 0
       }
       // Inject the permanently-unaborted signal — non-SSE routes don't
       // have a per-conn AbortController. Middleware/loaders/components
@@ -513,21 +513,19 @@ export function makeRenderer(
         verdict = await chain() as StreamMarkerResponse
       } catch (err) {
         console.error(`[brust] middleware/render uncaught:`, err)
-        await emitSingleChunkResponse(view, napi, workerId, encoder, {
+        return await emitSingleChunkResponse(view, napi, workerId, encoder, {
           status: 500, contentType: 'text/html; charset=utf-8', body: 'internal error',
         })
-        return
       }
 
       if (verdict._brustStream !== STREAM_MARKER) {
         // Middleware short-circuited with a concrete response.
-        await emitSingleChunkResponse(view, napi, workerId, encoder, {
+        return await emitSingleChunkResponse(view, napi, workerId, encoder, {
           status: verdict.status,
           contentType: verdict.contentType ?? 'text/html; charset=utf-8',
           body: verdict.body,
           headers: verdict.headers,
         })
-        return
       }
 
       // Sub-project J — native: true branch. Runs the leaf's loader (if any),
@@ -552,31 +550,32 @@ export function makeRenderer(
             data = await leaf.loader(ctx as any)
           } catch (err) {
             console.error(`[brust] loader failed for native route ${flat.fullPath}:`, err)
-            await emitSingleChunkResponse(view, napi, workerId, encoder, {
+            return await emitSingleChunkResponse(view, napi, workerId, encoder, {
               status: 500, contentType: 'text/html; charset=utf-8', body: 'internal error',
             })
-            return
           }
         }
         const json = JSON.stringify(data ?? {})
         const dataBytes = encoder.encode(json)
         if (dataBytes.length > view.length) {
-          await emitSingleChunkResponse(view, napi, workerId, encoder, {
+          return await emitSingleChunkResponse(view, napi, workerId, encoder, {
             status: 413, contentType: 'text/plain; charset=utf-8',
             body: 'loader data too large for SAB',
           })
-          return
         }
         view.set(dataBytes, 0)
         try {
-          await (native as any).napiRenderJinja(Number(workerId), dataBytes.length, flat.nativeTemplate)
+          // FAST LANE: napiRenderJinja is a SYNC napi call — renders Rust-side,
+          // writes the framed response into the SAB, and returns its length
+          // directly (no Promise round-trip). Return it up to the tsfn; Rust's
+          // fast-lane arm reads the SAB directly (no chunk channel).
+          return (native as any).napiRenderJinja(Number(workerId), dataBytes.length, flat.nativeTemplate)
         } catch (err) {
           console.error(`[brust] napiRenderJinja failed for "${flat.nativeTemplate}":`, err)
-          await emitSingleChunkResponse(view, napi, workerId, encoder, {
+          return await emitSingleChunkResponse(view, napi, workerId, encoder, {
             status: 500, contentType: 'text/html; charset=utf-8', body: 'internal error',
           })
         }
-        return
       }
 
       let element: ReactNode
@@ -590,10 +589,9 @@ export function makeRenderer(
         // bind throw. Shape matches the legacy "internal error" path so
         // existing integration tests stay green.
         console.error(`[brust] render setup failed:`, err)
-        await emitSingleChunkResponse(view, napi, workerId, encoder, {
+        return await emitSingleChunkResponse(view, napi, workerId, encoder, {
           status: 500, contentType: 'text/html; charset=utf-8', body: 'internal error',
         })
-        return
       }
       await renderBranchStreaming({
         element, view, workerId, napi, errorBoundary,
@@ -601,20 +599,22 @@ export function makeRenderer(
         headers: verdict.headers,
         routePath: flat.fullPath,
       })
-      return
+      // renderBranchStreaming wrote via the chunk channel.
+      return 0
     }
     if (call.kind === 'navigation') {
-      return navigationBranch(call, byRouteId, view, encoder, opts.getWorkerId)
+      await navigationBranch(call, byRouteId, view, encoder, opts.getWorkerId)
+      return 0
     }
     if (call.kind === 'action') {
+      // FAST LANE: pack the framed response into the SAB and return its length.
+      // Rust reads it directly after the Promise settles — no chunk channel.
       const resp = await actionBranchToResponse(call, byActionId)
-      await emitSingleChunkResponse(view, napi, workerId, encoder, resp)
-      return
+      return packSingleChunkResponse(view, encoder, resp)
     }
     if (call.kind === 'mcp') {
       const resp = await mcpBranchToResponse(call, opts.mcp)
-      await emitSingleChunkResponse(view, napi, workerId, encoder, resp)
-      return
+      return await emitSingleChunkResponse(view, napi, workerId, encoder, resp)
     }
     if (call.kind === 'sse') {
       try {
@@ -627,7 +627,7 @@ export function makeRenderer(
       }
       // SSE bypasses the chunk channel entirely — handleSseStream owns the
       // socket via napiSse* fns. No renderChunk calls here.
-      return
+      return 0
     }
     if (call.kind === 'ws') {
       try {
@@ -638,12 +638,12 @@ export function makeRenderer(
       }
       // WS bypasses the chunk channel entirely — handleWsConn owns the
       // socket via napiWs* fns. No renderChunk calls here.
-      return
+      return 0
     }
     // Unknown kind — log and 500. Shouldn't happen unless Rust ships
     // something out of band.
     console.error(`[brust] unknown envelope kind in worker:`, (call as { kind?: string }).kind)
-    await emitSingleChunkResponse(view, napi, workerId, encoder, {
+    return await emitSingleChunkResponse(view, napi, workerId, encoder, {
       status: 500, contentType: 'text/plain; charset=utf-8', body: 'invalid envelope kind',
     })
   }
@@ -843,10 +843,56 @@ async function buildRenderElement(
   return element
 }
 
+/** Pack a framed single-chunk response `[meta_len: u16 BE][meta JSON][body]`
+ * into the SAB and return its total byte length — the FAST LANE. The worker
+ * resolves its render Promise with this length; Rust reads the framed bytes
+ * directly from the SAB after the Promise settles, bypassing the chunk channel
+ * (no napiRenderChunk call, no per-chunk ack round-trip). Returns the length so
+ * the caller can `return` it up to the tsfn.
+ *
+ * On SAB overflow, packs a small 500 instead and returns ITS length — the
+ * response always fits, so the client never hangs waiting for a body. */
+function packSingleChunkResponse(
+  view: Uint8Array,
+  encoder: TextEncoder,
+  resp: { status: number; contentType: string; body: string | Uint8Array; headers?: Record<string, string> },
+): number {
+  const bodyBytes = typeof resp.body === 'string' ? encoder.encode(resp.body) : resp.body
+  const meta = JSON.stringify({
+    status: resp.status,
+    contentType: resp.contentType,
+    headers: resp.headers ?? {},
+    streaming: false,
+  })
+  const metaBytes = encoder.encode(meta)
+  const total = 2 + metaBytes.length + bodyBytes.length
+  if (total > view.length) {
+    console.error(`[brust] fast-lane response ${total}b exceeds SAB ${view.length}b — emitting 500`)
+    const errBody = encoder.encode('response body too large')
+    const errMeta = JSON.stringify({
+      status: 500, contentType: 'text/plain; charset=utf-8', headers: {}, streaming: false,
+    })
+    const errMetaBytes = encoder.encode(errMeta)
+    const errTotal = 2 + errMetaBytes.length + errBody.length
+    view[0] = (errMetaBytes.length >> 8) & 0xff
+    view[1] = errMetaBytes.length & 0xff
+    view.set(errMetaBytes, 2)
+    view.set(errBody, 2 + errMetaBytes.length)
+    return errTotal
+  }
+  view[0] = (metaBytes.length >> 8) & 0xff
+  view[1] = metaBytes.length & 0xff
+  view.set(metaBytes, 2)
+  view.set(bodyBytes, 2 + metaBytes.length)
+  return total
+}
+
 /** Emit a single-chunk response through the chunk channel — wire shape
  * matches what dispatch_to_worker_and_stream_chunks expects (one Bytes
- * chunk with `[meta_len][meta][body]`, then Final). Used by action/mcp
- * branches and by setup-failure fallbacks in the render branch. */
+ * chunk with `[meta_len][meta][body]`, then Final). Used by mcp branch
+ * and by setup-failure fallbacks in the render branch. Returns 0 (the
+ * "used the chunk channel" sentinel) so callers can `return` it up to the
+ * tsfn. */
 async function emitSingleChunkResponse(
   view: Uint8Array,
   napi: {
@@ -856,7 +902,7 @@ async function emitSingleChunkResponse(
   workerId: bigint,
   encoder: TextEncoder,
   resp: { status: number; contentType: string; body: string | Uint8Array; headers?: Record<string, string> },
-): Promise<void> {
+): Promise<number> {
   const bodyBytes = typeof resp.body === 'string' ? encoder.encode(resp.body) : resp.body
   const meta = JSON.stringify({
     status: resp.status,
@@ -885,13 +931,14 @@ async function emitSingleChunkResponse(
     view.set(errMetaBytes, 2)
     view.set(errBody, 2 + errMetaBytes.length)
     await napi.renderChunkFinal(workerId, errTotal, view)
-    return
+    return 0
   }
   view[0] = (metaBytes.length >> 8) & 0xff
   view[1] = metaBytes.length & 0xff
   view.set(metaBytes, 2)
   view.set(bodyBytes, 2 + metaBytes.length)
   await napi.renderChunkFinal(workerId, total, view)
+  return 0
 }
 
 /** Plain response object shape returned by action/mcp branches and consumed

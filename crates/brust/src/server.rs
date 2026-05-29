@@ -374,7 +374,9 @@ async fn handle_conn(
             // Action endpoint never caches — no-op on_success closure. Content-Type
             // is carried in the per-chunk meta JSON (JS sets 'application/json' for
             // normal returns and 'text/plain' for middleware string short-circuits).
-            match dispatch_to_worker_and_stream_chunks(
+            // Single-chunk by nature → maximally-stripped lock-free dispatch
+            // (no mpsc channel, no mutex, no select loop).
+            match dispatch_single_chunk(
                 &mut s,
                 &pool,
                 envelope,
@@ -949,8 +951,12 @@ where
         EnqueueFailed(napi::Error),
         /// JS Promise rejected — JS-level error, worker is still alive.
         PromiseRejected(napi::Error),
-        /// JS Promise resolved successfully.
-        Resolved,
+        /// JS Promise resolved with a framed-response length. `len > 0` →
+        /// fast lane: the worker wrote `[meta_len][meta][body]` into the SAB
+        /// instead of using the chunk channel; read it directly. `len == 0` →
+        /// the worker used the chunk channel (streaming/sse/ws) and the chunk
+        /// arm already handled the socket writes.
+        Resolved(u32),
     }
 
     let envelope_len = {
@@ -981,7 +987,7 @@ where
             Err(e) => RenderOutcome::EnqueueFailed(e),
             Ok(promise) => match promise.await {
                 Err(e) => RenderOutcome::PromiseRejected(e),
-                Ok(()) => RenderOutcome::Resolved,
+                Ok(len) => RenderOutcome::Resolved(len),
             },
         }
     };
@@ -1137,7 +1143,51 @@ where
             }
             outcome = &mut render_future => {
                 match outcome {
-                    RenderOutcome::Resolved => {
+                    RenderOutcome::Resolved(resp_len) => {
+                        // Fast lane: the worker wrote a complete framed response
+                        // `[meta_len][meta][body]` into the SAB and resolved with
+                        // its length, bypassing the chunk channel (no mpsc send,
+                        // no per-chunk ack round-trip, no second napi call). Read
+                        // it directly. Guarded by !headers_written so a worker that
+                        // (mis)used both paths still falls through to the
+                        // chunk-channel logic below.
+                        if !headers_written && resp_len > 0 {
+                            let len = resp_len as usize;
+                            if len > entry.buf_len {
+                                error!(
+                                    worker_id = entry.id, label, len, buf_len = entry.buf_len,
+                                    "fast-lane resp_len exceeds SAB capacity",
+                                );
+                                let _ = s.write_all(http::error_500()).await;
+                                break;
+                            }
+                            // SAFETY: the worker's render Promise has resolved
+                            // (happens-before via napi tsfn.await), so JS is done
+                            // writing the SAB and won't touch it until the next
+                            // claim. `len <= buf_len` bounds the read.
+                            let buf = unsafe {
+                                std::slice::from_raw_parts(entry.buf_ptr.0, len)
+                            };
+                            match crate::render_stream::split_meta(buf)
+                                .and_then(|(meta_slice, body)| {
+                                    serde_json::from_slice::<crate::render_stream::ChunkMeta>(meta_slice)
+                                        .map(|meta| (meta, body))
+                                        .map_err(|_| "fast-lane meta JSON parse failed")
+                                }) {
+                                Ok((meta, body)) => {
+                                    let resp = crate::render_stream::build_single_response_bytes(&meta, body);
+                                    if cache_wanted {
+                                        response_bytes_for_cache = resp.clone();
+                                    }
+                                    let _ = s.write_all(resp).await;
+                                }
+                                Err(e) => {
+                                    error!(worker_id = entry.id, label, error = e, "fast-lane response decode failed");
+                                    let _ = s.write_all(http::error_500()).await;
+                                }
+                            }
+                            break;
+                        }
                         let dropped = chunk_rx.len();
                         if dropped > 0 {
                             warn!(
@@ -1193,6 +1243,114 @@ where
 
     if cache_wanted && !response_bytes_for_cache.is_empty() {
         on_success(&response_bytes_for_cache);
+    }
+    DispatchControl::Continue
+}
+
+/// Maximally-stripped dispatch for guaranteed-single-chunk requests (actions).
+/// vs `dispatch_to_worker_and_stream_chunks`: NO mpsc channel allocation, NO
+/// per-entry mutex (lock-free `idle` CAS claim), NO `tokio::select!` loop. The
+/// worker MUST take the fast lane — write `[meta_len][meta][body]` into the SAB
+/// and resolve with its byte length. We claim, serialize, await the Promise,
+/// read the SAB, write. A resolve of 0 (worker used the chunk channel) is a
+/// contract violation here → 500.
+async fn dispatch_single_chunk<E, F>(
+    s: &mut TcpStream,
+    pool: &Arc<crate::pool::WorkerPool>,
+    envelope: E,
+    label: &'static str,
+    cache_wanted: bool,
+    on_success: F,
+) -> DispatchControl
+where
+    E: serde::Serialize,
+    F: FnOnce(&[u8]),
+{
+    let claim = match pool.try_claim_render_lockfree() {
+        crate::pool::ClaimResult::Claimed(c) => c,
+        crate::pool::ClaimResult::PoolEmpty => {
+            let _ = s.write_all(http::error_503("no workers")).await;
+            return DispatchControl::CloseConn;
+        }
+        crate::pool::ClaimResult::AllBusy => {
+            let _ = s.write_all(http::error_503("all workers busy")).await;
+            return DispatchControl::CloseConn;
+        }
+    };
+    let entry = std::sync::Arc::clone(claim.entry());
+
+    let envelope_len = {
+        let mut cursor = std::io::Cursor::new(unsafe {
+            std::slice::from_raw_parts_mut(entry.buf_ptr.0, entry.buf_len)
+        });
+        if let Err(e) = serde_json::to_writer(&mut cursor, &envelope) {
+            if e.is_io() {
+                let _ = s.write_all(http::error_413()).await;
+                return DispatchControl::CloseConn;
+            }
+            error!(worker_id = entry.id, label, error = %e, "envelope serialization failed");
+            let _ = s.write_all(http::error_500()).await;
+            return DispatchControl::CloseConn;
+        }
+        cursor.position() as u32
+    };
+
+    let resp_len = match entry
+        .tsfn
+        .as_ref()
+        .expect("tsfn is None — only legal in cfg(test) register_for_test; production register always supplies Some")
+        .call_async(napi::bindgen_prelude::Either::A(envelope_len))
+        .await
+    {
+        Err(e) => {
+            error!(worker_id = entry.id, label, error = %e,
+                   "render tsfn enqueue failed — worker dead, removing from pool");
+            pool.remove(entry.id);
+            if pool.registered_count() == 0 {
+                error!("no workers left after enqueue failure — terminating process");
+                std::process::exit(1);
+            }
+            let _ = s.write_all(http::build_response(502, "text/plain", &[], b"bad gateway".to_vec())).await;
+            return DispatchControl::CloseConn;
+        }
+        Ok(promise) => match promise.await {
+            Err(e) => {
+                error!(worker_id = entry.id, label, error = %e,
+                       "render tsfn JS Promise rejected — worker still alive");
+                let _ = s.write_all(http::error_500()).await;
+                return DispatchControl::CloseConn;
+            }
+            Ok(len) => len,
+        },
+    };
+
+    if resp_len == 0 || (resp_len as usize) > entry.buf_len {
+        error!(worker_id = entry.id, label, resp_len, buf_len = entry.buf_len,
+               "single-chunk dispatch got invalid resp_len (0 = worker used chunk channel)");
+        let _ = s.write_all(http::error_500()).await;
+        return DispatchControl::CloseConn;
+    }
+
+    // SAFETY: render Promise resolved (happens-before via napi tsfn.await), JS
+    // done writing the SAB; resp_len bounds-checked above.
+    let buf = unsafe { std::slice::from_raw_parts(entry.buf_ptr.0, resp_len as usize) };
+    match crate::render_stream::split_meta(buf).and_then(|(meta_slice, body)| {
+        serde_json::from_slice::<crate::render_stream::ChunkMeta>(meta_slice)
+            .map(|meta| (meta, body))
+            .map_err(|_| "single-chunk meta JSON parse failed")
+    }) {
+        Ok((meta, body)) => {
+            let resp = crate::render_stream::build_single_response_bytes(&meta, body);
+            if cache_wanted {
+                on_success(&resp);
+            }
+            let _ = s.write_all(resp).await;
+        }
+        Err(e) => {
+            error!(worker_id = entry.id, label, error = e, "single-chunk response decode failed");
+            let _ = s.write_all(http::error_500()).await;
+            return DispatchControl::CloseConn;
+        }
     }
     DispatchControl::Continue
 }
