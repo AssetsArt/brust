@@ -953,7 +953,7 @@ single samples.
 | `/` (Bun.serve baseline) | — | 17.7 k | 7.52 ms |
 
 Reproduce with `bun run bench` — driver at `scripts/benchmark.ts`, results at `bench/RESULTS.md`.
-Bun.serve baseline source: `example/bun-serve-baseline/index.ts`.
+Bun.serve baseline source: `bench/apps/bun-serve/index.ts`.
 
 **Read:** Brust's Rust accept loop + napi + SAB beats Bun.serve+React by ~26 % on `/ping` and ~70 % on `/`. The 2026-05-28 buffering-path napi-merge (`napi_render_chunk_final` + `RenderChunk::BytesAndFinal`) collapsed single-chunk renders from two tsfn round-trips to one — N=5 medians vs the pre-merge baseline (`a54394e`) show `/` RPS 23,193 → 29,993 (**+29 %**, ranges non-overlapping) and p99 2.80 ms → 1.74 ms (**−38 %**). c=1 p50 dropped 11 µs (148 µs → 137 µs) — the per-request round-trip cost. The action endpoint and `/ping` are near-identical (111 k vs 112 k) because both are single-call napi/SAB envelope paths with no React render tree to serialise; the gap to React-SSR (30 k) is the React render cost itself, not envelope overhead. The `/` row is still down vs the pre-2026-05-24 baseline (55 k → 30 k); the residual is the demo-component growth (Tailwind v4 + Layout wrapper) — see [post-mortem 2026-05-28](./docs/superpowers/post-mortems/2026-05-28-slash-route-p99-regression.md).
 
@@ -986,7 +986,7 @@ Bun.serve baseline source: `example/bun-serve-baseline/index.ts`.
 - `/ping` static native route for benchmarks
 - Auto-tuned worker count: `floor(os.availableParallelism() * 1.8)`
 - Integration test + 100-burst manual smoke check
-- Bun.serve baseline comparator (`example/bun-serve-baseline/`)
+- Bun.serve baseline comparator (`bench/apps/bun-serve/`)
 - Benchmark harness (`scripts/benchmark.ts`, `bun run bench`)
 - HTTP 414 emission on oversized requests
 - Declarative routing: `routes.tsx` + matchit radix tree + JSON envelope tsfn payload + per-route `errorBoundary`

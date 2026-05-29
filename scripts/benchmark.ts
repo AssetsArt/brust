@@ -58,7 +58,7 @@ const SCENARIOS: Scenario[] = [
   {
     id: 'brust',
     label: 'Brust (Rust HTTP + napi + SAB)',
-    cmd: ['bun', 'run', 'example/hello-world/index.ts'],
+    cmd: ['bun', 'run', 'bench/apps/brust/index.ts'],
     // No BRUST_WORKERS override — use the runtime default (availableParallelism()).
     // Earlier benches pinned 18 (the old `* 1.8` default) which oversubscribed on
     // CPU-bound React renders and amplified p99 ~6×; see post-mortem 2026-05-28.
@@ -68,14 +68,14 @@ const SCENARIOS: Scenario[] = [
   {
     id: 'bun-serve',
     label: 'Bun.serve + React renderToString',
-    cmd: ['bun', 'run', 'example/bun-serve-baseline/index.ts'],
+    cmd: ['bun', 'run', 'bench/apps/bun-serve/index.ts'],
     env: { BUN_BASELINE_PORT: '38202' },
     expectedPortLog: /listening on http:\/\/[^:]+:(\d+)/,
   },
   {
     id: 'elysia',
     label: 'Elysia + React renderToString',
-    cmd: ['bun', 'run', 'example/elysia-baseline/index.ts'],
+    cmd: ['bun', 'run', 'bench/apps/elysia/index.ts'],
     env: { ELYSIA_PORT: '38203' },
     expectedPortLog: /listening on http:\/\/[^:]+:(\d+)/,
   },
@@ -104,7 +104,7 @@ const PROBES: Probe[] = [
     path: '/native-islands',
     scenarios: ['brust'],
   },
-  // Server-function dispatch — brust-only. REQUIRES `example/hello-world/actions.ts`
+  // Server-function dispatch — brust-only. REQUIRES `bench/apps/brust/actions.ts`
   // to actually register createNote. Without it, the path hits Rust's
   // `error_404` short-circuit at server.rs:272 (unknown action id) instead
   // of going through dispatch — measuring the wrong path and reporting
@@ -320,17 +320,17 @@ function renderMarkdown(results: Result[]): string {
 }
 
 async function preflightJinja(): Promise<void> {
-  // Sub-project J — emit .brust/jinja/<Name>.jinja for example/hello-world's
+  // Sub-project J — emit .brust/jinja/<Name>.jinja for the brust bench app's
   // native: true routes BEFORE the brust scenario boots. Runtime loads from
-  // process.cwd() + '.brust/jinja', and `bun run example/hello-world/index.ts`
+  // process.cwd() + '.brust/jinja', and `bun run bench/apps/brust/index.ts`
   // runs with cwd = repo root, so emit to <repo>/.brust/jinja.
   //
   // Without this, /native-profile/{user} 500s because the registry is empty.
   const REPO_ROOT = process.cwd()
-  const exampleDir = path.resolve(REPO_ROOT, 'example/hello-world')
-  const routesFile = path.join(exampleDir, 'routes.tsx')
+  const benchAppDir = path.resolve(REPO_ROOT, 'bench/apps/brust')
+  const routesFile = path.join(benchAppDir, 'routes.tsx')
   if (!existsSync(routesFile)) {
-    console.warn('[bench] pre-flight: no routes.tsx in example/hello-world — skipping jinja emit')
+    console.warn('[bench] pre-flight: no routes.tsx in bench/apps/brust — skipping jinja emit')
     return
   }
   // Ensure jsx-rustc binary exists (release preferred). emitNativeTemplates
@@ -353,7 +353,7 @@ async function preflightJinja(): Promise<void> {
   // A native route with islands (e.g. /native-islands) requires the island
   // config so emitNativeTemplates can validate ids, enrich the manifest with
   // sourcePath, and bake the bootstrap. Without it, emit THROWS on that route.
-  const islandConfig = path.join(exampleDir, 'island.config.ts')
+  const islandConfig = path.join(benchAppDir, 'island.config.ts')
   await emitNativeTemplates({
     entryFile: routesFile,
     flatRoutes,
