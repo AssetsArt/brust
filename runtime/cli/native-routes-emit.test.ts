@@ -30,7 +30,13 @@ describe('reconcileIslandManifest', () => {
 
     const enriched = JSON.parse(readFileSync(islandsJsonPath, 'utf8'))
     expect(enriched).toEqual([
-      { id: 'Counter', propsPath: 'data.x', ssr: false, hydrate: 'load', sourcePath: '/abs/Counter.tsx' },
+      {
+        id: 'Counter',
+        propsPath: 'data.x',
+        ssr: false,
+        hydrate: 'load',
+        sourcePath: '/abs/Counter.tsx',
+      },
     ])
   })
 

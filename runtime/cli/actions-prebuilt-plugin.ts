@@ -25,7 +25,9 @@ export async function writePrebuiltActionsFileWithMap(
   // Stable file order = stable import order = deterministic builds.
   const filePaths = [...new Set(idToSourcePath.values())].sort()
   const fileToVar = new Map<string, string>()
-  filePaths.forEach((p, i) => fileToVar.set(p, `__mod${i}`))
+  filePaths.forEach((p, i) => {
+    fileToVar.set(p, `__mod${i}`)
+  })
 
   const imports = filePaths
     .map((p, i) => `import * as __mod${i} from ${JSON.stringify(p)}`)
@@ -64,10 +66,7 @@ export async function scanActions(_opts: ScanOptions = {}): Promise<ScanActionsR
 /** Bun.build plugin that aliases `runtime/scan-actions.ts` to the generated
  * prebuilt file. Combined with `writePrebuiltActionsFileWithMap` this makes
  * the bundled `scanActions()` return a hard-coded list. */
-export function actionsPrebuiltPlugin(
-  generatedFilePath: string,
-  repoRoot: string,
-): BunPlugin {
+export function actionsPrebuiltPlugin(generatedFilePath: string, repoRoot: string): BunPlugin {
   const targetPath = resolve(repoRoot, 'runtime/scan-actions.ts')
 
   return {
@@ -83,7 +82,10 @@ export function actionsPrebuiltPlugin(
         // Match the canonical scan-actions.ts file regardless of how it's
         // imported (relative './scan-actions.ts' from runtime/index.ts, etc.).
         // Resolve the import to an absolute path and compare.
-        const resolved = resolve(args.importer ? args.importer.replace(/\/[^/]*$/, '') : repoRoot, args.path)
+        const resolved = resolve(
+          args.importer ? args.importer.replace(/\/[^/]*$/, '') : repoRoot,
+          args.path,
+        )
         if (resolved === targetPath || resolved + '.ts' === targetPath) {
           return { path: generatedFilePath }
         }

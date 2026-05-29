@@ -22,7 +22,8 @@ test('brust build → run → smoke all major paths', async () => {
   distDir = await mkdtemp(path.join(tmpdir(), 'brust-dist-cli-test-'))
 
   // 1. Build
-  const buildResult = await $`bun ${path.join(REPO, 'runtime/cli/index.ts')} build ${path.join(REPO, 'example/hello-world/index.ts')} --out-dir ${distDir}`.nothrow()
+  const buildResult =
+    await $`bun ${path.join(REPO, 'runtime/cli/index.ts')} build ${path.join(REPO, 'example/hello-world/index.ts')} --out-dir ${distDir}`.nothrow()
   expect(buildResult.exitCode).toBe(0)
 
   // 2. Verify dist tree
@@ -41,8 +42,8 @@ test('brust build → run → smoke all major paths', async () => {
 
   // 3. Banner injection
   const bundle = await Bun.file(path.join(distDir, 'index.js')).text()
-  expect(bundle).toContain("process.env.BRUST_PREBUILT")
-  expect(bundle).toContain("BRUST_DIST_DIR")
+  expect(bundle).toContain('process.env.BRUST_PREBUILT')
+  expect(bundle).toContain('BRUST_DIST_DIR')
 
   // 4. Boot the prebuilt server
   proc = spawn({
@@ -82,14 +83,15 @@ test('brust build → run → smoke all major paths', async () => {
     }),
   })
   expect(mcp.status).toBe(200)
-  const mcpBody = await mcp.json() as any
+  const mcpBody = (await mcp.json()) as any
   expect(mcpBody.jsonrpc).toBe('2.0')
   expect(mcpBody.id).toBe(1)
   expect(mcpBody.result).toBeDefined()
 }, 60_000)
 
 test('brust build with missing entry exits 1 with a clear message', async () => {
-  const result = await $`bun ${path.join(REPO, 'runtime/cli/index.ts')} build /no/such/entry.ts`.nothrow()
+  const result =
+    await $`bun ${path.join(REPO, 'runtime/cli/index.ts')} build /no/such/entry.ts`.nothrow()
   expect(result.exitCode).toBe(1)
   expect(result.stderr.toString()).toContain('no entry file at /no/such/entry.ts')
 })

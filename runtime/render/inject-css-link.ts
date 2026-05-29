@@ -5,7 +5,9 @@ const ENC = new TextEncoder()
 let warned = false
 
 /** @internal — used by the unit test suite to reset the warn-once flag. */
-export function _resetWarnedForTests(): void { warned = false }
+export function _resetWarnedForTests(): void {
+  warned = false
+}
 
 /** Splice `<link rel="stylesheet" href="...">` tags into `body` immediately
  * before the first occurrence of `</head>` (case-insensitive). Returns the
@@ -22,9 +24,7 @@ export function injectCssLink(body: Uint8Array, hrefs: readonly string[]): Uint8
     }
     return body
   }
-  const tags = hrefs
-    .map((h) => `<link rel="stylesheet" href="${h}">`)
-    .join('')
+  const tags = hrefs.map((h) => `<link rel="stylesheet" href="${h}">`).join('')
   const tagsBytes = ENC.encode(tags)
   const out = new Uint8Array(body.length + tagsBytes.length)
   out.set(body.subarray(0, pos), 0)
@@ -38,16 +38,16 @@ export function injectCssLink(body: Uint8Array, hrefs: readonly string[]): Uint8
 function findHeadCloseTag(body: Uint8Array): number {
   // Target bytes: `<` `/` H E A D `>`  — 7 bytes total.
   // We only case-fold the four ASCII letters; the angle/slash bytes are exact.
-  const LT = 0x3c   // <
-  const SL = 0x2f   // /
-  const GT = 0x3e   // >
+  const LT = 0x3c // <
+  const SL = 0x2f // /
+  const GT = 0x3e // >
   for (let i = 0, max = body.length - 6; i < max; i++) {
-    if (body[i] !== LT || body[i+1] !== SL) continue
-    if (!isLetter(body[i+2], 0x48)) continue   // H/h
-    if (!isLetter(body[i+3], 0x45)) continue   // E/e
-    if (!isLetter(body[i+4], 0x41)) continue   // A/a
-    if (!isLetter(body[i+5], 0x44)) continue   // D/d
-    if (body[i+6] !== GT) continue
+    if (body[i] !== LT || body[i + 1] !== SL) continue
+    if (!isLetter(body[i + 2], 0x48)) continue // H/h
+    if (!isLetter(body[i + 3], 0x45)) continue // E/e
+    if (!isLetter(body[i + 4], 0x41)) continue // A/a
+    if (!isLetter(body[i + 5], 0x44)) continue // D/d
+    if (body[i + 6] !== GT) continue
     return i
   }
   return -1

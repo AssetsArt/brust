@@ -33,7 +33,9 @@ export class Tui {
     this.capacity = opts.capacity ?? DEFAULT_CAPACITY
   }
 
-  eventsForTests(): string[] { return [...this.events] }
+  eventsForTests(): string[] {
+    return [...this.events]
+  }
 
   updateStatus(s: Status): void {
     this.status = s
@@ -71,10 +73,25 @@ export class Tui {
   private renderHeader(): string {
     if (!this.status) return BRAND + 'brust 0.1.0 · dev mode' + RESET + '\n\n'
     return (
-      BRAND + 'brust 0.1.0 · dev mode' + RESET + '\n' +
-      DIM + 'port:     ' + RESET + this.status.port + '\n' +
-      DIM + 'workers:  ' + RESET + this.status.workers + '\n' +
-      DIM + 'watching: ' + RESET + this.status.watching.join(', ') + '\n\n'
+      BRAND +
+      'brust 0.1.0 · dev mode' +
+      RESET +
+      '\n' +
+      DIM +
+      'port:     ' +
+      RESET +
+      this.status.port +
+      '\n' +
+      DIM +
+      'workers:  ' +
+      RESET +
+      this.status.workers +
+      '\n' +
+      DIM +
+      'watching: ' +
+      RESET +
+      this.status.watching.join(', ') +
+      '\n\n'
     )
   }
 
@@ -86,7 +103,7 @@ export class Tui {
 
   private renderStatusBar(): string {
     if (this.state === 'building') return YELLOW + '◉ Building…' + RESET + '\n'
-    if (this.state === 'failed')   return RED + '✗ Build failed' + RESET + '\n'
+    if (this.state === 'failed') return RED + '✗ Build failed' + RESET + '\n'
     return GREEN + '◉ Serving' + RESET + '\n'
   }
 }

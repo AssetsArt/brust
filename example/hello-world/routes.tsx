@@ -18,8 +18,9 @@ export const routes = defineRoutes([
   // Dynamic params + loader — the slug becomes `params.slug`; the loader's
   // return value lands as the component's `data` prop.
   {
-    path: '/blog/{slug}', Component: BlogPost,
-    loader: async ({ params }) => ({ title: `Post: ${params.slug}` })
+    path: '/blog/{slug}',
+    Component: BlogPost,
+    loader: async ({ params }) => ({ title: `Post: ${params.slug}` }),
   },
 
   // HTML Streaming + Suspense — the page ships a shell with a Spinner, then

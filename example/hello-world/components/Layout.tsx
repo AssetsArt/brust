@@ -1,10 +1,10 @@
 import type { ReactNode } from 'react'
 
 const NAV = [
-  { href: '/',                label: 'Home' },
-  { href: '/blog/welcome',    label: 'Blog' },
-  { href: '/slow-suspense',   label: 'Streaming' },
-  { href: '/profile/world',   label: 'Profile' },
+  { href: '/', label: 'Home' },
+  { href: '/blog/welcome', label: 'Blog' },
+  { href: '/slow-suspense', label: 'Streaming' },
+  { href: '/profile/world', label: 'Profile' },
 ]
 
 interface LayoutProps {
@@ -23,7 +23,9 @@ export default function Layout({ title, children }: LayoutProps) {
       <body>
         <header className="bg-white border-b border-line">
           <div className="max-w-3xl mx-auto px-5 py-3.5 flex items-center gap-7">
-            <a href="/" className="font-bold text-lg text-brand no-underline tracking-tight">brust</a>
+            <a href="/" className="font-bold text-lg text-brand no-underline tracking-tight">
+              brust
+            </a>
             <nav className="flex gap-4 flex-wrap">
               {NAV.map((item) => (
                 <a

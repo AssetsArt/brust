@@ -27,13 +27,20 @@ export async function scanCssImports(scanRoot: string): Promise<Map<string, CssD
 
 async function walk(root: string, dir: string, out: Map<string, CssDep[]>): Promise<void> {
   let entries: string[]
-  try { entries = await readdir(dir) }
-  catch { return }
+  try {
+    entries = await readdir(dir)
+  } catch {
+    return
+  }
   for (const name of entries) {
     if (IGNORE_DIRS.has(name)) continue
     const full = path.join(dir, name)
-    let st
-    try { st = await stat(full) } catch { continue }
+    let st: Awaited<ReturnType<typeof stat>>
+    try {
+      st = await stat(full)
+    } catch {
+      continue
+    }
     if (st.isDirectory()) {
       await walk(root, full, out)
     } else if (SOURCE_EXT_RE.test(name) && !TEST_RE.test(name)) {
@@ -45,7 +52,13 @@ async function walk(root: string, dir: string, out: Map<string, CssDep[]>): Prom
 
 async function depsForFile(file: string): Promise<CssDep[]> {
   const src = await readFile(file, 'utf-8')
-  const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, /*setParentNodes*/ true, ts.ScriptKind.TSX)
+  const sf = ts.createSourceFile(
+    file,
+    src,
+    ts.ScriptTarget.Latest,
+    /*setParentNodes*/ true,
+    ts.ScriptKind.TSX,
+  )
   const deps: CssDep[] = []
   ts.forEachChild(sf, (node) => {
     if (!ts.isImportDeclaration(node)) return

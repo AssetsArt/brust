@@ -70,9 +70,7 @@ export async function collectExports(filePath: string): Promise<ActionDef[]> {
       )
     }
     if (name === 'default') {
-      throw new Error(
-        `${filePath}: default exports are not action-eligible. Use named export.`,
-      )
+      throw new Error(`${filePath}: default exports are not action-eligible. Use named export.`)
     }
     if (!isValidActionId(name)) {
       throw new Error(
@@ -86,9 +84,7 @@ export async function collectExports(filePath: string): Promise<ActionDef[]> {
     })
   }
   if (defs.length === 0) {
-    throw new Error(
-      `${filePath}: marked 'use server' but exports no functions.`,
-    )
+    throw new Error(`${filePath}: marked 'use server' but exports no functions.`)
   }
   return defs
 }

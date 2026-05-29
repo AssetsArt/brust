@@ -14,8 +14,12 @@ export type DevMessage =
 // given connection has it in `clients`.
 const clients: Set<WsSocket> = new Set()
 
-export function _clientCountForTests(): number { return clients.size }
-export function _resetForTests(): void { clients.clear() }
+export function _clientCountForTests(): number {
+  return clients.size
+}
+export function _resetForTests(): void {
+  clients.clear()
+}
 
 /** Build the synthetic /_brust/dev WS route. brust.run() prepends this
  * to opts.routes in dev mode (both main + worker route arrays). */
@@ -27,16 +31,26 @@ export function createDevWsRoute(): Route {
 }
 
 const devHandlers: WsHandlers = {
-  open(socket) { clients.add(socket) },
-  close(socket) { clients.delete(socket) },
-  message() { /* ignore — server→client only */ },
+  open(socket) {
+    clients.add(socket)
+  },
+  close(socket) {
+    clients.delete(socket)
+  },
+  message() {
+    /* ignore — server→client only */
+  },
 }
 
 /** Worker-side: forward JSON to every client connected to this worker. */
 async function broadcastLocal(json: string): Promise<void> {
   const sends: Promise<unknown>[] = []
   for (const s of clients) {
-    sends.push(s.send(json).catch(() => { clients.delete(s) }))
+    sends.push(
+      s.send(json).catch(() => {
+        clients.delete(s)
+      }),
+    )
   }
   await Promise.all(sends)
 }
@@ -60,8 +74,11 @@ export function installWorkerBroadcastListener(): void {
   })
   // Signal readiness to parent (main thread). In a Worker context,
   // postMessage targets the parent.
-  try { (globalThis as any).postMessage({ type: 'brust-worker-ready' }) }
-  catch { /* not in a worker (unit test); harmless */ }
+  try {
+    ;(globalThis as any).postMessage({ type: 'brust-worker-ready' })
+  } catch {
+    /* not in a worker (unit test); harmless */
+  }
 }
 
 /** Main-side: relay the message to every worker via postMessage. Each
@@ -73,7 +90,10 @@ export async function broadcast(msg: DevMessage): Promise<void> {
   const { _workersForTests } = await import('./worker-registry.ts')
   const workers = _workersForTests()
   for (const w of workers) {
-    try { w.postMessage({ type: 'dev-broadcast', json }) }
-    catch { /* worker already terminated; drop */ }
+    try {
+      w.postMessage({ type: 'dev-broadcast', json })
+    } catch {
+      /* worker already terminated; drop */
+    }
   }
 }

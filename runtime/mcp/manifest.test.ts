@@ -9,11 +9,13 @@ test('manifest: write and read round-trip', async () => {
   try {
     const manifest: McpManifest = {
       version: 1,
-      tools: [{
-        name: 'foo',
-        inputSchema: { type: 'object', properties: {}, required: [] },
-        paramOrder: [],
-      }],
+      tools: [
+        {
+          name: 'foo',
+          inputSchema: { type: 'object', properties: {}, required: [] },
+          paramOrder: [],
+        },
+      ],
       resources: [],
     }
     await writeManifest(dir, manifest)
@@ -47,7 +49,10 @@ test('manifest: writeManifest creates .brust/ directory if missing', async () =>
 test('manifest: readManifest rejects version mismatch', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'brust-mcp-'))
   try {
-    await Bun.write(join(dir, '.brust', 'mcp-manifest.json'), JSON.stringify({ version: 999, tools: [], resources: [] }))
+    await Bun.write(
+      join(dir, '.brust', 'mcp-manifest.json'),
+      JSON.stringify({ version: 999, tools: [], resources: [] }),
+    )
     await expect(readManifest(dir)).rejects.toThrow(/version mismatch/)
   } finally {
     await rm(dir, { recursive: true, force: true })

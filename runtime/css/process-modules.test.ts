@@ -33,11 +33,13 @@ describe('processCssFile', () => {
   })
 
   test('throws with file path on syntax error', async () => {
-    await expect(processCssFile({
-      filename: '/abs/broken.module.css',
-      source: '.x { color }\n',
-      isModule: true,
-      tailwindCompile: null,
-    })).rejects.toThrow()
+    await expect(
+      processCssFile({
+        filename: '/abs/broken.module.css',
+        source: '.x { color }\n',
+        isModule: true,
+        tailwindCompile: null,
+      }),
+    ).rejects.toThrow()
   })
 })

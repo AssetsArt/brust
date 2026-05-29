@@ -122,11 +122,13 @@ test('copyTemplate: recurses into subdirectories', async () => {
 })
 
 test('copyTemplate: throws if templateDir missing', async () => {
-  await expect(copyTemplate({
-    templateDir: '/no/such/dir',
-    targetDir: '/tmp/whatever',
-    substitutions: {},
-  })).rejects.toThrow(/template directory/)
+  await expect(
+    copyTemplate({
+      templateDir: '/no/such/dir',
+      targetDir: '/tmp/whatever',
+      substitutions: {},
+    }),
+  ).rejects.toThrow(/template directory/)
 })
 
 test('brust new: missing name → exit 1', async () => {
@@ -145,7 +147,8 @@ test('brust new: non-empty target dir → exit 1', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'brust-new-nonempty-'))
   try {
     await Bun.write(path.join(dir, 'something'), 'x')
-    const result = await $`bun ${path.join(REPO, 'runtime/cli/index.ts')} new test --dir ${dir}`.nothrow()
+    const result =
+      await $`bun ${path.join(REPO, 'runtime/cli/index.ts')} new test --dir ${dir}`.nothrow()
     expect(result.exitCode).toBe(1)
     expect(result.stderr.toString()).toContain('not empty')
   } finally {
@@ -164,7 +167,8 @@ test('brust new: scaffold emits the expected tree and content', async () => {
   const projectDir = path.join(parent, 'test-app')
 
   try {
-    const scaffold = await $`bun ${path.join(REPO, 'runtime/cli/index.ts')} new test-app --dir ${projectDir}`.nothrow()
+    const scaffold =
+      await $`bun ${path.join(REPO, 'runtime/cli/index.ts')} new test-app --dir ${projectDir}`.nothrow()
     expect(scaffold.exitCode).toBe(0)
 
     // File tree
@@ -210,7 +214,7 @@ async function collectFiles(dir: string): Promise<string[]> {
   for (const ent of entries) {
     if (ent.name === 'node_modules' || ent.name === '.git') continue
     const p = path.join(dir, ent.name)
-    if (ent.isDirectory()) out.push(...await collectFiles(p))
+    if (ent.isDirectory()) out.push(...(await collectFiles(p)))
     else if (ent.isFile()) out.push(p)
   }
   return out

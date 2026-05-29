@@ -57,7 +57,11 @@ export async function extractMcpManifest(opts: ExtractOptions): Promise<McpManif
   return { version: 1, tools, resources }
 }
 
-function extractToolFromNode(checker: ts.TypeChecker, node: ts.Node, actionIds: Set<string>): ToolSchema | null {
+function extractToolFromNode(
+  checker: ts.TypeChecker,
+  node: ts.Node,
+  actionIds: Set<string>,
+): ToolSchema | null {
   // Case 1: export async function name(req, ...args)
   if (
     ts.isFunctionDeclaration(node) &&
@@ -125,9 +129,9 @@ function toolFromSignature(
 }
 
 function extractResources(
-  checker: ts.TypeChecker,
+  _checker: ts.TypeChecker,
   routes: FlatRoute[],
-  routesSourceFile: ts.SourceFile | undefined,
+  _routesSourceFile: ts.SourceFile | undefined,
 ): ResourceSchema[] {
   const out: ResourceSchema[] = []
   for (let i = 0; i < routes.length; i++) {

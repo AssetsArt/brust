@@ -31,16 +31,22 @@ describe('runtime/dev/watcher classifyPath', () => {
 
 describe('runtime/dev/watcher coalesce', () => {
   test('multiple events within debounce window collapse to one callback', async () => {
-    let calls: string[][] = []
-    const c = _testCoalesce(50, (paths) => { calls.push(paths) })
-    c.add('/a.ts'); c.add('/b.ts'); c.add('/a.ts')
+    const calls: string[][] = []
+    const c = _testCoalesce(50, (paths) => {
+      calls.push(paths)
+    })
+    c.add('/a.ts')
+    c.add('/b.ts')
+    c.add('/a.ts')
     await new Promise((r) => setTimeout(r, 80))
     expect(calls).toEqual([['/a.ts', '/b.ts']])
   })
 
   test('events outside the window produce separate callbacks', async () => {
-    let calls: string[][] = []
-    const c = _testCoalesce(50, (paths) => { calls.push(paths) })
+    const calls: string[][] = []
+    const c = _testCoalesce(50, (paths) => {
+      calls.push(paths)
+    })
     c.add('/a.ts')
     await new Promise((r) => setTimeout(r, 80))
     c.add('/b.ts')

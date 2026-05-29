@@ -21,7 +21,9 @@ switch (subcommand) {
     if (!subcommand) {
       console.error('brust: missing subcommand. Try: brust build | brust dev | brust new')
     } else {
-      console.error(`brust: unknown subcommand "${subcommand}". Try: brust build | brust dev | brust new`)
+      console.error(
+        `brust: unknown subcommand "${subcommand}". Try: brust build | brust dev | brust new`,
+      )
     }
     process.exit(1)
   }

@@ -31,7 +31,8 @@ function registerTrigger(el: HTMLElement, trigger: Trigger, fire: () => void): v
       return
     }
     case 'idle': {
-      const rIC = (globalThis as { requestIdleCallback?: (cb: () => void) => void }).requestIdleCallback
+      const rIC = (globalThis as { requestIdleCallback?: (cb: () => void) => void })
+        .requestIdleCallback
       if (typeof rIC === 'function') {
         rIC(fire)
       } else {
@@ -121,7 +122,11 @@ export function unmountIslandsIn(root: ParentNode): void {
   for (const el of Array.from(markers)) {
     const r = islandRoots.get(el)
     if (r) {
-      try { r.unmount() } catch (e) { console.warn('[brust] island unmount failed', e) }
+      try {
+        r.unmount()
+      } catch (e) {
+        console.warn('[brust] island unmount failed', e)
+      }
       islandRoots.delete(el)
     }
   }
@@ -133,7 +138,9 @@ export function unmountIslandsIn(root: ParentNode): void {
  * `data-brust-hydrated` attribute on each marker is the idempotence guard
  * — a second call on the same root no-ops for already-hydrated markers. */
 export function hydrateMarkersIn(root: ParentNode = document.body): void {
-  const markers = root.querySelectorAll<HTMLElement>('[data-brust-island]:not([data-brust-hydrated])')
+  const markers = root.querySelectorAll<HTMLElement>(
+    '[data-brust-island]:not([data-brust-hydrated])',
+  )
   for (const el of Array.from(markers)) {
     el.setAttribute('data-brust-hydrated', '1')
     const trig = (el.getAttribute('data-brust-hydrate') ?? 'load') as Trigger
@@ -187,10 +194,10 @@ async function navigate(url: URL, push: boolean): Promise<void> {
   try {
     const resp = await fetch(`/_brust/page${url.pathname}${url.search}`, {
       signal: ac.signal,
-      headers: { 'Accept': 'application/json' },
+      headers: { Accept: 'application/json' },
     })
     if (!resp.ok) throw new Error(`navigation: status ${resp.status}`)
-    const { html, title } = await resp.json() as { html: string; title: string }
+    const { html, title } = (await resp.json()) as { html: string; title: string }
     const main = document.querySelector('main')
     if (!main) throw new Error('navigation: no <main> element')
     unmountIslandsIn(main as HTMLElement)

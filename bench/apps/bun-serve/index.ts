@@ -21,9 +21,7 @@ const server = Bun.serve({
         headers: { 'Content-Type': 'text/plain' },
       })
     }
-    const html = renderToString(
-      createElement(HelloWorld, { workerId: 0 } as any),
-    )
+    const html = renderToString(createElement(HelloWorld, { workerId: 0 } as any))
     return new Response(html, {
       headers: { 'Content-Type': 'text/html; charset=utf-8' },
     })

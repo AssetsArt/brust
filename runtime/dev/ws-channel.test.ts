@@ -55,7 +55,11 @@ describe('runtime/dev/ws-channel', () => {
     const reg = await import('./worker-registry.ts')
     reg._resetForTests()
     const good: any = { postMessage: () => {} }
-    const bad: any = { postMessage: () => { throw new Error('terminated') } }
+    const bad: any = {
+      postMessage: () => {
+        throw new Error('terminated')
+      },
+    }
     reg.registerInitialPool([bad, good], '/dummy', 2, {})
     await broadcast({ type: 'ok' })
     reg._resetForTests()
@@ -68,16 +72,21 @@ describe('runtime/dev/ws-channel', () => {
     let sent: any
     const sock: any = {
       id: 1n,
-      send: (m: any) => { sent = m; return Promise.resolve() },
+      send: (m: any) => {
+        sent = m
+        return Promise.resolve()
+      },
       close: () => {},
     }
     handlers.open?.(sock, { req: {} as any, subprotocol: null })
 
     installWorkerBroadcastListener()
     const json = JSON.stringify({ type: 'reload' })
-    ;(globalThis as any).dispatchEvent(new MessageEvent('message', {
-      data: { type: 'dev-broadcast', json },
-    }))
+    ;(globalThis as any).dispatchEvent(
+      new MessageEvent('message', {
+        data: { type: 'dev-broadcast', json },
+      }),
+    )
     await new Promise((r) => setTimeout(r, 10))
     expect(sent).toBe(json)
   })

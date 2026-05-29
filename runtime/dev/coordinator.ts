@@ -84,22 +84,26 @@ export class Coordinator {
 
 function formatStart(ev: { paths: string[]; kind: ChangeKind }): string {
   const icon = ev.kind === 'css' ? '⎈' : '⏵'
-  const label = ev.kind === 'css'           ? 'css update'
-              : ev.kind === 'component-css' ? 'component css update'
-              : ev.kind === 'islands'       ? 'islands rebuild'
-              : 'hotreload'
+  const label =
+    ev.kind === 'css'
+      ? 'css update'
+      : ev.kind === 'component-css'
+        ? 'component css update'
+        : ev.kind === 'islands'
+          ? 'islands rebuild'
+          : 'hotreload'
   return `${icon} ${label} ${ev.paths[0]}`
 }
 
 function exportsEqualForChanged(
   before: import('../css/manifest.ts').ComponentCssManifest | null,
-  after:  import('../css/manifest.ts').ComponentCssManifest | null,
+  after: import('../css/manifest.ts').ComponentCssManifest | null,
   paths: string[],
 ): boolean {
   if (!before || !after) return false
   for (const p of paths) {
     const b = before.modules[p]?.exports ?? null
-    const a = after.modules[p]?.exports  ?? null
+    const a = after.modules[p]?.exports ?? null
     if (b === null && a === null) continue
     if (b === null || a === null) return false
     const bk = Object.keys(b).sort().join(',')

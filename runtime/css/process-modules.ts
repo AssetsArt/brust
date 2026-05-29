@@ -41,9 +41,7 @@ export async function processCssFile(opts: ProcessCssOptions): Promise<ProcessCs
   const result = transform({
     filename: opts.filename,
     code: Buffer.from(css, 'utf-8'),
-    cssModules: opts.isModule
-      ? { pattern: '[local]_[hash]' }
-      : false,
+    cssModules: opts.isModule ? { pattern: '[local]_[hash]' } : false,
   })
 
   if (!opts.isModule) {

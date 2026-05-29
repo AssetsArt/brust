@@ -7,8 +7,10 @@ import { scanCssImports } from './scan-imports.ts'
 describe('scanCssImports', () => {
   test('finds plain .css side-effect import', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'scan-imp-'))
-    await writeFile(path.join(dir, 'Foo.tsx'),
-      `import './foo.css'\nexport default function Foo() { return <div /> }\n`)
+    await writeFile(
+      path.join(dir, 'Foo.tsx'),
+      `import './foo.css'\nexport default function Foo() { return <div /> }\n`,
+    )
     await writeFile(path.join(dir, 'foo.css'), '.x { color: red }\n')
     const result = await scanCssImports(dir)
     const foo = result.get(path.join(dir, 'Foo.tsx'))
@@ -21,8 +23,10 @@ describe('scanCssImports', () => {
 
   test('finds default-import .module.css', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'scan-imp-'))
-    await writeFile(path.join(dir, 'Bar.tsx'),
-      `import styles from './bar.module.css'\nexport default function Bar() { return <div className={styles.primary} /> }\n`)
+    await writeFile(
+      path.join(dir, 'Bar.tsx'),
+      `import styles from './bar.module.css'\nexport default function Bar() { return <div className={styles.primary} /> }\n`,
+    )
     await writeFile(path.join(dir, 'bar.module.css'), '.primary { color: blue }\n')
     const result = await scanCssImports(dir)
     const bar = result.get(path.join(dir, 'Bar.tsx'))
@@ -35,16 +39,17 @@ describe('scanCssImports', () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'scan-imp-'))
     await writeFile(path.join(dir, 'README.md'), 'not code')
     await mkdir(path.join(dir, 'node_modules', 'pkg'), { recursive: true })
-    await writeFile(path.join(dir, 'node_modules', 'pkg', 'index.tsx'),
-      `import './nope.css'\n`)
+    await writeFile(path.join(dir, 'node_modules', 'pkg', 'index.tsx'), `import './nope.css'\n`)
     const result = await scanCssImports(dir)
     expect(result.size).toBe(0)
   })
 
   test('handles a file with both .css and .module.css imports', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'scan-imp-'))
-    await writeFile(path.join(dir, 'Mixed.tsx'),
-      `import './global.css'\nimport styles from './mod.module.css'\nexport default function Mixed() { return null }\n`)
+    await writeFile(
+      path.join(dir, 'Mixed.tsx'),
+      `import './global.css'\nimport styles from './mod.module.css'\nexport default function Mixed() { return null }\n`,
+    )
     await writeFile(path.join(dir, 'global.css'), '')
     await writeFile(path.join(dir, 'mod.module.css'), '')
     const result = await scanCssImports(dir)

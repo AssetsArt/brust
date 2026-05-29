@@ -3,25 +3,35 @@ import { handleSseStream, type SseCall } from './handler.ts'
 import type { Route, BrustRequest } from '../routes.ts'
 
 function makeNapi() {
-  const writes: Array<{ conn_id: bigint, bytes: Uint8Array }> = []
+  const writes: Array<{ conn_id: bigint; bytes: Uint8Array }> = []
   let aborted: (() => void) | null = null
   return {
     writes,
     napi: {
-      async write(conn_id: bigint, bytes: Uint8Array) { writes.push({ conn_id, bytes }) },
+      async write(conn_id: bigint, bytes: Uint8Array) {
+        writes.push({ conn_id, bytes })
+      },
       close: mock(() => {}),
-      registerAbort: (_conn_id: bigint, cb: () => void) => { aborted = cb },
+      registerAbort: (_conn_id: bigint, cb: () => void) => {
+        aborted = cb
+      },
       signalOpen: mock(() => {}),
     },
-    fireAbort: () => { aborted?.() },
+    fireAbort: () => {
+      aborted?.()
+    },
   }
 }
 
 function makeReq(): BrustRequest {
   // Minimal BrustRequest stub — only fields the glue touches.
   return {
-    method: 'GET', url: '/sse-counter', headers: {}, cookies: {}, search: {},
-    signal: undefined as unknown as AbortSignal,   // glue overwrites
+    method: 'GET',
+    url: '/sse-counter',
+    headers: {},
+    cookies: {},
+    search: {},
+    signal: undefined as unknown as AbortSignal, // glue overwrites
   } as BrustRequest
 }
 
@@ -29,9 +39,14 @@ test('handler: chunks forwarded as bytes; string chunks utf-8 encoded', async ()
   const { napi, writes } = makeNapi()
   const route: Route = {
     path: '/x',
-    sse: () => new ReadableStream({
-      start(c) { c.enqueue('data: hi\n\n'); c.enqueue(new Uint8Array([42])); c.close() },
-    }),
+    sse: () =>
+      new ReadableStream({
+        start(c) {
+          c.enqueue('data: hi\n\n')
+          c.enqueue(new Uint8Array([42]))
+          c.close()
+        },
+      }),
   } as Route
   const call: SseCall = { kind: 'sse', conn_id: 1n, req: makeReq() }
   await handleSseStream(call, route, napi)
@@ -47,16 +62,19 @@ test('handler: heartbeat fires after heartbeatMs', async () => {
   const route: Route = {
     path: '/x',
     sseOptions: { heartbeatMs: 50 },
-    sse: () => new ReadableStream({
-      start(c) { closeStreamLater = () => c.close() },
-    }),
+    sse: () =>
+      new ReadableStream({
+        start(c) {
+          closeStreamLater = () => c.close()
+        },
+      }),
   } as Route
   const call: SseCall = { kind: 'sse', conn_id: 2n, req: makeReq() }
   const p = handleSseStream(call, route, napi)
-  await new Promise(r => setTimeout(r, 200))      // wait for 2-3 ticks
+  await new Promise((r) => setTimeout(r, 200)) // wait for 2-3 ticks
   closeStreamLater?.()
   await p
-  const pings = writes.filter(w => new TextDecoder().decode(w.bytes) === ': ping\n\n')
+  const pings = writes.filter((w) => new TextDecoder().decode(w.bytes) === ': ping\n\n')
   expect(pings.length).toBeGreaterThanOrEqual(1)
 })
 
@@ -73,18 +91,18 @@ test('handler: abort cancels reader + clears interval + closes', async () => {
     sse: (r) => {
       observedReq = r
       return new ReadableStream({
-        async pull(c) {
+        async pull(_c) {
           if (opened) return
           opened = true
           // never enqueue — simulates idle stream
-          await new Promise(() => {})  // pending forever
+          await new Promise(() => {}) // pending forever
         },
       })
     },
   } as Route
   const call: SseCall = { kind: 'sse', conn_id: 3n, req: makeReq() }
   const p = handleSseStream(call, route, fx.napi)
-  await new Promise(r => setTimeout(r, 30))
+  await new Promise((r) => setTimeout(r, 30))
   fx.fireAbort()
   await p
   expect(fx.napi.close).toHaveBeenCalledTimes(1)
@@ -96,7 +114,9 @@ test('handler: handler-thrown error closes the conn without crashing', async () 
   const { napi } = makeNapi()
   const route: Route = {
     path: '/x',
-    sse: () => { throw new Error('boom') },
+    sse: () => {
+      throw new Error('boom')
+    },
   } as unknown as Route
   const call: SseCall = { kind: 'sse', conn_id: 4n, req: makeReq() }
   await handleSseStream(call, route, napi)
@@ -109,15 +129,18 @@ test('handler: heartbeatMs=0 disables the interval', async () => {
   const route: Route = {
     path: '/x',
     sseOptions: { heartbeatMs: 0 },
-    sse: () => new ReadableStream({
-      start(c) { close = () => c.close() },
-    }),
+    sse: () =>
+      new ReadableStream({
+        start(c) {
+          close = () => c.close()
+        },
+      }),
   } as Route
   const call: SseCall = { kind: 'sse', conn_id: 5n, req: makeReq() }
   const p = handleSseStream(call, route, fx.napi)
-  await new Promise(r => setTimeout(r, 100))
+  await new Promise((r) => setTimeout(r, 100))
   close?.()
   await p
-  const pings = fx.writes.filter(w => new TextDecoder().decode(w.bytes) === ': ping\n\n')
+  const pings = fx.writes.filter((w) => new TextDecoder().decode(w.bytes) === ': ping\n\n')
   expect(pings.length).toBe(0)
 })

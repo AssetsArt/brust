@@ -8,13 +8,18 @@ import { buildComponentCss } from './component-build.ts'
 describe('buildComponentCss', () => {
   test('emits chunks + manifest + .d.ts for a tmp project', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'compcss-'))
-    await writeFile(path.join(dir, 'Home.tsx'),
+    await writeFile(
+      path.join(dir, 'Home.tsx'),
       `import './globals.css'
 import styles from './Button.module.css'
 export default function Home() { return <button className={styles.primary}>x</button> }
-`)
+`,
+    )
     await writeFile(path.join(dir, 'globals.css'), '.banner { color: red }\n')
-    await writeFile(path.join(dir, 'Button.module.css'), '.primary { color: blue }\n.secondary { color: green }\n')
+    await writeFile(
+      path.join(dir, 'Button.module.css'),
+      '.primary { color: blue }\n.secondary { color: green }\n',
+    )
 
     const outDir = path.join(dir, 'out')
     const routes = [{ fullPath: '/', componentSource: path.join(dir, 'Home.tsx') }]
@@ -47,8 +52,8 @@ export default function Home() { return <button className={styles.primary}>x</bu
 
     // 5. .d.ts generated next to .module.css
     const dts = await readFile(path.join(dir, 'Button.module.css.d.ts'), 'utf-8')
-    expect(dts).toContain("readonly primary")
-    expect(dts).toContain("readonly secondary")
+    expect(dts).toContain('readonly primary')
+    expect(dts).toContain('readonly secondary')
 
     // 6. component-manifest.json written
     const mf = await readFile(path.join(outDir, 'css', 'component-manifest.json'), 'utf-8')
@@ -57,8 +62,7 @@ export default function Home() { return <button className={styles.primary}>x</bu
 
   test('skips with empty manifest when no CSS imports exist', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'compcss-empty-'))
-    await writeFile(path.join(dir, 'Home.tsx'),
-      `export default function Home() { return null }\n`)
+    await writeFile(path.join(dir, 'Home.tsx'), `export default function Home() { return null }\n`)
     const outDir = path.join(dir, 'out')
     const manifest = await buildComponentCss({
       scanRoot: dir,

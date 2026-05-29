@@ -28,13 +28,18 @@ export default function Profile({ params }: RouteContext<{ user: string }>) {
     <Layout title={greeting}>
       <h1>{greeting}</h1>
       <p>
-        This page renders synchronously; the heading + this paragraph ship
-        as the shell. The bio below uses a server-side fetch wrapped in
-        <code> &lt;Suspense&gt;</code>, so the page doesn't wait for it —
-        the fallback ships in the shell and the resolved markup streams
-        in as a separate chunk ~150 ms later.
+        This page renders synchronously; the heading + this paragraph ship as the shell. The bio
+        below uses a server-side fetch wrapped in
+        <code> &lt;Suspense&gt;</code>, so the page doesn't wait for it — the fallback ships in the
+        shell and the resolved markup streams in as a separate chunk ~150 ms later.
       </p>
-      <Suspense fallback={<p data-testid="bio-fallback" className="text-gray-500 italic">loading bio...</p>}>
+      <Suspense
+        fallback={
+          <p data-testid="bio-fallback" className="text-gray-500 italic">
+            loading bio...
+          </p>
+        }
+      >
         <Bio promise={fetchBio(params.user)} />
       </Suspense>
     </Layout>

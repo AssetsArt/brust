@@ -135,27 +135,33 @@ test('flattenRoutes: cache from leaf only, parent ignored when chain > 1', () =>
 
 test('flattenRoutes: throws when index combined with path', () => {
   expect(() =>
-    flattenRoutes([{ path: '/a', Component: C, children: [{ index: true, path: 'b', Component: C }] }]),
+    flattenRoutes([
+      { path: '/a', Component: C, children: [{ index: true, path: 'b', Component: C }] },
+    ]),
   ).toThrow(/cannot set both index and path/)
 })
 
 test('flattenRoutes: throws when index has children', () => {
   expect(() =>
     flattenRoutes([
-      { path: '/a', Component: C, children: [{ index: true, Component: C, children: [{ path: 'x', Component: C }] }] },
+      {
+        path: '/a',
+        Component: C,
+        children: [{ index: true, Component: C, children: [{ path: 'x', Component: C }] }],
+      },
     ]),
   ).toThrow(/index route cannot have children/)
 })
 
 test('flattenRoutes: throws when route has neither path, index, nor children', () => {
-  expect(() => flattenRoutes([{ Component: C } as Route])).toThrow(/must have path, index, or children/)
+  expect(() => flattenRoutes([{ Component: C } as Route])).toThrow(
+    /must have path, index, or children/,
+  )
 })
 
 test('flattenRoutes: throws on absolute child path under non-empty parent', () => {
   expect(() =>
-    flattenRoutes([
-      { path: '/a', Component: C, children: [{ path: '/escape', Component: C }] },
-    ]),
+    flattenRoutes([{ path: '/a', Component: C, children: [{ path: '/escape', Component: C }] }]),
   ).toThrow(/absolute child path/)
 })
 
@@ -163,9 +169,7 @@ test('flattenRoutes: throws on absolute child path under non-empty parent', () =
 
 test('flattenRoutes rejects sse + Component', () => {
   expect(() =>
-    flattenRoutes([
-      { path: '/x', sse: () => new ReadableStream(), Component: C },
-    ] as Route[]),
+    flattenRoutes([{ path: '/x', sse: () => new ReadableStream(), Component: C }] as Route[]),
   ).toThrow(/cannot coexist with 'Component'/)
 })
 
@@ -187,9 +191,7 @@ test('flattenRoutes rejects sse + children', () => {
 
 test('flattenRoutes accepts sse + middleware', () => {
   expect(() =>
-    flattenRoutes([
-      { path: '/x', sse: () => new ReadableStream(), middleware: [] },
-    ] as Route[]),
+    flattenRoutes([{ path: '/x', sse: () => new ReadableStream(), middleware: [] }] as Route[]),
   ).not.toThrow()
 })
 
@@ -197,9 +199,7 @@ test('flattenRoutes accepts sse + middleware', () => {
 
 test('flattenRoutes rejects websocket + Component', () => {
   expect(() =>
-    flattenRoutes([
-      { path: '/x', websocket: async () => ({}), Component: C },
-    ] as Route[]),
+    flattenRoutes([{ path: '/x', websocket: async () => ({}), Component: C }] as Route[]),
   ).toThrow(/cannot coexist with 'Component'/)
 })
 
@@ -221,20 +221,18 @@ test('flattenRoutes rejects websocket + sse', () => {
 
 test('flattenRoutes accepts websocket + middleware', () => {
   expect(() =>
-    flattenRoutes([
-      { path: '/x', websocket: async () => ({}), middleware: [] },
-    ] as Route[]),
+    flattenRoutes([{ path: '/x', websocket: async () => ({}), middleware: [] }] as Route[]),
   ).not.toThrow()
 })
 
 // ----- Sub-project J `native: true` validation tests -----
 
-function NamedPage() { return null }
+function NamedPage() {
+  return null
+}
 
 test('flattenRoutes accepts native: true + Component (NamedPage)', () => {
-  const flat = flattenRoutes([
-    { path: '/', Component: NamedPage, native: true },
-  ] as Route[])
+  const flat = flattenRoutes([{ path: '/', Component: NamedPage, native: true }] as Route[])
   expect(flat.length).toBe(1)
   expect(flat[0]!.nativeTemplate).toBe('NamedPage')
 })
@@ -254,29 +252,46 @@ test('flattenRoutes accepts native: true + middleware', () => {
 })
 
 test('flattenRoutes rejects native: true without Component', () => {
-  expect(() => flattenRoutes([{ path: '/x', native: true } as Route])).toThrow(/'native: true' requires 'Component'/)
+  expect(() => flattenRoutes([{ path: '/x', native: true } as Route])).toThrow(
+    /'native: true' requires 'Component'/,
+  )
 })
 
 test('flattenRoutes rejects native: true with anonymous Component', () => {
-  const anon = (function () { return (function () { return null }) })() as unknown
-  expect(() => flattenRoutes([{ path: '/x', Component: anon as never, native: true } as Route])).toThrow(/must be a named function/)
+  const anon = (
+    () => () =>
+      null
+  )() as unknown
+  expect(() =>
+    flattenRoutes([{ path: '/x', Component: anon as never, native: true } as Route]),
+  ).toThrow(/must be a named function/)
 })
 
 test('flattenRoutes rejects native: true + sse', () => {
-  expect(() => flattenRoutes([
-    { path: '/x', Component: NamedPage, native: true, sse: () => new ReadableStream() } as Route,
-  ])).toThrow(/cannot coexist with 'sse'/)
+  expect(() =>
+    flattenRoutes([
+      { path: '/x', Component: NamedPage, native: true, sse: () => new ReadableStream() } as Route,
+    ]),
+  ).toThrow(/cannot coexist with 'sse'/)
 })
 
 test('flattenRoutes rejects native: true + children', () => {
-  expect(() => flattenRoutes([
-    { path: '/x', Component: NamedPage, native: true, children: [{ path: 'y', Component: NamedPage }] } as Route,
-  ])).toThrow(/nested children/)
+  expect(() =>
+    flattenRoutes([
+      {
+        path: '/x',
+        Component: NamedPage,
+        native: true,
+        children: [{ path: 'y', Component: NamedPage }],
+      } as Route,
+    ]),
+  ).toThrow(/nested children/)
 })
 
 test('flattenRoutes rejects native: true + cache (deferred)', () => {
-  expect(() => flattenRoutes([
-    { path: '/x', Component: NamedPage, native: true, cache: { ttl_seconds: 60 } } as Route,
-  ])).toThrow(/cannot coexist with 'cache'/)
+  expect(() =>
+    flattenRoutes([
+      { path: '/x', Component: NamedPage, native: true, cache: { ttl_seconds: 60 } } as Route,
+    ]),
+  ).toThrow(/cannot coexist with 'cache'/)
 })
-

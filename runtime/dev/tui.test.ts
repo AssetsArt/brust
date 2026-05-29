@@ -6,7 +6,9 @@ describe('Tui (non-TTY mode)', () => {
     const writes: string[] = []
     const tui = new Tui({
       isTty: false,
-      write: (s: string) => { writes.push(s) },
+      write: (s: string) => {
+        writes.push(s)
+      },
     })
     tui.updateStatus({ port: 3000, workers: 4, watching: ['/proj'] })
     tui.appendEvent('▶ serving on http://127.0.0.1:3000')
@@ -18,7 +20,9 @@ describe('Tui (non-TTY mode)', () => {
     const writes: string[] = []
     const tui = new Tui({
       isTty: false,
-      write: (s: string) => { writes.push(s) },
+      write: (s: string) => {
+        writes.push(s)
+      },
       capacity: 3,
     })
     tui.appendEvent('a')
@@ -34,7 +38,9 @@ describe('Tui (TTY mode)', () => {
     const writes: string[] = []
     const tui = new Tui({
       isTty: true,
-      write: (s: string) => { writes.push(s) },
+      write: (s: string) => {
+        writes.push(s)
+      },
     })
     tui.updateStatus({ port: 3000, workers: 4, watching: ['/proj'] })
     tui.appendEvent('boot')

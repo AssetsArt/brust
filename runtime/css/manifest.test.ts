@@ -2,7 +2,11 @@ import { describe, test, expect } from 'bun:test'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { readComponentCssManifest, writeComponentCssManifest, type ComponentCssManifest } from './manifest.ts'
+import {
+  readComponentCssManifest,
+  writeComponentCssManifest,
+  type ComponentCssManifest,
+} from './manifest.ts'
 
 describe('runtime/css/manifest', () => {
   test('round-trip a populated manifest', async () => {

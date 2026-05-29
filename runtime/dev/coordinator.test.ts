@@ -60,13 +60,20 @@ describe('Coordinator', () => {
     expect(calls[0].type).toBe('building')
     expect(calls[1].type).toBe('error')
     expect(calls[1].message).toBe('Tailwind broke')
-    expect(calls.find((c) => c.type === 'reload' || c.type === 'css-update' || c.type === 'ok')).toBeUndefined()
+    expect(
+      calls.find((c) => c.type === 'reload' || c.type === 'css-update' || c.type === 'ok'),
+    ).toBeUndefined()
   })
 
   test('component-css change → buildComponentCss + css-update (no reload)', async () => {
     const baseManifest: any = {
       version: 1,
-      modules: { '/p/x.module.css': { chunk: '/_brust/css/components/x.css', exports: { primary: 'primary_a' } } },
+      modules: {
+        '/p/x.module.css': {
+          chunk: '/_brust/css/components/x.css',
+          exports: { primary: 'primary_a' },
+        },
+      },
       routeChunks: {},
     }
     const deps = makeDeps({
@@ -84,12 +91,16 @@ describe('Coordinator', () => {
   test('component-css with exports-set change → reload (not css-update)', async () => {
     let snap = 0
     const before: any = {
-      version: 1, routeChunks: {},
+      version: 1,
+      routeChunks: {},
       modules: { '/p/x.module.css': { chunk: '/c.css', exports: { primary: 'p_a' } } },
     }
     const after: any = {
-      version: 1, routeChunks: {},
-      modules: { '/p/x.module.css': { chunk: '/c.css', exports: { primary: 'p_a', secondary: 's_a' } } },
+      version: 1,
+      routeChunks: {},
+      modules: {
+        '/p/x.module.css': { chunk: '/c.css', exports: { primary: 'p_a', secondary: 's_a' } },
+      },
     }
     const deps = makeDeps({
       buildComponentCss: mock(() => Promise.resolve()),
@@ -105,7 +116,12 @@ describe('Coordinator', () => {
     let releaseTerm!: () => void
     const deps = makeDeps({
       workers: {
-        terminateAll: mock(() => new Promise<void>((r) => { releaseTerm = r })),
+        terminateAll: mock(
+          () =>
+            new Promise<void>((r) => {
+              releaseTerm = r
+            }),
+        ),
         spawnAll: mock(() => Promise.resolve()),
       },
     })
