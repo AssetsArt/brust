@@ -34,16 +34,18 @@ export function registerInitialPool(
 export async function terminateAll(): Promise<void> {
   const olds = state.workers
   state.workers = []
-  await Promise.all(olds.map(async (w) => {
-    try {
-      await Promise.race([
-        w.terminate(),
-        new Promise<void>((resolve) => setTimeout(resolve, TERMINATE_TIMEOUT_MS)),
-      ])
-    } catch {
-      // Already-terminated rejections swallowed.
-    }
-  }))
+  await Promise.all(
+    olds.map(async (w) => {
+      try {
+        await Promise.race([
+          w.terminate(),
+          new Promise<void>((resolve) => setTimeout(resolve, TERMINATE_TIMEOUT_MS)),
+        ])
+      } catch {
+        // Already-terminated rejections swallowed.
+      }
+    }),
+  )
 }
 
 /** Spawn `count` fresh Workers using the entry + env captured at
@@ -63,25 +65,29 @@ export async function spawnAll(): Promise<void> {
       env: { ...state.baseEnv, BRUST_WORKER_ID: String(i) },
     })
     fresh.push(w)
-    readies.push(new Promise<void>((resolve) => {
-      const onMsg = (e: MessageEvent) => {
-        const d: any = (e as any).data
-        if (d && d.type === 'brust-worker-ready') {
-          ;(w as any).removeEventListener?.('message', onMsg)
-          resolve()
+    readies.push(
+      new Promise<void>((resolve) => {
+        const onMsg = (e: MessageEvent) => {
+          const d: any = (e as any).data
+          if (d && d.type === 'brust-worker-ready') {
+            ;(w as any).removeEventListener?.('message', onMsg)
+            resolve()
+          }
         }
-      }
-      ;(w as any).addEventListener?.('message', onMsg)
-      // Grace: don't hang forever if a worker crashes before reporting.
-      setTimeout(resolve, 5000)
-    }))
+        ;(w as any).addEventListener?.('message', onMsg)
+        // Grace: don't hang forever if a worker crashes before reporting.
+        setTimeout(resolve, 5000)
+      }),
+    )
   }
   state.workers = fresh
   await Promise.all(readies)
 }
 
 /** Test helper. */
-export function _workersForTests(): Worker[] { return [...state.workers] }
+export function _workersForTests(): Worker[] {
+  return [...state.workers]
+}
 export function _resetForTests(): void {
   state.workers = []
   state.entry = null

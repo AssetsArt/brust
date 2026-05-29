@@ -1,7 +1,10 @@
 import { existsSync } from 'node:fs'
 import { copyFile, mkdir, readdir, rm } from 'node:fs/promises'
 import path, { isAbsolute, resolve } from 'node:path'
-import { actionsPrebuiltPlugin, writePrebuiltActionsFileWithMap } from './actions-prebuilt-plugin.ts'
+import {
+  actionsPrebuiltPlugin,
+  writePrebuiltActionsFileWithMap,
+} from './actions-prebuilt-plugin.ts'
 import { emitNativeTemplates } from './native-routes-emit.ts'
 import { nativeShimPlugin } from './native-shim-plugin.ts'
 
@@ -10,8 +13,8 @@ import { nativeShimPlugin } from './native-shim-plugin.ts'
 const REPO_ROOT = path.resolve(import.meta.dir, '..', '..')
 
 interface ParsedArgs {
-  entry: string         // absolute path to the entry file
-  outDir: string        // absolute path to the output dir
+  entry: string // absolute path to the entry file
+  outDir: string // absolute path to the output dir
 }
 
 function parseArgs(args: string[]): ParsedArgs {
@@ -41,7 +44,9 @@ function parseArgs(args: string[]): ParsedArgs {
 
   const cwd = process.cwd()
   const entryPath = entry
-    ? (isAbsolute(entry) ? entry : resolve(cwd, entry))
+    ? isAbsolute(entry)
+      ? entry
+      : resolve(cwd, entry)
     : resolve(cwd, 'index.ts')
 
   if (!existsSync(entryPath)) {
@@ -50,7 +55,9 @@ function parseArgs(args: string[]): ParsedArgs {
   }
 
   const outPath = outDir
-    ? (isAbsolute(outDir) ? outDir : resolve(cwd, outDir))
+    ? isAbsolute(outDir)
+      ? outDir
+      : resolve(cwd, outDir)
     : resolve(cwd, 'dist')
 
   return { entry: entryPath, outDir: outPath }
@@ -70,7 +77,9 @@ export async function runBuild(args: string[]): Promise<void> {
   // 2. Scan actions + rediscover id→source mapping for the prebuilt plugin.
   const { scanActions, collectExports } = await import('../scan-actions.ts')
   const scan = await scanActions({ roots: [entryDir] })
-  console.log(`[brust build] actions: discovered ${scan.actions.length} (${scan.actions.map((a) => a.id).join(', ') || '(none)'})`)
+  console.log(
+    `[brust build] actions: discovered ${scan.actions.length} (${scan.actions.map((a) => a.id).join(', ') || '(none)'})`,
+  )
 
   const idToSource = new Map<string, string>()
   for (const file of scan.sourceFiles) {
@@ -105,7 +114,9 @@ export async function runBuild(args: string[]): Promise<void> {
     })
     const manifestPath = path.join(outDir, 'mcp-manifest.json')
     await Bun.write(manifestPath, JSON.stringify(manifest, null, 2))
-    console.log(`[brust build] mcp:     ${manifest.tools.length} tools + ${manifest.resources.length} resources → ${manifestPath}`)
+    console.log(
+      `[brust build] mcp:     ${manifest.tools.length} tools + ${manifest.resources.length} resources → ${manifestPath}`,
+    )
   } else {
     console.log(`[brust build] mcp:     skipped (no routes.tsx)`)
   }
@@ -166,7 +177,9 @@ export async function runBuild(args: string[]): Promise<void> {
             fullPath: r.fullPath,
             componentSource: routesFile,
           }))
-        } catch { /* if routes import fails, skip — manifest still emits modules */ }
+        } catch {
+          /* if routes import fails, skip — manifest still emits modules */
+        }
       }
       const cssOutDir = path.join(outDir, 'css')
       const manifest = await buildComponentCss({
@@ -175,7 +188,9 @@ export async function runBuild(args: string[]): Promise<void> {
         tailwindCompile: null,
         routes: routeForCss,
       })
-      console.log(`[brust build] css-mod: ${Object.keys(manifest.modules).length} chunk(s) → ${cssOutDir}/components/`)
+      console.log(
+        `[brust build] css-mod: ${Object.keys(manifest.modules).length} chunk(s) → ${cssOutDir}/components/`,
+      )
     } else {
       console.log(`[brust build] css-mod: skipped (no component CSS imports)`)
     }
@@ -187,8 +202,7 @@ export async function runBuild(args: string[]): Promise<void> {
 
   // 6. Bun.build the server bundle with both plugins + banner.
   const banner =
-    `process.env.BRUST_PREBUILT = '1';\n` +
-    `process.env.BRUST_DIST_DIR = import.meta.dir;\n`
+    `process.env.BRUST_PREBUILT = '1';\n` + `process.env.BRUST_DIST_DIR = import.meta.dir;\n`
 
   const result = await Bun.build({
     entrypoints: [entry],
@@ -202,10 +216,7 @@ export async function runBuild(args: string[]): Promise<void> {
     // minification still apply.
     minify: { whitespace: true, syntax: true, identifiers: false },
     banner,
-    plugins: [
-      nativeShimPlugin(REPO_ROOT),
-      actionsPrebuiltPlugin(prebuiltActionsPath, REPO_ROOT),
-    ],
+    plugins: [nativeShimPlugin(REPO_ROOT), actionsPrebuiltPlugin(prebuiltActionsPath, REPO_ROOT)],
   })
 
   if (!result.success) {
@@ -224,13 +235,11 @@ export async function runBuild(args: string[]): Promise<void> {
   // (CI matrix) Just Works without further wiring; in single-platform local
   // builds this is just one file.
   const runtimeDir = path.join(REPO_ROOT, 'runtime')
-  const nodeFiles = (await readdir(runtimeDir)).filter(
-    (f) => /^index\..+\.node$/.test(f),
-  )
+  const nodeFiles = (await readdir(runtimeDir)).filter((f) => /^index\..+\.node$/.test(f))
   if (nodeFiles.length === 0) {
     console.error(
       `brust build: no native binary found in ${runtimeDir}. ` +
-      `Run \`bun --filter runtime run build\` (or :debug) first.`,
+        `Run \`bun --filter runtime run build\` (or :debug) first.`,
     )
     process.exit(1)
   }

@@ -55,7 +55,9 @@ beforeAll(async () => {
     stderr: 'inherit',
   })
   if (buildRustc.exitCode !== 0) {
-    throw new Error(`cargo build -p jsx-rust-compiler --bin jsx-rustc failed (exit ${buildRustc.exitCode})`)
+    throw new Error(
+      `cargo build -p jsx-rust-compiler --bin jsx-rustc failed (exit ${buildRustc.exitCode})`,
+    )
   }
 
   // Pre-flight 2: run brust build against the fixture entry. This compiles the

@@ -1,5 +1,11 @@
 import { describe, test, expect, beforeEach } from 'bun:test'
-import { configureCssEnabled, getCssHrefs, configureCssHrefsForRoute, getCssHrefsForRoute, _resetCssForTests } from './css.ts'
+import {
+  configureCssEnabled,
+  getCssHrefs,
+  configureCssHrefsForRoute,
+  getCssHrefsForRoute,
+  _resetCssForTests,
+} from './css.ts'
 
 describe('runtime/css', () => {
   beforeEach(() => {

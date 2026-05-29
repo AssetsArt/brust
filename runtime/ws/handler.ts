@@ -1,4 +1,4 @@
-import type { Route, BrustRequest, RouteCall, WsHandlers, WsSocket } from '../routes.ts'
+import type { Route, RouteCall, WsHandlers, WsSocket } from '../routes.ts'
 
 export type WsCall = Extract<RouteCall, { kind: 'ws' }>
 
@@ -6,7 +6,13 @@ export type WsCall = Extract<RouteCall, { kind: 'ws' }>
 export interface WsNapi {
   send(conn_id: bigint, data: Uint8Array, isBinary: boolean): Promise<void>
   close(conn_id: bigint, code: number, reason: string): void
-  signalOpen(conn_id: bigint, status: number, body: string, contentType: string, subprotocol: string): void
+  signalOpen(
+    conn_id: bigint,
+    status: number,
+    body: string,
+    contentType: string,
+    subprotocol: string,
+  ): void
   registerHandlers(
     conn_id: bigint,
     onMessage: (data: Uint8Array, isBinary: boolean) => void,
@@ -62,11 +68,7 @@ const encoder = new TextEncoder()
  * and read it in message should await any setup synchronously inside open,
  * or guard reads in message against missing state.
  */
-export async function handleWsConn(
-  call: WsCall,
-  route: Route,
-  napi: WsNapi,
-): Promise<void> {
+export async function handleWsConn(call: WsCall, route: Route, napi: WsNapi): Promise<void> {
   // Load the handler module. Failure here → 500 signalOpen (Rust writes
   // regular HTTP error response since 101 hasn't been sent yet).
   //
@@ -79,10 +81,17 @@ export async function handleWsConn(
   try {
     const loaded = await route.websocket!()
     const maybeDefault = (loaded as { default?: WsHandlers }).default
-    handlers = (maybeDefault && typeof maybeDefault === 'object') ? maybeDefault : (loaded as WsHandlers)
+    handlers =
+      maybeDefault && typeof maybeDefault === 'object' ? maybeDefault : (loaded as WsHandlers)
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    napi.signalOpen(call.conn_id, 500, `ws handler import failed: ${msg}`, 'text/plain; charset=utf-8', '')
+    napi.signalOpen(
+      call.conn_id,
+      500,
+      `ws handler import failed: ${msg}`,
+      'text/plain; charset=utf-8',
+      '',
+    )
     return
   }
 
@@ -104,9 +113,10 @@ export async function handleWsConn(
       const payload = isBinary ? data : decoder.decode(data)
       try {
         const r = handlers.message?.(socket, payload)
-        if (r instanceof Promise) r.catch((err) => {
-          console.error(`[brust] ws conn=${call.conn_id} message handler rejected:`, err)
-        })
+        if (r instanceof Promise)
+          r.catch((err) => {
+            console.error(`[brust] ws conn=${call.conn_id} message handler rejected:`, err)
+          })
       } catch (err) {
         console.error(`[brust] ws conn=${call.conn_id} message handler threw:`, err)
       }

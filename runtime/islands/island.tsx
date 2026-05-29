@@ -43,7 +43,7 @@ export function Island<P extends Record<string, unknown>>({
   if (!resolvedId) {
     throw new Error(
       '<Island> requires an `id` prop because the component has no `.name` ' +
-      '(anonymous default export or minified function). Pass id="..." explicitly.',
+        '(anonymous default export or minified function). Pass id="..." explicitly.',
     )
   }
   const propsJson = JSON.stringify(props)

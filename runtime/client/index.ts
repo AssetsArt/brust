@@ -21,9 +21,7 @@ export class BrustActionError extends Error {
 export type ServerFn = (req: any, ...args: any[]) => Promise<any>
 
 /** Drop the leading `req` arg from F's parameter list. */
-type DropReq<F> = F extends (req: any, ...args: infer A) => infer R
-  ? (...args: A) => R
-  : never
+type DropReq<F> = F extends (req: any, ...args: infer A) => infer R ? (...args: A) => R : never
 
 /** Build a typed RPC stub for an action.
  *
@@ -47,11 +45,16 @@ export function action<F extends ServerFn>(id: string): DropReq<F> {
     if (!res.ok) {
       const parsed = safeParse(text)
       const message =
-        (parsed && typeof parsed === 'object' && parsed !== null &&
-         'error' in parsed && parsed.error && typeof parsed.error === 'object' &&
-         'message' in parsed.error && typeof parsed.error.message === 'string')
+        parsed &&
+        typeof parsed === 'object' &&
+        parsed !== null &&
+        'error' in parsed &&
+        parsed.error &&
+        typeof parsed.error === 'object' &&
+        'message' in parsed.error &&
+        typeof parsed.error.message === 'string'
           ? parsed.error.message
-          : (text || 'action failed')
+          : text || 'action failed'
       throw new BrustActionError(message, res.status, parsed ?? text)
     }
     return text ? JSON.parse(text) : undefined
@@ -59,13 +62,14 @@ export function action<F extends ServerFn>(id: string): DropReq<F> {
 }
 
 function safeParse(s: string): unknown | null {
-  try { return JSON.parse(s) } catch { return null }
+  try {
+    return JSON.parse(s)
+  } catch {
+    return null
+  }
 }
 
-type FormActionFn<F> =
-  F extends (req: any, fd: FormData) => infer R
-    ? (fd: FormData) => R
-    : never
+type FormActionFn<F> = F extends (req: any, fd: FormData) => infer R ? (fd: FormData) => R : never
 
 /** Build a typed RPC stub for a form-receiving action.
  *
@@ -100,11 +104,16 @@ export function formAction<F extends (req: any, fd: FormData) => unknown>(
     if (!res.ok) {
       const parsed = safeParse(text)
       const message =
-        (parsed && typeof parsed === 'object' && parsed !== null &&
-         'error' in parsed && parsed.error && typeof parsed.error === 'object' &&
-         'message' in parsed.error && typeof parsed.error.message === 'string')
+        parsed &&
+        typeof parsed === 'object' &&
+        parsed !== null &&
+        'error' in parsed &&
+        parsed.error &&
+        typeof parsed.error === 'object' &&
+        'message' in parsed.error &&
+        typeof parsed.error.message === 'string'
           ? parsed.error.message
-          : (text || 'action failed')
+          : text || 'action failed'
       throw new BrustActionError(message, res.status, parsed ?? text)
     }
     return text ? JSON.parse(text) : undefined

@@ -12,16 +12,11 @@ describe('injectDevClient', () => {
       body('<head><title>x</title></head><body></body>'),
       '<script>devclient</script>',
     )
-    expect(str(out)).toBe(
-      '<head><title>x</title><script>devclient</script></head><body></body>',
-    )
+    expect(str(out)).toBe('<head><title>x</title><script>devclient</script></head><body></body>')
   })
 
   test('matches case-insensitive </HEAD>', () => {
-    const out = injectDevClient(
-      body('<HEAD></HEAD>'),
-      '<script>x</script>',
-    )
+    const out = injectDevClient(body('<HEAD></HEAD>'), '<script>x</script>')
     expect(str(out)).toBe('<HEAD><script>x</script></HEAD>')
   })
 
@@ -47,7 +42,7 @@ describe('injectDevClient', () => {
       expect(warn).toHaveBeenCalledTimes(1)
 
       injectDevClient(body('<body></body>'), '<script>x</script>')
-      expect(warn).toHaveBeenCalledTimes(1)  // still 1
+      expect(warn).toHaveBeenCalledTimes(1) // still 1
     } finally {
       warn.mockRestore()
     }

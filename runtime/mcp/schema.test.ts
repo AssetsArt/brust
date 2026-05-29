@@ -2,19 +2,25 @@ import { test, expect } from 'bun:test'
 import ts from 'typescript'
 import { tsTypeToJsonSchema } from './schema.ts'
 
-function typeOf(source: string, varName: string): { type: ts.Type, checker: ts.TypeChecker } {
+function typeOf(source: string, varName: string): { type: ts.Type; checker: ts.TypeChecker } {
   const fileName = 'test.ts'
   const sourceFile = ts.createSourceFile(fileName, source, ts.ScriptTarget.ES2022, true)
   const host = ts.createCompilerHost({})
   const orig = host.getSourceFile
-  host.getSourceFile = (fn, ...rest) => fn === fileName ? sourceFile : orig.call(host, fn, ...rest)
+  host.getSourceFile = (fn, ...rest) =>
+    fn === fileName ? sourceFile : orig.call(host, fn, ...rest)
   const program = ts.createProgram({
-    rootNames: [fileName], options: { noEmit: true, target: ts.ScriptTarget.ES2022, skipLibCheck: true },
+    rootNames: [fileName],
+    options: { noEmit: true, target: ts.ScriptTarget.ES2022, skipLibCheck: true },
     host,
   })
   const checker = program.getTypeChecker()
-  const decl = sourceFile.statements.find((s): s is ts.VariableStatement => ts.isVariableStatement(s))!
-  const v = decl.declarationList.declarations.find((d) => (d.name as ts.Identifier).text === varName)!
+  const decl = sourceFile.statements.find((s): s is ts.VariableStatement =>
+    ts.isVariableStatement(s),
+  )!
+  const v = decl.declarationList.declarations.find(
+    (d) => (d.name as ts.Identifier).text === varName,
+  )!
   return { type: checker.getTypeAtLocation(v), checker }
 }
 
@@ -45,7 +51,10 @@ test('schema: string literal', () => {
 
 test('schema: array of strings', () => {
   const { type, checker } = typeOf('const x: string[] = []', 'x')
-  expect(tsTypeToJsonSchema(type, { checker })).toEqual({ type: 'array', items: { type: 'string' } })
+  expect(tsTypeToJsonSchema(type, { checker })).toEqual({
+    type: 'array',
+    items: { type: 'string' },
+  })
 })
 
 test('schema: tuple', () => {
@@ -78,12 +87,17 @@ test('schema: nested object', () => {
 
 test('schema: union string | number', () => {
   const { type, checker } = typeOf('const x: string | number = ""', 'x')
-  expect(tsTypeToJsonSchema(type, { checker })).toEqual({ anyOf: [{ type: 'string' }, { type: 'number' }] })
+  expect(tsTypeToJsonSchema(type, { checker })).toEqual({
+    anyOf: [{ type: 'string' }, { type: 'number' }],
+  })
 })
 
 test('schema: Record<string, number>', () => {
   const { type, checker } = typeOf('const x: Record<string, number> = {}', 'x')
-  expect(tsTypeToJsonSchema(type, { checker })).toEqual({ type: 'object', additionalProperties: { type: 'number' } })
+  expect(tsTypeToJsonSchema(type, { checker })).toEqual({
+    type: 'object',
+    additionalProperties: { type: 'number' },
+  })
 })
 
 test('schema: Promise<T> unwraps', () => {

@@ -10,11 +10,7 @@ describe('buildCss', () => {
 
     await writeFile(
       path.join(dir, 'app.css'),
-      [
-        '@import "tailwindcss";',
-        '@source "./**/*.tsx";',
-        '',
-      ].join('\n'),
+      ['@import "tailwindcss";', '@source "./**/*.tsx";', ''].join('\n'),
       'utf-8',
     )
 
@@ -37,8 +33,6 @@ describe('buildCss', () => {
   })
 
   test('throws when entry file is missing', async () => {
-    await expect(
-      buildCss({ entry: '/no/such/file.css', outDir: '/tmp/never' }),
-    ).rejects.toThrow()
+    await expect(buildCss({ entry: '/no/such/file.css', outDir: '/tmp/never' })).rejects.toThrow()
   })
 })

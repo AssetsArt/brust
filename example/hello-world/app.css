@@ -24,7 +24,8 @@
   body {
     @apply font-sans text-ink bg-paper leading-relaxed;
   }
-  main code, main pre {
+  main code,
+  main pre {
     @apply bg-soft px-1.5 py-0.5 rounded text-[13px] font-mono;
   }
   main pre {

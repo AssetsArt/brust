@@ -3,7 +3,7 @@ import { handleWsConn, pickSubprotocol, type WsCall } from './handler.ts'
 import type { Route, BrustRequest, WsHandlers } from '../routes.ts'
 
 function makeNapi() {
-  const sends: Array<{ conn_id: bigint, data: Uint8Array, isBinary: boolean }> = []
+  const sends: Array<{ conn_id: bigint; data: Uint8Array; isBinary: boolean }> = []
   let onMessage: ((data: Uint8Array, isBinary: boolean) => void) | undefined
   let onClose: ((code: number, reason: string) => void) | undefined
   return {
@@ -18,7 +18,10 @@ function makeNapi() {
         _conn_id: bigint,
         onMsg: (data: Uint8Array, isBinary: boolean) => void,
         onCls: (code: number, reason: string) => void,
-      ) => { onMessage = onMsg; onClose = onCls },
+      ) => {
+        onMessage = onMsg
+        onClose = onCls
+      },
     },
     fireMessage: (data: Uint8Array, isBinary: boolean) => onMessage?.(data, isBinary),
     fireClose: (code: number, reason: string) => onClose?.(code, reason),
@@ -27,7 +30,11 @@ function makeNapi() {
 
 function makeReq(): BrustRequest {
   return {
-    method: 'GET', url: '/ws/echo', headers: {}, cookies: {}, search: {},
+    method: 'GET',
+    url: '/ws/echo',
+    headers: {},
+    cookies: {},
+    search: {},
     signal: undefined as unknown as AbortSignal,
   } as BrustRequest
 }
@@ -47,9 +54,12 @@ test('pickSubprotocol: route declares none → null (no negotiation)', () => {
 
 test('handler: signalOpen 101 + open(socket, ctx) fires + send proxies napi', async () => {
   const fx = makeNapi()
-  let opened: { socket: any, ctx: any } | undefined
+  let opened: { socket: any; ctx: any } | undefined
   const handlers: WsHandlers = {
-    open(socket, ctx) { opened = { socket, ctx }; void socket.send('hi') },
+    open(socket, ctx) {
+      opened = { socket, ctx }
+      void socket.send('hi')
+    },
   }
   const call: WsCall = { kind: 'ws', conn_id: 1n, client_subprotocols: [], req: makeReq() }
   const route: Route = { path: '/ws/x', websocket: async () => handlers } as Route
@@ -66,7 +76,9 @@ test('handler: on_message arrives as string for text, Uint8Array for binary', as
   const fx = makeNapi()
   const received: Array<string | Uint8Array> = []
   const handlers: WsHandlers = {
-    message(_s, data) { received.push(data) },
+    message(_s, data) {
+      received.push(data)
+    },
   }
   const call: WsCall = { kind: 'ws', conn_id: 2n, client_subprotocols: [], req: makeReq() }
   const route: Route = { path: '/ws/x', websocket: async () => handlers } as Route
@@ -83,7 +95,11 @@ test('handler: on_message arrives as string for text, Uint8Array for binary', as
 test('handler: socket.close enqueues napi.close + subsequent send rejects', async () => {
   const fx = makeNapi()
   let s: any
-  const handlers: WsHandlers = { open(socket) { s = socket } }
+  const handlers: WsHandlers = {
+    open(socket) {
+      s = socket
+    },
+  }
   const call: WsCall = { kind: 'ws', conn_id: 3n, client_subprotocols: [], req: makeReq() }
   const route: Route = { path: '/ws/x', websocket: async () => handlers } as Route
   await handleWsConn(call, route, fx.napi)
@@ -97,10 +113,14 @@ test('handler: message-handler throw is logged but conn stays open', async () =>
   const fx = makeNapi()
   const errs: any[] = []
   const origError = console.error
-  console.error = (...a: any[]) => { errs.push(a) }
+  console.error = (...a: any[]) => {
+    errs.push(a)
+  }
   try {
     const handlers: WsHandlers = {
-      message() { throw new Error('boom') },
+      message() {
+        throw new Error('boom')
+      },
     }
     const call: WsCall = { kind: 'ws', conn_id: 4n, client_subprotocols: [], req: makeReq() }
     const route: Route = { path: '/ws/x', websocket: async () => handlers } as Route

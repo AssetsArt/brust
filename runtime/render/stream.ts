@@ -13,7 +13,7 @@ export interface RenderBranchStreamingArgs {
   view: Uint8Array
   workerId: bigint
   napi: {
-    renderChunk:      (workerId: bigint, len: number, sabBytes: Uint8Array) => Promise<void>
+    renderChunk: (workerId: bigint, len: number, sabBytes: Uint8Array) => Promise<void>
     renderChunkFinal: (workerId: bigint, len: number, sabBytes: Uint8Array) => Promise<void>
   }
   errorBoundary: ComponentType<{ error: Error }>
@@ -75,8 +75,14 @@ function concatBuffers(parts: Uint8Array[], withBootstrap: boolean): Uint8Array 
   const totalLen = (bootstrap?.length ?? 0) + parts.reduce((n, p) => n + p.length, 0)
   const out = new Uint8Array(totalLen)
   let off = 0
-  if (bootstrap) { out.set(bootstrap, off); off += bootstrap.length }
-  for (const p of parts) { out.set(p, off); off += p.length }
+  if (bootstrap) {
+    out.set(bootstrap, off)
+    off += bootstrap.length
+  }
+  for (const p of parts) {
+    out.set(p, off)
+    off += p.length
+  }
   return out
 }
 
@@ -97,8 +103,12 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
     const sendFinal = async () => {
       if (finalSent) return
       finalSent = true
-      try { await napi.renderChunk(workerId, 0, view); resolve() }
-      catch (e) { reject(e) }
+      try {
+        await napi.renderChunk(workerId, 0, view)
+        resolve()
+      } catch (e) {
+        reject(e)
+      }
     }
 
     let mode: 'buffering' | 'streaming' | 'done' = 'buffering'
@@ -113,7 +123,8 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
         try {
           if (mode === 'buffering') {
             buffer.push(new Uint8Array(chunk))
-            cb(); return
+            cb()
+            return
           }
           if (mode === 'streaming') {
             // Wait for the header chunk to be flushed before sending body chunks.
@@ -122,7 +133,9 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
             await napi.renderChunk(workerId, len, view)
           }
           cb()
-        } catch (e) { cb(e as Error) }
+        } catch (e) {
+          cb(e as Error)
+        }
       },
       async final(cb: (e?: Error | null) => void) {
         try {
@@ -132,7 +145,11 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
             const perRouteHrefs = args.routePath ? getCssHrefsForRoute(args.routePath) : []
             body = injectCssLink(body, [...getCssHrefs(), ...perRouteHrefs])
             body = injectDevClient(body, getDevClientSnippet())
-            const meta = makeMeta({ status: successStatus, streaming: false, headers: extraHeaders })
+            const meta = makeMeta({
+              status: successStatus,
+              streaming: false,
+              headers: extraHeaders,
+            })
             const len = encodeFirstChunk(view, meta, body)
             await napi.renderChunkFinal(workerId, len, view)
             finalSent = true
@@ -144,7 +161,9 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
             mode = 'done'
           }
           cb()
-        } catch (e) { cb(e as Error) }
+        } catch (e) {
+          cb(e as Error)
+        }
       },
     })
     sink.on('error', reject)
@@ -198,7 +217,8 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
             let resolveHeader!: () => void
             let rejectHeader!: (e: unknown) => void
             headerSent = new Promise<void>((res, rej) => {
-              resolveHeader = res; rejectHeader = rej
+              resolveHeader = res
+              rejectHeader = rej
             })
             // Attach a no-op catch so a synchronous rejection from the IIFE doesn't
             // fire Node's unhandledRejection before a downstream await subscribes.
@@ -211,7 +231,10 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
                 const len = encodeFirstChunk(view, meta, flushed)
                 await napi.renderChunk(workerId, len, view)
                 resolveHeader()
-              } catch (e) { rejectHeader(e); reject(e) }
+              } catch (e) {
+                rejectHeader(e)
+                reject(e)
+              }
             })()
           })
         },
@@ -229,12 +252,16 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
                 await napi.renderChunkFinal(workerId, len, view)
                 finalSent = true
                 resolve()
-              } catch (e) { reject(e) }
+              } catch (e) {
+                reject(e)
+              }
             })()
           } catch (e2) {
             console.error('[brust] errorBoundary threw during shell error:', e2)
             const meta = makeMeta({
-              status: 500, streaming: false, contentType: 'text/plain; charset=utf-8',
+              status: 500,
+              streaming: false,
+              contentType: 'text/plain; charset=utf-8',
             })
             mode = 'done'
             ;(async () => {
@@ -243,7 +270,9 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
                 await napi.renderChunkFinal(workerId, len, view)
                 finalSent = true
                 resolve()
-              } catch (e) { reject(e) }
+              } catch (e) {
+                reject(e)
+              }
             })()
           }
         },
@@ -251,9 +280,11 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
           console.error('[brust] render onError (post-shell):', err)
         },
       })
-    } catch (e) {
+    } catch (_e) {
       const meta = makeMeta({
-        status: 500, streaming: false, contentType: 'text/plain; charset=utf-8',
+        status: 500,
+        streaming: false,
+        contentType: 'text/plain; charset=utf-8',
       })
       ;(async () => {
         try {
@@ -261,7 +292,9 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
           await napi.renderChunkFinal(workerId, len, view)
           finalSent = true
           resolve()
-        } catch (ee) { reject(ee) }
+        } catch (ee) {
+          reject(ee)
+        }
       })()
     }
   })

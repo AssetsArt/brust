@@ -23,11 +23,7 @@ const PING_FRAME = encoder.encode(': ping\n\n')
  *   - napi.write(conn_id, bytes)       — write a chunk; Promise resolves when TCP write completes (backpressure)
  *   - napi.close(conn_id)             — JS tells Rust to tear down the per-conn task
  */
-export async function handleSseStream(
-  call: SseCall,
-  route: Route,
-  napi: SseNapi,
-): Promise<void> {
+export async function handleSseStream(call: SseCall, route: Route, napi: SseNapi): Promise<void> {
   // 1. Create per-conn AbortController + a fresh request object whose signal
   //    points at it. We spread call.req rather than mutating in place so the
   //    underlying envelope object (potentially reused by makeRenderer in the
@@ -55,13 +51,18 @@ export async function handleSseStream(
   // 5. Heartbeat + reader loop.
   const reader = stream.getReader()
   const heartbeatMs = route.sseOptions?.heartbeatMs ?? 15_000
-  const heartbeatId = heartbeatMs > 0
-    ? setInterval(() => { void napi.write(call.conn_id, PING_FRAME) }, heartbeatMs)
-    : null
+  const heartbeatId =
+    heartbeatMs > 0
+      ? setInterval(() => {
+          void napi.write(call.conn_id, PING_FRAME)
+        }, heartbeatMs)
+      : null
 
   // Force-cancel reader on abort so a stuck `await reader.read()` unwinds
   // even if the author didn't listen to req.signal.
-  controller.signal.addEventListener('abort', () => { void reader.cancel() })
+  controller.signal.addEventListener('abort', () => {
+    void reader.cancel()
+  })
 
   try {
     while (true) {
@@ -77,6 +78,8 @@ export async function handleSseStream(
   } finally {
     if (heartbeatId !== null) clearInterval(heartbeatId)
     napi.close(call.conn_id)
-    try { reader.releaseLock() } catch {}
+    try {
+      reader.releaseLock()
+    } catch {}
   }
 }

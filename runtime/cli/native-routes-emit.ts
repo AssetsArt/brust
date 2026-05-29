@@ -59,11 +59,12 @@ export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<vo
   if (!jsxRustc && nativeRoutes.length > 0) {
     throw new Error(
       'jsx-rustc binary not found in target/{release,debug}/; ' +
-      'run `cargo build -p jsx-rust-compiler --bin jsx-rustc`',
+        'run `cargo build -p jsx-rust-compiler --bin jsx-rustc`',
     )
   }
 
-  const importMap = nativeRoutes.length > 0 ? scanImports(opts.entryFile) : new Map<string, string>()
+  const importMap =
+    nativeRoutes.length > 0 ? scanImports(opts.entryFile) : new Map<string, string>()
 
   // Lazily loaded & cached island config map (id → absolute source path).
   // Only built the first time a route emits a `.islands.json`; routes without
@@ -119,8 +120,7 @@ function scanImports(entryFile: string): Map<string, string> {
   const map = new Map<string, string>()
   // Regex-based scanner; full swc AST scan deferred per spec §7 + §13.10.
   const re = /^import\s+(\w+)\s+from\s+['"]([^'"]+)['"]/gm
-  let m: RegExpExecArray | null
-  while ((m = re.exec(source)) !== null) {
+  for (let m = re.exec(source); m !== null; m = re.exec(source)) {
     const localName = m[1]!
     const importPath = m[2]!
     if (!importPath.startsWith('.')) continue // skip package imports

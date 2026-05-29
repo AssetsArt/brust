@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import path from 'node:path'
-import { scanCssImports, type CssDep } from './scan-imports.ts'
+import { scanCssImports } from './scan-imports.ts'
 import { processCssFile } from './process-modules.ts'
 import { computeRouteChunks, type RouteForCss } from './route-deps.ts'
 import { writeComponentCssManifest, type ComponentCssManifest } from './manifest.ts'
@@ -38,7 +38,9 @@ export async function buildComponentCss(
   for (const [absPath, { isModule }] of cssFiles) {
     const source = await readFile(absPath, 'utf-8')
     const result = await processCssFile({
-      filename: absPath, source, isModule,
+      filename: absPath,
+      source,
+      isModule,
       tailwindCompile: opts.tailwindCompile,
     })
     // Deterministic chunk filename: sha256 of relative path. relPath alone

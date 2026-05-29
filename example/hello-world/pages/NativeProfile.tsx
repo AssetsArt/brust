@@ -1,14 +1,17 @@
 export default function NativeProfile({ user, greeting }: { user: string; greeting: string }) {
-  // Note: `{" "}` is required between `User:` and `{user}` because the
-  // jsx-rust-compiler's `normalize_jsx_text` (lower.rs) collapses JSX
-  // whitespace via `split_whitespace().join(" ")`, which strips the
-  // boundary space between adjacent Text("User:") and Expr(user). The
-  // explicit `{" "}` lowers to `Expr::StaticText(" ")` which emit_jinja
-  // renders as a literal escaped space. Spec §5 deferral.
+  // Note: the label is a string EXPRESSION `{'User: '}` (not plain text) so the
+  // trailing space survives the jsx-rust-compiler's `normalize_jsx_text`
+  // (lower.rs), which collapses + trims whitespace between adjacent Text and
+  // Expr nodes. A plain `User: {user}` would compile to `User:{{ user }}` (no
+  // space). The earlier `{" "}` hack worked too but Biome's formatter collapses
+  // it back into a literal space; a string-literal expr is stable under both.
   return (
     <div>
       <h1>{greeting}</h1>
-      <p>User:{" "}{user}</p>
+      <p>
+        {'User: '}
+        {user}
+      </p>
     </div>
   )
 }

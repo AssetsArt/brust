@@ -28,7 +28,7 @@ function fail(why: string): never {
 {
   const sab = new SharedArrayBuffer(64)
   const view = new Uint8Array(sab)
-  const msg = 'hello via SharedArrayBuffer 💾'  // emoji = multi-byte UTF-8
+  const msg = 'hello via SharedArrayBuffer 💾' // emoji = multi-byte UTF-8
   const n = sabWriteTest(view, msg)
   const got = new TextDecoder().decode(view.subarray(0, n))
   const expectedBytes = new TextEncoder().encode(msg).length
@@ -49,4 +49,6 @@ function fail(why: string): never {
   console.log(`✓ Truncation: wrote ${n}/${msg.length} bytes correctly`)
 }
 
-console.log('\nAll 3 spike cases passed. SharedArrayBuffer ↔ Rust round-trip works on Bun + napi-rs 3.x.')
+console.log(
+  '\nAll 3 spike cases passed. SharedArrayBuffer ↔ Rust round-trip works on Bun + napi-rs 3.x.',
+)

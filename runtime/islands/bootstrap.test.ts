@@ -43,18 +43,18 @@ beforeAll(async () => {
   // happy-dom 20.9.0 leaves win.SyntaxError/TypeError undefined, which
   // crashes its own querySelectorAll :not() implementation. Patch them.
   ;(win as unknown as Record<string, unknown>).SyntaxError = SyntaxError
-  ;(win as unknown as Record<string, unknown>).TypeError  = TypeError
+  ;(win as unknown as Record<string, unknown>).TypeError = TypeError
 
   Object.assign(globalThis, {
-    document:          win.document,
-    window:            win,
-    location:          win.location,
-    history:           win.history,
-    MouseEvent:        win.MouseEvent,
-    Event:             win.Event,
-    HTMLElement:       win.HTMLElement,
+    document: win.document,
+    window: win,
+    location: win.location,
+    history: win.history,
+    MouseEvent: win.MouseEvent,
+    Event: win.Event,
+    HTMLElement: win.HTMLElement,
     HTMLAnchorElement: (win as unknown as Record<string, unknown>).HTMLAnchorElement,
-    DOMParser:         (win as unknown as Record<string, unknown>).DOMParser,
+    DOMParser: (win as unknown as Record<string, unknown>).DOMParser,
     // IntersectionObserver intentionally absent — registerTrigger guards with typeof check
     // AbortController is provided natively by bun
   })
@@ -62,14 +62,17 @@ beforeAll(async () => {
   // Import after globals are set so bootstrap's module-level guard
   // (typeof document !== 'undefined') sees the DOM correctly.
   const mod = await import('./bootstrap')
-  isInternalLink  = mod.isInternalLink
+  isInternalLink = mod.isInternalLink
   hydrateMarkersIn = mod.hydrateMarkersIn
   swapMainContent = mod.swapMainContent
   hydrateOne = mod.hydrateOne
   unmountIslandsIn = mod.unmountIslandsIn
 })
 
-function makeLink(href: string, attrs: Partial<{ target: string; download: string; 'data-brust-no-intercept': string }> = {}): HTMLAnchorElement {
+function makeLink(
+  href: string,
+  attrs: Partial<{ target: string; download: string; 'data-brust-no-intercept': string }> = {},
+): HTMLAnchorElement {
   const a = document.createElement('a')
   a.href = href
   for (const [k, v] of Object.entries(attrs)) {
@@ -79,7 +82,13 @@ function makeLink(href: string, attrs: Partial<{ target: string; download: strin
 }
 
 function plainClick(): MouseEvent {
-  return new MouseEvent('click', { button: 0, ctrlKey: false, metaKey: false, shiftKey: false, altKey: false })
+  return new MouseEvent('click', {
+    button: 0,
+    ctrlKey: false,
+    metaKey: false,
+    shiftKey: false,
+    altKey: false,
+  })
 }
 
 test('isInternalLink accepts plain same-origin <a href> on left click with no modifiers', () => {
@@ -99,7 +108,9 @@ test('isInternalLink rejects external origin, _blank, modifier-click, anchor, /_
   const anchor = makeLink(`${location.origin}${location.pathname}#section`)
   expect(isInternalLink(anchor, plainClick())).toBe(false)
   expect(isInternalLink(makeLink('/_brust/page/x'), plainClick())).toBe(false)
-  expect(isInternalLink(makeLink('/x', { 'data-brust-no-intercept': '' }), plainClick())).toBe(false)
+  expect(isInternalLink(makeLink('/x', { 'data-brust-no-intercept': '' }), plainClick())).toBe(
+    false,
+  )
   expect(isInternalLink(makeLink('/file.pdf', { download: '' }), plainClick())).toBe(false)
 })
 

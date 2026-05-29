@@ -12,7 +12,10 @@ export interface BrustConfig {
 }
 
 export class BrustConfigError extends Error {
-  constructor(message: string, public readonly file: string | null) {
+  constructor(
+    message: string,
+    public readonly file: string | null,
+  ) {
     super(message)
     this.name = 'BrustConfigError'
   }
@@ -45,10 +48,7 @@ export async function loadConfig(cwd: string = process.cwd()): Promise<BrustConf
     try {
       parsed = parseToml(await file.text())
     } catch (e) {
-      throw new BrustConfigError(
-        `failed to parse ${tomlPath}: ${(e as Error).message}`,
-        tomlPath,
-      )
+      throw new BrustConfigError(`failed to parse ${tomlPath}: ${(e as Error).message}`, tomlPath)
     }
     fromToml = extractFromToml(parsed, tomlPath)
   }

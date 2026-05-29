@@ -25,7 +25,7 @@ interface JsonRpcSuccess<T> {
 interface JsonRpcError {
   jsonrpc: '2.0'
   id: number | string | null
-  error: { code: number, message: string, data?: unknown }
+  error: { code: number; message: string; data?: unknown }
 }
 
 export interface McpServer {
@@ -70,7 +70,7 @@ export function makeMcpServer(opts: McpServerOptions): McpServer {
         default:
           return makeError(rpc.id ?? null, -32601, `method not found: ${rpc.method}`)
       }
-    }
+    },
   }
 }
 
@@ -101,7 +101,11 @@ async function handleToolsList(rpc: JsonRpcRequest, opts: McpServerOptions): Pro
   return makeResult(rpc.id ?? null, { tools })
 }
 
-async function handleToolsCall(rpc: JsonRpcRequest, opts: McpServerOptions, req: BrustRequest): Promise<string> {
+async function handleToolsCall(
+  rpc: JsonRpcRequest,
+  opts: McpServerOptions,
+  req: BrustRequest,
+): Promise<string> {
   const params = rpc.params as { name?: string; arguments?: Record<string, unknown> } | undefined
   if (!params || typeof params.name !== 'string') {
     return makeError(rpc.id ?? null, -32602, 'tools/call: name required')
@@ -160,7 +164,11 @@ async function handleResourcesList(rpc: JsonRpcRequest, opts: McpServerOptions):
   return makeResult(rpc.id ?? null, { resources })
 }
 
-async function handleResourcesRead(rpc: JsonRpcRequest, opts: McpServerOptions, req: BrustRequest): Promise<string> {
+async function handleResourcesRead(
+  rpc: JsonRpcRequest,
+  opts: McpServerOptions,
+  req: BrustRequest,
+): Promise<string> {
   const params = rpc.params as { uri?: string } | undefined
   if (!params || typeof params.uri !== 'string') {
     return makeError(rpc.id ?? null, -32602, 'resources/read: uri required')
@@ -189,11 +197,13 @@ async function handleResourcesRead(rpc: JsonRpcRequest, opts: McpServerOptions, 
   try {
     const data = await leaf.loader({ params: match.params, path: requestedPath, req })
     return makeResult(rpc.id ?? null, {
-      contents: [{
-        uri: params.uri,
-        mimeType: 'application/json',
-        text: JSON.stringify(data),
-      }],
+      contents: [
+        {
+          uri: params.uri,
+          mimeType: 'application/json',
+          text: JSON.stringify(data),
+        },
+      ],
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)

@@ -38,7 +38,9 @@ export async function readManifest(cwd: string): Promise<McpManifest | null> {
   if (!(await f.exists())) return null
   const text = await f.text()
   let parsed: unknown
-  try { parsed = JSON.parse(text) } catch (e) {
+  try {
+    parsed = JSON.parse(text)
+  } catch (e) {
     throw new Error(`mcp-manifest.json is malformed: ${e instanceof Error ? e.message : String(e)}`)
   }
   if (!parsed || typeof parsed !== 'object' || (parsed as McpManifest).version !== 1) {

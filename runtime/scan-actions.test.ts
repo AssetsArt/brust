@@ -2,7 +2,12 @@ import { test, expect } from 'bun:test'
 import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { stripLeadingTrivia, hasUseServerDirective, collectExports, scanActions } from './scan-actions.ts'
+import {
+  stripLeadingTrivia,
+  hasUseServerDirective,
+  collectExports,
+  scanActions,
+} from './scan-actions.ts'
 
 test('stripLeadingTrivia: empty', () => {
   expect(stripLeadingTrivia('')).toBe('')
@@ -101,7 +106,8 @@ test('hasUseServerDirective: string as value not statement', async () => {
 test('collectExports: happy path, two named function exports', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'brust-scan-'))
   try {
-    const src = `'use server'\n` +
+    const src =
+      `'use server'\n` +
       `export async function foo(_req) { return 'foo' }\n` +
       `export async function bar(_req) { return 'bar' }\n`
     const p = await writeFixture(dir, 'a.ts', src)
@@ -117,7 +123,8 @@ test('collectExports: happy path, two named function exports', async () => {
 test('collectExports: skips non-function exports', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'brust-scan-'))
   try {
-    const src = `'use server'\n` +
+    const src =
+      `'use server'\n` +
       `export const NAME = 'app'\n` +
       `export async function foo(_req) { return 'foo' }\n`
     const p = await writeFixture(dir, 'b.ts', src)
@@ -131,8 +138,7 @@ test('collectExports: skips non-function exports', async () => {
 test('collectExports: rejects default export', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'brust-scan-'))
   try {
-    const src = `'use server'\n` +
-      `export default async function () { return 'x' }\n`
+    const src = `'use server'\n` + `export default async function () { return 'x' }\n`
     const p = await writeFixture(dir, 'c.ts', src)
     expect(collectExports(p)).rejects.toThrow(/default exports are not action-eligible/)
   } finally {
@@ -143,8 +149,7 @@ test('collectExports: rejects default export', async () => {
 test('collectExports: rejects class exports', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'brust-scan-'))
   try {
-    const src = `'use server'\n` +
-      `export class Foo { static bar() {} }\n`
+    const src = `'use server'\n` + `export class Foo { static bar() {} }\n`
     const p = await writeFixture(dir, 'd.ts', src)
     expect(collectExports(p)).rejects.toThrow(/is a class/)
   } finally {
@@ -158,7 +163,8 @@ test('collectExports: rejects invalid id charset', async () => {
     // The function is named "x.y" via Object.defineProperty after const decl,
     // since TS doesn't allow exotic identifiers directly. We bypass with a
     // computed export name via re-export rename.
-    const src = `'use server'\n` +
+    const src =
+      `'use server'\n` +
       `async function _impl(_req) { return 'x' }\n` +
       `export { _impl as 'bad.id' }\n`
     const p = await writeFixture(dir, 'e.ts', src)
@@ -184,7 +190,8 @@ test('collectExports: picks up middleware from withMiddleware', async () => {
   try {
     // Inline withMiddleware-equivalent: write the metadata directly so the
     // fixture doesn't depend on the actions module path resolution.
-    const src = `'use server'\n` +
+    const src =
+      `'use server'\n` +
       `async function _impl(_req) { return 'ok' }\n` +
       `Object.defineProperty(_impl, '__brustMiddleware', { value: Object.freeze([() => {}]) })\n` +
       `export { _impl as foo }\n`
@@ -200,16 +207,16 @@ test('collectExports: picks up middleware from withMiddleware', async () => {
 test('scanActions: finds one server file with two exports', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'brust-scan-'))
   try {
-    await writeFixture(dir, 'actions.ts',
+    await writeFixture(
+      dir,
+      'actions.ts',
       `'use server'\n` +
-      `export async function a(_req) {}\n` +
-      `export async function b(_req) {}\n`,
+        `export async function a(_req) {}\n` +
+        `export async function b(_req) {}\n`,
     )
-    await writeFixture(dir, 'plain.ts',
-      `export async function notAnAction() {}\n`,
-    )
+    await writeFixture(dir, 'plain.ts', `export async function notAnAction() {}\n`)
     const { actions: defs } = await scanActions({ roots: [dir] })
-    expect(defs.map((d) => d.id)).toEqual(['a', 'b'])  // alphabetical sort
+    expect(defs.map((d) => d.id)).toEqual(['a', 'b']) // alphabetical sort
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
@@ -218,14 +225,10 @@ test('scanActions: finds one server file with two exports', async () => {
 test('scanActions: ignores node_modules by default', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'brust-scan-'))
   try {
-    await writeFixture(dir, 'actions.ts',
-      `'use server'\nexport async function a(_req) {}\n`,
-    )
+    await writeFixture(dir, 'actions.ts', `'use server'\nexport async function a(_req) {}\n`)
     // Place a second 'use server' file under node_modules.
     const nm = join(dir, 'node_modules', 'pkg')
-    await Bun.write(join(nm, 'evil.ts'),
-      `'use server'\nexport async function evil(_req) {}\n`,
-    )
+    await Bun.write(join(nm, 'evil.ts'), `'use server'\nexport async function evil(_req) {}\n`)
     const { actions: defs } = await scanActions({ roots: [dir] })
     expect(defs.map((d) => d.id)).toEqual(['a'])
   } finally {
@@ -236,14 +239,15 @@ test('scanActions: ignores node_modules by default', async () => {
 test('scanActions: ignores test patterns by default', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'brust-scan-'))
   try {
-    await writeFixture(dir, 'actions.ts',
-      `'use server'\nexport async function a(_req) {}\n`,
-    )
-    await writeFixture(dir, 'actions.test.ts',
+    await writeFixture(dir, 'actions.ts', `'use server'\nexport async function a(_req) {}\n`)
+    await writeFixture(
+      dir,
+      'actions.test.ts',
       `'use server'\nexport async function shouldNotAppear(_req) {}\n`,
     )
     const subTests = join(dir, 'tests')
-    await Bun.write(join(subTests, 'fixture.ts'),
+    await Bun.write(
+      join(subTests, 'fixture.ts'),
       `'use server'\nexport async function alsoSkipped(_req) {}\n`,
     )
     const { actions: defs } = await scanActions({ roots: [dir] })
@@ -256,10 +260,10 @@ test('scanActions: ignores test patterns by default', async () => {
 test('scanActions: custom ignore replaces defaults', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'brust-scan-'))
   try {
-    await writeFixture(dir, 'actions.ts',
-      `'use server'\nexport async function a(_req) {}\n`,
-    )
-    await writeFixture(dir, 'actions.test.ts',
+    await writeFixture(dir, 'actions.ts', `'use server'\nexport async function a(_req) {}\n`)
+    await writeFixture(
+      dir,
+      'actions.test.ts',
       `'use server'\nexport async function fromTest(_req) {}\n`,
     )
     // Custom ignore omits the test pattern → test file IS scanned.
@@ -273,14 +277,21 @@ test('scanActions: custom ignore replaces defaults', async () => {
 test('scanActions: duplicate id across files throws with both paths', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'brust-scan-'))
   try {
-    const pathA = await writeFixture(dir, 'one.ts',
+    const pathA = await writeFixture(
+      dir,
+      'one.ts',
       `'use server'\nexport async function dupe(_req) {}\n`,
     )
-    const pathB = await writeFixture(dir, 'two.ts',
+    const pathB = await writeFixture(
+      dir,
+      'two.ts',
       `'use server'\nexport async function dupe(_req) {}\n`,
     )
-    await expect(scanActions({ roots: [dir] })).rejects.toThrow(  // return shape doesn't matter — throws before returning
-      new RegExp(`Duplicate action "dupe".*${pathA}.*${pathB}|Duplicate action "dupe".*${pathB}.*${pathA}`),
+    await expect(scanActions({ roots: [dir] })).rejects.toThrow(
+      // return shape doesn't matter — throws before returning
+      new RegExp(
+        `Duplicate action "dupe".*${pathA}.*${pathB}|Duplicate action "dupe".*${pathB}.*${pathA}`,
+      ),
     )
   } finally {
     await rm(dir, { recursive: true, force: true })
@@ -290,7 +301,9 @@ test('scanActions: duplicate id across files throws with both paths', async () =
 test('scanActions: sorted alphabetical for deterministic boot logs', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'brust-scan-'))
   try {
-    await writeFixture(dir, 'z.ts',
+    await writeFixture(
+      dir,
+      'z.ts',
       `'use server'\nexport async function zebra(_req) {}\nexport async function apple(_req) {}\n`,
     )
     const { actions: defs } = await scanActions({ roots: [dir] })

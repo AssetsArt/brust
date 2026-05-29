@@ -35,10 +35,7 @@ interface Coalesce {
 }
 
 /** Internal — exposed for unit tests. */
-export function _testCoalesce(
-  debounceMs: number,
-  flush: (paths: string[]) => void,
-): Coalesce {
+export function _testCoalesce(debounceMs: number, flush: (paths: string[]) => void): Coalesce {
   let pending = new Set<string>()
   let timer: ReturnType<typeof setTimeout> | null = null
   return {
@@ -53,7 +50,10 @@ export function _testCoalesce(
       }, debounceMs)
     },
     flush() {
-      if (timer) { clearTimeout(timer); timer = null }
+      if (timer) {
+        clearTimeout(timer)
+        timer = null
+      }
       if (pending.size > 0) {
         const out = Array.from(pending)
         pending = new Set()

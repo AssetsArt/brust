@@ -34,7 +34,9 @@ export async function buildIslands(
   }
 
   const outDir = options.outDir
-    ? (isAbsolute(options.outDir) ? options.outDir : resolve(process.cwd(), options.outDir))
+    ? isAbsolute(options.outDir)
+      ? options.outDir
+      : resolve(process.cwd(), options.outDir)
     : resolve(process.cwd(), '.brust/islands')
   await rm(outDir, { recursive: true, force: true })
   await mkdir(outDir, { recursive: true })
@@ -55,7 +57,7 @@ export async function buildIslands(
     if (!isValidIslandId(id)) {
       throw new Error(
         `island id ${JSON.stringify(id)} contains invalid characters; ` +
-        `allowed: [A-Za-z0-9_-]+ (matches the server's filename safety check)`,
+          `allowed: [A-Za-z0-9_-]+ (matches the server's filename safety check)`,
       )
     }
     const entry = isAbsolute(rel) ? rel : resolve(configDir, rel)

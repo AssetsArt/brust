@@ -3,8 +3,10 @@ import type { BrustRequest, Middleware } from './routes.ts'
 /** Server-side action handler. First arg is ALWAYS BrustRequest; the client
  * stub strips it from the call site. Subsequent args are JSON-decoded from
  * the request body (which MUST be a JSON array). */
-export type ActionFn<Args extends unknown[] = unknown[], R = unknown> =
-  (req: BrustRequest, ...args: Args) => Promise<R>
+export type ActionFn<Args extends unknown[] = unknown[], R = unknown> = (
+  req: BrustRequest,
+  ...args: Args
+) => Promise<R>
 
 /** Registration shape passed to brust.registerActions. */
 export interface ActionDef<F extends ActionFn = ActionFn> {

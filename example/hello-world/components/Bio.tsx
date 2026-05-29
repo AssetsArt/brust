@@ -17,7 +17,10 @@ type AnnotatedPromise = Promise<string> & { status?: 'fulfilled'; value?: string
 export default function Bio({ promise }: BioProps) {
   const p = promise as AnnotatedPromise
   if (p.status !== 'fulfilled') {
-    p.then((v) => { p.status = 'fulfilled'; p.value = v })
+    p.then((v) => {
+      p.status = 'fulfilled'
+      p.value = v
+    })
     throw p
   }
   return <p data-testid="bio">{p.value}</p>

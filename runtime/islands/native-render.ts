@@ -119,7 +119,7 @@ export async function resolveIslandContext(
       let Component = componentCache.get(entry.sourcePath)
       if (Component === undefined) {
         const mod = await import(entry.sourcePath)
-        Component = (mod.default ?? mod)
+        Component = mod.default ?? mod
         componentCache.set(entry.sourcePath, Component)
       }
       if (typeof Component !== 'function') {
@@ -137,7 +137,10 @@ export async function resolveIslandContext(
       // an empty mount (no _html) + logged warning, rather than 500-ing the
       // page. The mount has no data-brust-csr, so the client will client-render
       // it via hydrateRoot's React-19 mismatch recovery (noisy but functional).
-      console.error(`[brust] ssr island "${entry.id}" renderToString failed; degrading to client-only:`, e)
+      console.error(
+        `[brust] ssr island "${entry.id}" renderToString failed; degrading to client-only:`,
+        e,
+      )
       // leave _html unset → empty mount
     }
   }

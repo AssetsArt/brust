@@ -16,15 +16,18 @@ export interface JsonSchema {
 
 export interface ToJsonSchemaOptions {
   unwrapPromise?: boolean
-  checker?: ts.TypeChecker  // required for object/property iteration
+  checker?: ts.TypeChecker // required for object/property iteration
 }
 
-export function tsTypeToJsonSchema(type: ts.Type, opts: ToJsonSchemaOptions = {}): JsonSchema | undefined {
+export function tsTypeToJsonSchema(
+  type: ts.Type,
+  opts: ToJsonSchemaOptions = {},
+): JsonSchema | undefined {
   const flags = type.flags
   // Unwrap Promise<T> at the top level when asked.
   if (opts.unwrapPromise) {
     const inner = unwrapPromise(type, opts.checker)
-    if (inner === null) return undefined         // Promise<void>
+    if (inner === null) return undefined // Promise<void>
     if (inner !== undefined) return tsTypeToJsonSchema(inner, { ...opts, unwrapPromise: false })
   }
   // void → undefined (caller treats as "no schema")
@@ -34,9 +37,11 @@ export function tsTypeToJsonSchema(type: ts.Type, opts: ToJsonSchemaOptions = {}
   // null
   if (flags & ts.TypeFlags.Null || flags & ts.TypeFlags.Undefined) return { type: 'null' }
   // string literal
-  if (flags & ts.TypeFlags.StringLiteral) return { type: 'string', enum: [(type as ts.StringLiteralType).value] }
+  if (flags & ts.TypeFlags.StringLiteral)
+    return { type: 'string', enum: [(type as ts.StringLiteralType).value] }
   // number literal
-  if (flags & ts.TypeFlags.NumberLiteral) return { type: 'number', enum: [(type as ts.NumberLiteralType).value] }
+  if (flags & ts.TypeFlags.NumberLiteral)
+    return { type: 'number', enum: [(type as ts.NumberLiteralType).value] }
   // boolean literal
   if (flags & ts.TypeFlags.BooleanLiteral) {
     const v = (type as any).intrinsicName === 'true'
@@ -47,7 +52,11 @@ export function tsTypeToJsonSchema(type: ts.Type, opts: ToJsonSchemaOptions = {}
   if (flags & ts.TypeFlags.Boolean) return { type: 'boolean' }
   // Union
   if (type.isUnion()) {
-    return { anyOf: type.types.map((t) => tsTypeToJsonSchema(t, opts)).filter((x): x is JsonSchema => x !== undefined) }
+    return {
+      anyOf: type.types
+        .map((t) => tsTypeToJsonSchema(t, opts))
+        .filter((x): x is JsonSchema => x !== undefined),
+    }
   }
   // Date special case
   const symbol = type.getSymbol()
@@ -106,8 +115,9 @@ function unwrapPromise(type: ts.Type, checker?: ts.TypeChecker): ts.Type | null 
   // absent from the public TypeChecker typings — cast to access without losing
   // strict-mode coverage elsewhere.
   if (!checker) return undefined
-  const inner = (checker as unknown as { getPromisedTypeOfPromise(t: ts.Type): ts.Type | undefined })
-    .getPromisedTypeOfPromise(type)
+  const inner = (
+    checker as unknown as { getPromisedTypeOfPromise(t: ts.Type): ts.Type | undefined }
+  ).getPromisedTypeOfPromise(type)
   if (inner === undefined) return undefined
   if (inner.flags & ts.TypeFlags.Void) return null
   return inner

@@ -31,23 +31,23 @@ export default function NativeIslands({
     <div>
       <h1>{greeting}</h1>
       <p>
-        Static jinja shell, rendered Rust-side. The two counters below are
-        islands — only their subtrees boot React in the browser.
+        Static jinja shell, rendered Rust-side. The two counters below are islands — only their
+        subtrees boot React in the browser.
       </p>
 
       <h2>Client-only island</h2>
       <p>
         Empty mount (<code>data-brust-csr</code>) until JS boots, then
-        <code>createRoot</code> renders it. No server markup, so it flashes
-        empty and is invisible to no-JS clients.
+        <code>createRoot</code> renders it. No server markup, so it flashes empty and is invisible
+        to no-JS clients.
       </p>
       <Island component={Counter} id="ClientCounter" props={clientProps} hydrate="load" />
 
       <h2>Server island (ssr)</h2>
       <p>
-        The worker <code>renderToString</code>s this counter during the loader
-        crossing, so its markup ships in the HTML (no layout shift, SEO-visible)
-        and the client <code>hydrateRoot</code>s it.
+        The worker <code>renderToString</code>s this counter during the loader crossing, so its
+        markup ships in the HTML (no layout shift, SEO-visible) and the client{' '}
+        <code>hydrateRoot</code>s it.
       </p>
       <Island component={Counter} id="ServerCounter" props={serverProps} ssr hydrate="load" />
     </div>

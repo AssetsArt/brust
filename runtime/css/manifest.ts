@@ -28,9 +28,12 @@ export async function readComponentCssManifest(
   if (!(await f.exists())) return null
   const text = await f.text()
   let parsed: unknown
-  try { parsed = JSON.parse(text) }
-  catch (e) {
-    throw new Error(`component-manifest.json is malformed: ${e instanceof Error ? e.message : String(e)}`)
+  try {
+    parsed = JSON.parse(text)
+  } catch (e) {
+    throw new Error(
+      `component-manifest.json is malformed: ${e instanceof Error ? e.message : String(e)}`,
+    )
   }
   if (!parsed || typeof parsed !== 'object' || (parsed as { version?: unknown }).version !== 1) {
     throw new Error('component-manifest.json version mismatch (expected 1)')

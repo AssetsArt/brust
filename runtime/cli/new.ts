@@ -45,16 +45,14 @@ export function parseArgs(args: string[]): ParsedNewArgs {
   }
 
   const cwd = process.cwd()
-  const targetDir = dir
-    ? (isAbsolute(dir) ? dir : resolve(cwd, dir))
-    : resolve(cwd, name)
+  const targetDir = dir ? (isAbsolute(dir) ? dir : resolve(cwd, dir)) : resolve(cwd, name)
 
   return { projectName: name, targetDir }
 }
 
 export interface BrustRef {
   kind: 'file' | 'version'
-  spec: string  // JSON-encoded string value (e.g. "file:/abs" or "^0.1.0")
+  spec: string // JSON-encoded string value (e.g. "file:/abs" or "^0.1.0")
 }
 
 function hasSourceMarkers(dir: string): boolean {
@@ -64,9 +62,11 @@ function hasSourceMarkers(dir: string): boolean {
   //   <root>/runtime/cli/...
   // Pre-refactor layout had `<root>/src/` instead of `<root>/crates/brust/`;
   // we no longer check `<root>/src` because the workspace root never has one.
-  return existsSync(join(dir, 'Cargo.toml'))
-    && existsSync(join(dir, 'crates/brust/src'))
-    && existsSync(join(dir, 'runtime/cli/index.ts'))
+  return (
+    existsSync(join(dir, 'Cargo.toml')) &&
+    existsSync(join(dir, 'crates/brust/src')) &&
+    existsSync(join(dir, 'runtime/cli/index.ts'))
+  )
 }
 
 export function resolveBrustRef(startDir: string = import.meta.dir): BrustRef {
@@ -103,7 +103,9 @@ export interface CopyTemplateOpts {
 
 export async function copyTemplate(opts: CopyTemplateOpts): Promise<void> {
   if (!existsSync(opts.templateDir)) {
-    throw new Error(`brust new: template directory not found at ${opts.templateDir}; this is a brust installation bug`)
+    throw new Error(
+      `brust new: template directory not found at ${opts.templateDir}; this is a brust installation bug`,
+    )
   }
   await copyDir(opts.templateDir, opts.targetDir, opts.substitutions)
 }

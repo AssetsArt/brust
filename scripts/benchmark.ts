@@ -20,19 +20,19 @@ import path from 'node:path'
 import { emitNativeTemplates } from '../runtime/cli/native-routes-emit.ts'
 
 type Scenario = {
-  id: string                       // short id used in column headers, e.g. 'brust'
-  label: string                    // pretty label used in the markdown table
-  cmd: string[]                    // argv to start the server
-  env?: Record<string, string>     // extra env vars
-  expectedPortLog: RegExp          // regex with one capture group → port number
+  id: string // short id used in column headers, e.g. 'brust'
+  label: string // pretty label used in the markdown table
+  cmd: string[] // argv to start the server
+  env?: Record<string, string> // extra env vars
+  expectedPortLog: RegExp // regex with one capture group → port number
 }
 
 type Probe = {
-  path: string                     // request path, e.g. '/' or '/ping'
-  method?: 'GET' | 'POST'          // default GET
-  body?: string                    // request body (POST only)
-  contentType?: string             // Content-Type header (POST only)
-  scenarios?: string[]             // restrict probe to scenarios whose id is listed; omit to run on all
+  path: string // request path, e.g. '/' or '/ping'
+  method?: 'GET' | 'POST' // default GET
+  body?: string // request body (POST only)
+  contentType?: string // Content-Type header (POST only)
+  scenarios?: string[] // restrict probe to scenarios whose id is listed; omit to run on all
 }
 
 type Result = {
@@ -46,13 +46,13 @@ type Result = {
   p99ms: number | null
   totalRequests: number
   errors: number
-  ohaRaw: unknown                  // dropped into RESULTS.json verbatim
+  ohaRaw: unknown // dropped into RESULTS.json verbatim
 }
 
-const CONN     = parseInt(process.env.BENCH_CONN ?? '120', 10)
+const CONN = parseInt(process.env.BENCH_CONN ?? '120', 10)
 const DURATION = process.env.BENCH_DUR ?? '10s'
-const WARMUP_MS = 1000          // boot-settle sleep (worker spawn + registerRenderer)
-const WARMUP_BURST = process.env.BENCH_WARMUP ?? '3s'  // discarded JIT warm-up traffic
+const WARMUP_MS = 1000 // boot-settle sleep (worker spawn + registerRenderer)
+const WARMUP_BURST = process.env.BENCH_WARMUP ?? '3s' // discarded JIT warm-up traffic
 
 const SCENARIOS: Scenario[] = [
   {
@@ -193,9 +193,9 @@ async function runScenario(s: Scenario, p: Probe): Promise<Result> {
   //   latencyPercentiles.p99      seconds
   //   statusCodeDistribution      Record<string, number>  (sum = total requests)
   //   errorDistribution           Record<string, number>
-  const summary  = ohaJson.summary ?? {}
-  const percent  = ohaJson.latencyPercentiles ?? {}
-  const rps      = numberOf(summary.requestsPerSec, summary.requestPerSec) ?? 0
+  const summary = ohaJson.summary ?? {}
+  const percent = ohaJson.latencyPercentiles ?? {}
+  const rps = numberOf(summary.requestsPerSec, summary.requestPerSec) ?? 0
   // oha 1.x does not expose totalRequests in summary; sum statusCodeDistribution instead
   const statusDist = ohaJson.statusCodeDistribution ?? {}
   const totalReq = Object.values(statusDist).reduce(
@@ -204,13 +204,13 @@ async function runScenario(s: Scenario, p: Probe): Promise<Result> {
   )
   // sum all error counts from errorDistribution
   const errDist = ohaJson.errorDistribution ?? {}
-  const errors   = Object.values(errDist).reduce(
+  const errors = Object.values(errDist).reduce(
     (acc: number, v: unknown) => acc + (typeof v === 'number' ? v : 0),
     0,
   )
-  const p50      = secondsToMs(percent.p50)
-  const p95      = secondsToMs(percent.p95)
-  const p99      = secondsToMs(percent.p99)
+  const p50 = secondsToMs(percent.p50)
+  const p95 = secondsToMs(percent.p95)
+  const p99 = secondsToMs(percent.p99)
 
   return {
     scenarioId: s.id,
@@ -248,7 +248,17 @@ async function readPort(stream: ReadableStream<Uint8Array>, pattern: RegExp): Pr
 
 async function runOha(url: string, conn: number, duration: string, probe: Probe): Promise<any> {
   const method = probe.method ?? 'GET'
-  const args: string[] = ['-c', String(conn), '-z', duration, '--no-tui', '--output-format', 'json', '-m', method]
+  const args: string[] = [
+    '-c',
+    String(conn),
+    '-z',
+    duration,
+    '--no-tui',
+    '--output-format',
+    'json',
+    '-m',
+    method,
+  ]
   if (method === 'POST') {
     if (!probe.body) throw new Error('POST probe requires body')
     args.push('-d', probe.body)
@@ -270,7 +280,7 @@ async function runOha(url: string, conn: number, duration: string, probe: Probe)
   }
   try {
     return JSON.parse(stdout)
-  } catch (e) {
+  } catch (_e) {
     throw new Error(`oha did not return JSON. stdout head: ${stdout.slice(0, 200)}`)
   }
 }
@@ -297,7 +307,9 @@ function renderMarkdown(results: Result[]): string {
   lines.push(`**Conditions:** \`oha -c ${CONN} -z ${DURATION} --no-tui --output-format json\``)
   lines.push(`· runtime: ${node}`)
   lines.push(`· host: ${hardware}`)
-  lines.push(`· warmup: ${WARMUP_MS} ms boot-settle + ${WARMUP_BURST} discarded JIT burst per probe`)
+  lines.push(
+    `· warmup: ${WARMUP_MS} ms boot-settle + ${WARMUP_BURST} discarded JIT burst per probe`,
+  )
   lines.push(`· build: release (\`cd runtime && bun run build\`)`)
   lines.push('')
   // Note on omitted columns: oha's `errorDistribution` counts requests that
@@ -310,8 +322,8 @@ function renderMarkdown(results: Result[]): string {
     const fmt = (n: number | null) => (n == null ? '—' : n.toFixed(2))
     lines.push(
       `| ${r.scenarioLabel} | ${r.method} | \`${r.path}\` | ${Math.round(r.rps).toLocaleString()} | ` +
-      `${fmt(r.p50ms)} | ${fmt(r.p95ms)} | ${fmt(r.p99ms)} | ` +
-      `${r.totalRequests.toLocaleString()} |`,
+        `${fmt(r.p50ms)} | ${fmt(r.p95ms)} | ${fmt(r.p99ms)} | ` +
+        `${r.totalRequests.toLocaleString()} |`,
     )
   }
   lines.push('')
@@ -368,8 +380,8 @@ async function preflightJinja(): Promise<void> {
 async function main() {
   console.log(
     'Reminder: bench requires a release-built napi addon.\n' +
-    '  cd runtime && bun run build     # release, optimised\n' +
-    '  cd runtime && bun run build:debug   # ~2x slower, debug only\n',
+      '  cd runtime && bun run build     # release, optimised\n' +
+      '  cd runtime && bun run build:debug   # ~2x slower, debug only\n',
   )
   await preflightJinja()
   const results: Result[] = []
@@ -377,21 +389,23 @@ async function main() {
     for (const p of PROBES) {
       if (p.scenarios && !p.scenarios.includes(s.id)) continue
       const method = p.method ?? 'GET'
-      console.log(`\n→ ${rowLabel(s.id, p.path)}   ${method} ${p.path}   conn=${CONN}  dur=${DURATION}`)
+      console.log(
+        `\n→ ${rowLabel(s.id, p.path)}   ${method} ${p.path}   conn=${CONN}  dur=${DURATION}`,
+      )
       const r = await runScenario(s, p)
       results.push(r)
       console.log(
         `  rps=${r.rps.toFixed(0).padStart(7)}   ` +
-        `p50=${(r.p50ms ?? NaN).toFixed(2)}ms   ` +
-        `p99=${(r.p99ms ?? NaN).toFixed(2)}ms   ` +
-        `total=${r.totalRequests.toLocaleString()}`,
+          `p50=${(r.p50ms ?? NaN).toFixed(2)}ms   ` +
+          `p99=${(r.p99ms ?? NaN).toFixed(2)}ms   ` +
+          `total=${r.totalRequests.toLocaleString()}`,
       )
     }
   }
 
   await mkdir('bench', { recursive: true })
   await writeFile('bench/RESULTS.json', JSON.stringify(results, null, 2))
-  await writeFile('bench/RESULTS.md',   renderMarkdown(results))
+  await writeFile('bench/RESULTS.md', renderMarkdown(results))
   console.log('\nWrote bench/RESULTS.md and bench/RESULTS.json')
 }
 
