@@ -79,15 +79,11 @@ export async function runDev(args: string[]): Promise<void> {
   // reads from `cwd + '.brust/jinja'`. When user runs `bun run dev
   // example/hello-world/index.ts` from repo root, cwd != entryDir; writing
   // to entryDir would put templates somewhere the runtime never looks.
-  const islandConfig = path.join(entryDir, 'island.config.ts')
   await emitNativeTemplates({
     entryFile: existsSync(routesFile) ? routesFile : entry,
     flatRoutes: loadedRoutes as { nativeTemplate?: string }[],
     outDir: path.join(process.cwd(), '.brust/jinja'),
     repoRoot: REPO_ROOT,
-    // Mirror build.ts: pass island.config.ts (from entryDir) so island-using
-    // native routes validate + enrich; undefined ⇒ clear throw at emit time.
-    islandConfigPath: existsSync(islandConfig) ? islandConfig : undefined,
   })
 
   // Hand off to the user's entry. It calls brust.run() which, with

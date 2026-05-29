@@ -8,6 +8,7 @@ import SlowSuspense  from '../../../example/hello-world/pages/SlowSuspense'
 import NativeProfile from '../../../example/hello-world/pages/NativeProfile'
 import NativeIslandPage from './NativeIslandPage'
 import NativeSsrIslandPage from './NativeSsrIslandPage'
+import NativeTwoIslandPage from './NativeTwoIslandPage'
 
 // Test-only components — these mount routes that exercise failure modes,
 // middleware, cache, nested routes, and the various server-action paths.
@@ -84,6 +85,22 @@ export const routes = defineRoutes([
     Component: NativeSsrIslandPage,
     native: true,
     loader: async () => ({ greeting: 'SSR islands', count: { start: 5 } }),
+  },
+  // Sub-project J / component-addressed islands — native: true route hosting
+  // TWO <Island component={Counter}> reusing the SAME Counter: instance 0 is
+  // client-only (empty data-brust-csr mount), instance 1 is ssr (server-rendered
+  // <button> inside the mount). The two instances carry distinct props paths
+  // (`first`/`second`) → distinct data-brust-props; both share ONE Counter.js
+  // chunk. Proves the two-instance reuse + chunk-dedup acceptance case.
+  {
+    path: '/_test/native-two-islands',
+    Component: NativeTwoIslandPage,
+    native: true,
+    loader: async () => ({
+      greeting: 'Two islands',
+      first: { start: 1 },
+      second: { start: 2 },
+    }),
   },
 
   // Test-only routes — failure modes + middleware + cache.

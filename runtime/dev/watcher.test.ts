@@ -10,7 +10,6 @@ describe('runtime/dev/watcher classifyPath', () => {
     ['/proj/util.jsx', 'ts'],
     ['/proj/app.css', 'css'],
     ['/proj/index.html', 'html'],
-    ['/proj/island.config.ts', 'islands'],
     ['/proj/node_modules/foo/index.js', null],
     ['/proj/.git/HEAD', null],
     ['/proj/.brust/css/app.css', null],

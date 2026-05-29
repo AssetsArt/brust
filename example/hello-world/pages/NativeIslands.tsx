@@ -14,9 +14,9 @@ import Counter from '../components/Counter'
  *    (`props={clientProps}`), not an object literal — object-literal props are
  *    a v1 Non-goal on the native path.
  *
- * The two islands reuse the same `Counter` component but need DISTINCT ids
- * (the compiler rejects duplicate island ids on one page), so `island.config.ts`
- * maps `ClientCounter` and `ServerCounter` to `Counter.tsx`.
+ * Both islands reuse the same `Counter` component (one `Counter.js` chunk).
+ * They differ only by source-order instance + the `ssr` flag — no id, no
+ * config.
  */
 export default function NativeIslands({
   greeting,
@@ -41,7 +41,7 @@ export default function NativeIslands({
         <code>createRoot</code> renders it. No server markup, so it flashes empty and is invisible
         to no-JS clients.
       </p>
-      <Island component={Counter} id="ClientCounter" props={clientProps} hydrate="load" />
+      <Island component={Counter} props={clientProps} hydrate="load" />
 
       <h2>Server island (ssr)</h2>
       <p>
@@ -49,7 +49,7 @@ export default function NativeIslands({
         markup ships in the HTML (no layout shift, SEO-visible) and the client{' '}
         <code>hydrateRoot</code>s it.
       </p>
-      <Island component={Counter} id="ServerCounter" props={serverProps} ssr hydrate="load" />
+      <Island component={Counter} props={serverProps} ssr hydrate="load" />
     </div>
   )
 }

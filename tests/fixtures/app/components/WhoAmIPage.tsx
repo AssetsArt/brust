@@ -7,7 +7,7 @@ export default function WhoAmIPage() {
       <head><title>Who am I</title></head>
       <body>
         <h1>Who am I?</h1>
-        <Island id="WhoAmI" component={WhoAmI} props={{}} hydrate="load" />
+        <Island component={WhoAmI} props={{}} hydrate="load" />
       </body>
     </html>
   )

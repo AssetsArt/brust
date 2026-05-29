@@ -8,11 +8,12 @@ import { spawn, spawnSync } from 'bun'
  *
  *   NativeIslandPage.tsx (<Island component={Counter} props={count} />, no ssr)
  *     → jsx-rustc compile → .brust/jinja/NativeIslandPage.jinja
- *         (empty data-brust-csr mount + island_Counter_props placeholder)
+ *         (empty data-brust-csr mount + island_0_props placeholder — the
+ *          instance-based context key for the single, source-order-0 instance)
  *     → T6 reconcile bakes {% raw %}…{% endraw %} importmap+bootstrap onto the .jinja
  *     → brust boot reads .brust/jinja/ into minijinja (the {% raw %} block MUST
  *        compile — if it didn't, this route would 500)
- *     → T7's native branch fills island_Counter_props with entity-encoded props JSON
+ *     → T7's native branch fills island_0_props with entity-encoded props JSON
  *     → served HTML = static shell + empty client-only mount + literal bootstrap
  *
  * This task proves the SERVED HTML SHAPE + that the baked template compiles at boot.
@@ -62,7 +63,7 @@ beforeAll(async () => {
 
   // Pre-flight 2: run brust build against the fixture entry. This compiles the
   // native pages to .brust/jinja/, bakes islands per T6, and bundles the island
-  // chunks (island.config.ts registers Counter).
+  // chunks (the page's <Island component={Counter}> usage registers Counter).
   const buildRes = spawnSync({
     cmd: ['bun', 'run', resolve(REPO_ROOT, 'runtime/cli/index.ts'), 'build', 'index.ts'],
     cwd: FIXTURE_DIR,

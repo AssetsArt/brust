@@ -60,27 +60,29 @@ fn emit_node(node: &JsxNode, out: &mut String) {
             }
         }
         // Island mount marker. The hydration runtime keys off the
-        // `data-brust-*` attributes; the runtime fills `island_<id>_props`
+        // `data-brust-*` attributes; the runtime fills `island_<instance>_props`
         // (a pre-serialized, attribute-safe string — NOT `| tojson`, which
-        // this minijinja build lacks) and, for ssr, `island_<id>_html` into
-        // the template context. `id`/`hydrate` are validated `[A-Za-z0-9_-]+`
-        // upstream, so they're safe verbatim as jinja identifiers and inside
-        // attribute values — no escaping (escaping is load-bearing for the
-        // byte-equal golden fixtures, so we deliberately avoid it here).
+        // this minijinja build lacks) and, for ssr, `island_<instance>_html`
+        // into the template context. `component` is validated `[A-Za-z0-9_]+`
+        // and `instance` is a bare number, so both are safe verbatim as jinja
+        // identifiers and inside attribute values — no escaping (escaping is
+        // load-bearing for the byte-equal golden fixtures, so we deliberately
+        // avoid it here).
         JsxNode::Island {
-            id,
+            component,
+            instance,
             props_path: _,
             hydrate,
             ssr,
         } => {
             let _ = write!(
                 out,
-                "<div data-brust-island=\"{id}\" data-brust-props=\"{{{{ island_{id}_props }}}}\" data-brust-hydrate=\"{hydrate}\""
+                "<div data-brust-island=\"{component}\" data-brust-props=\"{{{{ island_{instance}_props }}}}\" data-brust-hydrate=\"{hydrate}\""
             );
             if *ssr {
                 // Close the open tag, emit the server-rendered markup slot
                 // (`| safe` passes it through unescaped), then close the div.
-                let _ = write!(out, ">{{{{ island_{id}_html | safe }}}}</div>");
+                let _ = write!(out, ">{{{{ island_{instance}_html | safe }}}}</div>");
             } else {
                 // Client-only: trailing bare `data-brust-csr`, empty body.
                 out.push_str(" data-brust-csr></div>");
@@ -433,14 +435,15 @@ mod tests {
     #[test]
     fn emits_ssr_island() {
         let ir = JsxNode::Island {
-            id: "Counter".into(),
+            component: "Counter".into(),
+            instance: 0,
             props_path: "counter".into(),
             hydrate: "load".into(),
             ssr: true,
         };
         assert_eq!(
             emit(&component(ir)),
-            "<div data-brust-island=\"Counter\" data-brust-props=\"{{ island_Counter_props }}\" data-brust-hydrate=\"load\">{{ island_Counter_html | safe }}</div>"
+            "<div data-brust-island=\"Counter\" data-brust-props=\"{{ island_0_props }}\" data-brust-hydrate=\"load\">{{ island_0_html | safe }}</div>"
         );
     }
 
@@ -448,29 +451,31 @@ mod tests {
     fn emits_client_only_island() {
         // ssr:false → no `_html` slot, trailing bare `data-brust-csr`.
         let ir = JsxNode::Island {
-            id: "Counter".into(),
+            component: "Counter".into(),
+            instance: 0,
             props_path: "counter".into(),
             hydrate: "load".into(),
             ssr: false,
         };
         assert_eq!(
             emit(&component(ir)),
-            "<div data-brust-island=\"Counter\" data-brust-props=\"{{ island_Counter_props }}\" data-brust-hydrate=\"load\" data-brust-csr></div>"
+            "<div data-brust-island=\"Counter\" data-brust-props=\"{{ island_0_props }}\" data-brust-hydrate=\"load\" data-brust-csr></div>"
         );
     }
 
     #[test]
-    fn emits_island_interpolates_id_and_hydrate() {
-        // A different id/hydrate must thread through every slot.
+    fn emits_island_interpolates_component_and_hydrate() {
+        // A different component/hydrate must thread through every slot.
         let ir = JsxNode::Island {
-            id: "Cart".into(),
+            component: "Cart".into(),
+            instance: 0,
             props_path: "cart".into(),
             hydrate: "visible".into(),
             ssr: true,
         };
         assert_eq!(
             emit(&component(ir)),
-            "<div data-brust-island=\"Cart\" data-brust-props=\"{{ island_Cart_props }}\" data-brust-hydrate=\"visible\">{{ island_Cart_html | safe }}</div>"
+            "<div data-brust-island=\"Cart\" data-brust-props=\"{{ island_0_props }}\" data-brust-hydrate=\"visible\">{{ island_0_html | safe }}</div>"
         );
     }
 }

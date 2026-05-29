@@ -26,11 +26,12 @@ pub struct Compiled {
 }
 
 /// One entry in the island manifest. Field order here is intentional and
-/// independent of `JsxNode::Island`'s (which is `{id, props_path, hydrate,
-/// ssr}`) — always construct by field name, never positionally.
+/// independent of `JsxNode::Island`'s — always construct by field name, never
+/// positionally.
 #[derive(Debug, Clone, PartialEq)]
 pub struct IslandMeta {
-    pub id: String,
+    pub component: String,
+    pub instance: usize,
     pub props_path: String,
     pub ssr: bool,
     pub hydrate: String,
@@ -46,27 +47,36 @@ pub fn compile_full(source: &str, path: &str) -> Result<Compiled, CompileError> 
         kind: ErrorKind::Parse(e.to_string()),
     })?;
 
-    let ir = lower::lower(&parsed).map_err(|e| CompileError::from_lower(e, path, &parsed))?;
+    let mut ir = lower::lower(&parsed).map_err(|e| CompileError::from_lower(e, path, &parsed))?;
+    // Assign each island a source-order `instance` index. Runs after lower
+    // (which sets `instance: 0` as a placeholder) and before emit/collect so
+    // both read the final indices.
+    let mut n = 0;
+    number_islands(&mut ir.root, &mut n);
     let template = emit_jinja::emit(&ir);
     let mut islands = Vec::new();
     collect_islands(&ir.root, &mut islands);
-    // Duplicate island ids within one template collide on the shared jinja
-    // context keys (`island_<id>_props`/`_html`) AND on the chunk URL
-    // `/_brust/islands/<id>.js`. Reject at compile time — earliest catch, and
-    // spares the TS build from re-deriving the invariant. IR carries no spans,
-    // so use the line-0 fallback (same as the Parse error above).
-    let mut seen = std::collections::HashSet::new();
-    for isl in &islands {
-        if !seen.insert(&isl.id) {
-            return Err(CompileError {
-                path: path.to_string(),
-                line: 0,
-                col: 0,
-                kind: ErrorKind::DuplicateIslandId(isl.id.clone()),
-            });
-        }
-    }
     Ok(Compiled { template, islands })
+}
+
+/// Walk the IR in source order, assigning each `JsxNode::Island` a monotonically
+/// increasing `instance` index. The chunk key is the `component` ident; the
+/// instance index disambiguates multiple occurrences (incl. duplicate
+/// components) on the per-occurrence jinja context keys `island_<instance>_*`.
+fn number_islands(node: &mut JsxNode, counter: &mut usize) {
+    match node {
+        JsxNode::Island { instance, .. } => {
+            *instance = *counter;
+            *counter += 1;
+        }
+        JsxNode::Element { children, .. } => {
+            for c in children {
+                number_islands(c, counter);
+            }
+        }
+        JsxNode::Map { body, .. } => number_islands(body, counter),
+        JsxNode::Empty | JsxNode::Text(_) | JsxNode::Expr(_) => {}
+    }
 }
 
 /// Depth-first pre-order walk collecting every `JsxNode::Island` in source
@@ -76,13 +86,15 @@ pub fn compile_full(source: &str, path: &str) -> Result<Compiled, CompileError> 
 fn collect_islands(node: &JsxNode, out: &mut Vec<IslandMeta>) {
     match node {
         JsxNode::Island {
-            id,
+            component,
+            instance,
             props_path,
             hydrate,
             ssr,
         } => {
             out.push(IslandMeta {
-                id: id.clone(),
+                component: component.clone(),
+                instance: *instance,
                 props_path: props_path.clone(),
                 ssr: *ssr,
                 hydrate: hydrate.clone(),
@@ -99,18 +111,20 @@ fn collect_islands(node: &JsxNode, out: &mut Vec<IslandMeta>) {
 }
 
 /// Hand-rolled compact JSON for the island manifest (serde is intentionally
-/// absent from this crate's deps). Keys are camelCase: `id`, `propsPath`,
-/// `ssr`, `hydrate`. `ssr` is a bare bool. Empty slice → `[]`. Matches what the
-/// TS build/runtime will `JSON.parse`.
+/// absent from this crate's deps). Keys are camelCase: `component`, `instance`,
+/// `propsPath`, `ssr`, `hydrate`. `instance` is a bare number, `ssr` a bare
+/// bool. Empty slice → `[]`. Matches what the TS build/runtime will `JSON.parse`.
 pub fn islands_to_json(islands: &[IslandMeta]) -> String {
     let mut out = String::from("[");
     for (i, isl) in islands.iter().enumerate() {
         if i > 0 {
             out.push(',');
         }
-        out.push_str("{\"id\":\"");
-        out.push_str(&json_escape(&isl.id));
-        out.push_str("\",\"propsPath\":\"");
+        out.push_str("{\"component\":\"");
+        out.push_str(&json_escape(&isl.component));
+        out.push_str("\",\"instance\":");
+        out.push_str(&isl.instance.to_string());
+        out.push_str(",\"propsPath\":\"");
         out.push_str(&json_escape(&isl.props_path));
         out.push_str("\",\"ssr\":");
         out.push_str(if isl.ssr { "true" } else { "false" });
@@ -218,17 +232,13 @@ pub enum ErrorKind {
     )]
     IslandInMapNotSupported,
     #[error(
-        "`<Island id={{…}}>` must be a string literal matching `[A-Za-z0-9_]+` (no hyphens — the id becomes part of a jinja context key; e.g. `id=\"Counter\"`)"
-    )]
-    IslandBadId,
-    #[error(
         "`<Island>` must be self-closing — children are not supported (the component renders client-side)"
     )]
     IslandHasChildren,
-    #[error(
-        "duplicate island id `{0}` in one template — ids collide on the `island_<id>_props`/`_html` context keys and the `/_brust/islands/<id>.js` chunk; give each `<Island>` a distinct `id`"
-    )]
-    DuplicateIslandId(String),
+    #[error("`<Island id=…>` is no longer supported — islands are addressed by `component={{…}}`; remove the `id` attribute")]
+    IslandIdAttrRemoved,
+    #[error("`<Island component={{{0}}}>` — component name must match [A-Za-z0-9_]+ (it becomes the chunk filename and DOM marker)")]
+    IslandBadComponentName(String),
 }
 
 impl CompileError {
@@ -280,13 +290,15 @@ mod tests {
             c.islands,
             vec![
                 IslandMeta {
-                    id: "A".to_string(),
+                    component: "A".to_string(),
+                    instance: 0,
                     props_path: "data.a".to_string(),
                     ssr: true,
                     hydrate: "load".to_string(),
                 },
                 IslandMeta {
-                    id: "B".to_string(),
+                    component: "B".to_string(),
+                    instance: 1,
                     props_path: "data.b".to_string(),
                     ssr: false,
                     hydrate: "visible".to_string(),
@@ -305,16 +317,60 @@ mod tests {
     }
 
     #[test]
-    fn compile_full_rejects_duplicate_island_ids() {
-        // Two `<Island component={C}/>` siblings → same default id `C` →
-        // colliding context keys / chunk URL → compile error.
+    fn compile_full_allows_duplicate_components_distinct_instances() {
+        // Two `<Island component={C}/>` siblings now share the chunk key `C` but
+        // get distinct source-order `instance` indices — NO error.
         let src = r#"export default function Page({ data }) {
   return <div><Island component={C} props={data.a} /><Island component={C} props={data.b} /></div>;
 }"#;
+        let c = compile_full(src, "<test>").unwrap();
+        assert_eq!(
+            c.islands,
+            vec![
+                IslandMeta {
+                    component: "C".to_string(),
+                    instance: 0,
+                    props_path: "data.a".to_string(),
+                    ssr: false,
+                    hydrate: "load".to_string(),
+                },
+                IslandMeta {
+                    component: "C".to_string(),
+                    instance: 1,
+                    props_path: "data.b".to_string(),
+                    ssr: false,
+                    hydrate: "load".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn lower_rejects_id_attr() {
+        // `id=` is no longer supported.
+        let src = r#"export default function Page({ data }) {
+  return <Island component={C} id="X" props={data.a} />;
+}"#;
+        let err = compile_full(src, "<test>").unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::IslandIdAttrRemoved),
+            "expected IslandIdAttrRemoved, got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn lower_rejects_bad_component_name() {
+        // `$` is a valid JS identifier char, so swc parses `Foo$Bar` as an
+        // Ident — but it is not in `[A-Za-z0-9_]+`, so the charset validation
+        // rejects it.
+        let src = r#"export default function Page({ data }) {
+  return <Island component={Foo$Bar} props={data.a} />;
+}"#;
         let err = compile_full(src, "<test>").unwrap_err();
         match err.kind {
-            ErrorKind::DuplicateIslandId(id) => assert_eq!(id, "C"),
-            other => panic!("expected DuplicateIslandId(\"C\"), got {other:?}"),
+            ErrorKind::IslandBadComponentName(name) => assert_eq!(name, "Foo$Bar"),
+            other => panic!("expected IslandBadComponentName, got {other:?}"),
         }
     }
 
@@ -327,7 +383,8 @@ mod tests {
         assert_eq!(
             c.islands,
             vec![IslandMeta {
-                id: "Deep".to_string(),
+                component: "Deep".to_string(),
+                instance: 0,
                 props_path: "data.x".to_string(),
                 ssr: false,
                 hydrate: "load".to_string(),
@@ -339,14 +396,16 @@ mod tests {
     fn islands_to_json_golden() {
         let islands = vec![
             IslandMeta {
-                id: "Counter".to_string(),
+                component: "Counter".to_string(),
+                instance: 0,
                 props_path: "data.counter".to_string(),
                 ssr: true,
                 hydrate: "load".to_string(),
             },
             // Exercise escaping: a backslash and a quote in props_path.
             IslandMeta {
-                id: "Weird".to_string(),
+                component: "Weird".to_string(),
+                instance: 1,
                 props_path: r#"a\b"c"#.to_string(),
                 ssr: false,
                 hydrate: "idle".to_string(),
@@ -355,7 +414,7 @@ mod tests {
         let json = islands_to_json(&islands);
         assert_eq!(
             json,
-            r#"[{"id":"Counter","propsPath":"data.counter","ssr":true,"hydrate":"load"},{"id":"Weird","propsPath":"a\\b\"c","ssr":false,"hydrate":"idle"}]"#
+            r#"[{"component":"Counter","instance":0,"propsPath":"data.counter","ssr":true,"hydrate":"load"},{"component":"Weird","instance":1,"propsPath":"a\\b\"c","ssr":false,"hydrate":"idle"}]"#
         );
     }
 

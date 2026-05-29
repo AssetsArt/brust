@@ -42,7 +42,6 @@ The server listens on `127.0.0.1:3000` by default (override with
 example/hello-world/
 ├── index.ts             # entry — 3 lines, calls brust.run() with the routes
 ├── routes.tsx           # the routes table
-├── island.config.ts     # island map — Counter (React path) + ClientCounter/ServerCounter (native route)
 ├── sse-counter.ts       # SSE handler for /sse-counter
 ├── ws-echo.ts           # WS handler for /ws/echo
 ├── brust.example.toml   # config template — copy to brust.toml to use
@@ -58,7 +57,7 @@ example/hello-world/
 ```
 
 The entry is small on purpose — `brust.run({ routes, entry: import.meta.url })`
-discovers actions, builds islands (if `island.config.ts` is present),
+discovers actions, builds island chunks (scanning the pages for `<Island>`),
 wires the route table + SSE/WS path lists + MCP manifest, then either
 serves (main thread) or registers a renderer (worker thread). For apps
 that need finer control, the lower-level helpers (`scanActions`,

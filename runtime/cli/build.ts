@@ -87,19 +87,24 @@ export async function runBuild(args: string[]): Promise<void> {
     for (const def of defs) idToSource.set(def.id, file)
   }
 
-  // 3. Build islands (if config exists).
-  const islandConfig = path.join(entryDir, 'island.config.ts')
-  if (existsSync(islandConfig)) {
-    const { buildIslands } = await import('../islands/build.ts')
+  // routes.tsx is the scan target for both islands (§3) and the MCP manifest
+  // (§4). Computed once here and reused below.
+  const routesFile = path.join(entryDir, 'routes.tsx')
+
+  // 3. Build islands (if any <Island> usage is found in the routes graph).
+  const { scanIslandChunks, buildIslands } = await import('../islands/build.ts')
+  const islandMap = existsSync(routesFile)
+    ? scanIslandChunks(routesFile)
+    : new Map<string, string>()
+  if (islandMap.size > 0) {
     const islandsOutDir = path.join(outDir, 'islands')
-    const result = await buildIslands(islandConfig, { outDir: islandsOutDir })
+    const result = await buildIslands(islandMap, { outDir: islandsOutDir })
     console.log(`[brust build] islands: ${result.islandCount} chunk(s) → ${islandsOutDir}`)
   } else {
-    console.log(`[brust build] islands: skipped (no island.config.ts)`)
+    console.log('[brust build] islands: skipped (no <Island> usage)')
   }
 
   // 4. MCP manifest (if routes.tsx exists).
-  const routesFile = path.join(entryDir, 'routes.tsx')
   let loadedRoutes: any[] | undefined
   if (existsSync(routesFile)) {
     const { extractMcpManifest } = await import('../mcp/extractor.ts')
@@ -142,10 +147,6 @@ export async function runBuild(args: string[]): Promise<void> {
       flatRoutes: (loadedRoutes ?? []) as { nativeTemplate?: string }[],
       outDir: jinjaDir,
       repoRoot: REPO_ROOT,
-      // island.config.ts (computed at §3) — passed so native routes that use
-      // <Island> can validate ids + enrich their manifests. undefined ⇒ a
-      // route using islands throws a clear error.
-      islandConfigPath: existsSync(islandConfig) ? islandConfig : undefined,
     })
     const nativeCount = (loadedRoutes ?? []).filter((r: any) => r?.nativeTemplate).length
     console.log(`[brust build] jinja:   ${nativeCount} template(s) → ${jinjaDir}`)
@@ -210,10 +211,9 @@ export async function runBuild(args: string[]): Promise<void> {
     naming: 'index.js',
     target: 'bun',
     format: 'esm',
-    // Preserve function/class identifiers. The Island component falls back to
-    // `Component.name` for the chunk id when no explicit `id` prop is passed,
-    // so mangled names would point at non-existent files. Whitespace + syntax
-    // minification still apply.
+    // Preserve function/class identifiers. The Island component's chunk-id
+    // marker on the React path IS `Component.name`, so mangled names would
+    // point at non-existent files. Whitespace + syntax minification still apply.
     minify: { whitespace: true, syntax: true, identifiers: false },
     banner,
     plugins: [nativeShimPlugin(REPO_ROOT), actionsPrebuiltPlugin(prebuiltActionsPath, REPO_ROOT)],

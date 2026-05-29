@@ -4,14 +4,12 @@ import { createElement, type ComponentType, type ReactNode } from 'react'
 export type HydrateTrigger = 'load' | 'idle' | 'visible' | 'interaction'
 
 export interface IslandProps<P> {
-  /** Stable id — must match a key in the user's island.config.ts so the
-   * client bootstrap can resolve the chunk URL `/_brust/islands/<id>.js`.
-   * If omitted, falls back to `component.name`. Pass an explicit `id`
-   * when running a build that mangles function names. */
-  id?: string
   /** Component rendered server-side INSIDE the marker. Same component
    * the client chunk default-exports — SSR HTML must match the post-hydrate
-   * tree to avoid React reconciliation warnings. */
+   * tree to avoid React reconciliation warnings. Its `Component.name` is the
+   * island id: it names the chunk (`<name>.js`) and the `data-brust-island`
+   * marker the client bootstrap reads, so it must be a stable, named
+   * component (no anonymous default export). */
   component: ComponentType<P>
   /** Props passed to the component on both server and client. Must be
    * JSON-serializable (no functions, classes, DOM nodes, etc.). */
@@ -33,17 +31,18 @@ export function consumeIslandUsedFlag(): boolean {
 }
 
 export function Island<P extends Record<string, unknown>>({
-  id,
   component: Component,
   props,
   hydrate = 'load',
 }: IslandProps<P>): ReactNode {
   __used = true
-  const resolvedId = id ?? Component.name
+  const resolvedId = Component.name
   if (!resolvedId) {
     throw new Error(
-      '<Island> requires an `id` prop because the component has no `.name` ' +
-        '(anonymous default export or minified function). Pass id="..." explicitly.',
+      '<Island> component has no `.name`; the island id is derived from ' +
+        '`Component.name`. Use a stable named component (e.g. ' +
+        '`export default function Counter() {…}`), not an anonymous default ' +
+        'export or a minified/inlined function.',
     )
   }
   const propsJson = JSON.stringify(props)

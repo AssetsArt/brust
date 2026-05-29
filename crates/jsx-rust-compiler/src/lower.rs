@@ -346,8 +346,7 @@ fn lower_island(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode,
         ));
     }
 
-    let mut default_id: Option<String> = None;
-    let mut explicit_id: Option<String> = None;
+    let mut component: Option<(String, Span)> = None;
     let mut props_path: Option<String> = None;
     let mut hydrate: Option<String> = None;
     let mut ssr = false;
@@ -372,30 +371,13 @@ fn lower_island(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode,
 
         match name.as_str() {
             "component" => {
-                default_id = Some(island_component_ident(jsx_attr)?);
+                component = Some((island_component_ident(jsx_attr)?, jsx_attr.span));
             }
-            "id" => {
-                // String-literal only, AND must be jinja-identifier-safe.
-                // The id is embedded into the context KEYS `island_<id>_props`
-                // / `island_<id>_html` (emit_jinja). A hyphen (or any non
-                // `[A-Za-z0-9_]` char) would make minijinja parse the key as an
-                // expression (`island_cart-widget_props` → subtraction), so we
-                // restrict explicit ids to `[A-Za-z0-9_]+`. Component-ident
-                // defaults are inherently JS identifiers, so they never hit this.
-                match &jsx_attr.value {
-                    Some(JSXAttrValue::Str(s)) => {
-                        let v = s.value.to_string_lossy().into_owned();
-                        if v.is_empty() || !v.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-                        {
-                            return Err(LowerError::at(jsx_attr.span, ErrorKind::IslandBadId));
-                        }
-                        explicit_id = Some(v);
-                    }
-                    _ => {
-                        return Err(LowerError::at(jsx_attr.span, ErrorKind::IslandBadId));
-                    }
-                }
-            }
+            // `id=` is no longer supported — islands are addressed by the
+            // `component={…}` ident (chunk key) + a source-order instance index.
+            // This explicit reject arm MUST precede the `_ => {}` fall-through;
+            // without it, `id=` would be silently dropped.
+            "id" => return Err(LowerError::at(jsx_attr.span, ErrorKind::IslandIdAttrRemoved)),
             "props" => {
                 props_path = Some(island_props_path(jsx_attr, scope)?);
             }
@@ -427,17 +409,26 @@ fn lower_island(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode,
         }
     }
 
-    // `component` is required even when an explicit `id` is given; an explicit
-    // `id="..."` only overrides the default derived from the component ident.
-    let component_id = default_id
+    let (component, component_span) = component
         .ok_or_else(|| LowerError::at(el.opening.span, ErrorKind::IslandMissingComponent))?;
-    let id = explicit_id.unwrap_or(component_id);
+    // The component ident becomes both the chunk filename and the DOM marker
+    // value, so it must match `[A-Za-z0-9_]+`. JS idents permit `$`, which is
+    // rejected here.
+    if component.is_empty()
+        || !component.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        return Err(LowerError::at(
+            component_span,
+            ErrorKind::IslandBadComponentName(component.clone()),
+        ));
+    }
     let props_path = props_path
         .ok_or_else(|| LowerError::at(el.opening.span, ErrorKind::IslandPropsPathUnsupported))?;
     let hydrate = hydrate.unwrap_or_else(|| "load".to_string());
 
     Ok(JsxNode::Island {
-        id,
+        component,
+        instance: 0,
         props_path,
         hydrate,
         ssr,
@@ -1722,12 +1713,13 @@ mod tests {
         let c = lower(&parsed).unwrap();
         match &c.root {
             JsxNode::Island {
-                id,
+                component,
                 props_path,
                 hydrate,
                 ssr,
+                ..
             } => {
-                assert_eq!(id, "Counter");
+                assert_eq!(component, "Counter");
                 // Full dotted path (root included) — `data` is a destructured
                 // context key, so the value lives at `loaderReturn.data.counter`.
                 assert_eq!(props_path, "data.counter");
@@ -1747,12 +1739,13 @@ mod tests {
         let c = lower(&parsed).unwrap();
         match &c.root {
             JsxNode::Island {
-                id,
+                component,
                 props_path,
                 hydrate,
                 ssr,
+                ..
             } => {
-                assert_eq!(id, "Counter");
+                assert_eq!(component, "Counter");
                 assert_eq!(props_path, "counter");
                 assert_eq!(hydrate, "load");
                 assert!(!*ssr);
@@ -1762,16 +1755,14 @@ mod tests {
     }
 
     #[test]
-    fn island_explicit_id_overrides_component_default() {
+    fn island_id_attr_is_rejected() {
+        // `id=` is no longer supported — addressed by `component={…}` + instance.
         let src = r#"export default function Page({ counter }) {
   return <Island component={Counter} id="myId" props={counter} />;
 }"#;
         let parsed = parse(src, "<test>").unwrap();
-        let c = lower(&parsed).unwrap();
-        match &c.root {
-            JsxNode::Island { id, .. } => assert_eq!(id, "myId"),
-            other => panic!("expected Island, got {other:?}"),
-        }
+        let err = lower(&parsed).unwrap_err();
+        assert!(matches!(err.kind, ErrorKind::IslandIdAttrRemoved));
     }
 
     #[test]
@@ -1806,24 +1797,25 @@ mod tests {
 
     #[test]
     fn rejects_island_non_string_id() {
+        // Any `id=` form is rejected up front now, regardless of value shape.
         let src = r#"export default function Page({ counter }) {
   return <Island component={C} id={counter} props={counter} />;
 }"#;
         let parsed = parse(src, "<test>").unwrap();
         let err = lower(&parsed).unwrap_err();
-        assert!(matches!(err.kind, ErrorKind::IslandBadId));
+        assert!(matches!(err.kind, ErrorKind::IslandIdAttrRemoved));
     }
 
     #[test]
     fn rejects_island_hyphenated_id() {
-        // A hyphen would break the `island_<id>_props` context key (minijinja
-        // parses `island_cart-widget_props` as subtraction).
+        // `id=` is removed entirely; even a previously-"bad" hyphenated value is
+        // now caught by the up-front `IslandIdAttrRemoved` reject arm.
         let src = r#"export default function Page({ counter }) {
   return <Island component={C} id="cart-widget" props={counter} />;
 }"#;
         let parsed = parse(src, "<test>").unwrap();
         let err = lower(&parsed).unwrap_err();
-        assert!(matches!(err.kind, ErrorKind::IslandBadId));
+        assert!(matches!(err.kind, ErrorKind::IslandIdAttrRemoved));
     }
 
     #[test]
