@@ -344,6 +344,12 @@ architecture.md, example READMEs                             # drop island.confi
   truth for native pages anyway).
 - **Anonymous island components** (`export default () => …`) are rejected — must be
   named (pre-existing constraint, now enforced uniformly).
+- **Island component imports must be extensionless.** `scanImports` resolves by
+  appending candidate extensions (`.tsx`/`.ts`/`/index.*`), so an explicit
+  `import Counter from './Counter.tsx'` resolves to `Counter.tsx.tsx` → not found →
+  a **loud** build error (`no matching import` / collision-style throw), never a
+  silent missing chunk. Use `import Counter from './Counter'`. Pre-existing
+  `scanImports` behaviour (also applies to native route imports), inherited here.
 
 ## Alternatives considered (rejected)
 
