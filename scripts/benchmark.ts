@@ -51,7 +51,8 @@ type Result = {
 
 const CONN     = parseInt(process.env.BENCH_CONN ?? '120', 10)
 const DURATION = process.env.BENCH_DUR ?? '10s'
-const WARMUP_MS = 1000
+const WARMUP_MS = 1000          // boot-settle sleep (worker spawn + registerRenderer)
+const WARMUP_BURST = process.env.BENCH_WARMUP ?? '3s'  // discarded JIT warm-up traffic
 
 const SCENARIOS: Scenario[] = [
   {
@@ -145,10 +146,26 @@ async function runScenario(s: Scenario, p: Probe): Promise<Result> {
     throw new Error(`[${s.id}] failed to read port line: ${(e as Error).message}`)
   }
 
-  // Warm-up window — let the worker pool finish boot, JIT settle, etc.
+  const url = `http://127.0.0.1:${port}${p.path}`
+
+  // Boot settle — let the worker pool finish spawning + registerRenderer.
   await new Promise((r) => setTimeout(r, WARMUP_MS))
 
-  const url = `http://127.0.0.1:${port}${p.path}`
+  // JIT warm-up burst. A plain sleep warms NOTHING — V8 only JIT-compiles the
+  // render path after it has actually served thousands of requests, and a fresh
+  // process per probe starts cold. Without this, JIT-heavy paths (React
+  // renderToString) are measured mid-ramp and under-report by ~40-60% (cold
+  // ~16k vs warm ~25k on /). Fire a real traffic burst and discard it so the
+  // measured run sees steady state. Rust paths (ping/native/action) are barely
+  // JIT-sensitive, so this only matters for the React SSR rows — but it's
+  // applied uniformly to keep every row at steady state.
+  try {
+    await runOha(url, CONN, WARMUP_BURST, p)
+  } catch {
+    // A failed warmup burst shouldn't abort the real measurement; the measured
+    // run below will surface any genuine error.
+  }
+
   let ohaJson: any
   try {
     ohaJson = await runOha(url, CONN, DURATION, p)
@@ -268,7 +285,7 @@ function renderMarkdown(results: Result[]): string {
   lines.push(`**Conditions:** \`oha -c ${CONN} -z ${DURATION} --no-tui --output-format json\``)
   lines.push(`· runtime: ${node}`)
   lines.push(`· host: ${hardware}`)
-  lines.push(`· warmup: ${WARMUP_MS} ms`)
+  lines.push(`· warmup: ${WARMUP_MS} ms boot-settle + ${WARMUP_BURST} discarded JIT burst per probe`)
   lines.push(`· build: release (\`cd runtime && bun run build\`)`)
   lines.push('')
   // Note on omitted columns: oha's `errorDistribution` counts requests that
