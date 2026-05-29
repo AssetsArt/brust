@@ -122,14 +122,30 @@ impl RenderClaim {
 
 impl Drop for RenderClaim {
     fn drop(&mut self) {
-        // Clear slot FIRST (streaming claims only) so the invariant
-        // `in_flight >= render_slot_count` holds at every observable point,
-        // THEN release the idle gate, THEN decrement in_flight.
+        // Release the `idle` gate LAST. Clearing the slot and decrementing
+        // in_flight first, then publishing `idle = true` with Release, means the
+        // next claimer's Acquire CAS observes a fully-clean worker — slot empty,
+        // in_flight already decremented. (in_flight is a Relaxed load hint for
+        // pick_least_busy; ordering it before the Release store avoids a
+        // transient +1 skew where a new claim is taken before this decrement
+        // lands.)
+        //
+        // INVARIANT (load-bearing): a worker must NOT be released here until its
+        // render Promise has settled. Every dispatch path holds this RenderClaim
+        // until after `promise.await` (fast lane) or until the chunk loop breaks
+        // on the resolved future. The ONE exception is the streaming path's
+        // mid-stream `write_all`-error early-return (dispatch_to_worker_and_
+        // stream_chunks), which can drop the claim while the worker's JS is still
+        // running — a pre-existing, streaming-only window. Do NOT add disconnect
+        // cancellation / timeouts to the render/action dispatch without first
+        // gating release on Promise settlement: doing so would let a recycled
+        // worker's new request write the SAB concurrently with the old JS still
+        // touching it (data race). See the NOTE at the streaming early-returns.
         if !self.lockfree {
             self.entry.render_slot.lock().take();
         }
-        self.entry.idle.store(true, Ordering::Release);
         self.entry.in_flight.fetch_sub(1, Ordering::Relaxed);
+        self.entry.idle.store(true, Ordering::Release);
     }
 }
 

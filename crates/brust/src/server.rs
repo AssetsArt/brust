@@ -927,6 +927,15 @@ async fn handle_conn(
 /// select so chunks (the load-bearing path) always win when both are ready.
 /// Both terminal paths drain the necessary cleanup: chunked → emit terminator,
 /// content-length → flush buffered single response.
+///
+/// NOTE (pre-existing latent race — see RenderClaim::drop INVARIANT): the
+/// mid-stream `write_all`-error arms below `return CloseConn` while the worker's
+/// JS may still be running. That drops the RenderClaim early, recycling the
+/// worker before its Promise settles. A stray `napi_render_chunk` from the old
+/// render can then land in a new streaming claim's channel, or a new claim can
+/// write the SAB concurrently with the old JS. Streaming-only and not currently
+/// reachable via fast-lane paths; fixing it needs generation tracking or gating
+/// worker release on Promise settlement. Tracked, not addressed here.
 async fn dispatch_to_worker_and_stream_chunks<E, F>(
     s: &mut TcpStream,
     pool: &Arc<crate::pool::WorkerPool>,
