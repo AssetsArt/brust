@@ -93,7 +93,9 @@ export async function runBuild(args: string[]): Promise<void> {
 
   // 3. Build islands (if any <Island> usage is found in the routes graph).
   const { scanIslandChunks, buildIslands } = await import('../islands/build.ts')
-  const islandMap = existsSync(routesFile) ? scanIslandChunks(routesFile) : new Map<string, string>()
+  const islandMap = existsSync(routesFile)
+    ? scanIslandChunks(routesFile)
+    : new Map<string, string>()
   if (islandMap.size > 0) {
     const islandsOutDir = path.join(outDir, 'islands')
     const result = await buildIslands(islandMap, { outDir: islandsOutDir })

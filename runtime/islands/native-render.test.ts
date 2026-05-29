@@ -52,7 +52,14 @@ test('resolveIslandContext: a function-valued prop never crashes (serializes nul
   // If pathInto somehow yields a non-serializable value, JSON.stringify returns
   // undefined; the `?? null` / `?? "null"` guards keep entityEncode safe.
   const manifest: NativeIslandEntry[] = [
-    { component: 'Fn', instance: 0, propsPath: 'fn', ssr: false, hydrate: 'load', sourcePath: '/x' },
+    {
+      component: 'Fn',
+      instance: 0,
+      propsPath: 'fn',
+      ssr: false,
+      hydrate: 'load',
+      sourcePath: '/x',
+    },
   ]
   const out = await resolveIslandContext(manifest, { fn: () => 1 })
   expect(out.island_0_props).toBe(entityEncode('null'))
@@ -77,7 +84,14 @@ test('entityEncode escapes & < > " in the right order, no double-encode', () => 
 
 test('resolveIslandContext: client-only entry contributes only _props', async () => {
   const manifest: NativeIslandEntry[] = [
-    { component: 'Counter', instance: 0, propsPath: 'data.counter', ssr: false, hydrate: 'load', sourcePath: '/x' },
+    {
+      component: 'Counter',
+      instance: 0,
+      propsPath: 'data.counter',
+      ssr: false,
+      hydrate: 'load',
+      sourcePath: '/x',
+    },
   ]
   const data = { data: { counter: { n: 1 } } }
   const out = await resolveIslandContext(manifest, data)
@@ -91,8 +105,22 @@ test('resolveIslandContext: mixed manifest — ssr entry gets _html, client-only
   // in-repo fixture server-renders to _html; the client-only sibling gets only
   // _props. (This replaces the obsolete T7 "ssr contributes only _props" case.)
   const manifest: NativeIslandEntry[] = [
-    { component: 'Counter', instance: 0, propsPath: 'data.counter', ssr: false, hydrate: 'load', sourcePath: '/x' },
-    { component: 'Clock', instance: 1, propsPath: 'data.clock', ssr: true, hydrate: 'load', sourcePath: STUB_PATH },
+    {
+      component: 'Counter',
+      instance: 0,
+      propsPath: 'data.counter',
+      ssr: false,
+      hydrate: 'load',
+      sourcePath: '/x',
+    },
+    {
+      component: 'Clock',
+      instance: 1,
+      propsPath: 'data.clock',
+      ssr: true,
+      hydrate: 'load',
+      sourcePath: STUB_PATH,
+    },
   ]
   const data = { data: { counter: { n: 1 }, clock: { n: 9 } } }
   const out = await resolveIslandContext(manifest, data)
@@ -109,7 +137,14 @@ test('resolveIslandContext: ssr entry _html equals renderToString of the stub wi
   // gating-Q1 empirical proof: the worker import()s the island SOURCE .tsx by
   // absolute path and renderToStrings it. Bun transpiles+runs the TSX.
   const manifest: NativeIslandEntry[] = [
-    { component: 'Stub', instance: 0, propsPath: 'data.stub', ssr: true, hydrate: 'load', sourcePath: STUB_PATH },
+    {
+      component: 'Stub',
+      instance: 0,
+      propsPath: 'data.stub',
+      ssr: true,
+      hydrate: 'load',
+      sourcePath: STUB_PATH,
+    },
   ]
   const data = { data: { stub: { n: 1 } } }
   const out = await resolveIslandContext(manifest, data)
@@ -123,7 +158,14 @@ test('resolveIslandContext: hydration byte-identity — renderToString props der
   // parse out of data-brust-props. Decode _props, JSON.parse it, and confirm
   // the stub rendered that exact value.
   const manifest: NativeIslandEntry[] = [
-    { component: 'Stub', instance: 0, propsPath: 'data.stub', ssr: true, hydrate: 'load', sourcePath: STUB_PATH },
+    {
+      component: 'Stub',
+      instance: 0,
+      propsPath: 'data.stub',
+      ssr: true,
+      hydrate: 'load',
+      sourcePath: STUB_PATH,
+    },
   ]
   const data = { data: { stub: { n: 42 } } }
   const out = await resolveIslandContext(manifest, data)
@@ -144,7 +186,14 @@ test('resolveIslandContext: contained failure — component that throws in rende
   // render. resolveIslandContext must NOT throw; the entry degrades to props
   // only (empty mount, client recovers). console.error is the invariant working.
   const manifest: NativeIslandEntry[] = [
-    { component: 'Boom', instance: 0, propsPath: 'data.boom', ssr: true, hydrate: 'load', sourcePath: THROWING_PATH },
+    {
+      component: 'Boom',
+      instance: 0,
+      propsPath: 'data.boom',
+      ssr: true,
+      hydrate: 'load',
+      sourcePath: THROWING_PATH,
+    },
   ]
   const data = { data: { boom: { n: 1 } } }
   const out = await resolveIslandContext(manifest, data)
@@ -155,7 +204,14 @@ test('resolveIslandContext: contained failure — component that throws in rende
 test('resolveIslandContext: contained failure — source with no default export → no _html, no throw', async () => {
   // Hits the `typeof Component !== 'function'` guard.
   const manifest: NativeIslandEntry[] = [
-    { component: 'NoDef', instance: 0, propsPath: 'data.x', ssr: true, hydrate: 'load', sourcePath: NODEFAULT_PATH },
+    {
+      component: 'NoDef',
+      instance: 0,
+      propsPath: 'data.x',
+      ssr: true,
+      hydrate: 'load',
+      sourcePath: NODEFAULT_PATH,
+    },
   ]
   const data = { data: { x: { n: 1 } } }
   const out = await resolveIslandContext(manifest, data)
@@ -165,7 +221,14 @@ test('resolveIslandContext: contained failure — source with no default export 
 
 test('resolveIslandContext: missing props serialize as null (not undefined)', async () => {
   const manifest: NativeIslandEntry[] = [
-    { component: 'Counter', instance: 0, propsPath: 'data.missing', ssr: false, hydrate: 'load', sourcePath: '/x' },
+    {
+      component: 'Counter',
+      instance: 0,
+      propsPath: 'data.missing',
+      ssr: false,
+      hydrate: 'load',
+      sourcePath: '/x',
+    },
   ]
   const out = await resolveIslandContext(manifest, { data: {} })
   expect(out.island_0_props).toBe(entityEncode('null'))
@@ -174,7 +237,14 @@ test('resolveIslandContext: missing props serialize as null (not undefined)', as
 test('loadIslandManifest: reads from jinjaDir, missing file → null, caches reads', () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'brust-islands-'))
   const manifest: NativeIslandEntry[] = [
-    { component: 'Counter', instance: 0, propsPath: 'data.counter', ssr: false, hydrate: 'load', sourcePath: '/x' },
+    {
+      component: 'Counter',
+      instance: 0,
+      propsPath: 'data.counter',
+      ssr: false,
+      hydrate: 'load',
+      sourcePath: '/x',
+    },
   ]
   writeFileSync(path.join(dir, 'page.islands.json'), JSON.stringify(manifest))
 

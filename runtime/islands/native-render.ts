@@ -114,7 +114,9 @@ export async function resolveIslandContext(
     // `?? null` handles undefined props; the `?? 'null'` belt-and-braces covers
     // the case where JSON.stringify itself returns undefined (e.g. a function
     // value), so entityEncode never receives undefined.
-    out['island_' + entry.instance + '_props'] = entityEncode(JSON.stringify(props ?? null) ?? 'null')
+    out['island_' + entry.instance + '_props'] = entityEncode(
+      JSON.stringify(props ?? null) ?? 'null',
+    )
     if (!entry.ssr) continue
     try {
       let Component = componentCache.get(entry.sourcePath)

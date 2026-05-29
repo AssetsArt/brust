@@ -145,9 +145,7 @@ beforeAll(async () => {
   expect(inst0.sourcePath).toBe(inst1.sourcePath)
   // Chunk dedup: EXACTLY one Counter*.js file in the islands output dir.
   const islandsOutDir = resolve(FIXTURE_DIR, '.brust/islands')
-  const counterChunks = readdirSync(islandsOutDir).filter(
-    (f) => /^Counter.*\.js$/.test(f),
-  )
+  const counterChunks = readdirSync(islandsOutDir).filter((f) => /^Counter.*\.js$/.test(f))
   expect(counterChunks).toEqual(['Counter.js'])
   // The two-island jinja carries BOTH instances' context keys.
   const twoJinjaSrc = readFileSync(twoJinjaPath, 'utf8')

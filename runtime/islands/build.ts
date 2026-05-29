@@ -39,9 +39,7 @@ export function scanIslandChunks(routesEntryFile: string): Map<string, string> {
     for (const tag of tags) {
       const compMatch = tag.match(/component=\{\s*(\w+)\s*\}/)
       if (!compMatch) {
-        throw new Error(
-          `<Island> tag in ${pagePath} has no \`component={...}\` prop: ${tag}`,
-        )
+        throw new Error(`<Island> tag in ${pagePath} has no \`component={...}\` prop: ${tag}`)
       }
       const ident = compMatch[1]!
       const src = pageImports.get(ident)

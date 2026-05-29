@@ -80,10 +80,7 @@ test('throws naming both paths when two files share an island component name', (
 })
 
 test('throws naming the page for an <Island> with no component prop (loud miss)', () => {
-  write(
-    'Bad.tsx',
-    `export default function Bad() { return <Island props={{ x: 1 }} /> }\n`,
-  )
+  write('Bad.tsx', `export default function Bad() { return <Island props={{ x: 1 }} /> }\n`)
   const entry = write('routes.ts', `import Bad from './Bad'\nexport default [Bad]\n`)
 
   const badPath = resolve(dir, 'Bad.tsx')
