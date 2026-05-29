@@ -6,6 +6,7 @@ import HelloWorld    from '../../../example/hello-world/pages/HelloWorld'
 import BlogPost      from '../../../example/hello-world/pages/BlogPost'
 import SlowSuspense  from '../../../example/hello-world/pages/SlowSuspense'
 import NativeProfile from '../../../example/hello-world/pages/NativeProfile'
+import NativeIslandPage from './NativeIslandPage'
 
 // Test-only components — these mount routes that exercise failure modes,
 // middleware, cache, nested routes, and the various server-action paths.
@@ -61,6 +62,16 @@ export const routes = defineRoutes([
       user: params.user,
       greeting: `Hello, ${params.user}`,
     }),
+  },
+  // Sub-project J / native islands — native: true route hosting a CLIENT-ONLY
+  // <Island> (no ssr). The compiled .jinja emits an empty data-brust-csr mount
+  // div + a baked {% raw %} importmap/bootstrap block; T7's native branch fills
+  // island_Counter_props with the entity-encoded JSON of the resolved props.
+  {
+    path: '/_test/native-island',
+    Component: NativeIslandPage,
+    native: true,
+    loader: async () => ({ greeting: 'Hello islands', count: { start: 3 } }),
   },
 
   // Test-only routes — failure modes + middleware + cache.
