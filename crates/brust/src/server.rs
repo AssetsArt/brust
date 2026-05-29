@@ -776,39 +776,26 @@ async fn handle_conn(
             // is already done so we use from_raw_socket (skips the built-in
             // handshake which would otherwise expect to read the request line).
             //
-            // Platform split: WebSocketStream<S> requires S: AsyncRead + AsyncWrite +
-            // Unpin. On non-Linux, crate::io::TcpStream wraps tokio::net::TcpStream,
-            // which satisfies all three — extract via into_inner(). On Linux,
-            // tokio_uring::TcpStream is completion-based and does NOT implement
-            // AsyncRead/AsyncWrite, so tokio-tungstenite can't drive it. WebSocket is
-            // therefore UNSUPPORTED on the Linux build for now (SSE works on both);
-            // the 101 was already sent, so close the socket. Follow-up: a uring
-            // AsyncRead/AsyncWrite adapter (readiness-vs-completion, non-trivial).
-            #[cfg(not(target_os = "linux"))]
-            {
-                use tokio_tungstenite::tungstenite::protocol::Role;
-                let inner = s.into_inner();
-                let ws_stream =
-                    tokio_tungstenite::WebSocketStream::from_raw_socket(inner, Role::Server, None)
-                        .await;
-                // Spawn ws_conn_task as a detached task so handle_conn returns and
-                // the accept-worker can take other connections. The per-conn task
-                // owns the WebSocketStream + sends to TCP independently.
-                crate::io::spawn(async move {
-                    crate::ws::ws_conn_task(
-                        ws_stream, conn_id, send_rx,
-                        30_000,    // pingMs default — per-route forwarding is a follow-up
-                        1_048_576, // 1 MB max msg — per-route forwarding is a follow-up
-                    )
+            // Platform-common: WebSocketStream<S> requires S: AsyncRead +
+            // AsyncWrite + Unpin. `io::TcpStream::into_inner()` provides it on
+            // both targets — tokio::net::TcpStream off-Linux, and the forked
+            // tokio_uring's `PollIo` bridge on Linux (uring completion → poll IO).
+            use tokio_tungstenite::tungstenite::protocol::Role;
+            let inner = s.into_inner();
+            let ws_stream =
+                tokio_tungstenite::WebSocketStream::from_raw_socket(inner, Role::Server, None)
                     .await;
-                });
-            }
-            #[cfg(target_os = "linux")]
-            {
-                let _ = &send_rx; // consumed by ws_conn_task on non-Linux only
-                let _ = s.shutdown().await;
-                crate::ws::registry().lock().remove(&conn_id);
-            }
+            // Spawn ws_conn_task as a detached task so handle_conn returns and
+            // the accept-worker can take other connections. The per-conn task
+            // owns the WebSocketStream + sends to TCP independently.
+            crate::io::spawn(async move {
+                crate::ws::ws_conn_task(
+                    ws_stream, conn_id, send_rx,
+                    30_000,    // pingMs default — per-route forwarding is a follow-up
+                    1_048_576, // 1 MB max msg — per-route forwarding is a follow-up
+                )
+                .await;
+            });
             return;
         }
 

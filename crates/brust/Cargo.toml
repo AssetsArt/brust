@@ -31,7 +31,10 @@ minijinja          = "2"
 tempfile = "3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-tokio-uring = "0.5"
+# Fork of tokio-uring 0.5.0 (Aitthi/tokio-uring@brust-0.5): adds AsyncRead/AsyncWrite
+# (PollIo) so WebSocket works on uring, and gates statx behind cfg(gnu) so musl
+# compiles. Pinned by rev for reproducible CI/release. See docs/.../linux-tier1.
+tokio-uring = { git = "https://github.com/Aitthi/tokio-uring", rev = "b570eb3e3ddc1e7e0742297c2bdf310c4d528be8" }
 tokio       = { version = "1", features = ["rt", "macros", "signal", "sync", "time", "fs"] }
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
