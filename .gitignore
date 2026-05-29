@@ -10,3 +10,4 @@ brust.toml
 # Brust build output
 .brust/
 dist
+.antigravitycli
