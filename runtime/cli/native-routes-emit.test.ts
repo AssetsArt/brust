@@ -17,25 +17,29 @@ afterEach(() => {
 })
 
 describe('reconcileIslandManifest', () => {
-  test('enriches each .islands.json entry with sourcePath from the config map', () => {
+  test('enriches each .islands.json entry with sourcePath from the page imports', () => {
     const jinjaPath = join(dir, 'Page.jinja')
     const islandsJsonPath = join(dir, 'Page.islands.json')
     writeFileSync(jinjaPath, '<div>hi</div>')
     writeFileSync(
       islandsJsonPath,
-      JSON.stringify([{ id: 'Counter', propsPath: 'data.x', ssr: false, hydrate: 'load' }]),
+      JSON.stringify([
+        { component: 'Counter', instance: 0, propsPath: 'data.x', ssr: false, hydrate: 'load' },
+      ]),
     )
 
-    reconcileIslandManifest(jinjaPath, islandsJsonPath, { Counter: '/abs/Counter.tsx' }, 'Page')
+    const pageImports = new Map([['Counter', '/abs/components/Counter.tsx']])
+    reconcileIslandManifest(jinjaPath, islandsJsonPath, pageImports, 'Page')
 
     const enriched = JSON.parse(readFileSync(islandsJsonPath, 'utf8'))
     expect(enriched).toEqual([
       {
-        id: 'Counter',
+        component: 'Counter',
+        instance: 0,
         propsPath: 'data.x',
         ssr: false,
         hydrate: 'load',
-        sourcePath: '/abs/Counter.tsx',
+        sourcePath: '/abs/components/Counter.tsx',
       },
     ])
   })
@@ -47,10 +51,17 @@ describe('reconcileIslandManifest', () => {
     writeFileSync(jinjaPath, original)
     writeFileSync(
       islandsJsonPath,
-      JSON.stringify([{ id: 'Counter', propsPath: 'data.x', ssr: false, hydrate: 'load' }]),
+      JSON.stringify([
+        { component: 'Counter', instance: 0, propsPath: 'data.x', ssr: false, hydrate: 'load' },
+      ]),
     )
 
-    reconcileIslandManifest(jinjaPath, islandsJsonPath, { Counter: '/abs/Counter.tsx' }, 'Page')
+    reconcileIslandManifest(
+      jinjaPath,
+      islandsJsonPath,
+      new Map([['Counter', '/abs/Counter.tsx']]),
+      'Page',
+    )
 
     const content = readFileSync(jinjaPath, 'utf8')
     const expectedTail = `{% raw %}${ISLANDS_IMPORTMAP_AND_BOOTSTRAP}{% endraw %}`
@@ -66,10 +77,17 @@ describe('reconcileIslandManifest', () => {
     writeFileSync(jinjaPath, '<div>hi</div>')
     writeFileSync(
       islandsJsonPath,
-      JSON.stringify([{ id: 'Counter', propsPath: 'data.x', ssr: false, hydrate: 'load' }]),
+      JSON.stringify([
+        { component: 'Counter', instance: 0, propsPath: 'data.x', ssr: false, hydrate: 'load' },
+      ]),
     )
 
-    reconcileIslandManifest(jinjaPath, islandsJsonPath, { Counter: '/abs/Counter.tsx' }, 'Page')
+    reconcileIslandManifest(
+      jinjaPath,
+      islandsJsonPath,
+      new Map([['Counter', '/abs/Counter.tsx']]),
+      'Page',
+    )
 
     const content = readFileSync(jinjaPath, 'utf8')
     // The importmap JSON ends with `}}` (closing imports + root object). That
@@ -77,21 +95,29 @@ describe('reconcileIslandManifest', () => {
     expect(content).toContain('}}</script>')
   })
 
-  test('throws when an id is not registered in the config map (message contains id + route)', () => {
+  test('throws when a component has no matching import in the page (message contains component + route)', () => {
     const jinjaPath = join(dir, 'Page.jinja')
     const islandsJsonPath = join(dir, 'Page.islands.json')
     writeFileSync(jinjaPath, '<div>hi</div>')
     writeFileSync(
       islandsJsonPath,
-      JSON.stringify([{ id: 'Ghost', propsPath: 'data.x', ssr: false, hydrate: 'load' }]),
+      JSON.stringify([
+        { component: 'Ghost', instance: 0, propsPath: 'data.x', ssr: false, hydrate: 'load' },
+      ]),
     )
 
+    // Page imports a different component — Ghost is not present.
     expect(() =>
-      reconcileIslandManifest(jinjaPath, islandsJsonPath, { Counter: '/abs/Counter.tsx' }, 'Page'),
+      reconcileIslandManifest(
+        jinjaPath,
+        islandsJsonPath,
+        new Map([['Counter', '/abs/Counter.tsx']]),
+        'Page',
+      ),
     ).toThrow(/Ghost.*Page|Page.*Ghost/)
   })
 
-  test('no .islands.json → .jinja is byte-identical and no error even with undefined map', () => {
+  test('no .islands.json → .jinja is byte-identical and no error even with empty map', () => {
     const jinjaPath = join(dir, 'Page.jinja')
     const islandsJsonPath = join(dir, 'Page.islands.json')
     const original = '<html><body>{{ greeting }}</body></html>'
@@ -100,7 +126,7 @@ describe('reconcileIslandManifest', () => {
     expect(existsSync(islandsJsonPath)).toBe(false)
 
     expect(() =>
-      reconcileIslandManifest(jinjaPath, islandsJsonPath, undefined, 'Page'),
+      reconcileIslandManifest(jinjaPath, islandsJsonPath, new Map(), 'Page'),
     ).not.toThrow()
 
     expect(readFileSync(jinjaPath, 'utf8')).toBe(original)

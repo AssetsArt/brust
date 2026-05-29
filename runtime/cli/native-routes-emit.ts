@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, isAbsolute, resolve } from 'node:path'
+import { dirname, resolve } from 'node:path'
 import { ISLANDS_IMPORTMAP_AND_BOOTSTRAP } from '../islands/importmap.ts'
 
 /** Sub-project J — build pass that turns user's `pages/<Name>.tsx` files into
@@ -23,22 +23,20 @@ export interface NativeRouteEmitOpts {
   outDir: string
   /** Repo root — used to resolve the `jsx-rustc` binary. */
   repoRoot: string
-  /** Absolute path to `island.config.ts`, or undefined if none exists. Only
-   * consulted when a native route emits a `<Name>.islands.json` (i.e. the route
-   * actually uses `<Island>`). Lazily imported once and cached across routes. */
-  islandConfigPath?: string
 }
 
 /** One entry in a `<Name>.islands.json` as emitted by `jsx-rustc` (camelCase,
- * see crates/jsx-rust-compiler/src/lib.rs). T6 enriches it with `sourcePath`. */
+ * see crates/jsx-rust-compiler/src/lib.rs). Enriched with `sourcePath`. */
 interface RawIslandEntry {
-  id: string
+  component: string
+  instance: number
   propsPath: string
   ssr: boolean
   hydrate: string
 }
 interface EnrichedIslandEntry extends RawIslandEntry {
-  /** Absolute path to the island's client source, resolved from island.config.ts. */
+  /** Absolute path to the island's client source, resolved from the page's
+   * own `import <component> from "..."` declaration. */
   sourcePath: string
 }
 
@@ -65,11 +63,6 @@ export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<vo
 
   const importMap =
     nativeRoutes.length > 0 ? scanImports(opts.entryFile) : new Map<string, string>()
-
-  // Lazily loaded & cached island config map (id → absolute source path).
-  // Only built the first time a route emits a `.islands.json`; routes without
-  // islands never touch it, so the no-island path stays byte-identical.
-  let islandConfigMap: Record<string, string> | undefined
 
   const built: string[] = []
   for (const r of nativeRoutes) {
@@ -99,10 +92,9 @@ export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<vo
     // byte-identical (no-island regression).
     const islandsJsonPath = resolve(opts.outDir, `${name}.islands.json`)
     if (existsSync(islandsJsonPath)) {
-      if (islandConfigMap === undefined) {
-        islandConfigMap = await loadIslandConfigMap(opts.islandConfigPath, name)
-      }
-      reconcileIslandManifest(outPath, islandsJsonPath, islandConfigMap, name)
+      // Island source paths resolve from the PAGE file's own imports.
+      const pageImports = scanImports(sourcePath)
+      reconcileIslandManifest(outPath, islandsJsonPath, pageImports, name)
     }
   }
 
@@ -115,7 +107,7 @@ export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<vo
 /** Scan the entry file's `import Name from './path'` declarations and build a
  * map of localName -> resolved absolute path. Extension resolution tries
  * `.tsx`, `.ts`, `/index.tsx`, `/index.ts` in order. */
-function scanImports(entryFile: string): Map<string, string> {
+export function scanImports(entryFile: string): Map<string, string> {
   const source = readFileSync(entryFile, 'utf8')
   const map = new Map<string, string>()
   // Regex-based scanner; full swc AST scan deferred per spec §7 + §13.10.
@@ -138,38 +130,16 @@ function scanImports(entryFile: string): Map<string, string> {
   return map
 }
 
-/** Load `island.config.ts` and build a `Record<id, absoluteSourcePath>` map,
- * mirroring `buildIslands`'s resolution (entry paths resolved relative to the
- * config dir; `mod.default ?? mod`). Throws a clear error if the route uses
- * islands but no config exists — `routeName` names the offending route. */
-async function loadIslandConfigMap(
-  islandConfigPath: string | undefined,
-  routeName: string,
-): Promise<Record<string, string>> {
-  if (!islandConfigPath || !existsSync(islandConfigPath)) {
-    throw new Error(
-      `native route "${routeName}" uses islands but no island.config.ts was found at ${islandConfigPath ?? '(none)'}`,
-    )
-  }
-  const mod = await import(islandConfigPath)
-  const cfg = (mod.default ?? mod) as { islands?: Record<string, string> }
-  const configDir = dirname(islandConfigPath)
-  const map: Record<string, string> = {}
-  for (const [id, rel] of Object.entries(cfg.islands ?? {})) {
-    map[id] = isAbsolute(rel) ? rel : resolve(configDir, rel)
-  }
-  return map
-}
-
-/** Reconcile the raw `<Name>.islands.json` jsx-rustc emitted against the island
- * registry, then bake the importmap+bootstrap into the `.jinja`.
+/** Reconcile the raw `<Name>.islands.json` jsx-rustc emitted against the page's
+ * own imports, then bake the importmap+bootstrap into the `.jinja`.
  *
  * Pure-ish & synchronous (fs only) so it unit-tests deterministically:
  * 1. If `islandsJsonPath` is absent → no-op (the route has no islands; the
  *    `.jinja` stays byte-identical).
- * 2. Validate every entry's `id` ∈ `islandConfigMap` (else throw).
- * 3. Enrich each entry with `sourcePath` (absolute, from the config map) and
- *    rewrite the `.islands.json`.
+ * 2. Resolve every entry's `sourcePath` from the page's `import <component>
+ *    from "..."` (else throw).
+ * 3. Enrich each entry with that absolute `sourcePath` and rewrite the
+ *    `.islands.json`.
  * 4. Append `{% raw %}…{% endraw %}`-wrapped bootstrap to the `.jinja`. The raw
  *    block keeps the importmap's literal `}}`/`{{` inert through minijinja's
  *    boot-time compile.
@@ -177,19 +147,18 @@ async function loadIslandConfigMap(
 export function reconcileIslandManifest(
   jinjaPath: string,
   islandsJsonPath: string,
-  islandConfigMap: Record<string, string> | undefined,
+  pageImports: Map<string, string>,
   routeName: string,
 ): void {
   if (!existsSync(islandsJsonPath)) return
 
-  const map = islandConfigMap ?? {}
   const raw = JSON.parse(readFileSync(islandsJsonPath, 'utf8')) as RawIslandEntry[]
 
   const enriched: EnrichedIslandEntry[] = raw.map((entry) => {
-    const sourcePath = map[entry.id]
+    const sourcePath = pageImports.get(entry.component)
     if (!sourcePath) {
       throw new Error(
-        `island "${entry.id}" in native route "${routeName}" is not registered in island.config.ts (add it to the islands map)`,
+        `island component "${entry.component}" in native route "${routeName}" has no matching import in the page source (expected \`import ${entry.component} from "..."\`)`,
       )
     }
     return { ...entry, sourcePath }
