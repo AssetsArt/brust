@@ -139,7 +139,10 @@ pub async fn until_shutdown() -> NapiResult<()> {
 }
 
 #[napi]
-pub fn register_renderer(mut buf: Uint8Array, f: Function<napi::bindgen_prelude::Either<u32, String>, Promise<u32>>) -> NapiResult<u32> {
+pub fn register_renderer(
+    mut buf: Uint8Array,
+    f: Function<napi::bindgen_prelude::Either<u32, String>, Promise<u32>>,
+) -> NapiResult<u32> {
     // NOTE: is_worker() reads std::env::var which is not patched by Bun's Worker
     // env option (Bun Workers share the OS process).  The TS layer is responsible
     // for only calling registerRenderer from a worker context; we skip the guard.
@@ -618,11 +621,7 @@ pub async fn napi_render_chunk_final(worker_id: u32, len: u32) -> NapiResult<()>
 /// - `jinja::render` failure → writes a framed 500 into the SAB and returns its
 ///   length (the protocol error is converted to an HTTP 500 on the wire).
 #[napi]
-pub fn napi_render_jinja(
-    worker_id: u32,
-    data_len: u32,
-    template_name: String,
-) -> NapiResult<u32> {
+pub fn napi_render_jinja(worker_id: u32, data_len: u32, template_name: String) -> NapiResult<u32> {
     let entry = state()
         .pool
         .entry(worker_id)

@@ -1,4 +1,3 @@
-
 use httparse::EMPTY_HEADER;
 use parking_lot::RwLock;
 use serde::Deserialize;
@@ -266,7 +265,12 @@ impl RouteTable {
             .and_then(|n| n.clone())
     }
 
-    pub fn match_path<'a>(&self, method: &'a str, full_path: &'a str, raw_request: &'a [u8]) -> MatchResult<'a> {
+    pub fn match_path<'a>(
+        &self,
+        method: &'a str,
+        full_path: &'a str,
+        raw_request: &'a [u8],
+    ) -> MatchResult<'a> {
         let (path_only, query) = match full_path.split_once('?') {
             Some((p, q)) => (p, q),
             None => (full_path, ""),
@@ -293,10 +297,7 @@ impl RouteTable {
                     req,
                     native_template: native.map(std::borrow::Cow::Owned),
                 };
-                MatchResult::Matched {
-                    route_id,
-                    envelope,
-                }
+                MatchResult::Matched { route_id, envelope }
             }
             Err(_) => MatchResult::NoMatch,
         }
@@ -413,6 +414,13 @@ fn url_decode(s: &str) -> std::borrow::Cow<'_, str> {
 /// emits `kind` first), so a single targeted substring replace is correct
 /// and cheaper than a parse-rewrite-serialise round-trip. Returns the input
 /// unchanged if the `"kind":"render"` substring isn't found (defensive).
+///
+/// NOTE (2026-05): currently exercised only by its unit tests — the live
+/// navigation path mutates `envelope.kind` directly on the struct before
+/// serialising (see `server.rs`), so this string-rewrite helper is presently
+/// unused in production. Kept (allow dead_code) pending a decision to either
+/// re-adopt it or delete it + its tests.
+#[allow(dead_code)]
 pub fn rewrite_envelope_kind(envelope_json: String, new_kind: &str) -> String {
     envelope_json.replacen(
         r#""kind":"render""#,
@@ -476,8 +484,20 @@ mod tests {
     fn envelope_parses_cookies_from_single_header() {
         let raw = b"GET /x HTTP/1.1\r\nHost: x\r\nCookie: user=alice; sid=xyz\r\n\r\n";
         let env = build_request_envelope("GET", "/x", "", raw);
-        assert_eq!(env.cookies.iter().find(|(k, _)| *k == "user").map(|(_, v)| v.as_ref()), Some("alice"));
-        assert_eq!(env.cookies.iter().find(|(k, _)| *k == "sid").map(|(_, v)| v.as_ref()), Some("xyz"));
+        assert_eq!(
+            env.cookies
+                .iter()
+                .find(|(k, _)| *k == "user")
+                .map(|(_, v)| v.as_ref()),
+            Some("alice")
+        );
+        assert_eq!(
+            env.cookies
+                .iter()
+                .find(|(k, _)| *k == "sid")
+                .map(|(_, v)| v.as_ref()),
+            Some("xyz")
+        );
     }
 
     #[test]
@@ -486,8 +506,20 @@ mod tests {
         // some proxies fold/split. Both cookies should appear in the map.
         let raw = b"GET /x HTTP/1.1\r\nHost: x\r\nCookie: a=1\r\nCookie: b=2\r\n\r\n";
         let env = build_request_envelope("GET", "/x", "", raw);
-        assert_eq!(env.cookies.iter().find(|(k, _)| *k == "a").map(|(_, v)| v.as_ref()), Some("1"));
-        assert_eq!(env.cookies.iter().find(|(k, _)| *k == "b").map(|(_, v)| v.as_ref()), Some("2"));
+        assert_eq!(
+            env.cookies
+                .iter()
+                .find(|(k, _)| *k == "a")
+                .map(|(_, v)| v.as_ref()),
+            Some("1")
+        );
+        assert_eq!(
+            env.cookies
+                .iter()
+                .find(|(k, _)| *k == "b")
+                .map(|(_, v)| v.as_ref()),
+            Some("2")
+        );
     }
 
     #[test]
@@ -498,9 +530,27 @@ mod tests {
             "name=brust&flag&empty=",
             b"",
         );
-        assert_eq!(env.search.iter().find(|(k, _)| *k == "name").map(|(_, v)| v.as_ref()), Some("brust"));
-        assert_eq!(env.search.iter().find(|(k, _)| *k == "flag").map(|(_, v)| v.as_ref()), Some(""));
-        assert_eq!(env.search.iter().find(|(k, _)| *k == "empty").map(|(_, v)| v.as_ref()), Some(""));
+        assert_eq!(
+            env.search
+                .iter()
+                .find(|(k, _)| *k == "name")
+                .map(|(_, v)| v.as_ref()),
+            Some("brust")
+        );
+        assert_eq!(
+            env.search
+                .iter()
+                .find(|(k, _)| *k == "flag")
+                .map(|(_, v)| v.as_ref()),
+            Some("")
+        );
+        assert_eq!(
+            env.search
+                .iter()
+                .find(|(k, _)| *k == "empty")
+                .map(|(_, v)| v.as_ref()),
+            Some("")
+        );
     }
 
     #[test]
@@ -512,11 +562,17 @@ mod tests {
             b"",
         );
         assert_eq!(
-            env.search.iter().find(|(k, _)| *k == "greet").map(|(_, v)| v.as_ref()),
+            env.search
+                .iter()
+                .find(|(k, _)| *k == "greet")
+                .map(|(_, v)| v.as_ref()),
             Some("hello world"),
         );
         assert_eq!(
-            env.search.iter().find(|(k, _)| *k == "unicode").map(|(_, v)| v.as_ref()),
+            env.search
+                .iter()
+                .find(|(k, _)| *k == "unicode")
+                .map(|(_, v)| v.as_ref()),
             Some("\u{2713}"),
         );
     }

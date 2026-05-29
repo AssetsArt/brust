@@ -814,7 +814,7 @@ async fn handle_conn(
                 continue;
             }
             let real_path = if stripped.is_empty() { "/" } else { stripped };
-            let (mut envelope, _route_id) = match routes.match_path(&method, real_path, &buf) {
+            let (envelope, _route_id) = match routes.match_path(&method, real_path, &buf) {
                 MatchResult::Matched {
                     mut envelope,
                     route_id,
@@ -851,10 +851,7 @@ async fn handle_conn(
         }
 
         let (envelope, route_id) = match routes.match_path(&method, &path, &buf) {
-            MatchResult::Matched {
-                envelope,
-                route_id,
-            } => (envelope, route_id),
+            MatchResult::Matched { envelope, route_id } => (envelope, route_id),
             MatchResult::NoMatch => {
                 let _ = s.write_all(http::error_404()).await;
                 continue;
@@ -1346,8 +1343,13 @@ where
     };
 
     if resp_len == 0 || (resp_len as usize) > entry.buf_len {
-        error!(worker_id = entry.id, label, resp_len, buf_len = entry.buf_len,
-               "single-chunk dispatch got invalid resp_len (0 = worker used chunk channel)");
+        error!(
+            worker_id = entry.id,
+            label,
+            resp_len,
+            buf_len = entry.buf_len,
+            "single-chunk dispatch got invalid resp_len (0 = worker used chunk channel)"
+        );
         let _ = s.write_all(http::error_500()).await;
         return DispatchControl::CloseConn;
     }
@@ -1368,7 +1370,12 @@ where
             let _ = s.write_all(resp).await;
         }
         Err(e) => {
-            error!(worker_id = entry.id, label, error = e, "single-chunk response decode failed");
+            error!(
+                worker_id = entry.id,
+                label,
+                error = e,
+                "single-chunk response decode failed"
+            );
             let _ = s.write_all(http::error_500()).await;
             return DispatchControl::CloseConn;
         }
