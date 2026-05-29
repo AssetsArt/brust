@@ -331,6 +331,21 @@ fn lower_island(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode,
         ));
     }
 
+    // `<Island>` must be self-closing — meaningful children would be silently
+    // dropped (the island component renders client-side from its chunk, not from
+    // JSX here). Whitespace-only text between tags (`<Island>\n</Island>`) is
+    // tolerated; anything else (text, elements, exprs) is an error.
+    let has_meaningful_child = el.children.iter().any(|c| match c {
+        JSXElementChild::JSXText(t) => !t.value.trim().is_empty(),
+        _ => true,
+    });
+    if has_meaningful_child {
+        return Err(LowerError::at(
+            el.opening.span,
+            ErrorKind::IslandHasChildren,
+        ));
+    }
+
     let mut default_id: Option<String> = None;
     let mut explicit_id: Option<String> = None;
     let mut props_path: Option<String> = None;
@@ -366,10 +381,7 @@ fn lower_island(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode,
                         explicit_id = Some(s.value.to_string_lossy().into_owned());
                     }
                     _ => {
-                        return Err(LowerError::at(
-                            jsx_attr.span,
-                            ErrorKind::IslandPropsPathUnsupported,
-                        ));
+                        return Err(LowerError::at(jsx_attr.span, ErrorKind::IslandBadId));
                     }
                 }
             }
@@ -404,16 +416,11 @@ fn lower_island(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode,
         }
     }
 
-    let id = explicit_id
-        .or(default_id.clone())
+    // `component` is required even when an explicit `id` is given; an explicit
+    // `id="..."` only overrides the default derived from the component ident.
+    let component_id = default_id
         .ok_or_else(|| LowerError::at(el.opening.span, ErrorKind::IslandMissingComponent))?;
-    // `component` is required even when an explicit `id` is given.
-    if default_id.is_none() {
-        return Err(LowerError::at(
-            el.opening.span,
-            ErrorKind::IslandMissingComponent,
-        ));
-    }
+    let id = explicit_id.unwrap_or(component_id);
     let props_path = props_path
         .ok_or_else(|| LowerError::at(el.opening.span, ErrorKind::IslandPropsPathUnsupported))?;
     let hydrate = hydrate.unwrap_or_else(|| "load".to_string());
@@ -725,11 +732,7 @@ fn is_dot_map_call(call: &CallExpr) -> bool {
 ///   `MapShapeNotSupported`
 /// - arrow body is not a `<JSXElement>` (either as expr body or as the sole
 ///   `return <JSX>;` in a block body) → `MapShapeNotSupported`
-fn lower_call_as_map(
-    call: &CallExpr,
-    scope: &Scope,
-    _in_map: bool,
-) -> Result<JsxNode, LowerError> {
+fn lower_call_as_map(call: &CallExpr, scope: &Scope, _in_map: bool) -> Result<JsxNode, LowerError> {
     // Source object: `obj` of the `.map` member.
     let Callee::Expr(callee) = &call.callee else {
         return Err(LowerError::at(call.span, ErrorKind::MapShapeNotSupported));
@@ -1788,6 +1791,34 @@ mod tests {
         let parsed = parse(src, "<test>").unwrap();
         let err = lower(&parsed).unwrap_err();
         assert!(matches!(err.kind, ErrorKind::IslandInMapNotSupported));
+    }
+
+    #[test]
+    fn rejects_island_non_string_id() {
+        let src = r#"export default function Page({ counter }) {
+  return <Island component={C} id={counter} props={counter} />;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let err = lower(&parsed).unwrap_err();
+        assert!(matches!(err.kind, ErrorKind::IslandBadId));
+    }
+
+    #[test]
+    fn rejects_island_with_children() {
+        let src = r#"export default function Page({ counter }) {
+  return <Island component={C} props={counter}>hi</Island>;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let err = lower(&parsed).unwrap_err();
+        assert!(matches!(err.kind, ErrorKind::IslandHasChildren));
+    }
+
+    #[test]
+    fn island_whitespace_only_children_tolerated() {
+        let src = "export default function Page({ counter }) {\n  return <Island component={C} props={counter}>\n  </Island>;\n}";
+        let parsed = parse(src, "<test>").unwrap();
+        let c = lower(&parsed).unwrap();
+        assert!(matches!(c.root, JsxNode::Island { .. }));
     }
 
     #[test]

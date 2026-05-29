@@ -84,12 +84,22 @@ pub enum ErrorKind {
     PropTypeConflict(String),
     #[error("`<Island>` requires a `component={{Ident}}` attribute naming the island component")]
     IslandMissingComponent,
-    #[error("`<Island props={{…}}>` path unsupported — expect a destructured prop or one-deep member off one (e.g. `counter` or `data.counter`)")]
+    #[error(
+        "`<Island props={{…}}>` path unsupported — expect a destructured prop or one-deep member off one (e.g. `counter` or `data.counter`)"
+    )]
     IslandPropsPathUnsupported,
     #[error("`<Island hydrate=\"{0}\">` invalid — expect one of load/idle/visible/interaction")]
     IslandBadHydrate(String),
-    #[error("`<Island>` inside `.map(...)` not supported — id would collide across iterations and the props path can't be per-iteration in v1")]
+    #[error(
+        "`<Island>` inside `.map(...)` not supported — id would collide across iterations and the props path can't be per-iteration in v1"
+    )]
     IslandInMapNotSupported,
+    #[error("`<Island id={{…}}>` must be a string literal (e.g. `id=\"Counter\"`)")]
+    IslandBadId,
+    #[error(
+        "`<Island>` must be self-closing — children are not supported (the component renders client-side)"
+    )]
+    IslandHasChildren,
 }
 
 impl CompileError {
