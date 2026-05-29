@@ -1,10 +1,11 @@
 name: release
 
-# Publishes the `brust` npm package + its 6 per-platform native packages
+# Publishes the `brust` npm package + its 4 per-platform native packages
 # (brust-darwin-x64 / brust-darwin-arm64 / brust-linux-x64-gnu /
-# brust-linux-arm64-gnu / brust-linux-x64-musl / brust-linux-arm64-musl) on a
-# `v*` tag — both glibc AND musl Linux. No Windows target (matches package.json
-# napi.targets). WIRE-ONLY until you tag: nothing publishes on push to main.
+# brust-linux-arm64-gnu) on a `v*` tag. No Windows. No musl: tokio-uring 0.5
+# references libc::statx, which the musl `libc` bindings don't expose, so the
+# Linux runtime can't compile for musl without a different io backend (tracked
+# follow-up). WIRE-ONLY until you tag: nothing publishes on push to main.
 #
 # PREREQUISITE (manual, one-time): an `NPM_KEY` repository secret — an npm
 # automation token with publish rights to the `brust` name. ALREADY ADDED to
@@ -49,12 +50,6 @@ jobs:
             napi_extra: ""
           - runner: ubuntu-latest
             target: aarch64-unknown-linux-gnu
-            napi_extra: "--use-napi-cross"
-          - runner: ubuntu-latest
-            target: x86_64-unknown-linux-musl
-            napi_extra: "--use-napi-cross"
-          - runner: ubuntu-latest
-            target: aarch64-unknown-linux-musl
             napi_extra: "--use-napi-cross"
     steps:
       - uses: actions/checkout@v4

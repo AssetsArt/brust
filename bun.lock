@@ -18,12 +18,10 @@
         "typescript": "^5.5.0",
       },
       "optionalDependencies": {
-        "brust-darwin-arm64": "0.1.0",
-        "brust-darwin-x64": "0.1.0",
-        "brust-linux-arm64-gnu": "0.1.0",
-        "brust-linux-arm64-musl": "0.1.0",
-        "brust-linux-x64-gnu": "0.1.0",
-        "brust-linux-x64-musl": "0.1.0",
+        "brust-darwin-arm64": "0.1.0-alpha",
+        "brust-darwin-x64": "0.1.0-alpha",
+        "brust-linux-arm64-gnu": "0.1.0-alpha",
+        "brust-linux-x64-gnu": "0.1.0-alpha",
       },
       "peerDependencies": {
         "react": "^19.2.6",
