@@ -8,10 +8,10 @@ are dispatched into Bun Worker threads through `ThreadsafeFunction`, and HTML
 flows back via per-worker `SharedArrayBuffer`.
 
 ```
-106,493 RPS  GET /ping                     (p50 0.09ms · p99 0.15ms)   pure Rust, no JS
- 60,234 RPS  POST server action            (p50 0.16ms · p99 0.28ms)   crosses to a worker
- 57,268 RPS  GET /native-profile/:user     (p50 0.17ms · p99 0.29ms)   native jinja render
- 28,855 RPS  GET / (SSR React)             (p50 0.28ms · p99 2.19ms)   React renderToString
+116,778 RPS  GET /ping                     (p50 0.08ms · p99 0.16ms)   pure Rust, no JS
+ 60,491 RPS  GET /native-profile/:user     (p50 0.16ms · p99 0.28ms)   native jinja render
+ 59,908 RPS  POST server action            (p50 0.16ms · p99 0.28ms)   crosses to a worker
+ 29,288 RPS  GET / (SSR React)             (p50 0.28ms · p99 1.90ms)   React renderToString
 ```
 
 Benchmarked with `oha -c 120 -z 10s` on darwin/arm64 (M1 Pro, 10c), Bun 1.4 —
@@ -24,7 +24,7 @@ full table in [`bench/RESULTS.md`](./bench/RESULTS.md). Same hardware,
 There are two performance tiers, and the boundary between them is the napi
 crossing — not anything in the app:
 
-- **Pure-Rust path (`/ping`): ~106k RPS.** No worker, no JS. This is the Rust
+- **Pure-Rust path (`/ping`): ~110k RPS.** No worker, no JS. This is the Rust
   HTTP layer's ceiling on this box.
 - **Any route that crosses into a Bun worker: ~60k RPS floor.** A null-handler
   probe (a renderer that does *zero* JS work — no `JSON.parse`, no dispatch,
@@ -40,12 +40,14 @@ The **single-chunk fast lane** has the worker write the framed response
 `[meta_len][meta][body]` straight into the SAB and resolve its render Promise
 with the byte length; Rust reads the SAB directly (two crossings, no channel).
 Combined with making the jinja render a synchronous napi call and a
-**lock-free worker claim** (`AtomicBool` CAS instead of a per-entry mutex):
+**lock-free worker claim** (`AtomicBool` CAS instead of a per-entry mutex —
+the exclusivity gate for every render path, plus a fully channel-free,
+mutex-free `dispatch_single_chunk` for actions and native routes):
 
 | Path | before | after |
 |---|---:|---:|
-| POST server action | 48.7k | **60.1k** (+23%) |
-| GET native jinja route | 49.6k | **57.3k** (+16%) |
+| POST server action | 48.7k | **59.9k** (+23%) |
+| GET native jinja route | 49.6k | **60.5k** (+22%) |
 
 The lock-free claim itself was worth only ~3% — proof that worker-pool lock
 contention was never the bottleneck. To go faster than the ~60k worker floor

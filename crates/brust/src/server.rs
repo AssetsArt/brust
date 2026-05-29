@@ -874,10 +874,22 @@ async fn handle_conn(
             continue;
         }
 
-        // Render path receives the final response bytes via on_success when
-        // the response collapsed to a single Content-Length chunk (the only
-        // shape we cache — Suspense streams are never cached). The cache key
-        // and config move into the closure, so they're only inserted when a
+        // Native (jinja) routes are guaranteed single-chunk: the worker always
+        // takes the fast lane (Rust-side render → framed bytes in the SAB).
+        // Route them through the channel-free, lock-free dispatch_single_chunk.
+        // Native routes never cache (validated at defineRoutes time), so no
+        // cache write-back is needed here.
+        if routes.native_template_for(route_id).is_some() {
+            match dispatch_single_chunk(&mut s, &pool, envelope, "render", false, |_| {}).await {
+                DispatchControl::Continue => continue,
+                DispatchControl::CloseConn => return,
+            }
+        }
+
+        // React render path receives the final response bytes via on_success
+        // when the response collapsed to a single Content-Length chunk (the
+        // only shape we cache — Suspense streams are never cached). The cache
+        // key and config move into the closure, so they're only inserted when a
         // cache key was actually built for this request.
         let cache_for_closure = cache.clone();
         let cache_wanted = cache_config.is_some();

@@ -513,14 +513,18 @@ export function makeRenderer(
         verdict = await chain() as StreamMarkerResponse
       } catch (err) {
         console.error(`[brust] middleware/render uncaught:`, err)
-        return await emitSingleChunkResponse(view, napi, workerId, encoder, {
+        // FAST LANE: single-chunk error. Works for both React (big dispatch
+        // reads the SAB via its fast-lane arm) and native routes (which take
+        // the channel-free dispatch_single_chunk).
+        return packSingleChunkResponse(view, encoder, {
           status: 500, contentType: 'text/html; charset=utf-8', body: 'internal error',
         })
       }
 
       if (verdict._brustStream !== STREAM_MARKER) {
-        // Middleware short-circuited with a concrete response.
-        return await emitSingleChunkResponse(view, napi, workerId, encoder, {
+        // Middleware short-circuited with a concrete response. FAST LANE —
+        // single-chunk; same dual-dispatch safety as the error path above.
+        return packSingleChunkResponse(view, encoder, {
           status: verdict.status,
           contentType: verdict.contentType ?? 'text/html; charset=utf-8',
           body: verdict.body,
@@ -550,7 +554,9 @@ export function makeRenderer(
             data = await leaf.loader(ctx as any)
           } catch (err) {
             console.error(`[brust] loader failed for native route ${flat.fullPath}:`, err)
-            return await emitSingleChunkResponse(view, napi, workerId, encoder, {
+            // FAST LANE: native routes take dispatch_single_chunk (no chunk
+            // channel), so every native fallback MUST pack + return a length.
+            return packSingleChunkResponse(view, encoder, {
               status: 500, contentType: 'text/html; charset=utf-8', body: 'internal error',
             })
           }
@@ -558,7 +564,7 @@ export function makeRenderer(
         const json = JSON.stringify(data ?? {})
         const dataBytes = encoder.encode(json)
         if (dataBytes.length > view.length) {
-          return await emitSingleChunkResponse(view, napi, workerId, encoder, {
+          return packSingleChunkResponse(view, encoder, {
             status: 413, contentType: 'text/plain; charset=utf-8',
             body: 'loader data too large for SAB',
           })
@@ -572,7 +578,7 @@ export function makeRenderer(
           return (native as any).napiRenderJinja(Number(workerId), dataBytes.length, flat.nativeTemplate)
         } catch (err) {
           console.error(`[brust] napiRenderJinja failed for "${flat.nativeTemplate}":`, err)
-          return await emitSingleChunkResponse(view, napi, workerId, encoder, {
+          return packSingleChunkResponse(view, encoder, {
             status: 500, contentType: 'text/html; charset=utf-8', body: 'internal error',
           })
         }

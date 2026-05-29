@@ -257,12 +257,8 @@ impl RouteTable {
 
     /// Sub-project J — per-route-id lookup of the native template name.
     /// Returns `None` when the route is React-rendered (no `native: true`).
-    ///
-    /// T3 ships this as a public getter; the production caller (worker
-    /// dispatch branching on `native: true` from the envelope JSON) lands
-    /// in T4 (runtime side). Allowed-dead until then; the unit test
-    /// `route_table_natives_indexed_by_route_id` covers behavior.
-    #[allow(dead_code)]
+    /// Used by the render dispatch in server.rs to route native routes through
+    /// the channel-free `dispatch_single_chunk` fast path.
     pub fn native_template_for(&self, route_id: u32) -> Option<String> {
         self.native_templates
             .read()
