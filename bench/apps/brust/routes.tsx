@@ -8,8 +8,8 @@ import NativeIslands from './pages/NativeIslands'
  * Intentionally minimal: no SSE/WS/Suspense/blog routes (the bench doesn't
  * probe them, and dead routes would only add boot cost + drift risk). */
 export const routes = defineRoutes([
-  // React SSR — same `/` workload the bun-serve + elysia baselines render
-  // (they import the same `_shared/HelloWorld`), so the comparison is fair.
+  // React SSR — same `/` workload the bun-serve baseline renders
+  // (it imports the same `_shared/HelloWorld`), so the comparison is fair.
   { path: '/', Component: HelloWorld },
 
   // Native (jinja) route, no islands — the no-island fast-lane floor.

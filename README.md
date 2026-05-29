@@ -17,11 +17,11 @@ flows back via per-worker `SharedArrayBuffer`.
 N=5 medians, `oha -c 120 -z 10s` with a 3s discarded JIT warm-up burst per probe
 (a plain sleep warms nothing — V8 JIT-compiles the render path only after real
 traffic), darwin/arm64 (M1 Pro, 10c), Bun 1.4, React 19. Last run's full latency
-table in [`bench/RESULTS.md`](./bench/RESULTS.md). Same-hardware JS baselines on
+table in [`bench/RESULTS.md`](./bench/RESULTS.md). Same-hardware JS baseline on
 the identical HelloWorld render: `Bun.serve + renderToString` does **17.6k** RPS
-on `/`, **Elysia 17.8k** — the two are indistinguishable because `renderToString`
-dominates and the HTTP framework barely shows. Brust's React `/` (31.8k) is
-**~1.8×** both, from the Rust HTTP layer + keep-alive, not a faster React. Every
+on `/` — `renderToString` dominates and the HTTP framework barely shows. Brust's
+React `/` (31.8k) is **~1.8×** that, from the Rust HTTP layer + keep-alive, not a
+faster React. Every
 row holds <1% run-to-run spread except `/ping` (~6%), which at >100k RPS is most
 sensitive to sharing cores with the load generator.
 
@@ -60,7 +60,7 @@ contention was never the bottleneck. To go faster than the ~60k worker floor
 you have to *not cross* (render fully Rust-side) or *amortize the crossing*
 (batch multiple requests per tsfn call). React SSR `/` sits at ~32k because it's
 render-bound (`renderToString` time), not crossing-bound — which is also why the
-JS-framework baselines (Bun.serve, Elysia) all land at the same ~17.6k. See
+Bun.serve baseline lands at ~17.6k. See
 [`architecture.md`](./architecture.md) for the full request lifecycle and SAB
 protocol.
 

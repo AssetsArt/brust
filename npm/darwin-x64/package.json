@@ -1,0 +1,34 @@
+{
+  "name": "brust-darwin-x64",
+  "version": "0.1.0",
+  "cpu": [
+    "x64"
+  ],
+  "main": "brust.darwin-x64.node",
+  "files": [
+    "brust.darwin-x64.node"
+  ],
+  "description": "Bun + Rust SSR framework — React on the server, Rust everywhere else (napi cdylib + per-worker SharedArrayBuffer).",
+  "keywords": [
+    "bun",
+    "rust",
+    "ssr",
+    "react",
+    "napi",
+    "islands",
+    "framework"
+  ],
+  "homepage": "https://github.com/AssetsArt/brust#readme",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AssetsArt/brust.git"
+  },
+  "bugs": "https://github.com/AssetsArt/brust/issues",
+  "publishConfig": {
+    "access": "public"
+  },
+  "os": [
+    "darwin"
+  ]
+}

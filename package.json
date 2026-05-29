@@ -1,12 +1,29 @@
 {
   "name": "brust",
   "version": "0.1.0",
-  "private": true,
+  "description": "Bun + Rust SSR framework — React on the server, Rust everywhere else (napi cdylib + per-worker SharedArrayBuffer).",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AssetsArt/brust.git"
+  },
+  "homepage": "https://github.com/AssetsArt/brust#readme",
+  "bugs": "https://github.com/AssetsArt/brust/issues",
+  "keywords": [
+    "bun",
+    "rust",
+    "ssr",
+    "react",
+    "napi",
+    "islands",
+    "framework"
+  ],
   "bin": {
     "brust": "./runtime/cli/index.ts"
   },
   "napi": {
     "binaryName": "brust",
+    "packageName": "brust",
     "targets": [
       "x86_64-apple-darwin",
       "aarch64-apple-darwin",
@@ -17,8 +34,13 @@
   "dependencies": {
     "@tailwindcss/node": "^4.3.0",
     "@tailwindcss/oxide": "^4.3.0",
-    "elysia": "^1.4.28",
     "smol-toml": "^1.3.1"
+  },
+  "optionalDependencies": {
+    "brust-darwin-x64": "0.1.0",
+    "brust-darwin-arm64": "0.1.0",
+    "brust-linux-x64-gnu": "0.1.0",
+    "brust-linux-arm64-gnu": "0.1.0"
   },
   "peerDependencies": {
     "react": "^19.2.6",
@@ -33,9 +55,20 @@
     "typescript": "^5.5.0"
   },
   "type": "module",
+  "types": "./runtime/index.d.ts",
   "exports": {
     ".": "./runtime/index.ts",
     "./routes": "./runtime/routes.ts"
+  },
+  "files": [
+    "runtime",
+    "!runtime/node_modules",
+    "!runtime/package.json",
+    "!runtime/*.node",
+    "!runtime/**/*.test.ts"
+  ],
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "cd runtime && bun run build",

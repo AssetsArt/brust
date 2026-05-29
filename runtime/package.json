@@ -5,8 +5,8 @@
   "main": "index.js",
   "types": "index.d.ts",
   "scripts": {
-    "build": "napi build --platform --release --js index.js --dts index.d.ts --manifest-path ../crates/brust/Cargo.toml --output-dir .",
-    "build:debug": "napi build --platform --js index.js --dts index.d.ts --manifest-path ../crates/brust/Cargo.toml --output-dir ."
+    "build": "napi build --platform --release --js index.js --dts index.d.ts --js-package-name brust --manifest-path ../crates/brust/Cargo.toml --output-dir .",
+    "build:debug": "napi build --platform --js index.js --dts index.d.ts --js-package-name brust --manifest-path ../crates/brust/Cargo.toml --output-dir ."
   },
   "peerDependencies": {
     "react": "^18.3.1",
