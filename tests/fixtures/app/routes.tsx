@@ -7,6 +7,7 @@ import BlogPost      from '../../../example/hello-world/pages/BlogPost'
 import SlowSuspense  from '../../../example/hello-world/pages/SlowSuspense'
 import NativeProfile from '../../../example/hello-world/pages/NativeProfile'
 import NativeIslandPage from './NativeIslandPage'
+import NativeSsrIslandPage from './NativeSsrIslandPage'
 
 // Test-only components — these mount routes that exercise failure modes,
 // middleware, cache, nested routes, and the various server-action paths.
@@ -72,6 +73,17 @@ export const routes = defineRoutes([
     Component: NativeIslandPage,
     native: true,
     loader: async () => ({ greeting: 'Hello islands', count: { start: 3 } }),
+  },
+  // Sub-project J / native SSR islands — native: true route hosting an SSR
+  // <Island ... ssr>. The compiled .jinja emits a mount with NO data-brust-csr
+  // and an `{{ island_Counter_html | safe }}` placeholder INSIDE the mount div;
+  // T9's native branch imports Counter's source .tsx and renderToStrings it
+  // server-side, filling the placeholder with the initial markup.
+  {
+    path: '/_test/native-island-ssr',
+    Component: NativeSsrIslandPage,
+    native: true,
+    loader: async () => ({ greeting: 'SSR islands', count: { start: 5 } }),
   },
 
   // Test-only routes — failure modes + middleware + cache.
