@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 /// `RenderSlot.chunk_tx` channel — the Promise just signals "renderer
 /// callback returned" so handle_conn can fall through to terminator/cleanup.
 /// CalleeHandled = false matches what Function::build_threadsafe_function().build() produces.
-pub type RendererTsfn = ThreadsafeFunction<String, Promise<()>, String, napi::Status, false>;
+pub type RendererTsfn = ThreadsafeFunction<napi::bindgen_prelude::Either<u32, String>, napi::bindgen_prelude::Promise<()>, napi::bindgen_prelude::Either<u32, String>, napi::Status, false>;
 
 /// Raw pointer to the worker's SharedArrayBuffer backing store. Send+Sync because the
 /// backing store is process-global memory (V8 allocates SAB backing outside the GC heap)
@@ -210,7 +210,7 @@ pub async fn dispatch_sse(entry: Arc<TsfnEntry>, envelope_json: String) -> Resul
         .tsfn
         .as_ref()
         .expect("tsfn is None — only legal in cfg(test) register_for_test; production register always supplies Some")
-        .call_async(envelope_json)
+        .call_async(napi::bindgen_prelude::Either::B(envelope_json))
         .await
         .map(|_| ())
         .map_err(|e| napi::Error::from_reason(format!("sse dispatch failed: {e}")))
@@ -232,7 +232,7 @@ pub async fn dispatch_ws(entry: Arc<TsfnEntry>, envelope_json: String) -> Result
         .tsfn
         .as_ref()
         .expect("tsfn is None — only legal in cfg(test) register_for_test; production register always supplies Some")
-        .call_async(envelope_json)
+        .call_async(napi::bindgen_prelude::Either::B(envelope_json))
         .await
         .map(|_| ())
         .map_err(|e| napi::Error::from_reason(format!("ws dispatch failed: {e}")))
@@ -248,7 +248,7 @@ impl WorkerPool {
         let entry = Arc::new(TsfnEntry {
             id,
             tsfn: None,
-            buf_ptr: BufPtr(std::ptr::null_mut()),
+            buf_ptr: BufPtr(Box::into_raw(vec![0u8; 256*1024].into_boxed_slice()) as *mut u8),
             buf_len: 0,
             in_flight: AtomicU32::new(0),
             render_slot: parking_lot::Mutex::new(None),

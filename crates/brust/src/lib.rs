@@ -139,7 +139,7 @@ pub async fn until_shutdown() -> NapiResult<()> {
 }
 
 #[napi]
-pub fn register_renderer(mut buf: Uint8Array, f: Function<String, Promise<()>>) -> NapiResult<u32> {
+pub fn register_renderer(mut buf: Uint8Array, f: Function<napi::bindgen_prelude::Either<u32, String>, Promise<()>>) -> NapiResult<u32> {
     // NOTE: is_worker() reads std::env::var which is not patched by Bun's Worker
     // env option (Bun Workers share the OS process).  The TS layer is responsible
     // for only calling registerRenderer from a worker context; we skip the guard.

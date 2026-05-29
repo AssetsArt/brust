@@ -957,7 +957,7 @@ where
             .tsfn
             .as_ref()
             .expect("tsfn is None — only legal in cfg(test) register_for_test; production register always supplies Some")
-            .call_async(envelope_json)
+            .call_async(napi::bindgen_prelude::Either::B(envelope_json))
             .await
         {
             Err(e) => RenderOutcome::EnqueueFailed(e),
