@@ -5,9 +5,9 @@ name: release
 # brust-linux-arm64-gnu) on a `v*` tag. No Windows target (matches package.json
 # napi.targets). WIRE-ONLY until you tag: nothing publishes on push to main.
 #
-# PREREQUISITE (manual, one-time): add an `NPM_TOKEN` repository secret
-# (Settings → Secrets → Actions) — an npm automation token with publish rights
-# to the `brust` name. Without it the publish job fails at the .npmrc step.
+# PREREQUISITE (manual, one-time): an `NPM_KEY` repository secret — an npm
+# automation token with publish rights to the `brust` name. ALREADY ADDED to
+# this repo's Actions secrets. Without it the publish job fails at the .npmrc step.
 #
 # To cut a release:  npm version <x.y.z> (bumps package.json) → git tag vX.Y.Z →
 # git push --tags. The build matrix produces one brust.<triple>.node per target;
@@ -61,7 +61,10 @@ jobs:
         with:
           bun-version: latest
 
-      - run: bun install --frozen-lockfile
+      # Plain install (not --frozen-lockfile): the brust-<platform> optional
+      # deps don't exist on npm until the first publish, and a cold runner under
+      # --frozen-lockfile may treat the 404 as fatal. Revisit once published.
+      - run: bun install
       - name: Install runtime build deps (@napi-rs/cli)
         run: cd runtime && bun install
 
@@ -104,7 +107,10 @@ jobs:
         with:
           bun-version: latest
 
-      - run: bun install --frozen-lockfile
+      # Plain install (not --frozen-lockfile): the brust-<platform> optional
+      # deps don't exist on npm until the first publish, and a cold runner under
+      # --frozen-lockfile may treat the 404 as fatal. Revisit once published.
+      - run: bun install
       - name: Install runtime build deps (@napi-rs/cli)
         run: cd runtime && bun install
 
@@ -122,21 +128,19 @@ jobs:
           path: runtime
           merge-multiple: true
 
-      # Distribute each brust.<triple>.node into npm/<platform>/ and stamp the
-      # per-platform package.json versions to match the tag.
+      # Distribute each brust.<triple>.node into the committed npm/<platform>/
+      # dirs. (create-npm-dirs already ran at packaging time and the dirs are
+      # committed, so we only need to drop the .node files in here.)
       - name: Assemble per-platform packages
         run: |
           ./runtime/node_modules/.bin/napi artifacts \
             --package-json-path package.json \
             --output-dir runtime \
             --npm-dir npm
-          ./runtime/node_modules/.bin/napi create-npm-dirs \
-            --package-json-path package.json \
-            --npm-dir npm
 
       - name: Publish
         run: |
-          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
+          echo "//registry.npmjs.org/:_authToken=${NPM_KEY}" > ~/.npmrc
           # Publish the per-platform packages (optionalDependencies) first...
           ./runtime/node_modules/.bin/napi prepublish -t npm \
             --package-json-path package.json \
@@ -144,5 +148,5 @@ jobs:
           # ...then the main `brust` package.
           npm publish --access public
         env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_KEY: ${{ secrets.NPM_KEY }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_KEY }}

@@ -56,7 +56,10 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
-      - run: bun install --frozen-lockfile
+      # Plain install (not --frozen-lockfile): the brust-<platform> optional
+      # deps are unpublished until the first release, so a cold runner under
+      # --frozen-lockfile may treat their 404 as fatal. Revisit once published.
+      - run: bun install
       - run: bun run ci # biome ci .
 
   bun-test:
@@ -77,7 +80,10 @@ jobs:
       # Root deps (react/react-dom are peerDependencies — Bun installs them) +
       # runtime deps (@napi-rs/cli lives in runtime/, not the root; root is not
       # a Bun workspace).
-      - run: bun install --frozen-lockfile
+      # Plain install (not --frozen-lockfile): the brust-<platform> optional
+      # deps are unpublished until the first release, so a cold runner under
+      # --frozen-lockfile may treat their 404 as fatal. Revisit once published.
+      - run: bun install
       - name: Install runtime build deps (@napi-rs/cli)
         run: cd runtime && bun install
 
