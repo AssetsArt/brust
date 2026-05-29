@@ -10,8 +10,9 @@ Designed agent-first: routes are designed to ship machine-readable schemas
 (server fns as tools, loaders as resources) so AI agents can drive the app
 without scraping the DOM. The framework already has the structural knowledge —
 loader types, server-fn signatures, island markers — that a schema extractor
-needs. The extractor and the schema endpoints themselves are still on the
-roadmap (see [Agentic surface](#agentic-surface-mcp-style-page-schemas)).
+needs. **This shipped:** a boot-time extractor (`runtime/mcp/extractor.ts`) and
+a Model Context Protocol server at `POST /_brust/mcp` expose server fns as tools
+and route loaders as resources (see [Agentic surface](#agentic-surface-mcp)).
 
 ---
 
@@ -57,7 +58,7 @@ Bun process (one OS process)
       ├─ for i in 0..N: new Worker(entry, env=BRUST_WORKER_ID=i)
       └─ await napi.untilReady(timeout)   # all workers registered, or exit(1)
 
-  Worker threads × N  (= floor(os.availableParallelism() * 1.8))
+  Worker threads × N  (= os.availableParallelism(), override via BRUST_WORKERS / [workers].count)
     Each:
       const sab = new SharedArrayBuffer(256 KB)    # rooted in module scope
       brust.registerRenderer(new Uint8Array(sab), async (path) => {
@@ -309,10 +310,14 @@ Users with Suspense-heavy or await-heavy renders can override via
 
 ---
 
-## Designed but not built
+## Application & feature layer
 
-The HTTP and dispatch layers above are real. The user-facing parts below are
-roadmap.
+The HTTP and dispatch layers above are the foundation. The feature sections
+below were originally roadmap; **most have since shipped** — each subsection
+carries its own status (✅ shipped / partial / designed-not-built), and the
+authoritative per-feature ledger is the [Status](#status) section near the end.
+Where a subsection still shows an aspirational "vision" snippet, the shipped
+reality is called out inline.
 
 ### Routing, state, errors
 
@@ -366,9 +371,10 @@ chain's outer try/catch.
 - `middleware: [...]` ✅ shipped (per-route chain, short-circuit, header mutation).
 - `loader` receiving full `req` ✅ shipped.
 - `children: [...]` ✅ shipped (nested routes with `<Outlet />`, index routes, layout-only parents).
+- Client-side navigation (`/_brust/page/*`) ✅ shipped (see [Navigation](#navigation)).
+- `native: true` routes (jinja-compiled, Rust-rendered) ✅ shipped (see [Sub-project J](#sub-project-j--native-dynamic-routes-via-minijinja-2026-05-29)).
 - Global `app/_404.tsx` / `app/_500.tsx` overrides — Middleware follow-up.
 - Global `app/middleware.ts` — Middleware follow-up.
-- Client-side navigation (`/_brust/page/*`) — Navigation plan.
 
 ### Cache
 
@@ -412,6 +418,13 @@ Implementation: `src/cache.rs` wraps `lru::LruCache` behind
 
 ### Islands (on-demand hydration)
 
+> **Original vision below; shipped reality differs.** The `"use island"`
+> directive + auto-wrapping transformer described in this subsection was the
+> initial design. What actually shipped is the explicit `<Island component={…}>`
+> wrapper with **component-addressed** chunking and `data-brust-*` markers —
+> see **[Status (shipped)](#status-mvp-shipped)** immediately below for the
+> accurate mechanism. The vision is kept for context on where the API may head.
+
 Astro-style: islands are declared at point of use, in JSX. The component file
 opts in to "I can be an island" with a `"use island"` directive; the parent
 chooses **whether** and **when** to hydrate by passing a `hydrate` prop.
@@ -451,14 +464,15 @@ Behaviour:
   static on the client. Even islands work this way by default; you pay for
   hydration only where you ask for it.
 - **With `hydrate` prop** → server renders as static HTML *and* injects a
-  marker (`<div data-component="Counter" data-props='{"start":0}' data-hydrate="interaction">...</div>`). The bootstrap script attaches the trigger; on fire, the
-  component chunk (+ React runtime, first time) is imported and `hydrateRoot`
-  resumes from `data-props`.
+  marker. *(Shipped form: `<div data-brust-island="Counter" data-brust-props='{"start":0}' data-brust-hydrate="interaction">…</div>` — see the Status block for the real attribute names.)* The bootstrap script attaches the trigger; on
+  fire, the component chunk (+ React runtime, first time) is imported and
+  `hydrateRoot` resumes from the props attribute.
 
-Build-time: a TypeScript transformer scans component files for the
-`"use island"` directive and registers a chunk per island. Pages that import
-an island get the marker-wrapping at the call site automatically; non-island
-components are inlined as static HTML with no wrapper.
+Build-time *(vision)*: a TypeScript transformer scans component files for the
+`"use island"` directive and auto-wraps island call sites. *(Shipped instead:
+`scanIslandChunks` walks page sources for explicit `<Island component={X}>`
+JSX and builds one chunk per referenced component — no directive, no
+auto-wrapping. See the Status block.)*
 
 Hydration triggers (`hydrate` prop values):
 
@@ -473,7 +487,7 @@ The `hydrate` prop name is reserved by Brust on island components. If you need
 a user-facing prop called `hydrate`, rename it or wrap the island in another
 component.
 
-**Status (MVP shipped):**
+#### Status (MVP shipped)
 
 - `<Island component props hydrate? ssr?>` runtime component (from `runtime/islands/island.tsx`) embeds the SSR HTML inside a `data-brust-island` marker (value = the component name) and flips a module-scope flag. Islands are **component-addressed**: no `id` attribute, no config — the chunk is keyed by the `component={X}` identifier, and multiple `<Island>` may reuse one component (each occurrence gets a distinct source-order *instance* for its `island_<instance>_props/_html` context slot).
 - `makeRenderer` auto-injects an importmap + `<script type="module" src="/_brust/islands/_bootstrap.js" defer>` when any island rendered. Pages without islands ship zero JS.
@@ -827,12 +841,16 @@ Implementation plan: `docs/superpowers/plans/2026-05-26-navigation-interceptor.m
 
 ### Single-binary deploy
 
-```
-bun build --compile example/hello-world/index.ts → ./brust
-```
+**Shipped: a self-contained `dist/` directory.** `brust build` emits
+`dist/{index.js, islands/*, mcp-manifest.json, native/index.<triple>.node,
+.brust/jinja/*}` and `bun run dist/index.js` boots with no further build work
+(see the Built list). The single-**binary** `bun build --compile` form remains
+an open question — does it bundle native `.node` modules correctly? It needs to
+embed the cdylib alongside the user bundle. Untested, deferred.
 
-Open question: does `bun build --compile` bundle native `.node` modules
-correctly? The build needs to embed the cdylib alongside the user bundle.
+```
+bun build --compile dist/index.js → ./brust   # aspirational; .node bundling unverified
+```
 
 ### Configuration
 
@@ -868,15 +886,17 @@ Roadmap sections: `[build]` (build pipeline plan when the CLI lands).
 
 A small CLI ships with the framework:
 
-| Command | Does |
-|---|---|
-| `brust new <name>` | Scaffold a starter project (entry, `routes.tsx`, sample page, `brust.toml`) |
-| `brust dev`        | Run the dev server with hot reload (rebuild Rust if changed, restart Bun workers on JS/TSX edit) |
-| `brust build`      | Production build: TS transformer (`"use island"` / `"use server"`), client bundle, `bun build --compile` |
-| `brust invalidate <path>` | Talk to a running server's control socket to evict a cache entry |
+| Command | Does | Status |
+|---|---|---|
+| `brust new <name>` | Scaffold a starter project from `templates/minimal/` (entry, `routes.tsx`, sample island page, `brust.toml`, `package.json`, `tsconfig.json`) | ✅ (scaffold; end-to-end run blocked on a workspace restructure — see Built-list limitation) |
+| `brust dev`        | Dev server with hot reload (CSS hot-swap, native-template + island chunk emit, dev WS overlay) | ✅ partial (CSS workflows usable; TS/HTML reload needs a Rust `napi_clear_pool` — deferred) |
+| `brust build`      | Production build → self-contained `dist/` (`Bun.build` server bundle + island chunks + `mcp-manifest.json` + native `.node` + jinja templates). Not `bun build --compile`. | ✅ |
 
-The CLI is itself a Bun script; no separate Rust binary needed beyond the
-cdylib.
+The three subcommands actually registered are `new` / `dev` / `build`
+(`runtime/cli/index.ts`). Cache invalidation is a **native HTTP endpoint**
+(`POST /_brust/cache/invalidate`), not a CLI command — a `brust invalidate`
+wrapper is still roadmap. The CLI is itself a Bun script; no separate Rust
+binary beyond the cdylib.
 
 ### Native clients
 
@@ -905,29 +925,39 @@ Not implemented:
 
 ## Crate structure
 
-One crate, `cdylib`:
+A Cargo **workspace** (`Cargo.toml` at root, `resolver = "2"`) with two member
+crates. All Rust source lives under `crates/`; references elsewhere in this doc
+to `src/<file>.rs` mean `crates/brust/src/<file>.rs`.
 
 ```
-brust/
-├── Cargo.toml                     edition 2024, napi 3.x, flume 0.11,
-│                                   parking_lot, httparse, thiserror,
-│                                   tracing, once_cell,
+Cargo.toml                          [workspace] members = crates/brust, crates/jsx-rust-compiler
+                                    shared [profile.release]: lto, strip, codegen-units=1
+
+crates/brust/                       the napi cdylib (brust.node)
+├── Cargo.toml                      edition 2024, napi 3.x, flume 0.11,
+│                                   parking_lot, httparse, thiserror, tracing,
+│                                   once_cell, minijinja, tokio-tungstenite, sha1,
 │                                   tokio (mac) / tokio-uring (linux)
-├── src/lib.rs                     napi exports: beginServe, untilReady,
-│                                   untilShutdown, registerRenderer,
-│                                   isWorker, workerId
-├── src/pool.rs                    WorkerPool, TsfnEntry, BufPtr (Send+Sync)
-├── src/server.rs                  accept loop, handle_conn, read_full_request,
-│                                   keep-alive request loop. 500/502 statuses
-│                                   are emitted inline via build_response;
-│                                   only 400/404/405/503 have helpers in http.rs.
-├── src/http.rs                    parse_request (httparse), build_response,
-│                                   error_400/404/405/414/503. error_414 builds
-│                                   its response inline with Connection: close
-│                                   because the client's read cursor is mid-
-│                                   headers when oversize is detected.
-└── src/io/{linux,other,mod}.rs    tokio-uring vs tokio TcpListener/TcpStream
-                                    wrappers (current_thread runtimes on both)
+├── src/lib.rs                      napi exports: beginServe, untilReady,
+│                                   registerRenderer, registerRoutes/Actions,
+│                                   register{Sse,Ws}Paths, render-chunk + jinja +
+│                                   sse/ws napi entries, isWorker, workerId
+├── src/pool.rs                     WorkerPool, TsfnEntry, BufPtr (Send+Sync),
+│                                   try_claim_render / RenderClaim (atomic-claim)
+├── src/server.rs                   accept loop, handle_conn, keep-alive loop,
+│                                   dispatch_to_worker_and_stream_chunks, native
+│                                   /_brust/* routes (islands, css, cache, mcp).
+│                                   500/502 emitted inline; 400/404/405/503 → http.rs
+├── src/http.rs                     parse_request (httparse), build_response,
+│                                   error_400/404/405/414/503
+├── src/{routes,cache,jinja}.rs     matchit router, LRU cache, minijinja ENV
+└── src/io/{linux,other,mod}.rs     tokio-uring vs tokio listener/stream wrappers
+
+crates/jsx-rust-compiler/           jsx-rustc: JSX → minijinja compiler (native routes)
+├── src/{parser,ir,lower,emit_jinja,lib}.rs   swc parse → IR → lower → emit
+├── src/bin/jsx-rustc.rs            CLI: <source.tsx> -o <out.jinja>
+├── fixtures/*.{tsx,expected.html}  byte-equal goldens
+└── tests/golden_{emit,render}_jinja/         emit + minijinja-render goldens
 ```
 
 Future splits when the API stabilises (e.g. `brust-cli` if/when one exists).
@@ -966,11 +996,11 @@ Bun.serve baseline source: `bench/apps/bun-serve/index.ts`.
 | HTTP layer | Node.js | Node.js | Bun | **Rust cdylib loaded into Bun** |
 | Render workers | single process | single process | single process | **N Bun Worker threads in one process** |
 | Render IPC | — | — | — | **napi tsfn + per-worker `SharedArrayBuffer`** |
-| Cache | JS (GC) | JS (GC) | none built-in | **Rust LRU (roadmap)** |
+| Cache | JS (GC) | JS (GC) | none built-in | **Rust LRU** ✅ |
 | HTML processing | JS | JS | JS | **Rust** |
-| Hydration | full page | islands | full page | **on-demand islands (roadmap)** |
-| Client JS (baseline) | 80–200 KB | 0–10 KB | 80–200 KB | **~1 KB + 45 KB on first hydrate** (roadmap) |
-| Deploy | directory | directory | single binary | **bun build --compile (roadmap)** |
+| Hydration | full page | islands | full page | **on-demand component-addressed islands** ✅ |
+| Client JS (baseline) | 80–200 KB | 0–10 KB | 80–200 KB | **~1 KB + 45 KB on first hydrate** ✅ |
+| Deploy | directory | directory | single binary | **`brust build` → self-contained `dist/`** ✅ (`--compile` single-binary deferred) |
 
 ---
 
@@ -984,7 +1014,7 @@ Bun.serve baseline source: `bench/apps/bun-serve/index.ts`.
 - Per-worker `SharedArrayBuffer` (256 KB) zero-copy render result
 - TS facade: `brust.serve`, `brust.registerRenderer`, `isWorker`, `workerId`
 - `/ping` static native route for benchmarks
-- Auto-tuned worker count: `floor(os.availableParallelism() * 1.8)`
+- Auto-tuned worker count: `os.availableParallelism()` (one worker per core — the earlier `* 1.8` multiplier was reverted after it amplified p99 under load; see post-mortem 2026-05-28)
 - Integration test + 100-burst manual smoke check
 - Bun.serve baseline comparator (`bench/apps/bun-serve/`)
 - Benchmark harness (`scripts/benchmark.ts`, `bun run bench`)
@@ -998,7 +1028,7 @@ Bun.serve baseline source: `bench/apps/bun-serve/index.ts`.
 - Per-route loaders (`loader: ({ params, path, req }) => Promise<data>`, result lands as component `data` prop)
 - Structured `req` in envelope (`{ method, url, headers, cookies, search }` parsed once in Rust via httparse)
 - Per-route middleware chain (`middleware: [(req, next) => RouteResponse, ...]` — short-circuit + post-`next()` header mutation; CRLF-injection-guarded)
-- Islands hydration MVP: `<Island id component props hydrate?>` + `buildIslands(configPath)` + `/_brust/islands/<file>` static route + handwritten bootstrap with 4 triggers (load/idle/visible/interaction) + shared React runtime via importmap
+- Islands hydration MVP: `<Island component props hydrate? ssr?>` (no `id`, no config) + `scanIslandChunks(routes.tsx)` → `buildIslands(map)` + `/_brust/islands/<file>` static route + handwritten bootstrap with 4 triggers (load/idle/visible/interaction) + shared React runtime via importmap. **Component-addressed** (2026-05-29): chunk key = component ident; same component reused N times → one chunk + distinct source-order `instance` per occurrence (`island_<instance>_props/_html`); SSR islands (`ssr` attr) ship server-rendered markup, client-only get an empty `data-brust-csr` mount. Replaced the per-id `island.config.ts` registry. Spec: `docs/superpowers/specs/2026-05-29-component-addressed-islands-design.md`
 - Server functions MVP: async functions invokable from islands via `POST /_brust/action/<id>` (JSON args/return). Reuses the renderer tsfn via a `kind: 'render' | 'action'` envelope discriminant. Action-specific middleware (action def's own chain). Client helper `action<F>(id)` from `runtime/client` preserves types via TS generics + `import type` erase. New Rust napi `register_actions(ids: Vec<String>)`; new server.rs branch with charset/length/utf-8 guards and dedicated 404/405/411/413 error paths. Meta envelope grows optional `contentType` (camelCase) so action returns ship as `application/json`. ResponseMeta becomes the Content-Type override channel for any future need.
 - `"use server"` directive + boot-time scanner — file-level directive. `brust.scanActions({ roots? })` walks the project, finds files whose first statement is `'use server'`, imports them, and registers all named function exports as actions. Middleware attaches per-action via `withMiddleware([mws], fn)`. Replaces the manual `defineActions` / `brust.registerActions` API.
 - Forms & Multipart — `POST /_brust/action/<id>` accepts `multipart/form-data` and `application/x-www-form-urlencoded` bodies in addition to JSON. Handlers declare `(req: BrustRequest, fd: FormData) => R` for form actions. Client helper `formAction<F>(id)` mirrors `action<F>(id)`. Wire-level: `ActionEnvelope.args_json` replaced by `content_type` + `body_text` / `body_b64`; multipart bodies are base64-encoded for transport through the JSON envelope. 256 KB body cap unchanged.
@@ -1008,9 +1038,9 @@ Bun.serve baseline source: `bench/apps/bun-serve/index.ts`.
 - Real-time: WebSockets (RFC 6455) — `Route.websocket: () => Promise<WsHandlers>` serves WS upgrades. Rust validates the handshake headers, dispatches a single long-lived tsfn call to a worker, runs middleware via the existing chain (returns 4xx OR 101 + chosen subprotocol via `napiWsSignalOpen`), then on 101 writes the manual handshake response (Sec-WebSocket-Accept + optional Sec-WebSocket-Protocol) and wraps the TCP stream with `tokio_tungstenite::WebSocketStream::from_raw_socket(Role::Server)`. Per-conn task runs a `tokio::select!` over outgoing sends (JS-pushed via mpsc, ack via oneshot for backpressure), incoming frames (Text → string, Binary → Uint8Array), and a ping ticker (default 30 s; 2× window pong timeout closes with 1011). Author surface: `WsHandlers { open, message, close }` + `WsSocket { send, close, id }`. `on_close` fires exactly once for peer/timeout/error/oversize closes; author-initiated `socket.close` skips it. Subprotocol negotiation picks the first route-declared protocol that appears in the client's list. `handleWsConn` accepts handlers in either shape — direct `WsHandlers` OR a module wrapper exposing them via `default` — so the common `() => import('./x.ts')` pattern works without a `.then(m => m.default)` chain. Boot wiring: `brust.registerWsPaths(routes.filter(.websocket).map(.fullPath))`. Two new Rust deps: `tokio-tungstenite` 0.21 (default-features=false) for frame parsing + `sha1` for Sec-WebSocket-Accept. MVP supports literal WS paths only; parameterized routes (`/ws/chat/{room}`), pub/sub broadcast, `permessage-deflate`, client-mode WS, and TLS termination are deferred.
 - HTML Streaming (`renderToPipeableStream` + auto-detect Suspense) — Worker registers a single streaming renderer (`Promise<()>`). Chunks flow through a side channel: `napiRenderChunk(workerId, len: u32)` where `len=0` is the final signal. Per-worker `render_slot: Mutex<Option<RenderSlot>>` carries the chunk channel; lifecycle is RAII-clamped by `RenderSlotGuard` so tokio cancellation can't leak the slot. JS-side: `runtime/render/stream.ts` runs a buffering `Writable` sink — `onShellReady` checks an `allReadyFired` flag set by `onAllReady` (set synchronously when no Suspense is pending; React 18 internal `pendingSuspenseBoundaries` isn't exposed on the stream return value). No-Suspense path waits for `onAllReady`, checks `consumeIslandUsedFlag()`, emits one chunk with conditional bootstrap (preserves prior behavior). Suspense path commits chunked headers at `onShellReady` and always includes the islands bootstrap (~500 bytes overhead — late islands inside pending Suspense haven't rendered yet). `dispatch_to_worker_and_stream_chunks` is the unified dispatch for both render and action branches; sse/ws bypass the chunk channel entirely. Cache layer only stores single-chunk responses (chunked framing is ambiguous post-decode). Worker-death detection preserved: `RenderOutcome::EnqueueFailed` triggers `pool.remove` + `exit(1)` on empty pool; `PromiseRejected` keeps the worker alive.
 - Navigation interceptor (`/_brust/page/*` JSON page fetches) — Global `<a>` click interceptor (zero markup change) on the bootstrap chunk converts internal same-origin navigations into `GET /_brust/page/{path}` fetches that return a JSON `{ html, title }` envelope. Rust's `handle_conn` strips the `/_brust/page/` prefix, resolves the route through the existing `routes.match_path`, and rewrites the envelope's `kind` field to `"navigation"` via `rewrite_envelope_kind` — same dispatch helper as render, same per-worker render slot. JS-side `navigationBranch` renders synchronously via `renderToString` and regex-extracts `<main>` inner content + `<title>` text (React 18 `<!-- -->` markers stripped). Client swap uses `DOMParser('text/html') + importNode` to inertly parse the trusted server response and replace `<main>`'s children, then re-runs `hydrateMarkersIn(main)` (refactored from the existing init loop with a `data-brust-hydrated` idempotence guard). `pushState` on click, `popstate` on back/forward. Every failure mode (network error, non-2xx, missing `<main>`, malformed JSON) silently falls back to `location.href = url` — user always navigates. Rapid clicks abort in-flight fetches via `AbortController` so only the last click wins. No author API change — demo Layout's `<main>` + nav links become SPA automatically. Deferred: prefetch on hover, View Transitions API, scroll restoration, `<Link>` component, POST navigation.
-- `brust build` CLI emits a self-contained `./dist/` directory (`index.js` bundled with `Bun.build`, `islands/*` from pre-built chunks, `mcp-manifest.json`, `native/index.<triple>.node`). Run-phase: `bun run ./dist/index.js` boots without further build work. Two Bun.build plugins (native-shim, actions-prebuilt) replace the napi-rs platform shim and the filesystem-walking action scanner with prebuilt-aware variants during bundling. Banner injects `BRUST_PREBUILT=1` + `BRUST_DIST_DIR=import.meta.dir` so the runtime's `brust.run()` skips the build steps it would normally run on each boot. Identifier minification is disabled to keep `Component.name` stable for the Island id fallback; whitespace + syntax minification still apply. Single platform per build; multi-platform output is a CI matrix concern not in scope. Dev flow (`bun run example/hello-world/index.ts`) unchanged.
+- `brust build` CLI emits a self-contained `./dist/` directory (`index.js` bundled with `Bun.build`, `islands/*` from pre-built chunks, `mcp-manifest.json`, `native/index.<triple>.node`). Run-phase: `bun run ./dist/index.js` boots without further build work. Two Bun.build plugins (native-shim, actions-prebuilt) replace the napi-rs platform shim and the filesystem-walking action scanner with prebuilt-aware variants during bundling. Banner injects `BRUST_PREBUILT=1` + `BRUST_DIST_DIR=import.meta.dir` so the runtime's `brust.run()` skips the build steps it would normally run on each boot. Identifier minification is disabled to keep `Component.name` stable — it is the React-path island's `data-brust-island` marker (and thus the chunk URL); whitespace + syntax minification still apply. Single platform per build; multi-platform output is a CI matrix concern not in scope. Dev flow (`bun run example/hello-world/index.ts`) unchanged.
 - **Tailwind v4** — `<scanRoot>/app.css` convention; compiled programmatically via `@tailwindcss/node` (CSS-first config, user owns `@source` globs); output served at `/_brust/css/<file>` with `Cache-Control: public, max-age=3600`; SSR renderer auto-injects `<link rel="stylesheet">` before `</head>` on the first chunk. Build-only (no watch/HMR); dev mode compiles at boot.
-- **`brust dev` tooling (partial)** — CLI subcommand for end-user hot-reload DX. File watcher on TS/TSX/HTML/CSS/`island.config.ts` (no Rust). Synthetic `/_brust/dev` WS route prepended in dev mode; main-side `broadcast()` relays via `worker.postMessage` to workers, each worker forwards to its locally-connected dev clients. Dev client (`~80` LOC) inlined as `<script>` before `</head>` — connects WS, handles `reload`/`css-update`/`error`/`ok` messages, manages a red full-screen overlay on build errors. Hand-rolled ANSI TUI with plain-log fallback. Single-flight coordinator (change-during-build dropped). **Currently ships:** CSS edit → `<link>` hot-swap via `?v=<ms>` (no page reload); CSS / `app.css` syntax error → red overlay + auto-clear on next successful build; `SIGINT` clean exit. **Known limitation:** TS/HTML edits broadcast `reload` correctly but the Rust `WorkerPool` retains stale renderer entries after `Worker.terminate`, so the post-respawn server can hang on dispatch. Fix requires a small Rust napi (`napi_clear_pool`) — deferred. CSS-only workflows are usable today.
+- **`brust dev` tooling (partial)** — CLI subcommand for end-user hot-reload DX. File watcher on TS/TSX/HTML/CSS (no Rust). Synthetic `/_brust/dev` WS route prepended in dev mode; main-side `broadcast()` relays via `worker.postMessage` to workers, each worker forwards to its locally-connected dev clients. Dev client (`~80` LOC) inlined as `<script>` before `</head>` — connects WS, handles `reload`/`css-update`/`error`/`ok` messages, manages a red full-screen overlay on build errors. Hand-rolled ANSI TUI with plain-log fallback. Single-flight coordinator (change-during-build dropped). **Currently ships:** CSS edit → `<link>` hot-swap via `?v=<ms>` (no page reload); CSS / `app.css` syntax error → red overlay + auto-clear on next successful build; `SIGINT` clean exit. **Known limitation:** TS/HTML edits broadcast `reload` correctly but the Rust `WorkerPool` retains stale renderer entries after `Worker.terminate`, so the post-respawn server can hang on dispatch. Fix requires a small Rust napi (`napi_clear_pool`) — deferred. CSS-only workflows are usable today.
 - **Component CSS imports + CSS Modules (partial)** — `import './foo.css'` (side-effect) and `import styles from './foo.module.css'` (hashed class-name map) for end-users. Build-time pipeline: scan TS/TSX with TypeScript compiler API → process each `.css`/`.module.css` through `lightningcss` (modules pattern `[local]_[hash]`) → emit `<distDir>/css/components/<sha8>.css` + co-located `.module.css.d.ts` → manifest at `<distDir>/css/component-manifest.json` maps source path → chunk + exports, plus `route.fullPath` → ordered chunk hrefs. A `Bun.plugin` registered in main + workers (before `buildIslands`) reads the manifest and resolves `.module.css` imports to `export default <name-map>` JS; SSR + client hydrate see identical hashes. Renderer combines `app.css` (global) + per-route chunks for the matched route and passes them to `injectCssLink`. Dev watcher distinguishes `component-css` from `app.css`; coordinator hot-swaps the link href on content-only edits and full-reloads on exports name-set change. Zero Rust changes. **Known limitation:** Bun's bundler emits `.module.css` as an additional output chunk with `[name]` derived by stripping at the first dot, which collides with same-basename entries (`Counter.tsx` + `Counter.module.css` → both want `Counter.js`). Verified via standalone spike — Bun bug, not a brust design issue. **Workaround:** route-level (non-island) components can import `.module.css` freely; islands stay on Tailwind/inline styles. Example demo (Counter migration) deferred until the upstream Bun behavior is resolved.
 - **`brust new` scaffolding (partial)** — `brust new <name> [--dir <path>]` creates a fresh project at `./<name>/` from `runtime/cli/templates/minimal/`. Single template: TypeScript + Tailwind v4 + one hydrated island, plus `package.json`, `tsconfig.json`, `.gitignore`, `README.md`. `runtime/cli/new.ts` parses args, validates the project name (`/^[a-z0-9][a-z0-9_-]*$/`, max 50), checks the target dir is empty, resolves the brust dependency reference (`file:<abspath>` when the CLI runs from the brust source tree — detected via Cargo.toml + src/ + runtime/cli/index.ts markers — otherwise `^<version>`), copies the template with `__PROJECT_NAME__` and `__BRUST_DEP__` substitutions, renames `_gitignore` → `.gitignore`, strips `.tmpl` suffixes, prints next-steps. Root `package.json` gained an `exports` map (`'.'` → `./runtime/index.ts`, `'./routes'` → `./runtime/routes.ts`) so templates can `import from 'brust'`. 20 tests cover parseArgs, resolveBrustRef, copyTemplate, and the scaffold-output file tree. **Known limitation:** scaffolded projects can be created and `bun install`-ed but cannot run end-to-end (neither `bun run dev` nor `bun run build` + `bun run dist/index.js`) — dual-React copy. Bun's `file:` install symlinks individual source files back to the brust repo; React resolution from those symlinked files finds the brust repo's `node_modules/react` while user code (Counter.tsx etc) finds the scaffold's `node_modules/react` — two physical instances, `useState` hits `dispatcher null`. Fix is a separate sub-project: move brust to a Bun workspace where `example/hello-world` is a workspace member with its own React deps, removing React from the brust root's materialized `node_modules`.
 - **Sub-project J — Native dynamic routes via minijinja** — `native: true` flag on a route compiles its JSX into a minijinja template at build time and renders it in Rust at request time. `jsx-rustc` (the `jsx-rust-compiler` crate's CLI, parser + IR + lower carried over from A1 T0–T6, emit target swapped to minijinja) writes `.brust/jinja/<Component.name>.jinja` during `brust build` / `brust dev`. Boot-time `napi_load_jinja_templates(".brust/jinja")` populates `crate::jinja::ENV: OnceLock<Environment>` (chainable undefined mode). Per request: JS worker runs the loader, `JSON.stringify`s the result into the SAB at offset 0, calls `napiRenderJinja(workerId, dataLen, name)`; Rust renders, assembles `[meta_len u16 BE][meta JSON][body]`, ships via `RenderChunk::BytesAndFinal` — the existing `BytesAndFinal` arm at `server.rs:1053` handles framing + write identically to a JS-produced chunk. Composes with `loader` + `middleware`; rejects `sse` / `websocket` / `children` / `cache`. Boot-time mismatch between `routes.tsx` and `.brust/jinja/*.jinja` logs a warning (`napi_list_native_templates`); request to a missing template 500s. See the Sub-project J section below for full architecture.
