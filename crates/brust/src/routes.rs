@@ -82,23 +82,22 @@ pub struct McpEnvelope<'a> {
     pub req: RequestEnvelope<'a>,
 }
 
-pub fn build_mcp_envelope(
-    method: &str,
-    full_path: &str,
-    body_text: &str,
-    raw_request: &[u8],
-) -> String {
+pub fn build_mcp_envelope<'a>(
+    method: &'a str,
+    full_path: &'a str,
+    body_text: &'a str,
+    raw_request: &'a [u8],
+) -> McpEnvelope<'a> {
     let (_, query) = match full_path.split_once('?') {
         Some((p, q)) => (p, q),
         None => (full_path, ""),
     };
     let req = build_request_envelope(method, full_path, query, raw_request);
-    let env = McpEnvelope {
+    McpEnvelope {
         kind: "mcp",
         body_text,
         req,
-    };
-    serde_json::to_string(&env).unwrap()
+    }
 }
 
 /// SSE request envelope. `kind: "sse"` discriminates from render/action/mcp.
@@ -112,23 +111,22 @@ pub struct SseEnvelope<'a> {
     pub req: RequestEnvelope<'a>,
 }
 
-pub fn build_sse_envelope(
-    method: &str,
-    full_path: &str,
-    raw_request: &[u8],
+pub fn build_sse_envelope<'a>(
+    method: &'a str,
+    full_path: &'a str,
+    raw_request: &'a [u8],
     conn_id: u64,
-) -> String {
+) -> SseEnvelope<'a> {
     let (_, query) = match full_path.split_once('?') {
         Some((p, q)) => (p, q),
         None => (full_path, ""),
     };
     let req = build_request_envelope(method, full_path, query, raw_request);
-    let env = SseEnvelope {
+    SseEnvelope {
         kind: "sse",
         conn_id,
         req,
-    };
-    serde_json::to_string(&env).unwrap()
+    }
 }
 
 /// WS upgrade request envelope. `kind: "ws"` discriminates from
@@ -146,53 +144,51 @@ pub struct WsEnvelope<'a> {
     pub req: RequestEnvelope<'a>,
 }
 
-pub fn build_ws_envelope(
-    method: &str,
-    full_path: &str,
-    raw_request: &[u8],
+pub fn build_ws_envelope<'a>(
+    method: &'a str,
+    full_path: &'a str,
+    raw_request: &'a [u8],
     conn_id: u64,
     client_subprotocols: Vec<String>,
-) -> String {
+) -> WsEnvelope<'a> {
     let (_, query) = match full_path.split_once('?') {
         Some((p, q)) => (p, q),
         None => (full_path, ""),
     };
     let req = build_request_envelope(method, full_path, query, raw_request);
-    let env = WsEnvelope {
+    WsEnvelope {
         kind: "ws",
         conn_id,
         client_subprotocols,
         req,
-    };
-    serde_json::to_string(&env).unwrap()
+    }
 }
 
 /// Build an ActionEnvelope JSON string. Mirrors `match_path` for the render
 /// case. Caller has already validated the action_id charset and registry
 /// membership; this function only assembles the envelope.
-pub fn build_action_envelope(
-    method: &str,
-    full_path: &str,
-    action_id: &str,
-    content_type: &str,
-    body_text: Option<&str>,
-    body_b64: Option<&str>,
-    raw_request: &[u8],
-) -> String {
+pub fn build_action_envelope<'a>(
+    method: &'a str,
+    full_path: &'a str,
+    action_id: &'a str,
+    content_type: &'a str,
+    body_text: Option<&'a str>,
+    body_b64: Option<&'a str>,
+    raw_request: &'a [u8],
+) -> ActionEnvelope<'a> {
     let (_, query) = match full_path.split_once('?') {
         Some((p, q)) => (p, q),
         None => (full_path, ""),
     };
     let req = build_request_envelope(method, full_path, query, raw_request);
-    let env = ActionEnvelope {
+    ActionEnvelope {
         kind: "action",
         action_id,
         content_type,
         body_text,
         body_b64,
         req,
-    };
-    serde_json::to_string(&env).unwrap()
+    }
 }
 
 /// Outcome of a match against the radix tree.
@@ -564,7 +560,7 @@ mod tests {
 
     #[test]
     fn action_envelope_json_path() {
-        let json = build_action_envelope(
+        let env = build_action_envelope(
             "POST",
             "/_brust/action/createNote",
             "createNote",
@@ -573,6 +569,7 @@ mod tests {
             None,
             b"POST /_brust/action/createNote HTTP/1.1\r\nHost: x\r\n\r\n",
         );
+        let json = serde_json::to_string(&env).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["kind"], "action");
         assert_eq!(parsed["action_id"], "createNote");
@@ -585,7 +582,7 @@ mod tests {
 
     #[test]
     fn action_envelope_form_urlencoded_path() {
-        let json = build_action_envelope(
+        let env = build_action_envelope(
             "POST",
             "/_brust/action/registerUser",
             "registerUser",
@@ -594,6 +591,7 @@ mod tests {
             None,
             b"POST /_brust/action/registerUser HTTP/1.1\r\nHost: x\r\n\r\n",
         );
+        let json = serde_json::to_string(&env).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["kind"], "action");
         assert_eq!(parsed["content_type"], "application/x-www-form-urlencoded");
@@ -603,7 +601,7 @@ mod tests {
 
     #[test]
     fn action_envelope_multipart_path() {
-        let json = build_action_envelope(
+        let env = build_action_envelope(
             "POST",
             "/_brust/action/uploadAvatar",
             "uploadAvatar",
@@ -612,6 +610,7 @@ mod tests {
             Some("LS1hYmMNCkNvbnRlbnQt"),
             b"POST /_brust/action/uploadAvatar HTTP/1.1\r\nHost: x\r\n\r\n",
         );
+        let json = serde_json::to_string(&env).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["kind"], "action");
         assert_eq!(parsed["content_type"], "multipart/form-data; boundary=abc");
@@ -623,7 +622,7 @@ mod tests {
     fn action_envelope_quoting_preserved() {
         // Pinned: actionBranch in JS does JSON.parse(body_text). Any quote loss
         // between Rust → napi → JS surfaces as a parse error in production.
-        let json = build_action_envelope(
+        let env = build_action_envelope(
             "POST",
             "/_brust/action/x",
             "x",
@@ -632,6 +631,7 @@ mod tests {
             None,
             b"",
         );
+        let json = serde_json::to_string(&env).unwrap();
         let outer: serde_json::Value = serde_json::from_str(&json).unwrap();
         let inner: serde_json::Value =
             serde_json::from_str(outer["body_text"].as_str().unwrap()).unwrap();
@@ -641,12 +641,13 @@ mod tests {
 
     #[test]
     fn mcp_envelope_serialises_kind_mcp() {
-        let json = build_mcp_envelope(
+        let env = build_mcp_envelope(
             "POST",
             "/_brust/mcp",
             r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#,
             b"POST /_brust/mcp HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n\r\n",
         );
+        let json = serde_json::to_string(&env).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["kind"], "mcp");
         assert_eq!(
@@ -659,7 +660,8 @@ mod tests {
     #[test]
     fn mcp_envelope_preserves_inner_quotes() {
         let inner = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"x","arguments":{"text":"hi \"there\""}}}"#;
-        let json = build_mcp_envelope("POST", "/_brust/mcp", inner, b"");
+        let env = build_mcp_envelope("POST", "/_brust/mcp", inner, b"");
+        let json = serde_json::to_string(&env).unwrap();
         let outer: serde_json::Value = serde_json::from_str(&json).unwrap();
         let recovered: serde_json::Value =
             serde_json::from_str(outer["body_text"].as_str().unwrap()).unwrap();
@@ -668,12 +670,13 @@ mod tests {
 
     #[test]
     fn sse_envelope_serialises_kind_sse_and_conn_id() {
-        let json = build_sse_envelope(
+        let env = build_sse_envelope(
             "GET",
             "/sse-counter",
             b"GET /sse-counter HTTP/1.1\r\nHost: x\r\nAccept: text/event-stream\r\n\r\n",
             42u64,
         );
+        let json = serde_json::to_string(&env).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["kind"], "sse");
         assert_eq!(parsed["conn_id"], 42);
@@ -683,12 +686,13 @@ mod tests {
 
     #[test]
     fn sse_envelope_preserves_query_string() {
-        let json = build_sse_envelope(
+        let env = build_sse_envelope(
             "GET",
             "/events?topic=news",
             b"GET /events?topic=news HTTP/1.1\r\nHost: x\r\n\r\n",
             7u64,
         );
+        let json = serde_json::to_string(&env).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["kind"], "sse");
         assert_eq!(parsed["conn_id"], 7);
@@ -697,13 +701,14 @@ mod tests {
 
     #[test]
     fn ws_envelope_serialises_kind_ws_and_conn_id() {
-        let json = build_ws_envelope(
+        let env = build_ws_envelope(
             "GET",
             "/ws/chat",
             b"GET /ws/chat HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n",
             42u64,
             vec!["chat.v2".to_string(), "chat.v1".to_string()],
         );
+        let json = serde_json::to_string(&env).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["kind"], "ws");
         assert_eq!(parsed["conn_id"], 42);
@@ -715,13 +720,14 @@ mod tests {
 
     #[test]
     fn ws_envelope_empty_subprotocols() {
-        let json = build_ws_envelope(
+        let env = build_ws_envelope(
             "GET",
             "/ws/echo",
             b"GET /ws/echo HTTP/1.1\r\nHost: x\r\n\r\n",
             7u64,
             vec![],
         );
+        let json = serde_json::to_string(&env).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["kind"], "ws");
         assert_eq!(parsed["conn_id"], 7);
