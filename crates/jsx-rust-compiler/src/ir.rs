@@ -47,12 +47,13 @@ pub enum JsxNode {
     },
     /// Interactive island embedded in a native (jinja) route. Lowered from a
     /// dedicated `<Island component={C} props={path} hydrate="..." ssr/>`
-    /// recognition path (see `lower::lower_island`). The emitter (T2) renders a
-    /// placeholder + manifest hook; the manifest (T3) keys off `id`/`hydrate`.
+    /// recognition path (see `lower::lower_island`). The emitter renders a
+    /// placeholder + manifest hook; the manifest keys off `component`/`instance`.
     Island {
-        /// Island identity — defaults to the `component={Ident}` name, can be
-        /// overridden by an explicit `id="..."` literal attribute.
-        id: String,
+        /// Source identifier from `component={Ident}` — the chunk key.
+        component: String,
+        /// Source-order index within this template (set by `number_islands`).
+        instance: usize,
         /// Single-segment path into the route's prop context (the leaf segment
         /// of `props={...}`). NOT a full member chain in v1.
         props_path: String,
