@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use napi::bindgen_prelude::Promise;
+use napi::bindgen_prelude::{Either, Promise};
 use napi::threadsafe_function::ThreadsafeFunction;
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 /// `RenderSlot.chunk_tx` channel — the Promise just signals "renderer
 /// callback returned" so handle_conn can fall through to terminator/cleanup.
 /// CalleeHandled = false matches what Function::build_threadsafe_function().build() produces.
-pub type RendererTsfn = ThreadsafeFunction<napi::bindgen_prelude::Either<u32, String>, napi::bindgen_prelude::Promise<()>, napi::bindgen_prelude::Either<u32, String>, napi::Status, false>;
+pub type RendererTsfn = ThreadsafeFunction<Either<u32, String>, Promise<()>, Either<u32, String>, napi::Status, false>;
 
 /// Raw pointer to the worker's SharedArrayBuffer backing store. Send+Sync because the
 /// backing store is process-global memory (V8 allocates SAB backing outside the GC heap)
@@ -248,8 +248,8 @@ impl WorkerPool {
         let entry = Arc::new(TsfnEntry {
             id,
             tsfn: None,
-            buf_ptr: BufPtr(Box::into_raw(vec![0u8; 256*1024].into_boxed_slice()) as *mut u8),
-            buf_len: 0,
+            buf_ptr: BufPtr(Box::leak(vec![0u8; 256*1024].into_boxed_slice()).as_mut_ptr()),
+            buf_len: 256 * 1024,
             in_flight: AtomicU32::new(0),
             render_slot: parking_lot::Mutex::new(None),
         });

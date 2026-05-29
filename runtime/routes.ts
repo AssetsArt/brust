@@ -450,8 +450,9 @@ export function makeRenderer(
   routes: FlatRoute[],
   view: Uint8Array,
   opts: MakeRendererOptions = {},
-): (envelopeJson: string) => Promise<void> {
+): (envelopeJsonOrLen: number | string) => Promise<void> {
   const encoder = new TextEncoder()
+  const decoder = new TextDecoder()
   const byRouteId = new Map<number, FlatRoute>()
   routes.forEach((r, i) => byRouteId.set(i, r))
   const byActionId = new Map<string, ActionDef>()
@@ -470,7 +471,10 @@ export function makeRenderer(
     },
   }
 
-  return async (envelopeJson: string): Promise<void> => {
+  return async (envelopeJsonOrLen: number | string): Promise<void> => {
+    const envelopeJson = typeof envelopeJsonOrLen === 'number'
+      ? decoder.decode(view.subarray(0, envelopeJsonOrLen))
+      : envelopeJsonOrLen
     const call = JSON.parse(envelopeJson) as RouteCall
     const wid = opts.getWorkerId?.() ?? 0
     const workerId = BigInt(wid)

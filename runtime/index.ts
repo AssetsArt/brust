@@ -29,7 +29,7 @@ export interface ServeOptions {
 // can fall through to terminator/cleanup. The argument is a JSON envelope
 // `{ route_id, path, params }` produced by Rust's route table — see
 // runtime/routes.ts::RouteCall.
-export type RenderFn = (envelopeJson: string) => Promise<void>
+export type RenderFn = (envelopeJsonOrLen: number | string) => Promise<void>
 
 // Bun Workers run in the same OS process as the main thread; the `env` option
 // only patches the JS-visible process.env, not the native OS environment that
