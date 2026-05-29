@@ -1,15 +1,15 @@
 // Baseline comparator: Elysia (on Bun) + React renderToString.
-// Same Bun runtime, same React, same HelloWorld component as the Brust example
-// and the bun-serve baseline. Measures Elysia's routing overhead vs raw
-// Bun.serve and vs Brust's Rust HTTP layer.
+// Same Bun runtime, same React, same shared HelloWorld component as the Brust
+// bench app and the bun-serve baseline. Measures Elysia's routing overhead vs
+// raw Bun.serve and vs Brust's Rust HTTP layer.
 //
-// Run from repo root:  bun run example/elysia-baseline/index.ts
-// Override port:       ELYSIA_PORT=3003 bun run example/elysia-baseline/index.ts
+// Run from repo root:  bun run bench/apps/elysia/index.ts
+// Override port:       ELYSIA_PORT=3003 bun run bench/apps/elysia/index.ts
 
 import { Elysia } from 'elysia'
 import { renderToString } from 'react-dom/server'
 import { createElement } from 'react'
-import HelloWorld from '../hello-world/pages/HelloWorld'
+import HelloWorld from '../_shared/HelloWorld'
 
 const port = parseInt(process.env.ELYSIA_PORT ?? '3003', 10)
 

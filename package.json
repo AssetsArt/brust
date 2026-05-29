@@ -41,7 +41,7 @@
     "build:debug": "cd runtime && bun run build:debug",
     "test": "bun test tests/integration.test.ts",
     "dev": "bun runtime/cli/index.ts dev example/hello-world/index.ts",
-    "dev:baseline": "bun run example/bun-serve-baseline/index.ts",
+    "dev:baseline": "bun run bench/apps/bun-serve/index.ts",
     "bench": "bun run scripts/benchmark.ts"
   }
 }
