@@ -18,7 +18,6 @@ export function classifyPath(absPath: string, root: string): ChangeKind | null {
   if (TEST_RE.test(absPath)) return null
 
   const base = path.basename(absPath)
-  if (base === 'island.config.ts') return 'islands'
   if (base === 'app.css') return 'css'
   // skip generated module type declarations
   if (absPath.endsWith('.module.css.d.ts')) return null

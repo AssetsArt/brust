@@ -72,7 +72,7 @@ beforeAll(async () => {
 
   // Pre-flight 2: run brust build against the fixture entry. This compiles the
   // native pages to .brust/jinja/, bakes islands per T6, and bundles the island
-  // chunks (island.config.ts registers Counter).
+  // chunks (the page's <Island component={Counter}> usage registers Counter).
   const buildRes = spawnSync({
     cmd: ['bun', 'run', resolve(REPO_ROOT, 'runtime/cli/index.ts'), 'build', 'index.ts'],
     cwd: FIXTURE_DIR,

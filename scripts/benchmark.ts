@@ -366,16 +366,15 @@ async function preflightJinja(): Promise<void> {
   const mod = await import(routesFile)
   const flatRoutes = (mod.routes ?? []) as { nativeTemplate?: string }[]
   const outDir = path.resolve(REPO_ROOT, '.brust/jinja')
-  // A native route with islands (e.g. /native-islands) requires the island
-  // config so emitNativeTemplates can validate ids, enrich the manifest with
-  // sourcePath, and bake the bootstrap. Without it, emit THROWS on that route.
-  const islandConfig = path.join(benchAppDir, 'island.config.ts')
+  // A native route with islands (e.g. /native-islands) is handled by
+  // emitNativeTemplates, which scans each page's `<Island component={X}>`
+  // usage to derive the island chunks, enrich the manifest with sourcePath,
+  // and bake the bootstrap — no separate config file needed.
   await emitNativeTemplates({
     entryFile: routesFile,
     flatRoutes,
     outDir,
     repoRoot: REPO_ROOT,
-    islandConfigPath: existsSync(islandConfig) ? islandConfig : undefined,
   })
   const builtCount = flatRoutes.filter((r) => r.nativeTemplate).length
   console.log(`[bench] pre-flight: emitted ${builtCount} jinja template(s) → ${outDir}`)

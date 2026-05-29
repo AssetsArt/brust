@@ -1,5 +1,5 @@
-// Unit tests for scanIslandChunks — the React-path island chunk discovery that
-// replaced island.config.ts. It is pure file I/O (regex scan over page sources
+// Unit tests for scanIslandChunks — the React-path island chunk discovery
+// (component-addressed islands). It is pure file I/O (regex scan over page sources
 // + scanImports resolution), so we drive it against self-contained temp files.
 //
 // scanImports only records a default import when a resolved candidate file

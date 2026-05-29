@@ -177,7 +177,7 @@ test('brust new: scaffold emits the expected tree and content', async () => {
     expect(existsSync(path.join(projectDir, '.gitignore'))).toBe(true)
     expect(existsSync(path.join(projectDir, 'index.ts'))).toBe(true)
     expect(existsSync(path.join(projectDir, 'routes.tsx'))).toBe(true)
-    expect(existsSync(path.join(projectDir, 'island.config.ts'))).toBe(true)
+    expect(existsSync(path.join(projectDir, 'island.config.ts'))).toBe(false)
     expect(existsSync(path.join(projectDir, 'app.css'))).toBe(true)
     expect(existsSync(path.join(projectDir, 'README.md'))).toBe(true)
     expect(existsSync(path.join(projectDir, 'pages/Home.tsx'))).toBe(true)

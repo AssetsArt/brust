@@ -42,7 +42,7 @@ describe('Coordinator', () => {
   test('islands change → buildIslands + worker restart + reload', async () => {
     const deps = makeDeps()
     const c = new Coordinator(deps)
-    await c.handleChange({ paths: ['/island.config.ts'], kind: 'islands' })
+    await c.handleChange({ paths: ['/components/Counter.tsx'], kind: 'islands' })
     expect(deps.buildIslands).toHaveBeenCalledTimes(1)
     expect(deps.workers.terminateAll).toHaveBeenCalledTimes(1)
     expect(deps.workers.spawnAll).toHaveBeenCalledTimes(1)

@@ -10,12 +10,6 @@ export interface IslandsBuildResult {
   islandCount: number
 }
 
-export interface IslandsConfig {
-  /** Map of island id → entry file path. Paths are resolved relative
-   * to the directory of island.config.ts. */
-  islands: Record<string, string>
-}
-
 export interface BuildIslandsOptions {
   /** Override the output directory. Default: `<cwd>/.brust/islands`. */
   outDir?: string
@@ -23,7 +17,7 @@ export interface BuildIslandsOptions {
 
 /** Scan a routes entry file for `<Island component={X} />` usage and derive the
  * island chunk list (componentName → absolute source path). Replaces the old
- * `island.config.ts` lookup.
+ * static config-file lookup — the chunk set is derived from source.
  *
  * 1. Resolve the entry's page imports via {@link scanImports}.
  * 2. For each page, slice every `<Island … />` tag and capture its

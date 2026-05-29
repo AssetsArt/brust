@@ -8,7 +8,7 @@ export default function AvatarPage() {
       <body>
         <h1>Avatar Upload</h1>
         <p>Demonstrates <code>formAction</code> posting multipart/form-data to a server action.</p>
-        <Island id="AvatarUpload" component={AvatarUpload} props={{}} hydrate="load" />
+        <Island component={AvatarUpload} props={{}} hydrate="load" />
       </body>
     </html>
   )
