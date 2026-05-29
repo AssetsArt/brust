@@ -58,7 +58,7 @@
     "happy-dom": "^20.9.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
-    "typescript": "^5.9.3"
+    "typescript": "^6.0.3"
   },
   "type": "module",
   "types": "./runtime/index.d.ts",
