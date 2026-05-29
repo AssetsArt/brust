@@ -152,8 +152,10 @@ jobs:
           ./runtime/node_modules/.bin/napi prepublish -t npm \
             --package-json-path package.json \
             --npm-dir npm
-          # ...then the main `brust` package.
-          npm publish --access public
+          # ...then the main `brust` package. --tag alpha keeps the `latest`
+          # dist-tag off this prerelease (npm tags prereleases as latest by
+          # default otherwise). `npm i brust@alpha` to get it.
+          npm publish --access public --tag alpha
         env:
           NPM_KEY: ${{ secrets.NPM_KEY }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_KEY }}

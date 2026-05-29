@@ -1,6 +1,6 @@
 {
   "name": "brust-linux-x64-musl",
-  "version": "0.1.0",
+  "version": "0.1.0-alpha",
   "cpu": [
     "x64"
   ],
