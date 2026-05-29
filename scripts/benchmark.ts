@@ -99,6 +99,25 @@ const PROBES: Probe[] = [
   },
 ]
 
+// Per-(scenario, path) display label for the markdown table. The static
+// scenario `label` describes the server build; this names the engine/path each
+// row actually exercises, so `/ping` (pure Rust, no worker) isn't lumped under
+// the same "napi + SAB" tag as the routes that genuinely cross into a worker.
+function rowLabel(scenarioId: string, path: string): string {
+  if (scenarioId === 'brust') {
+    if (path === '/ping') return 'Brust (Rust only)'
+    if (path === '/') return 'Brust (React SSR)'
+    if (path.startsWith('/native-profile')) return 'Brust (native jinja)'
+    if (path.startsWith('/_brust/action')) return 'Brust (server action)'
+    return 'Brust'
+  }
+  if (scenarioId === 'bun-serve') {
+    if (path === '/') return 'Bun.serve (React SSR)'
+    return 'Bun.serve (ping)'
+  }
+  return scenarioId
+}
+
 async function runScenario(s: Scenario, p: Probe): Promise<Result> {
   const proc = spawn({
     cmd: s.cmd,
@@ -155,7 +174,7 @@ async function runScenario(s: Scenario, p: Probe): Promise<Result> {
 
   return {
     scenarioId: s.id,
-    scenarioLabel: s.label,
+    scenarioLabel: rowLabel(s.id, p.path),
     path: p.path,
     method: p.method ?? 'GET',
     rps,
@@ -313,7 +332,7 @@ async function main() {
     for (const p of PROBES) {
       if (p.scenarios && !p.scenarios.includes(s.id)) continue
       const method = p.method ?? 'GET'
-      console.log(`\n→ ${s.label}   ${method} ${p.path}   conn=${CONN}  dur=${DURATION}`)
+      console.log(`\n→ ${rowLabel(s.id, p.path)}   ${method} ${p.path}   conn=${CONN}  dur=${DURATION}`)
       const r = await runScenario(s, p)
       results.push(r)
       console.log(
