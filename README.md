@@ -8,40 +8,52 @@ are dispatched into Bun Worker threads through `ThreadsafeFunction`, and HTML
 flows back via per-worker `SharedArrayBuffer`.
 
 ```
-113,432 RPS  GET /ping              (p50 0.09ms · p99 0.15ms)
-110,927 RPS  POST server action     (p50 0.09ms · p99 0.15ms)
- 28,728 RPS  GET / (SSR React)      (p50 0.28ms · p99 1.84ms)
+106,493 RPS  GET /ping                     (p50 0.09ms · p99 0.15ms)   pure Rust, no JS
+ 60,234 RPS  POST server action            (p50 0.16ms · p99 0.28ms)   crosses to a worker
+ 57,268 RPS  GET /native-profile/:user     (p50 0.17ms · p99 0.29ms)   native jinja render
+ 28,855 RPS  GET / (SSR React)             (p50 0.28ms · p99 2.19ms)   React renderToString
 ```
 
 Benchmarked with `oha -c 120 -z 10s` on darwin/arm64 (M1 Pro, 10c), Bun 1.4 —
-single representative run; full table in [`bench/RESULTS.md`](./bench/RESULTS.md).
-Same hardware: Bun.serve + `renderToString` does 17.8k RPS on `/`. The Rust HTTP
-layer is where the headroom lives — `/ping` and the server-action POST path
-(both cross the napi+SAB boundary) sustain >110k RPS.
+full table in [`bench/RESULTS.md`](./bench/RESULTS.md). Same hardware,
+`Bun.serve + renderToString` does **17.7k** RPS on `/` — brust's React path is
+~1.6× faster, and its Rust surfaces multiples beyond that.
 
-The `/` SSR row is down from the pre-CSS-pipeline 54k. Two 2026-05-28
-investigations recovered most of the ground:
+### Where the time goes
 
-- **Worker-count default oversubscription** (see [post-mortem](./docs/superpowers/post-mortems/2026-05-28-slash-route-p99-regression.md)).
-  `floor(availableParallelism * 1.8)` was tuned for I/O-bound renders and
-  oversubscribed perf cores on CPU-bound React work, amplifying p99 ~6× under
-  load. Fix dropped the multiplier to `1.0`; p99 on `/` went ~18 ms → ~3 ms.
-- **Buffering-path napi merge** (commits `fb7d661` + `c2d3b1d`). Profile of `/`
-  at c=1 showed the two napi crossings per buffering render were the dominant
-  cost (~90% of brust runtime overhead, 70 µs of the 73 µs measured). Added
-  `napi_render_chunk_final` binding + `RenderChunk::BytesAndFinal` variant so
-  buffering responses complete in one tsfn round-trip instead of two. **N=5
-  medians**: c=120 `/` RPS 23,193 → 29,993 (**+29 %**, no overlap in 5-run
-  ranges); p99 2.80 ms → 1.74 ms (**−38 %**); p50 0.35 ms → 0.28 ms. c=1 p50
-  148 µs → 137 µs. Streaming-path responses unchanged (separate close still
-  needed there).
+There are two performance tiers, and the boundary between them is the napi
+crossing — not anything in the app:
 
-`/ping`, POST, and the Bun.serve baseline are unchanged across the napi-merge
-(within ±5 % bench noise) — they're the control surfaces that confirm the `/`
-delta is the napi-merge itself, not host drift.
+- **Pure-Rust path (`/ping`): ~106k RPS.** No worker, no JS. This is the Rust
+  HTTP layer's ceiling on this box.
+- **Any route that crosses into a Bun worker: ~60k RPS floor.** A null-handler
+  probe (a renderer that does *zero* JS work — no `JSON.parse`, no dispatch,
+  just hands back a precomputed response) measures **60k**. So ~60k is the
+  irreducible cost of one `ThreadsafeFunction` round-trip (tokio ↔ V8 isolate);
+  the per-request JS work on top of it costs ~1k. Actions and native routes now
+  sit *at* that floor.
 
-The handoff's earlier guess (per-request CSS injection) was falsified by
-the c=1 latency profile.
+Getting there took collapsing the worker→Rust hop for single-chunk responses.
+Previously every response — even a tiny action — flowed back through the chunk
+channel: `napi_render_chunk → mpsc → ack → resolve`, four Rust↔JS crossings.
+The **single-chunk fast lane** has the worker write the framed response
+`[meta_len][meta][body]` straight into the SAB and resolve its render Promise
+with the byte length; Rust reads the SAB directly (two crossings, no channel).
+Combined with making the jinja render a synchronous napi call and a
+**lock-free worker claim** (`AtomicBool` CAS instead of a per-entry mutex):
+
+| Path | before | after |
+|---|---:|---:|
+| POST server action | 48.7k | **60.1k** (+23%) |
+| GET native jinja route | 49.6k | **57.3k** (+16%) |
+
+The lock-free claim itself was worth only ~3% — proof that worker-pool lock
+contention was never the bottleneck. To go faster than the ~60k worker floor
+you have to *not cross* (render fully Rust-side) or *amortize the crossing*
+(batch multiple requests per tsfn call). React SSR `/` stays ~29k because it's
+render-bound (`renderToString` time), not crossing-bound. See
+[`architecture.md`](./architecture.md) for the full request lifecycle and SAB
+protocol.
 
 ---
 
@@ -55,6 +67,11 @@ Traditional SSR frameworks make you pay three times:
 
 Brust pays once. Server renders. Client resumes only the parts you mark as
 islands.
+
+For pages that need no client JS at all, mark the route `native: true` — brust
+compiles its JSX to a jinja template at build time and renders it entirely
+Rust-side (`minijinja`), skipping React on the server while still running your
+loader. That's the `/native-profile/:user` row above.
 
 Designed agent-first too: routes ship machine-readable schemas (server fns as
 MCP tools, loaders as resources) so AI agents can drive the app without
@@ -70,7 +87,7 @@ module is built once via napi-rs).
 ```bash
 git clone <this-repo> brust && cd brust
 bun install
-cd runtime && bun run build && cd ..
+cd runtime && bun run build && cd ..   # release; NOT build:debug (~2× slower)
 bun run example/hello-world/index.ts
 # → http://127.0.0.1:3000
 ```
@@ -78,9 +95,10 @@ bun run example/hello-world/index.ts
 Then in another terminal:
 
 ```bash
-curl http://127.0.0.1:3000/ping           # → pong
-curl http://127.0.0.1:3000/                # → SSR HTML with a hydrated <Counter />
-curl -N http://127.0.0.1:3000/sse-counter # → 3 SSE frames
+curl http://127.0.0.1:3000/ping                   # → pong
+curl http://127.0.0.1:3000/                        # → SSR HTML with a hydrated <Counter />
+curl http://127.0.0.1:3000/native-profile/World    # → Rust-rendered jinja, no React
+curl -N http://127.0.0.1:3000/sse-counter          # → 3 SSE frames
 ```
 
 The example app in [`example/hello-world/`](./example/hello-world) showcases
@@ -99,8 +117,8 @@ brust new   <name>              # scaffold a fresh project (see Status: partial)
 
 Production deploy: `brust build`, then `bun run dist/index.js`. The dist
 directory contains the bundled server, prebuilt islands, MCP manifest, the
-native `.node` for the target platform, and compiled CSS — no further build
-work at boot.
+native `.node` for the target platform, compiled CSS, and emitted jinja
+templates — no further build work at boot.
 
 ---
 
@@ -108,10 +126,16 @@ work at boot.
 
 **Shipped:**
 
-- HTTP/1.1 in Rust (custom tokio/tokio-uring accept loop, prespawned worker
-  tasks over a `flume` MPMC channel, per-worker SAB for zero-copy results).
+- HTTP/1.1 in Rust (custom tokio accept loop, `tokio-uring` on Linux; per-worker
+  SAB for zero-copy results; lock-free `AtomicBool`-CAS worker claim).
 - React 18 SSR via `renderToPipeableStream` + auto-detect Suspense; chunks
   stream over `Transfer-Encoding: chunked`.
+- Single-chunk **fast lane**: actions, native routes, and no-Suspense renders
+  return their framed response through the render Promise (one tsfn round-trip,
+  no chunk-channel hop).
+- `native: true` routes — JSX compiled to jinja at build time
+  (`crates/jsx-rust-compiler`), rendered Rust-side via `minijinja` with the
+  loader's return value as the template context. No React on the server.
 - Islands (manual `<Island>` wrapper today — `"use island"` directive is
   designed, not yet built).
 - Nested routes with dynamic params; per-route loaders that hand a typed `data`
@@ -142,11 +166,15 @@ work at boot.
   files back to the brust repo. Fix is a workspace restructure of this repo.
 - Islands + `.module.css` — same upstream Bun bundler collision. Route-level
   components import `.module.css` freely.
+- `native: true` — loader + middleware short-circuits are supported; middleware
+  that calls `next()` then mutates status/headers is not yet forwarded to the
+  jinja render (hardcodes 200). Nested children and `cache` are deferred.
 
 **Designed, not built:** content-hashed island filenames, `"use island"`
 auto-detection, React Fast Refresh, single-binary deploy
 (`bun build --compile`), TOML `[cache]` + `[build]` sections, response-header
-deletion channel for middleware, `brust invalidate`. See
+deletion channel for middleware, `brust invalidate`, tsfn request batching /
+worker-per-core to push past the ~60k crossing floor. See
 [`architecture.md`](./architecture.md) for the full roadmap.
 
 ---
@@ -154,9 +182,10 @@ deletion channel for middleware, `brust invalidate`. See
 ## Architecture
 
 The full architecture document — hosting model, request lifecycle, napi IPC
-layout, SAB protocol, slot-ownership invariants, every shipped subsystem —
-lives in [`architecture.md`](./architecture.md). It's the source of truth for
-how brust is structured; this README is the elevator pitch.
+layout, SAB protocol (including the single-chunk fast lane), slot-ownership
+invariants, every shipped subsystem — lives in
+[`architecture.md`](./architecture.md). It's the source of truth for how brust
+is structured; this README is the elevator pitch.
 
 Specs and implementation plans for each subsystem are in
 [`docs/superpowers/specs/`](./docs/superpowers/specs/) and
@@ -167,33 +196,34 @@ Specs and implementation plans for each subsystem are in
 ## Development
 
 ```bash
-cargo test --lib                # 99 pass — Rust unit tests
-bun test runtime/               # 188 pass — TS unit tests
-bun test tests/                 # ~100 pass — integration + CLI
-bun run bench                   # regenerates bench/RESULTS.md
+cargo test --workspace --lib    # 111 pass (brust) + jsx-rust-compiler — Rust unit tests
+bun test runtime/               # 197 pass — TS unit tests
+bun test tests/                 # 102 pass — integration + CLI
+bun run bench                   # regenerates bench/RESULTS.md (needs release addon)
 ```
 
-Repo layout:
+Repo layout (Cargo workspace):
 
 ```
-src/             Rust crate (accept loop, worker pool, napi exports)
-runtime/         Bun-side runtime: routing, render, actions, dev/build CLI
-runtime/cli/     brust build | brust dev | brust new
-example/         The hello-world demo app
-tests/           Integration + CLI tests
-bench/           Benchmark harness + last results
-docs/            Specs, plans, internal notes
-architecture.md  Full architecture document
+crates/brust/             Rust crate: accept loop, worker pool, napi exports, SAB
+crates/jsx-rust-compiler/ JSX → jinja compiler for native: true routes (+ jsx-rustc bin)
+runtime/                  Bun-side runtime: routing, render, actions
+runtime/cli/              brust build | brust dev | brust new
+example/                  The hello-world demo app
+tests/                    Integration + CLI tests
+bench/                    Benchmark harness + last results
+docs/                     Specs, plans, post-mortems
+architecture.md           Full architecture document
 ```
 
 ---
 
 ## Status
 
-Pre-publish. Solo-developed; not yet on npm. The framework runs and benchmarks
-above are reproducible today, but the consumer install path (`bunx brust new`)
-waits on the workspace restructure noted above. Until then, the supported flow
-is "clone this repo and run the example."
+Pre-publish. Solo-developed; not yet on npm. The framework runs and the
+benchmarks above are reproducible today, but the consumer install path
+(`bunx brust new`) waits on the workspace restructure noted above. Until then,
+the supported flow is "clone this repo and run the example."
 
 ---
 
