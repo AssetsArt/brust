@@ -236,8 +236,8 @@ export const brust = {
   },
 
   /**
-   * One-call lifecycle: scans actions, builds islands (if `island.config.ts` is
-   * present), registers routes + SSE/WS paths, builds the MCP manifest, then
+   * One-call lifecycle: scans actions, builds islands (if `routes.tsx` uses
+   * `<Island>`), registers routes + SSE/WS paths, builds the MCP manifest, then
    * branches to `serve()` (main thread) or registers a renderer (worker
    * thread). Replaces ~70 lines of boilerplate; the lower-level helpers
    * (`scanActions`, `registerRoutes`, `makeRenderer`, etc.) are still exported
@@ -245,8 +245,8 @@ export const brust = {
    *
    * Conventions assumed (override via the corresponding option if your layout
    * differs):
-   *   - `<scanRoot>/island.config.ts` — used by `buildIslands` if present
-   *   - `<scanRoot>/routes.tsx`       — referenced by the MCP manifest builder
+   *   - `<scanRoot>/routes.tsx`       — scanned for `<Island>` usage (islands)
+   *                                     and referenced by the MCP manifest builder
    *
    * `scanRoot` defaults to the directory of `entry` so the typical caller
    * passes only `{ routes, entry: import.meta.url }`.
@@ -346,12 +346,15 @@ export const brust = {
           console.log(`[brust] main: using pre-built islands at ${prebuiltIslandsDir}`)
         }
       } else {
-        const islandConfig = path.join(scanRoot, 'island.config.ts')
-        if (existsSync(islandConfig)) {
-          const { buildIslands: build } = await import('./islands/build.ts')
-          const islands = await build(islandConfig)
-          this.configureIslandsDir(islands.outDir)
-          console.log(`[brust] main: built ${islands.islandCount} island chunk(s)`)
+        const routesPath = path.join(scanRoot, 'routes.tsx')
+        if (existsSync(routesPath)) {
+          const { scanIslandChunks, buildIslands: build } = await import('./islands/build.ts')
+          const islandMap = scanIslandChunks(routesPath)
+          if (islandMap.size > 0) {
+            const islands = await build(islandMap)
+            this.configureIslandsDir(islands.outDir)
+            console.log(`[brust] main: built ${islands.islandCount} island chunk(s)`)
+          }
         }
       }
 
@@ -435,10 +438,13 @@ export const brust = {
             }
           },
           buildIslands: async () => {
-            const islandConfig = pathModule.join(scanRoot, 'island.config.ts')
-            if (fsModule.existsSync(islandConfig)) {
-              const { buildIslands } = await import('./islands/build.ts')
-              await buildIslands(islandConfig)
+            const routesPath = pathModule.join(scanRoot, 'routes.tsx')
+            if (fsModule.existsSync(routesPath)) {
+              const { scanIslandChunks, buildIslands } = await import('./islands/build.ts')
+              const islandMap = scanIslandChunks(routesPath)
+              if (islandMap.size > 0) {
+                await buildIslands(islandMap)
+              }
             }
           },
           buildComponentCss: async () => {
