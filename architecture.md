@@ -475,17 +475,17 @@ component.
 
 **Status (MVP shipped):**
 
-- `<Island id component props hydrate?>` runtime component (from `runtime/islands/island.tsx`) embeds the SSR HTML inside a `data-brust-island` marker and flips a module-scope flag.
+- `<Island component props hydrate? ssr?>` runtime component (from `runtime/islands/island.tsx`) embeds the SSR HTML inside a `data-brust-island` marker (value = the component name) and flips a module-scope flag. Islands are **component-addressed**: no `id` attribute, no config — the chunk is keyed by the `component={X}` identifier, and multiple `<Island>` may reuse one component (each occurrence gets a distinct source-order *instance* for its `island_<instance>_props/_html` context slot).
 - `makeRenderer` auto-injects an importmap + `<script type="module" src="/_brust/islands/_bootstrap.js" defer>` when any island rendered. Pages without islands ship zero JS.
-- `buildIslands(configPath)` (from `runtime/islands/build.ts`) at boot reads `island.config.ts` and runs `Bun.build` 3+N times: 1 combined chunk for `react`+`react/jsx-runtime` (`_react.js`, ~7 KB minified), 1 `react-dom/client` chunk (`_react-dom.js`, ~136 KB minified, externalises `react`), N island chunks (all 3 runtime modules external), 1 bootstrap. Output lands in `.brust/islands/`. All builds use `minify: true` + `define: process.env.NODE_ENV = "production"`.
+- `scanIslandChunks(routes.tsx)` (from `runtime/islands/build.ts`) walks the routes' page sources for `<Island component={X}>`, resolving each `X` to its source via the page's own imports → `Map<componentName, sourcePath>`. `buildIslands(map)` then runs `Bun.build` 3+N times: 1 combined chunk for `react`+`react/jsx-runtime` (`_react.js`, ~7 KB minified), 1 `react-dom/client` chunk (`_react-dom.js`, ~136 KB minified, externalises `react`), N island chunks (all 3 runtime modules external), 1 bootstrap. Output lands in `.brust/islands/`. All builds use `minify: true` + `define: process.env.NODE_ENV = "production"`.
 - Rust native route `GET /_brust/islands/<file>` serves chunks with `Cache-Control: public, max-age=3600`. Strict filename-safety check rejects path-traversal, hidden files, non-JS, and anything outside `[A-Za-z0-9_.-]+\.js`.
 - 4 hydration triggers shipped: `load` / `idle` / `visible` / `interaction`.
 
 **MVP-scope simplifications (vs the architecture vision above):**
 
 - `<Island>` is a manual wrapper. The `"use island"` directive + auto-detection at JSX call sites is deferred — users explicitly wrap.
-- Each island's `id` must be listed in `island.config.ts` (single source of truth for the build).
-- Filenames are predictable (`<id>.js`), not content-hashed. Production deployments should fingerprint or wrap with a CDN.
+- Islands are addressed by `component={X}` — no registry. The component identifier IS the chunk key, so **island component names must be unique across the app** (two different files with same-named island components → a clear build-time collision error).
+- Filenames are predictable (`<ComponentName>.js`), not content-hashed. Production deployments should fingerprint or wrap with a CDN.
 - React + react/jsx-runtime live in one chunk (`_react.js`); the importmap maps both bare specifiers to that URL. `react-dom/client` is its own chunk. Per-island bundle = component + its imports only.
 - No CSS extraction, no `"use server"` auto-rewrite (separate plan), no nested islands, no hot reload.
 - `runtime/package.json` uses `peerDependencies` for `react` + `react-dom` so the root app's single copy is the only one Bun installs (avoids dispatcher-null SSR crash when two physical React copies coexist).

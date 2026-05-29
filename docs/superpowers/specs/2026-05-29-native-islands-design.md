@@ -4,6 +4,8 @@
 **Date:** 2026-05-29
 **Branch:** `design/native-islands`
 
+> **Partially superseded (2026-05-29) by [component-addressed islands](2026-05-29-component-addressed-islands-design.md).** The `id` attribute + `island.config.ts` mechanism described here is removed: islands are now addressed by `component={X}` (the chunk key) with a source-order `instance` index for the per-occurrence context keys (`island_<instance>_props/_html`, was `island_<id>_*`), and source paths resolve from each page's own imports. The native SSR / hydration architecture (worker `renderToString`, `data-brust-csr` vs ssr mount, contained failure) is unchanged.
+
 > **Spec-review applied (2026-05-29).** A reviewer subagent verified claims
 > against the code. Material outcomes folded in below: `tojson` is absent and
 > the props attribute needs attribute-safe serialization (see "Island prop
