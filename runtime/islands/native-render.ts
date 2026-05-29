@@ -8,12 +8,15 @@
 // the value is safe to substitute RAW into a double-quoted attribute (brust's
 // minijinja env has NO autoescape).
 //
-// T7 SCOPE: client-only props path. Every island (ssr or not) contributes
-// only `_props`; NONE contribute `_html`. Server-side renderToString of ssr
-// islands is T9 — which will make resolveIslandContext async.
+// T9 SCOPE: ssr islands ALSO contribute `island_<id>_html` — the island's
+// SOURCE component, imported by absolute path and renderToString'd server-side.
+// Client-only islands (ssr:false) still contribute only `_props`. This makes
+// resolveIslandContext async (it awaits the dynamic import of each ssr source).
 
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
+import { renderToString } from 'react-dom/server'
+import { createElement } from 'react'
 
 /** One entry of a `<template>.islands.json` manifest (enriched by T6). */
 export interface NativeIslandEntry {
@@ -90,14 +93,20 @@ export function loadIslandManifest(
   return parsed
 }
 
-/** Build the per-island context additions for a manifest. T7: each entry
- * contributes only `island_<id>_props` — the resolved props, JSON-stringified
- * (undefined → null so it stays valid JSON) and entity-encoded. The `id` is
- * validated `[A-Za-z0-9_]+` upstream, so it's a safe key fragment. */
-export function resolveIslandContext(
+// Cache imported island modules by sourcePath (Bun caches the import anyway;
+// this avoids repeated default-export resolution).
+const componentCache = new Map<string, unknown>()
+
+/** Build the per-island context additions for a manifest. Each entry
+ * contributes `island_<id>_props` — the resolved props, JSON-stringified
+ * (undefined → null so it stays valid JSON) and entity-encoded. SSR entries
+ * (`ssr:true`) ALSO contribute `island_<id>_html` — the island source component
+ * imported by absolute path and renderToString'd. The `id` is validated
+ * `[A-Za-z0-9_]+` upstream, so it's a safe key fragment. */
+export async function resolveIslandContext(
   manifest: NativeIslandEntry[],
   data: unknown,
-): Record<string, string> {
+): Promise<Record<string, string>> {
   const out: Record<string, string> = {}
   for (const entry of manifest) {
     const props = pathInto(data, entry.propsPath)
@@ -105,6 +114,32 @@ export function resolveIslandContext(
     // the case where JSON.stringify itself returns undefined (e.g. a function
     // value), so entityEncode never receives undefined.
     out['island_' + entry.id + '_props'] = entityEncode(JSON.stringify(props ?? null) ?? 'null')
+    if (!entry.ssr) continue
+    try {
+      let Component = componentCache.get(entry.sourcePath)
+      if (Component === undefined) {
+        const mod = await import(entry.sourcePath)
+        Component = (mod.default ?? mod)
+        componentCache.set(entry.sourcePath, Component)
+      }
+      if (typeof Component !== 'function') {
+        throw new Error(`island "${entry.id}" source has no default-exported component`)
+      }
+      // Render from the SAME (roundtripped) props value the client gets via
+      // JSON.parse(data-brust-props) — byte-identity guarantees no hydration
+      // mismatch. props ?? undefined: pass the actual value (or undefined) to
+      // the component, NOT the `null` sentinel used for the props string.
+      out['island_' + entry.id + '_html'] = renderToString(
+        createElement(Component as any, (props ?? undefined) as any),
+      )
+    } catch (e) {
+      // CONTAINED FAILURE (spec invariant): a throwing ssr island degrades to
+      // an empty mount (no _html) + logged warning, rather than 500-ing the
+      // page. The mount has no data-brust-csr, so the client will client-render
+      // it via hydrateRoot's React-19 mismatch recovery (noisy but functional).
+      console.error(`[brust] ssr island "${entry.id}" renderToString failed; degrading to client-only:`, e)
+      // leave _html unset → empty mount
+    }
   }
   return out
 }

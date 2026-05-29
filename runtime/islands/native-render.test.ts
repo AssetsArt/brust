@@ -2,6 +2,8 @@ import { test, expect } from 'bun:test'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { createElement } from 'react'
+import { renderToString } from 'react-dom/server'
 import {
   pathInto,
   entityEncode,
@@ -9,6 +11,15 @@ import {
   loadIslandManifest,
   type NativeIslandEntry,
 } from './native-render.ts'
+import StubIsland from './__fixtures__/StubIsland.tsx'
+
+// Absolute paths to in-repo fixtures. Using in-repo fixtures (not tmpdir
+// .tsx) so `import('react')` inside the fixture resolves via the project's
+// node_modules — a tmpdir module would resolve bare specifiers from
+// /var/folders/... and never reach the project's react.
+const STUB_PATH = path.resolve(import.meta.dir, '__fixtures__/StubIsland.tsx')
+const THROWING_PATH = path.resolve(import.meta.dir, '__fixtures__/ThrowingIsland.tsx')
+const NODEFAULT_PATH = path.resolve(import.meta.dir, '__fixtures__/NoDefault.tsx')
 
 test('pathInto walks dotted paths and handles edge cases', () => {
   expect(pathInto({ data: { counter: { n: 1 } } }, 'data.counter')).toEqual({ n: 1 })
@@ -37,13 +48,13 @@ test('pathInto returns undefined for inherited / prototype keys (no chain walk)'
   expect(pathInto({ xs: [{ n: 7 }] }, 'xs.0')).toEqual({ n: 7 })
 })
 
-test('resolveIslandContext: a function-valued prop never crashes (serializes null)', () => {
+test('resolveIslandContext: a function-valued prop never crashes (serializes null)', async () => {
   // If pathInto somehow yields a non-serializable value, JSON.stringify returns
   // undefined; the `?? null` / `?? "null"` guards keep entityEncode safe.
   const manifest: NativeIslandEntry[] = [
     { id: 'Fn', propsPath: 'fn', ssr: false, hydrate: 'load', sourcePath: '/x' },
   ]
-  const out = resolveIslandContext(manifest, { fn: () => 1 })
+  const out = await resolveIslandContext(manifest, { fn: () => 1 })
   expect(out.island_Fn_props).toBe(entityEncode('null'))
 })
 
@@ -64,34 +75,99 @@ test('entityEncode escapes & < > " in the right order, no double-encode', () => 
   expect(out).not.toContain('"')
 })
 
-test('resolveIslandContext: client-only entry contributes only _props', () => {
+test('resolveIslandContext: client-only entry contributes only _props', async () => {
   const manifest: NativeIslandEntry[] = [
     { id: 'Counter', propsPath: 'data.counter', ssr: false, hydrate: 'load', sourcePath: '/x' },
   ]
   const data = { data: { counter: { n: 1 } } }
-  const out = resolveIslandContext(manifest, data)
+  const out = await resolveIslandContext(manifest, data)
   expect(out.island_Counter_props).toBe(entityEncode(JSON.stringify({ n: 1 })))
   expect('island_Counter_html' in out).toBe(false)
   expect(Object.keys(out)).toEqual(['island_Counter_props'])
 })
 
-test('resolveIslandContext: ssr entry ALSO contributes only _props in T7 (no _html)', () => {
+test('resolveIslandContext: mixed manifest — ssr entry gets _html, client-only sibling does not', async () => {
+  // Proves the `if (!entry.ssr) continue` gate: ssr entry pointed at a valid
+  // in-repo fixture server-renders to _html; the client-only sibling gets only
+  // _props. (This replaces the obsolete T7 "ssr contributes only _props" case.)
   const manifest: NativeIslandEntry[] = [
     { id: 'Counter', propsPath: 'data.counter', ssr: false, hydrate: 'load', sourcePath: '/x' },
-    { id: 'Clock', propsPath: 'data.clock', ssr: true, hydrate: 'load', sourcePath: '/y' },
+    { id: 'Clock', propsPath: 'data.clock', ssr: true, hydrate: 'load', sourcePath: STUB_PATH },
   ]
-  const data = { data: { counter: { n: 1 }, clock: { t: 9 } } }
-  const out = resolveIslandContext(manifest, data)
-  expect(out.island_Clock_props).toBe(entityEncode(JSON.stringify({ t: 9 })))
-  // T7 scope: ssr island does NOT yet contribute _html
-  expect('island_Clock_html' in out).toBe(false)
+  const data = { data: { counter: { n: 1 }, clock: { n: 9 } } }
+  const out = await resolveIslandContext(manifest, data)
+  // client-only sibling: props only, no _html
+  expect(out.island_Counter_props).toBe(entityEncode(JSON.stringify({ n: 1 })))
+  expect('island_Counter_html' in out).toBe(false)
+  // ssr entry: both props AND server-rendered _html
+  expect(out.island_Clock_props).toBe(entityEncode(JSON.stringify({ n: 9 })))
+  expect(out.island_Clock_html).toBe(renderToString(createElement(StubIsland, { n: 9 })))
+  expect(out.island_Clock_html).toBe('<span>9</span>')
 })
 
-test('resolveIslandContext: missing props serialize as null (not undefined)', () => {
+test('resolveIslandContext: ssr entry _html equals renderToString of the stub with its props', async () => {
+  // gating-Q1 empirical proof: the worker import()s the island SOURCE .tsx by
+  // absolute path and renderToStrings it. Bun transpiles+runs the TSX.
+  const manifest: NativeIslandEntry[] = [
+    { id: 'Stub', propsPath: 'data.stub', ssr: true, hydrate: 'load', sourcePath: STUB_PATH },
+  ]
+  const data = { data: { stub: { n: 1 } } }
+  const out = await resolveIslandContext(manifest, data)
+  expect(out.island_Stub_html).toBe('<span>1</span>')
+  expect(out.island_Stub_html).toBe(renderToString(createElement(StubIsland, { n: 1 })))
+  expect(out.island_Stub_props).toBe(entityEncode(JSON.stringify({ n: 1 })))
+})
+
+test('resolveIslandContext: hydration byte-identity — renderToString props derive from the same roundtripped value as _props', async () => {
+  // The prop the stub renders into markup must match what the client would
+  // parse out of data-brust-props. Decode _props, JSON.parse it, and confirm
+  // the stub rendered that exact value.
+  const manifest: NativeIslandEntry[] = [
+    { id: 'Stub', propsPath: 'data.stub', ssr: true, hydrate: 'load', sourcePath: STUB_PATH },
+  ]
+  const data = { data: { stub: { n: 42 } } }
+  const out = await resolveIslandContext(manifest, data)
+  // entity-DEcode the props string back to raw JSON, then parse.
+  const decoded = out.island_Stub_props
+    .replace(/&quot;/g, '"')
+    .replace(/&gt;/g, '>')
+    .replace(/&lt;/g, '<')
+    .replace(/&amp;/g, '&')
+  const parsed = JSON.parse(decoded) as { n: number }
+  expect(parsed).toEqual({ n: 42 })
+  // the stub rendered the SAME n the client would parse
+  expect(out.island_Stub_html).toBe(`<span>${parsed.n}</span>`)
+})
+
+test('resolveIslandContext: contained failure — component that throws in render → no _html, no throw', async () => {
+  // Production-realistic SSR failure: a valid default export that throws inside
+  // render. resolveIslandContext must NOT throw; the entry degrades to props
+  // only (empty mount, client recovers). console.error is the invariant working.
+  const manifest: NativeIslandEntry[] = [
+    { id: 'Boom', propsPath: 'data.boom', ssr: true, hydrate: 'load', sourcePath: THROWING_PATH },
+  ]
+  const data = { data: { boom: { n: 1 } } }
+  const out = await resolveIslandContext(manifest, data)
+  expect('island_Boom_html' in out).toBe(false)
+  expect(out.island_Boom_props).toBe(entityEncode(JSON.stringify({ n: 1 })))
+})
+
+test('resolveIslandContext: contained failure — source with no default export → no _html, no throw', async () => {
+  // Hits the `typeof Component !== 'function'` guard.
+  const manifest: NativeIslandEntry[] = [
+    { id: 'NoDef', propsPath: 'data.x', ssr: true, hydrate: 'load', sourcePath: NODEFAULT_PATH },
+  ]
+  const data = { data: { x: { n: 1 } } }
+  const out = await resolveIslandContext(manifest, data)
+  expect('island_NoDef_html' in out).toBe(false)
+  expect(out.island_NoDef_props).toBe(entityEncode(JSON.stringify({ n: 1 })))
+})
+
+test('resolveIslandContext: missing props serialize as null (not undefined)', async () => {
   const manifest: NativeIslandEntry[] = [
     { id: 'Counter', propsPath: 'data.missing', ssr: false, hydrate: 'load', sourcePath: '/x' },
   ]
-  const out = resolveIslandContext(manifest, { data: {} })
+  const out = await resolveIslandContext(manifest, { data: {} })
   expect(out.island_Counter_props).toBe(entityEncode('null'))
 })
 

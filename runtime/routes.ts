@@ -564,13 +564,14 @@ export function makeRenderer(
         }
         const json = JSON.stringify(data ?? {})
         // Sub-project J — islands. If this template has an enriched islands
-        // manifest, merge per-island context vars (island_<id>_props) into the
-        // loader data before shipping it. T7: client-only props path — no ssr
-        // _html yet (that's T9, which makes resolveIslandContext async).
+        // manifest, merge per-island context vars (island_<id>_props, plus
+        // island_<id>_html for ssr entries) into the loader data before
+        // shipping it. resolveIslandContext is async (T9: it awaits the dynamic
+        // import + renderToString of each ssr island source).
         const manifest = loadIslandManifest(flat.nativeTemplate)
         if (manifest && manifest.length > 0) {
           const rt = JSON.parse(json) // roundtrip ONCE; props read from rt
-          const extra = resolveIslandContext(manifest, rt)
+          const extra = await resolveIslandContext(manifest, rt)
           const ctx = { ...rt, ...extra }
           const finalBytes = encoder.encode(JSON.stringify(ctx))
           // The original size check guarded the pre-island bytes; the merged
