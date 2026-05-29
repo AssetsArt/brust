@@ -3,6 +3,7 @@
 mod cache;
 mod http;
 mod io;
+mod jinja;
 mod pool;
 pub mod render_stream;
 mod routes;
@@ -138,7 +139,7 @@ pub async fn until_shutdown() -> NapiResult<()> {
 }
 
 #[napi]
-pub fn register_renderer(mut buf: Uint8Array, f: Function<String, Promise<()>>) -> NapiResult<u32> {
+pub fn register_renderer(mut buf: Uint8Array, f: Function<napi::bindgen_prelude::Either<u32, String>, Promise<()>>) -> NapiResult<u32> {
     // NOTE: is_worker() reads std::env::var which is not patched by Bun's Worker
     // env option (Bun Workers share the OS process).  The TS layer is responsible
     // for only calling registerRenderer from a worker context; we skip the guard.
@@ -587,6 +588,131 @@ pub async fn napi_render_chunk_final(worker_id: u32, len: u32) -> NapiResult<()>
         .await
         .map_err(|_| napi::Error::from_reason("ack dropped — handle_conn torn down mid-chunk"))?;
     Ok(())
+}
+
+/// Sub-project J — render via minijinja using SAB-side-channeled loader data.
+///
+/// SAB convention (spec §6 last paragraph): per-napi-call. `napi_render_jinja`
+/// treats SAB[0..data_len] as INBOUND raw JSON written by the JS worker; on
+/// success it assembles a `[meta_len: u16 BE][meta JSON][body]` payload
+/// that the per-conn task at server.rs:1053-1115 unconditionally splits via
+/// `render_stream::split_meta` and ships to the socket via
+/// `build_single_response_bytes`. Ships through the same `chunk_tx` /
+/// `RenderChunk::BytesAndFinal` path as `napi_render_chunk_final` so cache
+/// write-back + ack semantics are identical.
+///
+/// Errors:
+/// - worker id not registered → NAPI Err
+/// - `data_len > buf_len` → NAPI Err (caller should have written ≤ buf_len)
+/// - render slot empty (no in-flight render) → NAPI Err
+/// - `jinja::render` failure → still ships a synthetic 500 chunk so the
+///   per-conn task receives Final and releases the worker; this fn returns
+///   `Ok(())` because the protocol error was already converted to an HTTP
+///   500 on the wire.
+#[napi]
+pub async fn napi_render_jinja(
+    worker_id: u32,
+    data_len: u32,
+    template_name: String,
+) -> NapiResult<()> {
+    let entry = state()
+        .pool
+        .entry(worker_id)
+        .ok_or_else(|| napi::Error::from_reason(format!("worker {} not registered", worker_id)))?;
+
+    if data_len as usize > entry.buf_len {
+        return Err(napi::Error::from_reason(format!(
+            "data_len {} exceeds SAB len {}",
+            data_len, entry.buf_len
+        )));
+    }
+
+    let chunk_tx = entry
+        .render_slot
+        .lock()
+        .as_ref()
+        .map(|s| s.chunk_tx.clone())
+        .ok_or_else(|| napi::Error::from_reason("no active render slot"))?;
+
+    // SAFETY: BufPtr is the SAB backing-store pointer pinned at register
+    // time (see pool.rs::BufPtr docstring). `data_len` is bounds-checked
+    // above against the SAB capacity. Mirrors napi_render_chunk_final.
+    let data_json =
+        unsafe { std::slice::from_raw_parts(entry.buf_ptr.0, data_len as usize) }.to_vec();
+
+    let (meta_json, body): (Vec<u8>, Vec<u8>) =
+        match crate::jinja::render(&template_name, &data_json) {
+            Ok(html) => {
+                let meta = serde_json::json!({
+                    "status": 200,
+                    "contentType": "text/html; charset=utf-8",
+                    "headers": {},
+                    "streaming": false,
+                });
+                (
+                    serde_json::to_vec(&meta).expect("meta serialize"),
+                    html.into_bytes(),
+                )
+            }
+            Err(e) => {
+                tracing::error!(
+                    template = %template_name,
+                    error = %e,
+                    "jinja render failed",
+                );
+                let meta = serde_json::json!({
+                    "status": 500,
+                    "contentType": "text/plain; charset=utf-8",
+                    "headers": {},
+                    "streaming": false,
+                });
+                (
+                    serde_json::to_vec(&meta).expect("meta serialize"),
+                    b"internal error".to_vec(),
+                )
+            }
+        };
+
+    if meta_json.len() > u16::MAX as usize {
+        return Err(napi::Error::from_reason(format!(
+            "meta JSON length {} exceeds u16::MAX",
+            meta_json.len()
+        )));
+    }
+    let meta_len: u16 = meta_json.len() as u16;
+    let mut assembled = Vec::with_capacity(2 + meta_json.len() + body.len());
+    assembled.extend_from_slice(&meta_len.to_be_bytes());
+    assembled.extend_from_slice(&meta_json);
+    assembled.extend_from_slice(&body);
+
+    let (ack_tx, ack_rx) = tokio::sync::oneshot::channel::<()>();
+    chunk_tx
+        .send(crate::pool::RenderChunk::BytesAndFinal {
+            data: assembled,
+            ack: ack_tx,
+        })
+        .await
+        .map_err(|_| napi::Error::from_reason("render chunk channel closed (handle_conn gone)"))?;
+    ack_rx
+        .await
+        .map_err(|_| napi::Error::from_reason("ack dropped — handle_conn torn down mid-chunk"))?;
+    Ok(())
+}
+
+/// Sub-project J — boot-time listing of registered minijinja templates.
+/// JS dispatcher uses this to validate every `native: true` route's
+/// `Component.name` is present (warns on mismatch per Reviewer Fix 1).
+#[napi]
+pub fn napi_list_native_templates() -> Vec<String> {
+    crate::jinja::registered_templates()
+}
+
+/// Sub-project J — boot-time loader for `.brust/jinja/*.jinja` templates.
+/// Returns the list of template names registered (each `<Name>.jinja` file
+/// stem becomes the lookup key). Lenient on missing/non-directory `dir`.
+#[napi]
+pub fn napi_load_jinja_templates(dir: String) -> Vec<String> {
+    crate::jinja::load_from(std::path::Path::new(&dir))
 }
 
 /// Convert a NAPI BigInt to u64, rejecting negative values.

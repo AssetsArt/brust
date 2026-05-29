@@ -361,7 +361,7 @@ async fn handle_conn(
                 return;
             }
 
-            let envelope_json = crate::routes::build_action_envelope(
+            let envelope = crate::routes::build_action_envelope(
                 &method,
                 &path,
                 id,
@@ -377,7 +377,7 @@ async fn handle_conn(
             match dispatch_to_worker_and_stream_chunks(
                 &mut s,
                 &pool,
-                envelope_json,
+                envelope,
                 "action",
                 false, // cache_wanted — actions never cache
                 |_| {},
@@ -462,13 +462,13 @@ async fn handle_conn(
                 }
             };
 
-            let envelope_json =
+            let envelope =
                 crate::routes::build_mcp_envelope(&method, &path, body_str, &buf[..header_end]);
 
             match dispatch_to_worker_and_stream_chunks(
                 &mut s,
                 &pool,
-                envelope_json,
+                envelope,
                 "mcp",
                 false,
                 |_| {},
@@ -582,8 +582,9 @@ async fn handle_conn(
                 crate::sse::registry().lock().remove(&conn_id);
                 return;
             };
-            let envelope_json =
+            let envelope =
                 crate::routes::build_sse_envelope(&method, &path, &buf[..header_end], conn_id);
+            let envelope_json = serde_json::to_string(&envelope).unwrap();
 
             if let Err(e) = crate::pool::dispatch_sse(entry.clone(), envelope_json).await {
                 error!(worker_id = entry.id, error = %e, "sse tsfn call_async failed");
@@ -697,13 +698,14 @@ async fn handle_conn(
                 sec_websocket_key,
                 client_subprotocols,
             } = handshake;
-            let envelope_json = crate::routes::build_ws_envelope(
+            let envelope = crate::routes::build_ws_envelope(
                 &method,
                 &path,
                 &buf[..header_end],
                 conn_id,
                 client_subprotocols,
             );
+            let envelope_json = serde_json::to_string(&envelope).unwrap();
 
             if let Err(e) = crate::pool::dispatch_ws(entry.clone(), envelope_json).await {
                 error!(worker_id = entry.id, error = %e, "ws dispatch failed");
@@ -810,14 +812,13 @@ async fn handle_conn(
                 continue;
             }
             let real_path = if stripped.is_empty() { "/" } else { stripped };
-            let (envelope_json, _route_id) = match routes.match_path(&method, real_path, &buf) {
+            let (mut envelope, _route_id) = match routes.match_path(&method, real_path, &buf) {
                 MatchResult::Matched {
-                    envelope_json,
+                    mut envelope,
                     route_id,
                 } => {
-                    let nav_envelope =
-                        crate::routes::rewrite_envelope_kind(envelope_json, "navigation");
-                    (nav_envelope, route_id)
+                    envelope.kind = "navigation";
+                    (envelope, route_id)
                 }
                 MatchResult::NoMatch => {
                     let body = br#"{"error":"not found"}"#.to_vec();
@@ -835,7 +836,7 @@ async fn handle_conn(
             match dispatch_to_worker_and_stream_chunks(
                 &mut s,
                 &pool,
-                envelope_json,
+                envelope,
                 "navigation",
                 false, // cache_wanted — navigation responses never cache
                 |_| {},
@@ -847,11 +848,11 @@ async fn handle_conn(
             }
         }
 
-        let (envelope_json, route_id) = match routes.match_path(&method, &path, &buf) {
+        let (envelope, route_id) = match routes.match_path(&method, &path, &buf) {
             MatchResult::Matched {
-                envelope_json,
+                envelope,
                 route_id,
-            } => (envelope_json, route_id),
+            } => (envelope, route_id),
             MatchResult::NoMatch => {
                 let _ = s.write_all(http::error_404()).await;
                 continue;
@@ -881,7 +882,7 @@ async fn handle_conn(
         match dispatch_to_worker_and_stream_chunks(
             &mut s,
             &pool,
-            envelope_json,
+            envelope,
             "render",
             cache_wanted,
             move |bytes| {
@@ -912,15 +913,16 @@ async fn handle_conn(
 /// select so chunks (the load-bearing path) always win when both are ready.
 /// Both terminal paths drain the necessary cleanup: chunked → emit terminator,
 /// content-length → flush buffered single response.
-async fn dispatch_to_worker_and_stream_chunks<F>(
+async fn dispatch_to_worker_and_stream_chunks<E, F>(
     s: &mut TcpStream,
     pool: &Arc<crate::pool::WorkerPool>,
-    envelope_json: String,
+    envelope: E,
     label: &'static str,
     cache_wanted: bool,
     on_success: F,
 ) -> DispatchControl
 where
+    E: serde::Serialize,
     F: FnOnce(&[u8]),
 {
     let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::channel::<crate::pool::RenderChunk>(1);
@@ -951,13 +953,29 @@ where
         Resolved,
     }
 
+    let envelope_len = {
+        let mut cursor = std::io::Cursor::new(unsafe {
+            std::slice::from_raw_parts_mut(entry.buf_ptr.0, entry.buf_len)
+        });
+        if let Err(e) = serde_json::to_writer(&mut cursor, &envelope) {
+            if e.is_io() {
+                let _ = s.write_all(http::error_413()).await;
+                return DispatchControl::CloseConn;
+            }
+            error!(worker_id = entry.id, label, error = %e, "envelope serialization failed");
+            let _ = s.write_all(http::error_500()).await;
+            return DispatchControl::CloseConn;
+        }
+        cursor.position() as u32
+    };
+
     let entry_for_future = Arc::clone(&entry);
     let render_future = async move {
         match entry_for_future
             .tsfn
             .as_ref()
             .expect("tsfn is None — only legal in cfg(test) register_for_test; production register always supplies Some")
-            .call_async(envelope_json)
+            .call_async(napi::bindgen_prelude::Either::A(envelope_len))
             .await
         {
             Err(e) => RenderOutcome::EnqueueFailed(e),

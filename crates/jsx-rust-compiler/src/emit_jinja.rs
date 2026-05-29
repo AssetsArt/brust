@@ -1,0 +1,401 @@
+//! Emit IR → minijinja template source.
+//!
+//! Lowering (parser + IR + lower) is unchanged — only the emission target
+//! swapped per Sub-project J.
+//!
+//! See spec `2026-05-28-minijinja-dynamic-routes-design.md` §5 for the
+//! IR→jinja table and plan `2026-05-29-minijinja-dynamic-routes-plan.md`
+//! Task 1 for the emission rules used here.
+//!
+//! Determinism is load-bearing: golden fixtures compare byte-for-byte. The
+//! output is a single line (no whitespace between sibling elements) so the
+//! generated file is compact.
+
+use std::fmt::Write;
+
+use crate::ir::*;
+
+pub fn emit(component: &Component) -> String {
+    let mut out = String::new();
+    emit_node(&component.root, &mut out);
+    out
+}
+
+fn emit_node(node: &JsxNode, out: &mut String) {
+    match node {
+        JsxNode::Empty => {}
+        JsxNode::Text(s) => {
+            push_html_escaped(out, s);
+        }
+        JsxNode::Expr(e) => {
+            emit_expr_node(e, out);
+        }
+        JsxNode::Map {
+            source,
+            binding,
+            body,
+        } => {
+            let _ = write!(out, "{{% for {binding} in {} %}}", emit_expr_path(source));
+            emit_node(body, out);
+            out.push_str("{% endfor %}");
+        }
+        JsxNode::Element {
+            tag,
+            attrs,
+            children,
+        } => {
+            out.push('<');
+            out.push_str(tag);
+            for a in attrs {
+                emit_attr(a, out);
+            }
+            if is_void(tag) {
+                out.push_str("/>");
+            } else {
+                out.push('>');
+                for c in children {
+                    emit_node(c, out);
+                }
+                let _ = write!(out, "</{tag}>");
+            }
+        }
+    }
+}
+
+/// Emit an `Expr` IR node sitting in JSX child position.
+///
+/// `Field`/`MemberAccess`/`MapBinding`/`MapMember`/`StaticNum` all render as
+/// `{{ ... }}`. `StaticText` is HTML-escaped at compile time and emitted
+/// verbatim (no `{{ ... }}` — it's a compile-time string, not a runtime value).
+fn emit_expr_node(e: &Expr, out: &mut String) {
+    match e {
+        Expr::StaticText(s) => {
+            push_html_escaped(out, s);
+        }
+        other => {
+            let _ = write!(out, "{{{{ {} }}}}", emit_expr_path(other));
+        }
+    }
+}
+
+/// Render the "path" form of an expression for use INSIDE `{{ ... }}`,
+/// `{% for x in ... %}`, or an attribute's `{{ ... }}` body.
+///
+/// No `props.` prefix — the jinja template context is the loader's return
+/// value, whose top-level keys are the destructured prop names.
+fn emit_expr_path(e: &Expr) -> String {
+    match e {
+        Expr::Field(name) => name.clone(),
+        Expr::MemberAccess { root, path } => {
+            let mut s = root.clone();
+            for seg in path {
+                s.push('.');
+                s.push_str(seg);
+            }
+            s
+        }
+        Expr::MapBinding(name) => name.clone(),
+        Expr::MapMember { root, path } => {
+            let mut s = root.clone();
+            for seg in path {
+                s.push('.');
+                s.push_str(seg);
+            }
+            s
+        }
+        Expr::StaticText(s) => {
+            // Shouldn't be reached for `{{ ... }}` context (we route static
+            // text through emit_expr_node above), but if a Map source is ever
+            // a literal string we render it as a quoted jinja literal.
+            format!("\"{}\"", s.replace('"', "\\\""))
+        }
+        Expr::StaticNum(n) => n.to_string(),
+    }
+}
+
+/// Emit one attribute, appending it directly to `out` (caller has already
+/// emitted the tag name and an implicit space-prefix is added here).
+fn emit_attr(a: &JsxAttr, out: &mut String) {
+    match &a.value {
+        AttrValue::Empty => {
+            out.push(' ');
+            out.push_str(&a.name);
+        }
+        AttrValue::Static(s) => {
+            out.push(' ');
+            out.push_str(&a.name);
+            out.push_str("=\"");
+            push_attr_escaped(out, s);
+            out.push('"');
+        }
+        AttrValue::StaticNum(n) => {
+            let _ = write!(out, " {}=\"{n}\"", a.name);
+        }
+        AttrValue::Expr(e) => match e {
+            // Static-in-attr-position fell through `lower_attr` only when the
+            // user wrote `attr={"raw"}` instead of `attr="raw"`; the AttrValue
+            // is reshaped to `AttrValue::Static` by the lowerer in that case,
+            // so the `StaticText` branch here is for completeness.
+            Expr::StaticText(s) => {
+                out.push(' ');
+                out.push_str(&a.name);
+                out.push_str("=\"");
+                push_attr_escaped(out, s);
+                out.push('"');
+            }
+            Expr::StaticNum(n) => {
+                let _ = write!(out, " {}=\"{n}\"", a.name);
+            }
+            other => {
+                let _ = write!(out, " {}=\"{{{{ {} }}}}\"", a.name, emit_expr_path(other));
+            }
+        },
+    }
+}
+
+/// HTML-escape `s` for text-node position (`<`, `>`, `&`).
+///
+/// Quotes are NOT escaped here — they're only relevant inside attribute
+/// values. minijinja's autoescape would re-escape runtime values; compile-
+/// time literals are pre-escaped here so the final HTML is well-formed
+/// regardless of autoescape configuration.
+fn push_html_escaped(out: &mut String, s: &str) {
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            other => out.push(other),
+        }
+    }
+}
+
+/// HTML-escape `s` for attribute-value position. Adds `"` escape because
+/// attribute values are quoted with `"`.
+fn push_attr_escaped(out: &mut String, s: &str) {
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            other => out.push(other),
+        }
+    }
+}
+
+const VOID: &[&str] = &[
+    "area", "base", "br", "col", "embed", "hr", "img", "input", "keygen", "link", "meta", "param",
+    "source", "track", "wbr",
+];
+
+fn is_void(tag: &str) -> bool {
+    VOID.contains(&tag)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    /// Build an empty `Component` shell around a single `JsxNode` root.
+    fn component(root: JsxNode) -> Component {
+        Component {
+            name: "X".into(),
+            props: PropsShape {
+                bindings: vec![],
+                types: BTreeMap::new(),
+            },
+            root,
+        }
+    }
+
+    #[test]
+    fn emits_static_element_with_text() {
+        let ir = JsxNode::Element {
+            tag: "div".into(),
+            attrs: vec![],
+            children: vec![JsxNode::Text("Hello".into())],
+        };
+        assert_eq!(emit(&component(ir)), "<div>Hello</div>");
+    }
+
+    #[test]
+    fn emits_text_expr_as_double_brace() {
+        let ir = JsxNode::Element {
+            tag: "h1".into(),
+            attrs: vec![],
+            children: vec![JsxNode::Expr(Expr::Field("title".into()))],
+        };
+        assert_eq!(emit(&component(ir)), "<h1>{{ title }}</h1>");
+    }
+
+    #[test]
+    fn emits_attr_expr_as_quoted_double_brace() {
+        let ir = JsxNode::Element {
+            tag: "a".into(),
+            attrs: vec![JsxAttr {
+                name: "href".into(),
+                value: AttrValue::Expr(Expr::MemberAccess {
+                    root: "item".into(),
+                    path: vec!["href".into()],
+                }),
+            }],
+            children: vec![],
+        };
+        assert_eq!(emit(&component(ir)), "<a href=\"{{ item.href }}\"></a>");
+    }
+
+    #[test]
+    fn emits_map_as_for_loop() {
+        let ir = JsxNode::Map {
+            source: Expr::Field("items".into()),
+            binding: "item".into(),
+            body: Box::new(JsxNode::Element {
+                tag: "li".into(),
+                attrs: vec![],
+                children: vec![],
+            }),
+        };
+        assert_eq!(
+            emit(&component(ir)),
+            "{% for item in items %}<li></li>{% endfor %}"
+        );
+    }
+
+    #[test]
+    fn emits_void_element_self_closing() {
+        let ir = JsxNode::Element {
+            tag: "br".into(),
+            attrs: vec![],
+            children: vec![],
+        };
+        assert_eq!(emit(&component(ir)), "<br/>");
+    }
+
+    #[test]
+    fn html_escape_in_text() {
+        let ir = JsxNode::Element {
+            tag: "p".into(),
+            attrs: vec![],
+            children: vec![JsxNode::Text("a < b & c > d".into())],
+        };
+        assert_eq!(emit(&component(ir)), "<p>a &lt; b &amp; c &gt; d</p>");
+    }
+
+    // Additional coverage for paths not in the spec's six-test minimum.
+
+    #[test]
+    fn emits_static_attr_escaped() {
+        let ir = JsxNode::Element {
+            tag: "div".into(),
+            attrs: vec![JsxAttr {
+                name: "title".into(),
+                value: AttrValue::Static("a < b & \"c\"".into()),
+            }],
+            children: vec![],
+        };
+        assert_eq!(
+            emit(&component(ir)),
+            "<div title=\"a &lt; b &amp; &quot;c&quot;\"></div>"
+        );
+    }
+
+    #[test]
+    fn emits_empty_bare_attr() {
+        let ir = JsxNode::Element {
+            tag: "input".into(),
+            attrs: vec![JsxAttr {
+                name: "disabled".into(),
+                value: AttrValue::Empty,
+            }],
+            children: vec![],
+        };
+        assert_eq!(emit(&component(ir)), "<input disabled/>");
+    }
+
+    #[test]
+    fn emits_static_num_attr() {
+        let ir = JsxNode::Element {
+            tag: "input".into(),
+            attrs: vec![JsxAttr {
+                name: "tabindex".into(),
+                value: AttrValue::StaticNum(5),
+            }],
+            children: vec![],
+        };
+        assert_eq!(emit(&component(ir)), "<input tabindex=\"5\"/>");
+    }
+
+    #[test]
+    fn emits_member_access_three_segments() {
+        let ir = JsxNode::Element {
+            tag: "span".into(),
+            attrs: vec![],
+            children: vec![JsxNode::Expr(Expr::MemberAccess {
+                root: "user".into(),
+                path: vec!["address".into(), "city".into()],
+            })],
+        };
+        assert_eq!(emit(&component(ir)), "<span>{{ user.address.city }}</span>");
+    }
+
+    #[test]
+    fn emits_map_with_member_source() {
+        // For `nested.items.map(item => …)` the source is a MemberAccess.
+        let ir = JsxNode::Map {
+            source: Expr::MemberAccess {
+                root: "nested".into(),
+                path: vec!["items".into()],
+            },
+            binding: "item".into(),
+            body: Box::new(JsxNode::Element {
+                tag: "li".into(),
+                attrs: vec![],
+                children: vec![],
+            }),
+        };
+        assert_eq!(
+            emit(&component(ir)),
+            "{% for item in nested.items %}<li></li>{% endfor %}"
+        );
+    }
+
+    #[test]
+    fn emits_map_binding_in_body() {
+        // `xs.map(x => <li>{x}</li>)` → `{% for x in xs %}<li>{{ x }}</li>{% endfor %}`
+        let ir = JsxNode::Map {
+            source: Expr::Field("xs".into()),
+            binding: "x".into(),
+            body: Box::new(JsxNode::Element {
+                tag: "li".into(),
+                attrs: vec![],
+                children: vec![JsxNode::Expr(Expr::MapBinding("x".into()))],
+            }),
+        };
+        assert_eq!(
+            emit(&component(ir)),
+            "{% for x in xs %}<li>{{ x }}</li>{% endfor %}"
+        );
+    }
+
+    #[test]
+    fn emits_static_num_in_text_position() {
+        let ir = JsxNode::Element {
+            tag: "p".into(),
+            attrs: vec![],
+            children: vec![JsxNode::Expr(Expr::StaticNum(42))],
+        };
+        assert_eq!(emit(&component(ir)), "<p>{{ 42 }}</p>");
+    }
+
+    #[test]
+    fn emits_static_text_expr_escaped_no_braces() {
+        let ir = JsxNode::Element {
+            tag: "p".into(),
+            attrs: vec![],
+            children: vec![JsxNode::Expr(Expr::StaticText("a & b".into()))],
+        };
+        assert_eq!(emit(&component(ir)), "<p>a &amp; b</p>");
+    }
+}

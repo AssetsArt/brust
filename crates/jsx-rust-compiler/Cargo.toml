@@ -1,0 +1,19 @@
+[package]
+name    = "jsx-rust-compiler"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "jsx-rustc"
+path = "src/bin/jsx-rustc.rs"
+
+[dependencies]
+swc_core  = { version = "68", features = ["ecma_ast", "ecma_parser_typescript", "ecma_visit", "common"] }
+thiserror = "1"
+
+[dev-dependencies]
+minijinja         = "2"
+pretty_assertions = "1"

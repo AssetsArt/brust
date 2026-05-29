@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import { copyFile, mkdir, readdir, rm } from 'node:fs/promises'
 import path, { isAbsolute, resolve } from 'node:path'
 import { actionsPrebuiltPlugin, writePrebuiltActionsFileWithMap } from './actions-prebuilt-plugin.ts'
+import { emitNativeTemplates } from './native-routes-emit.ts'
 import { nativeShimPlugin } from './native-shim-plugin.ts'
 
 /** repoRoot = the directory that contains runtime/. This file lives at
@@ -90,9 +91,11 @@ export async function runBuild(args: string[]): Promise<void> {
 
   // 4. MCP manifest (if routes.tsx exists).
   const routesFile = path.join(entryDir, 'routes.tsx')
+  let loadedRoutes: any[] | undefined
   if (existsSync(routesFile)) {
     const { extractMcpManifest } = await import('../mcp/extractor.ts')
     const { routes } = await import(routesFile)
+    loadedRoutes = routes
     const manifest = await extractMcpManifest({
       serverFiles: scan.sourceFiles,
       routesFile,
@@ -105,6 +108,32 @@ export async function runBuild(args: string[]): Promise<void> {
     console.log(`[brust build] mcp:     ${manifest.tools.length} tools + ${manifest.resources.length} resources → ${manifestPath}`)
   } else {
     console.log(`[brust build] mcp:     skipped (no routes.tsx)`)
+  }
+
+  // 4.1. Sub-project J — emit .brust/jinja/<Name>.jinja templates for every
+  // native: true route. Pipeline runs even if no native routes exist (writes
+  // an empty manifest) so consumers can rely on the output dir's presence.
+  {
+    // outDir must align with the runtime's loadJinjaOnce which reads from
+    // `process.cwd() + '.brust/jinja'`. Existing CSS pipeline uses cwd too
+    // (see boot log: "built CSS → <cwd>/.brust/css/app.css"). entryDir
+    // diverges when user runs `bun run dev <entry>` from a different dir;
+    // cwd is the single source of truth for both pipelines.
+    const jinjaDir = path.join(process.cwd(), '.brust/jinja')
+    // Spec §7 Component-source resolution: scan the routes module's source for
+    // ImportDeclarations, NOT the app entry's. The app entry only imports the
+    // routes module + brust; the page components are imported by routes.tsx.
+    // If routes.tsx doesn't exist (no routes module), we still write an empty
+    // manifest below — scanner falls back to passing a dummy path that produces
+    // an empty importMap (no native routes to emit anyway).
+    await emitNativeTemplates({
+      entryFile: existsSync(routesFile) ? routesFile : entry,
+      flatRoutes: (loadedRoutes ?? []) as { nativeTemplate?: string }[],
+      outDir: jinjaDir,
+      repoRoot: REPO_ROOT,
+    })
+    const nativeCount = (loadedRoutes ?? []).filter((r: any) => r?.nativeTemplate).length
+    console.log(`[brust build] jinja:   ${nativeCount} template(s) → ${jinjaDir}`)
   }
 
   // 4.5. CSS — Tailwind v4 if app.css is present.

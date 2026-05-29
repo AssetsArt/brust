@@ -29,7 +29,7 @@ export interface ServeOptions {
 // can fall through to terminator/cleanup. The argument is a JSON envelope
 // `{ route_id, path, params }` produced by Rust's route table — see
 // runtime/routes.ts::RouteCall.
-export type RenderFn = (envelopeJson: string) => Promise<void>
+export type RenderFn = (envelopeJsonOrLen: number | string) => Promise<void>
 
 // Bun Workers run in the same OS process as the main thread; the `env` option
 // only patches the JS-visible process.env, not the native OS environment that
@@ -40,6 +40,17 @@ export const isWorker: boolean = process.env.BRUST_WORKER_ID !== undefined
 // be re-evaluated at the point of use (not cached at module load).
 export function workerId(): number | null {
   return (native as any).workerId()
+}
+
+// Sub-project J — boot-time jinja loader. Idempotent: Rust holds the loaded
+// templates in a OnceLock, so a second `set()` would panic. The flag guards
+// repeated calls in both main and worker branches of `run()`, and from any
+// future test/embedded entrypoint that calls `registerRoutes` directly.
+let _jinjaLoaded = false
+function loadJinjaOnce(dir: string): void {
+  if (_jinjaLoaded) return
+  ;(native as any).napiLoadJinjaTemplates(dir)
+  _jinjaLoaded = true
 }
 
 function registerActionsInternal(actions: Array<{ id: string }>): number {
@@ -113,8 +124,27 @@ export const brust = {
    * Pass an array of FlatRoutes from `defineRoutes(...)` — each is JSON-encoded
    * with its optional cache config. Rust matches against `fullPath`. */
   registerRoutes(routes: import('./routes.ts').FlatRoute[]): number {
-    const configs = routes.map((r) => JSON.stringify({ path: r.fullPath, cache: r.cache ?? null }))
-    return (native as any).registerRoutes(configs)
+    const configs = routes.map((r) => JSON.stringify({
+      path: r.fullPath,
+      cache: r.cache ?? null,
+      nativeTemplate: r.nativeTemplate ?? null,
+    }))
+    const result = (native as any).registerRoutes(configs)
+
+    // Sub-project J — startup validation. Every native: true route's
+    // Component.name must have a registered .jinja template, else 500 at
+    // request time. Warn here so boot logs surface the misconfiguration
+    // before any traffic hits.
+    const expected = routes.filter((r) => r.nativeTemplate).map((r) => r.nativeTemplate!)
+    if (expected.length > 0) {
+      const registered = new Set<string>((native as any).napiListNativeTemplates() ?? [])
+      for (const name of expected) {
+        if (!registered.has(name)) {
+          console.warn(`[brust] native: true route expects template "${name}.jinja" but it's not registered (boot warning — request will 500)`)
+        }
+      }
+    }
+    return result
   },
   /** Register the list of literal route paths that should be dispatched as
    * SSE (text/event-stream) instead of going through the render pipeline.
@@ -331,6 +361,11 @@ export const brust = {
         }
       }
 
+      // Sub-project J — load .brust/jinja/*.jinja into the minijinja env so
+      // the startup-validation warning in registerRoutes can compare against
+      // a populated registry. Idempotent (Rust uses OnceLock).
+      loadJinjaOnce(path.resolve(process.cwd(), '.brust/jinja'))
+
       this.registerRoutes(routes)
       const ssePaths = routes
         .filter((r) => r.chain[r.chain.length - 1].sse !== undefined)
@@ -506,6 +541,12 @@ export const brust = {
         mcpServer = makeMcpServer({ manifest: mcpManifest, actions, routes: workerRoutes })
         console.log(`[brust] worker: mcp server ready (${mcpManifest.tools.length} tools)`)
       }
+
+      // Sub-project J note: jinja templates are loaded ONCE process-wide by the
+      // main branch's loadJinjaOnce call. Rust's ENV is a process-global
+      // OnceLock; Bun Workers share that process, so calling it from each
+      // worker would panic on second set(). The worker reads ENV.get() at
+      // napi_render_jinja time — no per-worker load needed.
 
       const { makeRenderer: make } = await import('./routes.ts')
       let wid: number | null = null

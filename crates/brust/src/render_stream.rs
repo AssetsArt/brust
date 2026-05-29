@@ -65,9 +65,10 @@ pub fn format_chunk_framed(body: &[u8]) -> Vec<u8> {
 /// Build the HTTP/1.1 response headers (no body) for a chunked stream.
 /// Emits status line, fixed Transfer-Encoding: chunked, content-type,
 /// then any extra headers from `meta.headers`, then the blank line.
+/// Includes `Connection: keep-alive` for parity with build_single_response_bytes.
 pub fn build_chunked_response_head(meta: &ChunkMeta) -> Vec<u8> {
     let mut out = format!(
-        "HTTP/1.1 {} {}\r\nTransfer-Encoding: chunked\r\nContent-Type: {}\r\n",
+        "HTTP/1.1 {} {}\r\nTransfer-Encoding: chunked\r\nContent-Type: {}\r\nConnection: keep-alive\r\n",
         meta.status,
         status_reason(meta.status),
         meta.content_type,
@@ -83,9 +84,14 @@ pub fn build_chunked_response_head(meta: &ChunkMeta) -> Vec<u8> {
 /// Build a complete single-chunk HTTP/1.1 response with Content-Length.
 /// Bytes-identical to today's renderToString wire shape for no-Suspense
 /// routes (spec §1 criterion #1).
+///
+/// Includes `Connection: keep-alive` to match `http::build_response` and
+/// avoid the 47k↔109k RPS halving the team observed in A2.3: without this
+/// header, oha (and any HTTP/1.1 client honoring the spec's "no header =
+/// close" default) reconnects per request, doubling TCP setup overhead.
 pub fn build_single_response_bytes(meta: &ChunkMeta, body: &[u8]) -> Vec<u8> {
     let mut out = format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\n",
+        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: keep-alive\r\n",
         meta.status,
         status_reason(meta.status),
         meta.content_type,

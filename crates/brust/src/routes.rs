@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 
 use httparse::EMPTY_HEADER;
 use parking_lot::RwLock;
@@ -7,16 +6,28 @@ use serde::Serialize;
 
 use crate::cache::CacheConfig;
 
+pub fn serialize_as_map<S, K, V>(vec: &[(K, V)], serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+    K: serde::Serialize,
+    V: serde::Serialize,
+{
+    serializer.collect_map(vec.iter().map(|(k, v)| (k, v)))
+}
+
 /// Structured view of the incoming HTTP request, owned by the envelope.
 /// Parsed once in Rust (cheaper than re-parsing in JS) and embedded in
 /// the JSON envelope handed to the worker.
 #[derive(Serialize)]
-pub struct RequestEnvelope {
-    pub method: String,
-    pub url: String,
-    pub headers: HashMap<String, String>,
-    pub cookies: HashMap<String, String>,
-    pub search: HashMap<String, String>,
+pub struct RequestEnvelope<'a> {
+    pub method: &'a str,
+    pub url: &'a str,
+    #[serde(serialize_with = "crate::routes::serialize_as_map")]
+    pub headers: Vec<(std::borrow::Cow<'a, str>, std::borrow::Cow<'a, str>)>,
+    #[serde(serialize_with = "crate::routes::serialize_as_map")]
+    pub cookies: Vec<(&'a str, std::borrow::Cow<'a, str>)>,
+    #[serde(serialize_with = "crate::routes::serialize_as_map")]
+    pub search: Vec<(std::borrow::Cow<'a, str>, std::borrow::Cow<'a, str>)>,
 }
 
 /// JSON envelope shipped across the tsfn boundary for each render call.
@@ -27,8 +38,15 @@ pub struct RouteEnvelope<'a> {
     pub kind: &'static str,
     pub route_id: u32,
     pub path: &'a str,
-    pub params: HashMap<&'a str, &'a str>,
-    pub req: RequestEnvelope,
+    #[serde(serialize_with = "crate::routes::serialize_as_map")]
+    pub params: Vec<(std::borrow::Cow<'a, str>, &'a str)>,
+    pub req: RequestEnvelope<'a>,
+    /// Sub-project J — when the route was registered with `native: true`,
+    /// the JS-side ships `nativeTemplate: Component.name`. JS dispatcher
+    /// branches on the presence of this field to call `napiRenderJinja`
+    /// instead of the React render path.
+    #[serde(skip_serializing_if = "Option::is_none", rename = "nativeTemplate")]
+    pub native_template: Option<std::borrow::Cow<'a, str>>,
 }
 
 /// Mirrors RouteEnvelope but carries a string action_id (not numeric route_id)
@@ -51,7 +69,7 @@ pub struct ActionEnvelope<'a> {
     /// JS decodes via Buffer.from(s, 'base64') before parsing.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub body_b64: Option<&'a str>,
-    pub req: RequestEnvelope,
+    pub req: RequestEnvelope<'a>,
 }
 
 /// MCP JSON-RPC request envelope. `kind: "mcp"` discriminates from render
@@ -61,26 +79,25 @@ pub struct ActionEnvelope<'a> {
 pub struct McpEnvelope<'a> {
     pub kind: &'static str,
     pub body_text: &'a str,
-    pub req: RequestEnvelope,
+    pub req: RequestEnvelope<'a>,
 }
 
-pub fn build_mcp_envelope(
-    method: &str,
-    full_path: &str,
-    body_text: &str,
-    raw_request: &[u8],
-) -> String {
+pub fn build_mcp_envelope<'a>(
+    method: &'a str,
+    full_path: &'a str,
+    body_text: &'a str,
+    raw_request: &'a [u8],
+) -> McpEnvelope<'a> {
     let (_, query) = match full_path.split_once('?') {
         Some((p, q)) => (p, q),
         None => (full_path, ""),
     };
     let req = build_request_envelope(method, full_path, query, raw_request);
-    let env = McpEnvelope {
+    McpEnvelope {
         kind: "mcp",
         body_text,
         req,
-    };
-    serde_json::to_string(&env).unwrap()
+    }
 }
 
 /// SSE request envelope. `kind: "sse"` discriminates from render/action/mcp.
@@ -88,29 +105,28 @@ pub fn build_mcp_envelope(
 /// napi_sse_write / napi_sse_close / napi_sse_signal_open so Rust can correlate
 /// chunks/lifecycle to the per-connection task.
 #[derive(Serialize)]
-pub struct SseEnvelope {
+pub struct SseEnvelope<'a> {
     pub kind: &'static str,
     pub conn_id: u64,
-    pub req: RequestEnvelope,
+    pub req: RequestEnvelope<'a>,
 }
 
-pub fn build_sse_envelope(
-    method: &str,
-    full_path: &str,
-    raw_request: &[u8],
+pub fn build_sse_envelope<'a>(
+    method: &'a str,
+    full_path: &'a str,
+    raw_request: &'a [u8],
     conn_id: u64,
-) -> String {
+) -> SseEnvelope<'a> {
     let (_, query) = match full_path.split_once('?') {
         Some((p, q)) => (p, q),
         None => (full_path, ""),
     };
     let req = build_request_envelope(method, full_path, query, raw_request);
-    let env = SseEnvelope {
+    SseEnvelope {
         kind: "sse",
         conn_id,
         req,
-    };
-    serde_json::to_string(&env).unwrap()
+    }
 }
 
 /// WS upgrade request envelope. `kind: "ws"` discriminates from
@@ -121,67 +137,65 @@ pub fn build_sse_envelope(
 /// picks the first match against `route.wsOptions.subprotocols` and
 /// signals back via napi_ws_signal_open.
 #[derive(Serialize)]
-pub struct WsEnvelope {
+pub struct WsEnvelope<'a> {
     pub kind: &'static str,
     pub conn_id: u64,
     pub client_subprotocols: Vec<String>,
-    pub req: RequestEnvelope,
+    pub req: RequestEnvelope<'a>,
 }
 
-pub fn build_ws_envelope(
-    method: &str,
-    full_path: &str,
-    raw_request: &[u8],
+pub fn build_ws_envelope<'a>(
+    method: &'a str,
+    full_path: &'a str,
+    raw_request: &'a [u8],
     conn_id: u64,
     client_subprotocols: Vec<String>,
-) -> String {
+) -> WsEnvelope<'a> {
     let (_, query) = match full_path.split_once('?') {
         Some((p, q)) => (p, q),
         None => (full_path, ""),
     };
     let req = build_request_envelope(method, full_path, query, raw_request);
-    let env = WsEnvelope {
+    WsEnvelope {
         kind: "ws",
         conn_id,
         client_subprotocols,
         req,
-    };
-    serde_json::to_string(&env).unwrap()
+    }
 }
 
 /// Build an ActionEnvelope JSON string. Mirrors `match_path` for the render
 /// case. Caller has already validated the action_id charset and registry
 /// membership; this function only assembles the envelope.
-pub fn build_action_envelope(
-    method: &str,
-    full_path: &str,
-    action_id: &str,
-    content_type: &str,
-    body_text: Option<&str>,
-    body_b64: Option<&str>,
-    raw_request: &[u8],
-) -> String {
+pub fn build_action_envelope<'a>(
+    method: &'a str,
+    full_path: &'a str,
+    action_id: &'a str,
+    content_type: &'a str,
+    body_text: Option<&'a str>,
+    body_b64: Option<&'a str>,
+    raw_request: &'a [u8],
+) -> ActionEnvelope<'a> {
     let (_, query) = match full_path.split_once('?') {
         Some((p, q)) => (p, q),
         None => (full_path, ""),
     };
     let req = build_request_envelope(method, full_path, query, raw_request);
-    let env = ActionEnvelope {
+    ActionEnvelope {
         kind: "action",
         action_id,
         content_type,
         body_text,
         body_b64,
         req,
-    };
-    serde_json::to_string(&env).unwrap()
+    }
 }
 
 /// Outcome of a match against the radix tree.
-pub enum MatchResult {
+pub enum MatchResult<'a> {
     Matched {
         route_id: u32,
-        envelope_json: String,
+        envelope: RouteEnvelope<'a>,
     },
     NoMatch,
 }
@@ -191,12 +205,20 @@ pub struct RouteConfig {
     pub path: String,
     #[serde(default)]
     pub cache: Option<CacheConfig>,
+    /// Sub-project J — JS-side ships `nativeTemplate: Component.name` when
+    /// the route has `native: true`. Rust uses this name to dispatch via
+    /// minijinja instead of React. See spec §3 + §4.
+    #[serde(default, rename = "nativeTemplate")]
+    pub native_template: Option<String>,
 }
 
 #[derive(Default)]
 pub struct RouteTable {
     inner: RwLock<matchit::Router<u32>>,
     cache_configs: RwLock<Vec<Option<CacheConfig>>>,
+    /// Sub-project J — per-route-id native template name (parallel to
+    /// `cache_configs`). Index = route_id. `None` ⇒ React-rendered route.
+    native_templates: RwLock<Vec<Option<String>>>,
 }
 
 impl RouteTable {
@@ -209,6 +231,7 @@ impl RouteTable {
     pub fn install_with_config(&self, configs: &[RouteConfig]) -> Result<u32, RouteInstallError> {
         let mut router = matchit::Router::new();
         let mut caches: Vec<Option<CacheConfig>> = Vec::with_capacity(configs.len());
+        let mut natives: Vec<Option<String>> = Vec::with_capacity(configs.len());
         for (idx, c) in configs.iter().enumerate() {
             router
                 .insert(c.path.clone(), idx as u32)
@@ -217,9 +240,11 @@ impl RouteTable {
                     reason: e.to_string(),
                 })?;
             caches.push(c.cache.clone());
+            natives.push(c.native_template.clone());
         }
         *self.inner.write() = router;
         *self.cache_configs.write() = caches;
+        *self.native_templates.write() = natives;
         Ok(configs.len() as u32)
     }
 
@@ -230,7 +255,22 @@ impl RouteTable {
             .and_then(|c| c.clone())
     }
 
-    pub fn match_path(&self, method: &str, full_path: &str, raw_request: &[u8]) -> MatchResult {
+    /// Sub-project J — per-route-id lookup of the native template name.
+    /// Returns `None` when the route is React-rendered (no `native: true`).
+    ///
+    /// T3 ships this as a public getter; the production caller (worker
+    /// dispatch branching on `native: true` from the envelope JSON) lands
+    /// in T4 (runtime side). Allowed-dead until then; the unit test
+    /// `route_table_natives_indexed_by_route_id` covers behavior.
+    #[allow(dead_code)]
+    pub fn native_template_for(&self, route_id: u32) -> Option<String> {
+        self.native_templates
+            .read()
+            .get(route_id as usize)
+            .and_then(|n| n.clone())
+    }
+
+    pub fn match_path<'a>(&self, method: &'a str, full_path: &'a str, raw_request: &'a [u8]) -> MatchResult<'a> {
         let (path_only, query) = match full_path.split_once('?') {
             Some((p, q)) => (p, q),
             None => (full_path, ""),
@@ -238,22 +278,28 @@ impl RouteTable {
         let router = self.inner.read();
         match router.at(path_only) {
             Ok(matched) => {
-                let mut params: HashMap<&str, &str> = HashMap::new();
+                let route_id = *matched.value;
+                let mut params = Vec::new();
                 for (k, v) in matched.params.iter() {
-                    params.insert(k, v);
+                    params.push((std::borrow::Cow::Owned(k.to_string()), v));
                 }
                 let req = build_request_envelope(method, full_path, query, raw_request);
+                let native = self
+                    .native_templates
+                    .read()
+                    .get(route_id as usize)
+                    .and_then(|n| n.clone());
                 let envelope = RouteEnvelope {
                     kind: "render",
-                    route_id: *matched.value,
+                    route_id,
                     path: full_path,
                     params,
                     req,
+                    native_template: native.map(std::borrow::Cow::Owned),
                 };
-                let envelope_json = serde_json::to_string(&envelope).unwrap();
                 MatchResult::Matched {
-                    route_id: *matched.value,
-                    envelope_json,
+                    route_id,
+                    envelope,
                 }
             }
             Err(_) => MatchResult::NoMatch,
@@ -267,42 +313,42 @@ pub enum RouteInstallError {
     Insert { pattern: String, reason: String },
 }
 
-fn build_request_envelope(
-    method: &str,
-    full_path: &str,
-    query: &str,
-    raw_request: &[u8],
-) -> RequestEnvelope {
+fn build_request_envelope<'a>(
+    method: &'a str,
+    full_path: &'a str,
+    query: &'a str,
+    raw_request: &'a [u8],
+) -> RequestEnvelope<'a> {
     // 64-header ceiling matches src/server.rs::lookup_vary_headers — enough
     // for Apache-default-shaped requests; headers beyond are dropped silently.
     let mut headers_storage = [EMPTY_HEADER; 64];
     let mut req = httparse::Request::new(&mut headers_storage);
     let _ = req.parse(raw_request);
 
-    let mut headers: HashMap<String, String> = HashMap::new();
-    let mut cookies: HashMap<String, String> = HashMap::new();
-    // Note: when a request carries multiple `Cookie:` headers (rare in
-    // practice but legal per RFC 6265 §5.4), all cookies are merged into
-    // `cookies`, but `headers["cookie"]` retains only the last raw line.
-    // Apps falling back to the raw header string will miss earlier cookies.
+    let mut headers = Vec::new();
+    let mut cookies = Vec::new();
     for h in req.headers.iter() {
         if h.name.is_empty() {
             continue;
         }
-        let name_lower = h.name.to_ascii_lowercase();
-        let value = std::str::from_utf8(h.value).unwrap_or("").to_string();
-        if name_lower == "cookie" {
-            for pair in value.split(';') {
+        let value_str = std::str::from_utf8(h.value).unwrap_or("");
+        if h.name.eq_ignore_ascii_case("cookie") {
+            for pair in value_str.split(';') {
                 let trimmed = pair.trim();
                 if let Some((k, v)) = trimmed.split_once('=') {
-                    cookies.insert(k.trim().to_string(), v.trim().to_string());
+                    cookies.push((k.trim(), std::borrow::Cow::Borrowed(v.trim())));
                 }
             }
         }
-        headers.insert(name_lower, value);
+        let name = if h.name.chars().any(|c| c.is_ascii_uppercase()) {
+            std::borrow::Cow::Owned(h.name.to_ascii_lowercase())
+        } else {
+            std::borrow::Cow::Borrowed(h.name)
+        };
+        headers.push((name, std::borrow::Cow::Borrowed(value_str)));
     }
 
-    let mut search: HashMap<String, String> = HashMap::new();
+    let mut search = Vec::new();
     if !query.is_empty() {
         for pair in query.split('&') {
             if pair.is_empty() {
@@ -310,18 +356,18 @@ fn build_request_envelope(
             }
             match pair.split_once('=') {
                 Some((k, v)) => {
-                    search.insert(url_decode(k), url_decode(v));
+                    search.push((url_decode(k), url_decode(v)));
                 }
                 None => {
-                    search.insert(url_decode(pair), String::new());
+                    search.push((url_decode(pair), std::borrow::Cow::Borrowed("")));
                 }
             }
         }
     }
 
     RequestEnvelope {
-        method: method.to_string(),
-        url: full_path.to_string(),
+        method,
+        url: full_path,
         headers,
         cookies,
         search,
@@ -330,7 +376,10 @@ fn build_request_envelope(
 
 /// Minimal percent-decode for query-string keys/values. Decodes %xx and treats
 /// `+` as space. Unrecognised escapes pass through unchanged.
-fn url_decode(s: &str) -> String {
+fn url_decode(s: &str) -> std::borrow::Cow<'_, str> {
+    if !s.contains('+') && !s.contains('%') {
+        return std::borrow::Cow::Borrowed(s);
+    }
     let bytes = s.as_bytes();
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut i = 0;
@@ -360,7 +409,7 @@ fn url_decode(s: &str) -> String {
             }
         }
     }
-    String::from_utf8(out).unwrap_or_default()
+    std::borrow::Cow::Owned(String::from_utf8(out).unwrap_or_default())
 }
 
 /// Swap `"kind":"<old>"` → `"kind":"<new>"` in a JS-built JSON envelope
@@ -431,8 +480,8 @@ mod tests {
     fn envelope_parses_cookies_from_single_header() {
         let raw = b"GET /x HTTP/1.1\r\nHost: x\r\nCookie: user=alice; sid=xyz\r\n\r\n";
         let env = build_request_envelope("GET", "/x", "", raw);
-        assert_eq!(env.cookies.get("user").map(|s| s.as_str()), Some("alice"));
-        assert_eq!(env.cookies.get("sid").map(|s| s.as_str()), Some("xyz"));
+        assert_eq!(env.cookies.iter().find(|(k, _)| *k == "user").map(|(_, v)| v.as_ref()), Some("alice"));
+        assert_eq!(env.cookies.iter().find(|(k, _)| *k == "sid").map(|(_, v)| v.as_ref()), Some("xyz"));
     }
 
     #[test]
@@ -441,8 +490,8 @@ mod tests {
         // some proxies fold/split. Both cookies should appear in the map.
         let raw = b"GET /x HTTP/1.1\r\nHost: x\r\nCookie: a=1\r\nCookie: b=2\r\n\r\n";
         let env = build_request_envelope("GET", "/x", "", raw);
-        assert_eq!(env.cookies.get("a").map(|s| s.as_str()), Some("1"));
-        assert_eq!(env.cookies.get("b").map(|s| s.as_str()), Some("2"));
+        assert_eq!(env.cookies.iter().find(|(k, _)| *k == "a").map(|(_, v)| v.as_ref()), Some("1"));
+        assert_eq!(env.cookies.iter().find(|(k, _)| *k == "b").map(|(_, v)| v.as_ref()), Some("2"));
     }
 
     #[test]
@@ -453,9 +502,9 @@ mod tests {
             "name=brust&flag&empty=",
             b"",
         );
-        assert_eq!(env.search.get("name").map(|s| s.as_str()), Some("brust"));
-        assert_eq!(env.search.get("flag").map(|s| s.as_str()), Some(""));
-        assert_eq!(env.search.get("empty").map(|s| s.as_str()), Some(""));
+        assert_eq!(env.search.iter().find(|(k, _)| *k == "name").map(|(_, v)| v.as_ref()), Some("brust"));
+        assert_eq!(env.search.iter().find(|(k, _)| *k == "flag").map(|(_, v)| v.as_ref()), Some(""));
+        assert_eq!(env.search.iter().find(|(k, _)| *k == "empty").map(|(_, v)| v.as_ref()), Some(""));
     }
 
     #[test]
@@ -467,11 +516,11 @@ mod tests {
             b"",
         );
         assert_eq!(
-            env.search.get("greet").map(|s| s.as_str()),
+            env.search.iter().find(|(k, _)| *k == "greet").map(|(_, v)| v.as_ref()),
             Some("hello world"),
         );
         assert_eq!(
-            env.search.get("unicode").map(|s| s.as_str()),
+            env.search.iter().find(|(k, _)| *k == "unicode").map(|(_, v)| v.as_ref()),
             Some("\u{2713}"),
         );
     }
@@ -492,12 +541,14 @@ mod tests {
         let cfg = RouteConfig {
             path: "/foo".into(),
             cache: None,
+            native_template: None,
         };
         table.install_with_config(&[cfg]).unwrap();
         let raw = b"GET /foo HTTP/1.1\r\nHost: x\r\n\r\n";
         let result = table.match_path("GET", "/foo", raw);
         match result {
-            MatchResult::Matched { envelope_json, .. } => {
+            MatchResult::Matched { envelope, .. } => {
+                let envelope_json = serde_json::to_string(&envelope).unwrap();
                 let parsed: serde_json::Value = serde_json::from_str(&envelope_json).unwrap();
                 assert_eq!(parsed["kind"], "render");
                 assert_eq!(parsed["route_id"], 0);
@@ -509,7 +560,7 @@ mod tests {
 
     #[test]
     fn action_envelope_json_path() {
-        let json = build_action_envelope(
+        let env = build_action_envelope(
             "POST",
             "/_brust/action/createNote",
             "createNote",
@@ -518,6 +569,7 @@ mod tests {
             None,
             b"POST /_brust/action/createNote HTTP/1.1\r\nHost: x\r\n\r\n",
         );
+        let json = serde_json::to_string(&env).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["kind"], "action");
         assert_eq!(parsed["action_id"], "createNote");
@@ -530,7 +582,7 @@ mod tests {
 
     #[test]
     fn action_envelope_form_urlencoded_path() {
-        let json = build_action_envelope(
+        let env = build_action_envelope(
             "POST",
             "/_brust/action/registerUser",
             "registerUser",
@@ -539,6 +591,7 @@ mod tests {
             None,
             b"POST /_brust/action/registerUser HTTP/1.1\r\nHost: x\r\n\r\n",
         );
+        let json = serde_json::to_string(&env).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["kind"], "action");
         assert_eq!(parsed["content_type"], "application/x-www-form-urlencoded");
@@ -548,7 +601,7 @@ mod tests {
 
     #[test]
     fn action_envelope_multipart_path() {
-        let json = build_action_envelope(
+        let env = build_action_envelope(
             "POST",
             "/_brust/action/uploadAvatar",
             "uploadAvatar",
@@ -557,6 +610,7 @@ mod tests {
             Some("LS1hYmMNCkNvbnRlbnQt"),
             b"POST /_brust/action/uploadAvatar HTTP/1.1\r\nHost: x\r\n\r\n",
         );
+        let json = serde_json::to_string(&env).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["kind"], "action");
         assert_eq!(parsed["content_type"], "multipart/form-data; boundary=abc");
@@ -568,7 +622,7 @@ mod tests {
     fn action_envelope_quoting_preserved() {
         // Pinned: actionBranch in JS does JSON.parse(body_text). Any quote loss
         // between Rust → napi → JS surfaces as a parse error in production.
-        let json = build_action_envelope(
+        let env = build_action_envelope(
             "POST",
             "/_brust/action/x",
             "x",
@@ -577,6 +631,7 @@ mod tests {
             None,
             b"",
         );
+        let json = serde_json::to_string(&env).unwrap();
         let outer: serde_json::Value = serde_json::from_str(&json).unwrap();
         let inner: serde_json::Value =
             serde_json::from_str(outer["body_text"].as_str().unwrap()).unwrap();
@@ -586,12 +641,13 @@ mod tests {
 
     #[test]
     fn mcp_envelope_serialises_kind_mcp() {
-        let json = build_mcp_envelope(
+        let env = build_mcp_envelope(
             "POST",
             "/_brust/mcp",
             r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#,
             b"POST /_brust/mcp HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n\r\n",
         );
+        let json = serde_json::to_string(&env).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["kind"], "mcp");
         assert_eq!(
@@ -604,7 +660,8 @@ mod tests {
     #[test]
     fn mcp_envelope_preserves_inner_quotes() {
         let inner = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"x","arguments":{"text":"hi \"there\""}}}"#;
-        let json = build_mcp_envelope("POST", "/_brust/mcp", inner, b"");
+        let env = build_mcp_envelope("POST", "/_brust/mcp", inner, b"");
+        let json = serde_json::to_string(&env).unwrap();
         let outer: serde_json::Value = serde_json::from_str(&json).unwrap();
         let recovered: serde_json::Value =
             serde_json::from_str(outer["body_text"].as_str().unwrap()).unwrap();
@@ -613,12 +670,13 @@ mod tests {
 
     #[test]
     fn sse_envelope_serialises_kind_sse_and_conn_id() {
-        let json = build_sse_envelope(
+        let env = build_sse_envelope(
             "GET",
             "/sse-counter",
             b"GET /sse-counter HTTP/1.1\r\nHost: x\r\nAccept: text/event-stream\r\n\r\n",
             42u64,
         );
+        let json = serde_json::to_string(&env).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["kind"], "sse");
         assert_eq!(parsed["conn_id"], 42);
@@ -628,12 +686,13 @@ mod tests {
 
     #[test]
     fn sse_envelope_preserves_query_string() {
-        let json = build_sse_envelope(
+        let env = build_sse_envelope(
             "GET",
             "/events?topic=news",
             b"GET /events?topic=news HTTP/1.1\r\nHost: x\r\n\r\n",
             7u64,
         );
+        let json = serde_json::to_string(&env).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["kind"], "sse");
         assert_eq!(parsed["conn_id"], 7);
@@ -642,13 +701,14 @@ mod tests {
 
     #[test]
     fn ws_envelope_serialises_kind_ws_and_conn_id() {
-        let json = build_ws_envelope(
+        let env = build_ws_envelope(
             "GET",
             "/ws/chat",
             b"GET /ws/chat HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n",
             42u64,
             vec!["chat.v2".to_string(), "chat.v1".to_string()],
         );
+        let json = serde_json::to_string(&env).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["kind"], "ws");
         assert_eq!(parsed["conn_id"], 42);
@@ -660,17 +720,86 @@ mod tests {
 
     #[test]
     fn ws_envelope_empty_subprotocols() {
-        let json = build_ws_envelope(
+        let env = build_ws_envelope(
             "GET",
             "/ws/echo",
             b"GET /ws/echo HTTP/1.1\r\nHost: x\r\n\r\n",
             7u64,
             vec![],
         );
+        let json = serde_json::to_string(&env).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["kind"], "ws");
         assert_eq!(parsed["conn_id"], 7);
         assert!(parsed["client_subprotocols"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn route_table_natives_indexed_by_route_id() {
+        let table = RouteTable::new();
+        let cfgs = vec![
+            RouteConfig {
+                path: "/a".into(),
+                cache: None,
+                native_template: None,
+            },
+            RouteConfig {
+                path: "/b".into(),
+                cache: None,
+                native_template: Some("Profile".into()),
+            },
+            RouteConfig {
+                path: "/c".into(),
+                cache: None,
+                native_template: None,
+            },
+        ];
+        table.install_with_config(&cfgs).unwrap();
+        assert_eq!(table.native_template_for(0), None);
+        assert_eq!(table.native_template_for(1), Some("Profile".to_string()));
+        assert_eq!(table.native_template_for(2), None);
+    }
+
+    #[test]
+    fn envelope_includes_native_template_when_set() {
+        let table = RouteTable::new();
+        let cfgs = vec![RouteConfig {
+            path: "/x".into(),
+            cache: None,
+            native_template: Some("MyPage".into()),
+        }];
+        table.install_with_config(&cfgs).unwrap();
+        let raw = b"GET /x HTTP/1.1\r\nHost: x\r\n\r\n";
+        let result = table.match_path("GET", "/x", raw);
+        match result {
+            MatchResult::Matched { envelope, .. } => {
+                let envelope_json = serde_json::to_string(&envelope).unwrap();
+                let parsed: serde_json::Value = serde_json::from_str(&envelope_json).unwrap();
+                assert_eq!(parsed["nativeTemplate"], "MyPage");
+            }
+            _ => panic!("expected match"),
+        }
+    }
+
+    #[test]
+    fn envelope_omits_native_template_when_unset() {
+        let table = RouteTable::new();
+        let cfgs = vec![RouteConfig {
+            path: "/y".into(),
+            cache: None,
+            native_template: None,
+        }];
+        table.install_with_config(&cfgs).unwrap();
+        let raw = b"GET /y HTTP/1.1\r\nHost: x\r\n\r\n";
+        let result = table.match_path("GET", "/y", raw);
+        match result {
+            MatchResult::Matched { envelope, .. } => {
+                let envelope_json = serde_json::to_string(&envelope).unwrap();
+                let parsed: serde_json::Value = serde_json::from_str(&envelope_json).unwrap();
+                assert!(parsed.get("nativeTemplate").is_none());
+            }
+            _ => panic!("expected match"),
+        }
     }
 }
 
