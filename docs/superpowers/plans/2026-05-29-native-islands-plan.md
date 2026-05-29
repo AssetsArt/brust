@@ -69,6 +69,15 @@ them:
 - Deep path `props={data.a.b}` → clear error (`IslandPropsPathTooDeep` or reuse
   `UnresolvedIdent`-style). Missing `component` → error. `props` that isn't a
   member/ident → error.
+- **`<Island>` under a `.map()` → reject (advisor #3).** An island whose subtree
+  is inside a `JsxNode::Map` (or whose props root resolves to a map binding, not
+  a destructured prop) gets a clear error (`IslandInMapNotSupported`). Reason:
+  the id would be identical across iterations → all iterations fight over
+  `/_brust/islands/<id>.js`, and the props path can't be a per-iteration value
+  in v1. Pin with a test: `{items.map(i => <Island component={C} props={i.x}/>)}`
+  → error. This enforces the spec's "islands nest only within the leaf JSX" line.
+  Implementation: thread a `in_map: bool` flag through lowering (set when
+  recursing into a Map body), and `lower_island` errors if `in_map`.
 - Event handler INSIDE a normal element still rejected (unchanged); a `<Island>`
   is NOT routed through `lower_element_name` rejection.
 
@@ -148,8 +157,10 @@ ssr + one client-only island returns `Compiled { template, islands }` where
 source returns `islands: vec![]`.
 
 **Implementation:**
-- `IslandMeta { id, props_path, ssr, hydrate }` (serde `Serialize`; add `serde`
-  +`serde_json` to the compiler crate if not present — check `Cargo.toml`).
+- `IslandMeta { id, props_path, ssr, hydrate }`. **serde is ABSENT from the
+  compiler `Cargo.toml` (verified) → hand-roll the JSON** (4 flat fields:
+  3 strings + 1 bool). Trivial `fn to_json(&[IslandMeta]) -> String` that
+  escapes `"`/`\` in the string fields. No new dep.
 - A post-lower walk collects `JsxNode::Island` nodes into `Vec<IslandMeta>`
   (walk the IR tree; islands can be nested inside elements/maps).
 - `compile_full` returns both; `compile_with_path` = `compile_full(...).map(|c| c.template)`.
@@ -218,10 +229,13 @@ islandRoots.set(el, root)
 **Test first** (bun): given a native route emitting `<Name>.islands.json` with
 ids `["Counter"]` and an `island.config.ts` exposing `Counter`, after
 `emitNativeTemplates`: (a) the final `<Name>.islands.json` entries carry
-`sourcePath` resolved from the config; (b) the `<Name>.jinja` ends with
-`ISLANDS_IMPORTMAP_AND_BOOTSTRAP`; (c) an id NOT in island.config throws a clear
-error; (d) a route with no islands writes no `.islands.json` and the `.jinja` is
-byte-identical to today (no bootstrap appended).
+`sourcePath` resolved from the config; (b) the `<Name>.jinja` ends with the
+baked bootstrap block; (c) an id NOT in island.config throws a clear error;
+(d) a route with no islands writes no `.islands.json` and the `.jinja` is
+byte-identical to today (no bootstrap appended); (e) **the appended bootstrap
+survives minijinja compile (advisor #2)** — load the post-append `.jinja`
+through a minijinja env (`UndefinedBehavior::Chainable`, matching boot) and
+assert it neither errors nor mangles the script markup.
 
 **Implementation:** after the `jsx-rustc` spawn (line ~63) for each route:
 - read `<out>.islands.json` if present;
@@ -231,7 +245,10 @@ byte-identical to today (no bootstrap appended).
 - validate each id ∈ config keys (throw `island "<id>" in native route "<Name>"
   is not registered in island.config.ts`);
 - enrich entries with `sourcePath`, rewrite the `.islands.json`;
-- append `ISLANDS_IMPORTMAP_AND_BOOTSTRAP` to the `.jinja` file content.
+- append the bootstrap to the `.jinja` file content, **wrapped in
+  `{% raw %}…{% endraw %}` (advisor #2)** so the markup's literal `}}` (and any
+  future `{{`/`{%`/`{#`/nonce) is guaranteed inert through minijinja's boot-time
+  compile. i.e. append `` `{% raw %}${ISLANDS_IMPORTMAP_AND_BOOTSTRAP}{% endraw %}` ``.
 - Import `ISLANDS_IMPORTMAP_AND_BOOTSTRAP` from `runtime/islands/importmap.ts`.
 
 **Verify:** `bun test runtime/cli/`.
@@ -263,9 +280,17 @@ entity-encoded (`&<>"`); NO `island_Counter_html` key for client-only.
   JSON-roundtrip `data` once (`const rt = JSON.parse(json)` reusing the `json`
   already computed at line 564), compute `const extra =
   resolveIslandContext(manifest, rt, importer)`, merge `const ctx = manifest ?
-  { ...rt, ...extra } : data`, then `JSON.stringify(ctx)` into the SAB instead of
-  the bare `json` (only when manifest present — keep the no-island path
+  { ...rt, ...extra } : data`, then serialize THAT into the SAB instead of the
+  bare `json` (only when manifest present — keep the no-island path
   byte-identical).
+- **Re-run the SAB size check on the FINAL bytes (advisor #1).** The existing
+  413 guard at `routes.ts:566` checks the pre-island `dataBytes` only. The merged
+  context (esp. ssr `island_X_html`) can be much larger. Compute
+  `const finalBytes = encoder.encode(JSON.stringify(ctx))` FIRST, then re-run
+  `if (finalBytes.length > view.length) return packSingleChunkResponse(... 413 ...)`
+  BEFORE `view.set(finalBytes, 0)`. `TypedArray.set` throws RangeError on
+  overflow — without this guard an oversized island context becomes an ungraceful
+  throw instead of a clean 413. (Test in T9 with ssr HTML that overflows the SAB.)
 
 **Verify:** `bun test runtime/`.
 
@@ -299,7 +324,10 @@ island button, assert it became interactive (counter increments).
 (feed a `Date`/`undefined`-bearing object; assert server html matches what the
 client would get from `JSON.parse(props)`). Contained-failure test: an importer
 / renderToString that throws → entry degrades to client-only (emits `_props`,
-no `_html`, logs) — does NOT throw out of `resolveIslandContext`.
+no `_html`, logs) — does NOT throw out of `resolveIslandContext`. SAB-overflow
+test (advisor #1): an ssr island whose rendered `_html` pushes the serialized
+context past `view.length` → the native branch returns a clean 413, NOT a
+RangeError throw.
 
 **Implementation:**
 - `importer(sourcePath)`: `await import(sourcePath)` → `mod.default ?? mod`;
