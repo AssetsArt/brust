@@ -32,6 +32,7 @@ The server listens on `127.0.0.1:3000` by default (override with
 | `GET /blog/{slug}` | Dynamic params + an async `loader` supplying the component's `data` prop | `/blog/welcome` |
 | `GET /slow-suspense` | HTML Streaming over `Transfer-Encoding: chunked` — shell + Spinner ship first; resolved content arrives ~200 ms later | `/slow-suspense` |
 | `GET /profile/{user}` | Async-data component pattern — sync page ships its shell + `loading bio...` fallback, then `<Bio />` streams in the resolved bio ~150 ms later | `/profile/world` |
+| `GET /native-islands` | Islands on a **native** (jinja) route — static Rust-rendered shell with a client-only island (empty mount → `createRoot`) and a server island (worker `renderToString` → `hydrateRoot`) | `/native-islands` |
 | `GET /sse-counter` | Server-Sent Events — three `data: N` frames at 50 ms intervals, then close | `curl -N http://127.0.0.1:3000/sse-counter` |
 | `GET /ws/echo` | WebSocket echo — every frame you send comes straight back | `wscat -c ws://127.0.0.1:3000/ws/echo` |
 
@@ -41,7 +42,7 @@ The server listens on `127.0.0.1:3000` by default (override with
 example/hello-world/
 ├── index.ts             # entry — 3 lines, calls brust.run() with the routes
 ├── routes.tsx           # the routes table
-├── island.config.ts     # one island (Counter) — minimal map
+├── island.config.ts     # island map — Counter (React path) + ClientCounter/ServerCounter (native route)
 ├── sse-counter.ts       # SSE handler for /sse-counter
 ├── ws-echo.ts           # WS handler for /ws/echo
 ├── brust.example.toml   # config template — copy to brust.toml to use
