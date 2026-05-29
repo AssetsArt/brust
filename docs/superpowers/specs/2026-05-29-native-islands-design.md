@@ -319,6 +319,12 @@ exact accepted AST shapes.
   baked bootstrap inherit that — editing an island `.tsx` needs a restart.
 - SEO visibility applies to `ssr` islands only; client-only islands are empty
   in the served HTML.
+- **Native island ids must match `[A-Za-z0-9_]+` (no hyphens).** The id is
+  embedded into the jinja context KEY `island_<id>_props` / `island_<id>_html`;
+  a hyphen would make minijinja parse the key as subtraction. The compiler
+  rejects hyphenated explicit `id="..."`; component-name defaults are inherently
+  safe. (The React-path `isValidIslandId` is laxer — `[A-Za-z0-9_-]+` — so a
+  hyphenated id usable on the React path is NOT usable as a native island.)
 
 ## Resolved by spec review
 

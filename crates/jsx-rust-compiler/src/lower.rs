@@ -375,10 +375,21 @@ fn lower_island(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode,
                 default_id = Some(island_component_ident(jsx_attr)?);
             }
             "id" => {
-                // String-literal only.
+                // String-literal only, AND must be jinja-identifier-safe.
+                // The id is embedded into the context KEYS `island_<id>_props`
+                // / `island_<id>_html` (emit_jinja). A hyphen (or any non
+                // `[A-Za-z0-9_]` char) would make minijinja parse the key as an
+                // expression (`island_cart-widget_props` → subtraction), so we
+                // restrict explicit ids to `[A-Za-z0-9_]+`. Component-ident
+                // defaults are inherently JS identifiers, so they never hit this.
                 match &jsx_attr.value {
                     Some(JSXAttrValue::Str(s)) => {
-                        explicit_id = Some(s.value.to_string_lossy().into_owned());
+                        let v = s.value.to_string_lossy().into_owned();
+                        if v.is_empty() || !v.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                        {
+                            return Err(LowerError::at(jsx_attr.span, ErrorKind::IslandBadId));
+                        }
+                        explicit_id = Some(v);
                     }
                     _ => {
                         return Err(LowerError::at(jsx_attr.span, ErrorKind::IslandBadId));
@@ -1797,6 +1808,18 @@ mod tests {
     fn rejects_island_non_string_id() {
         let src = r#"export default function Page({ counter }) {
   return <Island component={C} id={counter} props={counter} />;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let err = lower(&parsed).unwrap_err();
+        assert!(matches!(err.kind, ErrorKind::IslandBadId));
+    }
+
+    #[test]
+    fn rejects_island_hyphenated_id() {
+        // A hyphen would break the `island_<id>_props` context key (minijinja
+        // parses `island_cart-widget_props` as subtraction).
+        let src = r#"export default function Page({ counter }) {
+  return <Island component={C} id="cart-widget" props={counter} />;
 }"#;
         let parsed = parse(src, "<test>").unwrap();
         let err = lower(&parsed).unwrap_err();
