@@ -23,7 +23,7 @@ const DEFAULT_PORT = 3000
 // renders; on CPU-bound React work (typical) it over-subscribes and amplifies
 // p99 tail. Users with Suspense-heavy / await-heavy renders can override via
 // BRUST_WORKERS or workers.count in brust.toml.
-const defaultWorkers = (): number => os.availableParallelism()
+const defaultWorkers = (): number => os.availableParallelism() * 1.8
 
 const CONFIG_BASENAME = 'brust.toml'
 
