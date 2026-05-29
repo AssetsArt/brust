@@ -102,10 +102,13 @@ them:
     `hydrate` (Str literal, default `"load"`; validate ∈ load/idle/visible/interaction),
     `ssr` (bare boolean attr presence → true).
   - Prop-path extraction: accept `Ident(x)` where `x ∈ scope.destructured` →
-    path `x`; or `Member` exactly one deep off a destructured root
-    (`data.counter` where `data ∈ destructured`) → path = leaf seg. Reuse the
-    chain-walk shape from `lower_member` (line 716) but cap depth at 1 and
-    return the path string. Deeper / unresolved → error.
+    path `"x"`; or `Member` exactly one deep off a destructured root
+    (`data.counter` where `data ∈ destructured`) → **FULL dotted path
+    `"data.counter"`, root INCLUDED** (NOT leaf-only — the jinja context root is
+    the loader return whose top-level keys are the destructured names, so the
+    runtime resolves `pathInto(loaderReturn, "data.counter")`; leaf-only would
+    resolve the wrong key). Cap depth at 1. Deeper / unresolved → error.
+    [corrected during impl — original plan said leaf-only, which was wrong.]
   - `component` must be present (else error). `id = explicit_id ?? component_ident`.
 - `lib.rs`: add `ErrorKind` variants as needed (`IslandMissingComponent`,
   `IslandPropsPathUnsupported`, `IslandBadHydrate`). The existing

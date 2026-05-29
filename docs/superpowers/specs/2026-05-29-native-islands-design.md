@@ -203,7 +203,12 @@ with `.unmount()`, same as `hydrateRoot`).
 
 `props` must be a single path into the loader's return value:
 `<Island component={Counter} props={data.counter} ssr />` → manifest
-`propsPath: "counter"`. The same value feeds both `renderToString` (server
+`propsPath: "data.counter"` (the FULL dotted path, root included — corrected
+during impl: the jinja context root IS the loader return whose top-level keys are
+the destructured prop names, e.g. the `NativeProfile` fixture's `{user, greeting}`;
+so the runtime resolves `pathInto(loaderReturn, "data.counter")`. A leaf-only
+`"counter"` would wrongly resolve `loaderReturn.counter`. `props={counter}` with
+`counter` destructured → `propsPath: "counter"`.) The same value feeds both `renderToString` (server
 island) and the pre-serialized `data-brust-props` string. This keeps the prop
 resolvable in both Rust/jinja and JS without an expression evaluator. Object
 literals and computed expressions are a Non-goal for v1.

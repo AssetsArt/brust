@@ -82,6 +82,14 @@ pub enum ErrorKind {
     UnknownAttributeRename(String),
     #[error("prop `{0}` used as both value and collection — type conflict")]
     PropTypeConflict(String),
+    #[error("`<Island>` requires a `component={{Ident}}` attribute naming the island component")]
+    IslandMissingComponent,
+    #[error("`<Island props={{…}}>` path unsupported — expect a destructured prop or one-deep member off one (e.g. `counter` or `data.counter`)")]
+    IslandPropsPathUnsupported,
+    #[error("`<Island hydrate=\"{0}\">` invalid — expect one of load/idle/visible/interaction")]
+    IslandBadHydrate(String),
+    #[error("`<Island>` inside `.map(...)` not supported — id would collide across iterations and the props path can't be per-iteration in v1")]
+    IslandInMapNotSupported,
 }
 
 impl CompileError {

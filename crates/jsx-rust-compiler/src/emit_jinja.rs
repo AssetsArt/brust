@@ -59,6 +59,8 @@ fn emit_node(node: &JsxNode, out: &mut String) {
                 let _ = write!(out, "</{tag}>");
             }
         }
+        // T2 fills this in (placeholder markup + manifest hook).
+        JsxNode::Island { .. } => {}
     }
 }
 

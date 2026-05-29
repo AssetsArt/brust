@@ -81,7 +81,9 @@ pub fn lower(parsed: &ParsedSource) -> Result<Component, LowerError> {
             ));
         }
     };
-    let root = lower_element(element, &scope)?;
+    // Top-level JSX is not under any `.map(...)` — `in_map` starts false and is
+    // only forced true when `lower_call_as_map` recurses into a Map body.
+    let root = lower_element(element, &scope, false)?;
 
     let mut props = PropsShape {
         bindings: param_shape.destructured.clone(),
@@ -220,7 +222,17 @@ fn lower_params(function: &Function) -> Result<ParamShape, LowerError> {
     }
 }
 
-fn lower_element(el: &JSXElement, scope: &Scope) -> Result<JsxNode, LowerError> {
+fn lower_element(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode, LowerError> {
+    // Dedicated `<Island>` recognition path: peek the opening name BEFORE
+    // `lower_element_name` (which would reject any capitalized custom component
+    // as `CustomComponentNotSupported`). An `<Island>` is the one capitalized
+    // tag we accept, lowering it to `JsxNode::Island`.
+    if let JSXElementName::Ident(ident) = &el.opening.name
+        && ident.sym.as_ref() == "Island"
+    {
+        return lower_island(el, scope, in_map);
+    }
+
     let tag = lower_element_name(&el.opening.name)?;
     // T6: attr precedence (key drop, ref/on*/uppercase rejection, rename table),
     // void-element children check, whitespace-only JSXText filtering.
@@ -233,7 +245,9 @@ fn lower_element(el: &JSXElement, scope: &Scope) -> Result<JsxNode, LowerError> 
 
     let mut children = Vec::new();
     for child in &el.children {
-        if let Some(node) = lower_child(child, scope)? {
+        // `in_map` flows straight through to children — an element nested under
+        // a `.map(...)` keeps the flag set so any `<Island>` descendant is caught.
+        if let Some(node) = lower_child(child, scope, in_map)? {
             children.push(node);
         }
     }
@@ -291,6 +305,211 @@ fn rename_attr(name: &str) -> Option<&'static str> {
         "srcSet" => "srcset",
         _ => return None,
     })
+}
+
+/// Lower a `<Island …/>` element into `JsxNode::Island`.
+///
+/// Recognized attributes:
+/// - `component={Ident}` — REQUIRED. The ident's sym is the DEFAULT island id.
+///   Extracted by a dedicated walker (NOT `lower_expr`, which would reject the
+///   bare, non-destructured `Counter` as `UnresolvedIdent`). A non-Ident expr,
+///   a missing value, or an absent `component` → `IslandMissingComponent`.
+/// - `id="literal"` — OPTIONAL string literal; overrides the default id.
+/// - `props={path}` — REQUIRED single-segment path (see `island_props_path`).
+/// - `hydrate="literal"` — OPTIONAL; default `"load"`; must be one of
+///   load/idle/visible/interaction (else `IslandBadHydrate`).
+/// - `ssr` — OPTIONAL bare boolean attribute; presence → `ssr: true`.
+///
+/// Rejected UNDER a `.map(...)` (`in_map == true`) with `IslandInMapNotSupported`
+/// — checked FIRST, before any attribute parsing, so the map diagnostic always
+/// wins over an attribute error.
+fn lower_island(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode, LowerError> {
+    if in_map {
+        return Err(LowerError::at(
+            el.opening.span,
+            ErrorKind::IslandInMapNotSupported,
+        ));
+    }
+
+    let mut default_id: Option<String> = None;
+    let mut explicit_id: Option<String> = None;
+    let mut props_path: Option<String> = None;
+    let mut hydrate: Option<String> = None;
+    let mut ssr = false;
+
+    for attr in &el.opening.attrs {
+        // Spread on an island (`<Island {...x}/>`) is not a recognized attribute.
+        let JSXAttrOrSpread::JSXAttr(jsx_attr) = attr else {
+            return Err(LowerError::at(
+                el.opening.span,
+                ErrorKind::SpreadAttributeNotSupported,
+            ));
+        };
+        let name = match &jsx_attr.name {
+            JSXAttrName::Ident(name) => name.sym.to_string(),
+            JSXAttrName::JSXNamespacedName(n) => {
+                return Err(LowerError::at(
+                    n.span,
+                    ErrorKind::NamespacedAttrNotSupported,
+                ));
+            }
+        };
+
+        match name.as_str() {
+            "component" => {
+                default_id = Some(island_component_ident(jsx_attr)?);
+            }
+            "id" => {
+                // String-literal only.
+                match &jsx_attr.value {
+                    Some(JSXAttrValue::Str(s)) => {
+                        explicit_id = Some(s.value.to_string_lossy().into_owned());
+                    }
+                    _ => {
+                        return Err(LowerError::at(
+                            jsx_attr.span,
+                            ErrorKind::IslandPropsPathUnsupported,
+                        ));
+                    }
+                }
+            }
+            "props" => {
+                props_path = Some(island_props_path(jsx_attr, scope)?);
+            }
+            "hydrate" => {
+                let value = match &jsx_attr.value {
+                    Some(JSXAttrValue::Str(s)) => s.value.to_string_lossy().into_owned(),
+                    _ => {
+                        return Err(LowerError::at(
+                            jsx_attr.span,
+                            ErrorKind::IslandBadHydrate(String::new()),
+                        ));
+                    }
+                };
+                if !matches!(value.as_str(), "load" | "idle" | "visible" | "interaction") {
+                    return Err(LowerError::at(
+                        jsx_attr.span,
+                        ErrorKind::IslandBadHydrate(value),
+                    ));
+                }
+                hydrate = Some(value);
+            }
+            "ssr" => {
+                // Bare boolean attribute — presence is what matters.
+                ssr = true;
+            }
+            // Unknown attributes on an island are ignored (forward-compatible);
+            // T3 owns the full attribute vocabulary.
+            _ => {}
+        }
+    }
+
+    let id = explicit_id
+        .or(default_id.clone())
+        .ok_or_else(|| LowerError::at(el.opening.span, ErrorKind::IslandMissingComponent))?;
+    // `component` is required even when an explicit `id` is given.
+    if default_id.is_none() {
+        return Err(LowerError::at(
+            el.opening.span,
+            ErrorKind::IslandMissingComponent,
+        ));
+    }
+    let props_path = props_path
+        .ok_or_else(|| LowerError::at(el.opening.span, ErrorKind::IslandPropsPathUnsupported))?;
+    let hydrate = hydrate.unwrap_or_else(|| "load".to_string());
+
+    Ok(JsxNode::Island {
+        id,
+        props_path,
+        hydrate,
+        ssr,
+    })
+}
+
+/// Extract the `component={Ident}` name. The container shape is
+/// `JSXExprContainer(JSXExpr::Expr(SwcExpr::Ident))`; anything else (member,
+/// call, missing value) → `IslandMissingComponent`.
+fn island_component_ident(jsx_attr: &swc_core::ecma::ast::JSXAttr) -> Result<String, LowerError> {
+    match &jsx_attr.value {
+        Some(JSXAttrValue::JSXExprContainer(c)) => match &c.expr {
+            JSXExpr::Expr(e) => match e.as_ref() {
+                SwcExpr::Ident(id) => Ok(id.sym.to_string()),
+                _ => Err(LowerError::at(c.span, ErrorKind::IslandMissingComponent)),
+            },
+            JSXExpr::JSXEmptyExpr(_) => {
+                Err(LowerError::at(c.span, ErrorKind::IslandMissingComponent))
+            }
+        },
+        _ => Err(LowerError::at(
+            jsx_attr.span,
+            ErrorKind::IslandMissingComponent,
+        )),
+    }
+}
+
+/// Extract the `props={…}` path string into the jinja context (≤ 1 member deep).
+///
+/// Accepts only:
+/// - `Ident(x)` where `x ∈ scope.destructured` → `"x"`.
+/// - `Member` exactly one deep off a destructured root (`data.counter`,
+///   `data ∈ scope.destructured`) → `"data.counter"` (FULL dotted path, root
+///   included). The jinja context root is the loader return whose top-level keys
+///   are the destructured prop names; the runtime resolves
+///   `pathInto(loaderReturn, props_path)`, so the root must be kept.
+///
+/// Rejects (all → `IslandPropsPathUnsupported`): deeper chains (`data.a.b`),
+/// props rooted at a map binding, unresolved roots, computed access, non-Ident
+/// roots, and any non-`{expr}` value. Deliberately NOT routed through
+/// `lower_member` (which accepts map-bound roots and deeper chains).
+fn island_props_path(
+    jsx_attr: &swc_core::ecma::ast::JSXAttr,
+    scope: &Scope,
+) -> Result<String, LowerError> {
+    let err = || LowerError::at(jsx_attr.span, ErrorKind::IslandPropsPathUnsupported);
+
+    let Some(JSXAttrValue::JSXExprContainer(c)) = &jsx_attr.value else {
+        return Err(err());
+    };
+    let JSXExpr::Expr(e) = &c.expr else {
+        return Err(err());
+    };
+
+    match strip_paren(e.as_ref()) {
+        // `props={counter}` — bare destructured ident.
+        SwcExpr::Ident(id) => {
+            let name = id.sym.to_string();
+            if scope.destructured.contains(&name) {
+                Ok(name)
+            } else {
+                Err(err())
+            }
+        }
+        // `props={data.counter}` — exactly one-deep member off a destructured root.
+        SwcExpr::Member(m) => {
+            // Leaf segment must be a plain ident (no computed/private access).
+            let MemberProp::Ident(leaf) = &m.prop else {
+                return Err(err());
+            };
+            // Root must be a bare destructured Ident — a nested member (`data.a.b`)
+            // or a map-bound root is rejected.
+            let SwcExpr::Ident(root) = strip_paren(&m.obj) else {
+                return Err(err());
+            };
+            let root_name = root.sym.to_string();
+            if scope.destructured.contains(&root_name) {
+                // FULL dotted path, root included (`data.counter`), NOT leaf-only.
+                // The jinja context root IS the loader return whose top-level keys
+                // are the destructured prop names (see NativeProfile fixture); the
+                // runtime resolves `pathInto(loaderReturn, props_path)`. Leaf-only
+                // would resolve `rt.counter` instead of the correct `rt.data.counter`.
+                // This also matches what emit_jinja emits for `{{ data.counter }}`.
+                Ok(format!("{root_name}.{}", leaf.sym))
+            } else {
+                Err(err())
+            }
+        }
+        _ => Err(err()),
+    }
 }
 
 fn lower_element_name(name: &JSXElementName) -> Result<String, LowerError> {
@@ -436,7 +655,11 @@ fn is_event_handler(name: &str) -> bool {
         && matches!(chars.next(), Some(c) if c.is_ascii_uppercase())
 }
 
-fn lower_child(child: &JSXElementChild, scope: &Scope) -> Result<Option<JsxNode>, LowerError> {
+fn lower_child(
+    child: &JSXElementChild,
+    scope: &Scope,
+    in_map: bool,
+) -> Result<Option<JsxNode>, LowerError> {
     match child {
         JSXElementChild::JSXText(text) => {
             let cleaned = normalize_jsx_text(&text.value);
@@ -447,7 +670,7 @@ fn lower_child(child: &JSXElementChild, scope: &Scope) -> Result<Option<JsxNode>
             }
         }
         // `JSXElementChild::JSXElement` wraps `Box<JSXElement>`; auto-deref to `&JSXElement`.
-        JSXElementChild::JSXElement(el) => Ok(Some(lower_element(el, scope)?)),
+        JSXElementChild::JSXElement(el) => Ok(Some(lower_element(el, scope, in_map)?)),
         JSXElementChild::JSXFragment(f) => {
             Err(LowerError::at(f.span, ErrorKind::FragmentNotSupported))
         }
@@ -466,7 +689,7 @@ fn lower_child(child: &JSXElementChild, scope: &Scope) -> Result<Option<JsxNode>
                 if let SwcExpr::Call(call) = e.as_ref()
                     && is_dot_map_call(call)
                 {
-                    return Ok(Some(lower_call_as_map(call, scope)?));
+                    return Ok(Some(lower_call_as_map(call, scope, in_map)?));
                 }
                 Ok(Some(JsxNode::Expr(lower_expr(e, scope)?)))
             }
@@ -502,7 +725,11 @@ fn is_dot_map_call(call: &CallExpr) -> bool {
 ///   `MapShapeNotSupported`
 /// - arrow body is not a `<JSXElement>` (either as expr body or as the sole
 ///   `return <JSX>;` in a block body) → `MapShapeNotSupported`
-fn lower_call_as_map(call: &CallExpr, scope: &Scope) -> Result<JsxNode, LowerError> {
+fn lower_call_as_map(
+    call: &CallExpr,
+    scope: &Scope,
+    _in_map: bool,
+) -> Result<JsxNode, LowerError> {
     // Source object: `obj` of the `.map` member.
     let Callee::Expr(callee) = &call.callee else {
         return Err(LowerError::at(call.span, ErrorKind::MapShapeNotSupported));
@@ -534,7 +761,9 @@ fn lower_call_as_map(call: &CallExpr, scope: &Scope) -> Result<JsxNode, LowerErr
     // the lowering on `&Scope`; no `&mut` plumbing required.
     let mut inner_scope = scope.clone();
     inner_scope.map_bindings.push(binding.clone());
-    let body = lower_element(jsx_body, &inner_scope)?;
+    // Force `in_map = true` for the Map body: any `<Island>` inside the
+    // iteration is rejected (id collision + non-per-iteration props path in v1).
+    let body = lower_element(jsx_body, &inner_scope, true)?;
 
     Ok(JsxNode::Map {
         source,
@@ -843,6 +1072,10 @@ fn infer_props_types(node: &JsxNode, props: &mut PropsShape) -> Result<(), Lower
             // stage since they target the binding, not a prop name.
             infer_props_types(body, props)
         }
+        // An island's `props_path` is resolved by `lower_island` against the
+        // outer scope at lowering time; its placeholder/manifest are emitted by
+        // T2/T3. It contributes no prop-type inference here.
+        JsxNode::Island { .. } => Ok(()),
     }
 }
 
@@ -895,6 +1128,9 @@ fn collect_map_member_fields(
             collect_map_member_from_expr(source, binding, fields);
             collect_map_member_fields(body, binding, fields);
         }
+        // Islands are rejected under `.map(...)` (see `lower_island`), so an
+        // Island node never appears in a Map body. Nothing to collect.
+        JsxNode::Island { .. } => {}
     }
 }
 
@@ -1458,6 +1694,113 @@ mod tests {
         match err.kind {
             ErrorKind::VoidElementHasChildren(tag) => assert_eq!(tag, "br"),
             other => panic!("expected VoidElementHasChildren(\"br\"), got {other:?}"),
+        }
+    }
+
+    // T1 — <Island> recognition path
+
+    #[test]
+    fn lowers_island_member_props_full_attrs() {
+        let src = r#"export default function Page({ data }) {
+  return <Island component={Counter} props={data.counter} hydrate="visible" ssr />;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let c = lower(&parsed).unwrap();
+        match &c.root {
+            JsxNode::Island {
+                id,
+                props_path,
+                hydrate,
+                ssr,
+            } => {
+                assert_eq!(id, "Counter");
+                // Full dotted path (root included) — `data` is a destructured
+                // context key, so the value lives at `loaderReturn.data.counter`.
+                assert_eq!(props_path, "data.counter");
+                assert_eq!(hydrate, "visible");
+                assert!(*ssr);
+            }
+            other => panic!("expected Island, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn lowers_island_bare_ident_props_defaults() {
+        let src = r#"export default function Page({ counter }) {
+  return <Island component={Counter} props={counter} />;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let c = lower(&parsed).unwrap();
+        match &c.root {
+            JsxNode::Island {
+                id,
+                props_path,
+                hydrate,
+                ssr,
+            } => {
+                assert_eq!(id, "Counter");
+                assert_eq!(props_path, "counter");
+                assert_eq!(hydrate, "load");
+                assert!(!*ssr);
+            }
+            other => panic!("expected Island, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn island_explicit_id_overrides_component_default() {
+        let src = r#"export default function Page({ counter }) {
+  return <Island component={Counter} id="myId" props={counter} />;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let c = lower(&parsed).unwrap();
+        match &c.root {
+            JsxNode::Island { id, .. } => assert_eq!(id, "myId"),
+            other => panic!("expected Island, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_island_deep_props_path() {
+        let src = r#"export default function Page({ data }) {
+  return <Island component={Counter} props={data.a.b} />;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let err = lower(&parsed).unwrap_err();
+        assert!(matches!(err.kind, ErrorKind::IslandPropsPathUnsupported));
+    }
+
+    #[test]
+    fn rejects_island_missing_component() {
+        let src = r#"export default function Page({ counter }) {
+  return <Island props={counter} />;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let err = lower(&parsed).unwrap_err();
+        assert!(matches!(err.kind, ErrorKind::IslandMissingComponent));
+    }
+
+    #[test]
+    fn rejects_island_inside_map() {
+        let src = r#"export default function Page({ items }) {
+  return <ul>{items.map(i => <Island component={C} props={i.x} />)}</ul>;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let err = lower(&parsed).unwrap_err();
+        assert!(matches!(err.kind, ErrorKind::IslandInMapNotSupported));
+    }
+
+    #[test]
+    fn event_handler_on_normal_element_still_rejected() {
+        // Regression guard for requirement #7: the dedicated `<Island>` path must
+        // not change normal-element lowering — `onClick` on a `<button>` is still
+        // an `EventHandlerNotSupported` error.
+        let src = r#"export default function X({ x }) { return <button onClick={x}/>; }"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let err = lower(&parsed).unwrap_err();
+        match err.kind {
+            ErrorKind::EventHandlerNotSupported(name) => assert_eq!(name, "onClick"),
+            other => panic!("expected EventHandlerNotSupported(\"onClick\"), got {other:?}"),
         }
     }
 }
