@@ -167,8 +167,8 @@ pub fn path_is_ws(path: &str) -> bool {
     WS_PATHS.get().is_some_and(|s| s.lock().contains(path))
 }
 
+use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
-use std::borrow::Cow;
 use std::time::{Duration, Instant};
 use tokio_tungstenite::{
     WebSocketStream,
@@ -207,11 +207,14 @@ pub async fn ws_conn_task<S>(
             biased;   // give outgoing sends priority to drain the queue
             Some(out) = send_rx.recv() => {
                 let msg = match out.frame {
-                    WsFrameKind::Text(s) => Message::Text(s),
-                    WsFrameKind::Binary(b) => Message::Binary(b),
+                    // tungstenite 0.29: Text/Binary payloads are Utf8Bytes/Bytes
+                    // (were String/Vec<u8> in 0.21); String/Vec<u8> both impl
+                    // Into for them. CloseFrame.reason is Utf8Bytes (was Cow).
+                    WsFrameKind::Text(s) => Message::Text(s.into()),
+                    WsFrameKind::Binary(b) => Message::Binary(b.into()),
                     WsFrameKind::Close(c, r) => Message::Close(Some(CloseFrame {
                         code: c.into(),
-                        reason: Cow::Owned(r),
+                        reason: r.into(),
                     })),
                 };
                 let is_close = matches!(msg, Message::Close(_));
@@ -236,32 +239,42 @@ pub async fn ws_conn_task<S>(
                 };
                 match msg {
                     Message::Text(s) => {
+                        // s: Utf8Bytes (0.29). .len() is byte length via Deref<str>,
+                        // same semantics as the old String. fire_on_message needs an
+                        // owned Vec<u8> for the JS tsfn boundary (which copies into the
+                        // JS heap regardless), so .as_bytes().to_vec() here.
                         if s.len() > max_msg_bytes {
                             fire_on_close(conn_id, 1009, "message too big".to_string());
                             let _ = ws_sink.send(Message::Close(Some(CloseFrame {
                                 code: 1009.into(),
-                                reason: Cow::Borrowed("message too big"),
+                                reason: "message too big".into(),
                             }))).await;
                             break;
                         }
-                        fire_on_message(conn_id, s.into_bytes(), false);
+                        fire_on_message(conn_id, s.as_bytes().to_vec(), false);
                     }
                     Message::Binary(b) => {
+                        // b: Bytes (0.29, was Vec<u8>). .to_vec() copies once into the
+                        // owned Vec the JS tsfn boundary requires — one extra payload
+                        // copy on inbound vs 0.21's by-move Vec; acceptable for the
+                        // type change (threading Bytes/&[u8] through fire_on_message
+                        // would be a napi-boundary change beyond this dep bump).
                         if b.len() > max_msg_bytes {
                             fire_on_close(conn_id, 1009, "message too big".to_string());
                             let _ = ws_sink.send(Message::Close(Some(CloseFrame {
                                 code: 1009.into(),
-                                reason: Cow::Borrowed("message too big"),
+                                reason: "message too big".into(),
                             }))).await;
                             break;
                         }
-                        fire_on_message(conn_id, b, true);
+                        fire_on_message(conn_id, b.to_vec(), true);
                     }
                     Message::Ping(p) => { let _ = ws_sink.send(Message::Pong(p)).await; }
                     Message::Pong(_) => { last_pong = Instant::now(); }
                     Message::Close(cf) => {
                         let code = cf.as_ref().map_or(1005u16, |c| u16::from(c.code));
-                        let reason = cf.map_or(String::new(), |c| c.reason.into_owned());
+                        // c.reason: Utf8Bytes (0.29, was Cow<str> with into_owned()).
+                        let reason = cf.map_or(String::new(), |c| c.reason.to_string());
                         fire_on_close(conn_id, code, reason);
                         break;
                     }
@@ -274,13 +287,13 @@ pub async fn ws_conn_task<S>(
                     fire_on_close(conn_id, 1011, "pong timeout".to_string());
                     let _ = ws_sink.send(Message::Close(Some(CloseFrame {
                         code: 1011.into(),
-                        reason: Cow::Borrowed("pong timeout"),
+                        reason: "pong timeout".into(),
                     }))).await;
                     break;
                 }
                 // Match the send arm — break on send error so we don't loop
-                // sending Pings to a dead socket.
-                if ws_sink.send(Message::Ping(Vec::new())).await.is_err() { break; }
+                // sending Pings to a dead socket. Ping payload is Bytes in 0.29.
+                if ws_sink.send(Message::Ping(Bytes::new())).await.is_err() { break; }
             }
         }
     }
