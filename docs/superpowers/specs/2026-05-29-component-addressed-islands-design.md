@@ -120,11 +120,24 @@ by the numbering pass (below) before emit/collect.
 ### `lower.rs` — `lower_island`
 
 - Keep `island_component_ident` (returns the ident sym) → store as `component`.
-- **Remove** the `id="..."` attribute branch and `explicit_id`/`default_id` logic.
-  An `id=` attribute now → `UnknownAttribute`-style rejection (reuse the existing
-  unknown-attribute path for `<Island>`, or a dedicated `IslandIdAttrRemoved` error
-  with a migration message). Decision deferred to plan; **must produce a clear
-  error, not silently ignore.**
+- **Validate the component ident charset at lower time.** `island_component_ident`
+  accepts any `Ident` sym, but a JS-legal ident can contain `$` (`Foo$Bar`), which
+  fails both `isValidIslandId` (`build.ts:101`, `[A-Za-z0-9_-]`) and
+  `is_safe_island_filename` (`src/server.rs`, `[A-Za-z0-9_.-]`). Since the component
+  ident is now the chunk filename + `data-brust-island` value, reject any component
+  ident not matching `[A-Za-z0-9_]+` at lower time with a clear compile error (a new
+  `IslandBadComponentName` variant) rather than letting it surface as a build/serve
+  failure. (PascalCase idents — the norm — pass; this only rejects `$`/exotic names.)
+- **Remove `explicit_id`/`default_id`/`id` logic.** `lower.rs:434` derives
+  `id = explicit_id.unwrap_or(component_id)`; that whole derivation goes — the node
+  carries `component` directly. **CRITICAL (do not merely delete the `"id"` match
+  arm):** the attribute `match` ends with `_ => {}` (`lower.rs:426`, "unknown
+  attributes ignored, forward-compatible"). Deleting the `id` handling alone makes a
+  now-illegal `id=` fall through to `_ => {}` and be **silently dropped** — the exact
+  mode the spec forbids. The plan MUST **add an explicit `"id" => return Err(…)`
+  arm** (a new `IslandIdAttrRemoved` error with a migration message:
+  "`id=` is no longer supported; islands are addressed by `component={…}` — remove
+  the `id` attribute"). The `_ => {}` arm stays for genuinely-unknown attrs.
 - `props_path`, `hydrate`, `ssr`, the `.map`/children/self-closing guards: unchanged.
 
 ### `lib.rs` — numbering pass, collect, manifest
@@ -140,6 +153,9 @@ by the numbering pass (below) before emit/collect.
 - **Remove** the `DuplicateIslandId` rejection loop (reuse is now the goal;
   instances are unique by construction). Remove the `DuplicateIslandId` error
   variant. Keep `seen`-based dedup? **No** — delete it.
+- **`ErrorKind` net change:** remove `DuplicateIslandId` + `IslandBadId`; add
+  `IslandIdAttrRemoved` (illegal `id=` attr, see lower.rs) and
+  `IslandBadComponentName` (component ident outside `[A-Za-z0-9_]+`).
 
 ### `emit_jinja.rs` — island branch
 
@@ -180,13 +196,21 @@ by the numbering pass (below) before emit/collect.
 - New `scanIslandChunks(routesEntryFile: string): Map<string, string>` (name → abs
   source path):
   1. `scanImports(routesEntry)` → page modules.
-  2. For each page source, regex-match `<Island\b[\s\S]*?component=\{(\w+)\}` (all
-     occurrences) → component idents.
-  3. Resolve each ident via that page's own `scanImports` → abs source.
-  4. Build the map; on `name → two distinct paths`, throw the collision error.
-  - `scanImports` is currently private to `native-routes-emit.ts` — **export and
-    share it** (single source of truth for the import-resolution regex), or hoist
-    it to a small shared module. Decision in plan.
+  2. For each page source, regex-match `<Island\b[\s\S]*?component=\{\s*(\w+)\s*\}`
+     (all occurrences) → component idents. The `\s*` inside the braces is
+     load-bearing: the compiler accepts `component={ Counter }` (spaces) on the
+     native path, so the React-path scanner must too — otherwise it silently emits
+     no chunk and 404s at runtime.
+  3. **Loud on silent miss (F3):** if a page contains a `<Island` token but the
+     scan captures **no** component ident for it, throw/warn with the page path —
+     never let an island silently produce no chunk. There is no compiler
+     cross-check for React-path islands, so this is the only guard.
+  4. Resolve each ident via that page's own `scanImports` → abs source.
+  5. Build the map. Treat `name → SAME path` as a dedupe (one chunk); `name → two
+     DISTINCT paths` → throw the collision error naming both files.
+  - `scanImports` is currently a **private `function`** in `native-routes-emit.ts:118`
+    — sharing it is a real edit (export it, or hoist to a small shared module so the
+    import-resolution regex has a single source of truth). Decision in plan.
 - `buildIslands` signature changes to consume a resolved map instead of reading
   config: `buildIslands(islands: Map<string,string>, options)`. The `_react.js` /
   `_react-dom.js` / `_bootstrap.js` runtime chunks are still built unconditionally.
@@ -227,10 +251,11 @@ crates/jsx-rust-compiler/fixtures/island_{csr,ssr}.{tsx,expected.html}  # golden
 runtime/islands/{native-render,build,island}.ts             # runtime + scanner + React marker
 runtime/cli/{native-routes-emit,build,dev}.ts               # reconcile + wiring
 runtime/index.ts                                            # wiring (3 sites)
-example/hello-world/{island.config.ts → DELETE, pages/NativeIslands.tsx, components/Counter.tsx}
-bench/apps/brust/{island.config.ts → DELETE, routes/pages as needed}
+example/hello-world/{island.config.ts → DELETE, pages/NativeIslands.tsx}  # drop id="ClientCounter"/"ServerCounter" (44,52)
+bench/apps/brust/{island.config.ts → DELETE, pages/NativeIslands.tsx}     # drop id= (20,21)
 runtime/cli/templates/minimal/island.config.ts → DELETE (+ brust-new scaffolding refs)
-tests/fixtures/app/island.config.ts → DELETE (+ routes.tsx if it referenced ids)
+tests/fixtures/app/island.config.ts → DELETE
+tests/fixtures/app/components/{NotePage,AvatarPage,WhoAmIPage}.tsx        # React-path <Island id="…"> → drop id= (F1)
 docs/superpowers/specs/2026-05-29-native-islands-design.md   # note supersession
 architecture.md, example READMEs                             # drop island.config.ts mentions
 ```
@@ -246,13 +271,23 @@ architecture.md, example READMEs                             # drop island.confi
 - **Delete** `compile_full_rejects_duplicate_island_ids`; **add**
   `compile_full_allows_duplicate_components_distinct_instances` (two `<Island component={C}>`
   → instances 0 and 1, no error).
-- `emit_jinja.rs` island tests (`emits_ssr_island`, `emits_client_only_island`,
-  `emits_island_interpolates_id_and_hydrate`) — assert `data-brust-island="Counter"`
-  + `island_0_props` / `island_0_html` (rename the third — it tested id, now tests
-  component+instance).
-- `golden_emit_jinja_for_all_fixtures` + `fixtures/island_{csr,ssr}.expected.html` —
-  regenerate expected HTML for the new context keys. **This is the exact test that
-  broke during the Biome session; treat the fixtures as load-bearing.**
+- `emit_jinja.rs` island unit tests (`emits_ssr_island`, `emits_client_only_island`,
+  `emits_island_interpolates_id_and_hydrate`) — these assert the **raw emitted jinja
+  string**, which DOES change: `data-brust-island="Counter"` stays, but the context
+  keys become `{{ island_0_props }}` / `{{ island_0_html }}`. Update assertions;
+  rename the third (it tested id, now tests component+instance).
+- **Byte-equal render goldens (B1 correction):** the island render tests are
+  `renders_island_csr_byte_equal` / `renders_island_ssr_byte_equal` in
+  `crates/jsx-rust-compiler/tests/golden_render_jinja/main.rs` (NOT
+  `golden_emit_jinja_for_all_fixtures`, whose `FIXTURES` are islandless:
+  static_hello/props_hello/list_nav). The fix is to change the `context!{}` keys in
+  `main.rs` from `island_Counter_props`/`island_Counter_html` to
+  `island_0_props`/`island_0_html`. **The `fixtures/island_{csr,ssr}.expected.html`
+  files stay BYTE-IDENTICAL** — `data-brust-island="Counter"` is still the component
+  name and the props/html values are context-supplied (already substituted in the
+  fixture). Verify byte-equality after the change; do NOT regenerate the HTML.
+  **These fixtures are the exact ones the Biome session corrupted — leave them
+  untouched, only edit `main.rs`.**
 
 ### Runtime (TS)
 
@@ -266,6 +301,13 @@ architecture.md, example READMEs                             # drop island.confi
 - `tests/native-island.test.ts`, `tests/native-island-ssr.test.ts`,
   `tests/integration.test.ts` — update fixtures (drop config, allow reuse), keep
   the real-server gating proof (SSR island markup ships, hydrates).
+- **`runtime/cli/native-routes-emit.test.ts:20,38` (F2)** — existing cases test
+  `loadIslandConfigMap`/config-map enrichment (`sourcePath:'/abs/Counter.tsx'` from
+  config). These DIE when config resolution → page-import-map resolution; rewrite
+  to assert import-map-based `sourcePath` + the no-import/collision errors.
+- **`tests/cli-new.test.ts:180` (F2)** — asserts the scaffold emits
+  `island.config.ts`; breaks when the template file is deleted. Remove/flip the
+  assertion (scaffold no longer emits it).
 
 ### Acceptance criteria
 
