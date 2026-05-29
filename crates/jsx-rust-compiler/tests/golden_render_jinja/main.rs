@@ -59,3 +59,30 @@ fn renders_list_nav_byte_equal() {
         .expect("fixtures/list_nav.expected.html");
     assert_eq!(actual, expected);
 }
+
+#[test]
+fn renders_island_csr_byte_equal() {
+    let actual = render_fixture(
+        "island_csr",
+        context! {
+            island_Counter_props => "{&quot;n&quot;:1}",
+        },
+    );
+    let expected = std::fs::read_to_string("fixtures/island_csr.expected.html")
+        .expect("fixtures/island_csr.expected.html");
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn renders_island_ssr_byte_equal() {
+    let actual = render_fixture(
+        "island_ssr",
+        context! {
+            island_Counter_props => "{&quot;n&quot;:1}",
+            island_Counter_html => "<button>1</button>",
+        },
+    );
+    let expected = std::fs::read_to_string("fixtures/island_ssr.expected.html")
+        .expect("fixtures/island_ssr.expected.html");
+    assert_eq!(actual, expected);
+}

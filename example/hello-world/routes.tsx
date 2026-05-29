@@ -6,6 +6,7 @@ import BlogPost from './pages/BlogPost'
 import SlowSuspense from './pages/SlowSuspense'
 import Profile from './pages/Profile'
 import NativeProfile from './pages/NativeProfile'
+import NativeIslands from './pages/NativeIslands'
 
 /** Minimal demo — one route per major Brust feature. Failure-mode + auth +
  * cache + nested-route variants used by the integration tests live in
@@ -41,6 +42,22 @@ export const routes = defineRoutes([
     loader: async ({ params }) => ({
       user: params.user,
       greeting: `Welcome, ${params.user}`,
+    }),
+  },
+
+  // Sub-project J / Phase A3 — native route WITH islands. The shell is jinja
+  // (rendered Rust-side); `ClientCounter` is a client-only island (empty mount
+  // → createRoot) and `ServerCounter` is a server island (worker
+  // renderToStrings it during the loader crossing → hydrateRoot). The loader's
+  // return value supplies each island's `props` by path.
+  {
+    path: '/native-islands',
+    Component: NativeIslands,
+    native: true,
+    loader: async () => ({
+      greeting: 'Islands on a native route',
+      clientProps: { start: 0, label: 'client clicks' },
+      serverProps: { start: 100, label: 'server clicks' },
     }),
   },
 

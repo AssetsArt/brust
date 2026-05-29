@@ -13,7 +13,7 @@
 //   3. Listen for popstate (back / forward) and run the same swap path
 //      without pushing a new entry.
 
-import { hydrateRoot, type Root } from 'react-dom/client'
+import { createRoot, hydrateRoot, type Root } from 'react-dom/client'
 import { createElement } from 'react'
 
 // Track React roots created by hydrateOne so we can unmount them before
@@ -71,7 +71,10 @@ function registerTrigger(el: HTMLElement, trigger: Trigger, fire: () => void): v
   }
 }
 
-async function hydrateOne(el: HTMLElement): Promise<void> {
+// Exported for unit testing — the public entry is hydrateMarkersIn, but the
+// createRoot/hydrateRoot auto-detect branch is cleanest to assert by driving
+// hydrateOne directly (the `load` trigger fires it as a detached microtask).
+export async function hydrateOne(el: HTMLElement): Promise<void> {
   const id = el.getAttribute('data-brust-island')
   if (!id) return
   const propsJson = el.getAttribute('data-brust-props') ?? '{}'
@@ -89,7 +92,20 @@ async function hydrateOne(el: HTMLElement): Promise<void> {
       console.error(`[brust] island "${id}": chunk has no default-exported component`)
       return
     }
-    const root = hydrateRoot(el, createElement(Component, props))
+    let root: Root
+    if (el.hasAttribute('data-brust-csr')) {
+      // Client-only island: the native compiler emits an EMPTY mount (no
+      // server markup) tagged data-brust-csr. hydrateRoot on an empty mount
+      // is a React 19 hydration mismatch, so spin up a fresh client root.
+      root = createRoot(el)
+      root.render(createElement(Component, props))
+    } else {
+      // Server island (or React-path island): server markup is present in the
+      // mount, so hydrate it in place to attach handlers without re-rendering.
+      root = hydrateRoot(el, createElement(Component, props))
+    }
+    // createRoot and hydrateRoot both return a Root with .unmount(), so
+    // islandRoots / unmountIslandsIn handle either uniformly — no extra work.
     islandRoots.set(el, root)
   } catch (e) {
     console.error(`[brust] island "${id}": hydration failed`, e)
@@ -98,8 +114,9 @@ async function hydrateOne(el: HTMLElement): Promise<void> {
 
 /** Unmount any React roots that live inside `root`. Must run BEFORE
  * removing or replacing their DOM, otherwise React's scheduler keeps
- * posting work to detached nodes and the tab hangs. */
-function unmountIslandsIn(root: ParentNode): void {
+ * posting work to detached nodes and the tab hangs. Exported for unit
+ * testing the createRoot/hydrateRoot unmount parity. */
+export function unmountIslandsIn(root: ParentNode): void {
   const markers = root.querySelectorAll<HTMLElement>('[data-brust-island]')
   for (const el of Array.from(markers)) {
     const r = islandRoots.get(el)

@@ -59,6 +59,33 @@ fn emit_node(node: &JsxNode, out: &mut String) {
                 let _ = write!(out, "</{tag}>");
             }
         }
+        // Island mount marker. The hydration runtime keys off the
+        // `data-brust-*` attributes; the runtime fills `island_<id>_props`
+        // (a pre-serialized, attribute-safe string — NOT `| tojson`, which
+        // this minijinja build lacks) and, for ssr, `island_<id>_html` into
+        // the template context. `id`/`hydrate` are validated `[A-Za-z0-9_-]+`
+        // upstream, so they're safe verbatim as jinja identifiers and inside
+        // attribute values — no escaping (escaping is load-bearing for the
+        // byte-equal golden fixtures, so we deliberately avoid it here).
+        JsxNode::Island {
+            id,
+            props_path: _,
+            hydrate,
+            ssr,
+        } => {
+            let _ = write!(
+                out,
+                "<div data-brust-island=\"{id}\" data-brust-props=\"{{{{ island_{id}_props }}}}\" data-brust-hydrate=\"{hydrate}\""
+            );
+            if *ssr {
+                // Close the open tag, emit the server-rendered markup slot
+                // (`| safe` passes it through unescaped), then close the div.
+                let _ = write!(out, ">{{{{ island_{id}_html | safe }}}}</div>");
+            } else {
+                // Client-only: trailing bare `data-brust-csr`, empty body.
+                out.push_str(" data-brust-csr></div>");
+            }
+        }
     }
 }
 
@@ -397,5 +424,53 @@ mod tests {
             children: vec![JsxNode::Expr(Expr::StaticText("a & b".into()))],
         };
         assert_eq!(emit(&component(ir)), "<p>a &amp; b</p>");
+    }
+
+    // Island mount markers (T2). Byte-equal — golden fixtures (T4) render
+    // these through real minijinja with the runtime-supplied context keys
+    // `island_<id>_props` / `island_<id>_html`.
+
+    #[test]
+    fn emits_ssr_island() {
+        let ir = JsxNode::Island {
+            id: "Counter".into(),
+            props_path: "counter".into(),
+            hydrate: "load".into(),
+            ssr: true,
+        };
+        assert_eq!(
+            emit(&component(ir)),
+            "<div data-brust-island=\"Counter\" data-brust-props=\"{{ island_Counter_props }}\" data-brust-hydrate=\"load\">{{ island_Counter_html | safe }}</div>"
+        );
+    }
+
+    #[test]
+    fn emits_client_only_island() {
+        // ssr:false → no `_html` slot, trailing bare `data-brust-csr`.
+        let ir = JsxNode::Island {
+            id: "Counter".into(),
+            props_path: "counter".into(),
+            hydrate: "load".into(),
+            ssr: false,
+        };
+        assert_eq!(
+            emit(&component(ir)),
+            "<div data-brust-island=\"Counter\" data-brust-props=\"{{ island_Counter_props }}\" data-brust-hydrate=\"load\" data-brust-csr></div>"
+        );
+    }
+
+    #[test]
+    fn emits_island_interpolates_id_and_hydrate() {
+        // A different id/hydrate must thread through every slot.
+        let ir = JsxNode::Island {
+            id: "Cart".into(),
+            props_path: "cart".into(),
+            hydrate: "visible".into(),
+            ssr: true,
+        };
+        assert_eq!(
+            emit(&component(ir)),
+            "<div data-brust-island=\"Cart\" data-brust-props=\"{{ island_Cart_props }}\" data-brust-hydrate=\"visible\">{{ island_Cart_html | safe }}</div>"
+        );
     }
 }
