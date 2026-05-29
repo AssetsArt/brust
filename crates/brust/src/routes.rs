@@ -6,6 +6,15 @@ use serde::Serialize;
 
 use crate::cache::CacheConfig;
 
+pub fn serialize_as_map<S, K, V>(vec: &[(K, V)], serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+    K: serde::Serialize,
+    V: serde::Serialize,
+{
+    serializer.collect_map(vec.iter().map(|(k, v)| (k, v)))
+}
+
 /// Structured view of the incoming HTTP request, owned by the envelope.
 /// Parsed once in Rust (cheaper than re-parsing in JS) and embedded in
 /// the JSON envelope handed to the worker.
@@ -13,9 +22,12 @@ use crate::cache::CacheConfig;
 pub struct RequestEnvelope<'a> {
     pub method: &'a str,
     pub url: &'a str,
-    pub headers: Vec<(&'a str, std::borrow::Cow<'a, str>)>,
+    #[serde(serialize_with = "crate::routes::serialize_as_map")]
+    pub headers: Vec<(std::borrow::Cow<'a, str>, std::borrow::Cow<'a, str>)>,
+    #[serde(serialize_with = "crate::routes::serialize_as_map")]
     pub cookies: Vec<(&'a str, std::borrow::Cow<'a, str>)>,
-    pub search: Vec<(&'a str, std::borrow::Cow<'a, str>)>,
+    #[serde(serialize_with = "crate::routes::serialize_as_map")]
+    pub search: Vec<(std::borrow::Cow<'a, str>, std::borrow::Cow<'a, str>)>,
 }
 
 /// JSON envelope shipped across the tsfn boundary for each render call.
@@ -26,6 +38,7 @@ pub struct RouteEnvelope<'a> {
     pub kind: &'static str,
     pub route_id: u32,
     pub path: &'a str,
+    #[serde(serialize_with = "crate::routes::serialize_as_map")]
     pub params: Vec<(std::borrow::Cow<'a, str>, &'a str)>,
     pub req: RequestEnvelope<'a>,
     /// Sub-project J — when the route was registered with `native: true`,
@@ -331,13 +344,12 @@ fn build_request_envelope<'a>(
                 }
             }
         }
-        // To avoid allocation for header names, we could borrow h.name and trust HTTP semantics,
-        // but it's typically lowercase in JS. We'll pass it as is and let JS/client handle,
-        // or just use Cow if we really want lowercase. Actually, we are borrowing it as is.
-        // The previous code downcased it. Let's downcase if needed, or just return Cow.
-        // Wait, the task says `headers: Vec<(&'a str, Cow<'a, str>)>`. 
-        // We can just return the original case `h.name`.
-        headers.push((h.name, std::borrow::Cow::Borrowed(value_str)));
+        let name = if h.name.chars().any(|c| c.is_ascii_uppercase()) {
+            std::borrow::Cow::Owned(h.name.to_ascii_lowercase())
+        } else {
+            std::borrow::Cow::Borrowed(h.name)
+        };
+        headers.push((name, std::borrow::Cow::Borrowed(value_str)));
     }
 
     let mut search = Vec::new();
@@ -348,20 +360,10 @@ fn build_request_envelope<'a>(
             }
             match pair.split_once('=') {
                 Some((k, v)) => {
-                    // keys are often ascii so url_decode(k) will return Borrowed if no + or %.
-                    // Wait, url_decode returns Cow<'a, str>.
-                    // So we can't easily borrow `k` directly if we url_decode it and it becomes Owned.
-                    // Oh, the task says search becomes `Vec<(&'a str, Cow<'a, str>)>`. 
-                    // This means `k` must be `&'a str`. So we CANNOT url_decode `k` if it produces an Owned value,
-                    // or we must just use `k` without url_decode, or assume it's always borrowed.
-                    // Let's look closer at the task: "search become Vec<(&'a str, Cow<'a, str>)>". 
-                    // This means the key is `&'a str`. So we do NOT url_decode the key, or we assume it's not url-encoded.
-                    // Or we can url_decode the key but return a Cow and change the type to Cow? 
-                    // Let's just use `k` for key and `url_decode(v)` for value.
-                    search.push((k, url_decode(v)));
+                    search.push((url_decode(k), url_decode(v)));
                 }
                 None => {
-                    search.push((pair, std::borrow::Cow::Borrowed("")));
+                    search.push((url_decode(pair), std::borrow::Cow::Borrowed("")));
                 }
             }
         }
