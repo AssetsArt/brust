@@ -593,28 +593,36 @@ pub async fn napi_render_chunk_final(worker_id: u32, len: u32) -> NapiResult<()>
 /// Sub-project J — render via minijinja using SAB-side-channeled loader data.
 ///
 /// SAB convention (spec §6 last paragraph): per-napi-call. `napi_render_jinja`
-/// treats SAB[0..data_len] as INBOUND raw JSON written by the JS worker; on
-/// success it assembles a `[meta_len: u16 BE][meta JSON][body]` payload
-/// that the per-conn task at server.rs:1053-1115 unconditionally splits via
-/// `render_stream::split_meta` and ships to the socket via
-/// `build_single_response_bytes`. Ships through the same `chunk_tx` /
-/// `RenderChunk::BytesAndFinal` path as `napi_render_chunk_final` so cache
-/// write-back + ack semantics are identical.
+/// treats SAB[0..data_len] as INBOUND raw JSON written by the JS worker. It
+/// renders the template Rust-side, assembles a `[meta_len: u16 BE][meta JSON]
+/// [body]` payload, writes it back into the SAB, and returns its byte length —
+/// the FAST LANE. The JS native branch returns this length up to the tsfn, and
+/// the dispatch loop's fast-lane arm reads the framed bytes directly from the
+/// SAB and ships them via `build_single_response_bytes`. No chunk channel, no
+/// per-chunk ack round-trip.
+///
+/// The render reads the inbound JSON into an owned `Vec` first, so overwriting
+/// the SAB with the assembled response afterward is safe (no aliasing).
+///
+/// SYNCHRONOUS napi fn (not `async`): the body is pure CPU work (jinja render +
+/// SAB memcpy) with no `.await`, so it's a direct FFI call from the worker
+/// thread — no Promise, no microtask round-trip. This is what lets native
+/// routes reach the same crossing floor as actions: the only Rust↔JS hops left
+/// are the tsfn call and the render-Promise resolution.
 ///
 /// Errors:
 /// - worker id not registered → NAPI Err
 /// - `data_len > buf_len` → NAPI Err (caller should have written ≤ buf_len)
-/// - render slot empty (no in-flight render) → NAPI Err
-/// - `jinja::render` failure → still ships a synthetic 500 chunk so the
-///   per-conn task receives Final and releases the worker; this fn returns
-///   `Ok(())` because the protocol error was already converted to an HTTP
-///   500 on the wire.
+/// - assembled response > buf_len → writes a small framed 500 that fits and
+///   returns ITS length, so the client gets a response instead of hanging.
+/// - `jinja::render` failure → writes a framed 500 into the SAB and returns its
+///   length (the protocol error is converted to an HTTP 500 on the wire).
 #[napi]
-pub async fn napi_render_jinja(
+pub fn napi_render_jinja(
     worker_id: u32,
     data_len: u32,
     template_name: String,
-) -> NapiResult<()> {
+) -> NapiResult<u32> {
     let entry = state()
         .pool
         .entry(worker_id)
@@ -627,16 +635,10 @@ pub async fn napi_render_jinja(
         )));
     }
 
-    let chunk_tx = entry
-        .render_slot
-        .lock()
-        .as_ref()
-        .map(|s| s.chunk_tx.clone())
-        .ok_or_else(|| napi::Error::from_reason("no active render slot"))?;
-
     // SAFETY: BufPtr is the SAB backing-store pointer pinned at register
     // time (see pool.rs::BufPtr docstring). `data_len` is bounds-checked
-    // above against the SAB capacity. Mirrors napi_render_chunk_final.
+    // above against the SAB capacity. Copied to an owned Vec so the SAB can be
+    // overwritten with the assembled response below.
     let data_json =
         unsafe { std::slice::from_raw_parts(entry.buf_ptr.0, data_len as usize) }.to_vec();
 
@@ -685,18 +687,29 @@ pub async fn napi_render_jinja(
     assembled.extend_from_slice(&meta_json);
     assembled.extend_from_slice(&body);
 
-    let (ack_tx, ack_rx) = tokio::sync::oneshot::channel::<()>();
-    chunk_tx
-        .send(crate::pool::RenderChunk::BytesAndFinal {
-            data: assembled,
-            ack: ack_tx,
-        })
-        .await
-        .map_err(|_| napi::Error::from_reason("render chunk channel closed (handle_conn gone)"))?;
-    ack_rx
-        .await
-        .map_err(|_| napi::Error::from_reason("ack dropped — handle_conn torn down mid-chunk"))?;
-    Ok(())
+    // Overflow: assembled response can't fit in the SAB. Replace with a small
+    // framed 500 that always fits, so the client gets a response (HTTP 500)
+    // instead of hanging on a truncated body.
+    if assembled.len() > entry.buf_len {
+        tracing::error!(
+            template = %template_name,
+            assembled_len = assembled.len(),
+            buf_len = entry.buf_len,
+            "jinja response exceeds SAB capacity — emitting 500",
+        );
+        let meta = br#"{"status":500,"contentType":"text/plain; charset=utf-8","headers":{},"streaming":false}"#;
+        let body = b"response body too large";
+        assembled.clear();
+        assembled.extend_from_slice(&(meta.len() as u16).to_be_bytes());
+        assembled.extend_from_slice(meta);
+        assembled.extend_from_slice(body);
+    }
+
+    // SAFETY: same SAB pointer; the in-flight render owns it exclusively and the
+    // inbound JSON was already copied out above. `assembled.len() <= buf_len`.
+    let sab = unsafe { std::slice::from_raw_parts_mut(entry.buf_ptr.0, entry.buf_len) };
+    sab[..assembled.len()].copy_from_slice(&assembled);
+    Ok(assembled.len() as u32)
 }
 
 /// Sub-project J — boot-time listing of registered minijinja templates.

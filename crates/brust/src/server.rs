@@ -374,6 +374,8 @@ async fn handle_conn(
             // Action endpoint never caches — no-op on_success closure. Content-Type
             // is carried in the per-chunk meta JSON (JS sets 'application/json' for
             // normal returns and 'text/plain' for middleware string short-circuits).
+            // Single-chunk by nature → takes the fast lane inside dispatch
+            // (worker returns the framed length; no chunk-channel round-trip).
             match dispatch_to_worker_and_stream_chunks(
                 &mut s,
                 &pool,

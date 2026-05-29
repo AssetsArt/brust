@@ -565,15 +565,17 @@ export function makeRenderer(
         }
         view.set(dataBytes, 0)
         try {
-          await (native as any).napiRenderJinja(Number(workerId), dataBytes.length, flat.nativeTemplate)
+          // FAST LANE: napiRenderJinja is a SYNC napi call — renders Rust-side,
+          // writes the framed response into the SAB, and returns its length
+          // directly (no Promise round-trip). Return it up to the tsfn; Rust's
+          // fast-lane arm reads the SAB directly (no chunk channel).
+          return (native as any).napiRenderJinja(Number(workerId), dataBytes.length, flat.nativeTemplate)
         } catch (err) {
           console.error(`[brust] napiRenderJinja failed for "${flat.nativeTemplate}":`, err)
-          await emitSingleChunkResponse(view, napi, workerId, encoder, {
+          return await emitSingleChunkResponse(view, napi, workerId, encoder, {
             status: 500, contentType: 'text/html; charset=utf-8', body: 'internal error',
           })
         }
-        // napiRenderJinja used the chunk channel (or the catch emitted via it).
-        return 0
       }
 
       let element: ReactNode
