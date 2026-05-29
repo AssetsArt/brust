@@ -236,10 +236,14 @@ async function readPort(stream: ReadableStream<Uint8Array>, pattern: RegExp): Pr
     const { value, done } = await reader.read()
     if (done) throw new Error('server closed stdout before listening line')
     acc += decoder.decode(value, { stream: true })
-    const m = acc.match(pattern)
-    if (m) {
+    // group 1 is the port digits — present whenever the pattern matches
+    // (every `expectedPortLog` regex has a `(\d+)` capture). Capture it into a
+    // local so the truthiness guard narrows it to `string` (re-indexing `m[1]`
+    // would re-widen to `string | undefined` under noUncheckedIndexedAccess).
+    const port = acc.match(pattern)?.[1]
+    if (port) {
       reader.releaseLock()
-      return parseInt(m[1], 10)
+      return parseInt(port, 10)
     }
   }
   reader.releaseLock()
