@@ -109,7 +109,7 @@ dependencies = [
  "serde_json",
  "sha1",
  "tempfile",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-tungstenite",
  "tokio-uring",
@@ -748,7 +748,7 @@ dependencies = [
  "minijinja",
  "pretty_assertions",
  "swc_core",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
