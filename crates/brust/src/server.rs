@@ -812,11 +812,11 @@ async fn handle_conn(
             let real_path = if stripped.is_empty() { "/" } else { stripped };
             let (envelope_json, _route_id) = match routes.match_path(&method, real_path, &buf) {
                 MatchResult::Matched {
-                    envelope_json,
+                    mut envelope,
                     route_id,
                 } => {
-                    let nav_envelope =
-                        crate::routes::rewrite_envelope_kind(envelope_json, "navigation");
+                    envelope.kind = "navigation";
+                    let nav_envelope = serde_json::to_string(&envelope).unwrap();
                     (nav_envelope, route_id)
                 }
                 MatchResult::NoMatch => {
@@ -849,9 +849,9 @@ async fn handle_conn(
 
         let (envelope_json, route_id) = match routes.match_path(&method, &path, &buf) {
             MatchResult::Matched {
-                envelope_json,
+                envelope,
                 route_id,
-            } => (envelope_json, route_id),
+            } => (serde_json::to_string(&envelope).unwrap(), route_id),
             MatchResult::NoMatch => {
                 let _ = s.write_all(http::error_404()).await;
                 continue;
