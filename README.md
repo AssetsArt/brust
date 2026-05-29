@@ -8,16 +8,20 @@ are dispatched into Bun Worker threads through `ThreadsafeFunction`, and HTML
 flows back via per-worker `SharedArrayBuffer`.
 
 ```
-116,778 RPS  GET /ping                     (p50 0.08ms · p99 0.16ms)   pure Rust, no JS
- 60,491 RPS  GET /native-profile/:user     (p50 0.16ms · p99 0.28ms)   native jinja render
- 59,908 RPS  POST server action            (p50 0.16ms · p99 0.28ms)   crosses to a worker
- 29,288 RPS  GET / (SSR React)             (p50 0.28ms · p99 1.90ms)   React renderToString
+111,810 RPS  GET /ping                     pure Rust, no JS    (range 105–118k)
+ 60,500 RPS  GET /native-profile/:user     native jinja        (range 60.2–60.7k)
+ 60,147 RPS  POST server action            crosses to a worker (range 59.9–60.3k)
+ 29,360 RPS  GET / (SSR React)             renderToString      (range 28.7–29.6k)
 ```
 
-Benchmarked with `oha -c 120 -z 10s` on darwin/arm64 (M1 Pro, 10c), Bun 1.4 —
-full table in [`bench/RESULTS.md`](./bench/RESULTS.md). Same hardware,
-`Bun.serve + renderToString` does **17.7k** RPS on `/` — brust's React path is
-~1.6× faster, and its Rust surfaces multiples beyond that.
+N=5 medians, `oha -c 120 -z 10s` on darwin/arm64 (M1 Pro, 10c), Bun 1.4 — last
+run's full latency table in [`bench/RESULTS.md`](./bench/RESULTS.md). Same
+hardware, `Bun.serve + renderToString` does **17.7k** RPS on `/` — brust's
+React path is ~1.6× faster, and its Rust surfaces multiples beyond that. Note
+the spread: action and native are pinned at the ~60k worker-crossing floor with
+<1% run-to-run variance (a hard floor, not a lucky run), while `/ping` is the
+noisiest (~12%) since at >100k RPS it's most sensitive to sharing cores with
+the load generator.
 
 ### Where the time goes
 
