@@ -1,8 +1,18 @@
 # Islands in the native (jinja) render path
 
-**Status:** spec — not yet planned, not yet implemented
+**Status:** spec — reviewed (fix-then-plan); not yet planned, not yet implemented
 **Date:** 2026-05-29
 **Branch:** `design/native-islands`
+
+> **Spec-review applied (2026-05-29).** A reviewer subagent verified claims
+> against the code. Material outcomes folded in below: `tojson` is absent and
+> the props attribute needs attribute-safe serialization (see "Island prop
+> serialization"); the compiler change is a dedicated `<Island>` node, not a
+> relaxed rejection (see "Compiler"); server-island props must render from the
+> JSON-roundtripped value (see invariants); server-island component module
+> resolution and CSS-on-native-island are unresolved and gate `ssr` mode (see
+> Open questions). `createRoot` is confirmed importable and the importmap needs
+> no per-island entries.
 
 ## Goal
 
@@ -76,21 +86,45 @@ The two load-bearing facts for this spec:
 
 ### Compiler (`crates/jsx-rust-compiler`)
 
-`<Island ... />` in a native route's JSX is recognized by the lowering/emit
-stage (today unknown components are rejected). For each island the compiler:
+`<Island ... />` in a native route's JSX needs a **dedicated recognition path**
+— this is materially more than "relax the event-handler rejection." Review
+found `<Island>` is rejected at `lower_element_name` (`lower.rs:300-307`,
+`CustomComponentNotSupported`) BEFORE any attribute is examined, the `component`
+/`props` props reference out-of-scope idents (`lower.rs:651`
+`UnresolvedIdent`), and the IR (`ir.rs`) has no component-node variant. So the
+compiler work is: (a) a special-case in `lower_element` that matches the
+`Island` identifier, (b) a new IR node carrying `{id, propsPath, hydrate, ssr}`,
+(c) prop-path extraction that bypasses normal expr lowering, (d) emit support in
+`emit_jinja.rs` (which today only emits host elements, `emit_jinja.rs:42-63`).
+Event handlers INSIDE the island's component subtree are never compiled to jinja
+(the component lives in a client chunk), so they're simply not the compiler's
+concern — only the `<Island>` call site is.
+
+For each island the compiler:
 
 1. Emits the mount marker into the jinja template:
    ```jinja
    <div data-brust-island="<id>"
-        data-brust-props="{{ <propsPath> | tojson }}"
-        data-brust-hydrate="<trigger>">{{ island_<id>_html | safe }}</div>
+        data-brust-props="{{ island_<id>_props }}"
+        data-brust-hydrate="<trigger>"
+        {client-only: data-brust-csr}>{{ island_<id>_html | safe }}</div>
    ```
-   - `data-brust-props` is filled from the jinja template context via minijinja's
-     `tojson` filter (NOTE: confirm `tojson` is available in the brust minijinja
-     build; if not, the loader pre-serializes and the attr reads a string path).
-   - `island_<id>_html` is a context variable holding the server-rendered markup
-     for `ssr` islands; for client-only islands the compiler omits the slot
-     (empty mount).
+   - **`data-brust-props` reads a PRE-SERIALIZED, attribute-safe string from the
+     context, NOT `| tojson`.** Review confirmed: the brust minijinja build
+     (`minijinja 2.20`, default features only — `crates/brust/Cargo.toml:28`)
+     does NOT include the `json` feature, so `tojson` is unavailable; and the
+     env sets no autoescape (`jinja.rs:29`, extensionless template stems), so
+     even raw JSON would break the quoted attribute (`"` closes it). The native
+     branch (JS) serializes the island props to an attribute-safe string
+     (`JSON.stringify` then HTML-entity-encode `"`/`&`/`<`/`>`, matching what
+     React does at `island.tsx:49-56`) and passes it as `island_<id>_props` in
+     the context. `safe` IS available (default `builtins`) so the `_html` slot
+     is fine.
+   - `data-brust-csr` (client-only marker) is emitted for client-only islands so
+     the bootstrap can pick `createRoot` deterministically rather than sniffing
+     `childNodes.length` (whitespace text nodes make emptiness unreliable).
+   - `island_<id>_html` holds the server-rendered markup for `ssr` islands; for
+     client-only islands the compiler omits the slot (empty mount).
 2. Bakes `ISLANDS_IMPORTMAP_AND_BOOTSTRAP` into the template (once, near the end
    of `<body>` or `<head>`) when the component uses ≥1 island — so script
    injection is a build-time constant with zero runtime cost. (The exact markup
@@ -104,9 +138,17 @@ stage (today unknown components are rejected). For each island the compiler:
 
 - The native-template emit step scans each native route's JSX for `<Island>` and
   produces the island manifest above.
-- `buildIslands` is extended (or its caller) to include native routes' islands
-  in the set of client chunks bundled to `/_brust/islands/<id>.js` — today the
-  scan only sees React-tree islands.
+- **Registry reconciliation (review Fix 4).** There is no runtime island
+  "scan" — `buildIslands` bundles from a static, user-authored
+  `island.config.ts` (`cfg.islands: Record<id, entryPath>` — `build.ts:14,32,54`);
+  the `__used` flag (`island.tsx:26`) only gates *bootstrap injection*, not
+  discovery. So native islands introduce a SECOND registry (the per-route
+  `.islands.json`). The build must (a) bundle a client chunk for every native
+  island id, and (b) enforce id-uniqueness ACROSS `island.config.ts` and all
+  native manifests (a collision means two components fighting over
+  `/_brust/islands/<id>.js`). Plan-time decision: do native islands also live in
+  `island.config.ts` (one registry, author lists them), or are they
+  auto-discovered from native JSX (two registries, build merges + dedups)?
 
 ### Runtime — native branch (`runtime/routes.ts`)
 
@@ -115,14 +157,21 @@ The native branch currently: run loader → write loader JSON to SAB →
 the fast lane). Extended:
 
 1. Load the route's island manifest (built above).
-2. For each `ssr` island: resolve `props = pathInto(data, propsPath)`, dynamic-
-   import the component, `renderToString(createElement(Component, props))` →
-   markup string.
-3. Build the jinja context = `{ ...loaderData, island_<id>_html: markup }` for
-   each SSR island. Client-only islands contribute no `_html` key.
-4. Serialize that context into the SAB and call `napiRenderJinja` as today.
-   napiRenderJinja renders the template (which now has the island markers +
-   baked bootstrap) and returns the framed length (unchanged fast-lane contract).
+2. JSON-roundtrip the loader data ONCE (the same bytes the SAB carries), so
+   server-island props and the client's `data-brust-props` are byte-identical
+   (review Fix 5 — see invariants).
+3. For each island: resolve `props = pathInto(roundtrippedData, propsPath)`,
+   produce the attribute-safe `island_<id>_props` string. For `ssr` islands
+   additionally import the component **server-side** (see Open question:
+   server-island module resolution — `renderToString` itself is already wired,
+   `routes.ts:2`, but the import SOURCE is unresolved) and
+   `renderToString(createElement(Component, props))` → `island_<id>_html`.
+4. Build the jinja context = `{ ...loaderData, island_<id>_props, island_<id>_html? }`.
+   Client-only islands contribute `_props` but no `_html`.
+5. Serialize that context into the SAB and call `napiRenderJinja` as today —
+   unchanged fast-lane contract (sync, returns the framed `u32` length;
+   `lib.rs:613` `napi_render_jinja`). Adding per-island `renderToString` is CPU
+   inside the SAME loader crossing; it adds NO new napi crossing.
 
 Client-only islands add **zero** worker-side work beyond what the compiler baked
 into the template. Server islands add one synchronous `renderToString` per SSR
@@ -151,9 +200,17 @@ with `.unmount()`, same as `hydrateRoot`).
 `props` must be a single path into the loader's return value:
 `<Island component={Counter} props={data.counter} ssr />` → manifest
 `propsPath: "counter"`. The same value feeds both `renderToString` (server
-island) and `data-brust-props` (`{{ counter | tojson }}`). This keeps the prop
+island) and the pre-serialized `data-brust-props` string. This keeps the prop
 resolvable in both Rust/jinja and JS without an expression evaluator. Object
 literals and computed expressions are a Non-goal for v1.
+
+**Legal prop-expression shapes (review Fix 7).** The path is extracted by the
+dedicated `<Island>` handler, NOT normal lowering (normal lowering rejects
+member chains deeper than one segment — `lower.rs:776-782`). v1 accepts a
+single member access off the loader binding (`data.counter`, or the destructured
+`counter`). Deeper paths (`data.a.b`) and bare identifiers that aren't the loader
+value are rejected at compile time with a clear error. The plan must specify the
+exact accepted AST shapes.
 
 ## File structure
 
@@ -177,11 +234,15 @@ literals and computed expressions are a Non-goal for v1.
   `[meta_len][meta][body]` length; the native route still dispatches through
   `dispatch_single_chunk`. Islands change only the template + context, not the
   response protocol.
-- **Hydration correctness.** For `ssr` islands, the markup `renderToString`
-  produces inside the mount MUST equal what the client chunk renders from the
-  same props (same component, same props) — the standard React hydration
-  contract. The shared `propsPath` value guarantees identical props on both
-  sides.
+- **Hydration correctness (review Fix 5).** For `ssr` islands the markup
+  `renderToString` produces inside the mount MUST equal what the client chunk
+  renders. The shared `propsPath` guarantees the same path; it does NOT
+  guarantee the same VALUE representation — the client gets props via
+  `JSON.parse(data-brust-props)` while a naive server render would use the raw
+  loader object (a `Date`/`Map`/`undefined`/class instance roundtrips
+  differently → mismatch). Invariant: the server island renders from the
+  JSON-roundtripped value (the same bytes written to `data-brust-props` / the
+  SAB), not the raw loader return.
 - **No island ⇒ no bootstrap.** A native route with no `<Island>` emits no
   importmap/bootstrap script and behaves exactly as today.
 - **SSR-island failure is contained.** If a server-island `renderToString`
@@ -234,24 +295,52 @@ literals and computed expressions are a Non-goal for v1.
   visit); heavy island render lowers it proportionally.
 - Per-island SSR error degrades to client-only for that island (logged), not a
   page 500.
+- **CSS for island components on native pages is unsolved (review Fix 8).** The
+  React path injects per-route CSS in its buffering sink
+  (`stream.ts:132-133`); `napi_render_jinja` (`lib.rs:621-700`) injects no CSS
+  (`css_dir` state at `lib.rs:46` is unused on this path). An island shipping
+  styles on a native page has no link-injection mechanism in v1. Either treat
+  island CSS on native pages as a Non-goal for v1, or add a link-injection step
+  to the native branch — plan-time decision.
+- **No dev hot-reload for native islands.** Native templates are boot-only
+  (`native-routes-emit.ts` header; `jinja.rs` `OnceLock`); the manifest +
+  baked bootstrap inherit that — editing an island `.tsx` needs a restart.
+- SEO visibility applies to `ssr` islands only; client-only islands are empty
+  in the served HTML.
 
-## Open questions (resolve at plan-time)
+## Resolved by spec review
 
-1. **minijinja `tojson` filter availability** in the brust build. If absent:
-   add it (minijinja supports custom filters), or have the loader pre-serialize
-   props and the attr read a string. Confirm before planning the compiler emit.
-2. **Bootstrap markup single-source-of-truth across Rust and JS.** The compiler
-   (Rust) must bake the exact same importmap/bootstrap string the JS path uses
-   (`runtime/islands/importmap.ts`). Options: codegen the string into the
-   compiler, or have the build step (TS) post-process the emitted template to
-   inject it. Latter keeps one source of truth in TS — likely preferred.
-3. **Empty-mount detection** in `hydrateOne`: `childNodes.length === 0` vs an
-   explicit `data-brust-csr` attribute emitted by the compiler. Explicit
-   attribute is more robust (whitespace text nodes can make a "client-only"
-   mount non-empty). Lean explicit.
-4. **Island discovery for the build** when the only island usage is inside
-   native JSX the React tree never renders — the scan must read the compiler's
-   emitted manifest, not a runtime `__used` flag.
-5. **`hydrate` triggers** (`idle`/`visible`/`interaction`) for client-only
-   islands — `createRoot` path must honor them identically to the hydrate path
-   (the trigger registration in `hydrateMarkersIn` already wraps both).
+- **OQ1 `tojson`** → ABSENT (minijinja 2.20 default features, no `json`). Decision:
+  JS pre-serializes attribute-safe props; do NOT rely on `tojson`. (See "Island
+  prop serialization".)
+- **OQ3 empty-mount detection** → use an explicit `data-brust-csr` attribute the
+  compiler emits, not `childNodes.length` (whitespace nodes are unreliable).
+- **OQ5 hydrate triggers** → stand; `hydrateMarkersIn` (`bootstrap.ts:118-127`)
+  already wraps both root kinds, so triggers apply uniformly.
+- **importmap entries** → none needed per-island (islands are URL-dynamic-
+  imported, `bootstrap.ts:86`); only react/jsx-runtime/react-dom/client are
+  mapped. `createRoot` is importable (`_entries/react-dom.ts` re-exports it).
+
+## Open questions (MUST resolve before planning `ssr` mode)
+
+1. **Server-island component module resolution (blocker for `ssr`).** The worker
+   must import a SERVER module to `renderToString` the component, but
+   `island.config.ts` / `/_brust/islands/<id>.js` are BROWSER bundles with React
+   externalized (`build.ts:48-52`). Candidate: import the island's source `.tsx`
+   directly server-side (Bun runs TSX) via the `island.config.ts` entry path —
+   confirm that entry is a source path, not a prebuilt bundle, and that
+   importing it in the worker doesn't drag client-only deps.
+2. **Attribute-safe serialization strategy.** Custom minijinja filter vs
+   enabling autoescape for these templates vs JS-side entity-encoding. Must not
+   break the existing "compile-time pre-escape, no runtime autoescape" invariant
+   (`emit_jinja.rs:156-185`). Leaning JS-side encode (keeps Rust unchanged).
+3. **Registry reconciliation + id-uniqueness** across `island.config.ts` and the
+   per-route native manifests (see Build pipeline). One registry or two?
+4. **CSS for island components on native pages** (Known limitations) — Non-goal
+   v1, or add link-injection to the native branch?
+5. **Bootstrap markup single-source-of-truth across Rust and JS.** Bake via the
+   TS build step post-processing the emitted template (one source in
+   `importmap.ts`) rather than codegen-ing the string into the Rust compiler.
+6. **`<Outlet>` / layout interaction** for a native leaf vs the bootstrap
+   injection point — the native template is a single emitted file; define where
+   the baked bootstrap lands relative to any layout wrapper.
