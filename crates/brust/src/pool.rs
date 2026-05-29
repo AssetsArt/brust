@@ -6,12 +6,21 @@ use napi::threadsafe_function::ThreadsafeFunction;
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
 
-/// Renderer signature: takes the envelope JSON (String) and resolves with no value.
-/// The HTML/body bytes flow via `napi_render_chunk` through the per-worker
-/// `RenderSlot.chunk_tx` channel — the Promise just signals "renderer
-/// callback returned" so handle_conn can fall through to terminator/cleanup.
+/// Renderer signature: takes the envelope (SAB len as `u32`, or inline JSON
+/// `String`) and resolves with a `u32` framed-response length.
+///
+/// Two response protocols, selected by the resolved `u32`:
+/// - **Fast lane** (`len > 0`): the worker wrote a complete framed single-chunk
+///   response `[meta_len: u16 BE][meta JSON][body]` into the SAB and resolved
+///   with its byte length. Rust reads it directly after `promise.await` — no
+///   chunk channel, no per-chunk ack round-trip. Used for action/native/render
+///   responses that fit in one chunk.
+/// - **Chunk channel** (`len == 0`): the worker streamed bytes via
+///   `napi_render_chunk` through the per-worker `RenderSlot.chunk_tx`. Used for
+///   React Suspense streaming; SSE/WS resolve 0 too (they own the socket
+///   independently via napiSse*/napiWs*).
 /// CalleeHandled = false matches what Function::build_threadsafe_function().build() produces.
-pub type RendererTsfn = ThreadsafeFunction<Either<u32, String>, Promise<()>, Either<u32, String>, napi::Status, false>;
+pub type RendererTsfn = ThreadsafeFunction<Either<u32, String>, Promise<u32>, Either<u32, String>, napi::Status, false>;
 
 /// Raw pointer to the worker's SharedArrayBuffer backing store. Send+Sync because the
 /// backing store is process-global memory (V8 allocates SAB backing outside the GC heap)

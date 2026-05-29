@@ -23,13 +23,14 @@ export interface ServeOptions {
   mcp?: { manifest: import('./mcp/manifest.ts').McpManifest }
 }
 
-// Render callback. The body bytes flow through `napi.renderChunk(workerId, len)`
-// — one or more Bytes chunks followed by a Final chunk (len=0). The returned
-// Promise just signals "renderer callback returned" so Rust's dispatch loop
-// can fall through to terminator/cleanup. The argument is a JSON envelope
+// Render callback. Resolves with a framed-response length: `> 0` → FAST LANE
+// (the worker wrote `[meta_len][meta][body]` into the SAB; Rust reads it
+// directly), `0` → the worker used the chunk channel via
+// `napi.renderChunk(workerId, len)` (React Suspense streaming) or owns the
+// socket independently (SSE/WS). The argument is a JSON envelope
 // `{ route_id, path, params }` produced by Rust's route table — see
 // runtime/routes.ts::RouteCall.
-export type RenderFn = (envelopeJsonOrLen: number | string) => Promise<void>
+export type RenderFn = (envelopeJsonOrLen: number | string) => Promise<number>
 
 // Bun Workers run in the same OS process as the main thread; the `env` option
 // only patches the JS-visible process.env, not the native OS environment that

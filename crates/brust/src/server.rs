@@ -949,8 +949,12 @@ where
         EnqueueFailed(napi::Error),
         /// JS Promise rejected — JS-level error, worker is still alive.
         PromiseRejected(napi::Error),
-        /// JS Promise resolved successfully.
-        Resolved,
+        /// JS Promise resolved with a framed-response length. `len > 0` →
+        /// fast lane: the worker wrote `[meta_len][meta][body]` into the SAB
+        /// instead of using the chunk channel; read it directly. `len == 0` →
+        /// the worker used the chunk channel (streaming/sse/ws) and the chunk
+        /// arm already handled the socket writes.
+        Resolved(u32),
     }
 
     let envelope_len = {
@@ -981,7 +985,7 @@ where
             Err(e) => RenderOutcome::EnqueueFailed(e),
             Ok(promise) => match promise.await {
                 Err(e) => RenderOutcome::PromiseRejected(e),
-                Ok(()) => RenderOutcome::Resolved,
+                Ok(len) => RenderOutcome::Resolved(len),
             },
         }
     };
@@ -1137,7 +1141,51 @@ where
             }
             outcome = &mut render_future => {
                 match outcome {
-                    RenderOutcome::Resolved => {
+                    RenderOutcome::Resolved(resp_len) => {
+                        // Fast lane: the worker wrote a complete framed response
+                        // `[meta_len][meta][body]` into the SAB and resolved with
+                        // its length, bypassing the chunk channel (no mpsc send,
+                        // no per-chunk ack round-trip, no second napi call). Read
+                        // it directly. Guarded by !headers_written so a worker that
+                        // (mis)used both paths still falls through to the
+                        // chunk-channel logic below.
+                        if !headers_written && resp_len > 0 {
+                            let len = resp_len as usize;
+                            if len > entry.buf_len {
+                                error!(
+                                    worker_id = entry.id, label, len, buf_len = entry.buf_len,
+                                    "fast-lane resp_len exceeds SAB capacity",
+                                );
+                                let _ = s.write_all(http::error_500()).await;
+                                break;
+                            }
+                            // SAFETY: the worker's render Promise has resolved
+                            // (happens-before via napi tsfn.await), so JS is done
+                            // writing the SAB and won't touch it until the next
+                            // claim. `len <= buf_len` bounds the read.
+                            let buf = unsafe {
+                                std::slice::from_raw_parts(entry.buf_ptr.0, len)
+                            };
+                            match crate::render_stream::split_meta(buf)
+                                .and_then(|(meta_slice, body)| {
+                                    serde_json::from_slice::<crate::render_stream::ChunkMeta>(meta_slice)
+                                        .map(|meta| (meta, body))
+                                        .map_err(|_| "fast-lane meta JSON parse failed")
+                                }) {
+                                Ok((meta, body)) => {
+                                    let resp = crate::render_stream::build_single_response_bytes(&meta, body);
+                                    if cache_wanted {
+                                        response_bytes_for_cache = resp.clone();
+                                    }
+                                    let _ = s.write_all(resp).await;
+                                }
+                                Err(e) => {
+                                    error!(worker_id = entry.id, label, error = e, "fast-lane response decode failed");
+                                    let _ = s.write_all(http::error_500()).await;
+                                }
+                            }
+                            break;
+                        }
                         let dropped = chunk_rx.len();
                         if dropped > 0 {
                             warn!(
