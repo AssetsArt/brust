@@ -8,20 +8,22 @@ are dispatched into Bun Worker threads through `ThreadsafeFunction`, and HTML
 flows back via per-worker `SharedArrayBuffer`.
 
 ```
-111,810 RPS  GET /ping                     pure Rust, no JS    (range 105–118k)
- 60,500 RPS  GET /native-profile/:user     native jinja        (range 60.2–60.7k)
- 60,147 RPS  POST server action            crosses to a worker (range 59.9–60.3k)
- 29,360 RPS  GET / (SSR React)             renderToString      (range 28.7–29.6k)
+111,819 RPS  GET /ping                     pure Rust, no JS    (range 106–113k)
+ 61,065 RPS  GET /native-profile/:user     native jinja        (range 60.9–61.2k)
+ 60,486 RPS  POST server action            crosses to a worker (range 60.3–60.6k)
+ 31,788 RPS  GET / (SSR React)             renderToString      (range 31.6–31.9k)
 ```
 
-N=5 medians, `oha -c 120 -z 10s` on darwin/arm64 (M1 Pro, 10c), Bun 1.4 — last
-run's full latency table in [`bench/RESULTS.md`](./bench/RESULTS.md). Same
-hardware, `Bun.serve + renderToString` does **17.7k** RPS on `/` — brust's
-React path is ~1.6× faster, and its Rust surfaces multiples beyond that. Note
-the spread: action and native are pinned at the ~60k worker-crossing floor with
-<1% run-to-run variance (a hard floor, not a lucky run), while `/ping` is the
-noisiest (~12%) since at >100k RPS it's most sensitive to sharing cores with
-the load generator.
+N=5 medians, `oha -c 120 -z 10s` with a 3s discarded JIT warm-up burst per probe
+(a plain sleep warms nothing — V8 JIT-compiles the render path only after real
+traffic), darwin/arm64 (M1 Pro, 10c), Bun 1.4, React 19. Last run's full latency
+table in [`bench/RESULTS.md`](./bench/RESULTS.md). Same-hardware JS baselines on
+the identical HelloWorld render: `Bun.serve + renderToString` does **17.6k** RPS
+on `/`, **Elysia 17.8k** — the two are indistinguishable because `renderToString`
+dominates and the HTTP framework barely shows. Brust's React `/` (31.8k) is
+**~1.8×** both, from the Rust HTTP layer + keep-alive, not a faster React. Every
+row holds <1% run-to-run spread except `/ping` (~6%), which at >100k RPS is most
+sensitive to sharing cores with the load generator.
 
 ### Where the time goes
 
@@ -50,14 +52,15 @@ mutex-free `dispatch_single_chunk` for actions and native routes):
 
 | Path | before | after |
 |---|---:|---:|
-| POST server action | 48.7k | **59.9k** (+23%) |
-| GET native jinja route | 49.6k | **60.5k** (+22%) |
+| POST server action | 48.7k | **60.5k** (+24%) |
+| GET native jinja route | 49.6k | **61.1k** (+23%) |
 
 The lock-free claim itself was worth only ~3% — proof that worker-pool lock
 contention was never the bottleneck. To go faster than the ~60k worker floor
 you have to *not cross* (render fully Rust-side) or *amortize the crossing*
-(batch multiple requests per tsfn call). React SSR `/` stays ~29k because it's
-render-bound (`renderToString` time), not crossing-bound. See
+(batch multiple requests per tsfn call). React SSR `/` sits at ~32k because it's
+render-bound (`renderToString` time), not crossing-bound — which is also why the
+JS-framework baselines (Bun.serve, Elysia) all land at the same ~17.6k. See
 [`architecture.md`](./architecture.md) for the full request lifecycle and SAB
 protocol.
 
