@@ -131,6 +131,10 @@ export async function runBuild(args: string[]): Promise<void> {
       flatRoutes: (loadedRoutes ?? []) as { nativeTemplate?: string }[],
       outDir: jinjaDir,
       repoRoot: REPO_ROOT,
+      // island.config.ts (computed at §3) — passed so native routes that use
+      // <Island> can validate ids + enrich their manifests. undefined ⇒ a
+      // route using islands throws a clear error.
+      islandConfigPath: existsSync(islandConfig) ? islandConfig : undefined,
     })
     const nativeCount = (loadedRoutes ?? []).filter((r: any) => r?.nativeTemplate).length
     console.log(`[brust build] jinja:   ${nativeCount} template(s) → ${jinjaDir}`)
