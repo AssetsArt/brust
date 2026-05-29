@@ -77,11 +77,20 @@ reproducibly. No crates.io publish of the fork.
 - `crates/brust/src/io/linux.rs`:
   - Add `into_inner()` returning the fork's poll-IO type (mirrors `other.rs`'s
     `into_inner() -> tokio::net::TcpStream`), so the WS path is symmetric.
-  - **414 fix:** `read_request` (or its caller) must signal "request exceeds
-    `MAX_REQUEST_BYTES`" the same way the non-Linux path does, so `server.rs`
-    emits `error_414` instead of falling through to `400`. Trace the non-Linux
-    path (`other.rs::read_request` + `server.rs` 414 site) and mirror the
-    overflow signal on Linux.
+  - **414 fix — ROOT CAUSE is `read_request` not appending (spec-review B/Q4).**
+    The non-Linux `other.rs::read_request` reads into a 4 KiB stack buffer and
+    **appends** via `extend_from_slice`, so `buf` grows across reads and
+    `read_full_request` (`server.rs:1482`) sees `buf.len() >= MAX_REQUEST_BYTES`
+    → `ReadOutcome::Oversize` → `error_414`. The current Linux `linux.rs:37-43`
+    does `std::mem::take(buf)` → `read(empty_vec)` → reassign, i.e. it **reads at
+    offset 0 into an emptied vec every call and never appends** — so `buf.len()`
+    never crosses `MAX_REQUEST_BYTES` (→ falls through to `400`) AND multi-TCP-
+    segment requests are mishandled (a real correctness bug beyond the 414 edge).
+    **Fix: redesign Linux `read_request` to APPEND** — read into a fresh owned
+    buffer each call (uring needs an owned buffer), then `buf.extend_from_slice(
+    &owned[..n])`, matching the non-Linux growth semantics. Then 414 + multi-
+    segment both work. Validate on the box with a multi-segment + an oversized
+    request.
 - `crates/brust/src/server.rs`: remove the `#[cfg(target_os="linux")]` WS-reject
   stopgap; the `into_inner()` + `from_raw_socket` path becomes platform-common
   (or cfg-selects the fork's poll-IO on Linux, tokio's stream off-Linux).
