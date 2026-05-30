@@ -5,6 +5,9 @@ import { loadConfig } from './config.ts'
 import { configureCssEnabled, configureCssHrefsForRoute } from './css.ts'
 
 export interface ServeOptions {
+  /** Host/address to bind on. A hostname (e.g. `localhost`, resolved Rust-side)
+   * or a literal IP such as `0.0.0.0` / `127.0.0.1`. */
+  host: string
   port: number
   workers: number
   entry: string
@@ -101,6 +104,7 @@ export const brust = {
       registerActionsInternal(opts.actions)
     }
     ;(native as any).beginServe({
+      host: opts.host,
       port: opts.port,
       workers: opts.workers,
       entry: opts.entry,
@@ -257,6 +261,13 @@ export const brust = {
     routes: import('./routes.ts').FlatRoute[]
     entry: string
     scanRoot?: string
+    /** Host/address to bind on. Default `localhost`. A `brust dev --port` /
+     * BRUST_PORT / BRUST_ADDR / brust.toml all override this app-level value
+     * (precedence: env > toml > this > framework default). */
+    address?: string
+    /** TCP port to bind on. Default 1337. Overridable by env/toml — see
+     * `address`. */
+    port?: number
     /** Overrides merged into the underlying `serve()` call (main thread). */
     serve?: Partial<Omit<ServeOptions, 'entry' | 'actions' | 'mcp'>>
     /** Per-worker SAB size in bytes. Default 256 KB. */
@@ -293,7 +304,10 @@ export const brust = {
     const { actions, sourceFiles } = await this.scanActions({ roots: [scanRoot] })
 
     if (!isWorker) {
-      const { port, workers, cacheMaxEntries } = await loadConfig()
+      const { host, port, workers, cacheMaxEntries } = await loadConfig(process.cwd(), {
+        host: opts.address,
+        port: opts.port,
+      })
       console.log(`[brust] main: spawning ${workers} worker threads`)
       if (cacheMaxEntries !== undefined) this.configureCache({ maxEntries: cacheMaxEntries })
 
@@ -529,6 +543,7 @@ export const brust = {
       }
 
       await this.serve({
+        host,
         port,
         workers,
         entry: opts.entry,

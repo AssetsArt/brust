@@ -3,12 +3,22 @@ import path from 'node:path'
 import { parse as parseToml } from 'smol-toml'
 
 export interface BrustConfig {
-  /** TCP port to bind on. Default 3000. */
+  /** Host/address to bind on. Default `localhost`. Accepts a hostname
+   * (resolved Rust-side) or a literal IP such as `0.0.0.0` / `127.0.0.1`. */
+  host: string
+  /** TCP port to bind on. Default 1337. */
   port: number
   /** Bun Worker count for render dispatch. Default `availableParallelism()`. */
   workers: number
   /** Cache capacity (entries). Undefined → Rust default of 1000. */
   cacheMaxEntries?: number
+}
+
+/** Caller-supplied fallbacks (e.g. `brust.run({ address, port })`) applied
+ * BELOW env + TOML but ABOVE the framework defaults. */
+export interface ConfigDefaults {
+  host?: string
+  port?: number
 }
 
 export class BrustConfigError extends Error {
@@ -21,7 +31,8 @@ export class BrustConfigError extends Error {
   }
 }
 
-const DEFAULT_PORT = 3000
+const DEFAULT_HOST = 'localhost'
+const DEFAULT_PORT = 1337
 // One worker per CPU. Bumping the multiplier above 1 was tuned for I/O-bound
 // renders; on CPU-bound React work (typical) it over-subscribes and amplifies
 // p99 tail. Users with Suspense-heavy / await-heavy renders can override via
@@ -31,14 +42,21 @@ const defaultWorkers = (): number => os.availableParallelism()
 const CONFIG_BASENAME = 'brust.toml'
 
 /**
- * Resolve Brust configuration. Precedence (low → high): defaults < TOML < env.
+ * Resolve Brust configuration. Precedence (low → high):
+ * framework defaults < caller `defaults` < TOML < env.
  *
- * - Defaults: { port: 3000, workers: availableParallelism() }
+ * - Framework defaults: { host: 'localhost', port: 1337, workers: availableParallelism() }
+ * - Caller `defaults`: e.g. `brust.run({ address, port })` — app-level fallbacks
+ *   that fill in only when neither TOML nor env specify the value (so a
+ *   `brust dev --port` / BRUST_PORT still wins over code).
  * - TOML: brust.toml at `cwd` (missing file is fine — only a present file with
- *   wrong shape is an error).
- * - Env: BRUST_PORT and BRUST_WORKERS override either source.
+ *   wrong shape is an error). `[server] address` / `port`.
+ * - Env: BRUST_ADDR, BRUST_PORT, BRUST_WORKERS override either source.
  */
-export async function loadConfig(cwd: string = process.cwd()): Promise<BrustConfig> {
+export async function loadConfig(
+  cwd: string = process.cwd(),
+  defaults: ConfigDefaults = {},
+): Promise<BrustConfig> {
   let fromToml: Partial<BrustConfig> = {}
   const tomlPath = path.join(cwd, CONFIG_BASENAME)
 
@@ -55,10 +73,11 @@ export async function loadConfig(cwd: string = process.cwd()): Promise<BrustConf
 
   const fromEnv = extractFromEnv()
 
-  const port = fromEnv.port ?? fromToml.port ?? DEFAULT_PORT
+  const host = fromEnv.host ?? fromToml.host ?? defaults.host ?? DEFAULT_HOST
+  const port = fromEnv.port ?? fromToml.port ?? defaults.port ?? DEFAULT_PORT
   const workers = fromEnv.workers ?? fromToml.workers ?? defaultWorkers()
 
-  return { port, workers, cacheMaxEntries: fromToml.cacheMaxEntries }
+  return { host, port, workers, cacheMaxEntries: fromToml.cacheMaxEntries }
 }
 
 function extractFromToml(parsed: unknown, file: string): Partial<BrustConfig> {
@@ -82,6 +101,16 @@ function extractFromToml(parsed: unknown, file: string): Partial<BrustConfig> {
         )
       }
       out.port = port
+    }
+    const address = (server as Record<string, unknown>).address
+    if (address !== undefined) {
+      if (typeof address !== 'string' || address.trim() === '') {
+        throw new BrustConfigError(
+          `${file}: server.address must be a non-empty string (got ${JSON.stringify(address)})`,
+          file,
+        )
+      }
+      out.host = address.trim()
     }
   }
 
@@ -124,6 +153,13 @@ function extractFromToml(parsed: unknown, file: string): Partial<BrustConfig> {
 
 function extractFromEnv(): Partial<BrustConfig> {
   const out: Partial<BrustConfig> = {}
+  if (process.env.BRUST_ADDR) {
+    const addr = process.env.BRUST_ADDR.trim()
+    if (addr === '') {
+      throw new BrustConfigError('BRUST_ADDR must be a non-empty string', null)
+    }
+    out.host = addr
+  }
   if (process.env.BRUST_PORT) {
     const n = parseInt(process.env.BRUST_PORT, 10)
     if (!Number.isInteger(n) || n < 1 || n > 65535) {

@@ -871,12 +871,15 @@ bun build --compile dist/index.js → ./brust   # aspirational; .node bundling u
 
 Layered, low → high precedence:
 
-1. **Built-in defaults.** Port `3000`, workers `os.availableParallelism()`.
-2. **`brust.toml` at the project root.** Optional. Schema (extends as subsystems land):
+1. **Built-in defaults.** Host `localhost`, port `1337`, workers `os.availableParallelism()`.
+2. **App code.** `brust.run({ address, port })` — app-level fallbacks that sit above
+   the built-in defaults but below TOML and env (so `brust dev --port` still wins).
+3. **`brust.toml` at the project root.** Optional. Schema (extends as subsystems land):
 
    ```toml
    [server]
-   port = 3000
+   address = "localhost"   # hostname or literal IP (e.g. "0.0.0.0")
+   port = 1337
 
    [workers]
    count = 10
@@ -887,13 +890,16 @@ Layered, low → high precedence:
 
    See `example/hello-world/brust.example.toml`.
 
-3. **Environment variables.** Override TOML and defaults.
+4. **Environment variables.** Override TOML, app code, and defaults.
+   - `BRUST_ADDR` — host/address to bind on.
    - `BRUST_PORT` — TCP port.
    - `BRUST_WORKERS` — Bun Worker count.
    - `BRUST_WORKER_ID` — set per Worker by the framework; do not set manually.
 
-The loader is in `runtime/config.ts` and exposes `loadConfig(cwd?)` plus the
-`BrustConfig` type for app code that wants to read the merged config directly.
+The loader is in `runtime/config.ts` and exposes `loadConfig(cwd?, defaults?)` plus
+the `BrustConfig` type for app code that wants to read the merged config directly.
+`localhost` (and any other hostname) is resolved Rust-side at bind time, preferring
+IPv4.
 
 Roadmap sections: `[build]` (build pipeline plan when the CLI lands).
 
