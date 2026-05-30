@@ -1,6 +1,6 @@
 <div align="center">
 
-# 💥 Brust
+# Brust
 
 ### **B**un + **Rust** — an SSR framework that bursts.
 
