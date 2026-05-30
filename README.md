@@ -23,7 +23,17 @@ per-worker `SharedArrayBuffer`. `tokio-uring` (io_uring) on Linux, `tokio` on ma
 
 ## Quick start
 
-**Add to a project** (prebuilt native binary per platform — no Rust toolchain):
+**Scaffold a new project** (prebuilt native binary per platform — no Rust toolchain):
+
+```bash
+bun add --global brustjs@alpha   # puts the `brustjs` CLI on your PATH
+brustjs new my-app
+cd my-app
+bun install
+bun run dev                       # → http://127.0.0.1:3000
+```
+
+**Or add to an existing project:**
 
 ```bash
 bun add brustjs@alpha
@@ -97,8 +107,9 @@ bench/ · docs/ · architecture.md
 ## Status
 
 Alpha, solo-developed. Linux is tier-1 (io_uring; glibc + musl, 6 prebuilt platform
-binaries). Known partials: `brustjs new` scaffold install, `brustjs dev` TS reload,
-islands + `.module.css`. Deployment note: the io_uring server needs `io_uring_*`
+binaries). Known partials: `brustjs dev` TS reload, islands + `.module.css`. Tailwind
+is opt-in — the scaffold adds it as a project dependency; `@import "tailwindcss"`
+resolves from your own `node_modules`. Deployment note: the io_uring server needs `io_uring_*`
 syscalls permitted — a default-seccomp container (Docker/k8s) must allow them or run
 `--security-opt seccomp=unconfined`. Roadmap and limitations in
 [`architecture.md`](./architecture.md).

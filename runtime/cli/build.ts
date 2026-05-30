@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs'
 import { copyFile, mkdir, readdir, rm } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import path, { isAbsolute, resolve } from 'node:path'
 import {
   actionsPrebuiltPlugin,
@@ -11,6 +12,52 @@ import { nativeShimPlugin } from './native-shim-plugin.ts'
 /** repoRoot = the directory that contains runtime/. This file lives at
  * runtime/cli/build.ts so two dirname() steps get us there. */
 const REPO_ROOT = path.resolve(import.meta.dir, '..', '..')
+
+/** Detect musl (mirrors the napi loader + native-shim) so we pick the right
+ * platform package on Linux. */
+function linuxIsMusl(): boolean {
+  try {
+    const report = process.report as { excludeNetwork?: boolean; getReport?: () => unknown }
+    if (report && typeof report.getReport === 'function') {
+      report.excludeNetwork = true
+      const r = report.getReport() as { header?: { glibcVersionRuntime?: string } }
+      return !r?.header?.glibcVersionRuntime
+    }
+  } catch {}
+  return false
+}
+
+/** The npm package that carries this platform's prebuilt binary. */
+function platformPackageName(): string {
+  const { platform, arch } = process
+  if (platform === 'linux') return `brustjs-linux-${arch}-${linuxIsMusl() ? 'musl' : 'gnu'}`
+  return `brustjs-${platform}-${arch}`
+}
+
+/** Absolute paths of every `brust.*.node` to copy into the dist. Source-tree /
+ * CI-matrix builds emit them into runtime/; an installed project carries them
+ * in the brustjs-<platform> optionalDependency package. We gather from both so
+ * a dist Just Works in either layout. */
+async function collectNativeBinaries(): Promise<string[]> {
+  const out: string[] = []
+  const isNode = (f: string) => /^brust\..+\.node$/.test(f)
+
+  // (a) runtime/ — local napi build output (single- or multi-platform CI).
+  const runtimeDir = path.join(REPO_ROOT, 'runtime')
+  try {
+    for (const f of await readdir(runtimeDir)) if (isNode(f)) out.push(path.join(runtimeDir, f))
+  } catch {}
+
+  // (b) installed platform package — resolved from the brustjs install root so
+  // it survives node_modules hoisting.
+  try {
+    const req = createRequire(path.join(REPO_ROOT, '__brust_resolve__.js'))
+    const pkgDir = path.dirname(req.resolve(`${platformPackageName()}/package.json`))
+    for (const f of await readdir(pkgDir)) if (isNode(f)) out.push(path.join(pkgDir, f))
+  } catch {}
+
+  return out
+}
 
 interface ParsedArgs {
   entry: string // absolute path to the entry file
@@ -230,22 +277,27 @@ export async function runBuild(args: string[]): Promise<void> {
   const nativeDir = path.join(outDir, 'native')
   await mkdir(nativeDir, { recursive: true })
 
-  // napi-rs emits `runtime/brust.<platform>-<arch>[-libc].node` (binaryName
-  // "brust", from the root napi config). We copy every `brust.*.node` we find
-  // in runtime/ so a multi-platform pre-build (CI matrix) Just Works without
-  // further wiring; in single-platform local builds this is just one file.
-  const runtimeDir = path.join(REPO_ROOT, 'runtime')
-  const nodeFiles = (await readdir(runtimeDir)).filter((f) => /^brust\..+\.node$/.test(f))
-  if (nodeFiles.length === 0) {
+  // napi-rs names the binary `brust.<platform>-<arch>[-libc].node` (binaryName
+  // "brust", from the root napi config). Source/CI builds leave it in runtime/;
+  // an installed project carries it in the brustjs-<platform> package. Copy
+  // every match from both — multi-platform (CI matrix) and single-platform
+  // (local/installed) layouts both Just Work.
+  const nativeBinaries = await collectNativeBinaries()
+  if (nativeBinaries.length === 0) {
     console.error(
-      `brust build: no native binary found in ${runtimeDir}. ` +
-        `Run \`bun --filter runtime run build\` (or :debug) first.`,
+      `brust build: no native binary found. Looked in ${path.join(REPO_ROOT, 'runtime')} and ` +
+        `the ${platformPackageName()} package. From source run \`bun --filter runtime run build\` ` +
+        `(or :debug) first; in an installed project ensure the platform package is present.`,
     )
     process.exit(1)
   }
-  for (const f of nodeFiles) {
-    await copyFile(path.join(runtimeDir, f), path.join(nativeDir, f))
-    console.log(`[brust build] native:  ${f}`)
+  const seen = new Set<string>()
+  for (const src of nativeBinaries) {
+    const name = path.basename(src)
+    if (seen.has(name)) continue
+    seen.add(name)
+    await copyFile(src, path.join(nativeDir, name))
+    console.log(`[brust build] native:  ${name}`)
   }
 
   console.log(`[brust build] done.`)

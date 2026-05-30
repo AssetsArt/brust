@@ -193,6 +193,9 @@ test('brust new: scaffold emits the expected tree and content', async () => {
     expect(pkg.dependencies.brustjs).toMatch(/^file:/)
     const brustPath = pkg.dependencies.brustjs.slice('file:'.length)
     expect(existsSync(path.join(brustPath, 'Cargo.toml'))).toBe(true)
+    // tailwindcss is an opt-in *project* dependency (not bundled in brust core),
+    // so the scaffold must declare it for `@import "tailwindcss"` to resolve.
+    expect(pkg.dependencies.tailwindcss).toBeTruthy()
     expect(pkg.scripts.dev).toBe('brustjs dev')
     expect(pkg.scripts.build).toBe('brustjs build')
 
@@ -202,6 +205,9 @@ test('brust new: scaffold emits the expected tree and content', async () => {
       const content = await readFile(f, 'utf8').catch(() => '')
       expect(content, `placeholder leaked in ${f}`).not.toContain('__PROJECT_NAME__')
       expect(content, `placeholder leaked in ${f}`).not.toContain('__BRUST_DEP__')
+      // Guard the brust→brustjs rename: no import may reference the old bare
+      // `brust` package (the published name is `brustjs`). `brustjs/...` is fine.
+      expect(content, `stale 'brust' import in ${f}`).not.toMatch(/from ['"]brust(\/[^'"]*)?['"]/)
     }
   } finally {
     await rm(parent, { recursive: true, force: true })
