@@ -1,3 +1,3 @@
-# `brust-linux-arm64-gnu`
+# `brustjs-linux-arm64-gnu`
 
-This is the **aarch64-unknown-linux-gnu** binary for `brust`
+This is the **aarch64-unknown-linux-gnu** binary for `brustjs`

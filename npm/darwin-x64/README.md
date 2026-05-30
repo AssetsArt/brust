@@ -1,3 +1,3 @@
-# `brust-darwin-x64`
+# `brustjs-darwin-x64`
 
-This is the **x86_64-apple-darwin** binary for `brust`
+This is the **x86_64-apple-darwin** binary for `brustjs`

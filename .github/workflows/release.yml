@@ -174,14 +174,19 @@ jobs:
       - name: Publish
         run: |
           echo "//registry.npmjs.org/:_authToken=${NPM_KEY}" > ~/.npmrc
-          # Publish the per-platform packages (optionalDependencies) first...
+          # Publish the MAIN package FIRST. The unscoped name is the only thing
+          # npm's publish-time similarity guard can reject (it rejected `brust`
+          # as too close to brfs/must/grunt; the per-platform names are
+          # distinctive). If the name is rejected this fails here, BEFORE any
+          # platform package is published — so a bad name can't leave orphaned
+          # half-published packages (which is exactly what bit the first v* tag).
+          # --tag alpha keeps `latest` off this prerelease (`npm i brustjs@alpha`).
+          npm publish --access public --tag alpha
+          # ...only once the name is secured, publish the per-platform packages
+          # (the optionalDependencies the loader resolves at runtime).
           ./runtime/node_modules/.bin/napi prepublish -t npm \
             --package-json-path package.json \
             --npm-dir npm
-          # ...then the main `brust` package. --tag alpha keeps the `latest`
-          # dist-tag off this prerelease (npm tags prereleases as latest by
-          # default otherwise). `npm i brust@alpha` to get it.
-          npm publish --access public --tag alpha
         env:
           NPM_KEY: ${{ secrets.NPM_KEY }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_KEY }}

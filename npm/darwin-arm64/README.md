@@ -1,3 +1,3 @@
-# `brust-darwin-arm64`
+# `brustjs-darwin-arm64`
 
-This is the **aarch64-apple-darwin** binary for `brust`
+This is the **aarch64-apple-darwin** binary for `brustjs`
