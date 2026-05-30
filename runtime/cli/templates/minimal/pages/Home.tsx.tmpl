@@ -19,7 +19,7 @@ export default function Home() {
         <Island component={Counter} props={{ start: 0, label: 'client clicks' }} hydrate="load" />
       </section>
 
-      <section className="mb-6">
+      <section>
         <h2 className="text-xl font-semibold mb-1">Server island (SSR + hydrate)</h2>
         <p className="mb-2 text-sm text-gray-600">
           Rendered on the server, then hydrated — interactive with no flash of empty state.
@@ -31,13 +31,6 @@ export default function Home() {
           ssr
         />
       </section>
-
-      <p className="text-gray-700">
-        <a className="text-blue-600 underline" href="/native/world">
-          /native/world
-        </a>{' '}
-        — a <strong>native route</strong>, rendered entirely in Rust (no React on the server).
-      </p>
     </Layout>
   )
 }
