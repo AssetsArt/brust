@@ -230,12 +230,12 @@ export async function runBuild(args: string[]): Promise<void> {
   const nativeDir = path.join(outDir, 'native')
   await mkdir(nativeDir, { recursive: true })
 
-  // napi-rs emits `runtime/index.<platform>-<arch>[-libc].node`. We copy
-  // every `index.*.node` we find in runtime/ so a multi-platform pre-build
-  // (CI matrix) Just Works without further wiring; in single-platform local
-  // builds this is just one file.
+  // napi-rs emits `runtime/brust.<platform>-<arch>[-libc].node` (binaryName
+  // "brust", from the root napi config). We copy every `brust.*.node` we find
+  // in runtime/ so a multi-platform pre-build (CI matrix) Just Works without
+  // further wiring; in single-platform local builds this is just one file.
   const runtimeDir = path.join(REPO_ROOT, 'runtime')
-  const nodeFiles = (await readdir(runtimeDir)).filter((f) => /^index\..+\.node$/.test(f))
+  const nodeFiles = (await readdir(runtimeDir)).filter((f) => /^brust\..+\.node$/.test(f))
   if (nodeFiles.length === 0) {
     console.error(
       `brust build: no native binary found in ${runtimeDir}. ` +

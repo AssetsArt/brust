@@ -1,0 +1,37 @@
+{
+  "name": "brust-linux-arm64-gnu",
+  "version": "0.1.0-alpha",
+  "cpu": [
+    "arm64"
+  ],
+  "main": "brust.linux-arm64-gnu.node",
+  "files": [
+    "brust.linux-arm64-gnu.node"
+  ],
+  "description": "Bun + Rust SSR framework — React on the server, Rust everywhere else (napi cdylib + per-worker SharedArrayBuffer).",
+  "keywords": [
+    "bun",
+    "rust",
+    "ssr",
+    "react",
+    "napi",
+    "islands",
+    "framework"
+  ],
+  "homepage": "https://github.com/AssetsArt/brust#readme",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AssetsArt/brust.git"
+  },
+  "bugs": "https://github.com/AssetsArt/brust/issues",
+  "publishConfig": {
+    "access": "public"
+  },
+  "os": [
+    "linux"
+  ],
+  "libc": [
+    "glibc"
+  ]
+}

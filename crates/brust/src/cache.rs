@@ -110,7 +110,7 @@ impl LruCache {
     /// removed. Hits/misses counters are NOT reset.
     pub fn invalidate_path(&self, method: &str, path: &str) -> usize {
         let mut guard = self.inner.lock();
-        // lru 0.12 has no remove-by-predicate. Snapshot the matching keys,
+        // `lru` has no remove-by-predicate. Snapshot the matching keys,
         // then pop each. Allocation cost is proportional to matches, not
         // total cache size.
         let to_remove: Vec<CacheKey> = guard

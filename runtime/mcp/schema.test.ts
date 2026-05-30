@@ -11,7 +11,18 @@ function typeOf(source: string, varName: string): { type: ts.Type; checker: ts.T
     fn === fileName ? sourceFile : orig.call(host, fn, ...rest)
   const program = ts.createProgram({
     rootNames: [fileName],
-    options: { noEmit: true, target: ts.ScriptTarget.ES2022, skipLibCheck: true },
+    // strictNullChecks MUST match the real extractor (extractor.ts sets it
+    // true): under strict null checks an optional `b?: number` resolves to
+    // `number | undefined`, which is what production actually converts. This
+    // test previously omitted the flag and passed only because TS 5.x defaulted
+    // strict off; TS 6 flips that default on, which exposed the divergence. Pin
+    // it explicitly so the test asserts production behavior on any TS version.
+    options: {
+      noEmit: true,
+      target: ts.ScriptTarget.ES2022,
+      skipLibCheck: true,
+      strictNullChecks: true,
+    },
     host,
   })
   const checker = program.getTypeChecker()
@@ -69,9 +80,16 @@ test('schema: tuple', () => {
 
 test('schema: object with required + optional', () => {
   const { type, checker } = typeOf('const x: { a: string, b?: number } = { a: "" }', 'x')
+  // Under strictNullChecks (the extractor's config) the optional `b?` is
+  // `number | undefined`; the converter renders undefined as {type:'null'},
+  // so b becomes an anyOf. Optionality itself is carried by b's absence from
+  // `required`, not by the value schema.
   expect(tsTypeToJsonSchema(type, { checker })).toEqual({
     type: 'object',
-    properties: { a: { type: 'string' }, b: { type: 'number' } },
+    properties: {
+      a: { type: 'string' },
+      b: { anyOf: [{ type: 'null' }, { type: 'number' }] },
+    },
     required: ['a'],
   })
 })
@@ -122,9 +140,11 @@ test('schema: Date → string date-time', () => {
 
 test('schema: tuple with optional trailing element', () => {
   const { type, checker } = typeOf('const x: [string, number?] = [""]', 'x')
+  // Optional trailing element `number?` is `number | undefined` under strict
+  // null checks → anyOf; the optionality is carried by minItems < maxItems.
   expect(tsTypeToJsonSchema(type, { checker })).toEqual({
     type: 'array',
-    prefixItems: [{ type: 'string' }, { type: 'number' }],
+    prefixItems: [{ type: 'string' }, { anyOf: [{ type: 'null' }, { type: 'number' }] }],
     minItems: 1,
     maxItems: 2,
   })

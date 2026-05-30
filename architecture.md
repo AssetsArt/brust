@@ -226,6 +226,21 @@ Both are **single-threaded async** by design. The accept loop and all TCP
 worker tasks are cooperatively scheduled on this one thread; there is no
 multi-thread tokio runtime.
 
+> **Linux deployment — io_uring requires permitted syscalls (seccomp).** The
+> Linux runtime calls `io_uring_setup`/`io_uring_enter`/`io_uring_register`.
+> These are **not** in the default seccomp allowlist of most container runtimes
+> (Docker, podman ≤ current, restrictive k8s `seccompProfile`s) — io_uring has a
+> container-escape history, so default profiles deny it. Under a default profile
+> `tokio_uring::start` panics at boot with `ENOSYS` ("Function not implemented",
+> errno 38) and the worker thread dies → no listener → connections refused.
+> Run with `--security-opt seccomp=unconfined` (podman/Docker) or a custom
+> profile that allows the three `io_uring_*` syscalls; on k8s, set a
+> `seccompProfile` that permits them. This applies to **both** glibc and musl
+> builds — it is a property of the io_uring architecture, not the libc. Bare-metal
+> and VM deploys are unaffected. Verified on aarch64 / kernel 5.10 (2026-05): same
+> build boots to `listening (io: tokio-uring)` with `seccomp=unconfined`,
+> ENOSYS-panics under the default profile.
+
 **Connection dispatch:**
 
 - One `flume::bounded::<TcpStream>(1024)` MPMC channel

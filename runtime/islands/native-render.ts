@@ -15,7 +15,9 @@
 
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
-import { renderToString } from 'react-dom/server'
+// .node build: keep a single react-dom/server build loaded across the runtime
+// (the streaming paths need server.node's renderToPipeableStream). See routes.ts.
+import { renderToString } from 'react-dom/server.node'
 import { createElement } from 'react'
 
 /** One entry of a `<template>.islands.json` manifest (enriched by T6). */

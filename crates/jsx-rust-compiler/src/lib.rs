@@ -235,9 +235,13 @@ pub enum ErrorKind {
         "`<Island>` must be self-closing — children are not supported (the component renders client-side)"
     )]
     IslandHasChildren,
-    #[error("`<Island id=…>` is no longer supported — islands are addressed by `component={{…}}`; remove the `id` attribute")]
+    #[error(
+        "`<Island id=…>` is no longer supported — islands are addressed by `component={{…}}`; remove the `id` attribute"
+    )]
     IslandIdAttrRemoved,
-    #[error("`<Island component={{{0}}}>` — component name must match [A-Za-z0-9_]+ (it becomes the chunk filename and DOM marker)")]
+    #[error(
+        "`<Island component={{{0}}}>` — component name must match [A-Za-z0-9_]+ (it becomes the chunk filename and DOM marker)"
+    )]
     IslandBadComponentName(String),
 }
 

@@ -19,8 +19,10 @@ use tokio::sync::mpsc;
 ///   `napi_render_chunk` through the per-worker `RenderSlot.chunk_tx`. Used for
 ///   React Suspense streaming; SSE/WS resolve 0 too (they own the socket
 ///   independently via napiSse*/napiWs*).
+///
 /// CalleeHandled = false matches what Function::build_threadsafe_function().build() produces.
-pub type RendererTsfn = ThreadsafeFunction<Either<u32, String>, Promise<u32>, Either<u32, String>, napi::Status, false>;
+pub type RendererTsfn =
+    ThreadsafeFunction<Either<u32, String>, Promise<u32>, Either<u32, String>, napi::Status, false>;
 
 /// Raw pointer to the worker's SharedArrayBuffer backing store. Send+Sync because the
 /// backing store is process-global memory (V8 allocates SAB backing outside the GC heap)
@@ -319,7 +321,7 @@ impl WorkerPool {
         let entry = Arc::new(TsfnEntry {
             id,
             tsfn: None,
-            buf_ptr: BufPtr(Box::leak(vec![0u8; 256*1024].into_boxed_slice()).as_mut_ptr()),
+            buf_ptr: BufPtr(Box::leak(vec![0u8; 256 * 1024].into_boxed_slice()).as_mut_ptr()),
             buf_len: 256 * 1024,
             in_flight: AtomicU32::new(0),
             idle: AtomicBool::new(true),
@@ -505,7 +507,7 @@ mod tests {
             handles.push(tokio::spawn(async move {
                 start.wait().await;
                 let (tx, _rx) = tokio::sync::mpsc::channel::<RenderChunk>(1);
-                let outcome = match pool.try_claim_render(tx) {
+                match pool.try_claim_render(tx) {
                     ClaimResult::Claimed(c) => {
                         let id = c.entry().id;
                         // Hold the claim until every task is past the claim attempt.
@@ -518,8 +520,7 @@ mod tests {
                         None
                     }
                     ClaimResult::PoolEmpty => panic!("pool was registered with {M} workers"),
-                };
-                outcome
+                }
             }));
         }
 

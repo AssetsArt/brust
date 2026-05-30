@@ -3,10 +3,10 @@ import Layout from './Layout'
 import Counter from './Counter'
 import type { RouteContext } from '../../../runtime/routes.ts'
 
-// Shared React-SSR page for the `/` probe. The three bench scenarios
-// (brust route / bun-serve / elysia) all render THIS component via
-// renderToString, so the React-SSR comparison is apples-to-apples. Kept
-// byte-identical to the example's HelloWorld.
+// Shared React-SSR page for the `/` probe. Both bench scenarios
+// (brust route / bun-serve) render THIS component via renderToString, so the
+// React-SSR comparison is apples-to-apples. Kept byte-identical to the
+// example's HelloWorld.
 export default function HelloWorld({ workerId }: RouteContext) {
   return (
     <Layout title="Home">

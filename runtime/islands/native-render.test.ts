@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createElement } from 'react'
-import { renderToString } from 'react-dom/server'
+import { renderToString } from 'react-dom/server.node'
 import {
   pathInto,
   entityEncode,

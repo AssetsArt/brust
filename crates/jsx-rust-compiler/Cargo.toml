@@ -12,7 +12,7 @@ path = "src/bin/jsx-rustc.rs"
 
 [dependencies]
 swc_core  = { version = "68", features = ["ecma_ast", "ecma_parser_typescript", "ecma_visit", "common"] }
-thiserror = "1"
+thiserror = "2"
 
 [dev-dependencies]
 minijinja         = "2"

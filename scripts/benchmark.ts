@@ -72,13 +72,6 @@ const SCENARIOS: Scenario[] = [
     env: { BUN_BASELINE_PORT: '38202' },
     expectedPortLog: /listening on http:\/\/[^:]+:(\d+)/,
   },
-  {
-    id: 'elysia',
-    label: 'Elysia + React renderToString',
-    cmd: ['bun', 'run', 'bench/apps/elysia/index.ts'],
-    env: { ELYSIA_PORT: '38203' },
-    expectedPortLog: /listening on http:\/\/[^:]+:(\d+)/,
-  },
 ]
 
 const PROBES: Probe[] = [
@@ -134,10 +127,6 @@ function rowLabel(scenarioId: string, path: string): string {
   if (scenarioId === 'bun-serve') {
     if (path === '/') return 'Bun.serve (React SSR)'
     return 'Bun.serve (ping)'
-  }
-  if (scenarioId === 'elysia') {
-    if (path === '/') return 'Elysia (React SSR)'
-    return 'Elysia (ping)'
   }
   return scenarioId
 }

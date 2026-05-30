@@ -1,0 +1,111 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+# Brust is Rust (napi cdylib + jsx-rustc) + Bun (TS runtime). No Windows target
+# (the napi targets in package.json are darwin/linux only; the io layer is
+# tokio-uring on Linux / tokio on macOS). CI mirrors that: ubuntu + macOS only.
+jobs:
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  rust-test:
+    name: cargo test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --locked
+      - run: cargo test --workspace --locked
+
+  biome:
+    name: biome
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      # Plain install (not --frozen-lockfile): the brust-<platform> optional
+      # deps are unpublished until the first release, so a cold runner under
+      # --frozen-lockfile may treat their 404 as fatal. Revisit once published.
+      - run: bun install
+      - run: bun run ci # biome ci .
+
+  bun-test:
+    name: bun test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # Root deps (react/react-dom are peerDependencies — Bun installs them) +
+      # runtime deps (@napi-rs/cli lives in runtime/, not the root; root is not
+      # a Bun workspace).
+      # Plain install (not --frozen-lockfile): the brust-<platform> optional
+      # deps are unpublished until the first release, so a cold runner under
+      # --frozen-lockfile may treat their 404 as fatal. Revisit once published.
+      - run: bun install
+      - name: Install runtime build deps (@napi-rs/cli)
+        run: cd runtime && bun install
+
+      # The integration + native-island suites need real binaries: the
+      # jsx-rustc compiler (native-route templates) and the debug napi addon
+      # (the .node the TS runtime loads). Build both before any bun test.
+      - name: Build jsx-rustc (native-template compiler)
+        run: cargo build -p jsx-rust-compiler --bin jsx-rustc --locked
+      - name: Build napi addon (debug)
+        run: cd runtime && bun run build:debug
+
+      # Unit suite first (fast, no real server).
+      - name: bun test (runtime unit suite)
+        run: bun test runtime/
+
+      # Integration + native-island suites spawn a real server. Run each file
+      # SEPARATELY — a combined run has a documented ~1/5 port-race flake.
+      - name: bun test (native islands)
+        run: bun test tests/native-island.test.ts
+      - name: bun test (native islands — ssr)
+        run: bun test tests/native-island-ssr.test.ts
+      - name: bun test (cli new scaffold)
+        run: bun test tests/cli-new.test.ts
+      - name: bun test (integration)
+        run: bun test tests/integration.test.ts

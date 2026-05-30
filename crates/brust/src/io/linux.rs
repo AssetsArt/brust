@@ -35,11 +35,17 @@ impl TcpListener {
 
 impl TcpStream {
     pub async fn read_request(&mut self, buf: &mut Vec<u8>) -> std::io::Result<usize> {
-        // tokio-uring read takes ownership; we swap the buffer
-        let owned = std::mem::take(buf);
-        let (res, returned) = self.0.read(owned).await;
-        *buf = returned;
-        res
+        // APPEND semantics, matching other.rs (extend_from_slice). tokio-uring
+        // read needs an owned buffer, so read into a fresh scratch each call and
+        // append the bytes read onto `buf`. The previous mem::take+read overwrote
+        // at offset 0 and never grew `buf`, so `read_full_request`'s
+        // `buf.len() >= MAX_REQUEST_BYTES` 414 check never tripped (→ 400) and
+        // multi-segment requests dropped earlier bytes. (brust Linux tier-1.)
+        let scratch = vec![0u8; 4096];
+        let (res, scratch) = self.0.read(scratch).await;
+        let n = res?;
+        buf.extend_from_slice(&scratch[..n]);
+        Ok(n)
     }
 
     pub async fn write_all(&mut self, bytes: Vec<u8>) -> std::io::Result<()> {
@@ -50,6 +56,13 @@ impl TcpStream {
     #[allow(dead_code)]
     pub async fn shutdown(&mut self) -> std::io::Result<()> {
         self.0.shutdown(std::net::Shutdown::Both)
+    }
+
+    /// Consume into a tokio `AsyncRead + AsyncWrite + Unpin` view for the WS
+    /// upgrade path (mirrors `other.rs::into_inner`). The fork's `PollIo`
+    /// bridges uring completion IO so `tokio-tungstenite` can drive it.
+    pub fn into_inner(self) -> tokio_uring::PollIo {
+        self.0.into_poll_io()
     }
 }
 

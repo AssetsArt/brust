@@ -1,0 +1,162 @@
+name: release
+
+# Publishes the `brust` npm package + its 6 per-platform native packages
+# (brust-darwin-x64 / brust-darwin-arm64 / brust-linux-x64-gnu /
+# brust-linux-arm64-gnu / brust-linux-x64-musl / brust-linux-arm64-musl) on a
+# `v*` tag — both glibc AND musl Linux (musl enabled by the Aitthi/tokio-uring
+# fork that gates statx behind cfg(gnu)). No Windows. WIRE-ONLY until you tag:
+# nothing publishes on push to main.
+#
+# PREREQUISITE (manual, one-time): an `NPM_KEY` repository secret — an npm
+# automation token with publish rights to the `brust` name. ALREADY ADDED to
+# this repo's Actions secrets. Without it the publish job fails at the .npmrc step.
+#
+# To cut a release:  npm version <x.y.z> (bumps package.json) → git tag vX.Y.Z →
+# git push --tags. The build matrix produces one brust.<triple>.node per target;
+# the publish job assembles the per-platform packages (napi artifacts +
+# create-npm-dirs + prepublish) and publishes the main package.
+#
+# NOTE: this workflow has not yet been exercised by a real tag — validate the
+# cross-compile (linux-arm64 via --use-napi-cross) and the artifact naming on
+# the first `vX.Y.Z` you push, before relying on it.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            target: aarch64-apple-darwin
+            napi_extra: ""
+          - runner: macos-latest
+            target: x86_64-apple-darwin
+            napi_extra: ""
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            napi_extra: ""
+          - runner: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            napi_extra: "--use-napi-cross"
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            napi_extra: "--use-napi-cross"
+          - runner: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            napi_extra: "--use-napi-cross"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # Plain install (not --frozen-lockfile): the brust-<platform> optional
+      # deps don't exist on npm until the first publish, and a cold runner under
+      # --frozen-lockfile may treat the 404 as fatal. Revisit once published.
+      - run: bun install
+      - name: Install runtime build deps (@napi-rs/cli)
+        run: cd runtime && bun install
+
+      # Build the native addon for this target. Reads the ROOT package.json
+      # napi config (binaryName: brust) so the output is brust.<triple>.node,
+      # matching the per-platform package main + the loader's resolution.
+      - name: napi build (release)
+        run: >-
+          cd runtime &&
+          ./node_modules/.bin/napi build
+          --platform --release
+          --target ${{ matrix.target }}
+          ${{ matrix.napi_extra }}
+          --js index.js --dts index.d.ts
+          --package-json-path ../package.json
+          --manifest-path ../crates/brust/Cargo.toml
+          --output-dir .
+
+      - name: Upload addon artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bindings-${{ matrix.target }}
+          path: runtime/brust.*.node
+          if-no-files-found: error
+
+  publish:
+    name: publish to npm
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Node is what actually runs `npm publish`; Bun installs deps + drives napi.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # Plain install (not --frozen-lockfile): the brust-<platform> optional
+      # deps don't exist on npm until the first publish, and a cold runner under
+      # --frozen-lockfile may treat the 404 as fatal. Revisit once published.
+      - run: bun install
+      - name: Install runtime build deps (@napi-rs/cli)
+        run: cd runtime && bun install
+
+      # The main `brust` package ships the generated loader (runtime/index.js +
+      # index.d.ts). A host build emits them (its .node is excluded from the
+      # main package's files allowlist, so the host platform doesn't matter).
+      - name: Generate JS loader (index.js + index.d.ts)
+        run: cd runtime && bun run build
+
+      # Pull every target's brust.<triple>.node back into runtime/.
+      - name: Download all addon artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: bindings-*
+          path: runtime
+          merge-multiple: true
+
+      # Distribute each brust.<triple>.node into the committed npm/<platform>/
+      # dirs. (create-npm-dirs already ran at packaging time and the dirs are
+      # committed, so we only need to drop the .node files in here.)
+      - name: Assemble per-platform packages
+        run: |
+          ./runtime/node_modules/.bin/napi artifacts \
+            --package-json-path package.json \
+            --output-dir runtime \
+            --npm-dir npm
+
+      - name: Publish
+        run: |
+          echo "//registry.npmjs.org/:_authToken=${NPM_KEY}" > ~/.npmrc
+          # Publish the per-platform packages (optionalDependencies) first...
+          ./runtime/node_modules/.bin/napi prepublish -t npm \
+            --package-json-path package.json \
+            --npm-dir npm
+          # ...then the main `brust` package. --tag alpha keeps the `latest`
+          # dist-tag off this prerelease (npm tags prereleases as latest by
+          # default otherwise). `npm i brust@alpha` to get it.
+          npm publish --access public --tag alpha
+        env:
+          NPM_KEY: ${{ secrets.NPM_KEY }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_KEY }}

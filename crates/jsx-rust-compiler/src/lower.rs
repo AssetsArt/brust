@@ -377,7 +377,12 @@ fn lower_island(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode,
             // `component={…}` ident (chunk key) + a source-order instance index.
             // This explicit reject arm MUST precede the `_ => {}` fall-through;
             // without it, `id=` would be silently dropped.
-            "id" => return Err(LowerError::at(jsx_attr.span, ErrorKind::IslandIdAttrRemoved)),
+            "id" => {
+                return Err(LowerError::at(
+                    jsx_attr.span,
+                    ErrorKind::IslandIdAttrRemoved,
+                ));
+            }
             "props" => {
                 props_path = Some(island_props_path(jsx_attr, scope)?);
             }
@@ -415,7 +420,9 @@ fn lower_island(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode,
     // value, so it must match `[A-Za-z0-9_]+`. JS idents permit `$`, which is
     // rejected here.
     if component.is_empty()
-        || !component.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        || !component
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')
     {
         return Err(LowerError::at(
             component_span,
