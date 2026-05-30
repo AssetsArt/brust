@@ -34,11 +34,11 @@ test('brust build → run → smoke all major paths', async () => {
   expect(existsSync(path.join(distDir, 'islands/_react.js'))).toBe(true)
   expect(existsSync(path.join(distDir, 'islands/Counter.js'))).toBe(true)
 
-  // native binary present (filename varies by platform — Darwin: index.darwin-arm64.node,
-  // Linux: index.linux-x64-gnu.node, etc. — match the pattern build.ts uses).
+  // native binary present (filename varies by platform — Darwin: brust.darwin-arm64.node,
+  // Linux: brust.linux-x64-gnu.node, etc. — match the pattern build.ts uses).
   const { readdir } = await import('node:fs/promises')
   const nativeFiles = await readdir(path.join(distDir, 'native'))
-  expect(nativeFiles.filter((f) => /^index\..+\.node$/.test(f)).length).toBeGreaterThan(0)
+  expect(nativeFiles.filter((f) => /^brust\..+\.node$/.test(f)).length).toBeGreaterThan(0)
 
   // 3. Banner injection
   const bundle = await Bun.file(path.join(distDir, 'index.js')).text()
