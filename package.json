@@ -1,5 +1,5 @@
 {
-  "name": "brust",
+  "name": "brustjs",
   "version": "0.1.0-alpha",
   "description": "Bun + Rust SSR framework — React on the server, Rust everywhere else (napi cdylib + per-worker SharedArrayBuffer).",
   "license": "MIT",
@@ -19,11 +19,11 @@
     "framework"
   ],
   "bin": {
-    "brust": "./runtime/cli/index.ts"
+    "brustjs": "./runtime/cli/index.ts"
   },
   "napi": {
     "binaryName": "brust",
-    "packageName": "brust",
+    "packageName": "brustjs",
     "targets": [
       "x86_64-apple-darwin",
       "aarch64-apple-darwin",
@@ -39,12 +39,12 @@
     "smol-toml": "^1.6.1"
   },
   "optionalDependencies": {
-    "brust-darwin-x64": "0.1.0-alpha",
-    "brust-darwin-arm64": "0.1.0-alpha",
-    "brust-linux-x64-gnu": "0.1.0-alpha",
-    "brust-linux-arm64-gnu": "0.1.0-alpha",
-    "brust-linux-x64-musl": "0.1.0-alpha",
-    "brust-linux-arm64-musl": "0.1.0-alpha"
+    "brustjs-darwin-x64": "0.1.0-alpha",
+    "brustjs-darwin-arm64": "0.1.0-alpha",
+    "brustjs-linux-x64-gnu": "0.1.0-alpha",
+    "brustjs-linux-arm64-gnu": "0.1.0-alpha",
+    "brustjs-linux-x64-musl": "0.1.0-alpha",
+    "brustjs-linux-arm64-musl": "0.1.0-alpha"
   },
   "peerDependencies": {
     "react": "^19.2.6",

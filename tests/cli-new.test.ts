@@ -190,11 +190,11 @@ test('brust new: scaffold emits the expected tree and content', async () => {
     // package.json shape
     const pkg = JSON.parse(await readFile(path.join(projectDir, 'package.json'), 'utf8'))
     expect(pkg.name).toBe('test-app')
-    expect(pkg.dependencies.brust).toMatch(/^file:/)
-    const brustPath = pkg.dependencies.brust.slice('file:'.length)
+    expect(pkg.dependencies.brustjs).toMatch(/^file:/)
+    const brustPath = pkg.dependencies.brustjs.slice('file:'.length)
     expect(existsSync(path.join(brustPath, 'Cargo.toml'))).toBe(true)
-    expect(pkg.scripts.dev).toBe('brust dev')
-    expect(pkg.scripts.build).toBe('brust build')
+    expect(pkg.scripts.dev).toBe('brustjs dev')
+    expect(pkg.scripts.build).toBe('brustjs build')
 
     // No substitution leakage in any emitted file.
     const allFiles = await collectFiles(projectDir)
