@@ -266,6 +266,21 @@ impl WorkerPool {
     pub fn remove(&self, id: u32) {
         self.entries.write().retain(|e| e.id != id);
     }
+
+    /// Drop EVERY registered worker entry. Dev-mode hot reload calls this (via
+    /// the `reset_worker_pool` napi export) from the main thread right BEFORE
+    /// terminating the outgoing worker generation: each entry holds a `buf_ptr`
+    /// into that worker's SharedArrayBuffer — which `Worker.terminate()` frees —
+    /// plus a TSFN to its env. If the entries survived the respawn, the next
+    /// request could pick a stale one and `serde_json::to_writer` the render
+    /// envelope straight into freed SAB memory (use-after-free → SIGSEGV).
+    /// Clearing while the workers are still alive also releases each TSFN
+    /// against a live env. Any in-flight render keeps its entry alive through
+    /// its own `Arc` clone, so this can't free an entry mid-dispatch. No-op in
+    /// production (workers are registered once and never replaced).
+    pub fn clear(&self) {
+        self.entries.write().clear();
+    }
 }
 
 /// Dispatch an SSE envelope to the worker. Single long-lived tsfn call:
@@ -457,6 +472,33 @@ mod tests {
         // Drop ran here.
         assert!(entry.render_slot.lock().is_none());
         assert_eq!(entry.in_flight.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn clear_resets_pool_so_reload_does_not_accumulate() {
+        // Models a dev hot reload: an N-worker generation is registered, the
+        // reload clears it, then a fresh N-worker generation registers. The
+        // pool must hold N entries afterwards — NOT 2N. Before `clear()`
+        // existed, the stale generation survived (append-only `register`), and
+        // a stale entry's dangling `buf_ptr` produced a UAF segfault on the
+        // next render dispatch.
+        let pool = WorkerPool::new();
+        for _ in 0..4 {
+            pool.register_for_test();
+        }
+        assert_eq!(pool.registered_count(), 4);
+
+        pool.clear();
+        assert_eq!(pool.registered_count(), 0, "clear must drop every entry");
+
+        for _ in 0..4 {
+            pool.register_for_test();
+        }
+        assert_eq!(
+            pool.registered_count(),
+            4,
+            "after a reload the pool must hold N entries, not 2N (stale + fresh)",
+        );
     }
 
     #[test]

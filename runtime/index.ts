@@ -424,7 +424,23 @@ export const brust = {
 
         const coordinator = new Coordinator({
           workers: {
-            terminateAll: termWorkers,
+            terminateAll: async () => {
+              // Drop the outgoing generation's entries from the native render
+              // pool BEFORE killing the Bun workers. Each entry holds a raw
+              // pointer into the worker's SharedArrayBuffer (freed by
+              // Worker.terminate()) plus a ThreadsafeFunction to its env.
+              // Clearing while the workers are still alive releases each TSFN
+              // cleanly and removes the stale entries, so no post-reload
+              // request can write a render envelope into freed memory — the
+              // use-after-free that crashed `brust dev` on the first request
+              // after a hot reload. `?.` keeps an older addon (no reset export)
+              // from throwing; it just falls back to the old behaviour.
+              const dropped = (native as any).resetWorkerPool?.() ?? 0
+              if (process.env.BRUST_DEV_DEBUG) {
+                process.stderr.write(`[brust] dev: reset worker pool (dropped ${dropped})\n`)
+              }
+              await termWorkers()
+            },
             spawnAll: async () => {
               await spawnWorkers()
             },

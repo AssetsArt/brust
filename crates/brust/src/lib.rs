@@ -192,6 +192,29 @@ pub fn worker_id() -> Option<u32> {
     WORKER_ID.with(|cell| cell.get())
 }
 
+/// Drop every registered worker entry from the render pool, returning how many
+/// were dropped. Dev-mode hot reload calls this from the MAIN thread right
+/// BEFORE terminating the current worker generation (see `WorkerPool::clear`):
+/// the stale entries hold raw `buf_ptr`s into SharedArrayBuffers that
+/// `Worker.terminate()` frees, so any post-reload dispatch that picked one
+/// would write the render envelope into freed memory (use-after-free → segfault).
+/// No-op in production, where workers are registered once and never replaced.
+#[napi]
+pub fn reset_worker_pool() -> u32 {
+    let s = state();
+    let n = s.pool.registered_count() as u32;
+    s.pool.clear();
+    n
+}
+
+/// Number of workers currently registered in the render pool. Exposed for
+/// dev-mode observability: after a hot reload the count must return to the
+/// configured worker count, not accumulate stale generations.
+#[napi]
+pub fn worker_pool_size() -> u32 {
+    state().pool.registered_count() as u32
+}
+
 #[napi]
 pub fn configure_islands_dir(path: String) -> NapiResult<()> {
     let abs = std::path::PathBuf::from(&path);
