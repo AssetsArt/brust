@@ -258,6 +258,17 @@ export async function runBuild(args: string[]): Promise<void> {
     naming: 'index.js',
     target: 'bun',
     format: 'esm',
+    // React MUST stay external. Island components on `native: true` routes are
+    // SSR'd by importing their SOURCE file at runtime (islands/native-render.ts
+    // does `import(sourcePath)`), which resolves `react` from the project's
+    // node_modules. If we also bundled a copy of react/react-dom into this
+    // server bundle, renderToString (bundled react-dom) would render a source
+    // island (node_modules react) across two React instances — "more than one
+    // copy of React", a null hook dispatcher, the island SSR failing, and a
+    // client hydration mismatch (React #418). Externalizing pins every server-
+    // side render to the single node_modules copy the source islands use. (The
+    // browser island chunks are a separate build that DOES bundle react.)
+    external: ['react', 'react/*', 'react-dom', 'react-dom/*'],
     // Preserve function/class identifiers. The Island component's chunk-id
     // marker on the React path IS `Component.name`, so mangled names would
     // point at non-existent files. Whitespace + syntax minification still apply.

@@ -1,6 +1,6 @@
 import { test, expect, afterAll } from 'bun:test'
 import { spawn, $ } from 'bun'
-import { existsSync } from 'node:fs'
+import { existsSync, symlinkSync } from 'node:fs'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -25,6 +25,13 @@ test('brust build → run → smoke all major paths', async () => {
   const buildResult =
     await $`bun ${path.join(REPO, 'runtime/cli/index.ts')} build ${path.join(REPO, 'example/hello-world/index.ts')} --out-dir ${distDir}`.nothrow()
   expect(buildResult.exitCode).toBe(0)
+
+  // The server bundle keeps react/react-dom external (build.ts) so native-route
+  // island SSR shares ONE React copy with the source islands it imports at
+  // runtime. The dist therefore needs react resolvable from its own location;
+  // link the repo's node_modules in. (A real project runs dist from inside the
+  // project tree, where node_modules already resolves — this mirrors that.)
+  symlinkSync(path.join(REPO, 'node_modules'), path.join(distDir, 'node_modules'), 'dir')
 
   // 2. Verify dist tree
   expect(existsSync(path.join(distDir, 'index.js'))).toBe(true)
@@ -71,6 +78,17 @@ test('brust build → run → smoke all major paths', async () => {
   const counter = await fetch(`http://127.0.0.1:${port}/_brust/islands/Counter.js`)
   expect(counter.status).toBe(200)
   expect(counter.headers.get('content-type')).toContain('javascript')
+
+  // Native-route island SSR: /native-islands renders a `ssr: true` Counter
+  // server-side. With react bundled into dist this hit "more than one copy of
+  // React" (bundled react-dom vs the source island's node_modules react), the
+  // renderToString failing, and the island silently degrading to client-only
+  // (a React #418 hydration mismatch in the browser). Externalizing react fixes
+  // it — assert the island is genuinely server-rendered (its button is in the
+  // SSR HTML, not just hydrated client-side).
+  const nativeIslands = await fetch(`http://127.0.0.1:${port}/native-islands`)
+  expect(nativeIslands.status).toBe(200)
+  expect(await nativeIslands.text()).toContain('data-testid="counter"')
 
   const mcp = await fetch(`http://127.0.0.1:${port}/_brust/mcp`, {
     method: 'POST',

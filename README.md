@@ -72,7 +72,7 @@ route apiece.
 
 ```
 brustjs dev   <entry>             # dev mode: watcher + WS reload + browser auto-reload
-brustjs build <entry> --out-dir D # self-contained ./dist/ (bun run dist/index.js)
+brustjs build <entry> --out-dir D # prebuilt ./dist/ — run from the project (bun run dist/index.js)
 brustjs new   <name>              # scaffold a project (partial — see Status)
 ```
 
