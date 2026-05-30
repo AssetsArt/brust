@@ -97,6 +97,7 @@ dependencies = [
  "flume",
  "futures",
  "httparse",
+ "jsx-rust-compiler",
  "lru",
  "matchit",
  "minijinja",

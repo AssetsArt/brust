@@ -4,6 +4,7 @@ mod cache;
 mod http;
 mod io;
 mod jinja;
+mod jsx_compile;
 mod pool;
 pub mod render_stream;
 mod routes;

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { ISLANDS_IMPORTMAP_AND_BOOTSTRAP } from '../islands/importmap.ts'
 
@@ -21,7 +21,8 @@ export interface NativeRouteEmitOpts {
   flatRoutes: { nativeTemplate?: string }[]
   /** `.brust/jinja` absolute output dir. Created if missing. */
   outDir: string
-  /** Repo root — used to resolve the `jsx-rustc` binary. */
+  /** Repo root. Retained for call-site compatibility; native compilation now
+   * goes through the napi addon's `compileJsx`, not a target/ binary. */
   repoRoot: string
 }
 
@@ -45,20 +46,23 @@ export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<vo
 
   const nativeRoutes = opts.flatRoutes.filter((r) => r.nativeTemplate)
 
-  // Resolve jsx-rustc binary: prefer release, fall back to debug.
-  const jsxRustcRelease = resolve(opts.repoRoot, 'target/release/jsx-rustc')
-  const jsxRustcDebug = resolve(opts.repoRoot, 'target/debug/jsx-rustc')
-  const jsxRustc = existsSync(jsxRustcRelease)
-    ? jsxRustcRelease
-    : existsSync(jsxRustcDebug)
-      ? jsxRustcDebug
-      : null
-
-  if (!jsxRustc && nativeRoutes.length > 0) {
-    throw new Error(
-      'jsx-rustc binary not found in target/{release,debug}/; ' +
-        'run `cargo build -p jsx-rust-compiler --bin jsx-rustc`',
-    )
+  // Compile through the napi addon's `compileJsx` rather than spawning the
+  // `jsx-rustc` binary. The binary only exists in the source tree's target/
+  // dir, so spawning it broke `native: true` routes in a published npm install;
+  // the addon (`.node`) ships with every platform package, so this path works
+  // for source builds and installed projects alike.
+  let compileJsx:
+    | ((source: string, path: string) => { template: string; islandsJson: string })
+    | null = null
+  if (nativeRoutes.length > 0) {
+    const native = await import('../index.js')
+    compileJsx = (native as { compileJsx?: typeof compileJsx }).compileJsx ?? null
+    if (typeof compileJsx !== 'function') {
+      throw new Error(
+        'brust: the native addon does not expose compileJsx — rebuild it with ' +
+          '`cd runtime && bun run build` (or update brustjs to a build that ships it).',
+      )
+    }
   }
 
   const importMap =
@@ -75,26 +79,27 @@ export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<vo
       continue
     }
     const outPath = resolve(opts.outDir, `${name}.jinja`)
-    const result = Bun.spawnSync({
-      cmd: [jsxRustc!, sourcePath, '-o', outPath],
-      stdout: 'pipe',
-      stderr: 'pipe',
-    })
-    if (result.exitCode !== 0) {
-      const stderr = result.stderr ? new TextDecoder().decode(result.stderr) : ''
-      const stdout = result.stdout ? new TextDecoder().decode(result.stdout) : ''
-      throw new Error(`jsx-rustc failed for ${sourcePath}:\n${stdout}\n${stderr}`)
+    let compiled: { template: string; islandsJson: string }
+    try {
+      compiled = compileJsx!(readFileSync(sourcePath, 'utf8'), sourcePath)
+    } catch (e) {
+      throw new Error(`native route "${name}" failed to compile (${sourcePath}):\n${String(e)}`)
     }
+    writeFileSync(outPath, compiled.template)
     built.push(name)
 
-    // Islands post-processing. jsx-rustc writes `<Name>.islands.json` ONLY when
-    // the route uses <Island>; absent file ⇒ no islands ⇒ leave the .jinja
-    // byte-identical (no-island regression).
+    // Islands post-processing. The compiler reports an island manifest ONLY
+    // when the route uses <Island>; `"[]"` ⇒ no islands ⇒ leave the .jinja
+    // byte-identical (no-island regression). Remove any stale sibling so a
+    // route that dropped its islands doesn't reconcile against an old manifest.
     const islandsJsonPath = resolve(opts.outDir, `${name}.islands.json`)
-    if (existsSync(islandsJsonPath)) {
+    if (compiled.islandsJson && compiled.islandsJson !== '[]') {
+      writeFileSync(islandsJsonPath, compiled.islandsJson)
       // Island source paths resolve from the PAGE file's own imports.
       const pageImports = scanImports(sourcePath)
       reconcileIslandManifest(outPath, islandsJsonPath, pageImports, name)
+    } else if (existsSync(islandsJsonPath)) {
+      rmSync(islandsJsonPath, { force: true })
     }
   }
 
