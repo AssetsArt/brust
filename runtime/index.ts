@@ -42,10 +42,12 @@ export function workerId(): number | null {
   return (native as any).workerId()
 }
 
-// Sub-project J — boot-time jinja loader. Idempotent: Rust holds the loaded
-// templates in a OnceLock, so a second `set()` would panic. The flag guards
-// repeated calls in both main and worker branches of `run()`, and from any
-// future test/embedded entrypoint that calls `registerRoutes` directly.
+// Sub-project J — boot-time jinja loader. The flag guards repeated calls across
+// the main and worker branches of `run()` (and any embedded entrypoint that
+// calls `registerRoutes` directly) so the env loads once at startup. Dev hot
+// reload does NOT go through here — it reloads via reEmitJinja, which calls
+// napiLoadJinjaTemplates directly (the Rust env is a reloadable RwLock now, not
+// a load-once OnceLock).
 let _jinjaLoaded = false
 function loadJinjaOnce(dir: string): void {
   if (_jinjaLoaded) return
@@ -380,7 +382,7 @@ export const brust = {
 
       // Sub-project J — load .brust/jinja/*.jinja into the minijinja env so
       // the startup-validation warning in registerRoutes can compare against
-      // a populated registry. Idempotent (Rust uses OnceLock).
+      // a populated registry. Loads once at startup; dev hot reload reloads it.
       loadJinjaOnce(path.resolve(process.cwd(), '.brust/jinja'))
 
       this.registerRoutes(routes)
@@ -412,6 +414,7 @@ export const brust = {
         const { terminateAll: termWorkers, spawnAll: spawnWorkers } = await import(
           './dev/worker-registry.ts'
         )
+        const { reEmitJinja } = await import('./dev/jinja-reload.ts')
         const fsModule = await import('node:fs')
         const pathModule = await import('node:path')
 
@@ -445,6 +448,7 @@ export const brust = {
               await spawnWorkers()
             },
           },
+          reEmitJinja,
           buildCss: async () => {
             const appCss = pathModule.join(scanRoot, 'app.css')
             if (fsModule.existsSync(appCss)) {

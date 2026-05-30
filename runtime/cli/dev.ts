@@ -79,11 +79,29 @@ export async function runDev(args: string[]): Promise<void> {
   // reads from `cwd + '.brust/jinja'`. When user runs `bun run dev
   // example/hello-world/index.ts` from repo root, cwd != entryDir; writing
   // to entryDir would put templates somewhere the runtime never looks.
-  await emitNativeTemplates({
+  const jinjaDir = path.join(process.cwd(), '.brust/jinja')
+  const emitOpts = {
     entryFile: existsSync(routesFile) ? routesFile : entry,
     flatRoutes: loadedRoutes as { nativeTemplate?: string }[],
-    outDir: path.join(process.cwd(), '.brust/jinja'),
+    outDir: jinjaDir,
     repoRoot: REPO_ROOT,
+  }
+  await emitNativeTemplates(emitOpts)
+
+  // Native-route HMR: on a ts/html/islands hot reload the dev coordinator calls
+  // this to recompile the .jinja templates from the (edited) source and reload
+  // them into the minijinja env — so `native: true` routes pick up edits without
+  // a dev-server restart. The runtime (loaded by the entry import below) holds
+  // napiLoadJinjaTemplates via the napi loader at `../index.js`; the Rust env is
+  // a reloadable RwLock. Adding/removing routes still needs a restart (the route
+  // structure is captured here at startup).
+  const { registerJinjaReEmit } = await import('../dev/jinja-reload.ts')
+  registerJinjaReEmit(async () => {
+    await emitNativeTemplates(emitOpts)
+    const native = await import('../index.js')
+    ;(native as { napiLoadJinjaTemplates: (dir: string) => unknown }).napiLoadJinjaTemplates(
+      jinjaDir,
+    )
   })
 
   // Hand off to the user's entry. It calls brust.run() which, with

@@ -8,6 +8,9 @@ export interface CoordinatorDeps {
   }
   buildCss: () => Promise<void>
   buildIslands: () => Promise<void>
+  /** Recompile native-route `.jinja` templates from source and reload them into
+   * the minijinja env, so `native: true` routes pick up .tsx edits on reload. */
+  reEmitJinja: () => Promise<void>
   buildComponentCss?: () => Promise<void>
   snapshotComponentCss?: () => Promise<import('../css/manifest.ts').ComponentCssManifest | null>
   broadcast: (msg: DevMessage) => Promise<void> | void
@@ -33,12 +36,16 @@ export class Coordinator {
         case 'html':
           await this.deps.workers.terminateAll()
           await this.deps.workers.spawnAll()
+          // Reload native-route templates (process-global minijinja env — does
+          // not depend on the workers) just before telling the browser to reload.
+          await this.deps.reEmitJinja()
           await this.deps.broadcast({ type: 'reload' })
           break
         case 'islands':
           await this.deps.buildIslands()
           await this.deps.workers.terminateAll()
           await this.deps.workers.spawnAll()
+          await this.deps.reEmitJinja()
           await this.deps.broadcast({ type: 'reload' })
           break
         case 'css':

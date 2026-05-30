@@ -9,6 +9,7 @@ function makeDeps(over: Partial<any> = {}) {
     },
     buildCss: mock(() => Promise.resolve()),
     buildIslands: mock(() => Promise.resolve()),
+    reEmitJinja: mock(() => Promise.resolve()),
     broadcast: mock((_msg: any) => Promise.resolve()),
     tui: { appendEvent: mock((_line: string) => {}) },
     ...over,
@@ -20,6 +21,7 @@ describe('Coordinator', () => {
     const deps = makeDeps()
     const c = new Coordinator(deps)
     await c.handleChange({ paths: ['/a.tsx'], kind: 'ts' })
+    expect(deps.reEmitJinja).toHaveBeenCalledTimes(1)
     expect(deps.workers.terminateAll).toHaveBeenCalledTimes(1)
     expect(deps.workers.spawnAll).toHaveBeenCalledTimes(1)
     const types = deps.broadcast.mock.calls.map((c) => c[0].type)
@@ -31,6 +33,7 @@ describe('Coordinator', () => {
     const c = new Coordinator(deps)
     await c.handleChange({ paths: ['/app.css'], kind: 'css' })
     expect(deps.workers.terminateAll).not.toHaveBeenCalled()
+    expect(deps.reEmitJinja).not.toHaveBeenCalled()
     expect(deps.buildCss).toHaveBeenCalledTimes(1)
     const calls = deps.broadcast.mock.calls.map((c) => c[0])
     expect(calls[0].type).toBe('building')
@@ -44,6 +47,7 @@ describe('Coordinator', () => {
     const c = new Coordinator(deps)
     await c.handleChange({ paths: ['/components/Counter.tsx'], kind: 'islands' })
     expect(deps.buildIslands).toHaveBeenCalledTimes(1)
+    expect(deps.reEmitJinja).toHaveBeenCalledTimes(1)
     expect(deps.workers.terminateAll).toHaveBeenCalledTimes(1)
     expect(deps.workers.spawnAll).toHaveBeenCalledTimes(1)
     const types = deps.broadcast.mock.calls.map((c) => c[0].type)

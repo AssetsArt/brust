@@ -12,11 +12,17 @@
 //! to v2.x. `Box::leak` is the price of `OnceLock<Environment<'static>>`.
 
 use std::path::Path;
-use std::sync::OnceLock;
 
 use minijinja::{Environment, UndefinedBehavior};
+use parking_lot::RwLock;
 
-static ENV: OnceLock<Environment<'static>> = OnceLock::new();
+// RwLock (not OnceLock) so `load_from` can REPLACE the environment on a dev hot
+// reload: native-route `.jinja` templates are recompiled from source on every
+// `.tsx` edit and reloaded here. Renders take a shared read lock (cheap, and in
+// production always uncontended — loaded once, never rewritten); a reload takes
+// the brief write lock. Templates are added owned, so replacing the env drops
+// the previous generation instead of leaking it.
+static ENV: RwLock<Option<Environment<'static>>> = RwLock::new(None);
 
 /// Read every `<Name>.jinja` file in `dir` and register it under its file
 /// stem. Returns the registered template names.
@@ -45,24 +51,25 @@ pub fn load_from(dir: &Path) -> Vec<String> {
                 .to_string();
             let source = std::fs::read_to_string(&path)
                 .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-            // NOTE: OnceLock<Environment<'static>> requires 'static template
-            // sources + names; Box::leak is the bounded one-time leak per spec
-            // §6 (template count = route count). Hot reload deferred per §13.7.
-            let source_static: &'static str = Box::leak(source.into_boxed_str());
-            let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
-            env.add_template(name_static, source_static)
+            // Owned templates: the Environment owns its name + source (Cow::Owned
+            // -> 'static), so a dev hot reload can drop and replace the whole env
+            // without leaking. (The old OnceLock path Box::leak'd every source.)
+            env.add_template_owned(name.clone(), source)
                 .unwrap_or_else(|e| panic!("add_template {}: {e}", path.display()));
             names.push(name);
         }
     }
 
-    ENV.set(env).expect("jinja env initialized once");
+    // Replace, don't init-once: a dev hot reload calls this again with the
+    // freshly recompiled templates.
+    *ENV.write() = Some(env);
     names
 }
 
 /// Render the named template against the supplied JSON bytes.
 pub fn render(name: &str, data_json: &[u8]) -> Result<String, RenderError> {
-    let env = ENV.get().ok_or(RenderError::NotLoaded)?;
+    let guard = ENV.read();
+    let env = guard.as_ref().ok_or(RenderError::NotLoaded)?;
     let tmpl = env
         .get_template(name)
         .map_err(|_| RenderError::UnknownTemplate(name.to_string()))?;
@@ -75,7 +82,8 @@ pub fn render(name: &str, data_json: &[u8]) -> Result<String, RenderError> {
 /// Names of every template currently registered. Empty when `load_from`
 /// hasn't been called.
 pub fn registered_templates() -> Vec<String> {
-    ENV.get()
+    ENV.read()
+        .as_ref()
         .map(|env| env.templates().map(|(name, _)| name.to_string()).collect())
         .unwrap_or_default()
 }
@@ -113,8 +121,8 @@ mod tests {
 
     #[test]
     fn jinja_round_trip() {
-        // Single test serializing all sub-checks: OnceLock means ENV is
-        // process-global, so a second `load_from` would panic. The
+        // Single test serializing all sub-checks: ENV is process-global, so the
+        // sub-checks (including the reload at the end) must run in sequence. The
         // lenient-missing-dir branch is covered structurally + by Task 6 E2E.
         let dir = write_fixture_dir();
         let names = load_from(dir.path());
@@ -140,5 +148,24 @@ mod tests {
         let templates = registered_templates();
         assert!(templates.contains(&"HelloPage".to_string()));
         assert!(templates.contains(&"ListNav".to_string()));
+
+        // Hot reload: a second load_from REPLACES the env (the whole point of
+        // moving OnceLock -> RwLock — native-route templates recompile and
+        // reload on a .tsx edit instead of serving stale content until restart).
+        let dir2 = tempfile::tempdir().expect("temp dir");
+        std::fs::write(
+            dir2.path().join("HelloPage.jinja"),
+            "<div><h1>RELOADED, {{ name }}</h1></div>",
+        )
+        .unwrap();
+        let names2 = load_from(dir2.path());
+        assert_eq!(names2, vec!["HelloPage".to_string()]);
+        let out = render("HelloPage", br#"{"name":"World"}"#).expect("render after reload");
+        assert_eq!(out, "<div><h1>RELOADED, World</h1></div>");
+        // The previous generation's templates are gone after the replace.
+        assert!(matches!(
+            render("ListNav", b"{}"),
+            Err(RenderError::UnknownTemplate(_)),
+        ));
     }
 }
