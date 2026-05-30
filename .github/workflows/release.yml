@@ -16,9 +16,11 @@ name: release
 # the publish job assembles the per-platform packages (napi artifacts +
 # create-npm-dirs + prepublish) and publishes the main package.
 #
-# NOTE: this workflow has not yet been exercised by a real tag — validate the
-# cross-compile (linux-arm64 via --use-napi-cross) and the artifact naming on
-# the first `vX.Y.Z` you push, before relying on it.
+# NOTE: the publish job is gated to `v*` tags only (see its `if:`), so you can
+# run this workflow via workflow_dispatch (Actions → release → Run workflow) to
+# exercise the 6-target build matrix + cross-compile (linux-arm64/musl via
+# --use-napi-cross) and artifact naming WITHOUT publishing — do that to validate
+# before pushing the first real `vX.Y.Z` tag.
 
 on:
   push:
@@ -101,6 +103,11 @@ jobs:
   publish:
     name: publish to npm
     needs: build
+    # Publish ONLY on a real `v*` tag — never on workflow_dispatch. This lets you
+    # exercise the 6-target build matrix manually (Actions → release → Run workflow)
+    # to validate the cross-compile WITHOUT claiming the npm name; the actual
+    # publish happens only when you push the tag.
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
