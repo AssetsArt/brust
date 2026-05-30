@@ -107,6 +107,10 @@ pub struct ServeTuning {
     pub conn_queue_cap: Option<u32>,
     /// Initial per-connection read buffer capacity. Default 4096.
     pub read_buf_cap: Option<u32>,
+    /// Max ms a render dispatch waits for a free worker before 503 (AllBusy is
+    /// queued, not failed-fast). Lets `connWorkers > workers` avoid 503 storms.
+    /// Default 10000.
+    pub claim_timeout_ms: Option<u32>,
 }
 
 /// Resolve `host:port` to a bindable SocketAddr. Accepts literal IPs and
@@ -159,6 +163,10 @@ pub fn begin_serve(opts: ServeOptions) -> NapiResult<()> {
         ),
         conn_queue_cap: pick(t.and_then(|x| x.conn_queue_cap), defaults.conn_queue_cap),
         read_buf_cap: pick(t.and_then(|x| x.read_buf_cap), defaults.read_buf_cap),
+        claim_timeout_ms: t
+            .and_then(|x| x.claim_timeout_ms)
+            .map(|v| (v as u64).max(1))
+            .unwrap_or(defaults.claim_timeout_ms),
     };
 
     let addr: SocketAddr = resolve_bind_addr(opts.host.trim(), opts.port)?;
