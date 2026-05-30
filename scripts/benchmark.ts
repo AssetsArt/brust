@@ -315,8 +315,8 @@ function renderMarkdown(results: Result[]): string {
     const fmt = (n: number | null) => (n == null ? '—' : n.toFixed(2))
     lines.push(
       `| ${r.scenarioLabel} | ${r.method} | \`${r.path}\` | ${Math.round(r.rps).toLocaleString()} | ` +
-      `${fmt(r.p50ms)} | ${fmt(r.p95ms)} | ${fmt(r.p99ms)} | ` +
-      `${r.totalRequests.toLocaleString()} |`,
+        `${fmt(r.p50ms)} | ${fmt(r.p95ms)} | ${fmt(r.p99ms)} | ` +
+        `${r.totalRequests.toLocaleString()} |`,
     )
   }
   lines.push('')
@@ -372,8 +372,8 @@ async function preflightJinja(): Promise<void> {
 async function main() {
   console.log(
     'Reminder: bench requires a release-built napi addon.\n' +
-    '  cd runtime && bun run build     # release, optimised\n' +
-    '  cd runtime && bun run build:debug   # ~2x slower, debug only\n',
+      '  cd runtime && bun run build     # release, optimised\n' +
+      '  cd runtime && bun run build:debug   # ~2x slower, debug only\n',
   )
   await preflightJinja()
   const results: Result[] = []
@@ -388,9 +388,9 @@ async function main() {
       results.push(r)
       console.log(
         `  rps=${r.rps.toFixed(0).padStart(7)}   ` +
-        `p50=${(r.p50ms ?? NaN).toFixed(2)}ms   ` +
-        `p99=${(r.p99ms ?? NaN).toFixed(2)}ms   ` +
-        `total=${r.totalRequests.toLocaleString()}`,
+          `p50=${(r.p50ms ?? NaN).toFixed(2)}ms   ` +
+          `p99=${(r.p99ms ?? NaN).toFixed(2)}ms   ` +
+          `total=${r.totalRequests.toLocaleString()}`,
       )
     }
   }
