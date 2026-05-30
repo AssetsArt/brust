@@ -1,36 +1,54 @@
 import { Island } from 'brustjs'
-import Layout from '../components/Layout'
 import Counter from '../components/Counter'
 
-export default function Home() {
+// `native: true` page — compiled to a jinja template and rendered in Rust
+// (minijinja), no React on the server. Native pages use host elements only (no
+// custom components like Layout), so the document shell is written inline here;
+// the Tailwind stylesheet is linked directly. Each island's `props` is a path
+// into the route loader's return value.
+export default function Home({
+  clientProps,
+  serverProps,
+}: {
+  clientProps: { start: number; label: string }
+  serverProps: { start: number; label: string }
+}) {
   return (
-    <Layout title="__PROJECT_NAME__">
-      <h1 className="text-3xl font-bold mb-4">Welcome to Brust</h1>
-      <p className="mb-6 text-gray-700">
-        Edit <code className="bg-gray-100 px-1 rounded">pages/Home.tsx</code> and save —
-        <code className="bg-gray-100 px-1 rounded ml-1">brustjs dev</code> reloads.
-      </p>
+    <html lang="en">
+      <head>
+        <meta charSet="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>__PROJECT_NAME__</title>
+        <link rel="stylesheet" href="/_brust/css/app.css" />
+      </head>
+      <body className="bg-white text-gray-900 font-sans">
+        <main className="max-w-3xl mx-auto px-5 py-8">
+          <h1 className="text-3xl font-bold mb-4">Welcome to Brust</h1>
+          <p className="mb-6 text-gray-700">
+            This page is a <strong>native route</strong> — its shell is rendered in Rust
+            (minijinja), no React on the server. The counters below are{' '}
+            <strong>islands</strong>: only their subtrees boot React in the browser. Edit{' '}
+            <code className="bg-gray-100 px-1 rounded">pages/Home.tsx</code> and save —{' '}
+            <code className="bg-gray-100 px-1 rounded">brustjs dev</code> reloads.
+          </p>
 
-      <section className="mb-6">
-        <h2 className="text-xl font-semibold mb-1">Client island</h2>
-        <p className="mb-2 text-sm text-gray-600">
-          Ships no server markup; mounts and hydrates in the browser.
-        </p>
-        <Island component={Counter} props={{ start: 0, label: 'client clicks' }} hydrate="load" />
-      </section>
+          <section className="mb-6">
+            <h2 className="text-xl font-semibold mb-1">Client island</h2>
+            <p className="mb-2 text-sm text-gray-600">
+              No server markup; mounts and hydrates in the browser.
+            </p>
+            <Island component={Counter} props={clientProps} hydrate="load" />
+          </section>
 
-      <section>
-        <h2 className="text-xl font-semibold mb-1">Server island (SSR + hydrate)</h2>
-        <p className="mb-2 text-sm text-gray-600">
-          Rendered on the server, then hydrated — interactive with no flash of empty state.
-        </p>
-        <Island
-          component={Counter}
-          props={{ start: 100, label: 'server clicks' }}
-          hydrate="load"
-          ssr
-        />
-      </section>
-    </Layout>
+          <section>
+            <h2 className="text-xl font-semibold mb-1">Server island (SSR + hydrate)</h2>
+            <p className="mb-2 text-sm text-gray-600">
+              Rendered on the server during the loader crossing, then hydrated — no empty flash.
+            </p>
+            <Island component={Counter} props={serverProps} ssr hydrate="load" />
+          </section>
+        </main>
+      </body>
+    </html>
   )
 }

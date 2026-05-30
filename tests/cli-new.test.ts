@@ -181,8 +181,10 @@ test('brust new: scaffold emits the expected tree and content', async () => {
     expect(existsSync(path.join(projectDir, 'app.css'))).toBe(true)
     expect(existsSync(path.join(projectDir, 'README.md'))).toBe(true)
     expect(existsSync(path.join(projectDir, 'pages/Home.tsx'))).toBe(true)
-    expect(existsSync(path.join(projectDir, 'components/Layout.tsx'))).toBe(true)
     expect(existsSync(path.join(projectDir, 'components/Counter.tsx'))).toBe(true)
+    // Home is a native route showcasing islands — lock that contract so the
+    // scaffold can't silently regress to a plain React page.
+    expect(await readFile(path.join(projectDir, 'routes.tsx'), 'utf8')).toContain('native: true')
     expect(existsSync(path.join(projectDir, 'package.json.tmpl'))).toBe(false)
     expect(existsSync(path.join(projectDir, 'pages/Home.tsx.tmpl'))).toBe(false)
     expect(existsSync(path.join(projectDir, '_gitignore'))).toBe(false)
