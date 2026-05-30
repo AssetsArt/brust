@@ -86,6 +86,27 @@ pub struct ServeOptions {
     pub port: u16,
     pub workers: u32,
     pub entry: String,
+    /// Optional performance tunables. Omit to keep framework defaults.
+    pub tuning: Option<ServeTuning>,
+}
+
+/// Runtime-tunable server limits, all optional. Maps onto `server::Tuning`
+/// (which holds the defaults). `conn_workers` is the only one NOT in
+/// `server::Tuning` — it's the Rust connection-handling concurrency passed to
+/// `server::start`, independent of `workers` (the Bun render-thread count).
+#[napi(object)]
+pub struct ServeTuning {
+    /// Rust-side accept→parse→dispatch task concurrency. Independent of
+    /// `workers` (Bun render threads). Default = `workers`.
+    pub conn_workers: Option<u32>,
+    /// Cap on request bytes before the header terminator. Default 16384.
+    pub max_request_bytes: Option<u32>,
+    /// Cap on action/RPC body size (mirror the SAB capacity). Default 262144.
+    pub max_action_body_bytes: Option<u32>,
+    /// Accept-side queue depth (TCP backpressure point). Default 1024.
+    pub conn_queue_cap: Option<u32>,
+    /// Initial per-connection read buffer capacity. Default 4096.
+    pub read_buf_cap: Option<u32>,
 }
 
 /// Resolve `host:port` to a bindable SocketAddr. Accepts literal IPs and
@@ -115,6 +136,31 @@ pub fn begin_serve(opts: ServeOptions) -> NapiResult<()> {
     }
     s.expected_workers.store(opts.workers, Ordering::SeqCst);
 
+    // Resolve tunables: each field falls back to the server default, so an
+    // omitted `tuning` (or omitted field) is byte-for-byte the old behaviour.
+    // Counts/sizes are clamped to >= 1 so a 0 can never make flume::bounded(0)
+    // a rendezvous channel or zero-length the read loop. `conn_workers`
+    // defaults to `workers` (the historical coupling).
+    let defaults = server::Tuning::default();
+    let t = opts.tuning.as_ref();
+    let pick = |f: Option<u32>, d: usize| f.map(|v| (v as usize).max(1)).unwrap_or(d);
+    let conn_workers = t
+        .and_then(|x| x.conn_workers)
+        .map(|v| (v as usize).max(1))
+        .unwrap_or(opts.workers as usize);
+    let tuning = server::Tuning {
+        max_request_bytes: pick(
+            t.and_then(|x| x.max_request_bytes),
+            defaults.max_request_bytes,
+        ),
+        max_action_body_bytes: pick(
+            t.and_then(|x| x.max_action_body_bytes),
+            defaults.max_action_body_bytes,
+        ),
+        conn_queue_cap: pick(t.and_then(|x| x.conn_queue_cap), defaults.conn_queue_cap),
+        read_buf_cap: pick(t.and_then(|x| x.read_buf_cap), defaults.read_buf_cap),
+    };
+
     let addr: SocketAddr = resolve_bind_addr(opts.host.trim(), opts.port)?;
 
     // Process shutdown is owned by the TS layer: runtime/index.ts installs
@@ -128,7 +174,8 @@ pub fn begin_serve(opts: ServeOptions) -> NapiResult<()> {
         Arc::clone(&s.pool),
         Arc::clone(&s.routes),
         Arc::clone(&s.cache),
-        opts.workers as usize,
+        conn_workers,
+        tuning,
     );
     Ok(())
 }

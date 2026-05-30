@@ -37,14 +37,46 @@ enum DispatchControl {
     CloseConn,
 }
 
-const MAX_REQUEST_BYTES: usize = 16 * 1024;
-/// Cap on action body size. Mirrors the SAB capacity (256 KB default) so
-/// the largest action call fits in one SAB write. If the SAB is reconfigured
-/// larger by the user, this bound stays — action bodies don't get to grow
-/// past the renderer's working buffer.
-const MAX_ACTION_BODY_BYTES: usize = 256 * 1024;
-// Bound the accept-side queue so a slow worker pool triggers TCP backpressure instead of unbounded memory growth.
-const CONN_CHAN_CAP: usize = 1024;
+/// Runtime-tunable server limits, set ONCE from `ServeOptions.tuning` at
+/// `begin_serve` (see lib.rs). Every default matches the historical
+/// compile-time constant, so an app that omits `tuning` is byte-for-byte
+/// unchanged. Hot-path reads go through `tuning()`.
+///
+/// - `max_request_bytes` (16 KB): cap on request bytes before `\r\n\r\n`.
+/// - `max_action_body_bytes` (256 KB): cap on action/RPC body size. Mirrors the
+///   SAB capacity so the largest body fits one SAB write; raising the SAB does
+///   NOT auto-raise this — set it here too.
+/// - `conn_queue_cap` (1024): accept-side queue depth; a slow worker pool
+///   triggers TCP backpressure instead of unbounded memory growth.
+/// - `read_buf_cap` (4096): initial per-connection read buffer capacity.
+#[derive(Clone, Copy)]
+pub struct Tuning {
+    pub max_request_bytes: usize,
+    pub max_action_body_bytes: usize,
+    pub conn_queue_cap: usize,
+    pub read_buf_cap: usize,
+}
+
+impl Default for Tuning {
+    fn default() -> Self {
+        Self {
+            max_request_bytes: 16 * 1024,
+            max_action_body_bytes: 256 * 1024,
+            conn_queue_cap: 1024,
+            read_buf_cap: 4096,
+        }
+    }
+}
+
+static TUNING: std::sync::OnceLock<Tuning> = std::sync::OnceLock::new();
+
+/// Hot-path accessor. Returns the values set by `start`, or `Tuning::default()`
+/// if `start` has not run yet (unit tests that exercise handlers without
+/// booting the server). `Tuning` is `Copy`, so this is a cheap load.
+#[inline]
+fn tuning() -> Tuning {
+    TUNING.get().copied().unwrap_or_default()
+}
 
 pub fn start(
     addr: SocketAddr,
@@ -52,8 +84,13 @@ pub fn start(
     pool: Arc<WorkerPool>,
     routes: Arc<RouteTable>,
     cache: Arc<LruCache>,
-    workers: usize,
+    conn_workers: usize,
+    tuning: Tuning,
 ) {
+    // Set the process-wide tunables before any connection is served. `start`
+    // runs once per process (re-serve is rejected in begin_serve), so a
+    // best-effort set is correct; the Err arm only fires if already set.
+    let _ = TUNING.set(tuning);
     run_io(move || async move {
         let listener = match TcpListener::bind(addr).await {
             Ok(l) => l,
@@ -63,10 +100,13 @@ pub fn start(
             }
         };
 
-        let (tx, rx) = flume::bounded::<TcpStream>(CONN_CHAN_CAP);
+        let (tx, rx) = flume::bounded::<TcpStream>(tuning.conn_queue_cap);
 
-        // Workers exit only when all Senders drop (i.e. accept loop has exited).
-        for _ in 0..workers {
+        // Conn-workers exit only when all Senders drop (i.e. accept loop has
+        // exited). This count is independent of the Bun render-worker count
+        // (`expected_workers`): these are lightweight async tasks doing
+        // accept→parse→dispatch, not OS render threads.
+        for _ in 0..conn_workers {
             let rx = rx.clone();
             let pool = pool.clone();
             let routes = routes.clone();
@@ -110,7 +150,7 @@ async fn handle_conn(
     routes: Arc<RouteTable>,
     cache: Arc<LruCache>,
 ) {
-    let mut buf = Vec::with_capacity(4096);
+    let mut buf = Vec::with_capacity(tuning().read_buf_cap);
     loop {
         buf.clear();
         match read_full_request(&mut s, &mut buf).await {
@@ -290,7 +330,7 @@ async fn handle_conn(
                     return;
                 }
             };
-            if content_length > MAX_ACTION_BODY_BYTES {
+            if content_length > tuning().max_action_body_bytes {
                 let _ = s.write_all(http::error_413()).await;
                 return;
             }
@@ -431,7 +471,7 @@ async fn handle_conn(
                 }
             };
             // Same cap as action — single global body envelope limit (SAB capacity).
-            if content_length > MAX_ACTION_BODY_BYTES {
+            if content_length > tuning().max_action_body_bytes {
                 let _ = s.write_all(http::error_413()).await;
                 return;
             }
@@ -1485,7 +1525,7 @@ fn lookup_vary_headers(request_buf: &[u8], vary: &[String]) -> Vec<String> {
 }
 
 async fn read_full_request(s: &mut TcpStream, buf: &mut Vec<u8>) -> ReadOutcome {
-    while buf.len() < MAX_REQUEST_BYTES {
+    while buf.len() < tuning().max_request_bytes {
         let n = match s.read_request(buf).await {
             Ok(n) => n,
             Err(e) => {

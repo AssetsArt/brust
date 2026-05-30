@@ -23,6 +23,27 @@ export interface ServeOptions {
    * pattern. The field here is currently unused inside serve() and is reserved
    * for future IPC-based propagation of the manifest. */
   mcp?: { manifest: import('./mcp/manifest.ts').McpManifest }
+  /** Performance tunables. All optional — omitting any field keeps the
+   * framework default, so the whole object is opt-in. `connWorkers` sets the
+   * Rust-side connection-handling concurrency (accept→parse→dispatch), which is
+   * INDEPENDENT of `workers` (the Bun render threads): I/O-bound paths like
+   * `/ping` scale with `connWorkers`, render-bound paths scale with `workers`.
+   * Note: with the current fail-fast dispatch, setting `connWorkers` higher
+   * than `workers` can return 503 under heavy render load — keep
+   * `connWorkers <= workers` unless the route mix is dominated by Rust-only
+   * paths. */
+  tuning?: {
+    /** Rust accept/dispatch concurrency. Default = `workers`. */
+    connWorkers?: number
+    /** Max request bytes before header terminator. Default 16384 (16 KB). */
+    maxRequestBytes?: number
+    /** Max action/RPC body size. Default 262144 (256 KB). */
+    maxActionBodyBytes?: number
+    /** Accept-side queue depth (TCP backpressure point). Default 1024. */
+    connQueueCap?: number
+    /** Initial per-connection read buffer capacity. Default 4096. */
+    readBufCap?: number
+  }
 }
 
 // Render callback. Resolves with a framed-response length: `> 0` → FAST LANE
@@ -108,6 +129,7 @@ export const brust = {
       port: opts.port,
       workers: opts.workers,
       entry: opts.entry,
+      tuning: opts.tuning,
     })
     const baseEnv = { ...process.env }
     const workersArr: Worker[] = []
