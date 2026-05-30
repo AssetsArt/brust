@@ -1,6 +1,17 @@
-# Brust
+<div align="center">
 
-**B**un + **Rust** — an SSR framework that bursts.
+# 💥 Brust
+
+### **B**un + **Rust** — an SSR framework that bursts.
+
+[![npm](https://img.shields.io/npm/v/brustjs/alpha?logo=npm&logoColor=white&label=brustjs&color=cb3837)](https://www.npmjs.com/package/brustjs)
+[![CI](https://github.com/AssetsArt/brust/actions/workflows/ci.yml/badge.svg)](https://github.com/AssetsArt/brust/actions/workflows/ci.yml)
+[![license](https://img.shields.io/badge/license-MIT-3da639)](#status)
+[![platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20(glibc%20%7C%20musl)-1f6feb)](#status)
+[![Bun](https://img.shields.io/badge/Bun-%E2%89%A51.4-fbf0df?logo=bun&logoColor=black)](https://bun.sh)
+[![React](https://img.shields.io/badge/React-19-149eca?logo=react&logoColor=white)](https://react.dev)
+
+</div>
 
 React on the server, Rust everywhere else. One Bun host process; the HTTP accept
 loop and worker pool are pure Rust, loaded as a `.node` native module (napi-rs).

@@ -76,7 +76,7 @@ export function resolveBrustRef(startDir: string = import.meta.dir): BrustRef {
     if (existsSync(pkgPath)) {
       try {
         const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'))
-        if (pkg.name === 'brust') {
+        if (pkg.name === 'brustjs') {
           if (hasSourceMarkers(dir)) {
             return { kind: 'file', spec: `file:${dir}` }
           }
