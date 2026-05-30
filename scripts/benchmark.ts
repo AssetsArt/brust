@@ -52,7 +52,7 @@ type Result = {
 const CONN = parseInt(process.env.BENCH_CONN ?? '120', 10)
 const DURATION = process.env.BENCH_DUR ?? '10s'
 const WARMUP_MS = 1000 // boot-settle sleep (worker spawn + registerRenderer)
-const WARMUP_BURST = process.env.BENCH_WARMUP ?? '3s' // discarded JIT warm-up traffic
+const WARMUP_BRUST = process.env.BENCH_WARMUP ?? '3s' // discarded JIT warm-up traffic
 
 const SCENARIOS: Scenario[] = [
   {
@@ -152,18 +152,18 @@ async function runScenario(s: Scenario, p: Probe): Promise<Result> {
   // Boot settle — let the worker pool finish spawning + registerRenderer.
   await new Promise((r) => setTimeout(r, WARMUP_MS))
 
-  // JIT warm-up burst. A plain sleep warms NOTHING — V8 only JIT-compiles the
+  // JIT warm-up brust. A plain sleep warms NOTHING — V8 only JIT-compiles the
   // render path after it has actually served thousands of requests, and a fresh
   // process per probe starts cold. Without this, JIT-heavy paths (React
   // renderToString) are measured mid-ramp and under-report by ~40-60% (cold
-  // ~16k vs warm ~25k on /). Fire a real traffic burst and discard it so the
+  // ~16k vs warm ~25k on /). Fire a real traffic brust and discard it so the
   // measured run sees steady state. Rust paths (ping/native/action) are barely
   // JIT-sensitive, so this only matters for the React SSR rows — but it's
   // applied uniformly to keep every row at steady state.
   try {
-    await runOha(url, CONN, WARMUP_BURST, p)
+    await runOha(url, CONN, WARMUP_BRUST, p)
   } catch {
-    // A failed warmup burst shouldn't abort the real measurement; the measured
+    // A failed warmup brust shouldn't abort the real measurement; the measured
     // run below will surface any genuine error.
   }
 
@@ -301,7 +301,7 @@ function renderMarkdown(results: Result[]): string {
   lines.push(`· runtime: ${node}`)
   lines.push(`· host: ${hardware}`)
   lines.push(
-    `· warmup: ${WARMUP_MS} ms boot-settle + ${WARMUP_BURST} discarded JIT burst per probe`,
+    `· warmup: ${WARMUP_MS} ms boot-settle + ${WARMUP_BRUST} discarded JIT brust per probe`,
   )
   lines.push(`· build: release (\`cd runtime && bun run build\`)`)
   lines.push('')
@@ -315,8 +315,8 @@ function renderMarkdown(results: Result[]): string {
     const fmt = (n: number | null) => (n == null ? '—' : n.toFixed(2))
     lines.push(
       `| ${r.scenarioLabel} | ${r.method} | \`${r.path}\` | ${Math.round(r.rps).toLocaleString()} | ` +
-        `${fmt(r.p50ms)} | ${fmt(r.p95ms)} | ${fmt(r.p99ms)} | ` +
-        `${r.totalRequests.toLocaleString()} |`,
+      `${fmt(r.p50ms)} | ${fmt(r.p95ms)} | ${fmt(r.p99ms)} | ` +
+      `${r.totalRequests.toLocaleString()} |`,
     )
   }
   lines.push('')
@@ -372,8 +372,8 @@ async function preflightJinja(): Promise<void> {
 async function main() {
   console.log(
     'Reminder: bench requires a release-built napi addon.\n' +
-      '  cd runtime && bun run build     # release, optimised\n' +
-      '  cd runtime && bun run build:debug   # ~2x slower, debug only\n',
+    '  cd runtime && bun run build     # release, optimised\n' +
+    '  cd runtime && bun run build:debug   # ~2x slower, debug only\n',
   )
   await preflightJinja()
   const results: Result[] = []
@@ -388,9 +388,9 @@ async function main() {
       results.push(r)
       console.log(
         `  rps=${r.rps.toFixed(0).padStart(7)}   ` +
-          `p50=${(r.p50ms ?? NaN).toFixed(2)}ms   ` +
-          `p99=${(r.p99ms ?? NaN).toFixed(2)}ms   ` +
-          `total=${r.totalRequests.toLocaleString()}`,
+        `p50=${(r.p50ms ?? NaN).toFixed(2)}ms   ` +
+        `p99=${(r.p99ms ?? NaN).toFixed(2)}ms   ` +
+        `total=${r.totalRequests.toLocaleString()}`,
       )
     }
   }
