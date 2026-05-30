@@ -81,9 +81,19 @@ pub fn lower(parsed: &ParsedSource) -> Result<Component, LowerError> {
             ));
         }
     };
-    // Top-level JSX is not under any `.map(...)` — `in_map` starts false and is
-    // only forced true when `lower_call_as_map` recurses into a Map body.
-    let root = lower_element(element, &scope, false)?;
+    // `<BrustPage>` is the built-in document shell — recognized ONLY at the
+    // route root, here, before `lower_element`. `lower_element` itself rejects a
+    // nested `<BrustPage>` with `BrustPageMustBeRoot`, so the shell can never be
+    // emitted inside the body. Top-level JSX is not under any `.map(...)` —
+    // `in_map` starts false and is only forced true when `lower_call_as_map`
+    // recurses into a Map body.
+    let root = if let JSXElementName::Ident(ident) = &element.opening.name
+        && ident.sym.as_ref() == "BrustPage"
+    {
+        lower_brust_page(element, &scope)?
+    } else {
+        lower_element(element, &scope, false)?
+    };
 
     let mut props = PropsShape {
         bindings: param_shape.destructured.clone(),
@@ -233,6 +243,16 @@ fn lower_element(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode
         return lower_island(el, scope, in_map);
     }
 
+    // `<BrustPage>` is only valid as the route root (handled in `lower`). Any
+    // occurrence reaching `lower_element` is therefore nested — reject with a
+    // dedicated diagnostic rather than the generic `CustomComponentNotSupported`
+    // that `lower_element_name` would otherwise produce.
+    if let JSXElementName::Ident(ident) = &el.opening.name
+        && ident.sym.as_ref() == "BrustPage"
+    {
+        return Err(LowerError::at(ident.span, ErrorKind::BrustPageMustBeRoot));
+    }
+
     let tag = lower_element_name(&el.opening.name)?;
     // T6: attr precedence (key drop, ref/on*/uppercase rejection, rename table),
     // void-element children check, whitespace-only JSXText filtering.
@@ -264,6 +284,111 @@ fn lower_element(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode
         tag,
         attrs,
         children,
+    })
+}
+
+/// Lower the built-in `<BrustPage …>…</BrustPage>` document shell into
+/// `JsxNode::Document`.
+///
+/// Head content is supplied entirely through PROPS (not a `<head>` child) so the
+/// framework keeps full ownership of `<head>` and can inject more tags later
+/// without colliding with user markup. All props are OPTIONAL compile-time
+/// string literals:
+/// - `lang="…"`         → `<html lang>` (default `"en"` emitted if omitted)
+/// - `className="…"`     → `<html class>`
+/// - `bodyClassName="…"` → `<body class>`
+/// - `title="…"`         → `<title>…</title>`
+/// - `description="…"`   → `<meta name="description" content="…">`
+///
+/// A non-literal value (`title={x}`) → `BrustPageAttrMustBeStringLiteral`.
+/// Spread (`{...x}`) / namespaced attrs → the same rejects as host elements.
+/// Unknown props are ignored (forward-compatible, mirrors `<Island>`) — adding a
+/// new head prop is a single match arm + emit line.
+///
+/// Every child becomes `<body>` content. A literal `<head>` child is rejected
+/// (`BrustPageLiteralHeadNotSupported`) — head is configured via props only.
+///
+/// `<BrustPage>` is only reached for the route root (see `lower`), so it is
+/// never under a `.map(...)` — no `in_map` parameter.
+fn lower_brust_page(el: &JSXElement, scope: &Scope) -> Result<JsxNode, LowerError> {
+    let mut lang: Option<String> = None;
+    let mut html_class: Option<String> = None;
+    let mut body_class: Option<String> = None;
+    let mut title: Option<String> = None;
+    let mut description: Option<String> = None;
+
+    for attr in &el.opening.attrs {
+        let JSXAttrOrSpread::JSXAttr(jsx_attr) = attr else {
+            return Err(LowerError::at(
+                el.opening.span,
+                ErrorKind::SpreadAttributeNotSupported,
+            ));
+        };
+        let name = match &jsx_attr.name {
+            JSXAttrName::Ident(name) => name.sym.to_string(),
+            JSXAttrName::JSXNamespacedName(n) => {
+                return Err(LowerError::at(
+                    n.span,
+                    ErrorKind::NamespacedAttrNotSupported,
+                ));
+            }
+        };
+
+        // Only the curated shell/head props are read; everything else is ignored
+        // so future props don't hard-error older compilers.
+        let slot = match name.as_str() {
+            "lang" => &mut lang,
+            "className" => &mut html_class,
+            "bodyClassName" => &mut body_class,
+            "title" => &mut title,
+            "description" => &mut description,
+            _ => continue,
+        };
+        // Value must be a plain string literal — the shell is rendered in Rust,
+        // so its chrome can't depend on runtime props.
+        match &jsx_attr.value {
+            Some(JSXAttrValue::Str(s)) => {
+                *slot = Some(s.value.to_string_lossy().into_owned());
+            }
+            _ => {
+                return Err(LowerError::at(
+                    jsx_attr.span,
+                    ErrorKind::BrustPageAttrMustBeStringLiteral(name),
+                ));
+            }
+        }
+    }
+
+    // Default lang to "en" so the emitted document always declares a language.
+    if lang.is_none() {
+        lang = Some("en".to_string());
+    }
+
+    let mut body: Vec<JsxNode> = Vec::new();
+    for child in &el.children {
+        // A literal `<head>` child is disallowed — head is props-only so the
+        // framework can own/extend it. Point the user at the props.
+        if let JSXElementChild::JSXElement(ce) = child
+            && let JSXElementName::Ident(id) = &ce.opening.name
+            && id.sym.as_ref() == "head"
+        {
+            return Err(LowerError::at(
+                ce.opening.span,
+                ErrorKind::BrustPageLiteralHeadNotSupported,
+            ));
+        }
+        if let Some(node) = lower_child(child, scope, false)? {
+            body.push(node);
+        }
+    }
+
+    Ok(JsxNode::Document {
+        lang,
+        html_class,
+        body_class,
+        title,
+        description,
+        body,
     })
 }
 
@@ -841,19 +966,77 @@ fn arrow_jsx_body(arrow: &ArrowExpr) -> Result<&JSXElement, LowerError> {
     }
 }
 
-/// React-style JSX text normalization (spec §4.6, T6 refinement).
+/// React/JSX text normalization (spec §4.6).
 ///
-/// - Whitespace-only JSXText → empty string (caller drops the node).
-/// - JSXText with non-ws content → collapse all runs of `\s+` (spaces, tabs,
-///   newlines) to a single space and trim leading/trailing whitespace.
-///
-/// `split_whitespace().join(" ")` is sufficient for A1 fixtures because none
-/// of them require preserving leading/trailing space at text-element boundaries.
+/// Matches how JSX treats whitespace so the emitted HTML reads the same as the
+/// source TSX:
+/// - Internal runs of whitespace collapse to a single space.
+/// - A leading/trailing whitespace run is PRESERVED as a single boundary space
+///   IF it is inline (contains no line break) — this is the space between text
+///   and an adjacent element on the same line, e.g. `a <strong>…` → `"a "`.
+/// - A leading/trailing whitespace run that spans a line break is layout
+///   indentation and is dropped (JSX behavior).
+/// - A whitespace-only node is a single significant space when inline
+///   (`<a/> <b/>`), or empty when it spans a line break (the caller drops it).
 fn normalize_jsx_text(s: &str) -> String {
     if s.trim().is_empty() {
-        return String::new();
+        // Whitespace-only: a single inline space between elements is significant
+        // in JSX; whitespace spanning a line break is indentation, dropped.
+        return if has_line_break(s) {
+            String::new()
+        } else {
+            " ".to_string()
+        };
     }
-    s.split_whitespace().collect::<Vec<_>>().join(" ")
+    let collapsed = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let lead = leading_inline_space(s);
+    let trail = trailing_inline_space(s);
+    let mut out = String::with_capacity(collapsed.len() + 2);
+    if lead {
+        out.push(' ');
+    }
+    out.push_str(&collapsed);
+    if trail {
+        out.push(' ');
+    }
+    out
+}
+
+fn has_line_break(s: &str) -> bool {
+    s.contains('\n') || s.contains('\r')
+}
+
+/// True if `s` begins with a whitespace run that contains NO line break — the
+/// JSX boundary space between a preceding element and same-line text.
+fn leading_inline_space(s: &str) -> bool {
+    let mut saw = false;
+    for c in s.chars() {
+        if c == '\n' || c == '\r' {
+            return false;
+        }
+        if c.is_whitespace() {
+            saw = true;
+            continue;
+        }
+        break;
+    }
+    saw
+}
+
+/// True if `s` ends with a whitespace run that contains NO line break.
+fn trailing_inline_space(s: &str) -> bool {
+    let mut saw = false;
+    for c in s.chars().rev() {
+        if c == '\n' || c == '\r' {
+            return false;
+        }
+        if c.is_whitespace() {
+            saw = true;
+            continue;
+        }
+        break;
+    }
+    saw
 }
 
 /// Lower a JS expression (in JSX `{expr}` position) to an IR `Expr`.
@@ -1064,6 +1247,14 @@ fn infer_props_types(node: &JsxNode, props: &mut PropsShape) -> Result<(), Lower
             Ok(())
         }
         JsxNode::Expr(e) => infer_from_expr(e, props),
+        // Walk the body for prop references; the shell/head props are
+        // compile-time literals and contribute no prop types.
+        JsxNode::Document { body, .. } => {
+            for c in body {
+                infer_props_types(c, props)?;
+            }
+            Ok(())
+        }
         JsxNode::Map {
             source,
             binding,
@@ -1133,6 +1324,9 @@ fn collect_map_member_fields(
             }
         }
         JsxNode::Expr(e) => collect_map_member_from_expr(e, binding, fields),
+        // `<BrustPage>` is root-only, so a Document never appears inside a Map
+        // body — this arm exists only to keep the match exhaustive.
+        JsxNode::Document { .. } => {}
         JsxNode::Map { source, body, .. } => {
             // Nested maps: only inherit MapMember refs whose root matches
             // OUR binding (the outer one). The inner Map handles its own
@@ -1570,9 +1764,11 @@ mod tests {
 
     #[test]
     fn drops_whitespace_only_jsx_text() {
-        // The text gaps around the inner <p/> are pure whitespace and must be
-        // dropped, leaving the outer <div> with exactly 1 child: <p/>.
-        let src = "export default function X() { return <div>   \n   <p/>   </div>; }";
+        // The text gaps around the inner <p/> are indentation (whitespace that
+        // spans a line break) and must be dropped, leaving the outer <div> with
+        // exactly 1 child: <p/>. (Inline whitespace WITHOUT a newline is a
+        // significant boundary space — see preserves_inline_boundary_space_*.)
+        let src = "export default function X() { return <div>\n   <p/>\n   </div>; }";
         let parsed = parse(src, "<test>").unwrap();
         let c = lower(&parsed).unwrap();
         match &c.root {
@@ -1606,6 +1802,45 @@ mod tests {
                 }
             }
             _ => panic!("expected root element"),
+        }
+    }
+
+    #[test]
+    fn preserves_inline_boundary_space_around_element() {
+        // The space between "a" and <strong> (same line, no newline) must
+        // survive so the emitted HTML reads like the source TSX.
+        let src = "export default function X() { return <p>You are looking at a <strong>Native Route</strong>. Done</p>; }";
+        let parsed = parse(src, "<test>").unwrap();
+        let c = lower(&parsed).unwrap();
+        let children = match &c.root {
+            JsxNode::Element { children, .. } => children,
+            other => panic!("expected <p>, got {other:?}"),
+        };
+        // [ Text("You are looking at a "), <strong>, Text(". Done") ]
+        match &children[0] {
+            JsxNode::Text(t) => assert_eq!(t, "You are looking at a "),
+            other => panic!("expected leading text with trailing space, got {other:?}"),
+        }
+        match &children[2] {
+            JsxNode::Text(t) => assert_eq!(t, ". Done"),
+            other => panic!("expected trailing text, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn drops_indentation_whitespace_bordering_newline() {
+        // Leading whitespace that spans a newline is indentation → dropped; the
+        // trailing inline space before <code> is kept.
+        let src = "export default function X() {\n  return (\n    <p>\n      Edit <code>file</code>\n    </p>\n  );\n}";
+        let parsed = parse(src, "<test>").unwrap();
+        let c = lower(&parsed).unwrap();
+        let children = match &c.root {
+            JsxNode::Element { children, .. } => children,
+            other => panic!("expected <p>, got {other:?}"),
+        };
+        match &children[0] {
+            JsxNode::Text(t) => assert_eq!(t, "Edit "),
+            other => panic!("expected \"Edit \" (indent dropped, inline space kept), got {other:?}"),
         }
     }
 

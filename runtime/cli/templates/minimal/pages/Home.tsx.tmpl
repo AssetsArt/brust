@@ -1,11 +1,12 @@
-import { Island } from 'brustjs'
+import { BrustPage, Island } from 'brustjs'
 import Counter from '../components/Counter'
 
 // `native: true` page — compiled to a jinja template and rendered in Rust
-// (minijinja), no React on the server. Native pages use host elements only (no
-// custom components like Layout), so the document shell is written inline here;
-// the Tailwind stylesheet is linked directly. Each island's `props` is a path
-// into the route loader's return value.
+// (minijinja), no React on the server. `<BrustPage>` is the built-in document
+// shell: brust owns <html>/<head>/<body> and auto-injects the framework head
+// tags (charset, viewport, the app.css stylesheet link). Configure the head via
+// props (`title`, `description`, …) — you never write <head> yourself. Each
+// island's `props` is a path into the route loader's return value.
 export default function Home({
   clientProps,
   serverProps,
@@ -14,41 +15,56 @@ export default function Home({
   serverProps: { start: number; label: string }
 }) {
   return (
-    <html lang="en">
-      <head>
-        <meta charSet="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>__PROJECT_NAME__</title>
-        <link rel="stylesheet" href="/_brust/css/app.css" />
-      </head>
-      <body className="bg-white text-gray-900 font-sans">
-        <main className="max-w-3xl mx-auto px-5 py-8">
-          <h1 className="text-3xl font-bold mb-4">Welcome to Brust</h1>
-          <p className="mb-6 text-gray-700">
-            This page is a <strong>native route</strong> — its shell is rendered in Rust
-            (minijinja), no React on the server. The counters below are{' '}
-            <strong>islands</strong>: only their subtrees boot React in the browser. Edit{' '}
-            <code className="bg-gray-100 px-1 rounded">pages/Home.tsx</code> and save —{' '}
-            <code className="bg-gray-100 px-1 rounded">brustjs dev</code> reloads.
+    <BrustPage lang="en" className="dark" bodyClassName="brust-body" title="__PROJECT_NAME__">
+      {/* Background decorative glows */}
+      <div className="fixed top-[-20%] left-[-10%] w-[50%] h-[50%] bg-purple-600/10 rounded-full blur-[120px] pointer-events-none"></div>
+      <div className="fixed bottom-[-20%] right-[-10%] w-[50%] h-[50%] bg-teal-600/10 rounded-full blur-[120px] pointer-events-none"></div>
+
+      <main className="brust-container">
+        <header className="brust-header">
+          <h1 className="brust-title">
+            Built to <span className="brust-title-gradient">Burst.</span>
+          </h1>
+          <p className="brust-description">
+            You are looking at a <strong>Native Route</strong>. This shell is compiled to a Jinja
+            template and rendered entirely in Rust. No React runs on the server for this layout.
+            <br className="hidden md:block" />
+            Edit <code className="brust-code-inline">pages/Home.tsx</code> and save to see HMR in
+            action.
           </p>
+        </header>
 
-          <section className="mb-6">
-            <h2 className="text-xl font-semibold mb-1">Client island</h2>
-            <p className="mb-2 text-sm text-gray-600">
-              No server markup; mounts and hydrates in the browser.
+        <div className="brust-grid">
+          {/* Client island — empty on the server, hydrates in the browser. */}
+          <section className="island-card island-card-client">
+            <div className="island-header">
+              <span className="island-badge island-badge-client">CSR</span>
+              <h2 className="island-title">Client Island</h2>
+            </div>
+            <p className="island-desc">
+              Empty on the server. Boots and hydrates strictly in the browser.
             </p>
-            <Island component={Counter} props={clientProps} hydrate="load" />
+            <div className="island-mount-point">
+              <Island component={Counter} props={clientProps} hydrate="load" />
+            </div>
           </section>
 
-          <section>
-            <h2 className="text-xl font-semibold mb-1">Server island (SSR + hydrate)</h2>
-            <p className="mb-2 text-sm text-gray-600">
-              Rendered on the server during the loader crossing, then hydrated — no empty flash.
+          {/* Server island — rendered to string in the worker, then hydrated. */}
+          <section className="island-card island-card-server">
+            <div className="island-header">
+              <span className="island-badge island-badge-server">SSR + CSR</span>
+              <h2 className="island-title">Server Island</h2>
+            </div>
+            <p className="island-desc">
+              Rendered to string in the Bun worker during the loader crossing, then hydrated — no
+              layout shift.
             </p>
-            <Island component={Counter} props={serverProps} ssr hydrate="load" />
+            <div className="island-mount-point">
+              <Island component={Counter} props={serverProps} ssr hydrate="load" />
+            </div>
           </section>
-        </main>
-      </body>
-    </html>
+        </div>
+      </main>
+    </BrustPage>
   )
 }

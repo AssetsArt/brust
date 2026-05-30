@@ -614,5 +614,8 @@ export type { BrustConfig } from './config.ts'
 export { Island } from './islands/island.tsx'
 export type { IslandProps, HydrateTrigger } from './islands/island.tsx'
 
+export { BrustPage } from './islands/brust-page.tsx'
+export type { BrustPageProps } from './islands/brust-page.tsx'
+
 export { buildIslands } from './islands/build.ts'
 export type { IslandsBuildResult, BuildIslandsOptions } from './islands/build.ts'

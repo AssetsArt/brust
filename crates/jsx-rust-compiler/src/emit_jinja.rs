@@ -59,6 +59,63 @@ fn emit_node(node: &JsxNode, out: &mut String) {
                 let _ = write!(out, "</{tag}>");
             }
         }
+        // Built-in `<BrustPage>` document shell. The compiler owns the WHOLE
+        // html/head/body skeleton. Head is rendered entirely from props (no
+        // user head markup): the framework auto tags (charset, viewport) come
+        // first, then the prop-driven `<title>`/description meta, then the
+        // app.css stylesheet link — so the link is always present without the
+        // user writing it, and the framework can append more head tags later.
+        // `lang`/`html_class`/`body_class`/`title`/`description` are compile-time
+        // string literals (validated in `lower_brust_page`), attribute- or
+        // text-escaped here for safety. The islands importmap + bootstrap are
+        // still appended after `</html>` by the TS reconcile step.
+        JsxNode::Document {
+            lang,
+            html_class,
+            body_class,
+            title,
+            description,
+            body,
+        } => {
+            out.push_str("<html");
+            if let Some(l) = lang {
+                out.push_str(" lang=\"");
+                push_attr_escaped(out, l);
+                out.push('"');
+            }
+            if let Some(c) = html_class {
+                out.push_str(" class=\"");
+                push_attr_escaped(out, c);
+                out.push('"');
+            }
+            out.push_str("><head>");
+            out.push_str("<meta charset=\"utf-8\"/>");
+            out.push_str(
+                "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>",
+            );
+            if let Some(t) = title {
+                out.push_str("<title>");
+                push_html_escaped(out, t);
+                out.push_str("</title>");
+            }
+            if let Some(d) = description {
+                out.push_str("<meta name=\"description\" content=\"");
+                push_attr_escaped(out, d);
+                out.push_str("\"/>");
+            }
+            out.push_str("<link rel=\"stylesheet\" href=\"/_brust/css/app.css\"/>");
+            out.push_str("</head><body");
+            if let Some(c) = body_class {
+                out.push_str(" class=\"");
+                push_attr_escaped(out, c);
+                out.push('"');
+            }
+            out.push('>');
+            for c in body {
+                emit_node(c, out);
+            }
+            out.push_str("</body></html>");
+        }
         // Island mount marker. The hydration runtime keys off the
         // `data-brust-*` attributes; the runtime fills `island_<instance>_props`
         // (a pre-serialized, attribute-safe string — NOT `| tojson`, which

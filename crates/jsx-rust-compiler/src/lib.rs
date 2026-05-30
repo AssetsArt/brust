@@ -74,6 +74,12 @@ fn number_islands(node: &mut JsxNode, counter: &mut usize) {
                 number_islands(c, counter);
             }
         }
+        // Body-only: head is props (compile-time literals), never islands.
+        JsxNode::Document { body, .. } => {
+            for c in body {
+                number_islands(c, counter);
+            }
+        }
         JsxNode::Map { body, .. } => number_islands(body, counter),
         JsxNode::Empty | JsxNode::Text(_) | JsxNode::Expr(_) => {}
     }
@@ -102,6 +108,12 @@ fn collect_islands(node: &JsxNode, out: &mut Vec<IslandMeta>) {
         }
         JsxNode::Element { children, .. } => {
             for child in children {
+                collect_islands(child, out);
+            }
+        }
+        // Body-only — same as `number_islands`/`emit`.
+        JsxNode::Document { body, .. } => {
+            for child in body {
                 collect_islands(child, out);
             }
         }
@@ -243,6 +255,18 @@ pub enum ErrorKind {
         "`<Island component={{{0}}}>` — component name must match [A-Za-z0-9_]+ (it becomes the chunk filename and DOM marker)"
     )]
     IslandBadComponentName(String),
+    #[error(
+        "`<BrustPage>` must be the route's root element — it owns the document shell and cannot be nested"
+    )]
+    BrustPageMustBeRoot,
+    #[error(
+        "`<BrustPage {0}=…>` must be a string literal (e.g. `{0}=\"…\"`) — the document shell is rendered in Rust, so its attributes can't be dynamic expressions"
+    )]
+    BrustPageAttrMustBeStringLiteral(String),
+    #[error(
+        "`<BrustPage>` owns `<head>` — a literal `<head>` child is not supported; set head tags via props instead (e.g. `title=\"…\"`, `description=\"…\"`)"
+    )]
+    BrustPageLiteralHeadNotSupported,
 }
 
 impl CompileError {
@@ -425,5 +449,103 @@ mod tests {
     #[test]
     fn islands_to_json_empty_is_bracket_pair() {
         assert_eq!(islands_to_json(&[]), "[]");
+    }
+
+    #[test]
+    fn brust_page_emits_shell_with_auto_css_and_head_props() {
+        let src = r#"export default function Home({ clientProps, serverProps }) {
+  return (
+    <BrustPage lang="en" className="dark" bodyClassName="brust-body" title="Built to Burst" description="Bun + Rust SSR">
+      <main>
+        <Island component={Counter} props={clientProps} hydrate="load" />
+        <Island component={Counter} props={serverProps} ssr hydrate="load" />
+      </main>
+    </BrustPage>
+  );
+}"#;
+        let c = compile_full(src, "<test>").unwrap();
+        let expected = concat!(
+            "<html lang=\"en\" class=\"dark\">",
+            "<head>",
+            "<meta charset=\"utf-8\"/>",
+            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>",
+            "<title>Built to Burst</title>",
+            "<meta name=\"description\" content=\"Bun + Rust SSR\"/>",
+            "<link rel=\"stylesheet\" href=\"/_brust/css/app.css\"/>",
+            "</head>",
+            "<body class=\"brust-body\">",
+            "<main>",
+            "<div data-brust-island=\"Counter\" data-brust-props=\"{{ island_0_props }}\" data-brust-hydrate=\"load\" data-brust-csr></div>",
+            "<div data-brust-island=\"Counter\" data-brust-props=\"{{ island_1_props }}\" data-brust-hydrate=\"load\">{{ island_1_html | safe }}</div>",
+            "</main>",
+            "</body></html>",
+        );
+        assert_eq!(c.template, expected);
+        // Both islands collected in source order with correct ssr flags.
+        assert_eq!(c.islands.len(), 2);
+        assert_eq!(c.islands[0].instance, 0);
+        assert!(!c.islands[0].ssr);
+        assert_eq!(c.islands[0].props_path, "clientProps");
+        assert_eq!(c.islands[1].instance, 1);
+        assert!(c.islands[1].ssr);
+        assert_eq!(c.islands[1].props_path, "serverProps");
+    }
+
+    #[test]
+    fn brust_page_defaults_lang_to_en_and_omits_optional_props() {
+        let src = r#"export default function Home() {
+  return <BrustPage><main>hi</main></BrustPage>;
+}"#;
+        let c = compile_full(src, "<test>").unwrap();
+        assert_eq!(
+            c.template,
+            concat!(
+                "<html lang=\"en\">",
+                "<head>",
+                "<meta charset=\"utf-8\"/>",
+                "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>",
+                "<link rel=\"stylesheet\" href=\"/_brust/css/app.css\"/>",
+                "</head>",
+                "<body><main>hi</main></body></html>",
+            )
+        );
+    }
+
+    #[test]
+    fn brust_page_literal_head_is_rejected() {
+        let src = r#"export default function Home() {
+  return <BrustPage><head><title>x</title></head><main>hi</main></BrustPage>;
+}"#;
+        let err = compile_full(src, "<test>").unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::BrustPageLiteralHeadNotSupported),
+            "expected BrustPageLiteralHeadNotSupported, got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn brust_page_nested_is_rejected() {
+        let src = r#"export default function Home() {
+  return <div><BrustPage><main>hi</main></BrustPage></div>;
+}"#;
+        let err = compile_full(src, "<test>").unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::BrustPageMustBeRoot),
+            "expected BrustPageMustBeRoot, got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn brust_page_dynamic_attr_is_rejected() {
+        let src = r#"export default function Home({ lang }) {
+  return <BrustPage lang={lang}><main>hi</main></BrustPage>;
+}"#;
+        let err = compile_full(src, "<test>").unwrap_err();
+        match err.kind {
+            ErrorKind::BrustPageAttrMustBeStringLiteral(name) => assert_eq!(name, "lang"),
+            other => panic!("expected BrustPageAttrMustBeStringLiteral, got {other:?}"),
+        }
     }
 }

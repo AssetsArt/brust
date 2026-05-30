@@ -45,6 +45,30 @@ pub enum JsxNode {
         binding: String,
         body: Box<JsxNode>,
     },
+    /// Built-in `<BrustPage>` document shell. The compiler owns the ENTIRE
+    /// `<html>/<head>/<body>` skeleton, including `<head>` — the user never
+    /// writes head markup. Head content is supplied through a curated set of
+    /// string-literal PROPS (`title`, `description`, …); a literal `<head>`
+    /// child is rejected. Keeping `<head>` framework-owned lets brust inject
+    /// additional tags later (importmap, preloads, the css link) without
+    /// colliding with user markup. It is NOT a user-definable component — the
+    /// lowerer intercepts the `BrustPage` tag name (see
+    /// `lower::lower_brust_page`), so a local `components/BrustPage.tsx` can
+    /// never shadow it. Only valid as the route's root element.
+    Document {
+        /// `<html lang="…">` — `lang` prop. Defaults to `"en"` when omitted.
+        lang: Option<String>,
+        /// `<html class="…">` — `className` prop.
+        html_class: Option<String>,
+        /// `<body class="…">` — `bodyClassName` prop.
+        body_class: Option<String>,
+        /// `<title>…</title>` — `title` prop. Omitted entirely when absent.
+        title: Option<String>,
+        /// `<meta name="description" content="…">` — `description` prop.
+        description: Option<String>,
+        /// Page body — every `<BrustPage>` child (all become `<body>` content).
+        body: Vec<JsxNode>,
+    },
     /// Interactive island embedded in a native (jinja) route. Lowered from a
     /// dedicated `<Island component={C} props={path} hydrate="..." ssr/>`
     /// recognition path (see `lower::lower_island`). The emitter renders a

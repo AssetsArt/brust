@@ -86,3 +86,21 @@ fn renders_island_ssr_byte_equal() {
         .expect("fixtures/island_ssr.expected.html");
     assert_eq!(actual, expected);
 }
+
+#[test]
+fn renders_brust_page_byte_equal() {
+    // `<BrustPage>` document shell: the framework auto tags (charset, viewport,
+    // app.css link) must precede the user's <head>-slot <title>, and both
+    // islands must thread their per-instance context keys.
+    let actual = render_fixture(
+        "brust_page",
+        context! {
+            island_0_props => "{&quot;n&quot;:0}",
+            island_1_props => "{&quot;n&quot;:100}",
+            island_1_html => "<button>100</button>",
+        },
+    );
+    let expected = std::fs::read_to_string("fixtures/brust_page.expected.html")
+        .expect("fixtures/brust_page.expected.html");
+    assert_eq!(actual, expected);
+}
