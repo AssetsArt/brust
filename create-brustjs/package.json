@@ -1,0 +1,25 @@
+{
+  "name": "create-brustjs",
+  "version": "0.1.0-alpha",
+  "description": "Scaffold a Brust app — `bun create brustjs <dir>`.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AssetsArt/brust.git",
+    "directory": "create-brustjs"
+  },
+  "homepage": "https://github.com/AssetsArt/brust#readme",
+  "bugs": "https://github.com/AssetsArt/brust/issues",
+  "keywords": ["bun", "rust", "ssr", "react", "brust", "create"],
+  "type": "module",
+  "bin": {
+    "create-brustjs": "./index.ts"
+  },
+  "files": ["index.ts", "README.md"],
+  "dependencies": {
+    "brustjs": "^0.1.0-alpha"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

@@ -64,7 +64,8 @@
   "types": "./runtime/index.d.ts",
   "exports": {
     ".": "./runtime/index.ts",
-    "./routes": "./runtime/routes.ts"
+    "./routes": "./runtime/routes.ts",
+    "./create": "./runtime/create.ts"
   },
   "files": [
     "runtime",
