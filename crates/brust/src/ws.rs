@@ -167,6 +167,58 @@ pub fn path_is_ws(path: &str) -> bool {
     WS_PATHS.get().is_some_and(|s| s.lock().contains(path))
 }
 
+/// Dev-mode control-channel connections (`/_brust/dev`). Tracked separately
+/// from REGISTRY so `napi_dev_broadcast` can push reload/css-update frames to
+/// them directly from the main thread.
+///
+/// Unlike app WS routes, dev connections carry NO worker tsfn (their WsConn
+/// keeps `on_message`/`on_close` = None) and are never dispatched to a worker.
+/// That is what lets them survive a hot reload's terminateAll()/spawnAll():
+/// there is no worker-owned callback to dangle (the old UAF segfault), and the
+/// reload frame is delivered straight through the Rust-owned `send_tx` (so it
+/// is not lost when the old worker dies). See the `/_brust/dev` branch in
+/// server.rs.
+static DEV_CLIENTS: OnceLock<Mutex<HashSet<u64>>> = OnceLock::new();
+
+fn dev_clients() -> &'static Mutex<HashSet<u64>> {
+    DEV_CLIENTS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// Register a connection as a dev control-channel client.
+pub fn dev_client_add(conn_id: u64) {
+    dev_clients().lock().insert(conn_id);
+}
+
+/// Drop a dev client. Called from the per-conn task on close; a no-op for
+/// non-dev connections.
+pub fn dev_client_remove(conn_id: u64) {
+    dev_clients().lock().remove(&conn_id);
+}
+
+/// Number of dev clients currently connected. Exposed for tests.
+pub fn dev_client_count() -> usize {
+    dev_clients().lock().len()
+}
+
+/// Push one text frame to every connected dev client. Called from the main JS
+/// thread via `napi_dev_broadcast`. Fire-and-forget: a full or closed per-conn
+/// channel silently drops the frame (the browser reconnects and re-fetches).
+/// Sends via the Rust-owned `send_tx`, so delivery is independent of worker
+/// generation — this is what keeps dev hot reload working across a restart.
+pub fn dev_broadcast(text: &str) {
+    let ids: Vec<u64> = dev_clients().lock().iter().copied().collect();
+    let reg = registry().lock();
+    for id in &ids {
+        if let Some(conn) = reg.get(id) {
+            let (ack_tx, _ack_rx) = oneshot::channel();
+            let _ = conn.send_tx.try_send(WsOutgoing {
+                frame: WsFrameKind::Text(text.to_string()),
+                ack: ack_tx,
+            });
+        }
+    }
+}
+
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
 use std::time::{Duration, Instant};
@@ -300,6 +352,7 @@ pub async fn ws_conn_task<S>(
 
     let _ = ws_sink.close().await;
     registry().lock().remove(&conn_id);
+    dev_client_remove(conn_id);
 }
 
 fn fire_on_message(conn_id: u64, data: Vec<u8>, is_binary: bool) {
@@ -402,5 +455,66 @@ mod tests {
         let sse_id = crate::sse::next_conn_id();
         let ws_id = crate::sse::next_conn_id();
         assert_ne!(sse_id, ws_id);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dev_client_set_add_remove_count() {
+        let id = crate::sse::next_conn_id();
+        let before = dev_client_count();
+        dev_client_add(id);
+        assert_eq!(dev_client_count(), before + 1);
+        dev_client_remove(id);
+        assert_eq!(dev_client_count(), before);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dev_broadcast_reaches_only_dev_clients() {
+        // A dev client (registered in the dev set) receives the frame straight
+        // through its send_tx; an app WS conn that is NOT in the dev set does
+        // not. This is the mechanism that makes dev reload survive a worker
+        // restart — delivery never touches a worker.
+        let (dev_tx, mut dev_rx) = mpsc::channel(32);
+        let (app_tx, mut app_rx) = mpsc::channel(32);
+        let (o1, _r1) = oneshot::channel::<WsOpenSignal>();
+        let (o2, _r2) = oneshot::channel::<WsOpenSignal>();
+        let dev_id = crate::sse::next_conn_id();
+        let app_id = crate::sse::next_conn_id();
+        registry().lock().insert(
+            dev_id,
+            WsConn {
+                send_tx: dev_tx,
+                open_tx: Some(o1),
+                on_message: None,
+                on_close: None,
+            },
+        );
+        registry().lock().insert(
+            app_id,
+            WsConn {
+                send_tx: app_tx,
+                open_tx: Some(o2),
+                on_message: None,
+                on_close: None,
+            },
+        );
+        dev_client_add(dev_id);
+
+        dev_broadcast(r#"{"type":"reload"}"#);
+
+        match dev_rx.try_recv() {
+            Ok(out) => match out.frame {
+                WsFrameKind::Text(s) => assert_eq!(s, r#"{"type":"reload"}"#),
+                _ => panic!("dev client expected a Text frame"),
+            },
+            Err(e) => panic!("dev client received nothing: {e:?}"),
+        }
+        assert!(
+            app_rx.try_recv().is_err(),
+            "app conn must not receive a dev broadcast"
+        );
+
+        dev_client_remove(dev_id);
+        registry().lock().remove(&dev_id);
+        registry().lock().remove(&app_id);
     }
 }

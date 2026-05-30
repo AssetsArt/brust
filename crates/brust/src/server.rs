@@ -687,12 +687,6 @@ async fn handle_conn(
                 },
             );
 
-            // Pick a worker and dispatch.
-            let Some(entry) = pool.pick_least_busy() else {
-                let _ = s.write_all(http::error_500()).await;
-                crate::ws::registry().lock().remove(&conn_id);
-                return;
-            };
             // Destructure so client_subprotocols moves into the envelope
             // and sec_websocket_key is still available for compute_sec_accept
             // on the 101 happy path. Avoids an unnecessary Vec<String> clone.
@@ -700,41 +694,65 @@ async fn handle_conn(
                 sec_websocket_key,
                 client_subprotocols,
             } = handshake;
-            let envelope = crate::routes::build_ws_envelope(
-                &method,
-                &path,
-                &buf[..header_end],
-                conn_id,
-                client_subprotocols,
-            );
-            let envelope_json = serde_json::to_string(&envelope).unwrap();
 
-            if let Err(e) = crate::pool::dispatch_ws(entry.clone(), envelope_json).await {
-                error!(worker_id = entry.id, error = %e, "ws dispatch failed");
-                let _ = s.write_all(http::error_500()).await;
-                crate::ws::registry().lock().remove(&conn_id);
-                return;
-            }
+            // `/_brust/dev` is the dev-mode control channel: Rust-owned, never
+            // dispatched to a worker. It must survive worker hot-reloads, so the
+            // conn keeps `on_close`/`on_message` = None (no worker tsfn to
+            // dangle → no UAF) and is tracked in the dev-client set so
+            // napi_dev_broadcast can push reload frames straight through its
+            // send_tx. We accept the upgrade directly (101) rather than asking a
+            // worker for a middleware verdict — there is no app middleware on
+            // this internal path.
+            let open = if path == "/_brust/dev" {
+                crate::ws::dev_client_add(conn_id);
+                crate::ws::WsOpenSignal {
+                    status: 101,
+                    body: Vec::new(),
+                    content_type: String::new(),
+                    subprotocol: String::new(),
+                }
+            } else {
+                // Pick a worker and dispatch.
+                let Some(entry) = pool.pick_least_busy() else {
+                    let _ = s.write_all(http::error_500()).await;
+                    crate::ws::registry().lock().remove(&conn_id);
+                    return;
+                };
+                let envelope = crate::routes::build_ws_envelope(
+                    &method,
+                    &path,
+                    &buf[..header_end],
+                    conn_id,
+                    client_subprotocols,
+                );
+                let envelope_json = serde_json::to_string(&envelope).unwrap();
 
-            // Await open verdict with 30s timeout. Distinguish sender-drop (JS
-            // crash) from timeout for diagnosability.
-            let open = match tokio::time::timeout(std::time::Duration::from_secs(30), open_rx).await
-            {
-                Ok(Ok(signal)) => signal,
-                Ok(Err(_)) => {
-                    warn!(
-                        conn_id,
-                        "ws open_tx sender dropped before signal — JS crash?"
-                    );
+                if let Err(e) = crate::pool::dispatch_ws(entry.clone(), envelope_json).await {
+                    error!(worker_id = entry.id, error = %e, "ws dispatch failed");
                     let _ = s.write_all(http::error_500()).await;
                     crate::ws::registry().lock().remove(&conn_id);
                     return;
                 }
-                Err(_) => {
-                    warn!(conn_id, "ws open signal timeout (30s)");
-                    let _ = s.write_all(http::error_500()).await;
-                    crate::ws::registry().lock().remove(&conn_id);
-                    return;
+
+                // Await open verdict with 30s timeout. Distinguish sender-drop
+                // (JS crash) from timeout for diagnosability.
+                match tokio::time::timeout(std::time::Duration::from_secs(30), open_rx).await {
+                    Ok(Ok(signal)) => signal,
+                    Ok(Err(_)) => {
+                        warn!(
+                            conn_id,
+                            "ws open_tx sender dropped before signal — JS crash?"
+                        );
+                        let _ = s.write_all(http::error_500()).await;
+                        crate::ws::registry().lock().remove(&conn_id);
+                        return;
+                    }
+                    Err(_) => {
+                        warn!(conn_id, "ws open signal timeout (30s)");
+                        let _ = s.write_all(http::error_500()).await;
+                        crate::ws::registry().lock().remove(&conn_id);
+                        return;
+                    }
                 }
             };
 

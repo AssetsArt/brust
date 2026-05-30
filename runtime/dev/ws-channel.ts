@@ -81,19 +81,18 @@ export function installWorkerBroadcastListener(): void {
   }
 }
 
-/** Main-side: relay the message to every worker via postMessage. Each
- * worker's installed message listener forwards to its local clients.
- * Per-worker postMessage failures are swallowed (worker may be already
- * terminating). */
+/** Main-side: push the message to every `/_brust/dev` client through the napi
+ * addon. The dev WS is a Rust-owned control channel (see the `/_brust/dev`
+ * branch in crates/brust/src/server.rs), so the frame is delivered straight
+ * through each connection's Rust-owned send_tx and SURVIVES a hot reload's
+ * worker restart.
+ *
+ * The previous implementation relayed main→worker→worker-local-clients, which
+ * lost the `reload` frame: the coordinator broadcasts it AFTER terminateAll(),
+ * by which point the connection's worker-side registration had died with the
+ * old worker. */
 export async function broadcast(msg: DevMessage): Promise<void> {
   const json = JSON.stringify(msg)
-  const { _workersForTests } = await import('./worker-registry.ts')
-  const workers = _workersForTests()
-  for (const w of workers) {
-    try {
-      w.postMessage({ type: 'dev-broadcast', json })
-    } catch {
-      /* worker already terminated; drop */
-    }
-  }
+  const native = await import('../index.js')
+  ;(native as { napiDevBroadcast?: (json: string) => void }).napiDevBroadcast?.(json)
 }
