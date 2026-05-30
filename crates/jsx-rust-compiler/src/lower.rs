@@ -1840,7 +1840,9 @@ mod tests {
         };
         match &children[0] {
             JsxNode::Text(t) => assert_eq!(t, "Edit "),
-            other => panic!("expected \"Edit \" (indent dropped, inline space kept), got {other:?}"),
+            other => {
+                panic!("expected \"Edit \" (indent dropped, inline space kept), got {other:?}")
+            }
         }
     }
 
