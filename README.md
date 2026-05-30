@@ -35,15 +35,19 @@ bun run dev          # → http://127.0.0.1:3000
 **Or, with the CLI on your PATH:**
 
 ```bash
-bun add --global brustjs@alpha
+bun add --global brustjs
 brustjs new my-app
 ```
 
 **Or add to an existing project:**
 
 ```bash
-bun add brustjs@alpha
+bun add brustjs
 ```
+
+> During alpha, `latest` tracks the newest alpha, so the commands above need no
+> version. Pin the prerelease channel explicitly with `@alpha`
+> (`bun add brustjs@alpha`) if you want to stay on alpha once a stable ships.
 
 **Or run from source:**
 
