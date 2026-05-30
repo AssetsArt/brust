@@ -174,23 +174,40 @@ jobs:
       - name: Publish
         run: |
           echo "//registry.npmjs.org/:_authToken=${NPM_KEY}" > ~/.npmrc
+          VERSION=$(node -p "require('./package.json').version")
+          # Prerelease (0.x.y-alpha) is the de-facto default install until a
+          # stable ships, so publish it under `alpha` AND move `latest` onto it
+          # below. A stable version (no `-` suffix) publishes to the default
+          # `latest` and is NEVER force-tagged `alpha` — that lets npm's normal
+          # `latest` semantics stand so a later alpha can't clobber a real
+          # stable's `latest`.
+          if [[ "$VERSION" == *-* ]]; then TAG=alpha; else TAG=latest; fi
           # Publish the MAIN package FIRST. The unscoped name is the only thing
           # npm's publish-time similarity guard can reject (it rejected `brust`
           # as too close to brfs/must/grunt; the per-platform names are
           # distinctive). If the name is rejected this fails here, BEFORE any
           # platform package is published — so a bad name can't leave orphaned
           # half-published packages (which is exactly what bit the first v* tag).
-          # --tag alpha keeps `latest` off this prerelease (`npm i brustjs@alpha`).
-          npm publish --access public --tag alpha
+          npm publish --access public --tag "$TAG"
           # ...only once the name is secured, publish the per-platform packages
           # (the optionalDependencies the loader resolves at runtime).
           ./runtime/node_modules/.bin/napi prepublish -t npm \
             --package-json-path package.json \
             --npm-dir npm
           # `create-brustjs` powers `bun create brustjs <dir>` — a plain package
-          # (not a napi platform dir), published last. Its `^0.1.0-alpha` brustjs
-          # range resolves the prerelease just published above.
-          cd create-brustjs && npm publish --access public --tag alpha
+          # (not a napi platform dir), published last. Its pinned brustjs version
+          # resolves the prerelease just published above.
+          (cd create-brustjs && npm publish --access public --tag "$TAG")
+          # While still in prerelease, point `latest` at this version too, so
+          # `npm i brustjs` and `bun create brustjs` (create-brustjs@latest) get
+          # the newest alpha by default. npm pins `latest` to the very first
+          # publish and a plain `--tag alpha` never moves it — that is exactly
+          # why `latest` got stuck at 0.1.0-alpha. Skipped for stable: its
+          # publish above already set `latest`.
+          if [[ "$VERSION" == *-* ]]; then
+            npm dist-tag add brustjs@"$VERSION" latest
+            npm dist-tag add create-brustjs@"$VERSION" latest
+          fi
         env:
           NPM_KEY: ${{ secrets.NPM_KEY }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_KEY }}
