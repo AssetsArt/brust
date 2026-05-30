@@ -72,7 +72,7 @@ The injected snippet is:
 WATCH EVENT FLOW:
 ─────────────────────────────────────────────────────────────
 fs.watch event (one of *.tsx, *.css, etc.)
-  → debounce 50ms (coalesce burst-saves)
+  → debounce 50ms (coalesce brust-saves)
   → onChange({ paths, kind })  ← kind ∈ 'ts'|'css'|'html'|'islands'
   → coordinator.handleChange:
         ts/html/islands  → broadcastDev({type:'building'})

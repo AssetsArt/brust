@@ -2,7 +2,7 @@
 
 # Brust
 
-### **B**un + **Rust** — an SSR framework that bursts.
+### **B**un + **Rust** — an SSR framework that brusts.
 
 [![npm](https://img.shields.io/npm/v/brustjs/alpha?logo=npm&logoColor=white&label=brustjs&color=cb3837)](https://www.npmjs.com/package/brustjs)
 [![CI](https://github.com/AssetsArt/brust/actions/workflows/ci.yml/badge.svg)](https://github.com/AssetsArt/brust/actions/workflows/ci.yml)
@@ -128,4 +128,4 @@ MIT.
 
 ---
 
-*Brust — built to burst.*
+*Brust — built to brust.*

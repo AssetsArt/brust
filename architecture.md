@@ -1,6 +1,6 @@
 # Brust — Architecture
 
-**B**un + **Rust** — SSR framework that bursts.
+**B**un + **Rust** — SSR framework that brusts.
 
 React on the server. Rust everywhere else. One Bun host process, Rust loaded as
 a `.node` native module via napi-rs. Renders dispatched into Bun Worker threads;
@@ -1030,7 +1030,7 @@ Bun.serve baseline source: `bench/apps/bun-serve/index.ts`.
 - TS facade: `brust.serve`, `brust.registerRenderer`, `isWorker`, `workerId`
 - `/ping` static native route for benchmarks
 - Auto-tuned worker count: `os.availableParallelism()` (one worker per core — the earlier `* 1.8` multiplier was reverted after it amplified p99 under load; see post-mortem 2026-05-28)
-- Integration test + 100-burst manual smoke check
+- Integration test + 100-brust manual smoke check
 - Bun.serve baseline comparator (`bench/apps/bun-serve/`)
 - Benchmark harness (`scripts/benchmark.ts`, `bun run bench`)
 - HTTP 414 emission on oversized requests
@@ -1160,4 +1160,4 @@ Spec: `docs/superpowers/specs/2026-05-28-minijinja-dynamic-routes-design.md`. Pl
 
 ---
 
-*Brust — Built to burst.*
+*Brust — Built to brust.*

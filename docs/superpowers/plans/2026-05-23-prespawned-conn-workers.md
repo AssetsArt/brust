@@ -18,7 +18,7 @@ The integration test `tests/integration.test.ts` already exists and **passes tod
 
 - The integration test stays green before, during, and after the refactor.
 - No new automated tests are added (the spec scopes that out).
-- A manual concurrency smoke check (100-burst `curl`) is run once at the end to validate that work-stealing across workers doesn't deadlock or panic.
+- A manual concurrency smoke check (100-brust `curl`) is run once at the end to validate that work-stealing across workers doesn't deadlock or panic.
 
 Do NOT add unit tests that mock flume or fake the runtime. The integration test is the safety net.
 
@@ -244,10 +244,10 @@ bun run dev
 
 Wait for `[brust] listening on 127.0.0.1:3000 (io: tokio)`.
 
-In another terminal, run a 100-request burst:
+In another terminal, run a 100-request brust:
 
 ```bash
-for i in {1..100}; do curl -s http://localhost:3000/ > /dev/null & done; wait; echo "burst done"
+for i in {1..100}; do curl -s http://localhost:3000/ > /dev/null & done; wait; echo "brust done"
 ```
 
 Then a sanity follow-up:
@@ -257,7 +257,7 @@ curl -i http://localhost:3000/
 ```
 
 Expected:
-- `burst done` prints without any curl errors (`Connection refused`, `Empty reply`, etc.).
+- `brust done` prints without any curl errors (`Connection refused`, `Empty reply`, etc.).
 - The final `curl -i` returns `HTTP/1.1 200 OK` with body containing `Hello from Brust` and `worker_id=<N>`.
 - The dev process prints no Rust panic and is still running. Stop it with Ctrl-C when satisfied.
 
@@ -292,7 +292,7 @@ EOF
 
 - [ ] `cargo build` is clean — no errors, no new warnings (existing `error_414` / `error_404` / `shutdown.rs` dead-code warnings are pre-existing).
 - [ ] `bun run test` passes (`1 pass, 0 fail`).
-- [ ] Manual 100-burst smoke check from Task 3 Step 7 passed once.
+- [ ] Manual 100-brust smoke check from Task 3 Step 7 passed once.
 - [ ] `git log --oneline -5` shows two new commits: `chore(deps): add flume` and `refactor(server): pre-spawned conn workers`.
 - [ ] `git diff HEAD~2 -- src/server.rs` shows: new `CONN_CHAN_CAP` const, new `workers: usize` parameter, `flume::bounded` + worker spawn loop + `drop(rx)` + `tx.send_async` replacing the old `spawn(handle_conn(...))`.
 - [ ] `git diff HEAD~2 -- src/lib.rs` shows exactly one line changed — the `server::start(...)` call gains `opts.workers as usize`.
@@ -301,5 +301,5 @@ EOF
 ## Risks (carried over from spec, monitor during implementation)
 
 1. **Linux Send-ness:** `tokio_uring::net::TcpStream` may be `!Send`, which would clash with `flume`'s `Send` bound. Surfaces at `cargo build` time. Mitigation per spec.
-2. **Channel capacity:** `1024` is a guess. If smoke check shows accept-side latency under burst, revisit before committing — but a 100-burst from one host should never exceed 1024 in flight.
+2. **Channel capacity:** `1024` is a guess. If smoke check shows accept-side latency under brust, revisit before committing — but a 100-brust from one host should never exceed 1024 in flight.
 3. **Worker count semantics:** Matches napi workers (`opts.workers`). If `until_ready` semantics change later (currently waits for all napi workers to register), the TCP worker spawn happens *before* `ready.notified().await`, which is intentional — workers are ready to receive as soon as the listener binds, but `tx.send_async` will only start being called after readiness gating.

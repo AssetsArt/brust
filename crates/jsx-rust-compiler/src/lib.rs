@@ -455,7 +455,7 @@ mod tests {
     fn brust_page_emits_shell_with_auto_css_and_head_props() {
         let src = r#"export default function Home({ clientProps, serverProps }) {
   return (
-    <BrustPage lang="en" className="dark" bodyClassName="brust-body" title="Built to Burst" description="Bun + Rust SSR">
+    <BrustPage lang="en" className="dark" bodyClassName="brust-body" title="Built to Brust" description="Bun + Rust SSR">
       <main>
         <Island component={Counter} props={clientProps} hydrate="load" />
         <Island component={Counter} props={serverProps} ssr hydrate="load" />
@@ -469,7 +469,7 @@ mod tests {
             "<head>",
             "<meta charset=\"utf-8\"/>",
             "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>",
-            "<title>Built to Burst</title>",
+            "<title>Built to Brust</title>",
             "<meta name=\"description\" content=\"Bun + Rust SSR\"/>",
             "<link rel=\"stylesheet\" href=\"/_brust/css/app.css\"/>",
             "</head>",

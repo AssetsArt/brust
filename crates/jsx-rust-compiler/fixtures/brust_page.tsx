@@ -9,7 +9,7 @@ export default function Home({
   serverProps: { start: number; label: string }
 }) {
   return (
-    <BrustPage lang="en" className="dark" bodyClassName="brust-body" title="Built to Burst">
+    <BrustPage lang="en" className="dark" bodyClassName="brust-body" title="Built to Brust">
       <main className="brust-container">
         <h1 className="brust-title">Hello</h1>
         <Island component={Counter} props={clientProps} hydrate="load" />

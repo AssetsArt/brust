@@ -3,7 +3,7 @@
 **Conditions:** `oha -c 120 -z 10s --no-tui --output-format json`
 · runtime: Bun 1.4.0
 · host: darwin/arm64
-· warmup: 1000 ms boot-settle + 3s discarded JIT burst per probe
+· warmup: 1000 ms boot-settle + 3s discarded JIT brust per probe
 · build: release (`cd runtime && bun run build`)
 
 | Scenario | Method | Path | RPS | p50 (ms) | p95 (ms) | p99 (ms) | Total |

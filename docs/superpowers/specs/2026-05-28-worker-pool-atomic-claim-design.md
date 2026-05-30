@@ -245,7 +245,7 @@ Manual smoke (not codified): `bun run example/hello-world/index.ts`, run `oha -c
 
 ## Risks
 
-- **Throughput regression under sustained N+1 RPS** — when concurrent requests exceed worker count, the new path returns 503 immediately where the old path silently overwrote slots (data loss but no 503). The old behavior was wrong, so 503 is an improvement, but operators monitoring 5xx rates will see a new signal. Document in the release note that 503s under burst load are now visible.
+- **Throughput regression under sustained N+1 RPS** — when concurrent requests exceed worker count, the new path returns 503 immediately where the old path silently overwrote slots (data loss but no 503). The old behavior was wrong, so 503 is an improvement, but operators monitoring 5xx rates will see a new signal. Document in the release note that 503s under brust load are now visible.
 - **Linear scan cost** — pool size is small (~18), scan is cheap. If pool grows to hundreds of workers, replace with `crossbeam::SegQueue` or `async_channel` idle queue. Not in scope.
 - **First-idle bias** — earliest-registered worker tends to be picked when many are idle. Workers are identical in capability, so this doesn't matter for correctness. If observed to cause hot-worker cache effects, rotate the scan start index (single atomic counter, ~4 LOC).
 
