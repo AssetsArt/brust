@@ -56,9 +56,16 @@ jobs:
           - runner: ubuntu-latest
             target: x86_64-unknown-linux-musl
             napi_extra: "--use-napi-cross"
+          # aarch64-musl: napi-cross ships an aarch64-GNU gcc but no
+          # aarch64-MUSL one (the gnu leg above proves napi-cross works; this
+          # target failed with "linker aarch64-linux-musl-gcc not found"). Use
+          # cargo-zigbuild instead — zig cc bundles musl libc for every arch, so
+          # --cross-compile needs no per-target gcc. (x86_64-musl stays on
+          # napi-cross; it builds fine and changing a passing leg adds risk.)
           - runner: ubuntu-latest
             target: aarch64-unknown-linux-musl
-            napi_extra: "--use-napi-cross"
+            napi_extra: "--cross-compile"
+            setup_zig: true
     steps:
       - uses: actions/checkout@v4
 
@@ -77,6 +84,17 @@ jobs:
       - run: bun install
       - name: Install runtime build deps (@napi-rs/cli)
         run: cd runtime && bun install
+
+      # cargo-zigbuild backs napi's --cross-compile; zig cc provides the musl
+      # sysroot per target. Only the aarch64-musl leg sets setup_zig.
+      - name: Setup zig (--cross-compile targets)
+        if: matrix.setup_zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.13.0
+      - name: Install cargo-zigbuild (--cross-compile targets)
+        if: matrix.setup_zig
+        run: cargo install --locked cargo-zigbuild
 
       # Build the native addon for this target. Reads the ROOT package.json
       # napi config (binaryName: brust) so the output is brust.<triple>.node,
