@@ -1,14 +1,12 @@
 const ESC = '\x1b['
-const HIDE_CURSOR = ESC + '?25l'
-const SHOW_CURSOR = ESC + '?25h'
-const CLEAR_SCREEN = ESC + '2J' + ESC + 'H'
 const RESET = ESC + '0m'
 const DIM = ESC + '2m'
 const BRAND = ESC + '38;2;138;51;36m'
 const GREEN = ESC + '32m'
 const RED = ESC + '31m'
-const YELLOW = ESC + '33m'
+const BAR = BRAND + '┃' + RESET
 
+const VERSION = '0.1.0'
 const DEFAULT_CAPACITY = 10
 
 interface Status {
@@ -23,11 +21,14 @@ export interface TuiOptions {
   capacity?: number
 }
 
+/** Astro-style dev output: a clean one-time banner on ready, then event lines
+ * that scroll naturally below it. Deliberately NOT a full-screen TUI — it never
+ * hides the cursor or clears the screen, so the terminal is left exactly as it
+ * was found when the dev server exits (no more vanished cursor on Ctrl-C). */
 export class Tui {
   private events: string[] = []
-  private status: Status | null = null
   private capacity: number
-  private state: 'idle' | 'building' | 'failed' = 'idle'
+  private bannerShown = false
 
   constructor(private opts: TuiOptions) {
     this.capacity = opts.capacity ?? DEFAULT_CAPACITY
@@ -37,73 +38,66 @@ export class Tui {
     return [...this.events]
   }
 
+  /** Print the ready banner. Idempotent — only the first call emits it. */
   updateStatus(s: Status): void {
-    this.status = s
-    this.render()
+    if (this.bannerShown) return
+    this.bannerShown = true
+
+    if (!this.opts.isTty) {
+      this.opts.write(
+        `brust ${VERSION} · dev — http://127.0.0.1:${s.port}/ (workers: ${s.workers})\n`,
+      )
+      return
+    }
+
+    const lines = [
+      '',
+      ` ${BRAND}brust${RESET}  ${DIM}v${VERSION}${RESET}`,
+      '',
+      ` ${BAR} ${DIM}Local${RESET}      http://127.0.0.1:${s.port}/`,
+      ` ${BAR} ${DIM}Workers${RESET}    ${s.workers}`,
+      ` ${BAR} ${DIM}Watching${RESET}   ${s.watching.join(', ')}`,
+      '',
+      '',
+    ]
+    this.opts.write(lines.join('\n'))
   }
 
-  setState(s: 'idle' | 'building' | 'failed'): void {
-    this.state = s
-    this.render()
-  }
-
+  /** Append one event. Scrolls below the banner (TTY) or prints a plain line
+   * (non-TTY / CI). The in-memory ring buffer backs `eventsForTests`. */
   appendEvent(line: string): void {
     this.events.push(line)
     if (this.events.length > this.capacity) this.events.shift()
-    this.render()
-  }
 
-  stop(): void {
-    if (this.opts.isTty) this.opts.write(SHOW_CURSOR + RESET)
-  }
-
-  private render(): void {
     if (!this.opts.isTty) {
-      const latest = this.events[this.events.length - 1]
-      if (latest) this.opts.write(latest + '\n')
+      this.opts.write(line + '\n')
       return
     }
-    let out = HIDE_CURSOR + CLEAR_SCREEN
-    out += this.renderHeader()
-    out += this.renderEvents()
-    out += this.renderStatusBar()
-    this.opts.write(out)
+    this.opts.write(this.format(line) + '\n')
   }
 
-  private renderHeader(): string {
-    if (!this.status) return BRAND + 'brust 0.1.0 · dev mode' + RESET + '\n\n'
-    return (
-      BRAND +
-      'brust 0.1.0 · dev mode' +
-      RESET +
-      '\n' +
-      DIM +
-      'port:     ' +
-      RESET +
-      this.status.port +
-      '\n' +
-      DIM +
-      'workers:  ' +
-      RESET +
-      this.status.workers +
-      '\n' +
-      DIM +
-      'watching: ' +
-      RESET +
-      this.status.watching.join(', ') +
-      '\n\n'
-    )
+  /** Called on shutdown. There is nothing to restore (we never altered the
+   * terminal mode); the reset is belt-and-braces so a half-written colored
+   * line can't bleed into the user's prompt. */
+  stop(): void {
+    if (this.opts.isTty) this.opts.write(RESET)
   }
 
-  private renderEvents(): string {
-    let out = ''
-    for (const ev of this.events) out += ev + '\n'
-    return out + '\n'
+  /** Colorize an event line in TTY mode: a dim timestamp prefix, with ok/error
+   * markers tinted. The coordinator emits `  → ok (Nms)` and `  ✗ <msg>`. */
+  private format(line: string): string {
+    const ts = `${DIM}${timestamp()}${RESET} `
+    const trimmed = line.trimStart()
+    if (trimmed.startsWith('✗')) return ts + RED + line.trim() + RESET
+    if (trimmed.startsWith('→ ok') || trimmed.startsWith('ok')) {
+      return ts + GREEN + line.trim() + RESET
+    }
+    return ts + line
   }
+}
 
-  private renderStatusBar(): string {
-    if (this.state === 'building') return YELLOW + '◉ Building…' + RESET + '\n'
-    if (this.state === 'failed') return RED + '✗ Build failed' + RESET + '\n'
-    return GREEN + '◉ Serving' + RESET + '\n'
-  }
+function timestamp(): string {
+  const d = new Date()
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
 }

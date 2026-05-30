@@ -419,8 +419,8 @@ export const brust = {
           isTty: process.stdout.isTTY === true,
           write: (s: string) => process.stdout.write(s),
         })
+        // The banner's "Local" line is the ready signal — no separate event.
         tui.updateStatus({ port, workers, watching: [scanRoot] })
-        tui.appendEvent(`▶ serving on http://127.0.0.1:${port}`)
 
         const coordinator = new Coordinator({
           workers: {
