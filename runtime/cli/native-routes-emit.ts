@@ -1,6 +1,28 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
+import { buildDevClientTag } from '../dev/client.ts'
 import { ISLANDS_IMPORTMAP_AND_BOOTSTRAP } from '../islands/importmap.ts'
+
+/** Dev-only: splice the /_brust/dev WS client `<script>` into a compiled native
+ * template so `native: true` (jinja) routes auto-reload like React-SSR routes.
+ *
+ * Native routes render Rust-side on the fast lane, bypassing the React renderer
+ * that injects the dev client (runtime/render/stream.ts) — so without this the
+ * browser on a native page never opens the dev WS and can never auto-reload.
+ *
+ * Inserted before the first `</head>` when the page has one (a `<BrustPage>`
+ * shell); otherwise appended (bare-fragment pages like a plain `<div>`). The
+ * browser executes the module script in either position. Gated on `BRUST_DEV`
+ * so `brust build` never bakes it into production templates. */
+function injectDevClientIntoTemplate(template: string): string {
+  const tag = buildDevClientTag()
+  if (template.includes(tag)) return template // idempotent across re-emits
+  const headClose = template.indexOf('</head>')
+  if (headClose !== -1) {
+    return template.slice(0, headClose) + tag + template.slice(headClose)
+  }
+  return template + tag
+}
 
 /** Sub-project J — build pass that turns user's `pages/<Name>.tsx` files into
  * `.brust/jinja/<Name>.jinja` templates. Invoked from `brust build` and
@@ -85,7 +107,14 @@ export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<vo
     } catch (e) {
       throw new Error(`native route "${name}" failed to compile (${sourcePath}):\n${String(e)}`)
     }
-    writeFileSync(outPath, compiled.template)
+    // Dev-only: native routes don't pass through the React renderer's dev-client
+    // injection, so splice the /_brust/dev WS script in here. reEmitJinja() runs
+    // this on every hot reload, so the script is always present in dev.
+    const template =
+      process.env.BRUST_DEV === '1'
+        ? injectDevClientIntoTemplate(compiled.template)
+        : compiled.template
+    writeFileSync(outPath, template)
     built.push(name)
 
     // Islands post-processing. The compiler reports an island manifest ONLY

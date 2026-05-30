@@ -35,34 +35,25 @@ describe('runtime/dev/ws-channel', () => {
     expect(sock.send).not.toHaveBeenCalled()
   })
 
-  test('broadcast postMessages json to every registered worker', async () => {
-    _resetForTests()
-    const reg = await import('./worker-registry.ts')
-    reg._resetForTests()
-    const posts: any[] = []
-    const w1: any = { postMessage: (m: any) => posts.push({ to: 'w1', m }) }
-    const w2: any = { postMessage: (m: any) => posts.push({ to: 'w2', m }) }
-    reg.registerInitialPool([w1, w2], '/dummy', 2, {})
+  test('broadcast delegates the serialized message to the native dev channel', async () => {
+    // The dev WS is a Rust-owned control channel: broadcast() hands the JSON to
+    // the napi addon, which pushes it through each /_brust/dev connection's
+    // Rust-owned send_tx (surviving worker restarts). See server.rs.
+    const calls: string[] = []
+    mock.module('../index.js', () => ({
+      napiDevBroadcast: (json: string) => calls.push(json),
+    }))
     await broadcast({ type: 'reload' })
-    expect(posts.length).toBe(2)
-    expect(posts[0].m).toEqual({ type: 'dev-broadcast', json: '{"type":"reload"}' })
-    expect(posts[1].m).toEqual({ type: 'dev-broadcast', json: '{"type":"reload"}' })
-    reg._resetForTests()
+    expect(calls).toEqual(['{"type":"reload"}'])
+    await broadcast({ type: 'css-update', href: '/x.css' })
+    expect(calls[1]).toBe('{"type":"css-update","href":"/x.css"}')
   })
 
-  test('broadcast tolerates worker postMessage throwing', async () => {
-    _resetForTests()
-    const reg = await import('./worker-registry.ts')
-    reg._resetForTests()
-    const good: any = { postMessage: () => {} }
-    const bad: any = {
-      postMessage: () => {
-        throw new Error('terminated')
-      },
-    }
-    reg.registerInitialPool([bad, good], '/dummy', 2, {})
+  test('broadcast is a no-op when the native dev channel is unavailable', async () => {
+    // Optional chaining guards the call so a build without napiDevBroadcast (or
+    // a non-dev addon) does not throw at the coordinator's broadcast points.
+    mock.module('../index.js', () => ({}))
     await broadcast({ type: 'ok' })
-    reg._resetForTests()
   })
 
   test('installWorkerBroadcastListener routes dev-broadcast to local clients', async () => {

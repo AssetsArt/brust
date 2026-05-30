@@ -543,6 +543,19 @@ pub fn napi_register_ws_paths(paths: Vec<String>) -> NapiResult<()> {
     Ok(())
 }
 
+/// Dev-mode: broadcast one JSON control frame (building / reload / css-update /
+/// error / ok) to every connected `/_brust/dev` client. Called from the main
+/// thread by the dev coordinator. A no-op when no dev client is connected.
+///
+/// Delivery goes straight through each connection's Rust-owned `send_tx`, so it
+/// survives a hot reload's worker restart — unlike the old worker-relay path,
+/// which lost the `reload` frame because the terminated worker took the client
+/// registration with it.
+#[napi]
+pub fn napi_dev_broadcast(json: String) {
+    crate::ws::dev_broadcast(&json);
+}
+
 /// Worker-driven render chunk delivery. Worker calls this once per chunk
 /// it wants to emit; final call uses `len = 0` to close the channel.
 ///
