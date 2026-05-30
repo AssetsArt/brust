@@ -8,6 +8,9 @@ use napi::bindgen_prelude::*;
 use napi_derive::napi;
 
 /// Result of compiling one `pages/<Name>.tsx` source.
+// Used via napi's generated FFI export, not by any Rust caller — clippy's
+// dead-code lint (under `--all-targets`, the lib-test build) can't see that.
+#[allow(dead_code)]
 #[napi(object)]
 pub struct NapiCompiledJsx {
     /// The emitted jinja template.
@@ -21,6 +24,7 @@ pub struct NapiCompiledJsx {
 /// manifest. `path` is used only in error messages. Mirrors `jsx-rustc`'s
 /// `compile_full` + `islands_to_json` so the TS emit step can write the same
 /// `<Name>.jinja` and `<Name>.islands.json` files.
+#[allow(dead_code)]
 #[napi]
 pub fn compile_jsx(source: String, path: String) -> Result<NapiCompiledJsx> {
     match jsx_rust_compiler::compile_full(&source, &path) {

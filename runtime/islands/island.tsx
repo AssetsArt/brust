@@ -16,6 +16,10 @@ export interface IslandProps<P> {
   props: P
   /** When to hydrate. Default 'load'. */
   hydrate?: HydrateTrigger
+  /** Native routes only: render this island server-side (renderToString during
+   * the loader crossing) so its markup ships in the HTML, then hydrate. Ignored
+   * on the React path (the whole tree already SSRs there). Default false. */
+  ssr?: boolean
 }
 
 /** Module-scope flag flipped by every `<Island>` render. `makeRenderer`
