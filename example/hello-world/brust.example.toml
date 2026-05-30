@@ -1,9 +1,12 @@
 # Example brust.toml. Copy to brust.toml at your project root and edit.
-# Env vars BRUST_PORT and BRUST_WORKERS override any value here.
+# Env vars BRUST_ADDR, BRUST_PORT and BRUST_WORKERS override any value here.
 
 [server]
-# TCP port to bind on (1..65535). Default: 3000.
-port = 3000
+# Host/address to bind on. A hostname (resolved at bind time) or a literal IP
+# such as "0.0.0.0" to listen on all interfaces. Default: "localhost".
+address = "localhost"
+# TCP port to bind on (1..65535). Default: 1337.
+port = 1337
 
 [workers]
 # Bun Worker count for render dispatch.

@@ -29,7 +29,7 @@ per-worker `SharedArrayBuffer`. `tokio-uring` (io_uring) on Linux, `tokio` on ma
 bun create brustjs my-app
 cd my-app
 bun install
-bun run dev          # → http://127.0.0.1:3000
+bun run dev          # → http://127.0.0.1:1337
 ```
 
 **Or, with the CLI on your PATH:**
@@ -55,14 +55,14 @@ bun add brustjs
 git clone https://github.com/AssetsArt/brust && cd brust
 bun install
 cd runtime && bun run build && cd ..   # release addon; NOT build:debug (~2× slower)
-bun run example/hello-world/index.ts   # → http://127.0.0.1:3000
+bun run example/hello-world/index.ts   # → http://127.0.0.1:1337
 ```
 
 ```bash
-curl 127.0.0.1:3000/ping                  # → pong               (pure Rust)
-curl 127.0.0.1:3000/                       # → SSR HTML + island
-curl 127.0.0.1:3000/native-profile/World   # → Rust jinja, no React
-curl -N 127.0.0.1:3000/sse-counter         # → SSE frames
+curl 127.0.0.1:1337/ping                  # → pong               (pure Rust)
+curl 127.0.0.1:1337/                       # → SSR HTML + island
+curl 127.0.0.1:1337/native-profile/World   # → Rust jinja, no React
+curl -N 127.0.0.1:1337/sse-counter         # → SSE frames
 ```
 
 The [`example/hello-world/`](./example/hello-world) app shows each feature in one

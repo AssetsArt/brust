@@ -24,8 +24,6 @@ const REPO_ROOT = resolve(import.meta.dir, '..')
 const ENTRY = resolve(REPO_ROOT, 'tests/fixtures/app/index.ts')
 const SCAN_ROOT = resolve(REPO_ROOT, 'tests/fixtures/app')
 const PROBE = resolve(SCAN_ROOT, '__reload_probe__.tsx')
-const PORT = 3811
-const BASE = `http://127.0.0.1:${PORT}`
 
 let proc: Subprocess | undefined
 
@@ -39,22 +37,26 @@ afterEach(() => {
   proc = undefined
 })
 
-async function waitForReady(timeoutMs = 15000): Promise<void> {
+async function waitForReady(base: string, timeoutMs = 15000): Promise<void> {
   const start = Date.now()
   let lastErr: unknown
   while (Date.now() - start < timeoutMs) {
     try {
-      const r = await fetch(`${BASE}/ping`)
+      const r = await fetch(`${base}/ping`)
       if (r.status === 200) return
     } catch (e) {
       lastErr = e
     }
     await new Promise((r) => setTimeout(r, 100))
   }
-  throw new Error(`dev server not ready at ${BASE}: ${String(lastErr)}`)
+  throw new Error(`dev server not ready at ${base}: ${String(lastErr)}`)
 }
 
+// Distinct ports per test so a slow SIGINT teardown of one can't race the
+// next test's bind (the documented dev-server port-race flake).
 test('dev: WS client receives reload across a ts hot reload and the server survives', async () => {
+  const PORT = 3811
+  const BASE = `http://127.0.0.1:${PORT}`
   proc = spawn({
     cmd: ['bun', 'runtime/cli/index.ts', 'dev', ENTRY, '--port', String(PORT)],
     cwd: REPO_ROOT,
@@ -62,7 +64,7 @@ test('dev: WS client receives reload across a ts hot reload and the server survi
     stdout: 'pipe',
     stderr: 'pipe',
   })
-  await waitForReady()
+  await waitForReady(BASE)
 
   const ws = new WebSocket(`ws://127.0.0.1:${PORT}/_brust/dev`)
   await new Promise<void>((res, rej) => {
@@ -101,6 +103,8 @@ test('dev: native (jinja) route HTML includes the /_brust/dev client script', as
   // renderer that injects the dev client. Without injecting it at jinja-emit
   // time, a native page never opens the dev WS, so it can never auto-reload —
   // the user sees "content changed but I had to reload the page myself".
+  const PORT = 3812
+  const BASE = `http://127.0.0.1:${PORT}`
   proc = spawn({
     cmd: ['bun', 'runtime/cli/index.ts', 'dev', ENTRY, '--port', String(PORT)],
     cwd: REPO_ROOT,
@@ -108,7 +112,7 @@ test('dev: native (jinja) route HTML includes the /_brust/dev client script', as
     stdout: 'pipe',
     stderr: 'pipe',
   })
-  await waitForReady()
+  await waitForReady(BASE)
 
   const html = await (await fetch(`${BASE}/_test/native/alice`)).text()
   expect(html).toContain('/_brust/dev')

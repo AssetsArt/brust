@@ -13,7 +13,7 @@ pub mod sse;
 pub mod ws;
 
 use std::cell::Cell;
-use std::net::SocketAddr;
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
@@ -80,9 +80,31 @@ pub(crate) fn action_id_registered(id: &str) -> bool {
 
 #[napi(object)]
 pub struct ServeOptions {
+    /// Host to bind on — a hostname (e.g. `localhost`, resolved here) or a
+    /// literal IP such as `0.0.0.0` / `127.0.0.1`.
+    pub host: String,
     pub port: u16,
     pub workers: u32,
     pub entry: String,
+}
+
+/// Resolve `host:port` to a bindable SocketAddr. Accepts literal IPs and
+/// hostnames (via the system resolver). When a name resolves to both IPv4 and
+/// IPv6 (e.g. `localhost` → 127.0.0.1 + ::1), prefer IPv4 to match the
+/// historical 127.0.0.1 bind and avoid binding only `::1`.
+fn resolve_bind_addr(host: &str, port: u16) -> NapiResult<SocketAddr> {
+    let addrs: Vec<SocketAddr> = (host, port)
+        .to_socket_addrs()
+        .map_err(|e| {
+            napi::Error::from_reason(format!("cannot resolve bind address {host}:{port}: {e}"))
+        })?
+        .collect();
+    addrs
+        .iter()
+        .copied()
+        .find(SocketAddr::is_ipv4)
+        .or_else(|| addrs.first().copied())
+        .ok_or_else(|| napi::Error::from_reason(format!("no address resolved for {host}:{port}")))
 }
 
 #[napi]
@@ -93,9 +115,7 @@ pub fn begin_serve(opts: ServeOptions) -> NapiResult<()> {
     }
     s.expected_workers.store(opts.workers, Ordering::SeqCst);
 
-    let addr: SocketAddr = format!("127.0.0.1:{}", opts.port)
-        .parse()
-        .map_err(|e: std::net::AddrParseError| napi::Error::from_reason(e.to_string()))?;
+    let addr: SocketAddr = resolve_bind_addr(opts.host.trim(), opts.port)?;
 
     // Process shutdown is owned by the TS layer: runtime/index.ts installs
     // process.on('SIGINT', () => process.exit(0)). Bun intercepts SIGINT before
