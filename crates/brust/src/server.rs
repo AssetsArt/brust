@@ -55,6 +55,10 @@ pub struct Tuning {
     pub max_action_body_bytes: usize,
     pub conn_queue_cap: usize,
     pub read_buf_cap: usize,
+    /// Max time a render dispatch waits for a free worker before giving up with
+    /// 503 (see `claim_or_wait`). Bounds the AllBusy→queue wait so a wedged
+    /// worker pool can't park a connection forever. Default 10_000 ms.
+    pub claim_timeout_ms: u64,
 }
 
 impl Default for Tuning {
@@ -64,6 +68,7 @@ impl Default for Tuning {
             max_action_body_bytes: 256 * 1024,
             conn_queue_cap: 1024,
             read_buf_cap: 4096,
+            claim_timeout_ms: 10_000,
         }
     }
 }
@@ -988,6 +993,50 @@ async fn handle_conn(
 /// write the SAB concurrently with the old JS. Streaming-only and not currently
 /// reachable via fast-lane paths; fixing it needs generation tracking or gating
 /// worker release on Promise settlement. Tracked, not addressed here.
+/// Why `claim_or_wait` gave up without a worker.
+enum ClaimWaitErr {
+    /// No workers registered at all — none will ever appear, so 503 at once.
+    NoWorkers,
+    /// Every worker stayed busy until `claim_timeout_ms` — 503 last-resort.
+    Timeout,
+}
+
+/// Claim a render worker, AWAITING a free one (up to `claim_timeout_ms`) on
+/// AllBusy instead of failing fast with 503. This is what lets `connWorkers`
+/// exceed `workers` without a 503 storm: excess conn-tasks park on the pool's
+/// `idle_notify` until a render finishes (`RenderClaim::drop`), then re-claim.
+///
+/// `PoolEmpty` is never waited on. `try_claim` is re-invoked each iteration —
+/// the streaming caller must hand a closure that clones a FRESH chunk_tx per
+/// call, since a successful claim consumes one.
+async fn claim_or_wait(
+    pool: &crate::pool::WorkerPool,
+    mut try_claim: impl FnMut() -> crate::pool::ClaimResult,
+) -> Result<crate::pool::RenderClaim, ClaimWaitErr> {
+    let deadline =
+        tokio::time::Instant::now() + std::time::Duration::from_millis(tuning().claim_timeout_ms);
+    loop {
+        // Register interest BEFORE the claim attempt: a worker freed between a
+        // failed `try_claim` and the `.await` stores a permit on the Notify
+        // rather than being a lost wakeup. Combined with re-claiming every
+        // iteration, this can't deadlock with idle workers available.
+        let notified = pool.idle_notify().notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+
+        match try_claim() {
+            crate::pool::ClaimResult::Claimed(c) => return Ok(c),
+            crate::pool::ClaimResult::PoolEmpty => return Err(ClaimWaitErr::NoWorkers),
+            crate::pool::ClaimResult::AllBusy => {}
+        }
+
+        tokio::select! {
+            _ = &mut notified => { /* a worker freed — loop and re-claim */ }
+            _ = tokio::time::sleep_until(deadline) => return Err(ClaimWaitErr::Timeout),
+        }
+    }
+}
+
 async fn dispatch_to_worker_and_stream_chunks<E, F>(
     s: &mut TcpStream,
     pool: &Arc<crate::pool::WorkerPool>,
@@ -1002,13 +1051,13 @@ where
 {
     let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::channel::<crate::pool::RenderChunk>(1);
 
-    let claim = match pool.try_claim_render(chunk_tx) {
-        crate::pool::ClaimResult::Claimed(c) => c,
-        crate::pool::ClaimResult::PoolEmpty => {
+    let claim = match claim_or_wait(pool, || pool.try_claim_render(chunk_tx.clone())).await {
+        Ok(c) => c,
+        Err(ClaimWaitErr::NoWorkers) => {
             let _ = s.write_all(http::error_503("no workers")).await;
             return DispatchControl::CloseConn;
         }
-        crate::pool::ClaimResult::AllBusy => {
+        Err(ClaimWaitErr::Timeout) => {
             let _ = s.write_all(http::error_503("all workers busy")).await;
             return DispatchControl::CloseConn;
         }
@@ -1339,13 +1388,13 @@ where
     E: serde::Serialize,
     F: FnOnce(&[u8]),
 {
-    let claim = match pool.try_claim_render_lockfree() {
-        crate::pool::ClaimResult::Claimed(c) => c,
-        crate::pool::ClaimResult::PoolEmpty => {
+    let claim = match claim_or_wait(pool, || pool.try_claim_render_lockfree()).await {
+        Ok(c) => c,
+        Err(ClaimWaitErr::NoWorkers) => {
             let _ = s.write_all(http::error_503("no workers")).await;
             return DispatchControl::CloseConn;
         }
-        crate::pool::ClaimResult::AllBusy => {
+        Err(ClaimWaitErr::Timeout) => {
             let _ = s.write_all(http::error_503("all workers busy")).await;
             return DispatchControl::CloseConn;
         }

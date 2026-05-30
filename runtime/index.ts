@@ -28,10 +28,10 @@ export interface ServeOptions {
    * Rust-side connection-handling concurrency (accept→parse→dispatch), which is
    * INDEPENDENT of `workers` (the Bun render threads): I/O-bound paths like
    * `/ping` scale with `connWorkers`, render-bound paths scale with `workers`.
-   * Note: with the current fail-fast dispatch, setting `connWorkers` higher
-   * than `workers` can return 503 under heavy render load — keep
-   * `connWorkers <= workers` unless the route mix is dominated by Rust-only
-   * paths. */
+   * Setting `connWorkers > workers` is safe: a render dispatch that finds every
+   * worker busy QUEUES (awaits a free worker up to `claimTimeoutMs`) instead of
+   * 503-ing, so excess conn-workers just wait their turn rather than dropping
+   * requests. */
   tuning?: {
     /** Rust accept/dispatch concurrency. Default = `workers`. */
     connWorkers?: number
@@ -43,6 +43,9 @@ export interface ServeOptions {
     connQueueCap?: number
     /** Initial per-connection read buffer capacity. Default 4096. */
     readBufCap?: number
+    /** Max ms a render waits for a free worker before 503 (AllBusy queues
+     * instead of failing fast). Default 10000. */
+    claimTimeoutMs?: number
   }
 }
 

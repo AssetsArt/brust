@@ -114,6 +114,10 @@ pub struct RenderClaim {
     /// drop skips the mutex entirely. `false` → streaming claim; drop clears
     /// the slot under the mutex.
     lockfree: bool,
+    /// Pool-wide "a worker just freed up" signal. Drop fires `notify_one` AFTER
+    /// publishing `idle = true`, so a dispatcher waiting in `claim_or_wait`
+    /// (AllBusy → await instead of 503) wakes and re-claims this worker.
+    idle_notify: Arc<tokio::sync::Notify>,
 }
 
 impl RenderClaim {
@@ -148,6 +152,12 @@ impl Drop for RenderClaim {
         }
         self.entry.in_flight.fetch_sub(1, Ordering::Relaxed);
         self.entry.idle.store(true, Ordering::Release);
+        // Wake one dispatcher parked in `claim_or_wait`. Fired AFTER the
+        // `idle = true` Release store so the woken claimer's Acquire CAS sees
+        // this worker idle. A missed wakeup (no waiter yet) is harmless: the
+        // permit is stored, and `claim_or_wait` re-checks `try_claim` on every
+        // loop iteration anyway, so the next waiter still claims this worker.
+        self.idle_notify.notify_one();
     }
 }
 
@@ -164,6 +174,10 @@ pub enum ClaimResult {
 pub struct WorkerPool {
     entries: RwLock<Vec<Arc<TsfnEntry>>>,
     next_id: AtomicU32,
+    /// Notified once per worker release (see `RenderClaim::drop`). Dispatchers
+    /// that hit `AllBusy` await this instead of returning 503, letting
+    /// conn-workers exceed render-workers without dropping requests.
+    idle_notify: Arc<tokio::sync::Notify>,
 }
 
 impl WorkerPool {
@@ -188,6 +202,11 @@ impl WorkerPool {
 
     pub fn registered_count(&self) -> usize {
         self.entries.read().len()
+    }
+
+    /// Pool-wide "worker freed" signal. `claim_or_wait` awaits this on AllBusy.
+    pub fn idle_notify(&self) -> &Arc<tokio::sync::Notify> {
+        &self.idle_notify
     }
 
     pub fn pick_least_busy(&self) -> Option<Arc<TsfnEntry>> {
@@ -228,6 +247,7 @@ impl WorkerPool {
             return ClaimResult::Claimed(RenderClaim {
                 entry: Arc::clone(entry),
                 lockfree: false,
+                idle_notify: Arc::clone(&self.idle_notify),
             });
         }
         ClaimResult::AllBusy
@@ -254,6 +274,7 @@ impl WorkerPool {
             return ClaimResult::Claimed(RenderClaim {
                 entry: Arc::clone(entry),
                 lockfree: true,
+                idle_notify: Arc::clone(&self.idle_notify),
             });
         }
         ClaimResult::AllBusy
@@ -390,6 +411,55 @@ mod tests {
         let (ack_tx, ack_rx) = oneshot::channel::<()>();
         drop(ack_tx);
         assert!(ack_rx.await.is_err());
+    }
+
+    // Phase 2: dropping a RenderClaim fires `idle_notify` AND restores the
+    // worker to claimable, so a dispatcher parked in claim_or_wait wakes and
+    // re-claims instead of 503-ing. Mirrors the claim_or_wait register-then-await
+    // ordering to prove no lost wakeup.
+    #[tokio::test(flavor = "current_thread")]
+    async fn drop_notifies_and_reclaims_after_all_busy() {
+        let pool = WorkerPool::new();
+        pool.register_for_test();
+
+        // Claim the only worker → pool now AllBusy.
+        let claim = match pool.try_claim_render_lockfree() {
+            ClaimResult::Claimed(c) => c,
+            other => panic!("expected Claimed, got {:?}", DebugClaim(&other)),
+        };
+        assert!(matches!(
+            pool.try_claim_render_lockfree(),
+            ClaimResult::AllBusy
+        ));
+
+        // Register interest BEFORE releasing (claim_or_wait ordering).
+        let notified = pool.idle_notify().notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+
+        drop(claim); // releases idle = true, then notify_one()
+
+        // The wakeup must arrive...
+        tokio::time::timeout(std::time::Duration::from_millis(500), notified.as_mut())
+            .await
+            .expect("idle_notify should fire on RenderClaim drop");
+        // ...and the freed worker must be re-claimable.
+        assert!(matches!(
+            pool.try_claim_render_lockfree(),
+            ClaimResult::Claimed(_)
+        ));
+    }
+
+    // ClaimResult isn't Debug (holds a RenderClaim); tiny shim for the panic msg.
+    struct DebugClaim<'a>(&'a ClaimResult);
+    impl std::fmt::Debug for DebugClaim<'_> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(match self.0 {
+                ClaimResult::Claimed(_) => "Claimed",
+                ClaimResult::PoolEmpty => "PoolEmpty",
+                ClaimResult::AllBusy => "AllBusy",
+            })
+        }
     }
 
     #[test]
