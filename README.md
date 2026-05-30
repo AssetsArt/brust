@@ -26,11 +26,17 @@ per-worker `SharedArrayBuffer`. `tokio-uring` (io_uring) on Linux, `tokio` on ma
 **Scaffold a new project** (prebuilt native binary per platform — no Rust toolchain):
 
 ```bash
-bun add --global brustjs@alpha   # puts the `brustjs` CLI on your PATH
-brustjs new my-app
+bun create brustjs my-app
 cd my-app
 bun install
-bun run dev                       # → http://127.0.0.1:3000
+bun run dev          # → http://127.0.0.1:3000
+```
+
+**Or, with the CLI on your PATH:**
+
+```bash
+bun add --global brustjs@alpha
+brustjs new my-app
 ```
 
 **Or add to an existing project:**

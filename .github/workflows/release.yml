@@ -187,6 +187,10 @@ jobs:
           ./runtime/node_modules/.bin/napi prepublish -t npm \
             --package-json-path package.json \
             --npm-dir npm
+          # `create-brustjs` powers `bun create brustjs <dir>` — a plain package
+          # (not a napi platform dir), published last. Its `^0.1.0-alpha` brustjs
+          # range resolves the prerelease just published above.
+          cd create-brustjs && npm publish --access public --tag alpha
         env:
           NPM_KEY: ${{ secrets.NPM_KEY }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_KEY }}
