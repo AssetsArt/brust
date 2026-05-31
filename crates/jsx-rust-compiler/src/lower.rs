@@ -1,17 +1,43 @@
+use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::collections::HashMap;
+use std::rc::Rc;
 
 use swc_core::common::{Span, Spanned};
 use swc_core::ecma::ast::{
-    ArrayLit, ArrowExpr, AssignPatProp, BindingIdent, BlockStmt, BlockStmtOrExpr, CallExpr, Callee,
-    DefaultDecl, ExportDefaultDecl, Expr as SwcExpr, ExprOrSpread, FnExpr, Function, JSXAttrName,
-    JSXAttrOrSpread, JSXAttrValue, JSXElement, JSXElementChild, JSXElementName, JSXExpr, Lit,
-    MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, ObjectPatProp, ParenExpr, Pat, Prop,
-    PropName, PropOrSpread, ReturnStmt, Stmt,
+    ArrayLit, ArrowExpr, AssignPatProp, BinaryOp, BindingIdent, BlockStmt, BlockStmtOrExpr,
+    CallExpr, Callee, DefaultDecl, ExportDefaultDecl, Expr as SwcExpr, ExprOrSpread, FnExpr,
+    Function, JSXAttrName, JSXAttrOrSpread, JSXAttrValue, JSXElement, JSXElementChild,
+    JSXElementName, JSXExpr, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem,
+    ObjectPatProp, ParenExpr, Pat, Prop, PropName, PropOrSpread, ReturnStmt, Stmt, UnaryOp,
 };
 
 use crate::ErrorKind;
 use crate::ir::*;
 use crate::parser::ParsedSource;
+
+/// Context carried when lowering a component in inline mode (T5 opt-in).
+/// `subst` maps destructured prop names to the call-site `Expr` that replaces
+/// them. Whether `{children}` emits `ChildrenSlot` is determined by checking
+/// if `"children"` is in the component's destructured params — not stored here.
+#[derive(Debug)]
+struct InlineCtx {
+    subst: HashMap<String, crate::ir::Expr>,
+}
+
+/// Shared environment threaded through the entire native-inline recursion.
+/// Lives for the duration of one `lower_with_sources` call. SEPARATE from
+/// `InlineCtx.subst` (which is per-component); this env is global across the
+/// whole recursive inlining pass.
+#[derive(Debug)]
+pub(crate) struct InlineEnv {
+    /// Map from component ident → source text, used to resolve `<Comp native/>`.
+    sources: HashMap<String, String>,
+    /// Accumulated non-fatal diagnostic messages.
+    warnings: RefCell<Vec<String>>,
+    /// Stack of component idents currently being inlined; used for cycle detection.
+    cycle: RefCell<Vec<String>>,
+}
 
 #[derive(Debug)]
 pub struct LowerError {
@@ -34,11 +60,21 @@ impl LowerError {
 /// body and popped after. T5 uses clone-and-extend (clone the scope, push the
 /// new iter binding, recurse) rather than `&mut Scope` to keep all the
 /// existing `&Scope` signatures additive.
+/// `inline` carries the optional inline-mode context (T5 opt-in). When `None`,
+/// all inline behaviors are disabled and the code paths are byte-identical to
+/// pre-T5 behavior.
+/// `inline_env` is the shared native-inline environment (T6 opt-in). SEPARATE
+/// from `inline` — the env is shared across the whole recursion while `inline`
+/// changes per component.
 #[derive(Debug, Default, Clone)]
 struct Scope {
     destructured: Vec<String>,
     named_param: Option<String>,
     map_bindings: Vec<String>,
+    /// Inline mode context. `None` = normal (default) lowering.
+    inline: Option<Rc<InlineCtx>>,
+    /// Shared native-inline environment. `None` = no native inlining (default).
+    inline_env: Option<Rc<InlineEnv>>,
 }
 
 /// Lowered param shape: which names are in scope inside JSX.
@@ -50,6 +86,7 @@ struct ParamShape {
     named: Option<String>,
 }
 
+#[allow(dead_code)] // used in crate tests; live code now goes through lower_with_sources
 pub fn lower(parsed: &ParsedSource) -> Result<Component, LowerError> {
     let (name, function) = find_default_export(&parsed.module)?;
     let body =
@@ -61,6 +98,8 @@ pub fn lower(parsed: &ParsedSource) -> Result<Component, LowerError> {
         destructured: param_shape.destructured.clone(),
         named_param: param_shape.named.clone(),
         map_bindings: Vec::new(),
+        inline: None,
+        inline_env: None,
     };
 
     let return_expr = single_return_expr(body)?;
@@ -102,6 +141,232 @@ pub fn lower(parsed: &ParsedSource) -> Result<Component, LowerError> {
     infer_props_types(&root, &mut props)?;
 
     Ok(Component { name, props, root })
+}
+
+/// Route-level entry point for native-inline lowering (T6).
+///
+/// Like `lower` but builds an `InlineEnv` from `sources` (a map from component
+/// ident → source text). Warnings accumulated during inlining are returned
+/// alongside the component. Existing `lower(parsed)` is unchanged.
+// Called by `compile_full` (T7).
+pub(crate) fn lower_with_sources(
+    parsed: &ParsedSource,
+    sources: HashMap<String, String>,
+) -> Result<(Component, Vec<String>), LowerError> {
+    let (name, function) = find_default_export(&parsed.module)?;
+    let body =
+        function.function.body.as_ref().ok_or_else(|| {
+            LowerError::at(function.function.span, ErrorKind::BodyMustBeSingleReturn)
+        })?;
+    let param_shape = lower_params(&function.function)?;
+
+    let env = Rc::new(InlineEnv {
+        sources,
+        warnings: RefCell::new(Vec::new()),
+        cycle: RefCell::new(Vec::new()),
+    });
+
+    let scope = Scope {
+        destructured: param_shape.destructured.clone(),
+        named_param: param_shape.named.clone(),
+        map_bindings: Vec::new(),
+        inline: None,
+        inline_env: Some(env.clone()),
+    };
+
+    let return_expr = single_return_expr(body)?;
+    let jsx = strip_paren(return_expr);
+    let element = match jsx {
+        SwcExpr::JSXElement(el) => el,
+        SwcExpr::JSXFragment(f) => {
+            return Err(LowerError::at(f.span, ErrorKind::FragmentNotSupported));
+        }
+        _ => {
+            return Err(LowerError::at(
+                jsx.span(),
+                ErrorKind::BodyMustBeSingleReturn,
+            ));
+        }
+    };
+    let root = if let JSXElementName::Ident(ident) = &element.opening.name
+        && ident.sym.as_ref() == "BrustPage"
+    {
+        lower_brust_page(element, &scope)?
+    } else {
+        lower_element(element, &scope, false)?
+    };
+
+    let mut props = PropsShape {
+        bindings: param_shape.destructured.clone(),
+        types: BTreeMap::new(),
+    };
+    infer_props_types(&root, &mut props)?;
+
+    let warnings = env.warnings.borrow().clone();
+    Ok((Component { name, props, root }, warnings))
+}
+
+/// Crate-internal entry point for inline lowering (T5 opt-in).
+///
+/// Lowers a component's JSX body with `subst` substituted for its prop names.
+/// Whether `{children}` emits `ChildrenSlot` is determined by checking if
+/// `"children"` is in the component's destructured params (not via the
+/// `_has_children` argument, which is kept for API stability).
+/// The normal `lower` entry point is unaffected — this is purely additive.
+/// `env` is the shared native-inline environment threaded through T6 recursion;
+/// pass `None` for pure T5 usage.
+///
+/// Accepted body shapes:
+/// - Single `return <JSX>;` (or expr-bodied) → `vec![node]`.
+/// - `if (cond) return <A>; … return <B>;` → `vec![Cond{…}]`.
+/// - `const x = …; return <JSX>` or other local bindings → `Err(InlineUntranslatable)`.
+pub(crate) fn lower_component_inline(
+    parsed: &ParsedSource,
+    subst: HashMap<String, crate::ir::Expr>,
+    _has_children: bool,
+    env: Option<Rc<InlineEnv>>,
+) -> Result<Vec<JsxNode>, LowerError> {
+    let (_, fn_expr) = find_default_export(&parsed.module)?;
+    let body =
+        fn_expr.function.body.as_ref().ok_or_else(|| {
+            LowerError::at(fn_expr.function.span, ErrorKind::BodyMustBeSingleReturn)
+        })?;
+
+    let param_shape = lower_params(&fn_expr.function)?;
+
+    let inline_ctx = Rc::new(InlineCtx { subst });
+    let scope = Scope {
+        destructured: param_shape.destructured.clone(),
+        named_param: param_shape.named.clone(),
+        map_bindings: Vec::new(),
+        inline: Some(inline_ctx),
+        inline_env: env,
+    };
+
+    // Try single-return first.
+    if let Ok(return_expr) = single_return_expr(body) {
+        let jsx = strip_paren(return_expr);
+        let element = match jsx {
+            SwcExpr::JSXElement(el) => el,
+            SwcExpr::JSXFragment(f) => {
+                return Err(LowerError::at(f.span, ErrorKind::FragmentNotSupported));
+            }
+            _ => {
+                return Err(LowerError::at(
+                    jsx.span(),
+                    ErrorKind::BodyMustBeSingleReturn,
+                ));
+            }
+        };
+        let node = lower_element(element, &scope, false)?;
+        return Ok(vec![node]);
+    }
+
+    // Try `if (cond) return <A>; … return <B>;` — two-statement body.
+    if body.stmts.len() == 2
+        && let Some(cond_node) = try_lower_if_return_body(body, &scope)?
+    {
+        return Ok(vec![cond_node]);
+    }
+
+    // Multi-statement body or unrecognized shape.
+    Err(LowerError::at(
+        body.span,
+        ErrorKind::InlineUntranslatable("local binding".to_string()),
+    ))
+}
+
+/// Try to lower a two-statement body of the form:
+///   `if (cond) return <A>;`
+///   `return <B>;`
+/// (with or without an explicit `else`). Returns `None` if the shape doesn't
+/// match, so the caller can fall back to an error.
+fn try_lower_if_return_body(
+    body: &BlockStmt,
+    scope: &Scope,
+) -> Result<Option<JsxNode>, LowerError> {
+    use swc_core::ecma::ast::{IfStmt, Stmt};
+
+    if body.stmts.len() != 2 {
+        return Ok(None);
+    }
+
+    // First stmt: `if (cond) return <A>;` (no else branch here).
+    let Stmt::If(IfStmt {
+        test: cond_expr,
+        cons,
+        alt,
+        ..
+    }) = &body.stmts[0]
+    else {
+        return Ok(None);
+    };
+    // No else allowed in the two-stmt form (else handled separately below).
+    if alt.is_some() {
+        return Ok(None);
+    }
+    // cons must be `return <A>;` (possibly wrapped in a block).
+    let jsx_a = extract_return_jsx_from_stmt(cons)?;
+    let Some(jsx_a) = jsx_a else {
+        return Ok(None);
+    };
+
+    // Second stmt: `return <B>;`
+    let Stmt::Return(ReturnStmt {
+        arg: Some(ret_b), ..
+    }) = &body.stmts[1]
+    else {
+        return Ok(None);
+    };
+    let jsx_b = strip_paren(ret_b.as_ref());
+    let SwcExpr::JSXElement(el_b) = jsx_b else {
+        return Ok(None);
+    };
+
+    let test_expr = lower_expr(cond_expr, scope)?;
+    let node_a = lower_element(jsx_a, scope, false)?;
+    let node_b = lower_element(el_b, scope, false)?;
+
+    Ok(Some(JsxNode::Cond {
+        test: test_expr,
+        consequent: Box::new(node_a),
+        alternate: Some(Box::new(node_b)),
+    }))
+}
+
+/// Extract the JSX element from a `return <JSX>;` statement or
+/// `{ return <JSX>; }` block statement. Returns `None` if the shape doesn't
+/// match (so the caller can decide what to do).
+fn extract_return_jsx_from_stmt(stmt: &Stmt) -> Result<Option<&JSXElement>, LowerError> {
+    match stmt {
+        Stmt::Return(ReturnStmt {
+            arg: Some(expr), ..
+        }) => {
+            let jsx = strip_paren(expr.as_ref());
+            match jsx {
+                SwcExpr::JSXElement(el) => Ok(Some(el)),
+                _ => Ok(None),
+            }
+        }
+        Stmt::Block(block) => {
+            if block.stmts.len() != 1 {
+                return Ok(None);
+            }
+            match &block.stmts[0] {
+                Stmt::Return(ReturnStmt {
+                    arg: Some(expr), ..
+                }) => {
+                    let jsx = strip_paren(expr.as_ref());
+                    match jsx {
+                        SwcExpr::JSXElement(el) => Ok(Some(el)),
+                        _ => Ok(None),
+                    }
+                }
+                _ => Ok(None),
+            }
+        }
+        _ => Ok(None),
+    }
 }
 
 fn find_default_export(module: &Module) -> Result<(String, &FnExpr), LowerError> {
@@ -420,6 +685,219 @@ fn lower_ssr_component(
     let mut tags_path: Option<String> = None;
     let mut tags_literal: Option<Vec<String>> = None;
     let mut revalidate: Option<u32> = None;
+    // T6: detect bare `native` attribute before the attr loop.
+    let has_native = el.opening.attrs.iter().any(|a| {
+        if let JSXAttrOrSpread::JSXAttr(jsx_attr) = a
+            && let JSXAttrName::Ident(id) = &jsx_attr.name
+        {
+            return id.sym.as_ref() == "native";
+        }
+        false
+    });
+
+    // T6: collect call-site children for possible splicing.
+    let mut call_site_children: Vec<JsxNode> = Vec::new();
+    for child in &el.children {
+        if let Some(node) = lower_child(child, scope, in_map)? {
+            call_site_children.push(node);
+        }
+    }
+
+    // T6: native inline branch — only when `native` present AND env is available.
+    if has_native && let Some(env) = &scope.inline_env {
+        // Detect isr presence and spreads; build subst map from call-site attrs.
+        let mut has_isr = false;
+        let mut has_spread = false;
+        let mut subst: HashMap<String, crate::ir::Expr> = HashMap::new();
+        let mut subst_err = false;
+
+        for attr in &el.opening.attrs {
+            match attr {
+                JSXAttrOrSpread::SpreadElement(_) => {
+                    has_spread = true;
+                }
+                JSXAttrOrSpread::JSXAttr(jsx_attr) => {
+                    let name = match &jsx_attr.name {
+                        JSXAttrName::Ident(id) => id.sym.to_string(),
+                        JSXAttrName::JSXNamespacedName(n) => {
+                            return Err(LowerError::at(
+                                n.span,
+                                ErrorKind::NamespacedAttrNotSupported,
+                            ));
+                        }
+                    };
+                    match name.as_str() {
+                        "native" | "key" => continue,
+                        "isr" => {
+                            // Validate isr syntax (errors out if malformed).
+                            let err_fn = || {
+                                LowerError::at(
+                                    jsx_attr.span,
+                                    ErrorKind::ComponentIsrUnsupported(component.clone()),
+                                )
+                            };
+                            // Parse to validate; we only need presence for has_isr.
+                            parse_isr_object(jsx_attr, scope, &err_fn)?;
+                            has_isr = true;
+                            continue;
+                        }
+                        "ref" => {
+                            return Err(LowerError::at(
+                                jsx_attr.span,
+                                ErrorKind::RefAttributeNotSupported,
+                            ));
+                        }
+                        _ if is_event_handler(&name) => {
+                            return Err(LowerError::at(
+                                jsx_attr.span,
+                                ErrorKind::EventHandlerNotSupported(name),
+                            ));
+                        }
+                        _ => {}
+                    }
+                    // Lower value to an Expr for subst.
+                    let expr_result = match &jsx_attr.value {
+                        None => Ok(crate::ir::Expr::StaticText(String::new())), // bare bool attr
+                        Some(JSXAttrValue::Str(s)) => Ok(crate::ir::Expr::StaticText(
+                            s.value.to_string_lossy().into_owned(),
+                        )),
+                        Some(JSXAttrValue::JSXExprContainer(c)) => match &c.expr {
+                            JSXExpr::JSXEmptyExpr(_) => {
+                                Err(LowerError::at(c.span, ErrorKind::JsxInAttrNotSupported))
+                            }
+                            JSXExpr::Expr(e) => lower_expr(e, scope),
+                        },
+                        _ => Err(LowerError::at(
+                            jsx_attr.span,
+                            ErrorKind::JsxInAttrNotSupported,
+                        )),
+                    };
+                    match expr_result {
+                        Ok(expr) => {
+                            subst.insert(name, expr);
+                        }
+                        Err(_) => {
+                            subst_err = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Try to inline. Returns Ok(Some(node)) on success, Ok(None) on
+        // soft fallback (warns pushed to env), Err on hard error (cycle).
+        let inline_result = try_native_inline(
+            &component,
+            env,
+            subst,
+            has_spread,
+            subst_err,
+            &call_site_children,
+            has_isr,
+            el.opening.span,
+        )?;
+
+        if let Some(node) = inline_result {
+            return Ok(node);
+        }
+
+        // Fall through to SSR component emission, using isr fields if present.
+        // Rebuild props without native/isr attrs.
+        let mut ssr_props: Vec<SsrProp> = Vec::new();
+        let mut ssr_key_path: Option<String> = None;
+        let mut ssr_key_literal: Option<String> = None;
+        let mut ssr_tags_path: Option<String> = None;
+        let mut ssr_tags_literal: Option<Vec<String>> = None;
+        let mut ssr_revalidate: Option<u32> = None;
+
+        for attr in &el.opening.attrs {
+            let jsx_attr = match attr {
+                JSXAttrOrSpread::JSXAttr(a) => a,
+                JSXAttrOrSpread::SpreadElement(s) => {
+                    let expr = lower_expr(&s.expr, scope)?;
+                    ssr_props.push(SsrProp::Spread(expr));
+                    continue;
+                }
+            };
+            let name = match &jsx_attr.name {
+                JSXAttrName::Ident(id) => id.sym.to_string(),
+                JSXAttrName::JSXNamespacedName(n) => {
+                    return Err(LowerError::at(
+                        n.span,
+                        ErrorKind::NamespacedAttrNotSupported,
+                    ));
+                }
+            };
+            match name.as_str() {
+                "key" | "native" => continue,
+                "isr" => {
+                    let err_fn = || {
+                        LowerError::at(
+                            jsx_attr.span,
+                            ErrorKind::ComponentIsrUnsupported(component.clone()),
+                        )
+                    };
+                    let p = parse_isr_object(jsx_attr, scope, &err_fn)?;
+                    ssr_key_path = p.key_path;
+                    ssr_key_literal = p.key_literal;
+                    ssr_tags_path = p.tags_path;
+                    ssr_tags_literal = p.tags_literal;
+                    ssr_revalidate = p.revalidate;
+                    continue;
+                }
+                "ref" => {
+                    return Err(LowerError::at(
+                        jsx_attr.span,
+                        ErrorKind::RefAttributeNotSupported,
+                    ));
+                }
+                _ if is_event_handler(&name) => {
+                    return Err(LowerError::at(
+                        jsx_attr.span,
+                        ErrorKind::EventHandlerNotSupported(name),
+                    ));
+                }
+                _ => {}
+            }
+            let value = match &jsx_attr.value {
+                None => AttrValue::Empty,
+                Some(JSXAttrValue::Str(s)) => {
+                    AttrValue::Static(s.value.to_string_lossy().into_owned())
+                }
+                Some(JSXAttrValue::JSXExprContainer(c)) => match &c.expr {
+                    JSXExpr::JSXEmptyExpr(_) => {
+                        return Err(LowerError::at(c.span, ErrorKind::JsxInAttrNotSupported));
+                    }
+                    JSXExpr::Expr(e) => match lower_expr(e, scope)? {
+                        crate::ir::Expr::StaticNum(n) => AttrValue::StaticNum(n),
+                        crate::ir::Expr::StaticText(s) => AttrValue::Static(s),
+                        expr => AttrValue::Expr(expr),
+                    },
+                },
+                _ => {
+                    return Err(LowerError::at(
+                        jsx_attr.span,
+                        ErrorKind::JsxInAttrNotSupported,
+                    ));
+                }
+            };
+            ssr_props.push(SsrProp::Attr(JsxAttr { name, value }));
+        }
+
+        return Ok(JsxNode::SsrComponent {
+            component,
+            instance: 0,
+            props: ssr_props,
+            children: call_site_children,
+            key_path: ssr_key_path,
+            key_literal: ssr_key_literal,
+            tags_path: ssr_tags_path,
+            tags_literal: ssr_tags_literal,
+            revalidate: ssr_revalidate,
+        });
+    }
+
+    // Standard (non-native) SSR component path.
     for attr in &el.opening.attrs {
         // Spread `{...expr}` is valid on an SSR component (the factory is JS
         // createElement, so it becomes a JS object spread). The spread argument
@@ -495,24 +973,222 @@ fn lower_ssr_component(
         props.push(SsrProp::Attr(JsxAttr { name, value }));
     }
 
-    let mut children: Vec<JsxNode> = Vec::new();
-    for child in &el.children {
-        if let Some(node) = lower_child(child, scope, in_map)? {
-            children.push(node);
-        }
-    }
-
     Ok(JsxNode::SsrComponent {
         component,
         instance: 0,
         props,
-        children,
+        children: call_site_children,
         key_path,
         key_literal,
         tags_path,
         tags_literal,
         revalidate,
     })
+}
+
+/// Try to native-inline a component. Returns:
+/// - `Ok(Some(node))` — successfully inlined.
+/// - `Ok(None)` — soft fallback (warnings pushed to `env`); caller emits SSR component.
+/// - `Err(LowerError)` — hard error (only `CircularInline` for now).
+#[allow(clippy::too_many_arguments)]
+fn try_native_inline(
+    component: &str,
+    env: &Rc<InlineEnv>,
+    subst: HashMap<String, crate::ir::Expr>,
+    has_spread: bool,
+    subst_err: bool,
+    call_site_children: &[JsxNode],
+    has_isr: bool,
+    span: Span,
+) -> Result<Option<JsxNode>, LowerError> {
+    use crate::analyze::{Inlinability, analyze};
+
+    // 1. Resolve source.
+    let source = match env.sources.get(component) {
+        Some(s) => s.clone(),
+        None => {
+            env.warnings.borrow_mut().push(format!(
+                "native component \"{}\" not inlined: source unresolved",
+                component
+            ));
+            return Ok(None);
+        }
+    };
+
+    // 2. Spread or subst error → warn + fallback.
+    if has_spread || subst_err {
+        env.warnings.borrow_mut().push(format!(
+            "native component \"{}\" not inlined: unsupported prop",
+            component
+        ));
+        return Ok(None);
+    }
+
+    // 3. Parse.
+    let parsed_comp = match crate::parser::parse(&source, "<inline>") {
+        Ok(p) => p,
+        Err(_) => {
+            env.warnings.borrow_mut().push(format!(
+                "native component \"{}\" not inlined: parse error",
+                component
+            ));
+            return Ok(None);
+        }
+    };
+
+    // 4. Analyze.
+    let (_, fn_expr) = match find_default_export(&parsed_comp.module) {
+        Ok(r) => r,
+        Err(_) => {
+            env.warnings.borrow_mut().push(format!(
+                "native component \"{}\" not inlined: parse error",
+                component
+            ));
+            return Ok(None);
+        }
+    };
+    let body = match fn_expr.function.body.as_ref() {
+        Some(b) => b,
+        None => {
+            env.warnings.borrow_mut().push(format!(
+                "native component \"{}\" not inlined: parse error",
+                component
+            ));
+            return Ok(None);
+        }
+    };
+    if let Inlinability::Fallback(reason) = analyze(body) {
+        env.warnings.borrow_mut().push(format!(
+            "native component \"{}\" not inlined: {}",
+            component, reason
+        ));
+        return Ok(None);
+    }
+
+    // 5. Cycle check — hard error.
+    if env.cycle.borrow().contains(&component.to_string()) {
+        let path = format!("{} → {}", env.cycle.borrow().join(" → "), component);
+        return Err(LowerError::at(span, ErrorKind::CircularInline(path)));
+    }
+    env.cycle.borrow_mut().push(component.to_string());
+
+    // 6. Lower inline. Propagate hard errors (e.g. CircularInline) upward;
+    // convert soft lowering errors to a warning + fallback.
+    let has_children = !call_site_children.is_empty();
+    let nodes = match lower_component_inline(&parsed_comp, subst, has_children, Some(env.clone())) {
+        Ok(n) => n,
+        Err(e) => {
+            // CircularInline is a hard error — propagate it immediately.
+            if matches!(e.kind, ErrorKind::CircularInline(_)) {
+                env.cycle.borrow_mut().pop();
+                return Err(e);
+            }
+            let msg = if let ErrorKind::InlineUntranslatable(s) = &e.kind {
+                format!(
+                    "native component \"{}\" not inlined: untranslatable ({})",
+                    component, s
+                )
+            } else {
+                format!(
+                    "native component \"{}\" not inlined: unsupported prop",
+                    component
+                )
+            };
+            env.warnings.borrow_mut().push(msg);
+            env.cycle.borrow_mut().pop();
+            return Ok(None);
+        }
+    };
+
+    // 7. Expect exactly 1 root node.
+    if nodes.len() != 1 {
+        env.warnings.borrow_mut().push(format!(
+            "native component \"{}\" unexpected multi-root",
+            component
+        ));
+        env.cycle.borrow_mut().pop();
+        return Ok(None);
+    }
+
+    let mut root_node = nodes.into_iter().next().unwrap();
+
+    // 8. Splice children slots.
+    splice_children_slots(&mut root_node, call_site_children);
+
+    // 9. Pop cycle stack.
+    env.cycle.borrow_mut().pop();
+
+    // 10. Warn if isr was present (ignored on inlined component).
+    if has_isr {
+        env.warnings.borrow_mut().push(format!(
+            "isr ignored on inlined native component \"{}\"",
+            component
+        ));
+    }
+
+    Ok(Some(root_node))
+}
+
+/// Recursively replace every `JsxNode::ChildrenSlot` in a tree with the given
+/// `children` nodes (spliced in-place into the parent's children vec).
+fn splice_children_slots(node: &mut JsxNode, children: &[JsxNode]) {
+    match node {
+        JsxNode::Element {
+            children: node_children,
+            ..
+        } => {
+            // Splice any ChildrenSlot entries.
+            let mut i = 0;
+            while i < node_children.len() {
+                if matches!(node_children[i], JsxNode::ChildrenSlot) {
+                    // Replace the slot with the call-site children.
+                    node_children.remove(i);
+                    for (j, c) in children.iter().enumerate() {
+                        node_children.insert(i + j, c.clone());
+                    }
+                    i += children.len();
+                } else {
+                    splice_children_slots(&mut node_children[i], children);
+                    i += 1;
+                }
+            }
+        }
+        JsxNode::Cond {
+            consequent,
+            alternate,
+            ..
+        } => {
+            splice_children_slots(consequent, children);
+            if let Some(alt) = alternate {
+                splice_children_slots(alt, children);
+            }
+        }
+        JsxNode::Map { body, .. } => {
+            splice_children_slots(body, children);
+        }
+        JsxNode::Document { body, .. } => {
+            let mut i = 0;
+            while i < body.len() {
+                if matches!(body[i], JsxNode::ChildrenSlot) {
+                    body.remove(i);
+                    for (j, c) in children.iter().enumerate() {
+                        body.insert(i + j, c.clone());
+                    }
+                    i += children.len();
+                } else {
+                    splice_children_slots(&mut body[i], children);
+                    i += 1;
+                }
+            }
+        }
+        // Leaf nodes — nothing to splice.
+        JsxNode::Empty
+        | JsxNode::Text(_)
+        | JsxNode::Expr(_)
+        | JsxNode::Island { .. }
+        | JsxNode::SsrComponent { .. }
+        | JsxNode::ChildrenSlot => {}
+    }
 }
 
 /// HTML void elements per spec §4 / WHATWG. T6 rejects children on these.
@@ -763,6 +1439,17 @@ fn island_component_ident(jsx_attr: &swc_core::ecma::ast::JSXAttr) -> Result<Str
 /// props rooted at a map binding, unresolved roots, computed access, non-Ident
 /// roots, and any non-`{expr}` value. Deliberately NOT routed through
 /// `lower_member` (which accepts map-bound roots and deeper chains).
+///
+/// INLINE MODE (T6): when `scope.inline` is set, a bare `Ident(x)` that is a
+/// key in the inline `subst` map is remapped through the substitution BEFORE
+/// computing the path:
+/// - `Expr::Field(name)` or `Expr::MapBinding(name)` → use `name` as path.
+/// - `Expr::MemberAccess { root, path }` → join as `root.path[0]…` (full
+///   dotted path, mirrors what `expr_to_path` returns for a direct member).
+/// - Any other `Expr` (literal, arith, etc.) → not a valid island props source
+///   → `IslandPropsPathUnsupported`.
+///
+/// Non-inline behavior is byte-identical to pre-T6.
 fn island_props_path(
     jsx_attr: &swc_core::ecma::ast::JSXAttr,
     scope: &Scope,
@@ -775,6 +1462,32 @@ fn island_props_path(
     let JSXExpr::Expr(e) = &c.expr else {
         return Err(err());
     };
+
+    // INLINE MODE: if the expression is a bare ident that maps through the
+    // inline subst, remap to the call-site Expr and derive the path from it.
+    if let Some(ctx) = &scope.inline
+        && let SwcExpr::Ident(id) = strip_paren(e.as_ref())
+    {
+        let name = id.sym.to_string();
+        if let Some(substituted) = ctx.subst.get(&name) {
+            return match substituted {
+                // Bare call-site field (destructured prop name) → use directly.
+                crate::ir::Expr::Field(field_name) => Ok(field_name.clone()),
+                // Call-site map binding → use directly (e.g. item in a .map).
+                crate::ir::Expr::MapBinding(binding_name) => Ok(binding_name.clone()),
+                // Call-site member access: `root.seg0.seg1…` — join into dotted
+                // path. This mirrors what `expr_to_path` returns for a member expr.
+                crate::ir::Expr::MemberAccess { root, path } => {
+                    let mut parts = vec![root.as_str()];
+                    parts.extend(path.iter().map(|s| s.as_str()));
+                    Ok(parts.join("."))
+                }
+                // Any other Expr (literal, arith, concat, …) is not a valid
+                // island props source — fall back with unsupported.
+                _ => Err(err()),
+            };
+        }
+    }
 
     expr_to_path(e.as_ref(), scope, &err)
 }
@@ -1134,6 +1847,53 @@ fn lower_child(
                 {
                     return Ok(Some(lower_call_as_map(call, scope, in_map)?));
                 }
+
+                // GATE: inline mode — handle special inline child patterns.
+                if scope.inline.is_some() {
+                    // `{children}` → ChildrenSlot unconditionally when "children"
+                    // is in the component's destructured params. The splice step
+                    // removes the slot cleanly when zero call-site children were
+                    // passed, so we must emit the slot regardless of has_children.
+                    if let SwcExpr::Ident(id) = e.as_ref()
+                        && id.sym.as_ref() == "children"
+                        && scope.destructured.contains(&"children".to_string())
+                    {
+                        return Ok(Some(JsxNode::ChildrenSlot));
+                    }
+
+                    // `{cond && <JSX>}` → Cond{alternate: None}.
+                    if let SwcExpr::Bin(bin) = e.as_ref()
+                        && bin.op == BinaryOp::LogicalAnd
+                        && let SwcExpr::JSXElement(rhs_el) = strip_paren(bin.right.as_ref())
+                    {
+                        let test = lower_expr(&bin.left, scope)?;
+                        let consequent = lower_element(rhs_el, scope, in_map)?;
+                        return Ok(Some(JsxNode::Cond {
+                            test,
+                            consequent: Box::new(consequent),
+                            alternate: None,
+                        }));
+                    }
+
+                    // `{cond ? <A> : <B>}` → Cond{alternate: Some}.
+                    if let SwcExpr::Cond(cond_expr) = e.as_ref() {
+                        let test = lower_expr(&cond_expr.test, scope)?;
+                        let cons_jsx = strip_paren(cond_expr.cons.as_ref());
+                        let alt_jsx = strip_paren(cond_expr.alt.as_ref());
+                        if let (SwcExpr::JSXElement(el_a), SwcExpr::JSXElement(el_b)) =
+                            (cons_jsx, alt_jsx)
+                        {
+                            let node_a = lower_element(el_a, scope, in_map)?;
+                            let node_b = lower_element(el_b, scope, in_map)?;
+                            return Ok(Some(JsxNode::Cond {
+                                test,
+                                consequent: Box::new(node_a),
+                                alternate: Some(Box::new(node_b)),
+                            }));
+                        }
+                    }
+                }
+
                 Ok(Some(JsxNode::Expr(lower_expr(e, scope)?)))
             }
         },
@@ -1365,6 +2125,12 @@ fn lower_expr(expr: &SwcExpr, scope: &Scope) -> Result<crate::ir::Expr, LowerErr
     match expr {
         SwcExpr::Ident(id) => {
             let name = id.sym.to_string();
+            // Inline mode: substitution takes priority over destructured→Field.
+            if let Some(ctx) = &scope.inline
+                && let Some(substituted) = ctx.subst.get(&name)
+            {
+                return Ok(substituted.clone());
+            }
             if scope.destructured.contains(&name) {
                 Ok(crate::ir::Expr::Field(name))
             } else if scope.map_bindings.contains(&name) {
@@ -1392,32 +2158,270 @@ fn lower_expr(expr: &SwcExpr, scope: &Scope) -> Result<crate::ir::Expr, LowerErr
                 Ok(crate::ir::Expr::StaticNum(n.value as i64))
             }
         }
-        SwcExpr::Tpl(t) => Err(LowerError::at(
-            t.span,
-            ErrorKind::TemplateLiteralNotSupported,
-        )),
-        SwcExpr::Call(c) => Err(LowerError::at(
-            c.span,
-            ErrorKind::CallExpressionNotSupported,
-        )),
-        SwcExpr::Bin(b) => Err(LowerError::at(
-            b.span,
-            ErrorKind::ComplexExpressionNotSupported,
-        )),
+        SwcExpr::Tpl(t) => {
+            // GATE: inline mode only.
+            if scope.inline.is_some() {
+                // Template literal → Concat of quasis (StaticText) and exprs.
+                let mut parts: Vec<crate::ir::Expr> = Vec::new();
+                let quasis = &t.quasis;
+                let exprs = &t.exprs;
+                for (i, quasi) in quasis.iter().enumerate() {
+                    let cooked = quasi
+                        .cooked
+                        .as_ref()
+                        .map(|a| a.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    if !cooked.is_empty() {
+                        parts.push(crate::ir::Expr::StaticText(cooked));
+                    }
+                    if i < exprs.len() {
+                        parts.push(lower_expr(&exprs[i], scope)?);
+                    }
+                }
+                Ok(crate::ir::Expr::Concat(parts))
+            } else {
+                Err(LowerError::at(
+                    t.span,
+                    ErrorKind::TemplateLiteralNotSupported,
+                ))
+            }
+        }
+        SwcExpr::Call(c) => {
+            // GATE: inline mode only — method call lowering.
+            if scope.inline.is_some() {
+                lower_call_as_filter(c, scope)
+            } else {
+                Err(LowerError::at(
+                    c.span,
+                    ErrorKind::CallExpressionNotSupported,
+                ))
+            }
+        }
+        SwcExpr::Bin(b) => {
+            // GATE: inline mode only — arithmetic, comparison, logical.
+            if scope.inline.is_some() {
+                lower_bin_inline(b, scope)
+            } else {
+                Err(LowerError::at(
+                    b.span,
+                    ErrorKind::ComplexExpressionNotSupported,
+                ))
+            }
+        }
         SwcExpr::Cond(c) => Err(LowerError::at(
             c.span,
             ErrorKind::ComplexExpressionNotSupported,
         )),
-        SwcExpr::Unary(u) => Err(LowerError::at(
-            u.span,
-            ErrorKind::ComplexExpressionNotSupported,
-        )),
+        SwcExpr::Unary(u) => {
+            // GATE: inline mode only — `!` → Not.
+            if scope.inline.is_some() {
+                if u.op == UnaryOp::Bang {
+                    let inner = lower_expr(&u.arg, scope)?;
+                    Ok(crate::ir::Expr::Not(Box::new(inner)))
+                } else {
+                    Err(LowerError::at(
+                        u.span,
+                        ErrorKind::InlineUntranslatable(format!("{:?}", u.op)),
+                    ))
+                }
+            } else {
+                Err(LowerError::at(
+                    u.span,
+                    ErrorKind::ComplexExpressionNotSupported,
+                ))
+            }
+        }
         SwcExpr::Paren(p) => lower_expr(&p.expr, scope),
         other => Err(LowerError::at(
             other.span(),
             ErrorKind::ComplexExpressionNotSupported,
         )),
     }
+}
+
+/// Lower a binary expression in inline mode.
+fn lower_bin_inline(
+    b: &swc_core::ecma::ast::BinExpr,
+    scope: &Scope,
+) -> Result<crate::ir::Expr, LowerError> {
+    match b.op {
+        BinaryOp::Add => {
+            let lhs = lower_expr(&b.left, scope)?;
+            let rhs = lower_expr(&b.right, scope)?;
+            Ok(crate::ir::Expr::Arith {
+                op: ArithOp::Add,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            })
+        }
+        BinaryOp::Sub => {
+            let lhs = lower_expr(&b.left, scope)?;
+            let rhs = lower_expr(&b.right, scope)?;
+            Ok(crate::ir::Expr::Arith {
+                op: ArithOp::Sub,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            })
+        }
+        BinaryOp::Mul => {
+            let lhs = lower_expr(&b.left, scope)?;
+            let rhs = lower_expr(&b.right, scope)?;
+            Ok(crate::ir::Expr::Arith {
+                op: ArithOp::Mul,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            })
+        }
+        BinaryOp::Div => {
+            let lhs = lower_expr(&b.left, scope)?;
+            let rhs = lower_expr(&b.right, scope)?;
+            Ok(crate::ir::Expr::Arith {
+                op: ArithOp::Div,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            })
+        }
+        BinaryOp::Mod => {
+            let lhs = lower_expr(&b.left, scope)?;
+            let rhs = lower_expr(&b.right, scope)?;
+            Ok(crate::ir::Expr::Arith {
+                op: ArithOp::Mod,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            })
+        }
+        // Comparison: === and == both → Eq; !== and != → Ne.
+        BinaryOp::EqEqEq | BinaryOp::EqEq => {
+            let lhs = lower_expr(&b.left, scope)?;
+            let rhs = lower_expr(&b.right, scope)?;
+            Ok(crate::ir::Expr::Compare {
+                op: CmpOp::Eq,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            })
+        }
+        BinaryOp::NotEqEq | BinaryOp::NotEq => {
+            let lhs = lower_expr(&b.left, scope)?;
+            let rhs = lower_expr(&b.right, scope)?;
+            Ok(crate::ir::Expr::Compare {
+                op: CmpOp::Ne,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            })
+        }
+        BinaryOp::Gt => {
+            let lhs = lower_expr(&b.left, scope)?;
+            let rhs = lower_expr(&b.right, scope)?;
+            Ok(crate::ir::Expr::Compare {
+                op: CmpOp::Gt,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            })
+        }
+        BinaryOp::Lt => {
+            let lhs = lower_expr(&b.left, scope)?;
+            let rhs = lower_expr(&b.right, scope)?;
+            Ok(crate::ir::Expr::Compare {
+                op: CmpOp::Lt,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            })
+        }
+        BinaryOp::GtEq => {
+            let lhs = lower_expr(&b.left, scope)?;
+            let rhs = lower_expr(&b.right, scope)?;
+            Ok(crate::ir::Expr::Compare {
+                op: CmpOp::Ge,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            })
+        }
+        BinaryOp::LtEq => {
+            let lhs = lower_expr(&b.left, scope)?;
+            let rhs = lower_expr(&b.right, scope)?;
+            Ok(crate::ir::Expr::Compare {
+                op: CmpOp::Le,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            })
+        }
+        BinaryOp::LogicalAnd => {
+            let lhs = lower_expr(&b.left, scope)?;
+            let rhs = lower_expr(&b.right, scope)?;
+            Ok(crate::ir::Expr::Logical {
+                op: LogOp::And,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            })
+        }
+        BinaryOp::LogicalOr => {
+            let lhs = lower_expr(&b.left, scope)?;
+            let rhs = lower_expr(&b.right, scope)?;
+            Ok(crate::ir::Expr::Logical {
+                op: LogOp::Or,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            })
+        }
+        other => Err(LowerError::at(
+            b.span,
+            ErrorKind::InlineUntranslatable(format!("{other:?}")),
+        )),
+    }
+}
+
+/// Lower a call expression as a filter in inline mode.
+/// Only `recv.method(args)` where method ∈ {toUpperCase, toLowerCase, trim, slice, join}.
+/// Any other call → `InlineUntranslatable`.
+fn lower_call_as_filter(c: &CallExpr, scope: &Scope) -> Result<crate::ir::Expr, LowerError> {
+    let Callee::Expr(callee) = &c.callee else {
+        return Err(LowerError::at(
+            c.span,
+            ErrorKind::InlineUntranslatable("call".to_string()),
+        ));
+    };
+    let SwcExpr::Member(member) = callee.as_ref() else {
+        return Err(LowerError::at(
+            c.span,
+            ErrorKind::InlineUntranslatable("call".to_string()),
+        ));
+    };
+    let MemberProp::Ident(method_ident) = &member.prop else {
+        return Err(LowerError::at(
+            c.span,
+            ErrorKind::InlineUntranslatable("call".to_string()),
+        ));
+    };
+    let method_name = method_ident.sym.as_ref();
+    let filter_name = match method_name {
+        "toUpperCase" => "upper",
+        "toLowerCase" => "lower",
+        "trim" => "trim",
+        "slice" => "slice",
+        "join" => "join",
+        other => {
+            return Err(LowerError::at(
+                c.span,
+                ErrorKind::InlineUntranslatable(other.to_string()),
+            ));
+        }
+    };
+    let recv = lower_expr(&member.obj, scope)?;
+    let mut args: Vec<crate::ir::Expr> = Vec::new();
+    for arg in &c.args {
+        if arg.spread.is_some() {
+            return Err(LowerError::at(
+                c.span,
+                ErrorKind::InlineUntranslatable("spread arg".to_string()),
+            ));
+        }
+        args.push(lower_expr(&arg.expr, scope)?);
+    }
+    Ok(crate::ir::Expr::Filter {
+        value: Box::new(recv),
+        name: filter_name.to_string(),
+        args,
+    })
 }
 
 /// Lower a `MemberExpr` into one of the chain-rooted IR shapes.
@@ -1440,6 +2444,19 @@ fn lower_expr(expr: &SwcExpr, scope: &Scope) -> Result<crate::ir::Expr, LowerErr
 /// A `PrivateName` anywhere in the chain → `ComplexExpressionNotSupported`.
 /// A non-`Ident` root (call, literal, etc.) → `ComplexExpressionNotSupported`.
 fn lower_member(m: &MemberExpr, scope: &Scope) -> Result<crate::ir::Expr, LowerError> {
+    // GATE: inline mode — trailing `.length` → Filter{name:"length", args:[]}.
+    if scope.inline.is_some()
+        && let MemberProp::Ident(prop_ident) = &m.prop
+        && prop_ident.sym.as_ref() == "length"
+    {
+        let recv = lower_expr(&m.obj, scope)?;
+        return Ok(crate::ir::Expr::Filter {
+            value: Box::new(recv),
+            name: "length".to_string(),
+            args: vec![],
+        });
+    }
+
     // Collect chain leaf → root, then reverse. The leaf segment is `m.prop`.
     let mut path_rev: Vec<String> = Vec::new();
     let leaf = match &m.prop {
@@ -1584,6 +2601,19 @@ fn infer_props_types(node: &JsxNode, props: &mut PropsShape) -> Result<(), Lower
         // SsrComponent is opaque — it has its own type scope and is not
         // recursed into for prop-type inference here.
         JsxNode::SsrComponent { .. } => Ok(()),
+        JsxNode::Cond {
+            test,
+            consequent,
+            alternate,
+        } => {
+            infer_from_expr(test, props)?;
+            infer_props_types(consequent, props)?;
+            if let Some(alt) = alternate {
+                infer_props_types(alt, props)?;
+            }
+            Ok(())
+        }
+        JsxNode::ChildrenSlot => Ok(()),
     }
 }
 
@@ -1604,6 +2634,34 @@ fn infer_from_expr(expr: &crate::ir::Expr, props: &mut PropsShape) -> Result<(),
         | crate::ir::Expr::MapMember { .. }
         | crate::ir::Expr::StaticText(_)
         | crate::ir::Expr::StaticNum(_) => Ok(()),
+        // These variants may appear in inline-mode lowered trees; they carry no
+        // top-level prop type information themselves (the sub-expressions do).
+        crate::ir::Expr::Arith { lhs, rhs, .. } => {
+            infer_from_expr(lhs, props)?;
+            infer_from_expr(rhs, props)
+        }
+        crate::ir::Expr::Concat(parts) => {
+            for p in parts {
+                infer_from_expr(p, props)?;
+            }
+            Ok(())
+        }
+        crate::ir::Expr::Filter { value, args, .. } => {
+            infer_from_expr(value, props)?;
+            for a in args {
+                infer_from_expr(a, props)?;
+            }
+            Ok(())
+        }
+        crate::ir::Expr::Compare { lhs, rhs, .. } => {
+            infer_from_expr(lhs, props)?;
+            infer_from_expr(rhs, props)
+        }
+        crate::ir::Expr::Logical { lhs, rhs, .. } => {
+            infer_from_expr(lhs, props)?;
+            infer_from_expr(rhs, props)
+        }
+        crate::ir::Expr::Not(inner) => infer_from_expr(inner, props),
     }
 }
 
@@ -1644,6 +2702,18 @@ fn collect_map_member_fields(
         JsxNode::Island { .. } => {}
         // SsrComponent is opaque in map context — no MapMember refs to collect.
         JsxNode::SsrComponent { .. } => {}
+        JsxNode::Cond {
+            test,
+            consequent,
+            alternate,
+        } => {
+            collect_map_member_from_expr(test, binding, fields);
+            collect_map_member_fields(consequent, binding, fields);
+            if let Some(alt) = alternate {
+                collect_map_member_fields(alt, binding, fields);
+            }
+        }
+        JsxNode::ChildrenSlot => {}
     }
 }
 
@@ -2539,7 +3609,7 @@ mod tests {
     fn lower_ssr_component_leaf() {
         let src =
             "export default function Page({ greeting }) { return <Header user={greeting} />; }";
-        let c = compile_full(src, "<test>").unwrap();
+        let c = compile_full(src, "<test>", HashMap::new()).unwrap();
         assert_eq!(c.components.len(), 1);
         assert_eq!(c.components[0].component, "Header");
         assert_eq!(c.components[0].instance, 0);
@@ -2576,7 +3646,7 @@ mod tests {
     #[test]
     fn lower_ssr_component_event_handler_rejected() {
         let src = "export default function Page({ data }) { return <Card onClick={data.fn} />; }";
-        let err = compile_full(src, "<test>").unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::EventHandlerNotSupported(_)),
             "got {:?}",
@@ -2589,7 +3659,7 @@ mod tests {
         let src = r#"export default function Page({ items }) {
   return <ul>{items.map((item) => <Layout title={item.name} />)}</ul>;
 }"#;
-        let err = compile_full(src, "<test>").unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::SsrComponentInMapNotSupported(_)),
             "expected SsrComponentInMapNotSupported, got {:?}",
@@ -2602,7 +3672,7 @@ mod tests {
         let src = r#"export default function Page({ greeting, data }) {
   return <Layout title={greeting}><h1>{greeting}</h1><Island component={Counter} props={data.counter} hydrate="load" /></Layout>;
 }"#;
-        let c = compile_full(src, "<test>").unwrap();
+        let c = compile_full(src, "<test>", HashMap::new()).unwrap();
         assert_eq!(c.components.len(), 1);
         assert_eq!(c.components[0].component, "Layout");
         assert!(
@@ -2675,7 +3745,7 @@ mod tests {
         let src = r#"export default function Page({ data }) {
   return <Layout isr={{ tags: data.cacheTags }} />;
 }"#;
-        let err = compile_full(src, "<test>").unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::ComponentIsrUnsupported(_)),
             "got {:?}",
@@ -2688,7 +3758,7 @@ mod tests {
         let src = r#"export default function Page({ data }) {
   return <Layout isr={{ key: data.cacheKey, revalidate: data.ttl }} />;
 }"#;
-        let err = compile_full(src, "<test>").unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::ComponentIsrUnsupported(_)),
             "got {:?}",
@@ -2750,7 +3820,7 @@ mod tests {
         let src = r#"export default function Page({ data }) {
   return <Island component={Counter} props={data.counter} ssr isr={{ key: "k", tags: [123] }} />;
 }"#;
-        let err = compile_full(src, "<test>").unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::IslandIsrUnsupported),
             "got {:?}",
@@ -2788,11 +3858,748 @@ mod tests {
         let src = r#"export default function Page({ data }) {
   return <Layout isr={{ key: "a", key: data.x }} />;
 }"#;
-        let err = compile_full(src, "<test>").unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::ComponentIsrUnsupported(_)),
             "got {:?}",
             err.kind
         );
+    }
+
+    // ── T5 inline-mode tests ──────────────────────────────────────────────────
+
+    /// Helper: parse source, call lower_component_inline (no env = T5 mode).
+    fn inline_lower(
+        src: &str,
+        subst: HashMap<String, crate::ir::Expr>,
+        has_children: bool,
+    ) -> Result<Vec<JsxNode>, LowerError> {
+        let parsed = parse(src, "<test>").unwrap();
+        super::lower_component_inline(&parsed, subst, has_children, None)
+    }
+
+    #[test]
+    fn inline_substitutes_member_prop() {
+        // function C({title}){return <h1>{title}</h1>}
+        // subst: title → MemberAccess{root:"data", path:["x"]}
+        let src = r#"export default function C({ title }: { title: string }) {
+  return <h1>{title}</h1>;
+}"#;
+        let mut subst = HashMap::new();
+        subst.insert(
+            "title".to_string(),
+            crate::ir::Expr::MemberAccess {
+                root: "data".to_string(),
+                path: vec!["x".to_string()],
+            },
+        );
+        let nodes = inline_lower(src, subst, false).unwrap();
+        assert_eq!(nodes.len(), 1);
+        match &nodes[0] {
+            JsxNode::Element { tag, children, .. } => {
+                assert_eq!(tag, "h1");
+                assert_eq!(children.len(), 1);
+                match &children[0] {
+                    JsxNode::Expr(crate::ir::Expr::MemberAccess { root, path }) => {
+                        assert_eq!(root, "data");
+                        assert_eq!(path, &vec!["x".to_string()]);
+                    }
+                    other => panic!("expected MemberAccess, got {other:?}"),
+                }
+            }
+            other => panic!("expected h1 element, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inline_children_slot() {
+        // function C({children}){return <div>{children}</div>}  has_children=true
+        let src = r#"export default function C({ children }: any) {
+  return <div>{children}</div>;
+}"#;
+        let nodes = inline_lower(src, HashMap::new(), true).unwrap();
+        assert_eq!(nodes.len(), 1);
+        match &nodes[0] {
+            JsxNode::Element { tag, children, .. } => {
+                assert_eq!(tag, "div");
+                assert_eq!(children.len(), 1);
+                assert!(
+                    matches!(children[0], JsxNode::ChildrenSlot),
+                    "expected ChildrenSlot, got {:?}",
+                    children[0]
+                );
+            }
+            other => panic!("expected div element, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inline_and_to_cond() {
+        // function C({show}){return <div>{show && <span/>}</div>}
+        let src = r#"export default function C({ show }: any) {
+  return <div>{show && <span/>}</div>;
+}"#;
+        let mut subst = HashMap::new();
+        subst.insert(
+            "show".to_string(),
+            crate::ir::Expr::Field("show".to_string()),
+        );
+        let nodes = inline_lower(src, subst, false).unwrap();
+        assert_eq!(nodes.len(), 1);
+        match &nodes[0] {
+            JsxNode::Element { tag, children, .. } => {
+                assert_eq!(tag, "div");
+                assert_eq!(children.len(), 1);
+                match &children[0] {
+                    JsxNode::Cond {
+                        alternate,
+                        consequent,
+                        ..
+                    } => {
+                        assert!(alternate.is_none(), "expected no alternate");
+                        assert!(
+                            matches!(consequent.as_ref(), JsxNode::Element { tag, .. } if tag == "span")
+                        );
+                    }
+                    other => panic!("expected Cond, got {other:?}"),
+                }
+            }
+            other => panic!("expected div, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inline_ternary_to_cond() {
+        // {ok ? <a/> : <b/>} → Cond{alternate:Some}
+        let src = r#"export default function C({ ok }: any) {
+  return <div>{ok ? <a/> : <b/>}</div>;
+}"#;
+        let mut subst = HashMap::new();
+        subst.insert("ok".to_string(), crate::ir::Expr::Field("ok".to_string()));
+        let nodes = inline_lower(src, subst, false).unwrap();
+        let div_children = match &nodes[0] {
+            JsxNode::Element { children, .. } => children,
+            other => panic!("expected div, got {other:?}"),
+        };
+        match &div_children[0] {
+            JsxNode::Cond {
+                alternate,
+                consequent,
+                ..
+            } => {
+                assert!(alternate.is_some(), "expected alternate");
+                assert!(matches!(consequent.as_ref(), JsxNode::Element { tag, .. } if tag == "a"));
+                assert!(
+                    matches!(alternate.as_ref().unwrap().as_ref(), JsxNode::Element { tag, .. } if tag == "b")
+                );
+            }
+            other => panic!("expected Cond, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inline_ifelse_return_to_cond() {
+        // function C({ok}){ if(ok) return <a/>; return <b/>; }
+        let src = r#"export default function C({ ok }: any) {
+  if (ok) return <a/>;
+  return <b/>;
+}"#;
+        let mut subst = HashMap::new();
+        subst.insert("ok".to_string(), crate::ir::Expr::Field("ok".to_string()));
+        let nodes = inline_lower(src, subst, false).unwrap();
+        assert_eq!(nodes.len(), 1);
+        match &nodes[0] {
+            JsxNode::Cond {
+                alternate,
+                consequent,
+                ..
+            } => {
+                assert!(alternate.is_some(), "expected alternate");
+                assert!(matches!(consequent.as_ref(), JsxNode::Element { tag, .. } if tag == "a"));
+                assert!(
+                    matches!(alternate.as_ref().unwrap().as_ref(), JsxNode::Element { tag, .. } if tag == "b")
+                );
+            }
+            other => panic!("expected Cond, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inline_template_concat() {
+        // {`Hi ${name}`} → Concat([StaticText("Hi "), <name expr>])
+        let src = r#"export default function C({ name }: any) {
+  return <span>{`Hi ${name}`}</span>;
+}"#;
+        let mut subst = HashMap::new();
+        subst.insert(
+            "name".to_string(),
+            crate::ir::Expr::Field("name".to_string()),
+        );
+        let nodes = inline_lower(src, subst, false).unwrap();
+        let children = match &nodes[0] {
+            JsxNode::Element { children, .. } => children,
+            other => panic!("expected span, got {other:?}"),
+        };
+        match &children[0] {
+            JsxNode::Expr(crate::ir::Expr::Concat(parts)) => {
+                assert!(parts.len() >= 2, "expected at least 2 parts, got {parts:?}");
+                assert!(
+                    matches!(&parts[0], crate::ir::Expr::StaticText(s) if s.contains("Hi")),
+                    "expected StaticText with 'Hi', got {:?}",
+                    parts[0]
+                );
+            }
+            other => panic!("expected Concat, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inline_method_upper() {
+        // {title.toUpperCase()} → Filter{name:"upper"}
+        let src = r#"export default function C({ title }: any) {
+  return <span>{title.toUpperCase()}</span>;
+}"#;
+        let mut subst = HashMap::new();
+        subst.insert(
+            "title".to_string(),
+            crate::ir::Expr::Field("title".to_string()),
+        );
+        let nodes = inline_lower(src, subst, false).unwrap();
+        let children = match &nodes[0] {
+            JsxNode::Element { children, .. } => children,
+            other => panic!("expected span, got {other:?}"),
+        };
+        match &children[0] {
+            JsxNode::Expr(crate::ir::Expr::Filter { name, args, .. }) => {
+                assert_eq!(name, "upper");
+                assert!(args.is_empty());
+            }
+            other => panic!("expected Filter{{upper}}, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inline_arith() {
+        // {a + b} → Arith{Add}
+        let src = r#"export default function C({ a, b }: any) {
+  return <span>{a + b}</span>;
+}"#;
+        let mut subst = HashMap::new();
+        subst.insert("a".to_string(), crate::ir::Expr::Field("a".to_string()));
+        subst.insert("b".to_string(), crate::ir::Expr::Field("b".to_string()));
+        let nodes = inline_lower(src, subst, false).unwrap();
+        let children = match &nodes[0] {
+            JsxNode::Element { children, .. } => children,
+            other => panic!("expected span, got {other:?}"),
+        };
+        match &children[0] {
+            JsxNode::Expr(crate::ir::Expr::Arith { op, .. }) => {
+                assert_eq!(*op, crate::ir::ArithOp::Add);
+            }
+            other => panic!("expected Arith{{Add}}, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inline_length() {
+        // {items.length} → Filter{name:"length"}
+        let src = r#"export default function C({ items }: any) {
+  return <span>{items.length}</span>;
+}"#;
+        let mut subst = HashMap::new();
+        subst.insert(
+            "items".to_string(),
+            crate::ir::Expr::Field("items".to_string()),
+        );
+        let nodes = inline_lower(src, subst, false).unwrap();
+        let children = match &nodes[0] {
+            JsxNode::Element { children, .. } => children,
+            other => panic!("expected span, got {other:?}"),
+        };
+        match &children[0] {
+            JsxNode::Expr(crate::ir::Expr::Filter { name, args, .. }) => {
+                assert_eq!(name, "length");
+                assert!(args.is_empty());
+            }
+            other => panic!("expected Filter{{length}}, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inline_unknown_method_untranslatable() {
+        // {x.reduce(...)} → Err(InlineUntranslatable)
+        let src = r#"export default function C({ x }: any) {
+  return <span>{x.reduce((a, b) => a + b, 0)}</span>;
+}"#;
+        let mut subst = HashMap::new();
+        subst.insert("x".to_string(), crate::ir::Expr::Field("x".to_string()));
+        let err = inline_lower(src, subst, false).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::InlineUntranslatable(_)),
+            "expected InlineUntranslatable, got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn noninline_logical_still_errors() {
+        // THE GATE: normal route (no inline ctx) with {show && <span/>} → Err(ComplexExpressionNotSupported).
+        let src = r#"export default function X({ show }: any) {
+  return <div>{show && <span/>}</div>;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let err = lower(&parsed).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::ComplexExpressionNotSupported),
+            "expected ComplexExpressionNotSupported (gate check), got {:?}",
+            err.kind
+        );
+    }
+
+    // ── T6 native inline tests ────────────────────────────────────────────────
+
+    /// Helper: parse route source + sources map, call lower_with_sources.
+    fn lower_with_src(
+        route_src: &str,
+        sources: HashMap<String, String>,
+    ) -> Result<(crate::ir::Component, Vec<String>), LowerError> {
+        let parsed = parse(route_src, "<test>").unwrap();
+        super::lower_with_sources(&parsed, sources)
+    }
+
+    /// Recursively check that no SsrComponent node exists in the tree.
+    fn assert_no_ssr_component(node: &JsxNode) {
+        match node {
+            JsxNode::SsrComponent { component, .. } => {
+                panic!("unexpected SsrComponent({component}) in tree");
+            }
+            JsxNode::Element { children, .. } => {
+                for c in children {
+                    assert_no_ssr_component(c);
+                }
+            }
+            JsxNode::Cond {
+                consequent,
+                alternate,
+                ..
+            } => {
+                assert_no_ssr_component(consequent);
+                if let Some(alt) = alternate {
+                    assert_no_ssr_component(alt);
+                }
+            }
+            JsxNode::Map { body, .. } => assert_no_ssr_component(body),
+            JsxNode::Document { body, .. } => {
+                for c in body {
+                    assert_no_ssr_component(c);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Recursively check that no ChildrenSlot remains in tree.
+    fn assert_no_children_slot(node: &JsxNode) {
+        match node {
+            JsxNode::ChildrenSlot => panic!("unexpected ChildrenSlot in tree"),
+            JsxNode::Element { children, .. } => {
+                for c in children {
+                    assert_no_children_slot(c);
+                }
+            }
+            JsxNode::Cond {
+                consequent,
+                alternate,
+                ..
+            } => {
+                assert_no_children_slot(consequent);
+                if let Some(alt) = alternate {
+                    assert_no_children_slot(alt);
+                }
+            }
+            JsxNode::Map { body, .. } => assert_no_children_slot(body),
+            JsxNode::Document { body, .. } => {
+                for c in body {
+                    assert_no_children_slot(c);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn native_pure_inlines() {
+        // Route: <div><Card native title={data.x}/></div>
+        // Card: function Card({title}){return <h1>{title}</h1>}
+        // Expected: div contains h1 with MemberAccess(data.x), no SsrComponent.
+        let route = r#"export default function P({ data }) {
+  return <div><Card native title={data.x}/></div>;
+}"#;
+        let card = r#"export default function Card({ title }) {
+  return <h1>{title}</h1>;
+}"#;
+        let mut sources = HashMap::new();
+        sources.insert("Card".to_string(), card.to_string());
+        let (comp, warnings) = lower_with_src(route, sources).unwrap();
+        assert!(
+            warnings.is_empty(),
+            "expected no warnings, got: {warnings:?}"
+        );
+        assert_no_ssr_component(&comp.root);
+        // Check the h1 with MemberAccess is present.
+        let h1 = match &comp.root {
+            JsxNode::Element { children, .. } => match &children[0] {
+                JsxNode::Element { tag, children, .. } => {
+                    assert_eq!(tag, "h1");
+                    children
+                }
+                other => panic!("expected h1, got {other:?}"),
+            },
+            other => panic!("expected div, got {other:?}"),
+        };
+        match &h1[0] {
+            JsxNode::Expr(crate::ir::Expr::MemberAccess { root, path }) => {
+                assert_eq!(root, "data");
+                assert_eq!(path, &vec!["x".to_string()]);
+            }
+            other => panic!("expected MemberAccess(data.x), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn native_hook_falls_back() {
+        // Card uses useState → must fall back to SsrComponent, warning contains "useState".
+        let route = r#"export default function P({ data }) {
+  return <div><Card native title={data.x}/></div>;
+}"#;
+        let card = r#"export default function Card({ title }) {
+  const [v, setV] = useState(0);
+  return <h1>{title}</h1>;
+}"#;
+        let mut sources = HashMap::new();
+        sources.insert("Card".to_string(), card.to_string());
+        let (comp, warnings) = lower_with_src(route, sources).unwrap();
+        // Must have an SsrComponent for Card.
+        let has_ssr = {
+            fn find_ssr(node: &JsxNode) -> bool {
+                match node {
+                    JsxNode::SsrComponent { .. } => true,
+                    JsxNode::Element { children, .. } => children.iter().any(find_ssr),
+                    _ => false,
+                }
+            }
+            find_ssr(&comp.root)
+        };
+        assert!(has_ssr, "expected SsrComponent fallback for hook");
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("useState") || w.contains("hook")),
+            "expected hook warning, got: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn native_unresolved_falls_back() {
+        // sources map is empty → SsrComponent + "unresolved" warning.
+        let route = r#"export default function P({ data }) {
+  return <div><Card native title={data.x}/></div>;
+}"#;
+        let (comp, warnings) = lower_with_src(route, HashMap::new()).unwrap();
+        let has_ssr = {
+            fn find_ssr(node: &JsxNode) -> bool {
+                match node {
+                    JsxNode::SsrComponent { .. } => true,
+                    JsxNode::Element { children, .. } => children.iter().any(find_ssr),
+                    _ => false,
+                }
+            }
+            find_ssr(&comp.root)
+        };
+        assert!(has_ssr, "expected SsrComponent fallback for unresolved");
+        assert!(
+            warnings.iter().any(|w| w.contains("unresolved")),
+            "expected unresolved warning, got: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn native_children_splice() {
+        // Route: <Box native><span/></Box>
+        // Box: function Box({children}){return <section>{children}</section>}
+        // Expected: section contains the span, no ChildrenSlot.
+        let route = r#"export default function P() {
+  return <Box native><span/></Box>;
+}"#;
+        let box_src = r#"export default function Box({ children }) {
+  return <section>{children}</section>;
+}"#;
+        let mut sources = HashMap::new();
+        sources.insert("Box".to_string(), box_src.to_string());
+        let (comp, warnings) = lower_with_src(route, sources).unwrap();
+        assert!(
+            warnings.is_empty(),
+            "expected no warnings, got: {warnings:?}"
+        );
+        assert_no_ssr_component(&comp.root);
+        assert_no_children_slot(&comp.root);
+        // section should contain the span.
+        let section_children = match &comp.root {
+            JsxNode::Element { tag, children, .. } => {
+                assert_eq!(tag, "section");
+                children
+            }
+            other => panic!("expected section, got {other:?}"),
+        };
+        assert_eq!(section_children.len(), 1);
+        match &section_children[0] {
+            JsxNode::Element { tag, .. } => assert_eq!(tag, "span"),
+            other => panic!("expected span, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn native_nested_recurses() {
+        // Outer native contains <Inner native/>; both pure; sources has both → fully inlined.
+        let route = r#"export default function P({ data }) {
+  return <Outer native value={data.v}/>;
+}"#;
+        let outer_src = r#"export default function Outer({ value }) {
+  return <div><Inner native val={value}/></div>;
+}"#;
+        let inner_src = r#"export default function Inner({ val }) {
+  return <span>{val}</span>;
+}"#;
+        let mut sources = HashMap::new();
+        sources.insert("Outer".to_string(), outer_src.to_string());
+        sources.insert("Inner".to_string(), inner_src.to_string());
+        let (comp, warnings) = lower_with_src(route, sources).unwrap();
+        assert!(
+            warnings.is_empty(),
+            "expected no warnings, got: {warnings:?}"
+        );
+        assert_no_ssr_component(&comp.root);
+    }
+
+    #[test]
+    fn native_circular_errors() {
+        // A native → B native → A native → cycle error.
+        let route = r#"export default function P() {
+  return <A native/>;
+}"#;
+        let a_src = r#"export default function A() {
+  return <B native/>;
+}"#;
+        let b_src = r#"export default function B() {
+  return <A native/>;
+}"#;
+        let mut sources = HashMap::new();
+        sources.insert("A".to_string(), a_src.to_string());
+        sources.insert("B".to_string(), b_src.to_string());
+        let err = lower_with_src(route, sources).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::CircularInline(_)),
+            "expected CircularInline, got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn native_isr_inlined_warns() {
+        // <Card native isr={{key:'k'}}/> pure → inlines, warnings contains "isr ignored".
+        let route = r#"export default function P({ data }) {
+  return <Card native isr={{ key: data.k }}/>;
+}"#;
+        let card = r#"export default function Card() {
+  return <h1>hello</h1>;
+}"#;
+        let mut sources = HashMap::new();
+        sources.insert("Card".to_string(), card.to_string());
+        let (comp, warnings) = lower_with_src(route, sources).unwrap();
+        assert_no_ssr_component(&comp.root);
+        assert!(
+            warnings.iter().any(|w| w.contains("isr ignored")),
+            "expected 'isr ignored' warning, got: {warnings:?}"
+        );
+    }
+
+    // ── FIX 1 test: ChildrenSlot emitted even when call-site has no children ──
+
+    #[test]
+    fn native_children_slot_no_callsite_children() {
+        // Route: <Box native/> — NO children at the call site.
+        // Box: function Box({children}){return <section>{children}</section>}
+        // Expected: the section is present and contains neither ChildrenSlot
+        // nor Expr::Field("children"); children spliced to nothing.
+        let route = r#"export default function P() {
+  return <Box native/>;
+}"#;
+        let box_src = r#"export default function Box({ children }: any) {
+  return <section>{children}</section>;
+}"#;
+        let mut sources = HashMap::new();
+        sources.insert("Box".to_string(), box_src.to_string());
+        let (comp, warnings) = lower_with_src(route, sources).unwrap();
+        assert!(
+            warnings.is_empty(),
+            "expected no warnings, got: {warnings:?}"
+        );
+        // Root must be the inlined <section> — no SsrComponent.
+        assert_no_ssr_component(&comp.root);
+        // No ChildrenSlot left after splice.
+        assert_no_children_slot(&comp.root);
+        // No Expr::Field("children") anywhere (the bogus fallback).
+        fn assert_no_field_children(node: &JsxNode) {
+            match node {
+                JsxNode::Expr(crate::ir::Expr::Field(name)) => {
+                    assert_ne!(name, "children", "found bogus Expr::Field(\"children\")");
+                }
+                JsxNode::Element { children, .. } => {
+                    for c in children {
+                        assert_no_field_children(c);
+                    }
+                }
+                JsxNode::Cond {
+                    consequent,
+                    alternate,
+                    ..
+                } => {
+                    assert_no_field_children(consequent);
+                    if let Some(alt) = alternate {
+                        assert_no_field_children(alt);
+                    }
+                }
+                JsxNode::Map { body, .. } => assert_no_field_children(body),
+                JsxNode::Document { body, .. } => {
+                    for c in body {
+                        assert_no_field_children(c);
+                    }
+                }
+                _ => {}
+            }
+        }
+        assert_no_field_children(&comp.root);
+        // The section tag must be the root.
+        match &comp.root {
+            JsxNode::Element { tag, children, .. } => {
+                assert_eq!(tag, "section");
+                // Zero children: the slot was spliced away.
+                assert!(
+                    children.is_empty(),
+                    "expected empty children, got {children:?}"
+                );
+            }
+            other => panic!("expected section element, got {other:?}"),
+        }
+    }
+
+    // ── FIX 2 test: lower vs lower_with_sources identical for non-native routes ──
+
+    #[test]
+    fn noninline_route_identical_via_with_sources() {
+        // A representative non-native route: element + member expr + .map.
+        let src = r#"export default function Page({ data }: any) {
+  return (
+    <ul>
+      {data.items.map((item: any) => <li>{item.name}</li>)}
+    </ul>
+  );
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let comp_plain = super::lower(&parsed).unwrap();
+        let (comp_with_src, warnings) = super::lower_with_sources(&parsed, HashMap::new()).unwrap();
+        assert!(
+            warnings.is_empty(),
+            "expected no warnings from lower_with_sources, got: {warnings:?}"
+        );
+        // Use Debug equality: proves the inline gate doesn't alter non-native lowering.
+        assert_eq!(
+            format!("{:?}", comp_plain.root),
+            format!("{:?}", comp_with_src.root),
+            "lower and lower_with_sources produced different IR for a non-native route"
+        );
+        assert_eq!(
+            format!("{:?}", comp_plain.props),
+            format!("{:?}", comp_with_src.props),
+        );
+    }
+
+    // ── Island props_path remapping through inline subst (bug fix) ───────────
+
+    /// When a native component containing `<Island props={c} …/>` is inlined
+    /// with `c={count}` at the call site, the Island's `props_path` must be
+    /// remapped to the call-site name (`"count"`), NOT kept as the component's
+    /// local param name (`"c"`).
+    #[test]
+    fn native_island_props_path_remapped() {
+        // Route: <WrapCounter native c={count} />
+        // WrapCounter: function WrapCounter({c}){ return <div><Island component={Counter} props={c} hydrate="load"/></div> }
+        let route = r#"export default function Page({ count }: any) {
+  return <WrapCounter native c={count} />;
+}"#;
+        let wrap_counter = r#"export default function WrapCounter({ c }: any) {
+  return (
+    <div>
+      <Island component={Counter} props={c} hydrate="load" />
+    </div>
+  );
+}"#;
+        let mut sources = HashMap::new();
+        sources.insert("WrapCounter".to_string(), wrap_counter.to_string());
+        let (comp, warnings) = lower_with_src(route, sources).unwrap();
+        assert!(
+            warnings.is_empty(),
+            "expected no warnings, got: {warnings:?}"
+        );
+
+        // Find the Island node recursively.
+        fn find_island(node: &JsxNode) -> Option<&JsxNode> {
+            match node {
+                JsxNode::Island { .. } => Some(node),
+                JsxNode::Element { children, .. } => children.iter().find_map(find_island),
+                JsxNode::Cond {
+                    consequent,
+                    alternate,
+                    ..
+                } => find_island(consequent)
+                    .or_else(|| alternate.as_ref().and_then(|a| find_island(a))),
+                JsxNode::Map { body, .. } => find_island(body),
+                JsxNode::Document { body, .. } => body.iter().find_map(find_island),
+                _ => None,
+            }
+        }
+
+        let island = find_island(&comp.root).expect("expected an Island node in the inlined tree");
+
+        match island {
+            JsxNode::Island {
+                component,
+                props_path,
+                ..
+            } => {
+                assert_eq!(component, "Counter");
+                assert_eq!(
+                    props_path, "count",
+                    "props_path must be remapped from 'c' to 'count' (the call-site field name)"
+                );
+            }
+            other => panic!("expected Island, got {other:?}"),
+        }
+    }
+
+    /// Non-inline Island props_path is unchanged (regression guard).
+    #[test]
+    fn non_inline_island_props_path_unchanged() {
+        let src = r#"export default function Page({ counter }: any) {
+  return <Island component={Counter} props={counter} hydrate="load" />;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let comp = super::lower(&parsed).unwrap();
+        match &comp.root {
+            JsxNode::Island { props_path, .. } => {
+                assert_eq!(props_path, "counter");
+            }
+            other => panic!("expected Island, got {other:?}"),
+        }
     }
 }

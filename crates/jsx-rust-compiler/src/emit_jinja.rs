@@ -132,6 +132,20 @@ fn emit_node(node: &JsxNode, out: &mut String) {
         // identifiers and inside attribute values — no escaping (escaping is
         // load-bearing for the byte-equal golden fixtures, so we deliberately
         // avoid it here).
+        JsxNode::Cond {
+            test,
+            consequent,
+            alternate,
+        } => {
+            let _ = write!(out, "{{% if {} %}}", emit_expr_path(test));
+            emit_node(consequent, out);
+            if let Some(alt) = alternate {
+                out.push_str("{% else %}");
+                emit_node(alt, out);
+            }
+            out.push_str("{% endif %}");
+        }
+        JsxNode::ChildrenSlot => unreachable!("ChildrenSlot must be substituted before emit"),
         JsxNode::Island {
             component,
             instance,
@@ -204,6 +218,77 @@ fn emit_expr_path(e: &Expr) -> String {
             format!("\"{}\"", s.replace('"', "\\\""))
         }
         Expr::StaticNum(n) => n.to_string(),
+        Expr::Arith { op, lhs, rhs } => {
+            let op_str = match op {
+                ArithOp::Add => "+",
+                ArithOp::Sub => "-",
+                ArithOp::Mul => "*",
+                ArithOp::Div => "/",
+                ArithOp::Mod => "%",
+            };
+            format!(
+                "({}) {} ({})",
+                emit_expr_path(lhs),
+                op_str,
+                emit_expr_path(rhs)
+            )
+        }
+        Expr::Concat(parts) => {
+            let rendered: Vec<String> = parts
+                .iter()
+                .map(|p| match p {
+                    Expr::StaticText(s) => format!("\"{}\"", s.replace('"', "\\\"")),
+                    other => emit_expr_path(other),
+                })
+                .collect();
+            rendered.join(" ~ ")
+        }
+        Expr::Filter { value, name, args } => {
+            // Parenthesize value if it's a binary op to avoid ambiguity.
+            let value_str = match value.as_ref() {
+                Expr::Arith { .. } | Expr::Compare { .. } | Expr::Logical { .. } => {
+                    format!("({})", emit_expr_path(value))
+                }
+                other => emit_expr_path(other),
+            };
+            if args.is_empty() {
+                format!("{} | {}", value_str, name)
+            } else {
+                let args_str: Vec<String> = args.iter().map(emit_expr_path).collect();
+                format!("{} | {}({})", value_str, name, args_str.join(", "))
+            }
+        }
+        Expr::Compare { op, lhs, rhs } => {
+            let op_str = match op {
+                CmpOp::Eq => "==",
+                CmpOp::Ne => "!=",
+                CmpOp::Gt => ">",
+                CmpOp::Lt => "<",
+                CmpOp::Ge => ">=",
+                CmpOp::Le => "<=",
+            };
+            format!(
+                "({}) {} ({})",
+                emit_expr_path(lhs),
+                op_str,
+                emit_expr_path(rhs)
+            )
+        }
+        Expr::Logical { op, lhs, rhs } => {
+            let op_str = match op {
+                LogOp::And => "and",
+                LogOp::Or => "or",
+            };
+            format!(
+                "({}) {} ({})",
+                emit_expr_path(lhs),
+                op_str,
+                emit_expr_path(rhs)
+            )
+        }
+        Expr::Not(e) => {
+            format!("not ({})", emit_expr_path(e))
+        }
     }
 }
 
@@ -556,6 +641,119 @@ mod tests {
         assert_eq!(
             emit(&component(ir)),
             "<div data-brust-island=\"Cart\" data-brust-props=\"{{ island_0_props }}\" data-brust-hydrate=\"visible\">{{ island_0_html | safe }}</div>"
+        );
+    }
+
+    // T2: Cond and new Expr variant tests.
+
+    #[test]
+    fn cond_and_emits_if() {
+        // Cond with no alternate → `{% if active %}<span></span>{% endif %}`
+        let ir = JsxNode::Cond {
+            test: Expr::Field("active".into()),
+            consequent: Box::new(JsxNode::Element {
+                tag: "span".into(),
+                attrs: vec![],
+                children: vec![],
+            }),
+            alternate: None,
+        };
+        assert_eq!(
+            emit(&component(ir)),
+            "{% if active %}<span></span>{% endif %}"
+        );
+    }
+
+    #[test]
+    fn cond_ternary_emits_if_else() {
+        // Cond with alternate → contains `{% if x %}` ... `{% else %}` ... `{% endif %}`
+        let ir = JsxNode::Cond {
+            test: Expr::Field("x".into()),
+            consequent: Box::new(JsxNode::Element {
+                tag: "span".into(),
+                attrs: vec![],
+                children: vec![],
+            }),
+            alternate: Some(Box::new(JsxNode::Element {
+                tag: "div".into(),
+                attrs: vec![],
+                children: vec![],
+            })),
+        };
+        let out = emit(&component(ir));
+        assert!(out.contains("{% if x %}"), "missing if: {out}");
+        assert!(out.contains("{% else %}"), "missing else: {out}");
+        assert!(out.contains("{% endif %}"), "missing endif: {out}");
+        assert_eq!(
+            out,
+            "{% if x %}<span></span>{% else %}<div></div>{% endif %}"
+        );
+    }
+
+    #[test]
+    fn filter_upper() {
+        // `Expr::Filter{ value: Field("name"), name:"upper", args:[] }` in `{{ }}` → `{{ name | upper }}`
+        let ir = JsxNode::Element {
+            tag: "span".into(),
+            attrs: vec![],
+            children: vec![JsxNode::Expr(Expr::Filter {
+                value: Box::new(Expr::Field("name".into())),
+                name: "upper".into(),
+                args: vec![],
+            })],
+        };
+        assert_eq!(emit(&component(ir)), "<span>{{ name | upper }}</span>");
+    }
+
+    #[test]
+    fn compare_gt() {
+        // `Compare{Gt, Field("count"), StaticNum(0)}` as Cond test → `{% if (count) > (0) %}`
+        let ir = JsxNode::Cond {
+            test: Expr::Compare {
+                op: CmpOp::Gt,
+                lhs: Box::new(Expr::Field("count".into())),
+                rhs: Box::new(Expr::StaticNum(0)),
+            },
+            consequent: Box::new(JsxNode::Empty),
+            alternate: None,
+        };
+        let out = emit(&component(ir));
+        assert!(
+            out.contains("{% if (count) > (0) %}"),
+            "unexpected output: {out}"
+        );
+    }
+
+    #[test]
+    fn concat_template() {
+        // `Concat([StaticText("Hi "), Field("name")])` → `{{ "Hi " ~ name }}`
+        let ir = JsxNode::Element {
+            tag: "p".into(),
+            attrs: vec![],
+            children: vec![JsxNode::Expr(Expr::Concat(vec![
+                Expr::StaticText("Hi ".into()),
+                Expr::Field("name".into()),
+            ]))],
+        };
+        assert_eq!(emit(&component(ir)), "<p>{{ \"Hi \" ~ name }}</p>");
+    }
+
+    #[test]
+    fn logical_and() {
+        // `Logical{And, Field("a"), Field("b")}` as Cond test → `{% if (a) and (b) %}`
+        let ir = JsxNode::Cond {
+            test: Expr::Logical {
+                op: LogOp::And,
+                lhs: Box::new(Expr::Field("a".into())),
+                rhs: Box::new(Expr::Field("b".into())),
+            },
+            consequent: Box::new(JsxNode::Empty),
+            alternate: None,
+        };
+        let out = emit(&component(ir));
+        assert!(
+            out.contains("{% if (a) and (b) %}"),
+            "unexpected output: {out}"
         );
     }
 }

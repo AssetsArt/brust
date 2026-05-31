@@ -41,6 +41,13 @@ declare module 'react' {
        * component is called), valid on any SSR component or `ssr` island on a
        * native route. See {@link IsrConfig}. */
       isr?: IsrConfig
+      /** brust `native` inline directive — compiler-consumed (stripped at lower
+       * time). On a native-jinja route, `<Comp native />` expands the component
+       * inline at compile time (no JS-worker render) when it is pure
+       * (props→JSX, no hooks/side-effects); otherwise it degrades to a normal
+       * SSR component with a build warning. Bare boolean, like `ssr` on an
+       * island. */
+      native?: boolean
     }
   }
 }

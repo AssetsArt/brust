@@ -29,7 +29,7 @@ pub enum PropType {
     Struct(BTreeMap<String, PropType>),
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub enum JsxNode {
     #[default]
     Empty,
@@ -94,6 +94,15 @@ pub enum JsxNode {
         /// Optional ISR revalidation interval in seconds (TTL).
         revalidate: Option<u32>,
     },
+    /// Conditional expression: `{test ? consequent : alternate}`.
+    /// `alternate` is `None` when there is no false-branch (unary ternary).
+    Cond {
+        test: Expr,
+        consequent: Box<JsxNode>,
+        alternate: Option<Box<JsxNode>>,
+    },
+    /// Slot that expands to the component's children at the call site.
+    ChildrenSlot,
     /// Interactive island embedded in a native (jinja) route. Lowered from a
     /// dedicated `<Island component={C} props={path} hydrate="..." ssr/>`
     /// recognition path (see `lower::lower_island`). The emitter renders a
@@ -126,7 +135,7 @@ pub enum JsxNode {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct JsxAttr {
     pub name: String,
     pub value: AttrValue,
@@ -137,7 +146,7 @@ pub struct JsxAttr {
 /// emitted into a JS `createElement` call, where `{...expr}` is a natural object
 /// spread. Source order is preserved so spread/named override semantics match
 /// React.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum SsrProp {
     /// Named attribute: `title={x}`, `label="foo"`, or bare boolean `disabled`.
     Attr(JsxAttr),
@@ -145,7 +154,7 @@ pub enum SsrProp {
     Spread(Expr),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum AttrValue {
     /// Bare boolean attribute (`disabled`).
     Empty,
@@ -171,4 +180,110 @@ pub enum Expr {
     StaticText(String),
     /// Integer literal in expression position.
     StaticNum(i64),
+    /// Arithmetic binary expression, e.g. `a + b`.
+    Arith {
+        op: ArithOp,
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
+    },
+    /// String/value concatenation of multiple expressions.
+    Concat(Vec<Expr>),
+    /// Jinja-style filter: `value | name(args…)`.
+    Filter {
+        value: Box<Expr>,
+        name: String,
+        args: Vec<Expr>,
+    },
+    /// Comparison expression, e.g. `a == b`.
+    Compare {
+        op: CmpOp,
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
+    },
+    /// Logical binary expression, e.g. `a && b`.
+    Logical {
+        op: LogOp,
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
+    },
+    /// Logical negation, e.g. `!a`.
+    Not(Box<Expr>),
+}
+
+/// Arithmetic operator.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ArithOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+}
+
+/// Comparison operator.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CmpOp {
+    Eq,
+    Ne,
+    Gt,
+    Lt,
+    Ge,
+    Le,
+}
+
+/// Logical binary operator.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LogOp {
+    And,
+    Or,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cond_node_clones() {
+        let original = JsxNode::Cond {
+            test: Expr::Field("flag".into()),
+            consequent: Box::new(JsxNode::Text("yes".into())),
+            alternate: Some(Box::new(JsxNode::Text("no".into()))),
+        };
+        let cloned = original.clone();
+        assert_eq!(format!("{:?}", original), format!("{:?}", cloned));
+    }
+
+    #[test]
+    fn expr_variants_construct() {
+        let variants: Vec<Expr> = vec![
+            Expr::Arith {
+                op: ArithOp::Add,
+                lhs: Box::new(Expr::StaticNum(1)),
+                rhs: Box::new(Expr::StaticNum(2)),
+            },
+            Expr::Concat(vec![
+                Expr::StaticText("a".into()),
+                Expr::StaticText("b".into()),
+            ]),
+            Expr::Filter {
+                value: Box::new(Expr::Field("x".into())),
+                name: "upper".into(),
+                args: vec![],
+            },
+            Expr::Compare {
+                op: CmpOp::Eq,
+                lhs: Box::new(Expr::Field("a".into())),
+                rhs: Box::new(Expr::Field("b".into())),
+            },
+            Expr::Logical {
+                op: LogOp::And,
+                lhs: Box::new(Expr::Field("p".into())),
+                rhs: Box::new(Expr::Field("q".into())),
+            },
+            Expr::Not(Box::new(Expr::Field("flag".into()))),
+        ];
+        for e in &variants {
+            assert!(!format!("{:?}", e).is_empty());
+        }
+    }
 }

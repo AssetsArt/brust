@@ -1,3 +1,4 @@
+pub mod analyze;
 mod emit_factory;
 mod emit_jinja;
 mod ir;
@@ -5,6 +6,7 @@ mod lower;
 pub mod parser;
 
 use ir::JsxNode;
+use std::collections::HashMap;
 
 pub fn compile(source: &str) -> Result<String, CompileError> {
     compile_with_path(source, "<stdin>")
@@ -14,7 +16,7 @@ pub fn compile(source: &str) -> Result<String, CompileError> {
 /// harness depends on this signature, so it stays a thin delegate to
 /// `compile_full` (which also collects the island manifest).
 pub fn compile_with_path(source: &str, path: &str) -> Result<String, CompileError> {
-    compile_full(source, path).map(|c| c.template)
+    compile_full(source, path, HashMap::new()).map(|c| c.template)
 }
 
 /// Result of a full compile: the jinja template plus the island manifest
@@ -25,6 +27,9 @@ pub struct Compiled {
     pub template: String,
     pub islands: Vec<IslandMeta>,
     pub components: Vec<ComponentMeta>,
+    /// Non-fatal diagnostic messages collected during compilation (e.g. from
+    /// native-inline lowering). Empty when no `component_sources` are supplied.
+    pub warnings: Vec<String>,
 }
 
 /// One entry in the SSR-component manifest. Parallel to `IslandMeta`.
@@ -76,7 +81,14 @@ pub struct IslandMeta {
 /// Parse → lower → { emit template, collect islands, collect components }. The
 /// single source of truth for compilation; `compile`/`compile_with_path` are
 /// thin wrappers.
-pub fn compile_full(source: &str, path: &str) -> Result<Compiled, CompileError> {
+///
+/// `component_sources` maps component ident → source text for native-inline
+/// lowering (T6). Pass `HashMap::new()` for the legacy no-inline behaviour.
+pub fn compile_full(
+    source: &str,
+    path: &str,
+    component_sources: HashMap<String, String>,
+) -> Result<Compiled, CompileError> {
     let parsed = parser::parse(source, path).map_err(|e| CompileError {
         path: path.to_string(),
         line: 0,
@@ -84,7 +96,8 @@ pub fn compile_full(source: &str, path: &str) -> Result<Compiled, CompileError> 
         kind: ErrorKind::Parse(e.to_string()),
     })?;
 
-    let mut ir = lower::lower(&parsed).map_err(|e| CompileError::from_lower(e, path, &parsed))?;
+    let (mut ir, warnings) = lower::lower_with_sources(&parsed, component_sources)
+        .map_err(|e| CompileError::from_lower(e, path, &parsed))?;
     // Assign each island a source-order `instance` index. Runs after lower
     // (which sets `instance: 0` as a placeholder) and before emit/collect so
     // both read the final indices.
@@ -117,6 +130,7 @@ pub fn compile_full(source: &str, path: &str) -> Result<Compiled, CompileError> 
         template,
         islands,
         components,
+        warnings,
     })
 }
 
@@ -148,6 +162,17 @@ fn number_islands(node: &mut JsxNode, counter: &mut usize) {
             }
         }
         JsxNode::Empty | JsxNode::Text(_) | JsxNode::Expr(_) => {}
+        JsxNode::Cond {
+            consequent,
+            alternate,
+            ..
+        } => {
+            number_islands(consequent, counter);
+            if let Some(alt) = alternate {
+                number_islands(alt, counter);
+            }
+        }
+        JsxNode::ChildrenSlot => {}
     }
 }
 
@@ -198,6 +223,17 @@ fn collect_islands(node: &JsxNode, out: &mut Vec<IslandMeta>) {
         // are written by Island.tsx React-path render into the DOM directly.
         JsxNode::SsrComponent { .. } => {}
         JsxNode::Empty | JsxNode::Text(_) | JsxNode::Expr(_) => {}
+        JsxNode::Cond {
+            consequent,
+            alternate,
+            ..
+        } => {
+            collect_islands(consequent, out);
+            if let Some(alt) = alternate {
+                collect_islands(alt, out);
+            }
+        }
+        JsxNode::ChildrenSlot => {}
     }
 }
 
@@ -225,6 +261,17 @@ fn number_ssr_components(node: &mut JsxNode, counter: &mut usize) {
         }
         JsxNode::Map { body, .. } => number_ssr_components(body, counter),
         JsxNode::Empty | JsxNode::Text(_) | JsxNode::Expr(_) | JsxNode::Island { .. } => {}
+        JsxNode::Cond {
+            consequent,
+            alternate,
+            ..
+        } => {
+            number_ssr_components(consequent, counter);
+            if let Some(alt) = alternate {
+                number_ssr_components(alt, counter);
+            }
+        }
+        JsxNode::ChildrenSlot => {}
     }
 }
 
@@ -269,6 +316,17 @@ fn collect_components(node: &JsxNode, out: &mut Vec<ComponentMeta>) {
         }
         JsxNode::Map { body, .. } => collect_components(body, out),
         JsxNode::Empty | JsxNode::Text(_) | JsxNode::Expr(_) | JsxNode::Island { .. } => {}
+        JsxNode::Cond {
+            consequent,
+            alternate,
+            ..
+        } => {
+            collect_components(consequent, out);
+            if let Some(alt) = alternate {
+                collect_components(alt, out);
+            }
+        }
+        JsxNode::ChildrenSlot => {}
     }
 }
 
@@ -527,6 +585,10 @@ pub enum ErrorKind {
         "`<BrustPage>` owns `<head>` — a literal `<head>` child is not supported; set head tags via props instead (e.g. `title=\"…\"`, `description=\"…\"`)"
     )]
     BrustPageLiteralHeadNotSupported,
+    #[error("inline lowering cannot translate `{0}` — expression is too complex for inline mode")]
+    InlineUntranslatable(String),
+    #[error("circular native inline: {0}")]
+    CircularInline(String),
 }
 
 impl CompileError {
@@ -573,7 +635,7 @@ mod tests {
     <Island component={B} props={data.b} hydrate="visible" />
   </div>;
 }"#;
-        let c = compile_full(src, "<test>").unwrap();
+        let c = compile_full(src, "<test>", HashMap::new()).unwrap();
         assert_eq!(
             c.islands,
             vec![
@@ -610,7 +672,7 @@ mod tests {
     #[test]
     fn compile_full_no_islands_yields_empty_vec() {
         let src = "export default function Page() { return <p>hi</p>; }";
-        let c = compile_full(src, "<test>").unwrap();
+        let c = compile_full(src, "<test>", HashMap::new()).unwrap();
         assert_eq!(c.islands, vec![]);
     }
 
@@ -621,7 +683,7 @@ mod tests {
         let src = r#"export default function Page({ data }) {
   return <div><Island component={C} props={data.a} /><Island component={C} props={data.b} /></div>;
 }"#;
-        let c = compile_full(src, "<test>").unwrap();
+        let c = compile_full(src, "<test>", HashMap::new()).unwrap();
         assert_eq!(
             c.islands,
             vec![
@@ -659,7 +721,7 @@ mod tests {
         let src = r#"export default function Page({ data }) {
   return <Island component={C} id="X" props={data.a} />;
 }"#;
-        let err = compile_full(src, "<test>").unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::IslandIdAttrRemoved),
             "expected IslandIdAttrRemoved, got {:?}",
@@ -675,7 +737,7 @@ mod tests {
         let src = r#"export default function Page({ data }) {
   return <Island component={Foo$Bar} props={data.a} />;
 }"#;
-        let err = compile_full(src, "<test>").unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
         match err.kind {
             ErrorKind::IslandBadComponentName(name) => assert_eq!(name, "Foo$Bar"),
             other => panic!("expected IslandBadComponentName, got {other:?}"),
@@ -687,7 +749,7 @@ mod tests {
         let src = r#"export default function Page({ data }) {
   return <main><section><Island component={Deep} props={data.x} /></section></main>;
 }"#;
-        let c = compile_full(src, "<test>").unwrap();
+        let c = compile_full(src, "<test>", HashMap::new()).unwrap();
         assert_eq!(
             c.islands,
             vec![IslandMeta {
@@ -800,7 +862,7 @@ mod tests {
     </BrustPage>
   );
 }"#;
-        let c = compile_full(src, "<test>").unwrap();
+        let c = compile_full(src, "<test>", HashMap::new()).unwrap();
         let expected = concat!(
             "<html lang=\"en\" class=\"dark\">",
             "<head>",
@@ -833,7 +895,7 @@ mod tests {
         let src = r#"export default function Home() {
   return <BrustPage><main>hi</main></BrustPage>;
 }"#;
-        let c = compile_full(src, "<test>").unwrap();
+        let c = compile_full(src, "<test>", HashMap::new()).unwrap();
         assert_eq!(
             c.template,
             concat!(
@@ -853,7 +915,7 @@ mod tests {
         let src = r#"export default function Home() {
   return <BrustPage><head><title>x</title></head><main>hi</main></BrustPage>;
 }"#;
-        let err = compile_full(src, "<test>").unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::BrustPageLiteralHeadNotSupported),
             "expected BrustPageLiteralHeadNotSupported, got {:?}",
@@ -866,7 +928,7 @@ mod tests {
         let src = r#"export default function Home() {
   return <div><BrustPage><main>hi</main></BrustPage></div>;
 }"#;
-        let err = compile_full(src, "<test>").unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::BrustPageMustBeRoot),
             "expected BrustPageMustBeRoot, got {:?}",
@@ -879,7 +941,7 @@ mod tests {
         let src = r#"export default function Home({ lang }) {
   return <BrustPage lang={lang}><main>hi</main></BrustPage>;
 }"#;
-        let err = compile_full(src, "<test>").unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
         match err.kind {
             ErrorKind::BrustPageAttrMustBeStringLiteral(name) => assert_eq!(name, "lang"),
             other => panic!("expected BrustPageAttrMustBeStringLiteral, got {other:?}"),
@@ -891,7 +953,7 @@ mod tests {
         let src = r#"export default function Page({ greeting }) {
   return <Layout title={greeting} />;
 }"#;
-        let c = compile_full(src, "<test>").unwrap();
+        let c = compile_full(src, "<test>", HashMap::new()).unwrap();
         assert_eq!(c.template, "{{ comp_0_html | safe }}");
     }
 
@@ -900,7 +962,7 @@ mod tests {
         let src = r#"export default function Page({ greeting }) {
   return <div><Header /><p>{greeting}</p></div>;
 }"#;
-        let c = compile_full(src, "<test>").unwrap();
+        let c = compile_full(src, "<test>", HashMap::new()).unwrap();
         assert_eq!(
             c.template,
             "<div>{{ comp_0_html | safe }}<p>{{ greeting }}</p></div>"
@@ -912,7 +974,7 @@ mod tests {
         let src = r#"export default function Page({ a, b }) {
   return <div><Nav x={a} /><Sidebar y={b} /></div>;
 }"#;
-        let c = compile_full(src, "<test>").unwrap();
+        let c = compile_full(src, "<test>", HashMap::new()).unwrap();
         assert_eq!(
             c.template,
             "<div>{{ comp_0_html | safe }}{{ comp_1_html | safe }}</div>"
@@ -928,7 +990,7 @@ mod tests {
     fn factory_leaf_component() {
         let src =
             "export default function Page({ greeting }) { return <Header user={greeting} />; }";
-        let c = compile_full(src, "<test>").unwrap();
+        let c = compile_full(src, "<test>", HashMap::new()).unwrap();
         assert_eq!(
             c.components[0].factory_expr,
             "(ctx) => h(Header, {user: ctx.greeting})"
@@ -940,7 +1002,7 @@ mod tests {
     #[test]
     fn factory_component_with_static_prop() {
         let src = r#"export default function Page({ data }) { return <Card label="hello" count={data.n} />; }"#;
-        let c = compile_full(src, "<test>").unwrap();
+        let c = compile_full(src, "<test>", HashMap::new()).unwrap();
         assert_eq!(
             c.components[0].factory_expr,
             r#"(ctx) => h(Card, {label: "hello", count: ctx.data.n})"#
@@ -952,7 +1014,7 @@ mod tests {
         let src = r#"export default function Page({ greeting, data }) {
   return <Layout title={greeting}><h1>{greeting}</h1><Island component={Counter} props={data.counter} hydrate="load" /></Layout>;
 }"#;
-        let c = compile_full(src, "<test>").unwrap();
+        let c = compile_full(src, "<test>", HashMap::new()).unwrap();
         assert_eq!(
             c.components[0].factory_expr,
             r#"(ctx) => h(Layout, {title: ctx.greeting}, h("h1", null, ctx.greeting), h(Island, {component: Counter, props: ctx.data.counter, hydrate: "load"}))"#
@@ -976,7 +1038,7 @@ mod tests {
         // because the factory is plain JS createElement. It lowers to a JS
         // object spread `{...ctx.clientProps}`.
         let src = "export default function Page({ clientProps }) { return <Counter {...clientProps} />; }";
-        let c = compile_full(src, "<test>").unwrap();
+        let c = compile_full(src, "<test>", HashMap::new()).unwrap();
         assert_eq!(
             c.components[0].factory_expr,
             "(ctx) => h(Counter, {...ctx.clientProps})"
@@ -988,7 +1050,7 @@ mod tests {
         // Source order is load-bearing for object spread override semantics:
         // `{...a, extra: x}` lets `extra` win; the reverse lets `a` win.
         let src = "export default function Page({ clientProps, data }) { return <Counter {...clientProps} extra={data.x} />; }";
-        let c = compile_full(src, "<test>").unwrap();
+        let c = compile_full(src, "<test>", HashMap::new()).unwrap();
         assert_eq!(
             c.components[0].factory_expr,
             "(ctx) => h(Counter, {...ctx.clientProps, extra: ctx.data.x})"
@@ -998,7 +1060,7 @@ mod tests {
     #[test]
     fn factory_component_spread_member_access() {
         let src = "export default function Page({ data }) { return <Card {...data.card} />; }";
-        let c = compile_full(src, "<test>").unwrap();
+        let c = compile_full(src, "<test>", HashMap::new()).unwrap();
         assert_eq!(
             c.components[0].factory_expr,
             "(ctx) => h(Card, {...ctx.data.card})"
@@ -1011,7 +1073,7 @@ mod tests {
         // `{b: 1, ...ctx.a}` so the spread overrides the named prop — the
         // opposite override outcome from spread-first. Pins source-order fidelity.
         let src = "export default function Page({ data, rest }) { return <Card extra={data.x} {...rest} />; }";
-        let c = compile_full(src, "<test>").unwrap();
+        let c = compile_full(src, "<test>", HashMap::new()).unwrap();
         assert_eq!(
             c.components[0].factory_expr,
             "(ctx) => h(Card, {extra: ctx.data.x, ...ctx.rest})"
@@ -1086,10 +1148,139 @@ mod tests {
         let src = r#"export default function Page({ data }) {
   return <Layout title={data.title} isr={{ key: data.cacheKey, revalidate: 30 }} />;
 }"#;
-        let c = compile_full(src, "<test>").unwrap();
+        let c = compile_full(src, "<test>", HashMap::new()).unwrap();
         assert_eq!(c.components.len(), 1);
         assert_eq!(c.components[0].key_path.as_deref(), Some("data.cacheKey"));
         assert_eq!(c.components[0].tags_path, None);
         assert_eq!(c.components[0].revalidate, Some(30));
+    }
+
+    #[test]
+    fn collect_islands_recurses_cond() {
+        use crate::ir::{Expr, JsxNode};
+        // Build a Cond whose consequent is an Island; alternate is None.
+        let island = JsxNode::Island {
+            component: "CondIsland".to_string(),
+            instance: 0,
+            props_path: "data.x".to_string(),
+            hydrate: "load".to_string(),
+            ssr: false,
+            key_path: None,
+            key_literal: None,
+            tags_path: None,
+            tags_literal: None,
+            revalidate: None,
+        };
+        let mut root = JsxNode::Cond {
+            test: Expr::Field("flag".to_string()),
+            consequent: Box::new(island),
+            alternate: None,
+        };
+
+        // Number islands first (as compile_full does).
+        let mut counter = 0;
+        number_islands(&mut root, &mut counter);
+        assert_eq!(counter, 1, "should have numbered 1 island");
+
+        // Now collect islands.
+        let mut islands = Vec::new();
+        collect_islands(&root, &mut islands);
+        assert_eq!(islands.len(), 1, "island inside Cond should be collected");
+        assert_eq!(islands[0].component, "CondIsland");
+        assert_eq!(islands[0].instance, 0);
+    }
+
+    #[test]
+    fn collect_components_recurses_cond() {
+        use crate::ir::{Expr, JsxNode};
+        // Build a Cond whose consequent is an SsrComponent.
+        let comp = JsxNode::SsrComponent {
+            component: "CondLayout".to_string(),
+            instance: 0,
+            props: vec![],
+            children: vec![],
+            key_path: None,
+            key_literal: None,
+            tags_path: None,
+            tags_literal: None,
+            revalidate: None,
+        };
+        let mut root = JsxNode::Cond {
+            test: Expr::Field("show".to_string()),
+            consequent: Box::new(comp),
+            alternate: None,
+        };
+
+        // Number SSR components first (as compile_full does).
+        let mut counter = 0;
+        number_ssr_components(&mut root, &mut counter);
+        assert_eq!(counter, 1, "should have numbered 1 SSR component");
+
+        // Now collect components.
+        let mut components = Vec::new();
+        collect_components(&root, &mut components);
+        assert_eq!(
+            components.len(),
+            1,
+            "SsrComponent inside Cond should be collected"
+        );
+        assert_eq!(components[0].component, "CondLayout");
+        assert_eq!(components[0].instance, 0);
+    }
+
+    #[test]
+    fn compile_full_collects_warnings() {
+        // Route uses <Card native/> but Card source uses useState → falls back
+        // to SsrComponent and pushes a warning about the hook.
+        let route = r#"export default function Page({ data }) {
+  return <div><Card native title={data.x}/></div>;
+}"#;
+        let card_src = r#"export default function Card({ title }) {
+  const [v, setV] = useState(0);
+  return <h1>{title}</h1>;
+}"#;
+        let mut sources = HashMap::new();
+        sources.insert("Card".to_string(), card_src.to_string());
+        let c = compile_full(route, "<test>", sources).unwrap();
+        assert!(
+            !c.warnings.is_empty(),
+            "expected at least one warning, got none"
+        );
+    }
+
+    #[test]
+    fn compile_full_empty_sources_yields_empty_warnings() {
+        // Existing callers pass HashMap::new() — warnings must be empty.
+        let src = "export default function Page() { return <p>hi</p>; }";
+        let c = compile_full(src, "<test>", HashMap::new()).unwrap();
+        assert!(
+            c.warnings.is_empty(),
+            "expected no warnings, got: {:?}",
+            c.warnings
+        );
+    }
+
+    #[test]
+    fn circular_inline_surfaces_as_compile_error() {
+        // A native → B native → A native → CircularInline hard error surfaces
+        // as CompileError whose kind is ErrorKind::CircularInline.
+        let route = r#"export default function Page() {
+  return <A native/>;
+}"#;
+        let a_src = r#"export default function A() {
+  return <B native/>;
+}"#;
+        let b_src = r#"export default function B() {
+  return <A native/>;
+}"#;
+        let mut sources = HashMap::new();
+        sources.insert("A".to_string(), a_src.to_string());
+        sources.insert("B".to_string(), b_src.to_string());
+        let err = compile_full(route, "<test>", sources).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::CircularInline(_)),
+            "expected CircularInline, got {:?}",
+            err.kind
+        );
     }
 }

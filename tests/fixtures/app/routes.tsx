@@ -12,6 +12,7 @@ import NativeIslandPage from './NativeIslandPage'
 import NativeSsrIslandPage from './NativeSsrIslandPage'
 import NativeTwoIslandPage from './NativeTwoIslandPage'
 import NativeSsrComp from './NativeSsrComp'
+import NativeInline from './NativeInline'
 
 // Test-only components — these mount routes that exercise failure modes,
 // middleware, cache, nested routes, and the various server-action paths.
@@ -117,6 +118,17 @@ export const routes = defineRoutes([
       greeting: 'SSR component test',
       counter: { start: 0, label: 'clicks' },
     }),
+  },
+
+  // Sub-project J / native inline — native: true route with inlined pure
+  // components (InlineBadge), hook-fallback SSR components (HookBadge), and an
+  // inlined pure wrapper that itself embeds an Island (WrapCounter → Counter).
+  // Proves the full inline + fallback + Island-reconcile pipeline end-to-end.
+  {
+    path: '/_test/native-inline',
+    Component: NativeInline,
+    native: true,
+    loader: async () => ({ label: 'Hi', strong: true, count: { start: 0, label: 'c' } }),
   },
 
   // Test-only routes — failure modes + middleware + cache.
