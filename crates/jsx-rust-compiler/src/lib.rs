@@ -90,6 +90,11 @@ pub fn compile_full(source: &str, path: &str) -> Result<Compiled, CompileError> 
     let mut components: Vec<ComponentMeta> = Vec::new();
     collect_components(&ir.root, &mut components);
     // Zip factory outputs into component entries (same source order).
+    debug_assert_eq!(
+        components.len(),
+        factory_outputs.len(),
+        "collect_components and emit_factory must walk the IR identically"
+    );
     for (comp, fo) in components.iter_mut().zip(factory_outputs) {
         comp.factory_expr = fo.expr;
         comp.referenced_components = fo.referenced;
