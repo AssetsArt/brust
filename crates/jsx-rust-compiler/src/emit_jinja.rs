@@ -116,6 +116,13 @@ fn emit_node(node: &JsxNode, out: &mut String) {
             }
             out.push_str("</body></html>");
         }
+        // SSR component slot. The JS worker fills `comp_<instance>_html` into
+        // the template context; `| safe` passes the pre-rendered HTML through
+        // unescaped. `instance` is a bare number, safe verbatim as a jinja
+        // identifier.
+        JsxNode::SsrComponent { instance, .. } => {
+            let _ = write!(out, "{{{{ comp_{instance}_html | safe }}}}");
+        }
         // Island mount marker. The hydration runtime keys off the
         // `data-brust-*` attributes; the runtime fills `island_<instance>_props`
         // (a pre-serialized, attribute-safe string — NOT `| tojson`, which
