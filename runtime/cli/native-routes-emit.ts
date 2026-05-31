@@ -56,6 +56,12 @@ interface RawIslandEntry {
   propsPath: string
   ssr: boolean
   hydrate: string
+  /** ISR cache fields (present only on islands with an `isr` attr). Declared so
+   * reconcile's `{ ...entry }` spread is type-complete — they MUST survive into
+   * the enriched manifest, or runtime ISR caching silently never activates. */
+  keyPath?: string
+  tagsPath?: string
+  revalidate?: number
 }
 interface EnrichedIslandEntry extends RawIslandEntry {
   /** Absolute path to the island's client source, resolved from the page's
