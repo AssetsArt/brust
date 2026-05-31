@@ -18,12 +18,11 @@ use crate::parser::ParsedSource;
 
 /// Context carried when lowering a component in inline mode (T5 opt-in).
 /// `subst` maps destructured prop names to the call-site `Expr` that replaces
-/// them; `has_children` records whether the call site passed children so
-/// `{children}` emits a `JsxNode::ChildrenSlot`.
+/// them. Whether `{children}` emits `ChildrenSlot` is determined by checking
+/// if `"children"` is in the component's destructured params — not stored here.
 #[derive(Debug)]
 struct InlineCtx {
     subst: HashMap<String, crate::ir::Expr>,
-    has_children: bool,
 }
 
 /// Shared environment threaded through the entire native-inline recursion.
@@ -148,6 +147,7 @@ pub fn lower(parsed: &ParsedSource) -> Result<Component, LowerError> {
 /// Like `lower` but builds an `InlineEnv` from `sources` (a map from component
 /// ident → source text). Warnings accumulated during inlining are returned
 /// alongside the component. Existing `lower(parsed)` is unchanged.
+// Called by `compile_full` in T7; until then only the tests exercise it.
 #[allow(dead_code)]
 pub(crate) fn lower_with_sources(
     parsed: &ParsedSource,
@@ -208,8 +208,10 @@ pub(crate) fn lower_with_sources(
 
 /// Crate-internal entry point for inline lowering (T5 opt-in).
 ///
-/// Lowers a component's JSX body with `subst` substituted for its prop names
-/// and `has_children` controlling whether `{children}` emits `ChildrenSlot`.
+/// Lowers a component's JSX body with `subst` substituted for its prop names.
+/// Whether `{children}` emits `ChildrenSlot` is determined by checking if
+/// `"children"` is in the component's destructured params (not via the
+/// `_has_children` argument, which is kept for API stability).
 /// The normal `lower` entry point is unaffected — this is purely additive.
 /// `env` is the shared native-inline environment threaded through T6 recursion;
 /// pass `None` for pure T5 usage.
@@ -221,7 +223,7 @@ pub(crate) fn lower_with_sources(
 pub(crate) fn lower_component_inline(
     parsed: &ParsedSource,
     subst: HashMap<String, crate::ir::Expr>,
-    has_children: bool,
+    _has_children: bool,
     env: Option<Rc<InlineEnv>>,
 ) -> Result<Vec<JsxNode>, LowerError> {
     let (_, fn_expr) = find_default_export(&parsed.module)?;
@@ -232,10 +234,7 @@ pub(crate) fn lower_component_inline(
 
     let param_shape = lower_params(&fn_expr.function)?;
 
-    let inline_ctx = Rc::new(InlineCtx {
-        subst,
-        has_children,
-    });
+    let inline_ctx = Rc::new(InlineCtx { subst });
     let scope = Scope {
         destructured: param_shape.destructured.clone(),
         named_param: param_shape.named.clone(),
@@ -282,7 +281,6 @@ pub(crate) fn lower_component_inline(
 ///   `return <B>;`
 /// (with or without an explicit `else`). Returns `None` if the shape doesn't
 /// match, so the caller can fall back to an error.
-#[allow(dead_code)]
 fn try_lower_if_return_body(
     body: &BlockStmt,
     scope: &Scope,
@@ -339,7 +337,6 @@ fn try_lower_if_return_body(
 /// Extract the JSX element from a `return <JSX>;` statement or
 /// `{ return <JSX>; }` block statement. Returns `None` if the shape doesn't
 /// match (so the caller can decide what to do).
-#[allow(dead_code)]
 fn extract_return_jsx_from_stmt(stmt: &Stmt) -> Result<Option<&JSXElement>, LowerError> {
     match stmt {
         Stmt::Return(ReturnStmt {
@@ -1086,10 +1083,18 @@ fn try_native_inline(
                 env.cycle.borrow_mut().pop();
                 return Err(e);
             }
-            env.warnings.borrow_mut().push(format!(
-                "native component \"{}\" not inlined: unsupported prop",
-                component
-            ));
+            let msg = if let ErrorKind::InlineUntranslatable(s) = &e.kind {
+                format!(
+                    "native component \"{}\" not inlined: untranslatable ({})",
+                    component, s
+                )
+            } else {
+                format!(
+                    "native component \"{}\" not inlined: unsupported prop",
+                    component
+                )
+            };
+            env.warnings.borrow_mut().push(msg);
             env.cycle.borrow_mut().pop();
             return Ok(None);
         }
@@ -1808,14 +1813,13 @@ fn lower_child(
 
                 // GATE: inline mode — handle special inline child patterns.
                 if scope.inline.is_some() {
-                    // `{children}` → ChildrenSlot (when has_children is true).
+                    // `{children}` → ChildrenSlot unconditionally when "children"
+                    // is in the component's destructured params. The splice step
+                    // removes the slot cleanly when zero call-site children were
+                    // passed, so we must emit the slot regardless of has_children.
                     if let SwcExpr::Ident(id) = e.as_ref()
                         && id.sym.as_ref() == "children"
-                        && scope
-                            .inline
-                            .as_ref()
-                            .map(|ctx| ctx.has_children)
-                            .unwrap_or(false)
+                        && scope.destructured.contains(&"children".to_string())
                     {
                         return Ok(Some(JsxNode::ChildrenSlot));
                     }
@@ -4379,6 +4383,107 @@ mod tests {
         assert!(
             warnings.iter().any(|w| w.contains("isr ignored")),
             "expected 'isr ignored' warning, got: {warnings:?}"
+        );
+    }
+
+    // ── FIX 1 test: ChildrenSlot emitted even when call-site has no children ──
+
+    #[test]
+    fn native_children_slot_no_callsite_children() {
+        // Route: <Box native/> — NO children at the call site.
+        // Box: function Box({children}){return <section>{children}</section>}
+        // Expected: the section is present and contains neither ChildrenSlot
+        // nor Expr::Field("children"); children spliced to nothing.
+        let route = r#"export default function P() {
+  return <Box native/>;
+}"#;
+        let box_src = r#"export default function Box({ children }: any) {
+  return <section>{children}</section>;
+}"#;
+        let mut sources = HashMap::new();
+        sources.insert("Box".to_string(), box_src.to_string());
+        let (comp, warnings) = lower_with_src(route, sources).unwrap();
+        assert!(
+            warnings.is_empty(),
+            "expected no warnings, got: {warnings:?}"
+        );
+        // Root must be the inlined <section> — no SsrComponent.
+        assert_no_ssr_component(&comp.root);
+        // No ChildrenSlot left after splice.
+        assert_no_children_slot(&comp.root);
+        // No Expr::Field("children") anywhere (the bogus fallback).
+        fn assert_no_field_children(node: &JsxNode) {
+            match node {
+                JsxNode::Expr(crate::ir::Expr::Field(name)) => {
+                    assert_ne!(name, "children", "found bogus Expr::Field(\"children\")");
+                }
+                JsxNode::Element { children, .. } => {
+                    for c in children {
+                        assert_no_field_children(c);
+                    }
+                }
+                JsxNode::Cond {
+                    consequent,
+                    alternate,
+                    ..
+                } => {
+                    assert_no_field_children(consequent);
+                    if let Some(alt) = alternate {
+                        assert_no_field_children(alt);
+                    }
+                }
+                JsxNode::Map { body, .. } => assert_no_field_children(body),
+                JsxNode::Document { body, .. } => {
+                    for c in body {
+                        assert_no_field_children(c);
+                    }
+                }
+                _ => {}
+            }
+        }
+        assert_no_field_children(&comp.root);
+        // The section tag must be the root.
+        match &comp.root {
+            JsxNode::Element { tag, children, .. } => {
+                assert_eq!(tag, "section");
+                // Zero children: the slot was spliced away.
+                assert!(
+                    children.is_empty(),
+                    "expected empty children, got {children:?}"
+                );
+            }
+            other => panic!("expected section element, got {other:?}"),
+        }
+    }
+
+    // ── FIX 2 test: lower vs lower_with_sources identical for non-native routes ──
+
+    #[test]
+    fn noninline_route_identical_via_with_sources() {
+        // A representative non-native route: element + member expr + .map.
+        let src = r#"export default function Page({ data }: any) {
+  return (
+    <ul>
+      {data.items.map((item: any) => <li>{item.name}</li>)}
+    </ul>
+  );
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let comp_plain = super::lower(&parsed).unwrap();
+        let (comp_with_src, warnings) = super::lower_with_sources(&parsed, HashMap::new()).unwrap();
+        assert!(
+            warnings.is_empty(),
+            "expected no warnings from lower_with_sources, got: {warnings:?}"
+        );
+        // Use Debug equality: proves the inline gate doesn't alter non-native lowering.
+        assert_eq!(
+            format!("{:?}", comp_plain.root),
+            format!("{:?}", comp_with_src.root),
+            "lower and lower_with_sources produced different IR for a non-native route"
+        );
+        assert_eq!(
+            format!("{:?}", comp_plain.props),
+            format!("{:?}", comp_with_src.props),
         );
     }
 }
