@@ -1439,6 +1439,17 @@ fn island_component_ident(jsx_attr: &swc_core::ecma::ast::JSXAttr) -> Result<Str
 /// props rooted at a map binding, unresolved roots, computed access, non-Ident
 /// roots, and any non-`{expr}` value. Deliberately NOT routed through
 /// `lower_member` (which accepts map-bound roots and deeper chains).
+///
+/// INLINE MODE (T6): when `scope.inline` is set, a bare `Ident(x)` that is a
+/// key in the inline `subst` map is remapped through the substitution BEFORE
+/// computing the path:
+/// - `Expr::Field(name)` or `Expr::MapBinding(name)` → use `name` as path.
+/// - `Expr::MemberAccess { root, path }` → join as `root.path[0]…` (full
+///   dotted path, mirrors what `expr_to_path` returns for a direct member).
+/// - Any other `Expr` (literal, arith, etc.) → not a valid island props source
+///   → `IslandPropsPathUnsupported`.
+///
+/// Non-inline behavior is byte-identical to pre-T6.
 fn island_props_path(
     jsx_attr: &swc_core::ecma::ast::JSXAttr,
     scope: &Scope,
@@ -1451,6 +1462,32 @@ fn island_props_path(
     let JSXExpr::Expr(e) = &c.expr else {
         return Err(err());
     };
+
+    // INLINE MODE: if the expression is a bare ident that maps through the
+    // inline subst, remap to the call-site Expr and derive the path from it.
+    if let Some(ctx) = &scope.inline
+        && let SwcExpr::Ident(id) = strip_paren(e.as_ref())
+    {
+        let name = id.sym.to_string();
+        if let Some(substituted) = ctx.subst.get(&name) {
+            return match substituted {
+                // Bare call-site field (destructured prop name) → use directly.
+                crate::ir::Expr::Field(field_name) => Ok(field_name.clone()),
+                // Call-site map binding → use directly (e.g. item in a .map).
+                crate::ir::Expr::MapBinding(binding_name) => Ok(binding_name.clone()),
+                // Call-site member access: `root.seg0.seg1…` — join into dotted
+                // path. This mirrors what `expr_to_path` returns for a member expr.
+                crate::ir::Expr::MemberAccess { root, path } => {
+                    let mut parts = vec![root.as_str()];
+                    parts.extend(path.iter().map(|s| s.as_str()));
+                    Ok(parts.join("."))
+                }
+                // Any other Expr (literal, arith, concat, …) is not a valid
+                // island props source — fall back with unsupported.
+                _ => Err(err()),
+            };
+        }
+    }
 
     expr_to_path(e.as_ref(), scope, &err)
 }
@@ -4485,5 +4522,84 @@ mod tests {
             format!("{:?}", comp_plain.props),
             format!("{:?}", comp_with_src.props),
         );
+    }
+
+    // ── Island props_path remapping through inline subst (bug fix) ───────────
+
+    /// When a native component containing `<Island props={c} …/>` is inlined
+    /// with `c={count}` at the call site, the Island's `props_path` must be
+    /// remapped to the call-site name (`"count"`), NOT kept as the component's
+    /// local param name (`"c"`).
+    #[test]
+    fn native_island_props_path_remapped() {
+        // Route: <WrapCounter native c={count} />
+        // WrapCounter: function WrapCounter({c}){ return <div><Island component={Counter} props={c} hydrate="load"/></div> }
+        let route = r#"export default function Page({ count }: any) {
+  return <WrapCounter native c={count} />;
+}"#;
+        let wrap_counter = r#"export default function WrapCounter({ c }: any) {
+  return (
+    <div>
+      <Island component={Counter} props={c} hydrate="load" />
+    </div>
+  );
+}"#;
+        let mut sources = HashMap::new();
+        sources.insert("WrapCounter".to_string(), wrap_counter.to_string());
+        let (comp, warnings) = lower_with_src(route, sources).unwrap();
+        assert!(
+            warnings.is_empty(),
+            "expected no warnings, got: {warnings:?}"
+        );
+
+        // Find the Island node recursively.
+        fn find_island(node: &JsxNode) -> Option<&JsxNode> {
+            match node {
+                JsxNode::Island { .. } => Some(node),
+                JsxNode::Element { children, .. } => children.iter().find_map(find_island),
+                JsxNode::Cond {
+                    consequent,
+                    alternate,
+                    ..
+                } => find_island(consequent)
+                    .or_else(|| alternate.as_ref().and_then(|a| find_island(a))),
+                JsxNode::Map { body, .. } => find_island(body),
+                JsxNode::Document { body, .. } => body.iter().find_map(find_island),
+                _ => None,
+            }
+        }
+
+        let island = find_island(&comp.root).expect("expected an Island node in the inlined tree");
+
+        match island {
+            JsxNode::Island {
+                component,
+                props_path,
+                ..
+            } => {
+                assert_eq!(component, "Counter");
+                assert_eq!(
+                    props_path, "count",
+                    "props_path must be remapped from 'c' to 'count' (the call-site field name)"
+                );
+            }
+            other => panic!("expected Island, got {other:?}"),
+        }
+    }
+
+    /// Non-inline Island props_path is unchanged (regression guard).
+    #[test]
+    fn non_inline_island_props_path_unchanged() {
+        let src = r#"export default function Page({ counter }: any) {
+  return <Island component={Counter} props={counter} hydrate="load" />;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let comp = super::lower(&parsed).unwrap();
+        match &comp.root {
+            JsxNode::Island { props_path, .. } => {
+                assert_eq!(props_path, "counter");
+            }
+            other => panic!("expected Island, got {other:?}"),
+        }
     }
 }

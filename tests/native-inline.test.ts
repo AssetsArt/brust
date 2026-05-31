@@ -186,5 +186,20 @@ test('inlined island reconciles via merged imports', () => {
       islandsJson.includes('"Counter"'),
       `Expected NativeInline.islands.json to contain "Counter" (Island inside inlined WrapCounter must be reconciled even though NativeInline.tsx never imports Counter directly).\nislands.json:\n${islandsJson}\nNativeInline.jinja:\n${jinja}`,
     ).toBe(true)
+
+    // Bug fix: Island's propsPath must be remapped from WrapCounter's local
+    // param name "c" to the call-site field name "count".
+    const islands = JSON.parse(islandsJson) as Array<{ component?: string; propsPath?: string }>
+    const counterEntry = islands.find((e) => e.component === 'Counter')
+    expect(
+      counterEntry !== undefined,
+      `Expected an island entry with component "Counter" in islands.json.\nislands.json:\n${islandsJson}`,
+    ).toBe(true)
+    if (counterEntry !== undefined) {
+      expect(
+        counterEntry.propsPath,
+        `Expected Counter island propsPath to be "count" (remapped from WrapCounter's local "c" through inline subst), but got "${counterEntry.propsPath}".\nislands.json:\n${islandsJson}`,
+      ).toBe('count')
+    }
   }
 })
