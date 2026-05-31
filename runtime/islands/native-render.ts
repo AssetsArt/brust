@@ -174,25 +174,26 @@ export async function resolveIslandContext(
       // JSON.parse(data-brust-props) — byte-identity guarantees no hydration
       // mismatch. props ?? undefined: pass the actual value (or undefined) to
       // the component, NOT the `null` sentinel used for the props string.
-      const html = renderToString(
-        createElement(Component as any, (props ?? undefined) as any),
-      )
+      const html = renderToString(createElement(Component as any, (props ?? undefined) as any))
       out['island_' + entry.instance + '_html'] = html
       // Write-through: only on the SUCCESS path (a throwing render must not
       // poison the cache). Store the SAME entity-encoded propsAttr so a later
       // hit hydrates byte-identically.
       if (cache && key) {
-        const tagsValue = pathInto(data, entry.tagsPath ?? '')
-        let tags: string[]
-        if (Array.isArray(tagsValue)) {
-          tags = tagsValue as string[]
-        } else {
-          if (entry.tagsPath !== undefined && tagsValue !== undefined) {
+        // Resolve tags only when tagsPath is set (avoids pathInto('') returning
+        // the whole loader object). Must be a string[] — the value crosses to
+        // Rust as Vec<String>, so a non-array OR an array with a non-string
+        // element degrades to no tags + a warning, never a bad NAPI payload.
+        let tags: string[] = []
+        if (entry.tagsPath !== undefined) {
+          const tagsValue = pathInto(data, entry.tagsPath)
+          if (Array.isArray(tagsValue) && tagsValue.every((t) => typeof t === 'string')) {
+            tags = tagsValue
+          } else if (tagsValue !== undefined) {
             console.warn(
-              `[brust] ssr island "${entry.component}" ISR tagsPath "${entry.tagsPath}" resolved to a non-array value; using no tags`,
+              `[brust] ssr island "${entry.component}" ISR tagsPath "${entry.tagsPath}" must resolve to a string[]; using no tags`,
             )
           }
-          tags = []
         }
         const ttlMs = entry.revalidate !== undefined ? entry.revalidate * 1000 : undefined
         cache.set(key, tags, ttlMs, html, propsAttr)
