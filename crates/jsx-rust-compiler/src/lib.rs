@@ -763,4 +763,42 @@ mod tests {
             other => panic!("expected BrustPageAttrMustBeStringLiteral, got {other:?}"),
         }
     }
+
+    #[test]
+    fn ssr_component_emits_comp_slot() {
+        let src = r#"export default function Page({ greeting }) {
+  return <Layout title={greeting} />;
+}"#;
+        let c = compile_full(src, "<test>").unwrap();
+        assert_eq!(c.template, "{{ comp_0_html | safe }}");
+    }
+
+    #[test]
+    fn ssr_component_with_sibling_element() {
+        let src = r#"export default function Page({ greeting }) {
+  return <div><Header /><p>{greeting}</p></div>;
+}"#;
+        let c = compile_full(src, "<test>").unwrap();
+        assert_eq!(
+            c.template,
+            "<div>{{ comp_0_html | safe }}<p>{{ greeting }}</p></div>"
+        );
+    }
+
+    #[test]
+    fn ssr_component_multiple_in_source_order() {
+        let src = r#"export default function Page({ a, b }) {
+  return <div><Nav x={a} /><Sidebar y={b} /></div>;
+}"#;
+        let c = compile_full(src, "<test>").unwrap();
+        assert_eq!(
+            c.template,
+            "<div>{{ comp_0_html | safe }}{{ comp_1_html | safe }}</div>"
+        );
+        assert_eq!(c.components.len(), 2);
+        assert_eq!(c.components[0].component, "Nav");
+        assert_eq!(c.components[0].instance, 0);
+        assert_eq!(c.components[1].component, "Sidebar");
+        assert_eq!(c.components[1].instance, 1);
+    }
 }
