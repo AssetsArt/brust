@@ -5,8 +5,8 @@ use swc_core::ecma::ast::{
     ArrowExpr, AssignPatProp, BindingIdent, BlockStmt, BlockStmtOrExpr, CallExpr, Callee,
     DefaultDecl, ExportDefaultDecl, Expr as SwcExpr, FnExpr, Function, JSXAttrName,
     JSXAttrOrSpread, JSXAttrValue, JSXElement, JSXElementChild, JSXElementName, JSXExpr, Lit,
-    MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, ObjectPatProp, ParenExpr, Pat,
-    ReturnStmt, Stmt,
+    MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, ObjectPatProp, ParenExpr, Pat, Prop,
+    PropName, PropOrSpread, ReturnStmt, Stmt,
 };
 
 use crate::ErrorKind;
@@ -475,6 +475,9 @@ fn lower_island(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode,
     let mut props_path: Option<String> = None;
     let mut hydrate: Option<String> = None;
     let mut ssr = false;
+    let mut key_path: Option<String> = None;
+    let mut tags_path: Option<String> = None;
+    let mut revalidate: Option<u32> = None;
 
     for attr in &el.opening.attrs {
         // Spread on an island (`<Island {...x}/>`) is not a recognized attribute.
@@ -533,6 +536,46 @@ fn lower_island(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode,
                 // Bare boolean attribute — presence is what matters.
                 ssr = true;
             }
+            // `isr={{ key: <path>, tags?: <path>, revalidate?: <number-literal> }}`.
+            // `key`/`tags` accept the SAME path shape as `props={…}` (a
+            // destructured ident or one-deep member); `revalidate` is a numeric
+            // literal only. ssr-required is enforced after the attr loop.
+            "isr" => {
+                let err = || LowerError::at(jsx_attr.span, ErrorKind::IslandIsrUnsupported);
+                let Some(JSXAttrValue::JSXExprContainer(c)) = &jsx_attr.value else {
+                    return Err(err());
+                };
+                let JSXExpr::Expr(e) = &c.expr else {
+                    return Err(err());
+                };
+                let SwcExpr::Object(obj) = strip_paren(e.as_ref()) else {
+                    return Err(err());
+                };
+                for prop in &obj.props {
+                    let PropOrSpread::Prop(p) = prop else {
+                        return Err(err());
+                    };
+                    let Prop::KeyValue(kv) = p.as_ref() else {
+                        return Err(err());
+                    };
+                    let pname = match &kv.key {
+                        PropName::Ident(i) => i.sym.to_string(),
+                        PropName::Str(s) => s.value.to_string_lossy().into_owned(),
+                        _ => return Err(err()),
+                    };
+                    match pname.as_str() {
+                        "key" => key_path = Some(expr_to_path(&kv.value, scope, &err)?),
+                        "tags" => tags_path = Some(expr_to_path(&kv.value, scope, &err)?),
+                        "revalidate" => {
+                            let SwcExpr::Lit(Lit::Num(n)) = strip_paren(&kv.value) else {
+                                return Err(err());
+                            };
+                            revalidate = Some(n.value as u32);
+                        }
+                        _ => return Err(err()),
+                    }
+                }
+            }
             // Unknown attributes on an island are ignored (forward-compatible);
             // T3 owns the full attribute vocabulary.
             _ => {}
@@ -558,15 +601,24 @@ fn lower_island(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode,
         .ok_or_else(|| LowerError::at(el.opening.span, ErrorKind::IslandPropsPathUnsupported))?;
     let hydrate = hydrate.unwrap_or_else(|| "load".to_string());
 
+    // ISR caching only applies to SSR'd islands — caching a client-only island
+    // is meaningless. Reject any isr field without `ssr`.
+    if (key_path.is_some() || tags_path.is_some() || revalidate.is_some()) && !ssr {
+        return Err(LowerError::at(
+            el.opening.span,
+            ErrorKind::IslandIsrUnsupported,
+        ));
+    }
+
     Ok(JsxNode::Island {
         component,
         instance: 0,
         props_path,
         hydrate,
         ssr,
-        key_path: None,
-        tags_path: None,
-        revalidate: None,
+        key_path,
+        tags_path,
+        revalidate,
     })
 }
 
@@ -618,8 +670,29 @@ fn island_props_path(
         return Err(err());
     };
 
-    match strip_paren(e.as_ref()) {
-        // `props={counter}` — bare destructured ident.
+    expr_to_path(e.as_ref(), scope, &err)
+}
+
+/// Extract a ≤ 1-member-deep loader-data path from a bare expression. This is
+/// the reusable core shared by `island_props_path` (the `props={…}` attr) and
+/// the `isr={{ key, tags }}` object-property parser — both accept the SAME path
+/// shape. `err` produces the caller's error (props vs isr) so a bad path is
+/// blamed on the right attribute.
+///
+/// Accepts only:
+/// - `Ident(x)` where `x ∈ scope.destructured` → `"x"`.
+/// - `Member` exactly one deep off a destructured root (`data.counter`) →
+///   `"data.counter"` (FULL dotted path, root included).
+///
+/// Rejects (via `err`): deeper chains (`data.a.b`), unresolved roots, computed
+/// access, non-Ident roots.
+fn expr_to_path(
+    e: &SwcExpr,
+    scope: &Scope,
+    err: &dyn Fn() -> LowerError,
+) -> Result<String, LowerError> {
+    match strip_paren(e) {
+        // `counter` — bare destructured ident.
         SwcExpr::Ident(id) => {
             let name = id.sym.to_string();
             if scope.destructured.contains(&name) {
@@ -628,7 +701,7 @@ fn island_props_path(
                 Err(err())
             }
         }
-        // `props={data.counter}` — exactly one-deep member off a destructured root.
+        // `data.counter` — exactly one-deep member off a destructured root.
         SwcExpr::Member(m) => {
             // Leaf segment must be a plain ident (no computed/private access).
             let MemberProp::Ident(leaf) = &m.prop else {
@@ -2010,6 +2083,76 @@ mod tests {
         let parsed = parse(src, "<test>").unwrap();
         let err = lower(&parsed).unwrap_err();
         assert!(matches!(err.kind, ErrorKind::IslandIdAttrRemoved));
+    }
+
+    #[test]
+    fn lowers_isr_key_tags_revalidate() {
+        let src = r#"export default function Page({ data }) {
+  return <Island component={Counter} props={data.counter} hydrate="load" ssr
+    isr={{ key: data.cacheKey, tags: data.cacheTags, revalidate: 60 }} />;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let c = lower(&parsed).unwrap();
+        match &c.root {
+            JsxNode::Island {
+                key_path,
+                tags_path,
+                revalidate,
+                ssr,
+                ..
+            } => {
+                assert!(*ssr);
+                assert_eq!(key_path.as_deref(), Some("data.cacheKey"));
+                assert_eq!(tags_path.as_deref(), Some("data.cacheTags"));
+                assert_eq!(*revalidate, Some(60));
+            }
+            other => panic!("expected Island, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn isr_without_ssr_is_rejected() {
+        let src = r#"export default function Page({ data }) {
+  return <Island component={Counter} props={data.counter} hydrate="load"
+    isr={{ key: data.cacheKey, tags: data.cacheTags, revalidate: 60 }} />;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let err = lower(&parsed).unwrap_err();
+        assert!(matches!(err.kind, ErrorKind::IslandIsrUnsupported));
+    }
+
+    #[test]
+    fn isr_dynamic_revalidate_is_rejected() {
+        let src = r#"export default function Page({ data }) {
+  return <Island component={Counter} props={data.counter} ssr
+    isr={{ key: data.k, revalidate: data.ttl }} />;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let err = lower(&parsed).unwrap_err();
+        assert!(matches!(err.kind, ErrorKind::IslandIsrUnsupported));
+    }
+
+    #[test]
+    fn isr_key_only_is_allowed() {
+        let src = r#"export default function Page({ data }) {
+  return <Island component={Counter} props={data.counter} ssr
+    isr={{ key: data.cacheKey }} />;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let c = lower(&parsed).unwrap();
+        match &c.root {
+            JsxNode::Island {
+                key_path,
+                tags_path,
+                revalidate,
+                ..
+            } => {
+                assert_eq!(key_path.as_deref(), Some("data.cacheKey"));
+                assert_eq!(*tags_path, None);
+                assert_eq!(*revalidate, None);
+            }
+            other => panic!("expected Island, got {other:?}"),
+        }
     }
 
     #[test]

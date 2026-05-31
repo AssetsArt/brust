@@ -261,6 +261,10 @@ pub enum ErrorKind {
         "`<Island props={{…}}>` path unsupported — expect a destructured prop or one-deep member off one (e.g. `counter` or `data.counter`)"
     )]
     IslandPropsPathUnsupported,
+    #[error(
+        "`isr` attribute must be `{{ key: <path>, tags?: <path>, revalidate?: <number-literal> }}` with `ssr`"
+    )]
+    IslandIsrUnsupported,
     #[error("`<Island hydrate=\"{0}\">` invalid — expect one of load/idle/visible/interaction")]
     IslandBadHydrate(String),
     #[error(
@@ -488,6 +492,27 @@ mod tests {
         assert_eq!(
             json,
             r#"[{"component":"Counter","instance":0,"propsPath":"data.counter","ssr":true,"hydrate":"load"},{"component":"Weird","instance":1,"propsPath":"a\\b\"c","ssr":false,"hydrate":"idle"}]"#
+        );
+    }
+
+    #[test]
+    fn islands_to_json_with_isr_fields() {
+        // isr fields present → keyPath/tagsPath/revalidate appear AFTER hydrate,
+        // in that order. `revalidate` is a bare number (not quoted).
+        let islands = vec![IslandMeta {
+            component: "Counter".to_string(),
+            instance: 0,
+            props_path: "data.counter".to_string(),
+            ssr: true,
+            hydrate: "load".to_string(),
+            key_path: Some("data.cacheKey".to_string()),
+            tags_path: Some("data.cacheTags".to_string()),
+            revalidate: Some(60),
+        }];
+        let json = islands_to_json(&islands);
+        assert_eq!(
+            json,
+            r#"[{"component":"Counter","instance":0,"propsPath":"data.counter","ssr":true,"hydrate":"load","keyPath":"data.cacheKey","tagsPath":"data.cacheTags","revalidate":60}]"#
         );
     }
 
