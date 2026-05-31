@@ -415,6 +415,9 @@ fn lower_ssr_component(
     let component = component_name.to_owned();
 
     let mut props: Vec<SsrProp> = Vec::new();
+    let mut key_path: Option<String> = None;
+    let mut tags_path: Option<String> = None;
+    let mut revalidate: Option<u32> = None;
     for attr in &el.opening.attrs {
         // Spread `{...expr}` is valid on an SSR component (the factory is JS
         // createElement, so it becomes a JS object spread). The spread argument
@@ -438,6 +441,19 @@ fn lower_ssr_component(
         };
         match name.as_str() {
             "key" => continue,
+            "isr" => {
+                let err = || {
+                    LowerError::at(
+                        jsx_attr.span,
+                        ErrorKind::ComponentIsrUnsupported(component.clone()),
+                    )
+                };
+                let (k, t, r) = parse_isr_object(jsx_attr, scope, &err)?;
+                key_path = Some(k);
+                tags_path = t;
+                revalidate = r;
+                continue;
+            }
             "ref" => {
                 return Err(LowerError::at(
                     jsx_attr.span,
@@ -487,6 +503,9 @@ fn lower_ssr_component(
         instance: 0,
         props,
         children,
+        key_path,
+        tags_path,
+        revalidate,
     })
 }
 
@@ -2516,6 +2535,91 @@ mod tests {
         assert!(
             c.islands.is_empty(),
             "islands inside SsrComponent must not appear in manifest"
+        );
+    }
+
+    #[test]
+    fn lower_ssr_component_parses_isr() {
+        let src = r#"export default function Page({ data }) {
+  return <Layout title={data.title}
+    isr={{ key: data.cacheKey, tags: data.cacheTags, revalidate: 60 }} />;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let ir = lower(&parsed).unwrap();
+        match &ir.root {
+            JsxNode::SsrComponent {
+                component,
+                key_path,
+                tags_path,
+                revalidate,
+                props,
+                ..
+            } => {
+                assert_eq!(component, "Layout");
+                assert_eq!(key_path.as_deref(), Some("data.cacheKey"));
+                assert_eq!(tags_path.as_deref(), Some("data.cacheTags"));
+                assert_eq!(*revalidate, Some(60));
+                // `isr` is CONSUMED — it must NOT leak as a factory prop. Only
+                // `title` survives as a prop.
+                let names: Vec<&str> = props
+                    .iter()
+                    .map(|p| match p {
+                        SsrProp::Attr(a) => a.name.as_str(),
+                        SsrProp::Spread(_) => panic!("unexpected spread"),
+                    })
+                    .collect();
+                assert_eq!(names, vec!["title"]);
+            }
+            other => panic!("expected SsrComponent, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn lower_ssr_component_isr_key_only_allowed() {
+        // No `ssr` prerequisite for components (unlike islands).
+        let src = r#"export default function Page({ data }) {
+  return <Layout isr={{ key: data.cacheKey }} />;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let ir = lower(&parsed).unwrap();
+        match &ir.root {
+            JsxNode::SsrComponent {
+                key_path,
+                tags_path,
+                revalidate,
+                ..
+            } => {
+                assert_eq!(key_path.as_deref(), Some("data.cacheKey"));
+                assert_eq!(*tags_path, None);
+                assert_eq!(*revalidate, None);
+            }
+            other => panic!("expected SsrComponent, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn lower_ssr_component_isr_without_key_rejected() {
+        let src = r#"export default function Page({ data }) {
+  return <Layout isr={{ tags: data.cacheTags }} />;
+}"#;
+        let err = compile_full(src, "<test>").unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::ComponentIsrUnsupported(_)),
+            "got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn lower_ssr_component_isr_dynamic_revalidate_rejected() {
+        let src = r#"export default function Page({ data }) {
+  return <Layout isr={{ key: data.cacheKey, revalidate: data.ttl }} />;
+}"#;
+        let err = compile_full(src, "<test>").unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::ComponentIsrUnsupported(_)),
+            "got {:?}",
+            err.kind
         );
     }
 }

@@ -83,6 +83,12 @@ pub enum JsxNode {
         props: Vec<SsrProp>,
         /// Lowered children (may contain Islands, elements, etc.).
         children: Vec<JsxNode>,
+        /// Optional ISR cache key path (dotted loader-data path). `None` = no ISR.
+        key_path: Option<String>,
+        /// Optional ISR cache tags path (resolves to `string[]`).
+        tags_path: Option<String>,
+        /// Optional ISR revalidation interval in seconds (TTL).
+        revalidate: Option<u32>,
     },
     /// Interactive island embedded in a native (jinja) route. Lowered from a
     /// dedicated `<Island component={C} props={path} hydrate="..." ssr/>`
