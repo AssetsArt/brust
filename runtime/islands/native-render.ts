@@ -218,6 +218,12 @@ export interface NativeComponentEntry {
   component: string
   instance: number
   sourcePath: string
+  /** Dotted path into loader data yielding the ISR cache key (string). */
+  keyPath?: string
+  /** Dotted path into loader data yielding the ISR cache tags (string[]). */
+  tagsPath?: string
+  /** Revalidate window in SECONDS; converted to ttlMs on cache.set. */
+  revalidate?: number
 }
 
 // Cache component manifests by absolute path (same pattern as island manifests).
@@ -256,6 +262,7 @@ export async function resolveComponentContext(
   data: unknown,
   templateName: string,
   jinjaDir?: string,
+  cache?: IslandCache,
 ): Promise<Record<string, string>> {
   const out: Record<string, string> = {}
   if (!manifest.length) return out
@@ -277,12 +284,54 @@ export async function resolveComponentContext(
 
   for (let i = 0; i < manifest.length; i++) {
     const entry = manifest[i]!
+
+    // ISR fast-path: resolve a string cache key out of loader data. A hit
+    // serves the FROZEN html and skips the factory. A non-string-but-defined
+    // key is a manifest bug — warn and fall through to an uncached render.
+    let key: string | undefined
+    if (cache && entry.keyPath) {
+      const k = pathInto(data, entry.keyPath)
+      if (typeof k === 'string') {
+        key = k
+        const hit = cache.get(key)
+        if (hit) {
+          // Components have NO `_props` slot (unlike islands): the cache stores
+          // props="" for component entries, so we serve only hit.html and
+          // deliberately ignore hit.props. See the write-through below.
+          out[`comp_${entry.instance}_html`] = hit.html
+          continue
+        }
+      } else if (k !== undefined) {
+        console.warn(
+          `[brust] SSR component "${entry.component}" ISR keyPath "${entry.keyPath}" resolved to a non-string value; rendering uncached`,
+        )
+      }
+    }
+
     try {
       if (!factoryMod?.factories?.[i]) {
         throw new Error(`factory[${i}] not found in ${factoryPath}`)
       }
       const node = factoryMod.factories[i]!(data)
-      out[`comp_${entry.instance}_html`] = renderToString(node as React.ReactNode)
+      const html = renderToString(node as React.ReactNode)
+      out[`comp_${entry.instance}_html`] = html
+      // Write-through: SUCCESS path only (a throwing render must not poison the
+      // cache). props is "" — components have no separate hydration props attr.
+      if (cache && key) {
+        let tags: string[] = []
+        if (entry.tagsPath !== undefined) {
+          const tagsValue = pathInto(data, entry.tagsPath)
+          if (Array.isArray(tagsValue) && tagsValue.every((t) => typeof t === 'string')) {
+            tags = tagsValue
+          } else if (tagsValue !== undefined) {
+            console.warn(
+              `[brust] SSR component "${entry.component}" ISR tagsPath "${entry.tagsPath}" must resolve to a string[]; using no tags`,
+            )
+          }
+        }
+        const ttlMs = entry.revalidate !== undefined ? entry.revalidate * 1000 : undefined
+        cache.set(key, tags, ttlMs, html, '')
+      }
     } catch (e) {
       console.error(
         `[brust] SSR component "${entry.component}" renderToString failed; degrading to empty:`,
