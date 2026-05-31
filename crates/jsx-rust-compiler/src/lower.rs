@@ -253,6 +253,14 @@ fn lower_element(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode
         return Err(LowerError::at(ident.span, ErrorKind::BrustPageMustBeRoot));
     }
 
+    // Third path: any other capitalised tag → SSR component.
+    if let JSXElementName::Ident(ident) = &el.opening.name {
+        let s = ident.sym.as_ref();
+        if s.starts_with(|c: char| c.is_ascii_uppercase()) && s != "Island" && s != "BrustPage" {
+            return lower_ssr_component(el, scope, in_map);
+        }
+    }
+
     let tag = lower_element_name(&el.opening.name)?;
     // T6: attr precedence (key drop, ref/on*/uppercase rejection, rename table),
     // void-element children check, whitespace-only JSXText filtering.
@@ -389,6 +397,87 @@ fn lower_brust_page(el: &JSXElement, scope: &Scope) -> Result<JsxNode, LowerErro
         title,
         description,
         body,
+    })
+}
+
+fn lower_ssr_component(
+    el: &JSXElement,
+    scope: &Scope,
+    in_map: bool,
+) -> Result<JsxNode, LowerError> {
+    let component = match &el.opening.name {
+        JSXElementName::Ident(ident) => ident.sym.to_string(),
+        _ => unreachable!("caller guarantees Ident"),
+    };
+
+    let mut props: Vec<JsxAttr> = Vec::new();
+    for attr in &el.opening.attrs {
+        let JSXAttrOrSpread::JSXAttr(jsx_attr) = attr else {
+            return Err(LowerError::at(
+                el.opening.span,
+                ErrorKind::SpreadAttributeNotSupported,
+            ));
+        };
+        let name = match &jsx_attr.name {
+            JSXAttrName::Ident(id) => id.sym.to_string(),
+            JSXAttrName::JSXNamespacedName(n) => {
+                return Err(LowerError::at(
+                    n.span,
+                    ErrorKind::NamespacedAttrNotSupported,
+                ));
+            }
+        };
+        match name.as_str() {
+            "key" => continue,
+            "ref" => {
+                return Err(LowerError::at(
+                    jsx_attr.span,
+                    ErrorKind::RefAttributeNotSupported,
+                ));
+            }
+            _ if is_event_handler(&name) => {
+                return Err(LowerError::at(
+                    jsx_attr.span,
+                    ErrorKind::EventHandlerNotSupported(name),
+                ));
+            }
+            _ => {}
+        }
+        let value = match &jsx_attr.value {
+            None => AttrValue::Empty,
+            Some(JSXAttrValue::Str(s)) => AttrValue::Static(s.value.to_string_lossy().into_owned()),
+            Some(JSXAttrValue::JSXExprContainer(c)) => match &c.expr {
+                JSXExpr::JSXEmptyExpr(_) => {
+                    return Err(LowerError::at(c.span, ErrorKind::JsxInAttrNotSupported));
+                }
+                JSXExpr::Expr(e) => match lower_expr(e, scope)? {
+                    crate::ir::Expr::StaticNum(n) => AttrValue::StaticNum(n),
+                    crate::ir::Expr::StaticText(s) => AttrValue::Static(s),
+                    expr => AttrValue::Expr(expr),
+                },
+            },
+            _ => {
+                return Err(LowerError::at(
+                    jsx_attr.span,
+                    ErrorKind::JsxInAttrNotSupported,
+                ));
+            }
+        };
+        props.push(JsxAttr { name, value });
+    }
+
+    let mut children: Vec<JsxNode> = Vec::new();
+    for child in &el.children {
+        if let Some(node) = lower_child(child, scope, in_map)? {
+            children.push(node);
+        }
+    }
+
+    Ok(JsxNode::SsrComponent {
+        component,
+        instance: 0,
+        props,
+        children,
     })
 }
 
@@ -1565,6 +1654,7 @@ fn merge_into(existing: &mut PropType, incoming: PropType, name: &str) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compile_full;
     use crate::parser::parse;
 
     #[test]
@@ -1590,14 +1680,17 @@ mod tests {
     }
 
     #[test]
-    fn rejects_custom_component() {
+    fn capitalised_tag_lowers_to_ssr_component() {
+        // Previously rejected as `CustomComponentNotSupported`; now lowers to
+        // `JsxNode::SsrComponent` — the entry point for native SSR components.
         let src = "export default function X() { return <Layout/>; }";
         let parsed = parse(src, "<test>").unwrap();
-        let err = lower(&parsed).unwrap_err();
-        assert!(matches!(
-            err.kind,
-            ErrorKind::CustomComponentNotSupported(_)
-        ));
+        let c = lower(&parsed).unwrap();
+        assert!(
+            matches!(c.root, JsxNode::SsrComponent { ref component, .. } if component == "Layout"),
+            "expected SsrComponent(Layout), got {:?}",
+            c.root
+        );
     }
 
     #[test]
@@ -2321,5 +2414,51 @@ mod tests {
             ErrorKind::EventHandlerNotSupported(name) => assert_eq!(name, "onClick"),
             other => panic!("expected EventHandlerNotSupported(\"onClick\"), got {other:?}"),
         }
+    }
+
+    // lower_ssr_component — new tests
+
+    #[test]
+    fn lower_ssr_component_leaf() {
+        let src =
+            "export default function Page({ greeting }) { return <Header user={greeting} />; }";
+        let c = compile_full(src, "<test>").unwrap();
+        assert_eq!(c.components.len(), 1);
+        assert_eq!(c.components[0].component, "Header");
+        assert_eq!(c.components[0].instance, 0);
+        assert!(c.islands.is_empty());
+    }
+
+    #[test]
+    fn lower_ssr_component_camelcase_props_accepted() {
+        let src = "export default function Page({ data }) { return <Card userName={data.name} isActive={data.active} />; }";
+        let c = compile_full(src, "<test>").unwrap();
+        assert_eq!(c.components.len(), 1);
+        assert_eq!(c.components[0].component, "Card");
+    }
+
+    #[test]
+    fn lower_ssr_component_event_handler_rejected() {
+        let src = "export default function Page({ data }) { return <Card onClick={data.fn} />; }";
+        let err = compile_full(src, "<test>").unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::EventHandlerNotSupported(_)),
+            "got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn lower_ssr_component_with_children_island_not_in_manifest() {
+        let src = r#"export default function Page({ greeting, data }) {
+  return <Layout title={greeting}><h1>{greeting}</h1><Island component={Counter} props={data.counter} hydrate="load" /></Layout>;
+}"#;
+        let c = compile_full(src, "<test>").unwrap();
+        assert_eq!(c.components.len(), 1);
+        assert_eq!(c.components[0].component, "Layout");
+        assert!(
+            c.islands.is_empty(),
+            "islands inside SsrComponent must not appear in manifest"
+        );
     }
 }
