@@ -891,4 +891,17 @@ mod tests {
             "(ctx) => h(Card, {...ctx.data.card})"
         );
     }
+
+    #[test]
+    fn factory_component_named_then_spread_lets_spread_win() {
+        // Reverse order of the mixed test: `<Card b={1} {...a} />` must emit
+        // `{b: 1, ...ctx.a}` so the spread overrides the named prop — the
+        // opposite override outcome from spread-first. Pins source-order fidelity.
+        let src = "export default function Page({ data, rest }) { return <Card extra={data.x} {...rest} />; }";
+        let c = compile_full(src, "<test>").unwrap();
+        assert_eq!(
+            c.components[0].factory_expr,
+            "(ctx) => h(Card, {extra: ctx.data.x, ...ctx.rest})"
+        );
+    }
 }
