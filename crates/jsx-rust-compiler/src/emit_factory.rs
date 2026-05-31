@@ -45,8 +45,17 @@ fn collect_factories(node: &JsxNode, out: &mut Vec<FactoryOutput>) {
         }
         JsxNode::Map { body, .. } => collect_factories(body, out),
         JsxNode::Empty | JsxNode::Text(_) | JsxNode::Expr(_) | JsxNode::Island { .. } => {}
-        JsxNode::Cond { .. } => unreachable!("Cond handled in a later task"),
-        JsxNode::ChildrenSlot => unreachable!("ChildrenSlot handled in a later task"),
+        JsxNode::Cond {
+            consequent,
+            alternate,
+            ..
+        } => {
+            collect_factories(consequent, out);
+            if let Some(alt) = alternate {
+                collect_factories(alt, out);
+            }
+        }
+        JsxNode::ChildrenSlot => {}
     }
 }
 

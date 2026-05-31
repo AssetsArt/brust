@@ -148,8 +148,17 @@ fn number_islands(node: &mut JsxNode, counter: &mut usize) {
             }
         }
         JsxNode::Empty | JsxNode::Text(_) | JsxNode::Expr(_) => {}
-        JsxNode::Cond { .. } => unreachable!("Cond handled in a later task"),
-        JsxNode::ChildrenSlot => unreachable!("ChildrenSlot handled in a later task"),
+        JsxNode::Cond {
+            consequent,
+            alternate,
+            ..
+        } => {
+            number_islands(consequent, counter);
+            if let Some(alt) = alternate {
+                number_islands(alt, counter);
+            }
+        }
+        JsxNode::ChildrenSlot => {}
     }
 }
 
@@ -200,8 +209,17 @@ fn collect_islands(node: &JsxNode, out: &mut Vec<IslandMeta>) {
         // are written by Island.tsx React-path render into the DOM directly.
         JsxNode::SsrComponent { .. } => {}
         JsxNode::Empty | JsxNode::Text(_) | JsxNode::Expr(_) => {}
-        JsxNode::Cond { .. } => unreachable!("Cond handled in a later task"),
-        JsxNode::ChildrenSlot => unreachable!("ChildrenSlot handled in a later task"),
+        JsxNode::Cond {
+            consequent,
+            alternate,
+            ..
+        } => {
+            collect_islands(consequent, out);
+            if let Some(alt) = alternate {
+                collect_islands(alt, out);
+            }
+        }
+        JsxNode::ChildrenSlot => {}
     }
 }
 
@@ -229,8 +247,17 @@ fn number_ssr_components(node: &mut JsxNode, counter: &mut usize) {
         }
         JsxNode::Map { body, .. } => number_ssr_components(body, counter),
         JsxNode::Empty | JsxNode::Text(_) | JsxNode::Expr(_) | JsxNode::Island { .. } => {}
-        JsxNode::Cond { .. } => unreachable!("Cond handled in a later task"),
-        JsxNode::ChildrenSlot => unreachable!("ChildrenSlot handled in a later task"),
+        JsxNode::Cond {
+            consequent,
+            alternate,
+            ..
+        } => {
+            number_ssr_components(consequent, counter);
+            if let Some(alt) = alternate {
+                number_ssr_components(alt, counter);
+            }
+        }
+        JsxNode::ChildrenSlot => {}
     }
 }
 
@@ -275,8 +302,17 @@ fn collect_components(node: &JsxNode, out: &mut Vec<ComponentMeta>) {
         }
         JsxNode::Map { body, .. } => collect_components(body, out),
         JsxNode::Empty | JsxNode::Text(_) | JsxNode::Expr(_) | JsxNode::Island { .. } => {}
-        JsxNode::Cond { .. } => unreachable!("Cond handled in a later task"),
-        JsxNode::ChildrenSlot => unreachable!("ChildrenSlot handled in a later task"),
+        JsxNode::Cond {
+            consequent,
+            alternate,
+            ..
+        } => {
+            collect_components(consequent, out);
+            if let Some(alt) = alternate {
+                collect_components(alt, out);
+            }
+        }
+        JsxNode::ChildrenSlot => {}
     }
 }
 
@@ -1099,5 +1135,78 @@ mod tests {
         assert_eq!(c.components[0].key_path.as_deref(), Some("data.cacheKey"));
         assert_eq!(c.components[0].tags_path, None);
         assert_eq!(c.components[0].revalidate, Some(30));
+    }
+
+    #[test]
+    fn collect_islands_recurses_cond() {
+        use crate::ir::{Expr, JsxNode};
+        // Build a Cond whose consequent is an Island; alternate is None.
+        let island = JsxNode::Island {
+            component: "CondIsland".to_string(),
+            instance: 0,
+            props_path: "data.x".to_string(),
+            hydrate: "load".to_string(),
+            ssr: false,
+            key_path: None,
+            key_literal: None,
+            tags_path: None,
+            tags_literal: None,
+            revalidate: None,
+        };
+        let mut root = JsxNode::Cond {
+            test: Expr::Field("flag".to_string()),
+            consequent: Box::new(island),
+            alternate: None,
+        };
+
+        // Number islands first (as compile_full does).
+        let mut counter = 0;
+        number_islands(&mut root, &mut counter);
+        assert_eq!(counter, 1, "should have numbered 1 island");
+
+        // Now collect islands.
+        let mut islands = Vec::new();
+        collect_islands(&root, &mut islands);
+        assert_eq!(islands.len(), 1, "island inside Cond should be collected");
+        assert_eq!(islands[0].component, "CondIsland");
+        assert_eq!(islands[0].instance, 0);
+    }
+
+    #[test]
+    fn collect_components_recurses_cond() {
+        use crate::ir::{Expr, JsxNode};
+        // Build a Cond whose consequent is an SsrComponent.
+        let comp = JsxNode::SsrComponent {
+            component: "CondLayout".to_string(),
+            instance: 0,
+            props: vec![],
+            children: vec![],
+            key_path: None,
+            key_literal: None,
+            tags_path: None,
+            tags_literal: None,
+            revalidate: None,
+        };
+        let mut root = JsxNode::Cond {
+            test: Expr::Field("show".to_string()),
+            consequent: Box::new(comp),
+            alternate: None,
+        };
+
+        // Number SSR components first (as compile_full does).
+        let mut counter = 0;
+        number_ssr_components(&mut root, &mut counter);
+        assert_eq!(counter, 1, "should have numbered 1 SSR component");
+
+        // Now collect components.
+        let mut components = Vec::new();
+        collect_components(&root, &mut components);
+        assert_eq!(
+            components.len(),
+            1,
+            "SsrComponent inside Cond should be collected"
+        );
+        assert_eq!(components[0].component, "CondLayout");
+        assert_eq!(components[0].instance, 0);
     }
 }
