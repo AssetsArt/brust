@@ -203,10 +203,7 @@ fn number_ssr_components(node: &mut JsxNode, counter: &mut usize) {
             }
         }
         JsxNode::Map { body, .. } => number_ssr_components(body, counter),
-        JsxNode::Empty
-        | JsxNode::Text(_)
-        | JsxNode::Expr(_)
-        | JsxNode::Island { .. } => {}
+        JsxNode::Empty | JsxNode::Text(_) | JsxNode::Expr(_) | JsxNode::Island { .. } => {}
     }
 }
 
@@ -215,7 +212,11 @@ fn number_ssr_components(node: &mut JsxNode, counter: &mut usize) {
 /// is left empty — `compile_full` fills it from `emit_factory::emit`.
 fn collect_components(node: &JsxNode, out: &mut Vec<ComponentMeta>) {
     match node {
-        JsxNode::SsrComponent { component, instance, .. } => {
+        JsxNode::SsrComponent {
+            component,
+            instance,
+            ..
+        } => {
             // Don't recurse — nested SSR components render inside parent factory.
             out.push(ComponentMeta {
                 component: component.clone(),
@@ -236,10 +237,7 @@ fn collect_components(node: &JsxNode, out: &mut Vec<ComponentMeta>) {
             }
         }
         JsxNode::Map { body, .. } => collect_components(body, out),
-        JsxNode::Empty
-        | JsxNode::Text(_)
-        | JsxNode::Expr(_)
-        | JsxNode::Island { .. } => {}
+        JsxNode::Empty | JsxNode::Text(_) | JsxNode::Expr(_) | JsxNode::Island { .. } => {}
     }
 }
 
