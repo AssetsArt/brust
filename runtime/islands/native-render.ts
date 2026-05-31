@@ -282,13 +282,13 @@ export async function resolveComponentContext(
         throw new Error(`factory[${i}] not found in ${factoryPath}`)
       }
       const node = factoryMod.factories[i]!(data)
-      out[`comp_${i}_html`] = renderToString(node as React.ReactNode)
+      out[`comp_${entry.instance}_html`] = renderToString(node as React.ReactNode)
     } catch (e) {
       console.error(
         `[brust] SSR component "${entry.component}" renderToString failed; degrading to empty:`,
         e,
       )
-      out[`comp_${i}_html`] = ''
+      out[`comp_${entry.instance}_html`] = ''
     }
   }
   return out
