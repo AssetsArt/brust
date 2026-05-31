@@ -142,9 +142,10 @@ function emitComponentArtifacts(
   for (const entry of enriched) {
     try {
       const src = readFileSync(entry.sourcePath, 'utf8')
-      let m: RegExpExecArray | null
       islandAttrRe.lastIndex = 0
-      while ((m = islandAttrRe.exec(src)) !== null) {
+      for (;;) {
+        const m = islandAttrRe.exec(src)
+        if (m === null) break
         if (m[1] && !islandIdsFromComponents.includes(m[1]!)) {
           islandIdsFromComponents.push(m[1]!)
         }

@@ -140,7 +140,7 @@ describe('emitNativeTemplates — SSR component artifacts', () => {
     const layoutPath = join(dir, 'Layout.tsx')
     writeFileSync(
       layoutPath,
-      "export default function Layout({ title }: { title: string }) { return <h1>{title}</h1>; }",
+      'export default function Layout({ title }: { title: string }) { return <h1>{title}</h1>; }',
     )
 
     // Page.tsx — uses Layout as an SSR component (no Island, so no island artifacts).
@@ -193,6 +193,6 @@ describe('emitNativeTemplates — SSR component artifacts', () => {
     expect(factoryContent).toContain(`import Layout from`)
     expect(factoryContent).toContain('export const factories')
     // Should NOT import Island (Layout doesn't use islands)
-    expect(factoryContent).not.toContain("import { Island }")
+    expect(factoryContent).not.toContain('import { Island }')
   })
 })
