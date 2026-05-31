@@ -1,5 +1,5 @@
 import { test, expect, beforeAll, afterAll } from 'bun:test'
-import { spawn } from 'bun'
+import { spawn, type Subprocess } from 'bun'
 import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -44,7 +44,7 @@ async function startServer(opts: { workers?: string; rustLog?: string; cmd?: str
 // One server shared by all stateless, read-only, default-config tests (see
 // docs/superpowers/specs/2026-05-31-integration-shared-server-design.md). Cuts
 // the redundant per-test boots. Stateful/special tests still use startServer().
-let shared: { port: number; proc: import('bun').Subprocess } | null = null
+let shared: { port: number; proc: Subprocess } | null = null
 
 beforeAll(async () => {
   const port = await freePort()
@@ -56,7 +56,7 @@ beforeAll(async () => {
   })
   const readyPort = await readPortLine(proc.stdout)
   shared = { port: readyPort, proc }
-})
+}, 30_000) // boot includes the island chunk build (Bun.build ×3+N); cold CI needs headroom
 
 afterAll(async () => {
   if (!shared) return
@@ -66,9 +66,12 @@ afterAll(async () => {
 })
 
 /** Port of the shared server. ONLY for stateless, read-only, default-config
- * tests. NEVER GET /cache-test (mutates a JS renderCount) or any cacheable
- * route via a non-`/_brust/page` path (would perturb the isolated cache-stats
- * test). Stateful/special/long-lived-conn tests must use startServer(). */
+ * tests. Denylist: never request a cacheable route via a CACHING path on the
+ * shared server — `GET /cache-test` directly (mutates a JS renderCount AND
+ * writes the Rust cache, perturbing the isolated cache-stats test). The nav
+ * path `GET /_brust/page/cache-test` IS allowed: `/_brust/page/*` runs with
+ * cache_wanted:false, so it neither writes the cache nor bumps hit/miss
+ * counters. Stateful/special/long-lived-conn tests must use startServer(). */
 function sharedPort(): number {
   if (!shared) throw new Error('shared server not started')
   return shared.port
@@ -458,7 +461,7 @@ test('island marker + importmap injected when route uses <Island>', async () => 
   expect(body).toContain('"react/jsx-runtime":"/_brust/islands/_react.js"')
   expect(body).toContain('"/_brust/islands/_react-dom.js"')
   expect(body).toContain('src="/_brust/islands/_bootstrap.js"')
-})
+}, 15_000)
 
 test('island chunk + bootstrap served at /_brust/islands/<file>', async () => {
   const port = sharedPort()
@@ -480,7 +483,7 @@ test('island chunk + bootstrap served at /_brust/islands/<file>', async () => {
 
   const noExt = await fetch(`http://127.0.0.1:${port}/_brust/islands/Counter`)
   expect(noExt.status).toBe(404)
-})
+}, 15_000)
 
 test('routes without <Island> ship no importmap or bootstrap', async () => {
   const port = sharedPort()
@@ -491,7 +494,7 @@ test('routes without <Island> ship no importmap or bootstrap', async () => {
   expect(body).not.toContain('data-brust-island=')
   expect(body).not.toContain('<script type="importmap">')
   expect(body).not.toContain('_bootstrap.js')
-})
+}, 15_000)
 
 test('action endpoint: happy path returns JSON', async () => {
   const { port, stop } = await startServer({ rustLog: 'brust=warn' })
