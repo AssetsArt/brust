@@ -10,9 +10,13 @@ import Counter from '../components/Counter'
 export default function Home({
   clientProps,
   serverProps,
+  cacheKey,
+  cacheTags,
 }: {
   clientProps: { start: number; label: string }
   serverProps: { start: number; label: string }
+  cacheKey: string
+  cacheTags: string[]
 }) {
   return (
     <BrustPage lang="en" className="dark" bodyClassName="brust-body" title="__PROJECT_NAME__">
@@ -49,18 +53,29 @@ export default function Home({
             </div>
           </section>
 
-          {/* Server island — rendered to string in the worker, then hydrated. */}
+          {/* Server island — ISR-cached: renderToString runs ONCE per `key`,
+              then every request serves the frozen markup from the Rust-side
+              cache (no re-render). `key`/`tags` come from the loader; invalidate
+              from server code with `import { cache } from 'brustjs'` →
+              `cache.invalidate({ tags: ['home'] })`. Drop the `isr` prop to
+              render on every request instead. */}
           <section className="island-card island-card-server">
             <div className="island-header">
-              <span className="island-badge island-badge-server">SSR + CSR</span>
+              <span className="island-badge island-badge-server">SSR + ISR</span>
               <h2 className="island-title">Server Island</h2>
             </div>
             <p className="island-desc">
-              Rendered to string in the Bun worker during the loader crossing, then hydrated — no
-              layout shift.
+              Rendered to string in the Bun worker, then cached (ISR) and hydrated — rendered once
+              per key, no layout shift.
             </p>
             <div className="island-mount-point">
-              <Island component={Counter} props={serverProps} ssr hydrate="load" />
+              <Island
+                component={Counter}
+                props={serverProps}
+                ssr
+                hydrate="load"
+                isr={{ key: cacheKey, tags: cacheTags }}
+              />
             </div>
           </section>
         </div>
