@@ -1,8 +1,8 @@
 # Island ISR cache — render-once SSR islands with key/tags invalidation
 
-**Status:** spec — draft, awaiting user review
+**Status:** spec — reviewed (subagent, fix-then-plan applied 2026-05-31); ready to plan
 **Date:** 2026-05-31
-**Branch:** TBD (`feat/island-isr-cache`)
+**Branch:** `feat/island-isr-cache`
 
 ## Goal
 
@@ -74,19 +74,30 @@ to the same shapes `island_props_path` (`lower.rs:605`) already accepts — a
 destructured `Ident` or a one-deep `Member` off a destructured root — so we
 reuse that extraction logic, no new evaluation model:
 
-- `key` → `keyPath` (dotted path into loader data, e.g. `"data.cacheKey"`). Required when `isr` present.
-- `tags` → `tagsPath` (dotted path resolving to a `string[]`). Optional.
-- `revalidate` → `revalidate` (numeric literal, seconds; TTL). Optional.
+- `key` → `keyPath` (dotted path into loader data, e.g. `"data.cacheKey"`),
+  extracted with the **same** `island_props_path` helper (`lower.rs:605`).
+  Required when `isr` present.
+- `tags` → `tagsPath` (dotted path resolving to a `string[]`), same extractor. Optional.
+- `revalidate` → `revalidate` (numeric **literal**, seconds; TTL). Optional.
 
-Anything else inside `isr` (deeper chains, call expressions, computed access) →
-a new `ErrorKind::IslandIsrUnsupported` at lower time, consistent with how
-`props` rejects unsupported shapes. `isr` without `ssr` → error (caching a
-client-only island is meaningless).
+**`revalidate` needs a distinct extractor** — `island_props_path` yields a *path
+string*, not a value. There is no existing helper that reads a numeric literal
+out of a JSX attr expr, so the plan adds a small one. `revalidate` is
+**literal-only**: a non-literal (`revalidate={data.ttl}`) → `ErrorKind::IslandIsrUnsupported`
+at lower time (a per-request dynamic TTL is out of scope). Anything else inside
+`isr` (deeper chains, call expressions, computed access, unknown sub-keys) →
+the same error, consistent with how `props` rejects unsupported shapes. `isr`
+without `ssr` → error (caching a client-only island is meaningless).
 
 **Threading through the IR/manifest** (all parallel to the existing `propsPath`):
 - `JsxNode::Island` (`lower.rs:561`) gains `key_path: Option<String>`, `tags_path: Option<String>`, `revalidate: Option<u32>`.
-- `IslandMeta` + `collect_islands` (`lib.rs:92`) copy them through.
-- `islands_to_json` (`lib.rs:129`) emits `keyPath`/`tagsPath`/`revalidate` (omitted when `None`, keeping back-compat for islands without `isr`).
+- ⚠️ Adding fields to the `JsxNode::Island` variant breaks **every exhaustive
+  destructure** of it. The plan must enumerate and update all match sites:
+  `number_islands` (`lib.rs:68`), `collect_islands` (`lib.rs:94`), `emit_jinja.rs`
+  island arm (~`:128`, currently ignores `props_path` via `_`), `lower.rs:561`
+  construction, and the test-module destructures (`lower.rs` ~`:1281/1339/1959/1985`).
+- `IslandMeta` struct (`lib.rs:32`) + its construction in `collect_islands` (`lib.rs:101`) copy them through.
+- `islands_to_json` (`lib.rs:129`, hand-rolled string-building — **no serde**) emits `keyPath`/`tagsPath`/`revalidate` by hand, omitted when `None` (back-compat for islands without `isr`).
 - TS `NativeIslandEntry` (`native-render.ts:24`) gains the three optional fields.
 
 ### 2. Runtime — cache get/set around `renderToString`
@@ -113,7 +124,30 @@ contained-failure degrade-to-empty path (`native-render.ts:140`) are unchanged;
 a `renderToString` throw on a miss must NOT poison the cache (only `cacheSet` on
 success).
 
+**Degenerate key/tags values** (`pathInto` returns `undefined` for a missing or
+non-own path, `native-render.ts:40`):
+- `key` resolves to `undefined` or a non-string → **uncached render** (today's
+  path) + `console.warn` once. We never coerce a non-string into the cache key.
+- `tags` resolves to a non-array → treat as `[]` (entry is cacheable, just not
+  tag-invalidatable) + `console.warn`.
+
 ### 3. Rust — `CacheStore` trait + moka backend
+
+> **Relationship to the existing `LruCache` (`crates/brust/src/cache.rs`).** The
+> `state()` singleton already owns an `Arc<LruCache>` — but that is the **HTTP
+> response cache**: keyed by `CacheKey { method, path, sorted_query, vary_values }`,
+> storing whole `response_bytes`, invalidated by **path** (`invalidate_path`,
+> `cache.rs:111`). It is, in fact, the "page-level route cache" this spec lists
+> as a non-goal. The island ISR cache is a distinct store: keyed by a **dev
+> string**, storing **`{html, props}` fragments**, invalidated by **arbitrary
+> tags**. We do NOT reuse `LruCache` (wrong key type, no tag index). We use
+> **moka** for the new store because (1) tag-grouped invalidation needs a reverse
+> index `LruCache` lacks; (2) moka's sharded/lock-free reads beat the existing
+> single `parking_lot::Mutex<lru>` under the split conn/render worker pool
+> (multiple worker threads hit this store concurrently per request); (3)
+> redis-adaptability comes from the `CacheStore` **trait**, not the crate.
+> *(Decision: keep moka per explicit request; the existing `lru` pattern was
+> evaluated and rejected on key-type + concurrency grounds, not overlooked.)*
 
 A new field on the singleton `state()` (`crates/brust/src/lib.rs`):
 
@@ -146,6 +180,7 @@ Three `#[napi]` functions (style per `lib.rs:293` `configure_islands_dir` —
 #[napi] fn island_cache_get(key: String) -> Option<CachedIslandJs>     // { html, props } | null
 #[napi] fn island_cache_set(key: String, tags: Vec<String>, ttl_ms: Option<u32>, html: String, props: String)
 #[napi] fn island_cache_invalidate(key: Option<String>, tags: Option<Vec<String>>)
+#[napi] fn island_cache_clear()   // dev hot-reload (invariant 7) + test reset
 ```
 
 `get`/`set` move only small strings across the boundary (the rendered fragment +
@@ -207,6 +242,20 @@ elsewhere (action / api route):
    the SAB write; the worker-pool claim/release invariant from
    [[napi-crossing-floor]] / the 0.1.6 split-workers work is not in this path.
 
+6. **Cold-miss stampede is wasteful-but-correct.** Two worker threads hitting
+   the same cold key concurrently will both `renderToString` and both `cacheSet`.
+   By invariant 2 both renders are byte-identical, so last-write-wins is safe. We
+   accept the duplicated render rather than add a per-key render lock (the whole
+   point is to remove the render from the hot path, not gate it on a mutex).
+
+7. **Dev hot-reload must clear the island cache.** The cache is process-global on
+   the Rust side and survives Bun worker restarts (`resetWorkerPool`,
+   `runtime/index.ts:480`). An island source edit in `brust dev` restarts the
+   worker but would leave stale `{html, props}` cached → stale render after edit.
+   The dev reload path MUST also clear the island cache (a new
+   `island_cache_clear()` NAPI, called alongside `resetWorkerPool` in the dev
+   coordinator). Production is unaffected. See [[dev-browser-autoreload-ws-lifecycle]].
+
 ## Testing
 
 - **Compiler** (Rust unit, `lower.rs` / `lib.rs` tests): `isr` parses to
@@ -226,17 +275,20 @@ elsewhere (action / api route):
   (~the 4.9× headroom the isolation test showed). Reason in deltas; oha
   co-located.
 
-## Open questions
+## Open questions — resolved at plan time
 
-1. **moka `sync` vs `future`.** The runtime calls are from the worker thread via
-   NAPI (sync boundary) — `moka::sync::Cache` fits. Confirm no async needed.
-2. **Cache size bound / eviction.** moka needs a max capacity (entry count or
-   weighted by string bytes). Default? Make it a `ServeOptions.tuning` knob
-   (consistent with the 0.1.6 tuning surface)?
-3. **`revalidate` semantics on expiry.** Pure TTL evict (next request is a cold
-   miss) vs stale-while-revalidate (serve stale, re-render in background)? SWR
-   is more work and needs a background render dispatch — propose **pure TTL this
-   phase**, SWR later.
-4. **Cross-restart persistence.** moka is in-memory → empties on full process
-   restart (not worker restart). Acceptable this phase; the `RedisStore` adapter
-   is the persistence answer.
+1. **moka `sync` vs `future`** → **`moka::sync::Cache`.** The NAPI boundary is
+   synchronous (the worker calls `napiRenderJinja` synchronously, `routes.ts:612`,
+   and the cache get/set sit on that same sync path). No async runtime needed.
+2. **Cache size bound / eviction** → **`max_capacity` by entry count, default
+   1000** (matches `CACHE_CAPACITY` in `cache.rs:8`), exposed as a
+   `ServeOptions.tuning` knob (consistent with the 0.1.6 tuning surface). moka's
+   TinyLFU admission handles eviction.
+3. **`revalidate` semantics on expiry** → **pure TTL evict this phase** (next
+   request is a cold miss). Stale-while-revalidate needs a background render
+   dispatch — deferred.
+4. **Cross-restart persistence** → **accepted: in-memory, empties on full process
+   restart** (not worker restart — the store is main-side). The `RedisStore`
+   adapter behind `CacheStore` is the future persistence answer.
+5. **Stampede / dev-reload / degenerate values** → resolved in Invariants 6–7
+   and the runtime "degenerate key/tags" note above.
