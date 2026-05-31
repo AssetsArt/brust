@@ -1,4 +1,4 @@
-import Counter from '../../../example/hello-world/components/Counter'
+import Counter from './components/Counter'
 import NativeLayout from './NativeLayout'
 
 export default function NativeSsrComp({

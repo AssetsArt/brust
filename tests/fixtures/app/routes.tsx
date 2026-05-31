@@ -1,11 +1,13 @@
 import { defineRoutes, type Middleware } from '../../../runtime/routes.ts'
 import { counterStream, idleStream } from './sse-streams.ts'
 
-// Demo components re-used by the showcase routes (kept clean in example/).
-import HelloWorld    from '../../../example/hello-world/pages/HelloWorld'
-import BlogPost      from '../../../example/hello-world/pages/BlogPost'
-import SlowSuspense  from '../../../example/hello-world/pages/SlowSuspense'
-import NativeProfile from '../../../example/hello-world/pages/NativeProfile'
+// Fixture-local page copies. The test fixture is SELF-CONTAINED — it must not
+// import from example/hello-world, so deleting or regenerating the example
+// never breaks the test suite.
+import HelloWorld    from './pages/HelloWorld'
+import BlogPost      from './pages/BlogPost'
+import SlowSuspense  from './pages/SlowSuspense'
+import NativeProfile from './pages/NativeProfile'
 import NativeIslandPage from './NativeIslandPage'
 import NativeSsrIslandPage from './NativeSsrIslandPage'
 import NativeTwoIslandPage from './NativeTwoIslandPage'
