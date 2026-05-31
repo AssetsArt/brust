@@ -205,7 +205,7 @@ describe('emitNativeTemplates — SSR component artifacts', () => {
     const counterPath = join(dir, 'Counter.tsx')
     writeFileSync(
       counterPath,
-      "export default function Counter({ count }: { count: number }) { return <span>{count}</span>; }",
+      'export default function Counter({ count }: { count: number }) { return <span>{count}</span>; }',
     )
 
     // Layout.tsx — SSR component that acts as a wrapper
