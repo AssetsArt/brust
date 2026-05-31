@@ -99,6 +99,28 @@ Because inline produces ordinary `JsxNode`s spliced into the route IR, the
 existing island collection/numbering/hydration passes pick up any `<Island>`
 inside an inlined component for free — inline just has to run first.
 
+#### IR-walker impact (spec-review correction)
+`JsxNode::Cond` is produced **only** by the inline expansion path (lowering a
+`native` component body); it lives on the **route/Jinja side** and is NEVER a
+child of an `SsrComponent` (so `emit_factory` never *emits* it). But it CAN
+contain an `<Island>` or an (unannotated) SSR-slot component in its branches, so
+every route-IR **walker** must recurse into both `consequent` and `alternate`:
+- `number_islands`, `collect_islands` (`lib.rs`)
+- `number_ssr_components`, `collect_components` (`lib.rs`)
+- `collect_factories` (`emit_factory.rs`) — recurse to FIND nested SsrComponents;
+  it does not emit the Cond itself.
+- `emit_jinja::emit_node` — EMITS `Cond` as `{% if %}…{% else %}…{% endif %}`.
+
+`JsxNode::ChildrenSlot` is a **transient** lowering placeholder: it is fully
+substituted with the call-site children before `lower` returns, so it never
+reaches numbering/collection/emit. All post-lower consumers (`emit_jinja`,
+`emit_factory`, the walkers) add a defensive `unreachable!()` arm for it to keep
+matches exhaustive and assert the invariant.
+
+`JsxNode` currently derives only `Debug, Default` — **add `Clone`** so a
+`ChildrenSlot` referenced multiple times in a component body can splice the
+call-site subtree into each position.
+
 ### Expression translation surface
 Inlined expressions are lowered to the route's existing `Expr` IR, extended to
 cover the translatable set. Anything outside → inline fails → SSR fallback.
@@ -168,6 +190,19 @@ lowerer. Internal-only signature; default empty for existing test callers.
   `compileJsx`.
 - Build warnings returned in `warnings` are printed to stderr (one line each).
 
+#### BLOCKER (spec-review): transitive imports for reconcile
+`reconcileIslandManifest` and `emitComponentArtifacts` look up
+`pageImports.get(entry.component)` and **throw** when a manifest entry has no
+matching import in the page source (`native-routes-emit.ts:84-87`). An `<Island>`
+(or an unannotated SSR-slot component) imported INSIDE an inlined component file
+is not in the page route's `scanImports` → the build would throw. **Fix:** build
+a merged import map = page imports ∪ transitive imports from every inlined
+component file (the recursive source walk already visits these files), and pass
+the merged map to `reconcileIslandManifest` / `emitComponentArtifacts`. On an
+ident collision across files, the page's own import wins; if two inlined files
+import different paths under the same ident, that is a `CircularInline`-adjacent
+ambiguity — error with a clear message.
+
 ## File structure
 
 New Rust files in `crates/jsx-rust-compiler/src/`:
@@ -188,7 +223,13 @@ Extended Rust files:
 - `lower.rs` — `lower_ssr_component` gains the `native` branch; new helpers for
   parsing the `native` bare attr and driving inline.
 - `lib.rs` — thread `component_sources`; collect warnings; new `CircularInline`
-  error kind; `ComponentMeta`/numbering unchanged (inline runs before).
+  error kind; teach `number_islands`/`collect_islands`/`number_ssr_components`/
+  `collect_components` to recurse into `JsxNode::Cond` branches (an Island or
+  SSR-slot component can live in a conditional branch of an inlined component).
+  `ComponentMeta` shape unchanged.
+- `emit_factory.rs` — `collect_factories` recurses into `Cond` branches to find
+  nested SsrComponents; `emit_child` gains a defensive `unreachable!()` arm for
+  `Cond`/`ChildrenSlot` (neither is a factory child).
 
 Extended TS:
 - `runtime/islands/build.ts`, `runtime/cli/native-routes-emit.ts` — recursive
