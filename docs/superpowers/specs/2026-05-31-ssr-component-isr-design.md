@@ -285,6 +285,34 @@ any consumer's program.
   orphaned) shadowed root `@19` and made the augmentation land on the wrong
   version in-repo; removed during verification. See [[published-install-tarball-test]].
 
+### 2c. Literal `key`/`tags` (enhancement — both islands + components)
+
+Original design accepted only loader-data PATHS for `key`/`tags` (mirroring
+`props={…}`). But a STATIC cache identity — "cache this once, same for every
+request" (a global nav/layout) — is a common, natural case. So `key`/`tags` now
+ALSO accept literals, alongside paths:
+
+- `isr={{ key: 'ssrCounter', revalidate: 10 }}` — string-literal key (static).
+- `isr={{ key: 'x', tags: ['nav', 'global'] }}` — string-array-literal tags.
+- Paths still work: `isr={{ key: data.cacheKey, tags: data.cacheTags }}`.
+
+**Representation (parallel fields, least churn to the shipped path plumbing):**
+- `parse_isr_object` returns a struct `{ key_path, key_literal, tags_path, tags_literal, revalidate }`.
+  - `key`: `SwcExpr::Lit(Lit::Str)` → `key_literal`; else `expr_to_path` → `key_path`. Exactly one is set (key still mandatory — error if neither).
+  - `tags`: `SwcExpr::Array` of all-string-literals → `tags_literal` (empty `[]` allowed → no tags); else `expr_to_path` → `tags_path`. A non-string/spread/hole array element → error.
+- IR `Island` + `SsrComponent`, and `IslandMeta` + `ComponentMeta`, gain
+  `key_literal: Option<String>` + `tags_literal: Option<Vec<String>>` alongside
+  the existing `key_path`/`tags_path`.
+- `islands_to_json`/`components_to_json` emit `keyLiteral` (string) / `tagsLiteral`
+  (string[]) conditionally, parallel to `keyPath`/`tagsPath`.
+- `lower_island`'s `ssr`-required check includes the literal fields.
+- Runtime `NativeIslandEntry`/`NativeComponentEntry` gain `keyLiteral?: string` /
+  `tagsLiteral?: string[]`; `resolveIslandContext`/`resolveComponentContext`
+  resolve `key = entry.keyLiteral ?? <pathInto(data, keyPath) if string>` and
+  `tags = entry.tagsLiteral ?? <validated pathInto(data, tagsPath)>`. Literal wins.
+
+This also makes the intuitive `tags: []` (empty literal) valid (→ no tags).
+
 ### 3. Reused infrastructure (no diff)
 
 - `crates/brust/src/island_cache.rs` — `CacheStore`/`MokaStore`, tag reverse
