@@ -256,8 +256,8 @@ fn lower_element(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode
     // Third path: any other capitalised tag → SSR component.
     if let JSXElementName::Ident(ident) = &el.opening.name {
         let s = ident.sym.as_ref();
-        if s.starts_with(|c: char| c.is_ascii_uppercase()) && s != "Island" && s != "BrustPage" {
-            return lower_ssr_component(el, scope, in_map);
+        if s.starts_with(|c: char| c.is_ascii_uppercase()) {
+            return lower_ssr_component(el, s, scope, in_map);
         }
     }
 
@@ -402,13 +402,11 @@ fn lower_brust_page(el: &JSXElement, scope: &Scope) -> Result<JsxNode, LowerErro
 
 fn lower_ssr_component(
     el: &JSXElement,
+    component_name: &str,
     scope: &Scope,
     in_map: bool,
 ) -> Result<JsxNode, LowerError> {
-    let component = match &el.opening.name {
-        JSXElementName::Ident(ident) => ident.sym.to_string(),
-        _ => unreachable!("caller guarantees Ident"),
-    };
+    let component = component_name.to_owned();
 
     let mut props: Vec<JsxAttr> = Vec::new();
     for attr in &el.opening.attrs {
@@ -2431,10 +2429,23 @@ mod tests {
 
     #[test]
     fn lower_ssr_component_camelcase_props_accepted() {
+        use crate::parser;
+        // Verify camelCase prop names survive lowering — this is the core reason
+        // lower_ssr_component uses its own attr loop instead of lower_attr.
         let src = "export default function Page({ data }) { return <Card userName={data.name} isActive={data.active} />; }";
-        let c = compile_full(src, "<test>").unwrap();
-        assert_eq!(c.components.len(), 1);
-        assert_eq!(c.components[0].component, "Card");
+        let parsed = parser::parse(src, "<test>").unwrap();
+        let ir = lower(&parsed).unwrap();
+        match &ir.root {
+            JsxNode::SsrComponent {
+                component, props, ..
+            } => {
+                assert_eq!(component, "Card");
+                assert_eq!(props.len(), 2);
+                assert_eq!(props[0].name, "userName");
+                assert_eq!(props[1].name, "isActive");
+            }
+            other => panic!("expected SsrComponent, got {other:?}"),
+        }
     }
 
     #[test]
