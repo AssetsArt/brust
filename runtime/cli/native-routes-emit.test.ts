@@ -3,7 +3,11 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os'
 import { isAbsolute, join, relative } from 'node:path'
 import { ISLANDS_IMPORTMAP_AND_BOOTSTRAP } from '../islands/importmap.ts'
-import { emitNativeTemplates, reconcileIslandManifest } from './native-routes-emit.ts'
+import {
+  emitNativeTemplates,
+  gatherComponentSources,
+  reconcileIslandManifest,
+} from './native-routes-emit.ts'
 
 let dir: string
 
@@ -252,5 +256,130 @@ describe('emitNativeTemplates — SSR component artifacts', () => {
     // .factory.ts must import Island (usesIsland: true)
     const factoryContent = readFileSync(join(outDir, 'Page.factory.ts'), 'utf8')
     expect(factoryContent).toContain("import { Island } from 'brustjs'")
+  })
+})
+
+describe('gatherComponentSources', () => {
+  test('collects transitive native sources', () => {
+    // B.tsx — leaf component
+    const bPath = join(dir, 'B.tsx')
+    writeFileSync(bPath, 'export default function B() { return <span>B</span>; }')
+
+    // A.tsx — imports B
+    const aPath = join(dir, 'A.tsx')
+    writeFileSync(aPath, `import B from './B'\nexport default function A() { return <B/>; }`)
+
+    // Page.tsx — imports A
+    const pagePath = join(dir, 'Page.tsx')
+    writeFileSync(pagePath, `import A from './A'\nexport default function Page() { return <A/>; }`)
+
+    const { sources, mergedImports } = gatherComponentSources(pagePath)
+
+    // Both A and B should be in sources, keyed by their ident
+    expect('A' in sources).toBe(true)
+    expect('B' in sources).toBe(true)
+    expect(sources.A).toContain('function A')
+    expect(sources.B).toContain('function B')
+
+    // mergedImports should contain both A and B with their resolved paths
+    expect(mergedImports.get('A')).toBe(aPath)
+    expect(mergedImports.get('B')).toBe(bPath)
+  })
+
+  test('merges imports so a nested island reconciles (BLOCKER regression)', () => {
+    // Counter.tsx — the island component, imported only by Layout
+    const counterPath = join(dir, 'Counter.tsx')
+    writeFileSync(
+      counterPath,
+      'export default function Counter({ count }: { count: number }) { return <span>{count}</span>; }',
+    )
+
+    // Layout.tsx — imports Counter (island), NOT imported directly by Page
+    const layoutPath = join(dir, 'Layout.tsx')
+    writeFileSync(
+      layoutPath,
+      `import Counter from './Counter'\nexport default function Layout() { return <div><Island component={Counter} props={0} hydrate="load"/></div>; }`,
+    )
+
+    // Page.tsx — imports Layout only (Counter is NOT directly imported here)
+    const pagePath = join(dir, 'Page.tsx')
+    writeFileSync(
+      pagePath,
+      `import Layout from './Layout'\nexport default function Page() { return <Layout/>; }`,
+    )
+
+    const { mergedImports } = gatherComponentSources(pagePath)
+
+    // Counter must be in mergedImports even though Page never imports it directly
+    expect(mergedImports.get('Counter')).toBe(counterPath)
+    // Layout must also be present
+    expect(mergedImports.get('Layout')).toBe(layoutPath)
+  })
+
+  test('dedupes cycles — A imports B, B imports A — terminates and both present', () => {
+    // Use forward declarations — write placeholder files first, then rewrite with cross-imports
+    const aPath = join(dir, 'CycleA.tsx')
+    const bPath = join(dir, 'CycleB.tsx')
+
+    writeFileSync(
+      aPath,
+      `import CycleB from './CycleB'\nexport default function CycleA() { return <CycleB/>; }`,
+    )
+    writeFileSync(
+      bPath,
+      `import CycleA from './CycleA'\nexport default function CycleB() { return <CycleA/>; }`,
+    )
+
+    // Page imports A
+    const pagePath = join(dir, 'CyclePage.tsx')
+    writeFileSync(
+      pagePath,
+      `import CycleA from './CycleA'\nexport default function CyclePage() { return <CycleA/>; }`,
+    )
+
+    // Should not throw or infinite-loop
+    let result: ReturnType<typeof gatherComponentSources> | undefined
+    expect(() => {
+      result = gatherComponentSources(pagePath)
+    }).not.toThrow()
+
+    // Both CycleA and CycleB should be in sources
+    expect(result).toBeDefined()
+    expect('CycleA' in result!.sources).toBe(true)
+    expect('CycleB' in result!.sources).toBe(true)
+  })
+
+  test('ambiguous ident throws when two files import different paths as the same name', () => {
+    // Create two different Card components at different paths
+    const card1Path = join(dir, 'cards', 'Card.tsx')
+    mkdirSync(join(dir, 'cards'), { recursive: true })
+    writeFileSync(card1Path, 'export default function Card() { return <div>Card1</div>; }')
+
+    const card2Path = join(dir, 'widgets', 'Card.tsx')
+    mkdirSync(join(dir, 'widgets'), { recursive: true })
+    writeFileSync(card2Path, 'export default function Card() { return <div>Card2</div>; }')
+
+    // ComponentA imports Card from cards/
+    const compAPath = join(dir, 'CompA.tsx')
+    writeFileSync(
+      compAPath,
+      `import Card from './cards/Card'\nexport default function CompA() { return <Card/>; }`,
+    )
+
+    // ComponentB imports Card from widgets/ (different path, same ident)
+    const compBPath = join(dir, 'CompB.tsx')
+    writeFileSync(
+      compBPath,
+      `import Card from './widgets/Card'\nexport default function CompB() { return <Card/>; }`,
+    )
+
+    // Page imports both CompA and CompB — causes ambiguous Card ident
+    const pagePath = join(dir, 'AmbigPage.tsx')
+    writeFileSync(
+      pagePath,
+      `import CompA from './CompA'\nimport CompB from './CompB'\nexport default function AmbigPage() { return <div><CompA/><CompB/></div>; }`,
+    )
+
+    expect(() => gatherComponentSources(pagePath)).toThrow(/ambiguous component ident "Card"/)
   })
 })

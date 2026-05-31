@@ -3,6 +3,86 @@ import { dirname, relative, resolve } from 'node:path'
 import { buildDevClientTag } from '../dev/client.ts'
 import { ISLANDS_IMPORTMAP_AND_BOOTSTRAP } from '../islands/importmap.ts'
 
+/** Gather transitive component sources starting from a page source file.
+ *
+ * BFS/DFS over local imports reachable from `pageSourcePath`:
+ * - Reads each file's source text and adds it to `sources[ident]`.
+ * - Recursively follows local imports in each visited file.
+ * - Deduplicates by resolved path to handle cycles.
+ * - `mergedImports` is the union of every visited file's `scanImports`, with
+ *   the page's own imports taking precedence on a conflicting ident.
+ *
+ * Throws when the same ident resolves to two different absolute paths (across
+ * two different importing files) — that would be ambiguous for the Rust
+ * compiler. */
+export function gatherComponentSources(pageSourcePath: string): {
+  sources: Record<string, string>
+  mergedImports: Map<string, string>
+} {
+  const sources: Record<string, string> = {}
+  // mergedImports accumulates ident→resolvedPath across ALL visited files.
+  // The page's own imports win on conflict (inserted last below).
+  const mergedImports = new Map<string, string>()
+  const visited = new Set<string>()
+
+  // Queue items: { ident, resolvedPath } — ident is how the PARENT imported it.
+  // We start with the children of pageSourcePath (not the page itself).
+  function visit(filePath: string, ident: string) {
+    if (visited.has(filePath)) return
+    visited.add(filePath)
+
+    const sourceText = readFileSync(filePath, 'utf8')
+
+    // Record source keyed by ident — detect ambiguity.
+    if (ident in sources) {
+      // Same ident already seen — only an error if it resolves to a different path.
+      // We get the previous path from mergedImports (which maps ident → resolvedPath).
+      const existingPath = mergedImports.get(ident)
+      if (existingPath && existingPath !== filePath) {
+        throw new Error(
+          `native build: ambiguous component ident "${ident}" resolves to two paths: ${existingPath} and ${filePath}`,
+        )
+      }
+    } else {
+      sources[ident] = sourceText
+    }
+
+    // Scan this file's imports and recurse into local ones.
+    const childImports = scanImports(filePath)
+    for (const [childIdent, childPath] of childImports) {
+      // Merge into mergedImports — check for ambiguity.
+      const existing = mergedImports.get(childIdent)
+      if (existing !== undefined && existing !== childPath) {
+        throw new Error(
+          `native build: ambiguous component ident "${childIdent}" resolves to two paths: ${existing} and ${childPath}`,
+        )
+      }
+      if (existing === undefined) {
+        mergedImports.set(childIdent, childPath)
+      }
+      // Recurse into local files (skip node_modules / unresolved paths).
+      if (!childPath.includes('node_modules')) {
+        visit(childPath, childIdent)
+      }
+    }
+  }
+
+  // Seed: scan the page's own imports and visit each local file.
+  const pageImports = scanImports(pageSourcePath)
+  for (const [ident, resolvedPath] of pageImports) {
+    if (!resolvedPath.includes('node_modules')) {
+      visit(resolvedPath, ident)
+    }
+  }
+
+  // Page's own imports win on ident conflict — merge them last.
+  for (const [ident, resolvedPath] of pageImports) {
+    mergedImports.set(ident, resolvedPath)
+  }
+
+  return { sources, mergedImports }
+}
+
 /** Dev-only: splice the /_brust/dev WS client `<script>` into a compiled native
  * template so `native: true` (jinja) routes auto-reload like React-SSR routes.
  *
@@ -227,7 +307,11 @@ export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<vo
   // the addon (`.node`) ships with every platform package, so this path works
   // for source builds and installed projects alike.
   let compileJsx:
-    | ((source: string, path: string) => { template: string; islandsJson: string })
+    | ((
+        source: string,
+        path: string,
+        componentSources?: Record<string, string>,
+      ) => { template: string; islandsJson: string; warnings?: string[] })
     | null = null
   if (nativeRoutes.length > 0) {
     const native = await import('../index.js')
@@ -254,12 +338,22 @@ export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<vo
       continue
     }
     const outPath = resolve(opts.outDir, `${name}.jinja`)
-    let compiled: { template: string; islandsJson: string }
+
+    // Gather transitive component sources for native inlining and build the
+    // merged import map that covers nested components (e.g. islands inside an
+    // inlined native component that don't appear in the page's own imports).
+    const { sources, mergedImports } = gatherComponentSources(sourcePath)
+
+    let compiled: { template: string; islandsJson: string; warnings?: string[] }
     try {
-      compiled = compileJsx!(readFileSync(sourcePath, 'utf8'), sourcePath)
+      compiled = compileJsx!(readFileSync(sourcePath, 'utf8'), sourcePath, sources)
     } catch (e) {
       throw new Error(`native route "${name}" failed to compile (${sourcePath}):\n${String(e)}`)
     }
+
+    // Print non-fatal compiler warnings to stderr.
+    for (const w of compiled.warnings ?? []) process.stderr.write(`brust: ${w}\n`)
+
     // Dev-only: native routes don't pass through the React renderer's dev-client
     // injection, so splice the /_brust/dev WS script in here. reEmitJinja() runs
     // this on every hot reload, so the script is always present in dev.
@@ -270,10 +364,6 @@ export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<vo
     writeFileSync(outPath, template)
     built.push(name)
 
-    // Page imports are needed for both island reconciliation and SSR component
-    // artifact emission — hoist scan here so both code paths can use it.
-    const pageImports = scanImports(sourcePath)
-
     // Islands post-processing. The compiler reports an island manifest ONLY
     // when the route uses <Island>; `"[]"` ⇒ no islands ⇒ leave the .jinja
     // byte-identical (no-island regression). Remove any stale sibling so a
@@ -281,7 +371,7 @@ export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<vo
     const islandsJsonPath = resolve(opts.outDir, `${name}.islands.json`)
     if (compiled.islandsJson && compiled.islandsJson !== '[]') {
       writeFileSync(islandsJsonPath, compiled.islandsJson)
-      reconcileIslandManifest(outPath, islandsJsonPath, pageImports, name)
+      reconcileIslandManifest(outPath, islandsJsonPath, mergedImports, name)
     } else if (existsSync(islandsJsonPath)) {
       rmSync(islandsJsonPath, { force: true })
     }
@@ -289,7 +379,7 @@ export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<vo
     // SSR component artifacts: .components.json + .factory.ts
     const compJsonStr = (compiled as any).componentsJson ?? '[]'
     if (compJsonStr !== '[]') {
-      emitComponentArtifacts(outPath, compJsonStr, pageImports, name)
+      emitComponentArtifacts(outPath, compJsonStr, mergedImports, name)
     }
   }
 
