@@ -9,6 +9,7 @@ import NativeProfile from '../../../example/hello-world/pages/NativeProfile'
 import NativeIslandPage from './NativeIslandPage'
 import NativeSsrIslandPage from './NativeSsrIslandPage'
 import NativeTwoIslandPage from './NativeTwoIslandPage'
+import NativeSsrComp from './NativeSsrComp'
 
 // Test-only components — these mount routes that exercise failure modes,
 // middleware, cache, nested routes, and the various server-action paths.
@@ -100,6 +101,19 @@ export const routes = defineRoutes([
       greeting: 'Two islands',
       first: { start: 1 },
       second: { start: 2 },
+    }),
+  },
+  // Sub-project J / SSR components — native: true route hosting a plain React
+  // component (NativeLayout, defined inline) rendered server-side via
+  // resolveComponentContext. Proves the component manifest + factory pipeline
+  // wired in routes.ts dispatch.
+  {
+    path: '/native-ssr-comp',
+    Component: NativeSsrComp,
+    native: true,
+    loader: async () => ({
+      greeting: 'SSR component test',
+      counter: { start: 0, label: 'clicks' },
     }),
   },
 
