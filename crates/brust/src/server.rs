@@ -535,9 +535,17 @@ async fn handle_conn(
         if path.starts_with("/_brust/cache/invalidate") {
             // Endpoint is POST-only. The outer method gate already rejects
             // methods other than GET and POST; here we further reject GET.
+            // `continue`, not `return`: error_405() sends `Connection: keep-alive`
+            // (build_response default) and a GET has no body to leave unread, so
+            // the socket is in a clean state for the next request. Returning here
+            // would CLOSE a socket we just told the client to keep — a keep-alive
+            // client (Bun fetch's connection pool) then reuses the pooled-but-
+            // closed connection and the next request fails with "socket closed
+            // unexpectedly" (the intermittent CI flake). Matches the POST success
+            // branches below, which `continue`.
             if method != "POST" {
                 let _ = s.write_all(http::error_405()).await;
-                return;
+                continue;
             }
             let query = path.split_once('?').map(|(_, q)| q).unwrap_or("");
             let mut target_path: Option<String> = None;

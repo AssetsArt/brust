@@ -403,6 +403,47 @@ test('invalidate endpoint rejects GET and unsupported queries', async () => {
   }
 }, 15_000)
 
+// Regression (deterministic): a 405 sends `Connection: keep-alive`, so the
+// server MUST keep the socket open for the next request. It previously
+// `return`ed (closed) after the invalidate-GET 405 while advertising keep-alive
+// — a keep-alive client reusing the pooled-but-closed connection then failed
+// with "socket closed unexpectedly" (intermittent CI flake). Raw socket so the
+// connection reuse is explicit, not at the mercy of fetch's pool heuristics.
+test('405 on invalidate keeps the keep-alive connection open (no close-after-405)', async () => {
+  const { port, stop } = await startServer({ workers: '1' })
+  try {
+    let buf = ''
+    const sock = await Bun.connect({
+      hostname: '127.0.0.1',
+      port,
+      socket: {
+        data(_s, d) {
+          buf += new TextDecoder().decode(d)
+        },
+      },
+    })
+    // Request 1: GET (405, keep-alive) on the same socket.
+    sock.write(
+      'GET /_brust/cache/invalidate?path=/x HTTP/1.1\r\nHost: x\r\nConnection: keep-alive\r\n\r\n',
+    )
+    await Bun.sleep(150)
+    const first = buf.split('\r\n')[0]
+    buf = ''
+    // Request 2: POST on the SAME connection — must arrive, proving keep-alive.
+    sock.write(
+      'POST /_brust/cache/invalidate HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Length: 0\r\n\r\n',
+    )
+    await Bun.sleep(200)
+    const second = buf.split('\r\n')[0]
+    sock.end()
+    expect(first).toContain('405')
+    expect(second).toContain('400') // connection survived the 405; not empty/closed
+  } finally {
+    const exit = await stop()
+    expect(exit).toBe(0)
+  }
+}, 15_000)
+
 test('island marker + importmap injected when route uses <Island>', async () => {
   const { port, stop } = await startServer({ workers: '1' })
   try {
