@@ -478,7 +478,6 @@ export const brust = {
               // after a hot reload. `?.` keeps an older addon (no reset export)
               // from throwing; it just falls back to the old behaviour.
               const dropped = (native as any).resetWorkerPool?.() ?? 0
-              ;(native as any).islandCacheClear?.() // drop stale frozen islands after a source edit
               if (process.env.BRUST_DEV_DEBUG) {
                 process.stderr.write(`[brust] dev: reset worker pool (dropped ${dropped})\n`)
               }
@@ -489,6 +488,11 @@ export const brust = {
             },
           },
           reEmitJinja,
+          // Wipe the Rust-side island ISR cache on every render-affecting reload
+          // so a frozen island render never survives a `.tsx` edit in dev.
+          clearIslandCache: () => {
+            ;(native as any).islandCacheClear?.()
+          },
           buildCss: async () => {
             const appCss = pathModule.join(scanRoot, 'app.css')
             if (fsModule.existsSync(appCss)) {

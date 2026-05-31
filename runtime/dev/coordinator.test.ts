@@ -10,6 +10,7 @@ function makeDeps(over: Partial<any> = {}) {
     buildCss: mock(() => Promise.resolve()),
     buildIslands: mock(() => Promise.resolve()),
     reEmitJinja: mock(() => Promise.resolve()),
+    clearIslandCache: mock(() => {}),
     broadcast: mock((_msg: any) => Promise.resolve()),
     tui: { appendEvent: mock((_line: string) => {}) },
     ...over,
@@ -52,6 +53,25 @@ describe('Coordinator', () => {
     expect(deps.workers.spawnAll).toHaveBeenCalledTimes(1)
     const types = deps.broadcast.mock.calls.map((c) => c[0].type)
     expect(types).toEqual(['building', 'reload', 'ok'])
+  })
+
+  test('ISR cache is cleared on render-affecting reloads, not on css', async () => {
+    // ts + islands edits must wipe the Rust-side island cache so a frozen
+    // render never survives a hot reload; css-only changes leave it intact.
+    const ts = makeDeps()
+    await new Coordinator(ts).handleChange({ paths: ['/a.tsx'], kind: 'ts' })
+    expect(ts.clearIslandCache).toHaveBeenCalledTimes(1)
+
+    const islands = makeDeps()
+    await new Coordinator(islands).handleChange({
+      paths: ['/components/Counter.tsx'],
+      kind: 'islands',
+    })
+    expect(islands.clearIslandCache).toHaveBeenCalledTimes(1)
+
+    const css = makeDeps()
+    await new Coordinator(css).handleChange({ paths: ['/app.css'], kind: 'css' })
+    expect(css.clearIslandCache).not.toHaveBeenCalled()
   })
 
   test('build failure → broadcast error, no reload/ok', async () => {
