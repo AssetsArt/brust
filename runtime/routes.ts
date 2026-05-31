@@ -14,6 +14,20 @@ import { renderBranchStreaming } from './render/stream.ts'
 import { loadIslandManifest, resolveIslandContext } from './islands/native-render.ts'
 import type { ActionDef } from './actions.ts'
 
+// Sub-project J — island ISR cache, backed by the Rust-side store (shared across
+// the worker pool) via NAPI. napi-rs maps snake→camel: island_cache_get →
+// islandCacheGet, island_cache_set → islandCacheSet. `as any` avoids depending on
+// the regenerated .d.ts — the addon isn't rebuilt locally; index.js/*.node are
+// gitignored and CI rebuilds.
+const islandCache: import('./islands/native-render.ts').IslandCache = {
+  get(key) {
+    return (native as any).islandCacheGet(key) ?? null
+  },
+  set(key, tags, ttlMs, html, props) {
+    ;(native as any).islandCacheSet(key, tags, ttlMs ?? undefined, html, props)
+  },
+}
+
 // Permanently-unaborted AbortSignal sentinel for non-SSE routes.
 // The controller is held in module scope and never .abort()-ed, keeping
 // the signal alive in the unaborted state. Do NOT use AbortSignal.abort()
@@ -595,7 +609,7 @@ export function makeRenderer(
         const manifest = loadIslandManifest(flat.nativeTemplate)
         if (manifest && manifest.length > 0) {
           const rt = JSON.parse(json) // roundtrip ONCE; props read from rt
-          const extra = await resolveIslandContext(manifest, rt)
+          const extra = await resolveIslandContext(manifest, rt, islandCache)
           const ctx = { ...rt, ...extra }
           const finalBytes = encoder.encode(JSON.stringify(ctx))
           // The original size check guarded the pre-island bytes; the merged
