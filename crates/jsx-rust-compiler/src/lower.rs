@@ -1584,6 +1584,8 @@ fn infer_props_types(node: &JsxNode, props: &mut PropsShape) -> Result<(), Lower
         // SsrComponent is opaque — it has its own type scope and is not
         // recursed into for prop-type inference here.
         JsxNode::SsrComponent { .. } => Ok(()),
+        JsxNode::Cond { .. } => unreachable!("Cond handled in a later task"),
+        JsxNode::ChildrenSlot => unreachable!("ChildrenSlot handled in a later task"),
     }
 }
 
@@ -1604,6 +1606,12 @@ fn infer_from_expr(expr: &crate::ir::Expr, props: &mut PropsShape) -> Result<(),
         | crate::ir::Expr::MapMember { .. }
         | crate::ir::Expr::StaticText(_)
         | crate::ir::Expr::StaticNum(_) => Ok(()),
+        crate::ir::Expr::Arith { .. }
+        | crate::ir::Expr::Concat(_)
+        | crate::ir::Expr::Filter { .. }
+        | crate::ir::Expr::Compare { .. }
+        | crate::ir::Expr::Logical { .. }
+        | crate::ir::Expr::Not(_) => unreachable!("new Expr variants handled in a later task"),
     }
 }
 
@@ -1644,6 +1652,8 @@ fn collect_map_member_fields(
         JsxNode::Island { .. } => {}
         // SsrComponent is opaque in map context — no MapMember refs to collect.
         JsxNode::SsrComponent { .. } => {}
+        JsxNode::Cond { .. } => unreachable!("Cond handled in a later task"),
+        JsxNode::ChildrenSlot => unreachable!("ChildrenSlot handled in a later task"),
     }
 }
 

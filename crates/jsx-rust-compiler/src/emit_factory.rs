@@ -45,6 +45,8 @@ fn collect_factories(node: &JsxNode, out: &mut Vec<FactoryOutput>) {
         }
         JsxNode::Map { body, .. } => collect_factories(body, out),
         JsxNode::Empty | JsxNode::Text(_) | JsxNode::Expr(_) | JsxNode::Island { .. } => {}
+        JsxNode::Cond { .. } => unreachable!("Cond handled in a later task"),
+        JsxNode::ChildrenSlot => unreachable!("ChildrenSlot handled in a later task"),
     }
 }
 
@@ -161,6 +163,8 @@ fn emit_child(node: &JsxNode, fo: &mut FactoryOutput) {
         }
         JsxNode::Empty => {}
         JsxNode::Document { .. } => {} // cannot appear as child
+        JsxNode::Cond { .. } => unreachable!("Cond handled in a later task"),
+        JsxNode::ChildrenSlot => unreachable!("ChildrenSlot handled in a later task"),
     }
 }
 
@@ -172,5 +176,11 @@ fn emit_expr(e: &Expr) -> String {
         Expr::MapMember { root, path } => format!("{root}.{}", path.join(".")),
         Expr::StaticText(s) => format!("\"{}\"", s.replace('"', "\\\"")),
         Expr::StaticNum(n) => n.to_string(),
+        Expr::Arith { .. }
+        | Expr::Concat(_)
+        | Expr::Filter { .. }
+        | Expr::Compare { .. }
+        | Expr::Logical { .. }
+        | Expr::Not(_) => unreachable!("new Expr variants handled in a later task"),
     }
 }

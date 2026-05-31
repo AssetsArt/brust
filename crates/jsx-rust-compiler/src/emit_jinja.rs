@@ -132,6 +132,8 @@ fn emit_node(node: &JsxNode, out: &mut String) {
         // identifiers and inside attribute values — no escaping (escaping is
         // load-bearing for the byte-equal golden fixtures, so we deliberately
         // avoid it here).
+        JsxNode::Cond { .. } => unreachable!("Cond handled in a later task"),
+        JsxNode::ChildrenSlot => unreachable!("ChildrenSlot handled in a later task"),
         JsxNode::Island {
             component,
             instance,
@@ -204,6 +206,12 @@ fn emit_expr_path(e: &Expr) -> String {
             format!("\"{}\"", s.replace('"', "\\\""))
         }
         Expr::StaticNum(n) => n.to_string(),
+        Expr::Arith { .. }
+        | Expr::Concat(_)
+        | Expr::Filter { .. }
+        | Expr::Compare { .. }
+        | Expr::Logical { .. }
+        | Expr::Not(_) => unreachable!("new Expr variants handled in a later task"),
     }
 }
 

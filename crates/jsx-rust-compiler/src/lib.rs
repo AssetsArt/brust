@@ -148,6 +148,8 @@ fn number_islands(node: &mut JsxNode, counter: &mut usize) {
             }
         }
         JsxNode::Empty | JsxNode::Text(_) | JsxNode::Expr(_) => {}
+        JsxNode::Cond { .. } => unreachable!("Cond handled in a later task"),
+        JsxNode::ChildrenSlot => unreachable!("ChildrenSlot handled in a later task"),
     }
 }
 
@@ -198,6 +200,8 @@ fn collect_islands(node: &JsxNode, out: &mut Vec<IslandMeta>) {
         // are written by Island.tsx React-path render into the DOM directly.
         JsxNode::SsrComponent { .. } => {}
         JsxNode::Empty | JsxNode::Text(_) | JsxNode::Expr(_) => {}
+        JsxNode::Cond { .. } => unreachable!("Cond handled in a later task"),
+        JsxNode::ChildrenSlot => unreachable!("ChildrenSlot handled in a later task"),
     }
 }
 
@@ -225,6 +229,8 @@ fn number_ssr_components(node: &mut JsxNode, counter: &mut usize) {
         }
         JsxNode::Map { body, .. } => number_ssr_components(body, counter),
         JsxNode::Empty | JsxNode::Text(_) | JsxNode::Expr(_) | JsxNode::Island { .. } => {}
+        JsxNode::Cond { .. } => unreachable!("Cond handled in a later task"),
+        JsxNode::ChildrenSlot => unreachable!("ChildrenSlot handled in a later task"),
     }
 }
 
@@ -269,6 +275,8 @@ fn collect_components(node: &JsxNode, out: &mut Vec<ComponentMeta>) {
         }
         JsxNode::Map { body, .. } => collect_components(body, out),
         JsxNode::Empty | JsxNode::Text(_) | JsxNode::Expr(_) | JsxNode::Island { .. } => {}
+        JsxNode::Cond { .. } => unreachable!("Cond handled in a later task"),
+        JsxNode::ChildrenSlot => unreachable!("ChildrenSlot handled in a later task"),
     }
 }
 
