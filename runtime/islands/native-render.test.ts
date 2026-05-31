@@ -465,4 +465,114 @@ export const factories: Array<(ctx: any) => any> = [
     const ctx = await resolveComponentContext(manifest, {}, 'FailPage', failDir)
     expect(ctx.comp_0_html).toBe('')
   })
+
+  test('ISR miss renders once and writes cache (props is "")', async () => {
+    const isrDir = mkdtempSync(path.join(tmpdir(), 'brust-comp-isr-'))
+    const reactPath = require.resolve('react')
+    writeFileSync(
+      path.join(isrDir, 'IsrPage.factory.ts'),
+      `import { createElement as h } from ${JSON.stringify(reactPath)}
+export const factories: Array<(ctx: any) => any> = [
+  (ctx: any) => h('p', null, ctx.label),
+]`,
+    )
+    writeFileSync(
+      path.join(isrDir, 'IsrPage.components.json'),
+      JSON.stringify([
+        {
+          component: 'Layout',
+          instance: 0,
+          sourcePath: '/x',
+          keyPath: 'cacheKey',
+          tagsPath: 'cacheTags',
+          revalidate: 60,
+        },
+      ]),
+    )
+    const manifest = loadComponentManifest('IsrPage', isrDir)!
+    const { cache, calls, store } = fakeCache()
+    const data = { label: 'hi', cacheKey: 'layout:1', cacheTags: ['layout'] }
+    const out = await resolveComponentContext(manifest, data, 'IsrPage', isrDir, cache)
+    expect(calls.get).toBe(1)
+    expect(calls.set).toBe(1)
+    expect(out.comp_0_html).toContain('hi')
+    // Invariant 5: components store props="" (no separate hydration attr).
+    expect(store.get('layout:1')!.props).toBe('')
+  })
+
+  test('ISR hit skips the factory and serves cached html', async () => {
+    const isrDir = mkdtempSync(path.join(tmpdir(), 'brust-comp-isr-hit-'))
+    // Factory throws if ever called — proves a hit never invokes it.
+    writeFileSync(
+      path.join(isrDir, 'HitPage.factory.ts'),
+      `export const factories: Array<(ctx: any) => any> = [
+  () => { throw new Error('factory must not run on a hit') },
+]`,
+    )
+    writeFileSync(
+      path.join(isrDir, 'HitPage.components.json'),
+      JSON.stringify([{ component: 'Layout', instance: 0, sourcePath: '/x', keyPath: 'cacheKey' }]),
+    )
+    const manifest = loadComponentManifest('HitPage', isrDir)!
+    const { cache } = fakeCache()
+    // Pre-seed the cache for the key.
+    cache.set('layout:9', [], undefined, '<p>cached</p>', '')
+    const out = await resolveComponentContext(
+      manifest,
+      { cacheKey: 'layout:9' },
+      'HitPage',
+      isrDir,
+      cache,
+    )
+    expect(out.comp_0_html).toBe('<p>cached</p>')
+  })
+
+  test('ISR non-string key → uncached render, no cache write', async () => {
+    const isrDir = mkdtempSync(path.join(tmpdir(), 'brust-comp-isr-badkey-'))
+    const reactPath = require.resolve('react')
+    writeFileSync(
+      path.join(isrDir, 'BadKeyPage.factory.ts'),
+      `import { createElement as h } from ${JSON.stringify(reactPath)}
+export const factories: Array<(ctx: any) => any> = [(ctx: any) => h('p', null, 'x')]`,
+    )
+    writeFileSync(
+      path.join(isrDir, 'BadKeyPage.components.json'),
+      JSON.stringify([{ component: 'Layout', instance: 0, sourcePath: '/x', keyPath: 'cacheKey' }]),
+    )
+    const manifest = loadComponentManifest('BadKeyPage', isrDir)!
+    const { cache, calls } = fakeCache()
+    // cacheKey resolves to a number → non-string → uncached.
+    const out = await resolveComponentContext(
+      manifest,
+      { cacheKey: 123 },
+      'BadKeyPage',
+      isrDir,
+      cache,
+    )
+    expect(calls.set).toBe(0)
+    expect(out.comp_0_html).toContain('x')
+  })
+
+  test('ISR factory throw after a miss → empty string, cache NOT poisoned', async () => {
+    const isrDir = mkdtempSync(path.join(tmpdir(), 'brust-comp-isr-throw-'))
+    writeFileSync(
+      path.join(isrDir, 'ThrowPage.factory.ts'),
+      `export const factories: Array<(ctx: any) => any> = [() => { throw new Error('boom') }]`,
+    )
+    writeFileSync(
+      path.join(isrDir, 'ThrowPage.components.json'),
+      JSON.stringify([{ component: 'Layout', instance: 0, sourcePath: '/x', keyPath: 'cacheKey' }]),
+    )
+    const manifest = loadComponentManifest('ThrowPage', isrDir)!
+    const { cache, calls } = fakeCache()
+    const out = await resolveComponentContext(
+      manifest,
+      { cacheKey: 'layout:throw' },
+      'ThrowPage',
+      isrDir,
+      cache,
+    )
+    expect(out.comp_0_html).toBe('')
+    expect(calls.set).toBe(0) // throwing render must not write the cache
+  })
 })
