@@ -78,8 +78,9 @@ pub enum JsxNode {
         component: String,
         /// Source-order index among SSR components (set by `number_ssr_components`).
         instance: usize,
-        /// Lowered attrs via dedicated camelCase-safe attr loop.
-        props: Vec<JsxAttr>,
+        /// Lowered props (named attrs + `{...spread}`), in SOURCE ORDER — order
+        /// is load-bearing for object-spread override semantics in the factory.
+        props: Vec<SsrProp>,
         /// Lowered children (may contain Islands, elements, etc.).
         children: Vec<JsxNode>,
     },
@@ -115,6 +116,19 @@ pub enum JsxNode {
 pub struct JsxAttr {
     pub name: String,
     pub value: AttrValue,
+}
+
+/// One prop on an `SsrComponent`. Unlike host-element attributes (which emit to
+/// static Jinja and so cannot accept a runtime spread), SSR-component props are
+/// emitted into a JS `createElement` call, where `{...expr}` is a natural object
+/// spread. Source order is preserved so spread/named override semantics match
+/// React.
+#[derive(Debug)]
+pub enum SsrProp {
+    /// Named attribute: `title={x}`, `label="foo"`, or bare boolean `disabled`.
+    Attr(JsxAttr),
+    /// Spread `{...expr}` — becomes a JS object spread `...<expr>` in the factory.
+    Spread(Expr),
 }
 
 #[derive(Debug)]

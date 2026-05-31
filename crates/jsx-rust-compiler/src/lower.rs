@@ -414,13 +414,18 @@ fn lower_ssr_component(
     }
     let component = component_name.to_owned();
 
-    let mut props: Vec<JsxAttr> = Vec::new();
+    let mut props: Vec<SsrProp> = Vec::new();
     for attr in &el.opening.attrs {
-        let JSXAttrOrSpread::JSXAttr(jsx_attr) = attr else {
-            return Err(LowerError::at(
-                el.opening.span,
-                ErrorKind::SpreadAttributeNotSupported,
-            ));
+        // Spread `{...expr}` is valid on an SSR component (the factory is JS
+        // createElement, so it becomes a JS object spread). The spread argument
+        // lowers through the same expr rules as a named-prop value.
+        let jsx_attr = match attr {
+            JSXAttrOrSpread::JSXAttr(a) => a,
+            JSXAttrOrSpread::SpreadElement(s) => {
+                let expr = lower_expr(&s.expr, scope)?;
+                props.push(SsrProp::Spread(expr));
+                continue;
+            }
         };
         let name = match &jsx_attr.name {
             JSXAttrName::Ident(id) => id.sym.to_string(),
@@ -467,7 +472,7 @@ fn lower_ssr_component(
                 ));
             }
         };
-        props.push(JsxAttr { name, value });
+        props.push(SsrProp::Attr(JsxAttr { name, value }));
     }
 
     let mut children: Vec<JsxNode> = Vec::new();
@@ -2447,8 +2452,14 @@ mod tests {
             } => {
                 assert_eq!(component, "Card");
                 assert_eq!(props.len(), 2);
-                assert_eq!(props[0].name, "userName");
-                assert_eq!(props[1].name, "isActive");
+                let names: Vec<&str> = props
+                    .iter()
+                    .map(|p| match p {
+                        SsrProp::Attr(a) => a.name.as_str(),
+                        SsrProp::Spread(_) => panic!("expected named attr, got spread"),
+                    })
+                    .collect();
+                assert_eq!(names, vec!["userName", "isActive"]);
             }
             other => panic!("expected SsrComponent, got {other:?}"),
         }
