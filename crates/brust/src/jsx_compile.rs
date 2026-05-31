@@ -1,29 +1,20 @@
 //! napi binding for the JSX→jinja compiler (the `jsx-rust-compiler` crate).
-//!
-//! Lets the CLI compile `native: true` routes through the already-shipped
-//! `.node` addon, so a published npm install needs no separate `jsx-rustc`
-//! binary on disk (which only exists in the source tree's target/ dir). The
-//! standalone `jsx-rustc` bin stays for the golden harness and source builds.
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 
-/// Result of compiling one `pages/<Name>.tsx` source.
-// Used via napi's generated FFI export, not by any Rust caller — clippy's
-// dead-code lint (under `--all-targets`, the lib-test build) can't see that.
 #[allow(dead_code)]
 #[napi(object)]
 pub struct NapiCompiledJsx {
-    /// The emitted jinja template.
     pub template: String,
-    /// Island manifest as JSON (`"[]"` when the route uses no `<Island>`). The
-    /// camelCase keys match `RawIslandEntry` in native-routes-emit.ts.
+    /// Island manifest as JSON (`"[]"` when no `<Island>`). camelCase keys match
+    /// `RawIslandEntry` in native-routes-emit.ts.
     pub islands_json: String,
+    /// SSR component manifest as JSON (`"[]"` when no SSR components). camelCase
+    /// keys: `component`, `instance`, `factoryExpr`, `referencedComponents`,
+    /// `usesIsland`.
+    pub components_json: String,
 }
 
-/// Compile a single native-route source to its jinja template + island
-/// manifest. `path` is used only in error messages. Mirrors `jsx-rustc`'s
-/// `compile_full` + `islands_to_json` so the TS emit step can write the same
-/// `<Name>.jinja` and `<Name>.islands.json` files.
 #[allow(dead_code)]
 #[napi]
 pub fn compile_jsx(source: String, path: String) -> Result<NapiCompiledJsx> {
@@ -31,7 +22,48 @@ pub fn compile_jsx(source: String, path: String) -> Result<NapiCompiledJsx> {
         Ok(compiled) => Ok(NapiCompiledJsx {
             template: compiled.template,
             islands_json: jsx_rust_compiler::islands_to_json(&compiled.islands),
+            components_json: jsx_rust_compiler::components_to_json(&compiled.components),
         }),
         Err(e) => Err(Error::from_reason(format!("{e}"))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use jsx_rust_compiler::{ComponentMeta, compile_full, components_to_json};
+
+    #[test]
+    fn components_to_json_empty() {
+        assert_eq!(components_to_json(&[]), "[]");
+    }
+
+    #[test]
+    fn components_to_json_golden() {
+        let components = vec![ComponentMeta {
+            component: "Layout".to_string(),
+            instance: 0,
+            factory_expr: "(ctx) => h(Layout, {title: ctx.greeting})".to_string(),
+            referenced_components: vec!["Layout".to_string()],
+            uses_island: false,
+        }];
+        let json = components_to_json(&components);
+        assert_eq!(
+            json,
+            r#"[{"component":"Layout","instance":0,"factoryExpr":"(ctx) => h(Layout, {title: ctx.greeting})","referencedComponents":["Layout"],"usesIsland":false}]"#
+        );
+    }
+
+    #[test]
+    fn compile_jsx_exposes_components_json_field() {
+        let src = r#"export default function Page({ greeting }) {
+  return <Layout title={greeting} />;
+}"#;
+        let compiled = compile_full(src, "<test>").unwrap();
+        let json = components_to_json(&compiled.components);
+        assert!(json.contains("\"component\":\"Layout\""));
+        assert!(json.contains("\"instance\":0"));
+        assert!(json.contains("\"factoryExpr\":"));
+        assert!(json.contains("\"referencedComponents\":[\"Layout\"]"));
+        assert!(json.contains("\"usesIsland\":false"));
     }
 }
