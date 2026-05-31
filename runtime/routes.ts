@@ -623,7 +623,13 @@ export function makeRenderer(
               ? resolveIslandContext(manifest, rt, islandCache)
               : Promise.resolve({} as Record<string, string>),
             compManifest && compManifest.length > 0
-              ? resolveComponentContext(compManifest, rt, flat.nativeTemplate)
+              ? resolveComponentContext(
+                  compManifest,
+                  rt,
+                  flat.nativeTemplate,
+                  undefined,
+                  islandCache,
+                )
               : Promise.resolve({} as Record<string, string>),
           ])
           const ctx = { ...rt, ...islandExtra, ...componentExtra }
