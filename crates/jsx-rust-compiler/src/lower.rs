@@ -832,6 +832,9 @@ fn parse_isr_object(
         };
         match pname.as_str() {
             "key" => {
+                if key_path.is_some() || key_literal.is_some() {
+                    return Err(err());
+                }
                 if let SwcExpr::Lit(Lit::Str(s)) = strip_paren(&kv.value) {
                     key_literal = Some(s.value.to_string_lossy().into_owned());
                 } else {
@@ -839,6 +842,9 @@ fn parse_isr_object(
                 }
             }
             "tags" => {
+                if tags_path.is_some() || tags_literal.is_some() {
+                    return Err(err());
+                }
                 if let SwcExpr::Array(arr) = strip_paren(&kv.value) {
                     let arr: &ArrayLit = arr;
                     let mut lits = Vec::new();
@@ -2747,6 +2753,44 @@ mod tests {
         let err = compile_full(src, "<test>").unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::IslandIsrUnsupported),
+            "got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn lower_isr_mixed_literal_key_path_tags() {
+        // literal key + path tags is a valid independent combination.
+        let src = r#"export default function Page({ data }) {
+  return <Layout isr={{ key: "navbar", tags: data.cacheTags }} />;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let ir = lower(&parsed).unwrap();
+        match &ir.root {
+            JsxNode::SsrComponent {
+                key_literal,
+                key_path,
+                tags_literal,
+                tags_path,
+                ..
+            } => {
+                assert_eq!(key_literal.as_deref(), Some("navbar"));
+                assert_eq!(*key_path, None);
+                assert_eq!(*tags_literal, None);
+                assert_eq!(tags_path.as_deref(), Some("data.cacheTags"));
+            }
+            other => panic!("expected SsrComponent, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn lower_isr_duplicate_key_rejected() {
+        let src = r#"export default function Page({ data }) {
+  return <Layout isr={{ key: "a", key: data.x }} />;
+}"#;
+        let err = compile_full(src, "<test>").unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::ComponentIsrUnsupported(_)),
             "got {:?}",
             err.kind
         );

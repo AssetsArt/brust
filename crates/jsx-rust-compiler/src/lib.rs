@@ -770,6 +770,25 @@ mod tests {
     }
 
     #[test]
+    fn islands_to_json_with_literal_isr() {
+        let islands = vec![IslandMeta {
+            component: "Counter".to_string(),
+            instance: 0,
+            props_path: "data.counter".to_string(),
+            ssr: true,
+            hydrate: "load".to_string(),
+            key_path: None,
+            tags_path: None,
+            revalidate: Some(10),
+            key_literal: Some("ssrCounter".to_string()),
+            tags_literal: Some(vec!["nav".to_string()]),
+        }];
+        let json = islands_to_json(&islands);
+        assert!(json.contains("\"keyLiteral\":\"ssrCounter\""), "{json}");
+        assert!(json.contains("\"tagsLiteral\":[\"nav\"]"), "{json}");
+    }
+
+    #[test]
     fn brust_page_emits_shell_with_auto_css_and_head_props() {
         let src = r#"export default function Home({ clientProps, serverProps }) {
   return (
