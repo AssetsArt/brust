@@ -62,7 +62,19 @@ middleware verdicts. (~25–30 tests.)
 - **Action + MCP cluster** (`action endpoint: *`, `action middleware: *`, `mcp: tools/call createNote …`, form/multipart): `createNote` and friends **mutate in-memory state**; many also need specific request framing. MCP `tools/call` invokes actions (same mutation).
 - **Special-config**: `reads port and workers from brust.toml` (asserts toml-driven port/workers — must control env), the multi-worker test (`workers: '4'`), `414 MAX_REQUEST_BYTES`, action `413` (request-size limits / raw socket).
 - **Long-lived connections**: SSE and WebSocket tests — they hold a connection and (with `workers=1`) can occupy dispatch; isolate to avoid cross-test interference. (Conservative: isolate even though most would likely be safe.)
+- **`streaming: mid-stream disconnect`** (integration.test.ts:~1594) — ISOLATED with a real (not just conservative) reason: it aborts a chunked stream and asserts the workers=1 worker recovers its `RenderSlotGuard`. A leaked slot on a *shared* server would corrupt every subsequent shared test. (The other streaming/`/`-render tests — `streaming: single-chunk regression`, `nested routes: flat route still renders` — are plain GET probes and CAN join the shared set.)
 - **Shutdown-purpose**: any test whose assertion IS the clean-exit / signal behaviour.
+
+> **Denylist — never request these from the shared server:** `GET /cache-test`
+> (rendering `CacheTest` increments a JS-side module `renderCount`, a mutation
+> even on an uncached hit) and any cacheable route via a *non*-nav path (a real
+> cache write the isolated `cache stats` test would otherwise see). The nav probe
+> `GET /_brust/page/cache-test` is safe — `server.rs` passes `cache_wanted:false`
+> on the `/_brust/page/*` path, so it neither writes the cache nor bumps the
+> hit/miss counters (verified in review).
+
+**Out of scope:** the `/_test/native*` routes in the fixture (`routes.tsx`) have
+**no tests in this file** — they don't factor into the shared/isolated split.
 
 > **Rule when unsure: ISOLATE.** We just shipped a fix for a test-isolation
 > flake ([[bun-mock-module-leaks-suite]] sibling: the close-after-405 race) —
@@ -108,3 +120,7 @@ middleware verdicts. (~25–30 tests.)
    tests don't affect any shared assertion. Confirmed safe.
 2. **`beforeAll` boot failure** → `afterAll` guards `if (shared)`; a boot failure
    surfaces as the suite erroring at `beforeAll` (clear signal), not silent skips.
+3. **Shared server dies mid-suite** (e.g. OOM) → `afterAll`'s
+   `expect(await proc.exited).toBe(0)` would fail with a confusing signal. Low
+   probability (no shared test crashes a worker — crash/errorBoundary tests are
+   render-only, verified in review), accepted; the failure is loud, not silent.
