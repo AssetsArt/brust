@@ -426,6 +426,10 @@ pub enum ErrorKind {
     )]
     SsrComponentInMapNotSupported(String),
     #[error(
+        "`isr` on `<{0}/>` must be `{{ key: <path>, tags?: <path>, revalidate?: <number-literal> }}`"
+    )]
+    ComponentIsrUnsupported(String),
+    #[error(
         "`<Island>` must be self-closing — children are not supported (the component renders client-side)"
     )]
     IslandHasChildren,
