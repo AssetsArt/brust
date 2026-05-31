@@ -1,4 +1,4 @@
-import Counter from '../../../example/hello-world/components/Counter'
+import Counter from './components/Counter'
 
 // Two <Island component={Counter} …/> reusing the SAME Counter component:
 //   - instance 0: client-only (no ssr) — empty data-brust-csr mount

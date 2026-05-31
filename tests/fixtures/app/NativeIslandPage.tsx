@@ -1,4 +1,4 @@
-import Counter from '../../../example/hello-world/components/Counter'
+import Counter from './components/Counter'
 
 export default function NativeIslandPage({ greeting, count }: { greeting: string; count: { start: number } }) {
   return (
