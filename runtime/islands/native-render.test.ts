@@ -1,4 +1,4 @@
-import { test, expect } from 'bun:test'
+import { test, expect, describe, beforeAll } from 'bun:test'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -9,6 +9,8 @@ import {
   entityEncode,
   resolveIslandContext,
   loadIslandManifest,
+  loadComponentManifest,
+  resolveComponentContext,
   type NativeIslandEntry,
   type IslandCache,
 } from './native-render.ts'
@@ -387,4 +389,80 @@ test('loadIslandManifest: malformed JSON → null (no throw), cached', () => {
   expect(loadIslandManifest('broken', dir)).toBeNull()
   // cached as null → second call also null, no re-read/throw
   expect(loadIslandManifest('broken', dir)).toBeNull()
+})
+
+describe('resolveComponentContext', () => {
+  let dir: string
+
+  beforeAll(() => {
+    dir = mkdtempSync(path.join(tmpdir(), 'brust-comp-ctx-'))
+
+    // Write a simple component
+    writeFileSync(
+      path.join(dir, 'SimpleComp.tsx'),
+      `import { createElement } from 'react'
+export default function SimpleComp({ label }: { label: string }) {
+  return createElement('p', null, label)
+}`,
+    )
+
+    // Write the factory — use an absolute path for the react import so the
+    // factory resolves react from the project's node_modules even when Bun
+    // imports it from a tmpdir (bare 'react' would fail outside the project
+    // tree; same constraint as the in-repo StubIsland fixture).
+    const reactPath = require.resolve('react')
+    writeFileSync(
+      path.join(dir, 'TestPage.factory.ts'),
+      `import { createElement as h } from ${JSON.stringify(reactPath)}
+export const factories: Array<(ctx: any) => any> = [
+  (ctx: any) => h('p', null, ctx.greeting),
+]`,
+    )
+
+    // Write the components.json manifest
+    writeFileSync(
+      path.join(dir, 'TestPage.components.json'),
+      JSON.stringify([
+        { component: 'SimpleComp', instance: 0, sourcePath: path.join(dir, 'SimpleComp.tsx') },
+      ]),
+    )
+  })
+
+  test('loadComponentManifest returns null for missing file', () => {
+    const result = loadComponentManifest('NonExistent', dir)
+    expect(result).toBeNull()
+  })
+
+  test('loadComponentManifest returns parsed entries', () => {
+    const result = loadComponentManifest('TestPage', dir)
+    expect(result).not.toBeNull()
+    expect(result![0].component).toBe('SimpleComp')
+  })
+
+  test('resolveComponentContext renders factory and returns comp_0_html', async () => {
+    const manifest = loadComponentManifest('TestPage', dir)!
+    const ctx = await resolveComponentContext(
+      manifest,
+      { greeting: 'hello world' },
+      'TestPage',
+      dir,
+    )
+    expect(ctx.comp_0_html).toContain('hello world')
+    expect(ctx.comp_0_html).toContain('<p')
+  })
+
+  test('resolveComponentContext degrades to empty string on factory throw', async () => {
+    const failDir = mkdtempSync(path.join(tmpdir(), 'brust-comp-fail-'))
+    writeFileSync(
+      path.join(failDir, 'FailPage.factory.ts'),
+      `export const factories: Array<(ctx: any) => any> = [() => { throw new Error('boom') }]`,
+    )
+    writeFileSync(
+      path.join(failDir, 'FailPage.components.json'),
+      JSON.stringify([{ component: 'Fail', instance: 0, sourcePath: '/nonexistent' }]),
+    )
+    const manifest = loadComponentManifest('FailPage', failDir)!
+    const ctx = await resolveComponentContext(manifest, {}, 'FailPage', failDir)
+    expect(ctx.comp_0_html).toBe('')
+  })
 })

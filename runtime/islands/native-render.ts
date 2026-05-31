@@ -212,3 +212,84 @@ export async function resolveIslandContext(
   }
   return out
 }
+
+/** One entry in `<Name>.components.json` as enriched by `emitComponentArtifacts`. */
+export interface NativeComponentEntry {
+  component: string
+  instance: number
+  sourcePath: string
+}
+
+// Cache component manifests by absolute path (same pattern as island manifests).
+const componentManifestCache = new Map<string, NativeComponentEntry[] | null>()
+
+/** Read `<jinjaDir>/<templateName>.components.json` and return the parsed entry
+ * array, or `null` if the file doesn't exist. Both hits and misses are cached
+ * by absolute path (same invariant as `loadIslandManifest`). */
+export function loadComponentManifest(
+  templateName: string,
+  jinjaDir?: string,
+): NativeComponentEntry[] | null {
+  const dir = jinjaDir ?? path.resolve(process.cwd(), '.brust/jinja')
+  const abs = path.resolve(dir, `${templateName}.components.json`)
+  if (componentManifestCache.has(abs)) return componentManifestCache.get(abs)!
+  let parsed: NativeComponentEntry[] | null
+  try {
+    parsed = JSON.parse(readFileSync(abs, 'utf8')) as NativeComponentEntry[]
+  } catch {
+    componentManifestCache.set(abs, null)
+    return null
+  }
+  componentManifestCache.set(abs, parsed)
+  return parsed
+}
+
+// Cache factory modules by absolute path.
+const factoryCache = new Map<string, { factories: Array<(ctx: unknown) => unknown> } | null>()
+
+/** Build the per-component context additions for a manifest. Each entry
+ * contributes `comp_<instance>_html` — the component rendered to HTML by
+ * the route's factory function. On `renderToString` failure: degrade to
+ * `comp_N_html = ""` and log, mirrors SSR island failure behaviour. */
+export async function resolveComponentContext(
+  manifest: NativeComponentEntry[],
+  data: unknown,
+  templateName: string,
+  jinjaDir?: string,
+): Promise<Record<string, string>> {
+  const out: Record<string, string> = {}
+  if (!manifest.length) return out
+
+  const dir = jinjaDir ?? path.resolve(process.cwd(), '.brust/jinja')
+  const factoryPath = path.resolve(dir, `${templateName}.factory.ts`)
+
+  let factoryMod = factoryCache.get(factoryPath)
+  if (factoryMod === undefined) {
+    try {
+      factoryMod = (await import(factoryPath)) as {
+        factories: Array<(ctx: unknown) => unknown>
+      }
+    } catch {
+      factoryMod = null
+    }
+    factoryCache.set(factoryPath, factoryMod)
+  }
+
+  for (let i = 0; i < manifest.length; i++) {
+    const entry = manifest[i]!
+    try {
+      if (!factoryMod?.factories?.[i]) {
+        throw new Error(`factory[${i}] not found in ${factoryPath}`)
+      }
+      const node = factoryMod.factories[i]!(data)
+      out[`comp_${i}_html`] = renderToString(node as React.ReactNode)
+    } catch (e) {
+      console.error(
+        `[brust] SSR component "${entry.component}" renderToString failed; degrading to empty:`,
+        e,
+      )
+      out[`comp_${i}_html`] = ''
+    }
+  }
+  return out
+}
