@@ -1,22 +1,48 @@
 import { test, expect } from 'bun:test'
 import { spawn } from 'bun'
 import { mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-test('serves rendered html via worker pool', async () => {
+async function freePort(): Promise<number> {
+  return await new Promise((resolve, reject) => {
+    const srv = createServer()
+    srv.unref()
+    srv.on('error', reject)
+    srv.listen(0, '127.0.0.1', () => {
+      const p = (srv.address() as import('node:net').AddressInfo).port
+      srv.close(() => resolve(p))
+    })
+  })
+}
+
+async function startServer(opts: { workers?: string; rustLog?: string; cmd?: string[] } = {}) {
+  const port = await freePort()
   const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
+    cmd: opts.cmd ?? ['bun', 'run', 'tests/fixtures/app/index.ts'],
     env: {
       ...process.env,
-      BRUST_PORT: '38123',
-      RUST_LOG: 'brust=info',
+      BRUST_PORT: String(port),
+      BRUST_WORKERS: opts.workers ?? '1',
+      RUST_LOG: opts.rustLog ?? 'brust=info',
     },
     stdout: 'pipe',
     stderr: 'inherit',
   })
+  const readyPort = await readPortLine(proc.stdout)
+  return {
+    port: readyPort,
+    proc,
+    async stop() {
+      proc.kill('SIGINT')
+      return await proc.exited
+    },
+  }
+}
 
-  const port = await readPortLine(proc.stdout)
+test('serves rendered html via worker pool', async () => {
+  const { port, stop } = await startServer({ workers: '4' })
 
   const resp = await fetch(`http://127.0.0.1:${port}/`)
   expect(resp.status).toBe(200)
@@ -30,24 +56,12 @@ test('serves rendered html via worker pool', async () => {
   expect(ping.headers.get('content-type')).toBe('text/plain')
   expect(await ping.text()).toBe('pong\n')
 
-  proc.kill('SIGINT')
-  const exit = await proc.exited
+  const exit = await stop()
   expect(exit).toBe(0)
 }, 15_000)
 
 test('returns 414 when request exceeds MAX_REQUEST_BYTES', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: {
-      ...process.env,
-      BRUST_PORT: '38124',
-      RUST_LOG: 'brust=warn',
-    },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-
-  const port = await readPortLine(proc.stdout)
+  const { port, proc, stop } = await startServer({ rustLog: 'brust=warn' })
 
   // Build a request whose request-line alone exceeds 16 KB.
   // 17 KB of path bytes guarantees we cross the cap before \r\n\r\n is seen.
@@ -96,20 +110,14 @@ test('returns 414 when request exceeds MAX_REQUEST_BYTES', async () => {
     expect(received.toLowerCase()).toContain('uri too long')
     expect(received).toContain('Connection: close')
   } finally {
-    proc.kill('SIGINT')
+    await stop()
   }
   const exit = await proc.exited
   expect(exit).toBe(0)
 }, 15_000)
 
 test('routes /blog/:slug renders BlogPost with the slug param', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38131', RUST_LOG: 'brust=info' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer()
   try {
     const resp = await fetch(`http://127.0.0.1:${port}/blog/hello-world`)
     expect(resp.status).toBe(200)
@@ -118,38 +126,24 @@ test('routes /blog/:slug renders BlogPost with the slug param', async () => {
     expect(body).toContain('hello-world') // the slug appears in the rendered HTML
     expect(body).toContain('Post: hello-world') // the loader-produced title appears
   } finally {
-    proc.kill('SIGINT')
-    const exit = await proc.exited
+    const exit = await stop()
     expect(exit).toBe(0)
   }
 }, 15_000)
 
 test('unknown path returns 404', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38132', RUST_LOG: 'brust=info' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer()
   try {
     const resp = await fetch(`http://127.0.0.1:${port}/no/such/path`)
     expect(resp.status).toBe(404)
   } finally {
-    proc.kill('SIGINT')
-    const exit = await proc.exited
+    const exit = await stop()
     expect(exit).toBe(0)
   }
 }, 15_000)
 
 test('errorBoundary renders when a route component throws', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38133', RUST_LOG: 'brust=info' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer()
   try {
     const resp = await fetch(`http://127.0.0.1:${port}/crash`)
     // errorBoundary returns 500 — the worker encodes the status into the
@@ -160,8 +154,7 @@ test('errorBoundary renders when a route component throws', async () => {
     expect(body).toContain('CrashBoundary')
     expect(body).toContain('intentional crash for test')
   } finally {
-    proc.kill('SIGINT')
-    const exit = await proc.exited
+    const exit = await stop()
     expect(exit).toBe(0)
   }
 }, 15_000)
@@ -204,18 +197,7 @@ test('reads port and workers from brust.toml at cwd', async () => {
 }, 15_000)
 
 test('cache-test route returns same body on second hit (cache hit)', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: {
-      ...process.env,
-      BRUST_PORT: '38141',
-      BRUST_WORKERS: '1',
-      RUST_LOG: 'brust=info',
-    },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ workers: '1' })
   try {
     const first = await fetch(`http://127.0.0.1:${port}/cache-test`)
     const firstBody = await first.text()
@@ -227,25 +209,13 @@ test('cache-test route returns same body on second hit (cache hit)', async () =>
     expect(second.status).toBe(200)
     expect(secondBody).toBe(firstBody)
   } finally {
-    proc.kill('SIGINT')
-    const exit = await proc.exited
+    const exit = await stop()
     expect(exit).toBe(0)
   }
 }, 15_000)
 
 test('cache stats endpoint reflects hits and misses', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: {
-      ...process.env,
-      BRUST_PORT: '38151',
-      BRUST_WORKERS: '1',
-      RUST_LOG: 'brust=info',
-    },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ workers: '1' })
   try {
     // Initially zero.
     const r0 = await fetch(`http://127.0.0.1:${port}/_brust/cache/stats`)
@@ -269,40 +239,26 @@ test('cache stats endpoint reflects hits and misses', async () => {
     expect(s1.len).toBeGreaterThanOrEqual(1)
     expect(s1.capacity).toBe(1000)
   } finally {
-    proc.kill('SIGINT')
-    const exit = await proc.exited
+    const exit = await stop()
     expect(exit).toBe(0)
   }
 }, 15_000)
 
 test('middleware short-circuits with 401 when cookie missing', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38161', BRUST_WORKERS: '1', RUST_LOG: 'brust=info' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ workers: '1' })
   try {
     const r = await fetch(`http://127.0.0.1:${port}/protected`)
     expect(r.status).toBe(401)
     expect(await r.text()).toBe('unauthorised')
     expect(r.headers.get('www-authenticate')).toBe('Cookie')
   } finally {
-    proc.kill('SIGINT')
-    const exit = await proc.exited
+    const exit = await stop()
     expect(exit).toBe(0)
   }
 }, 15_000)
 
 test('middleware lets request through when cookie present + req.cookies reaches component', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38162', BRUST_WORKERS: '1', RUST_LOG: 'brust=info' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ workers: '1' })
   try {
     const r = await fetch(`http://127.0.0.1:${port}/protected`, {
       headers: { cookie: 'user=alice; sid=xyz' },
@@ -313,20 +269,13 @@ test('middleware lets request through when cookie present + req.cookies reaches 
     const body = (await r.text()).replace(/<!--\s*-->/g, '')
     expect(body).toContain('signed in as alice')
   } finally {
-    proc.kill('SIGINT')
-    const exit = await proc.exited
+    const exit = await stop()
     expect(exit).toBe(0)
   }
 }, 15_000)
 
 test('middleware injects x-render-ms response header + req.search reaches component', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38163', BRUST_WORKERS: '1', RUST_LOG: 'brust=info' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ workers: '1' })
   try {
     const r = await fetch(`http://127.0.0.1:${port}/with-header?name=brust`)
     expect(r.status).toBe(200)
@@ -338,8 +287,7 @@ test('middleware injects x-render-ms response header + req.search reaches compon
     const body = (await r.text()).replace(/<!--\s*-->/g, '')
     expect(body).toContain('Hello, brust')
   } finally {
-    proc.kill('SIGINT')
-    const exit = await proc.exited
+    const exit = await stop()
     expect(exit).toBe(0)
   }
 }, 15_000)
@@ -350,13 +298,7 @@ test('errorBoundary 500 path does not pick up middleware-only headers', async ()
   // AND that no rogue middleware headers (e.g. x-render-ms from a global
   // middleware that doesn't exist yet) leak into the response. Complements
   // the existing /crash test which covers boundary HTML content.
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38164', BRUST_WORKERS: '1', RUST_LOG: 'brust=info' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ workers: '1' })
   try {
     const r = await fetch(`http://127.0.0.1:${port}/crash`)
     expect(r.status).toBe(500)
@@ -365,25 +307,13 @@ test('errorBoundary 500 path does not pick up middleware-only headers', async ()
     const body = await r.text()
     expect(body).toContain('CrashBoundary')
   } finally {
-    proc.kill('SIGINT')
-    const exit = await proc.exited
+    const exit = await stop()
     expect(exit).toBe(0)
   }
 }, 15_000)
 
 test('invalidate by path drops a cached entry', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: {
-      ...process.env,
-      BRUST_PORT: '38171',
-      BRUST_WORKERS: '1',
-      RUST_LOG: 'brust=info',
-    },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ workers: '1' })
   try {
     // Warm the cache for /cache-test (CacheTest's body contains a counter
     // that changes on re-render; cache hit returns identical bytes).
@@ -409,25 +339,13 @@ test('invalidate by path drops a cached entry', async () => {
     expect(reRender.status).toBe(200)
     expect(await reRender.text()).not.toBe(firstBody)
   } finally {
-    proc.kill('SIGINT')
-    const exit = await proc.exited
+    const exit = await stop()
     expect(exit).toBe(0)
   }
 }, 15_000)
 
 test('invalidate all clears every entry + reports correct removed count', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: {
-      ...process.env,
-      BRUST_PORT: '38172',
-      BRUST_WORKERS: '1',
-      RUST_LOG: 'brust=info',
-    },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ workers: '1' })
   try {
     // Warm /cache-test (only cached route in the example).
     await fetch(`http://127.0.0.1:${port}/cache-test`)
@@ -460,25 +378,13 @@ test('invalidate all clears every entry + reports correct removed count', async 
     expect(afterStats.hits).toBe(beforeStats.hits)
     expect(afterStats.misses).toBe(beforeStats.misses)
   } finally {
-    proc.kill('SIGINT')
-    const exit = await proc.exited
+    const exit = await stop()
     expect(exit).toBe(0)
   }
 }, 15_000)
 
 test('invalidate endpoint rejects GET and unsupported queries', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: {
-      ...process.env,
-      BRUST_PORT: '38173',
-      BRUST_WORKERS: '1',
-      RUST_LOG: 'brust=info',
-    },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ workers: '1' })
   try {
     // GET on the invalidate endpoint must not work (POST-only).
     const wrongMethod = await fetch(`http://127.0.0.1:${port}/_brust/cache/invalidate?path=/x`)
@@ -492,20 +398,13 @@ test('invalidate endpoint rejects GET and unsupported queries', async () => {
     const body = (await missingParams.json()) as { error: string }
     expect(body.error).toContain('missing')
   } finally {
-    proc.kill('SIGINT')
-    const exit = await proc.exited
+    const exit = await stop()
     expect(exit).toBe(0)
   }
 }, 15_000)
 
 test('island marker + importmap injected when route uses <Island>', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38181', BRUST_WORKERS: '1', RUST_LOG: 'brust=info' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ workers: '1' })
   try {
     const r = await fetch(`http://127.0.0.1:${port}/`)
     expect(r.status).toBe(200)
@@ -522,20 +421,13 @@ test('island marker + importmap injected when route uses <Island>', async () => 
     expect(body).toContain('"/_brust/islands/_react-dom.js"')
     expect(body).toContain('src="/_brust/islands/_bootstrap.js"')
   } finally {
-    proc.kill('SIGINT')
-    const exit = await proc.exited
+    const exit = await stop()
     expect(exit).toBe(0)
   }
 }, 30_000)
 
 test('island chunk + bootstrap served at /_brust/islands/<file>', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38182', BRUST_WORKERS: '1', RUST_LOG: 'brust=info' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ workers: '1' })
   try {
     for (const file of ['Counter.js', '_bootstrap.js', '_react.js', '_react-dom.js']) {
       const r = await fetch(`http://127.0.0.1:${port}/_brust/islands/${file}`)
@@ -556,20 +448,13 @@ test('island chunk + bootstrap served at /_brust/islands/<file>', async () => {
     const noExt = await fetch(`http://127.0.0.1:${port}/_brust/islands/Counter`)
     expect(noExt.status).toBe(404)
   } finally {
-    proc.kill('SIGINT')
-    const exit = await proc.exited
+    const exit = await stop()
     expect(exit).toBe(0)
   }
 }, 30_000)
 
 test('routes without <Island> ship no importmap or bootstrap', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38183', BRUST_WORKERS: '1', RUST_LOG: 'brust=info' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ workers: '1' })
   try {
     // /blog/{slug} doesn't use <Island>.
     const r = await fetch(`http://127.0.0.1:${port}/blog/test-slug`)
@@ -579,20 +464,13 @@ test('routes without <Island> ship no importmap or bootstrap', async () => {
     expect(body).not.toContain('<script type="importmap">')
     expect(body).not.toContain('_bootstrap.js')
   } finally {
-    proc.kill('SIGINT')
-    const exit = await proc.exited
+    const exit = await stop()
     expect(exit).toBe(0)
   }
 }, 30_000)
 
 test('action endpoint: happy path returns JSON', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38150', RUST_LOG: 'brust=warn' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
     const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/createNote`, {
       method: 'POST',
@@ -604,19 +482,12 @@ test('action endpoint: happy path returns JSON', async () => {
     const body = (await resp.json()) as { id: string }
     expect(body.id).toMatch(/^n-\d+$/)
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 test('action endpoint: malformed JSON args → 400', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38157', RUST_LOG: 'brust=warn' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
     const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/createNote`, {
       method: 'POST',
@@ -627,19 +498,12 @@ test('action endpoint: malformed JSON args → 400', async () => {
     const body = await resp.text()
     expect(body).toContain('invalid request body')
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 test('action endpoint: args not an array → 400', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38152', RUST_LOG: 'brust=warn' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
     const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/createNote`, {
       method: 'POST',
@@ -650,19 +514,12 @@ test('action endpoint: args not an array → 400', async () => {
     const body = await resp.text()
     expect(body).toContain('JSON array')
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 test('action endpoint: unknown id → 404', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38153', RUST_LOG: 'brust=warn' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
     const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/missing`, {
       method: 'POST',
@@ -671,36 +528,22 @@ test('action endpoint: unknown id → 404', async () => {
     })
     expect(resp.status).toBe(404)
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 test('action endpoint: GET → 405', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38154', RUST_LOG: 'brust=warn' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
     const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/createNote`)
     expect(resp.status).toBe(405)
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 test('action endpoint: id with bad charset → 404', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38155', RUST_LOG: 'brust=warn' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
     // Dot in the id should be rejected by is_safe_action_id.
     const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/bad.id`, {
@@ -710,20 +553,13 @@ test('action endpoint: id with bad charset → 404', async () => {
     })
     expect(resp.status).toBe(404)
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 test('action endpoint: missing Content-Length → 411', async () => {
   // fetch always sets Content-Length, so use a raw socket like the 414 test.
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38156', RUST_LOG: 'brust=warn' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
     const chunks: Uint8Array[] = []
     let resolveClose!: () => void
@@ -754,21 +590,14 @@ test('action endpoint: missing Content-Length → 411', async () => {
     const combined = Buffer.concat(chunks).toString('utf-8')
     expect(combined.split('\r\n')[0]).toContain('411')
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 test('action endpoint: undefined return → 200 with empty body', async () => {
   // pingAction returns void → JS terminal sends body: '' with status 200.
   // Verifies the wire roundtrip handles Content-Length: 0 cleanly.
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38184', RUST_LOG: 'brust=warn' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
     const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/pingAction`, {
       method: 'POST',
@@ -780,8 +609,7 @@ test('action endpoint: undefined return → 200 with empty body', async () => {
     expect(resp.headers.get('content-length')).toBe('0')
     expect(await resp.text()).toBe('')
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
@@ -790,13 +618,7 @@ test('action endpoint: Content-Length > 256 KB → 413', async () => {
   // returns > MAX_ACTION_BODY_BYTES (256 KB) and writes 413 immediately.
   // Use a raw socket so we can claim a large Content-Length without actually
   // sending the bytes — the server should 413 from headers alone.
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38185', RUST_LOG: 'brust=warn' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
     const chunks: Uint8Array[] = []
     let resolveClose!: () => void
@@ -831,19 +653,12 @@ test('action endpoint: Content-Length > 256 KB → 413', async () => {
     const combined = Buffer.concat(chunks).toString('utf-8')
     expect(combined.split('\r\n')[0]).toContain('413')
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 test('action middleware: short-circuits without cookie', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38158', RUST_LOG: 'brust=warn' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
     const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/deleteNote`, {
       method: 'POST',
@@ -853,19 +668,12 @@ test('action middleware: short-circuits without cookie', async () => {
     expect(resp.status).toBe(401)
     expect(await resp.text()).toBe('login required')
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 test('action middleware: passes through with cookie', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38159', RUST_LOG: 'brust=warn' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
     const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/deleteNote`, {
       method: 'POST',
@@ -876,19 +684,12 @@ test('action middleware: passes through with cookie', async () => {
     const body = (await resp.json()) as { ok: boolean }
     expect(body.ok).toBe(true)
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 test('action-calling island page renders marker + importmap + bootstrap', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38170', RUST_LOG: 'brust=warn' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
     const html = await (await fetch(`http://127.0.0.1:${port}/note`)).text()
     // Marker for the NoteForm island
@@ -903,8 +704,7 @@ test('action-calling island page renders marker + importmap + bootstrap', async 
     expect(chunk.status).toBe(200)
     expect(chunk.headers.get('content-type')).toContain('javascript')
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 20_000)
 
@@ -912,13 +712,7 @@ test('action endpoint: form-urlencoded body → FormData arg', async () => {
   // pingAction takes no args; the framework parses the form-urlencoded body
   // into FormData and spreads [FormData] into pingAction, which ignores its
   // args and returns void. Confirms the form-urlencoded path reaches the handler.
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38186', RUST_LOG: 'brust=warn' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
     const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/pingAction`, {
       method: 'POST',
@@ -928,19 +722,12 @@ test('action endpoint: form-urlencoded body → FormData arg', async () => {
     expect(resp.status).toBe(200)
     expect(await resp.text()).toBe('')
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 test('action endpoint: multipart body → FormData with File', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38187', RUST_LOG: 'brust=warn' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
     const fd = new FormData()
     fd.append('file', new File(['hello'], 'greeting.txt', { type: 'text/plain' }))
@@ -953,19 +740,12 @@ test('action endpoint: multipart body → FormData with File', async () => {
     expect(body.name).toBe('greeting.txt')
     expect(body.size).toBe(5)
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 test('action endpoint: unsupported Content-Type → 415', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38188', RUST_LOG: 'brust=warn' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
     const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/createNote`, {
       method: 'POST',
@@ -974,19 +754,12 @@ test('action endpoint: unsupported Content-Type → 415', async () => {
     })
     expect(resp.status).toBe(415)
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 test('action endpoint: malformed multipart body → 400', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38189', RUST_LOG: 'brust=warn' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
     const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/uploadAvatar`, {
       method: 'POST',
@@ -997,21 +770,14 @@ test('action endpoint: malformed multipart body → 400', async () => {
     const text = await resp.text()
     expect(text).toContain('invalid request body')
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 test('action endpoint: JSON path still works after wire-format refactor', async () => {
   // Sanity test — duplicates the createNote happy path from session 5 but
   // proves the body_text refactor preserved JSON semantics.
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38190', RUST_LOG: 'brust=warn' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
     const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/createNote`, {
       method: 'POST',
@@ -1022,8 +788,7 @@ test('action endpoint: JSON path still works after wire-format refactor', async 
     const body = (await resp.json()) as { id: string }
     expect(body.id).toMatch(/^n-\d+$/)
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
@@ -1031,13 +796,7 @@ test('action endpoint: middleware short-circuits a multipart action', async () =
   // deleteNote is JSON-shape with requireUser middleware. Posting multipart
   // to it without a cookie should still 401 — middleware runs before body
   // parsing reaches the handler.
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38191', RUST_LOG: 'brust=warn' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
     const fd = new FormData()
     fd.append('noteId', 'n-1')
@@ -1048,19 +807,12 @@ test('action endpoint: middleware short-circuits a multipart action', async () =
     expect(resp.status).toBe(401)
     expect(await resp.text()).toBe('login required')
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 test('nested routes: index route renders parent layout + dashboard', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38192', RUST_LOG: 'brust=warn' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
     const resp = await fetch(`http://127.0.0.1:${port}/admin`, {
       headers: { cookie: 'user=alice' },
@@ -1070,36 +822,22 @@ test('nested routes: index route renders parent layout + dashboard', async () =>
     expect(body).toContain('AdminLayout')
     expect(body).toContain('AdminDashboard')
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 test('nested routes: child path inherits parent middleware (401 without cookie)', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38193', RUST_LOG: 'brust=warn' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
     const resp = await fetch(`http://127.0.0.1:${port}/admin/users`)
     expect(resp.status).toBe(401)
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 test('nested routes: param child renders with id from path', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38194', RUST_LOG: 'brust=warn' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
     const resp = await fetch(`http://127.0.0.1:${port}/admin/users/42`, {
       headers: { cookie: 'user=alice' },
@@ -1112,19 +850,12 @@ test('nested routes: param child renders with id from path', async () => {
     // grep for the id value itself (42), not the literal 'id=42'.
     expect(body).toMatch(/id\D*42/)
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 test('nested routes: parent errorBoundary catches child throw', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38195', RUST_LOG: 'brust=warn' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
     const resp = await fetch(`http://127.0.0.1:${port}/admin/users/throw`, {
       headers: { cookie: 'user=alice' },
@@ -1134,29 +865,21 @@ test('nested routes: parent errorBoundary catches child throw', async () => {
     expect(body).toContain('AdminErrorBoundary')
     expect(body).toContain('intentional admin child throw')
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 test('nested routes: flat route still renders (no regression)', async () => {
   // Sanity test: the existing flat `/` route still works after the
   // flatten + chain-walker refactor.
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38196', RUST_LOG: 'brust=warn' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
     const resp = await fetch(`http://127.0.0.1:${port}/`)
     expect(resp.status).toBe(200)
     const body = await resp.text()
     expect(body).toContain('Hello from Brust')
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
@@ -1175,13 +898,7 @@ async function mcpRequest(
 }
 
 test('mcp: initialize returns server capabilities', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38197', RUST_LOG: 'brust=warn' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
     const { status, body } = await mcpRequest(port, 'initialize', {
       protocolVersion: '2025-06-18',
@@ -1194,19 +911,12 @@ test('mcp: initialize returns server capabilities', async () => {
     expect(body.result.capabilities.tools).toBeDefined()
     expect(body.result.capabilities.resources).toBeDefined()
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 test('mcp: tools/list returns all scanned actions', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38198', RUST_LOG: 'brust=warn' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
     const { body } = await mcpRequest(port, 'tools/list')
     const names = body.result.tools.map((t: any) => t.name).sort()
@@ -1216,19 +926,12 @@ test('mcp: tools/list returns all scanned actions', async () => {
     expect(names).toContain('pingAction')
     expect(names).toContain('uploadAvatar')
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 test('mcp: tools/call createNote happy path', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38199', RUST_LOG: 'brust=warn' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
     const { body } = await mcpRequest(port, 'tools/call', {
       name: 'createNote',
@@ -1238,19 +941,12 @@ test('mcp: tools/call createNote happy path', async () => {
     const result = JSON.parse(body.result.content[0].text)
     expect(result.id).toMatch(/^n-\d+$/)
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 test('mcp: tools/call middleware-gated action without cookie → isError', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38200', RUST_LOG: 'brust=warn' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
     const { body } = await mcpRequest(port, 'tools/call', {
       name: 'deleteNote',
@@ -1259,19 +955,12 @@ test('mcp: tools/call middleware-gated action without cookie → isError', async
     expect(body.result.isError).toBe(true)
     expect(body.result.content[0].text).toContain('login required')
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 test('mcp: tools/call with cookie passes middleware', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38201', RUST_LOG: 'brust=warn' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
     const { body } = await mcpRequest(
       port,
@@ -1286,37 +975,23 @@ test('mcp: tools/call with cookie passes middleware', async () => {
     const result = JSON.parse(body.result.content[0].text)
     expect(result.ok).toBe(true)
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 test('mcp: resources/list returns loaders', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38202', RUST_LOG: 'brust=warn' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
     const { body } = await mcpRequest(port, 'resources/list')
     const uris = body.result.resources.map((r: any) => r.uri)
     expect(uris).toContain('brust:///blog/{slug}')
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 test('mcp: resources/read fetches loader output', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38203', RUST_LOG: 'brust=warn' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
     const { body } = await mcpRequest(port, 'resources/read', { uri: 'brust:///blog/hello' })
     expect(body.result.contents).toHaveLength(1)
@@ -1325,42 +1000,27 @@ test('mcp: resources/read fetches loader output', async () => {
     const data = JSON.parse(content.text)
     expect(data.title).toBe('Post: hello')
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 test('mcp: prompts/list returns empty', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38204', RUST_LOG: 'brust=warn' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
     const { body } = await mcpRequest(port, 'prompts/list')
     expect(body.result.prompts).toEqual([])
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 test('mcp: unknown method returns -32601', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38205', RUST_LOG: 'brust=warn' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
     const { body } = await mcpRequest(port, 'nonexistentMethod')
     expect(body.error.code).toBe(-32601)
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
@@ -1372,15 +1032,8 @@ test('mcp: unknown method returns -32601', async () => {
 // shape (same status, header order, Content-Length matching body bytes, no
 // Transfer-Encoding). fetch() reframes headers, so we read raw socket bytes.
 test('buffering: uncached and cached responses share wire shape', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: { ...process.env, BRUST_PORT: '38199', RUST_LOG: 'brust=warn' },
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
+  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
-    const port = await readPortLine(proc.stdout)
-
     // `/` is uncached → goes through the new vectored path.
     const uncachedBytes = await rawRequest(
       port,
@@ -1417,8 +1070,7 @@ test('buffering: uncached and cached responses share wire shape', async () => {
     expect(uncached.headerOrder.slice(0, 2)).toEqual(['content-type', 'content-length'])
     expect(cached.headerOrder.slice(0, 2)).toEqual(['content-type', 'content-length'])
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
@@ -1553,21 +1205,8 @@ async function readAllText(resp: Response, maxBytes = 4096, maxMs = 2000): Promi
   return new TextDecoder().decode(all)
 }
 
-const SSE_ENV = (port: string) => ({
-  ...process.env,
-  BRUST_PORT: port,
-  BRUST_WORKERS: '1', // critical — see SSE spec §8
-  RUST_LOG: 'brust=warn',
-})
-
 test('sse: 3 data frames in order then close', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: SSE_ENV('38210'),
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ workers: '1', rustLog: 'brust=warn' })
   try {
     const { resp } = await openSseConn(port, '/sse-counter')
     expect(resp.status).toBe(200)
@@ -1579,8 +1218,7 @@ test('sse: 3 data frames in order then close', async () => {
     expect(text.indexOf('data: 1')).toBeLessThan(text.indexOf('data: 2'))
     expect(text.indexOf('data: 2')).toBeLessThan(text.indexOf('data: 3'))
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
@@ -1591,13 +1229,7 @@ test('sse: heartbeat ping arrives on idle stream', async () => {
   // Bun's fetch API buffers SSE body chunks until the stream closes, so
   // we use a raw TCP socket (same pattern as the 414/411 tests) to observe
   // frames as they arrive from the wire.
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: SSE_ENV('38215'),
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ workers: '1', rustLog: 'brust=warn' })
   try {
     const rawChunks: Uint8Array[] = []
     let resolveClose!: () => void
@@ -1631,19 +1263,12 @@ test('sse: heartbeat ping arrives on idle stream', async () => {
     expect(raw).toContain('text/event-stream')
     expect(raw).toContain(': ping')
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 test('sse: client disconnect fires req.signal abort within 1s', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: SSE_ENV('38211'),
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ workers: '1', rustLog: 'brust=warn' })
   try {
     const { resp, ctrl } = await openSseConn(port, '/sse-counter')
     expect(resp.status).toBe(200)
@@ -1661,37 +1286,23 @@ test('sse: client disconnect fires req.signal abort within 1s', async () => {
     const { ts } = (await probe.json()) as { ts: number }
     expect(ts).toBeGreaterThan(0)
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 test('sse: middleware reject returns 401 + non-SSE content-type', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: SSE_ENV('38212'),
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ workers: '1', rustLog: 'brust=warn' })
   try {
     const { resp } = await openSseConn(port, '/sse-gated')
     expect(resp.status).toBe(401)
     expect(resp.headers.get('content-type') ?? '').not.toContain('text/event-stream')
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 test('sse: middleware pass with cookie streams normally', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: SSE_ENV('38213'),
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ workers: '1', rustLog: 'brust=warn' })
   try {
     const { resp } = await openSseConn(port, '/sse-gated', { cookie: 'user=alice' })
     expect(resp.status).toBe(200)
@@ -1700,19 +1311,12 @@ test('sse: middleware pass with cookie streams normally', async () => {
     expect(text).toContain('data: 1\n\n')
     expect(text).toContain('data: 3\n\n')
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 test('sse: POST to an SSE route returns 405', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: SSE_ENV('38214'),
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ workers: '1', rustLog: 'brust=warn' })
   try {
     const resp = await fetch(`http://127.0.0.1:${port}/sse-counter`, {
       method: 'POST',
@@ -1721,8 +1325,7 @@ test('sse: POST to an SSE route returns 405', async () => {
     })
     expect(resp.status).toBe(405)
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
@@ -1770,21 +1373,8 @@ function makeWsClient(
   return { ws, opened, closed, messages }
 }
 
-const WS_ENV = (port: string) => ({
-  ...process.env,
-  BRUST_PORT: port,
-  BRUST_WORKERS: '1', // critical — colocate handler + probe action
-  RUST_LOG: 'brust=warn',
-})
-
 test('ws: handshake + echo', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: WS_ENV('38220'),
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ workers: '1', rustLog: 'brust=warn' })
   try {
     const c = makeWsClient(port, '/ws/echo')
     await c.opened
@@ -1794,19 +1384,12 @@ test('ws: handshake + echo', async () => {
     const got = await c.messages
     expect(got).toContain('hello')
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 test('ws: binary frame round-trip', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: WS_ENV('38221'),
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ workers: '1', rustLog: 'brust=warn' })
   try {
     const c = makeWsClient(port, '/ws/echo')
     await c.opened
@@ -1819,38 +1402,24 @@ test('ws: binary frame round-trip', async () => {
     const bytes = new Uint8Array(got[0] as ArrayBuffer)
     expect(Array.from(bytes)).toEqual([1, 2, 3])
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 test('ws: server-initiated close fires client onclose with code 4000', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: WS_ENV('38222'),
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ workers: '1', rustLog: 'brust=warn' })
   try {
     const c = makeWsClient(port, '/ws/server-close')
     const closed = await c.closed
     expect(closed.code).toBe(4000)
     expect(closed.reason).toBe('bye')
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 test('ws: middleware reject returns 401 + no upgrade', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: WS_ENV('38223'),
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ workers: '1', rustLog: 'brust=warn' })
   try {
     const resp = await fetch(`http://127.0.0.1:${port}/ws/gated`, {
       method: 'GET',
@@ -1864,19 +1433,12 @@ test('ws: middleware reject returns 401 + no upgrade', async () => {
     expect(resp.status).toBe(401)
     expect(resp.headers.get('content-type') ?? '').not.toContain('websocket')
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 test('ws: middleware pass with cookie completes handshake + echo', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: WS_ENV('38224'),
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ workers: '1', rustLog: 'brust=warn' })
   try {
     const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/gated`, {
       headers: { cookie: 'user=alice' },
@@ -1897,19 +1459,12 @@ test('ws: middleware pass with cookie completes handshake + echo', async () => {
     expect(got).toContain('hi')
     expect(closed).toBe(true)
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 test('ws: subprotocol negotiation picks first match in route order', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: WS_ENV('38225'),
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ workers: '1', rustLog: 'brust=warn' })
   try {
     // route declares ['chat.v2', 'chat.v1']
     // client requests ['chat.v0', 'chat.v1']
@@ -1920,19 +1475,12 @@ test('ws: subprotocol negotiation picks first match in route order', async () =>
     expect(c.ws.protocol).toBe('chat.v1')
     c.ws.close()
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 test('ws: client clean close fires server on_close with 1000', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: WS_ENV('38226'),
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ workers: '1', rustLog: 'brust=warn' })
   try {
     const c = makeWsClient(port, '/ws/echo')
     await c.opened
@@ -1950,28 +1498,14 @@ test('ws: client clean close fires server on_close with 1000', async () => {
     const { code } = (await probe.json()) as { code: number; reason: string }
     expect(code).toBe(1000)
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 // ----- HTML Streaming integration tests -----
 
-const STREAM_ENV = (port: string) => ({
-  ...process.env,
-  BRUST_PORT: port,
-  BRUST_WORKERS: '1',
-  RUST_LOG: 'brust=warn',
-})
-
 test('streaming: single-chunk regression — / uses Content-Length, not chunked', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: STREAM_ENV('38230'),
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ workers: '1', rustLog: 'brust=warn' })
   try {
     const resp = await fetch(`http://127.0.0.1:${port}/`)
     expect(resp.status).toBe(200)
@@ -1980,19 +1514,12 @@ test('streaming: single-chunk regression — / uses Content-Length, not chunked'
     const body = await resp.text()
     expect(body.length).toBeGreaterThan(0)
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 test('streaming: /slow-suspense uses Transfer-Encoding: chunked + shell-before-resolved', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: STREAM_ENV('38231'),
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ workers: '1', rustLog: 'brust=warn' })
   try {
     const resp = await fetch(`http://127.0.0.1:${port}/slow-suspense`)
     expect(resp.status).toBe(200)
@@ -2019,19 +1546,12 @@ test('streaming: /slow-suspense uses Transfer-Encoding: chunked + shell-before-r
     expect(sawSpinnerBeforeResolved).toBe(true)
     expect(acc).toContain('Resolved after 200ms')
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 test('streaming: mid-stream disconnect — second request to same worker still succeeds', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: STREAM_ENV('38232'),
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ workers: '1', rustLog: 'brust=warn' })
   try {
     // First request: open the chunked stream, then abort mid-flight.
     const ac = new AbortController()
@@ -2053,28 +1573,14 @@ test('streaming: mid-stream disconnect — second request to same worker still s
     const body = await resp.text()
     expect(body.length).toBeGreaterThan(0)
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 // ----- Navigation interceptor integration tests -----
 
-const NAV_ENV = (port: string) => ({
-  ...process.env,
-  BRUST_PORT: port,
-  BRUST_WORKERS: '1',
-  RUST_LOG: 'brust=warn',
-})
-
 test('nav: /_brust/page/blog/x returns JSON {html, title} with <main> inner only', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: NAV_ENV('38240'),
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ workers: '1', rustLog: 'brust=warn' })
   try {
     const resp = await fetch(`http://127.0.0.1:${port}/_brust/page/blog/welcome`)
     expect(resp.status).toBe(200)
@@ -2090,19 +1596,12 @@ test('nav: /_brust/page/blog/x returns JSON {html, title} with <main> inner only
     // Title carries the page name
     expect(body.title).toContain('Post: welcome')
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
 test('nav: /_brust/page/<unknown> returns 404 with JSON error envelope', async () => {
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: NAV_ENV('38241'),
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ workers: '1', rustLog: 'brust=warn' })
   try {
     const resp = await fetch(`http://127.0.0.1:${port}/_brust/page/this/path/does/not/exist`)
     expect(resp.status).toBe(404)
@@ -2110,8 +1609,7 @@ test('nav: /_brust/page/<unknown> returns 404 with JSON error envelope', async (
     const body = (await resp.json()) as { error: string }
     expect(body.error).toBe('not found')
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
@@ -2122,13 +1620,7 @@ test('nav: page without <main> falls back to shipping full HTML in html field', 
   // rendered HTML instead, so the client interceptor fires its no-main
   // fallback. (/crash was the plan's original choice but renderToString
   // does not honour errorBoundary — it propagates the throw as a 500.)
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: NAV_ENV('38242'),
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ workers: '1', rustLog: 'brust=warn' })
   try {
     const resp = await fetch(`http://127.0.0.1:${port}/_brust/page/cache-test`)
     expect(resp.status).toBe(200)
@@ -2139,8 +1631,7 @@ test('nav: page without <main> falls back to shipping full HTML in html field', 
     expect(body.html).not.toContain('<main')
     expect(body.html).toContain('CacheTest')
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
 
@@ -2148,13 +1639,7 @@ test('nav: /_brust/page/<protected> without cookie returns middleware verdict (4
   // /admin (index) is guarded by authRequired middleware on the parent layout
   // (no cookie → 401). The navigation endpoint must honour middleware
   // short-circuits, otherwise it would leak guarded content via the JSON envelope.
-  const proc = spawn({
-    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
-    env: NAV_ENV('38243'),
-    stdout: 'pipe',
-    stderr: 'inherit',
-  })
-  const port = await readPortLine(proc.stdout)
+  const { port, stop } = await startServer({ workers: '1', rustLog: 'brust=warn' })
   try {
     const resp = await fetch(`http://127.0.0.1:${port}/_brust/page/admin`)
     // Middleware short-circuits with 401 before render happens — the client
@@ -2164,7 +1649,6 @@ test('nav: /_brust/page/<protected> without cookie returns middleware verdict (4
     const body = await resp.text()
     expect(body).not.toContain('Admin Dashboard')
   } finally {
-    proc.kill('SIGINT')
-    await proc.exited
+    await stop()
   }
 }, 15_000)
