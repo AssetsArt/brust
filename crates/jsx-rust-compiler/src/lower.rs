@@ -570,11 +570,17 @@ fn lower_island(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode,
                             let SwcExpr::Lit(Lit::Num(n)) = strip_paren(&kv.value) else {
                                 return Err(err());
                             };
-                            // Non-negative integer seconds only. A bare `as u32`
-                            // would silently truncate (60.5 → 60) and saturate
-                            // (-1 → 0, 1e12 → u32::MAX) — turning a typo into a
-                            // valid-but-wrong TTL. Reject instead.
-                            if n.value < 0.0 || n.value.fract() != 0.0 || n.value > u32::MAX as f64
+                            // Non-negative integer SECONDS. A bare `as u32` would
+                            // silently truncate (60.5 → 60) and saturate (-1 → 0,
+                            // 1e12 → u32::MAX) — turning a typo into a valid-but-
+                            // wrong TTL. Upper bound is u32::MAX/1000, not u32::MAX:
+                            // the runtime sends `revalidate * 1000` ms across NAPI
+                            // as a u32, so a larger value would silently wrap to a
+                            // garbage TTL. Reject all of these.
+                            const MAX_REVALIDATE_SECS: f64 = (u32::MAX / 1000) as f64;
+                            if n.value < 0.0
+                                || n.value.fract() != 0.0
+                                || n.value > MAX_REVALIDATE_SECS
                             {
                                 return Err(err());
                             }
@@ -2187,6 +2193,18 @@ mod tests {
         let src = r#"export default function Page({ data }) {
   return <Island component={Counter} props={data.counter} ssr
     isr={{ key: data.cacheKey, revalidate: -1 }} />;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let err = lower(&parsed).unwrap_err();
+        assert!(matches!(err.kind, ErrorKind::IslandIsrUnsupported));
+    }
+
+    #[test]
+    fn isr_oversized_revalidate_is_rejected() {
+        // > u32::MAX/1000 secs would overflow when sent as `revalidate*1000` ms.
+        let src = r#"export default function Page({ data }) {
+  return <Island component={Counter} props={data.counter} ssr
+    isr={{ key: data.cacheKey, revalidate: 5000000 }} />;
 }"#;
         let parsed = parse(src, "<test>").unwrap();
         let err = lower(&parsed).unwrap_err();
