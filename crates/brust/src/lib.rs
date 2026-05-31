@@ -3,6 +3,7 @@
 mod cache;
 mod http;
 mod io;
+mod island_cache;
 mod jinja;
 mod jsx_compile;
 mod pool;
