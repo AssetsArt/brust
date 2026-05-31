@@ -1,7 +1,3 @@
-// Wired into the runtime/NAPI in a follow-up task; until then the lib-only
-// build sees these as unused. Scoped allow keeps the `-D warnings` CI gate green.
-#![allow(dead_code)]
-
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
