@@ -11,6 +11,11 @@ export interface CoordinatorDeps {
   /** Recompile native-route `.jinja` templates from source and reload them into
    * the minijinja env, so `native: true` routes pick up .tsx edits on reload. */
   reEmitJinja: () => Promise<void>
+  /** Clear the Rust-side island ISR cache. Called on every render-affecting
+   * reload (`ts`/`html`/`islands`) so a `.tsx` edit is reflected immediately —
+   * a frozen island render from before the edit must never survive a hot reload.
+   * Optional: a build without the island-cache addon export omits it. */
+  clearIslandCache?: () => void
   buildComponentCss?: () => Promise<void>
   snapshotComponentCss?: () => Promise<import('../css/manifest.ts').ComponentCssManifest | null>
   broadcast: (msg: DevMessage) => Promise<void> | void
@@ -34,6 +39,8 @@ export class Coordinator {
       switch (ev.kind) {
         case 'ts':
         case 'html':
+          // Stale frozen island renders must not survive a source edit.
+          this.deps.clearIslandCache?.()
           await this.deps.workers.terminateAll()
           await this.deps.workers.spawnAll()
           // Reload native-route templates (process-global minijinja env — does
@@ -42,6 +49,7 @@ export class Coordinator {
           await this.deps.broadcast({ type: 'reload' })
           break
         case 'islands':
+          this.deps.clearIslandCache?.()
           await this.deps.buildIslands()
           await this.deps.workers.terminateAll()
           await this.deps.workers.spawnAll()
