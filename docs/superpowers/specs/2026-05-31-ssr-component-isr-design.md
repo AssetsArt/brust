@@ -264,6 +264,27 @@ port already passed to `resolveIslandContext` at `routes.ts:623`.)
 `{html, props}` store; `cache.set(key, tags, ttlMs, html, '')` stores `props=""`.
 Shared keyspace = the same `MokaStore` singleton.
 
+### 2b. TypeScript surface — `isr` is auto-typed (post-ship addendum)
+
+`isr` is a compiler pseudo-prop (stripped at lower time, never reaches the
+component at runtime — the factory carries no `isr`), exactly like React's
+`key`/`ref`. A user SSR component's own props type does NOT declare `isr`, so
+without help `<MyLayout isr={{…}}>` is a TS error. Fix (shipped): a global JSX
+augmentation in `runtime/islands/isr-jsx.ts` adds `isr?: IsrConfig` to
+`React.JSX.IntrinsicAttributes` (the interface `react-jsx` consults for every
+element — where `key` lives), so `isr` is accept-anywhere with zero
+per-component boilerplate. `IsrConfig` is exported from `brustjs`; `IslandProps.isr`
+reuses it. `runtime/index.ts` side-effect-imports the augmentation so it loads in
+any consumer's program.
+
+- **Augment `React.JSX.IntrinsicAttributes`, NOT `React.Attributes`** — under
+  React 19's `export = React` types, augmenting `React.Attributes` does not
+  propagate through the module boundary; targeting `React.JSX.IntrinsicAttributes`
+  directly is the form that merges.
+- A stale nested `runtime/node_modules/@types/react@18` (absent from `bun.lock`,
+  orphaned) shadowed root `@19` and made the augmentation land on the wrong
+  version in-repo; removed during verification. See [[published-install-tarball-test]].
+
 ### 3. Reused infrastructure (no diff)
 
 - `crates/brust/src/island_cache.rs` — `CacheStore`/`MokaStore`, tag reverse
