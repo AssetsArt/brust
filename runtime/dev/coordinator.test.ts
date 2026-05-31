@@ -29,6 +29,17 @@ describe('Coordinator', () => {
     expect(types).toEqual(['building', 'reload', 'ok'])
   })
 
+  test('ts change ALSO rebuilds island chunks (island .tsx edits must hot-reload)', async () => {
+    // Root-cause regression guard: the watcher's classifyPath NEVER emits
+    // 'islands' — every .tsx (incl. an island's client source) is classified
+    // 'ts'. So the 'ts' branch MUST rebuild island chunks, or editing an
+    // island's JS never reaches the browser without a dev-server restart.
+    const deps = makeDeps()
+    const c = new Coordinator(deps)
+    await c.handleChange({ paths: ['/components/Counter.tsx'], kind: 'ts' })
+    expect(deps.buildIslands).toHaveBeenCalledTimes(1)
+  })
+
   test('css change → buildCss + broadcast building+css-update+ok, no worker restart', async () => {
     const deps = makeDeps()
     const c = new Coordinator(deps)
@@ -138,20 +149,27 @@ describe('Coordinator', () => {
 
   test('single-flight: change-while-building is dropped', async () => {
     let releaseTerm!: () => void
+    let reachedTerm!: () => void
+    // Signal the moment the first change reaches terminateAll, so the assertion
+    // doesn't depend on how many `await`s precede it (e.g. the buildIslands hop).
+    const atTerm = new Promise<void>((r) => {
+      reachedTerm = r
+    })
     const deps = makeDeps({
       workers: {
-        terminateAll: mock(
-          () =>
-            new Promise<void>((r) => {
-              releaseTerm = r
-            }),
-        ),
+        terminateAll: mock(() => {
+          reachedTerm()
+          return new Promise<void>((r) => {
+            releaseTerm = r
+          })
+        }),
         spawnAll: mock(() => Promise.resolve()),
       },
     })
     const c = new Coordinator(deps)
     const first = c.handleChange({ paths: ['/a.tsx'], kind: 'ts' })
-    await c.handleChange({ paths: ['/b.tsx'], kind: 'ts' })
+    await atTerm // first is now blocked inside terminateAll (state === 'building')
+    await c.handleChange({ paths: ['/b.tsx'], kind: 'ts' }) // dropped by the state guard
     expect(deps.workers.terminateAll).toHaveBeenCalledTimes(1)
     releaseTerm()
     await first
