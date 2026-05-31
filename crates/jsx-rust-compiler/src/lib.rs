@@ -1,3 +1,4 @@
+pub mod analyze;
 mod emit_factory;
 mod emit_jinja;
 mod ir;
