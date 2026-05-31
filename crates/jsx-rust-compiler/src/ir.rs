@@ -85,6 +85,15 @@ pub enum JsxNode {
         hydrate: String,
         /// Whether to server-render the island's initial markup (`ssr` bare attr).
         ssr: bool,
+        /// Optional ISR cache key path (single-segment prop path). `None` until
+        /// the isr-attribute parser lands.
+        key_path: Option<String>,
+        /// Optional ISR cache tags path (single-segment prop path). `None` until
+        /// the isr-attribute parser lands.
+        tags_path: Option<String>,
+        /// Optional ISR revalidation interval in seconds. `None` until the
+        /// isr-attribute parser lands.
+        revalidate: Option<u32>,
     },
 }
 

@@ -35,6 +35,9 @@ pub struct IslandMeta {
     pub props_path: String,
     pub ssr: bool,
     pub hydrate: String,
+    pub key_path: Option<String>,
+    pub tags_path: Option<String>,
+    pub revalidate: Option<u32>,
 }
 
 /// Parse → lower → { emit template, collect islands }. The single source of
@@ -97,6 +100,9 @@ fn collect_islands(node: &JsxNode, out: &mut Vec<IslandMeta>) {
             props_path,
             hydrate,
             ssr,
+            key_path,
+            tags_path,
+            revalidate,
         } => {
             out.push(IslandMeta {
                 component: component.clone(),
@@ -104,6 +110,9 @@ fn collect_islands(node: &JsxNode, out: &mut Vec<IslandMeta>) {
                 props_path: props_path.clone(),
                 ssr: *ssr,
                 hydrate: hydrate.clone(),
+                key_path: key_path.clone(),
+                tags_path: tags_path.clone(),
+                revalidate: *revalidate,
             });
         }
         JsxNode::Element { children, .. } => {
@@ -142,7 +151,22 @@ pub fn islands_to_json(islands: &[IslandMeta]) -> String {
         out.push_str(if isl.ssr { "true" } else { "false" });
         out.push_str(",\"hydrate\":\"");
         out.push_str(&json_escape(&isl.hydrate));
-        out.push_str("\"}");
+        out.push('"');
+        if let Some(kp) = &isl.key_path {
+            out.push_str(",\"keyPath\":\"");
+            out.push_str(&json_escape(kp));
+            out.push('"');
+        }
+        if let Some(tp) = &isl.tags_path {
+            out.push_str(",\"tagsPath\":\"");
+            out.push_str(&json_escape(tp));
+            out.push('"');
+        }
+        if let Some(r) = isl.revalidate {
+            out.push_str(",\"revalidate\":");
+            out.push_str(&r.to_string());
+        }
+        out.push('}');
     }
     out.push(']');
     out
@@ -323,6 +347,9 @@ mod tests {
                     props_path: "data.a".to_string(),
                     ssr: true,
                     hydrate: "load".to_string(),
+                    key_path: None,
+                    tags_path: None,
+                    revalidate: None,
                 },
                 IslandMeta {
                     component: "B".to_string(),
@@ -330,6 +357,9 @@ mod tests {
                     props_path: "data.b".to_string(),
                     ssr: false,
                     hydrate: "visible".to_string(),
+                    key_path: None,
+                    tags_path: None,
+                    revalidate: None,
                 },
             ]
         );
@@ -361,6 +391,9 @@ mod tests {
                     props_path: "data.a".to_string(),
                     ssr: false,
                     hydrate: "load".to_string(),
+                    key_path: None,
+                    tags_path: None,
+                    revalidate: None,
                 },
                 IslandMeta {
                     component: "C".to_string(),
@@ -368,6 +401,9 @@ mod tests {
                     props_path: "data.b".to_string(),
                     ssr: false,
                     hydrate: "load".to_string(),
+                    key_path: None,
+                    tags_path: None,
+                    revalidate: None,
                 },
             ]
         );
@@ -416,6 +452,9 @@ mod tests {
                 props_path: "data.x".to_string(),
                 ssr: false,
                 hydrate: "load".to_string(),
+                key_path: None,
+                tags_path: None,
+                revalidate: None,
             }]
         );
     }
@@ -429,6 +468,9 @@ mod tests {
                 props_path: "data.counter".to_string(),
                 ssr: true,
                 hydrate: "load".to_string(),
+                key_path: None,
+                tags_path: None,
+                revalidate: None,
             },
             // Exercise escaping: a backslash and a quote in props_path.
             IslandMeta {
@@ -437,6 +479,9 @@ mod tests {
                 props_path: r#"a\b"c"#.to_string(),
                 ssr: false,
                 hydrate: "idle".to_string(),
+                key_path: None,
+                tags_path: None,
+                revalidate: None,
             },
         ];
         let json = islands_to_json(&islands);

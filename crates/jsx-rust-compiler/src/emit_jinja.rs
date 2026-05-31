@@ -131,6 +131,7 @@ fn emit_node(node: &JsxNode, out: &mut String) {
             props_path: _,
             hydrate,
             ssr,
+            ..
         } => {
             let _ = write!(
                 out,
@@ -497,6 +498,9 @@ mod tests {
             props_path: "counter".into(),
             hydrate: "load".into(),
             ssr: true,
+            key_path: None,
+            tags_path: None,
+            revalidate: None,
         };
         assert_eq!(
             emit(&component(ir)),
@@ -513,6 +517,9 @@ mod tests {
             props_path: "counter".into(),
             hydrate: "load".into(),
             ssr: false,
+            key_path: None,
+            tags_path: None,
+            revalidate: None,
         };
         assert_eq!(
             emit(&component(ir)),
@@ -529,6 +536,9 @@ mod tests {
             props_path: "cart".into(),
             hydrate: "visible".into(),
             ssr: true,
+            key_path: None,
+            tags_path: None,
+            revalidate: None,
         };
         assert_eq!(
             emit(&component(ir)),
