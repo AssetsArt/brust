@@ -29,7 +29,6 @@ use tracing::error;
 use tracing_subscriber::EnvFilter;
 
 use crate::cache::LruCache;
-use crate::island_cache::CacheStore;
 use crate::pool::{BufPtr, RendererTsfn, WorkerPool};
 use crate::routes::RouteTable;
 
@@ -43,7 +42,9 @@ struct State {
     shutdown: Arc<Notify>,
     routes: Arc<RouteTable>,
     cache: Arc<LruCache>,
-    island_cache: std::sync::Arc<crate::island_cache::MokaStore>,
+    // Typed as the trait object, not concrete MokaStore, so a future RedisStore
+    // backend swaps in here with zero changes to the NAPI fns / call sites.
+    island_cache: std::sync::Arc<dyn crate::island_cache::CacheStore>,
     is_serving: AtomicBool,
     expected_workers: AtomicU32,
     islands_dir: parking_lot::RwLock<Option<std::path::PathBuf>>,
@@ -68,7 +69,8 @@ pub(crate) fn state() -> &'static State {
             shutdown: Arc::new(Notify::new()),
             routes: Arc::new(RouteTable::new()),
             cache: Arc::new(LruCache::new()),
-            island_cache: std::sync::Arc::new(crate::island_cache::MokaStore::new(1000)),
+            island_cache: std::sync::Arc::new(crate::island_cache::MokaStore::new(1000))
+                as std::sync::Arc<dyn crate::island_cache::CacheStore>,
             is_serving: AtomicBool::new(false),
             expected_workers: AtomicU32::new(0),
             islands_dir: parking_lot::RwLock::new(None),
