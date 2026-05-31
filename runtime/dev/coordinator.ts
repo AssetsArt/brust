@@ -39,20 +39,22 @@ export class Coordinator {
       switch (ev.kind) {
         case 'ts':
         case 'html':
+        case 'islands':
           // Stale frozen island renders must not survive a source edit.
           this.deps.clearIslandCache?.()
+          // Rebuild island CLIENT chunks. The watcher classifies every `.tsx`
+          // (incl. an island's client source) as `ts` — it has no way to tell
+          // an island source from a page/component by path alone, and the
+          // island set changes as you add/remove `<Island>` usages. So we
+          // rebuild island chunks on every render-affecting reload; otherwise
+          // editing an island's JS never reaches the browser without a
+          // dev-server restart (the chunk on disk stays stale). buildIslands
+          // re-scans routes + re-bundles into the served `.brust/islands` dir.
+          await this.deps.buildIslands()
           await this.deps.workers.terminateAll()
           await this.deps.workers.spawnAll()
           // Reload native-route templates (process-global minijinja env — does
           // not depend on the workers) just before telling the browser to reload.
-          await this.deps.reEmitJinja()
-          await this.deps.broadcast({ type: 'reload' })
-          break
-        case 'islands':
-          this.deps.clearIslandCache?.()
-          await this.deps.buildIslands()
-          await this.deps.workers.terminateAll()
-          await this.deps.workers.spawnAll()
           await this.deps.reEmitJinja()
           await this.deps.broadcast({ type: 'reload' })
           break
