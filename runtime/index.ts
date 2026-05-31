@@ -478,6 +478,7 @@ export const brust = {
               // after a hot reload. `?.` keeps an older addon (no reset export)
               // from throwing; it just falls back to the old behaviour.
               const dropped = (native as any).resetWorkerPool?.() ?? 0
+              ;(native as any).islandCacheClear?.() // drop stale frozen islands after a source edit
               if (process.env.BRUST_DEV_DEBUG) {
                 process.stderr.write(`[brust] dev: reset worker pool (dropped ${dropped})\n`)
               }
@@ -679,3 +680,6 @@ export type { BrustPageProps } from './islands/brust-page.tsx'
 
 export { buildIslands } from './islands/build.ts'
 export type { IslandsBuildResult, BuildIslandsOptions } from './islands/build.ts'
+
+export { cache } from './cache.ts'
+export type { InvalidateArgs } from './cache.ts'
