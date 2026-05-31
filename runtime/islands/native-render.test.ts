@@ -369,10 +369,32 @@ test('resolveIslandContext ISR: literal key caches under the literal (no keyPath
       tagsLiteral: ['g'],
     },
   ]
-  const { cache, calls } = fakeCache()
+  const { cache, calls, store } = fakeCache()
   const out = await resolveIslandContext(manifest, { data: { stub: { n: 1 } } }, cache)
   expect(calls.set).toBe(1)
   expect(out.island_0_html).toBe('<span>1</span>')
+  expect(store.has('globalStub')).toBe(true) // cached under the LITERAL key, not a path
+})
+
+test('resolveIslandContext ISR: literal key HIT serves frozen pair, no re-render', async () => {
+  const manifest: NativeIslandEntry[] = [
+    {
+      component: 'Stub',
+      instance: 0,
+      propsPath: 'data.stub',
+      ssr: true,
+      hydrate: 'load',
+      sourcePath: STUB_PATH,
+      keyLiteral: 'globalStub',
+    },
+  ]
+  const { cache, calls, store } = fakeCache()
+  // Pre-seed the cache under the literal key with a frozen pair.
+  store.set('globalStub', { html: '<span>frozen</span>', props: 'FROZEN_PROPS' })
+  const out = await resolveIslandContext(manifest, { data: { stub: { n: 42 } } }, cache)
+  expect(calls.set).toBe(0) // hit → no write
+  expect(out.island_0_html).toBe('<span>frozen</span>')
+  expect(out.island_0_props).toBe('FROZEN_PROPS') // frozen props served, not live
 })
 
 test('loadIslandManifest: reads from jinjaDir, missing file → null, caches reads', () => {
