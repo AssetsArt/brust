@@ -1,4 +1,5 @@
 import { createElement, type ComponentType, type ReactNode } from 'react'
+import type { IsrConfig } from './isr-jsx.ts'
 
 /** Triggers that activate hydration of an island marker. */
 export type HydrateTrigger = 'load' | 'idle' | 'visible' | 'interaction'
@@ -37,11 +38,7 @@ export interface IslandProps<P> {
    *
    * Example: `isr={{ key: data.cacheKey, tags: ['blog'], revalidate: 60 }}`
    */
-  isr?: {
-    key: string
-    tags?: string[]
-    revalidate?: number
-  }
+  isr?: IsrConfig
 }
 
 /** Module-scope flag flipped by every `<Island>` render. `makeRenderer`
