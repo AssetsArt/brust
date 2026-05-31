@@ -56,6 +56,13 @@ interface RawComponentEntry {
   factoryExpr: string
   referencedComponents: string[]
   usesIsland: boolean
+  /** ISR cache fields (present only on components with an `isr` attr). Declared
+   * so the `{ ...entry }` / `{ ...e }` enrich spreads below are type-complete —
+   * they MUST survive into the enriched `<Name>.components.json`, or runtime ISR
+   * caching for SSR components silently never activates. Mirrors RawIslandEntry. */
+  keyPath?: string
+  tagsPath?: string
+  revalidate?: number
 }
 
 /** Enriched component entry written to `<Name>.components.json`. */

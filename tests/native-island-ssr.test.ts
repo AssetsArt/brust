@@ -170,6 +170,16 @@ beforeAll(async () => {
   const factorySrc = readFileSync(factoryPath, 'utf8')
   expect(factorySrc).toMatch(/^import \w+ from "\.\.?\//m) // a relative import line
   expect(factorySrc).not.toMatch(/import \w+ from "\//) // never absolute
+  // ISR fields must SURVIVE the compiler → napi → build-CLI-enrich → disk path
+  // (the enrich step spreads RawComponentEntry; the fields are emitted by Rust's
+  // components_to_json). Without this end-to-end assertion a stale addon or a
+  // future explicit-field-copy refactor in native-routes-emit.ts would silently
+  // drop isr and ISR caching would never activate for real builds. The fixture's
+  // <NativeLayout ... isr={{ key: greeting, revalidate: 60 }}> drives this.
+  expect(compJson[0].keyPath).toBe('greeting')
+  expect(compJson[0].revalidate).toBe(60)
+  // `isr` must NOT leak into the factory expression as a component prop.
+  expect(factorySrc).not.toContain('isr')
 
   // Spawn brust against the fixture (port 3803 to avoid clashing with 3802/3801).
   proc = spawn({
