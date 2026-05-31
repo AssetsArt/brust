@@ -44,6 +44,12 @@ pub struct ComponentMeta {
     /// True if any `<Island>` node appears in this component's factory tree.
     /// When true the TS build step adds `import { Island } from 'brustjs'`.
     pub uses_island: bool,
+    /// Optional ISR cache key path (dotted loader-data path). `None` = no ISR.
+    pub key_path: Option<String>,
+    /// Optional ISR cache tags path (resolves to `string[]`).
+    pub tags_path: Option<String>,
+    /// Optional ISR revalidation interval in seconds (TTL).
+    pub revalidate: Option<u32>,
 }
 
 /// One entry in the island manifest. Field order here is intentional and
@@ -220,6 +226,9 @@ fn collect_components(node: &JsxNode, out: &mut Vec<ComponentMeta>) {
         JsxNode::SsrComponent {
             component,
             instance,
+            key_path,
+            tags_path,
+            revalidate,
             ..
         } => {
             // Don't recurse — nested SSR components render inside parent factory.
@@ -229,6 +238,9 @@ fn collect_components(node: &JsxNode, out: &mut Vec<ComponentMeta>) {
                 factory_expr: String::new(),
                 referenced_components: Vec::new(),
                 uses_island: false,
+                key_path: key_path.clone(),
+                tags_path: tags_path.clone(),
+                revalidate: *revalidate,
             });
         }
         JsxNode::Element { children, .. } => {
@@ -289,7 +301,7 @@ pub fn islands_to_json(islands: &[IslandMeta]) -> String {
 
 /// Hand-rolled JSON for the component manifest. Mirrors `islands_to_json`.
 /// Keys: `component`, `instance`, `factoryExpr`, `referencedComponents`,
-/// `usesIsland`. Empty slice → `"[]"`.
+/// `usesIsland`, and (when set) `keyPath`/`tagsPath`/`revalidate`. Empty slice → `"[]"`.
 pub fn components_to_json(components: &[ComponentMeta]) -> String {
     if components.is_empty() {
         return "[]".to_string();
@@ -316,6 +328,20 @@ pub fn components_to_json(components: &[ComponentMeta]) -> String {
         }
         out.push_str("],\"usesIsland\":");
         out.push_str(if c.uses_island { "true" } else { "false" });
+        if let Some(kp) = &c.key_path {
+            out.push_str(",\"keyPath\":\"");
+            out.push_str(&json_escape(kp));
+            out.push('"');
+        }
+        if let Some(tp) = &c.tags_path {
+            out.push_str(",\"tagsPath\":\"");
+            out.push_str(&json_escape(tp));
+            out.push('"');
+        }
+        if let Some(r) = c.revalidate {
+            out.push_str(",\"revalidate\":");
+            out.push_str(&r.to_string());
+        }
         out.push('}');
     }
     out.push(']');
@@ -907,5 +933,53 @@ mod tests {
             c.components[0].factory_expr,
             "(ctx) => h(Card, {extra: ctx.data.x, ...ctx.rest})"
         );
+    }
+
+    #[test]
+    fn components_to_json_with_isr_fields() {
+        let components = vec![ComponentMeta {
+            component: "Layout".to_string(),
+            instance: 0,
+            factory_expr: "(ctx) => h(Layout, {})".to_string(),
+            referenced_components: vec!["Layout".to_string()],
+            uses_island: false,
+            key_path: Some("data.cacheKey".to_string()),
+            tags_path: Some("data.cacheTags".to_string()),
+            revalidate: Some(60),
+        }];
+        let json = components_to_json(&components);
+        assert!(json.contains("\"keyPath\":\"data.cacheKey\""), "{json}");
+        assert!(json.contains("\"tagsPath\":\"data.cacheTags\""), "{json}");
+        assert!(json.contains("\"revalidate\":60"), "{json}");
+    }
+
+    #[test]
+    fn components_to_json_without_isr_omits_fields() {
+        let components = vec![ComponentMeta {
+            component: "Layout".to_string(),
+            instance: 0,
+            factory_expr: "(ctx) => h(Layout, {})".to_string(),
+            referenced_components: vec!["Layout".to_string()],
+            uses_island: false,
+            key_path: None,
+            tags_path: None,
+            revalidate: None,
+        }];
+        let json = components_to_json(&components);
+        assert!(!json.contains("keyPath"), "{json}");
+        assert!(!json.contains("tagsPath"), "{json}");
+        assert!(!json.contains("revalidate"), "{json}");
+    }
+
+    #[test]
+    fn collect_components_copies_isr_from_ir() {
+        let src = r#"export default function Page({ data }) {
+  return <Layout title={data.title} isr={{ key: data.cacheKey, revalidate: 30 }} />;
+}"#;
+        let c = compile_full(src, "<test>").unwrap();
+        assert_eq!(c.components.len(), 1);
+        assert_eq!(c.components[0].key_path.as_deref(), Some("data.cacheKey"));
+        assert_eq!(c.components[0].tags_path, None);
+        assert_eq!(c.components[0].revalidate, Some(30));
     }
 }

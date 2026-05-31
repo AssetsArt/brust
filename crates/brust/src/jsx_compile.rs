@@ -45,6 +45,9 @@ mod tests {
             factory_expr: "(ctx) => h(Layout, {title: ctx.greeting})".to_string(),
             referenced_components: vec!["Layout".to_string()],
             uses_island: false,
+            key_path: None,
+            tags_path: None,
+            revalidate: None,
         }];
         let json = components_to_json(&components);
         assert_eq!(
