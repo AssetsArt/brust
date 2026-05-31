@@ -856,4 +856,39 @@ mod tests {
                 .contains(&"Counter".to_string())
         );
     }
+
+    #[test]
+    fn factory_component_with_spread_prop() {
+        // `<Counter {...clientProps} />` — spread is valid on an SSR component
+        // because the factory is plain JS createElement. It lowers to a JS
+        // object spread `{...ctx.clientProps}`.
+        let src = "export default function Page({ clientProps }) { return <Counter {...clientProps} />; }";
+        let c = compile_full(src, "<test>").unwrap();
+        assert_eq!(
+            c.components[0].factory_expr,
+            "(ctx) => h(Counter, {...ctx.clientProps})"
+        );
+    }
+
+    #[test]
+    fn factory_component_spread_mixed_with_named_preserves_order() {
+        // Source order is load-bearing for object spread override semantics:
+        // `{...a, extra: x}` lets `extra` win; the reverse lets `a` win.
+        let src = "export default function Page({ clientProps, data }) { return <Counter {...clientProps} extra={data.x} />; }";
+        let c = compile_full(src, "<test>").unwrap();
+        assert_eq!(
+            c.components[0].factory_expr,
+            "(ctx) => h(Counter, {...ctx.clientProps, extra: ctx.data.x})"
+        );
+    }
+
+    #[test]
+    fn factory_component_spread_member_access() {
+        let src = "export default function Page({ data }) { return <Card {...data.card} />; }";
+        let c = compile_full(src, "<test>").unwrap();
+        assert_eq!(
+            c.components[0].factory_expr,
+            "(ctx) => h(Card, {...ctx.data.card})"
+        );
+    }
 }

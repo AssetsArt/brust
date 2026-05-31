@@ -98,6 +98,37 @@ test('throws when the island component ident has no matching import', () => {
   expect(() => scanIslandChunks(entry)).toThrow('Ghost')
 })
 
+test('does not match an <Island> mentioned in a comment before a self-closing tag', () => {
+  // Regression: the scanner regex must not bridge a comment's `<Island>` (no
+  // `component=`) across an unrelated self-closing tag to a later `/>`. Such a
+  // span has no `component=` and used to throw a false "no component prop".
+  const counter = write('Counter.tsx', 'export default function Counter() { return null }\n')
+  write('Card.tsx', 'export default function Card() { return null }\n')
+  write(
+    'Commented.tsx',
+    `import Counter from './Counter'\n` +
+      `import Card from './Card'\n` +
+      `/** The native compiler emits host elements + \`<Island>\`. Shell is HTML. */\n` +
+      `export default function Commented() {\n` +
+      `  return (<div>\n` +
+      `    <Card />\n` +
+      `    <Island component={Counter} props={{ n: 1 }} />\n` +
+      `  </div>)\n` +
+      `}\n`,
+  )
+  const entry = write(
+    'routes.ts',
+    `import Commented from './Commented'\nexport default [Commented]\n`,
+  )
+
+  // Must NOT throw, and must find exactly the one real Island (Counter).
+  const chunks = scanIslandChunks(entry)
+  expect(chunks.size).toBe(1)
+  expect(chunks.get('Counter')).toBe(counter)
+  // Card is a plain element here, not an island — not a chunk.
+  expect(chunks.has('Card')).toBe(false)
+})
+
 // buildIslands(new Map(), {outDir}) smoke: asserts the 3 unconditional runtime
 // chunks land and islandCount === 0. Runs Bun.build 3× (react/react-dom/
 // bootstrap); kept because it is the cheap zero-island path and guards the

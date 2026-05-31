@@ -1,6 +1,6 @@
 use std::fmt::Write as _;
 
-use crate::ir::{AttrValue, Component, Expr, JsxAttr, JsxNode};
+use crate::ir::{AttrValue, Component, Expr, JsxAttr, JsxNode, SsrProp};
 
 pub struct FactoryOutput {
     pub expr: String,
@@ -48,13 +48,21 @@ fn collect_factories(node: &JsxNode, out: &mut Vec<FactoryOutput>) {
     }
 }
 
-fn emit_h(component: &str, props: &[JsxAttr], children: &[JsxNode], fo: &mut FactoryOutput) {
+fn emit_h(component: &str, props: &[SsrProp], children: &[JsxNode], fo: &mut FactoryOutput) {
     let _ = write!(fo.expr, "h({component}, {{");
-    for (i, attr) in props.iter().enumerate() {
+    // Props emit in source order so `{...a, b}` vs `{b, ...a}` override
+    // semantics match the JSX. Named → `name: value`; spread → `...expr`.
+    for (i, prop) in props.iter().enumerate() {
         if i > 0 {
             fo.expr.push_str(", ");
         }
-        emit_attr_kv(attr, fo);
+        match prop {
+            SsrProp::Attr(attr) => emit_attr_kv(attr, fo),
+            SsrProp::Spread(e) => {
+                fo.expr.push_str("...");
+                fo.expr.push_str(&emit_expr(e));
+            }
+        }
     }
     fo.expr.push('}');
     for child in children {

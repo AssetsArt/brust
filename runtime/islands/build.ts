@@ -35,7 +35,11 @@ export function scanIslandChunks(routesEntryFile: string): Map<string, string> {
     const source = readFileSync(pagePath, 'utf8')
     const pageImports = scanImports(pagePath)
 
-    const tags = source.match(/<Island\b[\s\S]*?\/>/g) ?? []
+    // `[^<]*?` (not `[\s\S]*?`) so a tag cannot bridge across another `<` — this
+    // stops a bare `<Island>` mentioned in a comment from lazily matching forward
+    // to an unrelated later `/>` (which would then falsely report "no component
+    // prop"). A real island tag never contains `<` between `<Island` and `/>`.
+    const tags = source.match(/<Island\b[^<]*?\/>/g) ?? []
     for (const tag of tags) {
       const compMatch = tag.match(/component=\{\s*(\w+)\s*\}/)
       if (!compMatch) {
