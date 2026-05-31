@@ -80,13 +80,15 @@ brustjs new   <name>              # scaffold a project (partial — see Status)
 
 - **React 19 SSR** via `renderToPipeableStream` (auto-Suspense → chunked streaming).
 - **Islands** — opt-in client hydration with `<Island>`; the rest ships zero JS.
+  SSR islands can opt into **ISR caching** (`isr={{ key, tags, revalidate }}`) so
+  `renderToString` runs once per key, then serves a frozen pair from Rust.
 - **`native: true` routes** — JSX compiled to a jinja template at build time and
   rendered Rust-side (`minijinja`), skipping React on the server entirely.
 - **Server actions** (`"use server"`) → per-action endpoints; client helper rewrites
   form/`fetch` targets.
 - **SSE & WebSockets** as first-class route shapes.
 - Nested routes + dynamic params, per-route typed loaders, request-scoped middleware,
-  forms/multipart, SPA-style navigation, in-process LRU cache, Tailwind v4 + CSS Modules.
+  forms/multipart, SPA-style navigation, in-process LRU response cache + island ISR cache, Tailwind v4 + CSS Modules.
 - **Agent-first** — server fns and routes expose MCP tool/resource schemas at
   `/_brust/mcp` so agents drive the app without scraping.
 

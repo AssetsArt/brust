@@ -509,6 +509,7 @@ component.
 - `scanIslandChunks(routes.tsx)` (from `runtime/islands/build.ts`) walks the routes' page sources for `<Island component={X}>`, resolving each `X` to its source via the page's own imports → `Map<componentName, sourcePath>`. `buildIslands(map)` then runs `Bun.build` 3+N times: 1 combined chunk for `react`+`react/jsx-runtime` (`_react.js`, ~7 KB minified), 1 `react-dom/client` chunk (`_react-dom.js`, ~136 KB minified, externalises `react`), N island chunks (all 3 runtime modules external), 1 bootstrap. Output lands in `.brust/islands/`. All builds use `minify: true` + `define: process.env.NODE_ENV = "production"`.
 - Rust native route `GET /_brust/islands/<file>` serves chunks with `Cache-Control: public, max-age=3600`. Strict filename-safety check rejects path-traversal, hidden files, non-JS, and anything outside `[A-Za-z0-9_.-]+\.js`.
 - 4 hydration triggers shipped: `load` / `idle` / `visible` / `interaction`.
+- **SSR islands on native-jinja pages can be ISR-cached** (`isr={{ key, tags, revalidate }}`) so `renderToString` runs once per key — see [Island ISR cache](#island-isr-cache-2026-05-31).
 
 **MVP-scope simplifications (vs the architecture vision above):**
 
@@ -1153,7 +1154,7 @@ The A1.1 render-only bench (`crates/jsx-rust-compiler/src/bin/jsx-bench.rs`) was
 
 Spec §12 + §14 acknowledge the following as out of scope for v2 and tracked as follow-ups:
 
-- Cache integration for native routes (today the `cache` field is rejected at validation time; reviewer Fix 1's boot-time warn matures into a hard panic).
+- Route-level cache for native routes (the `cache` field is still rejected at validation time). **Island-level ISR caching shipped** (2026-05-31) — see [Island ISR cache](#island-isr-cache-2026-05-31); whole-route native caching remains the deferral.
 - Nested loader composition for children of native routes (today only the leaf's loader runs).
 - Hot reload of `.brust/jinja/` templates during `brust dev` (today `ENV` is a `OnceLock`; template edits require a restart).
 - Dev-mode React fallback when the matching `.jinja` is missing (today the boot warning becomes a request-time 500).
@@ -1163,6 +1164,102 @@ Spec §12 + §14 acknowledge the following as out of scope for v2 and tracked as
 - Spec §5 adjacent-Text node merging — the current emitter doesn't merge adjacent text; `lower.rs` handles the common case.
 
 Spec: `docs/superpowers/specs/2026-05-28-minijinja-dynamic-routes-design.md`. Plan: `docs/superpowers/plans/2026-05-29-minijinja-dynamic-routes-plan.md`.
+
+---
+
+## Island ISR cache (2026-05-31)
+
+**Shipped.** An SSR island on a native-jinja page can opt into an ISR-style
+cache: its React `renderToString` runs **once per developer-supplied key**, and
+later requests serve a frozen `{html, props}` pair from a Rust-side store. This
+removes the per-request `renderToString` — the jitter-bound bottleneck on
+jittery hardware — from the hot path, while the page's jinja shell still renders
+Rust-side as before. It is the island-fragment analogue of the route-level
+[Cache](#cache); the route-level native-route cache remains a deferral.
+
+### Authoring
+
+```tsx
+// loader computes the key/tags (full freedom: session, params, hashing);
+// the `isr` prop just points at which loader fields hold them.
+loader: async ({ params, req }) => ({
+  product,
+  cacheKey: `user_${req.cookies.uid}:product_${params.id}`,
+  cacheTags: [`user_${req.cookies.uid}:product`],
+})
+
+<Island component={ProductCard} props={product} ssr hydrate="load"
+  isr={{ key: cacheKey, tags: cacheTags, revalidate: 60 }} />
+```
+
+`key` is required when `isr` is present; `tags` (a `string[]`) and `revalidate`
+(integer seconds, ≤ `u32::MAX/1000`) are optional. `isr` requires `ssr` — caching
+a client-only island is meaningless. `key`/`tags` are one-deep paths into loader
+data (same shape `props` accepts); `revalidate` is a numeric literal. All three
+are validated at compile time in `lower_island` (`crates/jsx-rust-compiler`),
+threaded through `IslandMeta` → the hand-rolled `islands_to_json` → the
+`<Name>.islands.json` manifest (camelCase `keyPath`/`tagsPath`/`revalidate`).
+
+### Per request (worker)
+
+In `resolveIslandContext` (`runtime/islands/native-render.ts`), for an ssr entry
+with a `keyPath`:
+
+```
+key = pathInto(loaderData, keyPath)              # string; non-string → uncached render + warn
+hit = islandCacheGet(key)                         # NAPI → Rust
+  ├─ HIT  → serve frozen {html, props}            # NO renderToString
+  └─ MISS → html = renderToString(...) ; islandCacheSet(key, tags, ttlMs, html, propsAttr)
+```
+
+**Frozen-pair invariant (load-bearing).** The cached `html` and the
+`data-brust-props` attribute are stored and served together. On a hit the served
+props is the *frozen* one, never the live loader's — serving cached markup
+against fresh props would break `hydrateRoot`. An island without `isr` keeps the
+exact prior behaviour (render every request); a throwing render degrades to an
+empty mount and never writes the cache.
+
+### Rust store
+
+`crates/brust/src/island_cache.rs`: a `CacheStore` trait (so a `RedisStore`
+backend can replace the default with zero changes to the NAPI layer) with a
+`MokaStore` impl — `moka::sync::Cache<String, CachedIsland>` plus a
+`parking_lot::Mutex<HashMap<tag, HashSet<key>>>` reverse index for group
+invalidation (moka has none natively). TTL is lazy-expiry on read (`expires_at`,
+mirroring `cache.rs`). Distinct from the route-level `LruCache`: different key
+(a dev string, not `method+path+query+vary`), different value (an HTML fragment,
+not a full response), tag-based rather than path-based invalidation. The store
+is a process-global singleton on `State`, shared across the whole worker pool.
+
+NAPI bridge: `islandCacheGet` / `islandCacheSet` / `islandCacheInvalidate` /
+`islandCacheClear`. Calls are `?.`-guarded on the TS side so a stale addon
+degrades to "no caching" rather than a `TypeError`.
+
+### Invalidation + dev
+
+Server code invalidates via `import { cache } from 'brustjs'`:
+
+```ts
+cache.invalidate({ tags: ['user_12:product'] })   // group
+cache.invalidate({ key: 'user_12:product_5' })     // exact
+```
+
+**Dev hot-reload clears the cache.** A frozen render must never survive a source
+edit, so the dev `Coordinator` calls `clearIslandCache` on every render-affecting
+reload (`ts` / `html` / `islands`); CSS-only changes leave it intact (they don't
+change island markup).
+
+### Performance
+
+Bench probe `/native-islands-isr` vs `/native-islands` (darwin/arm64 M1 Pro,
+release, two runs): ISR recovers **+7.5–7.8%** over the uncached ssr island
+(60.2k → 64.8k RPS), closing ~60% of the gap to the no-island jinja floor (68k).
+The win is hardware-dependent — on jittery arm/KVM the per-request `renderToString`
+penalty is far larger (the SSR-island isolation probe showed ~4.9×), so ISR
+scales with the jitter it removes. The residual gap is the loader + key
+`pathInto` + the `islandCacheGet` NAPI round-trip, which ISR does not remove.
+
+Spec: `docs/superpowers/specs/2026-05-31-island-isr-cache-design.md`. Plan: `docs/superpowers/plans/2026-05-31-island-isr-cache.md`.
 
 ---
 
