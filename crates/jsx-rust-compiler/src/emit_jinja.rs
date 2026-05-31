@@ -506,7 +506,9 @@ mod tests {
             hydrate: "load".into(),
             ssr: true,
             key_path: None,
+            key_literal: None,
             tags_path: None,
+            tags_literal: None,
             revalidate: None,
         };
         assert_eq!(
@@ -525,7 +527,9 @@ mod tests {
             hydrate: "load".into(),
             ssr: false,
             key_path: None,
+            key_literal: None,
             tags_path: None,
+            tags_literal: None,
             revalidate: None,
         };
         assert_eq!(
@@ -544,7 +548,9 @@ mod tests {
             hydrate: "visible".into(),
             ssr: true,
             key_path: None,
+            key_literal: None,
             tags_path: None,
+            tags_literal: None,
             revalidate: None,
         };
         assert_eq!(

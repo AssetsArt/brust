@@ -85,8 +85,12 @@ pub enum JsxNode {
         children: Vec<JsxNode>,
         /// Optional ISR cache key path (dotted loader-data path). `None` = no ISR.
         key_path: Option<String>,
+        /// ISR key as a string LITERAL (static cache identity). Mutually exclusive with key_path.
+        key_literal: Option<String>,
         /// Optional ISR cache tags path (resolves to `string[]`).
         tags_path: Option<String>,
+        /// ISR tags as string LITERALS. Mutually exclusive with tags_path.
+        tags_literal: Option<Vec<String>>,
         /// Optional ISR revalidation interval in seconds (TTL).
         revalidate: Option<u32>,
     },
@@ -109,9 +113,13 @@ pub enum JsxNode {
         /// Optional ISR cache key path (single-segment prop path). `None` until
         /// the isr-attribute parser lands.
         key_path: Option<String>,
+        /// ISR key as a string LITERAL (static cache identity). Mutually exclusive with key_path.
+        key_literal: Option<String>,
         /// Optional ISR cache tags path (single-segment prop path). `None` until
         /// the isr-attribute parser lands.
         tags_path: Option<String>,
+        /// ISR tags as string LITERALS. Mutually exclusive with tags_path.
+        tags_literal: Option<Vec<String>>,
         /// Optional ISR revalidation interval in seconds. `None` until the
         /// isr-attribute parser lands.
         revalidate: Option<u32>,

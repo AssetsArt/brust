@@ -46,7 +46,9 @@ mod tests {
             referenced_components: vec!["Layout".to_string()],
             uses_island: false,
             key_path: None,
+            key_literal: None,
             tags_path: None,
+            tags_literal: None,
             revalidate: None,
         }];
         let json = components_to_json(&components);
