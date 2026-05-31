@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use swc_core::common::{Span, Spanned};
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignPatProp, BindingIdent, BlockStmt, BlockStmtOrExpr, CallExpr, Callee,
-    DefaultDecl, ExportDefaultDecl, Expr as SwcExpr, FnExpr, Function, JSXAttrName,
+    ArrayLit, ArrowExpr, AssignPatProp, BindingIdent, BlockStmt, BlockStmtOrExpr, CallExpr, Callee,
+    DefaultDecl, ExportDefaultDecl, Expr as SwcExpr, ExprOrSpread, FnExpr, Function, JSXAttrName,
     JSXAttrOrSpread, JSXAttrValue, JSXElement, JSXElementChild, JSXElementName, JSXExpr, Lit,
     MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, ObjectPatProp, ParenExpr, Pat, Prop,
     PropName, PropOrSpread, ReturnStmt, Stmt,
@@ -416,7 +416,9 @@ fn lower_ssr_component(
 
     let mut props: Vec<SsrProp> = Vec::new();
     let mut key_path: Option<String> = None;
+    let mut key_literal: Option<String> = None;
     let mut tags_path: Option<String> = None;
+    let mut tags_literal: Option<Vec<String>> = None;
     let mut revalidate: Option<u32> = None;
     for attr in &el.opening.attrs {
         // Spread `{...expr}` is valid on an SSR component (the factory is JS
@@ -448,10 +450,12 @@ fn lower_ssr_component(
                         ErrorKind::ComponentIsrUnsupported(component.clone()),
                     )
                 };
-                let (k, t, r) = parse_isr_object(jsx_attr, scope, &err)?;
-                key_path = Some(k);
-                tags_path = t;
-                revalidate = r;
+                let p = parse_isr_object(jsx_attr, scope, &err)?;
+                key_path = p.key_path;
+                key_literal = p.key_literal;
+                tags_path = p.tags_path;
+                tags_literal = p.tags_literal;
+                revalidate = p.revalidate;
                 continue;
             }
             "ref" => {
@@ -504,7 +508,9 @@ fn lower_ssr_component(
         props,
         children,
         key_path,
+        key_literal,
         tags_path,
+        tags_literal,
         revalidate,
     })
 }
@@ -593,7 +599,9 @@ fn lower_island(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode,
     let mut hydrate: Option<String> = None;
     let mut ssr = false;
     let mut key_path: Option<String> = None;
+    let mut key_literal: Option<String> = None;
     let mut tags_path: Option<String> = None;
+    let mut tags_literal: Option<Vec<String>> = None;
     let mut revalidate: Option<u32> = None;
 
     for attr in &el.opening.attrs {
@@ -659,10 +667,12 @@ fn lower_island(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode,
             // literal only. ssr-required is enforced after the attr loop.
             "isr" => {
                 let err = || LowerError::at(jsx_attr.span, ErrorKind::IslandIsrUnsupported);
-                let (k, t, r) = parse_isr_object(jsx_attr, scope, &err)?;
-                key_path = Some(k);
-                tags_path = t;
-                revalidate = r;
+                let p = parse_isr_object(jsx_attr, scope, &err)?;
+                key_path = p.key_path;
+                key_literal = p.key_literal;
+                tags_path = p.tags_path;
+                tags_literal = p.tags_literal;
+                revalidate = p.revalidate;
             }
             // Unknown attributes on an island are ignored (forward-compatible);
             // T3 owns the full attribute vocabulary.
@@ -691,7 +701,13 @@ fn lower_island(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode,
 
     // ISR caching only applies to SSR'd islands — caching a client-only island
     // is meaningless. Reject any isr field without `ssr`.
-    if (key_path.is_some() || tags_path.is_some() || revalidate.is_some()) && !ssr {
+    if (key_path.is_some()
+        || key_literal.is_some()
+        || tags_path.is_some()
+        || tags_literal.is_some()
+        || revalidate.is_some())
+        && !ssr
+    {
         return Err(LowerError::at(
             el.opening.span,
             ErrorKind::IslandIsrUnsupported,
@@ -705,7 +721,9 @@ fn lower_island(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode,
         hydrate,
         ssr,
         key_path,
+        key_literal,
         tags_path,
+        tags_literal,
         revalidate,
     })
 }
@@ -770,11 +788,22 @@ fn island_props_path(
 /// integer literal ≤ u32::MAX/1000 (a larger value would wrap when sent as
 /// `revalidate * 1000` ms across NAPI). `err` produces the caller's error
 /// variant so a bad isr blames the right element (island vs component).
+/// Parsed `isr={{…}}` fields. `key` is mandatory and is EITHER a literal
+/// (`key_literal`) or a loader-data path (`key_path`) — exactly one is `Some`.
+/// `tags` is optional and likewise either `tags_literal` or `tags_path`.
+struct IsrParsed {
+    key_path: Option<String>,
+    key_literal: Option<String>,
+    tags_path: Option<String>,
+    tags_literal: Option<Vec<String>>,
+    revalidate: Option<u32>,
+}
+
 fn parse_isr_object(
     jsx_attr: &swc_core::ecma::ast::JSXAttr,
     scope: &Scope,
     err: &dyn Fn() -> LowerError,
-) -> Result<(String, Option<String>, Option<u32>), LowerError> {
+) -> Result<IsrParsed, LowerError> {
     let Some(JSXAttrValue::JSXExprContainer(c)) = &jsx_attr.value else {
         return Err(err());
     };
@@ -785,7 +814,9 @@ fn parse_isr_object(
         return Err(err());
     };
     let mut key_path: Option<String> = None;
+    let mut key_literal: Option<String> = None;
     let mut tags_path: Option<String> = None;
+    let mut tags_literal: Option<Vec<String>> = None;
     let mut revalidate: Option<u32> = None;
     for prop in &obj.props {
         let PropOrSpread::Prop(p) = prop else {
@@ -800,8 +831,36 @@ fn parse_isr_object(
             _ => return Err(err()),
         };
         match pname.as_str() {
-            "key" => key_path = Some(expr_to_path(&kv.value, scope, err)?),
-            "tags" => tags_path = Some(expr_to_path(&kv.value, scope, err)?),
+            "key" => {
+                if let SwcExpr::Lit(Lit::Str(s)) = strip_paren(&kv.value) {
+                    key_literal = Some(s.value.to_string_lossy().into_owned());
+                } else {
+                    key_path = Some(expr_to_path(&kv.value, scope, err)?);
+                }
+            }
+            "tags" => {
+                if let SwcExpr::Array(arr) = strip_paren(&kv.value) {
+                    let arr: &ArrayLit = arr;
+                    let mut lits = Vec::new();
+                    for el in &arr.elems {
+                        // No holes, no spreads; every element must be a string literal.
+                        let Some(item) = el else {
+                            return Err(err());
+                        };
+                        let item: &ExprOrSpread = item;
+                        if item.spread.is_some() {
+                            return Err(err());
+                        }
+                        let SwcExpr::Lit(Lit::Str(s)) = strip_paren(&item.expr) else {
+                            return Err(err());
+                        };
+                        lits.push(s.value.to_string_lossy().into_owned());
+                    }
+                    tags_literal = Some(lits);
+                } else {
+                    tags_path = Some(expr_to_path(&kv.value, scope, err)?);
+                }
+            }
             "revalidate" => {
                 let SwcExpr::Lit(Lit::Num(n)) = strip_paren(&kv.value) else {
                     return Err(err());
@@ -822,8 +881,16 @@ fn parse_isr_object(
         }
     }
     // `key` is mandatory — a tags-/revalidate-only isr has nothing to key by.
-    let key_path = key_path.ok_or_else(err)?;
-    Ok((key_path, tags_path, revalidate))
+    if key_path.is_none() && key_literal.is_none() {
+        return Err(err());
+    }
+    Ok(IsrParsed {
+        key_path,
+        key_literal,
+        tags_path,
+        tags_literal,
+        revalidate,
+    })
 }
 
 /// Extract a ≤ 1-member-deep loader-data path from a bare expression. This is
@@ -2618,6 +2685,68 @@ mod tests {
         let err = compile_full(src, "<test>").unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::ComponentIsrUnsupported(_)),
+            "got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn lower_ssr_component_isr_literal_key() {
+        let src = r#"export default function Page() {
+  return <Layout isr={{ key: "navbar", tags: ["nav", "global"], revalidate: 30 }} />;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let ir = lower(&parsed).unwrap();
+        match &ir.root {
+            JsxNode::SsrComponent {
+                key_literal,
+                key_path,
+                tags_literal,
+                tags_path,
+                revalidate,
+                ..
+            } => {
+                assert_eq!(key_literal.as_deref(), Some("navbar"));
+                assert_eq!(*key_path, None);
+                assert_eq!(
+                    tags_literal.as_deref(),
+                    Some(&["nav".to_string(), "global".to_string()][..])
+                );
+                assert_eq!(*tags_path, None);
+                assert_eq!(*revalidate, Some(30));
+            }
+            other => panic!("expected SsrComponent, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn lower_island_isr_literal_key_and_empty_tags() {
+        let src = r#"export default function Page({ data }) {
+  return <Island component={Counter} props={data.counter} ssr isr={{ key: "ssrCounter", tags: [] }} />;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let ir = lower(&parsed).unwrap();
+        match &ir.root {
+            JsxNode::Island {
+                key_literal,
+                tags_literal,
+                ..
+            } => {
+                assert_eq!(key_literal.as_deref(), Some("ssrCounter"));
+                assert_eq!(tags_literal.as_deref(), Some(&[][..]));
+            }
+            other => panic!("expected Island, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn lower_isr_nonstring_tag_element_rejected() {
+        let src = r#"export default function Page({ data }) {
+  return <Island component={Counter} props={data.counter} ssr isr={{ key: "k", tags: [123] }} />;
+}"#;
+        let err = compile_full(src, "<test>").unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::IslandIsrUnsupported),
             "got {:?}",
             err.kind
         );

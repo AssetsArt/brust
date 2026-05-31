@@ -46,8 +46,12 @@ pub struct ComponentMeta {
     pub uses_island: bool,
     /// Optional ISR cache key path (dotted loader-data path). `None` = no ISR.
     pub key_path: Option<String>,
+    /// ISR key as a string LITERAL (static cache identity). Mutually exclusive with key_path.
+    pub key_literal: Option<String>,
     /// Optional ISR cache tags path (resolves to `string[]`).
     pub tags_path: Option<String>,
+    /// ISR tags as string LITERALS. Mutually exclusive with tags_path.
+    pub tags_literal: Option<Vec<String>>,
     /// Optional ISR revalidation interval in seconds (TTL).
     pub revalidate: Option<u32>,
 }
@@ -63,7 +67,9 @@ pub struct IslandMeta {
     pub ssr: bool,
     pub hydrate: String,
     pub key_path: Option<String>,
+    pub key_literal: Option<String>,
     pub tags_path: Option<String>,
+    pub tags_literal: Option<Vec<String>>,
     pub revalidate: Option<u32>,
 }
 
@@ -158,7 +164,9 @@ fn collect_islands(node: &JsxNode, out: &mut Vec<IslandMeta>) {
             hydrate,
             ssr,
             key_path,
+            key_literal,
             tags_path,
+            tags_literal,
             revalidate,
         } => {
             out.push(IslandMeta {
@@ -168,7 +176,9 @@ fn collect_islands(node: &JsxNode, out: &mut Vec<IslandMeta>) {
                 ssr: *ssr,
                 hydrate: hydrate.clone(),
                 key_path: key_path.clone(),
+                key_literal: key_literal.clone(),
                 tags_path: tags_path.clone(),
+                tags_literal: tags_literal.clone(),
                 revalidate: *revalidate,
             });
         }
@@ -227,7 +237,9 @@ fn collect_components(node: &JsxNode, out: &mut Vec<ComponentMeta>) {
             component,
             instance,
             key_path,
+            key_literal,
             tags_path,
+            tags_literal,
             revalidate,
             ..
         } => {
@@ -239,7 +251,9 @@ fn collect_components(node: &JsxNode, out: &mut Vec<ComponentMeta>) {
                 referenced_components: Vec::new(),
                 uses_island: false,
                 key_path: key_path.clone(),
+                key_literal: key_literal.clone(),
                 tags_path: tags_path.clone(),
+                tags_literal: tags_literal.clone(),
                 revalidate: *revalidate,
             });
         }
@@ -289,6 +303,23 @@ pub fn islands_to_json(islands: &[IslandMeta]) -> String {
             out.push_str(&json_escape(tp));
             out.push('"');
         }
+        if let Some(kl) = &isl.key_literal {
+            out.push_str(",\"keyLiteral\":\"");
+            out.push_str(&json_escape(kl));
+            out.push('"');
+        }
+        if let Some(tl) = &isl.tags_literal {
+            out.push_str(",\"tagsLiteral\":[");
+            for (j, t) in tl.iter().enumerate() {
+                if j > 0 {
+                    out.push(',');
+                }
+                out.push('"');
+                out.push_str(&json_escape(t));
+                out.push('"');
+            }
+            out.push(']');
+        }
         if let Some(r) = isl.revalidate {
             out.push_str(",\"revalidate\":");
             out.push_str(&r.to_string());
@@ -337,6 +368,23 @@ pub fn components_to_json(components: &[ComponentMeta]) -> String {
             out.push_str(",\"tagsPath\":\"");
             out.push_str(&json_escape(tp));
             out.push('"');
+        }
+        if let Some(kl) = &c.key_literal {
+            out.push_str(",\"keyLiteral\":\"");
+            out.push_str(&json_escape(kl));
+            out.push('"');
+        }
+        if let Some(tl) = &c.tags_literal {
+            out.push_str(",\"tagsLiteral\":[");
+            for (j, t) in tl.iter().enumerate() {
+                if j > 0 {
+                    out.push(',');
+                }
+                out.push('"');
+                out.push_str(&json_escape(t));
+                out.push('"');
+            }
+            out.push(']');
         }
         if let Some(r) = c.revalidate {
             out.push_str(",\"revalidate\":");
@@ -536,7 +584,9 @@ mod tests {
                     ssr: true,
                     hydrate: "load".to_string(),
                     key_path: None,
+                    key_literal: None,
                     tags_path: None,
+                    tags_literal: None,
                     revalidate: None,
                 },
                 IslandMeta {
@@ -546,7 +596,9 @@ mod tests {
                     ssr: false,
                     hydrate: "visible".to_string(),
                     key_path: None,
+                    key_literal: None,
                     tags_path: None,
+                    tags_literal: None,
                     revalidate: None,
                 },
             ]
@@ -580,7 +632,9 @@ mod tests {
                     ssr: false,
                     hydrate: "load".to_string(),
                     key_path: None,
+                    key_literal: None,
                     tags_path: None,
+                    tags_literal: None,
                     revalidate: None,
                 },
                 IslandMeta {
@@ -590,7 +644,9 @@ mod tests {
                     ssr: false,
                     hydrate: "load".to_string(),
                     key_path: None,
+                    key_literal: None,
                     tags_path: None,
+                    tags_literal: None,
                     revalidate: None,
                 },
             ]
@@ -641,7 +697,9 @@ mod tests {
                 ssr: false,
                 hydrate: "load".to_string(),
                 key_path: None,
+                key_literal: None,
                 tags_path: None,
+                tags_literal: None,
                 revalidate: None,
             }]
         );
@@ -657,7 +715,9 @@ mod tests {
                 ssr: true,
                 hydrate: "load".to_string(),
                 key_path: None,
+                key_literal: None,
                 tags_path: None,
+                tags_literal: None,
                 revalidate: None,
             },
             // Exercise escaping: a backslash and a quote in props_path.
@@ -668,7 +728,9 @@ mod tests {
                 ssr: false,
                 hydrate: "idle".to_string(),
                 key_path: None,
+                key_literal: None,
                 tags_path: None,
+                tags_literal: None,
                 revalidate: None,
             },
         ];
@@ -690,7 +752,9 @@ mod tests {
             ssr: true,
             hydrate: "load".to_string(),
             key_path: Some("data.cacheKey".to_string()),
+            key_literal: None,
             tags_path: Some("data.cacheTags".to_string()),
+            tags_literal: None,
             revalidate: Some(60),
         }];
         let json = islands_to_json(&islands);
@@ -944,13 +1008,38 @@ mod tests {
             referenced_components: vec!["Layout".to_string()],
             uses_island: false,
             key_path: Some("data.cacheKey".to_string()),
+            key_literal: None,
             tags_path: Some("data.cacheTags".to_string()),
+            tags_literal: None,
             revalidate: Some(60),
         }];
         let json = components_to_json(&components);
         assert!(json.contains("\"keyPath\":\"data.cacheKey\""), "{json}");
         assert!(json.contains("\"tagsPath\":\"data.cacheTags\""), "{json}");
         assert!(json.contains("\"revalidate\":60"), "{json}");
+    }
+
+    #[test]
+    fn components_to_json_with_literal_isr() {
+        let components = vec![ComponentMeta {
+            component: "Layout".to_string(),
+            instance: 0,
+            factory_expr: "(ctx) => h(Layout, {})".to_string(),
+            referenced_components: vec!["Layout".to_string()],
+            uses_island: false,
+            key_path: None,
+            tags_path: None,
+            revalidate: Some(30),
+            key_literal: Some("navbar".to_string()),
+            tags_literal: Some(vec!["nav".to_string(), "global".to_string()]),
+        }];
+        let json = components_to_json(&components);
+        assert!(json.contains("\"keyLiteral\":\"navbar\""), "{json}");
+        assert!(
+            json.contains("\"tagsLiteral\":[\"nav\",\"global\"]"),
+            "{json}"
+        );
+        assert!(!json.contains("keyPath"), "{json}");
     }
 
     #[test]
@@ -962,7 +1051,9 @@ mod tests {
             referenced_components: vec!["Layout".to_string()],
             uses_island: false,
             key_path: None,
+            key_literal: None,
             tags_path: None,
+            tags_literal: None,
             revalidate: None,
         }];
         let json = components_to_json(&components);
