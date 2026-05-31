@@ -46,6 +46,12 @@ struct State {
     // backend swaps in here with zero changes to the NAPI fns / call sites.
     island_cache: std::sync::Arc<dyn crate::island_cache::CacheStore>,
     is_serving: AtomicBool,
+    /// Dev mode (set by `configure_dev_mode` from the TS dev coordinator). When
+    /// true, static assets (`/_brust/islands/*`, `/_brust/css/*`) are served
+    /// `Cache-Control: no-store` so an island/CSS rebuild on hot reload is never
+    /// masked by the browser cache (chunk URLs are unhashed, so a stale cached
+    /// copy would otherwise survive a reload). Off in production → cacheable.
+    dev_mode: AtomicBool,
     expected_workers: AtomicU32,
     islands_dir: parking_lot::RwLock<Option<std::path::PathBuf>>,
     css_dir: parking_lot::RwLock<Option<std::path::PathBuf>>,
@@ -72,6 +78,7 @@ pub(crate) fn state() -> &'static State {
             island_cache: std::sync::Arc::new(crate::island_cache::MokaStore::new(1000))
                 as std::sync::Arc<dyn crate::island_cache::CacheStore>,
             is_serving: AtomicBool::new(false),
+            dev_mode: AtomicBool::new(false),
             expected_workers: AtomicU32::new(0),
             islands_dir: parking_lot::RwLock::new(None),
             css_dir: parking_lot::RwLock::new(None),
@@ -306,6 +313,21 @@ pub fn configure_islands_dir(path: String) -> NapiResult<()> {
     }
     *state().islands_dir.write() = Some(abs);
     Ok(())
+}
+
+/// Enable/disable dev mode. Called by the TS dev coordinator (`brust.run` when
+/// `dev` is on). Flips static-asset caching to `no-store` so hot-reloaded island
+/// /CSS chunks (unhashed URLs) are never served stale from the browser cache.
+#[napi]
+pub fn configure_dev_mode(enabled: bool) {
+    state()
+        .dev_mode
+        .store(enabled, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether dev mode is active. Reads the flag set by `configure_dev_mode`.
+pub(crate) fn is_dev_mode() -> bool {
+    state().dev_mode.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 #[napi(object)]

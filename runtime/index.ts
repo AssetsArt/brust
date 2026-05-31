@@ -446,6 +446,11 @@ export const brust = {
       )
 
       if (dev) {
+        // Tell Rust we're in dev so static assets (islands/CSS chunks) are
+        // served `Cache-Control: no-store` — chunk URLs are unhashed, so a
+        // hot-reload rebuild would otherwise be masked by the browser cache.
+        // `?.` keeps an older addon (no export) from throwing.
+        ;(native as any).configureDevMode?.(true)
         const { createWatcher } = await import('./dev/watcher.ts')
         const { Coordinator } = await import('./dev/coordinator.ts')
         const { broadcast } = await import('./dev/ws-channel.ts')

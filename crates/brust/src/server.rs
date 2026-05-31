@@ -15,6 +15,17 @@ fn current_islands_dir() -> Option<std::path::PathBuf> {
     crate::state().islands_dir.read().clone()
 }
 
+/// `Cache-Control` for static assets (`/_brust/islands/*`, `/_brust/css/*`).
+/// Dev → `no-store`: chunk URLs are unhashed (`Counter.js`), so a hot-reload
+/// rebuild would otherwise be masked by the browser cache. Prod → cacheable.
+fn asset_cache_control(dev: bool) -> &'static str {
+    if dev {
+        "no-store"
+    } else {
+        "public, max-age=3600"
+    }
+}
+
 fn current_css_dir() -> Option<std::path::PathBuf> {
     crate::state().css_dir.read().clone()
 }
@@ -234,7 +245,7 @@ async fn handle_conn(
                 Ok(bytes) => {
                     let extra = [(
                         "Cache-Control".to_string(),
-                        "public, max-age=3600".to_string(),
+                        asset_cache_control(crate::is_dev_mode()).to_string(),
                     )];
                     let resp = http::build_response(
                         200,
@@ -274,7 +285,7 @@ async fn handle_conn(
                 Ok(bytes) => {
                     let extra = [(
                         "Cache-Control".to_string(),
-                        "public, max-age=3600".to_string(),
+                        asset_cache_control(crate::is_dev_mode()).to_string(),
                     )];
                     let resp = http::build_response(200, "text/css; charset=utf-8", &extra, bytes);
                     if s.write_all(resp).await.is_err() {
@@ -1702,6 +1713,14 @@ fn is_safe_action_id(id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dev_assets_are_no_store_prod_cacheable() {
+        // Dev hot reload rebuilds unhashed chunk URLs (Counter.js); a cacheable
+        // header would mask the rebuild in the browser. Dev must be no-store.
+        assert_eq!(asset_cache_control(true), "no-store");
+        assert_eq!(asset_cache_control(false), "public, max-age=3600");
+    }
 
     #[test]
     fn safe_filenames_pass() {
