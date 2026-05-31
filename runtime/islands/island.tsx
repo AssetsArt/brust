@@ -21,25 +21,26 @@ export interface IslandProps<P> {
    * on the React path (the whole tree already SSRs there). Default false. */
   ssr?: boolean
   /**
-   * Optional ISR configuration object.
-   * If present, the server will cache the rendered island for the specified duration.
-   * Must be an object with `{ key: string, tags: string[] }`.
+   * Optional ISR (incremental static regeneration) cache for an `ssr` island on
+   * a native-jinja route. When present, the island's `renderToString` runs ONCE
+   * per `key`; later requests serve the frozen markup from the Rust-side cache.
+   * Ignored unless `ssr` is set (caching a client-only island is meaningless).
    *
-   * - `key`: A unique string identifying this specific cache entry.
-   *   Changing this key invalidates the cache for this island.
-   * - `tags`: An array of strings used for cache invalidation.
-   *   Calling `brust.cache.invalidate(tag)` will invalidate all islands
-   *   associated with that tag.
+   * - `key` (required): unique string identifying this cache entry. A different
+   *   key is a different cached render. Compute it in the loader and pass it
+   *   through, e.g. `isr={{ key: data.cacheKey }}`.
+   * - `tags` (optional): groups for bulk invalidation —
+   *   `import { cache } from 'brustjs'; cache.invalidate({ tags: ['blog'] })`
+   *   evicts every entry carrying that tag. `cache.invalidate({ key })` evicts one.
+   * - `revalidate` (optional): TTL in **seconds** (integer). Omit to cache until
+   *   explicitly invalidated.
    *
-   * Example:
-   * `isr={{ key: 'counter-1', tags: ['blog'] }}`
-   *
-   * This island will be cached for 60 seconds. Any call to `brust.cache.invalidate('blog')`
-   * will clear this cache entry, even if the `key` remains the same.
+   * Example: `isr={{ key: data.cacheKey, tags: ['blog'], revalidate: 60 }}`
    */
   isr?: {
     key: string
-    tags: string[]
+    tags?: string[]
+    revalidate?: number
   }
 }
 
