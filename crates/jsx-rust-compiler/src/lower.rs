@@ -86,6 +86,7 @@ struct ParamShape {
     named: Option<String>,
 }
 
+#[allow(dead_code)] // used in crate tests; live code now goes through lower_with_sources
 pub fn lower(parsed: &ParsedSource) -> Result<Component, LowerError> {
     let (name, function) = find_default_export(&parsed.module)?;
     let body =
@@ -147,8 +148,7 @@ pub fn lower(parsed: &ParsedSource) -> Result<Component, LowerError> {
 /// Like `lower` but builds an `InlineEnv` from `sources` (a map from component
 /// ident → source text). Warnings accumulated during inlining are returned
 /// alongside the component. Existing `lower(parsed)` is unchanged.
-// Called by `compile_full` in T7; until then only the tests exercise it.
-#[allow(dead_code)]
+// Called by `compile_full` (T7).
 pub(crate) fn lower_with_sources(
     parsed: &ParsedSource,
     sources: HashMap<String, String>,
@@ -3572,7 +3572,7 @@ mod tests {
     fn lower_ssr_component_leaf() {
         let src =
             "export default function Page({ greeting }) { return <Header user={greeting} />; }";
-        let c = compile_full(src, "<test>").unwrap();
+        let c = compile_full(src, "<test>", HashMap::new()).unwrap();
         assert_eq!(c.components.len(), 1);
         assert_eq!(c.components[0].component, "Header");
         assert_eq!(c.components[0].instance, 0);
@@ -3609,7 +3609,7 @@ mod tests {
     #[test]
     fn lower_ssr_component_event_handler_rejected() {
         let src = "export default function Page({ data }) { return <Card onClick={data.fn} />; }";
-        let err = compile_full(src, "<test>").unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::EventHandlerNotSupported(_)),
             "got {:?}",
@@ -3622,7 +3622,7 @@ mod tests {
         let src = r#"export default function Page({ items }) {
   return <ul>{items.map((item) => <Layout title={item.name} />)}</ul>;
 }"#;
-        let err = compile_full(src, "<test>").unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::SsrComponentInMapNotSupported(_)),
             "expected SsrComponentInMapNotSupported, got {:?}",
@@ -3635,7 +3635,7 @@ mod tests {
         let src = r#"export default function Page({ greeting, data }) {
   return <Layout title={greeting}><h1>{greeting}</h1><Island component={Counter} props={data.counter} hydrate="load" /></Layout>;
 }"#;
-        let c = compile_full(src, "<test>").unwrap();
+        let c = compile_full(src, "<test>", HashMap::new()).unwrap();
         assert_eq!(c.components.len(), 1);
         assert_eq!(c.components[0].component, "Layout");
         assert!(
@@ -3708,7 +3708,7 @@ mod tests {
         let src = r#"export default function Page({ data }) {
   return <Layout isr={{ tags: data.cacheTags }} />;
 }"#;
-        let err = compile_full(src, "<test>").unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::ComponentIsrUnsupported(_)),
             "got {:?}",
@@ -3721,7 +3721,7 @@ mod tests {
         let src = r#"export default function Page({ data }) {
   return <Layout isr={{ key: data.cacheKey, revalidate: data.ttl }} />;
 }"#;
-        let err = compile_full(src, "<test>").unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::ComponentIsrUnsupported(_)),
             "got {:?}",
@@ -3783,7 +3783,7 @@ mod tests {
         let src = r#"export default function Page({ data }) {
   return <Island component={Counter} props={data.counter} ssr isr={{ key: "k", tags: [123] }} />;
 }"#;
-        let err = compile_full(src, "<test>").unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::IslandIsrUnsupported),
             "got {:?}",
@@ -3821,7 +3821,7 @@ mod tests {
         let src = r#"export default function Page({ data }) {
   return <Layout isr={{ key: "a", key: data.x }} />;
 }"#;
-        let err = compile_full(src, "<test>").unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::ComponentIsrUnsupported(_)),
             "got {:?}",
