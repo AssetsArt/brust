@@ -97,6 +97,14 @@ const PROBES: Probe[] = [
     path: '/native-islands',
     scenarios: ['brust'],
   },
+  // Same shape as /native-islands, but the ssr island is ISR-CACHED (stable
+  // key): renderToString runs once, then every request serves the frozen
+  // {html,props} pair from the Rust-side cache. The delta vs /native-islands
+  // ≈ the per-request renderToString cost the ISR cache removes. Brust-only.
+  {
+    path: '/native-islands-isr',
+    scenarios: ['brust'],
+  },
   // Server-function dispatch — brust-only. REQUIRES `bench/apps/brust/actions.ts`
   // to actually register createNote. Without it, the path hits Rust's
   // `error_404` short-circuit at server.rs:272 (unknown action id) instead
@@ -120,6 +128,9 @@ function rowLabel(scenarioId: string, path: string): string {
     if (path === '/ping') return 'Brust (Rust only)'
     if (path === '/') return 'Brust (React SSR)'
     if (path.startsWith('/native-profile')) return 'Brust (native jinja)'
+    // `-isr` MUST precede the generic `/native-islands` prefix check below
+    // (`/native-islands-isr`.startsWith('/native-islands') is true).
+    if (path.startsWith('/native-islands-isr')) return 'Brust (native + ISR island)'
     if (path.startsWith('/native-islands')) return 'Brust (native + islands)'
     if (path.startsWith('/_brust/action')) return 'Brust (server action)'
     return 'Brust'

@@ -3,6 +3,7 @@ import { defineRoutes } from '../../../runtime/routes.ts'
 import HelloWorld from '../_shared/HelloWorld'
 import NativeProfile from './pages/NativeProfile'
 import NativeIslands from './pages/NativeIslands'
+import NativeIslandsIsr from './pages/NativeIslandsIsr'
 
 /** Benchmark route table — one route per `scripts/benchmark.ts` PROBE.
  * Intentionally minimal: no SSE/WS/Suspense/blog routes (the bench doesn't
@@ -34,6 +35,23 @@ export const routes = defineRoutes([
       greeting: 'Islands on a native route',
       clientProps: { start: 0, label: 'client clicks' },
       serverProps: { start: 100, label: 'server clicks' },
+    }),
+  },
+
+  // Same shape as /native-islands, but the ssr island is ISR-CACHED (stable
+  // key). Its renderToString runs ONCE; every later request serves the frozen
+  // pair from the Rust cache. Delta vs /native-islands ≈ the renderToString
+  // cost the ISR cache removes from the per-request hot path.
+  {
+    path: '/native-islands-isr',
+    Component: NativeIslandsIsr,
+    native: true,
+    loader: async () => ({
+      greeting: 'ISR-cached island on a native route',
+      clientProps: { start: 0, label: 'client clicks' },
+      serverProps: { start: 100, label: 'server clicks' },
+      cacheKey: 'bench:isr-island',
+      cacheTags: ['bench'],
     }),
   },
 ])
