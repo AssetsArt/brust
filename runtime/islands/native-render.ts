@@ -34,6 +34,10 @@ export interface NativeIslandEntry {
   tagsPath?: string
   /** Revalidate window in SECONDS; converted to ttlMs on cache.set. */
   revalidate?: number
+  /** Static ISR cache key (string literal in JSX). Takes precedence over keyPath. */
+  keyLiteral?: string
+  /** Static ISR cache tags (array literal in JSX). Takes precedence over tagsPath. */
+  tagsLiteral?: string[]
 }
 
 /** Rust-side ISR cache, injected as a port for testability. A `get` hit
@@ -143,20 +147,25 @@ export async function resolveIslandContext(
     // stored one) and skips render. A non-string-but-defined key is a manifest
     // bug — warn and fall through to an uncached render.
     let key: string | undefined
-    if (cache && entry.keyPath) {
+    if (cache && entry.keyLiteral !== undefined) {
+      // Literal key takes precedence over keyPath; it's always a string.
+      key = entry.keyLiteral
+    } else if (cache && entry.keyPath) {
       const k = pathInto(data, entry.keyPath)
       if (typeof k === 'string') {
         key = k
-        const hit = cache.get(key)
-        if (hit) {
-          out['island_' + entry.instance + '_html'] = hit.html
-          out['island_' + entry.instance + '_props'] = hit.props
-          continue
-        }
       } else if (k !== undefined) {
         console.warn(
           `[brust] ssr island "${entry.component}" ISR keyPath "${entry.keyPath}" resolved to a non-string value; rendering uncached`,
         )
+      }
+    }
+    if (cache && key) {
+      const hit = cache.get(key)
+      if (hit) {
+        out['island_' + entry.instance + '_html'] = hit.html
+        out['island_' + entry.instance + '_props'] = hit.props
+        continue
       }
     }
 
@@ -185,7 +194,9 @@ export async function resolveIslandContext(
         // Rust as Vec<String>, so a non-array OR an array with a non-string
         // element degrades to no tags + a warning, never a bad NAPI payload.
         let tags: string[] = []
-        if (entry.tagsPath !== undefined) {
+        if (entry.tagsLiteral !== undefined) {
+          tags = entry.tagsLiteral
+        } else if (entry.tagsPath !== undefined) {
           const tagsValue = pathInto(data, entry.tagsPath)
           if (Array.isArray(tagsValue) && tagsValue.every((t) => typeof t === 'string')) {
             tags = tagsValue
@@ -224,6 +235,10 @@ export interface NativeComponentEntry {
   tagsPath?: string
   /** Revalidate window in SECONDS; converted to ttlMs on cache.set. */
   revalidate?: number
+  /** Static ISR cache key (string literal in JSX). Takes precedence over keyPath. */
+  keyLiteral?: string
+  /** Static ISR cache tags (array literal in JSX). Takes precedence over tagsPath. */
+  tagsLiteral?: string[]
 }
 
 // Cache component manifests by absolute path (same pattern as island manifests).
@@ -289,22 +304,27 @@ export async function resolveComponentContext(
     // serves the FROZEN html and skips the factory. A non-string-but-defined
     // key is a manifest bug — warn and fall through to an uncached render.
     let key: string | undefined
-    if (cache && entry.keyPath) {
+    if (cache && entry.keyLiteral !== undefined) {
+      // Literal key takes precedence over keyPath; it's always a string.
+      key = entry.keyLiteral
+    } else if (cache && entry.keyPath) {
       const k = pathInto(data, entry.keyPath)
       if (typeof k === 'string') {
         key = k
-        const hit = cache.get(key)
-        if (hit) {
-          // Components have NO `_props` slot (unlike islands): the cache stores
-          // props="" for component entries, so we serve only hit.html and
-          // deliberately ignore hit.props. See the write-through below.
-          out[`comp_${entry.instance}_html`] = hit.html
-          continue
-        }
       } else if (k !== undefined) {
         console.warn(
           `[brust] SSR component "${entry.component}" ISR keyPath "${entry.keyPath}" resolved to a non-string value; rendering uncached`,
         )
+      }
+    }
+    if (cache && key) {
+      const hit = cache.get(key)
+      if (hit) {
+        // Components have NO `_props` slot (unlike islands): the cache stores
+        // props="" for component entries, so we serve only hit.html and
+        // deliberately ignore hit.props. See the write-through below.
+        out[`comp_${entry.instance}_html`] = hit.html
+        continue
       }
     }
 
@@ -319,7 +339,9 @@ export async function resolveComponentContext(
       // cache). props is "" — components have no separate hydration props attr.
       if (cache && key) {
         let tags: string[] = []
-        if (entry.tagsPath !== undefined) {
+        if (entry.tagsLiteral !== undefined) {
+          tags = entry.tagsLiteral
+        } else if (entry.tagsPath !== undefined) {
           const tagsValue = pathInto(data, entry.tagsPath)
           if (Array.isArray(tagsValue) && tagsValue.every((t) => typeof t === 'string')) {
             tags = tagsValue
