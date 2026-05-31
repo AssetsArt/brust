@@ -69,6 +69,20 @@ pub enum JsxNode {
         /// Page body — every `<BrustPage>` child (all become `<body>` content).
         body: Vec<JsxNode>,
     },
+    /// Non-Island capitalized component on a native route. Lowered from any
+    /// capitalised tag that is not `<Island>` or `<BrustPage>`. The emitter
+    /// outputs a `{{ comp_N_html | safe }}` slot; the JS worker fills it via a
+    /// generated factory function.
+    SsrComponent {
+        /// Source identifier from the tag name (e.g. `Layout`).
+        component: String,
+        /// Source-order index among SSR components (set by `number_ssr_components`).
+        instance: usize,
+        /// Lowered attrs via dedicated camelCase-safe attr loop.
+        props: Vec<JsxAttr>,
+        /// Lowered children (may contain Islands, elements, etc.).
+        children: Vec<JsxNode>,
+    },
     /// Interactive island embedded in a native (jinja) route. Lowered from a
     /// dedicated `<Island component={C} props={path} hydrate="..." ssr/>`
     /// recognition path (see `lower::lower_island`). The emitter renders a

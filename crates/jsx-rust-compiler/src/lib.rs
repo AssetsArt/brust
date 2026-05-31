@@ -1,3 +1,4 @@
+mod emit_factory;
 mod emit_jinja;
 mod ir;
 mod lower;
@@ -23,6 +24,26 @@ pub fn compile_with_path(source: &str, path: &str) -> Result<String, CompileErro
 pub struct Compiled {
     pub template: String,
     pub islands: Vec<IslandMeta>,
+    pub components: Vec<ComponentMeta>,
+}
+
+/// One entry in the SSR-component manifest. Parallel to `IslandMeta`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ComponentMeta {
+    /// Identifier from the JSX tag name, e.g. `"Layout"`.
+    pub component: String,
+    /// Source-order index among SSR components on this page.
+    pub instance: usize,
+    /// The `(ctx) => h(Component, {…}, …)` TypeScript factory expression.
+    pub factory_expr: String,
+    /// All component-identifier names referenced inside the factory expression
+    /// (the SSR component itself + Island component names). The TS build step
+    /// imports each from `pageImports`. Includes duplicates if referenced
+    /// multiple times — the TS side dedupes.
+    pub referenced_components: Vec<String>,
+    /// True if any `<Island>` node appears in this component's factory tree.
+    /// When true the TS build step adds `import { Island } from 'brustjs'`.
+    pub uses_island: bool,
 }
 
 /// One entry in the island manifest. Field order here is intentional and
@@ -40,8 +61,9 @@ pub struct IslandMeta {
     pub revalidate: Option<u32>,
 }
 
-/// Parse → lower → { emit template, collect islands }. The single source of
-/// truth for compilation; `compile`/`compile_with_path` are thin wrappers.
+/// Parse → lower → { emit template, collect islands, collect components }. The
+/// single source of truth for compilation; `compile`/`compile_with_path` are
+/// thin wrappers.
 pub fn compile_full(source: &str, path: &str) -> Result<Compiled, CompileError> {
     let parsed = parser::parse(source, path).map_err(|e| CompileError {
         path: path.to_string(),
@@ -56,10 +78,29 @@ pub fn compile_full(source: &str, path: &str) -> Result<Compiled, CompileError> 
     // both read the final indices.
     let mut n = 0;
     number_islands(&mut ir.root, &mut n);
+    let mut m = 0;
+    number_ssr_components(&mut ir.root, &mut m);
+
     let template = emit_jinja::emit(&ir);
+    let factory_outputs = emit_factory::emit(&ir); // Vec<FactoryOutput>
+
     let mut islands = Vec::new();
     collect_islands(&ir.root, &mut islands);
-    Ok(Compiled { template, islands })
+
+    let mut components: Vec<ComponentMeta> = Vec::new();
+    collect_components(&ir.root, &mut components);
+    // Zip factory outputs into component entries (same source order).
+    for (comp, fo) in components.iter_mut().zip(factory_outputs) {
+        comp.factory_expr = fo.expr;
+        comp.referenced_components = fo.referenced;
+        comp.uses_island = fo.uses_island;
+    }
+
+    Ok(Compiled {
+        template,
+        islands,
+        components,
+    })
 }
 
 /// Walk the IR in source order, assigning each `JsxNode::Island` a monotonically
@@ -84,6 +125,11 @@ fn number_islands(node: &mut JsxNode, counter: &mut usize) {
             }
         }
         JsxNode::Map { body, .. } => number_islands(body, counter),
+        JsxNode::SsrComponent { children, .. } => {
+            for c in children {
+                number_islands(c, counter);
+            }
+        }
         JsxNode::Empty | JsxNode::Text(_) | JsxNode::Expr(_) => {}
     }
 }
@@ -127,7 +173,73 @@ fn collect_islands(node: &JsxNode, out: &mut Vec<IslandMeta>) {
             }
         }
         JsxNode::Map { body, .. } => collect_islands(body, out),
+        // Islands inside SSR components are NOT in .islands.json — their props
+        // are written by Island.tsx React-path render into the DOM directly.
+        JsxNode::SsrComponent { .. } => {}
         JsxNode::Empty | JsxNode::Text(_) | JsxNode::Expr(_) => {}
+    }
+}
+
+/// Assign source-order `instance` indices to every TOP-LEVEL `SsrComponent`
+/// node. Does NOT recurse into `SsrComponent.children` — nested SSR
+/// components render inline inside their parent's factory, not as separate
+/// `{{ comp_N_html }}` slots.
+fn number_ssr_components(node: &mut JsxNode, counter: &mut usize) {
+    match node {
+        JsxNode::SsrComponent { instance, .. } => {
+            *instance = *counter;
+            *counter += 1;
+            // Do not recurse into children — nested SSR components are not
+            // separately numbered/tracked (they render inside parent factory).
+        }
+        JsxNode::Element { children, .. } => {
+            for c in children {
+                number_ssr_components(c, counter);
+            }
+        }
+        JsxNode::Document { body, .. } => {
+            for c in body {
+                number_ssr_components(c, counter);
+            }
+        }
+        JsxNode::Map { body, .. } => number_ssr_components(body, counter),
+        JsxNode::Empty
+        | JsxNode::Text(_)
+        | JsxNode::Expr(_)
+        | JsxNode::Island { .. } => {}
+    }
+}
+
+/// Depth-first pre-order walk collecting every TOP-LEVEL `SsrComponent` in
+/// source order. Does NOT recurse into `SsrComponent.children`. `factory_expr`
+/// is left empty — `compile_full` fills it from `emit_factory::emit`.
+fn collect_components(node: &JsxNode, out: &mut Vec<ComponentMeta>) {
+    match node {
+        JsxNode::SsrComponent { component, instance, .. } => {
+            // Don't recurse — nested SSR components render inside parent factory.
+            out.push(ComponentMeta {
+                component: component.clone(),
+                instance: *instance,
+                factory_expr: String::new(),
+                referenced_components: Vec::new(),
+                uses_island: false,
+            });
+        }
+        JsxNode::Element { children, .. } => {
+            for child in children {
+                collect_components(child, out);
+            }
+        }
+        JsxNode::Document { body, .. } => {
+            for child in body {
+                collect_components(child, out);
+            }
+        }
+        JsxNode::Map { body, .. } => collect_components(body, out),
+        JsxNode::Empty
+        | JsxNode::Text(_)
+        | JsxNode::Expr(_)
+        | JsxNode::Island { .. } => {}
     }
 }
 
@@ -166,6 +278,41 @@ pub fn islands_to_json(islands: &[IslandMeta]) -> String {
             out.push_str(",\"revalidate\":");
             out.push_str(&r.to_string());
         }
+        out.push('}');
+    }
+    out.push(']');
+    out
+}
+
+/// Hand-rolled JSON for the component manifest. Mirrors `islands_to_json`.
+/// Keys: `component`, `instance`, `factoryExpr`, `referencedComponents`,
+/// `usesIsland`. Empty slice → `"[]"`.
+pub fn components_to_json(components: &[ComponentMeta]) -> String {
+    if components.is_empty() {
+        return "[]".to_string();
+    }
+    let mut out = String::from("[");
+    for (i, c) in components.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str("{\"component\":\"");
+        out.push_str(&json_escape(&c.component));
+        out.push_str("\",\"instance\":");
+        out.push_str(&c.instance.to_string());
+        out.push_str(",\"factoryExpr\":\"");
+        out.push_str(&json_escape(&c.factory_expr));
+        out.push_str("\",\"referencedComponents\":[");
+        for (j, r) in c.referenced_components.iter().enumerate() {
+            if j > 0 {
+                out.push(',');
+            }
+            out.push('"');
+            out.push_str(&json_escape(r));
+            out.push('"');
+        }
+        out.push_str("],\"usesIsland\":");
+        out.push_str(if c.uses_island { "true" } else { "false" });
         out.push('}');
     }
     out.push(']');

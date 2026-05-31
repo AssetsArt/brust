@@ -1375,6 +1375,9 @@ fn infer_props_types(node: &JsxNode, props: &mut PropsShape) -> Result<(), Lower
         // outer scope at lowering time; its placeholder/manifest are emitted by
         // T2/T3. It contributes no prop-type inference here.
         JsxNode::Island { .. } => Ok(()),
+        // SsrComponent is opaque — it has its own type scope and is not
+        // recursed into for prop-type inference here.
+        JsxNode::SsrComponent { .. } => Ok(()),
     }
 }
 
@@ -1433,6 +1436,8 @@ fn collect_map_member_fields(
         // Islands are rejected under `.map(...)` (see `lower_island`), so an
         // Island node never appears in a Map body. Nothing to collect.
         JsxNode::Island { .. } => {}
+        // SsrComponent is opaque in map context — no MapMember refs to collect.
+        JsxNode::SsrComponent { .. } => {}
     }
 }
 
