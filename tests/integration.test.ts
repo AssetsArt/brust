@@ -1,4 +1,4 @@
-import { test, expect } from 'bun:test'
+import { test, expect, beforeAll, afterAll } from 'bun:test'
 import { spawn } from 'bun'
 import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { createServer } from 'node:net'
@@ -39,6 +39,39 @@ async function startServer(opts: { workers?: string; rustLog?: string; cmd?: str
       return await proc.exited
     },
   }
+}
+
+// One server shared by all stateless, read-only, default-config tests (see
+// docs/superpowers/specs/2026-05-31-integration-shared-server-design.md). Cuts
+// the redundant per-test boots. Stateful/special tests still use startServer().
+let shared: { port: number; proc: import('bun').Subprocess } | null = null
+
+beforeAll(async () => {
+  const port = await freePort()
+  const proc = spawn({
+    cmd: ['bun', 'run', 'tests/fixtures/app/index.ts'],
+    env: { ...process.env, BRUST_PORT: String(port), BRUST_WORKERS: '1', RUST_LOG: 'brust=warn' },
+    stdout: 'pipe',
+    stderr: 'inherit',
+  })
+  const readyPort = await readPortLine(proc.stdout)
+  shared = { port: readyPort, proc }
+})
+
+afterAll(async () => {
+  if (!shared) return
+  shared.proc.kill('SIGINT')
+  // Single place that asserts clean shutdown for the shared server.
+  expect(await shared.proc.exited).toBe(0)
+})
+
+/** Port of the shared server. ONLY for stateless, read-only, default-config
+ * tests. NEVER GET /cache-test (mutates a JS renderCount) or any cacheable
+ * route via a non-`/_brust/page` path (would perturb the isolated cache-stats
+ * test). Stateful/special/long-lived-conn tests must use startServer(). */
+function sharedPort(): number {
+  if (!shared) throw new Error('shared server not started')
+  return shared.port
 }
 
 test('serves rendered html via worker pool', async () => {
@@ -117,47 +150,32 @@ test('returns 414 when request exceeds MAX_REQUEST_BYTES', async () => {
 }, 15_000)
 
 test('routes /blog/:slug renders BlogPost with the slug param', async () => {
-  const { port, stop } = await startServer()
-  try {
-    const resp = await fetch(`http://127.0.0.1:${port}/blog/hello-world`)
-    expect(resp.status).toBe(200)
-    const body = await resp.text()
-    expect(body).toContain('BlogPost')
-    expect(body).toContain('hello-world') // the slug appears in the rendered HTML
-    expect(body).toContain('Post: hello-world') // the loader-produced title appears
-  } finally {
-    const exit = await stop()
-    expect(exit).toBe(0)
-  }
-}, 15_000)
+  const port = sharedPort()
+  const resp = await fetch(`http://127.0.0.1:${port}/blog/hello-world`)
+  expect(resp.status).toBe(200)
+  const body = await resp.text()
+  expect(body).toContain('BlogPost')
+  expect(body).toContain('hello-world') // the slug appears in the rendered HTML
+  expect(body).toContain('Post: hello-world') // the loader-produced title appears
+})
 
 test('unknown path returns 404', async () => {
-  const { port, stop } = await startServer()
-  try {
-    const resp = await fetch(`http://127.0.0.1:${port}/no/such/path`)
-    expect(resp.status).toBe(404)
-  } finally {
-    const exit = await stop()
-    expect(exit).toBe(0)
-  }
-}, 15_000)
+  const port = sharedPort()
+  const resp = await fetch(`http://127.0.0.1:${port}/no/such/path`)
+  expect(resp.status).toBe(404)
+})
 
 test('errorBoundary renders when a route component throws', async () => {
-  const { port, stop } = await startServer()
-  try {
-    const resp = await fetch(`http://127.0.0.1:${port}/crash`)
-    // errorBoundary returns 500 — the worker encodes the status into the
-    // meta JSON envelope (`{status, headers?}`) at the head of the SAB;
-    // Rust parses the meta before calling build_response.
-    expect(resp.status).toBe(500)
-    const body = await resp.text()
-    expect(body).toContain('CrashBoundary')
-    expect(body).toContain('intentional crash for test')
-  } finally {
-    const exit = await stop()
-    expect(exit).toBe(0)
-  }
-}, 15_000)
+  const port = sharedPort()
+  const resp = await fetch(`http://127.0.0.1:${port}/crash`)
+  // errorBoundary returns 500 — the worker encodes the status into the
+  // meta JSON envelope (`{status, headers?}`) at the head of the SAB;
+  // Rust parses the meta before calling build_response.
+  expect(resp.status).toBe(500)
+  const body = await resp.text()
+  expect(body).toContain('CrashBoundary')
+  expect(body).toContain('intentional crash for test')
+})
 
 test('reads port and workers from brust.toml at cwd', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'brust-toml-'))
@@ -245,52 +263,37 @@ test('cache stats endpoint reflects hits and misses', async () => {
 }, 15_000)
 
 test('middleware short-circuits with 401 when cookie missing', async () => {
-  const { port, stop } = await startServer({ workers: '1' })
-  try {
-    const r = await fetch(`http://127.0.0.1:${port}/protected`)
-    expect(r.status).toBe(401)
-    expect(await r.text()).toBe('unauthorised')
-    expect(r.headers.get('www-authenticate')).toBe('Cookie')
-  } finally {
-    const exit = await stop()
-    expect(exit).toBe(0)
-  }
-}, 15_000)
+  const port = sharedPort()
+  const r = await fetch(`http://127.0.0.1:${port}/protected`)
+  expect(r.status).toBe(401)
+  expect(await r.text()).toBe('unauthorised')
+  expect(r.headers.get('www-authenticate')).toBe('Cookie')
+})
 
 test('middleware lets request through when cookie present + req.cookies reaches component', async () => {
-  const { port, stop } = await startServer({ workers: '1' })
-  try {
-    const r = await fetch(`http://127.0.0.1:${port}/protected`, {
-      headers: { cookie: 'user=alice; sid=xyz' },
-    })
-    expect(r.status).toBe(200)
-    // React 18 inserts <!-- --> between adjacent text nodes (text literal + {var}),
-    // so strip those before the substring check.
-    const body = (await r.text()).replace(/<!--\s*-->/g, '')
-    expect(body).toContain('signed in as alice')
-  } finally {
-    const exit = await stop()
-    expect(exit).toBe(0)
-  }
-}, 15_000)
+  const port = sharedPort()
+  const r = await fetch(`http://127.0.0.1:${port}/protected`, {
+    headers: { cookie: 'user=alice; sid=xyz' },
+  })
+  expect(r.status).toBe(200)
+  // React 18 inserts <!-- --> between adjacent text nodes (text literal + {var}),
+  // so strip those before the substring check.
+  const body = (await r.text()).replace(/<!--\s*-->/g, '')
+  expect(body).toContain('signed in as alice')
+})
 
 test('middleware injects x-render-ms response header + req.search reaches component', async () => {
-  const { port, stop } = await startServer({ workers: '1' })
-  try {
-    const r = await fetch(`http://127.0.0.1:${port}/with-header?name=brust`)
-    expect(r.status).toBe(200)
-    const ms = r.headers.get('x-render-ms')
-    expect(ms).not.toBeNull()
-    expect(Number(ms)).toBeGreaterThanOrEqual(0)
-    // React 18 inserts <!-- --> between adjacent text nodes (text literal + {var}),
-    // so strip those before the substring check.
-    const body = (await r.text()).replace(/<!--\s*-->/g, '')
-    expect(body).toContain('Hello, brust')
-  } finally {
-    const exit = await stop()
-    expect(exit).toBe(0)
-  }
-}, 15_000)
+  const port = sharedPort()
+  const r = await fetch(`http://127.0.0.1:${port}/with-header?name=brust`)
+  expect(r.status).toBe(200)
+  const ms = r.headers.get('x-render-ms')
+  expect(ms).not.toBeNull()
+  expect(Number(ms)).toBeGreaterThanOrEqual(0)
+  // React 18 inserts <!-- --> between adjacent text nodes (text literal + {var}),
+  // so strip those before the substring check.
+  const body = (await r.text()).replace(/<!--\s*-->/g, '')
+  expect(body).toContain('Hello, brust')
+})
 
 test('errorBoundary 500 path does not pick up middleware-only headers', async () => {
   // /crash has no middleware; verifies that the chain-less terminal path
@@ -298,19 +301,14 @@ test('errorBoundary 500 path does not pick up middleware-only headers', async ()
   // AND that no rogue middleware headers (e.g. x-render-ms from a global
   // middleware that doesn't exist yet) leak into the response. Complements
   // the existing /crash test which covers boundary HTML content.
-  const { port, stop } = await startServer({ workers: '1' })
-  try {
-    const r = await fetch(`http://127.0.0.1:${port}/crash`)
-    expect(r.status).toBe(500)
-    expect(r.headers.get('content-type')).toBe('text/html; charset=utf-8')
-    expect(r.headers.get('x-render-ms')).toBeNull()
-    const body = await r.text()
-    expect(body).toContain('CrashBoundary')
-  } finally {
-    const exit = await stop()
-    expect(exit).toBe(0)
-  }
-}, 15_000)
+  const port = sharedPort()
+  const r = await fetch(`http://127.0.0.1:${port}/crash`)
+  expect(r.status).toBe(500)
+  expect(r.headers.get('content-type')).toBe('text/html; charset=utf-8')
+  expect(r.headers.get('x-render-ms')).toBeNull()
+  const body = await r.text()
+  expect(body).toContain('CrashBoundary')
+})
 
 test('invalidate by path drops a cached entry', async () => {
   const { port, stop } = await startServer({ workers: '1' })
@@ -445,70 +443,55 @@ test('405 on invalidate keeps the keep-alive connection open (no close-after-405
 }, 15_000)
 
 test('island marker + importmap injected when route uses <Island>', async () => {
-  const { port, stop } = await startServer({ workers: '1' })
-  try {
-    const r = await fetch(`http://127.0.0.1:${port}/`)
-    expect(r.status).toBe(200)
-    const body = await r.text()
-    // Marker present, with id + JSON props + hydrate trigger.
-    expect(body).toContain('data-brust-island="Counter"')
-    expect(body).toContain('data-brust-hydrate="load"')
-    expect(body).toContain('data-brust-props="{')
-    // Importmap + bootstrap injected.
-    expect(body).toContain('<script type="importmap">')
-    expect(body).toContain('"/_brust/islands/_react.js"')
-    // react/jsx-runtime also maps to _react.js (combined chunk).
-    expect(body).toContain('"react/jsx-runtime":"/_brust/islands/_react.js"')
-    expect(body).toContain('"/_brust/islands/_react-dom.js"')
-    expect(body).toContain('src="/_brust/islands/_bootstrap.js"')
-  } finally {
-    const exit = await stop()
-    expect(exit).toBe(0)
-  }
-}, 30_000)
+  const port = sharedPort()
+  const r = await fetch(`http://127.0.0.1:${port}/`)
+  expect(r.status).toBe(200)
+  const body = await r.text()
+  // Marker present, with id + JSON props + hydrate trigger.
+  expect(body).toContain('data-brust-island="Counter"')
+  expect(body).toContain('data-brust-hydrate="load"')
+  expect(body).toContain('data-brust-props="{')
+  // Importmap + bootstrap injected.
+  expect(body).toContain('<script type="importmap">')
+  expect(body).toContain('"/_brust/islands/_react.js"')
+  // react/jsx-runtime also maps to _react.js (combined chunk).
+  expect(body).toContain('"react/jsx-runtime":"/_brust/islands/_react.js"')
+  expect(body).toContain('"/_brust/islands/_react-dom.js"')
+  expect(body).toContain('src="/_brust/islands/_bootstrap.js"')
+})
 
 test('island chunk + bootstrap served at /_brust/islands/<file>', async () => {
-  const { port, stop } = await startServer({ workers: '1' })
-  try {
-    for (const file of ['Counter.js', '_bootstrap.js', '_react.js', '_react-dom.js']) {
-      const r = await fetch(`http://127.0.0.1:${port}/_brust/islands/${file}`)
-      expect(r.status).toBe(200)
-      expect(r.headers.get('content-type')).toBe('application/javascript; charset=utf-8')
-      expect(r.headers.get('cache-control')).toBe('public, max-age=3600')
-      const body = await r.text()
-      expect(body.length).toBeGreaterThan(0)
-    }
-
-    // 404 + path-traversal safety.
-    const missing = await fetch(`http://127.0.0.1:${port}/_brust/islands/missing.js`)
-    expect(missing.status).toBe(404)
-
-    const traversal = await fetch(`http://127.0.0.1:${port}/_brust/islands/..%2Fetc%2Fpasswd.js`)
-    expect(traversal.status).toBe(404)
-
-    const noExt = await fetch(`http://127.0.0.1:${port}/_brust/islands/Counter`)
-    expect(noExt.status).toBe(404)
-  } finally {
-    const exit = await stop()
-    expect(exit).toBe(0)
+  const port = sharedPort()
+  for (const file of ['Counter.js', '_bootstrap.js', '_react.js', '_react-dom.js']) {
+    const r = await fetch(`http://127.0.0.1:${port}/_brust/islands/${file}`)
+    expect(r.status).toBe(200)
+    expect(r.headers.get('content-type')).toBe('application/javascript; charset=utf-8')
+    expect(r.headers.get('cache-control')).toBe('public, max-age=3600')
+    const body = await r.text()
+    expect(body.length).toBeGreaterThan(0)
   }
-}, 30_000)
+
+  // 404 + path-traversal safety.
+  const missing = await fetch(`http://127.0.0.1:${port}/_brust/islands/missing.js`)
+  expect(missing.status).toBe(404)
+
+  const traversal = await fetch(`http://127.0.0.1:${port}/_brust/islands/..%2Fetc%2Fpasswd.js`)
+  expect(traversal.status).toBe(404)
+
+  const noExt = await fetch(`http://127.0.0.1:${port}/_brust/islands/Counter`)
+  expect(noExt.status).toBe(404)
+})
 
 test('routes without <Island> ship no importmap or bootstrap', async () => {
-  const { port, stop } = await startServer({ workers: '1' })
-  try {
-    // /blog/{slug} doesn't use <Island>.
-    const r = await fetch(`http://127.0.0.1:${port}/blog/test-slug`)
-    expect(r.status).toBe(200)
-    const body = await r.text()
-    expect(body).not.toContain('data-brust-island=')
-    expect(body).not.toContain('<script type="importmap">')
-    expect(body).not.toContain('_bootstrap.js')
-  } finally {
-    const exit = await stop()
-    expect(exit).toBe(0)
-  }
-}, 30_000)
+  const port = sharedPort()
+  // /blog/{slug} doesn't use <Island>.
+  const r = await fetch(`http://127.0.0.1:${port}/blog/test-slug`)
+  expect(r.status).toBe(200)
+  const body = await r.text()
+  expect(body).not.toContain('data-brust-island=')
+  expect(body).not.toContain('<script type="importmap">')
+  expect(body).not.toContain('_bootstrap.js')
+})
 
 test('action endpoint: happy path returns JSON', async () => {
   const { port, stop } = await startServer({ rustLog: 'brust=warn' })
@@ -853,76 +836,56 @@ test('action endpoint: middleware short-circuits a multipart action', async () =
 }, 15_000)
 
 test('nested routes: index route renders parent layout + dashboard', async () => {
-  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
-  try {
-    const resp = await fetch(`http://127.0.0.1:${port}/admin`, {
-      headers: { cookie: 'user=alice' },
-    })
-    expect(resp.status).toBe(200)
-    const body = await resp.text()
-    expect(body).toContain('AdminLayout')
-    expect(body).toContain('AdminDashboard')
-  } finally {
-    await stop()
-  }
-}, 15_000)
+  const port = sharedPort()
+  const resp = await fetch(`http://127.0.0.1:${port}/admin`, {
+    headers: { cookie: 'user=alice' },
+  })
+  expect(resp.status).toBe(200)
+  const body = await resp.text()
+  expect(body).toContain('AdminLayout')
+  expect(body).toContain('AdminDashboard')
+})
 
 test('nested routes: child path inherits parent middleware (401 without cookie)', async () => {
-  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
-  try {
-    const resp = await fetch(`http://127.0.0.1:${port}/admin/users`)
-    expect(resp.status).toBe(401)
-  } finally {
-    await stop()
-  }
-}, 15_000)
+  const port = sharedPort()
+  const resp = await fetch(`http://127.0.0.1:${port}/admin/users`)
+  expect(resp.status).toBe(401)
+})
 
 test('nested routes: param child renders with id from path', async () => {
-  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
-  try {
-    const resp = await fetch(`http://127.0.0.1:${port}/admin/users/42`, {
-      headers: { cookie: 'user=alice' },
-    })
-    expect(resp.status).toBe(200)
-    const body = await resp.text()
-    expect(body).toContain('AdminLayout')
-    expect(body).toContain('AdminUserDetail')
-    // React 18 SSR may insert comment markers between text nodes, so
-    // grep for the id value itself (42), not the literal 'id=42'.
-    expect(body).toMatch(/id\D*42/)
-  } finally {
-    await stop()
-  }
-}, 15_000)
+  const port = sharedPort()
+  const resp = await fetch(`http://127.0.0.1:${port}/admin/users/42`, {
+    headers: { cookie: 'user=alice' },
+  })
+  expect(resp.status).toBe(200)
+  const body = await resp.text()
+  expect(body).toContain('AdminLayout')
+  expect(body).toContain('AdminUserDetail')
+  // React 18 SSR may insert comment markers between text nodes, so
+  // grep for the id value itself (42), not the literal 'id=42'.
+  expect(body).toMatch(/id\D*42/)
+})
 
 test('nested routes: parent errorBoundary catches child throw', async () => {
-  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
-  try {
-    const resp = await fetch(`http://127.0.0.1:${port}/admin/users/throw`, {
-      headers: { cookie: 'user=alice' },
-    })
-    expect(resp.status).toBe(500)
-    const body = await resp.text()
-    expect(body).toContain('AdminErrorBoundary')
-    expect(body).toContain('intentional admin child throw')
-  } finally {
-    await stop()
-  }
-}, 15_000)
+  const port = sharedPort()
+  const resp = await fetch(`http://127.0.0.1:${port}/admin/users/throw`, {
+    headers: { cookie: 'user=alice' },
+  })
+  expect(resp.status).toBe(500)
+  const body = await resp.text()
+  expect(body).toContain('AdminErrorBoundary')
+  expect(body).toContain('intentional admin child throw')
+})
 
 test('nested routes: flat route still renders (no regression)', async () => {
   // Sanity test: the existing flat `/` route still works after the
   // flatten + chain-walker refactor.
-  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
-  try {
-    const resp = await fetch(`http://127.0.0.1:${port}/`)
-    expect(resp.status).toBe(200)
-    const body = await resp.text()
-    expect(body).toContain('Hello from Brust')
-  } finally {
-    await stop()
-  }
-}, 15_000)
+  const port = sharedPort()
+  const resp = await fetch(`http://127.0.0.1:${port}/`)
+  expect(resp.status).toBe(200)
+  const body = await resp.text()
+  expect(body).toContain('Hello from Brust')
+})
 
 async function mcpRequest(
   port: number,
@@ -1546,18 +1509,14 @@ test('ws: client clean close fires server on_close with 1000', async () => {
 // ----- HTML Streaming integration tests -----
 
 test('streaming: single-chunk regression — / uses Content-Length, not chunked', async () => {
-  const { port, stop } = await startServer({ workers: '1', rustLog: 'brust=warn' })
-  try {
-    const resp = await fetch(`http://127.0.0.1:${port}/`)
-    expect(resp.status).toBe(200)
-    expect(resp.headers.get('content-length')).not.toBeNull()
-    expect(resp.headers.get('transfer-encoding')).toBeNull()
-    const body = await resp.text()
-    expect(body.length).toBeGreaterThan(0)
-  } finally {
-    await stop()
-  }
-}, 15_000)
+  const port = sharedPort()
+  const resp = await fetch(`http://127.0.0.1:${port}/`)
+  expect(resp.status).toBe(200)
+  expect(resp.headers.get('content-length')).not.toBeNull()
+  expect(resp.headers.get('transfer-encoding')).toBeNull()
+  const body = await resp.text()
+  expect(body.length).toBeGreaterThan(0)
+})
 
 test('streaming: /slow-suspense uses Transfer-Encoding: chunked + shell-before-resolved', async () => {
   const { port, stop } = await startServer({ workers: '1', rustLog: 'brust=warn' })
@@ -1621,38 +1580,30 @@ test('streaming: mid-stream disconnect — second request to same worker still s
 // ----- Navigation interceptor integration tests -----
 
 test('nav: /_brust/page/blog/x returns JSON {html, title} with <main> inner only', async () => {
-  const { port, stop } = await startServer({ workers: '1', rustLog: 'brust=warn' })
-  try {
-    const resp = await fetch(`http://127.0.0.1:${port}/_brust/page/blog/welcome`)
-    expect(resp.status).toBe(200)
-    expect(resp.headers.get('content-type') ?? '').toContain('application/json')
-    const body = (await resp.json()) as { html: string; title: string }
-    expect(typeof body.html).toBe('string')
-    expect(typeof body.title).toBe('string')
-    // <main> chrome excluded — no header/footer literals
-    expect(body.html).not.toContain('<header')
-    expect(body.html).not.toContain('<footer')
-    // Page-specific content present
-    expect(body.html).toContain('Post: welcome')
-    // Title carries the page name
-    expect(body.title).toContain('Post: welcome')
-  } finally {
-    await stop()
-  }
-}, 15_000)
+  const port = sharedPort()
+  const resp = await fetch(`http://127.0.0.1:${port}/_brust/page/blog/welcome`)
+  expect(resp.status).toBe(200)
+  expect(resp.headers.get('content-type') ?? '').toContain('application/json')
+  const body = (await resp.json()) as { html: string; title: string }
+  expect(typeof body.html).toBe('string')
+  expect(typeof body.title).toBe('string')
+  // <main> chrome excluded — no header/footer literals
+  expect(body.html).not.toContain('<header')
+  expect(body.html).not.toContain('<footer')
+  // Page-specific content present
+  expect(body.html).toContain('Post: welcome')
+  // Title carries the page name
+  expect(body.title).toContain('Post: welcome')
+})
 
 test('nav: /_brust/page/<unknown> returns 404 with JSON error envelope', async () => {
-  const { port, stop } = await startServer({ workers: '1', rustLog: 'brust=warn' })
-  try {
-    const resp = await fetch(`http://127.0.0.1:${port}/_brust/page/this/path/does/not/exist`)
-    expect(resp.status).toBe(404)
-    expect(resp.headers.get('content-type') ?? '').toContain('application/json')
-    const body = (await resp.json()) as { error: string }
-    expect(body.error).toBe('not found')
-  } finally {
-    await stop()
-  }
-}, 15_000)
+  const port = sharedPort()
+  const resp = await fetch(`http://127.0.0.1:${port}/_brust/page/this/path/does/not/exist`)
+  expect(resp.status).toBe(404)
+  expect(resp.headers.get('content-type') ?? '').toContain('application/json')
+  const body = (await resp.json()) as { error: string }
+  expect(body.error).toBe('not found')
+})
 
 test('nav: page without <main> falls back to shipping full HTML in html field', async () => {
   // The fixture's /cache-test route renders CacheTest, which is a bare
@@ -1661,35 +1612,27 @@ test('nav: page without <main> falls back to shipping full HTML in html field', 
   // rendered HTML instead, so the client interceptor fires its no-main
   // fallback. (/crash was the plan's original choice but renderToString
   // does not honour errorBoundary — it propagates the throw as a 500.)
-  const { port, stop } = await startServer({ workers: '1', rustLog: 'brust=warn' })
-  try {
-    const resp = await fetch(`http://127.0.0.1:${port}/_brust/page/cache-test`)
-    expect(resp.status).toBe(200)
-    expect(resp.headers.get('content-type') ?? '').toContain('application/json')
-    const body = (await resp.json()) as { html: string; title: string }
-    // Full HTML fallback — no <main> in the response, but the
-    // CacheTest content is present.
-    expect(body.html).not.toContain('<main')
-    expect(body.html).toContain('CacheTest')
-  } finally {
-    await stop()
-  }
-}, 15_000)
+  const port = sharedPort()
+  const resp = await fetch(`http://127.0.0.1:${port}/_brust/page/cache-test`)
+  expect(resp.status).toBe(200)
+  expect(resp.headers.get('content-type') ?? '').toContain('application/json')
+  const body = (await resp.json()) as { html: string; title: string }
+  // Full HTML fallback — no <main> in the response, but the
+  // CacheTest content is present.
+  expect(body.html).not.toContain('<main')
+  expect(body.html).toContain('CacheTest')
+})
 
 test('nav: /_brust/page/<protected> without cookie returns middleware verdict (401)', async () => {
   // /admin (index) is guarded by authRequired middleware on the parent layout
   // (no cookie → 401). The navigation endpoint must honour middleware
   // short-circuits, otherwise it would leak guarded content via the JSON envelope.
-  const { port, stop } = await startServer({ workers: '1', rustLog: 'brust=warn' })
-  try {
-    const resp = await fetch(`http://127.0.0.1:${port}/_brust/page/admin`)
-    // Middleware short-circuits with 401 before render happens — the client
-    // will treat any non-2xx as a fallback trigger (full reload).
-    expect(resp.status).toBe(401)
-    // The response body should NOT contain the rendered admin dashboard.
-    const body = await resp.text()
-    expect(body).not.toContain('Admin Dashboard')
-  } finally {
-    await stop()
-  }
-}, 15_000)
+  const port = sharedPort()
+  const resp = await fetch(`http://127.0.0.1:${port}/_brust/page/admin`)
+  // Middleware short-circuits with 401 before render happens — the client
+  // will treat any non-2xx as a fallback trigger (full reload).
+  expect(resp.status).toBe(401)
+  // The response body should NOT contain the rendered admin dashboard.
+  const body = await resp.text()
+  expect(body).not.toContain('Admin Dashboard')
+})
