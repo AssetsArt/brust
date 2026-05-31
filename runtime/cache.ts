@@ -8,8 +8,11 @@ export interface InvalidateArgs {
 }
 
 export const cache = {
-  /** Evict by exact key and/or by tag group. Both optional; both may be given. */
+  /** Evict by exact key and/or by tag group. Both optional; both may be given.
+   * `invalidate({})` forwards `(undefined, undefined)` — a deliberate no-op on
+   * the Rust side (neither the key nor the tags branch fires). The `?.` guards
+   * against a stale addon built before this export existed (degrades to no-op). */
   invalidate(args: InvalidateArgs): void {
-    ;(native as any).islandCacheInvalidate(args.key, args.tags)
+    ;(native as any).islandCacheInvalidate?.(args.key, args.tags)
   },
 }

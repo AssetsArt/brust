@@ -12,19 +12,23 @@ import { Buffer } from 'node:buffer'
 import * as native from './index.js'
 import { renderBranchStreaming } from './render/stream.ts'
 import { loadIslandManifest, resolveIslandContext } from './islands/native-render.ts'
+import type { IslandCache } from './islands/native-render.ts'
 import type { ActionDef } from './actions.ts'
 
 // Sub-project J — island ISR cache, backed by the Rust-side store (shared across
 // the worker pool) via NAPI. napi-rs maps snake→camel: island_cache_get →
 // islandCacheGet, island_cache_set → islandCacheSet. `as any` avoids depending on
 // the regenerated .d.ts — the addon isn't rebuilt locally; index.js/*.node are
-// gitignored and CI rebuilds.
-const islandCache: import('./islands/native-render.ts').IslandCache = {
+// gitignored and CI rebuilds. Optional-chaining (`?.`) means a STALE addon (built
+// before these exports existed) degrades gracefully: get → undefined → null (a
+// cache miss → normal render), set → no-op. Caching is an enhancement, never a
+// hard dependency — unlike napiRenderJinja which has no fallback.
+const islandCache: IslandCache = {
   get(key) {
-    return (native as any).islandCacheGet(key) ?? null
+    return (native as any).islandCacheGet?.(key) ?? null
   },
   set(key, tags, ttlMs, html, props) {
-    ;(native as any).islandCacheSet(key, tags, ttlMs ?? undefined, html, props)
+    ;(native as any).islandCacheSet?.(key, tags, ttlMs, html, props)
   },
 }
 
