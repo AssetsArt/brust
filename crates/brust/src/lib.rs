@@ -29,6 +29,7 @@ use tracing::error;
 use tracing_subscriber::EnvFilter;
 
 use crate::cache::LruCache;
+use crate::island_cache::CacheStore;
 use crate::pool::{BufPtr, RendererTsfn, WorkerPool};
 use crate::routes::RouteTable;
 
@@ -42,6 +43,7 @@ struct State {
     shutdown: Arc<Notify>,
     routes: Arc<RouteTable>,
     cache: Arc<LruCache>,
+    island_cache: std::sync::Arc<crate::island_cache::MokaStore>,
     is_serving: AtomicBool,
     expected_workers: AtomicU32,
     islands_dir: parking_lot::RwLock<Option<std::path::PathBuf>>,
@@ -66,6 +68,7 @@ pub(crate) fn state() -> &'static State {
             shutdown: Arc::new(Notify::new()),
             routes: Arc::new(RouteTable::new()),
             cache: Arc::new(LruCache::new()),
+            island_cache: std::sync::Arc::new(crate::island_cache::MokaStore::new(1000)),
             is_serving: AtomicBool::new(false),
             expected_workers: AtomicU32::new(0),
             islands_dir: parking_lot::RwLock::new(None),
@@ -301,6 +304,48 @@ pub fn configure_islands_dir(path: String) -> NapiResult<()> {
     }
     *state().islands_dir.write() = Some(abs);
     Ok(())
+}
+
+#[napi(object)]
+pub struct CachedIslandJs {
+    pub html: String,
+    pub props: String,
+}
+
+#[napi]
+pub fn island_cache_get(key: String) -> Option<CachedIslandJs> {
+    state().island_cache.get(&key).map(|v| CachedIslandJs {
+        html: v.html,
+        props: v.props,
+    })
+}
+
+#[napi]
+pub fn island_cache_set(
+    key: String,
+    tags: Vec<String>,
+    ttl_ms: Option<u32>,
+    html: String,
+    props: String,
+) {
+    let ttl = ttl_ms.map(|ms| std::time::Duration::from_millis(ms as u64));
+    state().island_cache.set(&key, &tags, ttl, html, props);
+}
+
+#[napi]
+pub fn island_cache_invalidate(key: Option<String>, tags: Option<Vec<String>>) {
+    let c = &state().island_cache;
+    if let Some(k) = key {
+        c.invalidate_key(&k);
+    }
+    if let Some(t) = tags {
+        c.invalidate_tags(&t);
+    }
+}
+
+#[napi]
+pub fn island_cache_clear() {
+    state().island_cache.clear();
 }
 
 #[napi]
@@ -913,5 +958,25 @@ mod action_id_tests {
     #[test]
     fn space_rejected() {
         assert!(!is_safe_action_id("a b"));
+    }
+}
+
+#[cfg(test)]
+mod island_cache_napi_tests {
+    use super::*;
+    #[test]
+    fn get_set_invalidate_roundtrip_through_state() {
+        island_cache_set(
+            "napi:k1".into(),
+            vec!["napi:t".into()],
+            Some(60_000),
+            "<i>x</i>".into(),
+            "{}".into(),
+        );
+        let got = island_cache_get("napi:k1".into()).expect("hit");
+        assert_eq!(got.html, "<i>x</i>");
+        island_cache_invalidate(None, Some(vec!["napi:t".into()]));
+        state().island_cache.clear();
+        assert!(island_cache_get("napi:k1".into()).is_none());
     }
 }
