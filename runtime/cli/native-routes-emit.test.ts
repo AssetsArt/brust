@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ISLANDS_IMPORTMAP_AND_BOOTSTRAP } from '../islands/importmap.ts'
-import { reconcileIslandManifest } from './native-routes-emit.ts'
+import { emitNativeTemplates, reconcileIslandManifest } from './native-routes-emit.ts'
 
 let dir: string
 
@@ -131,5 +131,68 @@ describe('reconcileIslandManifest', () => {
 
     expect(readFileSync(jinjaPath, 'utf8')).toBe(original)
     expect(existsSync(islandsJsonPath)).toBe(false)
+  })
+})
+
+describe('emitNativeTemplates — SSR component artifacts', () => {
+  test('emits .components.json and .factory.ts for a native route with an SSR component', async () => {
+    // Layout.tsx — minimal SSR component (capitalized tag lowers to SsrComponent).
+    const layoutPath = join(dir, 'Layout.tsx')
+    writeFileSync(
+      layoutPath,
+      "export default function Layout({ title }: { title: string }) { return <h1>{title}</h1>; }",
+    )
+
+    // Page.tsx — uses Layout as an SSR component (no Island, so no island artifacts).
+    const pagePath = join(dir, 'Page.tsx')
+    writeFileSync(
+      pagePath,
+      "import Layout from './Layout'\nexport default function Page() { return <Layout/>; }",
+    )
+
+    // routes.tsx — entry file that imports Page for the native route.
+    const routesPath = join(dir, 'routes.tsx')
+    writeFileSync(routesPath, `import Page from './Page'\n`)
+
+    const outDir = join(dir, 'jinja')
+    mkdirSync(outDir, { recursive: true })
+
+    await emitNativeTemplates({
+      entryFile: routesPath,
+      flatRoutes: [{ nativeTemplate: 'Page' }],
+      outDir,
+      repoRoot: dir,
+    })
+
+    // .jinja must exist
+    expect(existsSync(join(outDir, 'Page.jinja'))).toBe(true)
+
+    // .components.json must exist and contain Layout with sourcePath
+    const compJsonPath = join(outDir, 'Page.components.json')
+    expect(existsSync(compJsonPath)).toBe(true)
+    const compEntries = JSON.parse(readFileSync(compJsonPath, 'utf8')) as Array<{
+      component: string
+      sourcePath: string
+      instance: number
+      factoryExpr: string
+      referencedComponents: string[]
+      usesIsland: boolean
+    }>
+    expect(compEntries.length).toBeGreaterThan(0)
+    const layoutEntry = compEntries.find((e) => e.component === 'Layout')
+    expect(layoutEntry).toBeDefined()
+    expect(layoutEntry!.sourcePath).toBe(layoutPath)
+    expect(typeof layoutEntry!.factoryExpr).toBe('string')
+    expect(layoutEntry!.factoryExpr.length).toBeGreaterThan(0)
+
+    // .factory.ts must exist and contain the expected imports + export
+    const factoryPath = join(outDir, 'Page.factory.ts')
+    expect(existsSync(factoryPath)).toBe(true)
+    const factoryContent = readFileSync(factoryPath, 'utf8')
+    expect(factoryContent).toContain("import { createElement as h } from 'react'")
+    expect(factoryContent).toContain(`import Layout from`)
+    expect(factoryContent).toContain('export const factories')
+    // Should NOT import Island (Layout doesn't use islands)
+    expect(factoryContent).not.toContain("import { Island }")
   })
 })
