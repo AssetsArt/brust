@@ -678,6 +678,13 @@ export type { BrustConfig } from './config.ts'
 
 export { Island } from './islands/island.tsx'
 export type { IslandProps, HydrateTrigger } from './islands/island.tsx'
+// Side-effect import (NOT type-only) so the `react` JSX augmentation in
+// isr-jsx.ts is pulled into the program of any project that value-imports
+// brustjs — a type-only re-export would be elided and the augmentation lost.
+// The augmentation makes `isr` valid on any component, like `key`. (Compiles to
+// an empty module; harmless at runtime.)
+import './islands/isr-jsx.ts'
+export type { IsrConfig } from './islands/isr-jsx.ts'
 
 export { BrustPage } from './islands/brust-page.tsx'
 export type { BrustPageProps } from './islands/brust-page.tsx'
