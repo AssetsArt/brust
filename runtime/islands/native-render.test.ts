@@ -10,6 +10,7 @@ import {
   resolveIslandContext,
   loadIslandManifest,
   type NativeIslandEntry,
+  type IslandCache,
 } from './native-render.ts'
 import StubIsland from './__fixtures__/StubIsland.tsx'
 
@@ -232,6 +233,125 @@ test('resolveIslandContext: missing props serialize as null (not undefined)', as
   ]
   const out = await resolveIslandContext(manifest, { data: {} })
   expect(out.island_0_props).toBe(entityEncode('null'))
+})
+
+// ── T5: ISR cache get/set in resolveIslandContext ──────────────────────────
+
+function fakeCache() {
+  const store = new Map<string, { html: string; props: string }>()
+  const calls = { get: 0, set: 0 }
+  const cache: IslandCache = {
+    get(k: string) {
+      calls.get++
+      return store.get(k) ?? null
+    },
+    set(k: string, _t: string[], _ttl: number | undefined, html: string, props: string) {
+      calls.set++
+      store.set(k, { html, props })
+    },
+  }
+  return { cache, calls, store }
+}
+
+test('resolveIslandContext ISR: miss renders once and writes cache', async () => {
+  const manifest: NativeIslandEntry[] = [
+    {
+      component: 'Stub',
+      instance: 0,
+      propsPath: 'data.stub',
+      ssr: true,
+      hydrate: 'load',
+      sourcePath: STUB_PATH,
+      keyPath: 'data.key',
+      tagsPath: 'data.tags',
+      revalidate: 60,
+    },
+  ]
+  const { cache, calls } = fakeCache()
+  const data = { data: { stub: { n: 1 }, key: 'post:1', tags: ['post'] } }
+  const out = await resolveIslandContext(manifest, data, cache)
+  expect(calls.get).toBe(1)
+  expect(calls.set).toBe(1)
+  expect(out.island_0_html).toBeDefined()
+  expect(out.island_0_html).toBe('<span>1</span>')
+})
+
+test('resolveIslandContext ISR: hit serves FROZEN pair without re-rendering (hydration-safety)', async () => {
+  const manifest: NativeIslandEntry[] = [
+    {
+      component: 'Stub',
+      instance: 0,
+      propsPath: 'data.stub',
+      ssr: true,
+      hydrate: 'load',
+      sourcePath: STUB_PATH,
+      keyPath: 'data.key',
+    },
+  ]
+  const { cache, calls } = fakeCache()
+  // 1st request: populate the cache (n: 1).
+  const first = await resolveIslandContext(
+    manifest,
+    { data: { stub: { n: 1 }, key: 'post:1' } },
+    cache,
+  )
+  const frozenProps = first.island_0_props
+  const frozenHtml = first.island_0_html
+  expect(calls.set).toBe(1)
+  // 2nd request: SAME key, MUTATED live props (n: 999). Must NOT re-render or
+  // re-set; the served pair must be the FROZEN one from the first render.
+  const second = await resolveIslandContext(
+    manifest,
+    { data: { stub: { n: 999 }, key: 'post:1' } },
+    cache,
+  )
+  expect(calls.set).toBe(1) // NOT called again
+  expect(second.island_0_html).toBe(frozenHtml)
+  // hydration-safety invariant: served props are the FROZEN ones, NOT the
+  // mutated live props (which would entity-encode to {"n":999}).
+  expect(second.island_0_props).toBe(frozenProps)
+  expect(second.island_0_props).toBe(entityEncode(JSON.stringify({ n: 1 })))
+  expect(second.island_0_props).not.toBe(entityEncode(JSON.stringify({ n: 999 })))
+})
+
+test('resolveIslandContext ISR: undefined key (no keyPath value) → uncached render', async () => {
+  const manifest: NativeIslandEntry[] = [
+    {
+      component: 'Stub',
+      instance: 0,
+      propsPath: 'data.stub',
+      ssr: true,
+      hydrate: 'load',
+      sourcePath: STUB_PATH,
+      keyPath: 'data.missingKey',
+    },
+  ]
+  const { cache, calls } = fakeCache()
+  const data = { data: { stub: { n: 1 } } }
+  const out = await resolveIslandContext(manifest, data, cache)
+  expect(calls.get).toBe(0)
+  expect(calls.set).toBe(0)
+  expect(out.island_0_html).toBeDefined()
+  expect(out.island_0_html).toBe('<span>1</span>')
+})
+
+test('resolveIslandContext ISR: non-isr ssr island (no keyPath) leaves cache untouched', async () => {
+  const manifest: NativeIslandEntry[] = [
+    {
+      component: 'Stub',
+      instance: 0,
+      propsPath: 'data.stub',
+      ssr: true,
+      hydrate: 'load',
+      sourcePath: STUB_PATH,
+    },
+  ]
+  const { cache, calls } = fakeCache()
+  const data = { data: { stub: { n: 1 } } }
+  const out = await resolveIslandContext(manifest, data, cache)
+  expect(calls.get).toBe(0)
+  expect(calls.set).toBe(0)
+  expect(out.island_0_html).toBe('<span>1</span>')
 })
 
 test('loadIslandManifest: reads from jinjaDir, missing file → null, caches reads', () => {

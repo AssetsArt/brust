@@ -28,6 +28,21 @@ export interface NativeIslandEntry {
   ssr: boolean
   hydrate: string
   sourcePath: string
+  /** Dotted path into loader data yielding the ISR cache key (string). */
+  keyPath?: string
+  /** Dotted path into loader data yielding the ISR cache tags (string[]). */
+  tagsPath?: string
+  /** Revalidate window in SECONDS; converted to ttlMs on cache.set. */
+  revalidate?: number
+}
+
+/** Rust-side ISR cache, injected as a port for testability. A `get` hit
+ * returns a FROZEN {html,props} pair (the props are the entity-encoded attr
+ * string, identical to what was stored) so the served markup and the hydrated
+ * props stay byte-identical regardless of live loader-data mutation. */
+export interface IslandCache {
+  get(key: string): { html: string; props: string } | null
+  set(key: string, tags: string[], ttlMs: number | undefined, html: string, props: string): void
 }
 
 /** Walk a dotted path into `data`. Each segment must be an OWN enumerable
@@ -109,17 +124,42 @@ const componentCache = new Map<string, unknown>()
 export async function resolveIslandContext(
   manifest: NativeIslandEntry[],
   data: unknown,
+  cache?: IslandCache,
 ): Promise<Record<string, string>> {
   const out: Record<string, string> = {}
   for (const entry of manifest) {
     const props = pathInto(data, entry.propsPath)
     // `?? null` handles undefined props; the `?? 'null'` belt-and-braces covers
     // the case where JSON.stringify itself returns undefined (e.g. a function
-    // value), so entityEncode never receives undefined.
-    out['island_' + entry.instance + '_props'] = entityEncode(
-      JSON.stringify(props ?? null) ?? 'null',
-    )
+    // value), so entityEncode never receives undefined. Hoisted ABOVE the ssr
+    // branch so the SAME attr string is stored in (and served from) the cache
+    // AND hydrated against — byte-identity is the ISR hydration-safety invariant.
+    const propsAttr = entityEncode(JSON.stringify(props ?? null) ?? 'null')
+    out['island_' + entry.instance + '_props'] = propsAttr
     if (!entry.ssr) continue
+
+    // ISR fast-path: resolve a string cache key out of loader data. A hit
+    // serves the FROZEN {html,props} pair (overwriting the live _props with the
+    // stored one) and skips render. A non-string-but-defined key is a manifest
+    // bug — warn and fall through to an uncached render.
+    let key: string | undefined
+    if (cache && entry.keyPath) {
+      const k = pathInto(data, entry.keyPath)
+      if (typeof k === 'string') {
+        key = k
+        const hit = cache.get(key)
+        if (hit) {
+          out['island_' + entry.instance + '_html'] = hit.html
+          out['island_' + entry.instance + '_props'] = hit.props
+          continue
+        }
+      } else if (k !== undefined) {
+        console.warn(
+          `[brust] ssr island "${entry.component}" ISR keyPath "${entry.keyPath}" resolved to a non-string value; rendering uncached`,
+        )
+      }
+    }
+
     try {
       let Component = componentCache.get(entry.sourcePath)
       if (Component === undefined) {
@@ -134,9 +174,29 @@ export async function resolveIslandContext(
       // JSON.parse(data-brust-props) — byte-identity guarantees no hydration
       // mismatch. props ?? undefined: pass the actual value (or undefined) to
       // the component, NOT the `null` sentinel used for the props string.
-      out['island_' + entry.instance + '_html'] = renderToString(
+      const html = renderToString(
         createElement(Component as any, (props ?? undefined) as any),
       )
+      out['island_' + entry.instance + '_html'] = html
+      // Write-through: only on the SUCCESS path (a throwing render must not
+      // poison the cache). Store the SAME entity-encoded propsAttr so a later
+      // hit hydrates byte-identically.
+      if (cache && key) {
+        const tagsValue = pathInto(data, entry.tagsPath ?? '')
+        let tags: string[]
+        if (Array.isArray(tagsValue)) {
+          tags = tagsValue as string[]
+        } else {
+          if (entry.tagsPath !== undefined && tagsValue !== undefined) {
+            console.warn(
+              `[brust] ssr island "${entry.component}" ISR tagsPath "${entry.tagsPath}" resolved to a non-array value; using no tags`,
+            )
+          }
+          tags = []
+        }
+        const ttlMs = entry.revalidate !== undefined ? entry.revalidate * 1000 : undefined
+        cache.set(key, tags, ttlMs, html, propsAttr)
+      }
     } catch (e) {
       // CONTAINED FAILURE (spec invariant): a throwing ssr island degrades to
       // an empty mount (no _html) + logged warning, rather than 500-ing the
