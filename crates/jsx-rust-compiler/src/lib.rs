@@ -801,4 +801,50 @@ mod tests {
         assert_eq!(c.components[1].component, "Sidebar");
         assert_eq!(c.components[1].instance, 1);
     }
+
+    #[test]
+    fn factory_leaf_component() {
+        let src =
+            "export default function Page({ greeting }) { return <Header user={greeting} />; }";
+        let c = compile_full(src, "<test>").unwrap();
+        assert_eq!(
+            c.components[0].factory_expr,
+            "(ctx) => h(Header, {user: ctx.greeting})"
+        );
+        assert_eq!(c.components[0].referenced_components, vec!["Header"]);
+        assert!(!c.components[0].uses_island);
+    }
+
+    #[test]
+    fn factory_component_with_static_prop() {
+        let src = r#"export default function Page({ data }) { return <Card label="hello" count={data.n} />; }"#;
+        let c = compile_full(src, "<test>").unwrap();
+        assert_eq!(
+            c.components[0].factory_expr,
+            r#"(ctx) => h(Card, {label: "hello", count: ctx.data.n})"#
+        );
+    }
+
+    #[test]
+    fn factory_component_with_children_and_island() {
+        let src = r#"export default function Page({ greeting, data }) {
+  return <Layout title={greeting}><h1>{greeting}</h1><Island component={Counter} props={data.counter} hydrate="load" /></Layout>;
+}"#;
+        let c = compile_full(src, "<test>").unwrap();
+        assert_eq!(
+            c.components[0].factory_expr,
+            r#"(ctx) => h(Layout, {title: ctx.greeting}, h("h1", null, ctx.greeting), h(Island, {component: Counter, props: ctx.data.counter, hydrate: "load"}))"#
+        );
+        assert!(c.components[0].uses_island);
+        assert!(
+            c.components[0]
+                .referenced_components
+                .contains(&"Layout".to_string())
+        );
+        assert!(
+            c.components[0]
+                .referenced_components
+                .contains(&"Counter".to_string())
+        );
+    }
 }
