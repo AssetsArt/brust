@@ -356,6 +356,25 @@ test('resolveIslandContext ISR: non-isr ssr island (no keyPath) leaves cache unt
   expect(out.island_0_html).toBe('<span>1</span>')
 })
 
+test('resolveIslandContext ISR: literal key caches under the literal (no keyPath)', async () => {
+  const manifest: NativeIslandEntry[] = [
+    {
+      component: 'Stub',
+      instance: 0,
+      propsPath: 'data.stub',
+      ssr: true,
+      hydrate: 'load',
+      sourcePath: STUB_PATH,
+      keyLiteral: 'globalStub',
+      tagsLiteral: ['g'],
+    },
+  ]
+  const { cache, calls } = fakeCache()
+  const out = await resolveIslandContext(manifest, { data: { stub: { n: 1 } } }, cache)
+  expect(calls.set).toBe(1)
+  expect(out.island_0_html).toBe('<span>1</span>')
+})
+
 test('loadIslandManifest: reads from jinjaDir, missing file → null, caches reads', () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'brust-islands-'))
   const manifest: NativeIslandEntry[] = [
@@ -574,5 +593,51 @@ export const factories: Array<(ctx: any) => any> = [(ctx: any) => h('p', null, '
     )
     expect(out.comp_0_html).toBe('')
     expect(calls.set).toBe(0) // throwing render must not write the cache
+  })
+
+  test('ISR literal key — miss renders + caches under the literal, no pathInto needed', async () => {
+    const d = mkdtempSync(path.join(tmpdir(), 'brust-comp-isr-lit-'))
+    const reactPath = require.resolve('react')
+    writeFileSync(
+      path.join(d, 'LitPage.factory.ts'),
+      `import { createElement as h } from ${JSON.stringify(reactPath)}\nexport const factories: Array<(ctx: any) => any> = [(ctx: any) => h('p', null, 'x')]`,
+    )
+    writeFileSync(
+      path.join(d, 'LitPage.components.json'),
+      JSON.stringify([
+        {
+          component: 'Layout',
+          instance: 0,
+          sourcePath: '/x',
+          keyLiteral: 'navbar',
+          tagsLiteral: ['nav'],
+        },
+      ]),
+    )
+    const manifest = loadComponentManifest('LitPage', d)!
+    const { cache, calls, store } = fakeCache()
+    const out = await resolveComponentContext(manifest, {}, 'LitPage', d, cache)
+    expect(calls.set).toBe(1)
+    expect(out.comp_0_html).toContain('x')
+    expect(store.has('navbar')).toBe(true) // cached under the literal key
+  })
+
+  test('ISR literal key — hit serves frozen html, factory not called', async () => {
+    const d = mkdtempSync(path.join(tmpdir(), 'brust-comp-isr-lit-hit-'))
+    writeFileSync(
+      path.join(d, 'LitHit.factory.ts'),
+      `export const factories: Array<(ctx: any) => any> = [() => { throw new Error('must not run on hit') }]`,
+    )
+    writeFileSync(
+      path.join(d, 'LitHit.components.json'),
+      JSON.stringify([
+        { component: 'Layout', instance: 0, sourcePath: '/x', keyLiteral: 'navbar' },
+      ]),
+    )
+    const manifest = loadComponentManifest('LitHit', d)!
+    const { cache } = fakeCache()
+    cache.set('navbar', [], undefined, '<p>cached</p>', '')
+    const out = await resolveComponentContext(manifest, {}, 'LitHit', d, cache)
+    expect(out.comp_0_html).toBe('<p>cached</p>')
   })
 })
