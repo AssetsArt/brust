@@ -124,12 +124,10 @@ export const routes = defineRoutes([
     path: '/crash',
     Component: Crash,
     errorBoundary: CrashBoundary,
-    loader: async () => ({ crash: false }),
   },
   {
     path: '/crash-boundary',
     Component: CrashBoundary,
-    loader: async () => ({ crash: true }),
   },
   { path: '/cache-test',   Component: CacheTest, cache: { ttl_seconds: 60 } },
   { path: '/protected',    Component: Protected,    middleware: [authRequired] },
@@ -150,7 +148,7 @@ export const routes = defineRoutes([
     children: [
       { index: true,             Component: AdminDashboard },
       { path: 'users',           Component: AdminUsers },
-      { path: 'users/throw',     Component: AdminUserThrow, loader: async () => ({ crash: true }), },
+      { path: 'users/throw',     Component: AdminUserThrow },
       { path: 'users/{id}',      Component: AdminUserDetail },
     ],
   },
