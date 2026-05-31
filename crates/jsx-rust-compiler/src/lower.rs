@@ -570,10 +570,24 @@ fn lower_island(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode,
                             let SwcExpr::Lit(Lit::Num(n)) = strip_paren(&kv.value) else {
                                 return Err(err());
                             };
+                            // Non-negative integer seconds only. A bare `as u32`
+                            // would silently truncate (60.5 → 60) and saturate
+                            // (-1 → 0, 1e12 → u32::MAX) — turning a typo into a
+                            // valid-but-wrong TTL. Reject instead.
+                            if n.value < 0.0 || n.value.fract() != 0.0 || n.value > u32::MAX as f64
+                            {
+                                return Err(err());
+                            }
                             revalidate = Some(n.value as u32);
                         }
                         _ => return Err(err()),
                     }
+                }
+                // `key` is mandatory when `isr` is present — an empty,
+                // tags-only, or revalidate-only isr has nothing to key the
+                // cache by and is silently useless. Reject it loudly.
+                if key_path.is_none() {
+                    return Err(err());
                 }
             }
             // Unknown attributes on an island are ignored (forward-compatible);
@@ -2153,6 +2167,52 @@ mod tests {
             }
             other => panic!("expected Island, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn isr_fractional_revalidate_is_rejected() {
+        // `as u32` would silently truncate 60.5 → 60; reject instead.
+        let src = r#"export default function Page({ data }) {
+  return <Island component={Counter} props={data.counter} ssr
+    isr={{ key: data.cacheKey, revalidate: 60.5 }} />;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let err = lower(&parsed).unwrap_err();
+        assert!(matches!(err.kind, ErrorKind::IslandIsrUnsupported));
+    }
+
+    #[test]
+    fn isr_negative_revalidate_is_rejected() {
+        // `-1 as u32` would saturate to 0 (expire-immediately); reject instead.
+        let src = r#"export default function Page({ data }) {
+  return <Island component={Counter} props={data.counter} ssr
+    isr={{ key: data.cacheKey, revalidate: -1 }} />;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let err = lower(&parsed).unwrap_err();
+        assert!(matches!(err.kind, ErrorKind::IslandIsrUnsupported));
+    }
+
+    #[test]
+    fn isr_without_key_is_rejected() {
+        // `key` is mandatory — a tags-/revalidate-only isr has nothing to key by.
+        let src = r#"export default function Page({ data }) {
+  return <Island component={Counter} props={data.counter} ssr
+    isr={{ tags: data.cacheTags, revalidate: 60 }} />;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let err = lower(&parsed).unwrap_err();
+        assert!(matches!(err.kind, ErrorKind::IslandIsrUnsupported));
+    }
+
+    #[test]
+    fn isr_empty_object_is_rejected() {
+        let src = r#"export default function Page({ data }) {
+  return <Island component={Counter} props={data.counter} ssr isr={{}} />;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let err = lower(&parsed).unwrap_err();
+        assert!(matches!(err.kind, ErrorKind::IslandIsrUnsupported));
     }
 
     #[test]
