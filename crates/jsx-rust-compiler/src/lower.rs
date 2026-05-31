@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -25,6 +26,20 @@ struct InlineCtx {
     has_children: bool,
 }
 
+/// Shared environment threaded through the entire native-inline recursion.
+/// Lives for the duration of one `lower_with_sources` call. SEPARATE from
+/// `InlineCtx.subst` (which is per-component); this env is global across the
+/// whole recursive inlining pass.
+#[derive(Debug)]
+pub(crate) struct InlineEnv {
+    /// Map from component ident → source text, used to resolve `<Comp native/>`.
+    sources: HashMap<String, String>,
+    /// Accumulated non-fatal diagnostic messages.
+    warnings: RefCell<Vec<String>>,
+    /// Stack of component idents currently being inlined; used for cycle detection.
+    cycle: RefCell<Vec<String>>,
+}
+
 #[derive(Debug)]
 pub struct LowerError {
     pub span: Span,
@@ -49,6 +64,9 @@ impl LowerError {
 /// `inline` carries the optional inline-mode context (T5 opt-in). When `None`,
 /// all inline behaviors are disabled and the code paths are byte-identical to
 /// pre-T5 behavior.
+/// `inline_env` is the shared native-inline environment (T6 opt-in). SEPARATE
+/// from `inline` — the env is shared across the whole recursion while `inline`
+/// changes per component.
 #[derive(Debug, Default, Clone)]
 struct Scope {
     destructured: Vec<String>,
@@ -56,6 +74,8 @@ struct Scope {
     map_bindings: Vec<String>,
     /// Inline mode context. `None` = normal (default) lowering.
     inline: Option<Rc<InlineCtx>>,
+    /// Shared native-inline environment. `None` = no native inlining (default).
+    inline_env: Option<Rc<InlineEnv>>,
 }
 
 /// Lowered param shape: which names are in scope inside JSX.
@@ -79,6 +99,7 @@ pub fn lower(parsed: &ParsedSource) -> Result<Component, LowerError> {
         named_param: param_shape.named.clone(),
         map_bindings: Vec::new(),
         inline: None,
+        inline_env: None,
     };
 
     let return_expr = single_return_expr(body)?;
@@ -122,22 +143,86 @@ pub fn lower(parsed: &ParsedSource) -> Result<Component, LowerError> {
     Ok(Component { name, props, root })
 }
 
+/// Route-level entry point for native-inline lowering (T6).
+///
+/// Like `lower` but builds an `InlineEnv` from `sources` (a map from component
+/// ident → source text). Warnings accumulated during inlining are returned
+/// alongside the component. Existing `lower(parsed)` is unchanged.
+#[allow(dead_code)]
+pub(crate) fn lower_with_sources(
+    parsed: &ParsedSource,
+    sources: HashMap<String, String>,
+) -> Result<(Component, Vec<String>), LowerError> {
+    let (name, function) = find_default_export(&parsed.module)?;
+    let body =
+        function.function.body.as_ref().ok_or_else(|| {
+            LowerError::at(function.function.span, ErrorKind::BodyMustBeSingleReturn)
+        })?;
+    let param_shape = lower_params(&function.function)?;
+
+    let env = Rc::new(InlineEnv {
+        sources,
+        warnings: RefCell::new(Vec::new()),
+        cycle: RefCell::new(Vec::new()),
+    });
+
+    let scope = Scope {
+        destructured: param_shape.destructured.clone(),
+        named_param: param_shape.named.clone(),
+        map_bindings: Vec::new(),
+        inline: None,
+        inline_env: Some(env.clone()),
+    };
+
+    let return_expr = single_return_expr(body)?;
+    let jsx = strip_paren(return_expr);
+    let element = match jsx {
+        SwcExpr::JSXElement(el) => el,
+        SwcExpr::JSXFragment(f) => {
+            return Err(LowerError::at(f.span, ErrorKind::FragmentNotSupported));
+        }
+        _ => {
+            return Err(LowerError::at(
+                jsx.span(),
+                ErrorKind::BodyMustBeSingleReturn,
+            ));
+        }
+    };
+    let root = if let JSXElementName::Ident(ident) = &element.opening.name
+        && ident.sym.as_ref() == "BrustPage"
+    {
+        lower_brust_page(element, &scope)?
+    } else {
+        lower_element(element, &scope, false)?
+    };
+
+    let mut props = PropsShape {
+        bindings: param_shape.destructured.clone(),
+        types: BTreeMap::new(),
+    };
+    infer_props_types(&root, &mut props)?;
+
+    let warnings = env.warnings.borrow().clone();
+    Ok((Component { name, props, root }, warnings))
+}
+
 /// Crate-internal entry point for inline lowering (T5 opt-in).
 ///
 /// Lowers a component's JSX body with `subst` substituted for its prop names
 /// and `has_children` controlling whether `{children}` emits `ChildrenSlot`.
 /// The normal `lower` entry point is unaffected — this is purely additive.
+/// `env` is the shared native-inline environment threaded through T6 recursion;
+/// pass `None` for pure T5 usage.
 ///
 /// Accepted body shapes:
 /// - Single `return <JSX>;` (or expr-bodied) → `vec![node]`.
 /// - `if (cond) return <A>; … return <B>;` → `vec![Cond{…}]`.
 /// - `const x = …; return <JSX>` or other local bindings → `Err(InlineUntranslatable)`.
-// T6 will call this from the inliner; suppress dead_code until then.
-#[allow(dead_code)]
 pub(crate) fn lower_component_inline(
     parsed: &ParsedSource,
     subst: HashMap<String, crate::ir::Expr>,
     has_children: bool,
+    env: Option<Rc<InlineEnv>>,
 ) -> Result<Vec<JsxNode>, LowerError> {
     let (_, fn_expr) = find_default_export(&parsed.module)?;
     let body =
@@ -156,6 +241,7 @@ pub(crate) fn lower_component_inline(
         named_param: param_shape.named.clone(),
         map_bindings: Vec::new(),
         inline: Some(inline_ctx),
+        inline_env: env,
     };
 
     // Try single-return first.
@@ -602,6 +688,219 @@ fn lower_ssr_component(
     let mut tags_path: Option<String> = None;
     let mut tags_literal: Option<Vec<String>> = None;
     let mut revalidate: Option<u32> = None;
+    // T6: detect bare `native` attribute before the attr loop.
+    let has_native = el.opening.attrs.iter().any(|a| {
+        if let JSXAttrOrSpread::JSXAttr(jsx_attr) = a
+            && let JSXAttrName::Ident(id) = &jsx_attr.name
+        {
+            return id.sym.as_ref() == "native";
+        }
+        false
+    });
+
+    // T6: collect call-site children for possible splicing.
+    let mut call_site_children: Vec<JsxNode> = Vec::new();
+    for child in &el.children {
+        if let Some(node) = lower_child(child, scope, in_map)? {
+            call_site_children.push(node);
+        }
+    }
+
+    // T6: native inline branch — only when `native` present AND env is available.
+    if has_native && let Some(env) = &scope.inline_env {
+        // Detect isr presence and spreads; build subst map from call-site attrs.
+        let mut has_isr = false;
+        let mut has_spread = false;
+        let mut subst: HashMap<String, crate::ir::Expr> = HashMap::new();
+        let mut subst_err = false;
+
+        for attr in &el.opening.attrs {
+            match attr {
+                JSXAttrOrSpread::SpreadElement(_) => {
+                    has_spread = true;
+                }
+                JSXAttrOrSpread::JSXAttr(jsx_attr) => {
+                    let name = match &jsx_attr.name {
+                        JSXAttrName::Ident(id) => id.sym.to_string(),
+                        JSXAttrName::JSXNamespacedName(n) => {
+                            return Err(LowerError::at(
+                                n.span,
+                                ErrorKind::NamespacedAttrNotSupported,
+                            ));
+                        }
+                    };
+                    match name.as_str() {
+                        "native" | "key" => continue,
+                        "isr" => {
+                            // Validate isr syntax (errors out if malformed).
+                            let err_fn = || {
+                                LowerError::at(
+                                    jsx_attr.span,
+                                    ErrorKind::ComponentIsrUnsupported(component.clone()),
+                                )
+                            };
+                            // Parse to validate; we only need presence for has_isr.
+                            parse_isr_object(jsx_attr, scope, &err_fn)?;
+                            has_isr = true;
+                            continue;
+                        }
+                        "ref" => {
+                            return Err(LowerError::at(
+                                jsx_attr.span,
+                                ErrorKind::RefAttributeNotSupported,
+                            ));
+                        }
+                        _ if is_event_handler(&name) => {
+                            return Err(LowerError::at(
+                                jsx_attr.span,
+                                ErrorKind::EventHandlerNotSupported(name),
+                            ));
+                        }
+                        _ => {}
+                    }
+                    // Lower value to an Expr for subst.
+                    let expr_result = match &jsx_attr.value {
+                        None => Ok(crate::ir::Expr::StaticText(String::new())), // bare bool attr
+                        Some(JSXAttrValue::Str(s)) => Ok(crate::ir::Expr::StaticText(
+                            s.value.to_string_lossy().into_owned(),
+                        )),
+                        Some(JSXAttrValue::JSXExprContainer(c)) => match &c.expr {
+                            JSXExpr::JSXEmptyExpr(_) => {
+                                Err(LowerError::at(c.span, ErrorKind::JsxInAttrNotSupported))
+                            }
+                            JSXExpr::Expr(e) => lower_expr(e, scope),
+                        },
+                        _ => Err(LowerError::at(
+                            jsx_attr.span,
+                            ErrorKind::JsxInAttrNotSupported,
+                        )),
+                    };
+                    match expr_result {
+                        Ok(expr) => {
+                            subst.insert(name, expr);
+                        }
+                        Err(_) => {
+                            subst_err = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Try to inline. Returns Ok(Some(node)) on success, Ok(None) on
+        // soft fallback (warns pushed to env), Err on hard error (cycle).
+        let inline_result = try_native_inline(
+            &component,
+            env,
+            subst,
+            has_spread,
+            subst_err,
+            &call_site_children,
+            has_isr,
+            el.opening.span,
+        )?;
+
+        if let Some(node) = inline_result {
+            return Ok(node);
+        }
+
+        // Fall through to SSR component emission, using isr fields if present.
+        // Rebuild props without native/isr attrs.
+        let mut ssr_props: Vec<SsrProp> = Vec::new();
+        let mut ssr_key_path: Option<String> = None;
+        let mut ssr_key_literal: Option<String> = None;
+        let mut ssr_tags_path: Option<String> = None;
+        let mut ssr_tags_literal: Option<Vec<String>> = None;
+        let mut ssr_revalidate: Option<u32> = None;
+
+        for attr in &el.opening.attrs {
+            let jsx_attr = match attr {
+                JSXAttrOrSpread::JSXAttr(a) => a,
+                JSXAttrOrSpread::SpreadElement(s) => {
+                    let expr = lower_expr(&s.expr, scope)?;
+                    ssr_props.push(SsrProp::Spread(expr));
+                    continue;
+                }
+            };
+            let name = match &jsx_attr.name {
+                JSXAttrName::Ident(id) => id.sym.to_string(),
+                JSXAttrName::JSXNamespacedName(n) => {
+                    return Err(LowerError::at(
+                        n.span,
+                        ErrorKind::NamespacedAttrNotSupported,
+                    ));
+                }
+            };
+            match name.as_str() {
+                "key" | "native" => continue,
+                "isr" => {
+                    let err_fn = || {
+                        LowerError::at(
+                            jsx_attr.span,
+                            ErrorKind::ComponentIsrUnsupported(component.clone()),
+                        )
+                    };
+                    let p = parse_isr_object(jsx_attr, scope, &err_fn)?;
+                    ssr_key_path = p.key_path;
+                    ssr_key_literal = p.key_literal;
+                    ssr_tags_path = p.tags_path;
+                    ssr_tags_literal = p.tags_literal;
+                    ssr_revalidate = p.revalidate;
+                    continue;
+                }
+                "ref" => {
+                    return Err(LowerError::at(
+                        jsx_attr.span,
+                        ErrorKind::RefAttributeNotSupported,
+                    ));
+                }
+                _ if is_event_handler(&name) => {
+                    return Err(LowerError::at(
+                        jsx_attr.span,
+                        ErrorKind::EventHandlerNotSupported(name),
+                    ));
+                }
+                _ => {}
+            }
+            let value = match &jsx_attr.value {
+                None => AttrValue::Empty,
+                Some(JSXAttrValue::Str(s)) => {
+                    AttrValue::Static(s.value.to_string_lossy().into_owned())
+                }
+                Some(JSXAttrValue::JSXExprContainer(c)) => match &c.expr {
+                    JSXExpr::JSXEmptyExpr(_) => {
+                        return Err(LowerError::at(c.span, ErrorKind::JsxInAttrNotSupported));
+                    }
+                    JSXExpr::Expr(e) => match lower_expr(e, scope)? {
+                        crate::ir::Expr::StaticNum(n) => AttrValue::StaticNum(n),
+                        crate::ir::Expr::StaticText(s) => AttrValue::Static(s),
+                        expr => AttrValue::Expr(expr),
+                    },
+                },
+                _ => {
+                    return Err(LowerError::at(
+                        jsx_attr.span,
+                        ErrorKind::JsxInAttrNotSupported,
+                    ));
+                }
+            };
+            ssr_props.push(SsrProp::Attr(JsxAttr { name, value }));
+        }
+
+        return Ok(JsxNode::SsrComponent {
+            component,
+            instance: 0,
+            props: ssr_props,
+            children: call_site_children,
+            key_path: ssr_key_path,
+            key_literal: ssr_key_literal,
+            tags_path: ssr_tags_path,
+            tags_literal: ssr_tags_literal,
+            revalidate: ssr_revalidate,
+        });
+    }
+
+    // Standard (non-native) SSR component path.
     for attr in &el.opening.attrs {
         // Spread `{...expr}` is valid on an SSR component (the factory is JS
         // createElement, so it becomes a JS object spread). The spread argument
@@ -677,24 +976,214 @@ fn lower_ssr_component(
         props.push(SsrProp::Attr(JsxAttr { name, value }));
     }
 
-    let mut children: Vec<JsxNode> = Vec::new();
-    for child in &el.children {
-        if let Some(node) = lower_child(child, scope, in_map)? {
-            children.push(node);
-        }
-    }
-
     Ok(JsxNode::SsrComponent {
         component,
         instance: 0,
         props,
-        children,
+        children: call_site_children,
         key_path,
         key_literal,
         tags_path,
         tags_literal,
         revalidate,
     })
+}
+
+/// Try to native-inline a component. Returns:
+/// - `Ok(Some(node))` — successfully inlined.
+/// - `Ok(None)` — soft fallback (warnings pushed to `env`); caller emits SSR component.
+/// - `Err(LowerError)` — hard error (only `CircularInline` for now).
+#[allow(clippy::too_many_arguments)]
+fn try_native_inline(
+    component: &str,
+    env: &Rc<InlineEnv>,
+    subst: HashMap<String, crate::ir::Expr>,
+    has_spread: bool,
+    subst_err: bool,
+    call_site_children: &[JsxNode],
+    has_isr: bool,
+    span: Span,
+) -> Result<Option<JsxNode>, LowerError> {
+    use crate::analyze::{Inlinability, analyze};
+
+    // 1. Resolve source.
+    let source = match env.sources.get(component) {
+        Some(s) => s.clone(),
+        None => {
+            env.warnings.borrow_mut().push(format!(
+                "native component \"{}\" not inlined: source unresolved",
+                component
+            ));
+            return Ok(None);
+        }
+    };
+
+    // 2. Spread or subst error → warn + fallback.
+    if has_spread || subst_err {
+        env.warnings.borrow_mut().push(format!(
+            "native component \"{}\" not inlined: unsupported prop",
+            component
+        ));
+        return Ok(None);
+    }
+
+    // 3. Parse.
+    let parsed_comp = match crate::parser::parse(&source, "<inline>") {
+        Ok(p) => p,
+        Err(_) => {
+            env.warnings.borrow_mut().push(format!(
+                "native component \"{}\" not inlined: parse error",
+                component
+            ));
+            return Ok(None);
+        }
+    };
+
+    // 4. Analyze.
+    let (_, fn_expr) = match find_default_export(&parsed_comp.module) {
+        Ok(r) => r,
+        Err(_) => {
+            env.warnings.borrow_mut().push(format!(
+                "native component \"{}\" not inlined: parse error",
+                component
+            ));
+            return Ok(None);
+        }
+    };
+    let body = match fn_expr.function.body.as_ref() {
+        Some(b) => b,
+        None => {
+            env.warnings.borrow_mut().push(format!(
+                "native component \"{}\" not inlined: parse error",
+                component
+            ));
+            return Ok(None);
+        }
+    };
+    if let Inlinability::Fallback(reason) = analyze(body) {
+        env.warnings.borrow_mut().push(format!(
+            "native component \"{}\" not inlined: {}",
+            component, reason
+        ));
+        return Ok(None);
+    }
+
+    // 5. Cycle check — hard error.
+    if env.cycle.borrow().contains(&component.to_string()) {
+        let path = format!("{} → {}", env.cycle.borrow().join(" → "), component);
+        return Err(LowerError::at(span, ErrorKind::CircularInline(path)));
+    }
+    env.cycle.borrow_mut().push(component.to_string());
+
+    // 6. Lower inline. Propagate hard errors (e.g. CircularInline) upward;
+    // convert soft lowering errors to a warning + fallback.
+    let has_children = !call_site_children.is_empty();
+    let nodes = match lower_component_inline(&parsed_comp, subst, has_children, Some(env.clone())) {
+        Ok(n) => n,
+        Err(e) => {
+            // CircularInline is a hard error — propagate it immediately.
+            if matches!(e.kind, ErrorKind::CircularInline(_)) {
+                env.cycle.borrow_mut().pop();
+                return Err(e);
+            }
+            env.warnings.borrow_mut().push(format!(
+                "native component \"{}\" not inlined: unsupported prop",
+                component
+            ));
+            env.cycle.borrow_mut().pop();
+            return Ok(None);
+        }
+    };
+
+    // 7. Expect exactly 1 root node.
+    if nodes.len() != 1 {
+        env.warnings.borrow_mut().push(format!(
+            "native component \"{}\" unexpected multi-root",
+            component
+        ));
+        env.cycle.borrow_mut().pop();
+        return Ok(None);
+    }
+
+    let mut root_node = nodes.into_iter().next().unwrap();
+
+    // 8. Splice children slots.
+    splice_children_slots(&mut root_node, call_site_children);
+
+    // 9. Pop cycle stack.
+    env.cycle.borrow_mut().pop();
+
+    // 10. Warn if isr was present (ignored on inlined component).
+    if has_isr {
+        env.warnings.borrow_mut().push(format!(
+            "isr ignored on inlined native component \"{}\"",
+            component
+        ));
+    }
+
+    Ok(Some(root_node))
+}
+
+/// Recursively replace every `JsxNode::ChildrenSlot` in a tree with the given
+/// `children` nodes (spliced in-place into the parent's children vec).
+fn splice_children_slots(node: &mut JsxNode, children: &[JsxNode]) {
+    match node {
+        JsxNode::Element {
+            children: node_children,
+            ..
+        } => {
+            // Splice any ChildrenSlot entries.
+            let mut i = 0;
+            while i < node_children.len() {
+                if matches!(node_children[i], JsxNode::ChildrenSlot) {
+                    // Replace the slot with the call-site children.
+                    node_children.remove(i);
+                    for (j, c) in children.iter().enumerate() {
+                        node_children.insert(i + j, c.clone());
+                    }
+                    i += children.len();
+                } else {
+                    splice_children_slots(&mut node_children[i], children);
+                    i += 1;
+                }
+            }
+        }
+        JsxNode::Cond {
+            consequent,
+            alternate,
+            ..
+        } => {
+            splice_children_slots(consequent, children);
+            if let Some(alt) = alternate {
+                splice_children_slots(alt, children);
+            }
+        }
+        JsxNode::Map { body, .. } => {
+            splice_children_slots(body, children);
+        }
+        JsxNode::Document { body, .. } => {
+            let mut i = 0;
+            while i < body.len() {
+                if matches!(body[i], JsxNode::ChildrenSlot) {
+                    body.remove(i);
+                    for (j, c) in children.iter().enumerate() {
+                        body.insert(i + j, c.clone());
+                    }
+                    i += children.len();
+                } else {
+                    splice_children_slots(&mut body[i], children);
+                    i += 1;
+                }
+            }
+        }
+        // Leaf nodes — nothing to splice.
+        JsxNode::Empty
+        | JsxNode::Text(_)
+        | JsxNode::Expr(_)
+        | JsxNode::Island { .. }
+        | JsxNode::SsrComponent { .. }
+        | JsxNode::ChildrenSlot => {}
+    }
 }
 
 /// HTML void elements per spec §4 / WHATWG. T6 rejects children on these.
@@ -3338,14 +3827,14 @@ mod tests {
 
     // ── T5 inline-mode tests ──────────────────────────────────────────────────
 
-    /// Helper: parse source, call lower_component_inline.
+    /// Helper: parse source, call lower_component_inline (no env = T5 mode).
     fn inline_lower(
         src: &str,
         subst: HashMap<String, crate::ir::Expr>,
         has_children: bool,
     ) -> Result<Vec<JsxNode>, LowerError> {
         let parsed = parse(src, "<test>").unwrap();
-        super::lower_component_inline(&parsed, subst, has_children)
+        super::lower_component_inline(&parsed, subst, has_children, None)
     }
 
     #[test]
@@ -3623,6 +4112,273 @@ mod tests {
             matches!(err.kind, ErrorKind::ComplexExpressionNotSupported),
             "expected ComplexExpressionNotSupported (gate check), got {:?}",
             err.kind
+        );
+    }
+
+    // ── T6 native inline tests ────────────────────────────────────────────────
+
+    /// Helper: parse route source + sources map, call lower_with_sources.
+    fn lower_with_src(
+        route_src: &str,
+        sources: HashMap<String, String>,
+    ) -> Result<(crate::ir::Component, Vec<String>), LowerError> {
+        let parsed = parse(route_src, "<test>").unwrap();
+        super::lower_with_sources(&parsed, sources)
+    }
+
+    /// Recursively check that no SsrComponent node exists in the tree.
+    fn assert_no_ssr_component(node: &JsxNode) {
+        match node {
+            JsxNode::SsrComponent { component, .. } => {
+                panic!("unexpected SsrComponent({component}) in tree");
+            }
+            JsxNode::Element { children, .. } => {
+                for c in children {
+                    assert_no_ssr_component(c);
+                }
+            }
+            JsxNode::Cond {
+                consequent,
+                alternate,
+                ..
+            } => {
+                assert_no_ssr_component(consequent);
+                if let Some(alt) = alternate {
+                    assert_no_ssr_component(alt);
+                }
+            }
+            JsxNode::Map { body, .. } => assert_no_ssr_component(body),
+            JsxNode::Document { body, .. } => {
+                for c in body {
+                    assert_no_ssr_component(c);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Recursively check that no ChildrenSlot remains in tree.
+    fn assert_no_children_slot(node: &JsxNode) {
+        match node {
+            JsxNode::ChildrenSlot => panic!("unexpected ChildrenSlot in tree"),
+            JsxNode::Element { children, .. } => {
+                for c in children {
+                    assert_no_children_slot(c);
+                }
+            }
+            JsxNode::Cond {
+                consequent,
+                alternate,
+                ..
+            } => {
+                assert_no_children_slot(consequent);
+                if let Some(alt) = alternate {
+                    assert_no_children_slot(alt);
+                }
+            }
+            JsxNode::Map { body, .. } => assert_no_children_slot(body),
+            JsxNode::Document { body, .. } => {
+                for c in body {
+                    assert_no_children_slot(c);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn native_pure_inlines() {
+        // Route: <div><Card native title={data.x}/></div>
+        // Card: function Card({title}){return <h1>{title}</h1>}
+        // Expected: div contains h1 with MemberAccess(data.x), no SsrComponent.
+        let route = r#"export default function P({ data }) {
+  return <div><Card native title={data.x}/></div>;
+}"#;
+        let card = r#"export default function Card({ title }) {
+  return <h1>{title}</h1>;
+}"#;
+        let mut sources = HashMap::new();
+        sources.insert("Card".to_string(), card.to_string());
+        let (comp, warnings) = lower_with_src(route, sources).unwrap();
+        assert!(
+            warnings.is_empty(),
+            "expected no warnings, got: {warnings:?}"
+        );
+        assert_no_ssr_component(&comp.root);
+        // Check the h1 with MemberAccess is present.
+        let h1 = match &comp.root {
+            JsxNode::Element { children, .. } => match &children[0] {
+                JsxNode::Element { tag, children, .. } => {
+                    assert_eq!(tag, "h1");
+                    children
+                }
+                other => panic!("expected h1, got {other:?}"),
+            },
+            other => panic!("expected div, got {other:?}"),
+        };
+        match &h1[0] {
+            JsxNode::Expr(crate::ir::Expr::MemberAccess { root, path }) => {
+                assert_eq!(root, "data");
+                assert_eq!(path, &vec!["x".to_string()]);
+            }
+            other => panic!("expected MemberAccess(data.x), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn native_hook_falls_back() {
+        // Card uses useState → must fall back to SsrComponent, warning contains "useState".
+        let route = r#"export default function P({ data }) {
+  return <div><Card native title={data.x}/></div>;
+}"#;
+        let card = r#"export default function Card({ title }) {
+  const [v, setV] = useState(0);
+  return <h1>{title}</h1>;
+}"#;
+        let mut sources = HashMap::new();
+        sources.insert("Card".to_string(), card.to_string());
+        let (comp, warnings) = lower_with_src(route, sources).unwrap();
+        // Must have an SsrComponent for Card.
+        let has_ssr = {
+            fn find_ssr(node: &JsxNode) -> bool {
+                match node {
+                    JsxNode::SsrComponent { .. } => true,
+                    JsxNode::Element { children, .. } => children.iter().any(find_ssr),
+                    _ => false,
+                }
+            }
+            find_ssr(&comp.root)
+        };
+        assert!(has_ssr, "expected SsrComponent fallback for hook");
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("useState") || w.contains("hook")),
+            "expected hook warning, got: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn native_unresolved_falls_back() {
+        // sources map is empty → SsrComponent + "unresolved" warning.
+        let route = r#"export default function P({ data }) {
+  return <div><Card native title={data.x}/></div>;
+}"#;
+        let (comp, warnings) = lower_with_src(route, HashMap::new()).unwrap();
+        let has_ssr = {
+            fn find_ssr(node: &JsxNode) -> bool {
+                match node {
+                    JsxNode::SsrComponent { .. } => true,
+                    JsxNode::Element { children, .. } => children.iter().any(find_ssr),
+                    _ => false,
+                }
+            }
+            find_ssr(&comp.root)
+        };
+        assert!(has_ssr, "expected SsrComponent fallback for unresolved");
+        assert!(
+            warnings.iter().any(|w| w.contains("unresolved")),
+            "expected unresolved warning, got: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn native_children_splice() {
+        // Route: <Box native><span/></Box>
+        // Box: function Box({children}){return <section>{children}</section>}
+        // Expected: section contains the span, no ChildrenSlot.
+        let route = r#"export default function P() {
+  return <Box native><span/></Box>;
+}"#;
+        let box_src = r#"export default function Box({ children }) {
+  return <section>{children}</section>;
+}"#;
+        let mut sources = HashMap::new();
+        sources.insert("Box".to_string(), box_src.to_string());
+        let (comp, warnings) = lower_with_src(route, sources).unwrap();
+        assert!(
+            warnings.is_empty(),
+            "expected no warnings, got: {warnings:?}"
+        );
+        assert_no_ssr_component(&comp.root);
+        assert_no_children_slot(&comp.root);
+        // section should contain the span.
+        let section_children = match &comp.root {
+            JsxNode::Element { tag, children, .. } => {
+                assert_eq!(tag, "section");
+                children
+            }
+            other => panic!("expected section, got {other:?}"),
+        };
+        assert_eq!(section_children.len(), 1);
+        match &section_children[0] {
+            JsxNode::Element { tag, .. } => assert_eq!(tag, "span"),
+            other => panic!("expected span, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn native_nested_recurses() {
+        // Outer native contains <Inner native/>; both pure; sources has both → fully inlined.
+        let route = r#"export default function P({ data }) {
+  return <Outer native value={data.v}/>;
+}"#;
+        let outer_src = r#"export default function Outer({ value }) {
+  return <div><Inner native val={value}/></div>;
+}"#;
+        let inner_src = r#"export default function Inner({ val }) {
+  return <span>{val}</span>;
+}"#;
+        let mut sources = HashMap::new();
+        sources.insert("Outer".to_string(), outer_src.to_string());
+        sources.insert("Inner".to_string(), inner_src.to_string());
+        let (comp, warnings) = lower_with_src(route, sources).unwrap();
+        assert!(
+            warnings.is_empty(),
+            "expected no warnings, got: {warnings:?}"
+        );
+        assert_no_ssr_component(&comp.root);
+    }
+
+    #[test]
+    fn native_circular_errors() {
+        // A native → B native → A native → cycle error.
+        let route = r#"export default function P() {
+  return <A native/>;
+}"#;
+        let a_src = r#"export default function A() {
+  return <B native/>;
+}"#;
+        let b_src = r#"export default function B() {
+  return <A native/>;
+}"#;
+        let mut sources = HashMap::new();
+        sources.insert("A".to_string(), a_src.to_string());
+        sources.insert("B".to_string(), b_src.to_string());
+        let err = lower_with_src(route, sources).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::CircularInline(_)),
+            "expected CircularInline, got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn native_isr_inlined_warns() {
+        // <Card native isr={{key:'k'}}/> pure → inlines, warnings contains "isr ignored".
+        let route = r#"export default function P({ data }) {
+  return <Card native isr={{ key: data.k }}/>;
+}"#;
+        let card = r#"export default function Card() {
+  return <h1>hello</h1>;
+}"#;
+        let mut sources = HashMap::new();
+        sources.insert("Card".to_string(), card.to_string());
+        let (comp, warnings) = lower_with_src(route, sources).unwrap();
+        assert_no_ssr_component(&comp.root);
+        assert!(
+            warnings.iter().any(|w| w.contains("isr ignored")),
+            "expected 'isr ignored' warning, got: {warnings:?}"
         );
     }
 }

@@ -574,6 +574,8 @@ pub enum ErrorKind {
     BrustPageLiteralHeadNotSupported,
     #[error("inline lowering cannot translate `{0}` — expression is too complex for inline mode")]
     InlineUntranslatable(String),
+    #[error("circular native inline: {0}")]
+    CircularInline(String),
 }
 
 impl CompileError {
