@@ -1640,20 +1640,9 @@ test('nav: /_brust/page/<protected> without cookie returns middleware verdict (4
   expect(body).not.toContain('Admin Dashboard')
 })
 
-test('GET /native-ssr-comp — SSR component renders shell HTML', async () => {
-  const res = await fetch(`http://127.0.0.1:${sharedPort()}/native-ssr-comp`)
-  expect(res.status).toBe(200)
-  const html = await res.text()
-  expect(html).toContain('<header>')
-  expect(html).toContain('SSR component test')
-  // NativeLayout is not an Island — no island marker for it
-  expect(html).not.toContain('data-brust-island="NativeLayout"')
-})
-
-test('GET /native-ssr-comp — Island inside SSR component has markers for hydration', async () => {
-  const res = await fetch(`http://127.0.0.1:${sharedPort()}/native-ssr-comp`)
-  const html = await res.text()
-  // Counter Island markers must be present (client bootstrap will hydrate)
-  expect(html).toContain('data-brust-island="Counter"')
-  expect(html).toContain('data-brust-props=')
-})
+// NOTE: native-route coverage (`native: true`, SSR components) lives in
+// tests/native-island*.test.ts, NOT here. Those files run a `brust build`
+// pre-flight with cwd=FIXTURE_DIR so `.brust/jinja/` is populated before boot;
+// this shared server spawns from the repo root and never builds jinja, so a
+// native-route probe here would 500 with "unknown template". SSR-component
+// E2E is in tests/native-island-ssr.test.ts.
