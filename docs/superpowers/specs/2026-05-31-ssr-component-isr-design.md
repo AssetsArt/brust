@@ -1,6 +1,6 @@
 # SSR-component ISR — render-once SSR components with key/tags invalidation
 
-**Status:** spec — awaiting subagent review
+**Status:** spec — reviewed (subagent, fix-then-plan applied 2026-05-31); ready to plan
 **Date:** 2026-05-31
 **Branch:** `feat/components`
 
@@ -91,26 +91,36 @@ body into a reusable helper so the SSR-component arm does not duplicate it:
 
 ```rust
 /// Parse an `isr={{ key, tags?, revalidate? }}` attribute object into
-/// (key_path, tags_path, revalidate). `key` is mandatory; `revalidate` is a
-/// non-negative integer literal ≤ u32::MAX/1000. `err` produces the caller's
-/// error variant (island vs component) so a bad isr blames the right element.
+/// (key_path, tags_path, revalidate). `key` is MANDATORY and enforced here —
+/// hence the first element is a plain `String`, not `Option` (a missing key is
+/// an `err()` return, never a `None`). `revalidate` is a non-negative integer
+/// literal ≤ u32::MAX/1000. `err` produces the caller's error variant (island
+/// vs component) so a bad isr blames the right element.
 fn parse_isr_object(
     jsx_attr: &swc_core::ecma::ast::JSXAttr,
     scope: &Scope,
     err: &dyn Fn() -> LowerError,
-) -> Result<(Option<String>, Option<String>, Option<u32>), LowerError>
+) -> Result<(String, Option<String>, Option<u32>), LowerError>
 ```
 
-- `lower_island` calls `parse_isr_object(jsx_attr, scope, &err)` in its `isr` arm
-  (behavior **identical** — pure refactor; the island's `ssr`-required check
-  stays in `lower_island` after the attr loop, `lower.rs:724`, since it is
-  island-specific). All existing island-ISR lower tests must still pass.
+- `lower_island` calls `parse_isr_object` in its `isr` arm and wraps the key:
+  `let (k, t, r) = parse_isr_object(jsx_attr, scope, &err)?; key_path = Some(k);
+  tags_path = t; revalidate = r;` (behavior **identical** — pure refactor; the
+  island's `ssr`-required check stays in `lower_island` after the attr loop,
+  `lower.rs:724`, since it is island-specific). All existing island-ISR lower
+  tests must still pass.
 - `lower_ssr_component` adds an `"isr"` arm to its `match name.as_str()` block
   (`lower.rs:439`), alongside `"key" => continue` (`lower.rs:440`):
   ```rust
   "isr" => {
-      let err = || LowerError::at(jsx_attr.span, ErrorKind::ComponentIsrUnsupported);
-      (key_path, tags_path, revalidate) = parse_isr_object(jsx_attr, scope, &err)?;
+      let err = || LowerError::at(
+          jsx_attr.span,
+          ErrorKind::ComponentIsrUnsupported(component.clone()),
+      );
+      let (k, t, r) = parse_isr_object(jsx_attr, scope, &err)?;
+      key_path = Some(k);
+      tags_path = t;
+      revalidate = r;
       continue;   // consumed — NOT pushed to props (must not leak as a factory prop)
   }
   ```
@@ -124,31 +134,37 @@ tags_path: Option<String>,
 revalidate: Option<u32>,
 ```
 The `lower_ssr_component` construction (`lower.rs:485`) sets them. ⚠️ Adding
-fields breaks every **exhaustive** destructure of `SsrComponent`. Audit shows
-all current destructures already use `..`, so none break, but the plan must
-verify each at implementation time:
+fields breaks every **exhaustive** (non-`..`) destructure of the
+`JsxNode::SsrComponent` variant. Audit of every `SsrComponent` match arm shows
+all already use `..`, so none break — the plan must re-confirm each:
 - `number_ssr_components` `lib.rs:194` — `{ instance, .. }` ✓
-- `collect_islands` `lib.rs:183` — `{ .. }` ✓
+- `collect_islands` `lib.rs:183` — `SsrComponent { .. } => {}` ✓ (the *Island*
+  arm at `lib.rs:148` is a fully-named exhaustive destructure, but it is a
+  different variant — unaffected by this change)
 - `collect_components` `lib.rs:220` — `{ component, instance, .. }` ✓ (adds the
   three fields to the `ComponentMeta` it pushes — see below)
 - `number_islands` `lib.rs:133` — `{ children, .. }` ✓
 - `emit_factory::collect_factories` `emit_factory.rs:19` — `{ component, props, children, .. }` ✓
 - `emit_factory::emit_child` `emit_factory.rs:143` — `{ component, props, children, .. }` ✓
 - `emit_jinja` `emit_jinja.rs:123` — `{ instance, .. }` ✓
-- the `lower.rs` test-module destructures (`lower_ssr_component_*` tests ~`:2431+`)
+- the `lower.rs` test-module destructure (`lower_ssr_component_leaf` ~`:2450`) — `{ component, props, .. }` ✓
 
 **Manifest — `crates/jsx-rust-compiler/src/lib.rs:32` `ComponentMeta`** gains
 `key_path`/`tags_path`/`revalidate` (parallel to `IslandMeta`, `lib.rs:59`).
 `collect_components` (`lib.rs:226`) copies them from the IR node.
 `components_to_json` (`lib.rs:293`, hand-rolled string-building — **no serde**)
 emits `keyPath`/`tagsPath`/`revalidate` conditionally (omitted when `None`),
-exactly as `islands_to_json` does (`lib.rs:270–283`).
+exactly as `islands_to_json` does (`lib.rs:270–283`). The change is additive
+appends inside the existing per-entry loop; the empty-input `"[]"` early return
+(`lib.rs:294`) is untouched.
 
 **Error — `crates/jsx-rust-compiler/src/lib.rs:355` `ErrorKind`** gains
-`ComponentIsrUnsupported` with a generic message (NOT mentioning "island"):
+`ComponentIsrUnsupported(String)` carrying the component name (NOT mentioning
+"island"; pattern matches the existing `SsrComponentInMapNotSupported(String)`,
+`lib.rs:427`):
 ```rust
-#[error("`isr` attribute on a component must be `{{ key: <path>, tags?: <path>, revalidate?: <number-literal> }}`")]
-ComponentIsrUnsupported,
+#[error("`isr` on `<{0}/>` must be `{{ key: <path>, tags?: <path>, revalidate?: <number-literal> }}`")]
+ComponentIsrUnsupported(String),
 ```
 
 **Emitters — NO change.** `emit_factory.rs` (`{ component, props, children, .. }`,
@@ -159,8 +175,11 @@ cannot leak into the emitted `h(Component, {…})`.
 ### 2. Runtime — cache get/set around the factory render
 
 In `resolveComponentContext` (`native-render.ts:254`), add an optional `cache`
-param and an ISR fast-path that **mirrors `resolveIslandContext`
-(`native-render.ts:124`) exactly**:
+param and an ISR fast-path that **mirrors the ISR *logic* of
+`resolveIslandContext` (`native-render.ts:124`)** — same key-resolve / hit /
+write-through shape. (Signatures differ: `resolveComponentContext` keeps its
+`templateName`/`jinjaDir` params because it loads the factory file, and on a hit
+it sets only `comp_N_html` — there is no `comp_N_props` slot, see Invariant 5.)
 
 ```ts
 export interface NativeComponentEntry {
@@ -353,6 +372,18 @@ elsewhere (action / api route):
   adapter is the future persistence answer (island spec, deferred).
 - Pure TTL on `revalidate` expiry (cold miss next request); no
   stale-while-revalidate.
+- **`isr` on a nested `<Island>` is silently inert this phase** (Invariant 3) —
+  no compile diagnostic. The brust compiler emits errors only (no warning
+  channel), so adding a "nested-island isr ignored" warning is out of scope; a
+  diagnostic is deferred to whenever the compiler grows a warning surface. The
+  enclosing component's `isr` is the documented way to cache that subtree.
+- **`factoryCache` (`native-render.ts:248`) is not invalidated on a rebuild**
+  (pre-existing, shared with `componentManifestCache`). ISR *amplifies* the blast
+  radius: a stale factory's output gets frozen into the cache. In `brust dev`
+  this is moot — the worker restart drops `factoryCache` and the dev-reload path
+  calls `island_cache_clear` (island spec Invariant 7). In production a rebuild
+  implies a process restart, which empties both. So the window is closed in
+  practice; noted for completeness.
 
 ## Open questions — resolved at plan time
 
