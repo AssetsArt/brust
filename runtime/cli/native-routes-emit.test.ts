@@ -194,5 +194,58 @@ describe('emitNativeTemplates — SSR component artifacts', () => {
     expect(factoryContent).toContain('export const factories')
     // Should NOT import Island (Layout doesn't use islands)
     expect(factoryContent).not.toContain('import { Island }')
+
+    // Bootstrap must NOT be in jinja (no usesIsland)
+    const jinjaContent = readFileSync(join(outDir, 'Page.jinja'), 'utf8')
+    expect(jinjaContent).not.toContain('{% raw %}')
+  })
+
+  test('injects importmap bootstrap into .jinja when SSR component uses an Island', async () => {
+    // Counter.tsx — placeholder island component
+    const counterPath = join(dir, 'Counter.tsx')
+    writeFileSync(
+      counterPath,
+      "export default function Counter({ count }: { count: number }) { return <span>{count}</span>; }",
+    )
+
+    // Layout.tsx — SSR component that acts as a wrapper
+    const layoutPath = join(dir, 'Layout.tsx')
+    writeFileSync(
+      layoutPath,
+      `export default function Layout({ title }: { title: string }) { return <div><h1>{title}</h1></div>; }`,
+    )
+
+    // Page.tsx — passes an <Island> as a child of Layout (Island is inside the SsrComponent)
+    // This matches NativeSsrComp.tsx's pattern: <NativeLayout title={greeting}><Island .../></NativeLayout>
+    const pagePath = join(dir, 'Page.tsx')
+    writeFileSync(
+      pagePath,
+      `import Layout from './Layout'\nimport Counter from './Counter'\nexport default function Page({ greeting, counter }: { greeting: string; counter: number }) { return <Layout title={greeting}><p>hi</p><Island component={Counter} props={counter} hydrate="load" /></Layout>; }`,
+    )
+
+    // routes.tsx — entry file
+    const routesPath = join(dir, 'routes.tsx')
+    writeFileSync(routesPath, `import Page from './Page'\n`)
+
+    const outDir = join(dir, 'jinja')
+    mkdirSync(outDir, { recursive: true })
+
+    await emitNativeTemplates({
+      entryFile: routesPath,
+      flatRoutes: [{ nativeTemplate: 'Page' }],
+      outDir,
+      repoRoot: dir,
+    })
+
+    // .jinja must contain the importmap bootstrap (usesIsland: true → injected)
+    const jinjaContent = readFileSync(join(outDir, 'Page.jinja'), 'utf8')
+    const expectedTail = `{% raw %}${ISLANDS_IMPORTMAP_AND_BOOTSTRAP}{% endraw %}`
+    expect(jinjaContent).toContain('{% raw %}')
+    expect(jinjaContent).toContain('{% endraw %}')
+    expect(jinjaContent.endsWith(expectedTail)).toBe(true)
+
+    // .factory.ts must import Island (usesIsland: true)
+    const factoryContent = readFileSync(join(outDir, 'Page.factory.ts'), 'utf8')
+    expect(factoryContent).toContain("import { Island } from 'brustjs'")
   })
 })

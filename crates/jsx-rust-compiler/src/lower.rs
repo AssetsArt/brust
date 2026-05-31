@@ -406,6 +406,12 @@ fn lower_ssr_component(
     scope: &Scope,
     in_map: bool,
 ) -> Result<JsxNode, LowerError> {
+    if in_map {
+        return Err(LowerError::at(
+            el.opening.span,
+            ErrorKind::SsrComponentInMapNotSupported(component_name.to_owned()),
+        ));
+    }
     let component = component_name.to_owned();
 
     let mut props: Vec<JsxAttr> = Vec::new();
@@ -2455,6 +2461,19 @@ mod tests {
         assert!(
             matches!(err.kind, ErrorKind::EventHandlerNotSupported(_)),
             "got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn lower_rejects_ssr_component_in_map() {
+        let src = r#"export default function Page({ items }) {
+  return <ul>{items.map((item) => <Layout title={item.name} />)}</ul>;
+}"#;
+        let err = compile_full(src, "<test>").unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::SsrComponentInMapNotSupported(_)),
+            "expected SsrComponentInMapNotSupported, got {:?}",
             err.kind
         );
     }

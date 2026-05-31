@@ -167,6 +167,17 @@ function emitComponentArtifacts(
   ]
   writeFileSync(factoryPath, factoryLines.join('\n') + '\n')
 
+  // If any SSR component embeds an Island, bake the importmap + bootstrap into
+  // the Jinja template — the same injection reconcileIslandManifest would do.
+  // Without this the client bootstrap never loads and nested Islands don't hydrate.
+  if (needsIsland) {
+    const baked = `{% raw %}${ISLANDS_IMPORTMAP_AND_BOOTSTRAP}{% endraw %}`
+    const currentJinja = readFileSync(jinjaPath, 'utf8')
+    if (!currentJinja.includes(baked)) {
+      writeFileSync(jinjaPath, currentJinja + baked)
+    }
+  }
+
   return { islandIdsFromComponents }
 }
 
