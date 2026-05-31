@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { isAbsolute, resolve } from 'node:path'
 import { spawn, spawnSync } from 'bun'
 
 /** Sub-project J / native SSR islands E2E (T10) — proves the full `native: true`
@@ -152,6 +152,25 @@ beforeAll(async () => {
   expect(twoJinjaSrc).toContain('island_0_props') // client-only instance
   expect(twoJinjaSrc).toContain('island_1_html') // ssr instance
 
+  // SSR-component build sanity (NativeSsrComp = <NativeLayout> wrapping an
+  // <Island>). The component compiles to a comp_N slot + a generated factory.
+  const compJinjaPath = resolve(FIXTURE_DIR, '.brust/jinja/NativeSsrComp.jinja')
+  const compJsonPath = resolve(FIXTURE_DIR, '.brust/jinja/NativeSsrComp.components.json')
+  const factoryPath = resolve(FIXTURE_DIR, '.brust/jinja/NativeSsrComp.factory.ts')
+  expect(existsSync(compJinjaPath)).toBe(true)
+  expect(existsSync(compJsonPath)).toBe(true)
+  expect(existsSync(factoryPath)).toBe(true)
+  expect(manifest.templates).toContain('NativeSsrComp')
+  expect(readFileSync(compJinjaPath, 'utf8')).toContain('comp_0_html')
+  // Paths in the artifacts must be PROJECT-RELATIVE, never the build machine's
+  // absolute path. components.json sourcePath is cwd-relative; the factory's
+  // component imports are relative to the factory file (`../../…`).
+  const compJson = JSON.parse(readFileSync(compJsonPath, 'utf8'))
+  expect(isAbsolute(compJson[0].sourcePath)).toBe(false)
+  const factorySrc = readFileSync(factoryPath, 'utf8')
+  expect(factorySrc).toMatch(/^import \w+ from "\.\.?\//m) // a relative import line
+  expect(factorySrc).not.toMatch(/import \w+ from "\//) // never absolute
+
   // Spawn brust against the fixture (port 3803 to avoid clashing with 3802/3801).
   proc = spawn({
     cmd: ['bun', 'run', resolve(FIXTURE_DIR, 'index.ts')],
@@ -286,6 +305,41 @@ test('GET /_test/native-two-islands — same Counter twice (client-only + ssr): 
   expect(body).not.toContain('{% endraw %}')
 
   // Bootstrap baked once for the page.
+  expect(body).toContain('<script type="importmap">')
+  expect(body).toContain('/_brust/islands/_bootstrap.js')
+})
+
+test('GET /native-ssr-comp — SSR component renders its shell server-side', async () => {
+  // <NativeLayout title={greeting}> is a non-Island capitalized component:
+  // it renders via the generated factory's renderToString. A 200 with the
+  // layout chrome proves the worker `await import()`ed the factory and its
+  // RELATIVE component imports resolved at runtime (the whole point of the
+  // project-relative path change).
+  const res = await fetch(`${BASE_URL}/native-ssr-comp`)
+  expect(res.status).toBe(200)
+  expect(res.headers.get('content-type')).toContain('text/html')
+
+  const body = await res.text()
+  // NativeLayout's shell, rendered server-side from the loader's greeting.
+  expect(body).toContain('<header>')
+  expect(body).toContain('SSR component test')
+  expect(body).toContain('SSR component content')
+  // NativeLayout is an SSR component, NOT an island — no marker for it.
+  expect(body).not.toContain('data-brust-island="NativeLayout"')
+})
+
+test('GET /native-ssr-comp — Island nested in the SSR component still hydrates', async () => {
+  // The <Island component={Counter}> lives inside <NativeLayout>'s children.
+  // It renders inside the factory's renderToString (Island.tsx React-path),
+  // producing a hydration marker + props attribute, and the importmap+bootstrap
+  // is baked into the jinja so the client can boot it.
+  const res = await fetch(`${BASE_URL}/native-ssr-comp`)
+  const body = await res.text()
+
+  expect(body).toContain('data-brust-island="Counter"')
+  expect(body).toContain('data-brust-props=')
+  // Bootstrap must be present (injected because the SSR component uses an island)
+  // — otherwise the marker ships but never hydrates.
   expect(body).toContain('<script type="importmap">')
   expect(body).toContain('/_brust/islands/_bootstrap.js')
 })

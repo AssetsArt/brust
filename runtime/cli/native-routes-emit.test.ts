@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join, relative } from 'node:path'
 import { ISLANDS_IMPORTMAP_AND_BOOTSTRAP } from '../islands/importmap.ts'
 import { emitNativeTemplates, reconcileIslandManifest } from './native-routes-emit.ts'
 
@@ -181,7 +181,10 @@ describe('emitNativeTemplates — SSR component artifacts', () => {
     expect(compEntries.length).toBeGreaterThan(0)
     const layoutEntry = compEntries.find((e) => e.component === 'Layout')
     expect(layoutEntry).toBeDefined()
-    expect(layoutEntry!.sourcePath).toBe(layoutPath)
+    // sourcePath is PROJECT-RELATIVE (cwd-relative), never absolute — no build
+    // machine path baked into the artifact.
+    expect(isAbsolute(layoutEntry!.sourcePath)).toBe(false)
+    expect(layoutEntry!.sourcePath).toBe(relative(process.cwd(), layoutPath).replaceAll('\\', '/'))
     expect(typeof layoutEntry!.factoryExpr).toBe('string')
     expect(layoutEntry!.factoryExpr.length).toBeGreaterThan(0)
 
@@ -190,7 +193,9 @@ describe('emitNativeTemplates — SSR component artifacts', () => {
     expect(existsSync(factoryPath)).toBe(true)
     const factoryContent = readFileSync(factoryPath, 'utf8')
     expect(factoryContent).toContain("import { createElement as h } from 'react'")
-    expect(factoryContent).toContain(`import Layout from`)
+    // Layout import is RELATIVE to the factory dir (`../Layout.tsx`), not absolute.
+    expect(factoryContent).toContain('import Layout from "../Layout.tsx"')
+    expect(factoryContent).not.toMatch(/import Layout from "\//)
     expect(factoryContent).toContain('export const factories')
     // Should NOT import Island (Layout doesn't use islands)
     expect(factoryContent).not.toContain('import { Island }')

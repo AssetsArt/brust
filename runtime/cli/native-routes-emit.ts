@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import { dirname, relative, resolve } from 'node:path'
 import { buildDevClientTag } from '../dev/client.ts'
 import { ISLANDS_IMPORTMAP_AND_BOOTSTRAP } from '../islands/importmap.ts'
 
@@ -85,10 +85,25 @@ interface EnrichedIslandEntry extends RawIslandEntry {
   sourcePath: string
 }
 
+/** Build a portable ESM specifier (forward slashes, kept `./`/`../`-prefixed)
+ * for `to` interpreted against directory `from`. Used for the factory's
+ * component imports so they resolve relative to the factory FILE at runtime
+ * instead of baking the build machine's absolute path. */
+function toRelativeSpecifier(from: string, to: string): string {
+  const rel = relative(from, to).replaceAll('\\', '/')
+  return rel.startsWith('.') ? rel : `./${rel}`
+}
+
 /** Write `<Name>.components.json` and `<Name>.factory.ts` for a native route
  * that has SSR components. Also scans each SSR component's source for Island
  * `component={X}` references and returns those identifiers so the build step
- * can ensure their JS chunks are built. */
+ * can ensure their JS chunks are built.
+ *
+ * Both artifacts use PROJECT-RELATIVE paths, never the build machine's absolute
+ * path: `components.json` stores `sourcePath` relative to the project root
+ * (cwd); `.factory.ts` imports relative to its own location (`.brust/jinja/`).
+ * `enriched` keeps the ABSOLUTE path internally for the build-time island scan
+ * below (`readFileSync`). */
 function emitComponentArtifacts(
   jinjaPath: string,
   componentsJsonStr: string,
@@ -98,7 +113,11 @@ function emitComponentArtifacts(
   const raw = JSON.parse(componentsJsonStr) as RawComponentEntry[]
   if (raw.length === 0) return { islandIdsFromComponents: [] }
 
-  // Enrich with source paths resolved from page's own imports.
+  const jinjaDir = dirname(jinjaPath)
+  const projectRoot = process.cwd()
+
+  // Enrich with ABSOLUTE source paths resolved from page's own imports — kept
+  // absolute for the readFileSync island scan further down.
   const enriched: EnrichedComponentEntry[] = raw.map((entry) => {
     const sourcePath = pageImports.get(entry.component)
     if (!sourcePath) {
@@ -109,9 +128,15 @@ function emitComponentArtifacts(
     return { ...entry, sourcePath }
   })
 
-  // Write <Name>.components.json
+  // Write <Name>.components.json with PROJECT-RELATIVE sourcePaths. (sourcePath
+  // is build-time metadata — resolveComponentContext imports the factory, not
+  // these paths — so relative is purely a portability/readability win.)
   const compJsonPath = jinjaPath.replace(/\.jinja$/, '.components.json')
-  writeFileSync(compJsonPath, JSON.stringify(enriched))
+  const compJsonEntries = enriched.map((e) => ({
+    ...e,
+    sourcePath: relative(projectRoot, e.sourcePath).replaceAll('\\', '/'),
+  }))
+  writeFileSync(compJsonPath, JSON.stringify(compJsonEntries))
 
   // Collect import lines. Deduplicate referenced components.
   const seen = new Set<string>()
@@ -124,14 +149,17 @@ function emitComponentArtifacts(
     importLines.push("import { Island } from 'brustjs'")
   }
 
-  // Import each referenced component from its resolved source path.
+  // Import each referenced component RELATIVE to the factory file's own dir so
+  // `await import(factory)` resolves them at runtime regardless of where the
+  // project lives (no absolute build-machine path baked in).
   const allReferenced = [...new Set(enriched.flatMap((e) => e.referencedComponents))]
   for (const compName of allReferenced) {
     if (seen.has(compName)) continue
     seen.add(compName)
     const srcPath = pageImports.get(compName)
     if (srcPath) {
-      importLines.push(`import ${compName} from ${JSON.stringify(srcPath)}`)
+      const spec = toRelativeSpecifier(jinjaDir, srcPath)
+      importLines.push(`import ${compName} from ${JSON.stringify(spec)}`)
     }
   }
 
