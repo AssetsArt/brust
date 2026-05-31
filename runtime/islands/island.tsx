@@ -20,6 +20,27 @@ export interface IslandProps<P> {
    * the loader crossing) so its markup ships in the HTML, then hydrate. Ignored
    * on the React path (the whole tree already SSRs there). Default false. */
   ssr?: boolean
+  /**
+   * Optional ISR configuration object.
+   * If present, the server will cache the rendered island for the specified duration.
+   * Must be an object with `{ key: string, tags: string[] }`.
+   *
+   * - `key`: A unique string identifying this specific cache entry.
+   *   Changing this key invalidates the cache for this island.
+   * - `tags`: An array of strings used for cache invalidation.
+   *   Calling `brust.cache.invalidate(tag)` will invalidate all islands
+   *   associated with that tag.
+   *
+   * Example:
+   * `isr={{ key: 'counter-1', tags: ['blog'] }}`
+   *
+   * This island will be cached for 60 seconds. Any call to `brust.cache.invalidate('blog')`
+   * will clear this cache entry, even if the `key` remains the same.
+   */
+  isr?: {
+    key: string
+    tags: string[]
+  }
 }
 
 /** Module-scope flag flipped by every `<Island>` render. `makeRenderer`
