@@ -1,17 +1,29 @@
 use std::collections::BTreeMap;
+use std::collections::HashMap;
+use std::rc::Rc;
 
 use swc_core::common::{Span, Spanned};
 use swc_core::ecma::ast::{
-    ArrayLit, ArrowExpr, AssignPatProp, BindingIdent, BlockStmt, BlockStmtOrExpr, CallExpr, Callee,
-    DefaultDecl, ExportDefaultDecl, Expr as SwcExpr, ExprOrSpread, FnExpr, Function, JSXAttrName,
-    JSXAttrOrSpread, JSXAttrValue, JSXElement, JSXElementChild, JSXElementName, JSXExpr, Lit,
-    MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, ObjectPatProp, ParenExpr, Pat, Prop,
-    PropName, PropOrSpread, ReturnStmt, Stmt,
+    ArrayLit, ArrowExpr, AssignPatProp, BinaryOp, BindingIdent, BlockStmt, BlockStmtOrExpr,
+    CallExpr, Callee, DefaultDecl, ExportDefaultDecl, Expr as SwcExpr, ExprOrSpread, FnExpr,
+    Function, JSXAttrName, JSXAttrOrSpread, JSXAttrValue, JSXElement, JSXElementChild,
+    JSXElementName, JSXExpr, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem,
+    ObjectPatProp, ParenExpr, Pat, Prop, PropName, PropOrSpread, ReturnStmt, Stmt, UnaryOp,
 };
 
 use crate::ErrorKind;
 use crate::ir::*;
 use crate::parser::ParsedSource;
+
+/// Context carried when lowering a component in inline mode (T5 opt-in).
+/// `subst` maps destructured prop names to the call-site `Expr` that replaces
+/// them; `has_children` records whether the call site passed children so
+/// `{children}` emits a `JsxNode::ChildrenSlot`.
+#[derive(Debug)]
+struct InlineCtx {
+    subst: HashMap<String, crate::ir::Expr>,
+    has_children: bool,
+}
 
 #[derive(Debug)]
 pub struct LowerError {
@@ -34,11 +46,16 @@ impl LowerError {
 /// body and popped after. T5 uses clone-and-extend (clone the scope, push the
 /// new iter binding, recurse) rather than `&mut Scope` to keep all the
 /// existing `&Scope` signatures additive.
+/// `inline` carries the optional inline-mode context (T5 opt-in). When `None`,
+/// all inline behaviors are disabled and the code paths are byte-identical to
+/// pre-T5 behavior.
 #[derive(Debug, Default, Clone)]
 struct Scope {
     destructured: Vec<String>,
     named_param: Option<String>,
     map_bindings: Vec<String>,
+    /// Inline mode context. `None` = normal (default) lowering.
+    inline: Option<Rc<InlineCtx>>,
 }
 
 /// Lowered param shape: which names are in scope inside JSX.
@@ -61,6 +78,7 @@ pub fn lower(parsed: &ParsedSource) -> Result<Component, LowerError> {
         destructured: param_shape.destructured.clone(),
         named_param: param_shape.named.clone(),
         map_bindings: Vec::new(),
+        inline: None,
     };
 
     let return_expr = single_return_expr(body)?;
@@ -102,6 +120,170 @@ pub fn lower(parsed: &ParsedSource) -> Result<Component, LowerError> {
     infer_props_types(&root, &mut props)?;
 
     Ok(Component { name, props, root })
+}
+
+/// Crate-internal entry point for inline lowering (T5 opt-in).
+///
+/// Lowers a component's JSX body with `subst` substituted for its prop names
+/// and `has_children` controlling whether `{children}` emits `ChildrenSlot`.
+/// The normal `lower` entry point is unaffected — this is purely additive.
+///
+/// Accepted body shapes:
+/// - Single `return <JSX>;` (or expr-bodied) → `vec![node]`.
+/// - `if (cond) return <A>; … return <B>;` → `vec![Cond{…}]`.
+/// - `const x = …; return <JSX>` or other local bindings → `Err(InlineUntranslatable)`.
+// T6 will call this from the inliner; suppress dead_code until then.
+#[allow(dead_code)]
+pub(crate) fn lower_component_inline(
+    parsed: &ParsedSource,
+    subst: HashMap<String, crate::ir::Expr>,
+    has_children: bool,
+) -> Result<Vec<JsxNode>, LowerError> {
+    let (_, fn_expr) = find_default_export(&parsed.module)?;
+    let body =
+        fn_expr.function.body.as_ref().ok_or_else(|| {
+            LowerError::at(fn_expr.function.span, ErrorKind::BodyMustBeSingleReturn)
+        })?;
+
+    let param_shape = lower_params(&fn_expr.function)?;
+
+    let inline_ctx = Rc::new(InlineCtx {
+        subst,
+        has_children,
+    });
+    let scope = Scope {
+        destructured: param_shape.destructured.clone(),
+        named_param: param_shape.named.clone(),
+        map_bindings: Vec::new(),
+        inline: Some(inline_ctx),
+    };
+
+    // Try single-return first.
+    if let Ok(return_expr) = single_return_expr(body) {
+        let jsx = strip_paren(return_expr);
+        let element = match jsx {
+            SwcExpr::JSXElement(el) => el,
+            SwcExpr::JSXFragment(f) => {
+                return Err(LowerError::at(f.span, ErrorKind::FragmentNotSupported));
+            }
+            _ => {
+                return Err(LowerError::at(
+                    jsx.span(),
+                    ErrorKind::BodyMustBeSingleReturn,
+                ));
+            }
+        };
+        let node = lower_element(element, &scope, false)?;
+        return Ok(vec![node]);
+    }
+
+    // Try `if (cond) return <A>; … return <B>;` — two-statement body.
+    if body.stmts.len() == 2
+        && let Some(cond_node) = try_lower_if_return_body(body, &scope)?
+    {
+        return Ok(vec![cond_node]);
+    }
+
+    // Multi-statement body or unrecognized shape.
+    Err(LowerError::at(
+        body.span,
+        ErrorKind::InlineUntranslatable("local binding".to_string()),
+    ))
+}
+
+/// Try to lower a two-statement body of the form:
+///   `if (cond) return <A>;`
+///   `return <B>;`
+/// (with or without an explicit `else`). Returns `None` if the shape doesn't
+/// match, so the caller can fall back to an error.
+#[allow(dead_code)]
+fn try_lower_if_return_body(
+    body: &BlockStmt,
+    scope: &Scope,
+) -> Result<Option<JsxNode>, LowerError> {
+    use swc_core::ecma::ast::{IfStmt, Stmt};
+
+    if body.stmts.len() != 2 {
+        return Ok(None);
+    }
+
+    // First stmt: `if (cond) return <A>;` (no else branch here).
+    let Stmt::If(IfStmt {
+        test: cond_expr,
+        cons,
+        alt,
+        ..
+    }) = &body.stmts[0]
+    else {
+        return Ok(None);
+    };
+    // No else allowed in the two-stmt form (else handled separately below).
+    if alt.is_some() {
+        return Ok(None);
+    }
+    // cons must be `return <A>;` (possibly wrapped in a block).
+    let jsx_a = extract_return_jsx_from_stmt(cons)?;
+    let Some(jsx_a) = jsx_a else {
+        return Ok(None);
+    };
+
+    // Second stmt: `return <B>;`
+    let Stmt::Return(ReturnStmt {
+        arg: Some(ret_b), ..
+    }) = &body.stmts[1]
+    else {
+        return Ok(None);
+    };
+    let jsx_b = strip_paren(ret_b.as_ref());
+    let SwcExpr::JSXElement(el_b) = jsx_b else {
+        return Ok(None);
+    };
+
+    let test_expr = lower_expr(cond_expr, scope)?;
+    let node_a = lower_element(jsx_a, scope, false)?;
+    let node_b = lower_element(el_b, scope, false)?;
+
+    Ok(Some(JsxNode::Cond {
+        test: test_expr,
+        consequent: Box::new(node_a),
+        alternate: Some(Box::new(node_b)),
+    }))
+}
+
+/// Extract the JSX element from a `return <JSX>;` statement or
+/// `{ return <JSX>; }` block statement. Returns `None` if the shape doesn't
+/// match (so the caller can decide what to do).
+#[allow(dead_code)]
+fn extract_return_jsx_from_stmt(stmt: &Stmt) -> Result<Option<&JSXElement>, LowerError> {
+    match stmt {
+        Stmt::Return(ReturnStmt {
+            arg: Some(expr), ..
+        }) => {
+            let jsx = strip_paren(expr.as_ref());
+            match jsx {
+                SwcExpr::JSXElement(el) => Ok(Some(el)),
+                _ => Ok(None),
+            }
+        }
+        Stmt::Block(block) => {
+            if block.stmts.len() != 1 {
+                return Ok(None);
+            }
+            match &block.stmts[0] {
+                Stmt::Return(ReturnStmt {
+                    arg: Some(expr), ..
+                }) => {
+                    let jsx = strip_paren(expr.as_ref());
+                    match jsx {
+                        SwcExpr::JSXElement(el) => Ok(Some(el)),
+                        _ => Ok(None),
+                    }
+                }
+                _ => Ok(None),
+            }
+        }
+        _ => Ok(None),
+    }
 }
 
 fn find_default_export(module: &Module) -> Result<(String, &FnExpr), LowerError> {
@@ -1134,6 +1316,54 @@ fn lower_child(
                 {
                     return Ok(Some(lower_call_as_map(call, scope, in_map)?));
                 }
+
+                // GATE: inline mode — handle special inline child patterns.
+                if scope.inline.is_some() {
+                    // `{children}` → ChildrenSlot (when has_children is true).
+                    if let SwcExpr::Ident(id) = e.as_ref()
+                        && id.sym.as_ref() == "children"
+                        && scope
+                            .inline
+                            .as_ref()
+                            .map(|ctx| ctx.has_children)
+                            .unwrap_or(false)
+                    {
+                        return Ok(Some(JsxNode::ChildrenSlot));
+                    }
+
+                    // `{cond && <JSX>}` → Cond{alternate: None}.
+                    if let SwcExpr::Bin(bin) = e.as_ref()
+                        && bin.op == BinaryOp::LogicalAnd
+                        && let SwcExpr::JSXElement(rhs_el) = strip_paren(bin.right.as_ref())
+                    {
+                        let test = lower_expr(&bin.left, scope)?;
+                        let consequent = lower_element(rhs_el, scope, in_map)?;
+                        return Ok(Some(JsxNode::Cond {
+                            test,
+                            consequent: Box::new(consequent),
+                            alternate: None,
+                        }));
+                    }
+
+                    // `{cond ? <A> : <B>}` → Cond{alternate: Some}.
+                    if let SwcExpr::Cond(cond_expr) = e.as_ref() {
+                        let test = lower_expr(&cond_expr.test, scope)?;
+                        let cons_jsx = strip_paren(cond_expr.cons.as_ref());
+                        let alt_jsx = strip_paren(cond_expr.alt.as_ref());
+                        if let (SwcExpr::JSXElement(el_a), SwcExpr::JSXElement(el_b)) =
+                            (cons_jsx, alt_jsx)
+                        {
+                            let node_a = lower_element(el_a, scope, in_map)?;
+                            let node_b = lower_element(el_b, scope, in_map)?;
+                            return Ok(Some(JsxNode::Cond {
+                                test,
+                                consequent: Box::new(node_a),
+                                alternate: Some(Box::new(node_b)),
+                            }));
+                        }
+                    }
+                }
+
                 Ok(Some(JsxNode::Expr(lower_expr(e, scope)?)))
             }
         },
@@ -1365,6 +1595,12 @@ fn lower_expr(expr: &SwcExpr, scope: &Scope) -> Result<crate::ir::Expr, LowerErr
     match expr {
         SwcExpr::Ident(id) => {
             let name = id.sym.to_string();
+            // Inline mode: substitution takes priority over destructured→Field.
+            if let Some(ctx) = &scope.inline
+                && let Some(substituted) = ctx.subst.get(&name)
+            {
+                return Ok(substituted.clone());
+            }
             if scope.destructured.contains(&name) {
                 Ok(crate::ir::Expr::Field(name))
             } else if scope.map_bindings.contains(&name) {
@@ -1392,32 +1628,270 @@ fn lower_expr(expr: &SwcExpr, scope: &Scope) -> Result<crate::ir::Expr, LowerErr
                 Ok(crate::ir::Expr::StaticNum(n.value as i64))
             }
         }
-        SwcExpr::Tpl(t) => Err(LowerError::at(
-            t.span,
-            ErrorKind::TemplateLiteralNotSupported,
-        )),
-        SwcExpr::Call(c) => Err(LowerError::at(
-            c.span,
-            ErrorKind::CallExpressionNotSupported,
-        )),
-        SwcExpr::Bin(b) => Err(LowerError::at(
-            b.span,
-            ErrorKind::ComplexExpressionNotSupported,
-        )),
+        SwcExpr::Tpl(t) => {
+            // GATE: inline mode only.
+            if scope.inline.is_some() {
+                // Template literal → Concat of quasis (StaticText) and exprs.
+                let mut parts: Vec<crate::ir::Expr> = Vec::new();
+                let quasis = &t.quasis;
+                let exprs = &t.exprs;
+                for (i, quasi) in quasis.iter().enumerate() {
+                    let cooked = quasi
+                        .cooked
+                        .as_ref()
+                        .map(|a| a.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    if !cooked.is_empty() {
+                        parts.push(crate::ir::Expr::StaticText(cooked));
+                    }
+                    if i < exprs.len() {
+                        parts.push(lower_expr(&exprs[i], scope)?);
+                    }
+                }
+                Ok(crate::ir::Expr::Concat(parts))
+            } else {
+                Err(LowerError::at(
+                    t.span,
+                    ErrorKind::TemplateLiteralNotSupported,
+                ))
+            }
+        }
+        SwcExpr::Call(c) => {
+            // GATE: inline mode only — method call lowering.
+            if scope.inline.is_some() {
+                lower_call_as_filter(c, scope)
+            } else {
+                Err(LowerError::at(
+                    c.span,
+                    ErrorKind::CallExpressionNotSupported,
+                ))
+            }
+        }
+        SwcExpr::Bin(b) => {
+            // GATE: inline mode only — arithmetic, comparison, logical.
+            if scope.inline.is_some() {
+                lower_bin_inline(b, scope)
+            } else {
+                Err(LowerError::at(
+                    b.span,
+                    ErrorKind::ComplexExpressionNotSupported,
+                ))
+            }
+        }
         SwcExpr::Cond(c) => Err(LowerError::at(
             c.span,
             ErrorKind::ComplexExpressionNotSupported,
         )),
-        SwcExpr::Unary(u) => Err(LowerError::at(
-            u.span,
-            ErrorKind::ComplexExpressionNotSupported,
-        )),
+        SwcExpr::Unary(u) => {
+            // GATE: inline mode only — `!` → Not.
+            if scope.inline.is_some() {
+                if u.op == UnaryOp::Bang {
+                    let inner = lower_expr(&u.arg, scope)?;
+                    Ok(crate::ir::Expr::Not(Box::new(inner)))
+                } else {
+                    Err(LowerError::at(
+                        u.span,
+                        ErrorKind::InlineUntranslatable(format!("{:?}", u.op)),
+                    ))
+                }
+            } else {
+                Err(LowerError::at(
+                    u.span,
+                    ErrorKind::ComplexExpressionNotSupported,
+                ))
+            }
+        }
         SwcExpr::Paren(p) => lower_expr(&p.expr, scope),
         other => Err(LowerError::at(
             other.span(),
             ErrorKind::ComplexExpressionNotSupported,
         )),
     }
+}
+
+/// Lower a binary expression in inline mode.
+fn lower_bin_inline(
+    b: &swc_core::ecma::ast::BinExpr,
+    scope: &Scope,
+) -> Result<crate::ir::Expr, LowerError> {
+    match b.op {
+        BinaryOp::Add => {
+            let lhs = lower_expr(&b.left, scope)?;
+            let rhs = lower_expr(&b.right, scope)?;
+            Ok(crate::ir::Expr::Arith {
+                op: ArithOp::Add,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            })
+        }
+        BinaryOp::Sub => {
+            let lhs = lower_expr(&b.left, scope)?;
+            let rhs = lower_expr(&b.right, scope)?;
+            Ok(crate::ir::Expr::Arith {
+                op: ArithOp::Sub,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            })
+        }
+        BinaryOp::Mul => {
+            let lhs = lower_expr(&b.left, scope)?;
+            let rhs = lower_expr(&b.right, scope)?;
+            Ok(crate::ir::Expr::Arith {
+                op: ArithOp::Mul,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            })
+        }
+        BinaryOp::Div => {
+            let lhs = lower_expr(&b.left, scope)?;
+            let rhs = lower_expr(&b.right, scope)?;
+            Ok(crate::ir::Expr::Arith {
+                op: ArithOp::Div,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            })
+        }
+        BinaryOp::Mod => {
+            let lhs = lower_expr(&b.left, scope)?;
+            let rhs = lower_expr(&b.right, scope)?;
+            Ok(crate::ir::Expr::Arith {
+                op: ArithOp::Mod,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            })
+        }
+        // Comparison: === and == both → Eq; !== and != → Ne.
+        BinaryOp::EqEqEq | BinaryOp::EqEq => {
+            let lhs = lower_expr(&b.left, scope)?;
+            let rhs = lower_expr(&b.right, scope)?;
+            Ok(crate::ir::Expr::Compare {
+                op: CmpOp::Eq,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            })
+        }
+        BinaryOp::NotEqEq | BinaryOp::NotEq => {
+            let lhs = lower_expr(&b.left, scope)?;
+            let rhs = lower_expr(&b.right, scope)?;
+            Ok(crate::ir::Expr::Compare {
+                op: CmpOp::Ne,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            })
+        }
+        BinaryOp::Gt => {
+            let lhs = lower_expr(&b.left, scope)?;
+            let rhs = lower_expr(&b.right, scope)?;
+            Ok(crate::ir::Expr::Compare {
+                op: CmpOp::Gt,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            })
+        }
+        BinaryOp::Lt => {
+            let lhs = lower_expr(&b.left, scope)?;
+            let rhs = lower_expr(&b.right, scope)?;
+            Ok(crate::ir::Expr::Compare {
+                op: CmpOp::Lt,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            })
+        }
+        BinaryOp::GtEq => {
+            let lhs = lower_expr(&b.left, scope)?;
+            let rhs = lower_expr(&b.right, scope)?;
+            Ok(crate::ir::Expr::Compare {
+                op: CmpOp::Ge,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            })
+        }
+        BinaryOp::LtEq => {
+            let lhs = lower_expr(&b.left, scope)?;
+            let rhs = lower_expr(&b.right, scope)?;
+            Ok(crate::ir::Expr::Compare {
+                op: CmpOp::Le,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            })
+        }
+        BinaryOp::LogicalAnd => {
+            let lhs = lower_expr(&b.left, scope)?;
+            let rhs = lower_expr(&b.right, scope)?;
+            Ok(crate::ir::Expr::Logical {
+                op: LogOp::And,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            })
+        }
+        BinaryOp::LogicalOr => {
+            let lhs = lower_expr(&b.left, scope)?;
+            let rhs = lower_expr(&b.right, scope)?;
+            Ok(crate::ir::Expr::Logical {
+                op: LogOp::Or,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            })
+        }
+        other => Err(LowerError::at(
+            b.span,
+            ErrorKind::InlineUntranslatable(format!("{other:?}")),
+        )),
+    }
+}
+
+/// Lower a call expression as a filter in inline mode.
+/// Only `recv.method(args)` where method ∈ {toUpperCase, toLowerCase, trim, slice, join}.
+/// Any other call → `InlineUntranslatable`.
+fn lower_call_as_filter(c: &CallExpr, scope: &Scope) -> Result<crate::ir::Expr, LowerError> {
+    let Callee::Expr(callee) = &c.callee else {
+        return Err(LowerError::at(
+            c.span,
+            ErrorKind::InlineUntranslatable("call".to_string()),
+        ));
+    };
+    let SwcExpr::Member(member) = callee.as_ref() else {
+        return Err(LowerError::at(
+            c.span,
+            ErrorKind::InlineUntranslatable("call".to_string()),
+        ));
+    };
+    let MemberProp::Ident(method_ident) = &member.prop else {
+        return Err(LowerError::at(
+            c.span,
+            ErrorKind::InlineUntranslatable("call".to_string()),
+        ));
+    };
+    let method_name = method_ident.sym.as_ref();
+    let filter_name = match method_name {
+        "toUpperCase" => "upper",
+        "toLowerCase" => "lower",
+        "trim" => "trim",
+        "slice" => "slice",
+        "join" => "join",
+        other => {
+            return Err(LowerError::at(
+                c.span,
+                ErrorKind::InlineUntranslatable(other.to_string()),
+            ));
+        }
+    };
+    let recv = lower_expr(&member.obj, scope)?;
+    let mut args: Vec<crate::ir::Expr> = Vec::new();
+    for arg in &c.args {
+        if arg.spread.is_some() {
+            return Err(LowerError::at(
+                c.span,
+                ErrorKind::InlineUntranslatable("spread arg".to_string()),
+            ));
+        }
+        args.push(lower_expr(&arg.expr, scope)?);
+    }
+    Ok(crate::ir::Expr::Filter {
+        value: Box::new(recv),
+        name: filter_name.to_string(),
+        args,
+    })
 }
 
 /// Lower a `MemberExpr` into one of the chain-rooted IR shapes.
@@ -1440,6 +1914,19 @@ fn lower_expr(expr: &SwcExpr, scope: &Scope) -> Result<crate::ir::Expr, LowerErr
 /// A `PrivateName` anywhere in the chain → `ComplexExpressionNotSupported`.
 /// A non-`Ident` root (call, literal, etc.) → `ComplexExpressionNotSupported`.
 fn lower_member(m: &MemberExpr, scope: &Scope) -> Result<crate::ir::Expr, LowerError> {
+    // GATE: inline mode — trailing `.length` → Filter{name:"length", args:[]}.
+    if scope.inline.is_some()
+        && let MemberProp::Ident(prop_ident) = &m.prop
+        && prop_ident.sym.as_ref() == "length"
+    {
+        let recv = lower_expr(&m.obj, scope)?;
+        return Ok(crate::ir::Expr::Filter {
+            value: Box::new(recv),
+            name: "length".to_string(),
+            args: vec![],
+        });
+    }
+
     // Collect chain leaf → root, then reverse. The leaf segment is `m.prop`.
     let mut path_rev: Vec<String> = Vec::new();
     let leaf = match &m.prop {
@@ -1584,8 +2071,19 @@ fn infer_props_types(node: &JsxNode, props: &mut PropsShape) -> Result<(), Lower
         // SsrComponent is opaque — it has its own type scope and is not
         // recursed into for prop-type inference here.
         JsxNode::SsrComponent { .. } => Ok(()),
-        JsxNode::Cond { .. } => unreachable!("Cond handled in a later task"),
-        JsxNode::ChildrenSlot => unreachable!("ChildrenSlot handled in a later task"),
+        JsxNode::Cond {
+            test,
+            consequent,
+            alternate,
+        } => {
+            infer_from_expr(test, props)?;
+            infer_props_types(consequent, props)?;
+            if let Some(alt) = alternate {
+                infer_props_types(alt, props)?;
+            }
+            Ok(())
+        }
+        JsxNode::ChildrenSlot => Ok(()),
     }
 }
 
@@ -1606,12 +2104,34 @@ fn infer_from_expr(expr: &crate::ir::Expr, props: &mut PropsShape) -> Result<(),
         | crate::ir::Expr::MapMember { .. }
         | crate::ir::Expr::StaticText(_)
         | crate::ir::Expr::StaticNum(_) => Ok(()),
-        crate::ir::Expr::Arith { .. }
-        | crate::ir::Expr::Concat(_)
-        | crate::ir::Expr::Filter { .. }
-        | crate::ir::Expr::Compare { .. }
-        | crate::ir::Expr::Logical { .. }
-        | crate::ir::Expr::Not(_) => unreachable!("new Expr variants handled in a later task"),
+        // These variants may appear in inline-mode lowered trees; they carry no
+        // top-level prop type information themselves (the sub-expressions do).
+        crate::ir::Expr::Arith { lhs, rhs, .. } => {
+            infer_from_expr(lhs, props)?;
+            infer_from_expr(rhs, props)
+        }
+        crate::ir::Expr::Concat(parts) => {
+            for p in parts {
+                infer_from_expr(p, props)?;
+            }
+            Ok(())
+        }
+        crate::ir::Expr::Filter { value, args, .. } => {
+            infer_from_expr(value, props)?;
+            for a in args {
+                infer_from_expr(a, props)?;
+            }
+            Ok(())
+        }
+        crate::ir::Expr::Compare { lhs, rhs, .. } => {
+            infer_from_expr(lhs, props)?;
+            infer_from_expr(rhs, props)
+        }
+        crate::ir::Expr::Logical { lhs, rhs, .. } => {
+            infer_from_expr(lhs, props)?;
+            infer_from_expr(rhs, props)
+        }
+        crate::ir::Expr::Not(inner) => infer_from_expr(inner, props),
     }
 }
 
@@ -1652,8 +2172,18 @@ fn collect_map_member_fields(
         JsxNode::Island { .. } => {}
         // SsrComponent is opaque in map context — no MapMember refs to collect.
         JsxNode::SsrComponent { .. } => {}
-        JsxNode::Cond { .. } => unreachable!("Cond handled in a later task"),
-        JsxNode::ChildrenSlot => unreachable!("ChildrenSlot handled in a later task"),
+        JsxNode::Cond {
+            test,
+            consequent,
+            alternate,
+        } => {
+            collect_map_member_from_expr(test, binding, fields);
+            collect_map_member_fields(consequent, binding, fields);
+            if let Some(alt) = alternate {
+                collect_map_member_fields(alt, binding, fields);
+            }
+        }
+        JsxNode::ChildrenSlot => {}
     }
 }
 
@@ -2802,6 +3332,296 @@ mod tests {
         assert!(
             matches!(err.kind, ErrorKind::ComponentIsrUnsupported(_)),
             "got {:?}",
+            err.kind
+        );
+    }
+
+    // ── T5 inline-mode tests ──────────────────────────────────────────────────
+
+    /// Helper: parse source, call lower_component_inline.
+    fn inline_lower(
+        src: &str,
+        subst: HashMap<String, crate::ir::Expr>,
+        has_children: bool,
+    ) -> Result<Vec<JsxNode>, LowerError> {
+        let parsed = parse(src, "<test>").unwrap();
+        super::lower_component_inline(&parsed, subst, has_children)
+    }
+
+    #[test]
+    fn inline_substitutes_member_prop() {
+        // function C({title}){return <h1>{title}</h1>}
+        // subst: title → MemberAccess{root:"data", path:["x"]}
+        let src = r#"export default function C({ title }: { title: string }) {
+  return <h1>{title}</h1>;
+}"#;
+        let mut subst = HashMap::new();
+        subst.insert(
+            "title".to_string(),
+            crate::ir::Expr::MemberAccess {
+                root: "data".to_string(),
+                path: vec!["x".to_string()],
+            },
+        );
+        let nodes = inline_lower(src, subst, false).unwrap();
+        assert_eq!(nodes.len(), 1);
+        match &nodes[0] {
+            JsxNode::Element { tag, children, .. } => {
+                assert_eq!(tag, "h1");
+                assert_eq!(children.len(), 1);
+                match &children[0] {
+                    JsxNode::Expr(crate::ir::Expr::MemberAccess { root, path }) => {
+                        assert_eq!(root, "data");
+                        assert_eq!(path, &vec!["x".to_string()]);
+                    }
+                    other => panic!("expected MemberAccess, got {other:?}"),
+                }
+            }
+            other => panic!("expected h1 element, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inline_children_slot() {
+        // function C({children}){return <div>{children}</div>}  has_children=true
+        let src = r#"export default function C({ children }: any) {
+  return <div>{children}</div>;
+}"#;
+        let nodes = inline_lower(src, HashMap::new(), true).unwrap();
+        assert_eq!(nodes.len(), 1);
+        match &nodes[0] {
+            JsxNode::Element { tag, children, .. } => {
+                assert_eq!(tag, "div");
+                assert_eq!(children.len(), 1);
+                assert!(
+                    matches!(children[0], JsxNode::ChildrenSlot),
+                    "expected ChildrenSlot, got {:?}",
+                    children[0]
+                );
+            }
+            other => panic!("expected div element, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inline_and_to_cond() {
+        // function C({show}){return <div>{show && <span/>}</div>}
+        let src = r#"export default function C({ show }: any) {
+  return <div>{show && <span/>}</div>;
+}"#;
+        let mut subst = HashMap::new();
+        subst.insert(
+            "show".to_string(),
+            crate::ir::Expr::Field("show".to_string()),
+        );
+        let nodes = inline_lower(src, subst, false).unwrap();
+        assert_eq!(nodes.len(), 1);
+        match &nodes[0] {
+            JsxNode::Element { tag, children, .. } => {
+                assert_eq!(tag, "div");
+                assert_eq!(children.len(), 1);
+                match &children[0] {
+                    JsxNode::Cond {
+                        alternate,
+                        consequent,
+                        ..
+                    } => {
+                        assert!(alternate.is_none(), "expected no alternate");
+                        assert!(
+                            matches!(consequent.as_ref(), JsxNode::Element { tag, .. } if tag == "span")
+                        );
+                    }
+                    other => panic!("expected Cond, got {other:?}"),
+                }
+            }
+            other => panic!("expected div, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inline_ternary_to_cond() {
+        // {ok ? <a/> : <b/>} → Cond{alternate:Some}
+        let src = r#"export default function C({ ok }: any) {
+  return <div>{ok ? <a/> : <b/>}</div>;
+}"#;
+        let mut subst = HashMap::new();
+        subst.insert("ok".to_string(), crate::ir::Expr::Field("ok".to_string()));
+        let nodes = inline_lower(src, subst, false).unwrap();
+        let div_children = match &nodes[0] {
+            JsxNode::Element { children, .. } => children,
+            other => panic!("expected div, got {other:?}"),
+        };
+        match &div_children[0] {
+            JsxNode::Cond {
+                alternate,
+                consequent,
+                ..
+            } => {
+                assert!(alternate.is_some(), "expected alternate");
+                assert!(matches!(consequent.as_ref(), JsxNode::Element { tag, .. } if tag == "a"));
+                assert!(
+                    matches!(alternate.as_ref().unwrap().as_ref(), JsxNode::Element { tag, .. } if tag == "b")
+                );
+            }
+            other => panic!("expected Cond, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inline_ifelse_return_to_cond() {
+        // function C({ok}){ if(ok) return <a/>; return <b/>; }
+        let src = r#"export default function C({ ok }: any) {
+  if (ok) return <a/>;
+  return <b/>;
+}"#;
+        let mut subst = HashMap::new();
+        subst.insert("ok".to_string(), crate::ir::Expr::Field("ok".to_string()));
+        let nodes = inline_lower(src, subst, false).unwrap();
+        assert_eq!(nodes.len(), 1);
+        match &nodes[0] {
+            JsxNode::Cond {
+                alternate,
+                consequent,
+                ..
+            } => {
+                assert!(alternate.is_some(), "expected alternate");
+                assert!(matches!(consequent.as_ref(), JsxNode::Element { tag, .. } if tag == "a"));
+                assert!(
+                    matches!(alternate.as_ref().unwrap().as_ref(), JsxNode::Element { tag, .. } if tag == "b")
+                );
+            }
+            other => panic!("expected Cond, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inline_template_concat() {
+        // {`Hi ${name}`} → Concat([StaticText("Hi "), <name expr>])
+        let src = r#"export default function C({ name }: any) {
+  return <span>{`Hi ${name}`}</span>;
+}"#;
+        let mut subst = HashMap::new();
+        subst.insert(
+            "name".to_string(),
+            crate::ir::Expr::Field("name".to_string()),
+        );
+        let nodes = inline_lower(src, subst, false).unwrap();
+        let children = match &nodes[0] {
+            JsxNode::Element { children, .. } => children,
+            other => panic!("expected span, got {other:?}"),
+        };
+        match &children[0] {
+            JsxNode::Expr(crate::ir::Expr::Concat(parts)) => {
+                assert!(parts.len() >= 2, "expected at least 2 parts, got {parts:?}");
+                assert!(
+                    matches!(&parts[0], crate::ir::Expr::StaticText(s) if s.contains("Hi")),
+                    "expected StaticText with 'Hi', got {:?}",
+                    parts[0]
+                );
+            }
+            other => panic!("expected Concat, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inline_method_upper() {
+        // {title.toUpperCase()} → Filter{name:"upper"}
+        let src = r#"export default function C({ title }: any) {
+  return <span>{title.toUpperCase()}</span>;
+}"#;
+        let mut subst = HashMap::new();
+        subst.insert(
+            "title".to_string(),
+            crate::ir::Expr::Field("title".to_string()),
+        );
+        let nodes = inline_lower(src, subst, false).unwrap();
+        let children = match &nodes[0] {
+            JsxNode::Element { children, .. } => children,
+            other => panic!("expected span, got {other:?}"),
+        };
+        match &children[0] {
+            JsxNode::Expr(crate::ir::Expr::Filter { name, args, .. }) => {
+                assert_eq!(name, "upper");
+                assert!(args.is_empty());
+            }
+            other => panic!("expected Filter{{upper}}, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inline_arith() {
+        // {a + b} → Arith{Add}
+        let src = r#"export default function C({ a, b }: any) {
+  return <span>{a + b}</span>;
+}"#;
+        let mut subst = HashMap::new();
+        subst.insert("a".to_string(), crate::ir::Expr::Field("a".to_string()));
+        subst.insert("b".to_string(), crate::ir::Expr::Field("b".to_string()));
+        let nodes = inline_lower(src, subst, false).unwrap();
+        let children = match &nodes[0] {
+            JsxNode::Element { children, .. } => children,
+            other => panic!("expected span, got {other:?}"),
+        };
+        match &children[0] {
+            JsxNode::Expr(crate::ir::Expr::Arith { op, .. }) => {
+                assert_eq!(*op, crate::ir::ArithOp::Add);
+            }
+            other => panic!("expected Arith{{Add}}, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inline_length() {
+        // {items.length} → Filter{name:"length"}
+        let src = r#"export default function C({ items }: any) {
+  return <span>{items.length}</span>;
+}"#;
+        let mut subst = HashMap::new();
+        subst.insert(
+            "items".to_string(),
+            crate::ir::Expr::Field("items".to_string()),
+        );
+        let nodes = inline_lower(src, subst, false).unwrap();
+        let children = match &nodes[0] {
+            JsxNode::Element { children, .. } => children,
+            other => panic!("expected span, got {other:?}"),
+        };
+        match &children[0] {
+            JsxNode::Expr(crate::ir::Expr::Filter { name, args, .. }) => {
+                assert_eq!(name, "length");
+                assert!(args.is_empty());
+            }
+            other => panic!("expected Filter{{length}}, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inline_unknown_method_untranslatable() {
+        // {x.reduce(...)} → Err(InlineUntranslatable)
+        let src = r#"export default function C({ x }: any) {
+  return <span>{x.reduce((a, b) => a + b, 0)}</span>;
+}"#;
+        let mut subst = HashMap::new();
+        subst.insert("x".to_string(), crate::ir::Expr::Field("x".to_string()));
+        let err = inline_lower(src, subst, false).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::InlineUntranslatable(_)),
+            "expected InlineUntranslatable, got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn noninline_logical_still_errors() {
+        // THE GATE: normal route (no inline ctx) with {show && <span/>} → Err(ComplexExpressionNotSupported).
+        let src = r#"export default function X({ show }: any) {
+  return <div>{show && <span/>}</div>;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let err = lower(&parsed).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::ComplexExpressionNotSupported),
+            "expected ComplexExpressionNotSupported (gate check), got {:?}",
             err.kind
         );
     }

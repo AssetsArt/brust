@@ -572,6 +572,8 @@ pub enum ErrorKind {
         "`<BrustPage>` owns `<head>` — a literal `<head>` child is not supported; set head tags via props instead (e.g. `title=\"…\"`, `description=\"…\"`)"
     )]
     BrustPageLiteralHeadNotSupported,
+    #[error("inline lowering cannot translate `{0}` — expression is too complex for inline mode")]
+    InlineUntranslatable(String),
 }
 
 impl CompileError {
