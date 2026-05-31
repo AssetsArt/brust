@@ -422,6 +422,10 @@ pub enum ErrorKind {
     )]
     IslandInMapNotSupported,
     #[error(
+        "`<{0}/>` SSR component inside `.map(...)` not supported — instance would collide across iterations"
+    )]
+    SsrComponentInMapNotSupported(String),
+    #[error(
         "`<Island>` must be self-closing — children are not supported (the component renders client-side)"
     )]
     IslandHasChildren,
