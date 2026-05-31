@@ -640,59 +640,10 @@ fn lower_island(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode,
             // literal only. ssr-required is enforced after the attr loop.
             "isr" => {
                 let err = || LowerError::at(jsx_attr.span, ErrorKind::IslandIsrUnsupported);
-                let Some(JSXAttrValue::JSXExprContainer(c)) = &jsx_attr.value else {
-                    return Err(err());
-                };
-                let JSXExpr::Expr(e) = &c.expr else {
-                    return Err(err());
-                };
-                let SwcExpr::Object(obj) = strip_paren(e.as_ref()) else {
-                    return Err(err());
-                };
-                for prop in &obj.props {
-                    let PropOrSpread::Prop(p) = prop else {
-                        return Err(err());
-                    };
-                    let Prop::KeyValue(kv) = p.as_ref() else {
-                        return Err(err());
-                    };
-                    let pname = match &kv.key {
-                        PropName::Ident(i) => i.sym.to_string(),
-                        PropName::Str(s) => s.value.to_string_lossy().into_owned(),
-                        _ => return Err(err()),
-                    };
-                    match pname.as_str() {
-                        "key" => key_path = Some(expr_to_path(&kv.value, scope, &err)?),
-                        "tags" => tags_path = Some(expr_to_path(&kv.value, scope, &err)?),
-                        "revalidate" => {
-                            let SwcExpr::Lit(Lit::Num(n)) = strip_paren(&kv.value) else {
-                                return Err(err());
-                            };
-                            // Non-negative integer SECONDS. A bare `as u32` would
-                            // silently truncate (60.5 → 60) and saturate (-1 → 0,
-                            // 1e12 → u32::MAX) — turning a typo into a valid-but-
-                            // wrong TTL. Upper bound is u32::MAX/1000, not u32::MAX:
-                            // the runtime sends `revalidate * 1000` ms across NAPI
-                            // as a u32, so a larger value would silently wrap to a
-                            // garbage TTL. Reject all of these.
-                            const MAX_REVALIDATE_SECS: f64 = (u32::MAX / 1000) as f64;
-                            if n.value < 0.0
-                                || n.value.fract() != 0.0
-                                || n.value > MAX_REVALIDATE_SECS
-                            {
-                                return Err(err());
-                            }
-                            revalidate = Some(n.value as u32);
-                        }
-                        _ => return Err(err()),
-                    }
-                }
-                // `key` is mandatory when `isr` is present — an empty,
-                // tags-only, or revalidate-only isr has nothing to key the
-                // cache by and is silently useless. Reject it loudly.
-                if key_path.is_none() {
-                    return Err(err());
-                }
+                let (k, t, r) = parse_isr_object(jsx_attr, scope, &err)?;
+                key_path = Some(k);
+                tags_path = t;
+                revalidate = r;
             }
             // Unknown attributes on an island are ignored (forward-compatible);
             // T3 owns the full attribute vocabulary.
@@ -789,6 +740,71 @@ fn island_props_path(
     };
 
     expr_to_path(e.as_ref(), scope, &err)
+}
+
+/// Parse an `isr={{ key, tags?, revalidate? }}` attribute object into
+/// `(key_path, tags_path, revalidate)`. Shared by `lower_island` and
+/// `lower_ssr_component`. `key` is MANDATORY (a missing key is an `err()`
+/// return, never a `None`), hence the non-optional `String` first element.
+/// `key`/`tags` accept the same path shape as `props={…}` (destructured ident
+/// or one-deep member, via `expr_to_path`); `revalidate` is a non-negative
+/// integer literal ≤ u32::MAX/1000 (a larger value would wrap when sent as
+/// `revalidate * 1000` ms across NAPI). `err` produces the caller's error
+/// variant so a bad isr blames the right element (island vs component).
+fn parse_isr_object(
+    jsx_attr: &swc_core::ecma::ast::JSXAttr,
+    scope: &Scope,
+    err: &dyn Fn() -> LowerError,
+) -> Result<(String, Option<String>, Option<u32>), LowerError> {
+    let Some(JSXAttrValue::JSXExprContainer(c)) = &jsx_attr.value else {
+        return Err(err());
+    };
+    let JSXExpr::Expr(e) = &c.expr else {
+        return Err(err());
+    };
+    let SwcExpr::Object(obj) = strip_paren(e.as_ref()) else {
+        return Err(err());
+    };
+    let mut key_path: Option<String> = None;
+    let mut tags_path: Option<String> = None;
+    let mut revalidate: Option<u32> = None;
+    for prop in &obj.props {
+        let PropOrSpread::Prop(p) = prop else {
+            return Err(err());
+        };
+        let Prop::KeyValue(kv) = p.as_ref() else {
+            return Err(err());
+        };
+        let pname = match &kv.key {
+            PropName::Ident(i) => i.sym.to_string(),
+            PropName::Str(s) => s.value.to_string_lossy().into_owned(),
+            _ => return Err(err()),
+        };
+        match pname.as_str() {
+            "key" => key_path = Some(expr_to_path(&kv.value, scope, err)?),
+            "tags" => tags_path = Some(expr_to_path(&kv.value, scope, err)?),
+            "revalidate" => {
+                let SwcExpr::Lit(Lit::Num(n)) = strip_paren(&kv.value) else {
+                    return Err(err());
+                };
+                // Non-negative integer SECONDS. A bare `as u32` would silently
+                // truncate (60.5 → 60) and saturate (-1 → 0, 1e12 → u32::MAX) —
+                // turning a typo into a valid-but-wrong TTL. Upper bound is
+                // u32::MAX/1000, not u32::MAX: the runtime sends `revalidate *
+                // 1000` ms across NAPI as a u32, so a larger value would
+                // silently wrap to a garbage TTL. Reject all of these.
+                const MAX_REVALIDATE_SECS: f64 = (u32::MAX / 1000) as f64;
+                if n.value < 0.0 || n.value.fract() != 0.0 || n.value > MAX_REVALIDATE_SECS {
+                    return Err(err());
+                }
+                revalidate = Some(n.value as u32);
+            }
+            _ => return Err(err()),
+        }
+    }
+    // `key` is mandatory — a tags-/revalidate-only isr has nothing to key by.
+    let key_path = key_path.ok_or_else(err)?;
+    Ok((key_path, tags_path, revalidate))
 }
 
 /// Extract a ≤ 1-member-deep loader-data path from a bare expression. This is
