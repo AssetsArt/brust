@@ -1,3 +1,5 @@
+use std::fmt::Write as _;
+
 use crate::ir::{AttrValue, Component, Expr, JsxAttr, JsxNode};
 
 pub struct FactoryOutput {
@@ -47,7 +49,6 @@ fn collect_factories(node: &JsxNode, out: &mut Vec<FactoryOutput>) {
 }
 
 fn emit_h(component: &str, props: &[JsxAttr], children: &[JsxNode], fo: &mut FactoryOutput) {
-    use std::fmt::Write as _;
     let _ = write!(fo.expr, "h({component}, {{");
     for (i, attr) in props.iter().enumerate() {
         if i > 0 {
@@ -64,7 +65,6 @@ fn emit_h(component: &str, props: &[JsxAttr], children: &[JsxNode], fo: &mut Fac
 }
 
 fn emit_attr_kv(attr: &JsxAttr, fo: &mut FactoryOutput) {
-    use std::fmt::Write as _;
     let _ = write!(fo.expr, "{}: ", attr.name);
     match &attr.value {
         AttrValue::Empty => fo.expr.push_str("true"),
@@ -81,7 +81,6 @@ fn emit_attr_kv(attr: &JsxAttr, fo: &mut FactoryOutput) {
 }
 
 fn emit_child(node: &JsxNode, fo: &mut FactoryOutput) {
-    use std::fmt::Write as _;
     match node {
         JsxNode::Element {
             tag,
