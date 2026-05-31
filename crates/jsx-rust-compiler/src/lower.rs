@@ -564,6 +564,9 @@ fn lower_island(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode,
         props_path,
         hydrate,
         ssr,
+        key_path: None,
+        tags_path: None,
+        revalidate: None,
     })
 }
 
