@@ -47,8 +47,11 @@ pub struct MokaStore {
 
 impl MokaStore {
     pub fn new(max_capacity: u64) -> Self {
+        // Clamp to ≥1: moka `Cache::new(0)` is a zero-capacity sink where every
+        // insert is a no-op and every get a miss — a silent footgun. (cache.rs
+        // uses NonZeroUsize for the same reason.)
         Self {
-            cache: Cache::new(max_capacity),
+            cache: Cache::new(max_capacity.max(1)),
             tag_index: Mutex::new(HashMap::new()),
         }
     }
@@ -66,6 +69,13 @@ impl CacheStore for MokaStore {
 
     fn set(&self, key: &str, tags: &[String], ttl: Option<Duration>, html: String, props: String) {
         let expires_at = ttl.map(|d| Instant::now() + d);
+        // Ordering is load-bearing: index the tags BEFORE the moka insert. The
+        // reverse (insert then index) could leave a live, un-indexed entry if a
+        // panic hit between the two. With this order the worst case is a benign
+        // lost-invalidation (a concurrent invalidate_tags racing the insert just
+        // misses the not-yet-present key — the entry then lazy-expires or is
+        // dropped by invalidate_key). Safe because same-key renders are
+        // byte-identical (spec invariant 2), so a stale serve is never *wrong*.
         if !tags.is_empty() {
             let mut idx = self.tag_index.lock();
             for tag in tags {
@@ -87,20 +97,30 @@ impl CacheStore for MokaStore {
     }
 
     fn invalidate_tags(&self, tags: &[String]) {
-        let mut idx = self.tag_index.lock();
-        for tag in tags {
-            if let Some(keys) = idx.remove(tag) {
-                for k in keys {
-                    self.cache.invalidate(&k);
-                }
-            }
+        // Collect the affected keys under the lock, then DROP it before touching
+        // moka — `cache.invalidate` does internal eviction-scheduling work, and
+        // holding the tag_index Mutex across a large tag group would block every
+        // concurrent tagged `set` for that whole duration.
+        let keys: Vec<String> = {
+            let mut idx = self.tag_index.lock();
+            tags.iter()
+                .filter_map(|t| idx.remove(t))
+                .flatten()
+                .collect()
+        };
+        for k in keys {
+            self.cache.invalidate(&k);
         }
     }
 
     fn clear(&self) {
+        // Hold tag_index across the whole clear so a concurrent tagged `set`
+        // (which also locks tag_index) can't slip an entry in between the moka
+        // wipe and the index wipe, leaving a live but un-indexed entry.
+        let mut idx = self.tag_index.lock();
         self.cache.invalidate_all();
         self.cache.run_pending_tasks();
-        self.tag_index.lock().clear();
+        idx.clear();
     }
 }
 
