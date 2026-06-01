@@ -1,7 +1,9 @@
 // Route loaders. Each runs in a Bun worker (full JS), fetches from PokeAPI, and
-// returns a fully render-ready view-model. All formatting, CSS classes, and
-// inline-style strings are computed HERE because the native (jinja) page
-// templates can only interpolate member paths. See ../FRAMEWORK-GAPS.md.
+// returns a fully render-ready view-model. Templates now do conditionals (S11),
+// `style={{…}}` objects (S1), and dynamic head props (S8); the loader still
+// precomputes formatted strings, booleans for conditionals, and multi-property
+// style strings (no template-literals / arithmetic / helper calls in templates).
+// See ../FRAMEWORK-GAPS.md.
 
 import { z } from 'zod'
 import type { BrustRequest } from '../../../runtime/routes.ts'
@@ -63,7 +65,6 @@ export async function listLoader({ req }: LoaderCtx): Promise<ListData> {
   const hasPrev = offset > 0
   const hasNext = offset + PAGE < total
   const prevOffset = Math.max(0, offset - PAGE)
-  const btn = 'aa-btn aa-btn--secondary aa-btn--sm'
 
   return {
     items,
@@ -73,8 +74,11 @@ export async function listLoader({ req }: LoaderCtx): Promise<ListData> {
     offsetLabel: String(offset),
     showingLabel: `${fmt(offset + 1)}–${fmt(Math.min(offset + PAGE, total))} of ${fmt(total)}`,
     pageLabel: `${pageNo} / ${lastPage}`,
-    prevClass: hasPrev ? btn : `${btn} dex-pager__btn--off`,
-    nextClass: hasNext ? btn : `${btn} dex-pager__btn--off`,
+    // Real conditionals now exist in native routes (GAPS S11 closed): the
+    // template branches on these booleans with `{flags.hasPrev ? <a/> : <span/>}`
+    // instead of always-rendering a loader-computed hide-class.
+    hasPrev,
+    hasNext,
     prevHref: hasPrev ? (prevOffset > 0 ? `/?offset=${prevOffset}` : '/') : '#',
     nextHref: hasNext ? `/?offset=${offset + PAGE}` : '#',
     teamInitial: teamStore.list(),
@@ -106,7 +110,9 @@ export async function detailLoader({ params }: LoaderCtx): Promise<DetailData> {
     return {
       label: STAT_LABEL[s.name] ?? s.name,
       base: s.base,
-      barWidth: `width:${pct}%`,
+      // Bare percent — the template builds the declaration via the S1 style
+      // object: `style={{ width: st.barWidth }}` → `width:62%`.
+      barWidth: `${pct}%`,
       barClassName: `dex-statbar__fill dex-statbar__fill--${statBucket(s.base)}`,
     }
   })
@@ -114,34 +120,30 @@ export async function detailLoader({ params }: LoaderCtx): Promise<DetailData> {
   const abilities = p.abilities.map((a) => ({
     displayName: cap(a),
     initial: a.charAt(0).toUpperCase(),
-    iconStyle: `background:${tint}`,
+    // Bare color value — template does `style={{ background: a.iconColor }}`.
+    iconColor: tint,
   }))
 
-  const evolution = rawEvo.map((s, i) => {
-    const showArrow = i > 0
-    const showLevel = i > 0 && s.minLevel != null
-    return {
-      id: s.id,
-      name: s.name,
-      displayName: cap(s.name),
-      num: pad(s.id),
-      artwork: artwork(s.id),
-      detailHref: `/pokemon/${s.name}`,
-      levelLabel: s.minLevel != null ? `Lv ${s.minLevel}` : '',
-      sepClassName: showArrow ? 'dex-evo__sep' : 'dex-evo__sep dex-hide',
-      levelClassName: showLevel ? 'dex-evo__lv' : 'dex-evo__lv dex-hide',
-      cardClassName: s.id === p.id ? 'dex-evo__card dex-evo__card--current' : 'dex-evo__card',
-    }
-  })
+  const evolution = rawEvo.map((s, i) => ({
+    id: s.id,
+    name: s.name,
+    displayName: cap(s.name),
+    num: pad(s.id),
+    artwork: artwork(s.id),
+    detailHref: `/pokemon/${s.name}`,
+    levelLabel: s.minLevel != null ? `Lv ${s.minLevel}` : '',
+    // Real per-item conditionals now work in native routes (S11): the template
+    // tests these booleans instead of toggling a precomputed `dex-hide` class.
+    isFirst: i === 0,
+    showLevel: i > 0 && s.minLevel != null,
+    cardClassName: s.id === p.id ? 'dex-evo__card dex-evo__card--current' : 'dex-evo__card',
+  }))
 
   const hasEvolution = evolution.length > 1
 
   return {
     notFound: false,
-    contentClass: 'dex-detail-grid',
-    notFoundClass: 'dex-notfound dex-hide',
-    abilitiesClass: abilities.length > 0 ? 'dex-abilities' : 'dex-abilities dex-hide',
-    evoSectionClass: hasEvolution ? 'aa-section dex-evo' : 'aa-section dex-evo dex-hide',
+    pageTitle: `${cap(p.name)} · PokéDex`,
     name: p.name,
     id: p.id,
     displayName: cap(p.name),
@@ -175,10 +177,7 @@ export async function detailLoader({ params }: LoaderCtx): Promise<DetailData> {
 function emptyDetail(name: string): DetailData {
   return {
     notFound: true,
-    contentClass: 'dex-detail-grid dex-hide',
-    notFoundClass: 'dex-notfound',
-    abilitiesClass: 'dex-abilities dex-hide',
-    evoSectionClass: 'aa-section dex-evo dex-hide',
+    pageTitle: `${cap(name)} · PokéDex`,
     name,
     id: 0,
     displayName: cap(name),

@@ -1,10 +1,11 @@
 // Domain + view-model types for the PokéDex example.
 //
-// IMPORTANT (native constraint): the page components are `native: true` routes
-// compiled to minijinja. They can only interpolate MEMBER PATHS — no helper
-// calls, no `style={{…}}` objects, no string concatenation. So every formatted
-// string, CSS class, and inline-style string is precomputed here in the loader
-// and handed to the template as plain fields. See ../FRAMEWORK-GAPS.md S1.
+// NATIVE NOTE: the page components are `native: true` routes compiled to
+// minijinja. They now support conditionals (S11), `style={{…}}` object attrs
+// (S1), and dynamic `<BrustPage>` head props (S8) — all ✅ FIXED. Still
+// precomputed in the loader: formatted strings, helper-derived values, and
+// multi-property style strings (templates have no template-literals / arithmetic
+// / helper calls). See ../FRAMEWORK-GAPS.md.
 
 /** A single list cell — derived from the list endpoint alone (no detail fetch,
  *  see FRAMEWORK-GAPS.md S2 / N+1 avoidance). */
@@ -24,10 +25,10 @@ export interface ListData {
   offset: number
   showingLabel: string // "1–20 of 1,302"
   pageLabel: string // "1 / 66"
-  // Native routes can't use conditionals, so "disabled" is a precomputed class
-  // (pointer-events:none) rather than `{hasPrev ? <a> : <span>}`. See GAPS S11.
-  prevClass: string
-  nextClass: string
+  // Native routes now support conditionals (GAPS S11 closed): the template
+  // branches with `{flags.hasPrev ? <a/> : <span/>}` on these booleans.
+  hasPrev: boolean
+  hasNext: boolean
   prevHref: string
   nextHref: string
   offsetLabel: string // raw offset for the loader-echo line
@@ -42,14 +43,14 @@ export interface TypeBadgeVM {
 export interface StatVM {
   label: string // "HP" / "Atk" / …
   base: number
-  barWidth: string // "width:62%"
+  barWidth: string // "62%" — fed into `style={{ width: barWidth }}` (S1)
   barClassName: string // "dex-statbar__fill dex-statbar__fill--mid"
 }
 
 export interface AbilityVM {
   displayName: string // "Overgrow"
   initial: string // "O"
-  iconStyle: string // "background:var(--success-500)"
+  iconColor: string // type tint — fed into `style={{ background: iconColor }}` (S1)
 }
 
 export interface EvolutionStageVM {
@@ -60,23 +61,21 @@ export interface EvolutionStageVM {
   artwork: string
   detailHref: string
   levelLabel: string // "Lv 16"
-  // Conditionals aren't allowed in native routes, so the arrow/level separators
-  // are always rendered and hidden via these precomputed classes. See GAPS S11.
-  sepClassName: string // "dex-evo__sep" (+ " dex-hide" on the first stage)
-  levelClassName: string // "dex-evo__lv" (+ " dex-hide" when there's no level)
+  // Native routes now support per-item conditionals (GAPS S11 closed): the
+  // template tests these booleans (`{!s.isFirst && <Arrow/>}`) instead of
+  // toggling a precomputed `dex-hide` class.
+  isFirst: boolean // true on the first stage (no leading arrow)
+  showLevel: boolean // true when this stage has a min level to show
   cardClassName: string // adds the "current" highlight when this is the open Pokémon
 }
 
 /** The full view-model handed to DetailPage. Every field is render-ready. */
 export interface DetailData {
   notFound: boolean
-  // Native routes can't branch with `{notFound ? … : …}`, so BOTH the content
-  // and the 404 block are always emitted and one is hidden by a precomputed
-  // class. See FRAMEWORK-GAPS.md S11.
-  contentClass: string // "dex-detail-grid" (+ " dex-hide" when notFound)
-  notFoundClass: string // "dex-notfound" (+ " dex-hide" when found)
-  abilitiesClass: string // hidden when the Pokémon has no abilities
-  evoSectionClass: string // hidden when there's no multi-stage evolution
+  // Native routes now branch with `{notFound ? <NotFound/> : <Content/>}` (S11),
+  // so the content and 404 block are mutually exclusive at render time rather
+  // than both emitted with one hidden via a precomputed class.
+  pageTitle: string // dynamic <title> via `<BrustPage title={d.pageTitle}>` (S8)
   name: string
   // present only when notFound === false:
   id: number

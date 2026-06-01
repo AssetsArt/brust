@@ -25,9 +25,18 @@
 
 ---
 
-## ★ S11 — native route ใช้ conditional ไม่ได้เลย (ใหม่, เจ็บสุด) · CONFIRMED
+## ★ S11 — native route ใช้ conditional ไม่ได้เลย · ✅ FIXED (แก้ framework แล้ว)
 
-**อาการ:** `brust build` ล้มทันทีที่หน้ามี `{cond ? <a/> : <span/>}`:
+**fix:** ปลด gate `scope.inline.is_some()` ออกจากการ recognize `{cond && <X/>}` / `{a ? <A/> : <B/>}`
+ใน `lower_child` ให้ native route body ใช้ได้ด้วย. test รับ member-path truthiness · `!path` ·
+comparison (`x.n > 0`, `===`/`!==` → jinja `==`/`!=`) · logical (`&&`/`||`) ผ่าน `lower_cond_test`
++ `lower_cond_operand` (operand จำกัด member-path/literal — arithmetic/call ถูก reject). branch
+รับ JSXElement/JSXFragment/`null`→Empty; per-item cond ใน `.map` ก็ได้. emit ใช้ `JsxNode::Cond`
+เดิม (ไม่แตะ). ดู spec `docs/superpowers/specs/2026-06-01-native-compiler-expressiveness-design.md` S11.
+**dogfood:** pokedex ทิ้ง `prevClass`/`nextClass`/`contentClass`/`notFoundClass`/`sepClassName`/
+`levelClassName` แล้วใช้ conditional จริง.
+
+**อาการเดิม:** `brust build` ล้มทันทีที่หน้ามี `{cond ? <a/> : <span/>}`:
 
 ```
 native route "ListPage" failed to compile (pages/ListPage.tsx):
@@ -54,9 +63,15 @@ loader ที่บวมด้วย `xxxClass` เต็มไปหมด.
 
 ---
 
-## ★ S1 — `style={{…}}` object ใช้ใน native ไม่ได้ · CONFIRMED
+## ★ S1 — `style={{…}}` object ใช้ใน native ไม่ได้ · ✅ FIXED (แก้ framework แล้ว)
 
-**อาการ:** attribute ที่ค่าเป็น object literal (`style={{ width: 62 }}`) ถูก reject
+**fix:** `lower_attr` intercept `style={{…}}` → serialize เป็น `style="…"` (all-literal → `AttrValue::Static`;
+มี member-path → `AttrValue::Expr(Concat)`). key camelCase→kebab (รวม vendor `-webkit-`/`-moz-`/`-ms-`/`-o-`
++ custom prop); numeric literal ใส่ `px` อัตโนมัติ (ยกเว้น React unitless set); negative (`-8`) รองรับ.
+ดู spec S1. **dogfood:** `barWidth`/`iconColor` เป็น bare value ป้อน `style={{…}}`; `heroStyle` (gradient
+หลาย property) ยังเป็น precomputed string ผ่าน `style={heroStyle}` (member-path attr ปกติ).
+
+**อาการเดิม:** attribute ที่ค่าเป็น object literal (`style={{ width: 62 }}`) ถูก reject
 (`lower_expr` ไม่มีเคส `Object`). prototype ดีไซน์ทุกชิ้นพึ่ง inline style — ย้ายมา native
 ไม่ได้เลยตรงๆ.
 
@@ -184,9 +199,15 @@ native: true route expects template "ListPage.jinja" but it's not registered
 
 ---
 
-## ◆ S8 — `<BrustPage>` head props เป็น string literal เท่านั้น → `<title>` dynamic ไม่ได้ · CONFIRMED
+## ◆ S8 — `<BrustPage>` head props เป็น string literal เท่านั้น → `<title>` dynamic ไม่ได้ · ✅ FIXED
 
-**อาการ:** อยากได้ `<title>Charizard · PokéDex</title>` แต่ native บังคับ
+**fix:** IR ใหม่ `HeadValue{Literal,Path}`; `<BrustPage>` head props (title/description/lang/className/
+bodyClassName) รับ member-path → emit `{{ path }}` ลง slot ที่ตรง (`<title>{{ pageTitle }}</title>`).
+non-path (call/arith) ยัง reject เป็น `BrustPageAttrMustBeStringLiteral`. dynamic value render verbatim
+ตาม contract เดิม (`AutoEscape::None`). ดู spec S8. **dogfood:** detail ใช้ `<BrustPage title={pageTitle}>`,
+loader ตั้ง `pageTitle = "<Name> · PokéDex"` (ครบทุก path รวม 404).
+
+**อาการเดิม:** อยากได้ `<title>Charizard · PokéDex</title>` แต่ native บังคับ
 `title="…"` เป็น literal → ทุกหน้า detail ใช้ title เดียว `"PokéDex · detail"`.
 
 **ทำไม:** native path render `<head>` ฝั่ง Rust ตอน build → props ต้องเป็น compile-time literal

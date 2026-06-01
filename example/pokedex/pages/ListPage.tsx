@@ -3,10 +3,9 @@
 // non-host tags are <BrustPage> (the document shell) and <Island> (the floating
 // team dock) — both intercepted by the compiler.
 //
-// NOTE: native route components support `.map()` but NOT conditionals
-// (`{cond && …}` / `{a ? b : c}` only work inside inline `<Comp native/>`
-// components — see ../FRAMEWORK-GAPS.md S11). So pagination "disabled" state is
-// a precomputed class, not a `{hasPrev ? <a> : <span>}` branch.
+// Native route components support `.map()` AND conditionals (S11): pagination
+// "disabled" state is a real `{hasPrev ? <a/> : <span/>}` branch, not a
+// precomputed hide-class. See ../FRAMEWORK-GAPS.md S11.
 import { BrustPage, Island } from '../../../runtime/index.ts'
 import TeamBuilder from '../components/TeamBuilder'
 import type { ListData } from '../lib/types'
@@ -17,8 +16,8 @@ export default function ListPage({
   showingLabel,
   pageLabel,
   offsetLabel,
-  prevClass,
-  nextClass,
+  hasPrev,
+  hasNext,
   prevHref,
   nextHref,
   teamInitial,
@@ -103,13 +102,25 @@ export default function ListPage({
             <div className="dex-pager">
               <div className="dex-pager__info">{showingLabel}</div>
               <div className="dex-pager__nav">
-                <a className={prevClass} href={prevHref}>
-                  ‹ Prev
-                </a>
+                {hasPrev ? (
+                  <a className="aa-btn aa-btn--secondary aa-btn--sm" href={prevHref}>
+                    ‹ Prev
+                  </a>
+                ) : (
+                  <span className="aa-btn aa-btn--secondary aa-btn--sm dex-pager__btn--off">
+                    ‹ Prev
+                  </span>
+                )}
                 <span className="dex-pager__page">{pageLabel}</span>
-                <a className={nextClass} href={nextHref}>
-                  Next ›
-                </a>
+                {hasNext ? (
+                  <a className="aa-btn aa-btn--secondary aa-btn--sm" href={nextHref}>
+                    Next ›
+                  </a>
+                ) : (
+                  <span className="aa-btn aa-btn--secondary aa-btn--sm dex-pager__btn--off">
+                    Next ›
+                  </span>
+                )}
               </div>
             </div>
           </div>
