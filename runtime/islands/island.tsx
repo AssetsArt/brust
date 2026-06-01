@@ -53,7 +53,13 @@ export function consumeIslandUsedFlag(): boolean {
   return v
 }
 
-export function Island<P extends Record<string, unknown>>({
+// Constraint is `object`, NOT `Record<string, unknown>`: a TS `interface` has no
+// implicit index signature, so it does NOT satisfy `extends Record<string, unknown>`
+// — that made `P` fall back to the constraint and rejected any component whose
+// props are declared as an interface (`<Island component={C} props={p} />` →
+// ts(2322)). `extends object` accepts interfaces, still rejects primitives, and
+// lets `P` infer from `component`/`props` so the two stay type-tied.
+export function Island<P extends object>({
   component: Component,
   props,
   hydrate = 'load',
