@@ -110,6 +110,30 @@ Failed to load resource: the server responded with a status of 411
 
 ---
 
+## ★ S13 — SPA navigation พังบน native route → full reload ทุกครั้ง · ✅ FIXED (แก้ framework แล้ว)
+
+**อาการ:** คลิก internal link ทุกครั้ง network tab ขึ้น `GET <name>` **500 (fetch)** ตามด้วย
+`GET <name>` **200 (document)** — คือ SPA navigation fetch พัง แล้ว fallback ไป full document
+load เสมอ (เสีย performance ของ SPA ทั้งหมด).
+
+**root cause:** `navigationBranch` (`runtime/routes.ts`) React-render ทุก route ผ่าน
+`buildRenderElement` + `renderToString` **เสมอ — ไม่มี native branch**. native component
+destructure loader fields ตรงๆ (`{ types, items, cells }`) ซึ่ง navigation ส่งเป็น `data` prop
+ไม่ได้ spread → `types` เป็น `undefined` → `.map()` throw → 500 → client เห็น non-2xx แล้ว
+full-reload. (`TypeError: undefined is not an object (evaluating 'types.map')` ที่ `DetailPage`.)
+
+**fix (TS-only, ไม่แตะ Rust):** เพิ่ม native branch ใน `navigationBranch` — ถ้า
+`flat.nativeTemplate` ให้ render ผ่าน **minijinja ฝั่ง Rust** (helper `renderNativeRouteToHtml`
+ใช้ `napiRenderJinja` ที่มีอยู่ ซึ่งเขียน `[meta_len][meta][body]` ลง SAB) แล้วอ่าน body กลับมา
+extract `<main>` + `<title>` เหมือน React path. React route ใช้ path เดิม (ไม่กระทบ).
+
+**verify:** `/_brust/page/{,pokemon/charizard,type-chart}` → 200 + `{html,title}` ครบ;
+browser คลิก card → URL เปลี่ยน, content swap, **ไม่ full reload** (window flag รอด),
+TeamBuilder island คงอยู่. regression test: `tests/native-island-ssr.test.ts` →
+`nav: /_brust/page/<native route> returns {html,title}` (5/5 pass, nav tests เดิมไม่ regress).
+
+---
+
 ## ◆ stale island chunk cache หลัง rebuild · CONFIRMED
 
 **อาการ:** แก้โค้ด island, rebuild, refresh — browser ยังรันโค้ดเก่า (เจอตอน fix S12:

@@ -261,6 +261,30 @@ test('GET /_test/native-island-ssr — SSR island: static shell + server-rendere
   expect(body).toContain('/_brust/islands/_bootstrap.js')
 })
 
+test('nav: /_brust/page/<native route> returns {html,title} (regression: native SPA nav 500)', async () => {
+  // Regression for the SPA-navigation-on-native-routes bug: navigationBranch
+  // used to React-render every route via renderToString. A native component
+  // destructures the loader fields directly (they become the jinja scope), so
+  // under React those props arrive undefined → `.map()` throws → 500
+  // "render failed" → the client's non-2xx check forces a full document reload
+  // on EVERY internal link. navigationBranch must instead render the native
+  // route through minijinja (Rust-side) and return its HTML.
+  const res = await fetch(`${BASE_URL}/_brust/page/_test/native-island-ssr`)
+  expect(res.status).toBe(200)
+  expect(res.headers.get('content-type')).toContain('application/json')
+
+  const json = (await res.json()) as { html: string; title: string }
+  expect(typeof json.html).toBe('string')
+  expect(typeof json.title).toBe('string')
+  // The native page's SSR island (with its server-rendered markup) survives the
+  // navigation render — proving the jinja path ran, not a broken React render.
+  expect(json.html).toContain('data-brust-island="Counter"')
+  expect(json.html).toContain('count')
+  expect(json.html).toContain('5')
+  // Not the old error envelope.
+  expect(json.html).not.toContain('render failed')
+})
+
 test('GET /_test/native-two-islands — same Counter twice (client-only + ssr): one chunk, two distinct mounts', async () => {
   // Acceptance S3 real-server proof: ONE page with TWO <Island component={Counter}>
   // reusing the SAME Counter — instance 0 client-only, instance 1 ssr, distinct
