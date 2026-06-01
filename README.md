@@ -73,6 +73,7 @@ route apiece.
 ```
 brustjs dev   <entry>             # dev mode: watcher + WS reload + browser auto-reload
 brustjs build <entry> --out-dir D # prebuilt ./dist/ — run from the project (bun run dist/index.js)
+                  --target <auto|all|TARGET[,…]> # which native binary to bundle (default: auto = host platform)
 brustjs new   <name>              # scaffold a project (partial — see Status)
 ```
 

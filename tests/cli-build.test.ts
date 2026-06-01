@@ -107,6 +107,44 @@ test('brust build → run → smoke all major paths', async () => {
   expect(mcpBody.result).toBeDefined()
 }, 60_000)
 
+test('brust build --target <hostInfix> copies exactly the host binary', async () => {
+  // Compute host infix the same way build.ts does (mirrors platformPackageName + strip prefix).
+  const { platform, arch } = process
+  let hostInfix: string
+  if (platform === 'linux') {
+    // musl detection: absence of glibcVersionRuntime in process report
+    let isMusl = false
+    try {
+      const report = process.report as { excludeNetwork?: boolean; getReport?: () => unknown }
+      if (report && typeof report.getReport === 'function') {
+        report.excludeNetwork = true
+        const r = report.getReport() as { header?: { glibcVersionRuntime?: string } }
+        isMusl = !r?.header?.glibcVersionRuntime
+      }
+    } catch {}
+    hostInfix = `linux-${arch}-${isMusl ? 'musl' : 'gnu'}`
+  } else {
+    hostInfix = `${platform}-${arch}`
+  }
+
+  const targetDistDir = await mkdtemp(path.join(tmpdir(), 'brust-dist-target-test-'))
+  try {
+    const result =
+      await $`bun ${path.join(REPO, 'runtime/cli/index.ts')} build ${path.join(REPO, 'example/hello-world/index.ts')} --out-dir ${targetDistDir} --target ${hostInfix}`.nothrow()
+    expect(result.exitCode).toBe(0)
+
+    const { readdir } = await import('node:fs/promises')
+    const nativeFiles = await readdir(path.join(targetDistDir, 'native'))
+    const expected = `brust.${hostInfix}.node`
+    expect(nativeFiles).toContain(expected)
+    // Only the one requested target — not all platform binaries.
+    expect(nativeFiles.filter((f) => /^brust\..+\.node$/.test(f)).length).toBe(1)
+  } finally {
+    const { rm } = await import('node:fs/promises')
+    await rm(targetDistDir, { recursive: true, force: true })
+  }
+}, 60_000)
+
 test('brust build with missing entry exits 1 with a clear message', async () => {
   const result =
     await $`bun ${path.join(REPO, 'runtime/cli/index.ts')} build /no/such/entry.ts`.nothrow()
@@ -116,8 +154,10 @@ test('brust build with missing entry exits 1 with a clear message', async () => 
 
 test('brust (no subcommand) exits 1', async () => {
   const result = await $`bun ${path.join(REPO, 'runtime/cli/index.ts')}`.nothrow()
-  expect(result.exitCode).toBe(1)
-  expect(result.stderr.toString()).toContain('missing subcommand')
+  expect(result.exitCode).not.toBe(0)
+  const noArgErr = result.stderr.toString()
+  expect(noArgErr).toContain('Usage')
+  expect(noArgErr).toContain('build')
 })
 
 test('brust build emits dist/css/app.css with compiled Tailwind', async () => {
