@@ -1,5 +1,6 @@
 #![deny(clippy::all)]
 
+pub mod action_router;
 mod cache;
 mod http;
 mod io;
