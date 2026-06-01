@@ -306,6 +306,15 @@ export const brust = {
       ]
       configureDevClientSnippet(buildDevClientTag())
     }
+    {
+      const { configureActionPrefixSnippet } = await import('./render/inject-action-prefix.ts')
+      const ap = opts.actionPrefix
+      configureActionPrefixSnippet(
+        ap && ap !== '/_brust/action'
+          ? `<script>globalThis.__BRUST_ACTION_PREFIX__=${JSON.stringify(ap)}</script>`
+          : null,
+      )
+    }
     // Actions now come from the explicit `defineActions(...)` builder passed in
     // opts (the `'use server'` scanner is gone). `endpoints` is the EndpointDef[]
     // threaded to serve()/makeRenderer; the worker keys dispatch by registration
@@ -597,6 +606,15 @@ export const brust = {
           { ...devRoute, fullPath: devRoute.path!, chain: [devRoute as any] } as any,
           ...opts.routes,
         ]
+      }
+      {
+        const { configureActionPrefixSnippet } = await import('./render/inject-action-prefix.ts')
+        const ap = opts.actionPrefix
+        configureActionPrefixSnippet(
+          ap && ap !== '/_brust/action'
+            ? `<script>globalThis.__BRUST_ACTION_PREFIX__=${JSON.stringify(ap)}</script>`
+            : null,
+        )
       }
       // Worker: detect CSS the same way main did (no compile, no configureCssDir
       // — Rust state is shared, but the per-worker renderer needs the hrefs).
