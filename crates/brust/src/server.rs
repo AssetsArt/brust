@@ -189,15 +189,15 @@ async fn handle_conn(
             }
         };
 
-        // POST is only legal for /_brust/cache/invalidate, /_brust/action/*,
-        // and /_brust/mcp; everything else requires GET. For action paths, 405
-        // means "POST is the only allowed method here" — body must already have
-        // been consumed (or absent). The fixed `Connection: keep-alive` header
-        // in error_405 is correct because we haven't read a body yet.
-        if method != "GET"
-            && !(method == "POST" && path.starts_with("/_brust/cache/invalidate"))
-            && !(method == "POST" && path.starts_with("/_brust/action/"))
-            && !(method == "POST" && path == "/_brust/mcp")
+        // Only GET is allowed on general routes. Action paths (under the
+        // configured prefix), cache-invalidate, and MCP each allow POST (or
+        // any method for action paths, which are router-gated).
+        let action_prefix = crate::action_prefix();
+        let under_actions = path == action_prefix || path.starts_with(&format!("{action_prefix}/"));
+        if !(method == "GET"
+            || under_actions
+            || method == "POST" && path.starts_with("/_brust/cache/invalidate")
+            || method == "POST" && path == "/_brust/mcp")
         {
             let _ = s.write_all(http::error_405()).await;
             return;
@@ -301,34 +301,44 @@ async fn handle_conn(
         }
 
         // Native-only route: server-function dispatch.
-        //   POST /_brust/action/<id>
+        //   <METHOD> <action_prefix>/<rel>
         // Body: JSON array of args. Worker decodes the array and calls fn(req, ...args).
         // Status codes:
-        //   404 — id charset invalid or not in registry
-        //   405 — non-POST method (covered by outer method gate, but keep belt+suspenders)
-        //   411 — Content-Length missing
+        //   404 — path not in action router
+        //   405 — method not allowed for this endpoint
+        //   411 — Content-Length missing (non-GET/HEAD only)
         //   413 — Content-Length > SAB capacity
         //   400 — body not valid UTF-8
         // 5xx — fn throws / middleware throws (handled by the JS side via meta envelope)
-        if let Some(after) = path.strip_prefix("/_brust/action/") {
-            // The outer method gate has already rejected non-POST; the duplicate check
-            // here covers future refactors that might split the gate.
-            if method != "POST" {
-                let _ = s.write_all(http::error_405()).await;
-                return;
-            }
-            // Strip any query string from the id (action calls may add ?dryRun=1
-            // — the request still has the query string in req.search, but the id
-            // itself must be the bare segment).
-            let id = after.split('?').next().unwrap_or(after);
-            if !is_safe_action_id(id) {
-                let _ = s.write_all(http::error_404()).await;
-                continue;
-            }
-            if !crate::action_id_registered(id) {
-                let _ = s.write_all(http::error_404()).await;
-                continue;
-            }
+        let action_prefix = crate::action_prefix();
+        let path_no_query = path.split('?').next().unwrap_or(&path);
+        if path_no_query == action_prefix || path_no_query.starts_with(&format!("{action_prefix}/"))
+        {
+            let rel = &path_no_query[action_prefix.len()..];
+            let rel = if rel.is_empty() { "/" } else { rel };
+            let m = match crate::action_router::Method::from_http(&method) {
+                Some(m) => m,
+                None => {
+                    let _ = s.write_all(http::error_405()).await;
+                    continue;
+                }
+            };
+            let outcome = crate::with_action_router(|r| r.at(m, rel));
+            use crate::action_router::MatchOutcome;
+            let (endpoint_id, owned_params) = match outcome {
+                MatchOutcome::Found {
+                    endpoint_id,
+                    params,
+                } => (endpoint_id, params),
+                MatchOutcome::MethodNotAllowed => {
+                    let _ = s.write_all(http::error_405()).await;
+                    continue;
+                }
+                MatchOutcome::NotFound => {
+                    let _ = s.write_all(http::error_404()).await;
+                    continue;
+                }
+            };
 
             // Locate the body in `buf`. parse_request only gave us method+path; we
             // need to find \r\n\r\n to skip the headers, then read Content-Length bytes.
@@ -339,8 +349,17 @@ async fn handle_conn(
                     return;
                 }
             };
+
+            // GET/HEAD have no body — skip Content-Length requirement.
             let content_length = match parse_content_length(&buf[..header_end]) {
                 Some(n) => n,
+                None if matches!(
+                    m,
+                    crate::action_router::Method::Get | crate::action_router::Method::Head
+                ) =>
+                {
+                    0
+                }
                 None => {
                     let _ = s.write_all(http::error_411()).await;
                     return;
@@ -393,7 +412,7 @@ async fn handle_conn(
                 || ct_lower.starts_with("application/json")
                 || ct_lower.starts_with("application/x-www-form-urlencoded")
             {
-                // Text body — UTF-8 validated.
+                // Text body — UTF-8 validated. Empty slice (GET/HEAD) yields Some("").
                 match std::str::from_utf8(body_slice) {
                     Ok(s) => {
                         body_text_string = Some(s.to_string());
@@ -417,10 +436,16 @@ async fn handle_conn(
                 return;
             }
 
+            let id_str = endpoint_id.to_string();
+            let params_ref: Vec<(std::borrow::Cow<str>, &str)> = owned_params
+                .iter()
+                .map(|(k, v)| (std::borrow::Cow::Borrowed(k.as_str()), v.as_str()))
+                .collect();
             let envelope = crate::routes::build_action_envelope(
                 &method,
                 &path,
-                id,
+                &id_str,
+                params_ref,
                 &content_type,
                 body_text_string.as_deref(),
                 body_b64_string.as_deref(),
@@ -1699,17 +1724,6 @@ fn parse_header_value(buf: &[u8], name: &str) -> Option<String> {
     None
 }
 
-/// Mirrors src/lib.rs::is_safe_action_id. Belt-and-suspenders: the dispatch
-/// check that happens here is the only sanitization between the URL path and
-/// the action registry lookup.
-fn is_safe_action_id(id: &str) -> bool {
-    if id.is_empty() || id.len() > 128 {
-        return false;
-    }
-    id.bytes()
-        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1772,27 +1786,6 @@ mod tests {
     #[test]
     fn unsafe_non_ascii_rejected() {
         assert!(!is_safe_island_filename("évil.js"));
-    }
-
-    #[test]
-    fn server_action_id_matches_lib_helper() {
-        // Sanity: server.rs and lib.rs both define is_safe_action_id. They must
-        // agree on every input — drifting between the two is a 404 / 200 split
-        // depending on call order, which is a security smell.
-        let cases = [
-            ("createNote", true),
-            ("a_b-c", true),
-            ("X", true),
-            ("", false),
-            ("a.b", false),
-            ("a/b", false),
-            ("..", false),
-            ("évil", false),
-            ("a b", false),
-        ];
-        for (input, expected) in cases {
-            assert_eq!(is_safe_action_id(input), expected, "input={input:?}");
-        }
     }
 
     #[test]
