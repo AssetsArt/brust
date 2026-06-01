@@ -110,11 +110,17 @@ export type Actions = typeof actions
     params: Params             // typed from path's {param} segments (string-valued)
     query: Query               // validated+typed when opts.query set; else Record<string,string>
     headers: Record<string,string>
+    /** Branded response sentinel. Returning ctx.respond(...) controls
+     * status/headers; returning any other value ships it as 200 JSON. */
+    respond: (body: unknown, init?: { status?: number; headers?: Record<string,string> }) => ActionResponseSentinel
   }
   ```
-  Handler returns `R | Promise<R>`. `R` is the inferred output type. Returning a
-  plain value → `200 application/json`. To control status/headers a handler may
-  return a `RouteResponse` sentinel via `ctx.respond(...)` (see §4).
+  Handler returns `R | Promise<R>` (plain value → `200 application/json`) **or**
+  `ctx.respond(...)` to set status/headers. The dispatcher detects a respond
+  return by a **branded private symbol** (identity check), NOT by duck-typing a
+  `{status, body}` shape — otherwise a user payload that happens to contain a
+  `status` field would be misread as a response envelope. `ctx.respond` is the
+  single sanctioned status-control path (resolves the §"Open questions" fork).
 - **`opts: EndpointOptions`**:
   ```ts
   interface EndpointOptions {
@@ -191,33 +197,80 @@ const { data, error, status } = await api.notes({ id }).delete()
 - Request: `METHOD <actionPrefix>/<endpoint-path>?<query>` with body for
   non-GET/HEAD. Content-Type drives body decode (existing logic): `application/json`
   (default), `application/x-www-form-urlencoded`, `multipart/form-data` (b64).
-- Registry key (action_id): `"<METHOD> <endpoint-path>"`, e.g. `"GET /notes/{id}"`.
-  Stays within the existing `is_safe_action_id`-style charset rules **after**
-  relaxing them to permit `/`, `{`, `}`, `*`, space, and uppercase method —
-  validated by a new `is_safe_endpoint_key`.
-- Envelope (`kind: "action"`) gains `params: Record<string,string>` (extracted by
-  Rust's matchit) and keeps `method`, `req` (which already carries query). Body
-  fields unchanged (`body_text` / `body_b64` / `content_type`).
+- **Action router data structure (resolves the 404-vs-405 problem).** A
+  **path-only** `matchit::Router` whose value is a **per-path method table**
+  `methods: SmallVec<(Method, EndpointId)>` (or `[Option<EndpointId>; N_METHODS]`).
+  Dispatch (Phase A — **replaces** the literal `strip_prefix("/_brust/action/")`
+  parse at `server.rs:313`):
+  1. strip `<actionPrefix>` from the path → `rel`.
+  2. `action_router.at(rel)`:
+     - `Err(NotFound)` → **404** (unknown path).
+     - `Ok(m)` → look up the request method in `m.value.methods`:
+       - present → dispatch that `EndpointId`, harvest params from `m.params`.
+       - absent → **405** (path exists, method not registered). *This is the
+         distinction a single method-keyed tree cannot make — matchit bakes no
+         per-path method set, so 405 requires this path-only-tree + method-table
+         shape.*
+  This means the registry is NOT keyed by a `"METHOD /path"` string; method is a
+  separate enum dimension. Params come from `m.params` (matchit), NOT from any
+  string parse.
+- **Charset / validation of the path.** The old `is_safe_action_id`
+  (`[A-Za-z0-9_-]+`) does not fit matchit paths. The endpoint *path* is validated
+  by: TS-side `isValidEndpointPath` (must start `/`, no whitespace, no `?#`,
+  non-empty) + matchit `insert()` rejecting malformed patterns at registration.
+  Method is validated against the known method enum. **All four legacy
+  enforcement sites must change together** (Blocker from spec review):
+  1. `runtime/actions.ts::isValidActionId` (`/^[A-Za-z0-9_-]+$/`) — throws first
+     in `registerActionsInternal`; **replace** with `isValidEndpointPath` + method check.
+  2. `crates/brust/src/lib.rs::is_safe_action_id` — repurpose/remove.
+  3. `crates/brust/src/server.rs::is_safe_action_id` — repurpose/remove.
+  4. The Rust invariant test asserting the two helpers agree
+     (`lib.rs::server_action_id_matches_lib_helper`) — update or delete.
+- Envelope (`kind: "action"`) gains `params: Vec<(Cow<str>, &str)>` serialized as
+  a map (mirroring `RouteEnvelope.params` at `routes.rs:41`, reusing
+  `serialize_as_map`), harvested from the action-router `m.params`. Keeps
+  `method`, `req` (query lives in `req`). Body fields unchanged
+  (`body_text` / `body_b64` / `content_type`).
+- **Duplicate / conflict detection at registration**: a pre-insert TS `Set` of
+  `"<METHOD> <path>"` throws on exact duplicates with a clear message; matchit
+  `insert()` additionally throws on structural conflicts (e.g. param-name
+  conflict `{a}` vs `{b}` at the same position) — surface matchit's error verbatim
+  prefixed with the offending pattern.
 - Response: single-chunk JSON. Validation failure → `422` with
   `{ error: { message, issues } }` (issues = Standard Schema issue array).
 
 ## Behavior / invariants
 
-- **Validation runs in the worker (JS), before the handler, after middleware
-  body-independent checks.** Order: decode body → run `opts.body` validate →
-  run `opts.query` validate → build context → middleware chain → handler. A
-  validation failure short-circuits to 422 without invoking the handler.
-- **Rust never validates** — it only matches method+path, extracts params, and
-  ships bytes. Keeps the hot path lock-free / single-chunk.
-- **Method gate**: the outer gate in `server.rs` is generalized — any method is
-  legal under `<actionPrefix>/`; everything outside stays GET-only (page routes)
-  except the existing `/_brust/cache/invalidate` and `/_brust/mcp` POST cases.
-- **GET/HEAD with no body**: the body-read path must tolerate absent
-  Content-Length (no 411 for methods that carry no body).
-- **404 vs 405**: unknown path under prefix → 404. Known path, wrong method →
-  405 (matchit match succeeds for path but no registry entry for that method).
-- **Determinism**: registration order does not affect matching (matchit is a
-  radix tree); duplicate `"<METHOD> <path>"` keys throw at registration.
+- **Body shape for validation.** `ctx.body` is a parsed value, not an args array
+  (the old args-array protocol is gone). For `application/json` (default),
+  `body` = `JSON.parse(body_text)`. **Standard Schema validators operate on plain
+  objects**, so in the first slice **validation is scoped to JSON bodies**.
+  `application/x-www-form-urlencoded` and `multipart/form-data` decode to
+  `FormData`; their coercion to a validatable object (`Object.fromEntries`, files
+  excluded) is **Phase D** — until then a schema on a multipart endpoint is a
+  type-only contract, not a runtime check. Be loud: the slice's "validated 422
+  path" is JSON-only.
+- **Validation runs in the worker (JS), before the handler.** Order: decode body
+  → (JSON) run `opts.body` validate → run `opts.query` validate → build context →
+  middleware chain → handler. A validation failure short-circuits to 422 without
+  invoking the handler or middleware.
+- **Rust never validates** — it only matches path, selects method, extracts
+  params, and ships bytes. Keeps the hot path lock-free / single-chunk.
+- **Method gate**: the outer gate in `server.rs` keys off the **runtime
+  `actionPrefix`** (not the literal `/_brust/action/`): any method is legal when
+  the path is under `<actionPrefix>/`; everything outside stays GET-only (page
+  routes) except the existing `/_brust/cache/invalidate` and `/_brust/mcp` POST
+  cases, which remain special-cased. The static `/_brust/islands`, `/css`,
+  `/_brust/cache/stats` GET checks that precede the action branch are unaffected.
+- **GET/HEAD with no body**: gate the existing 411 branch (`server.rs:342`) on
+  method — for GET/HEAD an absent Content-Length means `content_length = 0`
+  (empty body), do NOT 411, do NOT close the keep-alive connection. POST/PUT/PATCH
+  with absent Content-Length still 411 (no silent body truncation).
+- **404 vs 405**: see the action-router data structure in §Wire — path miss → 404,
+  path hit with unregistered method → 405. Acceptance tests assert both.
+- **Determinism**: registration order does not affect matching (matchit radix
+  tree); duplicate `"<METHOD> <path>"` throws at registration (TS `Set` +
+  matchit `InsertError`).
 
 ## File structure
 
@@ -330,10 +383,22 @@ Phase D migration are the documented follow-ups.
 - Error `value` typing is best-effort (`unknown`-narrowed by status) unless a
   per-status error schema is later added.
 
-## Open questions resolved at plan time
+## Resolved decisions (from spec review)
 
-- Exact `ctx.respond()` sentinel vs returning a `RouteResponse` directly — pick
-  one in the plan; lean `return ctx.respond(body, { status, headers })` to keep
-  the common `return value` path clean.
-- Whether `head` auto-derives from a `get` endpoint or must be declared — lean
-  "must be declared" for v1 (simpler registry), revisit later.
+- **Status control**: branded `ctx.respond()` sentinel only (identity-checked).
+  No duck-typing of `{status, body}`. (§API handler context.)
+- **`head`**: must be declared explicitly for v1 (no auto-derive from `get`) —
+  simpler method table.
+- **404 vs 405**: path-only matchit tree + per-path method table (§Wire), NOT a
+  method-keyed path string.
+- **Charset**: all four legacy `is_safe_action_id` sites change together; the
+  endpoint *path* is validated by `isValidEndpointPath` + matchit, method by enum.
+- **Runtime URL invariant**: the client proxy composes the request URL from the
+  **literal registered path string** (filling `{param}` from the param-call args),
+  never from the inferred TS type. Type-level path parsing may loosen on exotic
+  patterns (catch-all, multi-param) without affecting runtime correctness.
+- **Validation scope (slice)**: JSON bodies only; FormData→object coercion for
+  urlencoded/multipart is Phase D.
+- **Prefix→gate plumbing**: the `server.rs` method gate keys off the runtime
+  `actionPrefix`, preserving the `/_brust/cache/invalidate` + `/_brust/mcp` POST
+  special-cases and the preceding static GET checks.
