@@ -17,7 +17,9 @@ const REPO_ROOT = resolve(import.meta.dir, '..')
 
 // Import the real napi addon (same path native-routes-emit.ts uses).
 const native = await import(resolve(REPO_ROOT, 'runtime/index.js'))
-const compileJsx = (native as { compileJsx: (source: string, path: string) => { template: string } }).compileJsx
+const compileJsx = (
+  native as { compileJsx: (source: string, path: string) => { template: string } }
+).compileJsx
 
 const FRAGMENT_SOURCE = readFileSync(
   resolve(REPO_ROOT, 'crates/jsx-rust-compiler/fixtures/fragment_basic.tsx'),
