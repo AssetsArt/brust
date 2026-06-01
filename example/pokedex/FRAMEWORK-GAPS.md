@@ -80,8 +80,10 @@ loader ที่บวมด้วย `xxxClass` เต็มไปหมด.
 **fix:** `lower_attr` intercept `style={{…}}` → serialize เป็น `style="…"` (all-literal → `AttrValue::Static`;
 มี member-path → `AttrValue::Expr(Concat)`). key camelCase→kebab (รวม vendor `-webkit-`/`-moz-`/`-ms-`/`-o-`
 + custom prop); numeric literal ใส่ `px` อัตโนมัติ (ยกเว้น React unitless set); negative (`-8`) รองรับ.
-ดู spec S1. **dogfood:** `barWidth`/`iconColor` เป็น bare value ป้อน `style={{…}}`; `heroStyle` (gradient
-หลาย property) ยังเป็น precomputed string ผ่าน `style={heroStyle}` (member-path attr ปกติ).
+ดู spec S1. **dogfood:** `barWidth`/`iconColor`/`heroBg` เป็น bare value ป้อน `style={{…}}`
+(`style={{ background: heroBg }}` — gradient string ผ่าน `| e` ได้ไม่โดน escape เพราะไม่มี `<>"'/&`).
+หมายเหตุ: React type ของ `style` คือ `CSSProperties` object → `style={someString}` เป็น ts(2559),
+ต้องใช้ `style={{ prop: value }}` เสมอ (string ล้วนใช้ไม่ได้แม้ native compiler จะรับ).
 
 **อาการเดิม:** attribute ที่ค่าเป็น object literal (`style={{ width: 62 }}`) ถูก reject
 (`lower_expr` ไม่มีเคส `Object`). prototype ดีไซน์ทุกชิ้นพึ่ง inline style — ย้ายมา native

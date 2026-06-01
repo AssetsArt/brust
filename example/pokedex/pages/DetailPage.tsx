@@ -27,7 +27,7 @@ export default function DetailPage({
   heightLabel,
   weightLabel,
   abilityCount,
-  heroStyle,
+  heroBg,
   types,
   stats,
   statTotal,
@@ -98,7 +98,7 @@ export default function DetailPage({
             ) : (
               <>
                 <div className="dex-detail-grid">
-                  <div className="aa-card dex-hero" style={heroStyle}>
+                  <div className="aa-card dex-hero" style={{ background: heroBg }}>
                     <div className="dex-hero__num">{num}</div>
                     <h1 className="dex-hero__name">{displayName}</h1>
                     <div className="dex-hero__genus">{genus}</div>

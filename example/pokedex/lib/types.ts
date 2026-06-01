@@ -87,7 +87,7 @@ export interface DetailData {
   heightLabel: string // "0.7 m"
   weightLabel: string // "6.9 kg"
   abilityCount: number
-  heroStyle: string // "background:linear-gradient(…)" — type-tinted
+  heroBg: string // gradient value for `style={{ background: heroBg }}` — type-tinted
   types: TypeBadgeVM[]
   stats: StatVM[]
   statTotal: number
