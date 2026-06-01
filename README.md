@@ -125,9 +125,9 @@ bench/ · docs/ · architecture.md
 ## Status
 
 Alpha, solo-developed. Linux is tier-1 (io_uring; glibc + musl, 6 prebuilt platform
-binaries). Known partials: `brustjs dev` TS reload is a full worker-respawn reload
-(not state-preserving HMR), islands + `.module.css`. Tailwind
-is opt-in — the scaffold adds it as a project dependency; `@import "tailwindcss"`
+binaries). Known partials: `brustjs dev` reload is a full worker-respawn (not
+state-preserving HMR) — TS, islands, and `.module.css` all reload that way.
+Tailwind is opt-in — the scaffold adds it as a project dependency; `@import "tailwindcss"`
 resolves from your own `node_modules`. Deployment note: the io_uring server needs `io_uring_*`
 syscalls permitted — a default-seccomp container (Docker/k8s) must allow them or run
 `--security-opt seccomp=unconfined`. Roadmap and limitations in
