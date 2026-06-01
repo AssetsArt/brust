@@ -1,0 +1,19 @@
+[package]
+name    = "jsx-rust-compiler"
+version = "0.1.0"
+edition = "2024"
+
+# NOT part of the brust workspace (brust's Cargo.toml has no [workspace] table,
+# so this subdir is invisible to brust's build). Compile standalone:
+#   cd tools/jsx-rust-compiler && cargo run -- <path-to.tsx>
+
+[[bin]]
+name = "jsx-rust-compiler"
+path = "src/main.rs"
+
+[dependencies]
+swc_core = { version = "13", features = ["common", "ecma_ast", "ecma_parser", "ecma_parser_typescript"] }
+anyhow   = "1"
+# swc_common 6.x uses serde::__private which was removed in serde 1.0.220+.
+# Pin to a serde that still exports it.
+serde = "=1.0.215"
