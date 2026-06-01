@@ -9,8 +9,8 @@ use swc_core::ecma::ast::{
     CallExpr, Callee, DefaultDecl, ExportDefaultDecl, Expr as SwcExpr, ExprOrSpread, FnExpr,
     Function, JSXAttrName, JSXAttrOrSpread, JSXAttrValue, JSXElement, JSXElementChild,
     JSXElementName, JSXExpr, JSXFragment, Lit, MemberExpr, MemberProp, Module, ModuleDecl,
-    ModuleItem, ObjectPatProp, ParenExpr, Pat, Prop, PropName, PropOrSpread, ReturnStmt, Stmt,
-    UnaryOp,
+    ModuleItem, ObjectLit, ObjectPatProp, ParenExpr, Pat, Prop, PropName, PropOrSpread, ReturnStmt,
+    Stmt, UnaryOp,
 };
 
 use crate::ErrorKind;
@@ -1825,6 +1825,22 @@ fn lower_attr(attr: &JSXAttrOrSpread, scope: &Scope) -> Result<Option<JsxAttr>, 
                 }
             };
 
+            // `style={{ … }}` object literal → serialize to a CSS declaration
+            // string (static) or a Concat (when any value is a member-path).
+            // Intercepted BEFORE the generic expr-lowering path, which has no
+            // `Object` arm and would otherwise reject it.
+            if final_name == "style"
+                && let Some(JSXAttrValue::JSXExprContainer(c)) = &jsx_attr.value
+                && let JSXExpr::Expr(e) = &c.expr
+                && let SwcExpr::Object(obj) = strip_paren(e)
+            {
+                let value = lower_style_object(obj, scope)?;
+                return Ok(Some(JsxAttr {
+                    name: final_name,
+                    value,
+                }));
+            }
+
             // swc_ecma_ast 25's `JSXAttrValue` is `Str | JSXExprContainer | JSXElement |
             // JSXFragment` — it does NOT have a `Lit` variant (the older swc shape the plan
             // listing was written against). Numeric attribute values (`tabIndex={5}`) arrive
@@ -1867,6 +1883,228 @@ fn lower_attr(attr: &JSXAttrOrSpread, scope: &Scope) -> Result<Option<JsxAttr>, 
             }))
         }
     }
+}
+
+/// React's `isUnitlessNumber` set (React 19). A numeric `style` value whose
+/// ORIGINAL camelCase key is in this set is emitted verbatim; everything else
+/// gets a `px` suffix (matching React's runtime style serialization).
+const UNITLESS: &[&str] = &[
+    "animationIterationCount",
+    "aspectRatio",
+    "borderImageOutset",
+    "borderImageSlice",
+    "borderImageWidth",
+    "boxFlex",
+    "boxFlexGroup",
+    "boxOrdinalGroup",
+    "columnCount",
+    "columns",
+    "flex",
+    "flexGrow",
+    "flexPositive",
+    "flexShrink",
+    "flexNegative",
+    "flexOrder",
+    "gridArea",
+    "gridRow",
+    "gridRowEnd",
+    "gridRowSpan",
+    "gridRowStart",
+    "gridColumn",
+    "gridColumnEnd",
+    "gridColumnSpan",
+    "gridColumnStart",
+    "fontWeight",
+    "lineClamp",
+    "lineHeight",
+    "opacity",
+    "order",
+    "orphans",
+    "scale",
+    "tabSize",
+    "widows",
+    "zIndex",
+    "zoom",
+    "fillOpacity",
+    "floodOpacity",
+    "stopOpacity",
+    "strokeDasharray",
+    "strokeDashoffset",
+    "strokeMiterlimit",
+    "strokeOpacity",
+    "strokeWidth",
+];
+
+/// camelCase CSS property → kebab-case (`backgroundColor` → `background-color`,
+/// `zIndex` → `z-index`). Vendor prefixes with a leading uppercase letter map to
+/// a leading dash (`WebkitFoo` → `-webkit-foo`, `MozBar` → `-moz-bar`,
+/// `OFoo` → `-o-foo`); lowercase `ms` stays a prefix → `-ms-…`. Keys that already
+/// contain `-` or are custom properties (`--foo`) pass through unchanged.
+fn css_kebab(camel: &str) -> String {
+    // Custom properties and already-kebab keys are passed through untouched.
+    if camel.starts_with("--") || camel.contains('-') {
+        return camel.to_string();
+    }
+    // Lowercase `ms` is the one vendor prefix React leaves lowercase; it still
+    // emits with a leading dash (`msFlexAlign` → `-ms-flex-align`).
+    let leading_ms = camel
+        .strip_prefix("ms")
+        .is_some_and(|rest| rest.chars().next().is_some_and(|c| c.is_ascii_uppercase()));
+    let mut out = String::with_capacity(camel.len() + 2);
+    if leading_ms {
+        out.push_str("-ms");
+    }
+    let start = if leading_ms { 2 } else { 0 };
+    for ch in camel.chars().skip(start) {
+        if ch.is_ascii_uppercase() {
+            // Leading uppercase → vendor prefix → leading dash; interior
+            // uppercase → word boundary → interior dash. Both push a dash.
+            out.push('-');
+            out.push(ch.to_ascii_lowercase());
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// Serialize a `style={{ … }}` object literal into an `AttrValue`.
+///
+/// All-static entries collapse to one `AttrValue::Static("a:b;c:d")` string.
+/// Any member-path value forces an `AttrValue::Expr(Expr::Concat([…]))` whose
+/// literal runs (property prefixes + separators) are `Expr::StaticText` and
+/// whose dynamic values are member-path `Expr`s. The emit layer renders the
+/// Concat as `style="{{ "a:" ~ path ~ ";b:c" }}"`.
+/// Serialize an integer style value to its CSS string, appending `px` unless the
+/// (camelCase) property is unitless. `negate` is set when the source was a unary
+/// `-N`. Non-integer numerics → `NonIntegerNumericNotSupported`.
+fn num_to_css(
+    n: &swc_core::ecma::ast::Number,
+    negate: bool,
+    camel_key: &str,
+) -> Result<String, LowerError> {
+    if n.value.fract() != 0.0 {
+        return Err(LowerError::at(
+            n.span,
+            ErrorKind::NonIntegerNumericNotSupported,
+        ));
+    }
+    let v = if negate {
+        -(n.value as i64)
+    } else {
+        n.value as i64
+    };
+    Ok(if UNITLESS.contains(&camel_key) {
+        v.to_string()
+    } else {
+        format!("{v}px")
+    })
+}
+
+fn lower_style_object(obj: &ObjectLit, scope: &Scope) -> Result<AttrValue, LowerError> {
+    /// One serialized `prop:value` segment: either fully-literal text, or a
+    /// literal prefix (`"prop:"`) plus a dynamic member-path value.
+    enum Seg {
+        Static(String),
+        Dynamic {
+            prefix: String,
+            value: crate::ir::Expr,
+        },
+    }
+
+    let mut segs: Vec<Seg> = Vec::new();
+    for prop in &obj.props {
+        // Spread (`{...x}`) and non-KeyValue props (shorthand/getter/setter/
+        // method/assign) are not representable as a CSS declaration.
+        let PropOrSpread::Prop(p) = prop else {
+            return Err(LowerError::at(obj.span, ErrorKind::StyleObjectNotSupported));
+        };
+        let Prop::KeyValue(kv) = p.as_ref() else {
+            return Err(LowerError::at(obj.span, ErrorKind::StyleObjectNotSupported));
+        };
+        // Key: Ident or string literal only. Computed/numeric keys → reject.
+        let camel_key = match &kv.key {
+            PropName::Ident(i) => i.sym.to_string(),
+            PropName::Str(s) => s.value.to_string_lossy().into_owned(),
+            _ => return Err(LowerError::at(obj.span, ErrorKind::StyleObjectNotSupported)),
+        };
+        let kebab = css_kebab(&camel_key);
+
+        match strip_paren(&kv.value) {
+            SwcExpr::Lit(Lit::Str(s)) => {
+                let text = s.value.to_string_lossy().into_owned();
+                segs.push(Seg::Static(format!("{kebab}:{text}")));
+            }
+            SwcExpr::Lit(Lit::Num(n)) => {
+                segs.push(Seg::Static(format!(
+                    "{kebab}:{}",
+                    num_to_css(n, false, &camel_key)?
+                )));
+            }
+            // Negative numeric literal: swc parses `-8` as `Unary(Minus, Num(8))`,
+            // not `Lit::Num(-8)`. Negative CSS values (margins, offsets) are common.
+            SwcExpr::Unary(u)
+                if u.op == UnaryOp::Minus
+                    && let SwcExpr::Lit(Lit::Num(n)) = strip_paren(&u.arg) =>
+            {
+                segs.push(Seg::Static(format!(
+                    "{kebab}:{}",
+                    num_to_css(n, true, &camel_key)?
+                )));
+            }
+            // Member-path / bare-ident dynamic value → lower to a path Expr.
+            stripped @ (SwcExpr::Ident(_) | SwcExpr::Member(_)) => {
+                let value = lower_expr(stripped, scope)?;
+                segs.push(Seg::Dynamic {
+                    prefix: format!("{kebab}:"),
+                    value,
+                });
+            }
+            // Object/Call/Tpl/Bin/Array/… → not a CSS declaration value.
+            _ => {
+                return Err(LowerError::at(
+                    kv.value.span(),
+                    ErrorKind::StyleObjectValueNotSupported,
+                ));
+            }
+        }
+    }
+
+    // All-static → join with `;` into a single declaration string.
+    if segs.iter().all(|s| matches!(s, Seg::Static(_))) {
+        let joined = segs
+            .iter()
+            .map(|s| match s {
+                Seg::Static(t) => t.as_str(),
+                Seg::Dynamic { .. } => unreachable!(),
+            })
+            .collect::<Vec<_>>()
+            .join(";");
+        return Ok(AttrValue::Static(joined));
+    }
+
+    // Any dynamic piece → build a Concat. Literal runs (prefixes + `;`
+    // separators) are merged into adjacent StaticText so the emitted jinja
+    // concatenates to a valid declaration.
+    let mut parts: Vec<crate::ir::Expr> = Vec::new();
+    let mut pending = String::new();
+    for (i, seg) in segs.iter().enumerate() {
+        if i > 0 {
+            pending.push(';');
+        }
+        match seg {
+            Seg::Static(t) => pending.push_str(t),
+            Seg::Dynamic { prefix, value } => {
+                pending.push_str(prefix);
+                parts.push(crate::ir::Expr::StaticText(std::mem::take(&mut pending)));
+                parts.push(value.clone());
+            }
+        }
+    }
+    if !pending.is_empty() {
+        parts.push(crate::ir::Expr::StaticText(pending));
+    }
+    Ok(AttrValue::Expr(crate::ir::Expr::Concat(parts)))
 }
 
 /// Match the `on[A-Z].*` event-handler pattern (`onClick`, `onMouseOver`, …).
@@ -5179,6 +5417,218 @@ mod tests {
                 assert_eq!(props_path, "counter");
             }
             other => panic!("expected Island, got {other:?}"),
+        }
+    }
+
+    // ── style={{…}} object lowering (S1) ──────────────────────────────────
+
+    /// Lower `src` and return the `AttrValue` of the FIRST attribute on the
+    /// root element. Panics on compile error.
+    fn first_style_attr(src: &str) -> AttrValue {
+        let parsed = parse(src, "<test>").unwrap();
+        let comp = super::lower(&parsed).unwrap();
+        match comp.root {
+            JsxNode::Element { mut attrs, .. } => {
+                assert_eq!(attrs.len(), 1, "expected exactly one attr");
+                let a = attrs.remove(0);
+                assert_eq!(a.name, "style");
+                a.value
+            }
+            other => panic!("expected root element, got {other:?}"),
+        }
+    }
+
+    /// Lower `src` and return the root-element `ErrorKind`.
+    fn style_err(src: &str) -> ErrorKind {
+        let parsed = parse(src, "<test>").unwrap();
+        super::lower(&parsed).unwrap_err().kind
+    }
+
+    #[test]
+    fn style_object_number_gets_px() {
+        let v = first_style_attr(
+            r#"export default function X() { return <div style={{ width: 62 }}/>; }"#,
+        );
+        match v {
+            AttrValue::Static(s) => assert_eq!(s, "width:62px"),
+            other => panic!("expected Static, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn style_object_unitless_no_px() {
+        let v = first_style_attr(
+            r#"export default function X() { return <div style={{ opacity: 1 }}/>; }"#,
+        );
+        match v {
+            AttrValue::Static(s) => assert_eq!(s, "opacity:1"),
+            other => panic!("expected Static, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn style_object_camel_kebab_unitless() {
+        let v = first_style_attr(
+            r#"export default function X() { return <div style={{ zIndex: 5 }}/>; }"#,
+        );
+        match v {
+            AttrValue::Static(s) => assert_eq!(s, "z-index:5"),
+            other => panic!("expected Static, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn style_object_negative_number_gets_px() {
+        // swc parses `-8` as Unary(Minus, Num(8)); negative CSS values must work.
+        let v = first_style_attr(
+            r#"export default function X() { return <div style={{ marginTop: -8 }}/>; }"#,
+        );
+        match v {
+            AttrValue::Static(s) => assert_eq!(s, "margin-top:-8px"),
+            other => panic!("expected Static, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn css_kebab_branches() {
+        // Vendor prefixes + custom properties + already-kebab passthrough — these
+        // css_kebab paths are not exercised by the style-object fixtures.
+        assert_eq!(super::css_kebab("backgroundColor"), "background-color");
+        assert_eq!(super::css_kebab("WebkitTransform"), "-webkit-transform");
+        assert_eq!(super::css_kebab("MozUserSelect"), "-moz-user-select");
+        assert_eq!(super::css_kebab("msFlexAlign"), "-ms-flex-align");
+        assert_eq!(super::css_kebab("--my-var"), "--my-var");
+        assert_eq!(super::css_kebab("z-index"), "z-index");
+    }
+
+    #[test]
+    fn style_object_multi_static_order_preserved() {
+        let v = first_style_attr(
+            r#"export default function X() { return <div style={{ backgroundColor: "red", width: 62 }}/>; }"#,
+        );
+        match v {
+            AttrValue::Static(s) => assert_eq!(s, "background-color:red;width:62px"),
+            other => panic!("expected Static, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn style_object_dynamic_member_path() {
+        let v = first_style_attr(
+            r#"export default function X({ c }: any) { return <div style={{ color: c.fg }}/>; }"#,
+        );
+        match v {
+            AttrValue::Expr(Expr::Concat(parts)) => {
+                assert_eq!(parts.len(), 2);
+                match &parts[0] {
+                    Expr::StaticText(s) => assert_eq!(s, "color:"),
+                    other => panic!("expected StaticText, got {other:?}"),
+                }
+                match &parts[1] {
+                    Expr::MemberAccess { root, path } => {
+                        assert_eq!(root, "c");
+                        assert_eq!(path, &vec!["fg".to_string()]);
+                    }
+                    other => panic!("expected MemberAccess, got {other:?}"),
+                }
+            }
+            other => panic!("expected Expr(Concat), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn style_object_mixed_dynamic_and_literal() {
+        let v = first_style_attr(
+            r#"export default function X({ st }: any) { return <div style={{ width: st.w, color: "red" }}/>; }"#,
+        );
+        match v {
+            AttrValue::Expr(Expr::Concat(parts)) => {
+                // ["width:", st.w, ";color:red"]
+                assert_eq!(parts.len(), 3, "got {parts:?}");
+                match &parts[0] {
+                    Expr::StaticText(s) => assert_eq!(s, "width:"),
+                    other => panic!("expected StaticText, got {other:?}"),
+                }
+                match &parts[1] {
+                    Expr::MemberAccess { root, path } => {
+                        assert_eq!(root, "st");
+                        assert_eq!(path, &vec!["w".to_string()]);
+                    }
+                    other => panic!("expected MemberAccess, got {other:?}"),
+                }
+                match &parts[2] {
+                    Expr::StaticText(s) => assert_eq!(s, ";color:red"),
+                    other => panic!("expected StaticText, got {other:?}"),
+                }
+            }
+            other => panic!("expected Expr(Concat), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn style_object_rejects_spread() {
+        let src = r#"export default function X({ x }: any) { return <div style={{ ...x }}/>; }"#;
+        assert!(
+            matches!(style_err(src), ErrorKind::StyleObjectNotSupported),
+            "got {:?}",
+            style_err(src)
+        );
+    }
+
+    #[test]
+    fn style_object_rejects_computed_key() {
+        let src = r#"export default function X({ k }: any) { return <div style={{ [k]: 1 }}/>; }"#;
+        assert!(
+            matches!(style_err(src), ErrorKind::StyleObjectNotSupported),
+            "got {:?}",
+            style_err(src)
+        );
+    }
+
+    #[test]
+    fn style_object_rejects_nested_object_value() {
+        let src = r#"export default function X() { return <div style={{ a: { b: 1 } }}/>; }"#;
+        assert!(
+            matches!(style_err(src), ErrorKind::StyleObjectValueNotSupported),
+            "got {:?}",
+            style_err(src)
+        );
+    }
+
+    #[test]
+    fn style_object_rejects_call_value() {
+        let src =
+            r#"export default function X({ fn }: any) { return <div style={{ w: fn() }}/>; }"#;
+        assert!(
+            matches!(style_err(src), ErrorKind::StyleObjectValueNotSupported),
+            "got {:?}",
+            style_err(src)
+        );
+    }
+
+    #[test]
+    fn style_object_literal_with_quote_lowers_soundly() {
+        // A literal value containing a quote; the dynamic case forces a Concat
+        // whose StaticText is backslash-escaped by the emitter.
+        let v = first_style_attr(
+            r#"export default function X({ c }: any) { return <div style={{ content: "\"\"", color: c.fg }}/>; }"#,
+        );
+        match v {
+            AttrValue::Expr(Expr::Concat(parts)) => {
+                // ["content:\"\";color:", c.fg]
+                match &parts[0] {
+                    Expr::StaticText(s) => assert_eq!(s, "content:\"\";color:"),
+                    other => panic!("expected StaticText, got {other:?}"),
+                }
+                match parts.last().unwrap() {
+                    Expr::MemberAccess { root, path } => {
+                        assert_eq!(root, "c");
+                        assert_eq!(path, &vec!["fg".to_string()]);
+                    }
+                    other => panic!("expected MemberAccess, got {other:?}"),
+                }
+            }
+            other => panic!("expected Expr(Concat), got {other:?}"),
         }
     }
 }

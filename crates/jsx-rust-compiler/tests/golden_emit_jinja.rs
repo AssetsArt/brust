@@ -14,6 +14,7 @@ const FIXTURES: &[&str] = &[
     "brust_page",
     "fragment_basic",
     "cond_native",
+    "style_object",
 ];
 
 #[test]

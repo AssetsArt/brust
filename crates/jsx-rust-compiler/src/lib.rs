@@ -547,6 +547,10 @@ pub enum ErrorKind {
     CallExpressionNotSupported,
     #[error("complex expression (binary/conditional/unary) not supported in Phase A1")]
     ComplexExpressionNotSupported,
+    #[error("`style` object: only `key: value` entries are supported (no spread/computed keys)")]
+    StyleObjectNotSupported,
+    #[error("`style` object value not supported — use a string/number literal or a member-path")]
+    StyleObjectValueNotSupported,
     #[error("`.map((item, idx) => …)` two-arg form not supported in Phase A1")]
     MapIndexParamNotSupported,
     #[error("`.map(...)` shape not supported — expect `(ident) => <JSXElement>`")]
