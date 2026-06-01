@@ -4,7 +4,8 @@
 > สร้าง PokéDex โดยพยายามใช้ **`native: true` ให้มากที่สุด** (ทั้ง 3 route เป็น native).
 >
 > แต่ละข้อระบุ:
-> - **สถานะ** — `CONFIRMED` = เจอจริงตอน build/run ครั้งนี้ · `BY-DESIGN` = ข้อจำกัดที่ตั้งใจ
+> - **สถานะ** — `✅ FIXED` = แก้ framework แล้ว · `CONFIRMED` = ยังเปิด, เจอจริงตอน build/run ·
+>   `BY-DESIGN` = ข้อจำกัดที่ตั้งใจ
 > - **อาการ** ที่เจอ · **ทำไม** · **workaround ที่ใช้ในแอปนี้** · **proposal**
 >
 > ความรุนแรง: ★ บล็อกงานหลัก · ◆ ต้องตัดสินใจแทน framework · ○ DX/ergonomics
@@ -13,15 +14,26 @@
 
 ---
 
-## สรุปสั้น (native เขียนยังไงให้ผ่าน)
+## สถานะรวม (อัปเดต 2026-06-02)
 
-จาก gap S1–S3 รวมกัน ได้ "กฎเหล็กของ native route" ที่บังคับทั้งแอป:
+**✅ FIXED แล้ว (6):** S11 conditionals · S1 `style={{…}}` · S8 dynamic head props ·
+S13 SPA-nav (รอบก่อน) — **3 อันแรกเป็น "Cluster A" รอบนี้**
+([spec](../../docs/superpowers/specs/2026-06-01-native-compiler-expressiveness-design.md)),
+พ่วง **XSS hardening** (`5a4c4ca`): dynamic HTML output ทุกจุด escape ด้วย `{{ (expr) | e }}`
+แล้ว (เดิม verbatim = ช่อง XSS จริง — request param ไหลเข้า `<title>` ได้).
 
-> **template ของ native route แสดงได้แค่ member-path + `.map()` เท่านั้น** — ห้าม
-> `style={{…}}`, ห้าม conditional, ห้ามเรียก helper/format, ห้าม arithmetic/compare/
-> template-literal **ทุกอย่างต้องคำนวณล่วงหน้าใน loader** แล้วส่งเป็น field ดิบ
-> (string/number/array). ดูได้จาก `lib/loaders.ts` — มันยาวเพราะมันคือ "view layer"
-> ตัวจริง ส่วน `pages/*.tsx` แทบเป็น HTML ล้วน.
+**ยังเปิด:** S12 (DELETE 411) · S9 (native loader ตั้ง status ไม่ได้ → 404-as-200) ·
+S4/S6/S7 (island store / session / typed error) · S2 (loader cache) · static asset ·
+native layout/Outlet · nested `.map()` · dark-mode `data-*`. · **BY-DESIGN:** S3 (Suspense).
+
+## สรุปสั้น (native เขียนยังไงให้ผ่าน — หลัง Cluster A)
+
+> กฎเหล็กเดิม "member-path + `.map()` เท่านั้น" **ผ่อนแล้ว** — native route body **ทำได้แล้ว**:
+> conditionals (`{cond && <X/>}`, `{a ? b : c}` + comparison/logical test), `style={{…}}`
+> object (auto-px), และ `<BrustPage title={d.x}>` dynamic head. **ยังต้อง precompute ใน loader:**
+> helper calls, template-literals, arithmetic *as text/operand*, multi-property style strings.
+> ทุกค่า dynamic ที่ออก HTML จะถูก **HTML-escape อัตโนมัติ** (XSS-safe). `lib/loaders.ts` จึงสั้นลง
+> (ทิ้ง `xxxClass`/style-string workaround) — เทียบกับ commit `b667dda` ที่ loader เคยเป็น view layer ทั้งก้อน.
 
 ---
 
@@ -291,6 +303,9 @@ fixture รับรอง เลย **flatten เป็น array เดีย�
 design ใช้ `[data-mode="dark"]` toggle. `<BrustPage>` ตั้งได้แค่ `lang`/`className` (html class)
 ไม่ตั้ง `data-*` ตามใจ → rewrite CSS เป็น `.dark` แล้ว `<html class="dark">` (dark อย่างเดียว,
 ตัด toggle). theme toggle จริงต้องเป็น island หรือ cookie round-trip.
+
+> อัปเดต: หลัง S8 `className={d.themeClass}` เป็น **member-path ได้แล้ว** (theme class แบบ
+> per-request ผ่าน cookie→loader ทำได้) — แต่ `<BrustPage>` ยังตั้ง `data-*` ตามใจไม่ได้ (ยังเปิด).
 
 ---
 
