@@ -187,6 +187,11 @@ pub fn begin_serve(opts: ServeOptions) -> NapiResult<()> {
     let addr: SocketAddr = resolve_bind_addr(opts.host.trim(), opts.port)?;
 
     if let Some(p) = &opts.action_prefix {
+        if p.is_empty() || !p.starts_with('/') || p.ends_with('/') {
+            return Err(napi::Error::from_reason(format!(
+                "action_prefix must be non-empty, start with '/', and not end with '/': {p:?}"
+            )));
+        }
         *state().action_prefix.write() = p.clone();
     }
 
@@ -418,8 +423,36 @@ pub(crate) fn with_action_router<R>(f: impl FnOnce(&ActionRouter) -> R) -> R {
     f(&state().action_router.read())
 }
 
-pub(crate) fn action_prefix() -> String {
-    state().action_prefix.read().clone()
+/// Run `f` with the configured action prefix borrowed — no clone. Used on the
+/// (rare) action dispatch path to compute the relative path.
+pub(crate) fn with_action_prefix<R>(f: impl FnOnce(&str) -> R) -> R {
+    f(&state().action_prefix.read())
+}
+
+/// True if `path` (caller MUST have stripped the query string already) is the
+/// action prefix itself or a path under it. Allocation-free: this runs on the
+/// method gate of EVERY request, so it must not clone or `format!`.
+pub(crate) fn path_under_action_prefix(path: &str) -> bool {
+    let p = state().action_prefix.read();
+    let p = p.as_str();
+    path == p || (path.len() > p.len() && path.as_bytes()[p.len()] == b'/' && path.starts_with(p))
+}
+
+#[cfg(test)]
+mod prefix_tests {
+    use super::*;
+
+    #[test]
+    fn path_under_action_prefix_matches_prefix_and_subpaths() {
+        // default prefix is "/_brust/action"
+        assert!(path_under_action_prefix("/_brust/action"));
+        assert!(path_under_action_prefix("/_brust/action/notes"));
+        assert!(path_under_action_prefix("/_brust/action/notes/5"));
+        // sibling that merely shares the prefix bytes must NOT match
+        assert!(!path_under_action_prefix("/_brust/actionXYZ"));
+        assert!(!path_under_action_prefix("/_brust/act"));
+        assert!(!path_under_action_prefix("/other"));
+    }
 }
 
 // ----- SSE NAPI bridge -----

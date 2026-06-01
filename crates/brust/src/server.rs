@@ -189,15 +189,18 @@ async fn handle_conn(
             }
         };
 
+        // Strip the query string once; reused by the gate and the action branch.
+        let path_no_query = path.split('?').next().unwrap_or(&path);
+
         // Only GET is allowed on general routes. Action paths (under the
         // configured prefix), cache-invalidate, and MCP each allow POST (or
-        // any method for action paths, which are router-gated).
-        let action_prefix = crate::action_prefix();
-        let under_actions = path == action_prefix || path.starts_with(&format!("{action_prefix}/"));
+        // any method for action paths, which are router-gated). The prefix
+        // check is allocation-free — it runs on every request.
+        let under_actions = crate::path_under_action_prefix(path_no_query);
         if !(method == "GET"
             || under_actions
-            || method == "POST" && path.starts_with("/_brust/cache/invalidate")
-            || method == "POST" && path == "/_brust/mcp")
+            || method == "POST" && path_no_query.starts_with("/_brust/cache/invalidate")
+            || method == "POST" && path_no_query == "/_brust/mcp")
         {
             let _ = s.write_all(http::error_405()).await;
             return;
@@ -310,12 +313,18 @@ async fn handle_conn(
         //   413 — Content-Length > SAB capacity
         //   400 — body not valid UTF-8
         // 5xx — fn throws / middleware throws (handled by the JS side via meta envelope)
-        let action_prefix = crate::action_prefix();
-        let path_no_query = path.split('?').next().unwrap_or(&path);
-        if path_no_query == action_prefix || path_no_query.starts_with(&format!("{action_prefix}/"))
-        {
-            let rel = &path_no_query[action_prefix.len()..];
-            let rel = if rel.is_empty() { "/" } else { rel };
+        if under_actions {
+            // Compute the prefix-relative path without cloning the prefix on the
+            // hot path; only action requests reach here (rare vs page loads).
+            let rel_owned = crate::with_action_prefix(|p| {
+                let rel = &path_no_query[p.len()..];
+                if rel.is_empty() {
+                    "/".to_string()
+                } else {
+                    rel.to_string()
+                }
+            });
+            let rel = rel_owned.as_str();
             let m = match crate::action_router::Method::from_http(&method) {
                 Some(m) => m,
                 None => {
