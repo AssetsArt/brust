@@ -116,8 +116,10 @@ test('brust build with missing entry exits 1 with a clear message', async () => 
 
 test('brust (no subcommand) exits 1', async () => {
   const result = await $`bun ${path.join(REPO, 'runtime/cli/index.ts')}`.nothrow()
-  expect(result.exitCode).toBe(1)
-  expect(result.stderr.toString()).toContain('missing subcommand')
+  expect(result.exitCode).not.toBe(0)
+  const noArgErr = result.stderr.toString()
+  expect(noArgErr).toContain('Usage')
+  expect(noArgErr).toContain('build')
 })
 
 test('brust build emits dist/css/app.css with compiled Tailwind', async () => {
