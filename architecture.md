@@ -9,9 +9,9 @@ crosses back to Rust through a per-worker `SharedArrayBuffer`, never through a V
 marshal.
 
 It is also **agent-first**: a Brust app ships a Model Context Protocol server at
-`POST /_brust/mcp` that exposes its route loaders as resources, extracted from
-the app's own types at boot — agents drive the app through typed contracts, not
-DOM scraping. (Action-derived tools are a deferred follow-up; see the MCP section.)
+`POST /_brust/mcp` that exposes its `defineActions` endpoints as tools and its
+route loaders as resources, extracted from the app's own types at boot — agents
+drive the app through typed contracts, not DOM scraping.
 
 Current line: **0.1.x-alpha** (npm `brustjs` + 6 platform packages + `create-brustjs`).
 
@@ -404,11 +404,6 @@ route-middleware inheritance, streaming uploads.
 
 ### Known limitations / deferred
 
-- **MCP-derived-from-actions is currently inert.** The MCP `tools/call` path was
-  coupled to the old positional-args `ActionDef` produced by the `'use server'`
-  scanner. With `defineActions` the manifest extractor no longer feeds actions
-  into MCP, so `tools/list` returns no action tools (loader-derived resources are
-  unaffected). Reworking MCP tools over the new `EndpointDef` is a follow-up.
 - **Multipart / file upload through the treaty client is deferred.** The dispatch
   path is JSON-only; the previous `multipart/form-data` + `x-www-form-urlencoded`
   body handling (and the `formAction`/`FormData` client) were removed with the
@@ -651,20 +646,22 @@ loader: async ({ params, req }) => ({ product, cacheKey: `p_${params.id}` })
 Brust mounts a Model Context Protocol (2025-06-18) server at `POST /_brust/mcp`
 (JSON-RPC 2.0). The framework already knows what an agent needs:
 
-- server actions → MCP **tools** *(deferred — see below)*
+- `defineActions` endpoints → MCP **tools** (one per `METHOD path`)
 - route loaders → MCP **resources** at `brust:///<path-template>`
 
-A boot-time extractor (`runtime/mcp/extractor.ts`) walks the types via the
-TypeScript compiler API and caches `.brust/mcp-manifest.json` — no hand-written
-schema. Capabilities: tools, resources, prompts (empty), logging. Transport is
-POST-only (SSE notifications deferred).
+A boot-time extractor (`runtime/mcp/extractor.ts`) walks the `defineActions`
+chain and the route types via the TypeScript compiler API and caches
+`.brust/mcp-manifest.json` — no hand-written schema. Each tool's `inputSchema`
+nests `params` (from `{x}` path segments), `body`, and `query` (inferred from
+the endpoint's Standard Schema validators); the tool name is a slug like
+`post_notes` / `get_notes_by_id`. Capabilities: tools, resources, prompts
+(empty), logging. Transport is POST-only (SSE notifications deferred).
 
-**Action-derived tools are currently inert.** The extractor was coupled to the
-old positional-args `ActionDef` from the `'use server'` scanner; with
-`defineActions`/`EndpointDef` it no longer emits action tools, so `tools/list`
-exposes only loader-derived resources. Reworking `tools/call` over `EndpointDef`
-(routing the call through the endpoint's middleware chain so the same auth that
-protects users protects agents) is a follow-up.
+`tools/call` resolves the tool to its `EndpointDef` and dispatches through the
+**same `dispatchAction` path as a real HTTP request** — so body/query validation
+(422), the endpoint middleware chain, and the `respond`/error contract all apply
+identically. The same auth that protects users protects agents. Tool arguments
+are nested by routing role: `{ params?, query?, body? }`.
 
 ---
 
