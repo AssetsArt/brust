@@ -156,6 +156,9 @@ runtime/cli/
   dev.ts new.ts   # unchanged (help routed by index.ts)
 ```
 
+Also update `README.md` (it documents `brustjs build` at ~line 75) with a
+one-line `--target` note. README is IN scope (a one-liner); broader docs are not.
+
 ## Tests
 
 Unit (bun:test, no spawn — fast, leak-free):
@@ -179,15 +182,23 @@ Unit (bun:test, no spawn — fast, leak-free):
    - `'auto'` selects the host binary — assert by computing the host infix the
      same way and checking membership (skip if host binary not in the fixture).
 
+> CI-gate note: `tests/cli-build.test.ts` is NOT in ci.yml's core gate, but
+> `bun test runtime/` (which IS gated) picks up `runtime/cli/*.test.ts`. So the
+> load-bearing target/help LOGIC must live in the unit tests below (1–5), which
+> ride the gate; the integration tests (6–9) are local hygiene that exercise the
+> real spawned binary. Do not rely on an ungated suite for correctness.
+
 Integration (bun spawn — run ISOLATED, port-race/leak hygiene per memory
 `bun-mock-module-leaks-suite`):
 6. `brust --version` → stdout matches the package.json version, exit 0.
 7. `brust --help` and `brust help build` → exit 0, stdout has the expected
    sections. `brust` (no args) → exit 1, help on stderr.
 8. `brust frobnicate` → exit 1, stderr contains `unknown command`.
-9. `brust build … --target darwin-arm64` against the example app → dist `native/`
-   contains exactly `brust.darwin-arm64.node` (on a darwin-arm64 host) and the
-   server still boots. (Gate/skip the exact-arch assertion to the host arch.)
+9. `brust build … --target <host-infix>` against the example app → dist `native/`
+   contains exactly `brust.<host-infix>.node` and the server still boots. Compute
+   `<host-infix>` DYNAMICALLY (same host detection as `auto`, e.g. derive from
+   `process.platform`/`process.arch`) — do NOT hardcode `darwin-arm64`, since CI
+   has a Linux leg. This doubles as the `auto`-equivalent smoke.
 
 The existing `cli-build.test.ts:118-120` assertion (`brust` → stderr
 `'missing subcommand'`) is now wrong and must be **updated** to assert exit 1 +
