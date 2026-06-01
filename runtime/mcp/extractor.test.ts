@@ -33,6 +33,27 @@ export const actions = defineActions()
 export type Actions = typeof actions
 `
 
+// Regression: a handler that does NOT destructure its ctx (e.g. `() => ...`)
+// must still get a rich body schema — inference reads the builder call's
+// resolved signature, not the user's arrow params. (Caught in Phase-6 scrutiny:
+// example/hello-world's paramless handler previously emitted an empty schema.)
+test('extractor: paramless handler with body schema still infers body', async () => {
+  const src = `
+import { defineActions } from '${RUNTIME}/index.ts'
+import { z } from 'zod'
+export const actions = defineActions()
+  .post('/notes', () => ({ id: 'n-1' }), { body: z.object({ text: z.string() }) })
+export type Actions = typeof actions
+`
+  const { m, cleanup } = await extractFrom(src)
+  try {
+    const post = m.tools.find((t) => t.name === 'post_notes')!
+    expect(post.inputSchema.properties?.body?.properties?.text).toEqual({ type: 'string' })
+  } finally {
+    await cleanup()
+  }
+})
+
 test('extractor: emits one name-sorted tool per endpoint', async () => {
   const { m, cleanup } = await extractFrom(SRC)
   try {

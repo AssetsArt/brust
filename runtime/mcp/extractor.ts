@@ -118,7 +118,7 @@ function extractToolsFromActions(
     const path = pathArg.text
     const handler = call.arguments[1]
     const optsArg = call.arguments[2]
-    const tool = buildTool(checker, method, path, handler, optsArg)
+    const tool = buildTool(checker, method, path, call, handler, optsArg)
     if (seen.has(tool.name)) {
       throw new Error(
         `[brust mcp] duplicate tool name "${tool.name}" from ${method} ${path}; ` +
@@ -159,6 +159,7 @@ function buildTool(
   checker: ts.TypeChecker,
   method: ToolSchema['method'],
   path: string,
+  call: ts.CallExpression,
   handler: ts.Expression | undefined,
   optsArg: ts.Expression | undefined,
 ): ToolSchema {
@@ -178,8 +179,10 @@ function buildTool(
   const hasQuery = optsLit ? hasProp(optsLit, 'query') : false
   const description = optsLit ? readStringProp(optsLit, 'description') : undefined
 
-  // handler ctx type — for body/query inference + output.
-  const ctxType = handler ? handlerCtxType(checker, handler) : undefined
+  // handler ctx type — for body/query inference. Derived from the builder
+  // call's resolved signature (not the user's arrow) so it works regardless of
+  // whether the handler destructures its ctx param.
+  const ctxType = callCtxType(checker, call)
   if (hasBody && ctxType) {
     const s = ctxMemberSchema(checker, ctxType, 'body')
     if (s) props.body = s
@@ -246,16 +249,24 @@ function readStringProp(lit: ts.ObjectLiteralExpression, name: string): string |
   return undefined
 }
 
-// The handler's ctx (first param) type, via the call signature of the handler expr.
-function handlerCtxType(checker: ts.TypeChecker, handler: ts.Expression): ts.Type | undefined {
-  const t = checker.getTypeAtLocation(handler)
-  const sig = t.getCallSignatures()[0]
-  if (!sig) return undefined
-  const p0 = sig.getParameters()[0]
+// The handler's ctx (first param) type, via the RESOLVED signature of the
+// builder call (param[1] = handler). Reading the builder's parameter type —
+// not the user's arrow — makes body/query inference independent of whether the
+// handler actually destructures its ctx: a `() => ...` handler that declares a
+// `body` schema still yields a rich body schema.
+function callCtxType(checker: ts.TypeChecker, call: ts.CallExpression): ts.Type | undefined {
+  const rs = checker.getResolvedSignature(call)
+  const handlerParam = rs?.getParameters()[1]
+  if (!handlerParam) return undefined
+  const hd = handlerParam.valueDeclaration ?? handlerParam.declarations?.[0]
+  if (!hd) return undefined
+  const ht = checker.getTypeOfSymbolAtLocation(handlerParam, hd)
+  const sig = ht.getCallSignatures()[0]
+  const p0 = sig?.getParameters()[0]
   if (!p0) return undefined
-  const decl = p0.valueDeclaration ?? p0.declarations?.[0]
-  if (!decl) return undefined
-  return checker.getTypeOfSymbolAtLocation(p0, decl)
+  const pd = p0.valueDeclaration ?? p0.declarations?.[0]
+  if (!pd) return undefined
+  return checker.getTypeOfSymbolAtLocation(p0, pd)
 }
 
 function handlerReturnType(checker: ts.TypeChecker, handler: ts.Expression): ts.Type | undefined {
