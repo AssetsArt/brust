@@ -378,7 +378,7 @@ const { data } = await api.whoami.get()                  // GET  /_brust/action/
 await api.notes({ id }).delete()                         // DELETE /_brust/action/notes/{id}
 ```
 
-- **Declaration:** `defineActions().get/post/put/patch/delete(path, ctx => R, opts?)`.
+- **Declaration:** `defineActions().get/post/put/patch/delete/head(path, ctx => R, opts?)`.
   The handler receives a context object `{ req, body, params, query, headers, respond }`.
   `opts.body` / `opts.query` are [Standard Schema](https://standardschema.dev)
   validators (e.g. zod); `opts.middleware` attaches a per-endpoint chain, and
@@ -387,31 +387,41 @@ await api.notes({ id }).delete()                         // DELETE /_brust/actio
   scan and no build-time codegen.
 - **Transport:** `METHOD <prefix>/<path>` over the same accept loop + worker pool
   as renders. Default prefix `/_brust/action`, configurable via the `actionPrefix`
-  option to `brust.run` / `brust.serve`. JSON object body in, JSON return out;
-  256 KB body cap. The Rust action router matches method + path: unknown path →
-  404, known path + wrong method → 405. Body schema failure → 422, malformed JSON
-  → 400.
+  option to `brust.run` / `brust.serve`. Request bodies decode by content-type —
+  `application/json` (default), `application/x-www-form-urlencoded`, and
+  `multipart/form-data` (→ object with `File` entries) — into a plain object
+  *before* schema validation; JSON return out; 256 KB body cap. The Rust action
+  router matches method + path: unknown path → 404, known path + wrong method →
+  405. Body schema failure → 422, malformed body → 400.
 - **Client:** `client<Actions>(opts?)` builds a treaty proxy. Static segments
   accumulate (`api.notes` → `/notes`); a function call fills `{param}`s positionally
   (`api.notes({ id })` → `/notes/<id>`); a terminal `.get/.post/...` performs the
   request. It returns `{ data, error, status, headers, response }` and **never
-  throws on an HTTP status** — branch on `error`. `opts.prefix` overrides the base
-  (absolute URL needed for server-side `fetch`); `opts.headers` / per-call
-  `{ headers }` thread request headers; `opts.fetch` injects a fetch impl.
+  throws on an HTTP status** — branch on `error`. A body carrying a top-level
+  `File`/`Blob` (or a `FormData`) is auto-sent as `multipart/form-data`;
+  otherwise JSON. `opts.prefix` overrides the base (absolute URL needed for
+  server-side `fetch`); in the browser the prefix is auto-discovered from an
+  injected `globalThis.__BRUST_ACTION_PREFIX__` when the app sets a custom
+  `actionPrefix`. `opts.headers` / per-call `{ headers }` thread request headers;
+  `opts.fetch` injects a fetch impl.
 
 Not built: build-time client RPC auto-rewrite, a shared client chunk,
 route-middleware inheritance, streaming uploads.
 
 ### Known limitations / deferred
 
-- **Multipart / file upload through the treaty client is deferred.** The dispatch
-  path is JSON-only; the previous `multipart/form-data` + `x-www-form-urlencoded`
-  body handling (and the `formAction`/`FormData` client) were removed with the
-  `'use server'` machinery.
-- **The `__BRUST_ACTION_PREFIX__` browser auto-discovery is deferred.** The client
-  reads that global as a prefix fallback, but the server does not yet inject it
-  into the page; pass `prefix` explicitly when the default `/_brust/action` is
-  wrong (always required for server-side callers).
+- **Multipart edge cases.** Single files via a top-level `File`/`Blob` work
+  end-to-end (client → wire → `Object.fromEntries(formData)` → schema). A `File`
+  **nested** inside a sub-object isn't detected (goes through JSON, serializes to
+  `{}`), and repeated form fields collapse to the last value (no arrays yet).
+- **Custom-prefix browser injection covers the React-SSR render path only.** The
+  `__BRUST_ACTION_PREFIX__` global is spliced into HTML by the SSR renderer;
+  native/jinja routes don't bake it (the prefix isn't a build-time input), so a
+  client on a native page with a custom prefix must pass `prefix` explicitly.
+  Server-side callers always pass it explicitly.
+- **HEAD ships a response body.** `.head` endpoints run like `get`; the Rust
+  single-chunk writer does not strip the body for HEAD (RFC-correct stripping
+  would be a separate Rust change).
 
 ---
 
