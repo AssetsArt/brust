@@ -1,7 +1,7 @@
 import ts from 'typescript'
 import { tsTypeToJsonSchema, type JsonSchema } from './schema.ts'
 import type { McpManifest, ToolSchema, ResourceSchema } from './manifest.ts'
-import type { ActionDef } from '../actions.ts'
+import type { LegacyActionDef } from './server.ts'
 import type { FlatRoute } from '../routes.ts'
 
 export interface ExtractOptions {
@@ -12,8 +12,9 @@ export interface ExtractOptions {
   /** The user's source roots. Reserved for future tsconfig/baseUrl/paths
    * resolution; currently ignored — pass at least one for forward compat. */
   sourceRoots: string[]
-  /** Result of `await brust.scanActions(...)` — maps action ids to ActionDef. */
-  actions: ActionDef[]
+  /** Legacy action defs (positional-args shape). Currently always empty — the
+   * `'use server'` scanner is gone; action-derived MCP tools land in M1. */
+  actions: LegacyActionDef[]
   /** Result of `defineRoutes(...)`. */
   routes: FlatRoute[]
 }

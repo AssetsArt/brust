@@ -1,10 +1,19 @@
-import type { ActionDef } from '../actions.ts'
-import type { FlatRoute, BrustRequest } from '../routes.ts'
+import type { FlatRoute, BrustRequest, Middleware } from '../routes.ts'
 import type { McpManifest } from './manifest.ts'
+
+/** Legacy `'use server'` action shape. The `defineActions` migration (M1)
+ * reworks MCP tools/call to dispatch over EndpointDef; until then the MCP
+ * server still speaks the positional-args ActionDef contract, but receives
+ * an empty `actions` array (the `'use server'` scanner is gone). */
+export interface LegacyActionDef {
+  id: string
+  fn: (req: BrustRequest, ...args: unknown[]) => Promise<unknown> | unknown
+  middleware?: Middleware[]
+}
 
 export interface McpServerOptions {
   manifest: McpManifest
-  actions: ActionDef[]
+  actions: LegacyActionDef[]
   routes: FlatRoute[]
   packageVersion?: string
 }
