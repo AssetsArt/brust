@@ -1,6 +1,5 @@
 import * as native from './index.js'
-import type { ActionDef } from './actions.ts'
-import { isValidActionId } from './actions.ts'
+import type { EndpointDef } from './define-actions.ts'
 import { loadConfig } from './config.ts'
 import { configureCssEnabled, configureCssHrefsForRoute } from './css.ts'
 import { configureJinjaDir } from './islands/native-render.ts'
@@ -13,10 +12,13 @@ export interface ServeOptions {
   workers: number
   entry: string
   bootTimeoutMs?: number
-  /** Action definitions discovered by `brust.scanActions()`. When present,
-   * `serve` calls the internal action registry before the listener binds.
-   * Optional — omit if the app has no server actions. */
-  actions?: ActionDef[]
+  /** Actions builder from `defineActions(...)`. When present, `serve`
+   * registers its endpoints (method/path, keyed by registration index)
+   * before the listener binds. Optional — omit if the app has no actions. */
+  actions?: import('./define-actions.ts').ActionsBuilder
+  /** URL prefix the action router mounts under (e.g. `/_actions`). Threaded
+   * into Rust's ServeOptions.action_prefix. */
+  actionPrefix?: string
   /** MCP support — pass a manifest built via brust.buildMcpManifest. brust.serve
    * does NOT auto-wire MCP into workers; the worker branch of the entry file must
    * call brust.loadMcpManifest() + makeMcpServer() itself and pass the McpServer
@@ -83,21 +85,8 @@ function loadJinjaOnce(dir: string): void {
   _jinjaLoaded = true
 }
 
-function registerActionsInternal(actions: Array<{ id: string }>): number {
-  const seen = new Set<string>()
-  for (const a of actions) {
-    if (!isValidActionId(a.id)) {
-      throw new Error(
-        `action id ${JSON.stringify(a.id)} contains invalid characters; ` +
-          `allowed: [A-Za-z0-9_-]+ (max 128 chars)`,
-      )
-    }
-    if (seen.has(a.id)) {
-      throw new Error(`action id ${JSON.stringify(a.id)} registered more than once`)
-    }
-    seen.add(a.id)
-  }
-  return (native as any).registerActions(actions.map((a) => a.id))
+function registerActionsInternal(endpoints: Array<{ method: string; path: string }>): number {
+  return (native as any).registerActions(endpoints.map((e) => ({ method: e.method, path: e.path })))
 }
 
 /** Read and schema-validate a prebuilt mcp-manifest.json at an absolute path.
@@ -122,11 +111,10 @@ async function readManifestFromPath(
 
 export const brust = {
   async serve(opts: ServeOptions): Promise<void> {
-    if (opts.actions && opts.actions.length > 0) {
-      // Register action ids with Rust. registerActionsInternal validates
-      // charset + uniqueness; throws on either. Mirrors the previous
-      // `brust.registerActions` user-facing call exactly.
-      registerActionsInternal(opts.actions)
+    if (opts.actions) {
+      // Register endpoint method/path with Rust. The router keys each by its
+      // registration index; the worker dispatches on that same index string.
+      registerActionsInternal(opts.actions.endpoints)
     }
     ;(native as any).beginServe({
       host: opts.host,
@@ -134,6 +122,10 @@ export const brust = {
       workers: opts.workers,
       entry: opts.entry,
       tuning: opts.tuning,
+      // napi-rs camelCases #[napi(object)] fields, so the addon reads
+      // `actionPrefix` (not snake_case). A snake_case key is silently dropped,
+      // leaving the prefix at its default — which broke custom-prefix routing.
+      actionPrefix: opts.actionPrefix,
     })
     const baseEnv = { ...process.env }
     const workersArr: Worker[] = []
@@ -218,18 +210,6 @@ export const brust = {
   configureCssDir(dir: string): void {
     ;(native as any).configureCssDir(dir)
   },
-  /** Walk the project for files marked `'use server'`, import them, and
-   * return all named function exports as ActionDef[] plus the list of source
-   * files (needed by brust.buildMcpManifest). Both the main process and each
-   * worker should call this once at module top-level and pass `actions` to
-   * `brust.serve({ actions, ... })` (main) and `makeRenderer(..., { actions,
-   * ... })` (worker). See ScanOptions for roots / ignore overrides. */
-  async scanActions(
-    opts?: import('./scan-actions.ts').ScanOptions,
-  ): Promise<import('./scan-actions.ts').ScanActionsResult> {
-    const { scanActions } = await import('./scan-actions.ts')
-    return scanActions(opts)
-  },
   /** Extract the MCP manifest from TypeScript source using the compiler API,
    * write it to `.brust/mcp-manifest.json`, and return it. Call once in the
    * main process after `brust.registerRoutes(routes)`. Workers must read the
@@ -237,10 +217,9 @@ export const brust = {
    * branch and pass an `McpServer` (built via `makeMcpServer`) to
    * `makeRenderer` via `opts.mcp`. See example/hello-world/index.ts. */
   async buildMcpManifest(opts: {
-    serverFiles: string[]
+    actionsFile?: string
     routesFile: string
     sourceRoots: string[]
-    actions: import('./actions.ts').ActionDef[]
     routes: import('./routes.ts').FlatRoute[]
     cwd?: string
   }): Promise<import('./mcp/manifest.ts').McpManifest> {
@@ -294,6 +273,11 @@ export const brust = {
     /** TCP port to bind on. Default 1337. Overridable by env/toml — see
      * `address`. */
     port?: number
+    /** Actions builder from `defineActions(...)`. Registered with Rust and
+     * threaded to each worker's renderer. Omit if the app has no actions. */
+    actions?: import('./define-actions.ts').ActionsBuilder
+    /** URL prefix the action router mounts under. Threaded to serve(). */
+    actionPrefix?: string
     /** Overrides merged into the underlying `serve()` call (main thread). */
     serve?: Partial<Omit<ServeOptions, 'entry' | 'actions' | 'mcp'>>
     /** Per-worker SAB size in bytes. Default 256 KB. */
@@ -325,9 +309,20 @@ export const brust = {
       ]
       configureDevClientSnippet(buildDevClientTag())
     }
-    // scanActions is plugin-aliased in prebuilt bundles → returns pre-baked
-    // list with sourceFiles=[]. In dev mode it walks the filesystem.
-    const { actions, sourceFiles } = await this.scanActions({ roots: [scanRoot] })
+    {
+      const { configureActionPrefixSnippet } = await import('./render/inject-action-prefix.ts')
+      const ap = opts.actionPrefix
+      configureActionPrefixSnippet(
+        ap && ap !== '/_brust/action'
+          ? `<script>globalThis.__BRUST_ACTION_PREFIX__=${JSON.stringify(ap)}</script>`
+          : null,
+      )
+    }
+    // Actions now come from the explicit `defineActions(...)` builder passed in
+    // opts (the `'use server'` scanner is gone). `endpoints` is the EndpointDef[]
+    // threaded to serve()/makeRenderer; the worker keys dispatch by registration
+    // index.
+    const endpoints: EndpointDef[] = opts.actions?.endpoints ?? []
 
     if (!isWorker) {
       const { host, port, workers, cacheMaxEntries } = await loadConfig(process.cwd(), {
@@ -453,7 +448,7 @@ export const brust = {
         console.log(`[brust] main: registered ${wsPaths.length} ws path(s): ${wsPaths.join(', ')}`)
       }
       console.log(
-        `[brust] main: scanActions found ${actions.length} action(s): ${actions.map((a) => a.id).join(', ')}`,
+        `[brust] main: registered ${endpoints.length} action endpoint(s): ${endpoints.map((e) => `${e.method} ${e.path}`).join(', ')}`,
       )
 
       if (dev) {
@@ -576,11 +571,11 @@ export const brust = {
           )
         }
       } else {
+        const actionsFile = path.join(scanRoot, 'actions.ts')
         mcpManifest = await this.buildMcpManifest({
-          serverFiles: sourceFiles,
+          actionsFile: existsSync(actionsFile) ? actionsFile : undefined,
           routesFile: path.join(scanRoot, 'routes.tsx'),
           sourceRoots: [scanRoot],
-          actions,
           routes,
         })
         console.log(
@@ -593,7 +588,8 @@ export const brust = {
         port,
         workers,
         entry: opts.entry,
-        actions,
+        actions: opts.actions,
+        actionPrefix: opts.actionPrefix,
         ...(mcpManifest ? { mcp: { manifest: mcpManifest } } : {}),
         ...opts.serve,
       })
@@ -613,6 +609,15 @@ export const brust = {
           { ...devRoute, fullPath: devRoute.path!, chain: [devRoute as any] } as any,
           ...opts.routes,
         ]
+      }
+      {
+        const { configureActionPrefixSnippet } = await import('./render/inject-action-prefix.ts')
+        const ap = opts.actionPrefix
+        configureActionPrefixSnippet(
+          ap && ap !== '/_brust/action'
+            ? `<script>globalThis.__BRUST_ACTION_PREFIX__=${JSON.stringify(ap)}</script>`
+            : null,
+        )
       }
       // Worker: detect CSS the same way main did (no compile, no configureCssDir
       // — Rust state is shared, but the per-worker renderer needs the hrefs).
@@ -655,7 +660,7 @@ export const brust = {
       let mcpServer: import('./mcp/server.ts').McpServer | undefined
       if (mcpManifest) {
         const { makeMcpServer } = await import('./mcp/server.ts')
-        mcpServer = makeMcpServer({ manifest: mcpManifest, actions, routes: workerRoutes })
+        mcpServer = makeMcpServer({ manifest: mcpManifest, endpoints, routes: workerRoutes })
         console.log(`[brust] worker: mcp server ready (${mcpManifest.tools.length} tools)`)
       }
 
@@ -667,7 +672,11 @@ export const brust = {
 
       const { makeRenderer: make } = await import('./routes.ts')
       let wid: number | null = null
-      const renderer = make(workerRoutes, view, { actions, getWorkerId: () => wid, mcp: mcpServer })
+      const renderer = make(workerRoutes, view, {
+        actions: endpoints,
+        getWorkerId: () => wid,
+        mcp: mcpServer,
+      })
       wid = this.registerRenderer(view, renderer)
     }
   },
@@ -685,9 +694,13 @@ export type {
   Middleware,
 } from './routes.ts'
 
-export { withMiddleware, isValidActionId } from './actions.ts'
-export type { ActionDef, ActionFn } from './actions.ts'
-export type { ScanOptions, ScanActionsResult } from './scan-actions.ts'
+export { defineActions, isValidEndpointPath } from './define-actions.ts'
+export type {
+  EndpointDef,
+  ActionContext,
+  EndpointOptions,
+  ActionsBuilder,
+} from './define-actions.ts'
 
 export { loadConfig, BrustConfigError } from './config.ts'
 export type { BrustConfig } from './config.ts'

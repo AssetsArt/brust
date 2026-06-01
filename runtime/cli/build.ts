@@ -2,10 +2,6 @@ import { existsSync } from 'node:fs'
 import { copyFile, cp, mkdir, readdir, rm } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import path, { isAbsolute, resolve } from 'node:path'
-import {
-  actionsPrebuiltPlugin,
-  writePrebuiltActionsFileWithMap,
-} from './actions-prebuilt-plugin.ts'
 import { emitNativeTemplates } from './native-routes-emit.ts'
 import { nativeShimPlugin } from './native-shim-plugin.ts'
 
@@ -217,18 +213,11 @@ export async function runBuild(args: string[]): Promise<void> {
   await rm(outDir, { recursive: true, force: true })
   await mkdir(outDir, { recursive: true })
 
-  // 2. Scan actions + rediscover id→source mapping for the prebuilt plugin.
-  const { scanActions, collectExports } = await import('../scan-actions.ts')
-  const scan = await scanActions({ roots: [entryDir] })
-  console.log(
-    `[brust build] actions: discovered ${scan.actions.length} (${scan.actions.map((a) => a.id).join(', ') || '(none)'})`,
-  )
-
-  const idToSource = new Map<string, string>()
-  for (const file of scan.sourceFiles) {
-    const defs = await collectExports(file)
-    for (const def of defs) idToSource.set(def.id, file)
-  }
+  // 2. Actions need no build-time codegen. With `defineActions(...)`, actions
+  // are an EXPLICIT module the app entry imports and passes to
+  // `brust.run({ actions })` — the dist boot registers them through the normal
+  // `import { actions } from './actions'` path, no scan and no `_actions-prebuilt`
+  // file. (The old `'use server'` filesystem scanner is gone.)
 
   // routes.tsx is the scan target for both islands (§3) and the MCP manifest
   // (§4). Computed once here and reused below.
@@ -243,6 +232,18 @@ export async function runBuild(args: string[]): Promise<void> {
     const islandsOutDir = path.join(outDir, 'islands')
     const result = await buildIslands(islandMap, { outDir: islandsOutDir })
     console.log(`[brust build] islands: ${result.islandCount} chunk(s) → ${islandsOutDir}`)
+
+    // Mirror into cwd/.brust/islands so the NON-prebuilt source runtime
+    // (`bun run <entry>` directly, and `bun run dev`) — which reads
+    // cwd/.brust/islands (see runtime/islands/build.ts default outDir) — finds
+    // the same chunks after a build. The prebuilt dist reads <distDir>/islands;
+    // this keeps the dev/source path working without a separate bundle step.
+    // Mirrors the jinja mirror below. `.brust/` is a gitignored cache dir.
+    const localIslandsDir = path.join(process.cwd(), '.brust', 'islands')
+    if (path.resolve(localIslandsDir) !== path.resolve(islandsOutDir)) {
+      await rm(localIslandsDir, { recursive: true, force: true })
+      await cp(islandsOutDir, localIslandsDir, { recursive: true })
+    }
   } else {
     console.log('[brust build] islands: skipped (no <Island> usage)')
   }
@@ -253,11 +254,11 @@ export async function runBuild(args: string[]): Promise<void> {
     const { extractMcpManifest } = await import('../mcp/extractor.ts')
     const { routes } = await import(routesFile)
     loadedRoutes = routes
+    const actionsFile = path.join(entryDir, 'actions.ts')
     const manifest = await extractMcpManifest({
-      serverFiles: scan.sourceFiles,
+      actionsFile: existsSync(actionsFile) ? actionsFile : undefined,
       routesFile,
       sourceRoots: [entryDir],
-      actions: scan.actions,
       routes,
     })
     const manifestPath = path.join(outDir, 'mcp-manifest.json')
@@ -350,11 +351,10 @@ export async function runBuild(args: string[]): Promise<void> {
     }
   }
 
-  // 5. Generate the prebuilt-actions file (always — empty list if no actions).
-  const prebuiltActionsPath = path.join(outDir, '_actions-prebuilt.ts')
-  await writePrebuiltActionsFileWithMap(prebuiltActionsPath, idToSource, REPO_ROOT)
-
-  // 6. Bun.build the server bundle with both plugins + banner.
+  // 5. Bun.build the server bundle with the native shim plugin + banner. No
+  // actions codegen: `defineActions(...)` actions register via the app entry's
+  // `import { actions } from './actions'` → `brust.run({ actions })` path, which
+  // the bundled entry already carries.
   const banner =
     `process.env.BRUST_PREBUILT = '1';\n` + `process.env.BRUST_DIST_DIR = import.meta.dir;\n`
 
@@ -380,7 +380,7 @@ export async function runBuild(args: string[]): Promise<void> {
     // point at non-existent files. Whitespace + syntax minification still apply.
     minify: { whitespace: true, syntax: true, identifiers: false },
     banner,
-    plugins: [nativeShimPlugin(REPO_ROOT), actionsPrebuiltPlugin(prebuiltActionsPath, REPO_ROOT)],
+    plugins: [nativeShimPlugin(REPO_ROOT)],
   })
 
   if (!result.success) {

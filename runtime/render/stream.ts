@@ -9,6 +9,7 @@ import { ISLANDS_IMPORTMAP_AND_BOOTSTRAP } from '../islands/importmap.ts'
 import { injectCssLink } from './inject-css-link.ts'
 import { getCssHrefs, getCssHrefsForRoute } from '../css.ts'
 import { injectDevClient } from './inject-dev-client.ts'
+import { injectActionPrefix, getActionPrefixSnippet } from './inject-action-prefix.ts'
 import { getDevClientSnippet } from '../dev/inject.ts'
 
 export interface RenderBranchStreamingArgs {
@@ -148,6 +149,7 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
             const perRouteHrefs = args.routePath ? getCssHrefsForRoute(args.routePath) : []
             body = injectCssLink(body, [...getCssHrefs(), ...perRouteHrefs])
             body = injectDevClient(body, getDevClientSnippet())
+            body = injectActionPrefix(body, getActionPrefixSnippet())
             const meta = makeMeta({
               status: successStatus,
               streaming: false,
@@ -208,8 +210,9 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
               .map((h) => `<link rel="stylesheet" href="${h}">`)
               .join('')
             const devTag = getDevClientSnippet() ?? ''
-            if (linkTagsStr.length > 0 || devTag.length > 0) {
-              const prepend = encoder.encode(linkTagsStr + devTag)
+            const prefixTag = getActionPrefixSnippet() ?? ''
+            if (linkTagsStr.length > 0 || devTag.length > 0 || prefixTag.length > 0) {
+              const prepend = encoder.encode(linkTagsStr + prefixTag + devTag)
               const out = new Uint8Array(flushed.length + prepend.length)
               out.set(flushed, 0)
               out.set(prepend, flushed.length)

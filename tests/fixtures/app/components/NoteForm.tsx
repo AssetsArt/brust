@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import { action, BrustActionError } from '../../../../runtime/client/index.ts'
-import type * as srv from '../actions'
+import { client } from '../../../../runtime/client/index.ts'
+import type { Actions } from '../actions'
 
-const createNote = action<typeof srv.createNote>('createNote')
+const api = client<Actions>()
 
 export default function NoteForm() {
   const [text, setText] = useState('')
@@ -14,14 +14,13 @@ export default function NoteForm() {
       onSubmit={async (e) => {
         e.preventDefault()
         setErr(null)
-        try {
-          const { id } = await createNote(text)
-          setCreated(id)
-          setText('')
-        } catch (caught) {
-          if (caught instanceof BrustActionError) setErr(`status ${caught.status}: ${caught.message}`)
-          else setErr(String(caught))
+        const { data, error } = await api.notes.post({ text })
+        if (error) {
+          setErr(`status ${error.status}`)
+          return
         }
+        setCreated(data.id)
+        setText('')
       }}
     >
       <input

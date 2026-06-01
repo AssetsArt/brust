@@ -85,13 +85,18 @@ brustjs new   <name>              # scaffold a project (partial — see Status)
   `renderToString` runs once per key, then serves a frozen pair from Rust.
 - **`native: true` routes** — JSX compiled to a jinja template at build time and
   rendered Rust-side (`minijinja`), skipping React on the server entirely.
-- **Server actions** (`"use server"`) → per-action endpoints; client helper rewrites
-  form/`fetch` targets.
+- **Typed actions** — `defineActions().get/post/put/patch/delete/head(path, ctx => R, { body, query })`
+  on the server; `client<typeof actions>()` is an Eden-Treaty-style proxy that
+  infers the whole API from the server types (no codegen) and returns
+  `{ data, error, status, headers }` (never throws). Standard Schema (zod)
+  validation, JSON / urlencoded / multipart bodies.
 - **SSE & WebSockets** as first-class route shapes.
 - Nested routes + dynamic params, per-route typed loaders, request-scoped middleware,
-  forms/multipart, SPA-style navigation, in-process LRU response cache + island ISR cache, Tailwind v4 + CSS Modules.
-- **Agent-first** — server fns and routes expose MCP tool/resource schemas at
-  `/_brust/mcp` so agents drive the app without scraping.
+  SPA-style navigation, in-process LRU response cache + island ISR cache, Tailwind v4 + CSS Modules.
+- **Agent-first** — `defineActions` endpoints become MCP **tools** and route
+  loaders become **resources** at `/_brust/mcp`; `tools/call` runs through the
+  same validation + middleware as an HTTP request, so agents drive the app
+  without scraping.
 
 ## Performance
 
@@ -120,9 +125,9 @@ bench/ · docs/ · architecture.md
 ## Status
 
 Alpha, solo-developed. Linux is tier-1 (io_uring; glibc + musl, 6 prebuilt platform
-binaries). Known partials: `brustjs dev` TS reload is a full worker-respawn reload
-(not state-preserving HMR), islands + `.module.css`. Tailwind
-is opt-in — the scaffold adds it as a project dependency; `@import "tailwindcss"`
+binaries). Known partials: `brustjs dev` reload is a full worker-respawn (not
+state-preserving HMR) — TS, islands, and `.module.css` all reload that way.
+Tailwind is opt-in — the scaffold adds it as a project dependency; `@import "tailwindcss"`
 resolves from your own `node_modules`. Deployment note: the io_uring server needs `io_uring_*`
 syscalls permitted — a default-seccomp container (Docker/k8s) must allow them or run
 `--security-opt seccomp=unconfined`. Roadmap and limitations in

@@ -56,6 +56,8 @@ pub struct RouteEnvelope<'a> {
 pub struct ActionEnvelope<'a> {
     pub kind: &'static str,
     pub action_id: &'a str,
+    #[serde(serialize_with = "crate::routes::serialize_as_map")]
+    pub params: Vec<(std::borrow::Cow<'a, str>, &'a str)>,
     /// Request's Content-Type header, whitespace-trimmed (case PRESERVED —
     /// JS lowercases defensively at the dispatch point). Empty string means
     /// the header was missing. JS dispatcher branches on this.
@@ -166,10 +168,12 @@ pub fn build_ws_envelope<'a>(
 /// Build an ActionEnvelope JSON string. Mirrors `match_path` for the render
 /// case. Caller has already validated the action_id charset and registry
 /// membership; this function only assembles the envelope.
+#[allow(clippy::too_many_arguments)]
 pub fn build_action_envelope<'a>(
     method: &'a str,
     full_path: &'a str,
     action_id: &'a str,
+    params: Vec<(std::borrow::Cow<'a, str>, &'a str)>,
     content_type: &'a str,
     body_text: Option<&'a str>,
     body_b64: Option<&'a str>,
@@ -183,6 +187,7 @@ pub fn build_action_envelope<'a>(
     ActionEnvelope {
         kind: "action",
         action_id,
+        params,
         content_type,
         body_text,
         body_b64,
@@ -616,6 +621,7 @@ mod tests {
             "POST",
             "/_brust/action/createNote",
             "createNote",
+            vec![],
             "application/json",
             Some(r#"["hello"]"#),
             None,
@@ -638,6 +644,7 @@ mod tests {
             "POST",
             "/_brust/action/registerUser",
             "registerUser",
+            vec![],
             "application/x-www-form-urlencoded",
             Some("name=Alice&age=30"),
             None,
@@ -657,6 +664,7 @@ mod tests {
             "POST",
             "/_brust/action/uploadAvatar",
             "uploadAvatar",
+            vec![],
             "multipart/form-data; boundary=abc",
             None,
             Some("LS1hYmMNCkNvbnRlbnQt"),
@@ -678,6 +686,7 @@ mod tests {
             "POST",
             "/_brust/action/x",
             "x",
+            vec![],
             "application/json",
             Some(r#"["hi \"there\"", 42]"#),
             None,

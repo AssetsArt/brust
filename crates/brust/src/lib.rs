@@ -1,5 +1,6 @@
 #![deny(clippy::all)]
 
+pub mod action_router;
 mod cache;
 mod http;
 mod io;
@@ -28,6 +29,7 @@ use tokio::sync::Notify;
 use tracing::error;
 use tracing_subscriber::EnvFilter;
 
+use crate::action_router::{ActionRouter, Method};
 use crate::cache::LruCache;
 use crate::pool::{BufPtr, RendererTsfn, WorkerPool};
 use crate::routes::RouteTable;
@@ -55,7 +57,8 @@ struct State {
     expected_workers: AtomicU32,
     islands_dir: parking_lot::RwLock<Option<std::path::PathBuf>>,
     css_dir: parking_lot::RwLock<Option<std::path::PathBuf>>,
-    actions: parking_lot::RwLock<std::collections::HashSet<String>>,
+    action_router: parking_lot::RwLock<ActionRouter>,
+    action_prefix: parking_lot::RwLock<String>,
 }
 
 static STATE: OnceCell<State> = OnceCell::new();
@@ -82,13 +85,10 @@ pub(crate) fn state() -> &'static State {
             expected_workers: AtomicU32::new(0),
             islands_dir: parking_lot::RwLock::new(None),
             css_dir: parking_lot::RwLock::new(None),
-            actions: parking_lot::RwLock::new(std::collections::HashSet::new()),
+            action_router: parking_lot::RwLock::new(ActionRouter::new()),
+            action_prefix: parking_lot::RwLock::new("/_brust/action".to_string()),
         }
     })
-}
-
-pub(crate) fn action_id_registered(id: &str) -> bool {
-    state().actions.read().contains(id)
 }
 
 #[napi(object)]
@@ -101,6 +101,8 @@ pub struct ServeOptions {
     pub entry: String,
     /// Optional performance tunables. Omit to keep framework defaults.
     pub tuning: Option<ServeTuning>,
+    /// Optional action prefix override. Defaults to `/_brust/action`.
+    pub action_prefix: Option<String>,
 }
 
 /// Runtime-tunable server limits, all optional. Maps onto `server::Tuning`
@@ -183,6 +185,15 @@ pub fn begin_serve(opts: ServeOptions) -> NapiResult<()> {
     };
 
     let addr: SocketAddr = resolve_bind_addr(opts.host.trim(), opts.port)?;
+
+    if let Some(p) = &opts.action_prefix {
+        if p.is_empty() || !p.starts_with('/') || p.ends_with('/') {
+            return Err(napi::Error::from_reason(format!(
+                "action_prefix must be non-empty, start with '/', and not end with '/': {p:?}"
+            )));
+        }
+        *state().action_prefix.write() = p.clone();
+    }
 
     // Process shutdown is owned by the TS layer: runtime/index.ts installs
     // process.on('SIGINT', () => process.exit(0)). Bun intercepts SIGINT before
@@ -384,41 +395,64 @@ pub fn configure_css_dir(path: String) -> NapiResult<()> {
     Ok(())
 }
 
-/// Register the set of action ids that Rust will accept on
-/// /_brust/action/<id>. Called once at boot from the main thread.
-/// Validates charset and rejects duplicates. Replaces any previous set
-/// (no incremental registration in MVP — register once at boot).
-#[napi]
-pub fn register_actions(ids: Vec<String>) -> NapiResult<u32> {
-    use std::collections::HashSet;
-    let mut set: HashSet<String> = HashSet::with_capacity(ids.len());
-    for id in &ids {
-        if !is_safe_action_id(id) {
-            return Err(napi::Error::from_reason(format!(
-                "action id {id:?} contains invalid characters; allowed: [A-Za-z0-9_-]+"
-            )));
-        }
-        if !set.insert(id.clone()) {
-            return Err(napi::Error::from_reason(format!(
-                "action id {id:?} registered more than once"
-            )));
-        }
-    }
-    let len = set.len() as u32;
-    *state().actions.write() = set;
-    Ok(len)
+/// Per-endpoint registration descriptor passed to `register_actions`.
+#[napi(object)]
+pub struct EndpointReg {
+    pub method: String,
+    pub path: String,
 }
 
-/// Mirrors is_safe_island_filename's spirit but with no .js suffix.
-/// Allows [A-Za-z0-9_-]+ only — same charset as the TS-side island id check.
-/// MUST stay in sync with src/server.rs::is_safe_action_id (covered by
-/// server_action_id_matches_lib_helper test).
-fn is_safe_action_id(id: &str) -> bool {
-    if id.is_empty() || id.len() > 128 {
-        return false;
+/// Register action endpoints. Replaces any previous router state.
+/// Returns the number of endpoints registered.
+#[napi]
+pub fn register_actions(endpoints: Vec<EndpointReg>) -> NapiResult<u32> {
+    let mut router = ActionRouter::new();
+    for (i, reg) in endpoints.iter().enumerate() {
+        let method = Method::from_http(&reg.method)
+            .ok_or_else(|| napi::Error::from_reason(format!("unknown method {:?}", reg.method)))?;
+        router
+            .insert(method, &reg.path, i as u32)
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     }
-    id.bytes()
-        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+    let n = endpoints.len() as u32;
+    *state().action_router.write() = router;
+    Ok(n)
+}
+
+pub(crate) fn with_action_router<R>(f: impl FnOnce(&ActionRouter) -> R) -> R {
+    f(&state().action_router.read())
+}
+
+/// Run `f` with the configured action prefix borrowed — no clone. Used on the
+/// (rare) action dispatch path to compute the relative path.
+pub(crate) fn with_action_prefix<R>(f: impl FnOnce(&str) -> R) -> R {
+    f(&state().action_prefix.read())
+}
+
+/// True if `path` (caller MUST have stripped the query string already) is the
+/// action prefix itself or a path under it. Allocation-free: this runs on the
+/// method gate of EVERY request, so it must not clone or `format!`.
+pub(crate) fn path_under_action_prefix(path: &str) -> bool {
+    let p = state().action_prefix.read();
+    let p = p.as_str();
+    path == p || (path.len() > p.len() && path.as_bytes()[p.len()] == b'/' && path.starts_with(p))
+}
+
+#[cfg(test)]
+mod prefix_tests {
+    use super::*;
+
+    #[test]
+    fn path_under_action_prefix_matches_prefix_and_subpaths() {
+        // default prefix is "/_brust/action"
+        assert!(path_under_action_prefix("/_brust/action"));
+        assert!(path_under_action_prefix("/_brust/action/notes"));
+        assert!(path_under_action_prefix("/_brust/action/notes/5"));
+        // sibling that merely shares the prefix bytes must NOT match
+        assert!(!path_under_action_prefix("/_brust/actionXYZ"));
+        assert!(!path_under_action_prefix("/_brust/act"));
+        assert!(!path_under_action_prefix("/other"));
+    }
 }
 
 // ----- SSE NAPI bridge -----
@@ -943,45 +977,65 @@ unsafe extern "C" fn napi_release_threadsafe_function(
 }
 
 #[cfg(test)]
-mod action_id_tests {
-    use super::is_safe_action_id;
+#[unsafe(no_mangle)]
+unsafe extern "C" fn napi_delete_reference(
+    _env: *mut std::ffi::c_void,
+    _ref_: *mut std::ffi::c_void,
+) -> i32 {
+    0
+}
+
+#[cfg(test)]
+#[unsafe(no_mangle)]
+unsafe extern "C" fn napi_reference_unref(
+    _env: *mut std::ffi::c_void,
+    _ref_: *mut std::ffi::c_void,
+    _result: *mut u32,
+) -> i32 {
+    0
+}
+
+#[cfg(test)]
+mod action_router_tests {
+    use super::*;
 
     #[test]
-    fn ascii_alphanumeric_passes() {
-        assert!(is_safe_action_id("createNote"));
-        assert!(is_safe_action_id("whoAmI"));
-        assert!(is_safe_action_id("a_b-c"));
-        assert!(is_safe_action_id("X"));
-        assert!(is_safe_action_id("123abc"));
+    fn register_and_match_actions() {
+        register_actions(vec![
+            EndpointReg {
+                method: "POST".into(),
+                path: "/notes".into(),
+            },
+            EndpointReg {
+                method: "GET".into(),
+                path: "/notes/{id}".into(),
+            },
+        ])
+        .unwrap();
+        use crate::action_router::{MatchOutcome, Method};
+        assert!(matches!(
+            with_action_router(|r| r.at(Method::Get, "/notes/42")),
+            MatchOutcome::Found { endpoint_id: 1, .. }
+        ));
+        assert!(matches!(
+            with_action_router(|r| r.at(Method::Put, "/notes/42")),
+            MatchOutcome::MethodNotAllowed
+        ));
+        assert!(matches!(
+            with_action_router(|r| r.at(Method::Get, "/nope")),
+            MatchOutcome::NotFound
+        ));
     }
+
     #[test]
-    fn empty_rejected() {
-        assert!(!is_safe_action_id(""));
-    }
-    #[test]
-    fn too_long_rejected() {
-        let s: String = "a".repeat(129);
-        assert!(!is_safe_action_id(&s));
-    }
-    #[test]
-    fn dot_rejected() {
-        assert!(!is_safe_action_id("a.b"));
-    }
-    #[test]
-    fn slash_rejected() {
-        assert!(!is_safe_action_id("a/b"));
-    }
-    #[test]
-    fn double_dot_rejected() {
-        assert!(!is_safe_action_id(".."));
-    }
-    #[test]
-    fn non_ascii_rejected() {
-        assert!(!is_safe_action_id("évil"));
-    }
-    #[test]
-    fn space_rejected() {
-        assert!(!is_safe_action_id("a b"));
+    fn register_actions_rejects_unknown_method() {
+        assert!(
+            register_actions(vec![EndpointReg {
+                method: "FOO".into(),
+                path: "/x".into()
+            }])
+            .is_err()
+        );
     }
 }
 

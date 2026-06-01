@@ -17,7 +17,9 @@ import {
   resolveComponentContext,
 } from './islands/native-render.ts'
 import type { IslandCache } from './islands/native-render.ts'
-import type { ActionDef } from './actions.ts'
+import type { EndpointDef } from './define-actions.ts'
+import { isRespondSentinel, makeRespond } from './define-actions.ts'
+import { validate } from './standard-schema.ts'
 
 // Sub-project J — island ISR cache, backed by the Rust-side store (shared across
 // the worker pool) via NAPI. napi-rs maps snake→camel: island_cache_get →
@@ -441,6 +443,8 @@ export type RouteCall =
       /** Base64-encoded binary body — present for multipart/form-data.
        * JS decodes via Buffer.from(s, 'base64') before parsing. */
       body_b64?: string
+      /** Path params extracted by the Rust router (e.g. {id} → "abc"). */
+      params?: Record<string, string>
       req: BrustRequest
     }
   | {
@@ -475,7 +479,7 @@ export interface MakeRendererOptions {
    * Both the main process and each worker call `brust.scanActions(...)` at
    * module top-level and pass the resulting array here — the wire keys (ids)
    * and the handler functions (fn) must agree across both ends. */
-  actions?: ActionDef[]
+  actions?: EndpointDef[]
   /** MCP server instance — built once per worker at module top-level. */
   mcp?: import('./mcp/server.ts').McpServer
 }
@@ -491,8 +495,10 @@ export function makeRenderer(
   routes.forEach((r, i) => {
     byRouteId.set(i, r)
   })
-  const byActionId = new Map<string, ActionDef>()
-  for (const a of opts.actions ?? []) byActionId.set(a.id, a)
+  const byActionId = new Map<string, EndpointDef>()
+  opts.actions?.forEach((e, i) => {
+    byActionId.set(String(i), e)
+  })
 
   // napi shim for the chunk channel. The sabBytes arg is ignored by the
   // native fn (Rust reads from the pre-registered BufPtr) — the call sites
@@ -726,7 +732,7 @@ export function makeRenderer(
     if (call.kind === 'action') {
       // FAST LANE: pack the framed response into the SAB and return its length.
       // Rust reads it directly after the Promise settles — no chunk channel.
-      const resp = await actionBranchToResponse(call, byActionId)
+      const resp = await dispatchAction(call, byActionId)
       return packSingleChunkResponse(view, encoder, resp)
     }
     if (call.kind === 'mcp') {
@@ -1090,82 +1096,131 @@ interface BranchResponse {
   headers?: Record<string, string>
 }
 
-async function actionBranchToResponse(
+async function decodeActionBody(
   call: Extract<RouteCall, { kind: 'action' }>,
-  byId: Map<string, ActionDef>,
+): Promise<{ ok: true; value: unknown } | { ok: false; status: number; body: string }> {
+  const ct = (call.content_type ?? '').toLowerCase()
+  // urlencoded → flat object of strings
+  if (ct.startsWith('application/x-www-form-urlencoded')) {
+    return { ok: true, value: Object.fromEntries(new URLSearchParams(call.body_text ?? '')) }
+  }
+  // multipart → object of strings + File entries (via Bun's Response.formData)
+  if (ct.startsWith('multipart/form-data')) {
+    try {
+      const bytes = Buffer.from(call.body_b64 ?? '', 'base64')
+      const fd = await new Response(bytes, {
+        headers: { 'content-type': call.content_type },
+      }).formData()
+      return { ok: true, value: Object.fromEntries(fd.entries()) }
+    } catch (err) {
+      return {
+        ok: false,
+        status: 400,
+        body: JSON.stringify({
+          error: { message: `invalid multipart body: ${(err as Error).message}` },
+        }),
+      }
+    }
+  }
+  // default: JSON
+  try {
+    return {
+      ok: true,
+      value:
+        call.body_text != null && call.body_text !== '' ? JSON.parse(call.body_text) : undefined,
+    }
+  } catch (err) {
+    return {
+      ok: false,
+      status: 400,
+      body: JSON.stringify({
+        error: { message: `invalid JSON body: ${(err as Error).message}` },
+      }),
+    }
+  }
+}
+
+export async function dispatchAction(
+  call: Extract<RouteCall, { kind: 'action' }>,
+  byId: Map<string, EndpointDef>,
 ): Promise<BranchResponse> {
   const def = byId.get(call.action_id)
   if (!def) {
-    // Rust already 404s when the id isn't registered, but a race during
-    // hot-reload (or a desynced worker) could land here. Log and 404.
-    // Action clients always expect JSON, so ship a JSON envelope even
-    // when Rust would have 404'd first.
-    console.error(`[brust] unknown action_id=${call.action_id}`)
     return {
       status: 404,
       body: '{"error":{"message":"unknown action"}}',
       contentType: 'application/json; charset=utf-8',
     }
   }
-  // Populate req.signal with the permanently-unaborted sentinel. Action
-  // handlers reading req.signal.aborted always see false; the SSE branch
-  // is where real disconnect lives.
   call.req.signal = NEVER_ABORTS
 
-  // Decode the body into the args array that will be spread into the handler.
-  // Three paths: multipart (body_b64), form-urlencoded (body_text), or JSON (body_text).
-  // Body decode happens BEFORE middleware so a malformed body 400s without running
-  // any user code.
-  let args: unknown[]
-  try {
-    if (call.body_b64 !== undefined) {
-      // Multipart path — base64 → bytes → Web Request.formData()
-      const bytes = Buffer.from(call.body_b64, 'base64')
-      const synthReq = new Request('http://x', {
-        method: 'POST',
-        headers: { 'Content-Type': call.content_type },
-        body: bytes,
-      })
-      const fd = await synthReq.formData()
-      args = [fd]
-    } else if (call.content_type.toLowerCase().startsWith('application/x-www-form-urlencoded')) {
-      // Form-urlencoded path — URLSearchParams → FormData
-      const params = new URLSearchParams(call.body_text ?? '')
-      const fd = new FormData()
-      for (const [k, v] of params) fd.append(k, v)
-      args = [fd]
-    } else {
-      // JSON path (default — empty or application/json content type).
-      const decoded = JSON.parse(call.body_text ?? '') as unknown
-      if (!Array.isArray(decoded)) {
-        return {
-          status: 400,
-          body: '{"error":{"message":"args must be a JSON array"}}',
-          contentType: 'application/json; charset=utf-8',
-        }
+  // Body decode — dispatch by content-type (JSON / urlencoded / multipart).
+  let rawBody: unknown
+  if (def.method !== 'GET' && def.method !== 'HEAD') {
+    const decoded = await decodeActionBody(call)
+    if (!decoded.ok) {
+      return {
+        status: decoded.status,
+        body: decoded.body,
+        contentType: 'application/json; charset=utf-8',
       }
-      args = decoded
     }
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
+    rawBody = decoded.value
+  }
+
+  const bodyCheck = await validate(def.body, rawBody)
+  if (!bodyCheck.ok) {
     return {
-      status: 400,
-      body: JSON.stringify({ error: { message: `invalid request body: ${msg}` } }),
+      status: 422,
+      body: JSON.stringify({
+        error: { message: 'body validation failed', issues: bodyCheck.issues },
+      }),
+      contentType: 'application/json; charset=utf-8',
+    }
+  }
+  // `req.search` already arrives as a parsed key→value object from the Rust
+  // envelope (BrustRequest.search: Record<string, string>) — use it directly
+  // as the query object rather than re-parsing it as a string.
+  const queryObj = call.req.search ?? {}
+  const queryCheck = await validate(def.query, queryObj)
+  if (!queryCheck.ok) {
+    return {
+      status: 422,
+      body: JSON.stringify({
+        error: { message: 'query validation failed', issues: queryCheck.issues },
+      }),
       contentType: 'application/json; charset=utf-8',
     }
   }
 
+  const ctx = {
+    req: call.req,
+    body: bodyCheck.value,
+    params: call.params ?? {},
+    query: queryCheck.value,
+    headers: call.req.headers ?? {},
+    respond: makeRespond(),
+  }
+
   const terminal = async (): Promise<RouteResponse> => {
     try {
-      const result = await def.fn(call.req, ...args)
+      const result = await def.handler(ctx as never)
+      if (isRespondSentinel(result)) {
+        return {
+          status: result.status,
+          body: result.body === undefined ? '' : JSON.stringify(result.body),
+          contentType: 'application/json; charset=utf-8',
+          headers: result.headers,
+        }
+      }
       return {
         status: 200,
         body: result === undefined ? '' : JSON.stringify(result),
         contentType: 'application/json; charset=utf-8',
       }
     } catch (err) {
-      console.error(`[brust] action ${def.id} threw:`, err)
       const e = err instanceof Error ? err : new Error(String(err))
+      console.error(`[brust] action ${def.method} ${def.path} threw:`, err)
       return {
         status: 500,
         body: JSON.stringify({ error: { message: e.message, name: e.name } }),
@@ -1175,15 +1230,14 @@ async function actionBranchToResponse(
   }
 
   const chain = composeChain(call.req, def.middleware, terminal)
-
   let response: RouteResponse
   try {
     response = await chain()
   } catch (err) {
-    console.error(`[brust] action middleware uncaught:`, err)
+    console.error('[brust] action middleware uncaught:', err)
     response = {
       status: 500,
-      body: JSON.stringify({ error: { message: 'internal error' } }),
+      body: '{"error":{"message":"internal error"}}',
       contentType: 'application/json; charset=utf-8',
     }
   }

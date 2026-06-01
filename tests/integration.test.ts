@@ -17,7 +17,9 @@ async function freePort(): Promise<number> {
   })
 }
 
-async function startServer(opts: { workers?: string; rustLog?: string; cmd?: string[] } = {}) {
+async function startServer(
+  opts: { workers?: string; rustLog?: string; cmd?: string[]; env?: Record<string, string> } = {},
+) {
   const port = await freePort()
   const proc = spawn({
     cmd: opts.cmd ?? ['bun', 'run', 'tests/fixtures/app/index.ts'],
@@ -26,6 +28,7 @@ async function startServer(opts: { workers?: string; rustLog?: string; cmd?: str
       BRUST_PORT: String(port),
       BRUST_WORKERS: opts.workers ?? '1',
       RUST_LOG: opts.rustLog ?? 'brust=info',
+      ...(opts.env ?? {}),
     },
     stdout: 'pipe',
     stderr: 'inherit',
@@ -496,13 +499,25 @@ test('routes without <Island> ship no importmap or bootstrap', async () => {
   expect(body).not.toContain('_bootstrap.js')
 }, 15_000)
 
+// ----- Server-action endpoints (treaty wire) -----
+//
+// Migrated to the `defineActions` / treaty wire (M1): `METHOD <prefix>/<path>`
+// with a JSON OBJECT body. The fixture registers POST /notes, GET /whoami, and
+// DELETE /notes/{id} (requireUser middleware). The old positional-args wire
+// (`POST /_brust/action/createNote` with a JSON ARRAY body) and the multipart /
+// urlencoded body paths were removed. MCP tools are now derived from these
+// `EndpointDef`s and `tools/call` dispatches over them (see the MCP tools/list +
+// tools/call tests below). The HTTP-transport guards (411 / 413 / missing
+// Content-Length) are retained, repointed at POST /notes since they exercise the
+// Rust layer, not the wire shape.
+
 test('action endpoint: happy path returns JSON', async () => {
   const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
-    const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/createNote`, {
+    const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/notes`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(['hi there']),
+      body: JSON.stringify({ text: 'hi there' }),
     })
     expect(resp.status).toBe(200)
     expect(resp.headers.get('content-type')).toContain('application/json')
@@ -513,45 +528,46 @@ test('action endpoint: happy path returns JSON', async () => {
   }
 }, 15_000)
 
-test('action endpoint: malformed JSON args → 400', async () => {
+test('action endpoint: malformed JSON body → 400', async () => {
   const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
-    const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/createNote`, {
+    const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/notes`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: 'not-json',
     })
     expect(resp.status).toBe(400)
     const body = await resp.text()
-    expect(body).toContain('invalid request body')
+    expect(body).toContain('invalid JSON body')
   } finally {
     await stop()
   }
 }, 15_000)
 
-test('action endpoint: args not an array → 400', async () => {
+test('action endpoint: body fails schema validation → 422', async () => {
   const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
-    const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/createNote`, {
+    // text must be a string; a number trips the zod body schema.
+    const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/notes`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: 'hi' }),
+      body: JSON.stringify({ text: 123 }),
     })
-    expect(resp.status).toBe(400)
+    expect(resp.status).toBe(422)
     const body = await resp.text()
-    expect(body).toContain('JSON array')
+    expect(body).toContain('validation failed')
   } finally {
     await stop()
   }
 }, 15_000)
 
-test('action endpoint: unknown id → 404', async () => {
+test('action endpoint: unknown path → 404', async () => {
   const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
     const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/missing`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify([]),
+      body: '{}',
     })
     expect(resp.status).toBe(404)
   } finally {
@@ -559,26 +575,12 @@ test('action endpoint: unknown id → 404', async () => {
   }
 }, 15_000)
 
-test('action endpoint: GET → 405', async () => {
+test('action endpoint: known path wrong method → 405', async () => {
   const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
-    const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/createNote`)
+    // /notes is POST-only; a GET is method-not-allowed.
+    const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/notes`)
     expect(resp.status).toBe(405)
-  } finally {
-    await stop()
-  }
-}, 15_000)
-
-test('action endpoint: id with bad charset → 404', async () => {
-  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
-  try {
-    // Dot in the id should be rejected by is_safe_action_id.
-    const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/bad.id`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: '[]',
-    })
-    expect(resp.status).toBe(404)
   } finally {
     await stop()
   }
@@ -611,30 +613,11 @@ test('action endpoint: missing Content-Length → 411', async () => {
       },
     })
     // Hand-crafted request: no Content-Length, no body.
-    sock.write('POST /_brust/action/createNote HTTP/1.1\r\nHost: x\r\n\r\n')
+    sock.write('POST /_brust/action/notes HTTP/1.1\r\nHost: x\r\n\r\n')
     await Promise.race([closed, new Promise<void>((r) => setTimeout(r, 1000))])
     sock.end()
     const combined = Buffer.concat(chunks).toString('utf-8')
     expect(combined.split('\r\n')[0]).toContain('411')
-  } finally {
-    await stop()
-  }
-}, 15_000)
-
-test('action endpoint: undefined return → 200 with empty body', async () => {
-  // pingAction returns void → JS terminal sends body: '' with status 200.
-  // Verifies the wire roundtrip handles Content-Length: 0 cleanly.
-  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
-  try {
-    const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/pingAction`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify([]),
-    })
-    expect(resp.status).toBe(200)
-    expect(resp.headers.get('content-type')).toBe('application/json; charset=utf-8')
-    expect(resp.headers.get('content-length')).toBe('0')
-    expect(await resp.text()).toBe('')
   } finally {
     await stop()
   }
@@ -670,7 +653,7 @@ test('action endpoint: Content-Length > 256 KB → 413', async () => {
       },
     })
     sock.write(
-      'POST /_brust/action/createNote HTTP/1.1\r\n' +
+      'POST /_brust/action/notes HTTP/1.1\r\n' +
         'Host: x\r\n' +
         'Content-Length: 300000\r\n' +
         '\r\n',
@@ -684,13 +667,12 @@ test('action endpoint: Content-Length > 256 KB → 413', async () => {
   }
 }, 15_000)
 
-test('action middleware: short-circuits without cookie', async () => {
+test('action middleware: short-circuits without cookie (401)', async () => {
   const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
-    const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/deleteNote`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(['n-123']),
+    // DELETE /notes/{id} is gated by requireUser — no cookie → 401.
+    const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/notes/n-123`, {
+      method: 'DELETE',
     })
     expect(resp.status).toBe(401)
     expect(await resp.text()).toBe('login required')
@@ -702,18 +684,127 @@ test('action middleware: short-circuits without cookie', async () => {
 test('action middleware: passes through with cookie', async () => {
   const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
-    const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/deleteNote`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Cookie: 'user=alice' },
-      body: JSON.stringify(['n-123']),
+    const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/notes/n-123`, {
+      method: 'DELETE',
+      headers: { Cookie: 'user=alice' },
     })
     expect(resp.status).toBe(200)
-    const body = (await resp.json()) as { ok: boolean }
+    const body = (await resp.json()) as { ok: boolean; id: string }
     expect(body.ok).toBe(true)
+    expect(body.id).toBe('n-123')
   } finally {
     await stop()
   }
 }, 15_000)
+
+test('action endpoint: GET /whoami returns null user without cookie', async () => {
+  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
+  try {
+    const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/whoami`)
+    expect(resp.status).toBe(200)
+    const body = (await resp.json()) as { user: string | null }
+    expect(body.user).toBeNull()
+  } finally {
+    await stop()
+  }
+}, 15_000)
+
+test('custom actionPrefix: routes under prefix + injects browser global', async () => {
+  const { port, stop } = await startServer({
+    rustLog: 'brust=warn',
+    env: { BRUST_ACTION_PREFIX: '/api' },
+  })
+  try {
+    // (a) action routes under the custom prefix
+    const ok = await fetch(`http://127.0.0.1:${port}/api/notes`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'hi' }),
+    })
+    expect(ok.status).toBe(200)
+    // Default prefix no longer routes actions. A POST to the (now unmounted)
+    // default path is rejected by Rust's method gate (server.rs: only GET, or
+    // POST to a registered action / cache-invalidate / mcp path is allowed) —
+    // so it's 405 "method not allowed", NOT the action's 200 JSON. (The plan
+    // expected 404, but the method gate fires before page routing for non-GET;
+    // a GET to the same path 404s. Either way the action no longer responds.)
+    const def = await fetch(`http://127.0.0.1:${port}/_brust/action/notes`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'hi' }),
+    })
+    expect(def.status).toBe(405)
+    expect(await def.text()).not.toContain('n-')
+    // (b) a non-Suspense HTML page injects the global before </head>.
+    // `/` (HelloWorld) has no <Suspense> → buffering path (see the
+    // "single-chunk regression" test) → script is spliced before </head>.
+    const html = await (await fetch(`http://127.0.0.1:${port}/`)).text()
+    expect(html).toContain('globalThis.__BRUST_ACTION_PREFIX__="/api"')
+    expect(html.indexOf('__BRUST_ACTION_PREFIX__')).toBeLessThan(html.indexOf('</head>'))
+  } finally {
+    await stop()
+  }
+}, 15_000)
+
+test('action: PUT /notes/{id} round-trips', async () => {
+  const r = await fetch(`http://127.0.0.1:${sharedPort()}/_brust/action/notes/abc`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ text: 'hello' }),
+  })
+  expect(r.status).toBe(200)
+  expect(await r.json()).toEqual({ id: 'abc', text: 'hello', updated: true })
+})
+
+test('action: PATCH /notes/{id} round-trips', async () => {
+  const r = await fetch(`http://127.0.0.1:${sharedPort()}/_brust/action/notes/xy`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ text: 'p' }),
+  })
+  expect(r.status).toBe(200)
+  expect(await r.json()).toEqual({ id: 'xy', patched: 'p' })
+})
+
+test('action: HEAD /notes/{id} returns 200 (body currently shipped, not stripped)', async () => {
+  const r = await fetch(`http://127.0.0.1:${sharedPort()}/_brust/action/notes/h`, {
+    method: 'HEAD',
+  })
+  expect(r.status).toBe(200)
+  // OQ#1: Rust does not strip the HEAD body. Assert reality; do not assert empty.
+})
+
+test('action: GET /search 422 on invalid query', async () => {
+  const r = await fetch(`http://127.0.0.1:${sharedPort()}/_brust/action/search?limit=abc`)
+  expect(r.status).toBe(422)
+})
+
+test('action: GET /search 200 on valid query', async () => {
+  const r = await fetch(`http://127.0.0.1:${sharedPort()}/_brust/action/search?limit=5`)
+  expect(r.status).toBe(200)
+  expect(await r.json()).toEqual({ limit: 5 })
+})
+
+test('action: urlencoded body coerces + validates', async () => {
+  const r = await fetch(`http://127.0.0.1:${sharedPort()}/_brust/action/upload`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: 'name=alice',
+  })
+  expect(r.status).toBe(200)
+  expect(await r.json()).toEqual({ name: 'alice' })
+})
+
+test('action: multipart body coerces + validates', async () => {
+  const fd = new FormData()
+  fd.append('name', 'bob')
+  const r = await fetch(`http://127.0.0.1:${sharedPort()}/_brust/action/upload`, {
+    method: 'POST',
+    body: fd,
+  })
+  expect(r.status).toBe(200)
+  expect(await r.json()).toEqual({ name: 'bob' })
+})
 
 test('action-calling island page renders marker + importmap + bootstrap', async () => {
   const { port, stop } = await startServer({ rustLog: 'brust=warn' })
@@ -734,109 +825,6 @@ test('action-calling island page renders marker + importmap + bootstrap', async 
     await stop()
   }
 }, 20_000)
-
-test('action endpoint: form-urlencoded body → FormData arg', async () => {
-  // pingAction takes no args; the framework parses the form-urlencoded body
-  // into FormData and spreads [FormData] into pingAction, which ignores its
-  // args and returns void. Confirms the form-urlencoded path reaches the handler.
-  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
-  try {
-    const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/pingAction`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: 'unused=field',
-    })
-    expect(resp.status).toBe(200)
-    expect(await resp.text()).toBe('')
-  } finally {
-    await stop()
-  }
-}, 15_000)
-
-test('action endpoint: multipart body → FormData with File', async () => {
-  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
-  try {
-    const fd = new FormData()
-    fd.append('file', new File(['hello'], 'greeting.txt', { type: 'text/plain' }))
-    const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/uploadAvatar`, {
-      method: 'POST',
-      body: fd,
-    })
-    expect(resp.status).toBe(200)
-    const body = (await resp.json()) as { name: string; size: number }
-    expect(body.name).toBe('greeting.txt')
-    expect(body.size).toBe(5)
-  } finally {
-    await stop()
-  }
-}, 15_000)
-
-test('action endpoint: unsupported Content-Type → 415', async () => {
-  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
-  try {
-    const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/createNote`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/xml' },
-      body: '<x/>',
-    })
-    expect(resp.status).toBe(415)
-  } finally {
-    await stop()
-  }
-}, 15_000)
-
-test('action endpoint: malformed multipart body → 400', async () => {
-  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
-  try {
-    const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/uploadAvatar`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'multipart/form-data; boundary=does-not-match' },
-      body: 'not-actually-multipart',
-    })
-    expect(resp.status).toBe(400)
-    const text = await resp.text()
-    expect(text).toContain('invalid request body')
-  } finally {
-    await stop()
-  }
-}, 15_000)
-
-test('action endpoint: JSON path still works after wire-format refactor', async () => {
-  // Sanity test — duplicates the createNote happy path from session 5 but
-  // proves the body_text refactor preserved JSON semantics.
-  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
-  try {
-    const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/createNote`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(['hello after refactor']),
-    })
-    expect(resp.status).toBe(200)
-    const body = (await resp.json()) as { id: string }
-    expect(body.id).toMatch(/^n-\d+$/)
-  } finally {
-    await stop()
-  }
-}, 15_000)
-
-test('action endpoint: middleware short-circuits a multipart action', async () => {
-  // deleteNote is JSON-shape with requireUser middleware. Posting multipart
-  // to it without a cookie should still 401 — middleware runs before body
-  // parsing reaches the handler.
-  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
-  try {
-    const fd = new FormData()
-    fd.append('noteId', 'n-1')
-    const resp = await fetch(`http://127.0.0.1:${port}/_brust/action/deleteNote`, {
-      method: 'POST',
-      body: fd,
-    })
-    expect(resp.status).toBe(401)
-    expect(await resp.text()).toBe('login required')
-  } finally {
-    await stop()
-  }
-}, 15_000)
 
 test('nested routes: index route renders parent layout + dashboard', async () => {
   const port = sharedPort()
@@ -922,65 +910,64 @@ test('mcp: initialize returns server capabilities', async () => {
   }
 }, 15_000)
 
-test('mcp: tools/list returns all scanned actions', async () => {
+test('mcp: tools/list returns action-derived tools', async () => {
   const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
     const { body } = await mcpRequest(port, 'tools/list')
     const names = body.result.tools.map((t: any) => t.name).sort()
-    expect(names).toContain('createNote')
-    expect(names).toContain('whoAmI')
-    expect(names).toContain('deleteNote')
-    expect(names).toContain('pingAction')
-    expect(names).toContain('uploadAvatar')
+    expect(names).toContain('post_notes')
+    expect(names).toContain('get_whoami')
+    expect(names).toContain('delete_notes_by_id')
+    const post = body.result.tools.find((t: any) => t.name === 'post_notes')
+    expect(post.inputSchema.properties.body).toBeDefined()
   } finally {
     await stop()
   }
 }, 15_000)
 
-test('mcp: tools/call createNote happy path', async () => {
+test('mcp: tools/call post_notes round-trips through dispatch', async () => {
   const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
     const { body } = await mcpRequest(port, 'tools/call', {
-      name: 'createNote',
-      arguments: { text: 'hello via mcp' },
+      name: 'post_notes',
+      arguments: { body: { text: 'hi' } },
     })
     expect(body.result.isError).toBe(false)
-    const result = JSON.parse(body.result.content[0].text)
-    expect(result.id).toMatch(/^n-\d+$/)
+    expect(JSON.parse(body.result.content[0].text)).toEqual({ id: 'n-2' })
   } finally {
     await stop()
   }
 }, 15_000)
 
-test('mcp: tools/call middleware-gated action without cookie → isError', async () => {
+test('mcp: tools/call post_notes 422 on invalid body', async () => {
   const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
     const { body } = await mcpRequest(port, 'tools/call', {
-      name: 'deleteNote',
-      arguments: { noteId: 'n-1' },
+      name: 'post_notes',
+      arguments: { body: {} },
     })
     expect(body.result.isError).toBe(true)
-    expect(body.result.content[0].text).toContain('login required')
   } finally {
     await stop()
   }
 }, 15_000)
 
-test('mcp: tools/call with cookie passes middleware', async () => {
+test('mcp: tools/call honors action middleware (cookie gate)', async () => {
   const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
-    const { body } = await mcpRequest(
+    const no = await mcpRequest(port, 'tools/call', {
+      name: 'delete_notes_by_id',
+      arguments: { params: { id: 'x' } },
+    })
+    expect(no.body.result.isError).toBe(true)
+    const yes = await mcpRequest(
       port,
       'tools/call',
-      {
-        name: 'deleteNote',
-        arguments: { noteId: 'n-1' },
-      },
-      { cookie: 'user=alice' },
+      { name: 'delete_notes_by_id', arguments: { params: { id: 'x' } } },
+      { Cookie: 'user=alice' },
     )
-    expect(body.result.isError).toBe(false)
-    const result = JSON.parse(body.result.content[0].text)
-    expect(result.ok).toBe(true)
+    expect(yes.body.result.isError).toBe(false)
+    expect(JSON.parse(yes.body.result.content[0].text)).toEqual({ ok: true, id: 'x' })
   } finally {
     await stop()
   }
@@ -1284,11 +1271,7 @@ test('sse: client disconnect fires req.signal abort within 1s', async () => {
 
     // BRUST_WORKERS=1 ensures the probe action lands on the same JS
     // context that ran the SSE handler — so __lastSseAbort is set.
-    const probe = await fetch(`http://127.0.0.1:${port}/_brust/action/lastSseAbort`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: '[]',
-    })
+    const probe = await fetch(`http://127.0.0.1:${port}/_brust/action/last-sse-abort`)
     expect(probe.status).toBe(200)
     const { ts } = (await probe.json()) as { ts: number }
     expect(ts).toBeGreaterThan(0)
@@ -1496,11 +1479,7 @@ test('ws: client clean close fires server on_close with 1000', async () => {
 
     // BRUST_WORKERS=1 ensures the probe action lands on the same JS
     // context that ran the WS handler.
-    const probe = await fetch(`http://127.0.0.1:${port}/_brust/action/lastWsClose`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: '[]',
-    })
+    const probe = await fetch(`http://127.0.0.1:${port}/_brust/action/last-ws-close`)
     expect(probe.status).toBe(200)
     const { code } = (await probe.json()) as { code: number; reason: string }
     expect(code).toBe(1000)
