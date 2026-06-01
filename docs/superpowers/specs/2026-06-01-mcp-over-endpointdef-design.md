@@ -263,8 +263,11 @@ In `extractMcpManifest`, when `actionsFile` is set and present:
    - `name`: derived slug; throw on duplicate.
 4. Sort tools by `name` (stable manifest), as today.
 
-`head` is included in the method set (the treaty builder declares `head`
-explicitly per the treaty spec); a `head` endpoint yields a tool with no body.
+`head` is included in the extractor method set as forward-compat: the
+`EndpointDef.method` *type* includes `'HEAD'`, but **no `.head` builder method
+exists yet** (`ActionsBuilder`/`defineActions()` only expose
+get/post/put/patch/delete). So in practice no `head` tool is emitted today; the
+branch is harmless and ready for when `.head` lands.
 
 Note: `tsTypeToJsonSchema` already handles object property enumeration, unions,
 arrays, Date, literals — no converter changes expected. If the inferred `body`
@@ -306,8 +309,12 @@ Changed:
 - `runtime/mcp/server.ts` — remove `LegacyActionDef`; `McpServerOptions.actions`
   → `endpoints: EndpointDef[]`; rewrite `handleToolsCall` to dispatch via
   `dispatchAction`; build `byId` in `makeMcpServer`.
-- `runtime/index.ts` — `buildMcpManifest` opts; `run()` main + worker wiring
-  (`actionsFile`, `endpoints` into `makeMcpServer`).
+- `runtime/index.ts` — `buildMcpManifest` opts (incl. removing the
+  `LegacyActionDef` reference in the opts type at ~line 220); `run()` main +
+  worker wiring (`actionsFile`, `endpoints` into `makeMcpServer`).
+- `runtime/mcp/manifest.test.ts` — the `ToolSchema` literal (~line 15) builds
+  `paramOrder: []` with no `method`/`path`; update it to the new shape (it is
+  the only other `ToolSchema` literal in the tree).
 - `runtime/cli/build.ts` — `extractMcpManifest` call args.
 - `runtime/define-actions.ts` — add `description?: string` to `EndpointOptions`
   (build-time-read metadata; runtime-harmless).
@@ -392,16 +399,22 @@ design end-to-end and is the priority if the run is truncated.
   Standard Schema) is unaffected and still enforced on `tools/call`.
 - **No output-schema runtime validation** (metadata only).
 
-## Open questions (resolve at plan time)
+## Resolved (spec review)
 
-1. Static vs dynamic import of `dispatchAction` in `server.ts` — match the
-   file's existing convention (it dynamically imports `composeChain`; the new
-   path can static-import from `../routes.ts` if no cycle, else dynamic). Verify
-   no import cycle `routes.ts` ↔ `mcp/server.ts`.
-2. Does the integration fixture's `index.ts` already pass `actions` to
-   `brust.run`? (Needed for the worker `endpoints` to be non-empty.) Confirm in
-   plan; if not, wire it.
-3. Confirm `BrustRequest` is safe to shallow-spread for the synthetic `search`
-   override (no getters/non-enumerables relied on downstream).
+1. **Import of `dispatchAction`**: **static** `import { dispatchAction } from
+   '../routes.ts'` in `server.ts` is safe — no runtime cycle. `routes.ts`
+   imports `mcp/server.ts` only as erased `import type`; `server.ts` imports
+   `routes.ts` only as `import type` today. The existing dynamic
+   `import('../routes.ts')` for `composeChain` (`server.ts:134`) is removed with
+   the old `handleToolsCall`.
+2. **Fixture wiring**: `tests/fixtures/app/index.ts` already calls
+   `brust.run({ routes, entry, actions })`, so worker `endpoints` is non-empty.
+   No extra wiring. Fixture handler `'n-' + body.text.length` ⇒ `{text:'hi'}` →
+   `'n-2'` (acceptance claim correct). Probe paths `/last-sse-abort` /
+   `/last-ws-close` ⇒ tools `get_last_sse_abort` / `get_last_ws_close`.
+3. **Spread `req`**: safe. `call.req` is a plain `JSON.parse`'d object
+   (`routes.ts:525`) — own enumerable data props + assigned `.signal`, no
+   getters/class. `{ ...mcpReq, search }` preserves cookies/headers for
+   `requireUser`.
 </content>
 </invoke>
