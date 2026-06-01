@@ -59,14 +59,98 @@ async function collectNativeBinaries(): Promise<string[]> {
   return out
 }
 
+/** The 6 published platform targets (root package.json optionalDependencies),
+ * keyed by the napi binary infix `<platform>-<arch>[-<libc>]`. */
+export const VALID_TARGETS = [
+  'darwin-x64',
+  'darwin-arm64',
+  'linux-x64-gnu',
+  'linux-arm64-gnu',
+  'linux-x64-musl',
+  'linux-arm64-musl',
+] as const
+
+/** Host target infix — reuses the same detection as platformPackageName by
+ * stripping the `brustjs-` prefix. */
+export function hostTargetInfix(): string {
+  return platformPackageName().replace(/^brustjs-/, '')
+}
+
+function basenameTarget(absPath: string): string | null {
+  const b = absPath.replace(/^.*[/\\]/, '') // basename
+  const m = /^brust\.(.+)\.node$/.exec(b)
+  return m ? m[1] : null
+}
+
+/** Select which collected `brust.*.node` paths to copy for `target`.
+ * Pure: takes the collected absolute paths, returns selected paths + errors. */
+export function selectNativeBinaries(
+  collected: string[],
+  target: string,
+): { selected: string[]; errors: string[] } {
+  // Dedupe tokens here so `selected` never contains duplicate paths — the
+  // function's contract is a clean selection, independent of any caller-side
+  // copy-dedup (`--target darwin-arm64,darwin-arm64` must select once).
+  const tokens = [
+    ...new Set(
+      target
+        .split(',')
+        .map((t) => t.trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  ]
+  const byTarget = new Map<string, string>() // infix → first abs path (dedupe)
+  for (const p of collected) {
+    const t = basenameTarget(p)
+    if (t && !byTarget.has(t)) byTarget.set(t, p)
+  }
+
+  if (tokens.length === 0) return { selected: [], errors: ['brust build: empty --target'] }
+
+  const hasAuto = tokens.includes('auto')
+  const hasAll = tokens.includes('all')
+  if ((hasAuto || hasAll) && tokens.length > 1) {
+    return {
+      selected: [],
+      errors: [
+        `brust build: --target "${target}" — auto/all cannot be combined with other targets`,
+      ],
+    }
+  }
+  if (hasAll) return { selected: [...byTarget.values()], errors: [] }
+
+  const wanted = hasAuto ? [hostTargetInfix()] : tokens
+  const selected: string[] = []
+  const errors: string[] = []
+  for (const t of wanted) {
+    if (!hasAuto && !VALID_TARGETS.includes(t as (typeof VALID_TARGETS)[number])) {
+      errors.push(
+        `brust build: unknown target "${t}" (valid: ${VALID_TARGETS.join(', ')}, or auto/all)`,
+      )
+      continue
+    }
+    const p = byTarget.get(t)
+    if (!p) {
+      errors.push(
+        `brust build: no native binary for target "${t}" — install brustjs-${t} or build it (bun --filter runtime run build)`,
+      )
+      continue
+    }
+    selected.push(p)
+  }
+  return { selected, errors }
+}
+
 interface ParsedArgs {
   entry: string // absolute path to the entry file
   outDir: string // absolute path to the output dir
+  target: string // --target value (default 'auto')
 }
 
 function parseArgs(args: string[]): ParsedArgs {
   let entry: string | undefined
   let outDir: string | undefined
+  let target = 'auto'
 
   for (let i = 0; i < args.length; i++) {
     const a = args[i]
@@ -78,6 +162,18 @@ function parseArgs(args: string[]): ParsedArgs {
       }
     } else if (a.startsWith('--out-dir=')) {
       outDir = a.slice('--out-dir='.length)
+    } else if (a === '--target') {
+      target = args[++i]
+      if (!target) {
+        console.error('brust build: --target requires a value')
+        process.exit(1)
+      }
+    } else if (a.startsWith('--target=')) {
+      target = a.slice('--target='.length)
+      if (!target) {
+        console.error('brust build: --target= requires a value')
+        process.exit(1)
+      }
     } else if (a.startsWith('-')) {
       console.error(`brust build: unknown flag "${a}"`)
       process.exit(1)
@@ -107,11 +203,11 @@ function parseArgs(args: string[]): ParsedArgs {
       : resolve(cwd, outDir)
     : resolve(cwd, 'dist')
 
-  return { entry: entryPath, outDir: outPath }
+  return { entry: entryPath, outDir: outPath, target }
 }
 
 export async function runBuild(args: string[]): Promise<void> {
-  const { entry, outDir } = parseArgs(args)
+  const { entry, outDir, target } = parseArgs(args)
   const entryDir = path.dirname(entry)
 
   console.log(`[brust build] entry:  ${entry}`)
@@ -285,26 +381,30 @@ export async function runBuild(args: string[]): Promise<void> {
   }
   console.log(`[brust build] bundle:  ${path.join(outDir, 'index.js')}`)
 
-  // 7. Copy the current-platform native binary.
+  // 7. Copy the selected-platform native binary(ies).
   const nativeDir = path.join(outDir, 'native')
   await mkdir(nativeDir, { recursive: true })
 
   // napi-rs names the binary `brust.<platform>-<arch>[-libc].node` (binaryName
   // "brust", from the root napi config). Source/CI builds leave it in runtime/;
-  // an installed project carries it in the brustjs-<platform> package. Copy
-  // every match from both — multi-platform (CI matrix) and single-platform
-  // (local/installed) layouts both Just Work.
+  // an installed project carries it in the brustjs-<platform> package. The
+  // --target flag (default "auto" = host platform) selects which to copy.
   const nativeBinaries = await collectNativeBinaries()
-  if (nativeBinaries.length === 0) {
+  const { selected, errors } = selectNativeBinaries(nativeBinaries, target)
+  if (errors.length > 0) {
+    for (const e of errors) console.error(e)
+    process.exit(1)
+  }
+  if (selected.length === 0) {
     console.error(
-      `brust build: no native binary found. Looked in ${path.join(REPO_ROOT, 'runtime')} and ` +
-        `the ${platformPackageName()} package. From source run \`bun --filter runtime run build\` ` +
-        `(or :debug) first; in an installed project ensure the platform package is present.`,
+      `brust build: no native binary found for target "${target}". Looked in ` +
+        `${path.join(REPO_ROOT, 'runtime')} and the ${platformPackageName()} package. ` +
+        `From source run \`bun --filter runtime run build\` first.`,
     )
     process.exit(1)
   }
   const seen = new Set<string>()
-  for (const src of nativeBinaries) {
+  for (const src of selected) {
     const name = path.basename(src)
     if (seen.has(name)) continue
     seen.add(name)
