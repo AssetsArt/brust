@@ -1,4 +1,4 @@
-import { Suspense } from 'react'
+import { Suspense, type JSX } from 'react'
 import Layout from '../components/Layout'
 
 // Cache the resolved promise per process so reloads don't pile up new ones.
