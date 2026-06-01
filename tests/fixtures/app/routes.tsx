@@ -22,7 +22,6 @@ import CacheTest           from './components/CacheTest'
 import Protected           from './components/Protected'
 import WithHeader          from './components/WithHeader'
 import NotePage            from './components/NotePage'
-import AvatarPage          from './components/AvatarPage'
 import WhoAmIPage          from './components/WhoAmIPage'
 import AdminLayout         from './components/AdminLayout'
 import AdminDashboard      from './components/AdminDashboard'
@@ -145,10 +144,9 @@ export const routes = defineRoutes([
   { path: '/protected',    Component: Protected,    middleware: [authRequired] },
   { path: '/with-header',  Component: WithHeader,   middleware: [timeIt] },
 
-  // Test-only routes — server actions (NotePage/AvatarPage/WhoAmIPage host the
+  // Test-only routes — server actions (NotePage/WhoAmIPage host the
   // islands that call the actions defined in tests/fixtures/app/actions.ts).
   { path: '/note',         Component: NotePage },
-  { path: '/avatar',       Component: AvatarPage },
   { path: '/whoami',       Component: WhoAmIPage },
 
   // Test-only routes — nested admin layout with shared middleware + boundary.

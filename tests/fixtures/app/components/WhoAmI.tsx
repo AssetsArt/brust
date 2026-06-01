@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react'
-import { action } from '../../../../runtime/client/index.ts'
-import type * as srv from '../actions'
+import { client } from '../../../../runtime/client/index.ts'
+import type { Actions } from '../actions'
 
-const whoAmI = action<typeof srv.whoAmI>('whoAmI')
+const api = client<Actions>()
 
 export default function WhoAmI() {
   const [user, setUser] = useState<string | null | undefined>(undefined)
   useEffect(() => {
-    whoAmI().then((r) => setUser(r.user))
+    api.whoami.get().then(({ data }) => setUser(data?.user ?? null))
   }, [])
   return <p data-testid="whoami">user: {user === undefined ? '...' : (user ?? '(anonymous)')}</p>
 }
