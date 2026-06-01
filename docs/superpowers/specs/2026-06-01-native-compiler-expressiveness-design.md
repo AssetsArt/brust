@@ -92,22 +92,53 @@ cmp_op    := > | < | >= | <= | === | == | !== | !=   (=== → ==, !== → !=)
 logic_op  := && | ||                                  (&& → and, || → or)
 ```
 
-`lower_cond_test` reuses the existing `lower_bin_inline` mapping logic for the
-operator translation, but is reachable without the inline gate. Operands recurse
-through a restricted lowerer that only yields member-path/`MapMember`/literal
-`Expr` nodes (anything else → `ComplexExpressionNotSupported`, preserving the gate
-for genuinely unsupported forms like calls and arithmetic-in-test).
+**Call-site precision (load-bearing).** The two lifted recognition blocks must
+call `lower_cond_test(&bin.left, scope)` (for `{cond && <X>}`) and
+`lower_cond_test(&cond_expr.test, scope)` (for the ternary) — **NOT** `lower_expr`.
+`lower_expr`'s `SwcExpr::Bin`/`Unary`/`Cond` arms stay inline-gated
+(`lower.rs:2268-2301`); routing the test through `lower_expr` on a native route
+would re-reject `{d.n > 0 && …}` with `ComplexExpressionNotSupported`. `lower_cond_test`
+is the *only* entry that lowers a comparison/logical/negation test outside inline mode.
+
+`lower_cond_test` accepts exactly:
+
+- a **truthiness leaf** — `lower_cond_operand` yielding `Field` / `MemberAccess` /
+  `MapBinding` / `MapMember` / `StaticText` / `StaticNum` (covers `{flag && …}`,
+  `{d.notFound ? …}`, and `{item.active && …}` / `{item && …}` inside `.map()`).
+- `SwcExpr::Unary` with `op == !` → `Expr::Not(Box::new(lower_cond_test(arg)))`.
+- `SwcExpr::Bin` with a **comparison** op (`>`,`<`,`>=`,`<=`,`===`,`==`,`!==`,`!=`)
+  → `Expr::Compare`, mapping `===`→`Eq`, `!==`→`Ne`; both operands lowered via
+  `lower_cond_operand` (member-path/literal **only**).
+- `SwcExpr::Bin` with a **logical** op (`&&`,`||`) → `Expr::Logical{And|Or}`; both
+  sides recurse through `lower_cond_test` (so `{a.x && b.y}` and `{a || !b}` work).
+- `SwcExpr::Paren` → recurse.
+- anything else (calls, arithmetic, template literals, object) →
+  `ComplexExpressionNotSupported`.
+
+`lower_cond_operand` is a **dedicated restricted lowerer** (not a reuse of
+`lower_bin_inline`, whose operand path delegates to `lower_expr` and would admit
+arithmetic). It yields only member-path / map-member / string-or-int literal; an
+arithmetic or call operand → `ComplexExpressionNotSupported`. This is what keeps
+`{a + b > 0 && …}` rejected while `{a.n > 0 && …}` is accepted (resolves review O2).
 
 The resulting `JsxNode::Cond { test, consequent, alternate }` is emitted unchanged
-by the existing `emit_node` arm.
+by the existing `emit_node` arm (`emit_jinja.rs:135-147`, via `emit_expr_path`
+which already renders `Compare`/`Logical`/`Not` — `emit_jinja.rs:266-297`).
 
 **Branch bodies** (`consequent`/`alternate`) are lowered through the normal
-`lower_element` path, so a branch may itself contain `.map()`, nested elements,
-islands, or further conditionals.
+`lower_child` path, so a branch may be a JSX element, a **fragment** (`<>…</>`),
+or itself contain `.map()`, islands, or further conditionals. The recognition must
+therefore accept both `SwcExpr::JSXElement` and `SwcExpr::JSXFragment` branches
+(today's inline code at `lower.rs:1951` only matches `JSXElement` — widen it).
+A `null` / `false` / `undefined` branch (`{cond ? <A/> : null}`) lowers that branch
+to `JsxNode::Empty` rather than falling through to `ComplexExpressionNotSupported`
+(resolves review F2/O3).
 
 ### S1 — `style={{…}}` object attribute
 
-In `lower_attr`, after `final_name` is resolved, intercept the case
+In `lower_attr`, **after** `rename_attr` resolves `final_name` (style is not in
+the rename table, so `final_name == "style"` == `raw_name == "style"` today —
+intercepting on `final_name` is correct and future-proof), intercept the case
 `final_name == "style"` **and** the value is `JSXExprContainer(Expr(Object))`.
 Route it to `lower_style_object(obj, scope)`:
 
@@ -133,8 +164,9 @@ Assemble the declaration string `"<prop>:<val>;<prop>:<val>"`. Then:
   `StaticText` for the literal CSS segments and the member-path `Expr` for dynamic
   values. The existing `emit_attr` arm for `AttrValue::Expr` renders this as
   `style="{{ "background-color:red;width:" ~ st.w ~ ";padding:16px" }}"` — valid
-  jinja that concatenates to the right declaration string. Autoescape keeps the
-  runtime value attribute-safe.
+  jinja that concatenates to the right declaration string. The runtime value is
+  emitted verbatim, identical to every other member-path attribute in brust today
+  (`href="{{ item.href }}"`) — see **Escaping contract** below.
 
 **React unitless set** (numeric literal → no `px`). Embedded as a `const &[&str]`
 in `lower.rs`, matching React DOM's `isUnitlessNumber`:
@@ -187,9 +219,14 @@ In `emit_jinja`'s `Document` arm, each slot branches on `HeadValue`:
 - `Path(e)` → `{{ <emit_expr_path(e)> }}` placed in the slot:
   `<title>{{ title }}</title>`, `<html lang="{{ lang }}" class="{{ html_class }}">`,
   `<meta name="description" content="{{ description }}"/>`,
-  `<body class="{{ body_class }}">`. minijinja HTML-autoescape (already relied on
-  for `href="{{ item.href }}"`) keeps both text and attribute positions safe — no
-  manual escaping for the `Path` case.
+  `<body class="{{ body_class }}">`. The runtime value is emitted verbatim,
+  consistent with all existing member-path interpolation in brust (`Literal` values
+  keep their compile-time `push_*_escaped`) — see **Escaping contract** below.
+
+The mechanical emitter change: each `if let Some(l) = lang { … }` becomes
+`if let Some(hv) = lang { match hv { Literal(s) => push_attr_escaped/push_html_escaped(out, s), Path(e) => write!(out, "{{{{ {} }}}}", emit_expr_path(e)) } }`.
+The `lang` default at `lower.rs:677` becomes `Some(HeadValue::Literal("en".into()))`
+so the `Literal` arm always covers the default (resolves review F3/F4).
 
 ## Behavioral invariants
 
@@ -198,9 +235,19 @@ In `emit_jinja`'s `Document` arm, each slot branches on `HeadValue`:
   alter the inline path. Regression guard: existing inline cond tests stay green.
 - **Determinism.** Output remains single-line and byte-stable (golden fixtures
   compare byte-for-byte).
-- **Escaping contract.** Compile-time literals are pre-escaped in the emitter;
-  runtime `{{ … }}` values rely on minijinja autoescape. S1/S8 dynamic values take
-  the autoescape path, consistent with existing attribute/text interpolation.
+- **Escaping contract.** brust's minijinja `Environment` runs with
+  `AutoEscape::None` (verified: `crates/brust/src/jinja.rs:34` `Environment::new()`
+  with no escape callback; templates registered by stem, no `.html` extension). So
+  **every** runtime `{{ … }}` value — `href="{{ item.href }}"`, `{{ title }}` text,
+  and the new S1/S8/S11 dynamic values — is emitted verbatim. The established
+  framework contract is **loader data is trusted/author-controlled** (it is the
+  author's loader return, not user input). S1/S8/S11 dynamic values follow this same
+  contract; they introduce no new trust assumption and no new escaping behavior.
+  Compile-time *literals* remain pre-escaped in the emitter as today. Introducing
+  framework-wide output escaping (a `| e` policy across all ~50 interpolation sites)
+  is a deliberate cross-cutting decision **out of scope** for Cluster A — escaping
+  only the 3 new prop families would be inconsistent and surprising. Tracked as a
+  follow-up (see Known limitations).
 - **Rejection still bites for genuinely unsupported forms.** Calls, arithmetic-as-text,
   template literals, spreads, computed keys, nested style objects → existing or
   new typed errors, not silent drops.
@@ -228,6 +275,8 @@ Per feature, three layers (TDD — failing test first):
 - `lower.rs` reject: spread `{{...x}}`, computed key `{{[k]: v}}`, nested
   `{{ a: { b: 1 } }}` → `StyleObject*NotSupported`.
 - `emit_jinja` unit: the `Concat` style value → expected `style="{{ … ~ … }}"`.
+- edge: a literal style value containing `"` (e.g. `content: '""'`) → confirm the
+  `Concat` `StaticText` quoting (`emit_jinja.rs:245`) escapes it soundly.
 - golden fixture: static + dynamic style on one element.
 
 **S8**
@@ -267,11 +316,21 @@ block shows for a bad name, `<title>` is per-page (`Charizard · PokéDex`).
 - Nested `style` objects and computed keys are rejected.
 - The `○ nested .map()` gap (type-chart) is a separate fixture concern, tracked
   but not required for Cluster A acceptance.
+- **No output escaping** is added: dynamic `{{ … }}` values render verbatim under
+  `AutoEscape::None` (the existing framework behavior). A `title`/`description`/style
+  value containing `<` or `"` from an untrusted source would break HTML structure.
+  Framework-wide escaping is a deliberate follow-up (Cluster B/C candidate), not a
+  Cluster A regression — the same property holds for every member-path today.
 
 ## Open questions resolved at plan time
 
 - **Exact React unitless list provenance** — pin to React 19's `isUnitlessNumber`;
   the list above is the canonical set. Plan task will cite the upstream source.
 - **`lower_cond_test` reuse vs. ungating `lower_expr`** — plan uses a dedicated
-  `lower_cond_test` (surgical) rather than ungating `lower_expr` wholesale, to keep
-  arithmetic-as-text rejected. Confirmed by reading `lower_expr`'s inline gates.
+  `lower_cond_test` + `lower_cond_operand` (surgical) rather than ungating
+  `lower_expr` or reusing `lower_bin_inline`, to keep arithmetic/calls rejected in
+  test position. Confirmed by reading `lower_expr`'s inline gates (review O2).
+- **Autoescape** — verified OFF (`AutoEscape::None`); resolved to the trusted-loader
+  contract above rather than adding `| e` to 3 props (review B1/B2/O1).
+- **Cond test/branch call sites** — `lower_cond_test` on `bin.left`/`cond.test`;
+  branches accept JSXElement/JSXFragment/`null` (review B3/F1/F2/O3).
