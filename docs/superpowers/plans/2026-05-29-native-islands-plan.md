@@ -390,7 +390,7 @@ numbers).
 
 ---
 
-## Acceptance criteria (from spec §Acceptance)
+## Acceptance criteria (from spec SAcceptance)
 
 1. `cargo test -p jsx-rust-compiler` green incl. T1-T4. ✅ gate on T4.
 2. `bun test runtime/` + `bun test tests/` green; no regression in native or

@@ -336,7 +336,7 @@ function validateRoute(r: Route, basePath: string): void {
 
 /** Walk the nested route tree, emitting one FlatRoute per leaf or index node.
  * Composes paths, middleware, errorBoundary, and cache per the rules in
- * the design spec (§3). */
+ * the design spec (S3). */
 export function flattenRoutes(routes: Route[]): FlatRoute[] {
   const out: FlatRoute[] = []
   walkRoutes(routes, [], '', out)
@@ -593,7 +593,7 @@ export function makeRenderer(
       // path above and works for native routes. But middleware that calls
       // next() then mutates status/headers (e.g. adds Cache-Control) is NOT
       // forwarded; napi_render_jinja hardcodes status: 200 and empty headers.
-      // Spec §4 doesn't define post-next() mutation semantics for native;
+      // Spec S4 doesn't define post-next() mutation semantics for native;
       // deferred to v2.x. If your middleware needs to mutate, use a React
       // route for now.
       if (flat.nativeTemplate !== undefined) {

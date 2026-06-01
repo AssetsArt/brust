@@ -24,10 +24,10 @@ export const actions = defineActions()
     '/team',
     ({ body }) => {
       const ok = teamStore.add(body)
-      // GAP §7: a domain error (team full) cannot throw a typed non-2xx across
+      // GAP S7: a domain error (team full) cannot throw a typed non-2xx across
       // the treaty boundary, so it rides back inside the success payload as a
       // `full` flag. The client therefore checks two places (transport `error`
-      // AND `data.full`). See ./FRAMEWORK-GAPS.md §7.
+      // AND `data.full`). See ./FRAMEWORK-GAPS.md S7.
       return { team: teamStore.list(), max: MAX_TEAM, full: !ok }
     },
     { body: TeamMemberInput },

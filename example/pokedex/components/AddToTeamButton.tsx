@@ -31,7 +31,7 @@ export default function AddToTeamButton(p: AddToTeamProps) {
       if (inTeam) {
         // NOTE: `.delete({})` — passing an empty body is REQUIRED. A bodyless
         // DELETE from the browser sends no Content-Length, and brust's action
-        // dispatch returns 411 on non-GET/HEAD without one. See GAPS §12.
+        // dispatch returns 411 on non-GET/HEAD without one. See GAPS S12.
         const { data } = await api.team({ id: p.id }).delete({})
         if (data) emitTeam(data.team)
       } else {

@@ -2,7 +2,7 @@
 // pure read-only data, the ideal native page (compiled to jinja, rendered in
 // Rust, zero React on the server). The 19×19 grid is pre-flattened in the loader
 // to a single row-major `cells` array so the template uses ONE `.map()` into a
-// CSS grid (nested maps aren't proven on the native path — see GAPS §10).
+// CSS grid (nested maps aren't proven on the native path — see GAPS S10).
 import { BrustPage, Island } from '../../../runtime/index.ts'
 import TeamBuilder from '../components/TeamBuilder'
 import type { TypeChartData } from '../lib/types'

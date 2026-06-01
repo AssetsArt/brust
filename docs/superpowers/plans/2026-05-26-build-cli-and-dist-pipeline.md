@@ -1266,7 +1266,7 @@ Print to the user:
 
 ---
 
-## Acceptance criteria (mirrors spec §Acceptance criteria)
+## Acceptance criteria (mirrors spec SAcceptance criteria)
 
 The plan is done when:
 

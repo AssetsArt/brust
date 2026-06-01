@@ -108,11 +108,11 @@ function injectDevClientIntoTemplate(template: string): string {
  * `.brust/jinja/<Name>.jinja` templates. Invoked from `brust build` and
  * `brust dev` after the user's routes are flattened.
  *
- * Limitations (spec §7 + §13.10):
+ * Limitations (spec S7 + S13.10):
  * - Regex-based import scanner — handles `import Name from './path'` only.
  *   Full swc AST + re-export chain support deferred to v2.x.
  * - Dev mode does NOT hot-reload templates on .tsx edit. Boot-only; restart
- *   required. Deferred per spec §12.
+ *   required. Deferred per spec S12.
  */
 
 export interface NativeRouteEmitOpts {
@@ -395,7 +395,7 @@ export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<vo
 export function scanImports(entryFile: string): Map<string, string> {
   const source = readFileSync(entryFile, 'utf8')
   const map = new Map<string, string>()
-  // Regex-based scanner; full swc AST scan deferred per spec §7 + §13.10.
+  // Regex-based scanner; full swc AST scan deferred per spec S7 + S13.10.
   const re = /^import\s+(\w+)\s+from\s+['"]([^'"]+)['"]/gm
   for (let m = re.exec(source); m !== null; m = re.exec(source)) {
     const localName = m[1]!

@@ -15,7 +15,7 @@ use tokio::sync::{mpsc, oneshot};
 
 const RFC6455_MAGIC: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
-/// Computes Sec-WebSocket-Accept per RFC 6455 §1.3:
+/// Computes Sec-WebSocket-Accept per RFC 6455 S1.3:
 ///   base64(SHA1(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
 pub fn compute_sec_accept(key: &str) -> String {
     let mut hasher = Sha1::new();
@@ -379,7 +379,7 @@ mod tests {
 
     #[test]
     fn sec_accept_rfc6455_example() {
-        // RFC 6455 §1.3 worked example: key "dGhlIHNhbXBsZSBub25jZQ=="
+        // RFC 6455 S1.3 worked example: key "dGhlIHNhbXBsZSBub25jZQ=="
         // → accept "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
         assert_eq!(
             compute_sec_accept("dGhlIHNhbXBsZSBub25jZQ=="),

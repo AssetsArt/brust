@@ -8,7 +8,7 @@
 
 **Tech Stack:** Rust 2024, TypeScript 5, no new crates. `lru::LruCache::resize` is available since 0.7 (we're on 0.12).
 
-**Spec source:** LRU Cache plan §"Risks / caveats" and §"Out of scope" — both flagged stats endpoint + `[cache]` TOML as deferred follow-ups. This plan ships both.
+**Spec source:** LRU Cache plan S"Risks / caveats" and S"Out of scope" — both flagged stats endpoint + `[cache]` TOML as deferred follow-ups. This plan ships both.
 
 ---
 
@@ -31,7 +31,7 @@
 | `runtime/index.ts` | New `brust.configureCache({ maxEntries })` method. |
 | `example/hello-world/index.ts` | If `loadConfig` returned a `cacheMaxEntries`, call `brust.configureCache(...)` before `serve`. |
 | `tests/integration.test.ts` | One new test: hit `/cache-test` twice, then hit `/_brust/cache/stats`, assert hits ≥ 1 and misses ≥ 1. |
-| `architecture.md` | §Cache section + §Configuration section + §Status update. |
+| `architecture.md` | SCache section + SConfiguration section + SStatus update. |
 
 `src/routes.rs`, `src/pool.rs`, `src/http.rs`, `runtime/routes.ts`, `Cargo.toml`: untouched.
 
@@ -354,7 +354,7 @@ EOF
 **Files:**
 - Modify: `architecture.md`
 
-- [ ] **Step 1:** Locate §Cache. Append after the existing "Not yet implemented" bullets a "Now shipped" note that replaces the relevant bullets:
+- [ ] **Step 1:** Locate SCache. Append after the existing "Not yet implemented" bullets a "Now shipped" note that replaces the relevant bullets:
 
 Replace:
 
@@ -379,7 +379,7 @@ With:
 - Default TTL fallback in `[cache]` — for routes that opt in without specifying `ttl_seconds`. Probably not needed; revisit if asked.
 ```
 
-- [ ] **Step 2:** Locate §Configuration. Update the schema example:
+- [ ] **Step 2:** Locate SConfiguration. Update the schema example:
 
 ```toml
 [server]
@@ -392,13 +392,13 @@ count = 18
 max_entries = 5000   # default 1000
 ```
 
-- [ ] **Step 3:** Locate §Status §Built. Append:
+- [ ] **Step 3:** Locate SStatus SBuilt. Append:
 
 ```markdown
 - Cache observability: `GET /_brust/cache/stats` + configurable capacity via `[cache] max_entries`
 ```
 
-In §Designed-not-built, refine the cache bullet:
+In SDesigned-not-built, refine the cache bullet:
 
 ```markdown
 - Cache invalidation (control-socket / `brust-cli invalidate`) + default TTL fallback in `[cache]`
@@ -411,12 +411,12 @@ git add architecture.md
 git commit -m "$(cat <<'EOF'
 docs(architecture): cache stats endpoint + [cache] config shipped
 
-§Cache: replace "stats not surfaced" + "[cache] not in TOML" with
+SCache: replace "stats not surfaced" + "[cache] not in TOML" with
 the shipped behavior. /_brust/cache/stats + [cache] max_entries.
 
-§Configuration: extend schema example with [cache].
+SConfiguration: extend schema example with [cache].
 
-§Status: Built gains cache observability + capacity config; the
+SStatus: Built gains cache observability + capacity config; the
 remaining cache gaps (control-socket invalidate + default TTL) stay
 in Designed-not-built.
 

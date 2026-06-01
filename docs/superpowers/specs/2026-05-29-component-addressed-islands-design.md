@@ -227,9 +227,9 @@ by the numbering pass (below) before emit/collect.
 
 - Remove all `island.config.ts` path resolution (3 sites in `index.ts`, 1 in
   `build.ts`, 1 in `dev.ts`).
-- `build.ts` §3: replace the `existsSync(islandConfig)` gate with `scanIslandChunks`
+- `build.ts` S3: replace the `existsSync(islandConfig)` gate with `scanIslandChunks`
   + `buildIslands(map, …)`. If the map is empty, skip (log `0 chunks`).
-- `build.ts` §4.1 / `dev.ts`: drop `islandConfigPath` from the `emitNativeTemplates`
+- `build.ts` S4.1 / `dev.ts`: drop `islandConfigPath` from the `emitNativeTemplates`
   call.
 - `index.ts` lifecycle `buildIslands` closures: rebuild via the scanner.
 - Update the `minify: { identifiers: false }` comment in `build.ts` (still needed —

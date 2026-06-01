@@ -4,7 +4,7 @@
    ---------------------------------------------------------------------
    NOTE: dark-mode only. The design's [data-mode="dark"] selectors are
    rewritten to .dark, set via <BrustPage className="dark"> (BrustPage
-   only sets <html class>, not arbitrary data-* attrs — see GAPS §8).
+   only sets <html class>, not arbitrary data-* attrs — see GAPS S8).
    Remote @import of Google Fonts is dropped (the css pipeline runs through
    @tailwindcss/node); we rely on the system-font fallbacks in the stacks.
    ===================================================================== */
@@ -1663,7 +1663,7 @@ code, pre { font-family: var(--font-mono); }
 .dex-notfound__code { font-family: var(--font-display); font-weight: 900; font-size: var(--text-5xl); color: var(--ink-200); }
 .dex-notfound__desc { color: var(--text-tertiary); font-size: var(--text-sm); margin-top: 8px; max-width: 420px; }
 
-/* per-type colours — keep in sync with lib/pokeapi.ts TYPE_COLOR (§5.4) */
+/* per-type colours — keep in sync with lib/pokeapi.ts TYPE_COLOR (S5.4) */
 .dex-type--normal, .dex-tc__colhead--normal, .dex-tc__rowhead--normal { background: var(--ink-400); }
 .dex-type--fire, .dex-tc__colhead--fire, .dex-tc__rowhead--fire { background: var(--magenta-500); }
 .dex-type--water, .dex-tc__colhead--water, .dex-tc__rowhead--water { background: var(--blue-500); }

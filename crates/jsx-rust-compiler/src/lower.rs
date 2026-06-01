@@ -438,7 +438,7 @@ fn strip_paren(expr: &SwcExpr) -> &SwcExpr {
 
 /// Lower the function's first parameter into the names that go into JSX scope.
 ///
-/// Accepted shapes (per spec §4.4):
+/// Accepted shapes (per spec S4.4):
 /// - empty `()` → no props
 /// - `({ a, b }: ...)` (`ObjectPat`) with shorthand `BindingIdent` entries
 ///   → destructured names
@@ -1261,7 +1261,7 @@ fn splice_children_slots(node: &mut JsxNode, children: &[JsxNode]) {
     }
 }
 
-/// HTML void elements per spec §4 / WHATWG. T6 rejects children on these.
+/// HTML void elements per spec S4 / WHATWG. T6 rejects children on these.
 fn is_void_element(tag: &str) -> bool {
     matches!(
         tag,
@@ -2096,7 +2096,7 @@ fn arrow_jsx_body(arrow: &ArrowExpr) -> Result<&JSXElement, LowerError> {
     }
 }
 
-/// React/JSX text normalization (spec §4.6).
+/// React/JSX text normalization (spec S4.6).
 ///
 /// Matches how JSX treats whitespace so the emitted HTML reads the same as the
 /// source TSX:

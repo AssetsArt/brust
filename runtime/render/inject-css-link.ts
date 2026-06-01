@@ -13,7 +13,7 @@ export function _resetWarnedForTests(): void {
  * before the first occurrence of `</head>` (case-insensitive). Returns the
  * original body untouched if `hrefs` is empty or if `</head>` is absent
  * (warns once in the latter case). Renderer calls this on the first chunk
- * only — see spec §"SSR <link> injection". */
+ * only — see spec S"SSR <link> injection". */
 export function injectCssLink(body: Uint8Array, hrefs: readonly string[]): Uint8Array {
   if (hrefs.length === 0) return body
   const pos = findHeadCloseTag(body)

@@ -3,7 +3,7 @@
 //! Lowering (parser + IR + lower) is unchanged — only the emission target
 //! swapped per Sub-project J.
 //!
-//! See spec `2026-05-28-minijinja-dynamic-routes-design.md` §5 for the
+//! See spec `2026-05-28-minijinja-dynamic-routes-design.md` S5 for the
 //! IR→jinja table and plan `2026-05-29-minijinja-dynamic-routes-plan.md`
 //! Task 1 for the emission rules used here.
 //!

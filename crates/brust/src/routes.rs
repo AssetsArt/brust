@@ -211,7 +211,7 @@ pub struct RouteConfig {
     pub cache: Option<CacheConfig>,
     /// Sub-project J — JS-side ships `nativeTemplate: Component.name` when
     /// the route has `native: true`. Rust uses this name to dispatch via
-    /// minijinja instead of React. See spec §3 + §4.
+    /// minijinja instead of React. See spec S3 + S4.
     #[serde(default, rename = "nativeTemplate")]
     pub native_template: Option<String>,
 }
@@ -507,7 +507,7 @@ mod tests {
 
     #[test]
     fn envelope_merges_cookies_across_multiple_cookie_headers() {
-        // RFC 6265 §5.4 allows a single Cookie header per request, but
+        // RFC 6265 S5.4 allows a single Cookie header per request, but
         // some proxies fold/split. Both cookies should appear in the map.
         let raw = b"GET /x HTTP/1.1\r\nHost: x\r\nCookie: a=1\r\nCookie: b=2\r\n\r\n";
         let env = build_request_envelope("GET", "/x", "", raw);

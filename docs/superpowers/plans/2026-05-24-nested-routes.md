@@ -419,7 +419,7 @@ Append:
 ```ts
 /** Walk the nested route tree, emitting one FlatRoute per leaf or index node.
  * Composes paths, middleware, errorBoundary, and cache per the rules in
- * the design spec (§3). */
+ * the design spec (S3). */
 export function flattenRoutes(routes: Route[]): FlatRoute[] {
   const out: FlatRoute[] = []
   walkRoutes(routes, [], '', out)
@@ -1131,26 +1131,26 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 Spec section → task that implements it:
 
-| Spec § | Task |
+| Spec S | Task |
 |---|---|
-| §1 Goal — `children`, `<Outlet />`, relative composition | Tasks 1, 2, 3 |
-| §1 Success criterion + concrete acceptance | Tasks 4 (manual smoke), 5 (automated) |
-| §2.1 Route type augmentation | Task 1 |
-| §2.2 FlatRoute interface | Task 1 |
-| §2.3 defineRoutes signature change | Task 3 |
-| §2.4 OutletContext + `<Outlet />` | Task 1 |
-| §3 flattenRoutes algorithm | Task 2 |
-| §3.1 Path composition rules | Task 2 (joinPath tests) |
-| §3.2 Validation errors | Task 2 (validation tests) |
-| §4 Render walker | Task 3 |
-| §4.1-4.3 Error handling / Outlet at leaf | Task 3 + Task 5 (errorBoundary integration test) |
-| §5 Middleware composition | Task 2 (concat in makeFlat) + Task 3 (flat.middleware in composeChain) |
-| §6 Zero Rust changes | Verified implicitly — no Rust files touched |
-| §7 Example app changes | Task 4 |
-| §8 Error handling | Task 2 (validateRoute) + Task 3 (errorBoundary wrap) |
-| §9.1 flattenRoutes unit tests | Task 2 |
-| §9.2 Integration tests | Task 5 |
-| §9.3 No Rust tests | n/a |
+| S1 Goal — `children`, `<Outlet />`, relative composition | Tasks 1, 2, 3 |
+| S1 Success criterion + concrete acceptance | Tasks 4 (manual smoke), 5 (automated) |
+| S2.1 Route type augmentation | Task 1 |
+| S2.2 FlatRoute interface | Task 1 |
+| S2.3 defineRoutes signature change | Task 3 |
+| S2.4 OutletContext + `<Outlet />` | Task 1 |
+| S3 flattenRoutes algorithm | Task 2 |
+| S3.1 Path composition rules | Task 2 (joinPath tests) |
+| S3.2 Validation errors | Task 2 (validation tests) |
+| S4 Render walker | Task 3 |
+| S4.1-4.3 Error handling / Outlet at leaf | Task 3 + Task 5 (errorBoundary integration test) |
+| S5 Middleware composition | Task 2 (concat in makeFlat) + Task 3 (flat.middleware in composeChain) |
+| S6 Zero Rust changes | Verified implicitly — no Rust files touched |
+| S7 Example app changes | Task 4 |
+| S8 Error handling | Task 2 (validateRoute) + Task 3 (errorBoundary wrap) |
+| S9.1 flattenRoutes unit tests | Task 2 |
+| S9.2 Integration tests | Task 5 |
+| S9.3 No Rust tests | n/a |
 
 All spec sections mapped. No requirements without a task.
 

@@ -44,7 +44,7 @@ pokedex/
 ├─ app.css             # AssetsArt design system (tokens + components) + .dex-* layer
 ├─ lib/
 │  ├─ pokeapi.ts       # PokeAPI fetch wrappers + helpers
-│  ├─ team-store.ts    # in-process Map (global, no session — see GAPS §6)
+│  ├─ team-store.ts    # in-process Map (global, no session — see GAPS S6)
 │  ├─ types.ts         # view-model types
 │  └─ loaders.ts       # THE view layer — precomputes every class/style/label
 │                      #   because native templates only interpolate member paths

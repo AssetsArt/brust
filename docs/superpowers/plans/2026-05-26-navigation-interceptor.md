@@ -1054,26 +1054,26 @@ EOF
 
 ## Spec coverage check (self-review)
 
-| Spec § | Implementing tasks |
+| Spec S | Implementing tasks |
 |---|---|
-| §1 success criterion 1 (demo SPA nav, no full reload) | Task 4 + Task 6 manual smoke |
-| §1 success criterion 2 (back/forward) | Task 4 (popstate handler) |
-| §1 success criterion 3 (islands re-hydrate) | Task 4 (`hydrateMarkersIn(main)` after swap) |
-| §1 success criterion 4 (external + special links bypass) | Task 4 (`isInternalLink`) + runtime test #2 |
-| §1 success criterion 5 (graceful fallback) | Task 4 (try/catch → `location.href`) |
-| §1 success criterion 6 (concurrent clicks abort) | Task 4 (`inFlight.abort()`) |
-| §1 success criterion 7 (no regression) | Task 6 final baseline check |
-| §2 Architecture | Tasks 1-4 (rewrite helper, server branch, JS branch, client interceptor) |
-| §3 Module layout | Task 1+2 (server.rs + routes.rs), Task 3 (routes.ts), Task 4 (bootstrap.ts + bootstrap.test.ts) |
-| §4 Wire protocol (request URL + JSON shape + cache policy) | Task 2 (URL routing + 404 envelope) + Task 3 (JSON serialisation) |
-| §5 Rust-side branch + `rewrite_envelope_kind` | Task 1 (helper) + Task 2 (branch) |
-| §6 JS `navigationBranch` + RouteCall variant | Task 3 |
-| §7 Bootstrap refactor + `swapMainContent` + interceptor + matrix | Task 4 |
-| §8 Error matrix | Task 4 (`try/catch` in `navigate`) covers 9 cases; integration tests 2 + 3 verify the 2 server-side error cases |
-| §9 Testing (4 runtime + 3 integration + 1 Rust) | Task 1 (Rust × 3 — covers `rewrite_envelope_kind`), Task 4 (runtime × 4), Task 5 (integration × 3) |
-| §10 Limits & deferred | (documented in spec; no impl task) |
+| S1 success criterion 1 (demo SPA nav, no full reload) | Task 4 + Task 6 manual smoke |
+| S1 success criterion 2 (back/forward) | Task 4 (popstate handler) |
+| S1 success criterion 3 (islands re-hydrate) | Task 4 (`hydrateMarkersIn(main)` after swap) |
+| S1 success criterion 4 (external + special links bypass) | Task 4 (`isInternalLink`) + runtime test #2 |
+| S1 success criterion 5 (graceful fallback) | Task 4 (try/catch → `location.href`) |
+| S1 success criterion 6 (concurrent clicks abort) | Task 4 (`inFlight.abort()`) |
+| S1 success criterion 7 (no regression) | Task 6 final baseline check |
+| S2 Architecture | Tasks 1-4 (rewrite helper, server branch, JS branch, client interceptor) |
+| S3 Module layout | Task 1+2 (server.rs + routes.rs), Task 3 (routes.ts), Task 4 (bootstrap.ts + bootstrap.test.ts) |
+| S4 Wire protocol (request URL + JSON shape + cache policy) | Task 2 (URL routing + 404 envelope) + Task 3 (JSON serialisation) |
+| S5 Rust-side branch + `rewrite_envelope_kind` | Task 1 (helper) + Task 2 (branch) |
+| S6 JS `navigationBranch` + RouteCall variant | Task 3 |
+| S7 Bootstrap refactor + `swapMainContent` + interceptor + matrix | Task 4 |
+| S8 Error matrix | Task 4 (`try/catch` in `navigate`) covers 9 cases; integration tests 2 + 3 verify the 2 server-side error cases |
+| S9 Testing (4 runtime + 3 integration + 1 Rust) | Task 1 (Rust × 3 — covers `rewrite_envelope_kind`), Task 4 (runtime × 4), Task 5 (integration × 3) |
+| S10 Limits & deferred | (documented in spec; no impl task) |
 
-All §1-§9 spec requirements map to at least one task.
+All S1-S9 spec requirements map to at least one task.
 
 ## Type / name consistency check
 
@@ -1112,4 +1112,4 @@ A new integration test (port 38243) verifies that `/_brust/page/admin/dashboard`
 
 ### Task 4 correction — `swapMainContent` uses `DOMParser + importNode`
 
-The original Task 4 implementation used `Range.createContextualFragment`. The shipped T4 fixup switched to `DOMParser('text/html') + importNode` (the inert-parse approach, where scripts in the fragment are not executed during parsing). The trust-boundary commentary is preserved. Spec §7 has been updated to show the correct implementation.
+The original Task 4 implementation used `Range.createContextualFragment`. The shipped T4 fixup switched to `DOMParser('text/html') + importNode` (the inert-parse approach, where scripts in the fragment are not executed during parsing). The trust-boundary commentary is preserved. Spec S7 has been updated to show the correct implementation.

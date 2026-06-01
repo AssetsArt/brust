@@ -2,13 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Worker writes `[status_u16_BE][body...]` into the SAB and returns total bytes written. Rust reads the 2-byte prefix as the HTTP status and the rest as the body. This closes the "Mechanism gap" in `architecture.md` §Middleware for the status side — `errorBoundary` recoveries now return `500` instead of `200`. Header mutation and TS-side middleware composition are deferred to a follow-up.
+**Goal:** Worker writes `[status_u16_BE][body...]` into the SAB and returns total bytes written. Rust reads the 2-byte prefix as the HTTP status and the rest as the body. This closes the "Mechanism gap" in `architecture.md` SMiddleware for the status side — `errorBoundary` recoveries now return `500` instead of `200`. Header mutation and TS-side middleware composition are deferred to a follow-up.
 
 **Architecture:** SAB byte layout changes from `[html bytes]` to `[status: u16 BE][body bytes]`. Worker still returns `u32` (total bytes written; same napi type signature). `handle_conn` reads the first 2 bytes from the SAB slice to parse status, then builds the response with `build_response(status, ...)`. `makeRenderer` always emits status 200 on the happy path and **500** on the errorBoundary branch. The example app's `worker_id=` post-processing wrapper skips the 2-byte prefix when reading and preserves it when re-writing.
 
 **Tech Stack:** Rust 2024, TypeScript 5, no new dependencies. Wire format: 2 big-endian bytes of status code preceding the body.
 
-**Spec source:** `architecture.md` §Middleware "Mechanism gap":
+**Spec source:** `architecture.md` SMiddleware "Mechanism gap":
 > the current tsfn contract returns only `u32` (body length); there is no channel for response headers or status. For middleware to actually mutate headers/status, the contract must evolve to either a richer return value (e.g. a struct `{ status, headers, body_len }` encoded into a fixed prefix of the SAB) or a separate tsfn handle dedicated to response metadata.
 
 This plan ships the **smallest** surgical step: status only, encoded as a fixed 2-byte prefix. Headers + middleware composition land separately.
@@ -29,7 +29,7 @@ This plan ships the **smallest** surgical step: status only, encoded as a fixed 
 | `runtime/routes.ts` | `makeRenderer` writes `[status_u16_BE][html]` into the view. Happy path = 200, errorBoundary path = 500. Returns total bytes written (body_len + 2). |
 | `example/hello-world/index.ts` | Worker_id post-processing wrapper now reads `view.subarray(2, written)` as body, mutates body, re-writes preserving the 2-byte prefix. |
 | `tests/integration.test.ts` | Flip the errorBoundary test's status assertion from 200 → 500. Update the inline comment. |
-| `architecture.md` §Middleware | Note the wire format change. List status mutation as shipped; header mutation + middleware composition stay in "designed not built". |
+| `architecture.md` SMiddleware | Note the wire format change. List status mutation as shipped; header mutation + middleware composition stay in "designed not built". |
 
 `src/cache.rs`: **no change**. The cache stores full HTTP response bytes (status line + headers + body) built via `build_response` AFTER status is known — so cached responses naturally carry whatever status was set at render time.
 
@@ -337,12 +337,12 @@ EOF
 
 ---
 
-### Task 4: Update architecture.md §Middleware and §Status
+### Task 4: Update architecture.md SMiddleware and SStatus
 
 **Files:**
 - Modify: `architecture.md`
 
-- [ ] **Step 1:** Locate the §Middleware "Mechanism gap" paragraph (around lines 605-619 — search for "Mechanism gap"). Update to reflect that status is now wired:
+- [ ] **Step 1:** Locate the SMiddleware "Mechanism gap" paragraph (around lines 605-619 — search for "Mechanism gap"). Update to reflect that status is now wired:
 
 ```markdown
 **Mechanism gap (partially closed):** the tsfn signature still returns
@@ -354,7 +354,7 @@ prefix to `[meta_len: u16][meta JSON][body]` carrying a `{status, headers}`
 struct.
 ```
 
-- [ ] **Step 2:** §Status. Move the "richer tsfn return (status)" into **Built**:
+- [ ] **Step 2:** SStatus. Move the "richer tsfn return (status)" into **Built**:
 
 In the **Built** list, append:
 
@@ -375,11 +375,11 @@ git add architecture.md
 git commit -m "$(cat <<'EOF'
 docs(architecture): tsfn status prefix is shipped; header mutation deferred
 
-§Middleware "Mechanism gap" paragraph: note the SAB layout
+SMiddleware "Mechanism gap" paragraph: note the SAB layout
 [status_u16_BE][body] closes the status-side half of the gap.
 errorBoundary recoveries now return HTTP 500 (Plan E's TODO).
 
-§Status: Built gains "Richer tsfn return: status prefix"; the
+SStatus: Built gains "Richer tsfn return: status prefix"; the
 remaining middleware work (header mutation + composition) stays
 in Designed-not-built under a clarified bullet.
 

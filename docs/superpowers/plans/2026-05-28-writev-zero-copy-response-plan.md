@@ -60,7 +60,7 @@ pub fn build_single_response_head_only(meta: &ChunkMeta, body_len: usize) -> Vec
 
 /// Build a complete single-chunk HTTP/1.1 response with Content-Length.
 /// Bytes-identical to today's renderToString wire shape for no-Suspense
-/// routes (spec §1 criterion #1). Header bytes from
+/// routes (spec S1 criterion #1). Header bytes from
 /// `build_single_response_head_only` followed by the body.
 pub fn build_single_response_bytes(meta: &ChunkMeta, body: &[u8]) -> Vec<u8> {
     let mut out = build_single_response_head_only(meta, body.len());
@@ -271,7 +271,7 @@ If `cargo test` reports `error[E0277]: tokio::io::AsyncWrite is not satisfied` f
     /// For now, concat into a single Vec and write in one call —
     /// preserving current Linux behavior. Real writev support is
     /// deferred to a future sub-project once a Linux bench baseline
-    /// exists (spec "Known limitations §1").
+    /// exists (spec "Known limitations S1").
     pub async fn write_all_vectored(
         &mut self,
         bufs: &mut [std::io::IoSlice<'_>],
@@ -339,7 +339,7 @@ With:
         // Build full bytes once for both the write and the cache insert.
         // Clone preserved here — cache needs an owned copy independent of
         // the write_all transfer. Reducing this clone is a separate
-        // sub-project (see spec "Known limitations §3").
+        // sub-project (see spec "Known limitations S3").
         let resp = crate::render_stream::build_single_response_bytes(&parsed, body);
         response_bytes_for_cache = resp.clone();
         if s.write_all(resp).await.is_err() {

@@ -1,6 +1,6 @@
 //! Sub-project J — minijinja Environment loader + render entry point.
 //!
-//! Spec §6 (jinja.rs) + §13.7 (OnceLock) + §13.6 (Chainable undefined behavior).
+//! Spec S6 (jinja.rs) + S13.7 (OnceLock) + S13.6 (Chainable undefined behavior).
 //!
 //! Boot path (Task 4 wires it):
 //! 1. `load_from(.brust/jinja/)` reads every `<Name>.jinja` file and registers
@@ -8,7 +8,7 @@
 //! 2. `render(name, &data_json)` looks up the template, deserializes the JSON,
 //!    and renders.
 //!
-//! `OnceLock` is intentional per §13.7 — hot reload via `RwLock` is deferred
+//! `OnceLock` is intentional per S13.7 — hot reload via `RwLock` is deferred
 //! to v2.x. `Box::leak` is the price of `OnceLock<Environment<'static>>`.
 
 use std::path::Path;
@@ -29,7 +29,7 @@ static ENV: RwLock<Option<Environment<'static>>> = RwLock::new(None);
 ///
 /// Lenient on missing/non-directory `dir` — sets an empty Environment and
 /// returns `vec![]`. Parse errors on individual `.jinja` files panic — that's
-/// real build-pipeline drift (spec §6).
+/// real build-pipeline drift (spec S6).
 pub fn load_from(dir: &Path) -> Vec<String> {
     let mut env = Environment::new();
     env.set_undefined_behavior(UndefinedBehavior::Chainable);

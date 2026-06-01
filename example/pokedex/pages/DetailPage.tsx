@@ -1,9 +1,9 @@
 // Route "/pokemon/{name}" — NATIVE detail page. Per the decision to push native
 // as far as possible, the evolution chain is loaded BLOCKING in the loader (a
 // native/jinja route has no React tree, so <Suspense> streaming is impossible —
-// see ../FRAMEWORK-GAPS.md §3).
+// see ../FRAMEWORK-GAPS.md S3).
 //
-// Native routes can't use conditionals (§11), so there is no `{notFound ? … : …}`
+// Native routes can't use conditionals (S11), so there is no `{notFound ? … : …}`
 // branch: BOTH the detail body and the 404 block are always emitted and one is
 // hidden via a loader-computed `dex-hide` class (contentClass / notFoundClass).
 // Same trick for the abilities row, the evolution section, and each evolution
@@ -87,7 +87,7 @@ export default function DetailPage({
               <h2 className="aa-h3">No Pokémon named “{displayName}”</h2>
               <p className="dex-notfound__desc">
                 loader ได้ 404 จาก PokeAPI. brust ยังไม่มี notFound() sentinel — หน้านี้จึงตอบ HTTP 200 พร้อม
-                body นี้ (ดู FRAMEWORK-GAPS.md §9).
+                body นี้ (ดู FRAMEWORK-GAPS.md S9).
               </p>
               <a className="aa-btn" href="/">
                 ‹ Back to Pokédex
@@ -167,7 +167,7 @@ export default function DetailPage({
                   <h2 className="aa-section__title">Evolution chain</h2>
                   <div className="aa-section__desc">
                     โหลดใน loader (native route stream{' '}
-                    <code className="dex-code">&lt;Suspense&gt;</code> ไม่ได้ — ดู GAPS §3)
+                    <code className="dex-code">&lt;Suspense&gt;</code> ไม่ได้ — ดู GAPS S3)
                   </div>
                 </div>
               </div>

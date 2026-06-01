@@ -1869,22 +1869,22 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 ## Spec coverage check (self-review)
 
-| Spec § | Task |
+| Spec S | Task |
 |---|---|
-| §1 Goal — MCP server with tools/resources/prompts/logging/roots | Tasks 4, 8, 9, 10 |
-| §1 Success criterion + concrete acceptance curls | Tasks 11 (smoke), 12 (automated) |
-| §2.1 Module layout | Tasks 4-7 (creates the modules) |
-| §2.2 Boot sequence | Task 11 |
-| §2.3 Rust route | Tasks 1, 2 |
-| §2.4 Worker dispatch envelope | Tasks 1, 3 |
-| §3.1 Implemented JSON-RPC methods | Tasks 4 (initialize), 8 (tools), 9 (resources), 10 (prompts/logging/roots) |
-| §3.2-§3.5 Tool/resource semantics | Tasks 8, 9 |
-| §4 TS compiler API extractor | Task 7 |
-| §5 TS type → JSON Schema | Task 5 |
-| §6 Worker MCP server | Tasks 4, 8, 9, 10 |
-| §7 Rust changes | Tasks 1, 2 |
-| §8 Authentication via middleware chain | Task 8 (tools/call uses composeChain) |
-| §9 Testing strategy | Tasks 1, 5, 6, 12 |
+| S1 Goal — MCP server with tools/resources/prompts/logging/roots | Tasks 4, 8, 9, 10 |
+| S1 Success criterion + concrete acceptance curls | Tasks 11 (smoke), 12 (automated) |
+| S2.1 Module layout | Tasks 4-7 (creates the modules) |
+| S2.2 Boot sequence | Task 11 |
+| S2.3 Rust route | Tasks 1, 2 |
+| S2.4 Worker dispatch envelope | Tasks 1, 3 |
+| S3.1 Implemented JSON-RPC methods | Tasks 4 (initialize), 8 (tools), 9 (resources), 10 (prompts/logging/roots) |
+| S3.2-S3.5 Tool/resource semantics | Tasks 8, 9 |
+| S4 TS compiler API extractor | Task 7 |
+| S5 TS type → JSON Schema | Task 5 |
+| S6 Worker MCP server | Tasks 4, 8, 9, 10 |
+| S7 Rust changes | Tasks 1, 2 |
+| S8 Authentication via middleware chain | Task 8 (tools/call uses composeChain) |
+| S9 Testing strategy | Tasks 1, 5, 6, 12 |
 
 All spec sections mapped. No requirements without a task.
 

@@ -2,7 +2,7 @@
 //
 // Rendered with `ssr` so the initial team (from the loader) ships in the HTML
 // and the dock count is correct on first paint, then hydrates. Stays in sync
-// with AddToTeamButton through the window-event bus (see team-bus.ts / GAPS §4).
+// with AddToTeamButton through the window-event bus (see team-bus.ts / GAPS S4).
 import { useEffect, useState } from 'react'
 import { client } from '../../../runtime/client/index.ts'
 import type { Actions } from '../actions'
@@ -26,7 +26,7 @@ export default function TeamBuilder({ teamInitial }: { teamInitial: TeamMember[]
   }, [])
 
   async function remove(id: number) {
-    // `.delete({})` — empty body is required (bodyless DELETE → 411). See GAPS §12.
+    // `.delete({})` — empty body is required (bodyless DELETE → 411). See GAPS S12.
     const { data } = await api.team({ id }).delete({})
     if (data) emitTeam(data.team)
   }

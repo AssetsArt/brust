@@ -4,10 +4,10 @@
 // compiled to minijinja. They can only interpolate MEMBER PATHS — no helper
 // calls, no `style={{…}}` objects, no string concatenation. So every formatted
 // string, CSS class, and inline-style string is precomputed here in the loader
-// and handed to the template as plain fields. See ../FRAMEWORK-GAPS.md §1.
+// and handed to the template as plain fields. See ../FRAMEWORK-GAPS.md S1.
 
 /** A single list cell — derived from the list endpoint alone (no detail fetch,
- *  see FRAMEWORK-GAPS.md §2 / N+1 avoidance). */
+ *  see FRAMEWORK-GAPS.md S2 / N+1 avoidance). */
 export interface CardVM {
   id: number
   name: string
@@ -25,7 +25,7 @@ export interface ListData {
   showingLabel: string // "1–20 of 1,302"
   pageLabel: string // "1 / 66"
   // Native routes can't use conditionals, so "disabled" is a precomputed class
-  // (pointer-events:none) rather than `{hasPrev ? <a> : <span>}`. See GAPS §11.
+  // (pointer-events:none) rather than `{hasPrev ? <a> : <span>}`. See GAPS S11.
   prevClass: string
   nextClass: string
   prevHref: string
@@ -61,7 +61,7 @@ export interface EvolutionStageVM {
   detailHref: string
   levelLabel: string // "Lv 16"
   // Conditionals aren't allowed in native routes, so the arrow/level separators
-  // are always rendered and hidden via these precomputed classes. See GAPS §11.
+  // are always rendered and hidden via these precomputed classes. See GAPS S11.
   sepClassName: string // "dex-evo__sep" (+ " dex-hide" on the first stage)
   levelClassName: string // "dex-evo__lv" (+ " dex-hide" when there's no level)
   cardClassName: string // adds the "current" highlight when this is the open Pokémon
@@ -72,7 +72,7 @@ export interface DetailData {
   notFound: boolean
   // Native routes can't branch with `{notFound ? … : …}`, so BOTH the content
   // and the 404 block are always emitted and one is hidden by a precomputed
-  // class. See FRAMEWORK-GAPS.md §11.
+  // class. See FRAMEWORK-GAPS.md S11.
   contentClass: string // "dex-detail-grid" (+ " dex-hide" when notFound)
   notFoundClass: string // "dex-notfound" (+ " dex-hide" when found)
   abilitiesClass: string // hidden when the Pokémon has no abilities
@@ -113,7 +113,7 @@ export interface AddToTeamProps {
 
 /** One cell of the type chart, FLATTENED into a single row-major array so the
  *  native template renders it with ONE `.map()` into a CSS grid — nested maps
- *  aren't proven on the native path, so we avoid them. See FRAMEWORK-GAPS.md §10. */
+ *  aren't proven on the native path, so we avoid them. See FRAMEWORK-GAPS.md S10. */
 export interface TypeChartCellVM {
   id: string // stable key (row/col coordinate)
   className: string // "dex-tc__cell dex-tc__cell--super"

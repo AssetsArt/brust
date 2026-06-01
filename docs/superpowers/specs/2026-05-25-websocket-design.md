@@ -106,7 +106,7 @@ tokio-tungstenite = { version = "0.21", default-features = false }
 sha1              = "0.10"
 ```
 - `tokio-tungstenite`: no TLS / native-tls features needed (TLS termination is out of scope per session 6 deferred list). Pulls in `tungstenite` as a transitive (RFC 6455 frame parser).
-- `sha1`: needed for the `Sec-WebSocket-Accept` derivation (RFC 6455 §1.3). `base64` is already present at `Cargo.toml:23` (added during Forms work).
+- `sha1`: needed for the `Sec-WebSocket-Accept` derivation (RFC 6455 S1.3). `base64` is already present at `Cargo.toml:23` (added during Forms work).
 
 ## 4. Author API
 
@@ -427,7 +427,7 @@ async fn ws_conn_task(
 9. If `verdict.status == 101`: build handshake response (`HTTP/1.1 101 Switching Protocols`, `Upgrade: websocket`, `Connection: Upgrade`, `Sec-WebSocket-Accept: <base64 sha1>`, `Sec-WebSocket-Protocol: <chosen>` if non-empty). Write headers, wrap stream with `tokio_tungstenite::WebSocketStream::from_raw_socket(stream, Role::Server, None)`, spawn `ws_conn_task`.
 10. JS glue calls `napi_ws_register_handlers(conn_id, onMessage, onClose)`. Author's `open(socket, ctx)` fires.
 
-**`Sec-WebSocket-Accept` derivation:** `base64(SHA1(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))` per RFC 6455 §1.3. `base64` is at `Cargo.toml:23`; `sha1` is added by this work (see §3 Cargo.toml additions above).
+**`Sec-WebSocket-Accept` derivation:** `base64(SHA1(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))` per RFC 6455 S1.3. `base64` is at `Cargo.toml:23`; `sha1` is added by this work (see S3 Cargo.toml additions above).
 
 ## 6. Lifecycle & error paths
 
@@ -492,7 +492,7 @@ The `closed: { v: boolean }` box is mutated by the glue when `on_close` fires (s
 
 - Per-IP rate limiting on WS connection counts
 - `permessage-deflate` compression extension (proxy-fragile; defer)
-- Built-in pub/sub broadcast — author builds via socket map (see §4 example). Will be designed jointly with the future SSE+WS shared pub/sub primitive.
+- Built-in pub/sub broadcast — author builds via socket map (see S4 example). Will be designed jointly with the future SSE+WS shared pub/sub primitive.
 - Cross-process / cross-instance fan-out (Redis adapter etc.)
 - Fragmented message frames > 16 MB (tungstenite default cap; raising requires explicit config)
 - Client-mode WebSocket (outbound conns from Brust as a client) — server only
@@ -619,7 +619,7 @@ kill %1
 
 ## Spec coverage check
 
-| §1 success criterion | Implementing tasks |
+| S1 success criterion | Implementing tasks |
 |---|---|
 | 1. websocat echo | 5, 9, 11, 12, 13 test 1 |
 | 2. binary round-trip | 5, 9, 12, 13 test 2 |
@@ -630,4 +630,4 @@ kill %1
 | 7. client close → 1000 | 5, 9, 11, 12, 13 test 7 |
 | 8. no regression | every task ends with cargo test + bun test |
 
-All §1-§9 spec requirements map to at least one task.
+All S1-S9 spec requirements map to at least one task.

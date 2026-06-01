@@ -32,7 +32,7 @@ interface LoaderCtx {
 const PAGE = 20
 const NATIONAL_MAX = 1302
 
-// GAP §1: query validation is not symmetric with actions. Actions bind a schema
+// GAP S1: query validation is not symmetric with actions. Actions bind a schema
 // in the descriptor and hand the handler a typed+validated `query`; loaders get
 // `req.search` as a raw Record<string,string> and must validate by hand here.
 const ListQuery = z.object({
@@ -86,16 +86,16 @@ export async function detailLoader({ params }: LoaderCtx): Promise<DetailData> {
   const empty = emptyDetail(name)
 
   const p = await fetchPokemon(name)
-  // GAP §9: no first-class notFound()/redirect() loader sentinel — a 404 from
+  // GAP S9: no first-class notFound()/redirect() loader sentinel — a 404 from
   // PokeAPI is surfaced as a flag the template branches on, and the response is
-  // still HTTP 200 (we can't set status from a native loader). See GAPS §9.
+  // still HTTP 200 (we can't set status from a native loader). See GAPS S9.
   if (!p) return empty
 
   const species = await fetchSpecies(p.id)
   // GAP (native↔streaming): a native route renders in Rust with NO React tree,
   // so <Suspense> streaming is impossible. The evolution chain — the slow fetch
   // the design wanted to stream — is therefore loaded BLOCKING here in the
-  // loader. See GAPS §3.
+  // loader. See GAPS S3.
   const rawEvo = await fetchEvolution(species.evolutionUrl)
 
   const primary = p.types[0] ?? 'normal'
@@ -224,7 +224,7 @@ const SHORT: Record<string, string> = {
 }
 
 export async function typeChartLoader(): Promise<TypeChartData> {
-  // GAP §2: no loader-level batch/parallel helper or request-scoped cache — we
+  // GAP S2: no loader-level batch/parallel helper or request-scoped cache — we
   // fan out 18 fetches by hand with Promise.all (and there is no dedupe).
   const relations = await Promise.all(ALL_TYPES.map((t) => fetchTypeRelations(t)))
 

@@ -3,7 +3,7 @@
 **Sub-project:** Tier-2 follow-up #5. Expose Brust's server actions, loaders, and routes as a Model Context Protocol (MCP) server so AI agents can discover and invoke them.
 **Date:** 2026-05-24
 **Status:** approved for implementation planning. Execution deferred to next session per length-of-session scope check.
-**Parent design:** `architecture.md` § "Agentic surface"
+**Parent design:** `architecture.md` S "Agentic surface"
 **Related shipped:**
 - `2026-05-24-server-functions-design.md` (action dispatch wire format — reused for `tools/call`)
 - `2026-05-24-use-server-directive-design.md` (action discovery via `'use server'` files — reused for `tools/list`)
@@ -332,7 +332,7 @@ export async function createNote(req: BrustRequest, text: string): Promise<{ id:
 
 1. Identify the parameter list. The FIRST parameter is always `req: BrustRequest` and is dropped from the schema (it's not an agent-visible arg).
 2. For each remaining param: extract its type via `checker.getTypeAtLocation(paramNode)`.
-3. Map the TS type to JSON Schema using `tsTypeToJsonSchema` (§5).
+3. Map the TS type to JSON Schema using `tsTypeToJsonSchema` (S5).
 4. Build `inputSchema = { type: "object", properties: {...}, required: [...] }`.
 5. Optional: extract leading JSDoc as `description`.
 

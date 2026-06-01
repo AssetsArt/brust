@@ -5,7 +5,7 @@
 //
 // NOTE: native route components support `.map()` but NOT conditionals
 // (`{cond && …}` / `{a ? b : c}` only work inside inline `<Comp native/>`
-// components — see ../FRAMEWORK-GAPS.md §11). So pagination "disabled" state is
+// components — see ../FRAMEWORK-GAPS.md S11). So pagination "disabled" state is
 // a precomputed class, not a `{hasPrev ? <a> : <span>}` branch.
 import { BrustPage, Island } from '../../../runtime/index.ts'
 import TeamBuilder from '../components/TeamBuilder'

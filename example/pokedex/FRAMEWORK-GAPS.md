@@ -15,7 +15,7 @@
 
 ## สรุปสั้น (native เขียนยังไงให้ผ่าน)
 
-จาก gap §1–§3 รวมกัน ได้ "กฎเหล็กของ native route" ที่บังคับทั้งแอป:
+จาก gap S1–S3 รวมกัน ได้ "กฎเหล็กของ native route" ที่บังคับทั้งแอป:
 
 > **template ของ native route แสดงได้แค่ member-path + `.map()` เท่านั้น** — ห้าม
 > `style={{…}}`, ห้าม conditional, ห้ามเรียก helper/format, ห้าม arithmetic/compare/
@@ -25,7 +25,7 @@
 
 ---
 
-## ★ §11 — native route ใช้ conditional ไม่ได้เลย (ใหม่, เจ็บสุด) · CONFIRMED
+## ★ S11 — native route ใช้ conditional ไม่ได้เลย (ใหม่, เจ็บสุด) · CONFIRMED
 
 **อาการ:** `brust build` ล้มทันทีที่หน้ามี `{cond ? <a/> : <span/>}`:
 
@@ -54,7 +54,7 @@ loader ที่บวมด้วย `xxxClass` เต็มไปหมด.
 
 ---
 
-## ★ §1 — `style={{…}}` object ใช้ใน native ไม่ได้ · CONFIRMED
+## ★ S1 — `style={{…}}` object ใช้ใน native ไม่ได้ · CONFIRMED
 
 **อาการ:** attribute ที่ค่าเป็น object literal (`style={{ width: 62 }}`) ถูก reject
 (`lower_expr` ไม่มีเคส `Object`). prototype ดีไซน์ทุกชิ้นพึ่ง inline style — ย้ายมา native
@@ -73,7 +73,7 @@ loader ที่บวมด้วย `xxxClass` เต็มไปหมด.
 
 ---
 
-## ★ §3 — native ↔ Suspense streaming ใช้ร่วมกันไม่ได้ · BY-DESIGN (ยืนยันแล้ว)
+## ★ S3 — native ↔ Suspense streaming ใช้ร่วมกันไม่ได้ · BY-DESIGN (ยืนยันแล้ว)
 
 **อาการ:** อยากให้ evolution chain (fetch ช้า) stream เข้ามาทีหลังด้วย `<Suspense>` แต่
 native route render ใน Rust/jinja **ไม่มี React tree** → ไม่มี `renderToPipeableStream`
@@ -88,7 +88,7 @@ React island ที่ stream เองได้) เป็นทางออก
 
 ---
 
-## ★ §12 — bodyless DELETE action → HTTP 411 · CONFIRMED (เจอใน browser จริง)
+## ★ S12 — bodyless DELETE action → HTTP 411 · CONFIRMED (เจอใน browser จริง)
 
 **อาการ:** ปุ่ม Remove เรียก `api.team({id}).delete()` แล้ว console ขึ้น:
 
@@ -112,7 +112,7 @@ Failed to load resource: the server responded with a status of 411
 
 ## ◆ stale island chunk cache หลัง rebuild · CONFIRMED
 
-**อาการ:** แก้โค้ด island, rebuild, refresh — browser ยังรันโค้ดเก่า (เจอตอน fix §12:
+**อาการ:** แก้โค้ด island, rebuild, refresh — browser ยังรันโค้ดเก่า (เจอตอน fix S12:
 chunk ที่ cache ไว้ยังเป็น `delete()`, ตัว fresh เป็น `delete({})`).
 
 **ทำไม:** island chunk เสิร์ฟด้วย `Cache-Control: max-age=3600` และ **filename ไม่ content-hash**
@@ -145,7 +145,7 @@ native: true route expects template "ListPage.jinja" but it's not registered
 
 ---
 
-## ◆ §9 — ไม่มี notFound()/redirect() sentinel; native loader ตั้ง status ไม่ได้ · CONFIRMED
+## ◆ S9 — ไม่มี notFound()/redirect() sentinel; native loader ตั้ง status ไม่ได้ · CONFIRMED
 
 **อาการ:** `/pokemon/<ชื่อมั่ว>` → PokeAPI 404 แต่หน้าเราตอบ **HTTP 200** พร้อม 404 body.
 
@@ -160,7 +160,7 @@ native: true route expects template "ListPage.jinja" but it's not registered
 
 ---
 
-## ◆ §8 — `<BrustPage>` head props เป็น string literal เท่านั้น → `<title>` dynamic ไม่ได้ · CONFIRMED
+## ◆ S8 — `<BrustPage>` head props เป็น string literal เท่านั้น → `<title>` dynamic ไม่ได้ · CONFIRMED
 
 **อาการ:** อยากได้ `<title>Charizard · PokéDex</title>` แต่ native บังคับ
 `title="…"` เป็น literal → ทุกหน้า detail ใช้ title เดียว `"PokéDex · detail"`.
@@ -173,7 +173,7 @@ native: true route expects template "ListPage.jinja" but it's not registered
 
 ---
 
-## ◆ §4 — ไม่มี cross-island shared-state primitive · CONFIRMED (workaround ใช้ได้)
+## ◆ S4 — ไม่มี cross-island shared-state primitive · CONFIRMED (workaround ใช้ได้)
 
 **อาการ:** `AddToTeamButton` กับ `TeamBuilder` เป็นคนละ island/คนละ bundle ต้องโชว์ทีมเดียวกัน.
 import store กลางร่วมกัน = ถูก bundle ซ้ำเป็นคนละ instance → ไม่ sync.
@@ -185,7 +185,7 @@ import store กลางร่วมกัน = ถูก bundle ซ้ำเ�
 
 ---
 
-## ◆ §6 — ไม่มี request/session context; team store เป็น global · CONFIRMED
+## ◆ S6 — ไม่มี request/session context; team store เป็น global · CONFIRMED
 
 team store เป็น module-scope Map = แชร์ข้ามทุก request/ทุก visitor. action handler รับ
 `{req,body,params,query}` แต่ไม่มี session/cookie helper. สำหรับ dogfood นี่โอเค แต่ทำ
@@ -193,7 +193,7 @@ multi-user ไม่ได้ถ้าไม่มี context primitive.
 
 ---
 
-## ◆ §7 — ไม่มี typed domain-error ผ่าน treaty · CONFIRMED
+## ◆ S7 — ไม่มี typed domain-error ผ่าน treaty · CONFIRMED
 
 handler "ไม่ throw" ผ่าน boundary → "ทีมเต็ม" ต้อง encode ใน success payload เอง
 (`{ team, max, full: true }`) แล้ว client เช็คสองที่ (`error` ของ transport + `data.full`).
@@ -203,7 +203,7 @@ handler "ไม่ throw" ผ่าน boundary → "ทีมเต็ม" ต�
 
 ---
 
-## ○ §2 — ไม่มี loader batch/dedupe/request-cache · CONFIRMED
+## ○ S2 — ไม่มี loader batch/dedupe/request-cache · CONFIRMED
 
 `typeChartLoader` ต้อง `Promise.all` 18 fetch เอง, ไม่มี request-scoped cache/dedupe.
 list page เลี่ยง N+1 ด้วยการ derive artwork จาก id (ยิง PokeAPI ครั้งเดียว/หน้า) — workaround

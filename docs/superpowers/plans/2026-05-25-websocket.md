@@ -221,7 +221,7 @@ use tokio::sync::{mpsc, oneshot};
 
 const RFC6455_MAGIC: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
-/// Computes Sec-WebSocket-Accept per RFC 6455 §1.3:
+/// Computes Sec-WebSocket-Accept per RFC 6455 S1.3:
 ///   base64(SHA1(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
 pub fn compute_sec_accept(key: &str) -> String {
     let mut hasher = Sha1::new();
@@ -346,7 +346,7 @@ mod tests {
 
     #[test]
     fn sec_accept_rfc6455_example() {
-        // RFC 6455 §1.3 worked example: key "dGhlIHNhbXBsZSBub25jZQ=="
+        // RFC 6455 S1.3 worked example: key "dGhlIHNhbXBsZSBub25jZQ=="
         // → accept "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
         assert_eq!(
             compute_sec_accept("dGhlIHNhbXBsZSBub25jZQ=="),
@@ -451,7 +451,7 @@ parse_ws_handshake validates Upgrade + Connection + Sec-WebSocket-Key +
 Sec-WebSocket-Version: 13 and extracts client subprotocols. Returns
 typed HandshakeError on each failure mode for clear 4xx mapping.
 
-compute_sec_accept does the RFC 6455 §1.3 SHA1(key + magic) + base64
+compute_sec_accept does the RFC 6455 S1.3 SHA1(key + magic) + base64
 ritual. Validated against the spec example vector.
 
 Tests: 8 — RFC example vector, 3 handshake parser paths, 1 invalid,
@@ -2296,32 +2296,32 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 ## Spec coverage check (self-review)
 
-| Spec § | Implementing tasks |
+| Spec S | Implementing tasks |
 |---|---|
-| §1 success criterion 1 (websocat echo) | 5, 9, 11, 12, 13 test 1 |
-| §1 success criterion 2 (binary round-trip) | 5, 9, 12, 13 test 2 |
-| §1 success criterion 3 (server close 4000) | 5, 9, 11, 12, 13 test 3 |
-| §1 success criterion 4 (mw reject 401) | 6, 8, 9, 12, 13 test 4 |
-| §1 success criterion 5 (mw pass + echo) | 6, 8, 9, 12, 13 test 5 |
-| §1 success criterion 6 (subprotocol negotiation) | 9, 12, 13 test 6 |
-| §1 success criterion 7 (client clean close → 1000) | 5, 9, 11, 12, 13 test 7 |
-| §1 success criterion 8 (no regression) | every task runs full suite |
-| §2 Architecture | 3, 5, 6 |
-| §3 Module layout | 1-14 (file map matches) |
-| §4 Author API | 8 (route + interfaces), 9 (WsSocketImpl + handlers wiring) |
-| §4 validation rules | 8 (impl), 10 (tests) |
-| §5 Wire format (WsEnvelope) | 2 |
-| §5 NAPI fns | 4 |
-| §5 Per-conn task | 5 |
-| §5 Server-side dispatch | 6, 7 |
-| §6 Disconnect detection matrix | 5 |
-| §6 on_close exactly-once | 5 (close_fired flag), 9 (test) |
-| §6 handler exceptions | 5 (Rust side), 9 (JS message-throw resilience test) |
-| §6 WsSocket impl | 9 |
-| §7 Limits | 5 (defaults: ping/max msg), 9 (reason cap) |
-| §8 Testing (8 Rust + 6 runtime + 7 integration) | 2, 3, 9, 10, 13 |
+| S1 success criterion 1 (websocat echo) | 5, 9, 11, 12, 13 test 1 |
+| S1 success criterion 2 (binary round-trip) | 5, 9, 12, 13 test 2 |
+| S1 success criterion 3 (server close 4000) | 5, 9, 11, 12, 13 test 3 |
+| S1 success criterion 4 (mw reject 401) | 6, 8, 9, 12, 13 test 4 |
+| S1 success criterion 5 (mw pass + echo) | 6, 8, 9, 12, 13 test 5 |
+| S1 success criterion 6 (subprotocol negotiation) | 9, 12, 13 test 6 |
+| S1 success criterion 7 (client clean close → 1000) | 5, 9, 11, 12, 13 test 7 |
+| S1 success criterion 8 (no regression) | every task runs full suite |
+| S2 Architecture | 3, 5, 6 |
+| S3 Module layout | 1-14 (file map matches) |
+| S4 Author API | 8 (route + interfaces), 9 (WsSocketImpl + handlers wiring) |
+| S4 validation rules | 8 (impl), 10 (tests) |
+| S5 Wire format (WsEnvelope) | 2 |
+| S5 NAPI fns | 4 |
+| S5 Per-conn task | 5 |
+| S5 Server-side dispatch | 6, 7 |
+| S6 Disconnect detection matrix | 5 |
+| S6 on_close exactly-once | 5 (close_fired flag), 9 (test) |
+| S6 handler exceptions | 5 (Rust side), 9 (JS message-throw resilience test) |
+| S6 WsSocket impl | 9 |
+| S7 Limits | 5 (defaults: ping/max msg), 9 (reason cap) |
+| S8 Testing (8 Rust + 6 runtime + 7 integration) | 2, 3, 9, 10, 13 |
 
-All §1-§8 spec requirements map to at least one task.
+All S1-S8 spec requirements map to at least one task.
 
 ## Type / name consistency check
 

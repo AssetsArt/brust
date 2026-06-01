@@ -114,7 +114,7 @@ beforeAll(async () => {
   // component-named `island_Counter_html`.
   expect(jinjaSrc).toContain('island_0_html')
 
-  // Two-instance page (acceptance §3): ONE page, TWO <Island component={Counter}>
+  // Two-instance page (acceptance S3): ONE page, TWO <Island component={Counter}>
   // reusing the SAME Counter — instance 0 client-only, instance 1 ssr, distinct
   // props paths. The build must:
   //   - emit a manifest with EXACTLY 2 entries (both component "Counter",
@@ -262,7 +262,7 @@ test('GET /_test/native-island-ssr — SSR island: static shell + server-rendere
 })
 
 test('GET /_test/native-two-islands — same Counter twice (client-only + ssr): one chunk, two distinct mounts', async () => {
-  // Acceptance §3 real-server proof: ONE page with TWO <Island component={Counter}>
+  // Acceptance S3 real-server proof: ONE page with TWO <Island component={Counter}>
   // reusing the SAME Counter — instance 0 client-only, instance 1 ssr, distinct
   // props paths. A 200 means the worker resolved both instances and SSR-rendered
   // instance 1.

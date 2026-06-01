@@ -105,7 +105,7 @@ runtime/
 
 One new Rust module (`render_stream.rs`), one new TS module (`runtime/render/stream.ts`). No new dependencies (React 18's `renderToPipeableStream` is already in `react-dom/server`).
 
-**Replaced helper:** `dispatch_to_worker_and_send_meta_response` at `src/server.rs:798-910` is the load-bearing function that today owns the `tsfn.call_async → Promise<u32> → read SAB → write response` flow for BOTH render and action branches (action calls it at the `/_brust/action/` handler, render calls it at `src/server.rs:762`). It's replaced wholesale by `dispatch_to_worker_and_stream_chunks` with the same call sites and the same `DispatchControl::{Continue, CloseConn}` return enum (§7.1). The `entry.in_flight_guard()` busy-counter call is preserved (unchanged behaviour for `pick_least_busy`); a separate `RenderSlot` (`render_slot` field) carries the chunk channel.
+**Replaced helper:** `dispatch_to_worker_and_send_meta_response` at `src/server.rs:798-910` is the load-bearing function that today owns the `tsfn.call_async → Promise<u32> → read SAB → write response` flow for BOTH render and action branches (action calls it at the `/_brust/action/` handler, render calls it at `src/server.rs:762`). It's replaced wholesale by `dispatch_to_worker_and_stream_chunks` with the same call sites and the same `DispatchControl::{Continue, CloseConn}` return enum (S7.1). The `entry.in_flight_guard()` busy-counter call is preserved (unchanged behaviour for `pick_least_busy`); a separate `RenderSlot` (`render_slot` field) carries the chunk channel.
 
 **Divergence from SSE/WS pattern (intentional):** SSE and WebSocket's dispatch tsfn resolves immediately after `signalOpen` — the rest of the per-conn lifetime lives on independent channels (`sse_conn_task`, `ws_conn_task`). The render tsfn instead resolves after the FINAL chunk because render is request-scoped (a render is one request, not a long-lived connection). Both patterns coexist in the worker pool; future maintainers should not try to unify them.
 
@@ -154,7 +154,7 @@ The existing renderer tsfn returns `Promise<u32>` (byte length packed into SAB).
 | `src/pool.rs:11` | `pub type RendererTsfn = ThreadsafeFunction<String, Promise<u32>, String, napi::Status, false>;` | `pub type RendererTsfn = ThreadsafeFunction<String, Promise<()>, String, napi::Status, false>;` |
 | `src/lib.rs:139-156` `register_renderer` | `f: Function<String, Promise<u32>>` | `f: Function<String, Promise<()>>` |
 | `src/pool.rs:98-130` `dispatch_sse`, `dispatch_ws` | `.map(|_| ())` discards the `Promise<u32>` | Already discards the return value; **no change** |
-| `src/server.rs:798+` `dispatch_to_worker_and_send_meta_response` | Reads `Promise<u32>` length, slices SAB[0..n], decodes meta+body, writes response | **Replaced** by `dispatch_to_worker_and_stream_chunks` (see §5.3) |
+| `src/server.rs:798+` `dispatch_to_worker_and_send_meta_response` | Reads `Promise<u32>` length, slices SAB[0..n], decodes meta+body, writes response | **Replaced** by `dispatch_to_worker_and_stream_chunks` (see S5.3) |
 | `runtime/index.ts:29` `RenderFn` type | `(envelope: string) => Promise<number>` | `(envelope: string) => Promise<void>` |
 | `runtime/routes.ts:400-452` `makeRenderer` + branch returns | Each branch (`actionBranch`, `renderBranch`, `sseBranch`, `wsBranch`) returns `Promise<number>` (SAB length); makeRenderer returns the length | Each branch returns `Promise<void>`; chunks travel through `napi.renderChunk` (action+render) or per-conn helpers (sse+ws — unchanged) |
 
@@ -171,7 +171,7 @@ pub async fn napi_render_chunk(worker_id: u32, len: u32) -> NapiResult<()>
 - `len > 0` → Rust reads SAB[0..len] from the worker's pre-registered buffer, sends `RenderChunk::Bytes { data, ack }` through the worker's `render_slot`'s `chunk_tx`, awaits `ack_rx`. Resolves after the chunk lands on the socket → worker proceeds to the next chunk.
 - `len == 0` → Final signal. Sends `RenderChunk::Final { ack }`, awaits ack. Rust writes chunked terminator (if `streaming: true`) OR flushes the buffered single-chunk response (if `streaming: false`), then resolves the Promise immediately.
 - Worker MUST call `napi.renderChunk(0)` exactly once per request — even single-chunk responses — to close the channel and let `handle_conn` proceed.
-- **`ack_rx` failure path:** if the oneshot sender is dropped before `send` (handle_conn torn down mid-stream), `ack_rx.await` returns `Err(RecvError)` — `napi_render_chunk` MUST translate this to `NapiResult::Err`, NOT stall. The worker sees a rejected Promise and propagates through the sink's error path (§6).
+- **`ack_rx` failure path:** if the oneshot sender is dropped before `send` (handle_conn torn down mid-stream), `ack_rx.await` returns `Err(RecvError)` — `napi_render_chunk` MUST translate this to `NapiResult::Err`, NOT stall. The worker sees a rejected Promise and propagates through the sink's error path (S6).
 
 ### 5.3 Per-worker render slot
 
@@ -355,7 +355,7 @@ async function renderBranchStreaming(call, routes, view, encoder, ctx): Promise<
 - `concatWithBootstrap(buffers)` — prepend `ISLANDS_IMPORTMAP_AND_BOOTSTRAP` bytes to the concatenation of `buffers`.
 - `consumeIslandUsedFlag()` — existing module-global flag from `runtime/islands/island.tsx`. **Only meaningful when called AFTER all shell rendering completes** — which is `_final` time in the buffering path. Streaming path can't use it (late islands inside pending Suspense haven't rendered yet at `onShellReady`), so streaming always includes bootstrap.
 
-**Backpressure:** the sink awaits `napi.renderChunk` BEFORE calling `cb()`, so only ONE chunk is in flight from JS to Rust at any time. React's pipe naturally stalls when the sink doesn't call `cb()` — matching socket back-pressure. The mpsc buffer in Rust (size 1, per §7) reflects this — one chunk in transit, no head-of-line latency hiding.
+**Backpressure:** the sink awaits `napi.renderChunk` BEFORE calling `cb()`, so only ONE chunk is in flight from JS to Rust at any time. React's pipe naturally stalls when the sink doesn't call `cb()` — matching socket back-pressure. The mpsc buffer in Rust (size 1, per S7) reflects this — one chunk in transit, no head-of-line latency hiding.
 
 **Islands integration:** since auto-detect uses streaming-protocol always, `wrapWithIslandsBootstrap` becomes "prepend importmap + bootstrap script tags to the first chunk's body BEFORE encoding into the SAB." The script tags work fine at the top of the HTML, before any body bytes. ~500 bytes of always-included overhead per HTML response, which is acceptable — most non-trivial pages use islands, and the dead-code DCE for island-less pages is a future optimisation (out of scope here).
 
@@ -367,7 +367,7 @@ The existing helper at `src/server.rs:798+` owns the Promise<u32>-then-read-SAB-
 
 **This helper is replaced by a new helper `dispatch_to_worker_and_stream_chunks`** with the same call sites. The new helper:
 1. Acquires `entry.in_flight_guard()` (same busy-counter accounting — `pick_least_busy` keeps working).
-2. Installs a `RenderSlot` via the RAII `RenderSlotGuard` (§5.3).
+2. Installs a `RenderSlot` via the RAII `RenderSlotGuard` (S5.3).
 3. Spawns the tsfn call.
 4. Loops the chunk channel.
 5. Returns the same `DispatchControl::{Continue, CloseConn}` enum as today — call sites at the action and render branches are unchanged.
@@ -388,7 +388,7 @@ async fn dispatch_to_worker_and_stream_chunks(
     };
     let _busy_guard = entry.in_flight_guard();                  // busy counter (unchanged)
 
-    let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::channel::<RenderChunk>(1);  // buffer=1, see §7.4
+    let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::channel::<RenderChunk>(1);  // buffer=1, see S7.4
     {
         let mut slot = entry.render_slot.lock();
         debug_assert!(slot.is_none(), "worker {} double-dispatch", entry.id);
@@ -499,7 +499,7 @@ async fn dispatch_to_worker_and_stream_chunks(
 
 ### 7.3 Key invariants
 
-- **Single-chunk path** (`streaming: false`): Rust buffers the lone chunk, waits for Final, emits ONE `HTTP/1.1 200 OK\r\nContent-Length: N\r\n...\r\n\r\n<body>` via `write_all`. Bytes-on-wire identical to today's `renderToString` output for pages with no Suspense in the tree (per §1 criterion #1).
+- **Single-chunk path** (`streaming: false`): Rust buffers the lone chunk, waits for Final, emits ONE `HTTP/1.1 200 OK\r\nContent-Length: N\r\n...\r\n\r\n<body>` via `write_all`. Bytes-on-wire identical to today's `renderToString` output for pages with no Suspense in the tree (per S1 criterion #1).
 - **Multi-chunk path** (`streaming: true`): HTTP/1.1 chunked transfer-encoding — headers ship as soon as the first chunk arrives (the TTFB win).
 - **C5 chunked-terminator guarantee:** the `Ok(...)` arm of the `select!` race ALWAYS emits `0\r\n\r\n` if `chunked && headers_written` — covers the "worker forgot `renderChunk(0)`" path so the browser doesn't see a truncated stream on an otherwise-successful render.
 - **C7 dropped-chunks visibility:** `chunk_rx.len()` is logged with the warn so post-incident debugging sees both the worker_id and the queue depth.
@@ -526,9 +526,9 @@ Buffer is **1** (not 4 — agent feedback C4). The sink in JS awaits `napi.rende
 | Client disconnects mid-chunk | `s.write_all` returns Err inside `write_chunk_framed` | The `?` propagates the error out of the chunk arm → loop exits with `?` propagated up. `_slot_guard` Drop clears slot. Worker sees ack drop on its next `napi.renderChunk` call → cascades through sink C8 path | `info!` log |
 | `sink._write` rejection propagation (C8) | `napi.renderChunk` throws OR rejects inside sink's `_write` | The await is inside try/catch; on rejection, `cb(err)` (NOT `cb()`) — sink emits `'error'` → `sink.on('error', reject)` rejects the outer Promise → renderer tsfn rejects → Rust's `render_future` Err arm fires | `error!` log JS-side |
 
-**Wire-level safety:** chunked stream truncation is RFC 9112 §7.1-compliant — a missing `0\r\n\r\n` terminator is interpreted by browsers as `ERR_INCOMPLETE_CHUNKED_ENCODING` and by `fetch`'s stream reader as `TypeError: network error`. Acceptable for the truncation cases above.
+**Wire-level safety:** chunked stream truncation is RFC 9112 S7.1-compliant — a missing `0\r\n\r\n` terminator is interpreted by browsers as `ERR_INCOMPLETE_CHUNKED_ENCODING` and by `fetch`'s stream reader as `TypeError: network error`. Acceptable for the truncation cases above.
 
-**`handle_conn` hang prevention guarantee:** every error path above EITHER triggers the Final signal (worker emits `napi.renderChunk(0)` via `sendFinal` in `onShellError` / sink's `_final`) OR rejects the renderer Promise (which fires `render_future` Err arm in the `select!`). There is no documented path that leaves handle_conn waiting indefinitely. Spec-level test in §9 runtime-unit #4 covers the post-shell crash case explicitly.
+**`handle_conn` hang prevention guarantee:** every error path above EITHER triggers the Final signal (worker emits `napi.renderChunk(0)` via `sendFinal` in `onShellError` / sink's `_final`) OR rejects the renderer Promise (which fires `render_future` Err arm in the `select!`). There is no documented path that leaves handle_conn waiting indefinitely. Spec-level test in S9 runtime-unit #4 covers the post-shell crash case explicitly.
 
 ## 9. Testing
 

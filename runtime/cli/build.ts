@@ -219,8 +219,8 @@ export async function runBuild(args: string[]): Promise<void> {
   // `import { actions } from './actions'` path, no scan and no `_actions-prebuilt`
   // file. (The old `'use server'` filesystem scanner is gone.)
 
-  // routes.tsx is the scan target for both islands (§3) and the MCP manifest
-  // (§4). Computed once here and reused below.
+  // routes.tsx is the scan target for both islands (S3) and the MCP manifest
+  // (S4). Computed once here and reused below.
   const routesFile = path.join(entryDir, 'routes.tsx')
 
   // 3. Build islands (if any <Island> usage is found in the routes graph).
@@ -279,7 +279,7 @@ export async function runBuild(args: string[]): Promise<void> {
     // deploy ships the templates. The prebuilt runtime reads them from
     // `<BRUST_DIST_DIR>/jinja` (see index.ts loadJinjaOnce / configureJinjaDir).
     const jinjaDir = path.join(outDir, 'jinja')
-    // Spec §7 Component-source resolution: scan the routes module's source for
+    // Spec S7 Component-source resolution: scan the routes module's source for
     // ImportDeclarations, NOT the app entry's. The app entry only imports the
     // routes module + brust; the page components are imported by routes.tsx.
     // If routes.tsx doesn't exist (no routes module), we still write an empty

@@ -5,7 +5,7 @@ import Counter from './components/Counter'
 //   - instance 1: ssr — server-rendered <button> inside the mount
 // The two instances carry DISTINCT props paths (`first` vs `second`), so their
 // data-brust-props differ. Both produce ONE shared Counter.js chunk (dedup by
-// component name) — the component-addressed-islands acceptance §3 proof.
+// component name) — the component-addressed-islands acceptance S3 proof.
 export default function NativeTwoIslandPage({
   greeting,
   first,

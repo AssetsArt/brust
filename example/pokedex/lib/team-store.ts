@@ -1,7 +1,7 @@
 // In-process team store — a module-scope Map that lives for the whole server
 // process. It is GLOBAL across every request and every visitor: brust ships no
 // per-session / request-context primitive, so for this dogfood the team is a
-// single shared roster. See ../FRAMEWORK-GAPS.md §6.
+// single shared roster. See ../FRAMEWORK-GAPS.md S6.
 
 import type { TeamMember } from './types'
 

@@ -39,7 +39,7 @@ done as a typed proxy instead of a compiler rewrite.
 - **NOT streaming responses from actions.** Actions stay single-chunk
   (`dispatch_single_chunk`). SSE stays on the `sse:` route field.
 - **NOT per-call auth/session middleware redesign.** The existing `Middleware`
-  contract is reused; only its *invocation context* changes (see §4).
+  contract is reused; only its *invocation context* changes (see S4).
 
 ## High-level architecture
 
@@ -120,7 +120,7 @@ export type Actions = typeof actions
   return by a **branded private symbol** (identity check), NOT by duck-typing a
   `{status, body}` shape — otherwise a user payload that happens to contain a
   `status` field would be misread as a response envelope. `ctx.respond` is the
-  single sanctioned status-control path (resolves the §"Open questions" fork).
+  single sanctioned status-control path (resolves the S"Open questions" fork).
 - **`opts: EndpointOptions`**:
   ```ts
   interface EndpointOptions {
@@ -266,7 +266,7 @@ const { data, error, status } = await api.notes({ id }).delete()
   method — for GET/HEAD an absent Content-Length means `content_length = 0`
   (empty body), do NOT 411, do NOT close the keep-alive connection. POST/PUT/PATCH
   with absent Content-Length still 411 (no silent body truncation).
-- **404 vs 405**: see the action-router data structure in §Wire — path miss → 404,
+- **404 vs 405**: see the action-router data structure in SWire — path miss → 404,
   path hit with unregistered method → 405. Acceptance tests assert both.
 - **Determinism**: registration order does not affect matching (matchit radix
   tree); duplicate `"<METHOD> <path>"` throws at registration (TS `Set` +
@@ -386,10 +386,10 @@ Phase D migration are the documented follow-ups.
 ## Resolved decisions (from spec review)
 
 - **Status control**: branded `ctx.respond()` sentinel only (identity-checked).
-  No duck-typing of `{status, body}`. (§API handler context.)
+  No duck-typing of `{status, body}`. (SAPI handler context.)
 - **`head`**: must be declared explicitly for v1 (no auto-derive from `get`) —
   simpler method table.
-- **404 vs 405**: path-only matchit tree + per-path method table (§Wire), NOT a
+- **404 vs 405**: path-only matchit tree + per-path method table (SWire), NOT a
   method-keyed path string.
 - **Charset**: all four legacy `is_safe_action_id` sites change together; the
   endpoint *path* is validated by `isValidEndpointPath` + matchit, method by enum.

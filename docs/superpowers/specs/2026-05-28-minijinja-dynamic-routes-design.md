@@ -4,9 +4,9 @@
 **Branch:** `refactor/cargo-workspace`
 **Parent:** `8208a76` (v2.1 → this v2.2 in-place; v2 was `e2f4d24`, v1 was `f8c5f6f`)
 **Replaces:** A1 maud emit target, A2.0–A2.3 static-render chain. **Does NOT replace jsx-rust-compiler**; the crate is repurposed as the JSX→jinja transformer.
-**v2 → v2.1 changes**: reviewer (`a7fc61cbddb59263b`) flagged 2 unresolved blockers (SAB framing + migration ordering) and 5 FIX/OQ items. v2.1 applies all inline. SIGN-OFF v2 was `not-ready`; this v2.1 addresses each finding by section number — see §3, §6, §13, §15 for the specific corrections.
+**v2 → v2.1 changes**: reviewer (`a7fc61cbddb59263b`) flagged 2 unresolved blockers (SAB framing + migration ordering) and 5 FIX/OQ items. v2.1 applies all inline. SIGN-OFF v2 was `not-ready`; this v2.1 addresses each finding by section number — see S3, S6, S13, S15 for the specific corrections.
 
-**v2.1 → v2.2 change**: user-facing API field renamed from `jinja: true` → `native: true` to keep the API engine-agnostic (the engine is an implementation detail; the user just declares "this route is rendered natively, not via React"). All FlatRoute / RouteConfig / registerRoutes field names follow (`nativeTemplate`, `native_template`). Internal Rust symbols (jinja.rs, napi_render_jinja, .brust/jinja/) keep engine-specific naming — they're implementation, not API. See §13.1 for the reasoning.
+**v2.1 → v2.2 change**: user-facing API field renamed from `jinja: true` → `native: true` to keep the API engine-agnostic (the engine is an implementation detail; the user just declares "this route is rendered natively, not via React"). All FlatRoute / RouteConfig / registerRoutes field names follow (`nativeTemplate`, `native_template`). Internal Rust symbols (jinja.rs, napi_render_jinja, .brust/jinja/) keep engine-specific naming — they're implementation, not API. See S13.1 for the reasoning.
 
 ---
 
@@ -309,7 +309,7 @@ use std::sync::OnceLock;
 
 use minijinja::{Environment, UndefinedBehavior};
 
-// v2.1: OnceLock (not RwLock<OnceLock>) — hot reload is deferred per §13.7.
+// v2.1: OnceLock (not RwLock<OnceLock>) — hot reload is deferred per S13.7.
 // If hot reload lands in v2.x, swap to RwLock<Environment<'static>> in a
 // follow-up; the change is contained to this module.
 static ENV: OnceLock<Environment<'static>> = OnceLock::new();
@@ -348,7 +348,7 @@ pub fn load_from(dir: &Path) -> Vec<String> {
 
 /// Per-request render: `data_json` is a slice of UTF-8 bytes from SAB.
 /// Returns the rendered HTML; caller wraps in `[meta_len][meta JSON][body]`
-/// per §3 and ships via RenderChunk::BytesAndFinal.
+/// per S3 and ships via RenderChunk::BytesAndFinal.
 pub fn render(name: &str, data_json: &[u8]) -> Result<String, RenderError> {
     let env = ENV.get().ok_or(RenderError::NotLoaded)?;
     let tmpl = env.get_template(name).map_err(|_| RenderError::UnknownTemplate)?;
@@ -617,7 +617,7 @@ In a separate `tests/jinja-protocol.test.ts` (or inside the napi shim's `#[cfg(t
 - Cache integration deferred (`cache` field rejected when `native: true`).
 - Nested `loader` for children of a `native: true` route is not composited (only leaf's loader runs). Composition is a follow-up.
 - minijinja's `Strict` undefined mode means typos in templates fail loudly at render — a feature, but breaks if a loader sometimes returns `{}`. Recommendation: loader return value should always include the keys the template references; use `{% if x is defined %}` to gate optional vars.
-- `Component` body is REAL React code. Best practice: write Components that work as both React (for unit testing the JSX shape) AND get analyzed by jsx-rustc (for jinja output). Documentation to make this explicit. **In dev mode v2.1 does NOT fall back to React on missing template** — boot logs a warning, missing template renders 500 at request time. The dev-mode React fallback is a v2.x follow-up. (v2 previously stated this inconsistently in §13.5 — v2.1 collapses to one answer here.)
+- `Component` body is REAL React code. Best practice: write Components that work as both React (for unit testing the JSX shape) AND get analyzed by jsx-rustc (for jinja output). Documentation to make this explicit. **In dev mode v2.1 does NOT fall back to React on missing template** — boot logs a warning, missing template renders 500 at request time. The dev-mode React fallback is a v2.x follow-up. (v2 previously stated this inconsistently in S13.5 — v2.1 collapses to one answer here.)
 - `jsx-rust-compiler` loses the maud emit target. Past A1+A1.1 work (the maud-only T7-T11) is partially retired. The IR + parser + lower (T0-T6) are preserved verbatim.
 - SAB size cap = per-worker registered length (currently ~64KB). Loader payloads larger than that get 413 — most apps stay well under.
 - Hot reload of templates during `brust dev`: SUPPORTED in spec but plan-time decision on whether to land in v2 or follow-up. The minijinja Environment is wrapped in `RwLock` so the runtime can swap templates without restarting.
@@ -625,15 +625,15 @@ In a separate `tests/jinja-protocol.test.ts` (or inside the napi shim's `#[cfg(t
 ## 13. Open questions resolved at plan-time
 
 1. **Field name** (v2.2): `native: true`. v2/v2.1 used `jinja: true` which exposed the implementation engine in the user-facing API. v2.2 switches to `native: true` because (a) it's engine-agnostic — future render strategies (compile-to-bytes, htmx, etc.) can live under the same flag without breaking users' route definitions; (b) brust's own server.rs already uses "native-only route" vernacular for paths handled by Rust without JS dispatch (see `/ping` comment at server.rs:150); (c) parallel to `static: true`'s established pattern. Internal Rust symbols (`jinja.rs`, `napi_render_jinja`, `.brust/jinja/`) keep the engine-specific naming — they're implementation details, not API surface.
-2. **Registry key**: `Component.name` (Reviewer OQ 1+2 — keeping). Minifier safety addressed §4.
+2. **Registry key**: `Component.name` (Reviewer OQ 1+2 — keeping). Minifier safety addressed S4.
 3. **Template directory**: `.brust/jinja/` (user direction — under user's project, like `.brust/css/`).
 4. **Maud target retire**: full retire — no `--target=maud` flag in v2. Plan can resurrect if needed; no current consumer.
 5. **Component-as-marker footgun**: resolved — Component IS the source, not a marker. Reviewer Fix 2.
 6. **Undefined behavior**: v2.1 picks `Chainable` (not `Strict`). Templates can chain through optional props without error; direct render of undefined vars still errors. Trade: looser than v2 Strict, but `{% if x is defined %}` works. Reviewer OQ 4.
-7. **Migration atomicity**: 8 commits, ordered per §15 v2.1 — brust drops jsx-rust-compiler build-dep BEFORE jsx-rust-compiler swaps emit target. Reviewer Blocker 2 addressed empirically.
+7. **Migration atomicity**: 8 commits, ordered per S15 v2.1 — brust drops jsx-rust-compiler build-dep BEFORE jsx-rust-compiler swaps emit target. Reviewer Blocker 2 addressed empirically.
 8. **Hot reload of templates in dev**: deferred to v2.x. v2.1 uses `OnceLock<Environment>` (not `RwLock`) — no hot-reload contortions in the runtime.
 9. **Pre-flight template validation**: v2.1 = startup warning via `napiListJinjaTemplates()`; mismatched routes still 500 at request time. Pre-flight panic is v2.x.
-10. **Component-source resolution** (v2.1 reviewer OQ 1): build-time AST scan of the routes module via swc. See §7 last subsection.
+10. **Component-source resolution** (v2.1 reviewer OQ 1): build-time AST scan of the routes module via swc. See S7 last subsection.
 
 ## 14. Out of scope (acceptable deferrals)
 
@@ -678,18 +678,18 @@ v2.1 reorders: brust sheds its build-dependency on jsx-rust-compiler BEFORE jsx-
 4. **brust crate — add minijinja + napi_render_jinja** (single commit):
    - add `minijinja = "2"` to `crates/brust/Cargo.toml` `[dependencies]`
    - add `crates/brust/src/jinja.rs` (Environment loader + render)
-   - add `napi_render_jinja` to `crates/brust/src/lib.rs` per §6
+   - add `napi_render_jinja` to `crates/brust/src/lib.rs` per S6
    - add `napi_list_native_templates` napi fn for boot-time validation (reviewer Fix 1 follow-up)
    - `cargo test --workspace --lib` green; bun cdylib regenerates with new napi symbols.
 
 5. **Runtime JS — `static?` → `jinja?` + worker dispatcher branch** (single commit):
-   - edit `runtime/routes.ts`: rename `static?` → `jinja?`, `staticRender` → `nativeTemplate`; update `validateRoute`; insert the worker-side jinja branch per §9
+   - edit `runtime/routes.ts`: rename `static?` → `jinja?`, `staticRender` → `nativeTemplate`; update `validateRoute`; insert the worker-side jinja branch per S9
    - edit `runtime/routes.test.ts`: rename + rewrite the 7 validation tests
    - edit `runtime/index.ts`: rename `staticRender` → `nativeTemplate` in `registerRoutes` payload
    - `bun test runtime/` green.
 
 6. **Build CLI — jsx-rustc spawn pass** (single commit):
-   - extend `runtime/cli/build.ts` + `runtime/cli/dev.ts` per §7
+   - extend `runtime/cli/build.ts` + `runtime/cli/dev.ts` per S7
    - dev mode: watcher re-runs `jsx-rustc` on TS edit
    - add `.brust/jinja/` to `.gitignore`
    - smoke against `example/hello-world/` to verify a `.brust/jinja/HelloPage.jinja` lands.

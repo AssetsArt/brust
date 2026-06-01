@@ -48,7 +48,7 @@ pub fn split_meta(buf: &[u8]) -> Result<(&[u8], &[u8]), &'static str> {
 /// Empty `body` (len=0) returns the terminator (`0\r\n\r\n`).
 ///
 /// Allocates one Vec per call. This matches the spec's per-chunk
-/// write_all pattern (§7) — one alloc + one socket write + one drop per
+/// write_all pattern (S7) — one alloc + one socket write + one drop per
 /// chunk is acceptable cost given chunks are typically 4-64 KB. If
 /// benchmarks ever show alloc pressure here, the signature can shift to
 /// `(&[u8], &mut Vec<u8>)` without changing call sites materially.
@@ -83,7 +83,7 @@ pub fn build_chunked_response_head(meta: &ChunkMeta) -> Vec<u8> {
 
 /// Build a complete single-chunk HTTP/1.1 response with Content-Length.
 /// Bytes-identical to today's renderToString wire shape for no-Suspense
-/// routes (spec §1 criterion #1).
+/// routes (spec S1 criterion #1).
 ///
 /// Includes `Connection: keep-alive` to match `http::build_response` and
 /// avoid the 47k↔109k RPS halving the team observed in A2.3: without this

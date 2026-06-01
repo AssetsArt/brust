@@ -40,7 +40,7 @@ unsafe impl Sync for BufPtr {}
 /// per-request chunk loop. `ack` resolves the worker's awaiting Promise so the
 /// next chunk can be written into the SAB without overlapping.
 pub enum RenderChunk {
-    /// Chunk body (first chunk includes meta prefix per spec §4).
+    /// Chunk body (first chunk includes meta prefix per spec S4).
     Bytes {
         data: Vec<u8>,
         ack: tokio::sync::oneshot::Sender<()>,

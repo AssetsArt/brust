@@ -8,7 +8,7 @@
 
 **Tech Stack:** Rust 2024 edition, `napi-rs 3.x`, `tokio::sync::Notify` (kept for the simplified `until_shutdown`).
 
-**Spec source:** `architecture.md` lines 844-847 ("currently dead code under Bun — Bun intercepts SIGINT before Rust's ctrl_c() handler fires; actual exit happens via JS process.exit(0)") and the handoff §"Sub-project candidates" line: `Remove dead src/shutdown.rs  ~½ d  Replace with a comment in lib.rs explaining shutdown is JS-side.`
+**Spec source:** `architecture.md` lines 844-847 ("currently dead code under Bun — Bun intercepts SIGINT before Rust's ctrl_c() handler fires; actual exit happens via JS process.exit(0)") and the handoff S"Sub-project candidates" line: `Remove dead src/shutdown.rs  ~½ d  Replace with a comment in lib.rs explaining shutdown is JS-side.`
 
 ---
 
@@ -261,5 +261,5 @@ EOF
 
 - Renaming the `shutdown` field on `State` to something like `shutdown_park`. The current name still reads correctly given the new comment, and renaming would touch `begin_serve` and `until_shutdown` for cosmetics only.
 - Removing the `until_shutdown` napi export entirely and rewriting `runtime/index.ts` to use a TS-side `await new Promise(() => {})`. Doable, but a wider change with no behavior win — current code already parks the Promise forever, just inside Rust.
-- Re-implementing a real Rust-side graceful shutdown (drain workers, finish in-flight renders, close sockets). That is the "Graceful reload + worker drain" item in `architecture.md` §HTTP layer "Not implemented (deferred)" — a separate plan when there is demand.
+- Re-implementing a real Rust-side graceful shutdown (drain workers, finish in-flight renders, close sockets). That is the "Graceful reload + worker drain" item in `architecture.md` SHTTP layer "Not implemented (deferred)" — a separate plan when there is demand.
 - Cross-platform behavior: if Brust ever runs under a non-Bun JS host that does *not* swallow SIGINT, the JS-side handler still wins because `process.on('SIGINT', ...)` is portable. No platform-specific code remains.

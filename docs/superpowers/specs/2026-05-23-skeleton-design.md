@@ -425,7 +425,7 @@ async fn serves_rendered_html() {
     // 1. Spawn brust as a child process
     // NOTE: BRUST_PORT=0 (OS-assigned) is deferred — it requires pingora
     // bound-port readback which is out of skeleton scope. The test uses a
-    // fixed port (38123) as a workaround; see "Known limitations" in §7.
+    // fixed port (38123) as a workaround; see "Known limitations" in S7.
     let mut child = Command::new(env!("CARGO_BIN_EXE_brust"))
         .env("BRUST_PORT", "38123")      // fixed port; BRUST_PORT=0 deferred
         .stdout(Stdio::piped())
