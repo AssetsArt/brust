@@ -36,7 +36,9 @@ test('brust build → run → smoke all major paths', async () => {
   // 2. Verify dist tree
   expect(existsSync(path.join(distDir, 'index.js'))).toBe(true)
   expect(existsSync(path.join(distDir, 'mcp-manifest.json'))).toBe(true)
-  expect(existsSync(path.join(distDir, '_actions-prebuilt.ts'))).toBe(true)
+  // No `_actions-prebuilt.ts`: `defineActions(...)` needs no build-time codegen —
+  // the bundled entry registers actions via `brust.run({ actions })`.
+  expect(existsSync(path.join(distDir, '_actions-prebuilt.ts'))).toBe(false)
   expect(existsSync(path.join(distDir, 'islands/_bootstrap.js'))).toBe(true)
   expect(existsSync(path.join(distDir, 'islands/_react.js'))).toBe(true)
   expect(existsSync(path.join(distDir, 'islands/Counter.js'))).toBe(true)

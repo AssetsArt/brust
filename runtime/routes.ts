@@ -1100,28 +1100,54 @@ export async function dispatchAction(
 ): Promise<BranchResponse> {
   const def = byId.get(call.action_id)
   if (!def) {
-    return { status: 404, body: '{"error":{"message":"unknown action"}}', contentType: 'application/json; charset=utf-8' }
+    return {
+      status: 404,
+      body: '{"error":{"message":"unknown action"}}',
+      contentType: 'application/json; charset=utf-8',
+    }
   }
   call.req.signal = NEVER_ABORTS
 
   // Body decode — JSON only in this slice (multipart/urlencoded deferred).
-  let rawBody: unknown = undefined
+  let rawBody: unknown
   if (def.method !== 'GET' && def.method !== 'HEAD') {
     try {
-      rawBody = call.body_text != null && call.body_text !== '' ? JSON.parse(call.body_text) : undefined
+      rawBody =
+        call.body_text != null && call.body_text !== '' ? JSON.parse(call.body_text) : undefined
     } catch (err) {
-      return { status: 400, body: JSON.stringify({ error: { message: `invalid JSON body: ${(err as Error).message}` } }), contentType: 'application/json; charset=utf-8' }
+      return {
+        status: 400,
+        body: JSON.stringify({
+          error: { message: `invalid JSON body: ${(err as Error).message}` },
+        }),
+        contentType: 'application/json; charset=utf-8',
+      }
     }
   }
 
   const bodyCheck = await validate(def.body, rawBody)
   if (!bodyCheck.ok) {
-    return { status: 422, body: JSON.stringify({ error: { message: 'body validation failed', issues: bodyCheck.issues } }), contentType: 'application/json; charset=utf-8' }
+    return {
+      status: 422,
+      body: JSON.stringify({
+        error: { message: 'body validation failed', issues: bodyCheck.issues },
+      }),
+      contentType: 'application/json; charset=utf-8',
+    }
   }
-  const queryObj = parseActionSearch(call.req.search ?? '')
+  // `req.search` already arrives as a parsed key→value object from the Rust
+  // envelope (BrustRequest.search: Record<string, string>) — use it directly
+  // as the query object rather than re-parsing it as a string.
+  const queryObj = call.req.search ?? {}
   const queryCheck = await validate(def.query, queryObj)
   if (!queryCheck.ok) {
-    return { status: 422, body: JSON.stringify({ error: { message: 'query validation failed', issues: queryCheck.issues } }), contentType: 'application/json; charset=utf-8' }
+    return {
+      status: 422,
+      body: JSON.stringify({
+        error: { message: 'query validation failed', issues: queryCheck.issues },
+      }),
+      contentType: 'application/json; charset=utf-8',
+    }
   }
 
   const ctx = {
@@ -1137,31 +1163,47 @@ export async function dispatchAction(
     try {
       const result = await def.handler(ctx as never)
       if (isRespondSentinel(result)) {
-        return { status: result.status, body: result.body === undefined ? '' : JSON.stringify(result.body), contentType: 'application/json; charset=utf-8', headers: result.headers }
+        return {
+          status: result.status,
+          body: result.body === undefined ? '' : JSON.stringify(result.body),
+          contentType: 'application/json; charset=utf-8',
+          headers: result.headers,
+        }
       }
-      return { status: 200, body: result === undefined ? '' : JSON.stringify(result), contentType: 'application/json; charset=utf-8' }
+      return {
+        status: 200,
+        body: result === undefined ? '' : JSON.stringify(result),
+        contentType: 'application/json; charset=utf-8',
+      }
     } catch (err) {
       const e = err instanceof Error ? err : new Error(String(err))
       console.error(`[brust] action ${def.method} ${def.path} threw:`, err)
-      return { status: 500, body: JSON.stringify({ error: { message: e.message, name: e.name } }), contentType: 'application/json; charset=utf-8' }
+      return {
+        status: 500,
+        body: JSON.stringify({ error: { message: e.message, name: e.name } }),
+        contentType: 'application/json; charset=utf-8',
+      }
     }
   }
 
   const chain = composeChain(call.req, def.middleware, terminal)
   let response: RouteResponse
-  try { response = await chain() } catch (err) {
+  try {
+    response = await chain()
+  } catch (err) {
     console.error('[brust] action middleware uncaught:', err)
-    response = { status: 500, body: '{"error":{"message":"internal error"}}', contentType: 'application/json; charset=utf-8' }
+    response = {
+      status: 500,
+      body: '{"error":{"message":"internal error"}}',
+      contentType: 'application/json; charset=utf-8',
+    }
   }
-  return { status: response.status, body: response.body, contentType: response.contentType ?? 'application/json; charset=utf-8', headers: response.headers }
-}
-
-function parseActionSearch(search: string): Record<string, string> {
-  const out: Record<string, string> = {}
-  const qs = search.startsWith('?') ? search.slice(1) : search
-  if (!qs) return out
-  for (const [k, v] of new URLSearchParams(qs)) out[k] = v
-  return out
+  return {
+    status: response.status,
+    body: response.body,
+    contentType: response.contentType ?? 'application/json; charset=utf-8',
+    headers: response.headers,
+  }
 }
 
 async function mcpBranchToResponse(
