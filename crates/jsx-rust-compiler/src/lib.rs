@@ -604,7 +604,7 @@ pub enum ErrorKind {
     )]
     BrustPageMustBeRoot,
     #[error(
-        "`<BrustPage {0}=…>` must be a string literal (e.g. `{0}=\"…\"`) — the document shell is rendered in Rust, so its attributes can't be dynamic expressions"
+        "`<BrustPage {0}=…>` must be a string literal (e.g. `{0}=\"…\"`) or a member-path (e.g. `{0}={{data.{0}}}`) — the document shell is rendered in Rust, so its attributes can't be call/arithmetic/spread expressions"
     )]
     BrustPageAttrMustBeStringLiteral(String),
     #[error(
@@ -963,9 +963,25 @@ mod tests {
     }
 
     #[test]
-    fn brust_page_dynamic_attr_is_rejected() {
+    fn brust_page_member_path_attr_is_accepted() {
+        // A member-path now threads into the head as `{{ data.lang }}` — no longer
+        // rejected (S8). The bare destructured prop `lang` lowers to `Expr::Field`.
         let src = r#"export default function Home({ lang }) {
   return <BrustPage lang={lang}><main>hi</main></BrustPage>;
+}"#;
+        let c = compile_full(src, "<test>", HashMap::new()).unwrap();
+        assert!(
+            c.template.contains("lang=\"{{ lang }}\""),
+            "expected interpolated lang, got: {}",
+            c.template
+        );
+    }
+
+    #[test]
+    fn brust_page_non_path_attr_is_rejected() {
+        // A non-literal, non-path expression (call) is still rejected.
+        let src = r#"export default function Home({ getLang }) {
+  return <BrustPage lang={getLang()}><main>hi</main></BrustPage>;
 }"#;
         let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
         match err.kind {

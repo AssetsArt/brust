@@ -65,10 +65,13 @@ fn emit_node(node: &JsxNode, out: &mut String) {
         // first, then the prop-driven `<title>`/description meta, then the
         // app.css stylesheet link — so the link is always present without the
         // user writing it, and the framework can append more head tags later.
-        // `lang`/`html_class`/`body_class`/`title`/`description` are compile-time
-        // string literals (validated in `lower_brust_page`), attribute- or
-        // text-escaped here for safety. The islands importmap + bootstrap are
-        // still appended after `</html>` by the TS reconcile step.
+        // `lang`/`html_class`/`body_class`/`title`/`description` are each a
+        // `HeadValue` (validated in `lower_brust_page`): a compile-time string
+        // literal (attribute-/text-escaped here for safety) OR a member-path
+        // interpolated as `{{ path }}` and rendered verbatim (brust runs
+        // minijinja with `AutoEscape::None` — the loader-data-trusted contract,
+        // same as host-element `href="{{ item.href }}"`). The islands importmap +
+        // bootstrap are still appended after `</html>` by the TS reconcile step.
         JsxNode::Document {
             lang,
             html_class,
@@ -79,14 +82,10 @@ fn emit_node(node: &JsxNode, out: &mut String) {
         } => {
             out.push_str("<html");
             if let Some(l) = lang {
-                out.push_str(" lang=\"");
-                push_attr_escaped(out, l);
-                out.push('"');
+                emit_head_attr(out, "lang", l);
             }
             if let Some(c) = html_class {
-                out.push_str(" class=\"");
-                push_attr_escaped(out, c);
-                out.push('"');
+                emit_head_attr(out, "class", c);
             }
             out.push_str("><head>");
             out.push_str("<meta charset=\"utf-8\"/>");
@@ -95,20 +94,28 @@ fn emit_node(node: &JsxNode, out: &mut String) {
             );
             if let Some(t) = title {
                 out.push_str("<title>");
-                push_html_escaped(out, t);
+                match t {
+                    HeadValue::Literal(s) => push_html_escaped(out, s),
+                    HeadValue::Path(e) => {
+                        let _ = write!(out, "{{{{ {} }}}}", emit_expr_path(e));
+                    }
+                }
                 out.push_str("</title>");
             }
             if let Some(d) = description {
                 out.push_str("<meta name=\"description\" content=\"");
-                push_attr_escaped(out, d);
+                match d {
+                    HeadValue::Literal(s) => push_attr_escaped(out, s),
+                    HeadValue::Path(e) => {
+                        let _ = write!(out, "{{{{ {} }}}}", emit_expr_path(e));
+                    }
+                }
                 out.push_str("\"/>");
             }
             out.push_str("<link rel=\"stylesheet\" href=\"/_brust/css/app.css\"/>");
             out.push_str("</head><body");
             if let Some(c) = body_class {
-                out.push_str(" class=\"");
-                push_attr_escaped(out, c);
-                out.push('"');
+                emit_head_attr(out, "class", c);
             }
             out.push('>');
             for c in body {
@@ -189,6 +196,20 @@ fn emit_expr_node(e: &Expr, out: &mut String) {
             let _ = write!(out, "{{{{ {} }}}}", emit_expr_path(other));
         }
     }
+}
+
+/// Emit a `<BrustPage>` head/shell attribute (`lang`/`class`) from a `HeadValue`.
+/// Literals are attribute-escaped (pre-escaped at build); member-paths become
+/// `{{ path }}` rendered verbatim (brust runs minijinja with `AutoEscape::None`).
+fn emit_head_attr(out: &mut String, name: &str, hv: &HeadValue) {
+    let _ = write!(out, " {name}=\"");
+    match hv {
+        HeadValue::Literal(s) => push_attr_escaped(out, s),
+        HeadValue::Path(e) => {
+            let _ = write!(out, "{{{{ {} }}}}", emit_expr_path(e));
+        }
+    }
+    out.push('"');
 }
 
 /// Render the "path" form of an expression for use INSIDE `{{ ... }}`,
@@ -774,6 +795,66 @@ mod tests {
         let out = emit(&component(ir));
         assert!(
             out.contains("{% if (a) and (b) %}"),
+            "unexpected output: {out}"
+        );
+    }
+
+    fn document_with(lang: Option<HeadValue>, title: Option<HeadValue>) -> JsxNode {
+        JsxNode::Document {
+            lang,
+            html_class: None,
+            body_class: None,
+            title,
+            description: None,
+            body: vec![],
+        }
+    }
+
+    #[test]
+    fn document_title_path_emits_interpolated_title() {
+        let ir = document_with(None, Some(HeadValue::Path(Expr::Field("t".into()))));
+        let out = emit(&component(ir));
+        assert!(
+            out.contains("<title>{{ t }}</title>"),
+            "unexpected output: {out}"
+        );
+    }
+
+    #[test]
+    fn document_lang_path_emits_interpolated_lang_attr() {
+        let ir = document_with(Some(HeadValue::Path(Expr::Field("l".into()))), None);
+        let out = emit(&component(ir));
+        assert!(out.contains("lang=\"{{ l }}\""), "unexpected output: {out}");
+    }
+
+    #[test]
+    fn document_title_literal_emits_plain_title() {
+        let ir = document_with(None, Some(HeadValue::Literal("Hi".into())));
+        let out = emit(&component(ir));
+        assert!(
+            out.contains("<title>Hi</title>"),
+            "unexpected output: {out}"
+        );
+    }
+
+    #[test]
+    fn document_description_path_emits_interpolated_content() {
+        // `description` is emitted via an inline `content="…"` write (not
+        // emit_head_attr), so it needs its own coverage for the Path branch.
+        let ir = JsxNode::Document {
+            lang: None,
+            html_class: None,
+            body_class: None,
+            title: None,
+            description: Some(HeadValue::Path(Expr::MemberAccess {
+                root: "d".into(),
+                path: vec!["desc".into()],
+            })),
+            body: vec![],
+        };
+        let out = emit(&component(ir));
+        assert!(
+            out.contains("<meta name=\"description\" content=\"{{ d.desc }}\"/>"),
             "unexpected output: {out}"
         );
     }

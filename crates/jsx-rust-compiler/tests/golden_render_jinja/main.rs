@@ -112,3 +112,27 @@ fn renders_brust_page_byte_equal() {
         .expect("fixtures/brust_page.expected.html");
     assert_eq!(actual, expected);
 }
+
+#[test]
+fn renders_brust_page_dynamic_byte_equal() {
+    // `<BrustPage>` with member-path head props (S8): `title`/`description`/`lang`
+    // thread a nested `d` loader object into the head as `{{ d.* }}`, rendered
+    // verbatim (AutoEscape::None).
+    let actual = render_fixture(
+        "brust_page_dynamic",
+        context! {
+            d => context! {
+                title => "Charizard · PokéDex",
+                desc => "The Flame Pokémon",
+                lang => "en",
+            },
+        },
+    );
+    if std::env::var("UPDATE_GOLDEN").is_ok() {
+        std::fs::write("fixtures/brust_page_dynamic.expected.html", &actual).unwrap();
+        return;
+    }
+    let expected = std::fs::read_to_string("fixtures/brust_page_dynamic.expected.html")
+        .expect("fixtures/brust_page_dynamic.expected.html");
+    assert_eq!(actual, expected);
+}

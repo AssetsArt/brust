@@ -606,15 +606,17 @@ fn lower_element(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode
 ///
 /// Head content is supplied entirely through PROPS (not a `<head>` child) so the
 /// framework keeps full ownership of `<head>` and can inject more tags later
-/// without colliding with user markup. All props are OPTIONAL compile-time
-/// string literals:
+/// without colliding with user markup. All props are OPTIONAL and accept either
+/// a compile-time string literal OR a member-path expression (`{d.title}`),
+/// interpolated into the head as `{{ path }}`:
 /// - `lang="…"`         → `<html lang>` (default `"en"` emitted if omitted)
 /// - `className="…"`     → `<html class>`
 /// - `bodyClassName="…"` → `<body class>`
 /// - `title="…"`         → `<title>…</title>`
 /// - `description="…"`   → `<meta name="description" content="…">`
 ///
-/// A non-literal value (`title={x}`) → `BrustPageAttrMustBeStringLiteral`.
+/// A non-literal/non-path value (`title={fn()}`, `title={a + b}`) →
+/// `BrustPageAttrMustBeStringLiteral`.
 /// Spread (`{...x}`) / namespaced attrs → the same rejects as host elements.
 /// Unknown props are ignored (forward-compatible, mirrors `<Island>`) — adding a
 /// new head prop is a single match arm + emit line.
@@ -625,11 +627,11 @@ fn lower_element(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode
 /// `<BrustPage>` is only reached for the route root (see `lower`), so it is
 /// never under a `.map(...)` — no `in_map` parameter.
 fn lower_brust_page(el: &JSXElement, scope: &Scope) -> Result<JsxNode, LowerError> {
-    let mut lang: Option<String> = None;
-    let mut html_class: Option<String> = None;
-    let mut body_class: Option<String> = None;
-    let mut title: Option<String> = None;
-    let mut description: Option<String> = None;
+    let mut lang: Option<crate::ir::HeadValue> = None;
+    let mut html_class: Option<crate::ir::HeadValue> = None;
+    let mut body_class: Option<crate::ir::HeadValue> = None;
+    let mut title: Option<crate::ir::HeadValue> = None;
+    let mut description: Option<crate::ir::HeadValue> = None;
 
     for attr in &el.opening.attrs {
         let JSXAttrOrSpread::JSXAttr(jsx_attr) = attr else {
@@ -658,11 +660,42 @@ fn lower_brust_page(el: &JSXElement, scope: &Scope) -> Result<JsxNode, LowerErro
             "description" => &mut description,
             _ => continue,
         };
-        // Value must be a plain string literal — the shell is rendered in Rust,
-        // so its chrome can't depend on runtime props.
+        // Value is either a plain string literal (pre-escaped at build) or a
+        // member-path expression interpolated into the jinja head as `{{ path }}`.
+        // Anything else (call, arithmetic, spread, …) is rejected: the shell is
+        // rendered in Rust and its head can only thread literals or loader paths.
         match &jsx_attr.value {
             Some(JSXAttrValue::Str(s)) => {
-                *slot = Some(s.value.to_string_lossy().into_owned());
+                *slot = Some(crate::ir::HeadValue::Literal(
+                    s.value.to_string_lossy().into_owned(),
+                ));
+            }
+            Some(JSXAttrValue::JSXExprContainer(c)) => {
+                if let JSXExpr::Expr(e) = &c.expr {
+                    // Do NOT propagate lower_expr's error with `?`: a call
+                    // (`title={fn()}`) lowers to `CallExpressionNotSupported`,
+                    // but the user-facing contract here is the more specific
+                    // "string literal or member-path". So any lower failure OR a
+                    // non-path success both collapse to the same reject.
+                    match lower_expr(e, scope) {
+                        Ok(
+                            ex @ (crate::ir::Expr::Field(_) | crate::ir::Expr::MemberAccess { .. }),
+                        ) => {
+                            *slot = Some(crate::ir::HeadValue::Path(ex));
+                        }
+                        _ => {
+                            return Err(LowerError::at(
+                                jsx_attr.span,
+                                ErrorKind::BrustPageAttrMustBeStringLiteral(name),
+                            ));
+                        }
+                    }
+                } else {
+                    return Err(LowerError::at(
+                        jsx_attr.span,
+                        ErrorKind::BrustPageAttrMustBeStringLiteral(name),
+                    ));
+                }
             }
             _ => {
                 return Err(LowerError::at(
@@ -675,7 +708,7 @@ fn lower_brust_page(el: &JSXElement, scope: &Scope) -> Result<JsxNode, LowerErro
 
     // Default lang to "en" so the emitted document always declares a language.
     if lang.is_none() {
-        lang = Some("en".to_string());
+        lang = Some(crate::ir::HeadValue::Literal("en".to_string()));
     }
 
     let mut body: Vec<JsxNode> = Vec::new();
@@ -3428,6 +3461,89 @@ mod tests {
         assert!(
             matches!(err.kind, ErrorKind::BrustPageMustBeRoot),
             "expected BrustPageMustBeRoot, got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn brust_page_title_member_path_lowers_to_head_path() {
+        let src = r#"export default function X({ d }) {
+  return <BrustPage title={d.title}><main>hi</main></BrustPage>;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let c = lower(&parsed).unwrap();
+        match &c.root {
+            JsxNode::Document { title, .. } => match title {
+                Some(HeadValue::Path(Expr::MemberAccess { root, path })) => {
+                    assert_eq!(root, "d");
+                    assert_eq!(path, &vec!["title".to_string()]);
+                }
+                other => panic!("expected HeadValue::Path(MemberAccess), got {other:?}"),
+            },
+            other => panic!("expected Document, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn brust_page_title_string_literal_lowers_to_head_literal() {
+        let src = r#"export default function X() {
+  return <BrustPage title="x"><main>hi</main></BrustPage>;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let c = lower(&parsed).unwrap();
+        match &c.root {
+            JsxNode::Document { title, .. } => {
+                assert!(
+                    matches!(title, Some(HeadValue::Literal(s)) if s == "x"),
+                    "expected HeadValue::Literal(\"x\"), got {title:?}"
+                );
+            }
+            other => panic!("expected Document, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn brust_page_omitted_lang_defaults_to_en_literal() {
+        let src = r#"export default function X() {
+  return <BrustPage title="x"><main>hi</main></BrustPage>;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let c = lower(&parsed).unwrap();
+        match &c.root {
+            JsxNode::Document { lang, .. } => {
+                assert!(
+                    matches!(lang, Some(HeadValue::Literal(s)) if s == "en"),
+                    "expected HeadValue::Literal(\"en\"), got {lang:?}"
+                );
+            }
+            other => panic!("expected Document, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn brust_page_call_expr_attr_rejected() {
+        let src = r#"export default function X({ fn }) {
+  return <BrustPage title={fn()}><main>hi</main></BrustPage>;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let err = lower(&parsed).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::BrustPageAttrMustBeStringLiteral(ref n) if n == "title"),
+            "expected BrustPageAttrMustBeStringLiteral, got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn brust_page_arith_attr_rejected() {
+        let src = r#"export default function X({ a, b }) {
+  return <BrustPage title={a + b}><main>hi</main></BrustPage>;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let err = lower(&parsed).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::BrustPageAttrMustBeStringLiteral(ref n) if n == "title"),
+            "expected BrustPageAttrMustBeStringLiteral, got {:?}",
             err.kind
         );
     }
