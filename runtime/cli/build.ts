@@ -254,11 +254,11 @@ export async function runBuild(args: string[]): Promise<void> {
     const { extractMcpManifest } = await import('../mcp/extractor.ts')
     const { routes } = await import(routesFile)
     loadedRoutes = routes
+    const actionsFile = path.join(entryDir, 'actions.ts')
     const manifest = await extractMcpManifest({
-      serverFiles: [],
+      actionsFile: existsSync(actionsFile) ? actionsFile : undefined,
       routesFile,
       sourceRoots: [entryDir],
-      actions: [],
       routes,
     })
     const manifestPath = path.join(outDir, 'mcp-manifest.json')

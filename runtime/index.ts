@@ -214,10 +214,9 @@ export const brust = {
    * branch and pass an `McpServer` (built via `makeMcpServer`) to
    * `makeRenderer` via `opts.mcp`. See example/hello-world/index.ts. */
   async buildMcpManifest(opts: {
-    serverFiles: string[]
+    actionsFile?: string
     routesFile: string
     sourceRoots: string[]
-    actions: import('./mcp/server.ts').LegacyActionDef[]
     routes: import('./routes.ts').FlatRoute[]
     cwd?: string
   }): Promise<import('./mcp/manifest.ts').McpManifest> {
@@ -310,9 +309,8 @@ export const brust = {
     // Actions now come from the explicit `defineActions(...)` builder passed in
     // opts (the `'use server'` scanner is gone). `endpoints` is the EndpointDef[]
     // threaded to serve()/makeRenderer; the worker keys dispatch by registration
-    // index. The MCP-from-actions path (serverFiles/ActionDef) is deferred to M1.
+    // index.
     const endpoints: EndpointDef[] = opts.actions?.endpoints ?? []
-    const sourceFiles: string[] = []
 
     if (!isWorker) {
       const { host, port, workers, cacheMaxEntries } = await loadConfig(process.cwd(), {
@@ -561,12 +559,11 @@ export const brust = {
           )
         }
       } else {
+        const actionsFile = path.join(scanRoot, 'actions.ts')
         mcpManifest = await this.buildMcpManifest({
-          serverFiles: sourceFiles,
+          actionsFile: existsSync(actionsFile) ? actionsFile : undefined,
           routesFile: path.join(scanRoot, 'routes.tsx'),
           sourceRoots: [scanRoot],
-          // Action-derived MCP tools are deferred to M1; pass none for now.
-          actions: [],
           routes,
         })
         console.log(
@@ -642,7 +639,7 @@ export const brust = {
       let mcpServer: import('./mcp/server.ts').McpServer | undefined
       if (mcpManifest) {
         const { makeMcpServer } = await import('./mcp/server.ts')
-        mcpServer = makeMcpServer({ manifest: mcpManifest, actions: [], routes: workerRoutes })
+        mcpServer = makeMcpServer({ manifest: mcpManifest, endpoints, routes: workerRoutes })
         console.log(`[brust] worker: mcp server ready (${mcpManifest.tools.length} tools)`)
       }
 
