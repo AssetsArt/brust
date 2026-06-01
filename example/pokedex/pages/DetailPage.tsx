@@ -34,7 +34,7 @@ export default function DetailPage({
   abilities,
   evolution,
   addProps,
-  teamInitial,
+  teamProps,
 }: DetailData) {
   return (
     <BrustPage lang="en" className="dark" title={pageTitle}>
@@ -206,7 +206,7 @@ export default function DetailPage({
           </div>
         </main>
 
-        <Island component={TeamBuilder} props={teamInitial} ssr hydrate="load" />
+        <Island component={TeamBuilder} props={teamProps} ssr hydrate="load" />
       </div>
     </BrustPage>
   )

@@ -32,7 +32,7 @@ export interface ListData {
   prevHref: string
   nextHref: string
   offsetLabel: string // raw offset for the loader-echo line
-  teamInitial: TeamMember[]
+  teamProps: { teamInitial: TeamMember[] }
 }
 
 export interface TypeBadgeVM {
@@ -97,7 +97,7 @@ export interface DetailData {
   hasEvolution: boolean
   // island props (a single path each — native island props can't be object literals):
   addProps: AddToTeamProps
-  teamInitial: TeamMember[]
+  teamProps: { teamInitial: TeamMember[] }
 }
 
 /** Props for the AddToTeamButton island (raw types kept for the action body). */
@@ -122,7 +122,7 @@ export interface TypeChartCellVM {
 
 export interface TypeChartData {
   cells: TypeChartCellVM[] // (18+1) × (18+1) row-major, including headers
-  teamInitial: TeamMember[]
+  teamProps: { teamInitial: TeamMember[] }
 }
 
 /** In-process team store member. */

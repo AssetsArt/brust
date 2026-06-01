@@ -81,7 +81,7 @@ export async function listLoader({ req }: LoaderCtx): Promise<ListData> {
     hasNext,
     prevHref: hasPrev ? (prevOffset > 0 ? `/?offset=${prevOffset}` : '/') : '#',
     nextHref: hasNext ? `/?offset=${offset + PAGE}` : '#',
-    teamInitial: teamStore.list(),
+    teamProps: { teamInitial: teamStore.list() },
   }
 }
 
@@ -170,7 +170,7 @@ export async function detailLoader({ params }: LoaderCtx): Promise<DetailData> {
       types: p.types,
       artwork: p.artwork,
     },
-    teamInitial: teamStore.list(),
+    teamProps: { teamInitial: teamStore.list() },
   }
 }
 
@@ -197,7 +197,7 @@ function emptyDetail(name: string): DetailData {
     evolution: [],
     hasEvolution: false,
     addProps: { id: 0, name, displayName: cap(name), num: '', types: [], artwork: '' },
-    teamInitial: teamStore.list(),
+    teamProps: { teamInitial: teamStore.list() },
   }
 }
 
@@ -284,6 +284,6 @@ export async function typeChartLoader(): Promise<TypeChartData> {
 
   return {
     cells: cells.map((c, i) => ({ id: String(i), ...c })),
-    teamInitial: teamStore.list(),
+    teamProps: { teamInitial: teamStore.list() },
   }
 }

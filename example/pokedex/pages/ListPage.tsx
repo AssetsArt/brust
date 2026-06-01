@@ -20,7 +20,7 @@ export default function ListPage({
   hasNext,
   prevHref,
   nextHref,
-  teamInitial,
+  teamProps,
 }: ListData) {
   return (
     <BrustPage lang="en" className="dark" title="PokéDex · brust example">
@@ -126,7 +126,7 @@ export default function ListPage({
           </div>
         </main>
 
-        <Island component={TeamBuilder} props={teamInitial} ssr hydrate="load" />
+        <Island component={TeamBuilder} props={teamProps} ssr hydrate="load" />
       </div>
     </BrustPage>
   )

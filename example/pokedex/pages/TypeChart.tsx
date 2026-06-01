@@ -7,7 +7,7 @@ import { BrustPage, Island } from '../../../runtime/index.ts'
 import TeamBuilder from '../components/TeamBuilder'
 import type { TypeChartData } from '../lib/types'
 
-export default function TypeChart({ cells, teamInitial }: TypeChartData) {
+export default function TypeChart({ cells, teamProps }: TypeChartData) {
   return (
     <BrustPage lang="en" className="dark" title="PokéDex · type chart">
       <div className="aa-app">
@@ -86,7 +86,7 @@ export default function TypeChart({ cells, teamInitial }: TypeChartData) {
           </div>
         </main>
 
-        <Island component={TeamBuilder} props={teamInitial} ssr hydrate="load" />
+        <Island component={TeamBuilder} props={teamProps} ssr hydrate="load" />
       </div>
     </BrustPage>
   )
