@@ -88,3 +88,25 @@ test('unknown action_id → 404', async () => {
   )
   expect(res.status).toBe(404)
 })
+test('HEAD endpoint accumulates + dispatches bodyless', async () => {
+  const a = defineActions().head('/notes/{id}', ({ params }) => ({ seen: params.id }))
+  const res = await dispatchAction(
+    {
+      kind: 'action',
+      action_id: '0',
+      content_type: '',
+      params: { id: 'z' },
+      req: { method: 'HEAD', ...reqBase } as any,
+    },
+    table(a),
+  )
+  expect(res.status).toBe(200)
+  expect(JSON.parse(res.body)).toEqual({ seen: 'z' })
+})
+test('duplicate HEAD path throws', () => {
+  expect(() =>
+    defineActions()
+      .head('/x', () => ({}))
+      .head('/x', () => ({})),
+  ).toThrow(/duplicate/)
+})

@@ -109,6 +109,11 @@ export interface ActionsBuilder<Acc extends EndpointMap = {}> {
     handler: Handler<BodyOf<O>, Params<P>, QueryOf<O>, R>,
     opts?: O,
   ): ActionsBuilder<Acc & { [K in P]: { DELETE: { input: BodyOf<O>; output: Awaited<R> } } }>
+  head<P extends string, O extends EndpointOptions, R>(
+    path: P,
+    handler: Handler<BodyOf<O>, Params<P>, QueryOf<O>, R>,
+    opts?: O,
+  ): ActionsBuilder<Acc & { [K in P]: { HEAD: { input: QueryOf<O>; output: Awaited<R> } } }>
 }
 
 export function defineActions(): ActionsBuilder {
@@ -161,6 +166,10 @@ export function defineActions(): ActionsBuilder {
     },
     delete(p: string, h: any, o?: EndpointOptions) {
       add('DELETE', p, h, o)
+      return builder
+    },
+    head(p: string, h: any, o?: EndpointOptions) {
+      add('HEAD', p, h, o)
       return builder
     },
   }
