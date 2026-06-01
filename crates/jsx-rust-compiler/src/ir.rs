@@ -103,6 +103,15 @@ pub enum JsxNode {
     },
     /// Slot that expands to the component's children at the call site.
     ChildrenSlot,
+    /// JSX fragment (`<>…</>`). Emits its children concatenated with NO wrapping
+    /// element — a pure grouping node. Children are lowered through the same
+    /// `lower_child` path as host-element children, so islands / SSR components /
+    /// Cond / Map / nested fragments are all valid inside one. A fragment as a
+    /// DIRECT child of an SSR component is rejected at lower time
+    /// (`FragmentInSsrComponentNotSupported`); see `lower_ssr_component`.
+    Fragment {
+        children: Vec<JsxNode>,
+    },
     /// Interactive island embedded in a native (jinja) route. Lowered from a
     /// dedicated `<Island component={C} props={path} hydrate="..." ssr/>`
     /// recognition path (see `lower::lower_island`). The emitter renders a
@@ -241,6 +250,15 @@ pub enum LogOp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fragment_node_clones() {
+        let original = JsxNode::Fragment {
+            children: vec![JsxNode::Text("a".into()), JsxNode::Text("b".into())],
+        };
+        let cloned = original.clone();
+        assert_eq!(format!("{:?}", original), format!("{:?}", cloned));
+    }
 
     #[test]
     fn cond_node_clones() {

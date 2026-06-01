@@ -146,6 +146,11 @@ fn emit_node(node: &JsxNode, out: &mut String) {
             out.push_str("{% endif %}");
         }
         JsxNode::ChildrenSlot => unreachable!("ChildrenSlot must be substituted before emit"),
+        JsxNode::Fragment { children } => {
+            for c in children {
+                emit_node(c, out);
+            }
+        }
         JsxNode::Island {
             component,
             instance,
@@ -736,6 +741,22 @@ mod tests {
             ]))],
         };
         assert_eq!(emit(&component(ir)), "<p>{{ \"Hi \" ~ name }}</p>");
+    }
+
+    #[test]
+    fn emits_fragment_children_no_wrapper() {
+        let ir = JsxNode::Fragment {
+            children: vec![JsxNode::Text("a".into()), JsxNode::Text("b".into())],
+        };
+        assert_eq!(emit(&component(ir)), "ab");
+    }
+
+    #[test]
+    fn emits_fragment_with_expr() {
+        let ir = JsxNode::Fragment {
+            children: vec![JsxNode::Expr(Expr::Field("t".into()))],
+        };
+        assert_eq!(emit(&component(ir)), "{{ t }}");
     }
 
     #[test]

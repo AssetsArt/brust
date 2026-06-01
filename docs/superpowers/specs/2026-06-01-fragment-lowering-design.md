@@ -139,10 +139,14 @@ when used). That is real surface for a **secondary, JS-bridged** case.
 deferred follow-up. Concretely:
 
 - New `ErrorKind::FragmentInSsrComponentNotSupported` (`lib.rs`).
-- In `lower_ssr_component`'s child loop (`lower.rs:700–704`), after lowering each
-  child via `lower_child`, reject if it is `JsxNode::Fragment { .. }`. This needs
-  NO SSR-context flag on `lower_child` — the generic path stays fragment-friendly
-  for the jinja side; only the SSR-component child list rejects.
+- In `lower_ssr_component`'s child loop, after lowering each child via
+  `lower_child`, reject if the child's **subtree contains a fragment anywhere**
+  (`subtree_contains_fragment`), not just a direct fragment child. The factory
+  emitter walks the whole child subtree, so a fragment nested inside a host
+  element (`<Layout><div><>x</></div></Layout>`) would otherwise reach
+  `emit_child` and panic. This needs NO SSR-context flag on `lower_child` — the
+  generic path stays fragment-friendly for the jinja side; only the
+  SSR-component child subtree rejects.
 - Because of that rejection, an `SsrComponent.children` vec never contains a
   `Fragment` at runtime. The two factory match sites still need compile-time
   arms (exhaustiveness):
@@ -254,9 +258,10 @@ existing crate suite + the runtime native-route tests.
 
 - `.map(x => <>…</>)`, fragment ternary/`&&` branches, and keyed fragments remain
   unsupported (see Non-goals). These are natural follow-ups but out of scope here.
-- A fragment as a direct child of an SSR component (`<Layout><>…</></Layout>`) is
-  rejected with `FragmentInSsrComponentNotSupported`; full `h(Fragment, …)`
-  factory support is a deferred follow-up.
+- A fragment anywhere inside an SSR component's subtree
+  (`<Layout><>…</></Layout>` or `<Layout><div><>…</></div></Layout>`) is rejected
+  with `FragmentInSsrComponentNotSupported`; full `h(Fragment, …)` factory support
+  is a deferred follow-up.
 
 ## Open questions resolved at plan time
 

@@ -173,6 +173,11 @@ fn number_islands(node: &mut JsxNode, counter: &mut usize) {
             }
         }
         JsxNode::ChildrenSlot => {}
+        JsxNode::Fragment { children } => {
+            for c in children {
+                number_islands(c, counter);
+            }
+        }
     }
 }
 
@@ -234,6 +239,11 @@ fn collect_islands(node: &JsxNode, out: &mut Vec<IslandMeta>) {
             }
         }
         JsxNode::ChildrenSlot => {}
+        JsxNode::Fragment { children } => {
+            for c in children {
+                collect_islands(c, out);
+            }
+        }
     }
 }
 
@@ -272,6 +282,11 @@ fn number_ssr_components(node: &mut JsxNode, counter: &mut usize) {
             }
         }
         JsxNode::ChildrenSlot => {}
+        JsxNode::Fragment { children } => {
+            for c in children {
+                number_ssr_components(c, counter);
+            }
+        }
     }
 }
 
@@ -327,6 +342,11 @@ fn collect_components(node: &JsxNode, out: &mut Vec<ComponentMeta>) {
             }
         }
         JsxNode::ChildrenSlot => {}
+        JsxNode::Fragment { children } => {
+            for c in children {
+                collect_components(c, out);
+            }
+        }
     }
 }
 
@@ -513,6 +533,8 @@ pub enum ErrorKind {
     SpreadAttributeNotSupported,
     #[error("spread child not supported")]
     SpreadChildNotSupported,
+    #[error("fragment `<>…</>` inside an SSR component not supported — wrap it in an element")]
+    FragmentInSsrComponentNotSupported,
     #[error("unresolved identifier `{0}`")]
     UnresolvedIdent(String),
     #[error("bare identifier `{0}` in JSX not supported in Phase A1")]
@@ -1153,6 +1175,55 @@ mod tests {
         assert_eq!(c.components[0].key_path.as_deref(), Some("data.cacheKey"));
         assert_eq!(c.components[0].tags_path, None);
         assert_eq!(c.components[0].revalidate, Some(30));
+    }
+
+    #[test]
+    fn islands_in_fragment_numbered() {
+        // A root fragment containing two Islands → both numbered in source order
+        // and present in collect_islands output.
+        let island_a = JsxNode::Island {
+            component: "A".to_string(),
+            instance: 0,
+            props_path: "data.a".to_string(),
+            hydrate: "load".to_string(),
+            ssr: false,
+            key_path: None,
+            key_literal: None,
+            tags_path: None,
+            tags_literal: None,
+            revalidate: None,
+        };
+        let island_b = JsxNode::Island {
+            component: "B".to_string(),
+            instance: 0,
+            props_path: "data.b".to_string(),
+            hydrate: "load".to_string(),
+            ssr: false,
+            key_path: None,
+            key_literal: None,
+            tags_path: None,
+            tags_literal: None,
+            revalidate: None,
+        };
+        let mut root = JsxNode::Fragment {
+            children: vec![island_a, island_b],
+        };
+
+        let mut counter = 0;
+        number_islands(&mut root, &mut counter);
+        assert_eq!(counter, 2, "should have numbered 2 islands");
+
+        let mut islands = Vec::new();
+        collect_islands(&root, &mut islands);
+        assert_eq!(
+            islands.len(),
+            2,
+            "both islands in fragment should be collected"
+        );
+        assert_eq!(islands[0].component, "A");
+        assert_eq!(islands[0].instance, 0);
+        assert_eq!(islands[1].component, "B");
+        assert_eq!(islands[1].instance, 1);
     }
 
     #[test]

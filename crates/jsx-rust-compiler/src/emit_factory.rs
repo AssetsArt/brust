@@ -56,6 +56,11 @@ fn collect_factories(node: &JsxNode, out: &mut Vec<FactoryOutput>) {
             }
         }
         JsxNode::ChildrenSlot => {}
+        JsxNode::Fragment { children } => {
+            for c in children {
+                collect_factories(c, out);
+            }
+        }
     }
 }
 
@@ -174,6 +179,9 @@ fn emit_child(node: &JsxNode, fo: &mut FactoryOutput) {
         JsxNode::Document { .. } => {} // cannot appear as child
         JsxNode::Cond { .. } => unreachable!("Cond handled in a later task"),
         JsxNode::ChildrenSlot => unreachable!("ChildrenSlot handled in a later task"),
+        JsxNode::Fragment { .. } => {
+            unreachable!("fragment rejected as SSR-component child in lower_ssr_component")
+        }
     }
 }
 
@@ -191,5 +199,53 @@ fn emit_expr(e: &Expr) -> String {
         | Expr::Compare { .. }
         | Expr::Logical { .. }
         | Expr::Not(_) => unreachable!("new Expr variants handled in a later task"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ir::{Component, JsxNode, PropsShape};
+    use std::collections::BTreeMap;
+
+    fn component(root: JsxNode) -> Component {
+        Component {
+            name: "X".into(),
+            props: PropsShape {
+                bindings: vec![],
+                types: BTreeMap::new(),
+            },
+            root,
+        }
+    }
+
+    #[test]
+    fn factory_descends_through_fragment() {
+        // root `<><Layout/></>` → emit produces one FactoryOutput referencing Layout.
+        let root = JsxNode::Fragment {
+            children: vec![JsxNode::SsrComponent {
+                component: "Layout".to_string(),
+                instance: 0,
+                props: vec![],
+                children: vec![],
+                key_path: None,
+                key_literal: None,
+                tags_path: None,
+                tags_literal: None,
+                revalidate: None,
+            }],
+        };
+        let outputs = emit(&component(root));
+        assert_eq!(
+            outputs.len(),
+            1,
+            "expected one FactoryOutput, got {}",
+            outputs.len()
+        );
+        assert!(
+            outputs[0].referenced.contains(&"Layout".to_string()),
+            "expected Layout in referenced, got {:?}",
+            outputs[0].referenced
+        );
     }
 }

@@ -8,8 +8,9 @@ use swc_core::ecma::ast::{
     ArrayLit, ArrowExpr, AssignPatProp, BinaryOp, BindingIdent, BlockStmt, BlockStmtOrExpr,
     CallExpr, Callee, DefaultDecl, ExportDefaultDecl, Expr as SwcExpr, ExprOrSpread, FnExpr,
     Function, JSXAttrName, JSXAttrOrSpread, JSXAttrValue, JSXElement, JSXElementChild,
-    JSXElementName, JSXExpr, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem,
-    ObjectPatProp, ParenExpr, Pat, Prop, PropName, PropOrSpread, ReturnStmt, Stmt, UnaryOp,
+    JSXElementName, JSXExpr, JSXFragment, Lit, MemberExpr, MemberProp, Module, ModuleDecl,
+    ModuleItem, ObjectPatProp, ParenExpr, Pat, Prop, PropName, PropOrSpread, ReturnStmt, Stmt,
+    UnaryOp,
 };
 
 use crate::ErrorKind;
@@ -106,32 +107,29 @@ pub fn lower(parsed: &ParsedSource) -> Result<Component, LowerError> {
     let jsx = strip_paren(return_expr);
     // `SwcExpr::JSXElement` wraps `Box<JSXElement>` in swc_ecma_ast 25; the `&Box<JSXElement>`
     // binding here coerces to `&JSXElement` at the call site below.
-    let element = match jsx {
-        SwcExpr::JSXElement(el) => el,
-        // Fragment-as-root must surface `FragmentNotSupported` (matches the rest of the
-        // tree's fragment-child rejection in `lower_child`).
-        SwcExpr::JSXFragment(f) => {
-            return Err(LowerError::at(f.span, ErrorKind::FragmentNotSupported));
-        }
-        _ => {
-            return Err(LowerError::at(
-                jsx.span(),
-                ErrorKind::BodyMustBeSingleReturn,
-            ));
-        }
-    };
     // `<BrustPage>` is the built-in document shell — recognized ONLY at the
     // route root, here, before `lower_element`. `lower_element` itself rejects a
     // nested `<BrustPage>` with `BrustPageMustBeRoot`, so the shell can never be
     // emitted inside the body. Top-level JSX is not under any `.map(...)` —
     // `in_map` starts false and is only forced true when `lower_call_as_map`
     // recurses into a Map body.
-    let root = if let JSXElementName::Ident(ident) = &element.opening.name
-        && ident.sym.as_ref() == "BrustPage"
-    {
-        lower_brust_page(element, &scope)?
-    } else {
-        lower_element(element, &scope, false)?
+    let root = match jsx {
+        SwcExpr::JSXElement(element) => {
+            if let JSXElementName::Ident(ident) = &element.opening.name
+                && ident.sym.as_ref() == "BrustPage"
+            {
+                lower_brust_page(element, &scope)?
+            } else {
+                lower_element(element, &scope, false)?
+            }
+        }
+        SwcExpr::JSXFragment(f) => lower_fragment(f, &scope, false)?,
+        _ => {
+            return Err(LowerError::at(
+                jsx.span(),
+                ErrorKind::BodyMustBeSingleReturn,
+            ));
+        }
     };
 
     let mut props = PropsShape {
@@ -176,24 +174,23 @@ pub(crate) fn lower_with_sources(
 
     let return_expr = single_return_expr(body)?;
     let jsx = strip_paren(return_expr);
-    let element = match jsx {
-        SwcExpr::JSXElement(el) => el,
-        SwcExpr::JSXFragment(f) => {
-            return Err(LowerError::at(f.span, ErrorKind::FragmentNotSupported));
+    let root = match jsx {
+        SwcExpr::JSXElement(element) => {
+            if let JSXElementName::Ident(ident) = &element.opening.name
+                && ident.sym.as_ref() == "BrustPage"
+            {
+                lower_brust_page(element, &scope)?
+            } else {
+                lower_element(element, &scope, false)?
+            }
         }
+        SwcExpr::JSXFragment(f) => lower_fragment(f, &scope, false)?,
         _ => {
             return Err(LowerError::at(
                 jsx.span(),
                 ErrorKind::BodyMustBeSingleReturn,
             ));
         }
-    };
-    let root = if let JSXElementName::Ident(ident) = &element.opening.name
-        && ident.sym.as_ref() == "BrustPage"
-    {
-        lower_brust_page(element, &scope)?
-    } else {
-        lower_element(element, &scope, false)?
     };
 
     let mut props = PropsShape {
@@ -246,20 +243,19 @@ pub(crate) fn lower_component_inline(
     // Try single-return first.
     if let Ok(return_expr) = single_return_expr(body) {
         let jsx = strip_paren(return_expr);
-        let element = match jsx {
-            SwcExpr::JSXElement(el) => el,
-            SwcExpr::JSXFragment(f) => {
-                return Err(LowerError::at(f.span, ErrorKind::FragmentNotSupported));
+        match jsx {
+            SwcExpr::JSXElement(el) => {
+                let node = lower_element(el, &scope, false)?;
+                return Ok(vec![node]);
             }
+            SwcExpr::JSXFragment(f) => return Ok(vec![lower_fragment(f, &scope, false)?]),
             _ => {
                 return Err(LowerError::at(
                     jsx.span(),
                     ErrorKind::BodyMustBeSingleReturn,
                 ));
             }
-        };
-        let node = lower_element(element, &scope, false)?;
-        return Ok(vec![node]);
+        }
     }
 
     // Try `if (cond) return <A>; … return <B>;` — two-statement body.
@@ -497,6 +493,51 @@ fn lower_params(function: &Function) -> Result<ParamShape, LowerError> {
     }
 }
 
+/// Lower a `<>…</>` fragment by lowering each child through `lower_child`
+/// (whitespace-only JSXText and empty `{}` containers are dropped, exactly as for
+/// host-element children; nested fragments lower recursively via that same path).
+/// `in_map` flows through unchanged.
+fn lower_fragment(frag: &JSXFragment, scope: &Scope, in_map: bool) -> Result<JsxNode, LowerError> {
+    let mut children = Vec::new();
+    for child in &frag.children {
+        if let Some(node) = lower_child(child, scope, in_map)? {
+            children.push(node);
+        }
+    }
+    Ok(JsxNode::Fragment { children })
+}
+
+/// True if `node` is a `Fragment` or contains one anywhere in the subtree that
+/// the React factory emitter walks. Used by `lower_ssr_component` to reject
+/// fragments inside an SSR component's children (the factory emitter cannot
+/// represent a fragment — v1 limitation). Recurses through every child-bearing
+/// variant the factory emits, including nested `SsrComponent` children (which
+/// `emit_factory::emit_h` renders inline).
+fn subtree_contains_fragment(node: &JsxNode) -> bool {
+    match node {
+        JsxNode::Fragment { .. } => true,
+        JsxNode::Element { children, .. }
+        | JsxNode::SsrComponent { children, .. }
+        | JsxNode::Document { body: children, .. } => {
+            children.iter().any(subtree_contains_fragment)
+        }
+        JsxNode::Map { body, .. } => subtree_contains_fragment(body),
+        JsxNode::Cond {
+            consequent,
+            alternate,
+            ..
+        } => {
+            subtree_contains_fragment(consequent)
+                || alternate.as_deref().is_some_and(subtree_contains_fragment)
+        }
+        JsxNode::Empty
+        | JsxNode::Text(_)
+        | JsxNode::Expr(_)
+        | JsxNode::Island { .. }
+        | JsxNode::ChildrenSlot => false,
+    }
+}
+
 fn lower_element(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode, LowerError> {
     // Dedicated `<Island>` recognition path: peek the opening name BEFORE
     // `lower_element_name` (which would reject any capitalized custom component
@@ -699,6 +740,18 @@ fn lower_ssr_component(
     let mut call_site_children: Vec<JsxNode> = Vec::new();
     for child in &el.children {
         if let Some(node) = lower_child(child, scope, in_map)? {
+            // A fragment anywhere in an SSR component's child subtree reaches the
+            // React factory emitter, which cannot represent one (see
+            // `emit_factory::emit_child`). Reject the WHOLE subtree, not just a
+            // direct fragment child — a fragment nested inside a host element
+            // (`<Layout><div><>x</></div></Layout>`) would otherwise slip past a
+            // shallow check and panic the factory emitter.
+            if subtree_contains_fragment(&node) {
+                return Err(LowerError::at(
+                    el.opening.span,
+                    ErrorKind::FragmentInSsrComponentNotSupported,
+                ));
+            }
             call_site_children.push(node);
         }
     }
@@ -1177,6 +1230,23 @@ fn splice_children_slots(node: &mut JsxNode, children: &[JsxNode]) {
                     i += children.len();
                 } else {
                     splice_children_slots(&mut body[i], children);
+                    i += 1;
+                }
+            }
+        }
+        JsxNode::Fragment {
+            children: frag_children,
+        } => {
+            let mut i = 0;
+            while i < frag_children.len() {
+                if matches!(frag_children[i], JsxNode::ChildrenSlot) {
+                    frag_children.remove(i);
+                    for (j, c) in children.iter().enumerate() {
+                        frag_children.insert(i + j, c.clone());
+                    }
+                    i += children.len();
+                } else {
+                    splice_children_slots(&mut frag_children[i], children);
                     i += 1;
                 }
             }
@@ -1827,9 +1897,7 @@ fn lower_child(
         }
         // `JSXElementChild::JSXElement` wraps `Box<JSXElement>`; auto-deref to `&JSXElement`.
         JSXElementChild::JSXElement(el) => Ok(Some(lower_element(el, scope, in_map)?)),
-        JSXElementChild::JSXFragment(f) => {
-            Err(LowerError::at(f.span, ErrorKind::FragmentNotSupported))
-        }
+        JSXElementChild::JSXFragment(f) => Ok(Some(lower_fragment(f, scope, in_map)?)),
         JSXElementChild::JSXSpreadChild(s) => {
             Err(LowerError::at(s.span, ErrorKind::SpreadChildNotSupported))
         }
@@ -2614,6 +2682,12 @@ fn infer_props_types(node: &JsxNode, props: &mut PropsShape) -> Result<(), Lower
             Ok(())
         }
         JsxNode::ChildrenSlot => Ok(()),
+        JsxNode::Fragment { children } => {
+            for c in children {
+                infer_props_types(c, props)?;
+            }
+            Ok(())
+        }
     }
 }
 
@@ -2714,6 +2788,11 @@ fn collect_map_member_fields(
             }
         }
         JsxNode::ChildrenSlot => {}
+        JsxNode::Fragment { children } => {
+            for c in children {
+                collect_map_member_fields(c, binding, fields);
+            }
+        }
     }
 }
 
@@ -2881,11 +2960,163 @@ mod tests {
     }
 
     #[test]
-    fn rejects_fragment() {
-        let src = "export default function X() { return <><a/></>; }";
+    fn root_fragment_lowers() {
+        let src = "export default function X() { return <><a/><b/></>; }";
+        let parsed = parse(src, "<test>").unwrap();
+        let c = lower(&parsed).unwrap();
+        match &c.root {
+            JsxNode::Fragment { children } => {
+                assert_eq!(children.len(), 2);
+                assert!(matches!(&children[0], JsxNode::Element { tag, .. } if tag == "a"));
+                assert!(matches!(&children[1], JsxNode::Element { tag, .. } if tag == "b"));
+            }
+            other => panic!("expected Fragment root, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fragment_child_of_element() {
+        let src = "export default function X() { return <ul><><li/><li/></></ul>; }";
+        let parsed = parse(src, "<test>").unwrap();
+        let c = lower(&parsed).unwrap();
+        match &c.root {
+            JsxNode::Element { tag, children, .. } => {
+                assert_eq!(tag, "ul");
+                assert_eq!(children.len(), 1);
+                match &children[0] {
+                    JsxNode::Fragment {
+                        children: frag_children,
+                    } => {
+                        assert_eq!(frag_children.len(), 2);
+                        assert!(
+                            matches!(&frag_children[0], JsxNode::Element { tag, .. } if tag == "li")
+                        );
+                        assert!(
+                            matches!(&frag_children[1], JsxNode::Element { tag, .. } if tag == "li")
+                        );
+                    }
+                    other => panic!("expected Fragment child, got {other:?}"),
+                }
+            }
+            other => panic!("expected ul element, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fragment_drops_whitespace() {
+        // Whitespace spanning a line break is indentation → dropped by normalize_jsx_text.
+        let src = "export default function X() { return (\n  <>\n    <a/>\n  </>\n); }";
+        let parsed = parse(src, "<test>").unwrap();
+        let c = lower(&parsed).unwrap();
+        match &c.root {
+            JsxNode::Fragment { children } => {
+                assert_eq!(
+                    children.len(),
+                    1,
+                    "expected exactly 1 child, got {children:?}"
+                );
+                assert!(matches!(&children[0], JsxNode::Element { tag, .. } if tag == "a"));
+            }
+            other => panic!("expected Fragment root, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fragment_map_body_still_rejected() {
+        // xs.map(x => <></>) inside a route → MapShapeNotSupported
+        let src = r#"export default function X({ xs }) {
+  return <ul>{xs.map(x => <></>)}</ul>;
+}"#;
         let parsed = parse(src, "<test>").unwrap();
         let err = lower(&parsed).unwrap_err();
-        assert!(matches!(err.kind, ErrorKind::FragmentNotSupported));
+        assert!(
+            matches!(err.kind, ErrorKind::MapShapeNotSupported),
+            "expected MapShapeNotSupported, got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn brust_page_in_fragment_rejected() {
+        let src = "export default function X() { return <><BrustPage/></>; }";
+        let parsed = parse(src, "<test>").unwrap();
+        let err = lower(&parsed).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::BrustPageMustBeRoot),
+            "expected BrustPageMustBeRoot, got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn fragment_in_ssr_component_rejected() {
+        let src = r#"export default function X() {
+  return <Layout><>a</></Layout>;
+}"#;
+        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::FragmentInSsrComponentNotSupported),
+            "expected FragmentInSsrComponentNotSupported, got {:?}",
+            err.kind
+        );
+    }
+
+    // A fragment NESTED inside a host element that is itself an SSR-component
+    // child still reaches the factory emitter (which cannot represent a
+    // fragment), so it must be rejected too — not just direct fragment children.
+    #[test]
+    fn fragment_nested_in_ssr_component_rejected() {
+        let src = r#"export default function X() {
+  return <Layout><div><>x</></div></Layout>;
+}"#;
+        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::FragmentInSsrComponentNotSupported),
+            "expected FragmentInSsrComponentNotSupported, got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn fragment_inline_children_slot() {
+        // A component body `<>{children}</>` lowered via inline path yields
+        // [Fragment{..}] containing a ChildrenSlot, and splice_children_slots replaces it.
+        let src = r#"export default function C({ children }: any) {
+  return <>{children}</>;
+}"#;
+        let nodes = inline_lower(src, HashMap::new(), true).unwrap();
+        assert_eq!(nodes.len(), 1);
+        match &nodes[0] {
+            JsxNode::Fragment { children } => {
+                assert_eq!(children.len(), 1);
+                assert!(
+                    matches!(children[0], JsxNode::ChildrenSlot),
+                    "expected ChildrenSlot inside Fragment, got {:?}",
+                    children[0]
+                );
+            }
+            other => panic!("expected Fragment, got {other:?}"),
+        }
+
+        // Now verify splice_children_slots replaces the slot.
+        let call_site_children = vec![JsxNode::Element {
+            tag: "span".into(),
+            attrs: vec![],
+            children: vec![],
+        }];
+        let mut root = nodes.into_iter().next().unwrap();
+        super::splice_children_slots(&mut root, &call_site_children);
+        match &root {
+            JsxNode::Fragment { children } => {
+                assert_eq!(children.len(), 1);
+                assert!(
+                    matches!(&children[0], JsxNode::Element { tag, .. } if tag == "span"),
+                    "expected span after splice, got {:?}",
+                    children[0]
+                );
+            }
+            other => panic!("expected Fragment after splice, got {other:?}"),
+        }
     }
 
     #[test]
