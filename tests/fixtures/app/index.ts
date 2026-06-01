@@ -11,4 +11,5 @@ await brust.run({
   routes,
   entry: import.meta.url,
   actions,
+  actionPrefix: process.env.BRUST_ACTION_PREFIX || undefined,
 })

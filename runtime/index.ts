@@ -122,7 +122,10 @@ export const brust = {
       workers: opts.workers,
       entry: opts.entry,
       tuning: opts.tuning,
-      action_prefix: opts.actionPrefix,
+      // napi-rs camelCases #[napi(object)] fields, so the addon reads
+      // `actionPrefix` (not snake_case). A snake_case key is silently dropped,
+      // leaving the prefix at its default — which broke custom-prefix routing.
+      actionPrefix: opts.actionPrefix,
     })
     const baseEnv = { ...process.env }
     const workersArr: Worker[] = []

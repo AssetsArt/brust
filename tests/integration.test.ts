@@ -17,7 +17,9 @@ async function freePort(): Promise<number> {
   })
 }
 
-async function startServer(opts: { workers?: string; rustLog?: string; cmd?: string[] } = {}) {
+async function startServer(
+  opts: { workers?: string; rustLog?: string; cmd?: string[]; env?: Record<string, string> } = {},
+) {
   const port = await freePort()
   const proc = spawn({
     cmd: opts.cmd ?? ['bun', 'run', 'tests/fixtures/app/index.ts'],
@@ -26,6 +28,7 @@ async function startServer(opts: { workers?: string; rustLog?: string; cmd?: str
       BRUST_PORT: String(port),
       BRUST_WORKERS: opts.workers ?? '1',
       RUST_LOG: opts.rustLog ?? 'brust=info',
+      ...(opts.env ?? {}),
     },
     stdout: 'pipe',
     stderr: 'inherit',
@@ -701,6 +704,43 @@ test('action endpoint: GET /whoami returns null user without cookie', async () =
     expect(resp.status).toBe(200)
     const body = (await resp.json()) as { user: string | null }
     expect(body.user).toBeNull()
+  } finally {
+    await stop()
+  }
+}, 15_000)
+
+test('custom actionPrefix: routes under prefix + injects browser global', async () => {
+  const { port, stop } = await startServer({
+    rustLog: 'brust=warn',
+    env: { BRUST_ACTION_PREFIX: '/api' },
+  })
+  try {
+    // (a) action routes under the custom prefix
+    const ok = await fetch(`http://127.0.0.1:${port}/api/notes`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'hi' }),
+    })
+    expect(ok.status).toBe(200)
+    // Default prefix no longer routes actions. A POST to the (now unmounted)
+    // default path is rejected by Rust's method gate (server.rs: only GET, or
+    // POST to a registered action / cache-invalidate / mcp path is allowed) —
+    // so it's 405 "method not allowed", NOT the action's 200 JSON. (The plan
+    // expected 404, but the method gate fires before page routing for non-GET;
+    // a GET to the same path 404s. Either way the action no longer responds.)
+    const def = await fetch(`http://127.0.0.1:${port}/_brust/action/notes`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'hi' }),
+    })
+    expect(def.status).toBe(405)
+    expect(await def.text()).not.toContain('n-')
+    // (b) a non-Suspense HTML page injects the global before </head>.
+    // `/` (HelloWorld) has no <Suspense> → buffering path (see the
+    // "single-chunk regression" test) → script is spliced before </head>.
+    const html = await (await fetch(`http://127.0.0.1:${port}/`)).text()
+    expect(html).toContain('globalThis.__BRUST_ACTION_PREFIX__="/api"')
+    expect(html.indexOf('__BRUST_ACTION_PREFIX__')).toBeLessThan(html.indexOf('</head>'))
   } finally {
     await stop()
   }
