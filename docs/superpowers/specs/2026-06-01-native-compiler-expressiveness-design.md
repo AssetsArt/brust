@@ -235,19 +235,21 @@ so the `Literal` arm always covers the default (resolves review F3/F4).
   alter the inline path. Regression guard: existing inline cond tests stay green.
 - **Determinism.** Output remains single-line and byte-stable (golden fixtures
   compare byte-for-byte).
-- **Escaping contract.** brust's minijinja `Environment` runs with
-  `AutoEscape::None` (verified: `crates/brust/src/jinja.rs:34` `Environment::new()`
-  with no escape callback; templates registered by stem, no `.html` extension). So
-  **every** runtime `{{ … }}` value — `href="{{ item.href }}"`, `{{ title }}` text,
-  and the new S1/S8/S11 dynamic values — is emitted verbatim. The established
-  framework contract is **loader data is trusted/author-controlled** (it is the
-  author's loader return, not user input). S1/S8/S11 dynamic values follow this same
-  contract; they introduce no new trust assumption and no new escaping behavior.
-  Compile-time *literals* remain pre-escaped in the emitter as today. Introducing
-  framework-wide output escaping (a `| e` policy across all ~50 interpolation sites)
-  is a deliberate cross-cutting decision **out of scope** for Cluster A — escaping
-  only the 3 new prop families would be inconsistent and surprising. Tracked as a
-  follow-up (see Known limitations).
+- **Escaping contract** (REVISED post-security-review, commit `5a4c4ca`). brust's
+  minijinja runs with `AutoEscape::None` (`crates/brust/src/jinja.rs`
+  `Environment::new()`, templates registered by stem, no `.html` extension), so
+  escaping is NOT automatic. The original draft of this spec said dynamic values
+  render *verbatim* under a "loader-data-trusted" contract — that was **WRONG** and
+  was a real HIGH XSS: loader data routinely derives from request params (route
+  `:name`) / third-party APIs, and a raw `<script>` in the URL path reached
+  `<title>`/text nodes unescaped (proven in the dogfood). **Corrected behavior:**
+  the emitter wraps every dynamic value in an HTML-OUTPUT position as
+  `{{ (expr) | e }}` (`emit_escaped_interp`) — text nodes, host-element attributes,
+  S1 style objects, S8 head props. Parenthesized so a `Concat`/`Filter` escapes its
+  final string. NOT escaped (correct): control-flow (`{% for %}`, `{% if %}` tests)
+  and pre-rendered HTML slots (`… | safe`), plus the pre-escaped `island_N_props`.
+  No AutoEscape mode change — the explicit `| e` keeps golden-render test fidelity.
+  minijinja `| e` also escapes `/` → `&#x2f;` in URLs (browser-decoded, safe).
 - **Rejection still bites for genuinely unsupported forms.** Calls, arithmetic-as-text,
   template literals, spreads, computed keys, nested style objects → existing or
   new typed errors, not silent drops.
@@ -316,11 +318,10 @@ block shows for a bad name, `<title>` is per-page (`Charizard · PokéDex`).
 - Nested `style` objects and computed keys are rejected.
 - The `○ nested .map()` gap (type-chart) is a separate fixture concern, tracked
   but not required for Cluster A acceptance.
-- **No output escaping** is added: dynamic `{{ … }}` values render verbatim under
-  `AutoEscape::None` (the existing framework behavior). A `title`/`description`/style
-  value containing `<` or `"` from an untrusted source would break HTML structure.
-  Framework-wide escaping is a deliberate follow-up (Cluster B/C candidate), not a
-  Cluster A regression — the same property holds for every member-path today.
+- ~~No output escaping~~ SUPERSEDED: a framework-wide `| e` escaping pass WAS added
+  (commit `5a4c4ca`) after a security review flagged the original verbatim plan as
+  XSS. All dynamic HTML output is now HTML-escaped at runtime. See the revised
+  Escaping contract above.
 
 ## Open questions resolved at plan time
 

@@ -203,8 +203,9 @@ native: true route expects template "ListPage.jinja" but it's not registered
 
 **fix:** IR ใหม่ `HeadValue{Literal,Path}`; `<BrustPage>` head props (title/description/lang/className/
 bodyClassName) รับ member-path → emit `{{ path }}` ลง slot ที่ตรง (`<title>{{ pageTitle }}</title>`).
-non-path (call/arith) ยัง reject เป็น `BrustPageAttrMustBeStringLiteral`. dynamic value render verbatim
-ตาม contract เดิม (`AutoEscape::None`). ดู spec S8. **dogfood:** detail ใช้ `<BrustPage title={pageTitle}>`,
+non-path (call/arith) ยัง reject เป็น `BrustPageAttrMustBeStringLiteral`. dynamic value **HTML-escaped**
+ด้วย `{{ (path) | e }}` (security fix `5a4c4ca` — `AutoEscape::None` จึงต้อง escape เอง; เดิมร่างไว้ verbatim
+ซึ่งเป็น XSS). ดู spec S8. **dogfood:** detail ใช้ `<BrustPage title={pageTitle}>`,
 loader ตั้ง `pageTitle = "<Name> · PokéDex"` (ครบทุก path รวม 404).
 
 **อาการเดิม:** อยากได้ `<title>Charizard · PokéDex</title>` แต่ native บังคับ
