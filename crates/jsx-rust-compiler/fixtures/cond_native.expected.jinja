@@ -1,0 +1,1 @@
+<div>{% if flags.showBanner %}<span>banner</span>{% endif %}{% if (data.count) > (0) %}<p>has items</p>{% else %}<em>empty</em>{% endif %}<ul>{% for item in items %}{% if item.active %}<li>{{ item.label }}</li>{% endif %}{% endfor %}</ul></div>

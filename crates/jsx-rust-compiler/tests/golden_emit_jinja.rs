@@ -13,6 +13,7 @@ const FIXTURES: &[&str] = &[
     "list_nav",
     "brust_page",
     "fragment_basic",
+    "cond_native",
 ];
 
 #[test]

@@ -1916,55 +1916,162 @@ fn lower_child(
                     return Ok(Some(lower_call_as_map(call, scope, in_map)?));
                 }
 
-                // GATE: inline mode — handle special inline child patterns.
-                if scope.inline.is_some() {
+                // GATE: inline mode — handle the inline-only `{children}` slot.
+                if scope.inline.is_some()
+                    && let SwcExpr::Ident(id) = e.as_ref()
+                    && id.sym.as_ref() == "children"
+                    && scope.destructured.contains(&"children".to_string())
+                {
                     // `{children}` → ChildrenSlot unconditionally when "children"
                     // is in the component's destructured params. The splice step
                     // removes the slot cleanly when zero call-site children were
                     // passed, so we must emit the slot regardless of has_children.
-                    if let SwcExpr::Ident(id) = e.as_ref()
-                        && id.sym.as_ref() == "children"
-                        && scope.destructured.contains(&"children".to_string())
-                    {
-                        return Ok(Some(JsxNode::ChildrenSlot));
-                    }
+                    return Ok(Some(JsxNode::ChildrenSlot));
+                }
 
-                    // `{cond && <JSX>}` → Cond{alternate: None}.
-                    if let SwcExpr::Bin(bin) = e.as_ref()
-                        && bin.op == BinaryOp::LogicalAnd
-                        && let SwcExpr::JSXElement(rhs_el) = strip_paren(bin.right.as_ref())
-                    {
-                        let test = lower_expr(&bin.left, scope)?;
-                        let consequent = lower_element(rhs_el, scope, in_map)?;
-                        return Ok(Some(JsxNode::Cond {
-                            test,
-                            consequent: Box::new(consequent),
-                            alternate: None,
-                        }));
-                    }
+                // Conditionals are valid in BOTH inline expansion and native
+                // route bodies. The test is lowered through `lower_cond_test`
+                // (member/compare/logical/not only), and the branches accept
+                // JSX elements, fragments, and `null`/`false`/`undefined`
+                // (→ Empty). Arithmetic operands and call tests are rejected
+                // with `ComplexExpressionNotSupported`.
 
-                    // `{cond ? <A> : <B>}` → Cond{alternate: Some}.
-                    if let SwcExpr::Cond(cond_expr) = e.as_ref() {
-                        let test = lower_expr(&cond_expr.test, scope)?;
-                        let cons_jsx = strip_paren(cond_expr.cons.as_ref());
-                        let alt_jsx = strip_paren(cond_expr.alt.as_ref());
-                        if let (SwcExpr::JSXElement(el_a), SwcExpr::JSXElement(el_b)) =
-                            (cons_jsx, alt_jsx)
-                        {
-                            let node_a = lower_element(el_a, scope, in_map)?;
-                            let node_b = lower_element(el_b, scope, in_map)?;
-                            return Ok(Some(JsxNode::Cond {
-                                test,
-                                consequent: Box::new(node_a),
-                                alternate: Some(Box::new(node_b)),
-                            }));
-                        }
-                    }
+                // `{cond && <JSX>}` → Cond{alternate: None}.
+                if let SwcExpr::Bin(bin) = e.as_ref()
+                    && bin.op == BinaryOp::LogicalAnd
+                    && is_cond_branch(strip_paren(bin.right.as_ref()))
+                {
+                    let test = lower_cond_test(&bin.left, scope)?;
+                    let consequent = lower_cond_branch(bin.right.as_ref(), scope, in_map)?;
+                    return Ok(Some(JsxNode::Cond {
+                        test,
+                        consequent: Box::new(consequent),
+                        alternate: None,
+                    }));
+                }
+
+                // `{cond ? <A> : <B>}` → Cond{alternate: Some}.
+                if let SwcExpr::Cond(cond_expr) = e.as_ref()
+                    && is_cond_branch(strip_paren(cond_expr.cons.as_ref()))
+                    && is_cond_branch(strip_paren(cond_expr.alt.as_ref()))
+                {
+                    let test = lower_cond_test(&cond_expr.test, scope)?;
+                    let consequent = lower_cond_branch(cond_expr.cons.as_ref(), scope, in_map)?;
+                    let alternate = lower_cond_branch(cond_expr.alt.as_ref(), scope, in_map)?;
+                    return Ok(Some(JsxNode::Cond {
+                        test,
+                        consequent: Box::new(consequent),
+                        alternate: Some(Box::new(alternate)),
+                    }));
                 }
 
                 Ok(Some(JsxNode::Expr(lower_expr(e, scope)?)))
             }
         },
+    }
+}
+
+/// Is `expr` (already paren-stripped) a valid conditional branch?
+///
+/// Branches accept JSX elements, JSX fragments, and the falsy literals
+/// `null` / `false` / `undefined` (which lower to `JsxNode::Empty`).
+fn is_cond_branch(expr: &SwcExpr) -> bool {
+    match expr {
+        SwcExpr::JSXElement(_) | SwcExpr::JSXFragment(_) => true,
+        SwcExpr::Lit(Lit::Null(_)) => true,
+        SwcExpr::Lit(Lit::Bool(b)) => !b.value,
+        SwcExpr::Ident(id) => id.sym.as_ref() == "undefined",
+        _ => false,
+    }
+}
+
+/// Lower one conditional branch to a `JsxNode`.
+///
+/// `null` / `false` / `undefined` → `JsxNode::Empty`; JSX elements and
+/// fragments route through the existing element/fragment lowerers.
+fn lower_cond_branch(expr: &SwcExpr, scope: &Scope, in_map: bool) -> Result<JsxNode, LowerError> {
+    match strip_paren(expr) {
+        SwcExpr::JSXElement(el) => lower_element(el, scope, in_map),
+        SwcExpr::JSXFragment(f) => lower_fragment(f, scope, in_map),
+        SwcExpr::Lit(Lit::Null(_)) => Ok(JsxNode::Empty),
+        SwcExpr::Lit(Lit::Bool(b)) if !b.value => Ok(JsxNode::Empty),
+        SwcExpr::Ident(id) if id.sym.as_ref() == "undefined" => Ok(JsxNode::Empty),
+        other => Err(LowerError::at(
+            other.span(),
+            ErrorKind::ComplexExpressionNotSupported,
+        )),
+    }
+}
+
+/// Lower a conditional TEST expression to a jinja-renderable `Expr`.
+///
+/// Accepts `!x` (Not), comparisons (`>`, `<`, `>=`, `<=`, `===`/`==`,
+/// `!==`/`!=`) and logical `&&` / `||` over member/ident/literal operands.
+/// Arithmetic operands, calls, and other shapes are rejected with
+/// `ComplexExpressionNotSupported` — the test never becomes free text.
+fn lower_cond_test(expr: &SwcExpr, scope: &Scope) -> Result<crate::ir::Expr, LowerError> {
+    match strip_paren(expr) {
+        SwcExpr::Unary(u) if u.op == UnaryOp::Bang => Ok(crate::ir::Expr::Not(Box::new(
+            lower_cond_test(u.arg.as_ref(), scope)?,
+        ))),
+        SwcExpr::Bin(b) => match b.op {
+            BinaryOp::Gt
+            | BinaryOp::Lt
+            | BinaryOp::GtEq
+            | BinaryOp::LtEq
+            | BinaryOp::EqEqEq
+            | BinaryOp::EqEq
+            | BinaryOp::NotEqEq
+            | BinaryOp::NotEq => {
+                let op = match b.op {
+                    BinaryOp::Gt => CmpOp::Gt,
+                    BinaryOp::Lt => CmpOp::Lt,
+                    BinaryOp::GtEq => CmpOp::Ge,
+                    BinaryOp::LtEq => CmpOp::Le,
+                    BinaryOp::EqEqEq | BinaryOp::EqEq => CmpOp::Eq,
+                    BinaryOp::NotEqEq | BinaryOp::NotEq => CmpOp::Ne,
+                    _ => unreachable!(),
+                };
+                Ok(crate::ir::Expr::Compare {
+                    op,
+                    lhs: Box::new(lower_cond_operand(b.left.as_ref(), scope)?),
+                    rhs: Box::new(lower_cond_operand(b.right.as_ref(), scope)?),
+                })
+            }
+            BinaryOp::LogicalAnd | BinaryOp::LogicalOr => {
+                let op = if b.op == BinaryOp::LogicalAnd {
+                    LogOp::And
+                } else {
+                    LogOp::Or
+                };
+                Ok(crate::ir::Expr::Logical {
+                    op,
+                    lhs: Box::new(lower_cond_test(b.left.as_ref(), scope)?),
+                    rhs: Box::new(lower_cond_test(b.right.as_ref(), scope)?),
+                })
+            }
+            _ => Err(LowerError::at(
+                b.span,
+                ErrorKind::ComplexExpressionNotSupported,
+            )),
+        },
+        other => lower_cond_operand(other, scope),
+    }
+}
+
+/// Lower a comparison operand (or a bare truthiness test) — only
+/// member/ident/string/number shapes are admitted. Anything else (arithmetic,
+/// calls, …) is `ComplexExpressionNotSupported`.
+fn lower_cond_operand(expr: &SwcExpr, scope: &Scope) -> Result<crate::ir::Expr, LowerError> {
+    match strip_paren(expr) {
+        stripped @ (SwcExpr::Ident(_)
+        | SwcExpr::Member(_)
+        | SwcExpr::Lit(Lit::Str(_))
+        | SwcExpr::Lit(Lit::Num(_))) => lower_expr(stripped, scope),
+        other => Err(LowerError::at(
+            other.span(),
+            ErrorKind::ComplexExpressionNotSupported,
+        )),
     }
 }
 
@@ -2020,9 +2127,9 @@ fn lower_call_as_map(call: &CallExpr, scope: &Scope, _in_map: bool) -> Result<Js
 
     let binding = arrow_binding(arrow)?;
 
-    // Body: accept either `(item) => <JSX>` (Expr body) or
-    // `(item) => { return <JSX>; }` (Block body with single return).
-    let jsx_body = arrow_jsx_body(arrow)?;
+    // Body: accept `(item) => <JSX>` / `(item) => (<JSX>)` / a per-item
+    // conditional, or the `{ return <JSX>; }` block form.
+    let body_expr = arrow_body_expr(arrow)?;
 
     // Clone-and-extend the scope with the new iter binding. Keeps the rest of
     // the lowering on `&Scope`; no `&mut` plumbing required.
@@ -2030,7 +2137,7 @@ fn lower_call_as_map(call: &CallExpr, scope: &Scope, _in_map: bool) -> Result<Js
     inner_scope.map_bindings.push(binding.clone());
     // Force `in_map = true` for the Map body: any `<Island>` inside the
     // iteration is rejected (id collision + non-per-iteration props path in v1).
-    let body = lower_element(jsx_body, &inner_scope, true)?;
+    let body = lower_map_body_expr(body_expr, &inner_scope)?;
 
     Ok(JsxNode::Map {
         source,
@@ -2058,21 +2165,15 @@ fn arrow_binding(arrow: &ArrowExpr) -> Result<String, LowerError> {
     }
 }
 
-/// Extract a `&JSXElement` from an arrow body, accepting both forms.
+/// Extract the body `&SwcExpr` from an arrow, accepting both forms.
 ///
-/// `(item) => <JSX>` lowers as `BlockStmtOrExpr::Expr(JSXElement)`.
-/// `(item) => (<JSX>)` lowers as `BlockStmtOrExpr::Expr(Paren(JSXElement))` —
-/// strip Paren wrappers since they're trivial.
-/// `(item) => { return <JSX>; }` lowers as `BlockStmtOrExpr::BlockStmt(...)`.
-fn arrow_jsx_body(arrow: &ArrowExpr) -> Result<&JSXElement, LowerError> {
+/// `(item) => <expr>` lowers as `BlockStmtOrExpr::Expr(<expr>)`.
+/// `(item) => { return <expr>; }` lowers as `BlockStmtOrExpr::BlockStmt(...)`
+/// with a single return. The returned expression is NOT paren-stripped — the
+/// caller (`lower_map_body_expr`) strips where appropriate.
+fn arrow_body_expr(arrow: &ArrowExpr) -> Result<&SwcExpr, LowerError> {
     match arrow.body.as_ref() {
-        BlockStmtOrExpr::Expr(expr) => match strip_paren(expr.as_ref()) {
-            SwcExpr::JSXElement(el) => Ok(el),
-            other => Err(LowerError::at(
-                other.span(),
-                ErrorKind::MapShapeNotSupported,
-            )),
-        },
+        BlockStmtOrExpr::Expr(expr) => Ok(expr.as_ref()),
         BlockStmtOrExpr::BlockStmt(block) => {
             if block.stmts.len() != 1 {
                 return Err(LowerError::at(block.span, ErrorKind::MapShapeNotSupported));
@@ -2080,19 +2181,64 @@ fn arrow_jsx_body(arrow: &ArrowExpr) -> Result<&JSXElement, LowerError> {
             match &block.stmts[0] {
                 Stmt::Return(ReturnStmt {
                     arg: Some(expr), ..
-                }) => match strip_paren(expr.as_ref()) {
-                    SwcExpr::JSXElement(el) => Ok(el),
-                    other => Err(LowerError::at(
-                        other.span(),
-                        ErrorKind::MapShapeNotSupported,
-                    )),
-                },
+                }) => Ok(expr.as_ref()),
                 other => Err(LowerError::at(
                     other.span(),
                     ErrorKind::MapShapeNotSupported,
                 )),
             }
         }
+    }
+}
+
+/// Lower a `.map` arrow body to the `Map` node body.
+///
+/// Accepts a JSX element, or a per-item conditional
+/// (`item.flag && <li/>` / `cond ? <a/> : <b/>`; conditional branches may
+/// themselves be fragments). The conditional recognition
+/// mirrors the `lower_child` expr-container path so per-item conditionals lower
+/// identically inside and outside a `.map`. A non-JSX, non-conditional body is
+/// `MapShapeNotSupported` (preserving the prior diagnostic for that shape).
+///
+/// NOTE: a bare-fragment map body (`xs.map(x => <>…</>)`) is intentionally NOT
+/// accepted here — it stays `MapShapeNotSupported` (see test
+/// `fragment_map_body_still_rejected`). Fragments are valid only as *conditional
+/// branches* inside a map body (`xs.map(x => x.f ? <>…</> : null)`), via
+/// `lower_cond_branch`. Lifting that restriction is out of scope for S11.
+fn lower_map_body_expr(expr: &SwcExpr, scope: &Scope) -> Result<JsxNode, LowerError> {
+    match strip_paren(expr) {
+        SwcExpr::JSXElement(el) => lower_element(el, scope, true),
+        // `cond && <JSX>`
+        SwcExpr::Bin(bin)
+            if bin.op == BinaryOp::LogicalAnd
+                && is_cond_branch(strip_paren(bin.right.as_ref())) =>
+        {
+            let test = lower_cond_test(bin.left.as_ref(), scope)?;
+            let consequent = lower_cond_branch(bin.right.as_ref(), scope, true)?;
+            Ok(JsxNode::Cond {
+                test,
+                consequent: Box::new(consequent),
+                alternate: None,
+            })
+        }
+        // `cond ? <A> : <B>`
+        SwcExpr::Cond(cond_expr)
+            if is_cond_branch(strip_paren(cond_expr.cons.as_ref()))
+                && is_cond_branch(strip_paren(cond_expr.alt.as_ref())) =>
+        {
+            let test = lower_cond_test(cond_expr.test.as_ref(), scope)?;
+            let consequent = lower_cond_branch(cond_expr.cons.as_ref(), scope, true)?;
+            let alternate = lower_cond_branch(cond_expr.alt.as_ref(), scope, true)?;
+            Ok(JsxNode::Cond {
+                test,
+                consequent: Box::new(consequent),
+                alternate: Some(Box::new(alternate)),
+            })
+        }
+        other => Err(LowerError::at(
+            other.span(),
+            ErrorKind::MapShapeNotSupported,
+        )),
     }
 }
 
@@ -4372,17 +4518,219 @@ mod tests {
         );
     }
 
+    /// Lower a native route source to its root JsxNode (no inline ctx).
+    fn lower_route_root(src: &str) -> Result<JsxNode, LowerError> {
+        let parsed = parse(src, "<test>").unwrap();
+        lower(&parsed).map(|c| c.root)
+    }
+
+    /// Helper: first child of the lowered route root `<div>`.
+    fn route_first_child(src: &str) -> JsxNode {
+        match lower_route_root(src).unwrap() {
+            JsxNode::Element { children, .. } => children.into_iter().next().expect("a child"),
+            other => panic!("expected element root, got {other:?}"),
+        }
+    }
+
     #[test]
-    fn noninline_logical_still_errors() {
-        // THE GATE: normal route (no inline ctx) with {show && <span/>} → Err(ComplexExpressionNotSupported).
+    fn noninline_logical_now_lowers_to_cond() {
+        // THE GATE (lifted): a bare {show && <span/>} on a native route now
+        // SUCCEEDS, yielding a Cond instead of ComplexExpressionNotSupported.
         let src = r#"export default function X({ show }: any) {
   return <div>{show && <span/>}</div>;
 }"#;
-        let parsed = parse(src, "<test>").unwrap();
-        let err = lower(&parsed).unwrap_err();
+        match route_first_child(src) {
+            JsxNode::Cond {
+                test, alternate, ..
+            } => {
+                assert!(matches!(test, crate::ir::Expr::Field(_)));
+                assert!(alternate.is_none());
+            }
+            other => panic!("expected Cond, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inline_logical_still_lowers_to_cond() {
+        // Regression guard: inline mode output for {cond && <JSX>} unchanged.
+        let src = r#"export default function C({ show }: any) {
+  return <div>{show && <span/>}</div>;
+}"#;
+        let nodes = inline_lower(src, HashMap::new(), false).unwrap();
+        let children = match &nodes[0] {
+            JsxNode::Element { children, .. } => children,
+            other => panic!("expected element, got {other:?}"),
+        };
+        assert!(
+            matches!(
+                children[0],
+                JsxNode::Cond {
+                    alternate: None,
+                    ..
+                }
+            ),
+            "expected Cond{{alternate:None}}, got {:?}",
+            children[0]
+        );
+    }
+
+    #[test]
+    fn noninline_cond_member_test() {
+        // {flags.hasPrev && <a/>} → Cond{ test: MemberAccess, alternate: None }
+        let src = r#"export default function X({ flags }: any) {
+  return <div>{flags.hasPrev && <a/>}</div>;
+}"#;
+        match route_first_child(src) {
+            JsxNode::Cond {
+                test, alternate, ..
+            } => {
+                assert!(
+                    matches!(test, crate::ir::Expr::MemberAccess { .. }),
+                    "expected MemberAccess, got {test:?}"
+                );
+                assert!(alternate.is_none());
+            }
+            other => panic!("expected Cond, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn noninline_cond_compare_test() {
+        // {d.n > 0 && <span/>} → test: Compare{ op: Gt }
+        let src = r#"export default function X({ d }: any) {
+  return <div>{d.n > 0 && <span/>}</div>;
+}"#;
+        match route_first_child(src) {
+            JsxNode::Cond { test, .. } => match test {
+                crate::ir::Expr::Compare { op, .. } => assert_eq!(op, crate::ir::CmpOp::Gt),
+                other => panic!("expected Compare{{Gt}}, got {other:?}"),
+            },
+            other => panic!("expected Cond, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn noninline_ternary_not_test() {
+        // {!d.empty ? <a/> : <b/>} → test: Not(..), alternate: Some(..)
+        let src = r#"export default function X({ d }: any) {
+  return <div>{!d.empty ? <a/> : <b/>}</div>;
+}"#;
+        match route_first_child(src) {
+            JsxNode::Cond {
+                test, alternate, ..
+            } => {
+                assert!(matches!(test, crate::ir::Expr::Not(_)), "got {test:?}");
+                assert!(alternate.is_some());
+            }
+            other => panic!("expected Cond, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn noninline_cond_logical_and_test() {
+        // {a.x && b.y && <i/>} → test: Logical{ And }
+        let src = r#"export default function X({ a, b }: any) {
+  return <div>{a.x && b.y && <i/>}</div>;
+}"#;
+        match route_first_child(src) {
+            JsxNode::Cond { test, .. } => match test {
+                // `a.x && b.y && <i/>` parses left-assoc as `(a.x && b.y) && <i/>`,
+                // so the test is the LHS `a.x && b.y`: a Logical{And} whose operands
+                // are member-paths (NOT recursively re-tested). Assert the operand
+                // shapes too, so a future swap of `lower_cond_operand`→`lower_cond_test`
+                // on the operands can't pass silently.
+                crate::ir::Expr::Logical { op, lhs, rhs } => {
+                    assert_eq!(op, crate::ir::LogOp::And);
+                    assert!(
+                        matches!(*lhs, crate::ir::Expr::MemberAccess { .. }),
+                        "lhs: {lhs:?}"
+                    );
+                    assert!(
+                        matches!(*rhs, crate::ir::Expr::MemberAccess { .. }),
+                        "rhs: {rhs:?}"
+                    );
+                }
+                other => panic!("expected Logical{{And}}, got {other:?}"),
+            },
+            other => panic!("expected Cond, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn noninline_cond_inside_map() {
+        // items.map(it => it.active && <li/>) → Map{ body: Cond{ test: MapMember } }
+        let src = r#"export default function X({ items }: any) {
+  return <ul>{items.map((it) => it.active && <li/>)}</ul>;
+}"#;
+        match route_first_child(src) {
+            JsxNode::Map { body, .. } => match *body {
+                JsxNode::Cond { test, .. } => assert!(
+                    matches!(test, crate::ir::Expr::MapMember { .. }),
+                    "expected MapMember, got {test:?}"
+                ),
+                other => panic!("expected Cond body, got {other:?}"),
+            },
+            other => panic!("expected Map, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn noninline_ternary_null_branch_empty() {
+        // {cond ? <A/> : null} → Cond with null branch lowered to Empty
+        let src = r#"export default function X({ cond }: any) {
+  return <div>{cond ? <a/> : null}</div>;
+}"#;
+        match route_first_child(src) {
+            JsxNode::Cond { alternate, .. } => {
+                let alt = alternate.expect("alternate present");
+                assert!(
+                    matches!(*alt, JsxNode::Empty),
+                    "expected Empty, got {alt:?}"
+                );
+            }
+            other => panic!("expected Cond, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn noninline_ternary_fragment_consequent() {
+        // {cond ? <>x</> : <b/>} → Cond with a Fragment consequent
+        let src = r#"export default function X({ cond }: any) {
+  return <div>{cond ? <>x</> : <b/>}</div>;
+}"#;
+        match route_first_child(src) {
+            JsxNode::Cond { consequent, .. } => assert!(
+                matches!(*consequent, JsxNode::Fragment { .. }),
+                "expected Fragment consequent, got {consequent:?}"
+            ),
+            other => panic!("expected Cond, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn noninline_cond_call_test_rejected() {
+        // {foo() && <a/>} → ComplexExpressionNotSupported
+        let src = r#"export default function X({ foo }: any) {
+  return <div>{foo() && <a/>}</div>;
+}"#;
+        let err = lower_route_root(src).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::ComplexExpressionNotSupported),
-            "expected ComplexExpressionNotSupported (gate check), got {:?}",
+            "got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn noninline_cond_arithmetic_operand_rejected() {
+        // {a + b > 0 && <a/>} → ComplexExpressionNotSupported (arithmetic operand)
+        let src = r#"export default function X({ a, b }: any) {
+  return <div>{a + b > 0 && <a/>}</div>;
+}"#;
+        let err = lower_route_root(src).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::ComplexExpressionNotSupported),
+            "got {:?}",
             err.kind
         );
     }
