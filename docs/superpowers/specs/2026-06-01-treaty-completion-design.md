@@ -132,28 +132,50 @@ for a non-bodyless method:
     return false
   }
   ```
-- if FormData → send as-is (no content-type header; fetch sets the boundary).
-- if a plain object containing File/Blob → build `FormData`, appending each
-  entry (Blob/File appended directly; everything else `String(v)` — except
-  nested objects which are JSON-stringified), and DO NOT set content-type.
+- if FormData → send as-is.
+- if a plain object containing a top-level File/Blob → build `FormData`,
+  appending each entry (Blob/File appended directly; everything else `String(v)`
+  — except nested plain objects which are JSON-stringified).
 - otherwise → JSON (today's path).
+- **For the FormData branch, actively `delete (init.headers as Record<string,
+  string>)['content-type']`** (resolved: spec review) — not merely skip setting
+  it. A caller-provided `options.headers['content-type']` would otherwise carry a
+  stale value and break the multipart boundary; `fetch` only auto-sets the
+  boundary when content-type is absent.
+- **Known limitation (loud):** detection is TOP-LEVEL only. A `File` nested
+  inside a sub-object (`{ doc: { file } }`) is NOT detected → goes through JSON
+  and the File serializes to `{}` (lost). Nested-File upload is a follow-up.
 
 `Blob`/`File`/`FormData` are web globals available in Bun and browsers.
 
 ### Phase C — prefix injection
 
 - New `runtime/render/inject-action-prefix.ts`, mirroring
-  `inject-dev-client.ts`: `injectActionPrefix(body: Uint8Array, snippet: string
-  | null): Uint8Array` splices `snippet` (a full `<script>…</script>`) before the
-  first `</head>` (byte-scan, reuse the same `</head>` finder as the dev/css
-  injectors — factor or copy the existing scanner; do NOT add a 3rd divergent
-  scanner if a shared one exists).
+  `inject-dev-client.ts` **exactly**: `injectActionPrefix(body: Uint8Array,
+  snippet: string | null): Uint8Array` splices `snippet` (a full
+  `<script>…</script>`) before the first `</head>` (byte-scan). **Resolved (spec
+  review): no shared `</head>` scanner exists today — `findHeadCloseTag` is
+  duplicated identically in `inject-css-link.ts` and `inject-dev-client.ts`. To
+  minimize blast radius, ADD A THIRD COPY in the new file, mirroring
+  `inject-dev-client.ts` including its warn-once flag + `_resetWarnedForTests`
+  export (the `inject-*.test.ts` convention resets it).**
 - New module-scope config in a small module (e.g.
   `runtime/render/action-prefix.ts` or fold into the inject file):
   `configureActionPrefixSnippet(s: string | null)` / `getActionPrefixSnippet()`.
-- `runtime/render/stream.ts` final assembly (~line 149-150): after
-  `injectCssLink` + `injectDevClient`, add
-  `body = injectActionPrefix(body, getActionPrefixSnippet())`.
+- `runtime/render/stream.ts` has TWO render paths (resolved: spec review) —
+  BOTH must inject:
+  1. **Buffering path** (~line 149-150, non-Suspense pages): after
+     `injectCssLink` + `injectDevClient`, add
+     `body = injectActionPrefix(body, getActionPrefixSnippet())`.
+  2. **Streaming/Suspense path** (~line 210, where `</head>` ships in a later
+     React chunk so splicing can't run, and the dev tag is instead *appended*
+     after the bootstrap as `devTag`): append the prefix snippet there too,
+     parallel to `devTag` (e.g. `const prefixTag = getActionPrefixSnippet() ??
+     ''` and include it in the same prepend). Missing this silently drops the
+     global on Suspense pages.
+  The Phase-C integration test MUST target a **non-Suspense (buffering-path)**
+  page for a deterministic assertion (the mode is chosen at stream.ts ~line
+  185-193, `allReadyFired` → buffering).
 - `runtime/index.ts run()` (BOTH main + worker startup, like the dev snippet):
   when `opts.actionPrefix` is set AND `!== '/_brust/action'`, call
   `configureActionPrefixSnippet('<script>globalThis.__BRUST_ACTION_PREFIX__=' +
@@ -247,12 +269,21 @@ If truncated, ship A first, then B, then C; D last. Report honestly what landed.
   `brust build` time (the dev/`run()` SSR path is the primary deliverable).
 - bench numbers are platform-indicative on macOS (see perf-bench memory).
 
-## Open questions (resolve at plan time / Phase 6)
-1. Does Rust drop the response body for HEAD on the wire, or ship it? (Phase A
-   test asserts actual behavior.)
-2. Is `actionPrefix` available at `brust build` time for the native-jinja bake?
-   (If not, defer that sub-step.)
-3. Does `new Response(bytes, {headers:{'content-type': multipartCT}}).formData()`
-   round-trip a brust-wire multipart body in Bun? (Verify empirically before
-   committing Phase B.)
+## Resolved (spec review + empirical probe)
+1. **Rust ships the HEAD response body — it does NOT strip it.**
+   `dispatch_single_chunk` (server.rs:469 / ~1517-1527) writes the handler's
+   full JSON body unconditionally with no HEAD branch. So a HEAD action returns
+   the body on the wire. The Phase-A HEAD test asserts status + a header and
+   documents that the body is currently shipped (RFC-correct stripping would be
+   a separate Rust change, out of scope — no `crates/` edits here).
+2. **Native-jinja prefix bake DEFERRED.** `actionPrefix` is a `brust.run()`
+   runtime option (index.ts only); it is NOT a build input (`build.ts` /
+   `native-routes-emit.ts` never see it). The React-SSR stream path (both
+   buffering + streaming) is the Phase-C deliverable; native-route custom-prefix
+   injection is a named follow-up.
+3. **Multipart decode CONFIRMED** in this Bun: `FormData → Response bytes → b64 →
+   Buffer.from → new Response(bytes,{ct}).formData() → Object.fromEntries` yields
+   string text fields + real `File` objects (bytes + name intact). The Rust wire
+   populates `body_b64` for multipart (routes.rs:192-193) and `body_text` for
+   json/urlencoded — both reach `dispatchAction` as assumed.
 </content>
