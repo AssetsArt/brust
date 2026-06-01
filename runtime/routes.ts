@@ -496,7 +496,9 @@ export function makeRenderer(
     byRouteId.set(i, r)
   })
   const byActionId = new Map<string, EndpointDef>()
-  opts.actions?.forEach((e, i) => byActionId.set(String(i), e))
+  opts.actions?.forEach((e, i) => {
+    byActionId.set(String(i), e)
+  })
 
   // napi shim for the chunk channel. The sabBytes arg is ignored by the
   // native fn (Rust reads from the pre-registered BufPtr) — the call sites

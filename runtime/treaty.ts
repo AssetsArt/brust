@@ -27,20 +27,26 @@ export function client<App = unknown>(opts?: ClientOptions): App {
   const prefix = resolvePrefix(opts)
   const doFetch = opts?.fetch ?? fetch
   function make(segments: string[]): any {
-    return new Proxy(function () {}, {
+    return new Proxy(() => {}, {
       get(_t, key: string) {
         if (METHODS.has(key)) {
           return async (arg1?: unknown, arg2?: unknown): Promise<TreatyResponse> => {
             const isBodyless = key === 'get' || key === 'head'
-            const options = (isBodyless ? arg1 : arg2) as { query?: Record<string, string>; headers?: Record<string, string> } | undefined
+            const options = (isBodyless ? arg1 : arg2) as
+              | { query?: Record<string, string>; headers?: Record<string, string> }
+              | undefined
             const body = isBodyless ? undefined : arg1
             let url = prefix + '/' + segments.join('/')
             if (options?.query) {
               const qs = new URLSearchParams(options.query as Record<string, string>).toString()
               if (qs) url += '?' + qs
             }
-            const baseHeaders = typeof opts?.headers === 'function' ? opts.headers() : (opts?.headers ?? {})
-            const init: RequestInit = { method: key.toUpperCase(), headers: { ...baseHeaders, ...(options?.headers ?? {}) } }
+            const baseHeaders =
+              typeof opts?.headers === 'function' ? opts.headers() : (opts?.headers ?? {})
+            const init: RequestInit = {
+              method: key.toUpperCase(),
+              headers: { ...baseHeaders, ...(options?.headers ?? {}) },
+            }
             if (!isBodyless && body !== undefined) {
               init.body = JSON.stringify(body)
               ;(init.headers as Record<string, string>)['content-type'] = 'application/json'
@@ -50,11 +56,32 @@ export function client<App = unknown>(opts?: ClientOptions): App {
               const text = await res.text()
               const parsed = text ? safeJson(text) : undefined
               const headers: Record<string, string> = {}
-              res.headers.forEach((v, k) => (headers[k] = v))
-              if (res.ok) return { data: parsed ?? null, error: null, status: res.status, headers, response: res }
-              return { data: null, error: { status: res.status, value: parsed ?? text }, status: res.status, headers, response: res }
+              res.headers.forEach((v, k) => {
+                headers[k] = v
+              })
+              if (res.ok)
+                return {
+                  data: parsed ?? null,
+                  error: null,
+                  status: res.status,
+                  headers,
+                  response: res,
+                }
+              return {
+                data: null,
+                error: { status: res.status, value: parsed ?? text },
+                status: res.status,
+                headers,
+                response: res,
+              }
             } catch (err) {
-              return { data: null, error: { status: 0, value: err }, status: 0, headers: {}, response: null }
+              return {
+                data: null,
+                error: { status: 0, value: err },
+                status: 0,
+                headers: {},
+                response: null,
+              }
             }
           }
         }
@@ -71,5 +98,9 @@ export function client<App = unknown>(opts?: ClientOptions): App {
 }
 
 function safeJson(s: string): unknown {
-  try { return JSON.parse(s) } catch { return s }
+  try {
+    return JSON.parse(s)
+  } catch {
+    return s
+  }
 }

@@ -654,7 +654,11 @@ export const brust = {
 
       const { makeRenderer: make } = await import('./routes.ts')
       let wid: number | null = null
-      const renderer = make(workerRoutes, view, { actions: endpoints, getWorkerId: () => wid, mcp: mcpServer })
+      const renderer = make(workerRoutes, view, {
+        actions: endpoints,
+        getWorkerId: () => wid,
+        mcp: mcpServer,
+      })
       wid = this.registerRenderer(view, renderer)
     }
   },

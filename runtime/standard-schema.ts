@@ -18,7 +18,8 @@ export type ValidateOk<T> = { ok: true; value: T }
 export type ValidateErr = { ok: false; issues: ReadonlyArray<StandardIssue> }
 
 export async function validate<S extends StandardSchemaV1 | undefined>(
-  schema: S, input: unknown,
+  schema: S,
+  input: unknown,
 ): Promise<ValidateOk<S extends StandardSchemaV1 ? InferOutput<S> : unknown> | ValidateErr> {
   if (schema === undefined) return { ok: true, value: input as never }
   let result = schema['~standard'].validate(input)
