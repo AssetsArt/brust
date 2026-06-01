@@ -11,3 +11,6 @@ brust.toml
 .brust/
 dist
 .antigravitycli
+
+# Unrelated local spike — kept on disk, never tracked (swept into #20 by accident)
+tools/jsx-rust-compiler/
