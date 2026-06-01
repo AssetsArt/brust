@@ -1,1 +1,1 @@
-<ul>{% for item in items %}<li><a href="{{ item.href }}">{{ item.label }}</a></li>{% endfor %}</ul>
+<ul>{% for item in items %}<li><a href="{{ (item.href) | e }}">{{ (item.label) | e }}</a></li>{% endfor %}</ul>

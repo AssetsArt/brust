@@ -971,7 +971,7 @@ mod tests {
 }"#;
         let c = compile_full(src, "<test>", HashMap::new()).unwrap();
         assert!(
-            c.template.contains("lang=\"{{ lang }}\""),
+            c.template.contains("lang=\"{{ (lang) | e }}\""),
             "expected interpolated lang, got: {}",
             c.template
         );
@@ -1007,7 +1007,7 @@ mod tests {
         let c = compile_full(src, "<test>", HashMap::new()).unwrap();
         assert_eq!(
             c.template,
-            "<div>{{ comp_0_html | safe }}<p>{{ greeting }}</p></div>"
+            "<div>{{ comp_0_html | safe }}<p>{{ (greeting) | e }}</p></div>"
         );
     }
 

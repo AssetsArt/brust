@@ -67,11 +67,12 @@ fn emit_node(node: &JsxNode, out: &mut String) {
         // user writing it, and the framework can append more head tags later.
         // `lang`/`html_class`/`body_class`/`title`/`description` are each a
         // `HeadValue` (validated in `lower_brust_page`): a compile-time string
-        // literal (attribute-/text-escaped here for safety) OR a member-path
-        // interpolated as `{{ path }}` and rendered verbatim (brust runs
-        // minijinja with `AutoEscape::None` — the loader-data-trusted contract,
-        // same as host-element `href="{{ item.href }}"`). The islands importmap +
-        // bootstrap are still appended after `</html>` by the TS reconcile step.
+        // literal (attribute-/text-escaped here at build) OR a member-path
+        // interpolated as `{{ (path) | e }}` — HTML-escaped at runtime via
+        // `emit_escaped_interp` (brust runs `AutoEscape::None`, so the `| e`
+        // filter is what keeps request/API-derived head values XSS-safe, same as
+        // every other dynamic output). The islands importmap + bootstrap are
+        // still appended after `</html>` by the TS reconcile step.
         JsxNode::Document {
             lang,
             html_class,
@@ -96,9 +97,7 @@ fn emit_node(node: &JsxNode, out: &mut String) {
                 out.push_str("<title>");
                 match t {
                     HeadValue::Literal(s) => push_html_escaped(out, s),
-                    HeadValue::Path(e) => {
-                        let _ = write!(out, "{{{{ {} }}}}", emit_expr_path(e));
-                    }
+                    HeadValue::Path(e) => emit_escaped_interp(out, e),
                 }
                 out.push_str("</title>");
             }
@@ -106,9 +105,7 @@ fn emit_node(node: &JsxNode, out: &mut String) {
                 out.push_str("<meta name=\"description\" content=\"");
                 match d {
                     HeadValue::Literal(s) => push_attr_escaped(out, s),
-                    HeadValue::Path(e) => {
-                        let _ = write!(out, "{{{{ {} }}}}", emit_expr_path(e));
-                    }
+                    HeadValue::Path(e) => emit_escaped_interp(out, e),
                 }
                 out.push_str("\"/>");
             }
@@ -182,19 +179,35 @@ fn emit_node(node: &JsxNode, out: &mut String) {
     }
 }
 
+/// Emit a runtime value interpolation in an HTML-output position (text node,
+/// attribute value, head slot) WITH the minijinja `| e` (HTML-escape) filter.
+///
+/// brust runs minijinja with `AutoEscape::None`, so escaping is NOT automatic;
+/// every dynamic value that lands in HTML output is escaped explicitly here. This
+/// is load-bearing for XSS safety because loader data can derive from request
+/// params / third-party APIs (e.g. a route `:name` param flowing into `<title>`).
+/// The whole expression is parenthesized before the filter so a `Concat`
+/// (`"a:" ~ x`) or `Filter` escapes its final string, not just the last operand.
+///
+/// This is for OUTPUT positions only. Control-flow positions (`{% for x in … %}`,
+/// `{% if … %}`) and pre-rendered HTML slots (`… | safe`) deliberately do NOT use
+/// this — see their call sites.
+fn emit_escaped_interp(out: &mut String, e: &Expr) {
+    let _ = write!(out, "{{{{ ({}) | e }}}}", emit_expr_path(e));
+}
+
 /// Emit an `Expr` IR node sitting in JSX child position.
 ///
-/// `Field`/`MemberAccess`/`MapBinding`/`MapMember`/`StaticNum` all render as
-/// `{{ ... }}`. `StaticText` is HTML-escaped at compile time and emitted
-/// verbatim (no `{{ ... }}` — it's a compile-time string, not a runtime value).
+/// Dynamic values (`Field`/`MemberAccess`/`MapBinding`/`MapMember`/`StaticNum`/…)
+/// render as `{{ (…) | e }}` (HTML-escaped at runtime). `StaticText` is
+/// HTML-escaped at compile time and emitted verbatim (no `{{ … }}` — it's a
+/// compile-time string, not a runtime value).
 fn emit_expr_node(e: &Expr, out: &mut String) {
     match e {
         Expr::StaticText(s) => {
             push_html_escaped(out, s);
         }
-        other => {
-            let _ = write!(out, "{{{{ {} }}}}", emit_expr_path(other));
-        }
+        other => emit_escaped_interp(out, other),
     }
 }
 
@@ -205,9 +218,7 @@ fn emit_head_attr(out: &mut String, name: &str, hv: &HeadValue) {
     let _ = write!(out, " {name}=\"");
     match hv {
         HeadValue::Literal(s) => push_attr_escaped(out, s),
-        HeadValue::Path(e) => {
-            let _ = write!(out, "{{{{ {} }}}}", emit_expr_path(e));
-        }
+        HeadValue::Path(e) => emit_escaped_interp(out, e),
     }
     out.push('"');
 }
@@ -352,7 +363,16 @@ fn emit_attr(a: &JsxAttr, out: &mut String) {
                 let _ = write!(out, " {}=\"{n}\"", a.name);
             }
             other => {
-                let _ = write!(out, " {}=\"{{{{ {} }}}}\"", a.name, emit_expr_path(other));
+                // Runtime value in attribute position → HTML-escaped via `| e`
+                // (AutoEscape::None; see emit_escaped_interp). This covers
+                // host-element attrs (`href={…}`) AND serialized `style={{…}}`
+                // objects (a `Concat`), whose dynamic pieces must be escaped to
+                // stay inside the quoted attribute.
+                out.push(' ');
+                out.push_str(&a.name);
+                out.push_str("=\"");
+                emit_escaped_interp(out, other);
+                out.push('"');
             }
         },
     }
@@ -432,7 +452,7 @@ mod tests {
             attrs: vec![],
             children: vec![JsxNode::Expr(Expr::Field("title".into()))],
         };
-        assert_eq!(emit(&component(ir)), "<h1>{{ title }}</h1>");
+        assert_eq!(emit(&component(ir)), "<h1>{{ (title) | e }}</h1>");
     }
 
     #[test]
@@ -448,7 +468,10 @@ mod tests {
             }],
             children: vec![],
         };
-        assert_eq!(emit(&component(ir)), "<a href=\"{{ item.href }}\"></a>");
+        assert_eq!(
+            emit(&component(ir)),
+            "<a href=\"{{ (item.href) | e }}\"></a>"
+        );
     }
 
     #[test]
@@ -542,7 +565,10 @@ mod tests {
                 path: vec!["address".into(), "city".into()],
             })],
         };
-        assert_eq!(emit(&component(ir)), "<span>{{ user.address.city }}</span>");
+        assert_eq!(
+            emit(&component(ir)),
+            "<span>{{ (user.address.city) | e }}</span>"
+        );
     }
 
     #[test]
@@ -580,7 +606,7 @@ mod tests {
         };
         assert_eq!(
             emit(&component(ir)),
-            "{% for x in xs %}<li>{{ x }}</li>{% endfor %}"
+            "{% for x in xs %}<li>{{ (x) | e }}</li>{% endfor %}"
         );
     }
 
@@ -591,7 +617,7 @@ mod tests {
             attrs: vec![],
             children: vec![JsxNode::Expr(Expr::StaticNum(42))],
         };
-        assert_eq!(emit(&component(ir)), "<p>{{ 42 }}</p>");
+        assert_eq!(emit(&component(ir)), "<p>{{ (42) | e }}</p>");
     }
 
     #[test]
@@ -728,7 +754,10 @@ mod tests {
                 args: vec![],
             })],
         };
-        assert_eq!(emit(&component(ir)), "<span>{{ name | upper }}</span>");
+        assert_eq!(
+            emit(&component(ir)),
+            "<span>{{ (name | upper) | e }}</span>"
+        );
     }
 
     #[test]
@@ -761,7 +790,7 @@ mod tests {
                 Expr::Field("name".into()),
             ]))],
         };
-        assert_eq!(emit(&component(ir)), "<p>{{ \"Hi \" ~ name }}</p>");
+        assert_eq!(emit(&component(ir)), "<p>{{ (\"Hi \" ~ name) | e }}</p>");
     }
 
     #[test]
@@ -777,7 +806,7 @@ mod tests {
         let ir = JsxNode::Fragment {
             children: vec![JsxNode::Expr(Expr::Field("t".into()))],
         };
-        assert_eq!(emit(&component(ir)), "{{ t }}");
+        assert_eq!(emit(&component(ir)), "{{ (t) | e }}");
     }
 
     #[test]
@@ -815,7 +844,7 @@ mod tests {
         let ir = document_with(None, Some(HeadValue::Path(Expr::Field("t".into()))));
         let out = emit(&component(ir));
         assert!(
-            out.contains("<title>{{ t }}</title>"),
+            out.contains("<title>{{ (t) | e }}</title>"),
             "unexpected output: {out}"
         );
     }
@@ -824,7 +853,10 @@ mod tests {
     fn document_lang_path_emits_interpolated_lang_attr() {
         let ir = document_with(Some(HeadValue::Path(Expr::Field("l".into()))), None);
         let out = emit(&component(ir));
-        assert!(out.contains("lang=\"{{ l }}\""), "unexpected output: {out}");
+        assert!(
+            out.contains("lang=\"{{ (l) | e }}\""),
+            "unexpected output: {out}"
+        );
     }
 
     #[test]
@@ -854,7 +886,7 @@ mod tests {
         };
         let out = emit(&component(ir));
         assert!(
-            out.contains("<meta name=\"description\" content=\"{{ d.desc }}\"/>"),
+            out.contains("<meta name=\"description\" content=\"{{ (d.desc) | e }}\"/>"),
             "unexpected output: {out}"
         );
     }
