@@ -248,7 +248,7 @@ export async function typeChartLoader(): Promise<TypeChartData> {
 
   // One row per attacking type: row head + 18 effectiveness cells.
   ALL_TYPES.forEach((atk, i) => {
-    const rel = relations[i]
+    const rel = relations[i]!
     cells.push({
       className: `dex-tc__rowhead dex-tc__rowhead--${atk}`,
       content: SHORT[atk] ?? atk.slice(0, 3).toUpperCase(),
