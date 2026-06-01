@@ -745,6 +745,27 @@ test('action: GET /search 200 on valid query', async () => {
   expect(await r.json()).toEqual({ limit: 5 })
 })
 
+test('action: urlencoded body coerces + validates', async () => {
+  const r = await fetch(`http://127.0.0.1:${sharedPort()}/_brust/action/upload`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: 'name=alice',
+  })
+  expect(r.status).toBe(200)
+  expect(await r.json()).toEqual({ name: 'alice' })
+})
+
+test('action: multipart body coerces + validates', async () => {
+  const fd = new FormData()
+  fd.append('name', 'bob')
+  const r = await fetch(`http://127.0.0.1:${sharedPort()}/_brust/action/upload`, {
+    method: 'POST',
+    body: fd,
+  })
+  expect(r.status).toBe(200)
+  expect(await r.json()).toEqual({ name: 'bob' })
+})
+
 test('action-calling island page renders marker + importmap + bootstrap', async () => {
   const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {

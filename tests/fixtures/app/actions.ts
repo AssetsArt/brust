@@ -43,5 +43,8 @@ export const actions = defineActions()
   .get('/search', ({ query }) => ({ limit: (query as { limit: number }).limit }), {
     query: z.object({ limit: z.coerce.number() }),
   })
+  .post('/upload', ({ body }) => ({ name: (body as { name: string }).name }), {
+    body: z.object({ name: z.string() }),
+  })
 
 export type Actions = typeof actions
