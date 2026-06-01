@@ -706,6 +706,45 @@ test('action endpoint: GET /whoami returns null user without cookie', async () =
   }
 }, 15_000)
 
+test('action: PUT /notes/{id} round-trips', async () => {
+  const r = await fetch(`http://127.0.0.1:${sharedPort()}/_brust/action/notes/abc`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ text: 'hello' }),
+  })
+  expect(r.status).toBe(200)
+  expect(await r.json()).toEqual({ id: 'abc', text: 'hello', updated: true })
+})
+
+test('action: PATCH /notes/{id} round-trips', async () => {
+  const r = await fetch(`http://127.0.0.1:${sharedPort()}/_brust/action/notes/xy`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ text: 'p' }),
+  })
+  expect(r.status).toBe(200)
+  expect(await r.json()).toEqual({ id: 'xy', patched: 'p' })
+})
+
+test('action: HEAD /notes/{id} returns 200 (body currently shipped, not stripped)', async () => {
+  const r = await fetch(`http://127.0.0.1:${sharedPort()}/_brust/action/notes/h`, {
+    method: 'HEAD',
+  })
+  expect(r.status).toBe(200)
+  // OQ#1: Rust does not strip the HEAD body. Assert reality; do not assert empty.
+})
+
+test('action: GET /search 422 on invalid query', async () => {
+  const r = await fetch(`http://127.0.0.1:${sharedPort()}/_brust/action/search?limit=abc`)
+  expect(r.status).toBe(422)
+})
+
+test('action: GET /search 200 on valid query', async () => {
+  const r = await fetch(`http://127.0.0.1:${sharedPort()}/_brust/action/search?limit=5`)
+  expect(r.status).toBe(200)
+  expect(await r.json()).toEqual({ limit: 5 })
+})
+
 test('action-calling island page renders marker + importmap + bootstrap', async () => {
   const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {

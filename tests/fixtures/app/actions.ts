@@ -25,5 +25,23 @@ export const actions = defineActions()
       code: 0,
       reason: '',
     })
+  .put(
+    '/notes/{id}',
+    ({ params, body }) => ({ id: params.id, text: (body as { text: string }).text, updated: true }),
+    {
+      body: z.object({ text: z.string() }),
+    },
+  )
+  .patch(
+    '/notes/{id}',
+    ({ params, body }) => ({ id: params.id, patched: (body as { text?: string }).text ?? null }),
+    {
+      body: z.object({ text: z.string().optional() }),
+    },
+  )
+  .head('/notes/{id}', ({ params }) => ({ id: params.id }))
+  .get('/search', ({ query }) => ({ limit: (query as { limit: number }).limit }), {
+    query: z.object({ limit: z.coerce.number() }),
+  })
 
 export type Actions = typeof actions
