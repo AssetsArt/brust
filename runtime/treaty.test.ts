@@ -48,3 +48,43 @@ test('network failure resolves as error status 0', async () => {
   const { error } = await api.notes.get()
   expect(error?.status).toBe(0)
 })
+test('body with a Blob sends FormData, no json content-type', async () => {
+  let captured: any
+  const api = client<any>({
+    prefix: '/api',
+    fetch: (async (_u: string, init: any) => {
+      captured = init
+      return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } })
+    }) as any,
+  })
+  await api.upload.post({ name: 'x', file: new Blob(['hi'], { type: 'text/plain' }) })
+  expect(captured.body instanceof FormData).toBe(true)
+  expect((captured.headers as Record<string, string>)['content-type']).toBeUndefined()
+})
+test('FormData passed directly is sent as-is', async () => {
+  let captured: any
+  const api = client<any>({
+    prefix: '/api',
+    fetch: (async (_u: string, init: any) => {
+      captured = init
+      return new Response('{}', { status: 200 })
+    }) as any,
+  })
+  const fd = new FormData()
+  fd.append('a', '1')
+  await api.upload.post(fd)
+  expect(captured.body).toBe(fd)
+})
+test('plain object still sends JSON (regression)', async () => {
+  let captured: any
+  const api = client<any>({
+    prefix: '/api',
+    fetch: (async (_u: string, init: any) => {
+      captured = init
+      return new Response('{}', { status: 200 })
+    }) as any,
+  })
+  await api.notes.post({ text: 'hi' })
+  expect(captured.body).toBe(JSON.stringify({ text: 'hi' }))
+  expect((captured.headers as Record<string, string>)['content-type']).toBe('application/json')
+})

@@ -48,8 +48,15 @@ export function client<App = unknown>(opts?: ClientOptions): App {
               headers: { ...baseHeaders, ...(options?.headers ?? {}) },
             }
             if (!isBodyless && body !== undefined) {
-              init.body = JSON.stringify(body)
-              ;(init.headers as Record<string, string>)['content-type'] = 'application/json'
+              if (hasFilePart(body)) {
+                init.body = toFormData(body)
+                // Let fetch set the multipart boundary; a stale content-type
+                // (e.g. from caller headers) would break it.
+                delete (init.headers as Record<string, string>)['content-type']
+              } else {
+                init.body = JSON.stringify(body)
+                ;(init.headers as Record<string, string>)['content-type'] = 'application/json'
+              }
             }
             try {
               const res = await doFetch(url, init)
@@ -95,6 +102,24 @@ export function client<App = unknown>(opts?: ClientOptions): App {
     })
   }
   return make([]) as App
+}
+
+function hasFilePart(b: unknown): boolean {
+  if (b instanceof FormData || b instanceof Blob) return true
+  if (b && typeof b === 'object')
+    return Object.values(b as Record<string, unknown>).some((v) => v instanceof Blob)
+  return false
+}
+
+function toFormData(b: unknown): FormData {
+  if (b instanceof FormData) return b
+  const fd = new FormData()
+  for (const [k, v] of Object.entries(b as Record<string, unknown>)) {
+    if (v instanceof Blob) fd.append(k, v)
+    else if (v !== null && typeof v === 'object') fd.append(k, JSON.stringify(v))
+    else fd.append(k, String(v))
+  }
+  return fd
 }
 
 function safeJson(s: string): unknown {
