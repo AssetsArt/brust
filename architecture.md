@@ -9,9 +9,9 @@ crosses back to Rust through a per-worker `SharedArrayBuffer`, never through a V
 marshal.
 
 It is also **agent-first**: a Brust app ships a Model Context Protocol server at
-`POST /_brust/mcp` that exposes its server functions as MCP tools and route
-loaders as resources, extracted from the app's own types at boot — agents drive
-the app through typed contracts, not DOM scraping.
+`POST /_brust/mcp` that exposes its route loaders as resources, extracted from
+the app's own types at boot — agents drive the app through typed contracts, not
+DOM scraping. (Action-derived tools are a deferred follow-up; see the MCP section.)
 
 Current line: **0.1.x-alpha** (npm `brustjs` + 6 platform packages + `create-brustjs`).
 
@@ -45,8 +45,8 @@ routes without ever waking a worker.
 ```
 Bun process (one OS process)
 
-  Main thread (TS host) — runtime/index.ts → brust.run({ routes, entry })
-    ├─ scan actions / build islands / compile native routes (build or boot)
+  Main thread (TS host) — runtime/index.ts → brust.run({ routes, entry, actions })
+    ├─ register actions / build islands / compile native routes (build or boot)
     ├─ napi.beginServe({ port, workers })        → spawn the Rust accept thread
     ├─ for i in 0..N: new Worker(entry, BRUST_WORKER_ID=i)
     └─ await napi.untilReady(timeout)            # every worker registered, or exit(1)
@@ -346,35 +346,77 @@ import Counter from './Counter'
 
 ---
 
-## Server functions & forms
+## Server actions (treaty client)
 
-Server-only async functions callable from a client island as if local — same
-types both sides, no separate API schema.
+Typed HTTP endpoints declared with a chained `defineActions(...)` builder and
+called from an island via an end-to-end-typed `client<Actions>()` proxy — same
+types both sides, no separate API schema, no codegen.
 
 ```tsx
-// actions/posts.ts
-"use server"
-export async function createComment(postId: string, body: string) { … }
+// actions.ts — an EXPLICIT module the app imports
+import { defineActions } from 'brustjs'
+import { z } from 'zod'
+
+export const actions = defineActions()
+  .post('/notes', ({ body }) => ({ id: 'n-' + body.text.length }), {
+    body: z.object({ text: z.string().max(1000) }),
+  })
+  .get('/whoami', ({ req }) => ({ user: req.cookies['user'] ?? null }))
+  .delete('/notes/{id}', ({ params }) => ({ ok: true, id: params.id }), {
+    middleware: [requireUser],
+  })
+export type Actions = typeof actions
+
+// index.ts — wire actions into the server
+await brust.run({ routes, entry: import.meta.url, actions })
 
 // in an island:
-import { action } from 'brustjs/client'
-await action<typeof createComment>('createComment')(postId, body)
+import { client } from 'brustjs/client'
+const api = client<Actions>()
+const { data, error } = await api.notes.post({ text })   // POST /_brust/action/notes
+const { data } = await api.whoami.get()                  // GET  /_brust/action/whoami
+await api.notes({ id }).delete()                         // DELETE /_brust/action/notes/{id}
 ```
 
-- **Discovery:** `"use server"` file-level directive; `brust.scanActions()`
-  imports those files at boot and registers every named export. `withMiddleware([…],
-  fn)` attaches per-action middleware.
-- **Transport:** `POST /_brust/action/<id>` over the same accept loop + worker
-  pool as renders (a `kind: 'render' | 'action'` envelope discriminant). JSON
-  args/return; errors → `{ error: { message, name } }`. Server-only code (DB,
-  secrets) stays out of the client bundle.
-- **Forms / multipart:** the same endpoint accepts `multipart/form-data` and
-  `x-www-form-urlencoded`; handlers declare `(req, fd: FormData) => R`, called
-  via `formAction<F>(id)`. The envelope carries `content_type` + `body_text` /
-  `body_b64` (multipart base64-encoded), 256 KB body cap.
+- **Declaration:** `defineActions().get/post/put/patch/delete(path, ctx => R, opts?)`.
+  The handler receives a context object `{ req, body, params, query, headers, respond }`.
+  `opts.body` / `opts.query` are [Standard Schema](https://standardschema.dev)
+  validators (e.g. zod); `opts.middleware` attaches a per-endpoint chain, and
+  `.use(mw)` adds a builder-global one. Path params use `{id}` syntax. Actions are
+  an explicit module passed to `brust.run({ actions })` — there is no filesystem
+  scan and no build-time codegen.
+- **Transport:** `METHOD <prefix>/<path>` over the same accept loop + worker pool
+  as renders. Default prefix `/_brust/action`, configurable via the `actionPrefix`
+  option to `brust.run` / `brust.serve`. JSON object body in, JSON return out;
+  256 KB body cap. The Rust action router matches method + path: unknown path →
+  404, known path + wrong method → 405. Body schema failure → 422, malformed JSON
+  → 400.
+- **Client:** `client<Actions>(opts?)` builds a treaty proxy. Static segments
+  accumulate (`api.notes` → `/notes`); a function call fills `{param}`s positionally
+  (`api.notes({ id })` → `/notes/<id>`); a terminal `.get/.post/...` performs the
+  request. It returns `{ data, error, status, headers, response }` and **never
+  throws on an HTTP status** — branch on `error`. `opts.prefix` overrides the base
+  (absolute URL needed for server-side `fetch`); `opts.headers` / per-call
+  `{ headers }` thread request headers; `opts.fetch` injects a fetch impl.
 
-Not built: build-time client RPC auto-rewrite (today islands call `action(id)`),
-a shared client chunk, route-middleware inheritance, streaming uploads.
+Not built: build-time client RPC auto-rewrite, a shared client chunk,
+route-middleware inheritance, streaming uploads.
+
+### Known limitations / deferred
+
+- **MCP-derived-from-actions is currently inert.** The MCP `tools/call` path was
+  coupled to the old positional-args `ActionDef` produced by the `'use server'`
+  scanner. With `defineActions` the manifest extractor no longer feeds actions
+  into MCP, so `tools/list` returns no action tools (loader-derived resources are
+  unaffected). Reworking MCP tools over the new `EndpointDef` is a follow-up.
+- **Multipart / file upload through the treaty client is deferred.** The dispatch
+  path is JSON-only; the previous `multipart/form-data` + `x-www-form-urlencoded`
+  body handling (and the `formAction`/`FormData` client) were removed with the
+  `'use server'` machinery.
+- **The `__BRUST_ACTION_PREFIX__` browser auto-discovery is deferred.** The client
+  reads that global as a prefix fallback, but the server does not yet inject it
+  into the page; pass `prefix` explicitly when the default `/_brust/action` is
+  wrong (always required for server-side callers).
 
 ---
 
@@ -609,15 +651,20 @@ loader: async ({ params, req }) => ({ product, cacheKey: `p_${params.id}` })
 Brust mounts a Model Context Protocol (2025-06-18) server at `POST /_brust/mcp`
 (JSON-RPC 2.0). The framework already knows what an agent needs:
 
-- server functions (`"use server"`) → MCP **tools**
+- server actions → MCP **tools** *(deferred — see below)*
 - route loaders → MCP **resources** at `brust:///<path-template>`
 
 A boot-time extractor (`runtime/mcp/extractor.ts`) walks the types via the
 TypeScript compiler API and caches `.brust/mcp-manifest.json` — no hand-written
-schema. `tools/call` flows through the action's existing middleware chain, so the
-same auth that protects users protects agents (rejections surface as
-`isError: true`). Capabilities: tools, resources, prompts (empty), logging.
-Transport is POST-only (SSE notifications deferred).
+schema. Capabilities: tools, resources, prompts (empty), logging. Transport is
+POST-only (SSE notifications deferred).
+
+**Action-derived tools are currently inert.** The extractor was coupled to the
+old positional-args `ActionDef` from the `'use server'` scanner; with
+`defineActions`/`EndpointDef` it no longer emits action tools, so `tools/list`
+exposes only loader-derived resources. Reworking `tools/call` over `EndpointDef`
+(routing the call through the endpoint's middleware chain so the same auth that
+protects users protects agents) is a follow-up.
 
 ---
 
@@ -625,9 +672,10 @@ Transport is POST-only (SSE notifications deferred).
 
 - **`brust build`** → a self-contained `./dist/`: `index.js` (`Bun.build`),
   prebuilt `islands/*`, `mcp-manifest.json`, native templates, and the platform
-  `.node`. Two Bun.build plugins swap the napi platform shim and the
-  filesystem-walking action scanner for prebuilt-aware variants; a banner sets
-  `BRUST_PREBUILT=1` so `brust.run()` skips per-boot build steps. Identifier
+  `.node`. A Bun.build plugin swaps the napi platform shim for a prebuilt-aware
+  variant; a banner sets `BRUST_PREBUILT=1` so `brust.run()` skips per-boot build
+  steps. Actions need no build-time codegen — the bundled entry registers them via
+  `import { actions } from './actions'` → `brust.run({ actions })`. Identifier
   minification is off (`Component.name` is the island chunk key). One platform per
   build; multi-platform is a CI matrix concern.
 - **`brust dev` (partial)** — TS/TSX/HTML/CSS watcher (no Rust) + a synthetic
@@ -725,7 +773,7 @@ native route back toward the jinja ceiling.
 tsfn + per-worker SAB render path · HTML streaming (Suspense auto-detect) ·
 declarative routing + nested routes + loaders + errorBoundary · per-route
 middleware · per-route LRU cache + stats + invalidation · component-addressed
-islands (4 triggers) · server functions + forms/multipart · MCP server · SSE +
+islands (4 triggers) · server actions (defineActions + treaty client) · MCP server · SSE +
 WebSockets (literal paths) · SPA navigation · native routes (JSX→minijinja) +
 **SSR components** + **conditional rendering** + **native inline** + **ISR cache
 (islands & SSR components)** · Tailwind v4 + component CSS (partial) · `brust
