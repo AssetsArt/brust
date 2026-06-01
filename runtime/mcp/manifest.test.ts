@@ -12,8 +12,9 @@ test('manifest: write and read round-trip', async () => {
       tools: [
         {
           name: 'foo',
+          method: 'GET',
+          path: '/foo',
           inputSchema: { type: 'object', properties: {}, required: [] },
-          paramOrder: [],
         },
       ],
       resources: [],

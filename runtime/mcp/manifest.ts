@@ -5,9 +5,10 @@ import type { JsonSchema } from './schema.ts'
 export interface ToolSchema {
   name: string
   description?: string
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD'
+  path: string
   inputSchema: JsonSchema
   outputSchema?: JsonSchema
-  paramOrder: string[]
 }
 
 export interface ResourceSchema {
