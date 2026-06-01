@@ -64,6 +64,8 @@ impl fmt::Display for InsertError {
     }
 }
 
+impl std::error::Error for InsertError {}
+
 #[derive(Default)]
 pub struct ActionRouter {
     inner: matchit::Router<usize>,
