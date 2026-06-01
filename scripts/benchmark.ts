@@ -105,15 +105,16 @@ const PROBES: Probe[] = [
     path: '/native-islands-isr',
     scenarios: ['brust'],
   },
-  // Server-function dispatch — brust-only. REQUIRES `bench/apps/brust/actions.ts`
-  // to actually register createNote. Without it, the path hits Rust's
-  // `error_404` short-circuit at server.rs:272 (unknown action id) instead
+  // Server-action dispatch — brust-only. REQUIRES `bench/apps/brust/actions.ts`
+  // to register the `/notes` endpoint. Without it, the path hits Rust's
+  // `error_404` short-circuit at server.rs:272 (unknown endpoint) instead
   // of going through dispatch — measuring the wrong path and reporting
   // ~110k inflated RPS (see commit history for the 2026-05-29 honest-numbers fix).
+  // New treaty wire: METHOD <prefix>/<path> with a JSON object body.
   {
-    path: '/_brust/action/createNote',
+    path: '/_brust/action/notes',
     method: 'POST',
-    body: '["hi"]',
+    body: '{"text":"hi"}',
     contentType: 'application/json',
     scenarios: ['brust'],
   },

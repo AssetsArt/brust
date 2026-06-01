@@ -1,5 +1,6 @@
 import { brust } from '../../../runtime/index.ts'
 import { routes } from './routes'
+import { actions } from './actions'
 
 // Dedicated brust benchmark app — decoupled from example/hello-world so bench
 // numbers don't drift when the demo changes. Serves ONLY the routes the bench
@@ -16,5 +17,6 @@ const connWorkers = process.env.BRUST_CONN_WORKERS
 await brust.run({
   routes,
   entry: import.meta.url,
+  actions,
   ...(connWorkers ? { serve: { tuning: { connWorkers } } } : {}),
 })

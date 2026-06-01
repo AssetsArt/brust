@@ -1,16 +1,14 @@
-'use server'
-import type { BrustRequest } from '../../runtime/index.ts'
+import { defineActions } from '../../runtime/index.ts'
+import { z } from 'zod'
 
 /** Demo action used by the benchmark suite — exercises the full action
  * dispatch path (TCP → match_path → action envelope → tsfn → JS handler →
- * chunk channel → write). NOT measured by tests/fixtures/app to keep the
- * scenario list minimal; this lives in example/hello-world so `bun run bench`
- * has a real registered action against example app instead of hitting the
- * 404 short-circuit that gave the misleading 111k RPS in earlier benches.
+ * chunk channel → write). Wired into brust.run({ actions }) in index.ts.
  *
- * Body shape (per oha bench): JSON array `["hi"]` — server-function positional args.
- */
-export async function createNote(_req: BrustRequest, text: string): Promise<{ id: string }> {
-  if (typeof text !== 'string') throw new Error('text must be a string')
-  return { id: 'n-' + Date.now() }
-}
+ * Wire: `POST /_brust/action/notes` with a JSON object body `{"text":"hi"}`.
+ * Reach it from the client via `client<Actions>().notes.post({ text })`. */
+export const actions = defineActions().post('/notes', () => ({ id: 'n-' + Date.now() }), {
+  body: z.object({ text: z.string() }),
+})
+
+export type Actions = typeof actions
