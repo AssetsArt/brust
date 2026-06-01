@@ -3,6 +3,7 @@ import type { ActionDef } from './actions.ts'
 import { isValidActionId } from './actions.ts'
 import { loadConfig } from './config.ts'
 import { configureCssEnabled, configureCssHrefsForRoute } from './css.ts'
+import { configureJinjaDir } from './islands/native-render.ts'
 
 export interface ServeOptions {
   /** Host/address to bind on. A hostname (e.g. `localhost`, resolved Rust-side)
@@ -419,10 +420,20 @@ export const brust = {
         }
       }
 
-      // Sub-project J — load .brust/jinja/*.jinja into the minijinja env so
-      // the startup-validation warning in registerRoutes can compare against
-      // a populated registry. Loads once at startup; dev hot reload reloads it.
-      loadJinjaOnce(path.resolve(process.cwd(), '.brust/jinja'))
+      // Sub-project J — load the compiled `*.jinja` templates into the minijinja
+      // env so the startup-validation warning in registerRoutes can compare
+      // against a populated registry. Loads once at startup; dev hot reload
+      // reloads it. The templates ship INSIDE the build output, so a pre-built
+      // run reads them (and their islands/components sidecars) from
+      // `<distDir>/jinja`; dev compiles them to `cwd/.brust/jinja`.
+      const jinjaDir = prebuilt
+        ? path.join(distDir!, 'jinja')
+        : path.resolve(process.cwd(), '.brust/jinja')
+      configureJinjaDir(jinjaDir)
+      loadJinjaOnce(jinjaDir)
+      if (prebuilt && existsSync(jinjaDir)) {
+        console.log(`[brust] main: using pre-built jinja at ${jinjaDir}`)
+      }
 
       this.registerRoutes(routes)
       const ssePaths = routes

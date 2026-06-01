@@ -20,6 +20,23 @@ import path from 'node:path'
 import { renderToString } from 'react-dom/server.node'
 import { createElement } from 'react'
 
+// Sub-project J — the directory holding the compiled `<Name>.jinja` templates
+// and their `.islands.json` / `.components.json` sidecars. Configured ONCE at
+// boot (`configureJinjaDir`) so it tracks the same location `loadJinjaOnce`
+// loads from: `<BRUST_DIST_DIR>/jinja` for a pre-built run, `cwd/.brust/jinja`
+// in dev. Falls back to the dev location when unset (tests pass an explicit dir).
+let _configuredJinjaDir: string | null = null
+
+/** Set the directory the sidecar-manifest readers resolve against. Called once
+ * at boot from `index.ts`, mirroring `configureIslandsDir`/`configureCssDir`. */
+export function configureJinjaDir(dir: string): void {
+  _configuredJinjaDir = dir
+}
+
+function defaultJinjaDir(): string {
+  return _configuredJinjaDir ?? path.resolve(process.cwd(), '.brust/jinja')
+}
+
 /** One entry of a `<template>.islands.json` manifest (enriched by T6). */
 export interface NativeIslandEntry {
   component: string
@@ -90,14 +107,14 @@ export function entityEncode(s: string): string {
 const manifestCache = new Map<string, NativeIslandEntry[] | null>()
 
 /** Read `<jinjaDir>/<templateName>.islands.json` and return the parsed entry
- * array, or `null` if the file doesn't exist. `jinjaDir` defaults to
- * `process.cwd()/.brust/jinja`; tests pass a temp dir. Both hits and misses
- * are cached by absolute path. */
+ * array, or `null` if the file doesn't exist. `jinjaDir` defaults to the
+ * boot-configured jinja dir (`configureJinjaDir`), or `cwd/.brust/jinja` when
+ * unset; tests pass a temp dir. Both hits and misses are cached by absolute path. */
 export function loadIslandManifest(
   templateName: string,
   jinjaDir?: string,
 ): NativeIslandEntry[] | null {
-  const dir = jinjaDir ?? path.resolve(process.cwd(), '.brust/jinja')
+  const dir = jinjaDir ?? defaultJinjaDir()
   const abs = path.resolve(dir, `${templateName}.islands.json`)
   if (manifestCache.has(abs)) return manifestCache.get(abs)!
   let parsed: NativeIslandEntry[] | null
@@ -251,7 +268,7 @@ export function loadComponentManifest(
   templateName: string,
   jinjaDir?: string,
 ): NativeComponentEntry[] | null {
-  const dir = jinjaDir ?? path.resolve(process.cwd(), '.brust/jinja')
+  const dir = jinjaDir ?? defaultJinjaDir()
   const abs = path.resolve(dir, `${templateName}.components.json`)
   if (componentManifestCache.has(abs)) return componentManifestCache.get(abs)!
   let parsed: NativeComponentEntry[] | null
@@ -282,7 +299,7 @@ export async function resolveComponentContext(
   const out: Record<string, string> = {}
   if (!manifest.length) return out
 
-  const dir = jinjaDir ?? path.resolve(process.cwd(), '.brust/jinja')
+  const dir = jinjaDir ?? defaultJinjaDir()
   const factoryPath = path.resolve(dir, `${templateName}.factory.ts`)
 
   let factoryMod = factoryCache.get(factoryPath)

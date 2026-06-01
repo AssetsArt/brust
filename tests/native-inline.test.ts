@@ -29,7 +29,9 @@ import { spawnSync } from 'bun'
 
 const REPO_ROOT = resolve(import.meta.dir, '..')
 const FIXTURE_DIR = resolve(REPO_ROOT, 'tests/fixtures/app')
-const JINJA_DIR = resolve(FIXTURE_DIR, '.brust/jinja')
+// `brust build` emits jinja templates INTO the build output dir (dist/jinja),
+// alongside islands/css/mcp, so a dist-only deploy ships them.
+const JINJA_DIR = resolve(FIXTURE_DIR, 'dist/jinja')
 
 let capturedStderr = ''
 

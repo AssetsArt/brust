@@ -177,12 +177,13 @@ export async function runBuild(args: string[]): Promise<void> {
   // native: true route. Pipeline runs even if no native routes exist (writes
   // an empty manifest) so consumers can rely on the output dir's presence.
   {
-    // outDir must align with the runtime's loadJinjaOnce which reads from
-    // `process.cwd() + '.brust/jinja'`. Existing CSS pipeline uses cwd too
-    // (see boot log: "built CSS → <cwd>/.brust/css/app.css"). entryDir
-    // diverges when user runs `bun run dev <entry>` from a different dir;
-    // cwd is the single source of truth for both pipelines.
-    const jinjaDir = path.join(process.cwd(), '.brust/jinja')
+    // Emit jinja templates INTO the build output dir (`<outDir>/jinja`), next to
+    // the other pre-built artifacts (islands, css, mcp-manifest), so a dist-only
+    // deploy ships the templates. The prebuilt runtime reads them from
+    // `<BRUST_DIST_DIR>/jinja` (see index.ts loadJinjaOnce / configureJinjaDir).
+    // Dev mode (`bun run dev`) is the divergent case: it emits to
+    // `cwd/.brust/jinja` and the non-prebuilt runtime reads from there.
+    const jinjaDir = path.join(outDir, 'jinja')
     // Spec §7 Component-source resolution: scan the routes module's source for
     // ImportDeclarations, NOT the app entry's. The app entry only imports the
     // routes module + brust; the page components are imported by routes.tsx.

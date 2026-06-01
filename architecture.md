@@ -473,10 +473,14 @@ lib.rs      compile_full; ComponentMeta / IslandMeta collection
 Invoked two ways: the **`jsx-rustc` binary** (build CLI, no inline) and the
 **NAPI `compileJsx(source, path, componentSources?)`** (the `brust build`
 native-route path — threads component sources for inline, returns
-`warnings: string[]`). The build emits `.brust/jinja/<Name>.jinja` (+
+`warnings: string[]`). The build emits `<outDir>/jinja/<Name>.jinja` (+
 `.islands.json` / `.components.json` / `.factory.ts` as needed) and a
-`_manifest.json`; boot loads them into `crate::jinja::ENV: OnceLock<Environment>`
-and warns on `routes.tsx` ↔ template mismatches.
+`_manifest.json` — INTO the build output (`dist/jinja`), alongside
+islands/css/mcp, so a dist-only deploy ships them; `bun run dev` instead emits
+to `cwd/.brust/jinja`. Boot loads them into
+`crate::jinja::ENV: OnceLock<Environment>` (from `<distDir>/jinja` for a
+pre-built run, `cwd/.brust/jinja` in dev) and warns on `routes.tsx` ↔ template
+mismatches.
 
 **Per request:** the matched envelope carries `nativeTemplate`; the worker runs
 middleware + loader, `JSON.stringify`s the data into the SAB, and calls
