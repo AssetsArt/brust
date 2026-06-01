@@ -1,19 +1,11 @@
-import type { FlatRoute, BrustRequest, Middleware } from '../routes.ts'
+import { dispatchAction } from '../routes.ts'
+import type { FlatRoute, BrustRequest } from '../routes.ts'
+import type { EndpointDef } from '../define-actions.ts'
 import type { McpManifest } from './manifest.ts'
-
-/** Legacy `'use server'` action shape. The `defineActions` migration (M1)
- * reworks MCP tools/call to dispatch over EndpointDef; until then the MCP
- * server still speaks the positional-args ActionDef contract, but receives
- * an empty `actions` array (the `'use server'` scanner is gone). */
-export interface LegacyActionDef {
-  id: string
-  fn: (req: BrustRequest, ...args: unknown[]) => Promise<unknown> | unknown
-  middleware?: Middleware[]
-}
 
 export interface McpServerOptions {
   manifest: McpManifest
-  actions: LegacyActionDef[]
+  endpoints: EndpointDef[]
   routes: FlatRoute[]
   packageVersion?: string
 }
@@ -42,6 +34,8 @@ export interface McpServer {
 }
 
 export function makeMcpServer(opts: McpServerOptions): McpServer {
+  const byId = new Map<string, EndpointDef>()
+  for (const e of opts.endpoints) byId.set(`${e.method} ${e.path}`, e)
   return {
     async handleRequest(jsonRpcBody, req): Promise<string> {
       let rpc: JsonRpcRequest
@@ -61,7 +55,7 @@ export function makeMcpServer(opts: McpServerOptions): McpServer {
         case 'tools/list':
           return handleToolsList(rpc, opts)
         case 'tools/call':
-          return handleToolsCall(rpc, opts, req)
+          return handleToolsCall(rpc, opts, req, byId)
         case 'resources/list':
           return handleResourcesList(rpc, opts)
         case 'resources/read':
@@ -114,6 +108,7 @@ async function handleToolsCall(
   rpc: JsonRpcRequest,
   opts: McpServerOptions,
   req: BrustRequest,
+  byId: Map<string, EndpointDef>,
 ): Promise<string> {
   const params = rpc.params as { name?: string; arguments?: Record<string, unknown> } | undefined
   if (!params || typeof params.name !== 'string') {
@@ -123,43 +118,30 @@ async function handleToolsCall(
   if (!tool) {
     return makeError(rpc.id ?? null, -32601, `unknown tool: ${params.name}`)
   }
-  const action = opts.actions.find((a) => a.id === params.name)
-  if (!action) {
-    return makeError(rpc.id ?? null, -32603, `action not registered: ${params.name}`)
+  const def = byId.get(`${tool.method} ${tool.path}`)
+  if (!def) {
+    return makeError(rpc.id ?? null, -32603, `endpoint not registered: ${tool.name}`)
   }
-  // Map { argsObject } → positional args via paramOrder.
-  const args = (tool.paramOrder ?? []).map((k) => params.arguments?.[k])
 
-  // Run through middleware chain (same shape as actionBranch).
-  const { composeChain } = await import('../routes.ts')
-  const terminal = async () => {
-    try {
-      const result = await action.fn(req, ...args)
-      return {
-        status: 200,
-        body: result === undefined ? '' : JSON.stringify(result),
-        contentType: 'application/json; charset=utf-8',
-      }
-    } catch (err) {
-      const e = err instanceof Error ? err : new Error(String(err))
-      return {
-        status: 500,
-        body: JSON.stringify({ error: { message: e.message, name: e.name } }),
-        contentType: 'application/json; charset=utf-8',
-      }
-    }
+  const args = (params.arguments ?? {}) as {
+    params?: Record<string, string>
+    query?: Record<string, string>
+    body?: unknown
   }
-  const chain = composeChain(req, action.middleware, terminal)
-  const response = await chain()
-  if (response.status >= 400) {
-    return makeResult(rpc.id ?? null, {
-      content: [{ type: 'text', text: response.body }],
-      isError: true,
-    })
-  }
+  const resp = await dispatchAction(
+    {
+      kind: 'action',
+      action_id: `${tool.method} ${tool.path}`,
+      content_type: 'application/json',
+      params: args.params ?? {},
+      body_text: args.body === undefined ? '' : JSON.stringify(args.body),
+      req: { ...req, search: args.query ?? {} } as BrustRequest,
+    } as never,
+    byId,
+  )
   return makeResult(rpc.id ?? null, {
-    content: [{ type: 'text', text: response.body || '' }],
-    isError: false,
+    content: [{ type: 'text', text: resp.body || '' }],
+    isError: resp.status >= 400,
   })
 }
 

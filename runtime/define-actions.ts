@@ -44,6 +44,8 @@ export interface EndpointOptions {
   body?: StandardSchemaV1
   query?: StandardSchemaV1
   middleware?: Middleware[]
+  /** Build-time MCP tool description (read by the manifest extractor). */
+  description?: string
 }
 export interface EndpointDef {
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD'
