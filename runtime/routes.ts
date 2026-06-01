@@ -1096,6 +1096,50 @@ interface BranchResponse {
   headers?: Record<string, string>
 }
 
+async function decodeActionBody(
+  call: Extract<RouteCall, { kind: 'action' }>,
+): Promise<{ ok: true; value: unknown } | { ok: false; status: number; body: string }> {
+  const ct = (call.content_type ?? '').toLowerCase()
+  // urlencoded → flat object of strings
+  if (ct.startsWith('application/x-www-form-urlencoded')) {
+    return { ok: true, value: Object.fromEntries(new URLSearchParams(call.body_text ?? '')) }
+  }
+  // multipart → object of strings + File entries (via Bun's Response.formData)
+  if (ct.startsWith('multipart/form-data')) {
+    try {
+      const bytes = Buffer.from(call.body_b64 ?? '', 'base64')
+      const fd = await new Response(bytes, {
+        headers: { 'content-type': call.content_type },
+      }).formData()
+      return { ok: true, value: Object.fromEntries(fd.entries()) }
+    } catch (err) {
+      return {
+        ok: false,
+        status: 400,
+        body: JSON.stringify({
+          error: { message: `invalid multipart body: ${(err as Error).message}` },
+        }),
+      }
+    }
+  }
+  // default: JSON
+  try {
+    return {
+      ok: true,
+      value:
+        call.body_text != null && call.body_text !== '' ? JSON.parse(call.body_text) : undefined,
+    }
+  } catch (err) {
+    return {
+      ok: false,
+      status: 400,
+      body: JSON.stringify({
+        error: { message: `invalid JSON body: ${(err as Error).message}` },
+      }),
+    }
+  }
+}
+
 export async function dispatchAction(
   call: Extract<RouteCall, { kind: 'action' }>,
   byId: Map<string, EndpointDef>,
@@ -1110,21 +1154,18 @@ export async function dispatchAction(
   }
   call.req.signal = NEVER_ABORTS
 
-  // Body decode — JSON only in this slice (multipart/urlencoded deferred).
+  // Body decode — dispatch by content-type (JSON / urlencoded / multipart).
   let rawBody: unknown
   if (def.method !== 'GET' && def.method !== 'HEAD') {
-    try {
-      rawBody =
-        call.body_text != null && call.body_text !== '' ? JSON.parse(call.body_text) : undefined
-    } catch (err) {
+    const decoded = await decodeActionBody(call)
+    if (!decoded.ok) {
       return {
-        status: 400,
-        body: JSON.stringify({
-          error: { message: `invalid JSON body: ${(err as Error).message}` },
-        }),
+        status: decoded.status,
+        body: decoded.body,
         contentType: 'application/json; charset=utf-8',
       }
     }
+    rawBody = decoded.value
   }
 
   const bodyCheck = await validate(def.body, rawBody)

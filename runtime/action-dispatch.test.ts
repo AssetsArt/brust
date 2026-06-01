@@ -103,6 +103,70 @@ test('HEAD endpoint accumulates + dispatches bodyless', async () => {
   expect(res.status).toBe(200)
   expect(JSON.parse(res.body)).toEqual({ seen: 'z' })
 })
+test('urlencoded body coerces to object and validates', async () => {
+  const a = defineActions().post('/f', ({ body }) => body, {
+    body: z.object({ a: z.string(), b: z.string() }),
+  })
+  const res = await dispatchAction(
+    {
+      kind: 'action',
+      action_id: '0',
+      content_type: 'application/x-www-form-urlencoded',
+      params: {},
+      body_text: 'a=1&b=hi',
+      req: { method: 'POST', ...reqBase } as any,
+    },
+    table(a),
+  )
+  expect(res.status).toBe(200)
+  expect(JSON.parse(res.body)).toEqual({ a: '1', b: 'hi' })
+})
+
+test('multipart body coerces (text fields + File) and validates', async () => {
+  const fd = new FormData()
+  fd.append('name', 'alice')
+  fd.append('file', new File(['hi'], 'h.txt', { type: 'text/plain' }))
+  const wire = new Request('http://x', { method: 'POST', body: fd })
+  const ct = wire.headers.get('content-type')!
+  const b64 = Buffer.from(new Uint8Array(await wire.arrayBuffer())).toString('base64')
+  const a = defineActions().post(
+    '/u',
+    ({ body }) => ({ name: (body as any).name, fileName: (body as any).file?.name }),
+    {
+      body: z.object({ name: z.string(), file: z.instanceof(File) }),
+    },
+  )
+  const res = await dispatchAction(
+    {
+      kind: 'action',
+      action_id: '0',
+      content_type: ct,
+      params: {},
+      body_b64: b64,
+      req: { method: 'POST', ...reqBase } as any,
+    },
+    table(a),
+  )
+  expect(res.status).toBe(200)
+  expect(JSON.parse(res.body)).toEqual({ name: 'alice', fileName: 'h.txt' })
+})
+
+test('malformed multipart → 400', async () => {
+  const a = defineActions().post('/u', ({ body }) => body)
+  const res = await dispatchAction(
+    {
+      kind: 'action',
+      action_id: '0',
+      content_type: 'multipart/form-data; boundary=----x',
+      params: {},
+      body_b64: Buffer.from('garbage not multipart').toString('base64'),
+      req: { method: 'POST', ...reqBase } as any,
+    },
+    table(a),
+  )
+  expect(res.status).toBe(400)
+})
+
 test('duplicate HEAD path throws', () => {
   expect(() =>
     defineActions()
