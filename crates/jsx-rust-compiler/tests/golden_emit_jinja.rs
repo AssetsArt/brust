@@ -7,7 +7,13 @@
 use jsx_rust_compiler::compile;
 use pretty_assertions::assert_eq;
 
-const FIXTURES: &[&str] = &["static_hello", "props_hello", "list_nav", "brust_page"];
+const FIXTURES: &[&str] = &[
+    "static_hello",
+    "props_hello",
+    "list_nav",
+    "brust_page",
+    "fragment_basic",
+];
 
 #[test]
 fn golden_emit_jinja_for_all_fixtures() {

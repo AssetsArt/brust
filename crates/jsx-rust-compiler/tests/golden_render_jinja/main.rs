@@ -88,6 +88,14 @@ fn renders_island_ssr_byte_equal() {
 }
 
 #[test]
+fn renders_fragment_basic_byte_equal() {
+    let actual = render_fixture("fragment_basic", context! {});
+    let expected = std::fs::read_to_string("fixtures/fragment_basic.expected.html")
+        .expect("fixtures/fragment_basic.expected.html");
+    assert_eq!(actual, expected);
+}
+
+#[test]
 fn renders_brust_page_byte_equal() {
     // `<BrustPage>` document shell: the framework auto tags (charset, viewport,
     // app.css link) must precede the user's <head>-slot <title>, and both
