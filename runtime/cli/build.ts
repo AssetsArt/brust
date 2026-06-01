@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { copyFile, mkdir, readdir, rm } from 'node:fs/promises'
+import { copyFile, cp, mkdir, readdir, rm } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import path, { isAbsolute, resolve } from 'node:path'
 import {
@@ -277,8 +277,6 @@ export async function runBuild(args: string[]): Promise<void> {
     // the other pre-built artifacts (islands, css, mcp-manifest), so a dist-only
     // deploy ships the templates. The prebuilt runtime reads them from
     // `<BRUST_DIST_DIR>/jinja` (see index.ts loadJinjaOnce / configureJinjaDir).
-    // Dev mode (`bun run dev`) is the divergent case: it emits to
-    // `cwd/.brust/jinja` and the non-prebuilt runtime reads from there.
     const jinjaDir = path.join(outDir, 'jinja')
     // Spec §7 Component-source resolution: scan the routes module's source for
     // ImportDeclarations, NOT the app entry's. The app entry only imports the
@@ -294,6 +292,17 @@ export async function runBuild(args: string[]): Promise<void> {
     })
     const nativeCount = (loadedRoutes ?? []).filter((r: any) => r?.nativeTemplate).length
     console.log(`[brust build] jinja:   ${nativeCount} template(s) → ${jinjaDir}`)
+
+    // Also mirror into cwd/.brust/jinja so the NON-prebuilt source runtime
+    // (`bun run <entry>` directly, and `bun run dev`) — which reads
+    // cwd/.brust/jinja — finds the same templates after a build. The prebuilt
+    // dist reads <distDir>/jinja (above); this keeps the dev/source path working
+    // without a separate compile step. `.brust/` is a gitignored cache dir.
+    const localJinjaDir = path.join(process.cwd(), '.brust', 'jinja')
+    if (path.resolve(localJinjaDir) !== path.resolve(jinjaDir)) {
+      await rm(localJinjaDir, { recursive: true, force: true })
+      await cp(jinjaDir, localJinjaDir, { recursive: true })
+    }
   }
 
   // 4.5. CSS — Tailwind v4 if app.css is present.
