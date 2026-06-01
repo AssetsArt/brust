@@ -501,11 +501,12 @@ test('routes without <Island> ship no importmap or bootstrap', async () => {
 // Migrated to the `defineActions` / treaty wire (M1): `METHOD <prefix>/<path>`
 // with a JSON OBJECT body. The fixture registers POST /notes, GET /whoami, and
 // DELETE /notes/{id} (requireUser middleware). The old positional-args wire
-// (`POST /_brust/action/createNote` with a JSON ARRAY body), the multipart /
-// urlencoded body paths, and the MCP-tools-derived-from-actions tests were
-// removed — those surfaces are deferred (see architecture.md "Known limitations").
-// The HTTP-transport guards (411 / 413 / missing Content-Length) are retained,
-// repointed at POST /notes since they exercise the Rust layer, not the wire shape.
+// (`POST /_brust/action/createNote` with a JSON ARRAY body) and the multipart /
+// urlencoded body paths were removed. MCP tools are now derived from these
+// `EndpointDef`s and `tools/call` dispatches over them (see the MCP tools/list +
+// tools/call tests below). The HTTP-transport guards (411 / 413 / missing
+// Content-Length) are retained, repointed at POST /notes since they exercise the
+// Rust layer, not the wire shape.
 
 test('action endpoint: happy path returns JSON', async () => {
   const { port, stop } = await startServer({ rustLog: 'brust=warn' })
@@ -809,17 +810,64 @@ test('mcp: initialize returns server capabilities', async () => {
   }
 }, 15_000)
 
-// MCP tools-derived-from-actions is DEFERRED (M1): the MCP `tools/call` path was
-// coupled to the old positional-args `ActionDef`. With `defineActions`/`EndpointDef`
-// the extractor no longer feeds actions into the manifest, so `tools/list` is empty.
-// Reworking MCP over `EndpointDef` is a follow-up (see architecture.md "Known
-// limitations"). The old tools/list + tools/call (createNote/deleteNote) tests were
-// removed with this test asserting the now-inert state.
-test('mcp: tools/list is empty (action-derived tools deferred)', async () => {
+test('mcp: tools/list returns action-derived tools', async () => {
   const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
     const { body } = await mcpRequest(port, 'tools/list')
-    expect(body.result.tools).toEqual([])
+    const names = body.result.tools.map((t: any) => t.name).sort()
+    expect(names).toContain('post_notes')
+    expect(names).toContain('get_whoami')
+    expect(names).toContain('delete_notes_by_id')
+    const post = body.result.tools.find((t: any) => t.name === 'post_notes')
+    expect(post.inputSchema.properties.body).toBeDefined()
+  } finally {
+    await stop()
+  }
+}, 15_000)
+
+test('mcp: tools/call post_notes round-trips through dispatch', async () => {
+  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
+  try {
+    const { body } = await mcpRequest(port, 'tools/call', {
+      name: 'post_notes',
+      arguments: { body: { text: 'hi' } },
+    })
+    expect(body.result.isError).toBe(false)
+    expect(JSON.parse(body.result.content[0].text)).toEqual({ id: 'n-2' })
+  } finally {
+    await stop()
+  }
+}, 15_000)
+
+test('mcp: tools/call post_notes 422 on invalid body', async () => {
+  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
+  try {
+    const { body } = await mcpRequest(port, 'tools/call', {
+      name: 'post_notes',
+      arguments: { body: {} },
+    })
+    expect(body.result.isError).toBe(true)
+  } finally {
+    await stop()
+  }
+}, 15_000)
+
+test('mcp: tools/call honors action middleware (cookie gate)', async () => {
+  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
+  try {
+    const no = await mcpRequest(port, 'tools/call', {
+      name: 'delete_notes_by_id',
+      arguments: { params: { id: 'x' } },
+    })
+    expect(no.body.result.isError).toBe(true)
+    const yes = await mcpRequest(
+      port,
+      'tools/call',
+      { name: 'delete_notes_by_id', arguments: { params: { id: 'x' } } },
+      { Cookie: 'user=alice' },
+    )
+    expect(yes.body.result.isError).toBe(false)
+    expect(JSON.parse(yes.body.result.content[0].text)).toEqual({ ok: true, id: 'x' })
   } finally {
     await stop()
   }
