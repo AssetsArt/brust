@@ -1,6 +1,6 @@
 use std::fmt::Write as _;
 
-use crate::ir::{AttrValue, Component, Expr, JsxAttr, JsxNode, SsrProp};
+use crate::ir::{AttrValue, Component, Expr, HeadValue, JsxAttr, JsxNode, SsrProp};
 
 pub struct FactoryOutput {
     pub expr: String,
@@ -44,7 +44,11 @@ fn collect_factories(node: &JsxNode, out: &mut Vec<FactoryOutput>) {
             }
         }
         JsxNode::Map { body, .. } => collect_factories(body, out),
-        JsxNode::Empty | JsxNode::Text(_) | JsxNode::Expr(_) | JsxNode::Island { .. } => {}
+        JsxNode::Empty
+        | JsxNode::Text(_)
+        | JsxNode::Expr(_)
+        | JsxNode::RawHtml(_)
+        | JsxNode::Island { .. } => {}
         JsxNode::Cond {
             consequent,
             alternate,
@@ -176,6 +180,30 @@ fn emit_child(node: &JsxNode, fo: &mut FactoryOutput) {
             fo.expr.push(')');
         }
         JsxNode::Empty => {}
+        // `dangerouslySetInnerHTML` is a native-body (jinja) feature; in the
+        // React SSR-component factory path it is emitted as a sibling fragment
+        // carrying the prop, so the rendered markup matches the native output.
+        JsxNode::RawHtml(hv) => {
+            fo.expr
+                .push_str("h(\"div\", {dangerouslySetInnerHTML: {__html: ");
+            match hv {
+                HeadValue::Literal(s) => {
+                    // JS double-quoted string: escape backslash FIRST, then quote
+                    // and the control chars that a multi-line HTML snippet carries
+                    // (a raw newline in a JS "" literal is a syntax error).
+                    let escaped = s
+                        .replace('\\', "\\\\")
+                        .replace('"', "\\\"")
+                        .replace('\n', "\\n")
+                        .replace('\r', "\\r");
+                    fo.expr.push('"');
+                    fo.expr.push_str(&escaped);
+                    fo.expr.push('"');
+                }
+                HeadValue::Path(e) => fo.expr.push_str(&emit_expr(e)),
+            }
+            fo.expr.push_str("}})");
+        }
         JsxNode::Document { .. } => {} // cannot appear as child
         JsxNode::Cond { .. } => unreachable!("Cond handled in a later task"),
         JsxNode::ChildrenSlot => unreachable!("ChildrenSlot handled in a later task"),
