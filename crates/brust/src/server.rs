@@ -1694,35 +1694,45 @@ fn parse_content_length(buf: &[u8]) -> Option<usize> {
     None
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 enum BodyClass {
     Empty,
     Sized(usize),
     Chunked,
 }
 
-/// Classify a request body per RFC 7230 §3.3.3: Transfer-Encoding wins over
-/// Content-Length; absent both → no body. We do not decode chunked, so Chunked
-/// is surfaced for the caller to reject.
+/// Classify a request body per RFC 7230 §3.3.3 in a SINGLE header pass:
+/// Transfer-Encoding (any value) wins over Content-Length and is surfaced as
+/// `Chunked` for the caller to reject (we don't decode it); a parseable
+/// `Content-Length` → `Sized`; neither → `Empty` (no body). On a header parse
+/// error we conservatively report `Empty` so a Content-Length we couldn't fully
+/// validate is never trusted to bound a body read.
+///
+/// One pass (vs. delegating to `parse_content_length` + a second walk) keeps the
+/// action hot path to a single httparse parse, and makes TE-wins-over-CL hold
+/// regardless of header order: any Transfer-Encoding seen short-circuits to
+/// `Chunked` before a Content-Length is honoured.
 fn classify_request_body(header: &[u8]) -> BodyClass {
-    if header_has_transfer_encoding(header) {
-        return BodyClass::Chunked;
+    let mut headers = [httparse::EMPTY_HEADER; 64];
+    let mut req = httparse::Request::new(&mut headers);
+    if req.parse(header).is_err() {
+        return BodyClass::Empty;
     }
-    match parse_content_length(header) {
+    let mut content_length: Option<usize> = None;
+    for h in req.headers.iter() {
+        if h.name.eq_ignore_ascii_case("transfer-encoding") {
+            return BodyClass::Chunked;
+        }
+        if h.name.eq_ignore_ascii_case("content-length") {
+            content_length = std::str::from_utf8(h.value)
+                .ok()
+                .and_then(|s| s.trim().parse::<usize>().ok());
+        }
+    }
+    match content_length {
         Some(n) => BodyClass::Sized(n),
         None => BodyClass::Empty,
     }
-}
-
-/// True if a `Transfer-Encoding` header is present (any value). Mirrors
-/// `parse_content_length`'s httparse-based header walk.
-fn header_has_transfer_encoding(header: &[u8]) -> bool {
-    let mut headers = [httparse::EMPTY_HEADER; 64];
-    let mut req = httparse::Request::new(&mut headers);
-    let _ = req.parse(header);
-    req.headers
-        .iter()
-        .any(|h| h.name.eq_ignore_ascii_case("transfer-encoding"))
 }
 
 /// Extract `Content-Type` from a buffered HTTP request's headers. Returns
