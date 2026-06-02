@@ -7,6 +7,8 @@ import { counterStream, idleStream } from './sse-streams.ts'
 import HelloWorld    from './pages/HelloWorld'
 import BlogPost      from './pages/BlogPost'
 import SlowSuspense  from './pages/SlowSuspense'
+import StoreDemo     from './pages/StoreDemo'
+import { counter }   from './stores/counter'
 import NativeProfile from './pages/NativeProfile'
 import NativeIslandPage from './NativeIslandPage'
 import NativeSsrIslandPage from './NativeSsrIslandPage'
@@ -54,6 +56,21 @@ export const routes = defineRoutes([
   { path: '/blog/{slug}',  Component: BlogPost,
     loader: async ({ params }) => ({ title: `Post: ${params.slug}` }) },
   { path: '/slow-suspense', Component: SlowSuspense },
+
+  // Spec A / isomorphic store (T8) — React-path route whose loader seeds the
+  // per-request `counter` store from a `?seed=N` query param. The render
+  // pipeline collects the store snapshot after the loader runs and injects it as
+  // a <script data-brust-store="counter"> before </head>. Each request gets an
+  // isolated store instance (S6 — no cross-request leak).
+  {
+    path: '/store-demo',
+    Component: StoreDemo,
+    loader: async ({ req }) => {
+      const seed = Number(req.search['seed'] ?? '0')
+      counter.value.set(Number.isFinite(seed) ? seed : 0)
+      return {}
+    },
+  },
 
   // Sub-project J — `native: true` E2E coverage. NativeProfile.tsx is
   // compiled to .brust/jinja/NativeProfile.jinja at build time; this
