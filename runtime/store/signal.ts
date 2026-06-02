@@ -2,8 +2,14 @@
 // Framework-agnostic — no react, no dom. Foundation for defineStore (Spec A) and
 // the Alpine-style client runtime (Spec B).
 
-const SIGNAL = Symbol('brust.signal')
-const COMPUTED = Symbol('brust.computed')
+// Symbol.for (GLOBAL registry), NOT Symbol(): every island is a SEPARATE Bun.build
+// chunk that inlines its own copy of this module, so a plain `Symbol()` brand would
+// be a DIFFERENT value per chunk — `isSignal` from chunk B then fails to recognize a
+// signal created in chunk A. That poisons the shared store snapshot (a cross-chunk
+// reader computes `{}` and caches it), so e.g. the team dock reads empty after a SPA
+// nav loads a new island chunk. A global registry symbol is identical across chunks.
+const SIGNAL = Symbol.for('brust.signal')
+const COMPUTED = Symbol.for('brust.computed')
 
 export interface Signal<T> {
   (): T

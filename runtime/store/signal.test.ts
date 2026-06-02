@@ -95,3 +95,15 @@ test('brands: isSignal / isComputed', () => {
   expect(isComputed(computed(() => 1))).toBe(true)
   expect(isComputed(signal(1))).toBe(false)
 })
+
+// Cross-chunk safety: each island is a separate Bun.build that inlines its own
+// copy of signal.ts. The brand MUST live in the GLOBAL Symbol registry
+// (Symbol.for), not a per-module Symbol(), or isSignal() from one chunk fails to
+// recognize a signal created in another — which poisons the shared store snapshot
+// (regression: team dock read empty after a SPA nav loaded a new island chunk).
+test('brands use the global Symbol registry (Symbol.for) so they are cross-chunk-stable', () => {
+  const s = signal(1) as unknown as Record<symbol, unknown>
+  const c = computed(() => 1) as unknown as Record<symbol, unknown>
+  expect(s[Symbol.for('brust.signal')]).toBe(true)
+  expect(c[Symbol.for('brust.computed')]).toBe(true)
+})
