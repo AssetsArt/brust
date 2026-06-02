@@ -22,7 +22,7 @@ export interface ServeOptions {
   /** MCP support — pass a manifest built via brust.buildMcpManifest. brust.serve
    * does NOT auto-wire MCP into workers; the worker branch of the entry file must
    * call brust.loadMcpManifest() + makeMcpServer() itself and pass the McpServer
-   * to makeRenderer via `opts.mcp`. See example/hello-world/index.ts for the
+   * to makeRenderer via `opts.mcp`. See example/pokedex/index.ts for the
    * pattern. The field here is currently unused inside serve() and is reserved
    * for future IPC-based propagation of the manifest. */
   mcp?: { manifest: import('./mcp/manifest.ts').McpManifest }
@@ -215,7 +215,7 @@ export const brust = {
    * main process after `brust.registerRoutes(routes)`. Workers must read the
    * persisted manifest themselves via `brust.loadMcpManifest()` in the worker
    * branch and pass an `McpServer` (built via `makeMcpServer`) to
-   * `makeRenderer` via `opts.mcp`. See example/hello-world/index.ts. */
+   * `makeRenderer` via `opts.mcp`. See example/pokedex/index.ts. */
   async buildMcpManifest(opts: {
     actionsFile?: string
     routesFile: string

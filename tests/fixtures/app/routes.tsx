@@ -2,8 +2,8 @@ import { defineRoutes, type Middleware } from '../../../runtime/routes.ts'
 import { counterStream, idleStream } from './sse-streams.ts'
 
 // Fixture-local page copies. The test fixture is SELF-CONTAINED — it must not
-// import from example/hello-world, so deleting or regenerating the example
-// never breaks the test suite.
+// import from any example/ app, so deleting or regenerating an example never
+// breaks the test suite.
 import HelloWorld    from './pages/HelloWorld'
 import BlogPost      from './pages/BlogPost'
 import SlowSuspense  from './pages/SlowSuspense'
@@ -49,7 +49,7 @@ const timeIt: Middleware = async (_req, next) => {
 }
 
 export const routes = defineRoutes([
-  // Demo showcase routes (also reachable through example/hello-world/).
+  // Demo showcase routes.
   { path: '/',             Component: HelloWorld },
   { path: '/blog/{slug}',  Component: BlogPost,
     loader: async ({ params }) => ({ title: `Post: ${params.slug}` }) },

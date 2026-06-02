@@ -23,7 +23,7 @@ test('brust build → run → smoke all major paths', async () => {
 
   // 1. Build
   const buildResult =
-    await $`bun ${path.join(REPO, 'runtime/cli/index.ts')} build ${path.join(REPO, 'example/hello-world/index.ts')} --out-dir ${distDir}`.nothrow()
+    await $`bun ${path.join(REPO, 'runtime/cli/index.ts')} build ${path.join(REPO, 'tests/fixtures/app/index.ts')} --out-dir ${distDir}`.nothrow()
   expect(buildResult.exitCode).toBe(0)
 
   // The server bundle keeps react/react-dom external (build.ts) so native-route
@@ -88,7 +88,7 @@ test('brust build → run → smoke all major paths', async () => {
   // (a React #418 hydration mismatch in the browser). Externalizing react fixes
   // it — assert the island is genuinely server-rendered (its button is in the
   // SSR HTML, not just hydrated client-side).
-  const nativeIslands = await fetch(`http://127.0.0.1:${port}/native-islands`)
+  const nativeIslands = await fetch(`http://127.0.0.1:${port}/_test/native-island-ssr`)
   expect(nativeIslands.status).toBe(200)
   expect(await nativeIslands.text()).toContain('data-testid="counter"')
 
@@ -132,7 +132,7 @@ test('brust build --target <hostInfix> copies exactly the host binary', async ()
   const targetDistDir = await mkdtemp(path.join(tmpdir(), 'brust-dist-target-test-'))
   try {
     const result =
-      await $`bun ${path.join(REPO, 'runtime/cli/index.ts')} build ${path.join(REPO, 'example/hello-world/index.ts')} --out-dir ${targetDistDir} --target ${hostInfix}`.nothrow()
+      await $`bun ${path.join(REPO, 'runtime/cli/index.ts')} build ${path.join(REPO, 'tests/fixtures/app/index.ts')} --out-dir ${targetDistDir} --target ${hostInfix}`.nothrow()
     expect(result.exitCode).toBe(0)
 
     const { readdir } = await import('node:fs/promises')

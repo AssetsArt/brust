@@ -2,8 +2,8 @@ import type { BrustRequest } from '../../../runtime/routes.ts'
 
 /** Instrumented counter stream used by integration tests. Emits 3 frames
  * at 50ms intervals then closes. Records abort timestamp into globalThis
- * so the lastSseAbort probe action can observe it. The clean demo version
- * (no instrumentation) lives at example/hello-world/sse-counter.ts. */
+ * so the lastSseAbort probe action can observe it. This is the instrumented
+ * variant; real apps write a plain stream without the globalThis bookkeeping. */
 export function counterStream(req: BrustRequest): ReadableStream<string> {
   return new ReadableStream({
     start(controller) {

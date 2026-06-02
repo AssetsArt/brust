@@ -77,7 +77,7 @@ export async function runDev(args: string[]): Promise<void> {
   // Spec S7 — scan routes.tsx (where page imports live), not the app entry.
   // outDir = process.cwd() to align with the runtime's loadJinjaOnce which
   // reads from `cwd + '.brust/jinja'`. When user runs `bun run dev
-  // example/hello-world/index.ts` from repo root, cwd != entryDir; writing
+  // example/pokedex/index.ts` from repo root, cwd != entryDir; writing
   // to entryDir would put templates somewhere the runtime never looks.
   const jinjaDir = path.join(process.cwd(), '.brust/jinja')
   const emitOpts = {
