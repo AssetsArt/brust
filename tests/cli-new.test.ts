@@ -1,5 +1,11 @@
 import { test, expect } from 'bun:test'
-import { parseArgs, resolveBrustRef, copyTemplate } from '../runtime/cli/new.ts'
+import { parseArgs, resolveBrustRef, copyTemplate, selectTemplate } from '../runtime/cli/new.ts'
+import {
+  listTemplates,
+  getTemplate,
+  findBrustPackageRoot,
+  DEFAULT_TEMPLATE,
+} from '../runtime/cli/templates.ts'
 import path from 'node:path'
 import { mkdtemp, rm, readFile, readdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -211,6 +217,229 @@ test('brust new: scaffold emits the expected tree and content', async () => {
       // `brust` package (the published name is `brustjs`). `brustjs/...` is fine.
       expect(content, `stale 'brust' import in ${f}`).not.toMatch(/from ['"]brust(\/[^'"]*)?['"]/)
     }
+  } finally {
+    await rm(parent, { recursive: true, force: true })
+  }
+}, 30_000)
+
+test('templates: listTemplates returns minimal + pokedex', () => {
+  const names = listTemplates().map((t) => t.name)
+  expect(names).toContain('minimal')
+  expect(names).toContain('pokedex')
+})
+
+test('templates: DEFAULT_TEMPLATE resolves to a registered template (minimal)', () => {
+  expect(DEFAULT_TEMPLATE).toBe('minimal')
+  // Lock that the default name actually resolves in the registry, not just the constant value.
+  expect(getTemplate(DEFAULT_TEMPLATE)?.name).toBe('minimal')
+})
+
+test('templates: getTemplate known/unknown', () => {
+  expect(getTemplate('pokedex')?.name).toBe('pokedex')
+  expect(getTemplate('minimal')?.name).toBe('minimal')
+  expect(getTemplate('bogus')).toBeUndefined()
+})
+
+test('templates: minimal sourceDir exists and has routes.tsx', () => {
+  const t = getTemplate('minimal')!
+  expect(existsSync(path.join(t.sourceDir, 'routes.tsx'))).toBe(true)
+  expect(t.exclude.size).toBe(0)
+  expect(t.extraFiles).toBeUndefined()
+})
+
+test('templates: pokedex sourceDir exists, has routes.tsx, excludes docs', () => {
+  const t = getTemplate('pokedex')!
+  expect(existsSync(path.join(t.sourceDir, 'routes.tsx'))).toBe(true)
+  expect(t.exclude.has('FRAMEWORK-GAPS.md')).toBe(true)
+  expect(t.exclude.has('README.md')).toBe(true)
+  // Build artifacts must never be scaffolded out of the dev tree.
+  expect(t.exclude.has('.brust')).toBe(true)
+  expect(t.exclude.has('dist')).toBe(true)
+  expect(t.exclude.has('node_modules')).toBe(true)
+  expect(typeof t.extraFiles).toBe('function')
+})
+
+test('templates: pokedex extraFiles synthesizes package.json/tsconfig/.gitignore', () => {
+  const t = getTemplate('pokedex')!
+  const files = t.extraFiles!({ projectName: 'demo', brustSpec: '^9.9.9' })
+  const byPath = new Map(files.map((f) => [f.relPath, f.content]))
+  expect(byPath.has('package.json')).toBe(true)
+  expect(byPath.has('tsconfig.json')).toBe(true)
+  expect(byPath.has('.gitignore')).toBe(true)
+  const pkg = JSON.parse(byPath.get('package.json')!)
+  expect(pkg.name).toBe('demo')
+  expect(pkg.dependencies.brustjs).toBe('^9.9.9')
+  expect(pkg.dependencies.zod).toBeTruthy()
+  expect(pkg.dependencies['react-dom']).toBeTruthy()
+  expect(pkg.dependencies.tailwindcss).toBeUndefined()
+  expect(pkg.scripts.dev).toBe('brustjs dev')
+})
+
+test('findBrustPackageRoot: resolves this repo root (has Cargo.toml + example/pokedex)', () => {
+  const root = findBrustPackageRoot()
+  expect(root).toBe(REPO) // pin the exact dir — not just a coincidental layout match
+  expect(existsSync(path.join(root, 'Cargo.toml'))).toBe(true)
+  expect(existsSync(path.join(root, 'example/pokedex/routes.tsx'))).toBe(true)
+})
+
+// --- parseArgs: template + yes ---
+test('parseArgs: --template pokedex', () => {
+  expect(parseArgs(['app', '--template', 'pokedex']).template).toBe('pokedex')
+})
+test('parseArgs: --template=pokedex', () => {
+  expect(parseArgs(['app', '--template=pokedex']).template).toBe('pokedex')
+})
+test('parseArgs: -t minimal', () => {
+  expect(parseArgs(['app', '-t', 'minimal']).template).toBe('minimal')
+})
+test('parseArgs: --template without value throws', () => {
+  expect(() => parseArgs(['app', '--template'])).toThrow(/--template requires a value/)
+})
+test('parseArgs: --template= (empty) throws', () => {
+  expect(() => parseArgs(['app', '--template='])).toThrow(/--template requires a value/)
+})
+test('parseArgs: --yes / -y set yes', () => {
+  expect(parseArgs(['app', '--yes']).yes).toBe(true)
+  expect(parseArgs(['app', '-y']).yes).toBe(true)
+})
+test('parseArgs: yes defaults false, template undefined', () => {
+  const r = parseArgs(['app'])
+  expect(r.yes).toBe(false)
+  expect(r.template).toBeUndefined()
+})
+
+// --- selectTemplate (injected read/isTTY) ---
+test('selectTemplate: explicit valid name', () => {
+  expect(selectTemplate({ explicit: 'pokedex', yes: false, isTTY: false }).name).toBe('pokedex')
+})
+test('selectTemplate: explicit invalid name throws', () => {
+  expect(() => selectTemplate({ explicit: 'nope', yes: false, isTTY: false })).toThrow(
+    /unknown template/,
+  )
+})
+test('selectTemplate: yes → default minimal', () => {
+  expect(selectTemplate({ yes: true, isTTY: true }).name).toBe('minimal')
+})
+test('selectTemplate: non-TTY → default minimal', () => {
+  expect(selectTemplate({ yes: false, isTTY: false }).name).toBe('minimal')
+})
+test('selectTemplate: TTY + read "2" → pokedex', () => {
+  expect(selectTemplate({ yes: false, isTTY: true, read: () => '2', print: () => {} }).name).toBe(
+    'pokedex',
+  )
+})
+test('selectTemplate: TTY + read "" → default minimal', () => {
+  expect(selectTemplate({ yes: false, isTTY: true, read: () => '', print: () => {} }).name).toBe(
+    'minimal',
+  )
+})
+test('selectTemplate: TTY + read name "pokedex" → pokedex', () => {
+  expect(
+    selectTemplate({ yes: false, isTTY: true, read: () => 'pokedex', print: () => {} }).name,
+  ).toBe('pokedex')
+})
+test('selectTemplate: TTY + null reader → default minimal (no infinite loop)', () => {
+  expect(selectTemplate({ yes: false, isTTY: true, read: () => null, print: () => {} }).name).toBe(
+    'minimal',
+  )
+})
+
+// --- copyTemplate: exclude + extraFiles ---
+test('copyTemplate: exclude skips listed root files; nested same-name survives', async () => {
+  const tmpl = await mkdtemp(path.join(tmpdir(), 'brust-excl-src-'))
+  const target = await mkdtemp(path.join(tmpdir(), 'brust-excl-dst-'))
+  try {
+    await Bun.write(path.join(tmpl, 'README.md'), 'root readme\n')
+    await Bun.write(path.join(tmpl, 'keep.txt'), 'keep\n')
+    await Bun.write(path.join(tmpl, 'sub/README.md'), 'nested readme\n')
+    await copyTemplate({
+      templateDir: tmpl,
+      targetDir: target,
+      substitutions: {},
+      exclude: new Set(['README.md']),
+    })
+    expect(existsSync(path.join(target, 'README.md'))).toBe(false)
+    expect(existsSync(path.join(target, 'keep.txt'))).toBe(true)
+    expect(existsSync(path.join(target, 'sub/README.md'))).toBe(true)
+  } finally {
+    await rm(tmpl, { recursive: true, force: true })
+    await rm(target, { recursive: true, force: true })
+  }
+})
+
+test('copyTemplate: extraFiles written verbatim (no substitution)', async () => {
+  const tmpl = await mkdtemp(path.join(tmpdir(), 'brust-extra-src-'))
+  const target = await mkdtemp(path.join(tmpdir(), 'brust-extra-dst-'))
+  try {
+    await Bun.write(path.join(tmpl, 'a.txt'), 'a\n')
+    await copyTemplate({
+      templateDir: tmpl,
+      targetDir: target,
+      substitutions: { __X__: 'SUBBED' },
+      extraFiles: [{ relPath: 'package.json', content: '{"x":"__X__"}\n' }],
+    })
+    expect(await readFile(path.join(target, 'package.json'), 'utf8')).toBe('{"x":"__X__"}\n')
+  } finally {
+    await rm(tmpl, { recursive: true, force: true })
+    await rm(target, { recursive: true, force: true })
+  }
+})
+
+test('brust new --template pokedex: emits pokedex tree, no docs, synth package.json', async () => {
+  const parent = await mkdtemp(path.join(tmpdir(), 'brust-new-poke-'))
+  const projectDir = path.join(parent, 'poke-app')
+  try {
+    const scaffold =
+      await $`bun ${path.join(REPO, 'runtime/cli/index.ts')} new poke-app --template pokedex --dir ${projectDir} < /dev/null`.nothrow()
+    expect(scaffold.exitCode).toBe(0)
+
+    expect(existsSync(path.join(projectDir, 'routes.tsx'))).toBe(true)
+    expect(existsSync(path.join(projectDir, 'index.ts'))).toBe(true)
+    expect(existsSync(path.join(projectDir, 'actions.ts'))).toBe(true)
+    expect(existsSync(path.join(projectDir, 'app.css'))).toBe(true)
+    expect(existsSync(path.join(projectDir, 'pages/DetailPage.tsx'))).toBe(true)
+    expect(existsSync(path.join(projectDir, 'lib/loaders.ts'))).toBe(true)
+    expect(existsSync(path.join(projectDir, 'components/TeamBuilder.tsx'))).toBe(true)
+
+    expect(existsSync(path.join(projectDir, 'FRAMEWORK-GAPS.md'))).toBe(false)
+    expect(existsSync(path.join(projectDir, 'README.md'))).toBe(false)
+    expect(existsSync(path.join(projectDir, '.brust'))).toBe(false)
+    expect(existsSync(path.join(projectDir, 'dist'))).toBe(false)
+
+    expect(existsSync(path.join(projectDir, 'tsconfig.json'))).toBe(true)
+    expect(existsSync(path.join(projectDir, '.gitignore'))).toBe(true)
+    const pkg = JSON.parse(await readFile(path.join(projectDir, 'package.json'), 'utf8'))
+    expect(pkg.name).toBe('poke-app')
+    expect(pkg.dependencies.brustjs).toMatch(/^file:/)
+    expect(pkg.dependencies.zod).toBeTruthy()
+    expect(pkg.dependencies['react-dom']).toBeTruthy()
+    expect(pkg.dependencies.tailwindcss).toBeUndefined()
+    expect(pkg.scripts.dev).toBe('brustjs dev')
+
+    const allFiles = await collectFiles(projectDir)
+    for (const f of allFiles) {
+      const content = await readFile(f, 'utf8').catch(() => '')
+      expect(content, `placeholder leaked in ${f}`).not.toContain('__PROJECT_NAME__')
+      expect(content, `placeholder leaked in ${f}`).not.toContain('__BRUST_DEP__')
+      expect(content, `stale 'brust' import in ${f}`).not.toMatch(/from ['"]brust(\/[^'"]*)?['"]/)
+    }
+  } finally {
+    await rm(parent, { recursive: true, force: true })
+  }
+}, 30_000)
+
+test('brust new (no --template, stdin closed): defaults to minimal tree', async () => {
+  const parent = await mkdtemp(path.join(tmpdir(), 'brust-new-defmin-'))
+  const projectDir = path.join(parent, 'def-app')
+  try {
+    const scaffold =
+      await $`bun ${path.join(REPO, 'runtime/cli/index.ts')} new def-app --dir ${projectDir} < /dev/null`.nothrow()
+    expect(scaffold.exitCode).toBe(0)
+    expect(existsSync(path.join(projectDir, 'pages/Home.tsx'))).toBe(true)
+    expect(existsSync(path.join(projectDir, 'components/Counter.tsx'))).toBe(true)
+    const pkg = JSON.parse(await readFile(path.join(projectDir, 'package.json'), 'utf8'))
+    expect(pkg.dependencies.tailwindcss).toBeTruthy()
+    expect(existsSync(path.join(projectDir, 'FRAMEWORK-GAPS.md'))).toBe(false)
   } finally {
     await rm(parent, { recursive: true, force: true })
   }

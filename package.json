@@ -74,7 +74,13 @@
     "!runtime/node_modules",
     "!runtime/package.json",
     "!runtime/*.node",
-    "!runtime/**/*.test.ts"
+    "!runtime/**/*.test.ts",
+    "example/pokedex",
+    "!example/pokedex/FRAMEWORK-GAPS.md",
+    "!example/pokedex/README.md",
+    "!example/pokedex/.brust",
+    "!example/pokedex/dist",
+    "!example/pokedex/node_modules"
   ],
   "publishConfig": {
     "access": "public"

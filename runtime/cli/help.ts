@@ -65,10 +65,15 @@ export const COMMANDS: CommandDef[] = [
   {
     name: 'new',
     summary: 'Scaffold a new brust project',
-    usage: 'brust new <name> [options]',
+    usage: 'brust new <name> [--dir <path>] [--template <name>] [--yes]',
     flags: [
       { flag: '<name>', desc: 'Project name (lowercase letters, digits, - _)' },
       { flag: '--dir <path>', desc: 'Target directory (default ./<name>)' },
+      {
+        flag: '--template, -t <name>',
+        desc: 'Template to scaffold (minimal | pokedex). Prompts if omitted on a TTY; defaults to minimal otherwise.',
+      },
+      { flag: '--yes, -y', desc: 'Skip the prompt; use the default template (minimal).' },
     ],
   },
 ]
