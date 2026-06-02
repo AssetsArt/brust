@@ -26,6 +26,26 @@ fn asset_cache_control(dev: bool) -> &'static str {
     }
 }
 
+/// Build a static-asset response: negotiate gzip, set Cache-Control + Vary, and
+/// Content-Encoding when compressed. `path` is the on-disk path (cache key).
+fn static_asset_response(buf: &[u8], content_type: &str, path: &str, bytes: Vec<u8>) -> Vec<u8> {
+    let dev = crate::is_dev_mode();
+    let accept = parse_header_value(buf, "accept-encoding");
+    let (body, encoding) =
+        crate::compress::maybe_compress(accept.as_deref(), content_type, path, bytes, dev);
+    let mut extra: Vec<(String, String)> = vec![
+        (
+            "Cache-Control".to_string(),
+            asset_cache_control(dev).to_string(),
+        ),
+        ("Vary".to_string(), "Accept-Encoding".to_string()),
+    ];
+    if let Some(enc) = encoding {
+        extra.push(("Content-Encoding".to_string(), enc.to_string()));
+    }
+    http::build_response(200, content_type, &extra, body)
+}
+
 fn current_css_dir() -> Option<std::path::PathBuf> {
     crate::state().css_dir.read().clone()
 }
@@ -287,14 +307,10 @@ async fn handle_conn(
             let file_path = dir.join(file);
             match tokio::fs::read(&file_path).await {
                 Ok(bytes) => {
-                    let extra = [(
-                        "Cache-Control".to_string(),
-                        asset_cache_control(crate::is_dev_mode()).to_string(),
-                    )];
-                    let resp = http::build_response(
-                        200,
+                    let resp = static_asset_response(
+                        &buf,
                         "application/javascript; charset=utf-8",
-                        &extra,
+                        &file_path.to_string_lossy(),
                         bytes,
                     );
                     if s.write_all(resp).await.is_err() {
@@ -327,11 +343,12 @@ async fn handle_conn(
             let file_path = dir.join(file);
             match tokio::fs::read(&file_path).await {
                 Ok(bytes) => {
-                    let extra = [(
-                        "Cache-Control".to_string(),
-                        asset_cache_control(crate::is_dev_mode()).to_string(),
-                    )];
-                    let resp = http::build_response(200, "text/css; charset=utf-8", &extra, bytes);
+                    let resp = static_asset_response(
+                        &buf,
+                        "text/css; charset=utf-8",
+                        &file_path.to_string_lossy(),
+                        bytes,
+                    );
                     if s.write_all(resp).await.is_err() {
                         return;
                     }
@@ -354,11 +371,8 @@ async fn handle_conn(
         {
             // read error (file removed after boot) → fall through to routing
             if let Ok(bytes) = tokio::fs::read(&file_path).await {
-                let extra = [(
-                    "Cache-Control".to_string(),
-                    asset_cache_control(crate::is_dev_mode()).to_string(),
-                )];
-                let resp = http::build_response(200, content_type_for(&file_path), &extra, bytes);
+                let ct = content_type_for(&file_path);
+                let resp = static_asset_response(&buf, ct, &file_path.to_string_lossy(), bytes);
                 if s.write_all(resp).await.is_err() {
                     return;
                 }
