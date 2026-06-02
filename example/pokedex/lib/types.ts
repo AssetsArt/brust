@@ -95,12 +95,15 @@ export interface DetailData {
   hasAbilities: boolean
   evolution: EvolutionStageVM[]
   hasEvolution: boolean
-  // island props (a single path each — native island props can't be object literals):
-  addProps: AddToTeamProps
+  // native interactive props: a single string path each (native props can't be
+  // object literals). addProps is the loader-precomputed JSON string handed to
+  // <AddToTeamButton data={addProps} /> → x-props (Spec B native directives).
+  addProps: string
   teamProps: { teamInitial: TeamMember[] }
 }
 
-/** Props for the AddToTeamButton island (raw types kept for the action body). */
+/** Shape of the AddToTeamButton native behavior's `props` (JSON-parsed from
+ *  x-props). Matches the action body fields so toggle() can post it directly. */
 export interface AddToTeamProps {
   id: number
   name: string
