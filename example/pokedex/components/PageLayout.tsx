@@ -7,7 +7,7 @@
 // would make the compiler soft-fall-back to an SSR component (no <html> shell).
 // active-nav uses conditional ELEMENTS (S11), not a className ternary
 // (unsupported). See ../FRAMEWORK-GAPS.md.
-import { BrustPage, Island } from '../../../runtime/index.ts'
+import { BrustPage, Island } from 'brustjs'
 import TeamBuilder from './TeamBuilder'
 
 export default function PageLayout({

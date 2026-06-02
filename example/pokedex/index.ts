@@ -1,4 +1,4 @@
-import { brust } from '../../runtime/index.ts'
+import { brust } from 'brustjs'
 import { actions } from './actions'
 import { routes } from './routes'
 

@@ -1,4 +1,4 @@
-import { defineRoutes } from '../../runtime/routes.ts'
+import { defineRoutes } from 'brustjs/routes'
 import { detailLoader, listLoader, typeChartLoader } from './lib/loaders'
 import DetailPage from './pages/DetailPage'
 import ListPage from './pages/ListPage'

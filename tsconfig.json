@@ -12,6 +12,17 @@
     // Bundler mode
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
+
+    // Resolve the package's own name to the local source so examples/apps in
+    // this repo import from `brustjs` exactly like a real installed consumer
+    // (mirrors the `exports` map). bun + tsc both honor these paths.
+    "paths": {
+      "brustjs": ["./runtime/index.ts"],
+      "brustjs/routes": ["./runtime/routes.ts"],
+      "brustjs/client": ["./runtime/client/index.ts"],
+      "brustjs/create": ["./runtime/create.ts"]
+    },
+
     "verbatimModuleSyntax": true,
     "noEmit": true,
 
