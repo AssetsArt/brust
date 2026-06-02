@@ -18,16 +18,15 @@
         "happy-dom": "^20.9.0",
         "react": "^19.2.6",
         "react-dom": "^19.2.6",
-        "typescript": "^6.0.3",
         "zod": "^4.4.3",
       },
       "optionalDependencies": {
-        "brustjs-darwin-arm64": "0.1.11-alpha",
-        "brustjs-darwin-x64": "0.1.11-alpha",
-        "brustjs-linux-arm64-gnu": "0.1.11-alpha",
-        "brustjs-linux-arm64-musl": "0.1.11-alpha",
-        "brustjs-linux-x64-gnu": "0.1.11-alpha",
-        "brustjs-linux-x64-musl": "0.1.11-alpha",
+        "brustjs-darwin-arm64": "0.1.14-alpha",
+        "brustjs-darwin-x64": "0.1.14-alpha",
+        "brustjs-linux-arm64-gnu": "0.1.14-alpha",
+        "brustjs-linux-arm64-musl": "0.1.14-alpha",
+        "brustjs-linux-x64-gnu": "0.1.14-alpha",
+        "brustjs-linux-x64-musl": "0.1.14-alpha",
       },
       "peerDependencies": {
         "react": "^19.2.6",
@@ -104,17 +103,17 @@
 
     "@types/ws": ["@types/ws@8.18.1", "", { "dependencies": { "@types/node": "*" } }, "sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg=="],
 
-    "brustjs-darwin-arm64": ["brustjs-darwin-arm64@0.1.11-alpha", "", { "os": "darwin", "cpu": "arm64" }, "sha512-/lmsgj7VLRYVESVHVJz10Jh3pZoGEuwausABrxDUrScQY50EAXVsQgd8smnEfWXYabULf6BGzVzdr2ht5b8yNQ=="],
+    "brustjs-darwin-arm64": ["brustjs-darwin-arm64@0.1.14-alpha", "", { "os": "darwin", "cpu": "arm64" }, "sha512-panM8vhmhQGpgXXwiyss36asQwt1vJfAG9Iyv7oDavxJxzHoRclkKFcjl4tm23xw7uGbefAdUMezzSrJ6hp0SQ=="],
 
-    "brustjs-darwin-x64": ["brustjs-darwin-x64@0.1.11-alpha", "", { "os": "darwin", "cpu": "x64" }, "sha512-P3MJFjkweu1kUpmW91kDCWNC2grEqfB8Vvp9IAad/5l4yEX80AYlKERI4bjNEMOcrUTuP/kR/ZICKYz9GWl9hA=="],
+    "brustjs-darwin-x64": ["brustjs-darwin-x64@0.1.14-alpha", "", { "os": "darwin", "cpu": "x64" }, "sha512-cUEwVru8t0D4uu+Sj3uf/0O0wLkjVs2WwlA3jq72fwDfNcO5DfghydFNduxkUKGA571hNBTLxgokm8i31tbc2A=="],
 
-    "brustjs-linux-arm64-gnu": ["brustjs-linux-arm64-gnu@0.1.11-alpha", "", { "os": "linux", "cpu": "arm64" }, "sha512-A9XvZ8tBGNPdTRPnSUkT8OANt4Wq8GXYMDUA8YqQZ0aH9ymX5IoT5J5Cv9sFZf0hhOQlJLOH6RHcyhgRWembcw=="],
+    "brustjs-linux-arm64-gnu": ["brustjs-linux-arm64-gnu@0.1.14-alpha", "", { "os": "linux", "cpu": "arm64" }, "sha512-BAfaVo+apb3zPsQvK6Gn+WcW3G2GVJb9+1Kyj6bLf8MhiU11P0e9qninFzSmQb4nX9p2j+YOBe+mYYsvTetC2Q=="],
 
-    "brustjs-linux-arm64-musl": ["brustjs-linux-arm64-musl@0.1.11-alpha", "", { "os": "linux", "cpu": "arm64" }, "sha512-U8fH2qPr7YCmxfxjDcX9f6x6OwjxFa/Ttxtia8qArGDRr6jJcXSlf+xXfrlfeHxAt+ud2v1UXP1rPecW8Dx/eg=="],
+    "brustjs-linux-arm64-musl": ["brustjs-linux-arm64-musl@0.1.14-alpha", "", { "os": "linux", "cpu": "arm64" }, "sha512-ul0hYnUuh1M6otBVEJkd4/m7MfL/kqopQp8S6vyZ4z+JEDq7KPnLASUbuIUIquv3D78AVFmOeBYgOLV7QGkw/Q=="],
 
-    "brustjs-linux-x64-gnu": ["brustjs-linux-x64-gnu@0.1.11-alpha", "", { "os": "linux", "cpu": "x64" }, "sha512-gj3C1GfqMFongYtwO8fHvNnmnGTf2vq3ZDyXDI0l9K5TtTVGtsiNUS3Kg1rze3xsb9D2BN/YtDXpUv0Ni2/JLQ=="],
+    "brustjs-linux-x64-gnu": ["brustjs-linux-x64-gnu@0.1.14-alpha", "", { "os": "linux", "cpu": "x64" }, "sha512-6ix4ifu7Q5cAC9oCW1cBhQNbyJxV2Ugm0J6IVpGIDnk9lHyrv5pGq2JxbmrDiwSbPmeAGLLVh1Qd8Gk97UV3RQ=="],
 
-    "brustjs-linux-x64-musl": ["brustjs-linux-x64-musl@0.1.11-alpha", "", { "os": "linux", "cpu": "x64" }, "sha512-uZceibXnwKot3HXx3l1V+t7yjWPaN4aklRX/lDeJ1wrzOim38jo58MIQv2ZWZTE8eOxyVL/lEwdlFDcvbZpIbw=="],
+    "brustjs-linux-x64-musl": ["brustjs-linux-x64-musl@0.1.14-alpha", "", { "os": "linux", "cpu": "x64" }, "sha512-k77hCWK/0PXnE6N066nniiEYGYQ9VLISjA8M0hukYSXqtsfFTyZt7LsfAZgDgXXCRtEFPrM2ri7HX4hoowN6RA=="],
 
     "bun-types": ["bun-types@1.3.14", "", { "dependencies": { "@types/node": "*" } }, "sha512-4N0ig0fEomHt5R0KCFWjovxow98rIoRwKolrYdCcknNwMekCXRnWEUvgu5soYV8QXtVsrUD8B95MBOZGPvr6KQ=="],
 
