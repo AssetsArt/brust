@@ -16,16 +16,17 @@
 
 ## สถานะรวม (อัปเดต 2026-06-02)
 
-**✅ FIXED แล้ว (7):** S11 conditionals · S1 `style={{…}}` · S8 dynamic head props ·
-S13 SPA-nav (รอบก่อน) · **native layout (chrome ซ้ำ 3 หน้า) — รอบนี้** (component-composition:
-`<PageLayout native>` ที่ root ของ expansion เป็น `<BrustPage>` ถูก promote เป็น document shell)
+**✅ FIXED แล้ว (9):** S11 conditionals · S1 `style={{…}}` · S8 dynamic head props ·
+S13 SPA-nav (รอบก่อน) · **native layout (chrome ซ้ำ 3 หน้า)** (component-composition:
+`<PageLayout native>` ที่ root ของ expansion เป็น `<BrustPage>` ถูก promote เป็น document shell) ·
+**S12 (bodyless DELETE 411) — รอบนี้** (RFC 7230 §3.3.3: no CL + no TE = body length 0) ·
+**S9 (native loader ตั้ง status ไม่ได้ → 404-as-200) — รอบนี้** (`notFound()`/`redirect()` sentinel)
 — **S11/S1/S8 เป็น "Cluster A"**
 ([spec](../../docs/superpowers/specs/2026-06-01-native-compiler-expressiveness-design.md)),
 พ่วง **XSS hardening** (`5a4c4ca`): dynamic HTML output ทุกจุด escape ด้วย `{{ (expr) | e }}`
 แล้ว (เดิม verbatim = ช่อง XSS จริง — request param ไหลเข้า `<title>` ได้).
 
-**ยังเปิด:** S12 (DELETE 411) · S9 (native loader ตั้ง status ไม่ได้ → 404-as-200) ·
-S4/S6/S7 (island store / session / typed error) · S2 (loader cache) · static asset ·
+**ยังเปิด:** S4/S6/S7 (island store / session / typed error) · S2 (loader cache) · static asset ·
 native **Outlet/router-level layout injection** · nested `.map()` · dark-mode `data-*`. ·
 **BY-DESIGN:** S3 (Suspense).
 
@@ -120,25 +121,28 @@ React island ที่ stream เองได้) เป็นทางออก
 
 ---
 
-## ★ S12 — bodyless DELETE action → HTTP 411 · CONFIRMED (เจอใน browser จริง)
+## ★ S12 — bodyless DELETE action → HTTP 411 · ✅ FIXED (แก้ framework แล้ว)
 
-**อาการ:** ปุ่ม Remove เรียก `api.team({id}).delete()` แล้ว console ขึ้น:
+**fix:** server ทำตาม RFC 7230 §3.3.3 แล้ว — request ที่ **ไม่มี `Content-Length` และไม่มี
+`Transfer-Encoding`** ถือว่า **ไม่มี body (length 0)** สำหรับทุก method → bodyless DELETE
+ไม่ตอบ 411 อีกต่อไป. ส่วน `Transfer-Encoding` (ยังไม่รองรับ) → ตอบ 411. **dogfood:**
+`api.team({id}).delete()` (bodyless) ทำงานได้แล้ว → **`.delete({})` workaround เลิกจำเป็น**
+(bodyless `.delete()` ผ่าน 200).
+
+**อาการเดิม:** ปุ่ม Remove เรียก `api.team({id}).delete()` แล้ว console ขึ้น:
 
 ```
 Failed to load resource: the server responded with a status of 411
 (Length Required) @ /_brust/action/team/6
 ```
 
-**ทำไม:** action dispatch ฝั่ง Rust (`server.rs`) บังคับ `Content-Length` บนทุก method
+**ทำไมเดิม:** action dispatch ฝั่ง Rust (`server.rs`) บังคับ `Content-Length` บนทุก method
 ที่ไม่ใช่ GET/HEAD → ไม่มีก็ตอบ 411. แต่ `fetch(url,{method:'DELETE'})` ของ browser
 **ไม่ส่ง `Content-Length: 0`** เมื่อไม่มี body. treaty client ก็ส่ง DELETE แบบไม่มี body.
 
-**workaround ในแอปนี้:** เรียก **`api.team({id}).delete({})`** — ส่ง body `{}` (เพราะ treaty
-ถือว่า delete ไม่ใช่ bodyless) → มี `Content-Length: 2` → ผ่าน 200. (ยืนยันแล้ว: bodyless = 411,
-มี `{}` = 200.)
-
-**proposal:** ฝั่ง Rust ถ้า method มีได้-ไม่มีก็ได้ (DELETE) ให้ treat `Content-Length`
-ที่หายเป็น 0 แทน 411; หรือ treaty ใส่ `Content-Length: 0` ให้ DELETE อัตโนมัติ.
+**workaround เดิม (เลิกจำเป็นแล้ว):** เรียก **`api.team({id}).delete({})`** — ส่ง body `{}` (เพราะ treaty
+ถือว่า delete ไม่ใช่ bodyless) → มี `Content-Length: 2` → ผ่าน 200. (ยืนยันเดิม: bodyless = 411,
+มี `{}` = 200.) ตอนนี้ bodyless = 200 แล้ว.
 
 ---
 
@@ -201,18 +205,25 @@ native: true route expects template "ListPage.jinja" but it's not registered
 
 ---
 
-## ◆ S9 — ไม่มี notFound()/redirect() sentinel; native loader ตั้ง status ไม่ได้ · CONFIRMED
+## ◆ S9 — ไม่มี notFound()/redirect() sentinel; native loader ตั้ง status ไม่ได้ · ✅ FIXED (แก้ framework แล้ว)
 
-**อาการ:** `/pokemon/<ชื่อมั่ว>` → PokeAPI 404 แต่หน้าเราตอบ **HTTP 200** พร้อม 404 body.
+**fix:** native route loader คืน sentinel ได้แล้ว — `return notFound(data)` (render template
+ของ route ตัวเอง พร้อม HTTP 404) หรือ `return redirect(url, status?)` (3xx + `Location`,
+**ไม่** render). `napi_render_jinja` เพิ่ม optional status param เพื่อให้ Rust ตั้ง HTTP status
+จาก loader ได้. sentinel เป็น **symbol-keyed** (`Symbol.for('brust.nativeVerdict')` — plain object
+ที่มี field `status` ไม่ถูกเข้าใจผิดว่าเป็น verdict) และ export จาก `brustjs/routes`.
+**dogfood:** `detailLoader` คืน `notFound(emptyDetail(name))` แล้ว → `/pokemon/<ชื่อมั่ว>`
+เป็น **HTTP 404** (เดิม 200). flag `notFound: true` บน data ยังขับ template 404-block (S11);
+sentinel ขับ HTTP status — เสริมกัน. **ข้อจำกัด:** SPA-nav ไปหน้า verdict (404/redirect)
+fall back เป็น full reload (documented limitation).
 
-**ทำไม:** loader คืน data อย่างเดียว ไม่มี `notFound()`/`redirect()` และ native loader
+**อาการเดิม:** `/pokemon/<ชื่อมั่ว>` → PokeAPI 404 แต่หน้าเราตอบ **HTTP 200** พร้อม 404 body.
+
+**ทำไมเดิม:** loader คืน data อย่างเดียว ไม่มี `notFound()`/`redirect()` และ native loader
 ตั้ง HTTP status ไม่ได้ (status มาจาก render meta ฝั่ง React path).
 
-**workaround:** loader คืน `notFound: true` + ผูก `notFoundClass`/`contentClass` ให้ template
-สลับ block (ยัง 200).
-
-**proposal:** `return notFound()` / `return redirect('/x')` sentinel ที่ map เป็น 404/302 ได้
-แม้บน native route.
+**workaround เดิม (เลิกจำเป็นแล้ว):** loader คืน `notFound: true` + ผูก `notFoundClass`/`contentClass`
+ให้ template สลับ block (ยัง 200). ตอนนี้ใช้ `return notFound(...)` ได้ → 404 จริง.
 
 ---
 

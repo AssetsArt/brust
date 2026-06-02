@@ -6,7 +6,7 @@
 // See ../FRAMEWORK-GAPS.md.
 
 import { z } from 'zod'
-import type { BrustRequest } from 'brustjs/routes'
+import { type BrustRequest, type NativeVerdict, notFound } from 'brustjs/routes'
 import {
   ALL_TYPES,
   artwork,
@@ -85,15 +85,16 @@ export async function listLoader({ req }: LoaderCtx): Promise<ListData> {
   }
 }
 
-export async function detailLoader({ params }: LoaderCtx): Promise<DetailData> {
+export async function detailLoader({ params }: LoaderCtx): Promise<DetailData | NativeVerdict> {
   const name = params?.name ?? ''
   const empty = emptyDetail(name)
 
   const p = await fetchPokemon(name)
-  // GAP S9: no first-class notFound()/redirect() loader sentinel — a 404 from
-  // PokeAPI is surfaced as a flag the template branches on, and the response is
-  // still HTTP 200 (we can't set status from a native loader). See GAPS S9.
-  if (!p) return empty
+  // GAP S9 (FIXED): native loaders can now `return notFound(data)` to render the
+  // route's OWN template with HTTP 404. The `notFound: true` flag on `empty`
+  // still drives the template's 404-block branch (S11); the sentinel sets the
+  // HTTP STATUS (404 instead of 200). They are complementary. See GAPS S9.
+  if (!p) return notFound(empty)
 
   const species = await fetchSpecies(p.id)
   // GAP (native↔streaming): a native route renders in Rust with NO React tree,
