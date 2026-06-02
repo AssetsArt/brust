@@ -188,6 +188,8 @@ test('brust new: scaffold emits the expected tree and content', async () => {
     expect(existsSync(path.join(projectDir, 'README.md'))).toBe(true)
     expect(existsSync(path.join(projectDir, 'pages/Home.tsx'))).toBe(true)
     expect(existsSync(path.join(projectDir, 'components/Counter.tsx'))).toBe(true)
+    // Static public asset ships in the scaffold (served at GET /favicon.svg).
+    expect(existsSync(path.join(projectDir, 'public/favicon.svg'))).toBe(true)
     // Home is a native route showcasing islands — lock that contract so the
     // scaffold can't silently regress to a plain React page.
     expect(await readFile(path.join(projectDir, 'routes.tsx'), 'utf8')).toContain('native: true')
