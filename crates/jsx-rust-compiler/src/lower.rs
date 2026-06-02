@@ -425,30 +425,17 @@ fn find_default_export(module: &Module) -> Result<(String, &FnExpr), LowerError>
                 }
                 found = Some((name, fn_expr));
             }
-            ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultDecl(_)) => {
-                return Err(LowerError::at(
-                    span_of_item(item),
-                    ErrorKind::UnexpectedStatement,
-                ));
-            }
-            _ => {
-                return Err(LowerError::at(
-                    span_of_item(item),
-                    ErrorKind::UnexpectedStatement,
-                ));
-            }
+            // Any other top-level item — named `export const`/`export function`,
+            // bare `const`/`let`, type aliases, interfaces, a non-Fn
+            // `export default`, etc. — is tolerated and ignored. This lets a
+            // single-file native component co-locate an `export const behavior`
+            // (and similar statements) next to its `export default function`
+            // template instead of being rejected with `UnexpectedStatement`.
+            // We still only lower the default function below.
+            _ => continue,
         }
     }
     found.ok_or_else(|| LowerError::at(Span::default(), ErrorKind::UnexpectedStatement))
-}
-
-fn span_of_item(item: &ModuleItem) -> Span {
-    // `ModuleDecl` / `Stmt` are `#[ast_node]` enums and implement `Spanned`; both expose
-    // their span via the trait method rather than a field.
-    match item {
-        ModuleItem::ModuleDecl(decl) => decl.span(),
-        ModuleItem::Stmt(stmt) => stmt.span(),
-    }
 }
 
 fn single_return_expr(body: &BlockStmt) -> Result<&SwcExpr, LowerError> {
@@ -3660,6 +3647,81 @@ mod tests {
             }
             _ => panic!("expected root element"),
         }
+    }
+
+    #[test]
+    fn tolerates_extra_top_level_statements() {
+        // Single-file native component: an `export const behavior` (and a bare
+        // `const`) co-located with the `export default function` template. These
+        // extra top-level statements are now ignored instead of producing
+        // `UnexpectedStatement`; only the default function is lowered.
+        let src = r#"import { signal } from "brustjs";
+const api = "/api";
+export const behavior = (el) => ({ count: 0 });
+export function helper() { return 1; }
+type Props = { x: string };
+export default function Counter() {
+  return <div>hello</div>;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let c = lower(&parsed).unwrap();
+        assert_eq!(c.name, "Counter");
+        assert!(
+            matches!(&c.root, JsxNode::Element { tag, .. } if tag == "div"),
+            "expected div root, got {:?}",
+            c.root
+        );
+    }
+
+    #[test]
+    fn single_file_native_component_compiles_with_directive_attr() {
+        // The canonical single-file native shape: an `export const behavior`
+        // next to the default template, whose JSX carries a directive attribute
+        // (`x-data`). The default export must still be found + lowered, and the
+        // emitted jinja must contain the `x-data` attribute.
+        let src = r#"import { signal } from "brustjs";
+export const behavior = () => ({});
+export default function C() {
+  return <div x-data="c" />;
+}"#;
+        let c = compile_full(src, "<test>", HashMap::new()).unwrap();
+        assert!(
+            c.template.contains("x-data=\"c\""),
+            "expected x-data attribute in template, got: {}",
+            c.template
+        );
+    }
+
+    #[test]
+    fn rejects_two_default_functions() {
+        // The duplicate-default guard is preserved.
+        let src = r#"export default function A() { return <a/>; }
+export default function B() { return <b/>; }"#;
+        let parsed = parse(src, "<test>");
+        // swc may reject two default exports at parse time; if it parses, lowering
+        // must still reject it as `UnexpectedStatement`.
+        if let Ok(parsed) = parsed {
+            let err = lower(&parsed).unwrap_err();
+            assert!(
+                matches!(err.kind, ErrorKind::UnexpectedStatement),
+                "got {:?}",
+                err.kind
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_no_default_function() {
+        // The "no default fn found" guard is preserved.
+        let src = r#"import { x } from "y";
+export const behavior = () => ({});"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let err = lower(&parsed).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::UnexpectedStatement),
+            "got {:?}",
+            err.kind
+        );
     }
 
     #[test]
