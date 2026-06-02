@@ -2,6 +2,7 @@
 
 pub mod action_router;
 mod cache;
+mod compress;
 mod http;
 mod io;
 mod island_cache;

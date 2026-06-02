@@ -50,8 +50,10 @@ pokedex/
 │                      #   because native templates only interpolate member paths
 ├─ pages/              # native route components — near-pure HTML + .map()
 │  ├─ ListPage.tsx · DetailPage.tsx · TypeChart.tsx
+├─ stores/             # isomorphic shared state (brustjs/store) — cross-island team
+│  └─ team.ts           #   defineStore: one window singleton, synced across islands (S4)
 └─ components/         # ISLANDS (real React, run in the browser)
-   ├─ AddToTeamButton.tsx · TeamBuilder.tsx · team-bus.ts
+   ├─ AddToTeamButton.tsx · TeamBuilder.tsx
 ```
 
 ## The one rule that shaped everything

@@ -747,6 +747,14 @@ export type { IsrConfig } from './islands/isr-jsx.ts'
 export { BrustPage } from './islands/brust-page.tsx'
 export type { BrustPageProps, HeadEntry } from './islands/brust-page.tsx'
 
+// Store reactive primitives (isomorphic, server-safe). The React adapter
+// `useStore` is intentionally NOT exported here — it ships from `brustjs/client`
+// because islands (the only React in the browser) bundle for the browser and
+// cannot pull this server entry (native addon + react-dom/server). See
+// runtime/client/index.ts.
+export { defineStore, signal, computed, effect, batch } from './store/index.ts'
+export type { StoreHandle, Snapshot, Signal, Computed } from './store/index.ts'
+
 export { buildIslands } from './islands/build.ts'
 export type { IslandsBuildResult, BuildIslandsOptions } from './islands/build.ts'
 

@@ -4,23 +4,26 @@
 // so unlike the native page shells they have NO jinja constraints: hooks, inline
 // `style={{…}}`, event handlers all work normally.
 import { useEffect, useState } from 'react'
-import { client } from 'brustjs/client'
+import { client, useStore } from 'brustjs/client'
 import type { Actions } from '../actions'
-import type { AddToTeamProps, TeamMember } from '../lib/types'
-import { emitTeam, onTeam } from './team-bus'
+import type { AddToTeamProps } from '../lib/types'
+import { teamStore } from '../stores/team'
 
 const api = client<Actions>()
 
 export default function AddToTeamButton(p: AddToTeamProps) {
-  const [team, setTeam] = useState<TeamMember[]>([])
+  // Shared store (GAP S4): writing teamStore.members here is observed by the
+  // TeamBuilder island — they resolve the same window singleton. This is a
+  // client-only island (no `ssr`), so the store read always hits the client branch.
+  const { members } = useStore(teamStore)
+  const team = members ?? []
   const [busy, setBusy] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
 
   useEffect(() => {
     api.team.get().then((r) => {
-      if (r.data) setTeam(r.data.team)
+      if (r.data) teamStore.members.set(r.data.team)
     })
-    return onTeam(setTeam)
   }, [])
 
   const inTeam = team.some((m) => m.id === p.id)
@@ -33,7 +36,7 @@ export default function AddToTeamButton(p: AddToTeamProps) {
         // DELETE from the browser sends no Content-Length, and brust's action
         // dispatch returns 411 on non-GET/HEAD without one. See GAPS S12.
         const { data } = await api.team({ id: p.id }).delete({})
-        if (data) emitTeam(data.team)
+        if (data) teamStore.members.set(data.team)
       } else {
         const { data } = await api.team.post({
           id: p.id,
@@ -47,7 +50,7 @@ export default function AddToTeamButton(p: AddToTeamProps) {
           setToast('ทีมเต็มแล้ว · สูงสุด 6 ตัว')
           setTimeout(() => setToast(null), 2200)
         } else if (data) {
-          emitTeam(data.team)
+          teamStore.members.set(data.team)
         }
       }
     } finally {
