@@ -10,8 +10,9 @@ import { createElement, type ReactNode } from 'react'
  * brust keeps full ownership of `<head>` and can add more tags later (importmap,
  * preloads) without colliding with hand-written head elements.
  *
- * All props are compile-time string literals on the native path (the shell is
- * rendered in Rust, so they can't be dynamic expressions there). This React
+ * On the native path each prop accepts a compile-time string literal OR a
+ * loader member-path (`title={data.title}`), interpolated into the Rust-rendered
+ * shell as `{{ path }}` (S8). Calls/arithmetic are still rejected. This React
  * implementation mirrors the compiled output for the rare non-native use. */
 export interface BrustPageProps {
   /** `<html lang>` — defaults to `"en"`. */

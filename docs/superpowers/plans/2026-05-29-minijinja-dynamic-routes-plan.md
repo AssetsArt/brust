@@ -6,7 +6,7 @@
 
 ## Pre-conditions (already shipped)
 
-Per spec §15.1 + §15.2 (Rust + TS deletion), commit `f8a038b` removed:
+Per spec S15.1 + S15.2 (Rust + TS deletion), commit `f8a038b` removed:
 - `crates/brust/src/compiled_routes/`, `napi_render_compiled`, `static_render` fields, `static_prebuilt_for_path`, A2.3 short-circuit
 - `static: true` API, `staticRender` field, A2.x validation tests
 - maud dep in brust, jsx-rust-compiler build-dep
@@ -20,7 +20,7 @@ Per spec §15.1 + §15.2 (Rust + TS deletion), commit `f8a038b` removed:
 
 ## Task ordering rationale
 
-Spec §15.3-§15.8. Each task lands a single commit; every intermediate state is green.
+Spec S15.3-S15.8. Each task lands a single commit; every intermediate state is green.
 
 ```
 T1: jsx-rust-compiler emit maud → jinja
@@ -54,7 +54,7 @@ All must be green before the next task dispatches.
 
 ## Task 1 — jsx-rust-compiler emit swap (maud → jinja)
 
-**Spec ref:** §5 + §15.3
+**Spec ref:** S5 + S15.3
 **Risk:** medium (rewrite emit; goldens must align)
 
 ### Files
@@ -84,7 +84,7 @@ All must be green before the next task dispatches.
 - `crates/jsx-rust-compiler/src/bin/jsx-rustc.rs` — output extension default from `.rs` to `.jinja` (only change at arg level; otherwise unchanged)
 - `crates/jsx-rust-compiler/src/lib.rs` — `ErrorKind::VoidElementHasChildren` MAY drop (jinja accepts void with content — relax check in lower.rs if it errors there)
 
-### IR → jinja emission rules (from §5)
+### IR → jinja emission rules (from S5)
 
 | IR | jinja |
 |---|---|
@@ -107,7 +107,7 @@ Attribute values:
 | `StaticNum(n)` | `name="n"` |
 | `Expr(e)` | `name="{{ <emit_expr> }}"` |
 
-Reuse the IR `Expr` walker shape from `emit.rs`. Attribute renames + whitespace handling unchanged from §5.
+Reuse the IR `Expr` walker shape from `emit.rs`. Attribute renames + whitespace handling unchanged from S5.
 
 ### Tests (TDD-first)
 
@@ -259,12 +259,12 @@ If the IR's `Expr::MapMember` variant doesn't exist (variant names may differ in
 ```
 impl(J/T1): jsx-rust-compiler emit target maud → jinja
 
-Replaces emit.rs with emit_jinja.rs per spec §5. Lowering (parser + IR +
+Replaces emit.rs with emit_jinja.rs per spec S5. Lowering (parser + IR +
 lower) is unchanged — T0-T6 of A1 carry over verbatim, only T7's emit
 swaps. Fixtures and goldens rewritten for jinja; minijinja replaces maud
 as the dev-dep that drives golden_render.
 
-- src/emit.rs → src/emit_jinja.rs (new emit rules per spec §5)
+- src/emit.rs → src/emit_jinja.rs (new emit rules per spec S5)
 - tests/golden_emit.rs → tests/golden_emit_jinja.rs
 - tests/golden_render/ → tests/golden_render_jinja/
 - fixtures/*.expected.{rs,html} → fixtures/*.expected.jinja + new
@@ -277,7 +277,7 @@ as the dev-dep that drives golden_render.
 
 ## Task 2 — brust adds minijinja + jinja.rs
 
-**Spec ref:** §6 + §15.4 part 1
+**Spec ref:** S6 + S15.4 part 1
 **Risk:** low (new module, no integration yet)
 
 ### Files
@@ -289,7 +289,7 @@ as the dev-dep that drives golden_render.
 - `crates/brust/Cargo.toml` — add `minijinja = "2"` to `[dependencies]`
 - `crates/brust/src/lib.rs` — add `mod jinja;`
 
-### `jinja.rs` skeleton (spec §6)
+### `jinja.rs` skeleton (spec S6)
 
 ```rust
 use std::path::Path;
@@ -424,15 +424,15 @@ cargo clippy -p brust --lib -- -D warnings
 
 If minijinja's `Environment::templates()` API doesn't return `impl Iterator<Item=(&str, &Template)>`, check actual API and adapt `registered_templates()`. The intent is "list registered template names".
 
-`Box::leak` for source + name is intentional per spec §6 (OnceLock + 'static templates). RwLock + hot reload deferred to v2.x.
+`Box::leak` for source + name is intentional per spec S6 (OnceLock + 'static templates). RwLock + hot reload deferred to v2.x.
 
 ### Commit
 
 ```
 impl(J/T2): brust adds minijinja + jinja.rs
 
-Spec §6 + §15.4 part 1. New module `crates/brust/src/jinja.rs`:
-- OnceLock<Environment<'static>> (hot reload deferred per §13.7)
+Spec S6 + S15.4 part 1. New module `crates/brust/src/jinja.rs`:
+- OnceLock<Environment<'static>> (hot reload deferred per S13.7)
 - UndefinedBehavior::Chainable (reviewer OQ 4)
 - load_from lenient on missing dir (reviewer Fix 1)
 - render(name, &data_json_bytes) -> Result<String, RenderError>
@@ -447,7 +447,7 @@ suite uses one consolidated test.
 
 ## Task 3 — brust `napi_render_jinja` + `native_template` routing + boot load
 
-**Spec ref:** §3 + §6 (napi shim) + §8 + §15.4 part 2
+**Spec ref:** S3 + S6 (napi shim) + S8 + S15.4 part 2
 **Risk:** HIGH — SAB framing claim is the load-bearing reviewer fix.
 
 ### Files
@@ -716,14 +716,14 @@ If `BufPtr` field or `render_slot` access pattern differs from `napi_render_chun
 
 If `tracing::error!` isn't usable (it IS a dep — `tracing = "0.1"`), fall back to `eprintln!`.
 
-If per-conn task at `server.rs:1101` doesn't call `split_meta` on the data (handoff §"Critical implementation details" pillar 1 — VERIFY THIS), STOP and call advisor. The whole SAB framing claim depends on this.
+If per-conn task at `server.rs:1101` doesn't call `split_meta` on the data (handoff S"Critical implementation details" pillar 1 — VERIFY THIS), STOP and call advisor. The whole SAB framing claim depends on this.
 
 ### Commit
 
 ```
 impl(J/T3): brust napi_render_jinja + native_template routing
 
-Spec §6 (napi shim) + §8 + §15.4 part 2. Rust side fully wired; JS lands T4.
+Spec S6 (napi shim) + S8 + S15.4 part 2. Rust side fully wired; JS lands T4.
 
 - routes.rs: RouteConfig.native_template, RouteTable.native_templates,
   native_template_for() getter, RouteEnvelope.nativeTemplate field
@@ -734,7 +734,7 @@ Spec §6 (napi shim) + §8 + §15.4 part 2. Rust side fully wired; JS lands T4.
   RenderChunk::BytesAndFinal on the same chunk_tx as napi_render_chunk_final
 - napi_list_native_templates() + napi_load_jinja_templates(dir) shims
 
-SAB convention is per-napi-call (spec §6 last paragraph):
+SAB convention is per-napi-call (spec S6 last paragraph):
   napi_render_jinja: SAB[0..data_len] = inbound JSON data
   napi_render_chunk_final: SAB[0..len] = outbound chunk (existing)
 ```
@@ -743,7 +743,7 @@ SAB convention is per-napi-call (spec §6 last paragraph):
 
 ## Task 4 — runtime `native: true` API + worker dispatcher
 
-**Spec ref:** §4 + §9 + §15.5
+**Spec ref:** S4 + S9 + S15.5
 **Risk:** medium (TS validation + worker render branch)
 
 ### Files
@@ -986,7 +986,7 @@ bun test runtime/ 2>&1 | tail
 
 ### BLOCKED fallback
 
-If the worker render dispatcher's structure differs from spec §9 (e.g. `call.kind === 'render'` branch is somewhere unexpected), trace the actual flow in `runtime/routes.ts` `makeRenderer` and adapt — goal is "branch on `flat.nativeTemplate` before the React render call".
+If the worker render dispatcher's structure differs from spec S9 (e.g. `call.kind === 'render'` branch is somewhere unexpected), trace the actual flow in `runtime/routes.ts` `makeRenderer` and adapt — goal is "branch on `flat.nativeTemplate` before the React render call".
 
 If `napiLoadJinjaTemplates` returns `null` instead of `[]` for missing dir, handle both with `?? []`.
 
@@ -995,7 +995,7 @@ If `napiLoadJinjaTemplates` returns `null` instead of `[]` for missing dir, hand
 ```
 impl(J/T4): runtime native: true API + worker dispatcher branch
 
-Spec §4 + §9 + §15.5.
+Spec S4 + S9 + S15.5.
 
 - Route.native?: boolean
 - FlatRoute.nativeTemplate?: string (Component.name when leaf had native: true)
@@ -1013,7 +1013,7 @@ Spec §4 + §9 + §15.5.
 
 ## Task 5 — build CLI: jsx-rustc spawn pass
 
-**Spec ref:** §7 + §15.6
+**Spec ref:** S7 + S15.6
 **Risk:** medium
 
 ### Files
@@ -1087,7 +1087,7 @@ function scanImports(entryFile: string): Map<string, string> {
   const source = readFileSync(entryFile, 'utf8')
   const map = new Map<string, string>()
   // Regex-based scanner — handles: `import Name from './path'`
-  // Full swc AST scan deferred to v2.x per spec §7 + §13.10.
+  // Full swc AST scan deferred to v2.x per spec S7 + S13.10.
   const re = /^import\s+(\w+)\s+from\s+['"]([^'"]+)['"]/gm
   let m: RegExpExecArray | null
   while ((m = re.exec(source)) !== null) {
@@ -1128,7 +1128,7 @@ await emitNativeTemplates({
 
 **Integration in `dev.ts`:**
 
-Same call. HMR-on-edit deferred per spec §12 hot-reload bullet — boot-time only is acceptable for v2.
+Same call. HMR-on-edit deferred per spec S12 hot-reload bullet — boot-time only is acceptable for v2.
 
 ### `.gitignore`
 
@@ -1179,7 +1179,7 @@ If dev.ts watcher integration is complex, ship one-time-at-boot call + add a TOD
 ```
 impl(J/T5): build CLI emits .brust/jinja/ templates
 
-Spec §7 + §15.6. New pass scans user's routes entry for
+Spec S7 + S15.6. New pass scans user's routes entry for
 ImportDeclarations, resolves each native: true route's Component to
 its .tsx source, invokes jsx-rustc to emit .brust/jinja/<Name>.jinja,
 writes _manifest.json.
@@ -1189,18 +1189,18 @@ writes _manifest.json.
 - build.ts + dev.ts: invoke after flattenRoutes
 - .gitignore: .brust/jinja/
 
-Limitations (per spec §7 + §13.10):
+Limitations (per spec S7 + S13.10):
 - Regex scanner handles `import Name from './path'` only; full swc AST
   + re-export chain support deferred to v2.x
 - Dev mode does NOT hot-reload templates on .tsx edit (boot-only;
-  restart required) — deferred per §12
+  restart required) — deferred per S12
 ```
 
 ---
 
 ## Task 6 — example + E2E test
 
-**Spec ref:** §10 + §15.7
+**Spec ref:** S10 + S15.7
 **Risk:** medium (end-to-end integration)
 
 ### Files
@@ -1387,7 +1387,7 @@ If the E2E hangs (per-conn task waiting on something), STOP and call advisor. SA
 ```
 impl(J/T6): example + E2E test for native: true routes
 
-Spec §10 + §15.7.
+Spec S10 + S15.7.
 
 - example/hello-world/pages/NativeProfile.tsx + /native-profile/{user}
   route (native: true with real loader)
@@ -1400,7 +1400,7 @@ Spec §10 + §15.7.
 
 ## Task 7 — docs (architecture.md rewrite)
 
-**Spec ref:** §15.8
+**Spec ref:** S15.8
 **Risk:** low (docs only)
 
 ### Files
@@ -1411,12 +1411,12 @@ Spec §10 + §15.7.
 ### Tasks
 
 1. Grep architecture.md for `napi_render_compiled`, `static_render`, `static: true`, `compiled_routes`, `Sub-project A1`, `Sub-project A2` — replace with Sub-project J references where applicable
-2. Add a Sub-project J section describing minijinja architecture (per spec §3)
+2. Add a Sub-project J section describing minijinja architecture (per spec S3)
 3. Update "Suggested next steps" with v2.x deferrals (cache integration, nested loader composition, hot reload, dev-mode React fallback)
 
 ### Acceptance
 
-Spec §11 criterion 9 — zero hits across `.rs/.ts/.tsx/.toml/.md`:
+Spec S11 criterion 9 — zero hits across `.rs/.ts/.tsx/.toml/.md`:
 ```bash
 grep -rn -E 'maud|static: true|staticRender|rustCompiled|napi_render_compiled|compiled_routes|jinja: true|jinja\?:|jinjaTemplate' \
   --include='*.rs' --include='*.ts' --include='*.tsx' --include='*.toml' --include='*.md' .
@@ -1428,20 +1428,20 @@ grep -rn -E 'maud|static: true|staticRender|rustCompiled|napi_render_compiled|co
 ```
 impl(J/T7): docs — architecture.md rewrites A1+A1.1 → Sub-project J
 
-Spec §15.8.
+Spec S15.8.
 
 - Removed Sub-project A1 + A1.1 sections (maud-emit chain retired;
-  jsx-rust-compiler keeps parser + IR + lower per §15.3)
+  jsx-rust-compiler keeps parser + IR + lower per S15.3)
 - Added Sub-project J section describing the minijinja architecture
 - Removed dangling napi_render_compiled reference
 - Updated Suggested next steps with v2.x deferrals
 
-Acceptance grep §11.9 zero-hits across .rs/.ts/.tsx/.toml/.md.
+Acceptance grep S11.9 zero-hits across .rs/.ts/.tsx/.toml/.md.
 ```
 
 ---
 
-## Final acceptance check (spec §11)
+## Final acceptance check (spec S11)
 
 After T7 commits, the orchestrator runs:
 
@@ -1461,7 +1461,7 @@ grep -rn -E 'maud|static: true|staticRender|rustCompiled|napi_render_compiled|co
 oha -c 120 -z 10s -m GET "http://127.0.0.1:3801/_test/native/X"
 ```
 
-## Out of scope (per spec §14)
+## Out of scope (per spec S14)
 
 - Cache integration for native routes
 - Nested loader composition for native routes (only leaf's loader runs)

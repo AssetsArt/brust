@@ -3,7 +3,7 @@
 **Sub-project:** Tier-2 follow-up. Adds parent/child route nesting + Outlet rendering.
 **Date:** 2026-05-24
 **Status:** approved for implementation planning
-**Parent design:** `architecture.md` § "Route table"
+**Parent design:** `architecture.md` S "Route table"
 **Related:** Server functions / Forms / `'use server'` are orthogonal — Nested Routes is purely a render-side feature.
 
 ---
@@ -144,7 +144,7 @@ export interface Route<Params = Record<string, string>, Data = unknown> {
 ```
 
 The `Params` generic stays as-is (`Record<string, string>` default). Type-aware
-path composition is out of scope (§1 Out-of-scope #3).
+path composition is out of scope (S1 Out-of-scope #3).
 
 **Params are shared across the chain.** matchit returns ALL params from the
 composed pattern (`/admin/{org}/users/{id}` → `{ org, id }`). The renderer
@@ -311,7 +311,7 @@ Absolute child paths (children whose `path` starts with `/`) are NOT in MVP
 scope. `joinPath`'s `rel.startsWith('/')` branch exists in the algorithm for
 the `'' + '/users'` layout-only case, but a leading-slash child under a
 non-empty parent is a footgun (looks like nesting but escapes the parent).
-Validation flags this — see §3.2.
+Validation flags this — see S3.2.
 
 ### 3.2 Validation errors
 
@@ -423,7 +423,7 @@ The renderBranch passes `flat.middleware` instead of `route.middleware`:
 const chain = composeChain(req, flat.middleware, terminal)
 ```
 
-The terminal step runs the Outlet-walker from §4. Existing cache lookup
+The terminal step runs the Outlet-walker from S4. Existing cache lookup
 still happens BEFORE middleware (`renderBranch` already reads `cache_for(route_id)`
 and bypasses chain on cache hit).
 

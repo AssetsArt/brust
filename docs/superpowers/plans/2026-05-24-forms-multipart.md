@@ -1082,23 +1082,23 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 Spec section → task that implements it:
 
-| Spec § | Task |
+| Spec S | Task |
 |---|---|
-| §1 Goal — multipart + form-urlencoded support | Tasks 2, 3, 4 |
-| §1 Success criterion + concrete acceptance curls | Tasks 4 (smoke), 5 (automated) |
-| §2.1 Rust `ActionEnvelope` shape | Task 2 |
-| §2.2 TS `RouteCall` shape | Task 2 |
-| §3.1 server.rs Content-Type dispatch | Task 2 |
-| §3.2 `parse_content_type` | Task 1 |
-| §3.3 `error_415` | Task 1 |
-| §3.4 `build_action_envelope` signature change | Task 2 |
-| §4 actionBranch JS decoding | Task 2 |
-| §5 `formAction<F>(id)` | Task 3 |
-| §6 Body cap (no change) | Verified implicitly — code keeps `MAX_ACTION_BODY_BYTES` |
-| §7 Migration of existing JSON actions (zero user-facing change) | Verified by integration tests carrying over |
-| §7.3 Example app additions | Task 4 |
-| §8 Error handling matrix | Task 2 (Rust 415, JS 400 errors) + Task 5 (tests) |
-| §9 Tests — Rust unit + integration | Task 1 (5 Rust), Task 2 (4 Rust), Task 5 (6 integration) |
+| S1 Goal — multipart + form-urlencoded support | Tasks 2, 3, 4 |
+| S1 Success criterion + concrete acceptance curls | Tasks 4 (smoke), 5 (automated) |
+| S2.1 Rust `ActionEnvelope` shape | Task 2 |
+| S2.2 TS `RouteCall` shape | Task 2 |
+| S3.1 server.rs Content-Type dispatch | Task 2 |
+| S3.2 `parse_content_type` | Task 1 |
+| S3.3 `error_415` | Task 1 |
+| S3.4 `build_action_envelope` signature change | Task 2 |
+| S4 actionBranch JS decoding | Task 2 |
+| S5 `formAction<F>(id)` | Task 3 |
+| S6 Body cap (no change) | Verified implicitly — code keeps `MAX_ACTION_BODY_BYTES` |
+| S7 Migration of existing JSON actions (zero user-facing change) | Verified by integration tests carrying over |
+| S7.3 Example app additions | Task 4 |
+| S8 Error handling matrix | Task 2 (Rust 415, JS 400 errors) + Task 5 (tests) |
+| S9 Tests — Rust unit + integration | Task 1 (5 Rust), Task 2 (4 Rust), Task 5 (6 integration) |
 
 All spec sections mapped. No requirements without a task.
 

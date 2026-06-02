@@ -3,7 +3,7 @@
 **Spec:** `docs/superpowers/specs/2026-05-29-component-addressed-islands-design.md`
 **Base commit:** `4b9d996` (branch `feat/component-addressed-islands`)
 
-Lockstep schema change (spec §Scope note). The tree is RED *within* a task but
+Lockstep schema change (spec SScope note). The tree is RED *within* a task but
 GREEN at every task boundary. Tasks run in strict order; T2+ depend on the
 rebuilt `jsx-rustc` binary from T1.
 
@@ -221,7 +221,7 @@ in values per the compiler grammar), so the simple non-greedy slice is safe; doc
 
 **Files:** `runtime/cli/build.ts`, `runtime/cli/dev.ts`, `runtime/index.ts`.
 
-- `cli/build.ts` §3: replace the `existsSync(islandConfig)` block with:
+- `cli/build.ts` S3: replace the `existsSync(islandConfig)` block with:
   ```ts
   const { scanIslandChunks, buildIslands } = await import('../islands/build.ts')
   const islandMap = existsSync(routesFile) ? scanIslandChunks(routesFile) : new Map()
@@ -231,8 +231,8 @@ in values per the compiler grammar), so the simple non-greedy slice is safe; doc
     console.log(`[brust build] islands: ${result.islandCount} chunk(s) → ${islandsOutDir}`)
   } else { console.log('[brust build] islands: skipped (no <Island> usage)') }
   ```
-  (Note: `routesFile` is computed at §4; move its computation above §3, or recompute.)
-  §4.1: drop `islandConfigPath` from the `emitNativeTemplates` call.
+  (Note: `routesFile` is computed at S4; move its computation above S3, or recompute.)
+  S4.1: drop `islandConfigPath` from the `emitNativeTemplates` call.
 - `cli/dev.ts`: drop the `islandConfig` var + `islandConfigPath` from
   `emitNativeTemplates`. Wire `scanIslandChunks`+`buildIslands` the same way if dev
   builds islands (mirror build.ts).
@@ -285,7 +285,7 @@ references (comments/docs only); `bun test tests/cli-new.test.ts` → green.
 - Keep the real-server gating proof: native route with TWO islands reusing `Counter`
   (one client-only, one ssr) → assert one `Counter.js` chunk served, ssr instance's
   `<button>` markup ships in HTML, client instance is empty `data-brust-csr`, both
-  hydrate. This is acceptance criterion §3.
+  hydrate. This is acceptance criterion S3.
 - Per memory `native-island-integration-flake`: run integration + cli-build files
   **separately** (combined `bun run` has a ~1/5 port-race flake).
 
@@ -320,4 +320,4 @@ supersession/historical mentions remain.
 4. Runtime + integration suites green (files run separately per flake memory).
 5. `biome check` exit 0.
 6. `grep -rn "island.config"` → no live code references.
-7. Real-server two-instance reuse proof passes (acceptance §3).
+7. Real-server two-instance reuse proof passes (acceptance S3).

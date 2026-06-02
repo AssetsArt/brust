@@ -24,12 +24,12 @@
 
 | Spec section | Task |
 |---|---|
-| §1 shared `parse_isr_object` extraction | Task 1 |
-| §1 `JsxNode::SsrComponent` 3 fields + `lower_ssr_component` isr arm + `ComponentIsrUnsupported(String)` | Task 2 |
-| §1 `ComponentMeta` fields + `collect_components` copy + `components_to_json` emit | Task 3 |
-| §2 `NativeComponentEntry` fields + `resolveComponentContext` cache param + ISR fast-path | Task 4 |
-| §2 wire `islandCache` into `routes.ts` | Task 5 |
-| §4 integration: render-once + invalidate (real Rust cache) | Task 6 |
+| S1 shared `parse_isr_object` extraction | Task 1 |
+| S1 `JsxNode::SsrComponent` 3 fields + `lower_ssr_component` isr arm + `ComponentIsrUnsupported(String)` | Task 2 |
+| S1 `ComponentMeta` fields + `collect_components` copy + `components_to_json` emit | Task 3 |
+| S2 `NativeComponentEntry` fields + `resolveComponentContext` cache param + ISR fast-path | Task 4 |
+| S2 wire `islandCache` into `routes.ts` | Task 5 |
+| S4 integration: render-once + invalidate (real Rust cache) | Task 6 |
 | Invariant 4 (throw → empty, no poison) | Task 4 |
 | Invariant 5 (`props=""`) | Task 4, Task 6 |
 | Invariant 7 (shared keyspace invalidation) | Task 6 |

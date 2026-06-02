@@ -3,7 +3,7 @@
 **Sub-project:** Tier-2 follow-up. Flagship feature unlocked by Islands MVP.
 **Date:** 2026-05-24
 **Status:** approved for implementation planning
-**Parent design:** `architecture.md` § "Server functions"
+**Parent design:** `architecture.md` S "Server functions"
 **Related plans:** `2026-05-24-islands-hydration.md` (provides client-side hydration surface this MVP wires actions into), middleware/header-mutation plan (provides `Middleware` type + chain composition)
 
 ---
@@ -480,7 +480,7 @@ The action handler receives `req` directly as its first arg (NOT inside a `Route
 
 ### Coverage target
 
-Every wire-status code listed in §6 has a test. One happy-path end-to-end through the example app.
+Every wire-status code listed in S6 has a test. One happy-path end-to-end through the example app.
 
 ---
 

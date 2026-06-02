@@ -59,7 +59,7 @@ data: Vec<u8>                       // owned, [meta_len u16 BE][meta JSON][body]
       // no on_success call — uncached routes skip the closure entirely
 ```
 
-**Cached routes:** unchanged at two body memcpys per req (`build` + `clone`). The cached path is not optimized in this sub-project — sharded cache + (head, body) pair-storage is a separate sub-project, see "Known limitations §3".
+**Cached routes:** unchanged at two body memcpys per req (`build` + `clone`). The cached path is not optimized in this sub-project — sharded cache + (head, body) pair-storage is a separate sub-project, see "Known limitations S3".
 
 **Uncached routes:** ZERO body memcpys (down from two — `build` and `clone` both skipped). This is the bench hot path: `/` and `POST /_brust/action/createNote` both run uncached at HEAD `66f04d3`.
 
@@ -208,7 +208,7 @@ impl TcpStream {
         // Build full bytes once for both the write and the cache insert.
         // Clone preserved here — cache needs an owned copy independent of
         // the write_all transfer. Reducing this clone is a separate
-        // sub-project (see "Known limitations §3").
+        // sub-project (see "Known limitations S3").
         let resp = crate::render_stream::build_single_response_bytes(&parsed, body);
         if s.write_all(resp.clone()).await.is_err() {
             let _ = ack.send(());

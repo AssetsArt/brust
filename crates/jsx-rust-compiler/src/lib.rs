@@ -547,6 +547,10 @@ pub enum ErrorKind {
     CallExpressionNotSupported,
     #[error("complex expression (binary/conditional/unary) not supported in Phase A1")]
     ComplexExpressionNotSupported,
+    #[error("`style` object: only `key: value` entries are supported (no spread/computed keys)")]
+    StyleObjectNotSupported,
+    #[error("`style` object value not supported — use a string/number literal or a member-path")]
+    StyleObjectValueNotSupported,
     #[error("`.map((item, idx) => …)` two-arg form not supported in Phase A1")]
     MapIndexParamNotSupported,
     #[error("`.map(...)` shape not supported — expect `(ident) => <JSXElement>`")]
@@ -600,7 +604,7 @@ pub enum ErrorKind {
     )]
     BrustPageMustBeRoot,
     #[error(
-        "`<BrustPage {0}=…>` must be a string literal (e.g. `{0}=\"…\"`) — the document shell is rendered in Rust, so its attributes can't be dynamic expressions"
+        "`<BrustPage {0}=…>` must be a string literal (e.g. `{0}=\"…\"`) or a member-path (e.g. `{0}={{data.{0}}}`) — the document shell is rendered in Rust, so its attributes can't be call/arithmetic/spread expressions"
     )]
     BrustPageAttrMustBeStringLiteral(String),
     #[error(
@@ -959,9 +963,25 @@ mod tests {
     }
 
     #[test]
-    fn brust_page_dynamic_attr_is_rejected() {
+    fn brust_page_member_path_attr_is_accepted() {
+        // A member-path now threads into the head as `{{ data.lang }}` — no longer
+        // rejected (S8). The bare destructured prop `lang` lowers to `Expr::Field`.
         let src = r#"export default function Home({ lang }) {
   return <BrustPage lang={lang}><main>hi</main></BrustPage>;
+}"#;
+        let c = compile_full(src, "<test>", HashMap::new()).unwrap();
+        assert!(
+            c.template.contains("lang=\"{{ (lang) | e }}\""),
+            "expected interpolated lang, got: {}",
+            c.template
+        );
+    }
+
+    #[test]
+    fn brust_page_non_path_attr_is_rejected() {
+        // A non-literal, non-path expression (call) is still rejected.
+        let src = r#"export default function Home({ getLang }) {
+  return <BrustPage lang={getLang()}><main>hi</main></BrustPage>;
 }"#;
         let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
         match err.kind {
@@ -987,7 +1007,7 @@ mod tests {
         let c = compile_full(src, "<test>", HashMap::new()).unwrap();
         assert_eq!(
             c.template,
-            "<div>{{ comp_0_html | safe }}<p>{{ greeting }}</p></div>"
+            "<div>{{ comp_0_html | safe }}<p>{{ (greeting) | e }}</p></div>"
         );
     }
 

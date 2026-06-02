@@ -3,7 +3,7 @@
 **Sub-project:** Tier-2 follow-up. Closes the loop on Server Functions MVP.
 **Date:** 2026-05-24
 **Status:** approved for implementation planning
-**Parent design:** `architecture.md` § "Server functions"
+**Parent design:** `architecture.md` S "Server functions"
 **Related plans:** `2026-05-24-server-functions-design.md` (provides the manual registration API + action wire format this builds on)
 
 ---
@@ -139,7 +139,7 @@ export const x = 'use server'   // not the first statement
 ```
 
 This matches the [TC39 directive prologue](https://tc39.es/ecma262/#directive-prologue)
-shape Next.js uses. Implementation detail in §3.
+shape Next.js uses. Implementation detail in S3.
 
 ### 2.2 `withMiddleware` runtime helper
 
@@ -285,7 +285,7 @@ root so the scanner stays scoped to the app:
 const actions = await brust.scanActions({ roots: [import.meta.dirname] })
 ```
 
-This is what the example app migration uses (§7).
+This is what the example app migration uses (S7).
 
 ### 3.2 Directive check (read-only, no parse)
 
@@ -422,7 +422,7 @@ sets of dynamic-imports at boot, one per JS context. For ~10 server files
 and 4 workers, that's ~5 ms × 5 = ~25 ms total scan time at boot. Acceptable
 for an MVP. Future optimisation: emit `.brust/actions/manifest.ts` once
 from main, have workers `import` the manifest instead of re-scanning. Out
-of scope for this MVP — see §11.
+of scope for this MVP — see S11.
 
 Because workers spawn from the same `entry` file as main (`new Worker(opts.entry, ...)`
 in `runtime/index.ts`), they import the same `index.ts`, hit the same
@@ -452,8 +452,8 @@ the existing `[brust] unknown action_id=...` handler at `runtime/routes.ts`
 - File has `'use server'` but `await import(file)` throws (TS error, runtime
   error in module top-level) → re-throw with `[brust] scanActions failed to
   import "<file>": <original>`. Likely user-fixable.
-- Duplicate id across files → throw with both paths (§3.4).
-- Invalid id charset → throw with file path + offending name (§3.3).
+- Duplicate id across files → throw with both paths (S3.4).
+- Invalid id charset → throw with file path + offending name (S3.3).
 - `'use server'` file with zero function exports → throw (likely a bug).
 - Bun.glob throws → bubble up unchanged.
 
@@ -605,11 +605,11 @@ Spawn `bun test` in a temp directory with a controlled file layout:
 | Risk | Likelihood | Mitigation |
 |---|---|---|
 | Scanner finds test fixtures, builds an action from a test fn | Med | Default `ignore` excludes `node_modules/**`, `.brust/**`, `dist/**`, `build/**`. Example apps + test harnesses pass explicit `roots: [import.meta.dirname]` to scope the scan to their own dir. Project-rooted apps generally won't have test files at the project root, so the default is safe. |
-| Class export picked up as an action and 500s at dispatch | Low | Scanner explicitly rejects class constructors at scan time (§3.3) with a clear error message — no chance of registering a class as an action. |
+| Class export picked up as an action and 500s at dispatch | Low | Scanner explicitly rejects class constructors at scan time (S3.3) with a clear error message — no chance of registering a class as an action. |
 | Boot time grows with N server files (each `await import`) | Low | Serial import for safety; flip to parallel if benchmarks ever show >50 ms. Document the budget. |
 | A `'use server'` file imports a heavy module (e.g. database client) that runs at top-level | Med | Acknowledged as user responsibility — same as today's top-level imports. Document in spec. |
 | Two workers race to register different action sets after a dev-loop file rename | Low | Unknown id at dispatch → JSON 404 (existing handler). Restart workers fixes it. |
-| Double-wrap with `withMiddleware` produces a confusing error | Low | The helper detects prior `__brustMiddleware` and throws a clear "called twice on the same function — compose in a single call instead" (§2.2). |
+| Double-wrap with `withMiddleware` produces a confusing error | Low | The helper detects prior `__brustMiddleware` and throws a clear "called twice on the same function — compose in a single call instead" (S2.2). |
 
 ---
 

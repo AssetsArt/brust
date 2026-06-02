@@ -8,7 +8,7 @@
 
 **Tech Stack:** Rust (napi 3 + matchit + serde_json), TypeScript (Bun runtime, React 18 islands), `bun:test` for integration tests, inline `#[cfg(test)] mod tests` for Rust units.
 
-**Parent spec:** `docs/superpowers/specs/2026-05-24-server-functions-design.md`. Read §3 (wire format) and §6 (error model) before starting — every task references them.
+**Parent spec:** `docs/superpowers/specs/2026-05-24-server-functions-design.md`. Read S3 (wire format) and S6 (error model) before starting — every task references them.
 
 ---
 
@@ -2212,17 +2212,17 @@ EOF
 
 | Spec section | Implementing task(s) |
 |---|---|
-| §1 MVP scope decisions | Locked in plan header + Task 0 spike verifies envelope shape; manual `registerActions` lives in Task 4 |
-| §2 Architecture + data flow | Tasks 1–3 (Rust) + Tasks 4–6 (TS) implement the diagram end-to-end |
-| §3 Wire format & envelope (RouteCall union + meta.contentType) | Task 1 (Rust) + Task 5 (TS) |
-| §3 Rust dispatcher (URL match, charset, length, registry) | Task 3 |
-| §4 Server-side API (ActionDef, registerActions) | Tasks 4–5 |
-| §5 Client-side API (`action<F>(id)`, BrustActionError) | Task 6 |
-| §6 Error model (server/Rust/client tables) | Task 3 (Rust pre-dispatch) + Task 5 (JS terminal + middleware) + Task 6 (client throw) |
-| §7 Middleware reuse + cache-forbidden + req shape | Task 5 (chain composition) + Task 4 (registerActions does NOT accept cache field — ActionDef has none) |
-| §8 Testing strategy | Tasks 8–10 (integration) + inline unit tests in Tasks 1, 2, 3 |
-| §9 File list | Matches the "Files" lists at the top of each task |
-| §10 Risks #1–7 | Risk #1 (tsfn conflation): mitigated by Task 5 clean `switch (kind)`. Risk #2 (wire backward-compat): Task 0 spike + Task 1 unit test for render-kind unchanged. Risk #3 (1 KB per island): documented in plan, not blocking. Risk #4 (id collisions runtime): Task 4 throws on duplicate. Risk #5 (JSON parse 400): Task 5 actionBranch parses + Array.isArray BEFORE middleware. Risk #6 (SAB cap): Task 3 enforces 413 at the limit. Risk #7 (no retries): inherited from render path, no new mitigation needed. |
+| S1 MVP scope decisions | Locked in plan header + Task 0 spike verifies envelope shape; manual `registerActions` lives in Task 4 |
+| S2 Architecture + data flow | Tasks 1–3 (Rust) + Tasks 4–6 (TS) implement the diagram end-to-end |
+| S3 Wire format & envelope (RouteCall union + meta.contentType) | Task 1 (Rust) + Task 5 (TS) |
+| S3 Rust dispatcher (URL match, charset, length, registry) | Task 3 |
+| S4 Server-side API (ActionDef, registerActions) | Tasks 4–5 |
+| S5 Client-side API (`action<F>(id)`, BrustActionError) | Task 6 |
+| S6 Error model (server/Rust/client tables) | Task 3 (Rust pre-dispatch) + Task 5 (JS terminal + middleware) + Task 6 (client throw) |
+| S7 Middleware reuse + cache-forbidden + req shape | Task 5 (chain composition) + Task 4 (registerActions does NOT accept cache field — ActionDef has none) |
+| S8 Testing strategy | Tasks 8–10 (integration) + inline unit tests in Tasks 1, 2, 3 |
+| S9 File list | Matches the "Files" lists at the top of each task |
+| S10 Risks #1–7 | Risk #1 (tsfn conflation): mitigated by Task 5 clean `switch (kind)`. Risk #2 (wire backward-compat): Task 0 spike + Task 1 unit test for render-kind unchanged. Risk #3 (1 KB per island): documented in plan, not blocking. Risk #4 (id collisions runtime): Task 4 throws on duplicate. Risk #5 (JSON parse 400): Task 5 actionBranch parses + Array.isArray BEFORE middleware. Risk #6 (SAB cap): Task 3 enforces 413 at the limit. Risk #7 (no retries): inherited from render path, no new mitigation needed. |
 
 **Placeholder scan:** Searched for "TBD", "TODO", "implement later", "Add appropriate" — none in the plan. Every code step shows the actual code.
 
@@ -2231,7 +2231,7 @@ EOF
 - `BrustActionError(message, status, payload)` constructor shape — consistent in Task 6 + Task 7 NoteForm.
 - `RouteCall` union: `kind: 'render' | 'action'` — consistent in Task 1 (Rust serialise) + Task 5 (TS parse).
 - `args_json` field name in envelope — consistent in Task 0 spike, Task 1 ActionEnvelope, Task 3 build_action_envelope call, Task 5 actionBranch consume.
-- `contentType` (camelCase on the wire) — consistent in spec §3, Task 3 ResponseMeta `#[serde(rename = "contentType")]`, Task 5 packResponse.
+- `contentType` (camelCase on the wire) — consistent in spec S3, Task 3 ResponseMeta `#[serde(rename = "contentType")]`, Task 5 packResponse.
 - `is_safe_action_id` defined in BOTH `src/lib.rs` and `src/server.rs` (intentional belt-and-suspenders) — Task 3 Step 4 test cross-checks they agree.
 
 No drift detected.

@@ -1366,25 +1366,25 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 Spec section → task that implements it:
 
-| Spec § | Task |
+| Spec S | Task |
 |---|---|
-| §2.1 Directive recognition | Task 2 (`hasUseServerDirective`) |
-| §2.2 `withMiddleware` helper | Task 1 |
-| §2.3 `brust.scanActions(opts?)` | Task 4 (impl) + Task 5 (expose) |
-| §2.4 `brust.serve({..., actions})` | Task 5 |
-| §2.5 Drop public `defineActions` / `registerActions` | Task 5 |
-| §3.1 `findCandidateFiles` | Task 4 |
-| §3.2 `stripLeadingTrivia` + directive check | Task 2 |
-| §3.3 `collectExports` (class + default rejection) | Task 3 |
-| §3.4 Duplicate id throws | Task 4 |
-| §3.5 Concurrency (parallel checks, serial imports) | Task 4 |
-| §4 Worker coordination | Task 6 (example reuses worker block) + Task 7 (verify) |
-| §5 Error handling | Tasks 3 + 4 (scan-time errors); existing runtime handles 404/500 |
-| §6 Type safety | Unchanged — no task; verified in Task 7 |
-| §7 Migration of example | Task 6 |
-| §8.1 Unit tests | Tasks 1-4 |
-| §8.2 Integration tests | Task 7 (verification only — no new tests; the existing 11 action tests + 1 island test cover the surface) |
-| §9 Risks | Mitigated: defaults updated (Task 4), class rejected (Task 3), double-wrap rejected (Task 1) |
-| §10 Implementation order | Tasks 1-8 below |
+| S2.1 Directive recognition | Task 2 (`hasUseServerDirective`) |
+| S2.2 `withMiddleware` helper | Task 1 |
+| S2.3 `brust.scanActions(opts?)` | Task 4 (impl) + Task 5 (expose) |
+| S2.4 `brust.serve({..., actions})` | Task 5 |
+| S2.5 Drop public `defineActions` / `registerActions` | Task 5 |
+| S3.1 `findCandidateFiles` | Task 4 |
+| S3.2 `stripLeadingTrivia` + directive check | Task 2 |
+| S3.3 `collectExports` (class + default rejection) | Task 3 |
+| S3.4 Duplicate id throws | Task 4 |
+| S3.5 Concurrency (parallel checks, serial imports) | Task 4 |
+| S4 Worker coordination | Task 6 (example reuses worker block) + Task 7 (verify) |
+| S5 Error handling | Tasks 3 + 4 (scan-time errors); existing runtime handles 404/500 |
+| S6 Type safety | Unchanged — no task; verified in Task 7 |
+| S7 Migration of example | Task 6 |
+| S8.1 Unit tests | Tasks 1-4 |
+| S8.2 Integration tests | Task 7 (verification only — no new tests; the existing 11 action tests + 1 island test cover the surface) |
+| S9 Risks | Mitigated: defaults updated (Task 4), class rejected (Task 3), double-wrap rejected (Task 1) |
+| S10 Implementation order | Tasks 1-8 below |
 
 All spec sections covered. No tasks added speculatively beyond the spec.

@@ -60,7 +60,7 @@ export async function runDev(args: string[]): Promise<void> {
 
   // Sub-project J — emit .brust/jinja/<Name>.jinja templates BEFORE handing
   // off to the user's entry. The runtime loads these on boot. Dev-mode HMR
-  // on .tsx edit is deferred per spec §12 (restart-to-reload for v2).
+  // on .tsx edit is deferred per spec S12 (restart-to-reload for v2).
   const entryDir = dirname(entry)
   const routesFile = path.join(entryDir, 'routes.tsx')
   let loadedRoutes: any[] = []
@@ -74,7 +74,7 @@ export async function runDev(args: string[]): Promise<void> {
       )
     }
   }
-  // Spec §7 — scan routes.tsx (where page imports live), not the app entry.
+  // Spec S7 — scan routes.tsx (where page imports live), not the app entry.
   // outDir = process.cwd() to align with the runtime's loadJinjaOnce which
   // reads from `cwd + '.brust/jinja'`. When user runs `bun run dev
   // example/hello-world/index.ts` from repo root, cwd != entryDir; writing

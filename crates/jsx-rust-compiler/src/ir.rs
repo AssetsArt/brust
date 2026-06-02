@@ -48,7 +48,7 @@ pub enum JsxNode {
     /// Built-in `<BrustPage>` document shell. The compiler owns the ENTIRE
     /// `<html>/<head>/<body>` skeleton, including `<head>` — the user never
     /// writes head markup. Head content is supplied through a curated set of
-    /// string-literal PROPS (`title`, `description`, …); a literal `<head>`
+    /// string-literal or member-path PROPS (`title`, `description`, …); a literal `<head>`
     /// child is rejected. Keeping `<head>` framework-owned lets brust inject
     /// additional tags later (importmap, preloads, the css link) without
     /// colliding with user markup. It is NOT a user-definable component — the
@@ -57,15 +57,15 @@ pub enum JsxNode {
     /// never shadow it. Only valid as the route's root element.
     Document {
         /// `<html lang="…">` — `lang` prop. Defaults to `"en"` when omitted.
-        lang: Option<String>,
+        lang: Option<HeadValue>,
         /// `<html class="…">` — `className` prop.
-        html_class: Option<String>,
+        html_class: Option<HeadValue>,
         /// `<body class="…">` — `bodyClassName` prop.
-        body_class: Option<String>,
+        body_class: Option<HeadValue>,
         /// `<title>…</title>` — `title` prop. Omitted entirely when absent.
-        title: Option<String>,
+        title: Option<HeadValue>,
         /// `<meta name="description" content="…">` — `description` prop.
-        description: Option<String>,
+        description: Option<HeadValue>,
         /// Page body — every `<BrustPage>` child (all become `<body>` content).
         body: Vec<JsxNode>,
     },
@@ -142,6 +142,17 @@ pub enum JsxNode {
         /// isr-attribute parser lands.
         revalidate: Option<u32>,
     },
+}
+
+/// A `<BrustPage>` head/shell prop value: either a compile-time string literal
+/// (pre-escaped at build via `push_*_escaped`) or a member-path expression
+/// interpolated into the jinja head as `{{ path }}` (rendered verbatim — brust
+/// runs minijinja with `AutoEscape::None`, the established loader-data-trusted
+/// contract, same as host-element `href="{{ item.href }}"`).
+#[derive(Debug, Clone)]
+pub enum HeadValue {
+    Literal(String),
+    Path(Expr),
 }
 
 #[derive(Debug, Clone)]

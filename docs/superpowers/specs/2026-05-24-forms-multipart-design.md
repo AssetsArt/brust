@@ -3,7 +3,7 @@
 **Sub-project:** Tier-2 follow-up. Extends server actions to accept HTML form bodies.
 **Date:** 2026-05-24
 **Status:** approved for implementation planning
-**Parent design:** `architecture.md` § "Server functions"
+**Parent design:** `architecture.md` S "Server functions"
 **Related plans:** `2026-05-24-server-functions-design.md` (action wire format), `2026-05-24-use-server-directive-design.md` (action discovery — actions discovered via `'use server'` files can be either JSON or form handlers)
 
 ---
@@ -155,7 +155,7 @@ ActionEnvelope {
 Invariant: exactly one of `body_text` / `body_b64` is `Some`. Encoded
 in serde via `#[serde(skip_serializing_if = "Option::is_none")]`.
 
-`args_json` is REMOVED. Worker-side dispatch updates accordingly (§3).
+`args_json` is REMOVED. Worker-side dispatch updates accordingly (S3).
 
 ### 2.2 TS mirror (`runtime/routes.ts::RouteCall`)
 
@@ -523,7 +523,7 @@ Add 6 new tests after the existing 11 action tests (ports 38186-38191):
 | `Request.formData()` parsing on a Web Request constructed from raw bytes — does Bun support it? | Low | Bun 1.x supports `new Request(url, { body: Uint8Array }).formData()` per docs. Add a sanity unit test if uncertain. |
 | Base64-encoding adds CPU cost to multipart path | Low | Acceptable for a 256 KB cap. Action endpoint is not the hot path (render is). |
 | Large multipart envelope (~341 KB JSON string) through napi tsfn might surface a buffer issue | Low | tsfn passes the String unchanged; no copy-cap documented. Verify with the integration test using a 200 KB file. |
-| Handler signature mismatch (declared `(req, fd: FormData)` but JSON request arrives) | Med | Documented in §4.2: handler is on the user to declare which shape it expects. JSON request → `argsForFn = [...args]`, handler sees first arg as whatever, behaves weirdly. NOT a framework concern; agentic schema in a future surface will surface this mismatch. |
+| Handler signature mismatch (declared `(req, fd: FormData)` but JSON request arrives) | Med | Documented in S4.2: handler is on the user to declare which shape it expects. JSON request → `argsForFn = [...args]`, handler sees first arg as whatever, behaves weirdly. NOT a framework concern; agentic schema in a future surface will surface this mismatch. |
 
 ---
 
@@ -546,7 +546,7 @@ Total estimate: ~6 hours focused work via subagent-driven-development.
 
 ## 12. Open follow-ups (post-MVP)
 
-Documented in §1 "Out of scope". Re-listing for the plan reader:
+Documented in S1 "Out of scope". Re-listing for the plan reader:
 
 - Native HTML form support with HTML/303 responses.
 - Streaming uploads (SAB resize protocol).

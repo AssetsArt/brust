@@ -37,7 +37,7 @@ This is follow-up #1 from the treaty handoff ("MCP-over-EndpointDef rework").
   time (consistent with how resources are already extracted, and with the old
   tool extractor). No new runtime dependency on Zod internals.
 - **NOT a flat `arguments` shape.** `arguments` is **nested** by routing role:
-  `{ params?, query?, body? }`. See §"inputSchema shape" for the rationale and
+  `{ params?, query?, body? }`. See S"inputSchema shape" for the rationale and
   the deferred flat-flattening follow-up.
 - **NOT per-endpoint MCP opt-out / rename in v1.** Every registered endpoint
   becomes a tool (matches the old behavior: every `'use server'` action was a
@@ -89,7 +89,7 @@ positional-args mapping) with the routing identity:
 
 ```ts
 export interface ToolSchema {
-  name: string                 // derived, MCP-valid: see §"Tool naming"
+  name: string                 // derived, MCP-valid: see S"Tool naming"
   description?: string
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD'  // NEW
   path: string                 // NEW — literal registered path, e.g. /notes/{id}
@@ -319,7 +319,7 @@ Changed:
 - `runtime/define-actions.ts` — add `description?: string` to `EndpointOptions`
   (build-time-read metadata; runtime-harmless).
 - `tests/integration.test.ts` — replace the "tools/list is empty" test with
-  real tool assertions + a `tools/call` round-trip (see §Tests).
+  real tool assertions + a `tools/call` round-trip (see STests).
 
 New:
 - `runtime/mcp/extractor.test.ts` cases (or extend existing) for the chain walk,

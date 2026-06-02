@@ -12,7 +12,10 @@ const FIXTURES: &[&str] = &[
     "props_hello",
     "list_nav",
     "brust_page",
+    "brust_page_dynamic",
     "fragment_basic",
+    "cond_native",
+    "style_object",
 ];
 
 #[test]

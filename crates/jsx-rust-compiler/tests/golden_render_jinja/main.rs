@@ -22,12 +22,23 @@ fn render_fixture(name: &str, ctx: minijinja::Value) -> String {
         .unwrap_or_else(|e| panic!("render {name}: {e}"))
 }
 
+/// Compare `actual` against the committed `<name>.expected.html`, or rewrite it
+/// when `UPDATE_GOLDEN` is set. Centralized so every render test regenerates
+/// consistently after an intentional emit change (e.g. the `| e` escaping pass).
+fn check_golden(name: &str, actual: &str) {
+    let path = format!("fixtures/{name}.expected.html");
+    if std::env::var("UPDATE_GOLDEN").is_ok() {
+        std::fs::write(&path, actual).unwrap();
+        return;
+    }
+    let expected = std::fs::read_to_string(&path).expect(&path);
+    assert_eq!(actual, expected);
+}
+
 #[test]
 fn renders_static_hello_byte_equal() {
     let actual = render_fixture("static_hello", context! {});
-    let expected = std::fs::read_to_string("fixtures/static_hello.expected.html")
-        .expect("fixtures/static_hello.expected.html");
-    assert_eq!(actual, expected);
+    check_golden("static_hello", &actual);
 }
 
 #[test]
@@ -39,9 +50,7 @@ fn renders_props_hello_byte_equal() {
             count => 7,
         },
     );
-    let expected = std::fs::read_to_string("fixtures/props_hello.expected.html")
-        .expect("fixtures/props_hello.expected.html");
-    assert_eq!(actual, expected);
+    check_golden("props_hello", &actual);
 }
 
 #[test]
@@ -55,9 +64,7 @@ fn renders_list_nav_byte_equal() {
             ],
         },
     );
-    let expected = std::fs::read_to_string("fixtures/list_nav.expected.html")
-        .expect("fixtures/list_nav.expected.html");
-    assert_eq!(actual, expected);
+    check_golden("list_nav", &actual);
 }
 
 #[test]
@@ -68,9 +75,7 @@ fn renders_island_csr_byte_equal() {
             island_0_props => "{&quot;n&quot;:1}",
         },
     );
-    let expected = std::fs::read_to_string("fixtures/island_csr.expected.html")
-        .expect("fixtures/island_csr.expected.html");
-    assert_eq!(actual, expected);
+    check_golden("island_csr", &actual);
 }
 
 #[test]
@@ -82,17 +87,13 @@ fn renders_island_ssr_byte_equal() {
             island_0_html => "<button>1</button>",
         },
     );
-    let expected = std::fs::read_to_string("fixtures/island_ssr.expected.html")
-        .expect("fixtures/island_ssr.expected.html");
-    assert_eq!(actual, expected);
+    check_golden("island_ssr", &actual);
 }
 
 #[test]
 fn renders_fragment_basic_byte_equal() {
     let actual = render_fixture("fragment_basic", context! {});
-    let expected = std::fs::read_to_string("fixtures/fragment_basic.expected.html")
-        .expect("fixtures/fragment_basic.expected.html");
-    assert_eq!(actual, expected);
+    check_golden("fragment_basic", &actual);
 }
 
 #[test]
@@ -108,7 +109,23 @@ fn renders_brust_page_byte_equal() {
             island_1_html => "<button>100</button>",
         },
     );
-    let expected = std::fs::read_to_string("fixtures/brust_page.expected.html")
-        .expect("fixtures/brust_page.expected.html");
-    assert_eq!(actual, expected);
+    check_golden("brust_page", &actual);
+}
+
+#[test]
+fn renders_brust_page_dynamic_byte_equal() {
+    // `<BrustPage>` with member-path head props (S8): `title`/`description`/`lang`
+    // thread a nested `d` loader object into the head as `{{ (d.*) | e }}`,
+    // HTML-escaped at runtime (AutoEscape::None, so the `| e` filter does it).
+    let actual = render_fixture(
+        "brust_page_dynamic",
+        context! {
+            d => context! {
+                title => "Charizard · PokéDex",
+                desc => "The Flame Pokémon",
+                lang => "en",
+            },
+        },
+    );
+    check_golden("brust_page_dynamic", &actual);
 }

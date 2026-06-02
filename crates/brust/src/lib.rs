@@ -738,7 +738,7 @@ pub fn napi_dev_broadcast(json: String) {
 /// Worker-driven render chunk delivery. Worker calls this once per chunk
 /// it wants to emit; final call uses `len = 0` to close the channel.
 ///
-/// Contract (spec §5.2):
+/// Contract (spec S5.2):
 /// - `len > 0`: read SAB[0..len], send Bytes through render_slot.chunk_tx,
 ///   await ack. Resolves after Rust writes the chunk to the socket.
 /// - `len == 0`: send Final, await ack. Closes the response.
@@ -811,7 +811,7 @@ pub async fn napi_render_chunk_final(worker_id: u32, len: u32) -> NapiResult<()>
 
 /// Sub-project J — render via minijinja using SAB-side-channeled loader data.
 ///
-/// SAB convention (spec §6 last paragraph): per-napi-call. `napi_render_jinja`
+/// SAB convention (spec S6 last paragraph): per-napi-call. `napi_render_jinja`
 /// treats SAB[0..data_len] as INBOUND raw JSON written by the JS worker. It
 /// renders the template Rust-side, assembles a `[meta_len: u16 BE][meta JSON]
 /// [body]` payload, writes it back into the SAB, and returns its byte length —

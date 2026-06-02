@@ -103,7 +103,7 @@ thiserror  = "1"
 
 **Important** (reviewer-flagged): swc_core's `ecma_parser` feature does NOT enable TypeScript parsing — the inner `swc_ecma_parser` is declared with `default-features = false`, so the `typescript` cargo feature stays off and `Syntax::Typescript(_)` is `#[cfg]`-gated out of the enum. The `ecma_parser_typescript` feature is the correct one: it pulls `["__parser", "swc_ecma_parser/typescript"]` and re-enables the variant.
 
-`swc_core` 68 bundles internally-consistent versions of `swc_common`, `swc_ecma_ast` (25.x), `swc_ecma_parser` (41.x), `swc_ecma_visit`. swc_core 68 resolves to `serde 1.0.228` internally (verified via `cargo fetch` + lockfile inspection); the workspace's existing `serde = "1"` is compatible. The bundle version-locks its internals, so the `serde::__private` failure that burned the prior session (swc_core 13 era) does NOT apply here. The likely remaining failure modes (proc-macro2 conflict, lockfile divergence) are covered by §15.1.
+`swc_core` 68 bundles internally-consistent versions of `swc_common`, `swc_ecma_ast` (25.x), `swc_ecma_parser` (41.x), `swc_ecma_visit`. swc_core 68 resolves to `serde 1.0.228` internally (verified via `cargo fetch` + lockfile inspection); the workspace's existing `serde = "1"` is compatible. The bundle version-locks its internals, so the `serde::__private` failure that burned the prior session (swc_core 13 era) does NOT apply here. The likely remaining failure modes (proc-macro2 conflict, lockfile divergence) are covered by S15.1.
 
 ### 4.2 Parser invocation
 
@@ -138,7 +138,7 @@ The lowering pass (`src/lower.rs`) walks the swc AST and produces our small IR. 
 `JSXFragment`: `FragmentNotSupported { span }`.
 
 `JSXAttr.name`:
-- `JSXAttrName::Ident(IdentName)`: passed through; the emitter handles renames (§4.5). Note: this variant wraps `IdentName` (span + Atom only), not `Ident` — no syntax context, no `.to_id()`. Only `.sym` matters.
+- `JSXAttrName::Ident(IdentName)`: passed through; the emitter handles renames (S4.5). Note: this variant wraps `IdentName` (span + Atom only), not `Ident` — no syntax context, no `.to_id()`. Only `.sym` matters.
 - `JSXAttrName::JSXNamespacedName(_)`: `NamespacedAttrNotSupported { span }`.
 
 `JSXAttrName::Ident` starting with `on` + uppercase next char (e.g. `onClick`, `onSubmit`): `EventHandlerNotSupported { span, name }`. Detected BEFORE rename-table lookup. (Reviewer-flagged precedence; v2 makes it explicit.)
@@ -158,14 +158,14 @@ The lowering pass (`src/lower.rs`) walks the swc AST and produces our small IR. 
 `JSXAttrSpread` (e.g. `{...props}`): `SpreadAttributeNotSupported { span }`.
 
 Element children: lowered in order, each child is one of:
-- `JSXText`: whitespace-normalize per §4.6, then `JsxNode::Text(s)`.
+- `JSXText`: whitespace-normalize per S4.6, then `JsxNode::Text(s)`.
 - `JSXExprContainer(JSXExpr::Expr(expr))`: see EXPR rules below.
 - `JSXExprContainer(JSXExpr::JSXEmptyExpr(_))`: silently dropped (covers `{/* comment */}`).
 - `JSXElement`: recurse.
 - `JSXFragment`: `FragmentNotSupported`.
 - `JSXSpreadChild`: `SpreadChildNotSupported`.
 
-**Void-element children check** (reviewer-flagged — moved from §6 trivia into a lowering rule): after the parent element's name is lowered, if the lowered name matches the void-element table (`area, base, br, col, embed, hr, img, input, keygen, link, meta, param, source, track, wbr`) and `children` is non-empty (after whitespace-only filter per §4.6), emit `VoidElementHasChildren { span, name }`. This is the ONLY trigger for that error kind.
+**Void-element children check** (reviewer-flagged — moved from S6 trivia into a lowering rule): after the parent element's name is lowered, if the lowered name matches the void-element table (`area, base, br, col, embed, hr, img, input, keygen, link, meta, param, source, track, wbr`) and `children` is non-empty (after whitespace-only filter per S4.6), emit `VoidElementHasChildren { span, name }`. This is the ONLY trigger for that error kind.
 
 `EXPR` rules (both child position and attribute-value position):
 - `Expr::Ident(name)`:
@@ -214,7 +214,7 @@ Processing order in the emitter (v2 makes precedence explicit):
 - A `JSXText` node with non-whitespace content: collapse runs of whitespace (spaces, tabs, newlines) to a single space; trim leading/trailing whitespace ONLY when the text borders a non-text sibling or the parent element boundary.
 - A leading/trailing whitespace-only span at the start/end of an element's children list is dropped.
 
-Three failing inputs would break: (a) preformatted `<pre>` content — React preserves it via the element semantics, but the JSX text itself is still collapsed at the JSX level. A1 inherits this React quirk. (b) Multiline string in `{"foo\nbar"}` — preserved verbatim, this is an EXPR not JSX text. (c) `&nbsp;` HTML entity — A1 treats `&` in JSX text as raw, NOT as an entity reference (React decodes `&nbsp;` to U+00A0; we don't). Listed as a known limitation §12.
+Three failing inputs would break: (a) preformatted `<pre>` content — React preserves it via the element semantics, but the JSX text itself is still collapsed at the JSX level. A1 inherits this React quirk. (b) Multiline string in `{"foo\nbar"}` — preserved verbatim, this is an EXPR not JSX text. (c) `&nbsp;` HTML entity — A1 treats `&` in JSX text as raw, NOT as an entity reference (React decodes `&nbsp;` to U+00A0; we don't). Listed as a known limitation S12.
 
 ## 5. Emit target — maud
 
@@ -263,9 +263,9 @@ pub fn render(props: &Props) -> Markup {
 | Text node (post-normalize) | `"text"` — maud will HTML-escape on render |
 | Expr child `{expr}` | `(<emit_expr>)` |
 | Map child | `@for binding in &<source_path> { <body> }` |
-| Number-literal text | `(value)` (i64) or `("value")` (str of fractional, see §5.2) |
+| Number-literal text | `(value)` (i64) or `("value")` (str of fractional, see S5.2) |
 
-`<emit_expr>` translation. **Canonical rule** (reviewer-flagged §5.1↔§10 inconsistency): the emitter emits NO explicit `&` prefix on field/member accesses. The render signature is `fn render(props: &Props) -> Markup`, so `props.title` already yields `&String`/`&T` via field projection through a reference; maud's `Render` blanket impl covers it. Adding `&` produces `&&String`, which works but is needlessly obscure.
+`<emit_expr>` translation. **Canonical rule** (reviewer-flagged S5.1↔S10 inconsistency): the emitter emits NO explicit `&` prefix on field/member accesses. The render signature is `fn render(props: &Props) -> Markup`, so `props.title` already yields `&String`/`&T` via field projection through a reference; maud's `Render` blanket impl covers it. Adding `&` produces `&&String`, which works but is needlessly obscure.
 
 | IR | Rust |
 |---|---|
@@ -273,10 +273,10 @@ pub fn render(props: &Props) -> Markup {
 | `MapBinding(name)` | `name` (binding from `for name in &props.xs` is already `&XsItem`) |
 | `MemberAccess { root, path }` where root is destructured prop | `props.<root>.<path0>.<path1>...` |
 | `MemberAccess` where root is map binding | `<root>.<path0>...` |
-| `StaticText(s)` | `(<emit_static_str>)` — see §5.2 |
+| `StaticText(s)` | `(<emit_static_str>)` — see S5.2 |
 | `StaticNum(n)` | `(n)` (i64) |
 
-All fixture expected emits in §10 follow this canonical rule.
+All fixture expected emits in S10 follow this canonical rule.
 
 ### 5.2 Numeric and string-literal emit
 
@@ -294,9 +294,9 @@ For Phase A1:
 |---|---|
 | `{name}` or `{name.field}` in JSX text or attr value, where field path bottoms out in a value position | `pub name: String` (or `pub name: { ... }` struct for member chains) |
 | `{name.map((item) => ...)}` | `pub name: Vec<NameItem>` where `NameItem` is a generated struct whose fields are inferred from `item.<f>` use sites inside the map body |
-| `{value.field1.field2}` where path reaches depth ≥ 2 | nested generated struct types — see §5.4 |
+| `{value.field1.field2}` where path reaches depth ≥ 2 | nested generated struct types — see S5.4 |
 
-If two paths conflict (e.g. `{items}` text and `{items.map(...)}`) → `PropTypeConflict`. The reviewer's open question is resolved in §5.4.
+If two paths conflict (e.g. `{items}` text and `{items.map(...)}`) → `PropTypeConflict`. The reviewer's open question is resolved in S5.4.
 
 ### 5.4 Nested member path → struct emit
 
@@ -401,7 +401,7 @@ No separate runtime crate. The emitted Rust code depends on `maud = "0.27"` at t
 ### 9.1 Unit tests (`src/*` `#[cfg(test)]`)
 
 - `parser.rs`: source → swc Module sanity (just confirms the parser is configured correctly; not testing swc).
-- `lower.rs`: per error case in §4.4, one test producing the expected `ErrorKind`. ~20 cases.
+- `lower.rs`: per error case in S4.4, one test producing the expected `ErrorKind`. ~20 cases.
 - `lower.rs`: positive lowering tests for each IR node kind, asserting on IR shape with `Debug`.
 - `emit.rs`: per IR node, one snapshot of emitted maud syntax.
 
@@ -590,7 +590,7 @@ Expected HTML — fixture test calls render with `items = [{href:"/a", label:"Al
 6. Each `.expected.html` file matches `maud::Markup::into_string()` output for the same input — verified by the golden_render tests passing.
 7. `bun run build` + `bun test runtime/` still green — A1 doesn't touch the napi build.
 8. Each `ErrorKind` variant has at least one unit test in `lower.rs` producing it.
-9. swc_core 68 compiles cleanly with the workspace's existing `serde = "1"`. If T1 finds a compat issue, the BLOCKED fallback in §15.1 fires before any other task runs.
+9. swc_core 68 compiles cleanly with the workspace's existing `serde = "1"`. If T1 finds a compat issue, the BLOCKED fallback in S15.1 fires before any other task runs.
 
 ## 12. Known limitations (shipped state)
 
@@ -609,21 +609,21 @@ Expected HTML — fixture test calls render with `items = [{href:"/a", label:"Al
 1. **Q (reviewer): React `'` escape** — moot. Dropping React byte-equivalence; trust maud's 4-char set.
 2. **Q (reviewer): void element form** — moot. maud emits `<br>`, that's the truth.
 3. **Q (reviewer): reserve calc** — moot. maud manages its own buffer.
-4. **Q (reviewer): PropTypeConflict for items used both as map source and value** — explicit `PropTypeConflict` per §5.3. Detected by the type-inference pass before emit.
+4. **Q (reviewer): PropTypeConflict for items used both as map source and value** — explicit `PropTypeConflict` per S5.3. Detected by the type-inference pass before emit.
 5. **Q (reviewer): one-shot capture vs recurring** — one-shot. `.expected.html` is committed and updated only on dialect/fixture changes. CI compares; CI does not recapture.
 6. **Q (reviewer, v2): inline TS type annotations like `({ a }: { a: string })`** — the lower pass type-erases the param type. The `swc_ecma_parser` configured with `tsx: true` already accepts inline types in the AST; we ignore the `type_ann` field. ✓
-7. **Q (reviewer, v2): map two-arg form** — explicit `MapIndexParamNotSupported` per §4.4.
-8. **Q (v2): swc_core compat with workspace serde** — T1 verifies. §15.1 BLOCKED fallback.
+7. **Q (reviewer, v2): map two-arg form** — explicit `MapIndexParamNotSupported` per S4.4.
+8. **Q (v2): swc_core compat with workspace serde** — T1 verifies. S15.1 BLOCKED fallback.
 
 ## 14. Internal consistency check
 
 (v2 — after rewrite, verify each cross-reference.)
 
-- §3 layout matches §9 test paths: ✓
-- §4 lowering rules cover every `ErrorKind` in §6: ✓ (cross-checked).
-- §5 emit rules cover every IR node introduced in §4: ✓.
-- §10 expected emits use the maud-syntax forms from §5.1: ✓.
-- §11 acceptance criteria match the test gates in §9.4: ✓.
+- S3 layout matches S9 test paths: ✓
+- S4 lowering rules cover every `ErrorKind` in S6: ✓ (cross-checked).
+- S5 emit rules cover every IR node introduced in S4: ✓.
+- S10 expected emits use the maud-syntax forms from S5.1: ✓.
+- S11 acceptance criteria match the test gates in S9.4: ✓.
 - Crate name `jsx-rust-compiler`, package name `jsx-rust-compiler`, lib `jsx_rust_compiler` (with hyphen→underscore), binary `jsx-rustc`. No `jsx_rust_runtime` mention anywhere — collapsed in v2.
 
 ## 15. Blocked fallback (per ny-auto-pipeline discipline)
@@ -634,14 +634,14 @@ Expected HTML — fixture test calls render with `items = [{href:"/a", label:"Al
 
 Symptom: `cargo build -p jsx-rust-compiler` errors during the swc-graph compile.
 
-First diagnostic step (debug-mantra step 3, falsify): `cargo build -p jsx-rust-compiler --verbose 2>&1 | head -60` and identify which crate failed. If the failing crate is NOT in the swc graph, the issue is local to our code and §15.1 doesn't apply.
+First diagnostic step (debug-mantra step 3, falsify): `cargo build -p jsx-rust-compiler --verbose 2>&1 | head -60` and identify which crate failed. If the failing crate is NOT in the swc graph, the issue is local to our code and S15.1 doesn't apply.
 
 Likely failure modes + recovery, in order of probability:
 
 1. **proc-macro2 / quote / syn version conflict** with another workspace dep that pins a major version. Recovery: `cargo tree -p jsx-rust-compiler -i proc-macro2` to find the conflicting branch. Bump our own constraint (or relax it to `"*"` for direct deps that don't pin major) until cargo can pick a single working version.
-2. **Edition / rustc version too old**. swc_core 68 may require a newer rustc minimum than the workspace's `edition = "2024"` toolchain supports. Recovery: `rustc --version` to confirm; the workspace `crates/brust/Cargo.toml` already pins `edition = "2024"`, which requires rustc ≥ 1.85 — swc_core 68 should be within that. If a newer minimum is required, document in §12 known limitations and add a `rust-version` field to `crates/jsx-rust-compiler/Cargo.toml`.
+2. **Edition / rustc version too old**. swc_core 68 may require a newer rustc minimum than the workspace's `edition = "2024"` toolchain supports. Recovery: `rustc --version` to confirm; the workspace `crates/brust/Cargo.toml` already pins `edition = "2024"`, which requires rustc ≥ 1.85 — swc_core 68 should be within that. If a newer minimum is required, document in S12 known limitations and add a `rust-version` field to `crates/jsx-rust-compiler/Cargo.toml`.
 3. **Lockfile divergence** between an in-repo `Cargo.lock` and what swc_core 68 expects. Recovery: `rm Cargo.lock && cargo build -p jsx-rust-compiler` to regenerate from constraint solving; commit the new lockfile.
-4. **NOT covered by §15.1**: serde version. swc_core 68 internally satisfies its own serde requirement. The workspace's `serde = "1"` SemVer-resolves to 1.0.x compatible with swc_core 68 by construction. Do NOT pin serde unless cargo's error message specifically names serde at a wrong version; even then, the pin must be UP (allow newer), not DOWN.
+4. **NOT covered by S15.1**: serde version. swc_core 68 internally satisfies its own serde requirement. The workspace's `serde = "1"` SemVer-resolves to 1.0.x compatible with swc_core 68 by construction. Do NOT pin serde unless cargo's error message specifically names serde at a wrong version; even then, the pin must be UP (allow newer), not DOWN.
 5. ESCALATE to advisor — if 1–3 fail in sequence and the error mode is truly novel, advisor adjudicates. Per ny-auto-pipeline two-attempts rule, BLOCKED-twice on the same root cause triggers advisor.
 
 The HARD floor before pivoting parser strategy: two real attempts on independent root causes must fail. Pivoting back to v1's hand-rolled approach requires explicit advisor sign-off — user direction is SWC + maud, and we don't override that on our own.
@@ -652,7 +652,7 @@ Symptom: golden_render test fails on a fixture the first time — the `expected.
 
 Recovery:
 1. `UPDATE_GOLDEN=1 cargo test -p jsx-rust-compiler --test golden_render -- <name>` to re-capture, commit the new bytes.
-2. Eyeball the diff. If it's whitespace, escape-set, or void-form: document in §12.
+2. Eyeball the diff. If it's whitespace, escape-set, or void-form: document in S12.
 3. If it's a semantic mismatch (wrong attribute, wrong text): emit bug — fix `emit.rs`, re-run, re-capture.
 
 ## 16. Out of scope — never doing in the compiler

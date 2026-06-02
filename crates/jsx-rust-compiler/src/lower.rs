@@ -9,8 +9,8 @@ use swc_core::ecma::ast::{
     CallExpr, Callee, DefaultDecl, ExportDefaultDecl, Expr as SwcExpr, ExprOrSpread, FnExpr,
     Function, JSXAttrName, JSXAttrOrSpread, JSXAttrValue, JSXElement, JSXElementChild,
     JSXElementName, JSXExpr, JSXFragment, Lit, MemberExpr, MemberProp, Module, ModuleDecl,
-    ModuleItem, ObjectPatProp, ParenExpr, Pat, Prop, PropName, PropOrSpread, ReturnStmt, Stmt,
-    UnaryOp,
+    ModuleItem, ObjectLit, ObjectPatProp, ParenExpr, Pat, Prop, PropName, PropOrSpread, ReturnStmt,
+    Stmt, UnaryOp,
 };
 
 use crate::ErrorKind;
@@ -438,7 +438,7 @@ fn strip_paren(expr: &SwcExpr) -> &SwcExpr {
 
 /// Lower the function's first parameter into the names that go into JSX scope.
 ///
-/// Accepted shapes (per spec §4.4):
+/// Accepted shapes (per spec S4.4):
 /// - empty `()` → no props
 /// - `({ a, b }: ...)` (`ObjectPat`) with shorthand `BindingIdent` entries
 ///   → destructured names
@@ -606,15 +606,17 @@ fn lower_element(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode
 ///
 /// Head content is supplied entirely through PROPS (not a `<head>` child) so the
 /// framework keeps full ownership of `<head>` and can inject more tags later
-/// without colliding with user markup. All props are OPTIONAL compile-time
-/// string literals:
+/// without colliding with user markup. All props are OPTIONAL and accept either
+/// a compile-time string literal OR a member-path expression (`{d.title}`),
+/// interpolated into the head as `{{ path }}`:
 /// - `lang="…"`         → `<html lang>` (default `"en"` emitted if omitted)
 /// - `className="…"`     → `<html class>`
 /// - `bodyClassName="…"` → `<body class>`
 /// - `title="…"`         → `<title>…</title>`
 /// - `description="…"`   → `<meta name="description" content="…">`
 ///
-/// A non-literal value (`title={x}`) → `BrustPageAttrMustBeStringLiteral`.
+/// A non-literal/non-path value (`title={fn()}`, `title={a + b}`) →
+/// `BrustPageAttrMustBeStringLiteral`.
 /// Spread (`{...x}`) / namespaced attrs → the same rejects as host elements.
 /// Unknown props are ignored (forward-compatible, mirrors `<Island>`) — adding a
 /// new head prop is a single match arm + emit line.
@@ -625,11 +627,11 @@ fn lower_element(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode
 /// `<BrustPage>` is only reached for the route root (see `lower`), so it is
 /// never under a `.map(...)` — no `in_map` parameter.
 fn lower_brust_page(el: &JSXElement, scope: &Scope) -> Result<JsxNode, LowerError> {
-    let mut lang: Option<String> = None;
-    let mut html_class: Option<String> = None;
-    let mut body_class: Option<String> = None;
-    let mut title: Option<String> = None;
-    let mut description: Option<String> = None;
+    let mut lang: Option<crate::ir::HeadValue> = None;
+    let mut html_class: Option<crate::ir::HeadValue> = None;
+    let mut body_class: Option<crate::ir::HeadValue> = None;
+    let mut title: Option<crate::ir::HeadValue> = None;
+    let mut description: Option<crate::ir::HeadValue> = None;
 
     for attr in &el.opening.attrs {
         let JSXAttrOrSpread::JSXAttr(jsx_attr) = attr else {
@@ -658,11 +660,42 @@ fn lower_brust_page(el: &JSXElement, scope: &Scope) -> Result<JsxNode, LowerErro
             "description" => &mut description,
             _ => continue,
         };
-        // Value must be a plain string literal — the shell is rendered in Rust,
-        // so its chrome can't depend on runtime props.
+        // Value is either a plain string literal (pre-escaped at build) or a
+        // member-path expression interpolated into the jinja head as `{{ path }}`.
+        // Anything else (call, arithmetic, spread, …) is rejected: the shell is
+        // rendered in Rust and its head can only thread literals or loader paths.
         match &jsx_attr.value {
             Some(JSXAttrValue::Str(s)) => {
-                *slot = Some(s.value.to_string_lossy().into_owned());
+                *slot = Some(crate::ir::HeadValue::Literal(
+                    s.value.to_string_lossy().into_owned(),
+                ));
+            }
+            Some(JSXAttrValue::JSXExprContainer(c)) => {
+                if let JSXExpr::Expr(e) = &c.expr {
+                    // Do NOT propagate lower_expr's error with `?`: a call
+                    // (`title={fn()}`) lowers to `CallExpressionNotSupported`,
+                    // but the user-facing contract here is the more specific
+                    // "string literal or member-path". So any lower failure OR a
+                    // non-path success both collapse to the same reject.
+                    match lower_expr(e, scope) {
+                        Ok(
+                            ex @ (crate::ir::Expr::Field(_) | crate::ir::Expr::MemberAccess { .. }),
+                        ) => {
+                            *slot = Some(crate::ir::HeadValue::Path(ex));
+                        }
+                        _ => {
+                            return Err(LowerError::at(
+                                jsx_attr.span,
+                                ErrorKind::BrustPageAttrMustBeStringLiteral(name),
+                            ));
+                        }
+                    }
+                } else {
+                    return Err(LowerError::at(
+                        jsx_attr.span,
+                        ErrorKind::BrustPageAttrMustBeStringLiteral(name),
+                    ));
+                }
             }
             _ => {
                 return Err(LowerError::at(
@@ -675,7 +708,7 @@ fn lower_brust_page(el: &JSXElement, scope: &Scope) -> Result<JsxNode, LowerErro
 
     // Default lang to "en" so the emitted document always declares a language.
     if lang.is_none() {
-        lang = Some("en".to_string());
+        lang = Some(crate::ir::HeadValue::Literal("en".to_string()));
     }
 
     let mut body: Vec<JsxNode> = Vec::new();
@@ -1261,7 +1294,7 @@ fn splice_children_slots(node: &mut JsxNode, children: &[JsxNode]) {
     }
 }
 
-/// HTML void elements per spec §4 / WHATWG. T6 rejects children on these.
+/// HTML void elements per spec S4 / WHATWG. T6 rejects children on these.
 fn is_void_element(tag: &str) -> bool {
     matches!(
         tag,
@@ -1825,6 +1858,22 @@ fn lower_attr(attr: &JSXAttrOrSpread, scope: &Scope) -> Result<Option<JsxAttr>, 
                 }
             };
 
+            // `style={{ … }}` object literal → serialize to a CSS declaration
+            // string (static) or a Concat (when any value is a member-path).
+            // Intercepted BEFORE the generic expr-lowering path, which has no
+            // `Object` arm and would otherwise reject it.
+            if final_name == "style"
+                && let Some(JSXAttrValue::JSXExprContainer(c)) = &jsx_attr.value
+                && let JSXExpr::Expr(e) = &c.expr
+                && let SwcExpr::Object(obj) = strip_paren(e)
+            {
+                let value = lower_style_object(obj, scope)?;
+                return Ok(Some(JsxAttr {
+                    name: final_name,
+                    value,
+                }));
+            }
+
             // swc_ecma_ast 25's `JSXAttrValue` is `Str | JSXExprContainer | JSXElement |
             // JSXFragment` — it does NOT have a `Lit` variant (the older swc shape the plan
             // listing was written against). Numeric attribute values (`tabIndex={5}`) arrive
@@ -1867,6 +1916,228 @@ fn lower_attr(attr: &JSXAttrOrSpread, scope: &Scope) -> Result<Option<JsxAttr>, 
             }))
         }
     }
+}
+
+/// React's `isUnitlessNumber` set (React 19). A numeric `style` value whose
+/// ORIGINAL camelCase key is in this set is emitted verbatim; everything else
+/// gets a `px` suffix (matching React's runtime style serialization).
+const UNITLESS: &[&str] = &[
+    "animationIterationCount",
+    "aspectRatio",
+    "borderImageOutset",
+    "borderImageSlice",
+    "borderImageWidth",
+    "boxFlex",
+    "boxFlexGroup",
+    "boxOrdinalGroup",
+    "columnCount",
+    "columns",
+    "flex",
+    "flexGrow",
+    "flexPositive",
+    "flexShrink",
+    "flexNegative",
+    "flexOrder",
+    "gridArea",
+    "gridRow",
+    "gridRowEnd",
+    "gridRowSpan",
+    "gridRowStart",
+    "gridColumn",
+    "gridColumnEnd",
+    "gridColumnSpan",
+    "gridColumnStart",
+    "fontWeight",
+    "lineClamp",
+    "lineHeight",
+    "opacity",
+    "order",
+    "orphans",
+    "scale",
+    "tabSize",
+    "widows",
+    "zIndex",
+    "zoom",
+    "fillOpacity",
+    "floodOpacity",
+    "stopOpacity",
+    "strokeDasharray",
+    "strokeDashoffset",
+    "strokeMiterlimit",
+    "strokeOpacity",
+    "strokeWidth",
+];
+
+/// camelCase CSS property → kebab-case (`backgroundColor` → `background-color`,
+/// `zIndex` → `z-index`). Vendor prefixes with a leading uppercase letter map to
+/// a leading dash (`WebkitFoo` → `-webkit-foo`, `MozBar` → `-moz-bar`,
+/// `OFoo` → `-o-foo`); lowercase `ms` stays a prefix → `-ms-…`. Keys that already
+/// contain `-` or are custom properties (`--foo`) pass through unchanged.
+fn css_kebab(camel: &str) -> String {
+    // Custom properties and already-kebab keys are passed through untouched.
+    if camel.starts_with("--") || camel.contains('-') {
+        return camel.to_string();
+    }
+    // Lowercase `ms` is the one vendor prefix React leaves lowercase; it still
+    // emits with a leading dash (`msFlexAlign` → `-ms-flex-align`).
+    let leading_ms = camel
+        .strip_prefix("ms")
+        .is_some_and(|rest| rest.chars().next().is_some_and(|c| c.is_ascii_uppercase()));
+    let mut out = String::with_capacity(camel.len() + 2);
+    if leading_ms {
+        out.push_str("-ms");
+    }
+    let start = if leading_ms { 2 } else { 0 };
+    for ch in camel.chars().skip(start) {
+        if ch.is_ascii_uppercase() {
+            // Leading uppercase → vendor prefix → leading dash; interior
+            // uppercase → word boundary → interior dash. Both push a dash.
+            out.push('-');
+            out.push(ch.to_ascii_lowercase());
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// Serialize a `style={{ … }}` object literal into an `AttrValue`.
+///
+/// All-static entries collapse to one `AttrValue::Static("a:b;c:d")` string.
+/// Any member-path value forces an `AttrValue::Expr(Expr::Concat([…]))` whose
+/// literal runs (property prefixes + separators) are `Expr::StaticText` and
+/// whose dynamic values are member-path `Expr`s. The emit layer renders the
+/// Concat as `style="{{ "a:" ~ path ~ ";b:c" }}"`.
+/// Serialize an integer style value to its CSS string, appending `px` unless the
+/// (camelCase) property is unitless. `negate` is set when the source was a unary
+/// `-N`. Non-integer numerics → `NonIntegerNumericNotSupported`.
+fn num_to_css(
+    n: &swc_core::ecma::ast::Number,
+    negate: bool,
+    camel_key: &str,
+) -> Result<String, LowerError> {
+    if n.value.fract() != 0.0 {
+        return Err(LowerError::at(
+            n.span,
+            ErrorKind::NonIntegerNumericNotSupported,
+        ));
+    }
+    let v = if negate {
+        -(n.value as i64)
+    } else {
+        n.value as i64
+    };
+    Ok(if UNITLESS.contains(&camel_key) {
+        v.to_string()
+    } else {
+        format!("{v}px")
+    })
+}
+
+fn lower_style_object(obj: &ObjectLit, scope: &Scope) -> Result<AttrValue, LowerError> {
+    /// One serialized `prop:value` segment: either fully-literal text, or a
+    /// literal prefix (`"prop:"`) plus a dynamic member-path value.
+    enum Seg {
+        Static(String),
+        Dynamic {
+            prefix: String,
+            value: crate::ir::Expr,
+        },
+    }
+
+    let mut segs: Vec<Seg> = Vec::new();
+    for prop in &obj.props {
+        // Spread (`{...x}`) and non-KeyValue props (shorthand/getter/setter/
+        // method/assign) are not representable as a CSS declaration.
+        let PropOrSpread::Prop(p) = prop else {
+            return Err(LowerError::at(obj.span, ErrorKind::StyleObjectNotSupported));
+        };
+        let Prop::KeyValue(kv) = p.as_ref() else {
+            return Err(LowerError::at(obj.span, ErrorKind::StyleObjectNotSupported));
+        };
+        // Key: Ident or string literal only. Computed/numeric keys → reject.
+        let camel_key = match &kv.key {
+            PropName::Ident(i) => i.sym.to_string(),
+            PropName::Str(s) => s.value.to_string_lossy().into_owned(),
+            _ => return Err(LowerError::at(obj.span, ErrorKind::StyleObjectNotSupported)),
+        };
+        let kebab = css_kebab(&camel_key);
+
+        match strip_paren(&kv.value) {
+            SwcExpr::Lit(Lit::Str(s)) => {
+                let text = s.value.to_string_lossy().into_owned();
+                segs.push(Seg::Static(format!("{kebab}:{text}")));
+            }
+            SwcExpr::Lit(Lit::Num(n)) => {
+                segs.push(Seg::Static(format!(
+                    "{kebab}:{}",
+                    num_to_css(n, false, &camel_key)?
+                )));
+            }
+            // Negative numeric literal: swc parses `-8` as `Unary(Minus, Num(8))`,
+            // not `Lit::Num(-8)`. Negative CSS values (margins, offsets) are common.
+            SwcExpr::Unary(u)
+                if u.op == UnaryOp::Minus
+                    && let SwcExpr::Lit(Lit::Num(n)) = strip_paren(&u.arg) =>
+            {
+                segs.push(Seg::Static(format!(
+                    "{kebab}:{}",
+                    num_to_css(n, true, &camel_key)?
+                )));
+            }
+            // Member-path / bare-ident dynamic value → lower to a path Expr.
+            stripped @ (SwcExpr::Ident(_) | SwcExpr::Member(_)) => {
+                let value = lower_expr(stripped, scope)?;
+                segs.push(Seg::Dynamic {
+                    prefix: format!("{kebab}:"),
+                    value,
+                });
+            }
+            // Object/Call/Tpl/Bin/Array/… → not a CSS declaration value.
+            _ => {
+                return Err(LowerError::at(
+                    kv.value.span(),
+                    ErrorKind::StyleObjectValueNotSupported,
+                ));
+            }
+        }
+    }
+
+    // All-static → join with `;` into a single declaration string.
+    if segs.iter().all(|s| matches!(s, Seg::Static(_))) {
+        let joined = segs
+            .iter()
+            .map(|s| match s {
+                Seg::Static(t) => t.as_str(),
+                Seg::Dynamic { .. } => unreachable!(),
+            })
+            .collect::<Vec<_>>()
+            .join(";");
+        return Ok(AttrValue::Static(joined));
+    }
+
+    // Any dynamic piece → build a Concat. Literal runs (prefixes + `;`
+    // separators) are merged into adjacent StaticText so the emitted jinja
+    // concatenates to a valid declaration.
+    let mut parts: Vec<crate::ir::Expr> = Vec::new();
+    let mut pending = String::new();
+    for (i, seg) in segs.iter().enumerate() {
+        if i > 0 {
+            pending.push(';');
+        }
+        match seg {
+            Seg::Static(t) => pending.push_str(t),
+            Seg::Dynamic { prefix, value } => {
+                pending.push_str(prefix);
+                parts.push(crate::ir::Expr::StaticText(std::mem::take(&mut pending)));
+                parts.push(value.clone());
+            }
+        }
+    }
+    if !pending.is_empty() {
+        parts.push(crate::ir::Expr::StaticText(pending));
+    }
+    Ok(AttrValue::Expr(crate::ir::Expr::Concat(parts)))
 }
 
 /// Match the `on[A-Z].*` event-handler pattern (`onClick`, `onMouseOver`, …).
@@ -1916,55 +2187,162 @@ fn lower_child(
                     return Ok(Some(lower_call_as_map(call, scope, in_map)?));
                 }
 
-                // GATE: inline mode — handle special inline child patterns.
-                if scope.inline.is_some() {
+                // GATE: inline mode — handle the inline-only `{children}` slot.
+                if scope.inline.is_some()
+                    && let SwcExpr::Ident(id) = e.as_ref()
+                    && id.sym.as_ref() == "children"
+                    && scope.destructured.contains(&"children".to_string())
+                {
                     // `{children}` → ChildrenSlot unconditionally when "children"
                     // is in the component's destructured params. The splice step
                     // removes the slot cleanly when zero call-site children were
                     // passed, so we must emit the slot regardless of has_children.
-                    if let SwcExpr::Ident(id) = e.as_ref()
-                        && id.sym.as_ref() == "children"
-                        && scope.destructured.contains(&"children".to_string())
-                    {
-                        return Ok(Some(JsxNode::ChildrenSlot));
-                    }
+                    return Ok(Some(JsxNode::ChildrenSlot));
+                }
 
-                    // `{cond && <JSX>}` → Cond{alternate: None}.
-                    if let SwcExpr::Bin(bin) = e.as_ref()
-                        && bin.op == BinaryOp::LogicalAnd
-                        && let SwcExpr::JSXElement(rhs_el) = strip_paren(bin.right.as_ref())
-                    {
-                        let test = lower_expr(&bin.left, scope)?;
-                        let consequent = lower_element(rhs_el, scope, in_map)?;
-                        return Ok(Some(JsxNode::Cond {
-                            test,
-                            consequent: Box::new(consequent),
-                            alternate: None,
-                        }));
-                    }
+                // Conditionals are valid in BOTH inline expansion and native
+                // route bodies. The test is lowered through `lower_cond_test`
+                // (member/compare/logical/not only), and the branches accept
+                // JSX elements, fragments, and `null`/`false`/`undefined`
+                // (→ Empty). Arithmetic operands and call tests are rejected
+                // with `ComplexExpressionNotSupported`.
 
-                    // `{cond ? <A> : <B>}` → Cond{alternate: Some}.
-                    if let SwcExpr::Cond(cond_expr) = e.as_ref() {
-                        let test = lower_expr(&cond_expr.test, scope)?;
-                        let cons_jsx = strip_paren(cond_expr.cons.as_ref());
-                        let alt_jsx = strip_paren(cond_expr.alt.as_ref());
-                        if let (SwcExpr::JSXElement(el_a), SwcExpr::JSXElement(el_b)) =
-                            (cons_jsx, alt_jsx)
-                        {
-                            let node_a = lower_element(el_a, scope, in_map)?;
-                            let node_b = lower_element(el_b, scope, in_map)?;
-                            return Ok(Some(JsxNode::Cond {
-                                test,
-                                consequent: Box::new(node_a),
-                                alternate: Some(Box::new(node_b)),
-                            }));
-                        }
-                    }
+                // `{cond && <JSX>}` → Cond{alternate: None}.
+                if let SwcExpr::Bin(bin) = e.as_ref()
+                    && bin.op == BinaryOp::LogicalAnd
+                    && is_cond_branch(strip_paren(bin.right.as_ref()))
+                {
+                    let test = lower_cond_test(&bin.left, scope)?;
+                    let consequent = lower_cond_branch(bin.right.as_ref(), scope, in_map)?;
+                    return Ok(Some(JsxNode::Cond {
+                        test,
+                        consequent: Box::new(consequent),
+                        alternate: None,
+                    }));
+                }
+
+                // `{cond ? <A> : <B>}` → Cond{alternate: Some}.
+                if let SwcExpr::Cond(cond_expr) = e.as_ref()
+                    && is_cond_branch(strip_paren(cond_expr.cons.as_ref()))
+                    && is_cond_branch(strip_paren(cond_expr.alt.as_ref()))
+                {
+                    let test = lower_cond_test(&cond_expr.test, scope)?;
+                    let consequent = lower_cond_branch(cond_expr.cons.as_ref(), scope, in_map)?;
+                    let alternate = lower_cond_branch(cond_expr.alt.as_ref(), scope, in_map)?;
+                    return Ok(Some(JsxNode::Cond {
+                        test,
+                        consequent: Box::new(consequent),
+                        alternate: Some(Box::new(alternate)),
+                    }));
                 }
 
                 Ok(Some(JsxNode::Expr(lower_expr(e, scope)?)))
             }
         },
+    }
+}
+
+/// Is `expr` (already paren-stripped) a valid conditional branch?
+///
+/// Branches accept JSX elements, JSX fragments, and the falsy literals
+/// `null` / `false` / `undefined` (which lower to `JsxNode::Empty`).
+fn is_cond_branch(expr: &SwcExpr) -> bool {
+    match expr {
+        SwcExpr::JSXElement(_) | SwcExpr::JSXFragment(_) => true,
+        SwcExpr::Lit(Lit::Null(_)) => true,
+        SwcExpr::Lit(Lit::Bool(b)) => !b.value,
+        SwcExpr::Ident(id) => id.sym.as_ref() == "undefined",
+        _ => false,
+    }
+}
+
+/// Lower one conditional branch to a `JsxNode`.
+///
+/// `null` / `false` / `undefined` → `JsxNode::Empty`; JSX elements and
+/// fragments route through the existing element/fragment lowerers.
+fn lower_cond_branch(expr: &SwcExpr, scope: &Scope, in_map: bool) -> Result<JsxNode, LowerError> {
+    match strip_paren(expr) {
+        SwcExpr::JSXElement(el) => lower_element(el, scope, in_map),
+        SwcExpr::JSXFragment(f) => lower_fragment(f, scope, in_map),
+        SwcExpr::Lit(Lit::Null(_)) => Ok(JsxNode::Empty),
+        SwcExpr::Lit(Lit::Bool(b)) if !b.value => Ok(JsxNode::Empty),
+        SwcExpr::Ident(id) if id.sym.as_ref() == "undefined" => Ok(JsxNode::Empty),
+        other => Err(LowerError::at(
+            other.span(),
+            ErrorKind::ComplexExpressionNotSupported,
+        )),
+    }
+}
+
+/// Lower a conditional TEST expression to a jinja-renderable `Expr`.
+///
+/// Accepts `!x` (Not), comparisons (`>`, `<`, `>=`, `<=`, `===`/`==`,
+/// `!==`/`!=`) and logical `&&` / `||` over member/ident/literal operands.
+/// Arithmetic operands, calls, and other shapes are rejected with
+/// `ComplexExpressionNotSupported` — the test never becomes free text.
+fn lower_cond_test(expr: &SwcExpr, scope: &Scope) -> Result<crate::ir::Expr, LowerError> {
+    match strip_paren(expr) {
+        SwcExpr::Unary(u) if u.op == UnaryOp::Bang => Ok(crate::ir::Expr::Not(Box::new(
+            lower_cond_test(u.arg.as_ref(), scope)?,
+        ))),
+        SwcExpr::Bin(b) => match b.op {
+            BinaryOp::Gt
+            | BinaryOp::Lt
+            | BinaryOp::GtEq
+            | BinaryOp::LtEq
+            | BinaryOp::EqEqEq
+            | BinaryOp::EqEq
+            | BinaryOp::NotEqEq
+            | BinaryOp::NotEq => {
+                let op = match b.op {
+                    BinaryOp::Gt => CmpOp::Gt,
+                    BinaryOp::Lt => CmpOp::Lt,
+                    BinaryOp::GtEq => CmpOp::Ge,
+                    BinaryOp::LtEq => CmpOp::Le,
+                    BinaryOp::EqEqEq | BinaryOp::EqEq => CmpOp::Eq,
+                    BinaryOp::NotEqEq | BinaryOp::NotEq => CmpOp::Ne,
+                    _ => unreachable!(),
+                };
+                Ok(crate::ir::Expr::Compare {
+                    op,
+                    lhs: Box::new(lower_cond_operand(b.left.as_ref(), scope)?),
+                    rhs: Box::new(lower_cond_operand(b.right.as_ref(), scope)?),
+                })
+            }
+            BinaryOp::LogicalAnd | BinaryOp::LogicalOr => {
+                let op = if b.op == BinaryOp::LogicalAnd {
+                    LogOp::And
+                } else {
+                    LogOp::Or
+                };
+                Ok(crate::ir::Expr::Logical {
+                    op,
+                    lhs: Box::new(lower_cond_test(b.left.as_ref(), scope)?),
+                    rhs: Box::new(lower_cond_test(b.right.as_ref(), scope)?),
+                })
+            }
+            _ => Err(LowerError::at(
+                b.span,
+                ErrorKind::ComplexExpressionNotSupported,
+            )),
+        },
+        other => lower_cond_operand(other, scope),
+    }
+}
+
+/// Lower a comparison operand (or a bare truthiness test) — only
+/// member/ident/string/number shapes are admitted. Anything else (arithmetic,
+/// calls, …) is `ComplexExpressionNotSupported`.
+fn lower_cond_operand(expr: &SwcExpr, scope: &Scope) -> Result<crate::ir::Expr, LowerError> {
+    match strip_paren(expr) {
+        stripped @ (SwcExpr::Ident(_)
+        | SwcExpr::Member(_)
+        | SwcExpr::Lit(Lit::Str(_))
+        | SwcExpr::Lit(Lit::Num(_))) => lower_expr(stripped, scope),
+        other => Err(LowerError::at(
+            other.span(),
+            ErrorKind::ComplexExpressionNotSupported,
+        )),
     }
 }
 
@@ -2020,9 +2398,9 @@ fn lower_call_as_map(call: &CallExpr, scope: &Scope, _in_map: bool) -> Result<Js
 
     let binding = arrow_binding(arrow)?;
 
-    // Body: accept either `(item) => <JSX>` (Expr body) or
-    // `(item) => { return <JSX>; }` (Block body with single return).
-    let jsx_body = arrow_jsx_body(arrow)?;
+    // Body: accept `(item) => <JSX>` / `(item) => (<JSX>)` / a per-item
+    // conditional, or the `{ return <JSX>; }` block form.
+    let body_expr = arrow_body_expr(arrow)?;
 
     // Clone-and-extend the scope with the new iter binding. Keeps the rest of
     // the lowering on `&Scope`; no `&mut` plumbing required.
@@ -2030,7 +2408,7 @@ fn lower_call_as_map(call: &CallExpr, scope: &Scope, _in_map: bool) -> Result<Js
     inner_scope.map_bindings.push(binding.clone());
     // Force `in_map = true` for the Map body: any `<Island>` inside the
     // iteration is rejected (id collision + non-per-iteration props path in v1).
-    let body = lower_element(jsx_body, &inner_scope, true)?;
+    let body = lower_map_body_expr(body_expr, &inner_scope)?;
 
     Ok(JsxNode::Map {
         source,
@@ -2058,21 +2436,15 @@ fn arrow_binding(arrow: &ArrowExpr) -> Result<String, LowerError> {
     }
 }
 
-/// Extract a `&JSXElement` from an arrow body, accepting both forms.
+/// Extract the body `&SwcExpr` from an arrow, accepting both forms.
 ///
-/// `(item) => <JSX>` lowers as `BlockStmtOrExpr::Expr(JSXElement)`.
-/// `(item) => (<JSX>)` lowers as `BlockStmtOrExpr::Expr(Paren(JSXElement))` —
-/// strip Paren wrappers since they're trivial.
-/// `(item) => { return <JSX>; }` lowers as `BlockStmtOrExpr::BlockStmt(...)`.
-fn arrow_jsx_body(arrow: &ArrowExpr) -> Result<&JSXElement, LowerError> {
+/// `(item) => <expr>` lowers as `BlockStmtOrExpr::Expr(<expr>)`.
+/// `(item) => { return <expr>; }` lowers as `BlockStmtOrExpr::BlockStmt(...)`
+/// with a single return. The returned expression is NOT paren-stripped — the
+/// caller (`lower_map_body_expr`) strips where appropriate.
+fn arrow_body_expr(arrow: &ArrowExpr) -> Result<&SwcExpr, LowerError> {
     match arrow.body.as_ref() {
-        BlockStmtOrExpr::Expr(expr) => match strip_paren(expr.as_ref()) {
-            SwcExpr::JSXElement(el) => Ok(el),
-            other => Err(LowerError::at(
-                other.span(),
-                ErrorKind::MapShapeNotSupported,
-            )),
-        },
+        BlockStmtOrExpr::Expr(expr) => Ok(expr.as_ref()),
         BlockStmtOrExpr::BlockStmt(block) => {
             if block.stmts.len() != 1 {
                 return Err(LowerError::at(block.span, ErrorKind::MapShapeNotSupported));
@@ -2080,13 +2452,7 @@ fn arrow_jsx_body(arrow: &ArrowExpr) -> Result<&JSXElement, LowerError> {
             match &block.stmts[0] {
                 Stmt::Return(ReturnStmt {
                     arg: Some(expr), ..
-                }) => match strip_paren(expr.as_ref()) {
-                    SwcExpr::JSXElement(el) => Ok(el),
-                    other => Err(LowerError::at(
-                        other.span(),
-                        ErrorKind::MapShapeNotSupported,
-                    )),
-                },
+                }) => Ok(expr.as_ref()),
                 other => Err(LowerError::at(
                     other.span(),
                     ErrorKind::MapShapeNotSupported,
@@ -2096,7 +2462,58 @@ fn arrow_jsx_body(arrow: &ArrowExpr) -> Result<&JSXElement, LowerError> {
     }
 }
 
-/// React/JSX text normalization (spec §4.6).
+/// Lower a `.map` arrow body to the `Map` node body.
+///
+/// Accepts a JSX element, or a per-item conditional
+/// (`item.flag && <li/>` / `cond ? <a/> : <b/>`; conditional branches may
+/// themselves be fragments). The conditional recognition
+/// mirrors the `lower_child` expr-container path so per-item conditionals lower
+/// identically inside and outside a `.map`. A non-JSX, non-conditional body is
+/// `MapShapeNotSupported` (preserving the prior diagnostic for that shape).
+///
+/// NOTE: a bare-fragment map body (`xs.map(x => <>…</>)`) is intentionally NOT
+/// accepted here — it stays `MapShapeNotSupported` (see test
+/// `fragment_map_body_still_rejected`). Fragments are valid only as *conditional
+/// branches* inside a map body (`xs.map(x => x.f ? <>…</> : null)`), via
+/// `lower_cond_branch`. Lifting that restriction is out of scope for S11.
+fn lower_map_body_expr(expr: &SwcExpr, scope: &Scope) -> Result<JsxNode, LowerError> {
+    match strip_paren(expr) {
+        SwcExpr::JSXElement(el) => lower_element(el, scope, true),
+        // `cond && <JSX>`
+        SwcExpr::Bin(bin)
+            if bin.op == BinaryOp::LogicalAnd
+                && is_cond_branch(strip_paren(bin.right.as_ref())) =>
+        {
+            let test = lower_cond_test(bin.left.as_ref(), scope)?;
+            let consequent = lower_cond_branch(bin.right.as_ref(), scope, true)?;
+            Ok(JsxNode::Cond {
+                test,
+                consequent: Box::new(consequent),
+                alternate: None,
+            })
+        }
+        // `cond ? <A> : <B>`
+        SwcExpr::Cond(cond_expr)
+            if is_cond_branch(strip_paren(cond_expr.cons.as_ref()))
+                && is_cond_branch(strip_paren(cond_expr.alt.as_ref())) =>
+        {
+            let test = lower_cond_test(cond_expr.test.as_ref(), scope)?;
+            let consequent = lower_cond_branch(cond_expr.cons.as_ref(), scope, true)?;
+            let alternate = lower_cond_branch(cond_expr.alt.as_ref(), scope, true)?;
+            Ok(JsxNode::Cond {
+                test,
+                consequent: Box::new(consequent),
+                alternate: Some(Box::new(alternate)),
+            })
+        }
+        other => Err(LowerError::at(
+            other.span(),
+            ErrorKind::MapShapeNotSupported,
+        )),
+    }
+}
+
+/// React/JSX text normalization (spec S4.6).
 ///
 /// Matches how JSX treats whitespace so the emitted HTML reads the same as the
 /// source TSX:
@@ -3044,6 +3461,89 @@ mod tests {
         assert!(
             matches!(err.kind, ErrorKind::BrustPageMustBeRoot),
             "expected BrustPageMustBeRoot, got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn brust_page_title_member_path_lowers_to_head_path() {
+        let src = r#"export default function X({ d }) {
+  return <BrustPage title={d.title}><main>hi</main></BrustPage>;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let c = lower(&parsed).unwrap();
+        match &c.root {
+            JsxNode::Document { title, .. } => match title {
+                Some(HeadValue::Path(Expr::MemberAccess { root, path })) => {
+                    assert_eq!(root, "d");
+                    assert_eq!(path, &vec!["title".to_string()]);
+                }
+                other => panic!("expected HeadValue::Path(MemberAccess), got {other:?}"),
+            },
+            other => panic!("expected Document, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn brust_page_title_string_literal_lowers_to_head_literal() {
+        let src = r#"export default function X() {
+  return <BrustPage title="x"><main>hi</main></BrustPage>;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let c = lower(&parsed).unwrap();
+        match &c.root {
+            JsxNode::Document { title, .. } => {
+                assert!(
+                    matches!(title, Some(HeadValue::Literal(s)) if s == "x"),
+                    "expected HeadValue::Literal(\"x\"), got {title:?}"
+                );
+            }
+            other => panic!("expected Document, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn brust_page_omitted_lang_defaults_to_en_literal() {
+        let src = r#"export default function X() {
+  return <BrustPage title="x"><main>hi</main></BrustPage>;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let c = lower(&parsed).unwrap();
+        match &c.root {
+            JsxNode::Document { lang, .. } => {
+                assert!(
+                    matches!(lang, Some(HeadValue::Literal(s)) if s == "en"),
+                    "expected HeadValue::Literal(\"en\"), got {lang:?}"
+                );
+            }
+            other => panic!("expected Document, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn brust_page_call_expr_attr_rejected() {
+        let src = r#"export default function X({ fn }) {
+  return <BrustPage title={fn()}><main>hi</main></BrustPage>;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let err = lower(&parsed).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::BrustPageAttrMustBeStringLiteral(ref n) if n == "title"),
+            "expected BrustPageAttrMustBeStringLiteral, got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn brust_page_arith_attr_rejected() {
+        let src = r#"export default function X({ a, b }) {
+  return <BrustPage title={a + b}><main>hi</main></BrustPage>;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let err = lower(&parsed).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::BrustPageAttrMustBeStringLiteral(ref n) if n == "title"),
+            "expected BrustPageAttrMustBeStringLiteral, got {:?}",
             err.kind
         );
     }
@@ -4372,17 +4872,219 @@ mod tests {
         );
     }
 
+    /// Lower a native route source to its root JsxNode (no inline ctx).
+    fn lower_route_root(src: &str) -> Result<JsxNode, LowerError> {
+        let parsed = parse(src, "<test>").unwrap();
+        lower(&parsed).map(|c| c.root)
+    }
+
+    /// Helper: first child of the lowered route root `<div>`.
+    fn route_first_child(src: &str) -> JsxNode {
+        match lower_route_root(src).unwrap() {
+            JsxNode::Element { children, .. } => children.into_iter().next().expect("a child"),
+            other => panic!("expected element root, got {other:?}"),
+        }
+    }
+
     #[test]
-    fn noninline_logical_still_errors() {
-        // THE GATE: normal route (no inline ctx) with {show && <span/>} → Err(ComplexExpressionNotSupported).
+    fn noninline_logical_now_lowers_to_cond() {
+        // THE GATE (lifted): a bare {show && <span/>} on a native route now
+        // SUCCEEDS, yielding a Cond instead of ComplexExpressionNotSupported.
         let src = r#"export default function X({ show }: any) {
   return <div>{show && <span/>}</div>;
 }"#;
-        let parsed = parse(src, "<test>").unwrap();
-        let err = lower(&parsed).unwrap_err();
+        match route_first_child(src) {
+            JsxNode::Cond {
+                test, alternate, ..
+            } => {
+                assert!(matches!(test, crate::ir::Expr::Field(_)));
+                assert!(alternate.is_none());
+            }
+            other => panic!("expected Cond, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inline_logical_still_lowers_to_cond() {
+        // Regression guard: inline mode output for {cond && <JSX>} unchanged.
+        let src = r#"export default function C({ show }: any) {
+  return <div>{show && <span/>}</div>;
+}"#;
+        let nodes = inline_lower(src, HashMap::new(), false).unwrap();
+        let children = match &nodes[0] {
+            JsxNode::Element { children, .. } => children,
+            other => panic!("expected element, got {other:?}"),
+        };
+        assert!(
+            matches!(
+                children[0],
+                JsxNode::Cond {
+                    alternate: None,
+                    ..
+                }
+            ),
+            "expected Cond{{alternate:None}}, got {:?}",
+            children[0]
+        );
+    }
+
+    #[test]
+    fn noninline_cond_member_test() {
+        // {flags.hasPrev && <a/>} → Cond{ test: MemberAccess, alternate: None }
+        let src = r#"export default function X({ flags }: any) {
+  return <div>{flags.hasPrev && <a/>}</div>;
+}"#;
+        match route_first_child(src) {
+            JsxNode::Cond {
+                test, alternate, ..
+            } => {
+                assert!(
+                    matches!(test, crate::ir::Expr::MemberAccess { .. }),
+                    "expected MemberAccess, got {test:?}"
+                );
+                assert!(alternate.is_none());
+            }
+            other => panic!("expected Cond, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn noninline_cond_compare_test() {
+        // {d.n > 0 && <span/>} → test: Compare{ op: Gt }
+        let src = r#"export default function X({ d }: any) {
+  return <div>{d.n > 0 && <span/>}</div>;
+}"#;
+        match route_first_child(src) {
+            JsxNode::Cond { test, .. } => match test {
+                crate::ir::Expr::Compare { op, .. } => assert_eq!(op, crate::ir::CmpOp::Gt),
+                other => panic!("expected Compare{{Gt}}, got {other:?}"),
+            },
+            other => panic!("expected Cond, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn noninline_ternary_not_test() {
+        // {!d.empty ? <a/> : <b/>} → test: Not(..), alternate: Some(..)
+        let src = r#"export default function X({ d }: any) {
+  return <div>{!d.empty ? <a/> : <b/>}</div>;
+}"#;
+        match route_first_child(src) {
+            JsxNode::Cond {
+                test, alternate, ..
+            } => {
+                assert!(matches!(test, crate::ir::Expr::Not(_)), "got {test:?}");
+                assert!(alternate.is_some());
+            }
+            other => panic!("expected Cond, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn noninline_cond_logical_and_test() {
+        // {a.x && b.y && <i/>} → test: Logical{ And }
+        let src = r#"export default function X({ a, b }: any) {
+  return <div>{a.x && b.y && <i/>}</div>;
+}"#;
+        match route_first_child(src) {
+            JsxNode::Cond { test, .. } => match test {
+                // `a.x && b.y && <i/>` parses left-assoc as `(a.x && b.y) && <i/>`,
+                // so the test is the LHS `a.x && b.y`: a Logical{And} whose operands
+                // are member-paths (NOT recursively re-tested). Assert the operand
+                // shapes too, so a future swap of `lower_cond_operand`→`lower_cond_test`
+                // on the operands can't pass silently.
+                crate::ir::Expr::Logical { op, lhs, rhs } => {
+                    assert_eq!(op, crate::ir::LogOp::And);
+                    assert!(
+                        matches!(*lhs, crate::ir::Expr::MemberAccess { .. }),
+                        "lhs: {lhs:?}"
+                    );
+                    assert!(
+                        matches!(*rhs, crate::ir::Expr::MemberAccess { .. }),
+                        "rhs: {rhs:?}"
+                    );
+                }
+                other => panic!("expected Logical{{And}}, got {other:?}"),
+            },
+            other => panic!("expected Cond, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn noninline_cond_inside_map() {
+        // items.map(it => it.active && <li/>) → Map{ body: Cond{ test: MapMember } }
+        let src = r#"export default function X({ items }: any) {
+  return <ul>{items.map((it) => it.active && <li/>)}</ul>;
+}"#;
+        match route_first_child(src) {
+            JsxNode::Map { body, .. } => match *body {
+                JsxNode::Cond { test, .. } => assert!(
+                    matches!(test, crate::ir::Expr::MapMember { .. }),
+                    "expected MapMember, got {test:?}"
+                ),
+                other => panic!("expected Cond body, got {other:?}"),
+            },
+            other => panic!("expected Map, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn noninline_ternary_null_branch_empty() {
+        // {cond ? <A/> : null} → Cond with null branch lowered to Empty
+        let src = r#"export default function X({ cond }: any) {
+  return <div>{cond ? <a/> : null}</div>;
+}"#;
+        match route_first_child(src) {
+            JsxNode::Cond { alternate, .. } => {
+                let alt = alternate.expect("alternate present");
+                assert!(
+                    matches!(*alt, JsxNode::Empty),
+                    "expected Empty, got {alt:?}"
+                );
+            }
+            other => panic!("expected Cond, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn noninline_ternary_fragment_consequent() {
+        // {cond ? <>x</> : <b/>} → Cond with a Fragment consequent
+        let src = r#"export default function X({ cond }: any) {
+  return <div>{cond ? <>x</> : <b/>}</div>;
+}"#;
+        match route_first_child(src) {
+            JsxNode::Cond { consequent, .. } => assert!(
+                matches!(*consequent, JsxNode::Fragment { .. }),
+                "expected Fragment consequent, got {consequent:?}"
+            ),
+            other => panic!("expected Cond, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn noninline_cond_call_test_rejected() {
+        // {foo() && <a/>} → ComplexExpressionNotSupported
+        let src = r#"export default function X({ foo }: any) {
+  return <div>{foo() && <a/>}</div>;
+}"#;
+        let err = lower_route_root(src).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::ComplexExpressionNotSupported),
-            "expected ComplexExpressionNotSupported (gate check), got {:?}",
+            "got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn noninline_cond_arithmetic_operand_rejected() {
+        // {a + b > 0 && <a/>} → ComplexExpressionNotSupported (arithmetic operand)
+        let src = r#"export default function X({ a, b }: any) {
+  return <div>{a + b > 0 && <a/>}</div>;
+}"#;
+        let err = lower_route_root(src).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::ComplexExpressionNotSupported),
+            "got {:?}",
             err.kind
         );
     }
@@ -4831,6 +5533,218 @@ mod tests {
                 assert_eq!(props_path, "counter");
             }
             other => panic!("expected Island, got {other:?}"),
+        }
+    }
+
+    // ── style={{…}} object lowering (S1) ──────────────────────────────────
+
+    /// Lower `src` and return the `AttrValue` of the FIRST attribute on the
+    /// root element. Panics on compile error.
+    fn first_style_attr(src: &str) -> AttrValue {
+        let parsed = parse(src, "<test>").unwrap();
+        let comp = super::lower(&parsed).unwrap();
+        match comp.root {
+            JsxNode::Element { mut attrs, .. } => {
+                assert_eq!(attrs.len(), 1, "expected exactly one attr");
+                let a = attrs.remove(0);
+                assert_eq!(a.name, "style");
+                a.value
+            }
+            other => panic!("expected root element, got {other:?}"),
+        }
+    }
+
+    /// Lower `src` and return the root-element `ErrorKind`.
+    fn style_err(src: &str) -> ErrorKind {
+        let parsed = parse(src, "<test>").unwrap();
+        super::lower(&parsed).unwrap_err().kind
+    }
+
+    #[test]
+    fn style_object_number_gets_px() {
+        let v = first_style_attr(
+            r#"export default function X() { return <div style={{ width: 62 }}/>; }"#,
+        );
+        match v {
+            AttrValue::Static(s) => assert_eq!(s, "width:62px"),
+            other => panic!("expected Static, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn style_object_unitless_no_px() {
+        let v = first_style_attr(
+            r#"export default function X() { return <div style={{ opacity: 1 }}/>; }"#,
+        );
+        match v {
+            AttrValue::Static(s) => assert_eq!(s, "opacity:1"),
+            other => panic!("expected Static, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn style_object_camel_kebab_unitless() {
+        let v = first_style_attr(
+            r#"export default function X() { return <div style={{ zIndex: 5 }}/>; }"#,
+        );
+        match v {
+            AttrValue::Static(s) => assert_eq!(s, "z-index:5"),
+            other => panic!("expected Static, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn style_object_negative_number_gets_px() {
+        // swc parses `-8` as Unary(Minus, Num(8)); negative CSS values must work.
+        let v = first_style_attr(
+            r#"export default function X() { return <div style={{ marginTop: -8 }}/>; }"#,
+        );
+        match v {
+            AttrValue::Static(s) => assert_eq!(s, "margin-top:-8px"),
+            other => panic!("expected Static, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn css_kebab_branches() {
+        // Vendor prefixes + custom properties + already-kebab passthrough — these
+        // css_kebab paths are not exercised by the style-object fixtures.
+        assert_eq!(super::css_kebab("backgroundColor"), "background-color");
+        assert_eq!(super::css_kebab("WebkitTransform"), "-webkit-transform");
+        assert_eq!(super::css_kebab("MozUserSelect"), "-moz-user-select");
+        assert_eq!(super::css_kebab("msFlexAlign"), "-ms-flex-align");
+        assert_eq!(super::css_kebab("--my-var"), "--my-var");
+        assert_eq!(super::css_kebab("z-index"), "z-index");
+    }
+
+    #[test]
+    fn style_object_multi_static_order_preserved() {
+        let v = first_style_attr(
+            r#"export default function X() { return <div style={{ backgroundColor: "red", width: 62 }}/>; }"#,
+        );
+        match v {
+            AttrValue::Static(s) => assert_eq!(s, "background-color:red;width:62px"),
+            other => panic!("expected Static, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn style_object_dynamic_member_path() {
+        let v = first_style_attr(
+            r#"export default function X({ c }: any) { return <div style={{ color: c.fg }}/>; }"#,
+        );
+        match v {
+            AttrValue::Expr(Expr::Concat(parts)) => {
+                assert_eq!(parts.len(), 2);
+                match &parts[0] {
+                    Expr::StaticText(s) => assert_eq!(s, "color:"),
+                    other => panic!("expected StaticText, got {other:?}"),
+                }
+                match &parts[1] {
+                    Expr::MemberAccess { root, path } => {
+                        assert_eq!(root, "c");
+                        assert_eq!(path, &vec!["fg".to_string()]);
+                    }
+                    other => panic!("expected MemberAccess, got {other:?}"),
+                }
+            }
+            other => panic!("expected Expr(Concat), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn style_object_mixed_dynamic_and_literal() {
+        let v = first_style_attr(
+            r#"export default function X({ st }: any) { return <div style={{ width: st.w, color: "red" }}/>; }"#,
+        );
+        match v {
+            AttrValue::Expr(Expr::Concat(parts)) => {
+                // ["width:", st.w, ";color:red"]
+                assert_eq!(parts.len(), 3, "got {parts:?}");
+                match &parts[0] {
+                    Expr::StaticText(s) => assert_eq!(s, "width:"),
+                    other => panic!("expected StaticText, got {other:?}"),
+                }
+                match &parts[1] {
+                    Expr::MemberAccess { root, path } => {
+                        assert_eq!(root, "st");
+                        assert_eq!(path, &vec!["w".to_string()]);
+                    }
+                    other => panic!("expected MemberAccess, got {other:?}"),
+                }
+                match &parts[2] {
+                    Expr::StaticText(s) => assert_eq!(s, ";color:red"),
+                    other => panic!("expected StaticText, got {other:?}"),
+                }
+            }
+            other => panic!("expected Expr(Concat), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn style_object_rejects_spread() {
+        let src = r#"export default function X({ x }: any) { return <div style={{ ...x }}/>; }"#;
+        assert!(
+            matches!(style_err(src), ErrorKind::StyleObjectNotSupported),
+            "got {:?}",
+            style_err(src)
+        );
+    }
+
+    #[test]
+    fn style_object_rejects_computed_key() {
+        let src = r#"export default function X({ k }: any) { return <div style={{ [k]: 1 }}/>; }"#;
+        assert!(
+            matches!(style_err(src), ErrorKind::StyleObjectNotSupported),
+            "got {:?}",
+            style_err(src)
+        );
+    }
+
+    #[test]
+    fn style_object_rejects_nested_object_value() {
+        let src = r#"export default function X() { return <div style={{ a: { b: 1 } }}/>; }"#;
+        assert!(
+            matches!(style_err(src), ErrorKind::StyleObjectValueNotSupported),
+            "got {:?}",
+            style_err(src)
+        );
+    }
+
+    #[test]
+    fn style_object_rejects_call_value() {
+        let src =
+            r#"export default function X({ fn }: any) { return <div style={{ w: fn() }}/>; }"#;
+        assert!(
+            matches!(style_err(src), ErrorKind::StyleObjectValueNotSupported),
+            "got {:?}",
+            style_err(src)
+        );
+    }
+
+    #[test]
+    fn style_object_literal_with_quote_lowers_soundly() {
+        // A literal value containing a quote; the dynamic case forces a Concat
+        // whose StaticText is backslash-escaped by the emitter.
+        let v = first_style_attr(
+            r#"export default function X({ c }: any) { return <div style={{ content: "\"\"", color: c.fg }}/>; }"#,
+        );
+        match v {
+            AttrValue::Expr(Expr::Concat(parts)) => {
+                // ["content:\"\";color:", c.fg]
+                match &parts[0] {
+                    Expr::StaticText(s) => assert_eq!(s, "content:\"\";color:"),
+                    other => panic!("expected StaticText, got {other:?}"),
+                }
+                match parts.last().unwrap() {
+                    Expr::MemberAccess { root, path } => {
+                        assert_eq!(root, "c");
+                        assert_eq!(path, &vec!["fg".to_string()]);
+                    }
+                    other => panic!("expected MemberAccess, got {other:?}"),
+                }
+            }
+            other => panic!("expected Expr(Concat), got {other:?}"),
         }
     }
 }

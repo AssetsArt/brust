@@ -65,7 +65,7 @@ mod tests {
     async fn render_chunk_enum_final_ack_drop_returns_err() {
         // If the ack receiver is dropped before send, awaiting it returns Err.
         // This is what makes napi_render_chunk surface NAPI Err (NOT hang)
-        // when handle_conn tears down mid-stream (spec §5.2 contract).
+        // when handle_conn tears down mid-stream (spec S5.2 contract).
         let (ack_tx, ack_rx) = oneshot::channel::<()>();
         drop(ack_tx);
         assert!(ack_rx.await.is_err());
@@ -87,7 +87,7 @@ Insert these definitions BEFORE `pub struct TsfnEntry { ... }`:
 /// per-request chunk loop. `ack` resolves the worker's awaiting Promise so the
 /// next chunk can be written into the SAB without overlapping.
 pub enum RenderChunk {
-    /// Chunk body (first chunk includes meta prefix per spec §4).
+    /// Chunk body (first chunk includes meta prefix per spec S4).
     Bytes { data: Vec<u8>, ack: tokio::sync::oneshot::Sender<()> },
     /// `napi_render_chunk(_, 0)` — close the channel, terminate the response.
     Final { ack: tokio::sync::oneshot::Sender<()> },
@@ -174,7 +174,7 @@ from workers to handle_conn. Leaves the renderer tsfn contract unchanged
 
 TsfnEntry gains a render_slot: Mutex<Option<RenderSlot>> field alongside
 the existing in_flight: AtomicU32 busy-counter (different concerns;
-spec §5.3 calls out the deliberate two-field shape so pick_least_busy
+spec S5.3 calls out the deliberate two-field shape so pick_least_busy
 keeps working).
 
 RenderSlotGuard's Drop impl is the load-bearing piece — without it,
@@ -274,7 +274,7 @@ pub fn build_chunked_response_head(meta: &ChunkMeta) -> Vec<u8> {
 
 /// Build a complete single-chunk HTTP/1.1 response with Content-Length.
 /// Bytes-identical to today's renderToString wire shape for no-Suspense
-/// routes (spec §1 criterion #1).
+/// routes (spec S1 criterion #1).
 pub fn build_single_response_bytes(meta: &ChunkMeta, body: &[u8]) -> Vec<u8> {
     let mut out = format!(
         "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\n",
@@ -443,7 +443,7 @@ Pure functions for the HTTP/1.1 chunked path + the meta layout
 `[meta_len: u16 BE][meta JSON UTF-8][body]` that workers will use to
 prefix the first chunk. Single-chunk path goes through
 `build_single_response_bytes` which produces bytes-identical output to
-today's renderToString wire shape (spec §1 criterion #1).
+today's renderToString wire shape (spec S1 criterion #1).
 
 No callers yet — wired in later when handle_conn switches to the new
 dispatch helper (Task 5).
@@ -459,7 +459,7 @@ EOF
 
 ### Task 3: `napi_render_chunk` NAPI function in `src/lib.rs`
 
-The function reads SAB[0..len] for `len > 0`, sends `RenderChunk::Bytes` through the worker's `render_slot`, awaits ack. For `len == 0` it sends `RenderChunk::Final`. Returns NAPI Err on bounds violation OR ack drop (NOT hang — spec §5.2 contract).
+The function reads SAB[0..len] for `len > 0`, sends `RenderChunk::Bytes` through the worker's `render_slot`, awaits ack. For `len == 0` it sends `RenderChunk::Final`. Returns NAPI Err on bounds violation OR ack drop (NOT hang — spec S5.2 contract).
 
 **Files:**
 - Modify: `src/lib.rs`
@@ -531,7 +531,7 @@ Find a spot near the other `#[napi]` functions for WS/SSE (e.g., right after `na
 /// Worker-driven render chunk delivery. Worker calls this once per chunk
 /// it wants to emit; final call uses `len = 0` to close the channel.
 ///
-/// Contract (spec §5.2):
+/// Contract (spec S5.2):
 /// - `len > 0`: read SAB[0..len], send Bytes through render_slot.chunk_tx,
 ///   await ack. Resolves after Rust writes the chunk to the socket.
 /// - `len == 0`: send Final, await ack. Closes the response.
@@ -599,7 +599,7 @@ NAPI fn that workers call per chunk during streaming render. len=0 signals
 final; len>0 reads SAB[0..len] and ships to handle_conn's chunk loop
 through the worker's render_slot. Bounds violations + ack drops surface as
 NAPI Err — the worker's sink propagates via cb(err), preventing hangs
-(spec §5.2 contract, B6 in agent review).
+(spec S5.2 contract, B6 in agent review).
 
 No callers yet — JS-side renderer wraps this in Task 4, contract switch
 in Task 5.
@@ -849,7 +849,7 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
   const { element, view, workerId, napi, errorBoundary } = args
 
   return new Promise<void>((resolve, reject) => {
-    // Single guaranteed-fire path for the Final signal (spec §6, B6 fix).
+    // Single guaranteed-fire path for the Final signal (spec S6, B6 fix).
     let finalSent = false
     const sendFinal = async () => {
       if (finalSent) return
@@ -1045,7 +1045,7 @@ EOF
 
 ### Task 5: Replace `RendererTsfn` + helper + branch dispatch (BIG SWITCH)
 
-This is the only task where compilation is broken between intermediate states. All edits land in one commit. Spec §5.1 cascade table is the authoritative checklist.
+This is the only task where compilation is broken between intermediate states. All edits land in one commit. Spec S5.1 cascade table is the authoritative checklist.
 
 **Files:**
 - Modify: `src/pool.rs` (line 11 — `RendererTsfn` type)
@@ -1260,7 +1260,7 @@ match dispatch_to_worker_and_stream_chunks(
 )
 ```
 
-(The `default_content_type` and `prefer_meta_content_type` params no longer exist — the meta JSON now carries everything per §4.)
+(The `default_content_type` and `prefer_meta_content_type` params no longer exist — the meta JSON now carries everything per S4.)
 
 - [ ] **Step 5: Update the action branch call site in `src/server.rs`**
 
@@ -1451,7 +1451,7 @@ git add src/pool.rs src/lib.rs src/server.rs runtime/index.ts runtime/routes.ts
 git commit -m "$(cat <<'EOF'
 feat(streaming): switch renderer contract — Promise<()> + chunk channel
 
-The cascade landed atomically (spec §5.1 — six concrete sites):
+The cascade landed atomically (spec S5.1 — six concrete sites):
 
   • src/pool.rs:11      RendererTsfn: Promise<u32> → Promise<()>
   • src/lib.rs:139      register_renderer: matching signature update
@@ -1466,7 +1466,7 @@ The cascade landed atomically (spec §5.1 — six concrete sites):
   • old renderBranch + packResponse deleted (no callers).
 
 The render+action branches share one dispatch model now; SSE+WS keep
-their own per-conn helpers as documented in spec §3 (intentional
+their own per-conn helpers as documented in spec S3 (intentional
 divergence).
 
 Baseline: 88 Rust + 98 runtime + 63 integration tests — all unchanged.
@@ -1778,30 +1778,30 @@ EOF
 
 ## Spec coverage check (self-review)
 
-| Spec § | Implementing tasks |
+| Spec S | Implementing tasks |
 |---|---|
-| §1 success criterion 1 (single-chunk Content-Length, byte-identical no-Suspense) | Task 5 + Task 7 test 1 |
-| §1 success criterion 2 (streaming round-trip with Transfer-Encoding: chunked) | Task 6 + Task 7 test 2 |
-| §1 success criterion 3 (TTFB win, shell-before-resolved) | Task 7 test 2 (sawSpinnerBeforeResolved) |
-| §1 success criterion 4 (mid-stream disconnect, slot recovery) | Task 1 RenderSlotGuard + Task 7 test 3 |
-| §1 success criterion 5 (pre-shell crash → 500 + errorBoundary, single chunk) | Task 4 test 3 |
-| §1 success criterion 6 (post-shell crash → Suspense errorBoundary, 200) | Task 4 test 4 |
-| §1 success criterion 7 (islands work in streaming mode) | Task 4 test 2 (bootstrap always-injected on streaming path) |
-| §1 success criterion 8 (no regression — 73+92+63 unchanged) | Task 5 step 11 + Task 8 step 2 |
-| §2 Architecture | Tasks 1-5 (slot, NAPI, sink, dispatch helper, contract) |
-| §3 Module layout | Task 1 (pool.rs), Task 2 (render_stream.rs), Task 3 (lib.rs), Task 4 (runtime/render/stream.ts), Task 5 (server.rs, routes.ts, index.ts) |
-| §4 Wire protocol (SAB layout + meta + transfer-encoding) | Task 2 (split_meta + format helpers) + Task 4 (encodeFirstChunk/encodeBodyChunk) |
-| §5.1 Contract cascade table | Task 5 steps 1-7 (all 6 sites) |
-| §5.2 napi_render_chunk contract | Task 3 |
-| §5.3 RenderSlot + RAII guard | Task 1 |
-| §6 JS-side wrapper (renderBranchStreaming + sink + helpers) | Task 4 |
-| §7 Rust handle_conn chunk routing | Task 5 step 3 (replacement helper) |
-| §7.4 mpsc buffer = 1 | Task 5 step 3 (buffer size 1 in code) |
-| §8 Error matrix | Task 4 (JS-side error paths) + Task 5 (Rust select! arms) |
-| §9 Testing (9 Rust + 6 runtime + 3 integration) | Tasks 1, 2, 3 (Rust); Task 4 (runtime); Task 7 (integration) |
-| §10 Limits & deferred | (Documented in spec; no impl task) |
+| S1 success criterion 1 (single-chunk Content-Length, byte-identical no-Suspense) | Task 5 + Task 7 test 1 |
+| S1 success criterion 2 (streaming round-trip with Transfer-Encoding: chunked) | Task 6 + Task 7 test 2 |
+| S1 success criterion 3 (TTFB win, shell-before-resolved) | Task 7 test 2 (sawSpinnerBeforeResolved) |
+| S1 success criterion 4 (mid-stream disconnect, slot recovery) | Task 1 RenderSlotGuard + Task 7 test 3 |
+| S1 success criterion 5 (pre-shell crash → 500 + errorBoundary, single chunk) | Task 4 test 3 |
+| S1 success criterion 6 (post-shell crash → Suspense errorBoundary, 200) | Task 4 test 4 |
+| S1 success criterion 7 (islands work in streaming mode) | Task 4 test 2 (bootstrap always-injected on streaming path) |
+| S1 success criterion 8 (no regression — 73+92+63 unchanged) | Task 5 step 11 + Task 8 step 2 |
+| S2 Architecture | Tasks 1-5 (slot, NAPI, sink, dispatch helper, contract) |
+| S3 Module layout | Task 1 (pool.rs), Task 2 (render_stream.rs), Task 3 (lib.rs), Task 4 (runtime/render/stream.ts), Task 5 (server.rs, routes.ts, index.ts) |
+| S4 Wire protocol (SAB layout + meta + transfer-encoding) | Task 2 (split_meta + format helpers) + Task 4 (encodeFirstChunk/encodeBodyChunk) |
+| S5.1 Contract cascade table | Task 5 steps 1-7 (all 6 sites) |
+| S5.2 napi_render_chunk contract | Task 3 |
+| S5.3 RenderSlot + RAII guard | Task 1 |
+| S6 JS-side wrapper (renderBranchStreaming + sink + helpers) | Task 4 |
+| S7 Rust handle_conn chunk routing | Task 5 step 3 (replacement helper) |
+| S7.4 mpsc buffer = 1 | Task 5 step 3 (buffer size 1 in code) |
+| S8 Error matrix | Task 4 (JS-side error paths) + Task 5 (Rust select! arms) |
+| S9 Testing (9 Rust + 6 runtime + 3 integration) | Tasks 1, 2, 3 (Rust); Task 4 (runtime); Task 7 (integration) |
+| S10 Limits & deferred | (Documented in spec; no impl task) |
 
-All §1-§9 spec requirements map to at least one task.
+All S1-S9 spec requirements map to at least one task.
 
 ## Type / name consistency check
 

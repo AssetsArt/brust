@@ -336,7 +336,7 @@ function validateRoute(r: Route, basePath: string): void {
 
 /** Walk the nested route tree, emitting one FlatRoute per leaf or index node.
  * Composes paths, middleware, errorBoundary, and cache per the rules in
- * the design spec (§3). */
+ * the design spec (S3). */
 export function flattenRoutes(routes: Route[]): FlatRoute[] {
   const out: FlatRoute[] = []
   walkRoutes(routes, [], '', out)
@@ -593,7 +593,7 @@ export function makeRenderer(
       // path above and works for native routes. But middleware that calls
       // next() then mutates status/headers (e.g. adds Cache-Control) is NOT
       // forwarded; napi_render_jinja hardcodes status: 200 and empty headers.
-      // Spec §4 doesn't define post-next() mutation semantics for native;
+      // Spec S4 doesn't define post-next() mutation semantics for native;
       // deferred to v2.x. If your middleware needs to mutate, use a React
       // route for now.
       if (flat.nativeTemplate !== undefined) {
@@ -884,13 +884,24 @@ async function navigationBranch(
   }
 
   try {
-    const element = await buildRenderElement(call as any, flat, getWorkerId)
-    if (!element) throw new Error('render setup failed')
-    // Use renderToPipeableStream + onAllReady so pages with <Suspense> emit
-    // their RESOLVED markup, not the fallback. renderToString would only
-    // capture the shell — navigating SPA-style to a Suspense-using route
-    // would otherwise ship "loading…" and never recover.
-    const fullHtml = await renderToAwaitedString(element)
+    // Native (jinja) routes have no React tree, so we can't renderToString them.
+    // Render the template Rust-side (same path as a full document load) and use
+    // its HTML; React routes keep the renderToAwaitedString path below. Without
+    // this branch, a SPA navigation to a native route React-renders a component
+    // whose loader fields arrive undefined → throws → 500 → full-reload fallback
+    // on every internal link.
+    let fullHtml: string
+    if (flat.nativeTemplate !== undefined) {
+      fullHtml = await renderNativeRouteToHtml(call, flat, view, encoder, workerId)
+    } else {
+      const element = await buildRenderElement(call as any, flat, getWorkerId)
+      if (!element) throw new Error('render setup failed')
+      // Use renderToPipeableStream + onAllReady so pages with <Suspense> emit
+      // their RESOLVED markup, not the fallback. renderToString would only
+      // capture the shell — navigating SPA-style to a Suspense-using route
+      // would otherwise ship "loading…" and never recover.
+      fullHtml = await renderToAwaitedString(element)
+    }
 
     // Extract <main> inner content. If the page didn't render a <main>,
     // ship the full HTML — the client's no-main check will fire its
@@ -923,6 +934,65 @@ async function navigationBranch(
       body: '{"error":"render failed"}',
     })
   }
+}
+
+/** Render a native (jinja) route to its full HTML document for a SPA navigation.
+ *
+ * Mirrors the render-branch native path: run the leaf loader, merge island /
+ * component manifest context, then call the SYNC `napiRenderJinja`, which writes
+ * a framed `[meta_len u16 BE][meta JSON][body]` response into the SAB and returns
+ * its length. Here — unlike the render branch, which returns that length so Rust
+ * streams the SAB straight to the socket — we read the body back out of the SAB
+ * and hand it to navigationBranch, which extracts `<main>` + `<title>` from it.
+ *
+ * Throws on loader failure / oversized data / non-200 render; navigationBranch's
+ * catch turns that into a 500 (→ client full-reload fallback). */
+async function renderNativeRouteToHtml(
+  call: Extract<RouteCall, { kind: 'navigation' }>,
+  flat: FlatRoute,
+  view: Uint8Array,
+  encoder: TextEncoder,
+  workerId: bigint,
+): Promise<string> {
+  const templateName = flat.nativeTemplate as string
+  const leaf = flat.chain[flat.chain.length - 1]
+
+  let data: unknown = {}
+  if (leaf.loader) {
+    data = await leaf.loader({ params: call.params, path: call.path, req: call.req } as any)
+  }
+
+  let ctx = (data ?? {}) as Record<string, unknown>
+  const manifest = loadIslandManifest(templateName)
+  const compManifest = loadComponentManifest(templateName)
+  if ((manifest && manifest.length > 0) || (compManifest && compManifest.length > 0)) {
+    const [islandExtra, componentExtra] = await Promise.all([
+      manifest && manifest.length > 0
+        ? resolveIslandContext(manifest, ctx, islandCache)
+        : Promise.resolve({} as Record<string, string>),
+      compManifest && compManifest.length > 0
+        ? resolveComponentContext(compManifest, ctx, templateName, undefined, islandCache)
+        : Promise.resolve({} as Record<string, string>),
+    ])
+    ctx = { ...ctx, ...islandExtra, ...componentExtra }
+  }
+
+  const bytes = encoder.encode(JSON.stringify(ctx))
+  if (bytes.length > view.length) throw new Error('native loader data too large for SAB')
+  view.set(bytes, 0)
+
+  const len = (native as any).napiRenderJinja(
+    Number(workerId),
+    bytes.length,
+    templateName,
+  ) as number
+
+  // Parse the framed response the SAB now holds: [meta_len u16 BE][meta][body].
+  const metaLen = (view[0] << 8) | view[1]
+  const decoder = new TextDecoder()
+  const meta = JSON.parse(decoder.decode(view.subarray(2, 2 + metaLen))) as { status?: number }
+  if (meta.status !== 200) throw new Error(`native render returned status ${meta.status}`)
+  return decoder.decode(view.subarray(2 + metaLen, len))
 }
 
 /** Build the React element for a render or navigation call: runs loaders

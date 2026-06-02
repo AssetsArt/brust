@@ -203,7 +203,7 @@ Integration (`tests/integration.test.ts`, shared or startServer):
 - `PUT /notes/{id}` round-trips (fixture handler returns the updated note).
 - `PATCH /notes/{id}` round-trips.
 - `HEAD /notes/{id}` → 200 (assert status + a header; body asserted to whatever
-  Rust actually returns for HEAD — see §A note).
+  Rust actually returns for HEAD — see SA note).
 - query-schema 422: an endpoint with a `query` Zod schema returns 422 on invalid
   query (e.g. `?limit=abc` where `limit: z.coerce.number()`).
 

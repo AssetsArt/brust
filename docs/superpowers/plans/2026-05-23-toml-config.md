@@ -2,13 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Read a `brust.toml` file at startup, falling back cleanly when missing. Today the example app reads `BRUST_PORT` and `BRUST_WORKERS` from `process.env` only. After this plan, the same values can also be sourced from `brust.toml` (TOML wins over defaults, environment wins over TOML). The schema lands minimal: `[server]` + `[workers]`. The `[cache]` and `[build]` sections noted in `architecture.md` §Configuration are explicitly deferred to the Cache and Build plans.
+**Goal:** Read a `brust.toml` file at startup, falling back cleanly when missing. Today the example app reads `BRUST_PORT` and `BRUST_WORKERS` from `process.env` only. After this plan, the same values can also be sourced from `brust.toml` (TOML wins over defaults, environment wins over TOML). The schema lands minimal: `[server]` + `[workers]`. The `[cache]` and `[build]` sections noted in `architecture.md` SConfiguration are explicitly deferred to the Cache and Build plans.
 
 **Architecture:** A new `runtime/config.ts` exposes `loadConfig(cwd: string): Promise<BrustConfig>`. It reads `brust.toml` via `Bun.file(...)`, parses it with the `smol-toml` package (a 10 KB single-purpose TOML parser, MIT, no transitive deps), and merges three sources with explicit precedence: `defaults < toml < env`. `example/hello-world/index.ts` switches to call it. The `runtime/index.ts` facade is **not** changed — `brust.serve(opts)` keeps accepting an explicit `ServeOptions` object so library users who don't want a config file aren't forced into one.
 
 **Tech Stack:** Bun 1.3, TypeScript 5.5, `smol-toml ^1.3.0` (new dev-time runtime dep). No Rust changes — config is resolved in JS before `brust.serve(opts)` is called.
 
-**Spec source:** `architecture.md` §Configuration:
+**Spec source:** `architecture.md` SConfiguration:
 
 > Today, env-only:
 > - `BRUST_PORT` — default 3000
@@ -17,7 +17,7 @@
 >
 > Roadmap: `brust.toml` with `[server]`, `[workers]`, `[cache]`, `[build]` sections.
 
-Handoff `architecture.md` reference and Tier 0 placement come from the §"Sub-project candidates" recommendation list.
+Handoff `architecture.md` reference and Tier 0 placement come from the S"Sub-project candidates" recommendation list.
 
 ---
 
@@ -623,7 +623,7 @@ EOF
 - [ ] `runtime/config.ts` uses `Bun.file('brust.toml').exists()` rather than `fs.access` or static `import` — required for the "missing file is fine, malformed file is an error" semantics.
 - [ ] `example/hello-world/index.ts` no longer imports `node:os` and no longer has inline `BRUST_PORT` / `BRUST_WORKERS` parsing.
 - [ ] `.gitignore` ignores `brust.toml` but not `brust.example.toml`.
-- [ ] `architecture.md` §Configuration matches the new layered precedence.
+- [ ] `architecture.md` SConfiguration matches the new layered precedence.
 - [ ] No Rust files were touched (`git diff HEAD~6 -- src/` is empty across the plan's commits).
 
 ## Risks and caveats

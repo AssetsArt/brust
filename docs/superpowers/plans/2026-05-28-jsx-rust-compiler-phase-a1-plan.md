@@ -10,26 +10,26 @@
 
 | Task | Spec sections | Description |
 |---|---|---|
-| T0 | §3, §4.1 | Add `crates/jsx-rust-compiler` as workspace member, smoke-build with swc_core 68 + maud 0.27 |
-| T1 | §4.2, §4.3 | Parser entrypoint: `&str` → `swc_ecma_ast::Module` with TS+JSX, parse errors propagated |
-| T2 | §6, parts of §4.4 | Public API + `CompileError`/`ErrorKind` skeleton, `path:line:col` formatting |
-| T3 | §4.3, §4.4 | Lower swc AST → IR for the happy path (StaticHello shape, no props, no exprs) |
-| T4 | §4.4 EXPR rules, §5.1–5.3 | Lower props patterns, ident/member access, type inference for owned `String` props |
-| T5 | §4.4 map rule, §5.1 `@for`, §5.4 nested struct emit | Lower `.map((item) => <JSX>)` with iter-binding scope, generate `<Root>Item` struct |
-| T6 | §4.5, §4.6, §4.4 void-element check | Attribute rename precedence (on*/ref/key/table/uppercase), JSX whitespace normalization, void-element child rejection |
-| T7 | §5 emit module | maud-syntax emitter: elements, attrs, text, expr children, map → renders 3 fixtures |
-| T8 | §10 + §9.2 | Three fixtures + `tests/golden_emit.rs` integration test |
-| T9 | §9.3 + §9.4 | `tests/golden_render/{main.rs, *.rs}` integration test using `#[path]` mods + maud render comparison |
-| T10 | §7 | CLI binary `jsx-rustc` with `--check`/`-o` flags, stderr error format |
-| T11 | §11, §9.4 | Full workspace verification: lib + release + bun runtime + integration tests; commit checkpoint |
+| T0 | S3, S4.1 | Add `crates/jsx-rust-compiler` as workspace member, smoke-build with swc_core 68 + maud 0.27 |
+| T1 | S4.2, S4.3 | Parser entrypoint: `&str` → `swc_ecma_ast::Module` with TS+JSX, parse errors propagated |
+| T2 | S6, parts of S4.4 | Public API + `CompileError`/`ErrorKind` skeleton, `path:line:col` formatting |
+| T3 | S4.3, S4.4 | Lower swc AST → IR for the happy path (StaticHello shape, no props, no exprs) |
+| T4 | S4.4 EXPR rules, S5.1–5.3 | Lower props patterns, ident/member access, type inference for owned `String` props |
+| T5 | S4.4 map rule, S5.1 `@for`, S5.4 nested struct emit | Lower `.map((item) => <JSX>)` with iter-binding scope, generate `<Root>Item` struct |
+| T6 | S4.5, S4.6, S4.4 void-element check | Attribute rename precedence (on*/ref/key/table/uppercase), JSX whitespace normalization, void-element child rejection |
+| T7 | S5 emit module | maud-syntax emitter: elements, attrs, text, expr children, map → renders 3 fixtures |
+| T8 | S10 + S9.2 | Three fixtures + `tests/golden_emit.rs` integration test |
+| T9 | S9.3 + S9.4 | `tests/golden_render/{main.rs, *.rs}` integration test using `#[path]` mods + maud render comparison |
+| T10 | S7 | CLI binary `jsx-rustc` with `--check`/`-o` flags, stderr error format |
+| T11 | S11, S9.4 | Full workspace verification: lib + release + bun runtime + integration tests; commit checkpoint |
 
-Every `ErrorKind` variant in §6 has a unit test introduced in T3–T6 (positive lowering or specific error case). Spec acceptance criterion #8 is satisfied as those tasks land.
+Every `ErrorKind` variant in S6 has a unit test introduced in T3–T6 (positive lowering or specific error case). Spec acceptance criterion #8 is satisfied as those tasks land.
 
 ---
 
 ## T0 — Bootstrap `crates/jsx-rust-compiler/`
 
-**Why first**: §15.1 BLOCKED fallback hinges on whether swc_core 68 + maud 0.27 compile cleanly against the workspace's existing serde. If T0 fails, NO other task can run; the fallback fires before T1.
+**Why first**: S15.1 BLOCKED fallback hinges on whether swc_core 68 + maud 0.27 compile cleanly against the workspace's existing serde. If T0 fails, NO other task can run; the fallback fires before T1.
 
 ### Files
 
@@ -93,7 +93,7 @@ cargo build --workspace
 
 Expected: brust + jsx-rust-compiler both build. 107 existing brust tests are not affected.
 
-### BLOCKED fallback (per spec §15.1)
+### BLOCKED fallback (per spec S15.1)
 
 If `cargo build -p jsx-rust-compiler` fails:
 
@@ -966,7 +966,7 @@ In `lower_element` (replacing `lower_element_T3` after T3/T4/T5):
 
 In `lower_child` / `normalize_whitespace`:
 
-- Implement the spec §4.6 rule precisely:
+- Implement the spec S4.6 rule precisely:
   - JSXText that is whitespace-only → drop.
   - JSXText with non-ws content: collapse runs of `\s+` to single space; trim leading/trailing whitespace only when the text borders a non-text sibling or the parent boundary.
 
@@ -1179,12 +1179,12 @@ T7(A1): emit IR → maud source — fixture-shaped output
 ### Files
 
 Create:
-- `crates/jsx-rust-compiler/fixtures/static_hello.tsx` (spec §10.1)
-- `crates/jsx-rust-compiler/fixtures/static_hello.expected.rs` (spec §10.1)
-- `crates/jsx-rust-compiler/fixtures/props_hello.tsx` (spec §10.2)
-- `crates/jsx-rust-compiler/fixtures/props_hello.expected.rs` (spec §10.2)
-- `crates/jsx-rust-compiler/fixtures/list_nav.tsx` (spec §10.3)
-- `crates/jsx-rust-compiler/fixtures/list_nav.expected.rs` (spec §10.3)
+- `crates/jsx-rust-compiler/fixtures/static_hello.tsx` (spec S10.1)
+- `crates/jsx-rust-compiler/fixtures/static_hello.expected.rs` (spec S10.1)
+- `crates/jsx-rust-compiler/fixtures/props_hello.tsx` (spec S10.2)
+- `crates/jsx-rust-compiler/fixtures/props_hello.expected.rs` (spec S10.2)
+- `crates/jsx-rust-compiler/fixtures/list_nav.tsx` (spec S10.3)
+- `crates/jsx-rust-compiler/fixtures/list_nav.expected.rs` (spec S10.3)
 - `crates/jsx-rust-compiler/tests/golden_emit.rs`
 
 ### `tests/golden_emit.rs`
@@ -1227,14 +1227,14 @@ Expected: 1 test passes (3 fixtures all match goldens).
 
 If a golden mismatches and the diff shows the spec was wrong about the emit shape:
 1. Re-run with `UPDATE_GOLDEN=1 cargo test -p jsx-rust-compiler --test golden_emit -- --nocapture` to regenerate.
-2. Inspect the diff: if the emit is sensible Rust + maud and the original spec was over-prescribed, update the spec's §10 to match the new bytes; commit the regeneration with a note explaining the divergence.
+2. Inspect the diff: if the emit is sensible Rust + maud and the original spec was over-prescribed, update the spec's S10 to match the new bytes; commit the regeneration with a note explaining the divergence.
 3. If the emit is broken Rust (won't compile), the BUG is in `emit.rs`. Do NOT update the golden; fix `emit.rs` instead.
 
 ### Commit
 
 ```
 T8(A1): three fixtures + golden_emit integration test
-- static_hello, props_hello, list_nav per spec §10
+- static_hello, props_hello, list_nav per spec S10
 - UPDATE_GOLDEN=1 regeneration escape hatch
 - 1 test asserts emit == golden for all fixtures
 ```
@@ -1322,7 +1322,7 @@ fn renders_expected_html() {
 }
 ```
 
-### `.expected.html` content (commit the bytes from spec §10)
+### `.expected.html` content (commit the bytes from spec S10)
 
 - `static_hello.expected.html` (1 line):
   ```
@@ -1349,14 +1349,14 @@ Expected: 3 tests pass (one per fixture).
 
 If maud's actual output diverges from the committed `.expected.html` (e.g. attribute escape, whitespace):
 1. Print the actual: re-run the failing test with `-- --nocapture` after adding `println!("{}", actual);` to the test fn.
-2. If the divergence is in maud's escape table (4 chars `<>&"`), this is fine — update the `.expected.html` to match maud. Document the deviation from spec §10.2 in a code comment.
+2. If the divergence is in maud's escape table (4 chars `<>&"`), this is fine — update the `.expected.html` to match maud. Document the deviation from spec S10.2 in a code comment.
 3. If the divergence is a bug in our emitter (wrong tag, wrong attr value), fix `emit.rs` — do NOT update the golden.
 
 ### Commit
 
 ```
 T9(A1): golden_render integration test — maud-rendered HTML
-- tests/golden_render/{main.rs + 3 fixture .rs} per spec §9.3 layout
+- tests/golden_render/{main.rs + 3 fixture .rs} per spec S9.3 layout
 - 3 .expected.html files capturing maud output for committed props
 - 3 tests assert render == golden HTML bytes
 ```
@@ -1453,7 +1453,7 @@ Expected: emits Rust source to stdout, exits 0, bytes match `static_hello.expect
 
 ```
 T10(A1): jsx-rustc CLI — stdin/-o/--check + path:line:col errors
-- arg parsing, exit codes per spec §7
+- arg parsing, exit codes per spec S7
 - smoke-test via existing fixtures
 ```
 
@@ -1505,30 +1505,30 @@ T11(A1) checkpoint: workspace verification green
 
 | Spec section | Task | Notes |
 |---|---|---|
-| §3 layout | T0, T8, T9, T10 | All new files materialized |
-| §4.1 dep table | T0 | Verified at T0 build |
-| §4.2 swc parse | T1 | TsSyntax, tsx: true |
-| §4.3 export-default discovery | T3 | DefaultDecl::Fn variant |
-| §4.4 lowering rules | T3–T6 | One error case per `ErrorKind` |
-| §4.5 attr rename precedence | T6 | Order: key, ref, on*, table, uppercase, verbatim |
-| §4.6 whitespace normalization | T6 | split_whitespace + join |
-| §5 emit target | T7 | maud, no Render/PreEscaped |
-| §5.1 emit table | T7 | Every IR node has an emit branch |
-| §5.2 numeric / string literal | T4+T7 | Integer-only; literal-as-text via `(value)` |
-| §5.3 type inference | T4+T5 | OwnedString / VecOf / Struct |
-| §5.4 nested struct emit | T5+T7 | PascalCase root + concat intermediates |
-| §6 ErrorKind taxonomy | T2 | All variants declared in T2 |
-| §7 CLI | T10 | argv parse + exit codes |
-| §8 runtime dep | T0 | maud as dev-dep (consumer-side) |
-| §9.1 unit tests | T1–T7 | Inline `#[cfg(test)]` mods |
-| §9.2 golden_emit | T8 | Single test, FIXTURES iteration |
-| §9.3 golden_render | T9 | `tests/golden_render/main.rs` + 3 mods |
-| §9.4 workspace gates | T11 | All baselines re-run, counts asserted |
-| §10 fixtures | T8+T9 | tsx + expected.rs + expected.html committed |
-| §11 acceptance criteria | T11 | Each criterion has a corresponding command |
-| §12 known limitations | (none) | Documentation-only; no implementation |
-| §13 open questions | (none) | All resolved at spec-time |
-| §15.1 swc compat fallback | T0 BLOCKED | Concrete recovery steps cited |
+| S3 layout | T0, T8, T9, T10 | All new files materialized |
+| S4.1 dep table | T0 | Verified at T0 build |
+| S4.2 swc parse | T1 | TsSyntax, tsx: true |
+| S4.3 export-default discovery | T3 | DefaultDecl::Fn variant |
+| S4.4 lowering rules | T3–T6 | One error case per `ErrorKind` |
+| S4.5 attr rename precedence | T6 | Order: key, ref, on*, table, uppercase, verbatim |
+| S4.6 whitespace normalization | T6 | split_whitespace + join |
+| S5 emit target | T7 | maud, no Render/PreEscaped |
+| S5.1 emit table | T7 | Every IR node has an emit branch |
+| S5.2 numeric / string literal | T4+T7 | Integer-only; literal-as-text via `(value)` |
+| S5.3 type inference | T4+T5 | OwnedString / VecOf / Struct |
+| S5.4 nested struct emit | T5+T7 | PascalCase root + concat intermediates |
+| S6 ErrorKind taxonomy | T2 | All variants declared in T2 |
+| S7 CLI | T10 | argv parse + exit codes |
+| S8 runtime dep | T0 | maud as dev-dep (consumer-side) |
+| S9.1 unit tests | T1–T7 | Inline `#[cfg(test)]` mods |
+| S9.2 golden_emit | T8 | Single test, FIXTURES iteration |
+| S9.3 golden_render | T9 | `tests/golden_render/main.rs` + 3 mods |
+| S9.4 workspace gates | T11 | All baselines re-run, counts asserted |
+| S10 fixtures | T8+T9 | tsx + expected.rs + expected.html committed |
+| S11 acceptance criteria | T11 | Each criterion has a corresponding command |
+| S12 known limitations | (none) | Documentation-only; no implementation |
+| S13 open questions | (none) | All resolved at spec-time |
+| S15.1 swc compat fallback | T0 BLOCKED | Concrete recovery steps cited |
 
 ## Placeholder + type-consistency scan
 
@@ -1542,7 +1542,7 @@ T11(A1) checkpoint: workspace verification green
 - **CLI flag order**: `-o <path>` must come BEFORE other content arguments. Plan T10 parses positionally and treats unknown flags as errors with exit code 2.
 - **`tests/golden_render/main.rs` vs `mod.rs`**: locked to `main.rs` per reviewer (cargo integration-test directory form requires `main.rs`).
 - **Subagent test counts**: T3=4, T4=8, T5=6, T6=9, T7=~5, T1=3 parser = ~35 unit tests plus 4 integration tests. Plan T11 expects "~31" integration; the ~35 unit count plus 31 integration = ~66 test runs total. Specific counts validated empirically at T11.
-- **maud-rendered byte forms**: §9.3 golden HTMLs are the spec's predicted bytes. If maud actually emits something slightly different (e.g. whitespace inside `<a>`), T9 BLOCKED fallback updates the goldens with a documenting comment.
+- **maud-rendered byte forms**: S9.3 golden HTMLs are the spec's predicted bytes. If maud actually emits something slightly different (e.g. whitespace inside `<a>`), T9 BLOCKED fallback updates the goldens with a documenting comment.
 
 ---
 

@@ -71,7 +71,7 @@ Mitigation was applied without an advisor call because the plan had pre-authoriz
 
 ## Why it slipped through
 
-The spec's "Known limitations §4" had already conceded the risk:
+The spec's "Known limitations S4" had already conceded the risk:
 
 > Bench measurability is on the noise floor. Expected RPS gain (+1–3%) is comparable to N=5 median variance (±5%). If measurement is ambiguous, the architectural improvement (fewer body memcpys, clearer ownership) still holds; document as such.
 

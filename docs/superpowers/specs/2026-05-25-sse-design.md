@@ -38,7 +38,7 @@ Three layers; one new directory under `runtime/`; no new Rust deps.
 Browser                         Rust (tokio)                          Worker JS (Bun)
 ────────                        ────────────                          ──────────────
 GET /events           ───→   accept conn
-Accept: text/event-stream    validate (GET + Accept rules — see §6)
+Accept: text/event-stream    validate (GET + Accept rules — see S6)
                              assign conn_id (AtomicU64)
                              dispatch_sse(envelope, conn_id) ─────→   resolve Route by path
                                                                        run middleware chain
@@ -57,11 +57,11 @@ Client TCP close      ───→   peek/read → Err/0
                                                                        clearInterval(heartbeat); reader.cancel()
 ```
 
-**Connection identity:** `conn_id: u64`, monotonic per server, assigned by Rust. Stored in a `parking_lot::Mutex<HashMap<u64, SseConn>>` registry (see §3 for the no-new-dep justification). Both sides carry it; all NAPI calls reference it.
+**Connection identity:** `conn_id: u64`, monotonic per server, assigned by Rust. Stored in a `parking_lot::Mutex<HashMap<u64, SseConn>>` registry (see S3 for the no-new-dep justification). Both sides carry it; all NAPI calls reference it.
 
 **Worker assignment:** stream stays on the worker chosen at `dispatch_sse` time. No migration. `pool.pick_least_busy()` picks once; its `in_flight_guard` stays alive for the entire connection (the tsfn call doesn't return until the stream ends), so that worker's `in_flight` counter reflects the open stream.
 
-**Open contract:** middleware can reject AFTER the dispatch has started but BEFORE any HTTP response has been written. The single dispatch carries an open signal back through `napi_sse_signal_open` so Rust knows whether to write SSE headers or a regular error response. See §5 for the full mechanics. No second dispatch, no sticky pool primitive.
+**Open contract:** middleware can reject AFTER the dispatch has started but BEFORE any HTTP response has been written. The single dispatch carries an open signal back through `napi_sse_signal_open` so Rust knows whether to write SSE headers or a regular error response. See S5 for the full mechanics. No second dispatch, no sticky pool primitive.
 
 ## 3. Module layout
 
@@ -365,7 +365,7 @@ The middleware composition runs at the top of `handleSseStream` itself (one entr
 | Rust unit | `SseEnvelope` serde, `build_sse_envelope`, REGISTRY insert/remove, conn_id monotonic | 4 | `src/routes.rs`, `src/sse.rs` `#[cfg(test)]` |
 | Rust unit | `peek_for_close` on paired UnixStream (FIN, RST) | 2 | `src/sse.rs` `#[cfg(test)]` |
 | Runtime unit | Glue — chunks forwarded, heartbeat fires, abort cancels reader + clears interval, error path closes, heartbeatMs=0 disables interval | 5 | `runtime/sse/handler.test.ts` |
-| Integration | 6 tests at ports 38210-38215 (see §1 success criteria 1-6) | 6 | `tests/integration.test.ts` |
+| Integration | 6 tests at ports 38210-38215 (see S1 success criteria 1-6) | 6 | `tests/integration.test.ts` |
 
 **Integration test worker setup (important):** every SSE integration test MUST spawn the example app with `env: { ...process.env, BRUST_PORT: '...', BRUST_WORKERS: '1', RUST_LOG: 'brust=warn' }`. Default `BRUST_WORKERS=18` spawns 18 separate Bun Worker contexts with isolated JS state — the SSE handler runs on one worker, but a follow-up probe action (e.g. `lastSseAbort()` in success criterion 3) gets dispatched by `pool.pick_least_busy()` to whichever worker is least loaded, almost certainly NOT the SSE worker. Probe reads a fresh (zeroed) module global and the test silently passes-or-fails. Single-worker mode aligns the SSE handler and the probe action onto the same JS context.
 
@@ -455,7 +455,7 @@ kill %1
 
 ## Spec coverage check
 
-| Requirement (§1 success criteria) | Tasks |
+| Requirement (S1 success criteria) | Tasks |
 |---|---|
 | 1. 3-frame stream + close | 7, 8, 11, 13 |
 | 2. Heartbeat within 16s | 8, 13 |

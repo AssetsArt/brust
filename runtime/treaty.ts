@@ -1,3 +1,5 @@
+import type { ActionsBuilder } from './define-actions.ts'
+
 const METHODS = new Set(['get', 'post', 'put', 'patch', 'delete', 'head'])
 
 export interface TreatyResponse<Data = unknown, Err = unknown> {
@@ -13,6 +15,29 @@ export interface ClientOptions {
   fetch?: typeof fetch
 }
 
+type FirstSegment<S extends string> = S extends `/${infer Rest}`
+  ? FirstSegment<Rest>
+  : S extends `${infer T}/${infer _U}`
+    ? T
+    : S
+
+export type PermissiveProxy = {
+  (arg?: any): PermissiveProxy
+  [key: string]: PermissiveProxy
+} & {
+  get: (options?: any) => Promise<TreatyResponse<any, any>>
+  post: (body?: any, options?: any) => Promise<TreatyResponse<any, any>>
+  put: (body?: any, options?: any) => Promise<TreatyResponse<any, any>>
+  patch: (body?: any, options?: any) => Promise<TreatyResponse<any, any>>
+  delete: (body?: any, options?: any) => Promise<TreatyResponse<any, any>>
+  head: (options?: any) => Promise<TreatyResponse<any, any>>
+}
+
+export type Treaty<App> =
+  App extends ActionsBuilder<infer Acc>
+    ? { [K in FirstSegment<keyof Acc & string>]: PermissiveProxy } & PermissiveProxy
+    : PermissiveProxy
+
 function resolvePrefix(opts?: ClientOptions): string {
   if (opts?.prefix) return opts.prefix
   const g = (globalThis as { __BRUST_ACTION_PREFIX__?: string }).__BRUST_ACTION_PREFIX__
@@ -23,7 +48,7 @@ function resolvePrefix(opts?: ClientOptions): string {
  * with an object fills the next {param}(s) positionally (in insertion order); a
  * terminal method key (.get/.post/…) performs the request. URL is composed from
  * the literal accumulated segments — never from any inferred type. */
-export function client<App = unknown>(opts?: ClientOptions): App {
+export function client<App = unknown>(opts?: ClientOptions): Treaty<App> {
   const prefix = resolvePrefix(opts)
   const doFetch = opts?.fetch ?? fetch
   function make(segments: string[]): any {
@@ -101,7 +126,7 @@ export function client<App = unknown>(opts?: ClientOptions): App {
       },
     })
   }
-  return make([]) as App
+  return make([]) as any as Treaty<App>
 }
 
 function hasFilePart(b: unknown): boolean {

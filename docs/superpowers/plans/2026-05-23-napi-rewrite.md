@@ -1353,29 +1353,29 @@ A walk through the spec to make sure every requirement has a task that implement
 
 | Spec section | Covered by task |
 |---|---|
-| §1 Goal: serve rendered `<HelloWorld/>` via Bun host + Rust .node | 11, 12, 13 |
-| §1 Acceptance: `curl /` → expected fragment, integration test passes | 4, 13 |
-| §1 Files removed | 1 |
-| §1 Files kept (HelloWorld, tsconfig, etc.) | 1 (Cargo.toml modify), 3 (tsconfig retained) |
-| §2 Architecture: Bun host + .node module + Worker threads | 5, 11, 12, 13 |
-| §2 napi binding surface (beginServe, untilReady, untilShutdown, registerRenderer, isWorker, workerId) | 11 |
-| §2 Rust internal layering (lib.rs / pool.rs / server.rs / http.rs / io / shutdown) | 6–11 |
-| §2 TS surface (single-file conditional) | 5, 12 |
-| §3 file layout | 1, 2, 3, 5 |
-| §3 Key Rust types | 8 (pool), 11 (lib) |
-| §3 TS API surface | 12 |
-| §4 Boot sequence | 11 (begin_serve, until_ready), 12 (facade orchestration) |
-| §4 Request flow | 10 |
-| §5 Platform abstraction | 7 |
-| §5 trade-offs (single-threaded, current_thread tokio on macOS) | implementation matches in 7 |
-| §6 Failure matrix entries | 6 (http errors), 10 (recv / parse / worker death), 11 (serve double-call, register in main) |
-| §6 SIGINT graceful shutdown | 9, 11 (install_sigint_handler in begin_serve) |
-| §7 Integration test shape | 4, 13 |
-| §7 readPortLine helper | 4 |
-| §8 Cargo.toml deps | 1, 6 (thiserror added) |
-| §8 runtime/package.json | 3 |
-| §8 build pipeline (napi build) | 3, 11 |
-| §8 Final project layout | All tasks combined |
+| S1 Goal: serve rendered `<HelloWorld/>` via Bun host + Rust .node | 11, 12, 13 |
+| S1 Acceptance: `curl /` → expected fragment, integration test passes | 4, 13 |
+| S1 Files removed | 1 |
+| S1 Files kept (HelloWorld, tsconfig, etc.) | 1 (Cargo.toml modify), 3 (tsconfig retained) |
+| S2 Architecture: Bun host + .node module + Worker threads | 5, 11, 12, 13 |
+| S2 napi binding surface (beginServe, untilReady, untilShutdown, registerRenderer, isWorker, workerId) | 11 |
+| S2 Rust internal layering (lib.rs / pool.rs / server.rs / http.rs / io / shutdown) | 6–11 |
+| S2 TS surface (single-file conditional) | 5, 12 |
+| S3 file layout | 1, 2, 3, 5 |
+| S3 Key Rust types | 8 (pool), 11 (lib) |
+| S3 TS API surface | 12 |
+| S4 Boot sequence | 11 (begin_serve, until_ready), 12 (facade orchestration) |
+| S4 Request flow | 10 |
+| S5 Platform abstraction | 7 |
+| S5 trade-offs (single-threaded, current_thread tokio on macOS) | implementation matches in 7 |
+| S6 Failure matrix entries | 6 (http errors), 10 (recv / parse / worker death), 11 (serve double-call, register in main) |
+| S6 SIGINT graceful shutdown | 9, 11 (install_sigint_handler in begin_serve) |
+| S7 Integration test shape | 4, 13 |
+| S7 readPortLine helper | 4 |
+| S8 Cargo.toml deps | 1, 6 (thiserror added) |
+| S8 runtime/package.json | 3 |
+| S8 build pipeline (napi build) | 3, 11 |
+| S8 Final project layout | All tasks combined |
 
 **No placeholders:** every code block contains complete, runnable code. No TBD / TODO / "similar to" patterns.
 
