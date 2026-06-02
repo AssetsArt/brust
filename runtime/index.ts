@@ -210,6 +210,11 @@ export const brust = {
   configureCssDir(dir: string): void {
     ;(native as any).configureCssDir(dir)
   },
+  /** Tell Rust where to read root-mapped static assets (`/favicon.ico`, …) from.
+   * Path must be absolute. */
+  configurePublicDir(dir: string): void {
+    ;(native as any).configurePublicDir(dir)
+  },
   /** Extract the MCP manifest from TypeScript source using the compiler API,
    * write it to `.brust/mcp-manifest.json`, and return it. Call once in the
    * main process after `brust.registerRoutes(routes)`. Workers must read the
@@ -412,6 +417,22 @@ export const brust = {
           this.configureCssDir(cssOutDir)
           configureCssEnabled(['/_brust/css/app.css'])
           console.log(`[brust] main: built CSS → ${cssOutDir}/app.css`)
+        }
+      }
+
+      // Static public assets — convention: <scanRoot>/public (dev) or
+      // <distDir>/public (prebuilt). Root-mapped (public/favicon.ico → /favicon.ico).
+      if (prebuilt) {
+        const prebuiltPublicDir = path.join(distDir!, 'public')
+        if (existsSync(prebuiltPublicDir)) {
+          this.configurePublicDir(prebuiltPublicDir)
+          console.log(`[brust] main: serving static assets from ${prebuiltPublicDir}`)
+        }
+      } else {
+        const publicDir = path.join(scanRoot, 'public')
+        if (existsSync(publicDir)) {
+          this.configurePublicDir(publicDir)
+          console.log(`[brust] main: serving static assets from ${publicDir}`)
         }
       }
 
