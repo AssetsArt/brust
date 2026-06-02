@@ -92,3 +92,41 @@ describe('x-text', () => {
     expect(span.textContent).toBe('a')
   })
 })
+
+describe('x-show + x-bind', () => {
+  test('x-show toggles display', async () => {
+    const win = setupDom('<div x-data="s1"><p x-show="open">hi</p></div>')
+    const { register, start } = await import(`./runtime.ts?show=${Math.random()}`)
+    const { signal } = await import('brustjs/store')
+    const open = signal(false)
+    register('s1', () => ({ open }))
+    start(win.document)
+    const p = win.document.querySelector('p')!
+    expect(p.style.display).toBe('none')
+    open.set(true)
+    expect(p.style.display).toBe('')
+  })
+
+  test('x-bind-class sets className; x-bind-disabled toggles property+attr; generic attr', async () => {
+    const win = setupDom(
+      '<div x-data="s2"><button x-bind-class="cls" x-bind-disabled="busy" x-bind-data-x="tag">b</button></div>',
+    )
+    const { register, start } = await import(`./runtime.ts?bind=${Math.random()}`)
+    const { signal } = await import('brustjs/store')
+    const cls = signal('a b')
+    const busy = signal(true)
+    const tag = signal('v1')
+    register('s2', () => ({ cls, busy, tag }))
+    start(win.document)
+    const btn = win.document.querySelector('button')! as any
+    expect(btn.className).toBe('a b')
+    expect(btn.disabled).toBe(true)
+    expect(btn.getAttribute('disabled')).toBe('')
+    expect(btn.getAttribute('data-x')).toBe('v1')
+    busy.set(false)
+    cls.set('c')
+    expect(btn.disabled).toBe(false)
+    expect(btn.hasAttribute('disabled')).toBe(false)
+    expect(btn.className).toBe('c')
+  })
+})

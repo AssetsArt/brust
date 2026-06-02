@@ -102,6 +102,23 @@ function bindAttrs(el: HTMLElement, scope: Instance, disposers: Array<() => void
       )
       continue
     }
+    if (name === 'x-show') {
+      disposers.push(
+        effect(() => {
+          el.style.display = read(scope, value) ? '' : 'none'
+        }),
+      )
+      continue
+    }
+    if (name.startsWith('x-bind-')) {
+      const target = name.slice('x-bind-'.length)
+      disposers.push(
+        effect(() => {
+          setBound(el, target, read(scope, value))
+        }),
+      )
+      continue
+    }
   }
 }
 
@@ -138,6 +155,30 @@ function disposeElement(el: HTMLElement): void {
     }
   }
   mounted.delete(el)
+}
+
+const BOOL_PROPS = new Set(['disabled', 'checked', 'hidden', 'readonly', 'required', 'selected'])
+
+/** Apply a bound value to a DOM attr/property. class → className; boolean props →
+ * property (when present) + attribute presence; value → property; else attribute. */
+export function setBound(el: HTMLElement, attr: string, value: unknown): void {
+  if (attr === 'class') {
+    el.className = value == null ? '' : String(value)
+    return
+  }
+  if (attr === 'value') {
+    ;(el as unknown as { value: unknown }).value = value == null ? '' : value
+    return
+  }
+  if (BOOL_PROPS.has(attr)) {
+    const on = Boolean(value)
+    if (attr in el) (el as unknown as Record<string, unknown>)[attr] = on
+    if (on) el.setAttribute(attr, '')
+    else el.removeAttribute(attr)
+    return
+  }
+  if (value == null || value === false) el.removeAttribute(attr)
+  else el.setAttribute(attr, String(value))
 }
 
 // --- reactive read helpers (used by later tasks) -------------------------------
