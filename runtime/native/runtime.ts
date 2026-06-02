@@ -1,0 +1,155 @@
+// Directive runtime — react-free, dom-only. Scans the DOM for x-* directives and
+// binds them to per-element component instances via brustjs/store's `effect`.
+import { effect, isComputed, isSignal } from 'brustjs/store'
+
+export type Instance = Record<string, unknown>
+export type Behavior = (ctx: { el: HTMLElement; props: unknown }) => Instance
+
+interface Mounted {
+  disposers: Array<() => void>
+}
+
+const registry = new Map<string, Behavior>()
+const mounted = new WeakMap<HTMLElement, Mounted>()
+let started = false
+
+/** Register a component behavior under `name` (called by the generated entry). */
+export function register(name: string, behavior: Behavior): void {
+  registry.set(name, behavior)
+}
+
+/** Scan `root` (default: document) for [x-data], mount each, and (once) attach a
+ * MutationObserver for dynamic mount/dispose. Idempotent. */
+export function start(root?: ParentNode): void {
+  const scope: ParentNode | undefined =
+    root ?? (typeof document !== 'undefined' ? document : undefined)
+  if (!scope) return
+  const run = () => {
+    scanAndMount(scope)
+    if (!started) {
+      started = true
+      observe()
+    }
+  }
+  if (typeof document !== 'undefined' && document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', run, { once: true })
+  } else {
+    run()
+  }
+}
+
+function scanAndMount(scope: ParentNode): void {
+  if (scope instanceof HTMLElement && scope.hasAttribute('x-data')) mountElement(scope)
+  for (const el of Array.from(scope.querySelectorAll<HTMLElement>('[x-data]'))) {
+    mountElement(el)
+  }
+}
+
+function mountElement(el: HTMLElement): void {
+  if (mounted.has(el)) return
+  const name = el.getAttribute('x-data') ?? ''
+  const behavior = registry.get(name)
+  if (!behavior) {
+    console.warn(`[brust] unknown x-data component "${name}"`)
+    return
+  }
+  let props: unknown = {}
+  const rawProps = el.getAttribute('x-props')
+  if (rawProps) {
+    try {
+      props = JSON.parse(rawProps)
+    } catch {
+      console.warn(`[brust] x-props on "${name}" is not valid JSON`)
+    }
+  }
+  const instance = behavior({ el, props })
+  const m: Mounted = { disposers: [] }
+  mounted.set(el, m)
+  bindTree(el, instance, m.disposers)
+  if (typeof instance.init === 'function') {
+    try {
+      Promise.resolve((instance.init as () => unknown)()).catch((e) =>
+        console.error('[brust] x-data init() failed:', e),
+      )
+    } catch (e) {
+      console.error('[brust] x-data init() threw:', e)
+    }
+  }
+}
+
+// Bind this element's directives, then recurse — but never descend into a nested
+// [x-data] (it owns its own subtree and is mounted independently).
+function bindTree(el: HTMLElement, instance: Instance, disposers: Array<() => void>): void {
+  bindAttrs(el, instance, disposers)
+  for (const child of Array.from(el.children)) {
+    if (!(child instanceof HTMLElement)) continue
+    if (child.hasAttribute('x-data')) continue
+    bindTree(child, instance, disposers)
+  }
+}
+
+// Filled in by later tasks (x-text, x-show, x-bind-*, x-on-*, x-for).
+function bindAttrs(_el: HTMLElement, _scope: Instance, _disposers: Array<() => void>): void {}
+
+function observe(): void {
+  if (typeof MutationObserver === 'undefined' || typeof document === 'undefined') return
+  const obs = new MutationObserver((records) => {
+    for (const rec of records) {
+      for (const node of Array.from(rec.removedNodes)) {
+        if (node instanceof HTMLElement) disposeTree(node)
+      }
+      for (const node of Array.from(rec.addedNodes)) {
+        if (node instanceof HTMLElement) scanAndMount(node)
+      }
+    }
+  })
+  obs.observe(document.body, { childList: true, subtree: true })
+}
+
+function disposeTree(node: HTMLElement): void {
+  if (mounted.has(node)) disposeElement(node)
+  for (const el of Array.from(node.querySelectorAll<HTMLElement>('[x-data]'))) {
+    disposeElement(el)
+  }
+}
+
+function disposeElement(el: HTMLElement): void {
+  const m = mounted.get(el)
+  if (!m) return
+  for (const d of m.disposers.splice(0)) {
+    try {
+      d()
+    } catch {
+      // disposer must not break sibling disposal
+    }
+  }
+  mounted.delete(el)
+}
+
+// --- reactive read helpers (used by later tasks) -------------------------------
+
+/** Walk a dotted member path against `scope`; at the LEAF, call signals/computeds/
+ * functions to obtain the reactive value (this read is what `effect` tracks). */
+export function read(scope: Instance, path: string): unknown {
+  let cur: unknown = scope
+  for (const part of path.split('.')) {
+    if (cur == null) return undefined
+    cur = (cur as Record<string, unknown>)[part]
+  }
+  if (isSignal(cur) || isComputed(cur)) return (cur as () => unknown)()
+  if (typeof cur === 'function') return (cur as () => unknown)()
+  return cur
+}
+
+/** Resolve a dotted path WITHOUT calling the leaf (for x-on handlers). */
+export function resolveRaw(scope: Instance, path: string): unknown {
+  let cur: unknown = scope
+  for (const part of path.split('.')) {
+    if (cur == null) return undefined
+    cur = (cur as Record<string, unknown>)[part]
+  }
+  return cur
+}
+
+// Keep `effect` referenced for later tasks (avoids an unused-import lint flag now).
+void effect
