@@ -747,6 +747,8 @@ export type { IsrConfig } from './islands/isr-jsx.ts'
 export { BrustPage } from './islands/brust-page.tsx'
 export type { BrustPageProps, HeadEntry } from './islands/brust-page.tsx'
 
+export { useStore } from './store/react.ts'
+
 export { buildIslands } from './islands/build.ts'
 export type { IslandsBuildResult, BuildIslandsOptions } from './islands/build.ts'
 

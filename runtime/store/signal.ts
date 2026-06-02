@@ -1,0 +1,134 @@
+// Minimal pull-based reactive core: push-on-write, pull-on-read, synchronous notify.
+// Framework-agnostic — no react, no dom. Foundation for defineStore (Spec A) and
+// the Alpine-style client runtime (Spec B).
+
+const SIGNAL = Symbol('brust.signal')
+const COMPUTED = Symbol('brust.computed')
+
+export interface Signal<T> {
+  (): T
+  set(next: T | ((prev: T) => T)): void
+  readonly [SIGNAL]: true
+}
+export interface Computed<T> {
+  (): T
+  readonly [COMPUTED]: true
+}
+
+export function isSignal(v: unknown): v is Signal<unknown> {
+  return typeof v === 'function' && (v as { [SIGNAL]?: true })[SIGNAL] === true
+}
+export function isComputed(v: unknown): v is Computed<unknown> {
+  return typeof v === 'function' && (v as { [COMPUTED]?: true })[COMPUTED] === true
+}
+
+// A reactive consumer (effect or computed) tracking its dependencies.
+interface Consumer {
+  run(): void
+  deps: Set<Set<Consumer>>
+}
+
+let activeConsumer: Consumer | null = null
+let batchDepth = 0
+const pendingNotify = new Set<Consumer>()
+
+function track(subscribers: Set<Consumer>): void {
+  if (activeConsumer) {
+    subscribers.add(activeConsumer)
+    activeConsumer.deps.add(subscribers)
+  }
+}
+
+function notify(subscribers: Set<Consumer>): void {
+  // Snapshot — a consumer re-running mutates the set.
+  for (const c of [...subscribers]) {
+    if (batchDepth > 0) pendingNotify.add(c)
+    else c.run()
+  }
+}
+
+function flush(): void {
+  const queued = [...pendingNotify]
+  pendingNotify.clear()
+  for (const c of queued) c.run()
+}
+
+export function batch(fn: () => void): void {
+  batchDepth++
+  try {
+    fn()
+  } finally {
+    batchDepth--
+    if (batchDepth === 0) flush()
+  }
+}
+
+export function signal<T>(initial: T): Signal<T> {
+  let value = initial
+  const subscribers = new Set<Consumer>()
+  const read = (() => {
+    track(subscribers)
+    return value
+  }) as Signal<T>
+  read.set = (next: T | ((prev: T) => T)) => {
+    const v = typeof next === 'function' ? (next as (p: T) => T)(value) : next
+    if (Object.is(v, value)) return
+    value = v
+    notify(subscribers)
+  }
+  Object.defineProperty(read, SIGNAL, { value: true })
+  return read
+}
+
+function clearDeps(c: Consumer): void {
+  for (const dep of c.deps) dep.delete(c)
+  c.deps.clear()
+}
+
+export function computed<T>(fn: () => T): Computed<T> {
+  let cached: T
+  let dirty = true
+  const subscribers = new Set<Consumer>()
+  const self: Consumer = {
+    deps: new Set(),
+    run() {
+      dirty = true
+      notify(subscribers) // downstream recomputes lazily on next read
+    },
+  }
+  const read = (() => {
+    track(subscribers)
+    if (dirty) {
+      clearDeps(self)
+      const prev = activeConsumer
+      activeConsumer = self
+      try {
+        cached = fn()
+        dirty = false
+      } finally {
+        activeConsumer = prev
+      }
+    }
+    return cached
+  }) as Computed<T>
+  Object.defineProperty(read, COMPUTED, { value: true })
+  return read
+}
+
+export function effect(fn: () => void): () => void {
+  const self: Consumer = {
+    deps: new Set(),
+    run() {
+      clearDeps(self)
+      const prev = activeConsumer
+      activeConsumer = self
+      try {
+        fn()
+      } finally {
+        activeConsumer = prev
+      }
+    },
+  }
+  self.run()
+  return () => clearDeps(self)
+}
