@@ -195,7 +195,7 @@ export const behavior = ({ props }: { props: AddProps }) => {
     busy.set(true)
     try {
       if (inTeam()) {
-        const { data } = await api.team({ id: props.id }).delete({})   // .delete({}) — GAPS S12
+        const { data } = await api.team({ id: props.id }).delete()   // bodyless DELETE OK (GAPS S12 fixed)
         if (data) teamStore.members.set(data.team)
       } else {
         const { data } = await api.team.post(props)
@@ -255,8 +255,11 @@ export function scanDirectiveComponents(routesEntryFile: string): Map<string, { 
 //   2. Bun.build({ entrypoints:[tmpEntry], outdir, naming:'_directives.js',
 //                  format:'esm', target:'browser', minify:true, external:[],   // NO externals — self-contained
 //                  define:{'process.env.NODE_ENV':'"production"'} })
-//   3. ASSERT react is not bundled (scan output for a react marker / size guard) — a leak
-//      means a behavior imported a react-pulling symbol (e.g. useStore); fail the build loud.
+//   3. ASSERT react is not bundled — scan the output text for a concrete react marker
+//      (e.g. a react-dom / react internal symbol or the importmap bare specifier 'react'),
+//      NOT a size threshold (treaty.ts + signal.ts are tiny, so a size guard false-passes/
+//      fails). A hit means a behavior imported a react-pulling symbol (e.g. useStore) →
+//      fail the build loud.
 export async function buildDirectives(components, options): Promise<{ outDir: string; count: number }>
 ```
 
@@ -272,10 +275,23 @@ template, knows whether the template references `x-data` (scan `compiled.templat
 page (no `<Island>`) still gets the script. The wrap is `{% raw %}` for symmetry/safety even
 though the tag has no `{{`/`}}`.
 
-**Wiring in `build.ts` / `dev.ts`:** after the islands build block, add a directives build
-block: `scanDirectiveComponents(routesFile)` → if non-empty, `buildDirectives(..., {outDir:
+**Wiring in `build.ts`:** after the islands build block, add a directives build block:
+`scanDirectiveComponents(routesFile)` → if non-empty, `buildDirectives(..., {outDir:
 <outDir>/islands})` and mirror into `cwd/.brust/islands` (same dual-write the islands block
-does for the source runtime). Order: directives after islands so both land in the same dir.
+does for the source runtime). **Hard ordering requirement:** directives build runs *after*
+`buildIslands`, because `buildIslands` starts with `rm -rf outDir` (`islands/build.ts:100`) —
+running directives first would wipe `_directives.js`. The directives block must **also create
+`<outDir>/islands` itself** (`mkdir -p`): when `islandMap.size === 0` the entire islands block
+is skipped (`build.ts:247`) and the dir is never created, but a directives-only app still needs
+it.
+
+**Dev (`dev.ts`) — NO islands/directives bundle build (matches the existing islands story).**
+`dev.ts` does not build islands; it only `emitNativeTemplates` and relies on a prior `brust
+build` having produced `.brust/islands` (repo rule: "must `brust build` before run"). So in dev
+the **jinja `x-data` bake happens for free** — it lives in `native-routes-emit.ts`
+(`emitNativeTemplates`), which both `build` and `dev` call — but the **`_directives.js` bundle
+comes from `brust build`** (stale/absent otherwise, exactly like island chunks today). `dev.ts`
+needs **no edit**; the bake is in `native-routes-emit.ts`.
 
 ### Package export
 
@@ -296,8 +312,8 @@ runtime/native/
   index.ts            # brustjs/native barrel: export { register, start }                 (new)
 runtime/islands/importmap.ts   # + export const DIRECTIVES_BOOTSTRAP                      (edit)
 runtime/cli/native-routes-emit.ts  # bake DIRECTIVES_BOOTSTRAP when template uses x-data  (edit)
-runtime/cli/build.ts           # directives build block (scan → build → dual-write)       (edit)
-runtime/cli/dev.ts             # same directives build block for dev                      (edit)
+runtime/cli/build.ts           # directives build block (scan → build → dual-write; AFTER islands) (edit)
+                               # (dev.ts needs NO edit — bake is in native-routes-emit.ts; bundle from `brust build`)
 package.json                   # + "./native": "./runtime/native/index.ts"               (edit)
 tests/native-directives.test.ts # integration: build a fixture native route w/ directives (new)
 example/pokedex/components/AddToTeamButton.tsx  # island → native interactive component   (rewrite, dogfood)
@@ -315,14 +331,18 @@ example/pokedex/FRAMEWORK-GAPS.md  # mark native interactivity addressed        
    jinja byte output.
 2. **Cross-paradigm store identity (S4 reuse):** a native `x-on-click` handler calling
    `teamStore.members.set(...)` and a React `useStore(teamStore)` island resolve the same
-   `window.__BRUST_STORES__.team` (Spec A `Symbol.for` cross-chunk identity). Verified in a
-   real browser (the dogfood acceptance).
+   window singleton — the pokedex store is `defineStore('pokedex.team', …)`, so the key is
+   `window.__BRUST_STORES__['pokedex.team']` (Spec A `Symbol.for` cross-chunk identity).
+   Verified in a real browser (the dogfood acceptance).
 3. **Reactive update:** changing a signal/computed read by `x-text`/`x-show`/`x-bind-*`
    re-runs only that binding's `effect`; `Object.is`-equal writes notify nobody (Spec A guard).
-4. **Lifecycle:** `init()` runs exactly once per mount, after binding setup is irrelevant —
-   it runs after instance creation, before/independent of first effect flush (effects already
-   ran synchronously on bind). Removal disposes every effect + listener under the node (no
-   leaked effects after SPA-nav swap).
+4. **Lifecycle:** per mount the order is: (a) create instance, (b) bind the subtree — each
+   binding `effect` runs **synchronously once** against the instance's *initial* state, (c)
+   fire-and-forget `instance.init?.()`. `init()` is typically async (seeds the store via a
+   fetch); when its await resolves and writes a signal, the already-bound effects re-run with
+   the new value. So a first paint with initial state, then a reactive update after `init()` —
+   no ordering hazard. `init()` runs exactly once per mount. Removal disposes every effect +
+   listener under the node (no leaked effects after an SPA-nav swap).
 5. **No-directive pages unaffected:** a native route with no `x-data` gets no `_directives.js`
    script and a byte-identical `.jinja` (no-island/no-directive regression parity).
 6. **react-free bundle:** `_directives.js` contains no React (build-time assert).
@@ -344,7 +364,9 @@ Unit (`bun test`, happy-dom for DOM):
   - nested `x-data`: outer walk stops at the inner; inner mounts independently with its own
     scope.
   - dispose: removing the `x-data` element (MutationObserver) stops its effects — a later
-    signal write does not touch detached DOM.
+    signal write does not touch detached DOM. **Cover the SPA-nav swap shape**, not just a
+    bare `removeChild`: an element removed and a fresh `x-data` element added in the same
+    observer batch must dispose-then-mount (no double-mount, no leaked effect from the old node).
   - `start()` idempotent (second call no-op); `read` leaf calls signal/computed/function but
     passes plain values through.
 - `runtime/native/build.test.ts`:
@@ -398,6 +420,11 @@ only be confirmed in a real browser):
   does full-reload nav (directives still re-init on load).
 - **Behaviors must be react-free** — importing a react-pulling symbol (e.g. `useStore`) fails
   the directives build's react-leak guard. Use `signal`/`computed` from `brustjs/store`.
+- **`x-data` inside an `ssr` React island subtree is unsupported** — React owns/replaces that
+  subtree on render, which would leak or double-bind a directive instance. The directive
+  namespace (`x-*`) and the island namespace (`data-brust-island`) are disjoint and authors
+  should keep directive markup outside island-rendered DOM. v1 does not actively guard this
+  (no warn); documented as an authoring constraint.
 
 ## Open questions resolved at design/plan time
 
