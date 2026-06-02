@@ -54,6 +54,14 @@ pub fn configure_public_dir(path: String) -> NapiResult<()> {
 - **URL key derivation:** path of the file relative to the public root, with the
   OS separator normalized to `/`, prefixed with `/`. `public/favicon.ico` →
   `/favicon.ico`; `public/img/logo.png` → `/img/logo.png`.
+- **MUST exclude `/_brust/` keys (security).** Several `/_brust/*` handlers run
+  AFTER the public serve block in the request loop — MCP (`server.rs:~490`),
+  `/_brust/page` nav (`~920`), cache-invalidate (`~576`), dev WS upgrade (`~800`).
+  A file at `public/_brust/mcp` would otherwise shadow them. `configure_public_dir`
+  therefore **skips any file whose derived URL key starts with `/_brust/`** and
+  logs a warning. (Files under `/_brust/css/` and `/_brust/islands/` are handled
+  before the public block, but excluding the whole `/_brust/` namespace is the
+  correct, uniform guard.)
 - **Traversal safety by construction:** the map's values are the only paths ever
   read; the request path is used solely as a `HashMap` key lookup — the request
   string is never joined to a directory. Canonicalize-under-root at build time
@@ -71,10 +79,13 @@ fn current_public_asset(url_path: &str) -> Option<std::path::PathBuf> {
 ### 2. MIME table (`crates/brust/src/server.rs`)
 
 ```rust
-/// Extension → Content-Type for static public assets. Lowercased extension
-/// (no dot). Unknown → application/octet-stream.
-fn content_type_for(path: &str) -> &'static str { /* match on rsplit('.') */ }
+/// Extension → Content-Type for static public assets. Input is the resolved
+/// FILE PATH from the manifest (not the URL) so MIME tracks the real file, not
+/// URL structure; lowercased extension via rsplit('.'). Unknown → application/octet-stream.
+fn content_type_for(file_path: &std::path::Path) -> &'static str { /* match on extension */ }
 ```
+`eot` → `application/vnd.ms-fontobject`, `ico` → `image/x-icon`, `wasm` →
+`application/wasm`. charset only on text/js/json/svg+xml; binary types none.
 Covered (at least): html, css, js/mjs, json, map, svg, ico, png, jpg/jpeg, gif,
 webp, avif, woff, woff2, ttf, otf, eot, txt, xml, pdf, wasm, mp4, webm, mp3, wav,
 csv. `text/*` and `image/svg+xml`, `application/json`, `text/javascript` get
@@ -94,7 +105,7 @@ if method == "GET" {
                 let extra = [("Cache-Control".to_string(),
                               asset_cache_control(crate::is_dev_mode()).to_string())];
                 let resp = http::build_response(
-                    200, content_type_for(path_no_query), &extra, bytes);
+                    200, content_type_for(&file_path), &extra, bytes);
                 if s.write_all(resp).await.is_err() { return; }
                 continue;
             }
@@ -192,6 +203,11 @@ example/pokedex/public/favicon.svg   NEW — dogfood (kills the favicon 404)
   author's responsibility; prod cache is a flat `max-age=3600`).
 - A read error after boot falls through to routing (typically yields the app's
   404), not a 500 — intentional.
+- **TOCTOU:** the canonicalize-under-root symlink guard runs at boot (manifest
+  build) only. A `public/` file replaced by an out-of-root symlink AFTER boot is
+  not re-validated before `tokio::fs::read`. Exploiting it needs local filesystem
+  write access (outside the typical web threat model); restart rebuilds the
+  manifest. Acceptable for v1.
 
 ## Open questions resolved at plan time
 
