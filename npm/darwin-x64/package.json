@@ -1,6 +1,6 @@
 {
   "name": "brustjs-darwin-x64",
-  "version": "0.1.20-alpha",
+  "version": "0.1.21-alpha",
   "cpu": [
     "x64"
   ],
