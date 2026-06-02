@@ -19,7 +19,9 @@ export function register(name: string, behavior: Behavior): void {
 }
 
 /** Scan `root` (default: document) for [x-data], mount each, and (once) attach a
- * MutationObserver for dynamic mount/dispose. Idempotent. */
+ * MutationObserver for dynamic mount/dispose. Idempotent. NOTE: `root` scopes the
+ * INITIAL scan only; the observer always watches the global `document.body` (one
+ * observer per document handles every later mount/dispose, incl. SPA-nav swaps). */
 export function start(root?: ParentNode): void {
   const scope: ParentNode | undefined =
     root ?? (typeof document !== 'undefined' ? document : undefined)
@@ -189,6 +191,7 @@ function bindAttrs(el: HTMLElement, scope: Instance, disposers: Array<() => void
 
 function observe(): void {
   if (typeof MutationObserver === 'undefined' || typeof document === 'undefined') return
+  if (!document.body) return // nothing to observe yet (called pre-<body>); start() re-runs on DOMContentLoaded
   const obs = new MutationObserver((records) => {
     for (const rec of records) {
       for (const node of Array.from(rec.removedNodes)) {
