@@ -80,12 +80,71 @@ function mountElement(el: HTMLElement): void {
 // Bind this element's directives, then recurse — but never descend into a nested
 // [x-data] (it owns its own subtree and is mounted independently).
 function bindTree(el: HTMLElement, instance: Instance, disposers: Array<() => void>): void {
+  if (el.hasAttribute('x-for')) {
+    bindFor(el, instance, disposers)
+    return
+  }
   bindAttrs(el, instance, disposers)
   for (const child of Array.from(el.children)) {
     if (!(child instanceof HTMLElement)) continue
     if (child.hasAttribute('x-data')) continue
     bindTree(child, instance, disposers)
   }
+}
+
+const FOR_RE = /^\s*(\w+)\s+in\s+([\w.]+)\s*$/
+
+// `x-for="item in member"` — the element is the template. Replace it with a comment
+// anchor; on each change of `member`, clear previous clones and render one per item,
+// binding each clone with a child scope { [item]: value } prototype-linked to the
+// instance (so instance members + methods stay visible). v1 = full re-render.
+function bindFor(tplEl: HTMLElement, instance: Instance, disposers: Array<() => void>): void {
+  const raw = tplEl.getAttribute('x-for') ?? ''
+  const m = FOR_RE.exec(raw)
+  if (!m) {
+    console.warn(`[brust] malformed x-for expression: "${raw}"`)
+    return
+  }
+  const itemName = m[1] as string
+  const listPath = m[2] as string
+  const parent = tplEl.parentNode
+  if (!parent) return
+  const anchor = tplEl.ownerDocument.createComment(`x-for:${itemName}`)
+  parent.insertBefore(anchor, tplEl)
+  tplEl.removeAttribute('x-for')
+  const template = tplEl.cloneNode(true) as HTMLElement
+  tplEl.remove()
+
+  const rendered: HTMLElement[] = []
+  const childDisposers: Array<() => void> = []
+
+  const clear = () => {
+    for (const d of childDisposers.splice(0)) {
+      try {
+        d()
+      } catch {
+        /* keep clearing */
+      }
+    }
+    for (const node of rendered.splice(0)) node.remove()
+  }
+
+  disposers.push(
+    effect(() => {
+      clear()
+      const list = read(instance, listPath)
+      if (!Array.isArray(list)) return
+      for (const item of list) {
+        const clone = template.cloneNode(true) as HTMLElement
+        const childScope: Instance = Object.create(instance)
+        childScope[itemName] = item
+        bindTree(clone, childScope, childDisposers)
+        parent.insertBefore(clone, anchor) // before anchor → preserves order
+        rendered.push(clone)
+      }
+    }),
+  )
+  disposers.push(clear)
 }
 
 function bindAttrs(el: HTMLElement, scope: Instance, disposers: Array<() => void>): void {
@@ -124,7 +183,6 @@ function bindAttrs(el: HTMLElement, scope: Instance, disposers: Array<() => void
       const handler = (e: Event) => callMethod(scope, value, e)
       el.addEventListener(eventName, handler)
       disposers.push(() => el.removeEventListener(eventName, handler))
-      continue
     }
   }
 }

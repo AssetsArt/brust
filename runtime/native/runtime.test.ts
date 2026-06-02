@@ -159,3 +159,31 @@ describe('x-on', () => {
     expect(() => btn.dispatchEvent(new win.Event('click', { bubbles: true }))).not.toThrow()
   })
 })
+
+describe('x-for', () => {
+  test('renders one node per item, updates on change, child reads loop item + instance member', async () => {
+    const win = setupDom(
+      '<ul x-data="f1"><li x-for="t in items" x-text="t.name" x-bind-class="cls"></li></ul>',
+    )
+    const { register, start } = await import(`./runtime.ts?for=${Math.random()}`)
+    const { signal } = await import('brustjs/store')
+    const items = signal([{ name: 'fire' }, { name: 'water' }])
+    register('f1', () => ({ items, cls: signal('chip') }))
+    start(win.document)
+    const ul = win.document.querySelector('ul')!
+    let lis = ul.querySelectorAll('li')
+    expect(Array.from(lis).map((l) => l.textContent)).toEqual(['fire', 'water'])
+    expect(lis[0]!.className).toBe('chip') // instance member visible in loop scope
+    items.set([{ name: 'grass' }])
+    lis = ul.querySelectorAll('li')
+    expect(Array.from(lis).map((l) => l.textContent)).toEqual(['grass'])
+  })
+
+  test('malformed x-for expression warns and skips', async () => {
+    const win = setupDom('<ul x-data="f2"><li x-for="garbage" x-text="t"></li></ul>')
+    const { register, start } = await import(`./runtime.ts?for2=${Math.random()}`)
+    const { signal } = await import('brustjs/store')
+    register('f2', () => ({ items: signal([]) }))
+    expect(() => start(win.document)).not.toThrow()
+  })
+})
