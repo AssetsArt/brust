@@ -39,7 +39,9 @@ Spec B delivers:
    that scans the routes graph for behavior-bearing components, generates a
    registration entry, `Bun.build`s a self-contained `_directives.js`, and **bakes its
    `<script>` tag into the jinja** at build time (mirrors `reconcileIslandManifest`'s
-   `{% raw %}…{% endraw %}` bootstrap baking) — **no Rust change, no compiler change.**
+   `{% raw %}…{% endraw %}` bootstrap baking) — **the build/bake path needs no Rust change.**
+   (The one Rust change Spec B does make is the `find_default_export` relaxation for single-file
+   components — see Non-goals.)
 4. The **v1 directive set** (Scheme 1 — JSX-safe, no `:`/`@`, all lowercase+hyphen so
    the native compiler passes them through as static string attrs):
    `x-data` · `x-props` · `x-text` · `x-show` · `x-bind-<attr>` · `x-on-<event>` · `x-for`.
@@ -56,7 +58,18 @@ Spec B delivers:
   into native HTML has no consumer in v1. Adding it later is the build-baked jinja
   placeholder `<script data-brust-store-snapshot>{{ __brust_stores | safe }}</script>`
   filled from `collectSnapshot()` via the existing SAB context — a follow-up (Spec B.1),
-  not this spec. **Spec B touches no Rust and no compiler.**
+  not this spec.
+- **ONE contained compiler change (decided at impl time).** The directive *attributes*
+  need no compiler change (they pass through `lower_attr` as static string attrs). But the
+  **single-file** shape — a `.tsx` with a co-located `export const behavior` next to the
+  `export default function` template — is rejected by the native compiler's
+  `find_default_export` (`crates/jsx-rust-compiler/src/lower.rs`), which today errors on any
+  top-level statement other than imports + a single `export default function`
+  (`UnexpectedStatement`). To deliver the single-file ergonomic (the user's explicit choice),
+  `find_default_export` is relaxed to **tolerate (ignore) extra top-level statements** and
+  lower only the default export. This is the ONLY Rust change; it requires a `.node` addon
+  rebuild and updates to the jsx-rust-compiler tests that asserted the old rejection. The
+  alternative (a companion `<Name>.client.ts`, zero Rust) was rejected in favor of single-file.
 - **No inline expression evaluation (`new Function`/`with`).** Logic lives in the typed
   `behavior` module; directives reference **member names** (`x-text="label"`) or, inside
   `x-for`, **dotted member paths** (`x-text="item.name"`) resolved by a tiny path
@@ -175,7 +188,8 @@ import { client } from 'brustjs/client'            // treaty action client — r
 import { teamStore } from '../stores/team'
 import type { Actions } from '../actions'
 
-export interface AddProps { id: string; name: string; displayName: string; num: string; types: string[]; artwork: string }
+// Use the app's real AddToTeamProps (id is a NUMBER — matches the action's z.number()).
+export interface AddProps { id: number; name: string; displayName: string; num: string; types: string[]; artwork: string }
 
 const api = client<Actions>()
 
@@ -230,7 +244,9 @@ export default function AddToTeamButton({ data }: { data: string }) {
 
 `data` is loader-precomputed (`addProps: JSON.stringify({ id, name, displayName, num, types, artwork })`),
 emitted by the compiler as `x-props="{{ (data) | e }}"` (attribute-escaped → XSS-safe; the
-browser unescapes it for `getAttribute`). Detail page: `<AddToTeamButton data={d.addProps} />`.
+browser unescapes it for `getAttribute`). Detail page usage requires the **`native`** marker
+so the compiler inlines it (only `native`-marked child components are inline-eligible):
+`<AddToTeamButton native data={d.addProps} />`.
 
 ### Build pipeline (`runtime/native/build.ts` + wiring)
 
@@ -312,6 +328,8 @@ runtime/native/
   build.ts            # scanDirectiveComponents, buildDirectives                          (new)
   build.test.ts       # scan + generated-entry + react-leak-guard units                  (new)
   index.ts            # brustjs/native barrel: export { register, start }                 (new)
+crates/jsx-rust-compiler/src/lower.rs # find_default_export: tolerate extra top-level stmts  (edit, RUST)
+crates/jsx-rust-compiler/src/lib.rs   # update tests that asserted UnexpectedStatement       (edit, RUST tests)
 runtime/islands/importmap.ts   # + export const DIRECTIVES_BOOTSTRAP                      (edit)
 runtime/cli/native-routes-emit.ts  # bake DIRECTIVES_BOOTSTRAP when template uses x-data  (edit)
 runtime/cli/build.ts           # directives build block (scan → build → dual-write; AFTER islands) (edit)
@@ -401,8 +419,12 @@ only be confirmed in a real browser):
   `brust-ts-ci-gates-biome-not-cargo`).
 - New unit suites green; existing `runtime` suite green (no regressions vs this branch's base
   count — re-measure at impl time, don't freeze a literal).
-- `cargo test` baselines **unchanged** (Spec B touches no Rust, no compiler): jsx-rust-compiler
-  + brust lib byte-for-byte.
+- `cargo test` green with the `find_default_export` relaxation: the jsx-rust-compiler tests
+  that asserted `UnexpectedStatement` for extra top-level statements are **updated** to assert
+  the default export is found + lowered instead (baseline intentionally changes for those
+  cases only; the brust lib tests stay unchanged). The `.node` addon is rebuilt
+  (`cd runtime && bun run build`) so the CLI/build/integration paths use the new compiler
+  (memory `stale-napi-node-after-compiler-change`).
 - Integration suite green + the new `native-directives` test.
 - `import { register, start } from 'brustjs/native'` resolves under `bun test`; `_directives.js`
   builds and contains no React (build-time assert green).
