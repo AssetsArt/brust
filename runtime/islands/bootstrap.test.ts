@@ -6,6 +6,10 @@ import { Window } from 'happy-dom'
 // isInternalLink and hydrateMarkersIn are imported lazily (after DOM is up)
 // via a module-level variable populated in beforeAll.
 let isInternalLink: (a: HTMLAnchorElement, e: MouseEvent) => boolean
+let classifyClick: (
+  a: HTMLAnchorElement,
+  e: MouseEvent,
+) => 'external' | 'hash' | 'reload' | 'navigate'
 let hydrateMarkersIn: (root?: ParentNode) => void
 let swapMainContent: (main: HTMLElement, html: string) => void
 let hydrateOne: (el: HTMLElement) => Promise<void>
@@ -63,6 +67,7 @@ beforeAll(async () => {
   // (typeof document !== 'undefined') sees the DOM correctly.
   const mod = await import('./bootstrap')
   isInternalLink = mod.isInternalLink
+  classifyClick = mod.classifyClick
   hydrateMarkersIn = mod.hydrateMarkersIn
   swapMainContent = mod.swapMainContent
   hydrateOne = mod.hydrateOne
@@ -112,6 +117,54 @@ test('isInternalLink rejects external origin, _blank, modifier-click, anchor, /_
     false,
   )
   expect(isInternalLink(makeLink('/file.pdf', { download: '' }), plainClick())).toBe(false)
+})
+
+test('classifyClick: exact same URL → "reload" (must be suppressed, not a browser full reload)', () => {
+  // location is http://localhost/ in this harness.
+  expect(classifyClick(makeLink('http://localhost/'), plainClick())).toBe('reload')
+  expect(classifyClick(makeLink('/'), plainClick())).toBe('reload')
+})
+
+test('classifyClick: same path, different hash → "hash" (native scroll, not intercepted)', () => {
+  expect(classifyClick(makeLink('http://localhost/#section'), plainClick())).toBe('hash')
+})
+
+test('classifyClick: different path → "navigate" (SPA)', () => {
+  expect(classifyClick(makeLink('/blog/welcome'), plainClick())).toBe('navigate')
+})
+
+test('classifyClick: not-ours → "external"', () => {
+  expect(classifyClick(makeLink('https://example.com/x'), plainClick())).toBe('external')
+  expect(classifyClick(makeLink('/_brust/page/x'), plainClick())).toBe('external')
+  expect(classifyClick(makeLink('/x', { target: '_blank' }), plainClick())).toBe('external')
+})
+
+// Behavioral regression for the reported bug: clicking the link to the page you
+// are already on must NOT trigger a full page reload. The installed click
+// interceptor must call preventDefault() (so the browser does not navigate),
+// while a hash-only link must be left to the browser's native scroll.
+test('click interceptor: clicking the current URL is preventDefaulted (no full reload)', () => {
+  const a = makeLink('http://localhost/')
+  document.body.appendChild(a)
+  try {
+    const ev = new MouseEvent('click', { button: 0, bubbles: true, cancelable: true })
+    a.dispatchEvent(ev)
+    expect(ev.defaultPrevented).toBe(true)
+  } finally {
+    document.body.removeChild(a)
+  }
+})
+
+test('click interceptor: hash-only link is NOT preventDefaulted (browser scrolls natively)', () => {
+  const a = makeLink('http://localhost/#section')
+  document.body.appendChild(a)
+  try {
+    const ev = new MouseEvent('click', { button: 0, bubbles: true, cancelable: true })
+    a.dispatchEvent(ev)
+    expect(ev.defaultPrevented).toBe(false)
+  } finally {
+    document.body.removeChild(a)
+  }
 })
 
 test('hydrateMarkersIn(root) only scans within the given root subtree', () => {
