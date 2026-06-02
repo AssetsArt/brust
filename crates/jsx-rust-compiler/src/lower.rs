@@ -176,10 +176,23 @@ pub(crate) fn lower_with_sources(
     let jsx = strip_paren(return_expr);
     let root = match jsx {
         SwcExpr::JSXElement(element) => {
-            if let JSXElementName::Ident(ident) = &element.opening.name
-                && ident.sym.as_ref() == "BrustPage"
-            {
-                lower_brust_page(element, &scope)?
+            if let JSXElementName::Ident(ident) = &element.opening.name {
+                let s = ident.sym.as_ref();
+                if s == "BrustPage" {
+                    lower_brust_page(element, &scope)?
+                } else if s == "Island" {
+                    lower_element(element, &scope, false)?
+                } else if s.starts_with(|c: char| c.is_ascii_uppercase())
+                    && has_native_attr(element)
+                {
+                    // Document-root inline: a custom `native` component at the
+                    // route root may itself return `<BrustPage>`. Pass
+                    // `doc_root = true` so a nested `<BrustPage>` in its body is
+                    // promoted to the document shell instead of being rejected.
+                    lower_ssr_component(element, s, &scope, false, true)?
+                } else {
+                    lower_element(element, &scope, false)?
+                }
             } else {
                 lower_element(element, &scope, false)?
             }
@@ -203,6 +216,21 @@ pub(crate) fn lower_with_sources(
     Ok((Component { name, props, root }, warnings))
 }
 
+/// Does this element carry a (bare or valued) `native` attribute? Shared by the
+/// route-root dispatch in `lower_with_sources` (to route a custom `native`
+/// component through `lower_ssr_component` with `doc_root = true`) and by
+/// `lower_ssr_component`'s own native-branch detection.
+fn has_native_attr(el: &JSXElement) -> bool {
+    el.opening.attrs.iter().any(|a| {
+        if let JSXAttrOrSpread::JSXAttr(jsx_attr) = a
+            && let JSXAttrName::Ident(id) = &jsx_attr.name
+        {
+            return id.sym.as_ref() == "native";
+        }
+        false
+    })
+}
+
 /// Crate-internal entry point for inline lowering (T5 opt-in).
 ///
 /// Lowers a component's JSX body with `subst` substituted for its prop names.
@@ -222,6 +250,7 @@ pub(crate) fn lower_component_inline(
     subst: HashMap<String, crate::ir::Expr>,
     _has_children: bool,
     env: Option<Rc<InlineEnv>>,
+    doc_root: bool,
 ) -> Result<Vec<JsxNode>, LowerError> {
     let (_, fn_expr) = find_default_export(&parsed.module)?;
     let body =
@@ -245,6 +274,15 @@ pub(crate) fn lower_component_inline(
         let jsx = strip_paren(return_expr);
         match jsx {
             SwcExpr::JSXElement(el) => {
+                // Document-root promotion: when this inlined component is the
+                // route root AND its single-return root is `<BrustPage>`, emit the
+                // document shell here instead of rejecting it as nested.
+                if doc_root
+                    && let JSXElementName::Ident(ident) = &el.opening.name
+                    && ident.sym.as_ref() == "BrustPage"
+                {
+                    return Ok(vec![lower_brust_page(el, &scope)?]);
+                }
                 let node = lower_element(el, &scope, false)?;
                 return Ok(vec![node]);
             }
@@ -563,7 +601,7 @@ fn lower_element(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode
     if let JSXElementName::Ident(ident) = &el.opening.name {
         let s = ident.sym.as_ref();
         if s.starts_with(|c: char| c.is_ascii_uppercase()) {
-            return lower_ssr_component(el, s, scope, in_map);
+            return lower_ssr_component(el, s, scope, in_map, false);
         }
     }
 
@@ -678,6 +716,9 @@ fn lower_brust_page(el: &JSXElement, scope: &Scope) -> Result<JsxNode, LowerErro
                     // "string literal or member-path". So any lower failure OR a
                     // non-path success both collapse to the same reject.
                     match lower_expr(e, scope) {
+                        Ok(crate::ir::Expr::StaticText(s)) => {
+                            *slot = Some(crate::ir::HeadValue::Literal(s));
+                        }
                         Ok(
                             ex @ (crate::ir::Expr::Field(_) | crate::ir::Expr::MemberAccess { .. }),
                         ) => {
@@ -744,6 +785,7 @@ fn lower_ssr_component(
     component_name: &str,
     scope: &Scope,
     in_map: bool,
+    doc_root: bool,
 ) -> Result<JsxNode, LowerError> {
     if in_map {
         return Err(LowerError::at(
@@ -760,14 +802,7 @@ fn lower_ssr_component(
     let mut tags_literal: Option<Vec<String>> = None;
     let mut revalidate: Option<u32> = None;
     // T6: detect bare `native` attribute before the attr loop.
-    let has_native = el.opening.attrs.iter().any(|a| {
-        if let JSXAttrOrSpread::JSXAttr(jsx_attr) = a
-            && let JSXAttrName::Ident(id) = &jsx_attr.name
-        {
-            return id.sym.as_ref() == "native";
-        }
-        false
-    });
+    let has_native = has_native_attr(el);
 
     // T6: collect call-site children for possible splicing.
     let mut call_site_children: Vec<JsxNode> = Vec::new();
@@ -881,6 +916,7 @@ fn lower_ssr_component(
             &call_site_children,
             has_isr,
             el.opening.span,
+            doc_root,
         )?;
 
         if let Some(node) = inline_result {
@@ -1086,6 +1122,7 @@ fn try_native_inline(
     call_site_children: &[JsxNode],
     has_isr: bool,
     span: Span,
+    doc_root: bool,
 ) -> Result<Option<JsxNode>, LowerError> {
     use crate::analyze::{Inlinability, analyze};
 
@@ -1161,7 +1198,13 @@ fn try_native_inline(
     // 6. Lower inline. Propagate hard errors (e.g. CircularInline) upward;
     // convert soft lowering errors to a warning + fallback.
     let has_children = !call_site_children.is_empty();
-    let nodes = match lower_component_inline(&parsed_comp, subst, has_children, Some(env.clone())) {
+    let nodes = match lower_component_inline(
+        &parsed_comp,
+        subst,
+        has_children,
+        Some(env.clone()),
+        doc_root,
+    ) {
         Ok(n) => n,
         Err(e) => {
             // CircularInline is a hard error — propagate it immediately.
@@ -4606,7 +4649,162 @@ mod tests {
         has_children: bool,
     ) -> Result<Vec<JsxNode>, LowerError> {
         let parsed = parse(src, "<test>").unwrap();
-        super::lower_component_inline(&parsed, subst, has_children, None)
+        super::lower_component_inline(&parsed, subst, has_children, None, false)
+    }
+
+    // ── Document-root inline (native layout shell) ────────────────────────────
+
+    fn lower_route_with_layout(
+        route_src: &str,
+        layout_name: &str,
+        layout_src: &str,
+    ) -> (Component, Vec<String>) {
+        let parsed = parse(route_src, "<route>").unwrap();
+        let mut sources = HashMap::new();
+        sources.insert(layout_name.to_string(), layout_src.to_string());
+        super::lower_with_sources(&parsed, sources).unwrap()
+    }
+
+    const SHELL_LAYOUT: &str = r#"export default function PageLayout({ title, crumb, children }: any) {
+  return (
+    <BrustPage lang="en" className="dark" title={title}>
+      <main><b>{crumb}</b><div className="aa-content">{children}</div></main>
+    </BrustPage>
+  );
+}"#;
+
+    #[test]
+    fn native_layout_root_promotes_to_document() {
+        let route = r#"export default function Page(d: any) { return <PageLayout native title="T" crumb="C"><p>hi</p></PageLayout>; }"#;
+        let (c, _warnings) = lower_route_with_layout(route, "PageLayout", SHELL_LAYOUT);
+        match &c.root {
+            JsxNode::Document { title, lang, .. } => {
+                match title {
+                    Some(crate::ir::HeadValue::Literal(s)) => assert_eq!(s, "T"),
+                    other => panic!("expected title Literal(\"T\"), got {other:?}"),
+                }
+                match lang {
+                    Some(crate::ir::HeadValue::Literal(s)) => assert_eq!(s, "en"),
+                    other => panic!("expected lang Literal(\"en\"), got {other:?}"),
+                }
+            }
+            other => panic!("expected Document, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn native_layout_head_prop_via_member_path() {
+        let route = r#"export default function Page({ pageTitle }: any) { return <PageLayout native title={pageTitle} crumb="C"><p>hi</p></PageLayout>; }"#;
+        let (c, _warnings) = lower_route_with_layout(route, "PageLayout", SHELL_LAYOUT);
+        match &c.root {
+            JsxNode::Document { title, .. } => match title {
+                Some(crate::ir::HeadValue::Path(crate::ir::Expr::Field(f))) => {
+                    assert_eq!(f, "pageTitle")
+                }
+                other => panic!("expected title Path(Field(\"pageTitle\")), got {other:?}"),
+            },
+            other => panic!("expected Document, got {other:?}"),
+        }
+
+        let mut sources = HashMap::new();
+        sources.insert("PageLayout".to_string(), SHELL_LAYOUT.to_string());
+        let compiled = crate::compile_full(route, "<route>", sources).unwrap();
+        // The jinja head emitter wraps the path in parens before the escape
+        // filter (`{{ (pageTitle) | e }}`); assert on the escaped-interpolation
+        // shape that actually reaches the template.
+        assert!(
+            compiled.template.contains("pageTitle") && compiled.template.contains("| e }}</title>"),
+            "expected escaped pageTitle in <title>, got:\n{}",
+            compiled.template
+        );
+    }
+
+    #[test]
+    fn native_layout_splices_children_into_shell() {
+        let route = r#"export default function Page(d: any) { return <PageLayout native title="T" crumb="C"><p>hi</p></PageLayout>; }"#;
+        let (c, _warnings) = lower_route_with_layout(route, "PageLayout", SHELL_LAYOUT);
+        match &c.root {
+            JsxNode::Document { .. } => {}
+            other => panic!("expected Document, got {other:?}"),
+        }
+        let dbg = format!("{:?}", c.root);
+        assert!(
+            dbg.contains("\"p\""),
+            "expected spliced <p> child, got:\n{dbg}"
+        );
+        assert!(
+            !dbg.contains("ChildrenSlot"),
+            "expected children slot replaced, got:\n{dbg}"
+        );
+    }
+
+    #[test]
+    fn nested_brustpage_literal_still_rejected() {
+        let src =
+            r#"export default function Page(d: any) { return <div><BrustPage title="x"/></div>; }"#;
+        let parsed = parse(src, "<route>").unwrap();
+        let err = super::lower(&parsed).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::BrustPageMustBeRoot),
+            "expected BrustPageMustBeRoot, got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn native_layout_below_root_does_not_promote() {
+        let route = r#"export default function Page(d: any) { return <div><PageLayout native title="T" crumb="C"><p>hi</p></PageLayout></div>; }"#;
+        let parsed = parse(route, "<route>").unwrap();
+        let mut sources = HashMap::new();
+        sources.insert("PageLayout".to_string(), SHELL_LAYOUT.to_string());
+        // Contract: a native layout used BELOW the route root is reached with
+        // doc_root=false, so its body-root `<BrustPage>` hits the nested
+        // `BrustPageMustBeRoot` reject inside `lower_component_inline`. That hard
+        // error is non-Circular/non-Untranslatable, so `try_native_inline`
+        // SWALLOWS it into a soft fallback (warning + SSR component emission) —
+        // the route compiles, but as a NON-Document SSR component (no nested
+        // <html> shell), with a "not inlined" warning recorded.
+        let (c, warnings) = super::lower_with_sources(&parsed, sources)
+            .expect("nested layout soft-falls-back to SSR, does not hard-error");
+        let dbg = format!("{:?}", c.root);
+        assert!(
+            !dbg.contains("Document"),
+            "must NOT promote a nested <BrustPage> to a document shell below root, got:\n{dbg}"
+        );
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("PageLayout") && w.contains("not inlined")),
+            "expected a not-inlined fallback warning, got: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn native_layout_rooting_in_element_unchanged() {
+        let route = r#"export default function Page(d: any) { return <Wrap native label="hi"><p>x</p></Wrap>; }"#;
+        let wrap = r#"export default function Wrap({ label, children }: any) { return <section><h1>{label}</h1>{children}</section>; }"#;
+        let (c, _warnings) = lower_route_with_layout(route, "Wrap", wrap);
+        match &c.root {
+            JsxNode::Element { .. } => {}
+            other => panic!("expected Element, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn native_layout_active_conditional_element() {
+        let route =
+            r#"export default function Page(d: any) { return <Nav native active="list"/>; }"#;
+        let nav = r#"export default function Nav({ active }: any) { return <nav>{active === 'list' ? <a className="is-active">L</a> : <a>L</a>}</nav>; }"#;
+        let (c, _warnings) = lower_route_with_layout(route, "Nav", nav);
+        match &c.root {
+            JsxNode::Element { children, .. } => {
+                assert!(
+                    children.iter().any(|n| matches!(n, JsxNode::Cond { .. })),
+                    "expected a Cond child, got {children:?}"
+                );
+            }
+            other => panic!("expected Element, got {other:?}"),
+        }
     }
 
     #[test]
