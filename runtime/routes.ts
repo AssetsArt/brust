@@ -648,6 +648,21 @@ export function makeRenderer(
             })
           }
         }
+        let renderStatus: number | undefined
+        if (isNativeVerdict(data)) {
+          if (!data.render) {
+            // redirect — no template render; fast-lane packed response with Location.
+            return packSingleChunkResponse(view, encoder, {
+              status: data.status,
+              contentType: 'text/html; charset=utf-8',
+              body: '',
+              headers: data.headers,
+            })
+          }
+          // notFound — render the route's own template, but with the verdict's status.
+          renderStatus = data.status
+          data = data.data ?? {}
+        }
         const json = JSON.stringify(data ?? {})
         // Sub-project J — islands + components. If this template has an enriched
         // islands manifest or a components manifest, merge per-island context vars
@@ -689,6 +704,7 @@ export function makeRenderer(
               Number(workerId),
               finalBytes.length,
               flat.nativeTemplate,
+              renderStatus,
             )
           } catch (err) {
             console.error(`[brust] napiRenderJinja failed for "${flat.nativeTemplate}":`, err)
@@ -717,6 +733,7 @@ export function makeRenderer(
             Number(workerId),
             dataBytes.length,
             flat.nativeTemplate,
+            renderStatus,
           )
         } catch (err) {
           console.error(`[brust] napiRenderJinja failed for "${flat.nativeTemplate}":`, err)
@@ -994,6 +1011,12 @@ async function renderNativeRouteToHtml(
   let data: unknown = {}
   if (leaf.loader) {
     data = await leaf.loader({ params: call.params, path: call.path, req: call.req } as any)
+  }
+
+  if (isNativeVerdict(data)) {
+    // SPA nav can't emit a redirect/404 in-place; force the client's full-reload
+    // fallback so the document path produces the authoritative status.
+    throw new Error('native verdict on SPA navigation — falling back to full reload')
   }
 
   let ctx = (data ?? {}) as Record<string, unknown>
