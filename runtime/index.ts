@@ -682,7 +682,14 @@ export const brust = {
   },
 }
 
-export { defineRoutes, makeRenderer, Outlet } from './routes.ts'
+export {
+  defineRoutes,
+  makeRenderer,
+  Outlet,
+  notFound,
+  redirect,
+  isNativeVerdict,
+} from './routes.ts'
 export type {
   Route,
   RouteCall,
@@ -692,6 +699,7 @@ export type {
   BrustRequest,
   RouteResponse,
   Middleware,
+  NativeVerdict,
 } from './routes.ts'
 
 export { defineActions, isValidEndpointPath } from './define-actions.ts'

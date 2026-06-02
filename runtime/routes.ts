@@ -145,6 +145,40 @@ export interface RouteResponse {
   contentType?: string
 }
 
+const BRUST_VERDICT = Symbol.for('brust.nativeVerdict')
+
+/** Sentinel returned from a native (`native: true`) route loader to control the
+ * HTTP response. Build it with `notFound()` / `redirect()`, never by hand. */
+export interface NativeVerdict {
+  readonly [BRUST_VERDICT]: true
+  readonly status: number
+  readonly render: boolean
+  readonly data?: unknown
+  readonly headers?: Record<string, string>
+}
+
+/** Return from a native route loader to render the route's OWN template with
+ * HTTP 404. `data` (default `{}`) becomes the template context. */
+export function notFound(data?: unknown): NativeVerdict {
+  return { [BRUST_VERDICT]: true, status: 404, render: true, data: data ?? {} }
+}
+
+/** Return from a native route loader to emit a redirect (no template render). */
+export function redirect(
+  location: string,
+  status: 301 | 302 | 303 | 307 | 308 = 302,
+): NativeVerdict {
+  return { [BRUST_VERDICT]: true, status, render: false, headers: { Location: location } }
+}
+
+/** True if a loader return value is a NativeVerdict (symbol-keyed — a plain
+ * object with a `status` property is NOT mistaken for one). */
+export function isNativeVerdict(x: unknown): x is NativeVerdict {
+  return (
+    typeof x === 'object' && x !== null && (x as Record<symbol, unknown>)[BRUST_VERDICT] === true
+  )
+}
+
 /** Middleware contract — Express/Koa-style chain. Receives a structured
  * request and a `next()` that runs the rest of the chain (eventually the
  * loader + render). Return a `RouteResponse` to short-circuit, or call
