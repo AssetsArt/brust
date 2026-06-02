@@ -237,13 +237,15 @@ browser unescapes it for `getAttribute`). Detail page: `<AddToTeamButton data={d
 Mirrors `runtime/islands/build.ts`:
 
 ```ts
-// scanDirectiveComponents(routesEntryFile): Map<name, {sourcePath, registerName}>
-//   BFS the local import graph (reuse scanImports). A file qualifies iff:
-//     (a) source matches /export\s+const\s+behavior\b/  AND
-//     (b) some reachable native template references x-data="<registerName>"
-//   registerName = camelCase(basename without ext); collisions across files → throw
-//   (mirrors islands' app-unique id rule). Returns the components to bundle.
-export function scanDirectiveComponents(routesEntryFile: string): Map<string, { sourcePath: string }>
+// scanDirectiveComponents(routesEntryFile): Map<registerName, sourcePath>
+//   BFS the local import graph (reuse scanImports). A file qualifies iff its source
+//   matches /export\s+const\s+behavior\b/. registerName = camelCase(basename without ext)
+//   = lowercased-first-char (AddToTeamButton → addToTeamButton); collisions across files
+//   → throw (mirrors islands' app-unique id rule). Returns the components to bundle.
+//   (An x-data cross-reference check — "is this behavior actually used by a template" — is
+//   deferred YAGNI: registerName is filename-derived so x-data must match it anyway, and a
+//   bundled-but-unreferenced behavior is harmless — start() simply finds no matching element.)
+export function scanDirectiveComponents(routesEntryFile: string): Map<string, string>
 
 // buildDirectives(components, {outDir}): writes <outDir>/_directives.js (and nothing if empty)
 //   1. generate an in-memory entry:
