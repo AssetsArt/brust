@@ -187,3 +187,56 @@ describe('x-for', () => {
     expect(() => start(win.document)).not.toThrow()
   })
 })
+
+describe('lifecycle', () => {
+  test('dynamic add mounts; nested x-data is independent and not double-bound by the outer', async () => {
+    const win = setupDom('<div id="host"></div>')
+    const { register, start } = await import(`./runtime.ts?life=${Math.random()}`)
+    const { signal } = await import('brustjs/store')
+    let outerInits = 0
+    let innerInits = 0
+    register('outer', () => ({
+      init() {
+        outerInits++
+      },
+      msg: signal('O'),
+    }))
+    register('inner', () => ({
+      init() {
+        innerInits++
+      },
+      msg: signal('I'),
+    }))
+    start(win.document)
+    // dynamically inject an outer wrapping an inner, each with its own x-text
+    win.document.getElementById('host')!.innerHTML =
+      '<div x-data="outer"><span class="o" x-text="msg"></span>' +
+      '<div x-data="inner"><span class="i" x-text="msg"></span></div></div>'
+    await Promise.resolve()
+    expect(outerInits).toBe(1)
+    expect(innerInits).toBe(1)
+    expect(win.document.querySelector('.o')!.textContent).toBe('O')
+    expect(win.document.querySelector('.i')!.textContent).toBe('I') // inner owns its subtree
+  })
+
+  test('SPA-nav swap shape: remove old x-data + add new in one batch → dispose then mount', async () => {
+    const win = setupDom(
+      '<main id="m"><div x-data="pg" x-props=\'{"v":"1"}\'><span x-text="v"></span></div></main>',
+    )
+    const { register, start } = await import(`./runtime.ts?swap=${Math.random()}`)
+    const mounts: string[] = []
+    register('pg', ({ props }: any) => {
+      mounts.push(props.v)
+      return { v: props.v }
+    })
+    start(win.document)
+    expect(mounts).toEqual(['1'])
+    expect(win.document.querySelector('span')!.textContent).toBe('1')
+    // emulate swapMainContent: replace the <main> contents wholesale
+    win.document.getElementById('m')!.innerHTML =
+      '<div x-data="pg" x-props=\'{"v":"2"}\'><span x-text="v"></span></div>'
+    await Promise.resolve()
+    expect(mounts).toEqual(['1', '2']) // old disposed, new mounted exactly once
+    expect(win.document.querySelector('span')!.textContent).toBe('2')
+  })
+})
