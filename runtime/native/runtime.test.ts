@@ -59,3 +59,36 @@ describe('x-data mount', () => {
     expect(() => start(win.document)).not.toThrow()
   })
 })
+
+describe('x-text', () => {
+  test('binds initial value and updates on signal change; reads a computed', async () => {
+    const win = setupDom('<div x-data="t1"><span x-text="label"></span><b x-text="msg"></b></div>')
+    const { register, start } = await import(`./runtime.ts?xtext=${Math.random()}`)
+    const { signal, computed } = await import('brustjs/store')
+    const n = signal(1)
+    register('t1', () => ({ msg: n, label: computed(() => `n=${n()}`) }))
+    start(win.document)
+    const span = win.document.querySelector('span')!
+    const b = win.document.querySelector('b')!
+    expect(span.textContent).toBe('n=1')
+    expect(b.textContent).toBe('1')
+    n.set(5)
+    expect(span.textContent).toBe('n=5')
+    expect(b.textContent).toBe('5')
+  })
+
+  test('removing the x-data element disposes effects (no detached update)', async () => {
+    const win = setupDom('<div id="host"><div x-data="t2"><span x-text="msg"></span></div></div>')
+    const { register, start } = await import(`./runtime.ts?disp=${Math.random()}`)
+    const { signal } = await import('brustjs/store')
+    const n = signal('a')
+    register('t2', () => ({ msg: n }))
+    start(win.document)
+    const span = win.document.querySelector('span')!
+    expect(span.textContent).toBe('a')
+    win.document.getElementById('host')!.innerHTML = '' // MutationObserver fires removal
+    await Promise.resolve() // let the observer callback run
+    n.set('b') // must NOT update the detached span / must not throw
+    expect(span.textContent).toBe('a')
+  })
+})

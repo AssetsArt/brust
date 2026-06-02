@@ -88,8 +88,22 @@ function bindTree(el: HTMLElement, instance: Instance, disposers: Array<() => vo
   }
 }
 
-// Filled in by later tasks (x-text, x-show, x-bind-*, x-on-*, x-for).
-function bindAttrs(_el: HTMLElement, _scope: Instance, _disposers: Array<() => void>): void {}
+function bindAttrs(el: HTMLElement, scope: Instance, disposers: Array<() => void>): void {
+  for (const attr of Array.from(el.attributes)) {
+    const name = attr.name
+    const value = attr.value
+    if (name === 'x-data' || name === 'x-props') continue
+    if (name === 'x-text') {
+      disposers.push(
+        effect(() => {
+          const v = read(scope, value)
+          el.textContent = v == null ? '' : String(v)
+        }),
+      )
+      continue
+    }
+  }
+}
 
 function observe(): void {
   if (typeof MutationObserver === 'undefined' || typeof document === 'undefined') return
@@ -150,6 +164,3 @@ export function resolveRaw(scope: Instance, path: string): unknown {
   }
   return cur
 }
-
-// Keep `effect` referenced for later tasks (avoids an unused-import lint flag now).
-void effect
