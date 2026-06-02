@@ -255,9 +255,17 @@ export async function runBuild(args: string[]): Promise<void> {
   // dir itself (the islands block is skipped when there are no <Island> usages).
   {
     const { scanDirectiveComponents, buildDirectives } = await import('../native/build.ts')
-    const directiveComponents = existsSync(routesFile)
-      ? scanDirectiveComponents(routesFile)
-      : new Map<string, string>()
+    let directiveComponents = new Map<string, string>()
+    if (existsSync(routesFile)) {
+      try {
+        directiveComponents = scanDirectiveComponents(routesFile)
+      } catch (err) {
+        // e.g. two files derive the same directive register name — surface a clean
+        // message instead of an unformatted stack out of `brust build`.
+        console.error(`[brust build] directives: ${(err as Error).message}`)
+        process.exit(1)
+      }
+    }
     if (directiveComponents.size > 0) {
       const islandsOutDir = path.join(outDir, 'islands')
       const result = await buildDirectives(directiveComponents, { outDir: islandsOutDir })

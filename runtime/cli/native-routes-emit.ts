@@ -108,7 +108,9 @@ function injectDevClientIntoTemplate(template: string): string {
  * x-data directive. Idempotent. Wrapped in {% raw %} for symmetry with the islands
  * bootstrap bake (the tag has no {{ }} but the wrap is harmless + consistent). */
 export function bakeDirectivesIfUsed(template: string): string {
-  if (!template.includes('x-data')) return template
+  // Attribute-anchored (`x-data=`) so a literal "x-data" in text/content can't
+  // trigger a stray <script> that would 404 (no bundle built for that route).
+  if (!/x-data=/.test(template)) return template
   const baked = `{% raw %}${DIRECTIVES_BOOTSTRAP}{% endraw %}`
   if (template.includes(baked)) return template
   return template + baked
