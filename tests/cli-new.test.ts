@@ -1,5 +1,11 @@
 import { test, expect } from 'bun:test'
 import { parseArgs, resolveBrustRef, copyTemplate } from '../runtime/cli/new.ts'
+import {
+  listTemplates,
+  getTemplate,
+  findBrustPackageRoot,
+  DEFAULT_TEMPLATE,
+} from '../runtime/cli/templates.ts'
 import path from 'node:path'
 import { mkdtemp, rm, readFile, readdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -215,6 +221,66 @@ test('brust new: scaffold emits the expected tree and content', async () => {
     await rm(parent, { recursive: true, force: true })
   }
 }, 30_000)
+
+test('templates: listTemplates returns minimal + pokedex', () => {
+  const names = listTemplates().map((t) => t.name)
+  expect(names).toContain('minimal')
+  expect(names).toContain('pokedex')
+})
+
+test('templates: DEFAULT_TEMPLATE resolves to a registered template (minimal)', () => {
+  expect(DEFAULT_TEMPLATE).toBe('minimal')
+  // Lock that the default name actually resolves in the registry, not just the constant value.
+  expect(getTemplate(DEFAULT_TEMPLATE)?.name).toBe('minimal')
+})
+
+test('templates: getTemplate known/unknown', () => {
+  expect(getTemplate('pokedex')?.name).toBe('pokedex')
+  expect(getTemplate('minimal')?.name).toBe('minimal')
+  expect(getTemplate('bogus')).toBeUndefined()
+})
+
+test('templates: minimal sourceDir exists and has routes.tsx', () => {
+  const t = getTemplate('minimal')!
+  expect(existsSync(path.join(t.sourceDir, 'routes.tsx'))).toBe(true)
+  expect(t.exclude.size).toBe(0)
+  expect(t.extraFiles).toBeUndefined()
+})
+
+test('templates: pokedex sourceDir exists, has routes.tsx, excludes docs', () => {
+  const t = getTemplate('pokedex')!
+  expect(existsSync(path.join(t.sourceDir, 'routes.tsx'))).toBe(true)
+  expect(t.exclude.has('FRAMEWORK-GAPS.md')).toBe(true)
+  expect(t.exclude.has('README.md')).toBe(true)
+  // Build artifacts must never be scaffolded out of the dev tree.
+  expect(t.exclude.has('.brust')).toBe(true)
+  expect(t.exclude.has('dist')).toBe(true)
+  expect(t.exclude.has('node_modules')).toBe(true)
+  expect(typeof t.extraFiles).toBe('function')
+})
+
+test('templates: pokedex extraFiles synthesizes package.json/tsconfig/.gitignore', () => {
+  const t = getTemplate('pokedex')!
+  const files = t.extraFiles!({ projectName: 'demo', brustSpec: '^9.9.9' })
+  const byPath = new Map(files.map((f) => [f.relPath, f.content]))
+  expect(byPath.has('package.json')).toBe(true)
+  expect(byPath.has('tsconfig.json')).toBe(true)
+  expect(byPath.has('.gitignore')).toBe(true)
+  const pkg = JSON.parse(byPath.get('package.json')!)
+  expect(pkg.name).toBe('demo')
+  expect(pkg.dependencies.brustjs).toBe('^9.9.9')
+  expect(pkg.dependencies.zod).toBeTruthy()
+  expect(pkg.dependencies['react-dom']).toBeTruthy()
+  expect(pkg.dependencies.tailwindcss).toBeUndefined()
+  expect(pkg.scripts.dev).toBe('brustjs dev')
+})
+
+test('findBrustPackageRoot: resolves this repo root (has Cargo.toml + example/pokedex)', () => {
+  const root = findBrustPackageRoot()
+  expect(root).toBe(REPO) // pin the exact dir — not just a coincidental layout match
+  expect(existsSync(path.join(root, 'Cargo.toml'))).toBe(true)
+  expect(existsSync(path.join(root, 'example/pokedex/routes.tsx'))).toBe(true)
+})
 
 async function collectFiles(dir: string): Promise<string[]> {
   const out: string[] = []
