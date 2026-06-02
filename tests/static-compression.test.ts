@@ -24,7 +24,7 @@ async function readPortLine(stream: ReadableStream<Uint8Array>): Promise<number>
     if (done) throw new Error('process closed stdout before listening log')
     acc += decoder.decode(value, { stream: true })
     const m = acc.match(/listening on 127\.0\.0\.1:(\d+)/)
-    if (m) {
+    if (m?.[1]) {
       reader.releaseLock()
       return parseInt(m[1], 10)
     }
@@ -124,7 +124,7 @@ async function rawGet(port: number, path: string, extraHeaders = ''): Promise<Ra
   if (sep === -1) throw new Error(`no header terminator in response to ${path}`)
   const headerText = raw.subarray(0, sep).toString('utf-8')
   const lines = headerText.split('\r\n')
-  const status = Number(lines[0].split(' ')[1])
+  const status = Number((lines[0] ?? '').split(' ')[1])
   const headers: Record<string, string> = {}
   for (const line of lines.slice(1)) {
     const i = line.indexOf(':')

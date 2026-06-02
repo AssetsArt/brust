@@ -33,13 +33,16 @@ fn static_asset_response(buf: &[u8], content_type: &str, path: &str, bytes: Vec<
     let accept = parse_header_value(buf, "accept-encoding");
     let (body, encoding) =
         crate::compress::maybe_compress(accept.as_deref(), content_type, path, bytes, dev);
-    let mut extra: Vec<(String, String)> = vec![
-        (
-            "Cache-Control".to_string(),
-            asset_cache_control(dev).to_string(),
-        ),
-        ("Vary".to_string(), "Accept-Encoding".to_string()),
-    ];
+    let mut extra: Vec<(String, String)> = vec![(
+        "Cache-Control".to_string(),
+        asset_cache_control(dev).to_string(),
+    )];
+    // Vary only matters for compression-eligible types — a non-compressible asset
+    // (png/woff2/…) never varies by Accept-Encoding, so omitting it keeps CDN/proxy
+    // cache variants minimal.
+    if crate::compress::is_compressible(content_type) {
+        extra.push(("Vary".to_string(), "Accept-Encoding".to_string()));
+    }
     if let Some(enc) = encoding {
         extra.push(("Content-Encoding".to_string(), enc.to_string()));
     }

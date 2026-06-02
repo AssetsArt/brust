@@ -16,6 +16,8 @@ const MIN_SIZE: usize = 1024;
 /// PROD only — assets are immutable for the process lifetime, so a path key needs
 /// no mtime. Dev compresses fresh (see `gzip_cached`) so a hot-reloaded file is
 /// never served stale.
+// 512 = approximate ENTRY count (not a byte budget); moka evicts via TinyLFU past
+// it — far above any realistic island/css/public asset count.
 static GZIP_CACHE: Lazy<Cache<String, Arc<Vec<u8>>>> = Lazy::new(|| Cache::new(512));
 
 /// True if Accept-Encoding offers gzip with a non-zero q-value. Absent → false.
@@ -29,7 +31,9 @@ pub fn accepts_gzip(accept_encoding: Option<&str>) -> bool {
             let mut q = 1.0_f32;
             for p in it {
                 if let Some(v) = p.strip_prefix("q=").or_else(|| p.strip_prefix("Q=")) {
-                    q = v.trim().parse().unwrap_or(1.0);
+                    // A malformed q-value disables this token (RFC 7231 §5.3.1),
+                    // so fall back to 0.0 (reject), not 1.0.
+                    q = v.trim().parse().unwrap_or(0.0);
                 }
             }
             if q > 0.0 {
@@ -109,6 +113,7 @@ mod tests {
         assert!(accepts_gzip(Some("gzip;q=1.0")));
         assert!(!accepts_gzip(Some("gzip;q=0")));
         assert!(!accepts_gzip(Some("gzip; q=0.0")));
+        assert!(!accepts_gzip(Some("gzip;q=banana"))); // malformed q → reject
         assert!(!accepts_gzip(Some("identity")));
         assert!(!accepts_gzip(Some("br")));
         assert!(!accepts_gzip(None));
