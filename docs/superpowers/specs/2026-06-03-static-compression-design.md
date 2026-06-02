@@ -86,31 +86,31 @@ pub fn gzip_cached(path: &str, bytes: &[u8], dev: bool) -> Option<Arc<Vec<u8>>>;
 Three static branches (islands ≈ 273–310, css ≈ 314–345, public ≈ 352–367). At each,
 after the file bytes are read and `content_type` + `dev` are known:
 
-1. Read the request's Accept-Encoding once (reuse the SSE pattern
-   `parse_header_value(&buf[..header_end], "accept-encoding")`). Read it once near the
-   top of request dispatch and thread it to the static branches, or call it within
-   each branch — the plan picks whichever keeps the diff smallest; functionally
-   identical.
+1. Read the request's Accept-Encoding via `parse_header_value(&buf, "accept-encoding")`.
+   NOTE (spec-review correction): `header_end` is a LOCAL computed only inside the
+   action/sse/ws branches — it is NOT in scope at the static branches. The
+   function-level `buf` (server.rs:210) IS in scope; `parse_header_value` runs
+   `httparse` and stops at the header terminator itself, so passing the whole `&buf`
+   is correct (slicing to `header_end` is only an optimization).
 2. `let (body, enc): (Cow/Arc bytes, Option<&str>) = match compress::gzip_cached(...)`
    gated by `accepts_gzip && is_compressible && len >= MIN_SIZE`.
 3. Pass `enc` to `http::build_response`.
 
-### `crates/brust/src/http.rs` — `build_response` extension
+### `crates/brust/src/http.rs` — NO signature change (use `extra_headers`)
 
-`build_response` currently builds `[status line][headers][body]` with `Content-Type`,
-`Cache-Control`, `Content-Length = body.len()`. Extend it (new param or a sibling
-`build_response_encoded`) to:
+Spec-review finding: `build_response` already takes an `extra_headers` Vec and writes
+through every header except content-type/content-length/connection (http.rs:62-65),
+and sets `Content-Length = body.len()`. So compression needs **no change to
+`build_response`'s signature** (which has 11 callers + 4 unit tests). The static
+branches simply:
 
-- when `content_encoding = Some("gzip")`: emit `Content-Encoding: gzip` and set
-  `Content-Length` to the **compressed** body length (the body passed in is already
-  the compressed bytes).
-- always emit `Vary: Accept-Encoding` on these static responses (so a shared/proxy
-  cache keys identity vs gzip correctly).
+- pass the **compressed bytes** as the body → `Content-Length` is automatically the
+  compressed length.
+- push `("Content-Encoding", "gzip")` and `("Vary", "Accept-Encoding")` into the
+  `extra_headers` Vec they already build for `Cache-Control`.
 
-Other callers of `build_response` (action/cache paths) pass `None` and are unchanged
-apart from the (harmless) absence of `Vary` — only the static asset call sites opt
-into `Vary`/`Content-Encoding`. (Plan decides: add `Vary` inside the encoded variant
-only, so non-static callers are byte-for-byte unchanged.)
+When the response is identity, push only `("Vary", "Accept-Encoding")` (correct shared-
+cache keying) and no `Content-Encoding`. Non-static callers are byte-for-byte unchanged.
 
 ## Behavior / invariants
 
@@ -133,9 +133,8 @@ only, so non-static callers are byte-for-byte unchanged.)
 
 ```
 crates/brust/src/compress.rs   # accepts_gzip, is_compressible, gzip, gzip_cached + #[cfg(test)] (new)
-crates/brust/src/server.rs     # 3 static branches: negotiate + pass encoding (edit)
-crates/brust/src/http.rs       # build_response: optional Content-Encoding + Vary (edit)
-crates/brust/src/lib.rs        # `mod compress;` (edit)
+crates/brust/src/server.rs     # 3 static branches: negotiate + push Content-Encoding/Vary into extra_headers (edit)
+crates/brust/src/lib.rs        # `mod compress;` (edit)  — http.rs NOT touched (use existing extra_headers)
 crates/brust/Cargo.toml        # + flate2 = "1" (edit)
 tests/static-compression.test.ts  # integration (new)
 ```
@@ -183,12 +182,15 @@ addon first):**
 - No `.gz` precompression sidecars; first prod request for each asset pays the
   one-time compression cost, then it's cached for the process lifetime.
 
-## Open questions resolved at plan-time
+## Open questions — resolved by spec review (2026-06-03)
 
-1. **Where to read Accept-Encoding** (once at dispatch vs per static branch) — plan
-   picks the smallest-diff option; both are correct. The request header buffer
-   (`buf[..header_end]`) is already in scope at the static branches (the SSE branch
-   reads `accept` there).
-2. **`build_response` signature** — extend in place with an `Option<&str>`
-   content-encoding arg, or add `build_response_encoded`. Plan decides based on caller
-   count; non-static callers must stay byte-for-byte identical.
+1. **Read Accept-Encoding:** call `parse_header_value(&buf, "accept-encoding")` at each
+   static branch (`buf` is in scope; `header_end` is NOT — it's local to other
+   branches). Verified.
+2. **`build_response`:** NO signature change. Thread `Content-Encoding`/`Vary` through
+   the existing `extra_headers` Vec (it passes through all non-reserved headers).
+   Verified: 11 callers + 4 tests stay untouched.
+3. **`dev` flag:** use `crate::is_dev_mode()` (global atomic, available everywhere) —
+   there is no local `dev` binding at the static branches. Verified.
+4. **`is_compressible` must substring/prefix-match** — content types carry a
+   `; charset=utf-8` suffix (e.g. `text/css; charset=utf-8`), so exact `==` fails.
