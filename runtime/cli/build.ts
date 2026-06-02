@@ -248,6 +248,39 @@ export async function runBuild(args: string[]): Promise<void> {
     console.log('[brust build] islands: skipped (no <Island> usage)')
   }
 
+  // 3.5. Build the directive runtime bundle (if any native interactive component —
+  // a file with `export const behavior` — is reachable from the routes graph).
+  // MUST run AFTER buildIslands: buildIslands does `rm -rf outDir/islands`, so
+  // running this first would wipe _directives.js. This block creates the islands
+  // dir itself (the islands block is skipped when there are no <Island> usages).
+  {
+    const { scanDirectiveComponents, buildDirectives } = await import('../native/build.ts')
+    const directiveComponents = existsSync(routesFile)
+      ? scanDirectiveComponents(routesFile)
+      : new Map<string, string>()
+    if (directiveComponents.size > 0) {
+      const islandsOutDir = path.join(outDir, 'islands')
+      const result = await buildDirectives(directiveComponents, { outDir: islandsOutDir })
+      console.log(
+        `[brust build] directives: ${result.count} component(s) → ${islandsOutDir}/_directives.js`,
+      )
+
+      // Mirror _directives.js into cwd/.brust/islands for the source runtime (the
+      // islands block's whole-dir mirror ran before this file existed, so copy it
+      // explicitly). Create the dir in case the islands block was skipped.
+      const localIslandsDir = path.join(process.cwd(), '.brust', 'islands')
+      if (path.resolve(localIslandsDir) !== path.resolve(islandsOutDir)) {
+        await mkdir(localIslandsDir, { recursive: true })
+        await cp(
+          path.join(islandsOutDir, '_directives.js'),
+          path.join(localIslandsDir, '_directives.js'),
+        )
+      }
+    } else {
+      console.log('[brust build] directives: skipped (no export-const-behavior components)')
+    }
+  }
+
   // 4. MCP manifest (if routes.tsx exists).
   let loadedRoutes: any[] | undefined
   if (existsSync(routesFile)) {
