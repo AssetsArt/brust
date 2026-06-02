@@ -203,6 +203,12 @@ example/pokedex/public/favicon.svg   NEW — dogfood (kills the favicon 404)
   author's responsibility; prod cache is a flat `max-age=3600`).
 - A read error after boot falls through to routing (typically yields the app's
   404), not a 500 — intentional.
+- **Filenames must be URL-safe.** Manifest keys are raw filenames; request paths
+  arrive percent-encoded. A `public/` file whose name has a space or non-ASCII
+  char (`my logo.png`, `café.svg`) will never match an incoming request (`%20`,
+  `%C3%A9`) and won't be served. `configure_public_dir` logs a warning for such
+  files at boot. Use ASCII, no-space names. (Percent-decoding the request path is
+  deferred.)
 - **TOCTOU:** the canonicalize-under-root symlink guard runs at boot (manifest
   build) only. A `public/` file replaced by an out-of-root symlink AFTER boot is
   not re-validated before `tokio::fs::read`. Exploiting it needs local filesystem
