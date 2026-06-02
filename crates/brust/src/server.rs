@@ -30,6 +30,47 @@ fn current_css_dir() -> Option<std::path::PathBuf> {
     crate::state().css_dir.read().clone()
 }
 
+fn current_public_asset(url_path: &str) -> Option<std::path::PathBuf> {
+    crate::state().public_assets.read().get(url_path).cloned()
+}
+
+/// Content-Type for a static public file, keyed on its file extension
+/// (lowercased). Unknown/none → application/octet-stream.
+fn content_type_for(file_path: &std::path::Path) -> &'static str {
+    let ext = file_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase());
+    match ext.as_deref() {
+        Some("html") | Some("htm") => "text/html; charset=utf-8",
+        Some("css") => "text/css; charset=utf-8",
+        Some("js") | Some("mjs") => "text/javascript; charset=utf-8",
+        Some("json") | Some("map") => "application/json; charset=utf-8",
+        Some("svg") => "image/svg+xml; charset=utf-8",
+        Some("xml") => "application/xml; charset=utf-8",
+        Some("txt") => "text/plain; charset=utf-8",
+        Some("csv") => "text/csv; charset=utf-8",
+        Some("ico") => "image/x-icon",
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        Some("avif") => "image/avif",
+        Some("woff2") => "font/woff2",
+        Some("woff") => "font/woff",
+        Some("ttf") => "font/ttf",
+        Some("otf") => "font/otf",
+        Some("eot") => "application/vnd.ms-fontobject",
+        Some("pdf") => "application/pdf",
+        Some("wasm") => "application/wasm",
+        Some("mp4") => "video/mp4",
+        Some("webm") => "video/webm",
+        Some("mp3") => "audio/mpeg",
+        Some("wav") => "audio/wav",
+        _ => "application/octet-stream",
+    }
+}
+
 enum ReadOutcome {
     /// Headers complete (`\r\n\r\n` seen) — `buf` contains the full request.
     Complete,
@@ -300,6 +341,28 @@ async fn handle_conn(
                     let _ = s.write_all(http::error_404()).await;
                     continue;
                 }
+            }
+        }
+
+        // Root-mapped static assets from the configured public/ dir. Boot-time
+        // manifest (URL→file); static wins over app routes, but every /_brust/*
+        // handler above already `continue`d. GET-only (the method gate above
+        // already 405s non-GET general paths). `path_no_query` is used purely as
+        // a map key — never joined to a path — so traversal is impossible here.
+        if method == "GET"
+            && let Some(file_path) = current_public_asset(path_no_query)
+        {
+            // read error (file removed after boot) → fall through to routing
+            if let Ok(bytes) = tokio::fs::read(&file_path).await {
+                let extra = [(
+                    "Cache-Control".to_string(),
+                    asset_cache_control(crate::is_dev_mode()).to_string(),
+                )];
+                let resp = http::build_response(200, content_type_for(&file_path), &extra, bytes);
+                if s.write_all(resp).await.is_err() {
+                    return;
+                }
+                continue;
             }
         }
 
@@ -1780,6 +1843,30 @@ mod tests {
         // header would mask the rebuild in the browser. Dev must be no-store.
         assert_eq!(asset_cache_control(true), "no-store");
         assert_eq!(asset_cache_control(false), "public, max-age=3600");
+    }
+
+    #[test]
+    fn content_type_for_common_extensions() {
+        use std::path::Path;
+        assert_eq!(
+            content_type_for(Path::new("/p/favicon.ico")),
+            "image/x-icon"
+        );
+        assert_eq!(content_type_for(Path::new("/p/a.png")), "image/png");
+        assert_eq!(
+            content_type_for(Path::new("/p/a.svg")),
+            "image/svg+xml; charset=utf-8"
+        );
+        assert_eq!(content_type_for(Path::new("/p/a.PNG")), "image/png");
+        assert_eq!(content_type_for(Path::new("/p/a.woff2")), "font/woff2");
+        assert_eq!(
+            content_type_for(Path::new("/p/noext")),
+            "application/octet-stream"
+        );
+        assert_eq!(
+            content_type_for(Path::new("/p/a.weird")),
+            "application/octet-stream"
+        );
     }
 
     #[test]

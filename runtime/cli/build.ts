@@ -351,6 +351,18 @@ export async function runBuild(args: string[]): Promise<void> {
     }
   }
 
+  // Static public assets: copy <project>/public → <dist>/public so a deployed
+  // dist is self-contained. No .brust mirror — the source/dev runtime reads
+  // <scanRoot>/public directly.
+  const publicSrc = path.join(entryDir, 'public')
+  if (existsSync(publicSrc)) {
+    const publicOut = path.join(outDir, 'public')
+    await cp(publicSrc, publicOut, { recursive: true })
+    console.log(`[brust build] public:  ${publicSrc} → ${publicOut}`)
+  } else {
+    console.log('[brust build] public:  skipped (no public/ dir)')
+  }
+
   // 5. Bun.build the server bundle with the native shim plugin + banner. No
   // actions codegen: `defineActions(...)` actions register via the app entry's
   // `import { actions } from './actions'` → `brust.run({ actions })` path, which

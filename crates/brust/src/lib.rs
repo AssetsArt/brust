@@ -57,6 +57,9 @@ struct State {
     expected_workers: AtomicU32,
     islands_dir: parking_lot::RwLock<Option<std::path::PathBuf>>,
     css_dir: parking_lot::RwLock<Option<std::path::PathBuf>>,
+    /// URL path (`/favicon.ico`) → canonical absolute file path under public/.
+    /// Built once at boot by `configure_public_dir`; replaced wholesale.
+    public_assets: parking_lot::RwLock<std::collections::HashMap<String, std::path::PathBuf>>,
     action_router: parking_lot::RwLock<ActionRouter>,
     action_prefix: parking_lot::RwLock<String>,
 }
@@ -85,6 +88,7 @@ pub(crate) fn state() -> &'static State {
             expected_workers: AtomicU32::new(0),
             islands_dir: parking_lot::RwLock::new(None),
             css_dir: parking_lot::RwLock::new(None),
+            public_assets: parking_lot::RwLock::new(std::collections::HashMap::new()),
             action_router: parking_lot::RwLock::new(ActionRouter::new()),
             action_prefix: parking_lot::RwLock::new("/_brust/action".to_string()),
         }
@@ -323,6 +327,114 @@ pub fn configure_islands_dir(path: String) -> NapiResult<()> {
         )));
     }
     *state().islands_dir.write() = Some(abs);
+    Ok(())
+}
+
+/// Derive the served URL key for a file path relative to the public root.
+/// Normalizes the OS separator to `/` and prefixes `/`. Returns None for keys
+/// in the reserved `/_brust/` namespace (those would shadow framework handlers
+/// that run after the public serve block — MCP, /_brust/page, cache-invalidate,
+/// dev WS). Pure — unit tested.
+fn public_url_key(rel: &std::path::Path) -> Option<String> {
+    let mut key = String::from("/");
+    let mut first = true;
+    for comp in rel.components() {
+        let std::path::Component::Normal(os) = comp else {
+            return None; // no `..`, root, prefix, curdir components
+        };
+        let part = os.to_str()?;
+        if !first {
+            key.push('/');
+        }
+        key.push_str(part);
+        first = false;
+    }
+    if first {
+        return None; // empty relative path
+    }
+    if key == "/_brust" || key.starts_with("/_brust/") {
+        return None;
+    }
+    Some(key)
+}
+
+/// Walk `root` recursively and build the URL→file map. Skips files whose
+/// canonical path escapes `root` (symlink guard) and reserved `/_brust/` keys.
+fn build_public_manifest(
+    root: &std::path::Path,
+) -> std::collections::HashMap<String, std::path::PathBuf> {
+    let mut map = std::collections::HashMap::new();
+    let canon_root = match root.canonicalize() {
+        Ok(r) => r,
+        Err(_) => return map,
+    };
+    let mut stack = vec![canon_root.clone()];
+    while let Some(dir) = stack.pop() {
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::warn!("public: cannot read dir {dir:?} ({e}) — skipping its assets");
+                continue;
+            }
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let meta = match entry.metadata() {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            if meta.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            let canon = match path.canonicalize() {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            if !canon.starts_with(&canon_root) {
+                tracing::warn!("public: skipping {canon:?} (escapes public root)");
+                continue;
+            }
+            let Ok(rel) = canon.strip_prefix(&canon_root) else {
+                continue;
+            };
+            match public_url_key(rel) {
+                Some(key) => {
+                    // Request paths arrive percent-encoded; manifest keys are raw
+                    // filenames. A name with a space or non-ASCII byte will never
+                    // match an incoming request (it'd be `%20`/`%C3%A9`). Warn so
+                    // the author isn't silently surprised; still register it.
+                    if key.bytes().any(|b| b == b' ' || b >= 0x80) {
+                        tracing::warn!(
+                            "public: {key:?} has a space or non-ASCII char — requests are \
+                             percent-encoded and will not match; rename to a URL-safe name"
+                        );
+                    }
+                    map.insert(key, canon);
+                }
+                None => {
+                    tracing::warn!("public: skipping reserved/invalid key for {rel:?}");
+                }
+            }
+        }
+    }
+    map
+}
+
+/// Tell Rust where to read root-mapped static assets from (`<project>/public`
+/// in dev, `<dist>/public` prebuilt). Walks the dir once and caches the
+/// URL→file manifest. Path must be absolute.
+#[napi]
+pub fn configure_public_dir(path: String) -> NapiResult<()> {
+    let abs = std::path::PathBuf::from(&path);
+    if !abs.is_absolute() {
+        return Err(napi::Error::from_reason(format!(
+            "public_dir must be an absolute path (got {path:?})"
+        )));
+    }
+    let manifest = build_public_manifest(&abs);
+    tracing::info!("public: {} asset(s) from {abs:?}", manifest.len());
+    *state().public_assets.write() = manifest;
     Ok(())
 }
 
@@ -1061,5 +1173,32 @@ mod island_cache_napi_tests {
         island_cache_invalidate(None, Some(vec!["napi:t".into()]));
         state().island_cache.clear();
         assert!(island_cache_get("napi:k1".into()).is_none());
+    }
+
+    #[test]
+    fn public_url_key_derivation() {
+        use std::path::Path;
+        assert_eq!(
+            public_url_key(Path::new("favicon.ico")).as_deref(),
+            Some("/favicon.ico")
+        );
+        assert_eq!(
+            public_url_key(Path::new("img/logo.png")).as_deref(),
+            Some("/img/logo.png")
+        );
+        assert_eq!(
+            public_url_key(Path::new("a/b/c.txt")).as_deref(),
+            Some("/a/b/c.txt")
+        );
+        assert_eq!(public_url_key(Path::new("_brust/mcp")), None);
+        assert_eq!(public_url_key(Path::new("_brust")), None);
+        assert_eq!(public_url_key(Path::new("../etc/passwd")), None);
+        assert_eq!(public_url_key(Path::new(".")), None);
+        assert_eq!(public_url_key(Path::new("")), None);
+        // `_brust` prefix WITHOUT a trailing slash is not reserved (no false positive).
+        assert_eq!(
+            public_url_key(Path::new("_brust_extra.txt")).as_deref(),
+            Some("/_brust_extra.txt")
+        );
     }
 }
