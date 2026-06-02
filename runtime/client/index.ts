@@ -20,3 +20,9 @@ export class BrustActionError extends Error {
 
 export { client } from '../treaty.ts'
 export type { TreatyResponse, ClientOptions } from '../treaty.ts'
+
+// Store view-layer adapter for islands. Lives here (the browser/island entry),
+// NOT in the brustjs main entry — that pulls the native addon + server-only
+// surface and cannot be bundled for the browser. react.ts → define-store.ts is
+// browser-safe (no node:async_hooks; the server resolver is injected separately).
+export { useStore } from '../store/react.ts'

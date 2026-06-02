@@ -1,6 +1,29 @@
 import { type Computed, type Signal, isComputed, isSignal } from './signal.ts'
 import { parseStoreScript } from './serialize.ts'
-import { getServerInstance, type StoreInstanceRecord } from './server-context.ts'
+
+// The resolved per-scope store record, shared by the client singleton registry
+// and the server per-request map. `version` bumps on every signal write so
+// `snapshot()` returns a referentially-stable object (useSyncExternalStore
+// contract) until a change; `snap` memoizes it. `handle` is set only on the
+// server record so collectSnapshot() can serialize a touched store.
+export interface StoreInstanceRecord {
+  instance: object
+  subs: Set<() => void>
+  version: { n: number }
+  snap: { value: Record<string, unknown>; version: number } | null
+  handle?: { serialize(): Record<string, unknown> }
+}
+
+// Server per-request resolver, injected by server-context.ts (which imports
+// node:async_hooks) via __setServerResolver. This keeps define-store — reachable
+// from browser/island bundles via brustjs/store and brustjs/client — free of any
+// static Node-builtin import. On the client the resolver stays null and the
+// window-singleton branch is used.
+type ServerResolver = (name: string, create: () => StoreInstanceRecord) => StoreInstanceRecord
+let serverResolver: ServerResolver | null = null
+export function __setServerResolver(fn: ServerResolver): void {
+  serverResolver = fn
+}
 
 export type Snapshot<S> = {
   [K in keyof S as S[K] extends (...a: never[]) => unknown
@@ -22,11 +45,6 @@ export interface StoreHandle<S extends object> {
   serialize(): Record<string, unknown>
   hydrate(state: Record<string, unknown>): void
 }
-
-// `StoreInstanceRecord` is the resolved per-scope (client singleton or server
-// per-request) store record; it lives in server-context.ts so both scopes and
-// `StoreRecord` share one shape.
-export type { StoreInstanceRecord }
 
 interface ClientRegistry {
   [name: string]: StoreInstanceRecord
@@ -88,12 +106,14 @@ export function defineStore<S extends object>(name: string, factory: () => S): S
       }
       return reg[name]
     }
-    // server: per-request via AsyncLocalStorage. StoreRecord extends
-    // StoreInstanceRecord (adds `handle`), so the return is assignable directly.
-    return getServerInstance(name, () => {
-      const rec = createRecord()
-      return { ...rec, handle: handle as StoreHandle<object> }
-    })
+    // server: per-request via the resolver injected by server-context.ts.
+    if (!serverResolver) {
+      throw new Error(`store '${name}' accessed on the server without a request scope`)
+    }
+    return serverResolver(name, () => ({
+      ...createRecord(),
+      handle: handle as StoreHandle<object>,
+    }))
   }
 
   function hydrateRecord(rec: StoreInstanceRecord, state: Record<string, unknown>): void {

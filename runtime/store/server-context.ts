@@ -1,38 +1,31 @@
+// This module is the ONLY one in runtime/store that imports a Node builtin
+// (node:async_hooks). define-store.ts must NOT import it statically — it is
+// reachable from browser/island bundles (brustjs/store, brustjs/client). Instead
+// we register the per-request resolver into define-store via __setServerResolver
+// at module load; the server pulls this module in via routes.ts (runInStoreContext
+// / collectSnapshot), so the resolver is installed before any request runs.
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { __setServerResolver, type StoreInstanceRecord } from './define-store.ts'
 
-// The resolved per-scope store record shared by the client registry and the
-// server per-request map. `version` is bumped on every signal write so
-// `snapshot()` can return a referentially-stable object (useSyncExternalStore
-// contract) until a change; `snap` memoizes that object across repeated reads.
-export interface StoreInstanceRecord {
-  instance: object
-  subs: Set<() => void>
-  version: { n: number }
-  snap: { value: Record<string, unknown>; version: number } | null
-}
-
-// A per-request store record: the shared record plus a `handle.serialize` so
-// collectSnapshot() can serialize every touched store without re-resolving.
-export interface StoreRecord extends StoreInstanceRecord {
-  handle: { serialize(): Record<string, unknown> }
-}
-
-const storeContext = new AsyncLocalStorage<Map<string, StoreRecord>>()
+const storeContext = new AsyncLocalStorage<Map<string, StoreInstanceRecord>>()
 
 export function runInStoreContext<T>(fn: () => T): T {
   return storeContext.run(new Map(), fn)
 }
 
-// Client builds its own registry; on the server this resolves the per-request map.
-// `create` is required when first-accessing in a scope; reads pass it too (idempotent).
-export function getServerInstance(name: string, create?: () => StoreRecord): StoreRecord {
+// Resolve (create-once) the per-request instance for `name` in the active scope.
+// Exported for direct unit testing; production code reaches it via the resolver
+// registered into define-store.ts below.
+export function getServerInstance(
+  name: string,
+  create: () => StoreInstanceRecord,
+): StoreInstanceRecord {
   const map = storeContext.getStore()
   if (!map) {
     throw new Error(`store '${name}' accessed outside a request scope`)
   }
   let rec = map.get(name)
   if (!rec) {
-    if (!create) throw new Error(`store '${name}' not initialized in this scope`)
     rec = create()
     map.set(name, rec)
   }
@@ -43,6 +36,8 @@ export function collectSnapshot(): Record<string, Record<string, unknown>> | nul
   const map = storeContext.getStore()
   if (!map || map.size === 0) return null
   const out: Record<string, Record<string, unknown>> = {}
-  for (const [name, rec] of map) out[name] = rec.handle.serialize()
+  for (const [name, rec] of map) out[name] = rec.handle ? rec.handle.serialize() : {}
   return out
 }
+
+__setServerResolver(getServerInstance)

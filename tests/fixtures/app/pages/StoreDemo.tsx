@@ -3,7 +3,7 @@
 // instance seeded by the loader (routes.tsx). The rendered value lands in the
 // initial HTML body; the framework also injects the seeded state as a
 // <script data-brust-store="counter"> before </head> (buffering path).
-import { useStore } from '../../../../runtime/index.ts'
+import { useStore } from '../../../../runtime/client/index.ts'
 import type { RouteContext } from '../../../../runtime/routes.ts'
 import Layout from '../components/Layout'
 import { counter } from '../stores/counter'
