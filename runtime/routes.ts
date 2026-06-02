@@ -10,6 +10,7 @@ import { Writable } from 'node:stream'
 import { Buffer } from 'node:buffer'
 import * as native from './index.js'
 import { renderBranchStreaming } from './render/stream.ts'
+import { runInStoreContext, collectSnapshot } from './store/server-context.ts'
 import {
   loadIslandManifest,
   resolveIslandContext,
@@ -636,7 +637,11 @@ export function makeRenderer(
         if (leaf.loader) {
           const ctx = { params: call.params, path: call.path, req: call.req }
           try {
-            data = await leaf.loader(ctx as any)
+            // Native loaders may write to a defineStore; run them in a per-request
+            // store scope so those writes are isolated per request. No snapshot is
+            // collected and no <script> is injected on native paths — Spec B owns
+            // native store delivery (hard non-goal here).
+            data = await runInStoreContext(() => leaf.loader!(ctx as any))
           } catch (err) {
             console.error(`[brust] loader failed for native route ${flat.fullPath}:`, err)
             // FAST LANE: native routes take dispatch_single_chunk (no chunk
@@ -745,36 +750,45 @@ export function makeRenderer(
         }
       }
 
-      let element: ReactNode
-      let errorBoundary: ComponentType<{ error: Error }>
-      try {
-        element = await buildRenderElement(call, flat, opts.getWorkerId)
-        errorBoundary =
-          flat.errorBoundary ??
-          (({ error }) => createElement('div', null, `Internal Server Error: ${error.message}`))
-      } catch (err) {
-        // Setup failure BEFORE renderToPipeableStream — loader throw, params
-        // bind throw. Shape matches the legacy "internal error" path so
-        // existing integration tests stay green.
-        console.error(`[brust] render setup failed:`, err)
-        return await emitSingleChunkResponse(view, napi, workerId, encoder, {
-          status: 500,
-          contentType: 'text/html; charset=utf-8',
-          body: 'internal error',
+      // Wrap the loader run (inside buildRenderElement) AND the React render in
+      // one AsyncLocalStorage store scope so any defineStore read during loaders
+      // or render resolves the same per-request instance. Snapshot is collected
+      // after loaders (buildRenderElement resolved) — that's where Spec A stores
+      // are seeded — and threaded into the render for <script> injection.
+      return await runInStoreContext(async () => {
+        let element: ReactNode
+        let errorBoundary: ComponentType<{ error: Error }>
+        try {
+          element = await buildRenderElement(call, flat, opts.getWorkerId)
+          errorBoundary =
+            flat.errorBoundary ??
+            (({ error }) => createElement('div', null, `Internal Server Error: ${error.message}`))
+        } catch (err) {
+          // Setup failure BEFORE renderToPipeableStream — loader throw, params
+          // bind throw. Shape matches the legacy "internal error" path so
+          // existing integration tests stay green.
+          console.error(`[brust] render setup failed:`, err)
+          return await emitSingleChunkResponse(view, napi, workerId, encoder, {
+            status: 500,
+            contentType: 'text/html; charset=utf-8',
+            body: 'internal error',
+          })
+        }
+        const storeSnapshot = collectSnapshot()
+        await renderBranchStreaming({
+          element,
+          view,
+          workerId,
+          napi,
+          errorBoundary,
+          status: verdict.status,
+          headers: verdict.headers,
+          routePath: flat.fullPath,
+          storeSnapshot,
         })
-      }
-      await renderBranchStreaming({
-        element,
-        view,
-        workerId,
-        napi,
-        errorBoundary,
-        status: verdict.status,
-        headers: verdict.headers,
-        routePath: flat.fullPath,
+        // renderBranchStreaming wrote via the chunk channel.
+        return 0
       })
-      // renderBranchStreaming wrote via the chunk channel.
-      return 0
     }
     if (call.kind === 'navigation') {
       await navigationBranch(call, byRouteId, view, encoder, opts.getWorkerId)
@@ -942,16 +956,26 @@ async function navigationBranch(
     // whose loader fields arrive undefined → throws → 500 → full-reload fallback
     // on every internal link.
     let fullHtml: string
+    // React nav: snapshot of stores seeded during loader+render, shipped in the
+    // nav payload so the client can apply it to its live stores. Native nav
+    // collects no snapshot (Spec B owns native store delivery).
+    let store: Record<string, Record<string, unknown>> | null = null
     if (flat.nativeTemplate !== undefined) {
       fullHtml = await renderNativeRouteToHtml(call, flat, view, encoder, workerId)
     } else {
-      const element = await buildRenderElement(call as any, flat, getWorkerId)
-      if (!element) throw new Error('render setup failed')
-      // Use renderToPipeableStream + onAllReady so pages with <Suspense> emit
-      // their RESOLVED markup, not the fallback. renderToString would only
-      // capture the shell — navigating SPA-style to a Suspense-using route
-      // would otherwise ship "loading…" and never recover.
-      fullHtml = await renderToAwaitedString(element)
+      // Wrap loader run (inside buildRenderElement) + render in one store scope so
+      // store reads resolve the per-request instance; collect after render.
+      fullHtml = await runInStoreContext(async () => {
+        const element = await buildRenderElement(call as any, flat, getWorkerId)
+        if (!element) throw new Error('render setup failed')
+        // Use renderToPipeableStream + onAllReady so pages with <Suspense> emit
+        // their RESOLVED markup, not the fallback. renderToString would only
+        // capture the shell — navigating SPA-style to a Suspense-using route
+        // would otherwise ship "loading…" and never recover.
+        const html = await renderToAwaitedString(element)
+        store = collectSnapshot()
+        return html
+      })
     }
 
     // Extract <main> inner content. If the page didn't render a <main>,
@@ -971,7 +995,7 @@ async function navigationBranch(
     const titleMatch = fullHtml.match(/<title[^>]*>([\s\S]*?)<\/title>/i)
     const title = titleMatch ? titleMatch[1].replace(/<!--.*?-->/g, '').trim() : ''
 
-    const body = JSON.stringify({ html: innerHtml, title })
+    const body = JSON.stringify({ html: innerHtml, title, store })
     await emitSingleChunkResponse(view, napi, workerId, encoder, {
       status: 200,
       contentType: 'application/json; charset=utf-8',
@@ -1010,7 +1034,11 @@ async function renderNativeRouteToHtml(
 
   let data: unknown = {}
   if (leaf.loader) {
-    data = await leaf.loader({ params: call.params, path: call.path, req: call.req } as any)
+    // Per-request store scope for native loader writes (isolation only). No
+    // snapshot collected / no <script> injected — Spec B owns native delivery.
+    data = await runInStoreContext(() =>
+      leaf.loader!({ params: call.params, path: call.path, req: call.req } as any),
+    )
   }
 
   if (isNativeVerdict(data)) {

@@ -10,6 +10,7 @@ import { injectCssLink } from './inject-css-link.ts'
 import { getCssHrefs, getCssHrefsForRoute } from '../css.ts'
 import { injectDevClient } from './inject-dev-client.ts'
 import { injectActionPrefix, getActionPrefixSnippet } from './inject-action-prefix.ts'
+import { injectBrustStore, buildStoreScripts } from './inject-store.ts'
 import { getDevClientSnippet } from '../dev/inject.ts'
 
 export interface RenderBranchStreamingArgs {
@@ -31,6 +32,10 @@ export interface RenderBranchStreamingArgs {
   /** The matched route's fullPath (e.g. '/' or '/blog/{slug}'). Used to
    * combine global CSS hrefs with per-route CSS hrefs before injection. */
   routePath?: string
+  /** Per-request store snapshot collected after loaders run. Injected as a
+   * `<script data-brust-store="…">` blob before `</head>` (buffering) or into
+   * the streaming first-chunk prepend. Null/undefined → no injection. */
+  storeSnapshot?: Record<string, Record<string, unknown>> | null
 }
 
 const encoder = new TextEncoder()
@@ -150,6 +155,7 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
             body = injectCssLink(body, [...getCssHrefs(), ...perRouteHrefs])
             body = injectDevClient(body, getDevClientSnippet())
             body = injectActionPrefix(body, getActionPrefixSnippet())
+            body = injectBrustStore(body, args.storeSnapshot ?? null)
             const meta = makeMeta({
               status: successStatus,
               streaming: false,
@@ -211,8 +217,14 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
               .join('')
             const devTag = getDevClientSnippet() ?? ''
             const prefixTag = getActionPrefixSnippet() ?? ''
-            if (linkTagsStr.length > 0 || devTag.length > 0 || prefixTag.length > 0) {
-              const prepend = encoder.encode(linkTagsStr + prefixTag + devTag)
+            const storeTag = buildStoreScripts(args.storeSnapshot ?? null)
+            if (
+              linkTagsStr.length > 0 ||
+              devTag.length > 0 ||
+              prefixTag.length > 0 ||
+              storeTag.length > 0
+            ) {
+              const prepend = encoder.encode(linkTagsStr + prefixTag + devTag + storeTag)
               const out = new Uint8Array(flushed.length + prepend.length)
               out.set(flushed, 0)
               out.set(prepend, flushed.length)

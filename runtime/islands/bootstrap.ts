@@ -15,6 +15,7 @@
 
 import { createRoot, hydrateRoot, type Root } from 'react-dom/client'
 import { createElement } from 'react'
+import { applyStoreSnapshot } from '../store/client-hydrate.ts'
 
 // Track React roots created by hydrateOne so we can unmount them before
 // removing their DOM in swapMainContent. Without this, removing the DOM
@@ -214,11 +215,16 @@ async function navigate(url: URL, push: boolean): Promise<void> {
       headers: { Accept: 'application/json' },
     })
     if (!resp.ok) throw new Error(`navigation: status ${resp.status}`)
-    const { html, title } = (await resp.json()) as { html: string; title: string }
+    const { html, title, store } = (await resp.json()) as {
+      html: string
+      title: string
+      store?: Record<string, Record<string, unknown>>
+    }
     const main = document.querySelector('main')
     if (!main) throw new Error('navigation: no <main> element')
     unmountIslandsIn(main as HTMLElement)
     swapMainContent(main as HTMLElement, html)
+    if (store) applyStoreSnapshot(store)
     if (title) document.title = title
     if (push) history.pushState({}, '', url.href)
     window.scrollTo(0, 0)
