@@ -1,0 +1,53 @@
+import { afterEach, expect, test } from 'bun:test'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
+import { buildDirectives, scanDirectiveComponents } from '../runtime/native/build.ts'
+
+// Temp dirs MUST live under the repo so Bun.build can self-resolve brustjs/* (see the
+// note in runtime/native/build.test.ts). `.brust/` is gitignored.
+const TMP_BASE = resolve(import.meta.dir, '../.brust/native-int-test')
+const dirs: string[] = []
+function tmp(): string {
+  mkdirSync(TMP_BASE, { recursive: true })
+  const d = mkdtempSync(join(TMP_BASE, 'd-'))
+  dirs.push(d)
+  return d
+}
+afterEach(() => {
+  for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true })
+})
+
+test('directive component is discovered and bundled into a react-free _directives.js', async () => {
+  const root = tmp()
+  mkdirSync(join(root, 'components'))
+  writeFileSync(
+    join(root, 'routes.tsx'),
+    `import Counter from './components/Counter'\nexport const routes = []\n`,
+  )
+  writeFileSync(
+    join(root, 'components/Counter.tsx'),
+    `import { signal } from 'brustjs/store'\n` +
+      `export const behavior = () => { const n = signal(0); return { n, inc(){ n.set(n()+1) } } }\n` +
+      `export default function Counter(){ return null as any }\n`,
+  )
+  const components = scanDirectiveComponents(join(root, 'routes.tsx'))
+  expect([...components.keys()]).toEqual(['counter'])
+  const outDir = join(root, 'islands')
+  const res = await buildDirectives(components, { outDir })
+  expect(res.count).toBe(1)
+  expect(existsSync(join(outDir, '_directives.js'))).toBe(true)
+  const js = readFileSync(join(outDir, '_directives.js'), 'utf8')
+  expect(js).toContain('counter')
+  expect(/createRoot|hydrateRoot|react-dom/.test(js)).toBe(false)
+})
+
+test('bake helper: template with x-data gets the directives <script>, without does not', async () => {
+  const { bakeDirectivesIfUsed } = await import('../runtime/cli/native-routes-emit.ts')
+  const { DIRECTIVES_BOOTSTRAP } = await import('../runtime/islands/importmap.ts')
+  const withDir = bakeDirectivesIfUsed(
+    '<body><button x-data="counter" x-on-click="inc">0</button></body>',
+  )
+  expect(withDir).toContain(DIRECTIVES_BOOTSTRAP)
+  const noDir = '<body><div>static</div></body>'
+  expect(bakeDirectivesIfUsed(noDir)).toBe(noDir)
+})
