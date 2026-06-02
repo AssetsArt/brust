@@ -1715,30 +1715,9 @@ test('nav: /_brust/page/<protected> without cookie returns middleware verdict (4
   expect(body).not.toContain('Admin Dashboard')
 })
 
-// S9 — native loader status sentinels. The `brust build` step that the CI
-// gate runs before this suite dual-emits jinja to `.brust/jinja/` at the repo
-// root, so the shared server (spawned from the repo root) resolves the compiled
-// NativeProfile template. Both native-notfound/native-redirect REUSE that one
-// template (templateName = Component.name = "NativeProfile"). These are
-// read-only, so they ride the shared server.
-test('native loader notFound() → 404 with rendered template', async () => {
-  const resp = await fetch(`http://127.0.0.1:${shared!.port}/_test/native-notfound/bob`)
-  expect(resp.status).toBe(404)
-  expect(await resp.text()).toContain('Hello, bob')
-})
-test('native loader redirect() → 302 + Location, empty body', async () => {
-  const resp = await fetch(`http://127.0.0.1:${shared!.port}/_test/native-redirect`, {
-    redirect: 'manual',
-  })
-  expect(resp.status).toBe(302)
-  expect(resp.headers.get('location')).toBe('/_test/native/landed')
-  expect(await resp.text()).toBe('')
-})
-test('native loader normal return → 200 (no regression)', async () => {
-  const resp = await fetch(`http://127.0.0.1:${shared!.port}/_test/native/alice`)
-  expect(resp.status).toBe(200)
-})
-
-// NOTE: broader native-route coverage (islands, SSR components) lives in
-// tests/native-island*.test.ts, which run their own `brust build` pre-flight.
-// SSR-component E2E is in tests/native-island-ssr.test.ts.
+// NOTE: native-route HTTP coverage — including the S9 notFound()/redirect()
+// status sentinels — lives in tests/native-island-ssr.test.ts, which runs a
+// `brust build` pre-flight so the fixture's jinja templates are registered.
+// This suite boots the fixture in SOURCE mode (no build), so native routes are
+// not exercised here. S12 action-dispatch coverage (bodyless / chunked) is
+// above and needs no jinja.
