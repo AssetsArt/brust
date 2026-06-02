@@ -25,12 +25,22 @@ export function __setServerResolver(fn: ServerResolver): void {
   serverResolver = fn
 }
 
+// Unwrap a Signal/Computed to its value type; `never` if it is neither. Uses
+// `infer` (not `extends Signal<unknown>`): `Signal<T>.set(next: T)` is
+// contravariant in T, so `Signal<TeamMember[]>` is NOT assignable to
+// `Signal<unknown>` — a concrete-`unknown` check wrongly drops every typed signal
+// key from the snapshot. `infer` sidesteps that.
+type StoreValue<X> = X extends Signal<infer T> ? T : X extends Computed<infer T> ? T : never
+
+// Snapshot = plain-value view of a store: Signal<T>/Computed<T> → T, plain values
+// kept as-is, action functions dropped. The `[…] extends [never]` tuple wrap stops
+// `never` from distributing the conditional to `never`.
 export type Snapshot<S> = {
-  [K in keyof S as S[K] extends (...a: never[]) => unknown
-    ? S[K] extends Signal<unknown> | Computed<unknown>
-      ? K
-      : never
-    : K]: S[K] extends Signal<infer T> ? T : S[K] extends Computed<infer T> ? T : S[K]
+  [K in keyof S as [StoreValue<S[K]>] extends [never]
+    ? S[K] extends (...a: never[]) => unknown
+      ? never
+      : K
+    : K]: [StoreValue<S[K]>] extends [never] ? S[K] : StoreValue<S[K]>
 }
 
 // `then` is reserved so a store with a signal named `then` can't make the proxy
