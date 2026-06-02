@@ -1,5 +1,5 @@
 import { test, expect } from 'bun:test'
-import { parseArgs, resolveBrustRef, copyTemplate } from '../runtime/cli/new.ts'
+import { parseArgs, resolveBrustRef, copyTemplate, selectTemplate } from '../runtime/cli/new.ts'
 import {
   listTemplates,
   getTemplate,
@@ -280,6 +280,109 @@ test('findBrustPackageRoot: resolves this repo root (has Cargo.toml + example/po
   expect(root).toBe(REPO) // pin the exact dir — not just a coincidental layout match
   expect(existsSync(path.join(root, 'Cargo.toml'))).toBe(true)
   expect(existsSync(path.join(root, 'example/pokedex/routes.tsx'))).toBe(true)
+})
+
+// --- parseArgs: template + yes ---
+test('parseArgs: --template pokedex', () => {
+  expect(parseArgs(['app', '--template', 'pokedex']).template).toBe('pokedex')
+})
+test('parseArgs: --template=pokedex', () => {
+  expect(parseArgs(['app', '--template=pokedex']).template).toBe('pokedex')
+})
+test('parseArgs: -t minimal', () => {
+  expect(parseArgs(['app', '-t', 'minimal']).template).toBe('minimal')
+})
+test('parseArgs: --template without value throws', () => {
+  expect(() => parseArgs(['app', '--template'])).toThrow(/--template requires a value/)
+})
+test('parseArgs: --template= (empty) throws', () => {
+  expect(() => parseArgs(['app', '--template='])).toThrow(/--template requires a value/)
+})
+test('parseArgs: --yes / -y set yes', () => {
+  expect(parseArgs(['app', '--yes']).yes).toBe(true)
+  expect(parseArgs(['app', '-y']).yes).toBe(true)
+})
+test('parseArgs: yes defaults false, template undefined', () => {
+  const r = parseArgs(['app'])
+  expect(r.yes).toBe(false)
+  expect(r.template).toBeUndefined()
+})
+
+// --- selectTemplate (injected read/isTTY) ---
+test('selectTemplate: explicit valid name', () => {
+  expect(selectTemplate({ explicit: 'pokedex', yes: false, isTTY: false }).name).toBe('pokedex')
+})
+test('selectTemplate: explicit invalid name throws', () => {
+  expect(() => selectTemplate({ explicit: 'nope', yes: false, isTTY: false })).toThrow(
+    /unknown template/,
+  )
+})
+test('selectTemplate: yes → default minimal', () => {
+  expect(selectTemplate({ yes: true, isTTY: true }).name).toBe('minimal')
+})
+test('selectTemplate: non-TTY → default minimal', () => {
+  expect(selectTemplate({ yes: false, isTTY: false }).name).toBe('minimal')
+})
+test('selectTemplate: TTY + read "2" → pokedex', () => {
+  expect(selectTemplate({ yes: false, isTTY: true, read: () => '2', print: () => {} }).name).toBe(
+    'pokedex',
+  )
+})
+test('selectTemplate: TTY + read "" → default minimal', () => {
+  expect(selectTemplate({ yes: false, isTTY: true, read: () => '', print: () => {} }).name).toBe(
+    'minimal',
+  )
+})
+test('selectTemplate: TTY + read name "pokedex" → pokedex', () => {
+  expect(
+    selectTemplate({ yes: false, isTTY: true, read: () => 'pokedex', print: () => {} }).name,
+  ).toBe('pokedex')
+})
+test('selectTemplate: TTY + null reader → default minimal (no infinite loop)', () => {
+  expect(selectTemplate({ yes: false, isTTY: true, read: () => null, print: () => {} }).name).toBe(
+    'minimal',
+  )
+})
+
+// --- copyTemplate: exclude + extraFiles ---
+test('copyTemplate: exclude skips listed root files; nested same-name survives', async () => {
+  const tmpl = await mkdtemp(path.join(tmpdir(), 'brust-excl-src-'))
+  const target = await mkdtemp(path.join(tmpdir(), 'brust-excl-dst-'))
+  try {
+    await Bun.write(path.join(tmpl, 'README.md'), 'root readme\n')
+    await Bun.write(path.join(tmpl, 'keep.txt'), 'keep\n')
+    await Bun.write(path.join(tmpl, 'sub/README.md'), 'nested readme\n')
+    await copyTemplate({
+      templateDir: tmpl,
+      targetDir: target,
+      substitutions: {},
+      exclude: new Set(['README.md']),
+    })
+    expect(existsSync(path.join(target, 'README.md'))).toBe(false)
+    expect(existsSync(path.join(target, 'keep.txt'))).toBe(true)
+    expect(existsSync(path.join(target, 'sub/README.md'))).toBe(true)
+  } finally {
+    await rm(tmpl, { recursive: true, force: true })
+    await rm(target, { recursive: true, force: true })
+  }
+})
+
+test('copyTemplate: extraFiles written verbatim (no substitution)', async () => {
+  const tmpl = await mkdtemp(path.join(tmpdir(), 'brust-extra-src-'))
+  const target = await mkdtemp(path.join(tmpdir(), 'brust-extra-dst-'))
+  try {
+    await Bun.write(path.join(tmpl, 'a.txt'), 'a\n')
+    await copyTemplate({
+      templateDir: tmpl,
+      targetDir: target,
+      substitutions: { __X__: 'SUBBED' },
+      extraFiles: [{ relPath: 'package.json', content: '{"x":"__X__"}\n' }],
+    })
+    expect(await readFile(path.join(target, 'package.json'), 'utf8')).toBe('{"x":"__X__"}\n')
+  } finally {
+    await rm(tmpl, { recursive: true, force: true })
+    await rm(target, { recursive: true, force: true })
+  }
 })
 
 async function collectFiles(dir: string): Promise<string[]> {

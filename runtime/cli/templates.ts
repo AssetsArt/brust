@@ -18,7 +18,11 @@ export interface TemplateDef {
   title: string
   description: string
   sourceDir: string
-  /** POSIX-relative paths (from sourceDir) to skip when copying. */
+  /**
+   * POSIX-relative paths (from sourceDir) to skip when copying. Matching uses
+   * the SOURCE entry name (pre-`renameForEmit`), so to exclude an emitted
+   * `.gitignore` you list its source name `_gitignore`, not `.gitignore`.
+   */
   exclude: Set<string>
   /** Files the source tree lacks, generated at scaffold time. */
   extraFiles?: (ctx: ScaffoldCtx) => EmittedFile[]
