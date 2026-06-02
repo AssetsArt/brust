@@ -2,8 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join, relative } from 'node:path'
-import { ISLANDS_IMPORTMAP_AND_BOOTSTRAP } from '../islands/importmap.ts'
+import { DIRECTIVES_BOOTSTRAP, ISLANDS_IMPORTMAP_AND_BOOTSTRAP } from '../islands/importmap.ts'
 import {
+  bakeDirectivesIfUsed,
   emitNativeTemplates,
   gatherComponentSources,
   reconcileIslandManifest,
@@ -381,5 +382,18 @@ describe('gatherComponentSources', () => {
     )
 
     expect(() => gatherComponentSources(pagePath)).toThrow(/ambiguous component ident "Card"/)
+  })
+})
+
+describe('bakeDirectivesIfUsed', () => {
+  test('bakes the directives bootstrap into a template that uses x-data', () => {
+    const tmpl = '<html><head></head><body><div x-data="probe"></div></body></html>'
+    expect(bakeDirectivesIfUsed(tmpl)).toContain(DIRECTIVES_BOOTSTRAP)
+    expect(bakeDirectivesIfUsed(tmpl)).toContain('{% raw %}')
+  })
+
+  test('leaves a template without x-data byte-identical', () => {
+    const tmpl = '<html><head></head><body><div>static</div></body></html>'
+    expect(bakeDirectivesIfUsed(tmpl)).toBe(tmpl)
   })
 })

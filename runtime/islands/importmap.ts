@@ -15,3 +15,9 @@ export const ISLANDS_IMPORTMAP_AND_BOOTSTRAP =
   }) +
   '</script>' +
   '<script type="module" src="/_brust/islands/_bootstrap.js" defer></script>'
+
+// Directive runtime loader — baked into a native template's .jinja when it uses
+// any x-data directive. Served from the same /_brust/islands/ static route as the
+// island chunks (underscore-prefixed → passes is_safe_island_filename).
+export const DIRECTIVES_BOOTSTRAP =
+  '<script type="module" src="/_brust/islands/_directives.js" defer></script>'

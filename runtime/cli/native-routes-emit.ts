@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, relative, resolve } from 'node:path'
 import { buildDevClientTag } from '../dev/client.ts'
-import { ISLANDS_IMPORTMAP_AND_BOOTSTRAP } from '../islands/importmap.ts'
+import { DIRECTIVES_BOOTSTRAP, ISLANDS_IMPORTMAP_AND_BOOTSTRAP } from '../islands/importmap.ts'
 
 /** Gather transitive component sources starting from a page source file.
  *
@@ -102,6 +102,16 @@ function injectDevClientIntoTemplate(template: string): string {
     return template.slice(0, headClose) + tag + template.slice(headClose)
   }
   return template + tag
+}
+
+/** Bake the directive runtime loader into a native template iff it uses any
+ * x-data directive. Idempotent. Wrapped in {% raw %} for symmetry with the islands
+ * bootstrap bake (the tag has no {{ }} but the wrap is harmless + consistent). */
+export function bakeDirectivesIfUsed(template: string): string {
+  if (!template.includes('x-data')) return template
+  const baked = `{% raw %}${DIRECTIVES_BOOTSTRAP}{% endraw %}`
+  if (template.includes(baked)) return template
+  return template + baked
 }
 
 /** Sub-project J — build pass that turns user's `pages/<Name>.tsx` files into
@@ -357,10 +367,9 @@ export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<vo
     // Dev-only: native routes don't pass through the React renderer's dev-client
     // injection, so splice the /_brust/dev WS script in here. reEmitJinja() runs
     // this on every hot reload, so the script is always present in dev.
+    const withDirectives = bakeDirectivesIfUsed(compiled.template)
     const template =
-      process.env.BRUST_DEV === '1'
-        ? injectDevClientIntoTemplate(compiled.template)
-        : compiled.template
+      process.env.BRUST_DEV === '1' ? injectDevClientIntoTemplate(withDirectives) : withDirectives
     writeFileSync(outPath, template)
     built.push(name)
 
