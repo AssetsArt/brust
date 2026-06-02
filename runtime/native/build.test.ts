@@ -1,7 +1,14 @@
 import { describe, expect, test, afterEach } from 'bun:test'
-import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync as rf,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { join, resolve } from 'node:path'
-import { scanDirectiveComponents } from './build.ts'
+import { buildDirectives, scanDirectiveComponents } from './build.ts'
 
 // IMPORTANT: temp dirs MUST live UNDER the repo (not os.tmpdir()/`/tmp`). Task 8's
 // buildDirectives runs `Bun.build` on a generated entry that imports `brustjs/native`
@@ -64,5 +71,50 @@ describe('scanDirectiveComponents', () => {
     // instead assert two DISTINCT names are found:
     const found = scanDirectiveComponents(join(root, 'routes.tsx'))
     expect(new Set(found.keys())).toEqual(new Set(['widget', 'other']))
+  })
+})
+
+describe('buildDirectives', () => {
+  test('emits a react-free _directives.js for a react-free behavior', async () => {
+    const root = tmp()
+    const outDir = join(root, 'islands')
+    // A behavior importing only signal/computed from brustjs/store (react-free).
+    const compPath = join(root, 'Probe.tsx')
+    writeFileSync(
+      compPath,
+      `import { signal } from 'brustjs/store'\n` +
+        `export const behavior = () => ({ n: signal(0) })\n` +
+        `export default function Probe(){ return null as any }\n`,
+    )
+    const res = await buildDirectives(new Map([['probe', compPath]]), { outDir })
+    expect(res.count).toBe(1)
+    const outFile = join(outDir, '_directives.js')
+    expect(existsSync(outFile)).toBe(true)
+    const out = rf(outFile, 'utf8')
+    expect(out).toContain('probe') // registered name present
+    expect(/createRoot|hydrateRoot|react-dom/.test(out)).toBe(false) // react-free
+  })
+
+  test('react-leak guard throws when a behavior pulls react (useStore)', async () => {
+    const root = tmp()
+    const outDir = join(root, 'islands')
+    const compPath = join(root, 'Bad.tsx')
+    writeFileSync(
+      compPath,
+      `import { useStore } from 'brustjs/client'\n` +
+        `export const behavior = () => ({ x: useStore })\n` +
+        `export default function Bad(){ return null as any }\n`,
+    )
+    await expect(buildDirectives(new Map([['bad', compPath]]), { outDir })).rejects.toThrow(
+      /react/i,
+    )
+  })
+
+  test('empty component set is a no-op (no file)', async () => {
+    const root = tmp()
+    const outDir = join(root, 'islands')
+    const res = await buildDirectives(new Map(), { outDir })
+    expect(res.count).toBe(0)
+    expect(existsSync(join(outDir, '_directives.js'))).toBe(false)
   })
 })
