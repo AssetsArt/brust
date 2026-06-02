@@ -50,7 +50,7 @@ describe('scanDirectiveComponents', () => {
     expect(found.get('addToTeamButton')).toBe(join(root, 'components/AddToTeamButton.tsx'))
   })
 
-  test('throws on two files deriving the same register name', () => {
+  test('discovers multiple behaviors across the import graph (distinct names)', () => {
     const root = tmp()
     mkdirSync(join(root, 'a'))
     mkdirSync(join(root, 'b'))
