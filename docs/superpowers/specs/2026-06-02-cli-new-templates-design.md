@@ -73,9 +73,12 @@ export const DEFAULT_TEMPLATE = 'minimal'
 - `pokedex` → `join(packageRoot, 'example', 'pokedex')`, where `packageRoot` is
   the directory of the nearest `package.json` whose `name === 'brustjs'`. This
   is the **same walk** `resolveBrustRef` already performs; we extract it into a
-  shared `findBrustPackageRoot(startDir): string` helper so source-tree and
-  published-package layouts both resolve correctly (the published tarball ships
-  `example/pokedex`, see Distribution).
+  shared `findBrustPackageRoot(startDir): string` helper (throws on root-reached,
+  same as today) so source-tree and published-package layouts both resolve
+  correctly (the published tarball ships `example/pokedex`, see Distribution).
+  **`resolveBrustRef` is rewritten to consume `findBrustPackageRoot`** rather than
+  duplicating the walk — exactly one walk implementation, retaining the
+  `hasSourceMarkers` → `file:` vs `^version` decision.
 
 ### pokedex synthesized files (`extraFiles`)
 
@@ -84,6 +87,8 @@ export const DEFAULT_TEMPLATE = 'minimal'
 1. **`package.json`** — built from a template literal, NOT copied from minimal,
    because pokedex's dependency set differs:
    - `dependencies`: `brustjs` (`ctx.brustRef.spec`), `react`, `react-dom`, `zod`.
+     (`react-dom` is included as the framework's SSR/hydration peer, NOT because
+     pokedex source imports it directly — do not "tidy" it away.)
      **No `tailwindcss`** — pokedex's `app.css` is a hand-written design system
      that deliberately avoids Tailwind (verified: the only `tailwindcss` mention
      in `app.css` is a comment explaining its absence; no `@import "tailwindcss"`).
@@ -141,8 +146,10 @@ selectTemplate({ explicit, yes, isTTY, read }) -> TemplateDef
 global `prompt`) and `isTTY` (defaults to `process.stdin.isTTY`) so it is unit
 testable without a real terminal. `promptPicker` prints the numbered list, reads
 one line, accepts a 1-based index or the template name, re-prompts on invalid
-input (bounded to a few attempts, then falls back to default), and treats empty
-input as "default".
+input (bounded to **3 attempts**, then falls back to default), and treats empty
+input **or a `null` reader result** (EOF / closed stdin) as "default". The
+bounded attempt count guarantees no infinite loop if the reader returns `null`
+every call.
 
 ## CLI / API surface
 
@@ -260,9 +267,11 @@ Existing tests stay green unchanged (default template = minimal). New cases:
   dir containing `Cargo.toml`
 
 **default still minimal (subprocess, no --template, non-TTY)**
-- `brust new <name> --dir <tmp>` with piped stdin → emits the minimal tree
+- `brust new <name> --dir <tmp>` with stdin closed (`< /dev/null`, deterministic
+  regardless of how `bun test` is launched) → emits the minimal tree
   (tailwindcss present, Home.tsx native) — i.e., the existing scaffold test,
-  reasserted to lock the non-TTY default.
+  reasserted to lock the non-TTY default. Subprocess scaffold tests close stdin
+  so the picker is never reached even from an interactive shell.
 
 ## Acceptance criteria
 
