@@ -33,3 +33,8 @@ test('parseStoreScript reads JSON.parse(el.textContent)', () => {
   expect(parseStoreScript({ textContent: '{"a":1}' })).toEqual({ a: 1 })
   expect(parseStoreScript({ textContent: null })).toEqual({})
 })
+
+test('parseStoreScript returns {} on invalid JSON without throwing', () => {
+  expect(() => parseStoreScript({ textContent: '{bad' })).not.toThrow()
+  expect(parseStoreScript({ textContent: '{bad' })).toEqual({})
+})

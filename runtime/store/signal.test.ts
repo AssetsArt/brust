@@ -71,6 +71,24 @@ test('batch: two .set inside one batch → effect re-runs once', () => {
   expect(runs).toBe(2)
 })
 
+test('effect that reads and conditionally writes the same signal does not stack-overflow', () => {
+  const a = signal(0)
+  let runs = 0
+  // Without the re-entrancy guard, the write inside the effect re-triggers the
+  // same consumer mid-run → unbounded recursion → stack overflow. The guard
+  // drops the re-entrant re-run, so this runs once, bumps a once, and settles.
+  effect(() => {
+    runs++
+    if (a() < 3) a.set(a() + 1)
+  })
+  expect(runs).toBe(1)
+  expect(a()).toBe(1)
+  // A later external write re-runs the effect cleanly (guard already reset).
+  a.set(0)
+  expect(a()).toBe(1)
+  expect(runs).toBe(2)
+})
+
 test('brands: isSignal / isComputed', () => {
   expect(isSignal(signal(1))).toBe(true)
   expect(isSignal(computed(() => 1))).toBe(false)

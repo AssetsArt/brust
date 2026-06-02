@@ -87,3 +87,35 @@ test('subscribe fires on write within the scope', () => {
     expect(fired).toBe(1)
   })
 })
+
+test('no-op .set does not fire subscribers and keeps snapshot reference stable', () => {
+  const store = defineStore(`noop-${storeSeq++}`, () => {
+    const n = signal(1)
+    return { n }
+  })
+  runInStoreContext(() => {
+    let fired = 0
+    store.subscribe(() => {
+      fired++
+    })
+    const snap1 = store.snapshot()
+    ;(store.n as ReturnType<typeof signal<number>>).set(1) // same value → no-op
+    expect(fired).toBe(0)
+    const snap2 = store.snapshot()
+    expect(snap2).toBe(snap1)
+  })
+})
+
+test("RESERVED blocks a 'then' signal so the handle is not an accidental thenable", async () => {
+  const store = defineStore(`thenable-${storeSeq++}`, () => {
+    const then = signal(1)
+    return { then }
+  })
+  await runInStoreContext(async () => {
+    // handle.then resolves to the handle's own (absent) `then`, not the signal.
+    expect((store as { then?: unknown }).then).toBeUndefined()
+    // Promise.resolve(handle) must not treat it as a thenable and hang.
+    const resolved = await Promise.resolve(store)
+    expect(resolved).toBe(store)
+  })
+})

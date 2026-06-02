@@ -23,5 +23,10 @@ export function storeScriptTag(name: string, state: unknown): string {
 
 export function parseStoreScript(el: { textContent: string | null }): Record<string, unknown> {
   const text = el.textContent ?? '{}'
-  return JSON.parse(text) as Record<string, unknown>
+  try {
+    return JSON.parse(text) as Record<string, unknown>
+  } catch (e) {
+    console.warn('[brust] store: invalid snapshot JSON', e)
+    return {}
+  }
 }

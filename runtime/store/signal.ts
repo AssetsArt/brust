@@ -26,6 +26,7 @@ export function isComputed(v: unknown): v is Computed<unknown> {
 interface Consumer {
   run(): void
   deps: Set<Set<Consumer>>
+  running: boolean
 }
 
 let activeConsumer: Consumer | null = null
@@ -91,9 +92,16 @@ export function computed<T>(fn: () => T): Computed<T> {
   const subscribers = new Set<Consumer>()
   const self: Consumer = {
     deps: new Set(),
+    running: false,
     run() {
-      dirty = true
-      notify(subscribers) // downstream recomputes lazily on next read
+      if (self.running) return
+      self.running = true
+      try {
+        dirty = true
+        notify(subscribers) // downstream recomputes lazily on next read
+      } finally {
+        self.running = false
+      }
     },
   }
   const read = (() => {
@@ -118,7 +126,10 @@ export function computed<T>(fn: () => T): Computed<T> {
 export function effect(fn: () => void): () => void {
   const self: Consumer = {
     deps: new Set(),
+    running: false,
     run() {
+      if (self.running) return
+      self.running = true
       clearDeps(self)
       const prev = activeConsumer
       activeConsumer = self
@@ -126,6 +137,7 @@ export function effect(fn: () => void): () => void {
         fn()
       } finally {
         activeConsumer = prev
+        self.running = false
       }
     },
   }

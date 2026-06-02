@@ -1,6 +1,6 @@
 import { type Computed, type Signal, isComputed, isSignal } from './signal.ts'
 import { parseStoreScript } from './serialize.ts'
-import { getServerInstance } from './server-context.ts'
+import { getServerInstance, type StoreInstanceRecord } from './server-context.ts'
 
 export type Snapshot<S> = {
   [K in keyof S as S[K] extends (...a: never[]) => unknown
@@ -10,7 +10,9 @@ export type Snapshot<S> = {
     : K]: S[K] extends Signal<infer T> ? T : S[K] extends Computed<infer T> ? T : S[K]
 }
 
-const RESERVED = new Set(['name', 'subscribe', 'snapshot', 'serialize', 'hydrate'])
+// `then` is reserved so a store with a signal named `then` can't make the proxy
+// an accidental thenable (await/Promise.resolve(handle) misbehaving).
+const RESERVED = new Set(['name', 'subscribe', 'snapshot', 'serialize', 'hydrate', 'then'])
 
 export interface StoreHandle<S extends object> {
   (): S
@@ -21,15 +23,10 @@ export interface StoreHandle<S extends object> {
   hydrate(state: Record<string, unknown>): void
 }
 
-// A resolved per-scope (client singleton or server per-request) store record.
-// `version` is bumped on every signal write so `snapshot()` can return a
-// referentially-stable object (useSyncExternalStore contract) until a change.
-export interface StoreInstanceRecord {
-  instance: object
-  subs: Set<() => void>
-  version: { n: number }
-  snap: { value: Record<string, unknown>; version: number } | null
-}
+// `StoreInstanceRecord` is the resolved per-scope (client singleton or server
+// per-request) store record; it lives in server-context.ts so both scopes and
+// `StoreRecord` share one shape.
+export type { StoreInstanceRecord }
 
 interface ClientRegistry {
   [name: string]: StoreInstanceRecord
@@ -56,12 +53,15 @@ function bridgeSubscribers(
       const sig = v as Signal<unknown>
       const origSet = sig.set.bind(sig)
       sig.set = (next) => {
-        const before = version.n
+        // origSet is a no-op when Object.is(prev,next). Reading sig() here is
+        // outside any active consumer, so it registers no dependency — we can
+        // compare before/after and only bump+notify on a real change, avoiding
+        // spurious React re-renders.
+        const before = sig()
         origSet(next as never)
-        // origSet is a no-op when Object.is(prev,next); only notify on a real change.
-        // We can't read internal change state, so bump+notify unconditionally is
-        // acceptable, but guard against the equal-value case by snapshotting value.
-        version.n = before + 1
+        const after = sig()
+        if (Object.is(before, after)) return
+        version.n += 1
         for (const cb of [...subs]) cb()
       }
     }
@@ -88,17 +88,12 @@ export function defineStore<S extends object>(name: string, factory: () => S): S
       }
       return reg[name]
     }
-    // server: per-request via AsyncLocalStorage
+    // server: per-request via AsyncLocalStorage. StoreRecord extends
+    // StoreInstanceRecord (adds `handle`), so the return is assignable directly.
     return getServerInstance(name, () => {
       const rec = createRecord()
-      return {
-        instance: rec.instance,
-        subs: rec.subs,
-        version: rec.version,
-        snap: rec.snap,
-        handle: handle as StoreHandle<object>,
-      }
-    }) as StoreInstanceRecord
+      return { ...rec, handle: handle as StoreHandle<object> }
+    })
   }
 
   function hydrateRecord(rec: StoreInstanceRecord, state: Record<string, unknown>): void {
@@ -144,7 +139,7 @@ export function defineStore<S extends object>(name: string, factory: () => S): S
 
   return new Proxy(handle, {
     get(target, prop, recv) {
-      if (typeof prop === 'symbol' || RESERVED.has(prop) || prop === 'name') {
+      if (typeof prop === 'symbol' || RESERVED.has(prop)) {
         return Reflect.get(target, prop, recv)
       }
       const rec = resolve()

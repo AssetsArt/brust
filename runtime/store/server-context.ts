@@ -1,14 +1,19 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 
-// A per-request store record. `instance`/`subs` mirror the client registry shape;
-// `version`/`snap` carry defineStore's snapshot memo so it survives across the
-// repeated getServerInstance reads within one request. `handle.serialize` lets
-// collectSnapshot() serialize every touched store without re-resolving.
-export interface StoreRecord {
+// The resolved per-scope store record shared by the client registry and the
+// server per-request map. `version` is bumped on every signal write so
+// `snapshot()` can return a referentially-stable object (useSyncExternalStore
+// contract) until a change; `snap` memoizes that object across repeated reads.
+export interface StoreInstanceRecord {
   instance: object
   subs: Set<() => void>
-  version?: { n: number }
-  snap?: { value: Record<string, unknown>; version: number } | null
+  version: { n: number }
+  snap: { value: Record<string, unknown>; version: number } | null
+}
+
+// A per-request store record: the shared record plus a `handle.serialize` so
+// collectSnapshot() can serialize every touched store without re-resolving.
+export interface StoreRecord extends StoreInstanceRecord {
   handle: { serialize(): Record<string, unknown> }
 }
 
