@@ -160,8 +160,67 @@ native compiled output is authoritative.)
 3. Manual smoke: pokedex `/` head has the favicon link; `curl /favicon.svg` 200 (already shipped).
 4. minimal scaffold emits a `<BrustPage head={[…favicon…]}>`.
 
+## Feature B — `dangerouslySetInnerHTML` on host elements (native body)
+
+React's raw-HTML escape hatch, supported on native host elements (`div`, `span`,
+…). This is the explicit, named opt-out from brust's escape-everything posture —
+the trusted-data boundary for dynamic HTML/CSS-in-markup the static `head` `text`
+deliberately omits.
+
+```tsx
+<div dangerouslySetInnerHTML={{ __html: data.renderedMarkdown }} />   // member-path → raw
+<div dangerouslySetInnerHTML={{ __html: "<b>static</b>" }} />        // literal → raw
+```
+
+### Semantics
+- Value MUST be an object literal with a single `__html` key whose value is a
+  string literal OR a loader member-path (same value rules as head attrs).
+- The element MUST have NO other children (React throws otherwise) → compile error.
+- Output is RAW (un-escaped): literal → emitted verbatim; member-path → `{{ (path) | safe }}`
+  (the existing island/component raw-passthrough filter). Named "dangerously" —
+  the trust boundary is explicit, identical to React.
+
+### IR (`ir.rs`)
+New child node reusing `HeadValue` (Literal|Path):
+```rust
+/// Raw, un-escaped inner HTML from `dangerouslySetInnerHTML={{ __html }}`.
+/// Literal → emitted verbatim; Path → `{{ (path) | safe }}`. Trusted-data only.
+RawHtml(HeadValue),
+```
+
+### Lowering (`lower_element`, before the attr loop)
+Peek `el.opening.attrs` for `dangerouslySetInnerHTML`:
+- value `JSXExprContainer` → `SwcExpr::Object` with exactly one `__html` key
+  (else `DangerouslySetInnerHtmlInvalid`); lower its value via the same
+  `lower_expr` → `StaticText`(→Literal) / `Field`|`MemberAccess`(→Path) branch.
+- if present AND the element has non-whitespace children → `DangerouslySetInnerHtmlWithChildren`.
+- emit the element with a single child `JsxNode::RawHtml(hv)`; do NOT pass
+  `dangerouslySetInnerHTML` through `lower_attr`.
+
+New `ErrorKind`s:
+- `DangerouslySetInnerHtmlInvalid` — "`dangerouslySetInnerHTML` must be `{{ __html: <string-literal | member-path> }}`"
+- `DangerouslySetInnerHtmlWithChildren` — "an element with `dangerouslySetInnerHTML` cannot also have children"
+
+### Emit (`emit_jinja.rs`, `JsxNode::RawHtml` arm in `emit_node`)
+```rust
+JsxNode::RawHtml(HeadValue::Literal(s)) => out.push_str(s),          // verbatim
+JsxNode::RawHtml(HeadValue::Path(e))    => { let _ = write!(out, "{{{{ ({}) | safe }}}}", emit_expr_path(e)); }
+```
+
+### TS / JSX types
+`dangerouslySetInnerHTML` is already a standard React DOM attribute (`{ __html: string }`)
+— no brust type augmentation needed; native authors use it as-is.
+
+### Tests (Rust)
+- emit: `<div dangerouslySetInnerHTML={{__html: data.h}}/>` → `<div>{{ (data.h) | safe }}</div>`;
+  literal → `<div><b>x</b></div>`.
+- lower: object without `__html` / non-path-non-literal value → `DangerouslySetInnerHtmlInvalid`;
+  element with both children and the prop → `DangerouslySetInnerHtmlWithChildren`.
+
 ## Known limitations
 
-- `text` is static-literal only (dynamic JS/CSS unsupported by design — XSS).
-- No `key`/ordering control beyond array order; entries emit after the css link.
+- head `text` is static-literal only (dynamic via `dangerouslySetInnerHTML` in body, not head).
+- No `key`/ordering control beyond array order; head entries emit after the css link.
 - React mirror is best-effort for the non-native path.
+- `dangerouslySetInnerHTML` is a trusted-data boundary — interpolating user input is
+  the author's responsibility (same as React).
