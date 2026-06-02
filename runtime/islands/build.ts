@@ -28,12 +28,29 @@ export interface BuildIslandsOptions {
  *    files whose island components share a name (ids must be app-unique).
  */
 export function scanIslandChunks(routesEntryFile: string): Map<string, string> {
-  const pages = scanImports(routesEntryFile)
   const chunks = new Map<string, string>()
+  const visited = new Set<string>()
 
-  for (const pagePath of pages.values()) {
-    const source = readFileSync(pagePath, 'utf8')
-    const pageImports = scanImports(pagePath)
+  // BFS over the LOCAL import graph rooted at the routes entry. An <Island> can
+  // live in ANY component reachable from the routes — not just a top-level page.
+  // (e.g. a shared layout that hosts a floating dock: routes → page → Layout →
+  // <Island component={Dock} />.) Stopping at the pages misses those, so the
+  // chunk is never built and the browser 404s on `/_brust/islands/<Dock>.js`.
+  // `scanImports` only returns LOCAL (relative) default imports, so the walk
+  // never escapes into node_modules / `brustjs` / `react`.
+  const queue: string[] = [...scanImports(routesEntryFile).values()]
+  while (queue.length > 0) {
+    const filePath = queue.shift()!
+    if (visited.has(filePath)) continue
+    visited.add(filePath)
+
+    const source = readFileSync(filePath, 'utf8')
+    const fileImports = scanImports(filePath)
+
+    // Follow this file's own local imports transitively.
+    for (const dep of fileImports.values()) {
+      if (!visited.has(dep)) queue.push(dep)
+    }
 
     // `[^<]*?` (not `[\s\S]*?`) so a tag cannot bridge across another `<` — this
     // stops a bare `<Island>` mentioned in a comment from lazily matching forward
@@ -43,13 +60,13 @@ export function scanIslandChunks(routesEntryFile: string): Map<string, string> {
     for (const tag of tags) {
       const compMatch = tag.match(/component=\{\s*(\w+)\s*\}/)
       if (!compMatch) {
-        throw new Error(`<Island> tag in ${pagePath} has no \`component={...}\` prop: ${tag}`)
+        throw new Error(`<Island> tag in ${filePath} has no \`component={...}\` prop: ${tag}`)
       }
       const ident = compMatch[1]!
-      const src = pageImports.get(ident)
+      const src = fileImports.get(ident)
       if (!src) {
         throw new Error(
-          `<Island component={${ident}}> in ${pagePath} has no matching import ` +
+          `<Island component={${ident}}> in ${filePath} has no matching import ` +
             `(expected \`import ${ident} from "..."\`)`,
         )
       }

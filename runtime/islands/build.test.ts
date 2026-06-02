@@ -55,6 +55,33 @@ test('dedupes a reused component and lists each distinct one once', () => {
   expect(chunks.get('Clock')).toBe(clock)
 })
 
+test('discovers an island nested in a component a page imports (transitive)', () => {
+  // Regression: routes → page → Layout, and the <Island> lives in Layout (a
+  // shared shell), NOT directly in the page. The scanner must follow the import
+  // graph transitively or the chunk is never built and the browser 404s.
+  // (This is exactly pokedex after PageLayout absorbed the TeamBuilder dock.)
+  const dock = write('Dock.tsx', 'export default function Dock() { return null }\n')
+  write(
+    'Layout.tsx',
+    `import Dock from './Dock'\n` +
+      `export default function Layout({ children }: any) {\n` +
+      `  return (<div><Island component={Dock} props={{}} ssr />{children}</div>)\n` +
+      `}\n`,
+  )
+  // Page imports Layout (not Dock); has no <Island> of its own.
+  write(
+    'Home.tsx',
+    `import Layout from './Layout'\n` +
+      `export default function Home() { return <Layout><p>hi</p></Layout> }\n`,
+  )
+  const entry = write('routes.ts', `import Home from './Home'\nexport default [Home]\n`)
+
+  const chunks = scanIslandChunks(entry)
+
+  expect(chunks.size).toBe(1)
+  expect(chunks.get('Dock')).toBe(dock)
+})
+
 test('throws naming both paths when two files share an island component name', () => {
   // Two distinct component files, same local name "Widget", imported by two
   // different pages → app-uniqueness violation.
