@@ -16,15 +16,18 @@
 
 ## สถานะรวม (อัปเดต 2026-06-02)
 
-**✅ FIXED แล้ว (6):** S11 conditionals · S1 `style={{…}}` · S8 dynamic head props ·
-S13 SPA-nav (รอบก่อน) — **3 อันแรกเป็น "Cluster A" รอบนี้**
+**✅ FIXED แล้ว (7):** S11 conditionals · S1 `style={{…}}` · S8 dynamic head props ·
+S13 SPA-nav (รอบก่อน) · **native layout (chrome ซ้ำ 3 หน้า) — รอบนี้** (component-composition:
+`<PageLayout native>` ที่ root ของ expansion เป็น `<BrustPage>` ถูก promote เป็น document shell)
+— **S11/S1/S8 เป็น "Cluster A"**
 ([spec](../../docs/superpowers/specs/2026-06-01-native-compiler-expressiveness-design.md)),
 พ่วง **XSS hardening** (`5a4c4ca`): dynamic HTML output ทุกจุด escape ด้วย `{{ (expr) | e }}`
 แล้ว (เดิม verbatim = ช่อง XSS จริง — request param ไหลเข้า `<title>` ได้).
 
 **ยังเปิด:** S12 (DELETE 411) · S9 (native loader ตั้ง status ไม่ได้ → 404-as-200) ·
 S4/S6/S7 (island store / session / typed error) · S2 (loader cache) · static asset ·
-native layout/Outlet · nested `.map()` · dark-mode `data-*`. · **BY-DESIGN:** S3 (Suspense).
+native **Outlet/router-level layout injection** · nested `.map()` · dark-mode `data-*`. ·
+**BY-DESIGN:** S3 (Suspense).
 
 ## สรุปสั้น (native เขียนยังไงให้ผ่าน — หลัง Cluster A)
 
@@ -281,14 +284,19 @@ prototype เลยใช้ไม่ได้ → แทนด้วย brand-m
 
 ---
 
-## ○ native ใช้ component ใน body ลำบาก (chrome ซ้ำ 3 หน้า) · CONFIRMED (เลี่ยงแล้ว)
+## ○ native ใช้ component ใน body ลำบาก (chrome ซ้ำ 3 หน้า) · ✅ FIXED (component-composition)
 
-native route ใช้ capitalized component ได้ก็จริง (SSR-component factory) แต่ component ที่
-**รับ `children`** จะถูก worker `renderToString` → children (เนื้อหา native ของหน้า) จะกลาย
-เป็น React ไม่ใช่ jinja = เสีย native. เลย **เขียน sidebar/topbar ซ้ำในทั้ง 3 หน้า** แทน
-shared layout. (`<Outlet>`/nested route เป็นของ React path ไม่ใช่ native.)
+**fix:** chrome (sidebar/topbar/team-dock) สกัดเป็น **`components/PageLayout.tsx`** อันเดียว แล้ว
+แต่ละ route ใช้ root เป็น `<PageLayout native …>` — compiler **inline** ขยาย PageLayout ตอน build
+แล้ว `<BrustPage>` ที่อยู่ root ของ expansion ถูก **promote เป็น document shell** (เหมือน route เขียน
+`<BrustPage>` เอง). children (เนื้อหา native ของหน้า) ยัง compile เป็น jinja ตามปกติ — ไม่โดน
+`renderToString`. PageLayout ต้อง **single-return ไม่มี local binding** (มี `const` = soft-fall-back
+ไป SSR component = ไม่มี `<html>` shell) และ active-nav ใช้ conditional **elements** (S11) ไม่ใช่
+className ternary. **dogfood:** ทั้ง 3 หน้าทิ้ง sidebar/topbar/Island ที่ซ้ำ เหลือแค่
+`<PageLayout native title=… active=… crumb=… teamProps={…}>{inner}</PageLayout>`.
 
-**proposal:** layout/Outlet สำหรับ native route ที่ children ยัง compile เป็น jinja.
+**ยังเปิด:** `<Outlet>`/nested-route สำหรับ native (router-level injection) — นี่เป็น
+**composition** (route root เลือก layout เอง) ไม่ใช่ router inject layout ให้.
 
 ---
 
