@@ -804,22 +804,18 @@ fn lower_ssr_component(
     // T6: detect bare `native` attribute before the attr loop.
     let has_native = has_native_attr(el);
 
-    // T6: collect call-site children for possible splicing.
+    // T6: collect call-site children for possible splicing. The fragment guard is
+    // DEFERRED to the SSR-emission points below (see `subtree_contains_fragment`
+    // checks). A fragment anywhere in the child subtree is unrepresentable by the
+    // React factory emitter (see `emit_factory::emit_child`) — but on the
+    // native-INLINE success path the children are spliced into jinja (which CAN
+    // represent a fragment) and never reach the factory. So the check must fire
+    // only when this component actually emits as a `JsxNode::SsrComponent`, not
+    // eagerly during collection (which would reject a perfectly valid native
+    // layout wrapping conditional `{cond ? <x/> : <>…</>}` content).
     let mut call_site_children: Vec<JsxNode> = Vec::new();
     for child in &el.children {
         if let Some(node) = lower_child(child, scope, in_map)? {
-            // A fragment anywhere in an SSR component's child subtree reaches the
-            // React factory emitter, which cannot represent one (see
-            // `emit_factory::emit_child`). Reject the WHOLE subtree, not just a
-            // direct fragment child — a fragment nested inside a host element
-            // (`<Layout><div><>x</></div></Layout>`) would otherwise slip past a
-            // shallow check and panic the factory emitter.
-            if subtree_contains_fragment(&node) {
-                return Err(LowerError::at(
-                    el.opening.span,
-                    ErrorKind::FragmentInSsrComponentNotSupported,
-                ));
-            }
             call_site_children.push(node);
         }
     }
@@ -924,6 +920,14 @@ fn lower_ssr_component(
         }
 
         // Fall through to SSR component emission, using isr fields if present.
+        // Children now flow into the React factory emitter — apply the deferred
+        // fragment guard here (the native-inline success path returned above).
+        if call_site_children.iter().any(subtree_contains_fragment) {
+            return Err(LowerError::at(
+                el.opening.span,
+                ErrorKind::FragmentInSsrComponentNotSupported,
+            ));
+        }
         // Rebuild props without native/isr attrs.
         let mut ssr_props: Vec<SsrProp> = Vec::new();
         let mut ssr_key_path: Option<String> = None;
@@ -1019,7 +1023,14 @@ fn lower_ssr_component(
         });
     }
 
-    // Standard (non-native) SSR component path.
+    // Standard (non-native) SSR component path. Children flow into the React
+    // factory emitter — apply the deferred fragment guard.
+    if call_site_children.iter().any(subtree_contains_fragment) {
+        return Err(LowerError::at(
+            el.opening.span,
+            ErrorKind::FragmentInSsrComponentNotSupported,
+        ));
+    }
     for attr in &el.opening.attrs {
         // Spread `{...expr}` is valid on an SSR component (the factory is JS
         // createElement, so it becomes a JS object spread). The spread argument
@@ -4805,6 +4816,24 @@ mod tests {
             }
             other => panic!("expected Element, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn native_layout_allows_fragment_children() {
+        // A native layout wrapping conditional content whose alternate is a
+        // fragment (`{cond ? <p/> : <>…</>}`) must INLINE + splice. The fragment
+        // guard is deferred to the SSR-emission paths; the native-inline success
+        // path is exempt because the children become jinja, not factory output.
+        // (This is exactly DetailPage's `{notFound ? … : <>…</>}` shape.)
+        let route = r#"export default function Page({ notFound }: any) {
+  return <PageLayout native title="T" crumb="C">{notFound ? <p>x</p> : <><h1>a</h1><h2>b</h2></>}</PageLayout>;
+}"#;
+        let (c, _warnings) = lower_route_with_layout(route, "PageLayout", SHELL_LAYOUT);
+        assert!(
+            matches!(c.root, JsxNode::Document { .. }),
+            "expected Document (inline succeeded, no fragment error), got {:?}",
+            c.root
+        );
     }
 
     #[test]
