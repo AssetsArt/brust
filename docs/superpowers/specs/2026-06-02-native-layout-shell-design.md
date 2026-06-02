@@ -58,9 +58,11 @@ Three coordinated compiler changes; the example refactor rides on top.
 
 ### Change 1 — document-root inline (lower.rs)
 
-In `lower_with_sources`, when the route-root JSX is a capitalized custom component (not `Island`, not literal `BrustPage`) carrying a bare `native` attribute, take a dedicated **root-inline** path rather than the generic `lower_element`:
+**Seam (pinned per spec review B1/F2):** the `<BrustPage>`-as-document promotion is gated at the **`lower_with_sources` route-root dispatch** via a **dedicated path** — NOT inside `lower_element` (its signature stays untouched; it keeps rejecting any `<BrustPage>` it sees) and NOT inside the shared `lower_component_inline` when reached via the nested `try_native_inline` path. Concretely: a `doc_root_allowed` capability is true ONLY on the route-root inline; the nested `try_native_inline` → `lower_component_inline` call passes it false, so a layout used below the root still hits `BrustPageMustBeRoot`. Implementation may either (a) add a dedicated `lower_root_native_component` helper in `lower_with_sources` that reuses `try_native_inline`'s resolve/parse/analyze/cycle/splice core with `doc_root_allowed=true`, or (b) thread a `doc_root_allowed: bool` only through the `try_native_inline`/`lower_component_inline` pair (default false; true only for the route-root call). Plan picks one after reading the seam. `lower_element` is NOT modified either way.
 
-- Build the `subst` map from the call-site attributes exactly as `lower_ssr_component`'s native branch does (title/lang/className/active/crumb/teamProps → `Expr`; reject spreads/JSX-in-attr the same way).
+In `lower_with_sources`, when the route-root JSX is a capitalized custom component (not `Island`, not literal `BrustPage`) carrying a bare `native` attribute, take this **root-inline** path rather than the generic `lower_element`:
+
+- Build the `subst` map from the call-site attributes exactly as `lower_ssr_component`'s native branch does (title/lang/className/active/crumb/teamProps → `Expr`; reject spreads/JSX-in-attr the same way). `native` and `key` attrs are skipped (dropped, not subst'd), as in the existing native branch (lower.rs ~816). **`isr` on the route-root layout component is out of scope (spec review F4/OQ3):** it is ignored with a warning, consistent with `try_native_inline`'s "isr ignored on inlined native component" (lower.rs ~1208). Documented under Known limitations.
 - Resolve + parse the component source from `InlineEnv.sources` (reuse `try_native_inline`'s resolve/parse/analyze/cycle steps).
 - Lower the component body under an inline scope (`InlineCtx { subst }`), but with a **"document root permitted"** signal so that **iff** the body's single-return root element is `<BrustPage>`, it is lowered via `lower_brust_page` (under the inline scope) → `JsxNode::Document`.
 - Splice call-site children into `ChildrenSlot`s (`splice_children_slots` already handles `JsxNode::Document`, line ~1255 — no change there).
@@ -79,7 +81,11 @@ Under the document-root inline, the head prop is written as `title={title}` insi
 - `Expr::StaticText(s)` — when the page passed a string literal (`title="PokéDex · brust example"`). **NEW:** accept `Expr::StaticText(s)` → `HeadValue::Literal(s)`.
 - `Expr::Field` / `Expr::MemberAccess` — when the page passed a loader path (`title={pageTitle}`). Already → `HeadValue::Path` (unchanged).
 
-Any other resolved shape (arith, call, etc.) keeps the existing `BrustPageAttrMustBeStringLiteral` rejection. This single added match arm (`StaticText` → `Literal`) is the only behavioral change in `lower_brust_page`; the literal/path branches are unchanged. (Escaping is unchanged — head paths still emit `{{ path | e }}` per `brust-jinja-autoescape-none`.)
+**Exact match-arm location (pinned per spec review B2):** the new `StaticText → Literal` arm goes ONLY inside the `JSXAttrValue::JSXExprContainer` branch's `lower_expr(e, scope)` result match (lower.rs ~680-692), alongside the existing `Field | MemberAccess` arm. The separate `JSXAttrValue::Str(s)` branch (~668-671, for a literal written directly on the tag) is already correct and is NOT touched — the `StaticText` shape only arises because inline subst has already converted the `{title}` container into a resolved `Expr`.
+
+Any other resolved shape (arith, call, etc.) keeps the existing `BrustPageAttrMustBeStringLiteral` rejection. This single added match arm (`StaticText` → `Literal`) is the only behavioral change in `lower_brust_page`; the literal/path branches are unchanged. (Escaping is unchanged — head paths still emit `{{ path | e }}` per `brust-jinja-autoescape-none`; `HeadValue::Literal` is pre-escaped at emit by `push_html_escaped`/`push_attr_escaped`, so there is no double-escape and no path divergence between the `Str` and `StaticText` origins.)
+
+**Note — `infer_props_types` / `props.types` is NOT load-bearing here (spec review B3 falsified):** `compile_full` returns the emitted jinja template + island/component manifests; it does not emit any Rust struct from `props.types`/`props.bindings`, and `emit_jinja` reads neither. Native routes render via minijinja with the loader's return as the dynamic scope (`{{ pageTitle | e }}` resolves at runtime). The `Document` arm of `infer_props_types` (lower.rs ~3056) walking only `body` and not the `HeadValue` fields is therefore pre-existing and harmless — DetailPage already ships `<BrustPage title={pageTitle}>` (S8, in `0.1.13-alpha`) with `pageTitle` referenced nowhere in its body, and it builds and runs. No change to `infer_props_types` is required or in scope.
 
 ### Change 3 — none for children
 
@@ -88,6 +94,7 @@ Any other resolved shape (arith, call, etc.) keeps the existing `BrustPageAttrMu
 ### Example refactor (`example/pokedex/`)
 
 - **New** `components/PageLayout.tsx` — the inlined shell+chrome component (props `title`, `active: 'list' | 'typechart'`, `crumb`, `teamProps`, `children`). Active-nav uses S11 conditional **elements** (`{active === 'list' ? <a is-active/> : <a/>}`) — NOT a className ternary (unsupported; `AttrValue` has no conditional variant).
+  - **Authoring constraint (spec review F3):** `PageLayout.tsx` MUST be a single-`return` function with NO local bindings above the return (no `const navItems = […]`). A local binding makes `lower_component_inline` return `InlineUntranslatable("local binding")` (lower.rs ~269), which **soft-falls-back to an SSR component** — i.e. the route silently loses its `<html>/<head>/<body>` shell rather than hard-erroring. The dogfood `PageLayout` is already single-return; the plan's compiler change keeps this fallback path intact (it does not turn the fallback into an error).
 - **Refactor** `pages/ListPage.tsx`, `pages/DetailPage.tsx`, `pages/TypeChart.tsx` to return `<PageLayout native …>{inner}</PageLayout>`, deleting the duplicated `<BrustPage>` + sidebar + topbar + `<Island TeamBuilder>` (~50 lines × 3).
   - ListPage: `title="PokéDex · brust example"` `active="list"` `crumb="All Pokémon"`.
   - DetailPage: `title={pageTitle}` (loader path) `active="list"` `crumb={displayName}` (loader path); inner keeps the `{notFound ? … : …}` branch.
@@ -107,10 +114,10 @@ Any other resolved shape (arith, call, etc.) keeps the existing `BrustPageAttrMu
 **Compiler crate unit tests** (`crates/jsx-rust-compiler/`, `cargo test`) — the load-bearing layer, tested first (TDD):
 
 1. **Document-root inline happy path** — route root `<Layout native title="T">…<BrustPage> body…</BrustPage></Layout>` (Layout source in `sources`) lowers to a `Component` whose `root` is `JsxNode::Document` with `title = HeadValue::Literal("T")`, `lang` defaulting to `en`.
-2. **Head prop via member-path subst** — page passes `title={pageTitle}`; Document `title = HeadValue::Path(MemberAccess|Field)` rooted at the route prop; emitted jinja contains `{{ pageTitle | e }}`.
+2. **Head prop via member-path subst** — page passes `title={pageTitle}` (a bare destructured ident); Document `title = HeadValue::Path(Expr::Field("pageTitle"))` (assert `Field`, not `MemberAccess` — `MemberAccess` is only for a dotted path like `data.pageTitle`); emitted jinja contains `{{ pageTitle | e }}`.
 3. **Children splice into shell** — `{children}` inside the layout's `<BrustPage>` body is replaced by the call-site children in the emitted Document body.
 4. **Nested `<BrustPage>` still rejected** — `<div><BrustPage/></div>` (literal nested) → `BrustPageMustBeRoot`.
-5. **Non-root layout use still rejected** — a `native` component rooting in `<BrustPage>` used **below** the route root (e.g. inside a `<div>`) does not become a Document; the nested `<BrustPage>` rejects (or soft-falls-back) — it must NOT silently emit a second shell.
+5. **Non-root layout use still rejected** — a `native` component rooting in `<BrustPage>` used **below** the route root (route root = `<div><Layout native/></div>`) does NOT become a Document. Because `doc_root_allowed` is false on the nested `try_native_inline`→`lower_component_inline` path, the layout's root `<BrustPage>` reaches `lower_element` and rejects with `BrustPageMustBeRoot` (or soft-falls-back) — it must NOT emit a nested second `<html>` shell. Assert the error/fallback, and assert no `JsxNode::Document` appears below the route root.
 6. **Layout rooting in a normal element** — unchanged: produces an element root, not a Document (regression guard for existing T6).
 7. **`active === 'list'` conditional element** inside the inlined layout lowers to `JsxNode::Cond` with a string-literal compare operand (guards the example's nav mechanism at the IR level).
 
@@ -137,6 +144,8 @@ Any other resolved shape (arith, call, etc.) keeps the existing `BrustPageAttrMu
 - Only the route-root component may own the shell. A layout used below the root cannot emit `<BrustPage>`.
 - Active-nav is a string-literal `active` prop compared inside the layout; adding a nav item is a code edit in `PageLayout.tsx` (acceptable for an example).
 - Router-level `<Outlet>` remains unbuilt — pages still each invoke `<PageLayout>` explicitly. This is composition, not injection.
+- `isr` on the route-root layout component is ignored (warn), not supported.
+- `PageLayout.tsx` must be a single-return function with no local bindings above the return; violating that soft-falls-back to an SSR component (no shell), not a hard error (spec review F3).
 
 ## Open questions resolved at plan-time
 
