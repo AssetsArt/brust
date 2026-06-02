@@ -26,9 +26,10 @@ S13 SPA-nav (รอบก่อน) · **native layout (chrome ซ้ำ 3 ห�
 พ่วง **XSS hardening** (`5a4c4ca`): dynamic HTML output ทุกจุด escape ด้วย `{{ (expr) | e }}`
 แล้ว (เดิม verbatim = ช่อง XSS จริง — request param ไหลเข้า `<title>` ได้).
 
-**ยังเปิด:** S4/S6/S7 (island store / session / typed error) · S2 (loader cache) · static asset ·
-native **Outlet/router-level layout injection** · nested `.map()` · dark-mode `data-*`. ·
-**BY-DESIGN:** S3 (Suspense).
+**ยังเปิด:** S4/S6/S7 (island store / session / typed error) · S2 (loader cache) ·
+native **Outlet/router-level layout injection** · nested `.map()` · dark-mode `data-*` ·
+`<BrustPage>` head `<link>`/`data-*` (favicon auto-ref). ·
+**BY-DESIGN:** S3 (Suspense). · **✅ static/public asset serving — รอบนี้** (boot manifest, static-wins).
 
 ## สรุปสั้น (native เขียนยังไงให้ผ่าน — หลัง Cluster A)
 
@@ -285,13 +286,28 @@ list page เลี่ยง N+1 ด้วยการ derive artwork จาก 
 
 ---
 
-## ○ ไม่มี static/public asset serving · CONFIRMED
+## ○ static/public asset serving · ✅ FIXED (แก้ framework แล้ว)
 
-เสิร์ฟได้แค่ `/_brust/css/*` กับ `/_brust/islands/*` — ไม่มี public dir. logo-mark ของ
-prototype เลยใช้ไม่ได้ → แทนด้วย brand-mark gradient + ตัว "P" (CSS ล้วน). `favicon.ico`
-ก็ 404 ใน console.
+**fix:** server เสิร์ฟ `public/` ที่ root แล้ว — `public/favicon.svg` → `GET /favicon.svg`,
+`public/img/x.png` → `/img/x.png`. boot เดิน `public/` ครั้งเดียวสร้าง manifest `URL→file`
+(in-memory) แล้ว **static ชนะ app route** (ทุก `/_brust/*` handler ยัง `continue` ก่อน).
+napi `configure_public_dir` ตั้ง dir per-mode (dev `<scanRoot>/public`, prebuilt `<dist>/public`);
+`brust build` copy `public/`→`dist/public/`. Content-Type จาก extension; dev = `no-store`,
+prod = `max-age=3600`. **Traversal-safe by construction** (request path เป็น map key ล้วน
+ไม่ join กับ path), reserved `/_brust/` keys + symlink-escape ถูกตัดตอน build manifest.
+**dogfood:** เพิ่ม `example/pokedex/public/favicon.svg` — `curl /favicon.svg` → 200 `image/svg+xml`.
 
-**proposal:** เสิร์ฟ `public/` (favicon, รูป, sprite cache) ผ่าน static route.
+**เดิม:** เสิร์ฟได้แค่ `/_brust/css/*` กับ `/_brust/islands/*` — ไม่มี public dir; `favicon.ico` 404.
+
+**ยังเปิด (related):**
+- browser auto-request `/favicon.ico` (ไม่ใช่ `.svg`); `<BrustPage>` head ตั้ง `<link rel="icon">`
+  เองไม่ได้ (head รับแค่ title/description/lang/className/bodyClassName) → favicon.svg เสิร์ฟได้
+  แต่ยังไม่ถูก reference อัตโนมัติ. ต้องมี head-link capability หรือใส่ favicon.ico จริง.
+- filename ต้อง URL-safe (ASCII, ไม่มี space) — request percent-encoded ไม่ match raw key
+  (warn ตอน boot); percent-decode request path = deferred.
+- ไม่มี hot-add ตอน dev run (manifest สร้างตอน boot — restart), GET-only, ไม่มี range/HEAD.
+
+ดู spec `docs/superpowers/specs/2026-06-02-static-public-assets-design.md`.
 
 ---
 
