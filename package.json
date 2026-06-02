@@ -66,6 +66,7 @@
   "exports": {
     ".": "./runtime/index.ts",
     "./routes": "./runtime/routes.ts",
+    "./client": "./runtime/client/index.ts",
     "./create": "./runtime/create.ts"
   },
   "files": [

@@ -4,7 +4,7 @@
 // so unlike the native page shells they have NO jinja constraints: hooks, inline
 // `style={{…}}`, event handlers all work normally.
 import { useEffect, useState } from 'react'
-import { client } from '../../../runtime/client/index.ts'
+import { client } from 'brustjs/client'
 import type { Actions } from '../actions'
 import type { AddToTeamProps, TeamMember } from '../lib/types'
 import { emitTeam, onTeam } from './team-bus'

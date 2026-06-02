@@ -4,7 +4,7 @@
 // and the dock count is correct on first paint, then hydrates. Stays in sync
 // with AddToTeamButton through the window-event bus (see team-bus.ts / GAPS S4).
 import { useEffect, useState } from 'react'
-import { client } from '../../../runtime/client/index.ts'
+import { client } from 'brustjs/client'
 import type { Actions } from '../actions'
 import type { TeamMember } from '../lib/types'
 import { emitTeam, onTeam } from './team-bus'

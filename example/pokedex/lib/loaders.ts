@@ -6,7 +6,7 @@
 // See ../FRAMEWORK-GAPS.md.
 
 import { z } from 'zod'
-import type { BrustRequest } from '../../../runtime/routes.ts'
+import type { BrustRequest } from 'brustjs/routes'
 import {
   ALL_TYPES,
   artwork,
