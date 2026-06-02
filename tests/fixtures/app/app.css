@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* Scan all TS / TSX under the example for class candidates. The
+/* Scan all TS / TSX under the fixture for class candidates. The
  * @source path is relative to this file. */
 @source "./**/*.{tsx,ts}";
 

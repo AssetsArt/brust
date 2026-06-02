@@ -54,19 +54,21 @@ bun add brustjs
 ```bash
 git clone https://github.com/AssetsArt/brust && cd brust
 bun install
-cd runtime && bun run build && cd ..   # release addon; NOT build:debug (~2× slower)
-bun run example/hello-world/index.ts   # → http://127.0.0.1:1337
+cd runtime && bun run build && cd ..                          # release addon; NOT build:debug (~2× slower)
+bun run runtime/cli/index.ts build example/pokedex/index.ts  # compile native routes → .brust/jinja
+BRUST_PORT=3100 bun run example/pokedex/index.ts             # → http://127.0.0.1:3100
 ```
 
 ```bash
-curl 127.0.0.1:1337/ping                  # → pong               (pure Rust)
-curl 127.0.0.1:1337/                       # → SSR HTML + island
-curl 127.0.0.1:1337/native-profile/World   # → Rust jinja, no React
-curl -N 127.0.0.1:1337/sse-counter         # → SSE frames
+curl 127.0.0.1:3100/ping                  # → pong                    (pure Rust)
+curl 127.0.0.1:3100/                       # → native list page, no server React
+curl 127.0.0.1:3100/pokemon/pikachu        # → native detail, dynamic param
+curl 127.0.0.1:3100/type-chart             # → native 18×18 effectiveness grid
 ```
 
-The [`example/hello-world/`](./example/hello-world) app shows each feature in one
-route apiece.
+The [`example/pokedex/`](./example/pokedex) app dogfoods `native: true` across
+every route; see its [`FRAMEWORK-GAPS.md`](./example/pokedex/FRAMEWORK-GAPS.md) for
+the empirically-found limits.
 
 ## CLI
 
@@ -118,7 +120,7 @@ bun test tests/integration.test.ts   # integration (real server)
 crates/brust/             Rust: accept loop, worker pool, napi exports, SAB
 crates/jsx-rust-compiler/ JSX → jinja compiler for native: true routes
 runtime/                  Bun-side: routing, render, actions, CLI
-example/                  hello-world demo
+example/                  pokedex native-first demo
 bench/ · docs/ · architecture.md
 ```
 
