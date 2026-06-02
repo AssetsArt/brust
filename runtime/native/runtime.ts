@@ -1,6 +1,6 @@
 // Directive runtime — react-free, dom-only. Scans the DOM for x-* directives and
 // binds them to per-element component instances via brustjs/store's `effect`.
-import { effect, isComputed, isSignal } from 'brustjs/store'
+import { effect, isComputed, isSignal } from '../store/index.ts'
 
 export type Instance = Record<string, unknown>
 export type Behavior = (ctx: { el: HTMLElement; props: unknown }) => Instance

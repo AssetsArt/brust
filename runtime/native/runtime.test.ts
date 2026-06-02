@@ -64,7 +64,7 @@ describe('x-text', () => {
   test('binds initial value and updates on signal change; reads a computed', async () => {
     const win = setupDom('<div x-data="t1"><span x-text="label"></span><b x-text="msg"></b></div>')
     const { register, start } = await import(`./runtime.ts?xtext=${Math.random()}`)
-    const { signal, computed } = await import('brustjs/store')
+    const { signal, computed } = await import('../store/index.ts')
     const n = signal(1)
     register('t1', () => ({ msg: n, label: computed(() => `n=${n()}`) }))
     start(win.document)
@@ -80,7 +80,7 @@ describe('x-text', () => {
   test('removing the x-data element disposes effects (no detached update)', async () => {
     const win = setupDom('<div id="host"><div x-data="t2"><span x-text="msg"></span></div></div>')
     const { register, start } = await import(`./runtime.ts?disp=${Math.random()}`)
-    const { signal } = await import('brustjs/store')
+    const { signal } = await import('../store/index.ts')
     const n = signal('a')
     register('t2', () => ({ msg: n }))
     start(win.document)
@@ -97,7 +97,7 @@ describe('x-show + x-bind', () => {
   test('x-show toggles display', async () => {
     const win = setupDom('<div x-data="s1"><p x-show="open">hi</p></div>')
     const { register, start } = await import(`./runtime.ts?show=${Math.random()}`)
-    const { signal } = await import('brustjs/store')
+    const { signal } = await import('../store/index.ts')
     const open = signal(false)
     register('s1', () => ({ open }))
     start(win.document)
@@ -112,7 +112,7 @@ describe('x-show + x-bind', () => {
       '<div x-data="s2"><button x-bind-class="cls" x-bind-disabled="busy" x-bind-data-x="tag">b</button></div>',
     )
     const { register, start } = await import(`./runtime.ts?bind=${Math.random()}`)
-    const { signal } = await import('brustjs/store')
+    const { signal } = await import('../store/index.ts')
     const cls = signal('a b')
     const busy = signal(true)
     const tag = signal('v1')
@@ -166,7 +166,7 @@ describe('x-for', () => {
       '<ul x-data="f1"><li x-for="t in items" x-text="t.name" x-bind-class="cls"></li></ul>',
     )
     const { register, start } = await import(`./runtime.ts?for=${Math.random()}`)
-    const { signal } = await import('brustjs/store')
+    const { signal } = await import('../store/index.ts')
     const items = signal([{ name: 'fire' }, { name: 'water' }])
     register('f1', () => ({ items, cls: signal('chip') }))
     start(win.document)
@@ -182,7 +182,7 @@ describe('x-for', () => {
   test('malformed x-for expression warns and skips', async () => {
     const win = setupDom('<ul x-data="f2"><li x-for="garbage" x-text="t"></li></ul>')
     const { register, start } = await import(`./runtime.ts?for2=${Math.random()}`)
-    const { signal } = await import('brustjs/store')
+    const { signal } = await import('../store/index.ts')
     register('f2', () => ({ items: signal([]) }))
     expect(() => start(win.document)).not.toThrow()
   })
@@ -192,7 +192,7 @@ describe('lifecycle', () => {
   test('dynamic add mounts; nested x-data is independent and not double-bound by the outer', async () => {
     const win = setupDom('<div id="host"></div>')
     const { register, start } = await import(`./runtime.ts?life=${Math.random()}`)
-    const { signal } = await import('brustjs/store')
+    const { signal } = await import('../store/index.ts')
     let outerInits = 0
     let innerInits = 0
     register('outer', () => ({
