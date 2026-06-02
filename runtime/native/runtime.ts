@@ -119,6 +119,13 @@ function bindAttrs(el: HTMLElement, scope: Instance, disposers: Array<() => void
       )
       continue
     }
+    if (name.startsWith('x-on-')) {
+      const eventName = name.slice('x-on-'.length)
+      const handler = (e: Event) => callMethod(scope, value, e)
+      el.addEventListener(eventName, handler)
+      disposers.push(() => el.removeEventListener(eventName, handler))
+      continue
+    }
   }
 }
 
@@ -204,4 +211,11 @@ export function resolveRaw(scope: Instance, path: string): unknown {
     cur = (cur as Record<string, unknown>)[part]
   }
   return cur
+}
+
+/** Resolve `path` on `scope` and, if a function, call it with the event. */
+export function callMethod(scope: Instance, path: string, event: Event): void {
+  const fn = resolveRaw(scope, path)
+  if (typeof fn === 'function') (fn as (e: Event) => unknown)(event)
+  else console.warn(`[brust] x-on target "${path}" is not a function`)
 }

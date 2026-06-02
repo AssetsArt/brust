@@ -130,3 +130,32 @@ describe('x-show + x-bind', () => {
     expect(btn.className).toBe('c')
   })
 })
+
+describe('x-on', () => {
+  test('x-on-click calls the named method with the event', async () => {
+    const win = setupDom('<div x-data="o1"><button x-on-click="inc">+</button></div>')
+    const { register, start } = await import(`./runtime.ts?on=${Math.random()}`)
+    let calls = 0
+    let lastType = ''
+    register('o1', () => ({
+      inc(e: Event) {
+        calls++
+        lastType = e.type
+      },
+    }))
+    start(win.document)
+    const btn = win.document.querySelector('button')!
+    btn.dispatchEvent(new win.Event('click', { bubbles: true }))
+    expect(calls).toBe(1)
+    expect(lastType).toBe('click')
+  })
+
+  test('x-on target that is not a function warns, does not throw', async () => {
+    const win = setupDom('<div x-data="o2"><button x-on-click="nope">x</button></div>')
+    const { register, start } = await import(`./runtime.ts?on2=${Math.random()}`)
+    register('o2', () => ({ nope: 5 }))
+    start(win.document)
+    const btn = win.document.querySelector('button')!
+    expect(() => btn.dispatchEvent(new win.Event('click', { bubbles: true }))).not.toThrow()
+  })
+})
