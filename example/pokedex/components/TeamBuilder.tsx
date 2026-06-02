@@ -2,33 +2,43 @@
 //
 // Rendered with `ssr` so the initial team (from the loader) ships in the HTML
 // and the dock count is correct on first paint, then hydrates. Stays in sync
-// with AddToTeamButton through the window-event bus (see team-bus.ts / GAPS S4).
+// with AddToTeamButton through the shared `teamStore` (one window singleton — see
+// ../stores/team.ts / GAPS S4; replaced the old window-event bus).
 import { useEffect, useState } from 'react'
-import { client } from 'brustjs/client'
+import { client, useStore } from 'brustjs/client'
 import type { Actions } from '../actions'
 import type { TeamMember } from '../lib/types'
-import { emitTeam, onTeam } from './team-bus'
+import { teamStore } from '../stores/team'
 
 const api = client<Actions>()
 const MAX = 6
 
 export default function TeamBuilder({ teamInitial }: { teamInitial: TeamMember[] }) {
-  const [team, setTeam] = useState<TeamMember[]>(teamInitial ?? [])
+  // Shared store (GAP S4): in sync with AddToTeamButton via one window singleton.
+  const { members } = useStore(teamStore)
+  const [mounted, setMounted] = useState(false)
   const [open, setOpen] = useState(false)
 
+  // This island is `ssr`, but Spec A does not server-seed native client state, so
+  // the store is empty during SSR. Drive the first render (server + client) from
+  // the `teamInitial` prop so the dock count is correct on first paint AND the
+  // hydration markup matches; switch to the live store once mounted. (Full
+  // server-seeded native snapshot is Spec B.)
+  const team = mounted ? (members ?? []) : (teamInitial ?? [])
+
   useEffect(() => {
-    // Re-sync from the server on mount (the SSR snapshot may be stale by now),
-    // then subscribe to mutations from the other island.
+    if (teamInitial?.length) teamStore.members.set(teamInitial)
+    setMounted(true)
+    // Re-sync from the server on mount (the SSR snapshot may be stale by now).
     api.team.get().then((r) => {
-      if (r.data) setTeam(r.data.team)
+      if (r.data) teamStore.members.set(r.data.team)
     })
-    return onTeam(setTeam)
-  }, [])
+  }, [teamInitial])
 
   async function remove(id: number) {
     // `.delete({})` — empty body is required (bodyless DELETE → 411). See GAPS S12.
     const { data } = await api.team({ id }).delete({})
-    if (data) emitTeam(data.team)
+    if (data) teamStore.members.set(data.team)
   }
 
   const coverage = [...new Set(team.flatMap((m) => m.types))]

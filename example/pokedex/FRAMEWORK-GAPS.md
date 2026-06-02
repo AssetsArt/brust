@@ -272,15 +272,22 @@ loader ตั้ง `pageTitle = "<Name> · PokéDex"` (ครบทุก path 
 
 ---
 
-## ◆ S4 — ไม่มี cross-island shared-state primitive · CONFIRMED (workaround ใช้ได้)
+## ◆ S4 — ไม่มี cross-island shared-state primitive · ✅ FIXED (Spec A — isomorphic store)
 
-**อาการ:** `AddToTeamButton` กับ `TeamBuilder` เป็นคนละ island/คนละ bundle ต้องโชว์ทีมเดียวกัน.
-import store กลางร่วมกัน = ถูก bundle ซ้ำเป็นคนละ instance → ไม่ sync.
+**fix:** `brustjs/store` `defineStore(name, factory)` — บน client resolve เป็น instance เดียว
+ต่อ `name` บน `window.__BRUST_STORES__` (island คนละ bundle เห็น instance เดียวกัน) แล้ว
+`useStore(store)` (จาก `brustjs/client`, สร้างบน `useSyncExternalStore`) ให้ island re-render
+ตาม store. **dogfood:** `stores/team.ts` = `defineStore('pokedex.team', …)`; `AddToTeamButton`
++ `TeamBuilder` เลิกใช้ event bus หันมา `useStore(teamStore)` + `teamStore.members.set(...)` ตอน
+mutate → sync ข้าม island ผ่าน singleton. **ลบ `components/team-bus.ts` แล้ว.**
 
-**workaround:** `components/team-bus.ts` ใช้ `window` CustomEvent (สิ่งเดียวที่ทุก chunk แชร์จริง).
-ยืนยันใน browser: กด Add ที่หน้า detail → dock count อัปเดตทันที.
+**ข้อจำกัด (Spec A):** native page **ไม่** server-seed store snapshot ลง HTML (ไม่มี
+`<script data-brust-store>` ใน native) — TeamBuilder (ssr island) จึง drive first paint จาก
+prop `teamInitial` จนกว่าจะ mounted แล้วค่อยสลับมาใช้ store (กัน hydration mismatch). การ
+server-seed native client state เต็มรูปแบบ = **Spec B** (separate Alpine-style client script).
 
-**proposal:** `createIslandStore()` หรือ documented pattern + ตัวอย่าง optimistic+reconcile.
+**อาการเดิม:** คนละ bundle → module store ถูก duplicate → ไม่ sync.
+**workaround เดิม (เลิกใช้แล้ว):** `components/team-bus.ts` ใช้ `window` CustomEvent.
 
 ---
 
