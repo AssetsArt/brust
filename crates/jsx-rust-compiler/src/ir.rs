@@ -40,6 +40,9 @@ pub enum JsxNode {
     },
     Text(String),
     Expr(Expr),
+    /// Raw, un-escaped inner HTML from `dangerouslySetInnerHTML={{ __html }}`.
+    /// Literal → emitted verbatim; Path → `{{ (path) | safe }}`. Trusted-data only.
+    RawHtml(HeadValue),
     Map {
         source: Expr,
         binding: String,
@@ -66,6 +69,8 @@ pub enum JsxNode {
         title: Option<HeadValue>,
         /// `<meta name="description" content="…">` — `description` prop.
         description: Option<HeadValue>,
+        /// `<BrustPage head={[…]}>` — extra head elements (link/meta/base/style/script/noscript).
+        head: Vec<HeadEntry>,
         /// Page body — every `<BrustPage>` child (all become `<body>` content).
         body: Vec<JsxNode>,
     },
@@ -153,6 +158,44 @@ pub enum JsxNode {
 pub enum HeadValue {
     Literal(String),
     Path(Expr),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeadTag {
+    Link,
+    Meta,
+    Base,
+    Style,
+    Script,
+    Noscript,
+}
+
+impl HeadTag {
+    pub fn name(self) -> &'static str {
+        match self {
+            HeadTag::Link => "link",
+            HeadTag::Meta => "meta",
+            HeadTag::Base => "base",
+            HeadTag::Style => "style",
+            HeadTag::Script => "script",
+            HeadTag::Noscript => "noscript",
+        }
+    }
+    /// void = self-closing, no inner text.
+    pub fn is_void(self) -> bool {
+        matches!(self, HeadTag::Link | HeadTag::Meta | HeadTag::Base)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct HeadEntry {
+    pub tag: HeadTag,
+    /// attr name (already camelCase→html mapped) → literal|member-path value.
+    pub attrs: Vec<(String, HeadValue)>,
+    /// presence attrs from boolean `true` (e.g. `defer`, `async`).
+    pub bool_attrs: Vec<String>,
+    /// inner content for style/script/noscript — static literal only.
+    pub text: Option<String>,
 }
 
 #[derive(Debug, Clone)]

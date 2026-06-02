@@ -571,6 +571,7 @@ fn subtree_contains_fragment(node: &JsxNode) -> bool {
         JsxNode::Empty
         | JsxNode::Text(_)
         | JsxNode::Expr(_)
+        | JsxNode::RawHtml(_)
         | JsxNode::Island { .. }
         | JsxNode::ChildrenSlot => false,
     }
@@ -606,10 +607,35 @@ fn lower_element(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode
     }
 
     let tag = lower_element_name(&el.opening.name)?;
+    // `dangerouslySetInnerHTML={{ __html: <literal | member-path> }}` — React's
+    // raw-HTML escape hatch. Detected before the normal attr/children build so it
+    // is NOT routed through `lower_attr`; its value becomes a single `RawHtml`
+    // child emitted un-escaped (literal verbatim, path via `| safe`).
+    let mut raw_html: Option<crate::ir::HeadValue> = None;
+    for a in &el.opening.attrs {
+        let JSXAttrOrSpread::JSXAttr(jsx_attr) = a else {
+            continue;
+        };
+        let JSXAttrName::Ident(name) = &jsx_attr.name else {
+            continue;
+        };
+        if name.sym.as_ref() != "dangerouslySetInnerHTML" {
+            continue;
+        }
+        raw_html = Some(lower_dangerously_set_inner_html(jsx_attr, scope)?);
+    }
+
     // T6: attr precedence (key drop, ref/on*/uppercase rejection, rename table),
     // void-element children check, whitespace-only JSXText filtering.
     let mut attrs = Vec::new();
     for a in &el.opening.attrs {
+        // The `dangerouslySetInnerHTML` attr is consumed above, not emitted.
+        if let JSXAttrOrSpread::JSXAttr(jsx_attr) = a
+            && let JSXAttrName::Ident(name) = &jsx_attr.name
+            && name.sym.as_ref() == "dangerouslySetInnerHTML"
+        {
+            continue;
+        }
         if let Some(attr) = lower_attr(a, scope)? {
             attrs.push(attr);
         }
@@ -622,6 +648,18 @@ fn lower_element(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode
         if let Some(node) = lower_child(child, scope, in_map)? {
             children.push(node);
         }
+    }
+
+    // `dangerouslySetInnerHTML` owns the element's inner content — React rejects
+    // an element that has both, and the raw child would otherwise be ambiguous.
+    if let Some(hv) = raw_html {
+        if !children.is_empty() {
+            return Err(LowerError::at(
+                el.opening.span,
+                ErrorKind::DangerouslySetInnerHtmlWithChildren,
+            ));
+        }
+        children = vec![JsxNode::RawHtml(hv)];
     }
 
     // T6: void element with non-empty (post-filter) children → error.
@@ -637,6 +675,52 @@ fn lower_element(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode
         attrs,
         children,
     })
+}
+
+/// Lower a `dangerouslySetInnerHTML={{ __html: … }}` attribute value. The value
+/// must be an object literal with exactly one `__html` key whose value is a
+/// string literal (→ `Literal`, emitted verbatim) or a loader member-path (→
+/// `Path`, emitted via `{{ (path) | safe }}`). Anything else is rejected.
+fn lower_dangerously_set_inner_html(
+    jsx_attr: &swc_core::ecma::ast::JSXAttr,
+    scope: &Scope,
+) -> Result<crate::ir::HeadValue, LowerError> {
+    let span = jsx_attr.span;
+    let err = || LowerError::at(span, ErrorKind::DangerouslySetInnerHtmlInvalid);
+
+    let Some(JSXAttrValue::JSXExprContainer(c)) = &jsx_attr.value else {
+        return Err(err());
+    };
+    let JSXExpr::Expr(e) = &c.expr else {
+        return Err(err());
+    };
+    let SwcExpr::Object(obj) = strip_paren(e.as_ref()) else {
+        return Err(err());
+    };
+    if obj.props.len() != 1 {
+        return Err(err());
+    }
+    let PropOrSpread::Prop(p) = &obj.props[0] else {
+        return Err(err());
+    };
+    let Prop::KeyValue(kv) = p.as_ref() else {
+        return Err(err());
+    };
+    let key = match &kv.key {
+        PropName::Ident(i) => i.sym.to_string(),
+        PropName::Str(s) => s.value.to_string_lossy().into_owned(),
+        _ => return Err(err()),
+    };
+    if key != "__html" {
+        return Err(err());
+    }
+    match lower_expr(&kv.value, scope) {
+        Ok(crate::ir::Expr::StaticText(s)) => Ok(crate::ir::HeadValue::Literal(s)),
+        Ok(ex @ (crate::ir::Expr::Field(_) | crate::ir::Expr::MemberAccess { .. })) => {
+            Ok(crate::ir::HeadValue::Path(ex))
+        }
+        _ => Err(err()),
+    }
 }
 
 /// Lower the built-in `<BrustPage …>…</BrustPage>` document shell into
@@ -670,6 +754,7 @@ fn lower_brust_page(el: &JSXElement, scope: &Scope) -> Result<JsxNode, LowerErro
     let mut body_class: Option<crate::ir::HeadValue> = None;
     let mut title: Option<crate::ir::HeadValue> = None;
     let mut description: Option<crate::ir::HeadValue> = None;
+    let mut head: Vec<crate::ir::HeadEntry> = Vec::new();
 
     for attr in &el.opening.attrs {
         let JSXAttrOrSpread::JSXAttr(jsx_attr) = attr else {
@@ -687,6 +772,13 @@ fn lower_brust_page(el: &JSXElement, scope: &Scope) -> Result<JsxNode, LowerErro
                 ));
             }
         };
+
+        // `head` is an array of head-entry objects, not a HeadValue slot — parse
+        // it separately before the scalar-prop slot match.
+        if name == "head" {
+            parse_head_array(jsx_attr, scope, &mut head)?;
+            continue;
+        }
 
         // Only the curated shell/head props are read; everything else is ignored
         // so future props don't hard-error older compilers.
@@ -776,8 +868,145 @@ fn lower_brust_page(el: &JSXElement, scope: &Scope) -> Result<JsxNode, LowerErro
         body_class,
         title,
         description,
+        head,
         body,
     })
+}
+
+/// Parse a `<BrustPage head={[…]}>` array literal into `HeadEntry`s. Mirrors the
+/// SWC object-parse pattern used by `parse_isr_object`. Each element must be an
+/// object literal with a `tag` discriminant; `text` is a static string literal
+/// only (dynamic text is an XSS vector — see the design doc security model).
+fn parse_head_array(
+    jsx_attr: &swc_core::ecma::ast::JSXAttr,
+    scope: &Scope,
+    out: &mut Vec<crate::ir::HeadEntry>,
+) -> Result<(), LowerError> {
+    use crate::ir::{HeadEntry, HeadTag, HeadValue};
+    let span = jsx_attr.span;
+    let arr_err = || LowerError::at(span, ErrorKind::BrustPageHeadMustBeArray);
+    let entry_err = || LowerError::at(span, ErrorKind::BrustPageHeadEntryInvalid);
+
+    let Some(JSXAttrValue::JSXExprContainer(c)) = &jsx_attr.value else {
+        return Err(arr_err());
+    };
+    let JSXExpr::Expr(e) = &c.expr else {
+        return Err(arr_err());
+    };
+    let SwcExpr::Array(arr) = strip_paren(e.as_ref()) else {
+        return Err(arr_err());
+    };
+
+    for el in &arr.elems {
+        let Some(item) = el else {
+            return Err(entry_err());
+        };
+        if item.spread.is_some() {
+            return Err(entry_err());
+        }
+        let SwcExpr::Object(obj) = strip_paren(item.expr.as_ref()) else {
+            return Err(entry_err());
+        };
+
+        let mut tag: Option<HeadTag> = None;
+        let mut attrs: Vec<(String, HeadValue)> = Vec::new();
+        let mut bool_attrs: Vec<String> = Vec::new();
+        let mut text: Option<String> = None;
+
+        for prop in &obj.props {
+            let PropOrSpread::Prop(p) = prop else {
+                return Err(entry_err());
+            };
+            let Prop::KeyValue(kv) = p.as_ref() else {
+                return Err(entry_err());
+            };
+            let key = match &kv.key {
+                PropName::Ident(i) => i.sym.to_string(),
+                PropName::Str(s) => s.value.to_string_lossy().into_owned(),
+                _ => return Err(entry_err()),
+            };
+            if key == "tag" {
+                let SwcExpr::Lit(Lit::Str(s)) = strip_paren(&kv.value) else {
+                    return Err(entry_err());
+                };
+                tag = Some(match s.value.to_string_lossy().as_ref() {
+                    "link" => HeadTag::Link,
+                    "meta" => HeadTag::Meta,
+                    "base" => HeadTag::Base,
+                    "style" => HeadTag::Style,
+                    "script" => HeadTag::Script,
+                    "noscript" => HeadTag::Noscript,
+                    _ => return Err(entry_err()),
+                });
+                continue;
+            }
+            if key == "text" {
+                let SwcExpr::Lit(Lit::Str(s)) = strip_paren(&kv.value) else {
+                    return Err(LowerError::at(
+                        span,
+                        ErrorKind::BrustPageHeadTextMustBeLiteral,
+                    ));
+                };
+                text = Some(s.value.to_string_lossy().into_owned());
+                continue;
+            }
+            // boolean presence attr (`defer`, `async`)
+            if let SwcExpr::Lit(Lit::Bool(b)) = strip_paren(&kv.value) {
+                if b.value {
+                    bool_attrs.push(map_head_attr_key(&key));
+                }
+                continue;
+            }
+            // string literal attr
+            if let SwcExpr::Lit(Lit::Str(s)) = strip_paren(&kv.value) {
+                attrs.push((
+                    map_head_attr_key(&key),
+                    HeadValue::Literal(s.value.to_string_lossy().into_owned()),
+                ));
+                continue;
+            }
+            // member-path attr (same contract as title/description)
+            match lower_expr(&kv.value, scope) {
+                Ok(crate::ir::Expr::StaticText(s)) => {
+                    attrs.push((map_head_attr_key(&key), HeadValue::Literal(s)));
+                }
+                Ok(ex @ (crate::ir::Expr::Field(_) | crate::ir::Expr::MemberAccess { .. })) => {
+                    attrs.push((map_head_attr_key(&key), HeadValue::Path(ex)));
+                }
+                _ => {
+                    return Err(LowerError::at(
+                        span,
+                        ErrorKind::BrustPageAttrMustBeStringLiteral(key),
+                    ));
+                }
+            }
+        }
+
+        let Some(tag) = tag else {
+            return Err(entry_err());
+        };
+        if text.is_some() && tag.is_void() {
+            return Err(LowerError::at(span, ErrorKind::BrustPageHeadTextOnVoid));
+        }
+        out.push(HeadEntry {
+            tag,
+            attrs,
+            bool_attrs,
+            text,
+        });
+    }
+    Ok(())
+}
+
+/// camelCase head-attr key → HTML attribute name. Only the two camelCase cases
+/// need mapping; every other field in the HeadEntry union is already a lowercase
+/// HTML attribute name.
+fn map_head_attr_key(k: &str) -> String {
+    match k {
+        "crossOrigin" => "crossorigin".to_string(),
+        "httpEquiv" => "http-equiv".to_string(),
+        other => other.to_string(),
+    }
 }
 
 fn lower_ssr_component(
@@ -1342,6 +1571,7 @@ fn splice_children_slots(node: &mut JsxNode, children: &[JsxNode]) {
         JsxNode::Empty
         | JsxNode::Text(_)
         | JsxNode::Expr(_)
+        | JsxNode::RawHtml(_)
         | JsxNode::Island { .. }
         | JsxNode::SsrComponent { .. }
         | JsxNode::ChildrenSlot => {}
@@ -3105,9 +3335,21 @@ fn infer_props_types(node: &JsxNode, props: &mut PropsShape) -> Result<(), Lower
             Ok(())
         }
         JsxNode::Expr(e) => infer_from_expr(e, props),
-        // Walk the body for prop references; the shell/head props are
-        // compile-time literals and contribute no prop types.
-        JsxNode::Document { body, .. } => {
+        // `dangerouslySetInnerHTML` member-path → infer the prop it reads from
+        // (a literal contributes nothing).
+        JsxNode::RawHtml(HeadValue::Path(e)) => infer_from_expr(e, props),
+        JsxNode::RawHtml(HeadValue::Literal(_)) => Ok(()),
+        // Walk the body for prop references. Also walk `head` entry attribute
+        // member-paths (a dynamic value used ONLY in a head entry, e.g.
+        // `{ tag:'meta', content: data.title }`, still needs its prop inferred).
+        JsxNode::Document { body, head, .. } => {
+            for entry in head {
+                for (_, hv) in &entry.attrs {
+                    if let HeadValue::Path(e) = hv {
+                        infer_from_expr(e, props)?;
+                    }
+                }
+            }
             for c in body {
                 infer_props_types(c, props)?;
             }
@@ -3232,6 +3474,10 @@ fn collect_map_member_fields(
             }
         }
         JsxNode::Expr(e) => collect_map_member_from_expr(e, binding, fields),
+        // `dangerouslySetInnerHTML` path carries a member-path expr; route it
+        // through the same collector (a literal carries nothing).
+        JsxNode::RawHtml(HeadValue::Path(e)) => collect_map_member_from_expr(e, binding, fields),
+        JsxNode::RawHtml(HeadValue::Literal(_)) => {}
         // `<BrustPage>` is root-only, so a Document never appears inside a Map
         // body — this arm exists only to keep the match exhaustive.
         JsxNode::Document { .. } => {}

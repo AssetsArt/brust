@@ -161,7 +161,7 @@ fn number_islands(node: &mut JsxNode, counter: &mut usize) {
                 number_islands(c, counter);
             }
         }
-        JsxNode::Empty | JsxNode::Text(_) | JsxNode::Expr(_) => {}
+        JsxNode::Empty | JsxNode::Text(_) | JsxNode::Expr(_) | JsxNode::RawHtml(_) => {}
         JsxNode::Cond {
             consequent,
             alternate,
@@ -227,7 +227,7 @@ fn collect_islands(node: &JsxNode, out: &mut Vec<IslandMeta>) {
         // Islands inside SSR components are NOT in .islands.json — their props
         // are written by Island.tsx React-path render into the DOM directly.
         JsxNode::SsrComponent { .. } => {}
-        JsxNode::Empty | JsxNode::Text(_) | JsxNode::Expr(_) => {}
+        JsxNode::Empty | JsxNode::Text(_) | JsxNode::Expr(_) | JsxNode::RawHtml(_) => {}
         JsxNode::Cond {
             consequent,
             alternate,
@@ -270,7 +270,11 @@ fn number_ssr_components(node: &mut JsxNode, counter: &mut usize) {
             }
         }
         JsxNode::Map { body, .. } => number_ssr_components(body, counter),
-        JsxNode::Empty | JsxNode::Text(_) | JsxNode::Expr(_) | JsxNode::Island { .. } => {}
+        JsxNode::Empty
+        | JsxNode::Text(_)
+        | JsxNode::Expr(_)
+        | JsxNode::RawHtml(_)
+        | JsxNode::Island { .. } => {}
         JsxNode::Cond {
             consequent,
             alternate,
@@ -330,7 +334,11 @@ fn collect_components(node: &JsxNode, out: &mut Vec<ComponentMeta>) {
             }
         }
         JsxNode::Map { body, .. } => collect_components(body, out),
-        JsxNode::Empty | JsxNode::Text(_) | JsxNode::Expr(_) | JsxNode::Island { .. } => {}
+        JsxNode::Empty
+        | JsxNode::Text(_)
+        | JsxNode::Expr(_)
+        | JsxNode::RawHtml(_)
+        | JsxNode::Island { .. } => {}
         JsxNode::Cond {
             consequent,
             alternate,
@@ -611,6 +619,22 @@ pub enum ErrorKind {
         "`<BrustPage>` owns `<head>` — a literal `<head>` child is not supported; set head tags via props instead (e.g. `title=\"…\"`, `description=\"…\"`)"
     )]
     BrustPageLiteralHeadNotSupported,
+    #[error("`<BrustPage head>` must be an array literal of head-entry objects")]
+    BrustPageHeadMustBeArray,
+    #[error(
+        "each `<BrustPage head>` entry must be an object literal with a `tag` of link|meta|base|style|script|noscript"
+    )]
+    BrustPageHeadEntryInvalid,
+    #[error(
+        "`text` in a `<BrustPage head>` entry must be a string literal (no dynamic values — XSS)"
+    )]
+    BrustPageHeadTextMustBeLiteral,
+    #[error("`text` is not allowed on a void head tag (link/meta/base)")]
+    BrustPageHeadTextOnVoid,
+    #[error("`dangerouslySetInnerHTML` must be `{{ __html: <string literal | member-path> }}`")]
+    DangerouslySetInnerHtmlInvalid,
+    #[error("an element with `dangerouslySetInnerHTML` cannot also have children")]
+    DangerouslySetInnerHtmlWithChildren,
     #[error("inline lowering cannot translate `{0}` — expression is too complex for inline mode")]
     InlineUntranslatable(String),
     #[error("circular native inline: {0}")]
@@ -988,6 +1012,194 @@ mod tests {
             ErrorKind::BrustPageAttrMustBeStringLiteral(name) => assert_eq!(name, "lang"),
             other => panic!("expected BrustPageAttrMustBeStringLiteral, got {other:?}"),
         }
+    }
+
+    // ---- Feature A: `<BrustPage head={[…]}>` typed head-entry array ----
+
+    #[test]
+    fn brust_page_head_link_entry_emits_void_tag() {
+        let src = r#"export default function Home() {
+  return <BrustPage head={[{ tag: 'link', rel: 'icon', href: '/favicon.svg' }]}><main>hi</main></BrustPage>;
+}"#;
+        let c = compile_full(src, "<test>", HashMap::new()).unwrap();
+        assert!(
+            c.template
+                .contains("<link rel=\"icon\" href=\"/favicon.svg\"/>"),
+            "got: {}",
+            c.template
+        );
+    }
+
+    #[test]
+    fn brust_page_head_script_bool_attr_emits_presence() {
+        let src = r#"export default function Home() {
+  return <BrustPage head={[{ tag: 'script', src: '/x.js', defer: true }]}><main>hi</main></BrustPage>;
+}"#;
+        let c = compile_full(src, "<test>", HashMap::new()).unwrap();
+        assert!(
+            c.template.contains("<script src=\"/x.js\" defer></script>"),
+            "got: {}",
+            c.template
+        );
+    }
+
+    #[test]
+    fn brust_page_head_style_text_emits_raw_inner() {
+        let src = r#"export default function Home() {
+  return <BrustPage head={[{ tag: 'style', text: '.x{}' }]}><main>hi</main></BrustPage>;
+}"#;
+        let c = compile_full(src, "<test>", HashMap::new()).unwrap();
+        assert!(
+            c.template.contains("<style>.x{}</style>"),
+            "got: {}",
+            c.template
+        );
+    }
+
+    #[test]
+    fn brust_page_head_meta_member_path_is_escaped_interp() {
+        let src = r#"export default function Home({ data }) {
+  return <BrustPage head={[{ tag: 'meta', property: 'og:title', content: data.title }]}><main>hi</main></BrustPage>;
+}"#;
+        let c = compile_full(src, "<test>", HashMap::new()).unwrap();
+        assert!(
+            c.template.contains("content=\"{{ (data.title) | e }}\""),
+            "got: {}",
+            c.template
+        );
+    }
+
+    #[test]
+    fn brust_page_head_cross_origin_maps_to_html_attr() {
+        let src = r#"export default function Home() {
+  return <BrustPage head={[{ tag: 'link', rel: 'preconnect', href: '/x', crossOrigin: 'anonymous' }]}><main>hi</main></BrustPage>;
+}"#;
+        let c = compile_full(src, "<test>", HashMap::new()).unwrap();
+        assert!(
+            c.template.contains("crossorigin=\"anonymous\""),
+            "got: {}",
+            c.template
+        );
+    }
+
+    #[test]
+    fn brust_page_head_http_equiv_maps_to_html_attr() {
+        let src = r#"export default function Home() {
+  return <BrustPage head={[{ tag: 'meta', httpEquiv: 'content-security-policy', content: "default-src 'self'" }]}><main>hi</main></BrustPage>;
+}"#;
+        let c = compile_full(src, "<test>", HashMap::new()).unwrap();
+        assert!(
+            c.template
+                .contains("http-equiv=\"content-security-policy\""),
+            "got: {}",
+            c.template
+        );
+    }
+
+    #[test]
+    fn brust_page_head_non_array_is_rejected() {
+        let src = r#"export default function Home() {
+  return <BrustPage head={"x"}><main>hi</main></BrustPage>;
+}"#;
+        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::BrustPageHeadMustBeArray),
+            "expected BrustPageHeadMustBeArray, got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn brust_page_head_entry_without_tag_is_rejected() {
+        let src = r#"export default function Home() {
+  return <BrustPage head={[{ rel: 'icon' }]}><main>hi</main></BrustPage>;
+}"#;
+        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::BrustPageHeadEntryInvalid),
+            "expected BrustPageHeadEntryInvalid, got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn brust_page_head_dynamic_text_is_rejected() {
+        let src = r#"export default function Home({ data }) {
+  return <BrustPage head={[{ tag: 'style', text: data.css }]}><main>hi</main></BrustPage>;
+}"#;
+        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::BrustPageHeadTextMustBeLiteral),
+            "expected BrustPageHeadTextMustBeLiteral, got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn brust_page_head_text_on_void_tag_is_rejected() {
+        let src = r#"export default function Home() {
+  return <BrustPage head={[{ tag: 'link', text: 'x' }]}><main>hi</main></BrustPage>;
+}"#;
+        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::BrustPageHeadTextOnVoid),
+            "expected BrustPageHeadTextOnVoid, got {:?}",
+            err.kind
+        );
+    }
+
+    // ---- Feature B: `dangerouslySetInnerHTML` on host elements ----
+
+    #[test]
+    fn dangerously_set_inner_html_member_path_emits_safe_filter() {
+        let src = r#"export default function Home({ data }) {
+  return <BrustPage><div dangerouslySetInnerHTML={{ __html: data.h }} /></BrustPage>;
+}"#;
+        let c = compile_full(src, "<test>", HashMap::new()).unwrap();
+        assert!(
+            c.template.contains("<div>{{ (data.h) | safe }}</div>"),
+            "got: {}",
+            c.template
+        );
+    }
+
+    #[test]
+    fn dangerously_set_inner_html_literal_emits_verbatim() {
+        let src = r#"export default function Home() {
+  return <BrustPage><div dangerouslySetInnerHTML={{ __html: "<b>x</b>" }} /></BrustPage>;
+}"#;
+        let c = compile_full(src, "<test>", HashMap::new()).unwrap();
+        assert!(
+            c.template.contains("<div><b>x</b></div>"),
+            "got: {}",
+            c.template
+        );
+    }
+
+    #[test]
+    fn dangerously_set_inner_html_call_value_is_rejected() {
+        let src = r#"export default function Home({ foo }) {
+  return <BrustPage><div dangerouslySetInnerHTML={{ __html: foo() }} /></BrustPage>;
+}"#;
+        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::DangerouslySetInnerHtmlInvalid),
+            "expected DangerouslySetInnerHtmlInvalid, got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn dangerously_set_inner_html_with_children_is_rejected() {
+        let src = r#"export default function Home({ data }) {
+  return <BrustPage><div dangerouslySetInnerHTML={{ __html: data.h }}>child</div></BrustPage>;
+}"#;
+        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::DangerouslySetInnerHtmlWithChildren),
+            "expected DangerouslySetInnerHtmlWithChildren, got {:?}",
+            err.kind
+        );
     }
 
     #[test]

@@ -19,7 +19,13 @@ export default function Home({
   cacheTags: string[]
 }) {
   return (
-    <BrustPage lang="en" className="dark" bodyClassName="brust-body" title="__PROJECT_NAME__">
+    <BrustPage
+      lang="en"
+      className="dark"
+      bodyClassName="brust-body"
+      title="__PROJECT_NAME__"
+      head={[{ tag: 'link', rel: 'icon', href: '/favicon.svg' }]}
+    >
       {/* Background decorative glows */}
       <div className="fixed top-[-20%] left-[-10%] w-[50%] h-[50%] bg-purple-600/10 rounded-full blur-[120px] pointer-events-none"></div>
       <div className="fixed bottom-[-20%] right-[-10%] w-[50%] h-[50%] bg-teal-600/10 rounded-full blur-[120px] pointer-events-none"></div>

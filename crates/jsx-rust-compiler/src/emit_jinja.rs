@@ -30,6 +30,14 @@ fn emit_node(node: &JsxNode, out: &mut String) {
         JsxNode::Expr(e) => {
             emit_expr_node(e, out);
         }
+        // `dangerouslySetInnerHTML` raw passthrough. Literal → verbatim; path →
+        // `{{ (path) | safe }}` (un-escaped). Trusted-data boundary, by design.
+        JsxNode::RawHtml(hv) => match hv {
+            HeadValue::Literal(s) => out.push_str(s),
+            HeadValue::Path(e) => {
+                let _ = write!(out, "{{{{ ({}) | safe }}}}", emit_expr_path(e));
+            }
+        },
         JsxNode::Map {
             source,
             binding,
@@ -79,6 +87,7 @@ fn emit_node(node: &JsxNode, out: &mut String) {
             body_class,
             title,
             description,
+            head,
             body,
         } => {
             out.push_str("<html");
@@ -110,6 +119,31 @@ fn emit_node(node: &JsxNode, out: &mut String) {
                 out.push_str("\"/>");
             }
             out.push_str("<link rel=\"stylesheet\" href=\"/_brust/css/app.css\"/>");
+            // `head={[…]}` entries — emitted after the framework tags, before
+            // `</head>`. Attr values reuse `emit_head_attr` (literal→escaped,
+            // path→`{{ (p) | e }}`); `text` is RAW (forced static-literal in lower).
+            for entry in head {
+                out.push('<');
+                out.push_str(entry.tag.name());
+                for (name, hv) in &entry.attrs {
+                    emit_head_attr(out, name, hv);
+                }
+                for b in &entry.bool_attrs {
+                    out.push(' ');
+                    out.push_str(b);
+                }
+                if entry.tag.is_void() {
+                    out.push_str("/>");
+                } else {
+                    out.push('>');
+                    if let Some(t) = &entry.text {
+                        out.push_str(t); // RAW static literal (developer-authored)
+                    }
+                    out.push_str("</");
+                    out.push_str(entry.tag.name());
+                    out.push('>');
+                }
+            }
             out.push_str("</head><body");
             if let Some(c) = body_class {
                 emit_head_attr(out, "class", c);
@@ -835,6 +869,7 @@ mod tests {
             body_class: None,
             title,
             description: None,
+            head: vec![],
             body: vec![],
         }
     }
@@ -882,6 +917,7 @@ mod tests {
                 root: "d".into(),
                 path: vec!["desc".into()],
             })),
+            head: vec![],
             body: vec![],
         };
         let out = emit(&component(ir));
