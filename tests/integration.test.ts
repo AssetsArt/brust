@@ -507,9 +507,12 @@ test('routes without <Island> ship no importmap or bootstrap', async () => {
 // (`POST /_brust/action/createNote` with a JSON ARRAY body) and the multipart /
 // urlencoded body paths were removed. MCP tools are now derived from these
 // `EndpointDef`s and `tools/call` dispatches over them (see the MCP tools/list +
-// tools/call tests below). The HTTP-transport guards (411 / 413 / missing
-// Content-Length) are retained, repointed at POST /notes since they exercise the
-// Rust layer, not the wire shape.
+// tools/call tests below). The HTTP-transport guards exercise the Rust framing
+// layer (not the wire shape) and are repointed at POST/DELETE /notes. Post-S12
+// they encode the RFC-compliant behavior: a MISSING Content-Length is a valid
+// bodyless request (no longer 411 — it reaches the handler with an empty body);
+// only Transfer-Encoding is rejected with 411, and an oversized declared
+// Content-Length is still 413.
 
 test('action endpoint: happy path returns JSON', async () => {
   const { port, stop } = await startServer({ rustLog: 'brust=warn' })
@@ -586,8 +589,12 @@ test('action endpoint: known path wrong method → 405', async () => {
   }
 }, 15_000)
 
-test('action endpoint: missing Content-Length → 411', async () => {
-  // fetch always sets Content-Length, so use a raw socket like the 414 test.
+test('action endpoint: missing Content-Length → no longer 411 (RFC bodyless)', async () => {
+  // S12: a request with no Content-Length and no Transfer-Encoding is a valid
+  // RFC bodyless request — it must NOT be rejected with 411. It reaches the
+  // handler with an empty body; for POST /notes the empty body then fails the
+  // zod body schema downstream (→ 422). fetch always sets Content-Length, so we
+  // use a raw socket like the 414 test to send a request with NO CL header.
   const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
     const chunks: Uint8Array[] = []
@@ -614,6 +621,95 @@ test('action endpoint: missing Content-Length → 411', async () => {
     })
     // Hand-crafted request: no Content-Length, no body.
     sock.write('POST /_brust/action/notes HTTP/1.1\r\nHost: x\r\n\r\n')
+    await Promise.race([closed, new Promise<void>((r) => setTimeout(r, 1000))])
+    sock.end()
+    const combined = Buffer.concat(chunks).toString('utf-8')
+    const statusLine = combined.split('\r\n')[0]
+    // EMPIRICALLY OBSERVED: bodyless POST /notes → empty body → zod body
+    // validation fails → 422 (not the old 411).
+    expect(statusLine).not.toContain('411')
+    expect(statusLine).toContain('422')
+  } finally {
+    await stop()
+  }
+}, 15_000)
+
+test('action endpoint: bodyless DELETE (no Content-Length) → 200 (RFC bodyless)', async () => {
+  // S12: a bodyless DELETE is valid per RFC and must reach the handler with an
+  // empty body. We MUST use a raw socket: fetch() always sets `Content-Length: 0`
+  // on a bodyless request, which masks the bug entirely — the framing path that
+  // S12 fixes is only exercised when NO Content-Length header is present at all.
+  // DELETE /notes/{id} is gated by requireUser, so we send the user cookie; the
+  // handler then returns { ok: true, id: 'n-1' } → 200.
+  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
+  try {
+    const chunks: Uint8Array[] = []
+    let resolveClose!: () => void
+    const closed = new Promise<void>((r) => {
+      resolveClose = r
+    })
+    const sock = await Bun.connect({
+      hostname: '127.0.0.1',
+      port,
+      socket: {
+        data(_s, data) {
+          chunks.push(new Uint8Array(data))
+        },
+        open() {},
+        close() {
+          resolveClose()
+        },
+        drain() {},
+        error() {
+          resolveClose()
+        },
+      },
+    })
+    sock.write(
+      'DELETE /_brust/action/notes/n-1 HTTP/1.1\r\n' + 'Host: x\r\n' + 'Cookie: user=alice\r\n\r\n',
+    )
+    await Promise.race([closed, new Promise<void>((r) => setTimeout(r, 1000))])
+    sock.end()
+    const combined = Buffer.concat(chunks).toString('utf-8')
+    expect(combined.split('\r\n')[0]).toContain('200')
+  } finally {
+    await stop()
+  }
+}, 15_000)
+
+test('action endpoint: Transfer-Encoding chunked → 411 (unsupported)', async () => {
+  // S12: while a missing Content-Length is now allowed (bodyless), a
+  // Transfer-Encoding request is NOT supported by the server's framing path and
+  // is rejected with 411. Raw socket: fetch won't let us forge Transfer-Encoding.
+  const { port, stop } = await startServer({ rustLog: 'brust=warn' })
+  try {
+    const chunks: Uint8Array[] = []
+    let resolveClose!: () => void
+    const closed = new Promise<void>((r) => {
+      resolveClose = r
+    })
+    const sock = await Bun.connect({
+      hostname: '127.0.0.1',
+      port,
+      socket: {
+        data(_s, data) {
+          chunks.push(new Uint8Array(data))
+        },
+        open() {},
+        close() {
+          resolveClose()
+        },
+        drain() {},
+        error() {
+          resolveClose()
+        },
+      },
+    })
+    sock.write(
+      'POST /_brust/action/notes HTTP/1.1\r\n' +
+        'Host: x\r\n' +
+        'Transfer-Encoding: chunked\r\n\r\n',
+    )
     await Promise.race([closed, new Promise<void>((r) => setTimeout(r, 1000))])
     sock.end()
     const combined = Buffer.concat(chunks).toString('utf-8')
@@ -1619,9 +1715,30 @@ test('nav: /_brust/page/<protected> without cookie returns middleware verdict (4
   expect(body).not.toContain('Admin Dashboard')
 })
 
-// NOTE: native-route coverage (`native: true`, SSR components) lives in
-// tests/native-island*.test.ts, NOT here. Those files run a `brust build`
-// pre-flight with cwd=FIXTURE_DIR so `.brust/jinja/` is populated before boot;
-// this shared server spawns from the repo root and never builds jinja, so a
-// native-route probe here would 500 with "unknown template". SSR-component
-// E2E is in tests/native-island-ssr.test.ts.
+// S9 — native loader status sentinels. The `brust build` step that the CI
+// gate runs before this suite dual-emits jinja to `.brust/jinja/` at the repo
+// root, so the shared server (spawned from the repo root) resolves the compiled
+// NativeProfile template. Both native-notfound/native-redirect REUSE that one
+// template (templateName = Component.name = "NativeProfile"). These are
+// read-only, so they ride the shared server.
+test('native loader notFound() → 404 with rendered template', async () => {
+  const resp = await fetch(`http://127.0.0.1:${shared!.port}/_test/native-notfound/bob`)
+  expect(resp.status).toBe(404)
+  expect(await resp.text()).toContain('Hello, bob')
+})
+test('native loader redirect() → 302 + Location, empty body', async () => {
+  const resp = await fetch(`http://127.0.0.1:${shared!.port}/_test/native-redirect`, {
+    redirect: 'manual',
+  })
+  expect(resp.status).toBe(302)
+  expect(resp.headers.get('location')).toBe('/_test/native/landed')
+  expect(await resp.text()).toBe('')
+})
+test('native loader normal return → 200 (no regression)', async () => {
+  const resp = await fetch(`http://127.0.0.1:${shared!.port}/_test/native/alice`)
+  expect(resp.status).toBe(200)
+})
+
+// NOTE: broader native-route coverage (islands, SSR components) lives in
+// tests/native-island*.test.ts, which run their own `brust build` pre-flight.
+// SSR-component E2E is in tests/native-island-ssr.test.ts.

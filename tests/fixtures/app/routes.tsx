@@ -1,4 +1,4 @@
-import { defineRoutes, type Middleware } from '../../../runtime/routes.ts'
+import { defineRoutes, notFound, redirect, type Middleware } from '../../../runtime/routes.ts'
 import { counterStream, idleStream } from './sse-streams.ts'
 
 // Fixture-local page copies. The test fixture is SELF-CONTAINED — it must not
@@ -67,6 +67,20 @@ export const routes = defineRoutes([
       user: params.user,
       greeting: `Hello, ${params.user}`,
     }),
+  },
+  // S9 — native loader status sentinels. Reuse NativeProfile's compiled template.
+  {
+    path: '/_test/native-notfound/{user}',
+    Component: NativeProfile,
+    native: true,
+    loader: async ({ params }: { params: { user: string } }) =>
+      notFound({ user: params.user, greeting: `Hello, ${params.user}` }),
+  },
+  {
+    path: '/_test/native-redirect',
+    Component: NativeProfile,
+    native: true,
+    loader: async () => redirect('/_test/native/landed'),
   },
   // Sub-project J / native islands — native: true route hosting a CLIENT-ONLY
   // <Island> (no ssr). The compiled .jinja emits an empty data-brust-csr mount
