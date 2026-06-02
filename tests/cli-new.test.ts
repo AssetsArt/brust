@@ -385,6 +385,66 @@ test('copyTemplate: extraFiles written verbatim (no substitution)', async () => 
   }
 })
 
+test('brust new --template pokedex: emits pokedex tree, no docs, synth package.json', async () => {
+  const parent = await mkdtemp(path.join(tmpdir(), 'brust-new-poke-'))
+  const projectDir = path.join(parent, 'poke-app')
+  try {
+    const scaffold =
+      await $`bun ${path.join(REPO, 'runtime/cli/index.ts')} new poke-app --template pokedex --dir ${projectDir} < /dev/null`.nothrow()
+    expect(scaffold.exitCode).toBe(0)
+
+    expect(existsSync(path.join(projectDir, 'routes.tsx'))).toBe(true)
+    expect(existsSync(path.join(projectDir, 'index.ts'))).toBe(true)
+    expect(existsSync(path.join(projectDir, 'actions.ts'))).toBe(true)
+    expect(existsSync(path.join(projectDir, 'app.css'))).toBe(true)
+    expect(existsSync(path.join(projectDir, 'pages/DetailPage.tsx'))).toBe(true)
+    expect(existsSync(path.join(projectDir, 'lib/loaders.ts'))).toBe(true)
+    expect(existsSync(path.join(projectDir, 'components/TeamBuilder.tsx'))).toBe(true)
+
+    expect(existsSync(path.join(projectDir, 'FRAMEWORK-GAPS.md'))).toBe(false)
+    expect(existsSync(path.join(projectDir, 'README.md'))).toBe(false)
+    expect(existsSync(path.join(projectDir, '.brust'))).toBe(false)
+    expect(existsSync(path.join(projectDir, 'dist'))).toBe(false)
+
+    expect(existsSync(path.join(projectDir, 'tsconfig.json'))).toBe(true)
+    expect(existsSync(path.join(projectDir, '.gitignore'))).toBe(true)
+    const pkg = JSON.parse(await readFile(path.join(projectDir, 'package.json'), 'utf8'))
+    expect(pkg.name).toBe('poke-app')
+    expect(pkg.dependencies.brustjs).toMatch(/^file:/)
+    expect(pkg.dependencies.zod).toBeTruthy()
+    expect(pkg.dependencies['react-dom']).toBeTruthy()
+    expect(pkg.dependencies.tailwindcss).toBeUndefined()
+    expect(pkg.scripts.dev).toBe('brustjs dev')
+
+    const allFiles = await collectFiles(projectDir)
+    for (const f of allFiles) {
+      const content = await readFile(f, 'utf8').catch(() => '')
+      expect(content, `placeholder leaked in ${f}`).not.toContain('__PROJECT_NAME__')
+      expect(content, `placeholder leaked in ${f}`).not.toContain('__BRUST_DEP__')
+      expect(content, `stale 'brust' import in ${f}`).not.toMatch(/from ['"]brust(\/[^'"]*)?['"]/)
+    }
+  } finally {
+    await rm(parent, { recursive: true, force: true })
+  }
+}, 30_000)
+
+test('brust new (no --template, stdin closed): defaults to minimal tree', async () => {
+  const parent = await mkdtemp(path.join(tmpdir(), 'brust-new-defmin-'))
+  const projectDir = path.join(parent, 'def-app')
+  try {
+    const scaffold =
+      await $`bun ${path.join(REPO, 'runtime/cli/index.ts')} new def-app --dir ${projectDir} < /dev/null`.nothrow()
+    expect(scaffold.exitCode).toBe(0)
+    expect(existsSync(path.join(projectDir, 'pages/Home.tsx'))).toBe(true)
+    expect(existsSync(path.join(projectDir, 'components/Counter.tsx'))).toBe(true)
+    const pkg = JSON.parse(await readFile(path.join(projectDir, 'package.json'), 'utf8'))
+    expect(pkg.dependencies.tailwindcss).toBeTruthy()
+    expect(existsSync(path.join(projectDir, 'FRAMEWORK-GAPS.md'))).toBe(false)
+  } finally {
+    await rm(parent, { recursive: true, force: true })
+  }
+}, 30_000)
+
 async function collectFiles(dir: string): Promise<string[]> {
   const out: string[] = []
   const entries = await readdir(dir, { withFileTypes: true })
