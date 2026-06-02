@@ -14,6 +14,35 @@ import { createElement, type ReactNode } from 'react'
  * loader member-path (`title={data.title}`), interpolated into the Rust-rendered
  * shell as `{{ path }}` (S8). Calls/arithmetic are still rejected. This React
  * implementation mirrors the compiled output for the rare non-native use. */
+/** One extra `<head>` element for `<BrustPage head={[…]}>`. Discriminated by
+ * `tag`. On the native path, attribute values may be a string literal or a
+ * loader member-path (HTML-escaped); `text` (inner content of style/script/
+ * noscript) must be a static string literal (raw — never user input). */
+export type HeadEntry =
+  | {
+      tag: 'link'
+      rel: string
+      href: string
+      type?: string
+      sizes?: string
+      as?: string
+      media?: string
+      crossOrigin?: string
+    }
+  | { tag: 'meta'; name?: string; property?: string; httpEquiv?: string; content: string }
+  | { tag: 'base'; href?: string; target?: string }
+  | { tag: 'style'; text: string; media?: string }
+  | {
+      tag: 'script'
+      src?: string
+      text?: string
+      type?: string
+      defer?: boolean
+      async?: boolean
+      crossOrigin?: string
+    }
+  | { tag: 'noscript'; text: string }
+
 export interface BrustPageProps {
   /** `<html lang>` — defaults to `"en"`. */
   lang?: string
@@ -25,8 +54,21 @@ export interface BrustPageProps {
   title?: string
   /** `<meta name="description" content="…">`. Omitted when absent. */
   description?: string
+  /** Extra `<head>` elements (link/meta/base/style/script/noscript). */
+  head?: HeadEntry[]
   /** Page body — rendered inside `<body>`. */
   children?: ReactNode
+}
+
+/** React mirror of one head entry (non-native path). Native routes emit these
+ * in Rust; this keeps the rare React render in sync. */
+function headEntryToElement(entry: HeadEntry, key: number): ReactNode {
+  const { tag, ...rest } = entry
+  if (tag === 'style' || tag === 'script' || tag === 'noscript') {
+    const { text, ...attrs } = rest as { text?: string } & Record<string, unknown>
+    return createElement(tag, { key, ...attrs }, text ?? undefined)
+  }
+  return createElement(tag, { key, ...rest })
 }
 
 export function BrustPage({
@@ -35,6 +77,7 @@ export function BrustPage({
   bodyClassName,
   title,
   description,
+  head,
   children,
 }: BrustPageProps): ReactNode {
   return createElement(
@@ -50,6 +93,7 @@ export function BrustPage({
         ? createElement('meta', { name: 'description', content: description })
         : null,
       createElement('link', { rel: 'stylesheet', href: '/_brust/css/app.css' }),
+      ...(head ?? []).map((entry, i) => headEntryToElement(entry, i)),
     ),
     createElement('body', { className: bodyClassName }, children),
   )

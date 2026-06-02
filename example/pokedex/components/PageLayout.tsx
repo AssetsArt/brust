@@ -26,7 +26,12 @@ export default function PageLayout({
   children: ReactNode
 }) {
   return (
-    <BrustPage lang="en" className="dark" title={title}>
+    <BrustPage
+      lang="en"
+      className="dark"
+      title={title}
+      head={[{ tag: 'link', rel: 'icon', href: '/favicon.svg' }]}
+    >
       <div className="aa-app">
         <aside className="aa-sidebar">
           <div className="aa-sidebar__brand">
