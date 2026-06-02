@@ -166,23 +166,40 @@ export function swapMainContent(main: HTMLElement, html: string): void {
   }
 }
 
-/** Classifier — true iff the event should be intercepted as a SPA
- * navigation. Exported for unit testing. */
-export function isInternalLink(a: HTMLAnchorElement, event: MouseEvent): boolean {
-  if (event.defaultPrevented) return false
-  if (event.button !== 0) return false
-  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return false
-  if (a.target && a.target !== '_self') return false
-  if (a.hasAttribute('download')) return false
-  if (a.dataset.brustNoIntercept !== undefined) return false
+/** What a left-click on an <a> means for in-app navigation. Exported for unit
+ * testing.
+ *   - 'external': not ours (cross-origin, modifier/middle click, target,
+ *     download, opt-out, /_brust/) — leave the browser alone.
+ *   - 'hash':     same path+query, different hash — let the browser scroll
+ *     natively (do NOT preventDefault).
+ *   - 'reload':   the exact current URL — the browser would full-reload, so we
+ *     claim the click (preventDefault) and no-op. This is the active menu item.
+ *   - 'navigate': a different in-app page — SPA fetch + swap. */
+export function classifyClick(
+  a: HTMLAnchorElement,
+  event: MouseEvent,
+): 'external' | 'hash' | 'reload' | 'navigate' {
+  if (event.defaultPrevented) return 'external'
+  if (event.button !== 0) return 'external'
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return 'external'
+  if (a.target && a.target !== '_self') return 'external'
+  if (a.hasAttribute('download')) return 'external'
+  if (a.dataset.brustNoIntercept !== undefined) return 'external'
   const url = new URL(a.href, location.href)
-  if (url.origin !== location.origin) return false
-  // Same-pathname links: hash-only changes use the browser's native scroll;
-  // hash-absent same-URL clicks (e.g., logo back to current page) are
-  // redundant — let the browser handle them as no-ops (no SPA refetch).
-  if (url.pathname === location.pathname && url.search === location.search) return false
-  if (url.pathname.startsWith('/_brust/')) return false
-  return true
+  if (url.origin !== location.origin) return 'external'
+  if (url.pathname.startsWith('/_brust/')) return 'external'
+  if (url.pathname === location.pathname && url.search === location.search) {
+    // Same page: a differing hash is a native in-page scroll (don't intercept);
+    // an identical URL would otherwise trigger a browser full reload, so we
+    // claim it and no-op instead of refetching.
+    return url.hash !== location.hash ? 'hash' : 'reload'
+  }
+  return 'navigate'
+}
+
+/** Back-compat thin wrapper — true iff the click is an SPA navigation. */
+export function isInternalLink(a: HTMLAnchorElement, event: MouseEvent): boolean {
+  return classifyClick(a, event) === 'navigate'
 }
 
 let inFlight: AbortController | null = null
@@ -219,8 +236,14 @@ function installInterceptor(): void {
   document.addEventListener('click', (e) => {
     const target = e.target as HTMLElement | null
     const a = target?.closest('a') as HTMLAnchorElement | null
-    if (!a || !isInternalLink(a, e)) return
+    if (!a) return
+    const intent = classifyClick(a, e)
+    // 'external' → browser owns it; 'hash' → native in-page scroll. Both: leave alone.
+    if (intent === 'external' || intent === 'hash') return
+    // 'reload' or 'navigate' both suppress the browser's full page load.
     e.preventDefault()
+    // 'reload' = clicking the page we're already on → no-op (no refetch).
+    if (intent === 'reload') return
     void navigate(new URL(a.href, location.href), /* push */ true)
   })
   window.addEventListener('popstate', () => {
