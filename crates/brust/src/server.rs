@@ -309,7 +309,7 @@ async fn handle_conn(
         // Status codes:
         //   404 — path not in action router
         //   405 — method not allowed for this endpoint
-        //   411 — Content-Length missing (non-GET/HEAD only)
+        //   411 — Transfer-Encoding/chunked body (unsupported; ask for Content-Length)
         //   413 — Content-Length > SAB capacity
         //   400 — body not valid UTF-8
         // 5xx — fn throws / middleware throws (handled by the JS side via meta envelope)
@@ -359,25 +359,21 @@ async fn handle_conn(
                 }
             };
 
-            // GET/HEAD have no body — skip Content-Length requirement.
-            let content_length = match parse_content_length(&buf[..header_end]) {
-                Some(n) => n,
-                None if matches!(
-                    m,
-                    crate::action_router::Method::Get | crate::action_router::Method::Head
-                ) =>
-                {
-                    0
-                }
-                None => {
+            // RFC 7230 §3.3.3: absent Content-Length and Transfer-Encoding means
+            // no body (length 0) — a bodyless DELETE/POST must not get 411.
+            let content_length = match classify_request_body(&buf[..header_end]) {
+                // We don't decode chunked bodies — ask the client for a Content-Length.
+                BodyClass::Chunked => {
                     let _ = s.write_all(http::error_411()).await;
                     return;
                 }
+                BodyClass::Sized(n) if n > tuning().max_action_body_bytes => {
+                    let _ = s.write_all(http::error_413()).await;
+                    return;
+                }
+                BodyClass::Sized(n) => n,
+                BodyClass::Empty => 0,
             };
-            if content_length > tuning().max_action_body_bytes {
-                let _ = s.write_all(http::error_413()).await;
-                return;
-            }
 
             // Body bytes already in buf? read_full_request only loops until headers
             // complete; the body may be partially or fully buffered after \r\n\r\n.
@@ -1698,6 +1694,47 @@ fn parse_content_length(buf: &[u8]) -> Option<usize> {
     None
 }
 
+#[derive(Debug)]
+enum BodyClass {
+    Empty,
+    Sized(usize),
+    Chunked,
+}
+
+/// Classify a request body per RFC 7230 §3.3.3 in a SINGLE header pass:
+/// Transfer-Encoding (any value) wins over Content-Length and is surfaced as
+/// `Chunked` for the caller to reject (we don't decode it); a parseable
+/// `Content-Length` → `Sized`; neither → `Empty` (no body). On a header parse
+/// error we conservatively report `Empty` so a Content-Length we couldn't fully
+/// validate is never trusted to bound a body read.
+///
+/// One pass (vs. delegating to `parse_content_length` + a second walk) keeps the
+/// action hot path to a single httparse parse, and makes TE-wins-over-CL hold
+/// regardless of header order: any Transfer-Encoding seen short-circuits to
+/// `Chunked` before a Content-Length is honoured.
+fn classify_request_body(header: &[u8]) -> BodyClass {
+    let mut headers = [httparse::EMPTY_HEADER; 64];
+    let mut req = httparse::Request::new(&mut headers);
+    if req.parse(header).is_err() {
+        return BodyClass::Empty;
+    }
+    let mut content_length: Option<usize> = None;
+    for h in req.headers.iter() {
+        if h.name.eq_ignore_ascii_case("transfer-encoding") {
+            return BodyClass::Chunked;
+        }
+        if h.name.eq_ignore_ascii_case("content-length") {
+            content_length = std::str::from_utf8(h.value)
+                .ok()
+                .and_then(|s| s.trim().parse::<usize>().ok());
+        }
+    }
+    match content_length {
+        Some(n) => BodyClass::Sized(n),
+        None => BodyClass::Empty,
+    }
+}
+
 /// Extract `Content-Type` from a buffered HTTP request's headers. Returns
 /// None if the header is missing. Whitespace-trimmed. Preserves the
 /// parameter part (e.g. `; boundary=...`) since the JS side needs it
@@ -1819,6 +1856,32 @@ mod tests {
     fn parse_content_length_garbage_returns_none() {
         let raw = b"POST /x HTTP/1.1\r\nHost: x\r\nContent-Length: NaN\r\n\r\n";
         assert_eq!(parse_content_length(raw), None);
+    }
+
+    #[test]
+    fn classify_body_missing_cl_is_empty() {
+        let raw = b"DELETE /x HTTP/1.1\r\nHost: x\r\n\r\n";
+        assert!(matches!(classify_request_body(raw), BodyClass::Empty));
+    }
+    #[test]
+    fn classify_body_with_cl_is_sized() {
+        let raw = b"POST /x HTTP/1.1\r\nHost: x\r\nContent-Length: 7\r\n\r\n";
+        assert!(matches!(classify_request_body(raw), BodyClass::Sized(7)));
+    }
+    #[test]
+    fn classify_body_transfer_encoding_is_chunked() {
+        let raw = b"POST /x HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n";
+        assert!(matches!(classify_request_body(raw), BodyClass::Chunked));
+    }
+    #[test]
+    fn classify_body_te_wins_over_cl() {
+        let raw = b"POST /x HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n";
+        assert!(matches!(classify_request_body(raw), BodyClass::Chunked));
+    }
+    #[test]
+    fn classify_body_te_case_insensitive() {
+        let raw = b"POST /x HTTP/1.1\r\nHost: x\r\ntransfer-encoding: Chunked\r\n\r\n";
+        assert!(matches!(classify_request_body(raw), BodyClass::Chunked));
     }
 
     #[test]

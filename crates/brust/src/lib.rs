@@ -837,7 +837,12 @@ pub async fn napi_render_chunk_final(worker_id: u32, len: u32) -> NapiResult<()>
 /// - `jinja::render` failure → writes a framed 500 into the SAB and returns its
 ///   length (the protocol error is converted to an HTTP 500 on the wire).
 #[napi]
-pub fn napi_render_jinja(worker_id: u32, data_len: u32, template_name: String) -> NapiResult<u32> {
+pub fn napi_render_jinja(
+    worker_id: u32,
+    data_len: u32,
+    template_name: String,
+    status: Option<u32>,
+) -> NapiResult<u32> {
     let entry = state()
         .pool
         .entry(worker_id)
@@ -861,7 +866,7 @@ pub fn napi_render_jinja(worker_id: u32, data_len: u32, template_name: String) -
         match crate::jinja::render(&template_name, &data_json) {
             Ok(html) => {
                 let meta = serde_json::json!({
-                    "status": 200,
+                    "status": status.unwrap_or(200),
                     "contentType": "text/html; charset=utf-8",
                     "headers": {},
                     "streaming": false,

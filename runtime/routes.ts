@@ -145,6 +145,40 @@ export interface RouteResponse {
   contentType?: string
 }
 
+const BRUST_VERDICT = Symbol.for('brust.nativeVerdict')
+
+/** Sentinel returned from a native (`native: true`) route loader to control the
+ * HTTP response. Build it with `notFound()` / `redirect()`, never by hand. */
+export interface NativeVerdict {
+  readonly [BRUST_VERDICT]: true
+  readonly status: number
+  readonly render: boolean
+  readonly data?: unknown
+  readonly headers?: Record<string, string>
+}
+
+/** Return from a native route loader to render the route's OWN template with
+ * HTTP 404. `data` (default `{}`) becomes the template context. */
+export function notFound(data?: unknown): NativeVerdict {
+  return { [BRUST_VERDICT]: true, status: 404, render: true, data: data ?? {} }
+}
+
+/** Return from a native route loader to emit a redirect (no template render). */
+export function redirect(
+  location: string,
+  status: 301 | 302 | 303 | 307 | 308 = 302,
+): NativeVerdict {
+  return { [BRUST_VERDICT]: true, status, render: false, headers: { Location: location } }
+}
+
+/** True if a loader return value is a NativeVerdict (symbol-keyed — a plain
+ * object with a `status` property is NOT mistaken for one). */
+export function isNativeVerdict(x: unknown): x is NativeVerdict {
+  return (
+    typeof x === 'object' && x !== null && (x as Record<symbol, unknown>)[BRUST_VERDICT] === true
+  )
+}
+
 /** Middleware contract — Express/Koa-style chain. Receives a structured
  * request and a `next()` that runs the rest of the chain (eventually the
  * loader + render). Return a `RouteResponse` to short-circuit, or call
@@ -614,6 +648,21 @@ export function makeRenderer(
             })
           }
         }
+        let renderStatus: number | undefined
+        if (isNativeVerdict(data)) {
+          if (!data.render) {
+            // redirect — no template render; fast-lane packed response with Location.
+            return packSingleChunkResponse(view, encoder, {
+              status: data.status,
+              contentType: 'text/html; charset=utf-8',
+              body: '',
+              headers: data.headers,
+            })
+          }
+          // notFound — render the route's own template, but with the verdict's status.
+          renderStatus = data.status
+          data = data.data ?? {}
+        }
         const json = JSON.stringify(data ?? {})
         // Sub-project J — islands + components. If this template has an enriched
         // islands manifest or a components manifest, merge per-island context vars
@@ -655,6 +704,7 @@ export function makeRenderer(
               Number(workerId),
               finalBytes.length,
               flat.nativeTemplate,
+              renderStatus,
             )
           } catch (err) {
             console.error(`[brust] napiRenderJinja failed for "${flat.nativeTemplate}":`, err)
@@ -683,6 +733,7 @@ export function makeRenderer(
             Number(workerId),
             dataBytes.length,
             flat.nativeTemplate,
+            renderStatus,
           )
         } catch (err) {
           console.error(`[brust] napiRenderJinja failed for "${flat.nativeTemplate}":`, err)
@@ -960,6 +1011,12 @@ async function renderNativeRouteToHtml(
   let data: unknown = {}
   if (leaf.loader) {
     data = await leaf.loader({ params: call.params, path: call.path, req: call.req } as any)
+  }
+
+  if (isNativeVerdict(data)) {
+    // SPA nav can't emit a redirect/404 in-place; force the client's full-reload
+    // fallback so the document path produces the authoritative status.
+    throw new Error('native verdict on SPA navigation — falling back to full reload')
   }
 
   let ctx = (data ?? {}) as Record<string, unknown>

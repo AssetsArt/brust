@@ -8,6 +8,8 @@
 // active-nav uses conditional ELEMENTS (S11), not a className ternary
 // (unsupported). See ../FRAMEWORK-GAPS.md.
 import { BrustPage, Island } from 'brustjs'
+import type { ReactNode } from 'react'
+import type { TeamMember } from '../lib/types'
 import TeamBuilder from './TeamBuilder'
 
 export default function PageLayout({
@@ -20,8 +22,8 @@ export default function PageLayout({
   title: string
   active: 'list' | 'typechart'
   crumb: string
-  teamProps: unknown
-  children: unknown
+  teamProps: { teamInitial: TeamMember[] }
+  children: ReactNode
 }) {
   return (
     <BrustPage lang="en" className="dark" title={title}>

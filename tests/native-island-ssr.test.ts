@@ -207,6 +207,28 @@ afterAll(async () => {
   }
 })
 
+// S9 — native loader status sentinels (notFound/redirect). These live HERE,
+// not in tests/integration.test.ts, because the server must be booted from a
+// `brust build` (done in beforeAll) so the NativeProfile jinja template is
+// registered — integration.test.ts boots in source mode with no build, so a
+// native route 500s there in a clean CI checkout. Both routes REUSE the
+// already-compiled NativeProfile template (templateName = Component.name).
+test('S9: native loader notFound() → 404 with rendered template', async () => {
+  const res = await fetch(`${BASE_URL}/_test/native-notfound/bob`)
+  expect(res.status).toBe(404)
+  expect(await res.text()).toContain('Hello, bob')
+})
+test('S9: native loader redirect() → 302 + Location, empty body', async () => {
+  const res = await fetch(`${BASE_URL}/_test/native-redirect`, { redirect: 'manual' })
+  expect(res.status).toBe(302)
+  expect(res.headers.get('location')).toBe('/_test/native/landed')
+  expect(await res.text()).toBe('')
+})
+test('S9: native loader normal return → 200 (no regression)', async () => {
+  const res = await fetch(`${BASE_URL}/_test/native/alice`)
+  expect(res.status).toBe(200)
+})
+
 test('GET /_test/native-island-ssr — SSR island: static shell + server-rendered mount + bootstrap', async () => {
   const res = await fetch(`${BASE_URL}/_test/native-island-ssr`)
 
