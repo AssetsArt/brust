@@ -27,9 +27,10 @@ S13 SPA-nav (รอบก่อน) · **native layout (chrome ซ้ำ 3 ห�
 แล้ว (เดิม verbatim = ช่อง XSS จริง — request param ไหลเข้า `<title>` ได้).
 
 **ยังเปิด:** S4/S6/S7 (island store / session / typed error) · S2 (loader cache) ·
-native **Outlet/router-level layout injection** · nested `.map()` · dark-mode `data-*` ·
-`<BrustPage>` head `<link>`/`data-*` (favicon auto-ref). ·
-**BY-DESIGN:** S3 (Suspense). · **✅ static/public asset serving — รอบนี้** (boot manifest, static-wins).
+native **Outlet/router-level layout injection** · nested `.map()` · dark-mode `data-*` (`<html>` only) ·
+**BY-DESIGN:** S3 (Suspense). · **✅ static/public asset serving** (boot manifest, static-wins) ·
+**✅ `<BrustPage head={[…]}>` typed head array + `dangerouslySetInnerHTML` — รอบนี้**
+(favicon auto-ref ปิดแล้ว: `head={[{tag:'link',rel:'icon',href:'/favicon.svg'}]}`).
 
 ## สรุปสั้น (native เขียนยังไงให้ผ่าน — หลัง Cluster A)
 
@@ -248,6 +249,29 @@ loader ตั้ง `pageTitle = "<Name> · PokéDex"` (ครบทุก path 
 
 ---
 
+## ◆ `<BrustPage>` head ตั้ง tag เองไม่ได้ (link/meta/script/style) + ไม่มี raw-HTML escape hatch · ✅ FIXED
+
+**fix (2 features):**
+1. **`head={[…]}` typed array** — `<BrustPage head={[{ tag:'link', rel:'icon', href:'/favicon.svg' },
+   { tag:'meta', property:'og:title', content: data.title }, { tag:'script', src:'/x.js', defer:true },
+   { tag:'style', text:'.x{}' }]}>`. Allowlist `link|meta|base|style|script|noscript`; discriminated-union
+   type คุม field per tag. **attr values = string literal หรือ member-path** (escape `{{ (p) | e }}` —
+   dynamic ปลอดภัย); **`text` (style/script/noscript) = static literal เท่านั้น** emit raw
+   (member-path ใน text ถูก reject กัน XSS); void tag (link/meta/base) self-close; camelCase→html
+   (`crossOrigin`→`crossorigin`, `httpEquiv`→`http-equiv`). emit หลัง css link.
+2. **`dangerouslySetInnerHTML={{ __html }}` บน host element** (div ฯลฯ) — raw-HTML escape hatch
+   (= React semantics): literal → verbatim; member-path → `{{ (p) | safe }}`. element ห้ามมี children อื่น.
+   **นี่คือทางทำ dynamic CSS/HTML** (trusted-data boundary — ห้ามต่อ user input, เหมือน React).
+
+**dogfood:** minimal template + pokedex `PageLayout` ใช้ `head={[{tag:'link',rel:'icon',href:'/favicon.svg'}]}`
+→ pokedex `/` view-source มี `<link rel="icon" href="/favicon.svg"/>` ใน `<head>` จริง. 14 compiler tests.
+ดู spec `docs/superpowers/specs/2026-06-02-brustpage-head-array-design.md`.
+
+**ยังเปิด:** `text` ของ style/script เป็น static-only (dynamic CSS/JS body ใช้ `dangerouslySetInnerHTML` แทน) ·
+`<BrustPage>` ยังตั้ง `data-*` บน `<html>` ตามใจไม่ได้.
+
+---
+
 ## ◆ S4 — ไม่มี cross-island shared-state primitive · CONFIRMED (workaround ใช้ได้)
 
 **อาการ:** `AddToTeamButton` กับ `TeamBuilder` เป็นคนละ island/คนละ bundle ต้องโชว์ทีมเดียวกัน.
@@ -299,10 +323,11 @@ prod = `max-age=3600`. **Traversal-safe by construction** (request path เป�
 
 **เดิม:** เสิร์ฟได้แค่ `/_brust/css/*` กับ `/_brust/islands/*` — ไม่มี public dir; `favicon.ico` 404.
 
+**favicon auto-ref — ✅ ปิดแล้ว (รอบถัดมา):** `<BrustPage head={[{tag:'link',rel:'icon',
+href:'/favicon.svg'}]}>` (typed head-entry array) → `<head>` emit `<link rel="icon" href="/favicon.svg"/>`
+จริง (verify: pokedex `/` view-source). ทั้ง minimal template + pokedex ใช้แล้ว.
+
 **ยังเปิด (related):**
-- browser auto-request `/favicon.ico` (ไม่ใช่ `.svg`); `<BrustPage>` head ตั้ง `<link rel="icon">`
-  เองไม่ได้ (head รับแค่ title/description/lang/className/bodyClassName) → favicon.svg เสิร์ฟได้
-  แต่ยังไม่ถูก reference อัตโนมัติ. ต้องมี head-link capability หรือใส่ favicon.ico จริง.
 - filename ต้อง URL-safe (ASCII, ไม่มี space) — request percent-encoded ไม่ match raw key
   (warn ตอน boot); percent-decode request path = deferred.
 - ไม่มี hot-add ตอน dev run (manifest สร้างตอน boot — restart), GET-only, ไม่มี range/HEAD.
