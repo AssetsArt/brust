@@ -818,13 +818,21 @@ git commit -m "test(native): pin MutationObserver lifecycle — nested scope + S
 ```ts
 import { describe, expect, test, afterEach } from 'bun:test'
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { scanDirectiveComponents } from './build.ts'
 
+// IMPORTANT: temp dirs MUST live UNDER the repo (not os.tmpdir()/`/tmp`). Task 8's
+// buildDirectives runs `Bun.build` on a generated entry that imports `brustjs/native`
+// and fixtures that import `brustjs/store`. Bun resolves those bare specifiers via
+// package SELF-REFERENCE (package name "brustjs" + exports) — which only works for
+// files located inside the package tree. A `/tmp` fixture cannot reach the package
+// and fails with "Cannot find module 'brustjs/native'". `.brust/` is gitignored, so
+// stray dirs from a crashed run are never committed.
+const TMP_BASE = resolve(import.meta.dir, '../../.brust/native-test')
 const dirs: string[] = []
 function tmp(): string {
-  const d = mkdtempSync(join(tmpdir(), 'brust-dir-'))
+  mkdirSync(TMP_BASE, { recursive: true })
+  const d = mkdtempSync(join(TMP_BASE, 'd-'))
   dirs.push(d)
   return d
 }
@@ -1280,13 +1288,16 @@ Read `tests/` for an existing native-route build test (e.g. one that calls `emit
 ```ts
 import { afterEach, expect, test } from 'bun:test'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { scanDirectiveComponents, buildDirectives } from '../runtime/native/build.ts'
 
+// Temp dirs MUST live under the repo so Bun.build can self-resolve brustjs/* (see the
+// note in runtime/native/build.test.ts). `.brust/` is gitignored.
+const TMP_BASE = resolve(import.meta.dir, '../.brust/native-int-test')
 const dirs: string[] = []
 function tmp(): string {
-  const d = mkdtempSync(join(tmpdir(), 'brust-int-'))
+  mkdirSync(TMP_BASE, { recursive: true })
+  const d = mkdtempSync(join(TMP_BASE, 'd-'))
   dirs.push(d)
   return d
 }
