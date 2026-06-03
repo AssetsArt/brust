@@ -60,10 +60,11 @@ export function findBrustPackageRoot(startDir: string = import.meta.dir): string
 }
 
 function pokedexExtraFiles(ctx: ScaffoldCtx): EmittedFile[] {
-  // pokedex's dependency set differs from minimal: it uses `zod` and does NOT
-  // use tailwind (its app.css is a hand-written design system). `react-dom` is
-  // included as the framework's SSR/hydration peer (not a direct pokedex
-  // import) — do not "tidy" it away.
+  // pokedex's dependency set extends minimal: it adds `zod` (action/query
+  // schemas) and `lucide-react` (icons SSR-rendered in native routes + islands).
+  // `tailwindcss` is declared like minimal (the redesigned app.css is Tailwind v4
+  // — `@import "tailwindcss"`). `react-dom` is the framework's SSR/hydration peer
+  // (not a direct pokedex import) — do not "tidy" it away.
   const pkg = {
     name: ctx.projectName,
     version: '0.0.1',
@@ -78,6 +79,8 @@ function pokedexExtraFiles(ctx: ScaffoldCtx): EmittedFile[] {
       react: '^19.2.6',
       'react-dom': '^19.2.6',
       zod: '^4.4.3',
+      tailwindcss: '^4.3.0',
+      'lucide-react': '^1.17.0',
     },
     devDependencies: {
       '@types/bun': 'latest',
