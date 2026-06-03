@@ -30,25 +30,36 @@ monkey-patching (too magic), NOT a DataLoader batch-fn (overkill).
   + `runInRequestCache(fn)` + `dedupe(key, fn)` + `cachedFetch(url, init?)`.
 - `dedupe(key, fn)`: ถ้า key อยู่ใน map → คืน promise เดิม (share in-flight + cached result);
   ไม่งั้นเรียก `fn()`, เก็บ promise ลง map, คืน. **เก็บ promise (ไม่ใช่ resolved value)** →
-  concurrent callers ก่อน resolve ก็ share. **ถ้า fn reject → ลบ key** (ไม่ cache error เพื่อให้
-  retry ใน request เดียวกันได้; แต่ within one request rejection มักจบ — ลบกัน poisoned cache).
-- `cachedFetch(url, init?)`: sugar = `dedupe('GET '+url, () => fetch(url, init))` — **เฉพาะ
-  idempotent GET/HEAD** (มี init.method อื่น → bypass dedupe, fetch ตรง — กัน cache POST). คืน
-  `Response` ที่ **clone** ได้ (เก็บ resolved Response แล้ว `.clone()` ต่อ caller เพราะ body
-  อ่านได้ครั้งเดียว) — ดู Open questions.
+  concurrent callers ก่อน resolve ก็ share. **ถ้า fn reject → ลบ key แบบ guarded** (ไม่ cache
+  error): `pA.catch(() => { if (map.get(key) === pA) map.delete(key) })` — เช็ค identity ก่อนลบ
+  กัน late-firing catch ของ promise เก่าไปลบ entry ใหม่ (retry ใน request เดียว). **(race fix —
+  load-bearing)**
+- `cachedFetch(url, init?)`: sugar เหนือ `dedupe` — **idempotent เท่านั้น**: method =
+  `(init?.method ?? 'GET').toUpperCase()`; ถ้าไม่ใช่ `GET`/`HEAD` → **bypass** (fetch ตรง, ไม่ cache
+  — กัน cache mutation). key = `` `${method} ${url}` `` (HEAD ≠ GET). **clone ทุกครั้งที่คืน**
+  (รวม caller แรก) — เก็บ resolved `Response` ไว้ภายใน, return `stored.clone()` เสมอ, ไม่เปิด
+  stored original ออกไป (body อ่านครั้งเดียว → clone กัน sibling พัง). **idiom หลักที่ doc แนะนำคือ
+  `dedupe` ที่ระดับ parsed value** (`dedupe(url, () => fetch(url).then(r => r.json()))`) — สิ่งที่
+  loader ส่วนใหญ่ต้องการจริง (เรียก `.json()` ทันที), เลี่ยง body-stream hazard ทั้งหมด;
+  `cachedFetch`+clone เป็น escape hatch เมื่อ caller ต้องการ `Response` เอง.
 - **No active scope → graceful passthrough:** `dedupe`/`cachedFetch` เรียกนอก request scope
   (เช่น test, script) → ทำงานเป็น no-cache passthrough (เรียก fn/fetch ตรง) ไม่ throw. (ต่างจาก
   store ที่ throw — loader cache เป็น optimization ไม่ใช่ correctness).
 
 ## Wiring
 
-`runInRequestCache` ต้องครอบช่วงที่ loader รัน. จุดที่ loader รัน (เหมือน `runInStoreContext`):
-- native chain loaders: `routes.ts` `runNativeChainLoaders` call sites (~`:726`, `:1122`)
-- React loaders: `buildRenderElement` path (`routes.ts` ~`:759`/`:1106`)
+`runInRequestCache` ต้องครอบช่วงที่ loader (และ render-time fetch) รัน — จุดที่
+`runInStoreContext` wrap อยู่แล้ว (verified line numbers):
+- native chain loaders: `routes.ts` `runNativeChainLoaders` call sites **`:728`**, **`:1125`**
+- React loaders + render: `runInStoreContext` ที่ **`:845`** (wrap ทั้ง loader **และ**
+  `renderBranchStreaming` → render-time `cachedFetch` ต้องเห็น cache ด้วย) และ **`:1055`**
 
-แทนที่จะ wrap แยก ให้ **รวมกับ store context**: เพิ่ม `runInRequestCache` ซ้อน `runInStoreContext`
-ที่ call sites เดิม (หรือทำ helper `runInRequestContext(fn)` = store ∘ cache). nested ALS สอง
-ตัวซ้อนกันปลอดภัย. action handlers ไม่ wrap รอบนี้ (scope = loader/render; ขยายทีหลังได้).
+**ทำ helper `runInRequestContext(fn) = runInRequestCache(() => runInStoreContext(fn))`** แล้วแทน
+`runInStoreContext` ที่ 4 จุดนั้น (cache เป็น **OUTER** wrap → alive ตลอด store span รวม render).
+nested ALS สองตัว (key อิสระ) ปลอดภัย + O(1). 
+- **MCP loader path ไม่ wrap** (`runtime/mcp/server.ts:189` เรียก `leaf.loader(...)` ตรง ไม่มี store/cache
+  scope) → loader ที่ใช้ `cachedFetch` ผ่าน MCP จะ **passthrough graceful** (ไม่ cache, ไม่ crash).
+  ตั้งใจปล่อยไว้รอบนี้ (scope = HTTP loader/render). action handlers เช่นกัน — ขยายทีหลังได้.
 
 ## File-level changes
 1. `runtime/loader-cache.ts` (ใหม่): ALS + `runInRequestCache` + `dedupe` + `cachedFetch`.
@@ -74,8 +85,10 @@ monkey-patching (too magic), NOT a DataLoader batch-fn (overkill).
 1. `cd runtime && bun test loader-cache.test.ts` เขียว; full `bun test` ไม่ regress (baseline 376/0... main).
 2. `bun run ci` (biome) เขียว.
 3. export `import { dedupe, cachedFetch } from 'brustjs'` resolve.
-4. dogfood: typeChartLoader ใช้ `cachedFetch`/`dedupe`; pokedex build + type-chart render เท่าเดิม (361 cells).
-5. dedupe พิสูจน์ได้: same-URL ใน request เดียว fetch ครั้งเดียว (unit + ถ้าเป็นไปได้ integration).
+4. dogfood: typeChartLoader ใช้ `dedupe`/`cachedFetch` (= **ergonomic only** — 18 URL distinct,
+   ไม่มี intra-call dedupe จริง); pokedex build + type-chart render เท่าเดิม (361 cells).
+5. dedupe พิสูจน์ผ่าน **unit test** (mock fetch, 2× `cachedFetch(sameUrl)` ใน scope เดียว → fetch ครั้งเดียว).
+   **ไม่** อ้าง integration dedupe จาก pokedex (ไม่มี same-URL repeat ใน route chain ปัจจุบัน — honest).
 
 ## Known limitations
 - request-scoped เท่านั้น (ไม่ cross-request / ไม่ persistent — นั่นคือ ISR `cache` แยกกัน).
