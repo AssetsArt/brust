@@ -71,6 +71,9 @@ pub enum JsxNode {
         description: Option<HeadValue>,
         /// `<BrustPage head={[…]}>` — extra head elements (link/meta/base/style/script/noscript).
         head: Vec<HeadEntry>,
+        /// `<html data-*>` — arbitrary data attributes in source order. Each
+        /// value is a literal or loader member-path (escaped like lang/class).
+        html_attrs: Vec<(String, HeadValue)>,
         /// Page body — every `<BrustPage>` child (all become `<body>` content).
         body: Vec<JsxNode>,
     },

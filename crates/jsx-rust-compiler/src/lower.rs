@@ -742,6 +742,7 @@ fn lower_brust_page(el: &JSXElement, scope: &Scope) -> Result<JsxNode, LowerErro
     let mut title: Option<crate::ir::HeadValue> = None;
     let mut description: Option<crate::ir::HeadValue> = None;
     let mut head: Vec<crate::ir::HeadEntry> = Vec::new();
+    let mut html_attrs: Vec<(String, crate::ir::HeadValue)> = Vec::new();
 
     for attr in &el.opening.attrs {
         let JSXAttrOrSpread::JSXAttr(jsx_attr) = attr else {
@@ -764,6 +765,20 @@ fn lower_brust_page(el: &JSXElement, scope: &Scope) -> Result<JsxNode, LowerErro
         // it separately before the scalar-prop slot match.
         if name == "head" {
             parse_head_array(jsx_attr, scope, &mut head)?;
+            continue;
+        }
+
+        // `data-*` → arbitrary attribute on <html>. Same value grammar as the
+        // scalar shell props (string literal or loader member-path).
+        if name.starts_with("data-") {
+            if !is_valid_data_attr_name(&name) {
+                return Err(LowerError::at(
+                    jsx_attr.span,
+                    ErrorKind::InvalidDataAttrName(name),
+                ));
+            }
+            let value = parse_brust_page_head_value(jsx_attr, &name, scope)?;
+            html_attrs.push((name, value));
             continue;
         }
 
@@ -856,8 +871,61 @@ fn lower_brust_page(el: &JSXElement, scope: &Scope) -> Result<JsxNode, LowerErro
         title,
         description,
         head,
+        html_attrs,
         body,
     })
+}
+
+/// A `data-*` attribute name is valid iff it is `data-` followed by one or more
+/// lowercase letters, digits, or hyphens. Uppercase is rejected (DOM lowercases
+/// data attrs; a `data-Foo` literal wouldn't round-trip via `dataset`).
+fn is_valid_data_attr_name(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix("data-") else {
+        return false;
+    };
+    !rest.is_empty()
+        && rest
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
+/// Parse a `<BrustPage>` scalar/attr value into a `HeadValue`: a string literal
+/// (`x="…"`) or a loader member-path (`x={data.y}`). Calls/arithmetic/spread/
+/// non-path exprs are rejected as `BrustPageAttrMustBeStringLiteral`. Mirrors the
+/// inline scalar-slot logic; used for `data-*` attrs.
+fn parse_brust_page_head_value(
+    jsx_attr: &swc_core::ecma::ast::JSXAttr,
+    name: &str,
+    scope: &Scope,
+) -> Result<crate::ir::HeadValue, LowerError> {
+    match &jsx_attr.value {
+        Some(JSXAttrValue::Str(s)) => Ok(crate::ir::HeadValue::Literal(
+            s.value.to_string_lossy().into_owned(),
+        )),
+        Some(JSXAttrValue::JSXExprContainer(c)) => {
+            if let JSXExpr::Expr(e) = &c.expr {
+                match lower_expr(e, scope) {
+                    Ok(crate::ir::Expr::StaticText(s)) => Ok(crate::ir::HeadValue::Literal(s)),
+                    Ok(ex @ (crate::ir::Expr::Field(_) | crate::ir::Expr::MemberAccess { .. })) => {
+                        Ok(crate::ir::HeadValue::Path(ex))
+                    }
+                    _ => Err(LowerError::at(
+                        jsx_attr.span,
+                        ErrorKind::BrustPageAttrMustBeStringLiteral(name.to_string()),
+                    )),
+                }
+            } else {
+                Err(LowerError::at(
+                    jsx_attr.span,
+                    ErrorKind::BrustPageAttrMustBeStringLiteral(name.to_string()),
+                ))
+            }
+        }
+        _ => Err(LowerError::at(
+            jsx_attr.span,
+            ErrorKind::BrustPageAttrMustBeStringLiteral(name.to_string()),
+        )),
+    }
 }
 
 /// Parse a `<BrustPage head={[…]}>` array literal into `HeadEntry`s. Mirrors the

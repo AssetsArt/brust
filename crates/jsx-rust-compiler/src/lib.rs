@@ -616,6 +616,10 @@ pub enum ErrorKind {
     )]
     BrustPageAttrMustBeStringLiteral(String),
     #[error(
+        "`<BrustPage {0}=…>` is not a valid data-* attribute name (use lowercase letters, digits, hyphens, e.g. `data-mode`)"
+    )]
+    InvalidDataAttrName(String),
+    #[error(
         "`<BrustPage>` owns `<head>` — a literal `<head>` child is not supported; set head tags via props instead (e.g. `title=\"…\"`, `description=\"…\"`)"
     )]
     BrustPageLiteralHeadNotSupported,
@@ -1639,6 +1643,102 @@ mod tests {
         assert_eq!(
             compile(src).unwrap(),
             "<table>{% for r in rows %}<tr>{% for c in r.cells %}{% if c.hot %}<td class=\"hot\">{{ (c.v) | e }}</td>{% else %}<td>{{ (c.v) | e }}</td>{% endif %}{% endfor %}</tr>{% endfor %}</table>"
+        );
+    }
+
+    #[test]
+    fn brustpage_html_data_attr_literal() {
+        let src = r#"export default function P() {
+  return <BrustPage data-mode="dark"><div>x</div></BrustPage>;
+}"#;
+        let out = compile(src).unwrap();
+        assert!(
+            out.starts_with("<html lang=\"en\" data-mode=\"dark\">"),
+            "{out}"
+        );
+        assert!(out.ends_with("<body><div>x</div></body></html>"), "{out}");
+    }
+
+    #[test]
+    fn brustpage_html_data_attr_dynamic() {
+        let src = r#"export default function P({ mode }) {
+  return <BrustPage data-theme={mode}><div>x</div></BrustPage>;
+}"#;
+        let out = compile(src).unwrap();
+        assert!(
+            out.starts_with("<html lang=\"en\" data-theme=\"{{ (mode) | e }}\">"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn brustpage_html_data_attrs_multiple_order() {
+        let src = r#"export default function P() {
+  return <BrustPage data-mode="dark" data-density="cozy"><div/></BrustPage>;
+}"#;
+        let out = compile(src).unwrap();
+        assert!(
+            out.starts_with("<html lang=\"en\" data-mode=\"dark\" data-density=\"cozy\">"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn brustpage_html_data_attr_after_class() {
+        let src = r#"export default function P() {
+  return <BrustPage className="dark" data-mode="dark"><div/></BrustPage>;
+}"#;
+        let out = compile(src).unwrap();
+        assert!(
+            out.starts_with("<html lang=\"en\" class=\"dark\" data-mode=\"dark\">"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn brustpage_html_data_attr_call_rejected() {
+        let src = r#"export default function P() {
+  return <BrustPage data-x={fn()}><div/></BrustPage>;
+}"#;
+        assert!(matches!(
+            compile_with_path(src, "<t>").unwrap_err().kind,
+            ErrorKind::BrustPageAttrMustBeStringLiteral(_)
+        ));
+    }
+
+    #[test]
+    fn brustpage_invalid_data_attr_name_rejected() {
+        let src = r#"export default function P() {
+  return <BrustPage data-Mode="x"><div/></BrustPage>;
+}"#;
+        assert!(matches!(
+            compile_with_path(src, "<t>").unwrap_err().kind,
+            ErrorKind::InvalidDataAttrName(_)
+        ));
+    }
+
+    #[test]
+    fn brustpage_bare_data_attr_name_rejected() {
+        // `data-` with no suffix is not a valid data attribute name.
+        let src = r#"export default function P() {
+  return <BrustPage data-="x"><div/></BrustPage>;
+}"#;
+        assert!(matches!(
+            compile_with_path(src, "<t>").unwrap_err().kind,
+            ErrorKind::InvalidDataAttrName(_)
+        ));
+    }
+
+    #[test]
+    fn brustpage_html_data_attr_after_lang() {
+        // Emit order: lang → data-* (lang is not clobbered by a data attr).
+        let src = r#"export default function P() {
+  return <BrustPage lang="fr" data-mode="dark"><div/></BrustPage>;
+}"#;
+        let out = compile(src).unwrap();
+        assert!(
+            out.starts_with("<html lang=\"fr\" data-mode=\"dark\">"),
+            "{out}"
         );
     }
 }

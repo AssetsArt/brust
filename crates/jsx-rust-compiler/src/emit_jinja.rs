@@ -88,6 +88,7 @@ fn emit_node(node: &JsxNode, out: &mut String) {
             title,
             description,
             head,
+            html_attrs,
             body,
         } => {
             out.push_str("<html");
@@ -96,6 +97,9 @@ fn emit_node(node: &JsxNode, out: &mut String) {
             }
             if let Some(c) = html_class {
                 emit_head_attr(out, "class", c);
+            }
+            for (name, hv) in html_attrs {
+                emit_head_attr(out, name, hv);
             }
             out.push_str("><head>");
             out.push_str("<meta charset=\"utf-8\"/>");
@@ -870,6 +874,7 @@ mod tests {
             title,
             description: None,
             head: vec![],
+            html_attrs: vec![],
             body: vec![],
         }
     }
@@ -918,6 +923,7 @@ mod tests {
                 path: vec!["desc".into()],
             })),
             head: vec![],
+            html_attrs: vec![],
             body: vec![],
         };
         let out = emit(&component(ir));
