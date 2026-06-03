@@ -18,6 +18,7 @@
 import { BrustPage, Island, Outlet } from 'brustjs'
 import type { TeamMember } from '../lib/types'
 import NavLink from './NavLink'
+import NavPreloader from './NavPreloader'
 import TeamBuilder from './TeamBuilder'
 import ThemeToggle from './ThemeToggle'
 
@@ -81,6 +82,7 @@ export default function AppLayout({
         </main>
 
         <Island component={TeamBuilder} props={teamProps} ssr hydrate="load" />
+        <Island component={NavPreloader} hydrate="load" />
       </div>
     </BrustPage>
   )

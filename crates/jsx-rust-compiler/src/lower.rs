@@ -1843,8 +1843,12 @@ fn lower_island(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode,
             ErrorKind::IslandBadComponentName(component.clone()),
         ));
     }
-    let props_path = props_path
-        .ok_or_else(|| LowerError::at(el.opening.span, ErrorKind::IslandPropsPathUnsupported))?;
+    // `props` is OPTIONAL: a propless island (`<Island component={X} hydrate=…/>`)
+    // lowers to an empty props_path. The emitters render that as `island_<n>_props`
+    // = `{}` (resolveIslandContext) and `props: {}` (factory). A PRESENT-but-invalid
+    // `props={…}` still errors inside `island_props_path` above — omit the attr to
+    // pass empty props.
+    let props_path = props_path.unwrap_or_default();
     let hydrate = hydrate.unwrap_or_else(|| "load".to_string());
 
     // ISR caching only applies to SSR'd islands — caching a client-only island
@@ -4563,6 +4567,32 @@ export const behavior = () => ({});"#;
             } => {
                 assert_eq!(component, "Counter");
                 assert_eq!(props_path, "counter");
+                assert_eq!(hydrate, "load");
+                assert!(!*ssr);
+            }
+            other => panic!("expected Island, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn lowers_propless_island_to_empty_props_path() {
+        // A propless island (no `props=` attr) is legal — props_path is "" and the
+        // emitters render it as `{}`.
+        let src = r#"export default function Page() {
+  return <Island component={NavBar} hydrate="load" />;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let c = lower(&parsed).unwrap();
+        match &c.root {
+            JsxNode::Island {
+                component,
+                props_path,
+                hydrate,
+                ssr,
+                ..
+            } => {
+                assert_eq!(component, "NavBar");
+                assert_eq!(props_path, "");
                 assert_eq!(hydrate, "load");
                 assert!(!*ssr);
             }

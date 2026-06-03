@@ -1687,32 +1687,27 @@ code, pre { font-family: var(--font-mono); }
 .dex-hide { display: none !important; }
 
 /* ----------------------------------------------------------------------------
- * SPA navigation progress bar — driven purely by <html data-brust-nav>, which
- * brustjs/navigation flips to "loading" during an SPA fetch and back to "idle"
- * on commit (and "error" on failure). No markup or JS in the app — pure CSS.
- * The bar is a fixed body::before so it escapes the .aa-app grid; z-index sits
- * above the sticky topbar (z-index:10).
+ * SPA navigation preloader — a top progress bar rendered by the NavPreloader
+ * React ISLAND (components/NavPreloader.tsx) while brustjs/navigation reports
+ * phase === 'loading'. The island reads the nav store via useNav() and mounts
+ * this bar only during a navigation; the bar is fixed so it escapes the .aa-app
+ * grid and sits above the sticky topbar (z-index:10).
  * ------------------------------------------------------------------------- */
-html[data-brust-nav="loading"] body::before {
-  content: "";
+.nav-preloader {
   position: fixed;
   inset: 0 0 auto 0;
   height: 3px;
   z-index: 9999;
+  overflow: hidden;
+  pointer-events: none;
+}
+.nav-preloader__bar {
+  height: 100%;
+  width: 40%;
   background: var(--aa-gradient, #1B75BB);
-  background-size: 40% 100%;
-  background-repeat: no-repeat;
-  animation: brust-nav-progress 0.9s ease-in-out infinite;
+  animation: nav-preloader-slide 0.9s ease-in-out infinite;
 }
-html[data-brust-nav="error"] body::before {
-  content: "";
-  position: fixed;
-  inset: 0 0 auto 0;
-  height: 3px;
-  z-index: 9999;
-  background: var(--magenta-500, #D41C59);
-}
-@keyframes brust-nav-progress {
-  from { background-position: -40% 0; }
-  to   { background-position: 140% 0; }
+@keyframes nav-preloader-slide {
+  from { transform: translateX(-110%); }
+  to   { transform: translateX(360%); }
 }
