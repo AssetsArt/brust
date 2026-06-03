@@ -5,8 +5,23 @@
 // slices.
 
 import type { BrustRequest } from 'brustjs/routes'
+import { ALL_TYPES, artwork, cap, fetchList, pad, TYPE_COLOR } from './pokeapi'
 import { teamStore } from './team-store'
 import type { BrowseData, DetailData, HomeData, TypeChartData } from './types'
+
+/** A curated set of iconic Pokémon for the home featured strip. Hardcoded
+ *  {id,name} so the home page needs ZERO PokeAPI calls — artwork is derived from
+ *  id, names supply the display label and detail href. */
+const FEATURED: { id: number; name: string }[] = [
+  { id: 1, name: 'bulbasaur' },
+  { id: 4, name: 'charmander' },
+  { id: 7, name: 'squirtle' },
+  { id: 25, name: 'pikachu' },
+  { id: 39, name: 'jigglypuff' },
+  { id: 94, name: 'gengar' },
+  { id: 143, name: 'snorlax' },
+  { id: 150, name: 'mewtwo' },
+]
 
 interface LoaderCtx {
   params: Record<string, string>
@@ -22,17 +37,40 @@ const chrome = (req: BrustRequest, title: string, crumb: string) => ({
 })
 
 export async function homeLoader({ req }: LoaderCtx): Promise<HomeData> {
+  const featured = FEATURED.map((p) => ({
+    id: p.id,
+    name: p.name,
+    displayName: cap(p.name),
+    num: pad(p.id),
+    artwork: artwork(p.id),
+    detailHref: `/pokemon/${p.name}`,
+  }))
+  const typeTiles = ALL_TYPES.map((t) => ({
+    name: t,
+    label: cap(t),
+    color: TYPE_COLOR[t] ?? '#888888',
+    href: '/pokedex',
+  }))
   return {
-    ...chrome(req, 'PokéDex · brust example', 'Home'),
-    heading: 'PokéDex',
+    ...chrome(req, 'PokéDex · built with brust', 'Home'),
+    featured,
+    typeTiles,
   }
 }
 
 export async function browseLoader({ req }: LoaderCtx): Promise<BrowseData> {
+  const { results } = await fetchList(0, 151)
+  const items = results.map((r) => ({
+    id: r.id,
+    name: r.name,
+    displayName: cap(r.name),
+    num: pad(r.id),
+    artwork: artwork(r.id),
+    detailHref: `/pokemon/${r.name}`,
+  }))
   return {
-    ...chrome(req, 'Pokédex · browse', 'Pokédex'),
-    heading: 'Browse Pokémon',
-    dexProps: JSON.stringify({ items: [] }),
+    ...chrome(req, 'Pokédex · Browse', 'Pokédex'),
+    dexProps: JSON.stringify({ items }),
   }
 }
 

@@ -42,15 +42,23 @@ export interface TypeBadgeVM {
   color: string // hex tint — fed into an inline style value
 }
 
-/** Home landing page data. Minimal for slice 1. */
+/** One "browse by type" tile on the home page. */
+export interface TypeTileVM {
+  name: string // raw type key, used as the .map() key
+  label: string // "Grass"
+  color: string // hex tint — fed into an inline style value
+  href: string // "/pokedex"
+}
+
+/** Home landing page data — curated featured strip + type tiles + chrome. */
 export interface HomeData extends ChromeData {
-  heading: string
+  featured: DexCard[]
+  typeTiles: TypeTileVM[]
 }
 
 /** Browse (dex grid) page data. `dexProps` is the loader-precomputed JSON
- *  string handed to the browse island; real grid data lands in a later slice. */
+ *  string handed to the DexFilter native directive (gen-1 grid, keyed x-for). */
 export interface BrowseData extends ChromeData {
-  heading: string
   dexProps: string
 }
 
