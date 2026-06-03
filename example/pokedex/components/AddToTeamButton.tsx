@@ -24,11 +24,10 @@ export const behavior = ({ props }: { props: AddToTeamProps }) => {
   // TeamBuilder island — they resolve the same window singleton. A native
   // x-on-click mutation is therefore seen reactively by a React island.
   const busy = signal(false)
-  const toast = signal<string | null>(null)
   const inTeam = computed(() => (teamStore.members() ?? []).some((m) => m.id === props.id))
-  const label = computed(() => (inTeam() ? '✓ In your team' : '＋ Add to team'))
+  const label = computed(() => (inTeam() ? '✓ In your team' : disabled() ? 'Team Full' : '＋ Add to team'))
   const btnClass = computed(() => `aa-btn aa-btn--full${inTeam() ? ' aa-btn--secondary' : ''}`)
-  const showToast = computed(() => toast() !== null)
+  const disabled = computed(() => busy() || ((teamStore.members()?.length ?? 0) >= 6 && !inTeam()))
 
   async function init() {
     const r = await api.team.get()
@@ -51,10 +50,7 @@ export const behavior = ({ props }: { props: AddToTeamProps }) => {
           types: props.types,
           artwork: props.artwork,
         })
-        if (data?.full) {
-          toast.set('ทีมเต็มแล้ว · สูงสุด 6 ตัว')
-          setTimeout(() => toast.set(null), 2200)
-        } else if (data) {
+        if (data && !data?.full) {
           teamStore.members.set(data.team)
         }
       }
@@ -63,7 +59,7 @@ export const behavior = ({ props }: { props: AddToTeamProps }) => {
     }
   }
 
-  return { busy, toast, inTeam, label, btnClass, showToast, init, toggle }
+  return { busy, inTeam, label, btnClass, init, toggle, disabled }
 }
 
 // default → jinja (server). The x-* directives are static string attributes the
@@ -77,33 +73,13 @@ export default function AddToTeamButton({ data }: { data: string }) {
         type="button"
         x-text="label"
         x-bind-class="btnClass"
-        x-bind-disabled="busy"
+        x-bind-disabled="disabled"
         x-on-click="toggle"
         className="aa-btn aa-btn--full"
         style={{ width: '100%' }}
       >
         ＋ Add to team
       </button>
-      <div
-        x-show="showToast"
-        x-text="toast"
-        style={{
-          position: 'absolute',
-          top: 'calc(100% + 8px)',
-          left: 0,
-          right: 0,
-          zIndex: 50,
-          padding: '8px 12px',
-          borderRadius: 'var(--radius-md)',
-          background: 'var(--danger-50)',
-          color: 'var(--danger-700)',
-          border: '1px solid rgba(212,28,89,0.25)',
-          fontSize: 'var(--text-xs)',
-          fontWeight: 600,
-          textAlign: 'center',
-          boxShadow: 'var(--shadow-md)',
-        }}
-      />
     </div>
   )
 }
