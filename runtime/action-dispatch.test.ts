@@ -1,5 +1,6 @@
 import { test, expect } from 'bun:test'
 import { z } from 'zod'
+import { ActionError } from './action-error.ts'
 import { defineActions } from './define-actions.ts'
 import { dispatchAction } from './routes.ts'
 
@@ -173,4 +174,111 @@ test('duplicate HEAD path throws', () => {
       .head('/x', () => ({}))
       .head('/x', () => ({})),
   ).toThrow(/duplicate/)
+})
+
+test('handler throws ActionError → typed status + flat body', async () => {
+  const a = defineActions().post('/t', () => {
+    throw new ActionError(409, 'TEAM_FULL', { data: { max: 6 } })
+  })
+  const res = await dispatchAction(
+    {
+      kind: 'action',
+      action_id: '0',
+      content_type: 'application/json',
+      params: {},
+      body_text: 'null',
+      req: { method: 'POST', ...reqBase } as any,
+    },
+    table(a),
+  )
+  expect(res.status).toBe(409)
+  expect(JSON.parse(res.body)).toEqual({
+    code: 'TEAM_FULL',
+    message: 'TEAM_FULL',
+    data: { max: 6 },
+  })
+})
+
+// `data` key is absent (not `data: undefined`): actionErrorResponse only adds it
+// when present, and toEqual treats a missing key vs an explicit-undefined as unequal.
+test('ActionError without data omits data key', async () => {
+  const a = defineActions().post('/t', () => {
+    throw new ActionError(400, 'BAD', { message: 'nope' })
+  })
+  const res = await dispatchAction(
+    {
+      kind: 'action',
+      action_id: '0',
+      content_type: 'application/json',
+      params: {},
+      body_text: 'null',
+      req: { method: 'POST', ...reqBase } as any,
+    },
+    table(a),
+  )
+  expect(res.status).toBe(400)
+  expect(JSON.parse(res.body)).toEqual({ code: 'BAD', message: 'nope' })
+})
+
+test('non-ActionError throw → still 500 enveloped (regression)', async () => {
+  const a = defineActions().post('/t', () => {
+    throw new Error('boom')
+  })
+  const res = await dispatchAction(
+    {
+      kind: 'action',
+      action_id: '0',
+      content_type: 'application/json',
+      params: {},
+      body_text: 'null',
+      req: { method: 'POST', ...reqBase } as any,
+    },
+    table(a),
+  )
+  expect(res.status).toBe(500)
+  expect(JSON.parse(res.body)).toEqual({ error: { message: 'boom', name: 'Error' } })
+})
+
+test('middleware throws ActionError → same typed body as terminal (outer catch)', async () => {
+  const mw = async (_req: any, _next: any) => {
+    throw new ActionError(403, 'FORBIDDEN', { data: { reason: 'x' } })
+  }
+  const a = defineActions().post('/t', () => ({ ok: true }), { middleware: [mw] })
+  const res = await dispatchAction(
+    {
+      kind: 'action',
+      action_id: '0',
+      content_type: 'application/json',
+      params: {},
+      body_text: 'null',
+      req: { method: 'POST', ...reqBase } as any,
+    },
+    table(a),
+  )
+  expect(res.status).toBe(403)
+  expect(JSON.parse(res.body)).toEqual({
+    code: 'FORBIDDEN',
+    message: 'FORBIDDEN',
+    data: { reason: 'x' },
+  })
+})
+
+test('respond() then throw ActionError → throw wins', async () => {
+  const a = defineActions().post('/t', ({ respond }) => {
+    respond({ ok: true }, { status: 201 })
+    throw new ActionError(409, 'TEAM_FULL')
+  })
+  const res = await dispatchAction(
+    {
+      kind: 'action',
+      action_id: '0',
+      content_type: 'application/json',
+      params: {},
+      body_text: 'null',
+      req: { method: 'POST', ...reqBase } as any,
+    },
+    table(a),
+  )
+  expect(res.status).toBe(409)
+  expect(JSON.parse(res.body)).toEqual({ code: 'TEAM_FULL', message: 'TEAM_FULL' })
 })

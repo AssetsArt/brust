@@ -8,6 +8,7 @@
 // The behavior is react-free: `signal`/`computed` from brustjs/store (the window
 // singleton on the client), `client` from brustjs/client (the treaty action
 // client — also react-free), and the shared teamStore. NO react imports.
+import type { ActionErrorBody } from 'brustjs'
 import { client } from 'brustjs/client'
 import { computed, signal } from 'brustjs/store'
 import type { Actions } from '../actions'
@@ -24,9 +25,10 @@ export const behavior = ({ props }: { props: AddToTeamProps }) => {
   // TeamBuilder island — they resolve the same window singleton. A native
   // x-on-click mutation is therefore seen reactively by a React island.
   const busy = signal(false)
+  const full = signal(false)
   const inTeam = computed(() => (teamStore.members() ?? []).some((m) => m.id === props.id))
   const label = computed(() =>
-    inTeam() ? '✓ In your team' : disabled() ? 'Team Full' : '＋ Add to team',
+    inTeam() ? '✓ In your team' : disabled() || full() ? 'Team Full' : '＋ Add to team',
   )
   const btnClass = computed(() => `aa-btn aa-btn--full${inTeam() ? ' aa-btn--secondary' : ''}`)
   const disabled = computed(() => busy() || ((teamStore.members()?.length ?? 0) >= 6 && !inTeam()))
@@ -44,7 +46,7 @@ export const behavior = ({ props }: { props: AddToTeamProps }) => {
         const { data } = await api.team({ id: props.id }).delete()
         if (data) teamStore.members.set(data.team)
       } else {
-        const { data } = await api.team.post({
+        const { data, error } = await api.team.post({
           id: props.id,
           name: props.name,
           displayName: props.displayName,
@@ -52,8 +54,11 @@ export const behavior = ({ props }: { props: AddToTeamProps }) => {
           types: props.types,
           artwork: props.artwork,
         })
-        if (data && !data?.full) {
+        if (data) {
+          full.set(false)
           teamStore.members.set(data.team)
+        } else if ((error?.value as ActionErrorBody)?.code === 'TEAM_FULL') {
+          full.set(true) // server rejected — team full; surface instead of silent no-op
         }
       }
     } finally {
@@ -61,7 +66,7 @@ export const behavior = ({ props }: { props: AddToTeamProps }) => {
     }
   }
 
-  return { init, label, btnClass, toggle, disabled }
+  return { init, label, btnClass, toggle, disabled, full }
 }
 
 // default → jinja (server). The x-* directives are static string attributes the

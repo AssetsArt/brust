@@ -18,6 +18,7 @@ import {
   resolveComponentContext,
 } from './islands/native-render.ts'
 import type { IslandCache } from './islands/native-render.ts'
+import { isActionError, type ActionError, type ActionErrorBody } from './action-error.ts'
 import type { EndpointDef } from './define-actions.ts'
 import { isRespondSentinel, makeRespond } from './define-actions.ts'
 import { validate } from './standard-schema.ts'
@@ -1295,6 +1296,19 @@ async function decodeActionBody(
   }
 }
 
+function actionErrorResponse(err: ActionError): RouteResponse {
+  // Flat domain-error body `{ code, message, data? }` — `code` is the client-side
+  // discriminator (vs the framework's enveloped `{ error: { … } }`). `data` is
+  // included only when present so the wire shape omits the key entirely otherwise.
+  const body: ActionErrorBody = { code: err.code, message: err.message }
+  if (err.data !== undefined) body.data = err.data
+  return {
+    status: err.status,
+    body: JSON.stringify(body),
+    contentType: 'application/json; charset=utf-8',
+  }
+}
+
 export async function dispatchAction(
   call: Extract<RouteCall, { kind: 'action' }>,
   byId: Map<string, EndpointDef>,
@@ -1374,6 +1388,7 @@ export async function dispatchAction(
         contentType: 'application/json; charset=utf-8',
       }
     } catch (err) {
+      if (isActionError(err)) return actionErrorResponse(err)
       const e = err instanceof Error ? err : new Error(String(err))
       console.error(`[brust] action ${def.method} ${def.path} threw:`, err)
       return {
@@ -1389,11 +1404,15 @@ export async function dispatchAction(
   try {
     response = await chain()
   } catch (err) {
-    console.error('[brust] action middleware uncaught:', err)
-    response = {
-      status: 500,
-      body: '{"error":{"message":"internal error"}}',
-      contentType: 'application/json; charset=utf-8',
+    if (isActionError(err)) {
+      response = actionErrorResponse(err)
+    } else {
+      console.error('[brust] action middleware uncaught:', err)
+      response = {
+        status: 500,
+        body: '{"error":{"message":"internal error"}}',
+        contentType: 'application/json; charset=utf-8',
+      }
     }
   }
   return {

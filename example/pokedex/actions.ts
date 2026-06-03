@@ -6,7 +6,7 @@
 //   api.team({ id }).delete()      → DELETE /_brust/action/team/{id}
 
 import { z } from 'zod'
-import { defineActions } from 'brustjs'
+import { defineActions, ActionError } from 'brustjs'
 import { MAX_TEAM, teamStore } from './lib/team-store'
 
 const TeamMemberInput = z.object({
@@ -23,12 +23,10 @@ export const actions = defineActions()
   .post(
     '/team',
     ({ body }) => {
-      const ok = teamStore.add(body)
-      // GAP S7: a domain error (team full) cannot throw a typed non-2xx across
-      // the treaty boundary, so it rides back inside the success payload as a
-      // `full` flag. The client therefore checks two places (transport `error`
-      // AND `data.full`). See ./FRAMEWORK-GAPS.md S7.
-      return { team: teamStore.list(), max: MAX_TEAM, full: !ok }
+      if (!teamStore.add(body)) {
+        throw new ActionError(409, 'TEAM_FULL', { data: { max: MAX_TEAM } })
+      }
+      return { team: teamStore.list(), max: MAX_TEAM }
     },
     { body: TeamMemberInput },
   )
