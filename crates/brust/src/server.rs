@@ -28,7 +28,13 @@ fn asset_cache_control(dev: bool) -> &'static str {
 
 /// Build a static-asset response: negotiate gzip, set Cache-Control + Vary, and
 /// Content-Encoding when compressed. `path` is the on-disk path (cache key).
-fn static_asset_response(buf: &[u8], content_type: &str, path: &str, bytes: Vec<u8>) -> Vec<u8> {
+fn static_asset_response(
+    buf: &[u8],
+    content_type: &str,
+    path: &str,
+    bytes: Vec<u8>,
+    head: bool,
+) -> Vec<u8> {
     let dev = crate::is_dev_mode();
     let accept = parse_header_value(buf, "accept-encoding");
     let (body, encoding) =
@@ -46,7 +52,47 @@ fn static_asset_response(buf: &[u8], content_type: &str, path: &str, bytes: Vec<
     if let Some(enc) = encoding {
         extra.push(("Content-Encoding".to_string(), enc.to_string()));
     }
-    http::build_response(200, content_type, &extra, body)
+    // HEAD: same headers as the GET (incl. the content-length the GET body would
+    // have produced — compression already applied) but no entity body.
+    if head {
+        http::build_response_head(200, content_type, &extra, body.len())
+    } else {
+        http::build_response(200, content_type, &extra, body)
+    }
+}
+
+/// Percent-decode a URL **path** for static-asset manifest lookup. Identical to
+/// `percent_decode` for `%XX` escapes, but a `+` is a LITERAL plus in a path
+/// (only query strings map `+`→space). Manifest keys are raw filenames, so a
+/// request like `/img/a%20b.png` must decode to `/img/a b.png` to match.
+fn percent_decode_path(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hi = (bytes[i + 1] as char).to_digit(16);
+            let lo = (bytes[i + 2] as char).to_digit(16);
+            if let (Some(h), Some(l)) = (hi, lo) {
+                out.push(((h << 4) | l) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8(out).unwrap_or_default()
+}
+
+/// Manifest lookup key for `path_no_query`: percent-decoded only when it actually
+/// contains an escape, so the common no-escape path stays allocation-free.
+fn asset_lookup_key(path_no_query: &str) -> std::borrow::Cow<'_, str> {
+    if path_no_query.contains('%') {
+        std::borrow::Cow::Owned(percent_decode_path(path_no_query))
+    } else {
+        std::borrow::Cow::Borrowed(path_no_query)
+    }
 }
 
 fn current_css_dir() -> Option<std::path::PathBuf> {
@@ -256,6 +302,32 @@ async fn handle_conn(
         // Strip the query string once; reused by the gate and the action branch.
         let path_no_query = path.split('?').next().unwrap_or(&path);
 
+        // HEAD is supported for static public assets (identical headers to the
+        // GET — incl. Content-Length — but no body; the canonical CDN/cache
+        // existence+metadata probe). Resolved BEFORE the GET-only method gate and
+        // the body-producing page handlers. Action paths keep their own method
+        // handling (the gate's action-prefix exception → action dispatch), so a
+        // HEAD under the action prefix falls through; any other non-asset HEAD is
+        // a probe for a resource we don't serve via HEAD → 404.
+        if method == "HEAD" {
+            if let Some(file_path) = current_public_asset(&asset_lookup_key(path_no_query))
+                && let Ok(bytes) = tokio::fs::read(&file_path).await
+            {
+                let ct = content_type_for(&file_path);
+                let resp =
+                    static_asset_response(&buf, ct, &file_path.to_string_lossy(), bytes, true);
+                if s.write_all(resp).await.is_err() {
+                    return;
+                }
+                continue;
+            }
+            if !crate::path_under_action_prefix(path_no_query) {
+                let _ = s.write_all(http::error_404()).await;
+                continue;
+            }
+            // else: fall through to the action-path handling below.
+        }
+
         // Only GET is allowed on general routes. Action paths (under the
         // configured prefix), cache-invalidate, and MCP each allow POST (or
         // any method for action paths, which are router-gated). The prefix
@@ -315,6 +387,7 @@ async fn handle_conn(
                         "application/javascript; charset=utf-8",
                         &file_path.to_string_lossy(),
                         bytes,
+                        false,
                     );
                     if s.write_all(resp).await.is_err() {
                         return;
@@ -351,6 +424,7 @@ async fn handle_conn(
                         "text/css; charset=utf-8",
                         &file_path.to_string_lossy(),
                         bytes,
+                        false,
                     );
                     if s.write_all(resp).await.is_err() {
                         return;
@@ -370,12 +444,13 @@ async fn handle_conn(
         // already 405s non-GET general paths). `path_no_query` is used purely as
         // a map key — never joined to a path — so traversal is impossible here.
         if method == "GET"
-            && let Some(file_path) = current_public_asset(path_no_query)
+            && let Some(file_path) = current_public_asset(&asset_lookup_key(path_no_query))
         {
             // read error (file removed after boot) → fall through to routing
             if let Ok(bytes) = tokio::fs::read(&file_path).await {
                 let ct = content_type_for(&file_path);
-                let resp = static_asset_response(&buf, ct, &file_path.to_string_lossy(), bytes);
+                let resp =
+                    static_asset_response(&buf, ct, &file_path.to_string_lossy(), bytes, false);
                 if s.write_all(resp).await.is_err() {
                     return;
                 }
@@ -1860,6 +1935,20 @@ mod tests {
         // header would mask the rebuild in the browser. Dev must be no-store.
         assert_eq!(asset_cache_control(true), "no-store");
         assert_eq!(asset_cache_control(false), "public, max-age=3600");
+    }
+
+    #[test]
+    fn percent_decode_path_decodes_escapes_but_keeps_plus_literal() {
+        // Static-asset path lookup: %XX → byte; but unlike query strings, a '+'
+        // in a PATH is a literal '+', NOT a space. The manifest key is the raw
+        // filename, so "/img/a%20b.png" must resolve to "/img/a b.png".
+        assert_eq!(percent_decode_path("/img/a%20b.png"), "/img/a b.png");
+        assert_eq!(percent_decode_path("/a+b.png"), "/a+b.png");
+        // Lowercase hex + a non-ASCII byte sequence (é = C3 A9) round-trips.
+        assert_eq!(percent_decode_path("/caf%c3%a9.png"), "/café.png");
+        // A malformed escape is left verbatim (no panic, no data loss).
+        assert_eq!(percent_decode_path("/a%2.png"), "/a%2.png");
+        assert_eq!(percent_decode_path("/plain/path.css"), "/plain/path.css");
     }
 
     #[test]

@@ -32,6 +32,36 @@ pub fn build_response(
     extra_headers: &[(String, String)],
     body: Vec<u8>,
 ) -> Vec<u8> {
+    let content_length = body.len();
+    response_bytes(status, content_type, extra_headers, content_length, body)
+}
+
+/// Like `build_response` but for a HEAD request: emits byte-identical headers to
+/// the matching GET (including `Content-Length: content_length`, the FULL entity
+/// size) with NO entity body. HTTP requires a HEAD response to carry the same
+/// headers a GET would, minus the body.
+pub fn build_response_head(
+    status: u16,
+    content_type: &str,
+    extra_headers: &[(String, String)],
+    content_length: usize,
+) -> Vec<u8> {
+    response_bytes(
+        status,
+        content_type,
+        extra_headers,
+        content_length,
+        Vec::new(),
+    )
+}
+
+fn response_bytes(
+    status: u16,
+    content_type: &str,
+    extra_headers: &[(String, String)],
+    content_length: usize,
+    body: Vec<u8>,
+) -> Vec<u8> {
     let status_text = match status {
         200 => "OK",
         301 => "Moved Permanently",
@@ -53,9 +83,8 @@ pub fn build_response(
     let mut header = format!(
         "HTTP/1.1 {status} {status_text}\r\n\
          Content-Type: {content_type}\r\n\
-         Content-Length: {}\r\n\
+         Content-Length: {content_length}\r\n\
          Connection: keep-alive\r\n",
-        body.len(),
     );
     for (name, value) in extra_headers {
         // Skip names that would collide with the fixed lines above.
@@ -220,6 +249,24 @@ mod tests {
         let bytes = build_response(200, "text/plain", &extra, b"".to_vec());
         let s = as_str(&bytes);
         assert!(!s.contains("Set-Cookie"));
+    }
+
+    #[test]
+    fn build_response_head_sets_full_content_length_with_no_body() {
+        // HEAD: identical headers to the GET (incl. the FULL Content-Length) but
+        // zero body bytes after the blank line.
+        let extra = vec![(
+            "Cache-Control".to_string(),
+            "public, max-age=3600".to_string(),
+        )];
+        let bytes = build_response_head(200, "image/png", &extra, 70);
+        let s = as_str(&bytes);
+        assert!(s.starts_with("HTTP/1.1 200 OK\r\n"));
+        assert!(s.contains("Content-Type: image/png\r\n"));
+        assert!(s.contains("Content-Length: 70\r\n"));
+        assert!(s.contains("Cache-Control: public, max-age=3600\r\n"));
+        // Nothing after the header terminator — no entity body.
+        assert!(s.ends_with("\r\n\r\n"));
     }
 
     #[test]
