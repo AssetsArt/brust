@@ -8,7 +8,6 @@
 // The behavior is react-free: `signal`/`computed` from brustjs/store (the window
 // singleton on the client), `client` from brustjs/client (the treaty action
 // client — also react-free), and the shared teamStore. NO react imports.
-import type { ActionErrorBody } from 'brustjs'
 import { client } from 'brustjs/client'
 import { computed, signal } from 'brustjs/store'
 import type { Actions } from '../actions'
@@ -57,7 +56,7 @@ export const behavior = ({ props }: { props: AddToTeamProps }) => {
         if (data) {
           full.set(false)
           teamStore.members.set(data.team)
-        } else if ((error?.value as ActionErrorBody)?.code === 'TEAM_FULL') {
+        } else if (error?.value.code === 'TEAM_FULL') {
           full.set(true) // server rejected — team full; surface instead of silent no-op
         }
       }

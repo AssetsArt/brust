@@ -245,8 +245,8 @@ const SHORT: Record<string, string> = {
 }
 
 export async function typeChartLoader(): Promise<TypeChartData> {
-  // GAP S2: no loader-level batch/parallel helper or request-scoped cache — we
-  // fan out 18 fetches by hand with Promise.all (and there is no dedupe).
+  // Fan out 18 distinct type fetches with Promise.all; each goes through
+  // cachedFetch (S2), so duplicate in-flight GETs within the request dedupe.
   const relations = await Promise.all(ALL_TYPES.map((t) => fetchTypeRelations(t)))
 
   // Build the 19×19 grid as nested rows (header row + one row per attacking

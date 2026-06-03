@@ -28,7 +28,7 @@ export const actions = defineActions()
       }
       return { team: teamStore.list(), max: MAX_TEAM }
     },
-    { body: TeamMemberInput },
+    { body: TeamMemberInput, errors: { TEAM_FULL: z.object({ max: z.number() }) } },
   )
   .delete('/team/{id}', ({ params }) => {
     teamStore.remove(Number(params.id))
