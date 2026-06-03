@@ -11,5 +11,13 @@
     "jsx": "react-jsx",
     "types": []
   },
-  "files": ["treaty.ts", "define-actions.ts", "standard-schema.ts", "treaty.type-test.ts"]
+  "files": [
+    "treaty.ts",
+    "define-actions.ts",
+    "standard-schema.ts",
+    "treaty.type-test.ts",
+    "navigation/index.ts",
+    "navigation/store.ts",
+    "navigation/active-nav.ts"
+  ]
 }

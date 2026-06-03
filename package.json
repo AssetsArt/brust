@@ -69,7 +69,8 @@
     "./client": "./runtime/client/index.ts",
     "./create": "./runtime/create.ts",
     "./store": "./runtime/store/index.ts",
-    "./native": "./runtime/native/index.ts"
+    "./native": "./runtime/native/index.ts",
+    "./navigation": "./runtime/navigation/index.ts"
   },
   "files": [
     "runtime",
