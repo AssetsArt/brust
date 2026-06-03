@@ -27,7 +27,8 @@ S13 SPA-nav (รอบก่อน) · **native layout (chrome ซ้ำ 3 ห�
 แล้ว (เดิม verbatim = ช่อง XSS จริง — request param ไหลเข้า `<title>` ได้).
 
 **ยังเปิด:** S2 (loader cache) ·
-native **Outlet/router-level layout injection** ·
+(**native Outlet/router-level layout injection — ✅ FIXED รอบนี้:** approach a build-time desugar —
+nested native routes + `<Outlet/>`, synth wrapper reuse inline machinery, chain loader merge) ·
 (**S7 typed treaty error — ✅ FIXED รอบนี้:** `ActionError` primitive + dispatch map flat body) ·
 **BY-DESIGN:** S3 (Suspense). · **✅ static/public asset serving** (boot manifest, static-wins) ·
 **✅ `<BrustPage head={[…]}>` typed head array + `dangerouslySetInnerHTML`**
@@ -381,8 +382,21 @@ href:'/favicon.svg'}]}>` (typed head-entry array) → `<head>` emit `<link rel="
 className ternary. **dogfood:** ทั้ง 3 หน้าทิ้ง sidebar/topbar/Island ที่ซ้ำ เหลือแค่
 `<PageLayout native title=… active=… crumb=… teamProps={…}>{inner}</PageLayout>`.
 
-**ยังเปิด:** `<Outlet>`/nested-route สำหรับ native (router-level injection) — นี่เป็น
-**composition** (route root เลือก layout เอง) ไม่ใช่ router inject layout ให้.
+**✅ router-level injection — FIXED รอบนี้ (approach a, build-time desugar):** native รองรับ
+**nested routes + `<Outlet/>`** แล้ว. author ประกาศ nesting ใน route tree (parent layout +
+native children) แล้วเขียน `<Outlet/>` ใน layout ครั้งเดียว — framework ประกอบให้ (ไม่ต้อง wrap
+`<PageLayout native>{children}</>` ทุก route). กลไก: `defineRoutes` ยอม native+children (ทั้ง
+subtree ต้อง native), `emitNativeTemplates` synthesize per-leaf wrapper `<Parent native><Leaf
+native/></Parent>` แล้ว reuse inline+splice machinery เดิม (compiler งานใหม่แค่ `<Outlet/>` builtin →
+`ChildrenSlot`), chain loaders รัน top-down merge เป็น flat context เดียว (child-wins). Rust route
+table ไม่แตะ (1 leaf → 1 composed template). **dogfood:** pokedex เหลือ `AppLayout` เดียว
+(propless, `<Outlet/>`), 3 หน้าเป็น fragment, chrome (`title/active/crumb/teamProps`) มาจาก leaf
+loader. ดู spec/plan `docs/superpowers/specs/2026-06-03-native-outlet-router-layout-{design,plan}.md`.
+
+**ยังเปิด (out of scope → approach b):** layout duplicated ลงแต่ละ leaf template (build-time inline,
+ไม่ share runtime); runtime separate-template composition (minijinja block override / template chain
+ใน Rust); per-level loader scope (ตอนนี้ merge child-wins, collision เงียบ). convention: layout owns
+`<main>` (leaf ห้ามมี — จะทำ SPA-nav extraction พัง).
 
 ---
 
