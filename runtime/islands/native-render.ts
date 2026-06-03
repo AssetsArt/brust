@@ -128,6 +128,17 @@ export function loadIslandManifest(
     manifestCache.set(abs, null)
     return null
   }
+  // sourcePath ships PROJECT-RELATIVE (no leaked absolute build path). Rehydrate
+  // it to an absolute path against cwd so the SSR `import(entry.sourcePath)` in
+  // resolveIslandContext resolves regardless of where the manifest lives. An
+  // already-absolute path (old manifests, unit-test stubs) passes through.
+  if (parsed) {
+    for (const entry of parsed) {
+      if (entry.sourcePath && !path.isAbsolute(entry.sourcePath)) {
+        entry.sourcePath = path.resolve(process.cwd(), entry.sourcePath)
+      }
+    }
+  }
   manifestCache.set(abs, parsed)
   return parsed
 }

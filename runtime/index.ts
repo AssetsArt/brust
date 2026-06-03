@@ -708,11 +708,24 @@ export const brust = {
         console.log(`[brust] worker: mcp server ready (${mcpManifest.tools.length} tools)`)
       }
 
-      // Sub-project J note: jinja templates are loaded ONCE process-wide by the
+      // Sub-project J note: jinja TEMPLATES are loaded ONCE process-wide by the
       // main branch's loadJinjaOnce call. Rust's ENV is a process-global
       // OnceLock; Bun Workers share that process, so calling it from each
       // worker would panic on second set(). The worker reads ENV.get() at
       // napi_render_jinja time — no per-worker load needed.
+      //
+      // BUT the JS-side island/component sidecar readers (native-render.ts)
+      // resolve against a MODULE-LOCAL `_configuredJinjaDir`, and Bun Workers
+      // are separate JS isolates — that variable is unset here unless we set it.
+      // Without this, the worker falls back to `cwd/.brust/jinja`; a prebuilt
+      // run then silently depends on the build's `.brust` dual-emit, and once
+      // that cache is removed the island manifest reads null → `data-brust-props`
+      // renders empty → the client's JSON.parse throws. Configure it to the SAME
+      // dir main loads from so native island/component render works dist-only.
+      const workerJinjaDir = prebuilt
+        ? path.join(distDir!, 'jinja')
+        : path.resolve(process.cwd(), '.brust/jinja')
+      configureJinjaDir(workerJinjaDir)
 
       const { makeRenderer: make } = await import('./routes.ts')
       let wid: number | null = null

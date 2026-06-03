@@ -25,7 +25,7 @@ afterEach(() => {
 })
 
 describe('reconcileIslandManifest', () => {
-  test('enriches each .islands.json entry with sourcePath from the page imports', () => {
+  test('enriches each .islands.json entry with a PROJECT-RELATIVE sourcePath (no leaked absolute path)', () => {
     const jinjaPath = join(dir, 'Page.jinja')
     const islandsJsonPath = join(dir, 'Page.islands.json')
     writeFileSync(jinjaPath, '<div>hi</div>')
@@ -36,7 +36,12 @@ describe('reconcileIslandManifest', () => {
       ]),
     )
 
-    const pageImports = new Map([['Counter', '/abs/components/Counter.tsx']])
+    // Use an absolute path UNDER the project root so the relative result is a
+    // clean forward-slash path, not a `../../` escape — and crucially never the
+    // build machine's absolute path (which would leak the developer's username
+    // into shipped dist/jinja artifacts). Mirrors the .components.json contract.
+    const absSource = join(process.cwd(), 'components', 'Counter.tsx')
+    const pageImports = new Map([['Counter', absSource]])
     reconcileIslandManifest(jinjaPath, islandsJsonPath, pageImports, 'Page')
 
     const enriched = JSON.parse(readFileSync(islandsJsonPath, 'utf8'))
@@ -47,9 +52,10 @@ describe('reconcileIslandManifest', () => {
         propsPath: 'data.x',
         ssr: false,
         hydrate: 'load',
-        sourcePath: '/abs/components/Counter.tsx',
+        sourcePath: 'components/Counter.tsx',
       },
     ])
+    expect(isAbsolute(enriched[0].sourcePath)).toBe(false)
   })
 
   test('appends the {% raw %}-wrapped bootstrap to the .jinja file', () => {
