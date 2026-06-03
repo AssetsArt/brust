@@ -1,4 +1,4 @@
-import type { ActionsBuilder } from './define-actions.ts'
+import type { ActionsBuilder, EndpointEntry } from './define-actions.ts'
 
 const METHODS = new Set(['get', 'post', 'put', 'patch', 'delete', 'head'])
 
@@ -15,12 +15,6 @@ export interface ClientOptions {
   fetch?: typeof fetch
 }
 
-type FirstSegment<S extends string> = S extends `/${infer Rest}`
-  ? FirstSegment<Rest>
-  : S extends `${infer T}/${infer _U}`
-    ? T
-    : S
-
 export type PermissiveProxy = {
   (arg?: any): PermissiveProxy
   [key: string]: PermissiveProxy
@@ -33,10 +27,53 @@ export type PermissiveProxy = {
   head: (options?: any) => Promise<TreatyResponse<any, any>>
 }
 
+// ─── Typed Treaty<App> (B2, descoped) ───────────────────────────────────────
+// Static paths get fully-typed methods (output + discriminated error union);
+// any param path (`{...}`) or unknown segment falls through to PermissiveProxy.
+// Reference shape proven by spike5 (EXIT=0).
+
+/** Per-method client signatures for one endpoint-entry map (the `{ GET, POST, … }`
+ * object for a single path). Bodyless methods (GET/HEAD) take only options. */
+type Methods<E> = {
+  [M in keyof E & string as Lowercase<M>]: M extends 'GET' | 'HEAD'
+    ? E[M] extends EndpointEntry
+      ? (o?: {
+          query?: Record<string, string>
+          headers?: Record<string, string>
+        }) => Promise<TreatyResponse<E[M]['output'], E[M]['error']>>
+      : never
+    : E[M] extends EndpointEntry
+      ? (
+          b?: E[M]['input'],
+          o?: { headers?: Record<string, string> },
+        ) => Promise<TreatyResponse<E[M]['output'], E[M]['error']>>
+      : never
+}
+
+/** A path is static iff it contains no `{param}` segment. */
+type IsStatic<K extends string> = K extends `${string}{${string}}${string}` ? false : true
+/** Keep only the static path keys of the accumulator. */
+type StaticAcc<Acc> = {
+  [K in keyof Acc as K extends string ? (IsStatic<K> extends true ? K : never) : never]: Acc[K]
+}
+/** Given a path key `K` and the accumulated prefix `P`, the next segment after `P`. */
+type Tail<K extends string, P extends string> = K extends `${P}/${infer Rest}`
+  ? Rest extends `${infer H}/${string}`
+    ? H
+    : Rest
+  : never
+/** All immediate child segments under prefix `P`. */
+type ChildSegs<SA, P extends string> = { [K in keyof SA]: Tail<K & string, P> }[keyof SA]
+/** The entry map for the exact path `P`, if one exists. */
+// biome-ignore lint/complexity/noBannedTypes: `{}` is the empty-methods identity when no exact endpoint matches the prefix
+type ExactEntry<SA, P extends string> = P extends keyof SA ? SA[P] : {}
+/** A treaty node: methods of the exact path + child segment nodes + permissive fallback. */
+type TNode<SA, P extends string> = Methods<ExactEntry<SA, P>> & {
+  [Seg in ChildSegs<SA, P> & string]: TNode<SA, `${P}/${Seg}`>
+} & PermissiveProxy
+
 export type Treaty<App> =
-  App extends ActionsBuilder<infer Acc>
-    ? { [K in FirstSegment<keyof Acc & string>]: PermissiveProxy } & PermissiveProxy
-    : PermissiveProxy
+  App extends ActionsBuilder<infer Acc> ? TNode<StaticAcc<Acc>, ''> : PermissiveProxy
 
 function resolvePrefix(opts?: ClientOptions): string {
   if (opts?.prefix) return opts.prefix

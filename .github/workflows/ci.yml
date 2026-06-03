@@ -61,6 +61,12 @@ jobs:
       # --frozen-lockfile may treat their 404 as fatal. Revisit once published.
       - run: bun install
       - run: bun run ci # biome ci .
+      # Isolated type-check of the treaty client's public types (the full-project
+      # tsc stack-overflows on the React graph, so this checks only the
+      # react-free treaty/define-actions subgraph + its type-test). This is the
+      # ONLY gate that catches type regressions in the typed treaty surface.
+      - run: cd runtime && bun install
+      - run: bun run typecheck:treaty
 
   bun-test:
     name: bun test (${{ matrix.os }})
