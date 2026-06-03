@@ -31,18 +31,22 @@ the action ergonomic + correct `Set-Cookie` serialization).
 ## Architecture
 
 ### 1. `runtime/request-context.ts` (new) — ALS request scope
-Mirrors `store/server-context.ts`. ONE ALS holding a per-request object `{ ctx: Map<string,unknown>;
-cookies: SetCookie[] }`.
+Mirrors `store/server-context.ts` (incl. its **client-bundle warning**: imports `node:async_hooks`
+→ MUST NOT be reachable from `brustjs/client` or `brustjs/store`; export `cookies`/`getRequestContext`
+ONLY from the server `runtime/index.ts`). ONE ALS holding a per-request scope object with **distinctly
+named** fields (don't conflate read vs write):
 ```ts
+interface RequestScope { ctx: Map<string, unknown>; reqCookies: Record<string,string>; setCookies: string[] }
 const reqCtx = new AsyncLocalStorage<RequestScope>()
-export function runInRequestScope<T>(fn: () => T): T { return reqCtx.run({ ctx: new Map(), setCookies: [] }, fn) }
-export function getRequestContext(): Map<string, unknown> { /* current scope's ctx; throws if outside */ }
-export function __stagedSetCookies(): SetCookie[]  // internal — read by the flush
-export function __stageSetCookie(c: SetCookie): void // internal — called by cookies.set
+export function runInRequestScope<T>(reqCookies: Record<string,string>, fn: () => T): T {
+  return reqCtx.run({ ctx: new Map(), reqCookies, setCookies: [] }, fn)
+}
+export function getRequestContext(): Map<string, unknown> { /* scope.ctx; THROWS if outside (like store) */ }
+export function __scope(): RequestScope | undefined  // internal — getStore(); used by cookies + flush
 ```
-Compose with the existing `runInStoreContext` wrap at the loader/render/action sites (a combined
-`runInRequestScope(() => runInStoreContext(fn))` — like B1's pattern, but B1 is a separate branch;
-here add `runInRequestScope` OUTER at the same routes.ts sites + the action dispatch terminal).
+Compose with `runInStoreContext` — `runInRequestScope(req.cookies, () => runInStoreContext(fn))` OUTER at
+the action dispatch path + loader/render + **SPA navigation** sites (B1's loader-cache wrap is a SEPARATE
+branch — do NOT assume present; wrap independently here).
 
 ### 2. `runtime/cookies.ts` (new) — cookie helper
 ```ts
@@ -54,18 +58,28 @@ export const cookies = {
 }
 function serializeCookie(name, value, opts): string  // RFC 6265 Set-Cookie line (encode value; Max-Age/Path/...)
 ```
-`cookies.get` reads the request's parsed cookies — needs access to `req` in scope; stash `req.cookies`
-into the request scope at `runInRequestScope` setup (the wrap site has `call.req`). So
-`runInRequestScope(req, fn)` seeds `{ cookies: req.cookies, ctx, setCookies: [] }`.
+`cookies.get` reads `scope.reqCookies` (seeded from `req.cookies` at wrap setup). Note: in actions/loaders
+that already hold `ctx.req`, `req.cookies[name]` is directly available — `cookies.get` is a convenience for
+code without `req` in hand.
 
 ### 3. Flush staged Set-Cookie → response (TS paths only)
-- **Action dispatch** (`routes.ts` `dispatchAction`): after the handler/chain, read `__stagedSetCookies()`
-  and merge into the response `headers` (append each as a `Set-Cookie`; RouteResponse.headers →
-  BranchResponse → Rust writes). Works alongside `respond(_, {headers})`.
-- **React render path**: merge staged cookies into the render response headers where status/headers are
-  forwarded (the React path supports headers; native does not — see non-goal).
-- **Native render**: staged cookies are NOT flushed (no headers param) → if `cookies.set` is called in a
-  native loader, **warn once** (dev) that it's a no-op; documented.
+**Canonical key:** the Rust writer stores headers in a **case-sensitive `BTreeMap`**
+(`crates/brust/src/render_stream.rs`) — it does NOT lower-case-dedup (that skip is a different non-worker
+path in `http.rs`). So `'Set-Cookie'` and `'set-cookie'` would emit as TWO lines. **All cookie writes use
+the single canonical key `'set-cookie'` (lowercase) everywhere** to keep the one-cookie invariant.
+- **Action dispatch** (`routes.ts` `dispatchAction`): after the handler/chain, read `scope.setCookies`.
+  **Precedence (defined):** if the handler ALSO set `response.headers['set-cookie']` via `respond(_,
+  {headers})`, the **explicit `respond` value WINS** (do not clobber) + emit a dev-warn on conflict.
+  Otherwise set `response.headers['set-cookie'] = scope.setCookies[last]`. If `scope.setCookies.length > 1`,
+  emit a dev-warn (only the last is sent — multiple Set-Cookie per response is the documented limitation).
+- **React render path**: same flush where the render response headers are forwarded (React supports headers).
+- **SPA navigation** (`navigationBranch` ~`:1055`/`:1086`): runs the SAME loader/middleware chain → MUST be
+  wrapped in `runInRequestScope` AND flush `scope.setCookies` into the nav response headers (else a
+  `cookies.set` during client-side nav is silently dropped). Wrap + flush this site too.
+- **Native render**: staged cookies NOT flushed (no headers param on `napiRenderJinja`) → `cookies.set` in a
+  native loader emits a **dev warn (no-op)**; documented. (`req.cookies` READ still works in native loaders.)
+- **MCP / SSE paths**: no `runInRequestScope` wrap → `getRequestContext` throws / `cookies.set` warns there.
+  Documented as out-of-scope this round (cookie-write from MCP/SSE deferred).
 
 ### 4. Exports — `runtime/index.ts`
 `export { getRequestContext } from './request-context.ts'` + `export { cookies } from './cookies.ts'`
