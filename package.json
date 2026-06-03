@@ -98,6 +98,7 @@
     "lint": "biome lint .",
     "check": "biome check .",
     "check:fix": "biome check --write .",
-    "ci": "biome ci ."
+    "ci": "biome ci .",
+    "typecheck:treaty": "cd runtime && bunx tsc -p tsconfig.typecheck.json --noEmit"
   }
 }
