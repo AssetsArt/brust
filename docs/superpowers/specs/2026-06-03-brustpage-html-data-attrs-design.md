@@ -49,6 +49,17 @@ Add a field to the `Document` variant:
 html_attrs: Vec<(String, HeadValue)>,
 ```
 
+**ALL `JsxNode::Document { … }` sites that must be updated** (a new field with no
+`..` breaks compilation — verified by spec review). Every other site uses `..`
+or a named-subset pattern and is forward-compatible:
+- `lower.rs:852` — real constructor (add `html_attrs`).
+- `emit_jinja.rs:84` — emit arm, exhaustive destructure (add `html_attrs` to the
+  pattern; consume it per §3).
+- `emit_jinja.rs:866` — `document_with` test helper, full constructor (add
+  `html_attrs: vec![]` or a `html_attrs` param).
+- `emit_jinja.rs:911` — `document_description_path_emits_interpolated_content`
+  test, full constructor (add `html_attrs: vec![]`).
+
 ### 2. Lowering (`crates/jsx-rust-compiler/src/lower.rs`, `lower_brust_page`)
 
 - Declare `let mut html_attrs: Vec<(String, crate::ir::HeadValue)> = Vec::new();`
@@ -159,5 +170,13 @@ BrustPage-using native fixture already exists — extend it.)
   (`cd runtime && bun run build:debug`) before any bun test booting the server,
   else stale `.node`.
 - TS gate is biome (`bun run ci`), not tsc.
-- Add the new `ErrorKind::InvalidDataAttrName` to whatever exhaustive match /
-  Display impl `ErrorKind` requires (clippy `-D warnings` will catch a missing arm).
+- `ErrorKind` (lib.rs:~514) derives `thiserror::Error` with a per-variant
+  `#[error("…")]` attribute — there is NO separate Display match. Add
+  `InvalidDataAttrName(String)` as a variant WITH its `#[error("invalid data-*
+  attribute name: {0}")]` attribute (mirror `BrustPageAttrMustBeStringLiteral` at
+  lib.rs:~614-617). No exhaustive consumer match exists (consumers use `_ =>` /
+  `matches!`), so nothing else needs touching.
+- `data-*` name validation `^data-[a-z0-9-]+$` rejects uppercase (`data-Foo`).
+  Defensible (DOM lowercases data attrs; avoids a name that wouldn't round-trip
+  via `dataset`) — note it in FRAMEWORK-GAPS so authors aren't surprised.
+  `data-foo-bar` (multiple hyphens) is intentionally allowed.
