@@ -346,6 +346,50 @@ import Counter from './Counter'
 
 ---
 
+## Isomorphic store (`brustjs/store`)
+
+A tiny framework-agnostic reactive core + a named-store abstraction that is the
+single source of truth for shared client state, with correct per-request
+isolation on the server.
+
+```ts
+// signal / computed / effect / batch — pull-based, push-on-write, sync notify
+import { signal, computed, defineStore } from 'brustjs/store'
+
+export const teamStore = defineStore('pokedex.team', () => ({
+  members: signal<Member[]>([]),
+  count: computed(() => /* … */ 0),
+}))
+```
+
+- **Reactive core** (`runtime/store/signal.ts`): `signal` (callable read + `.set`),
+  `computed` (memoised, lazy), `effect` (re-runs on tracked change, returns a
+  disposer), `batch`. `Object.is` write guard.
+- **`defineStore(name, factory)`** returns a handle that is also a property proxy
+  over the *active* instance:
+  - **client** — one instance per `name` on `window.__BRUST_STORES__` (so two
+    separately-built island/directive chunks resolve the **same** object — fixes
+    GAP S4),
+  - **server** — a per-request instance in an `AsyncLocalStorage` scope (two
+    concurrent requests never see each other's writes — fixes GAP S6;
+    out-of-scope access throws).
+- **Cross-chunk identity is load-bearing.** Each island / the directive runtime is
+  a separate `Bun.build` that inlines its own copy of `signal.ts`. So the brands
+  (`isSignal`/`isComputed`) AND the dependency-tracking context
+  (`activeConsumer`/batch/pending-notify) live in **global** registries
+  (`Symbol.for('brust.signal')`, `Symbol.for('brust.reactive.ctx')`), never
+  module-local — otherwise an `effect` in chunk B can't track a `signal` created
+  in chunk A (a native directive button wouldn't react to a store a React island
+  mutated). Verifiable only in a real browser with ≥2 chunks.
+- **Snapshot** serialize → `<script type="application/json" data-brust-store>` →
+  client hydrate, injected on the **React render paths**; native pages currently
+  seed via a loader/`init()` fetch (SSR snapshot injection into native HTML is
+  deferred). `useStore(store)` (a `useSyncExternalStore` adapter, exported from
+  `brustjs/client`) lets React islands consume a store with no authoring change.
+- **No Rust, no compiler involvement** — pure TS.
+
+---
+
 ## Server actions (treaty client)
 
 Typed HTTP endpoints declared with a chained `defineActions(...)` builder and
@@ -635,6 +679,76 @@ loader: async ({ params, req }) => ({ product, cacheKey: `p_${params.id}` })
 
 ---
 
+## Native interactivity — DOM directives
+
+Make a `native: true` (jinja) page interactive **without a React island**, via
+Alpine.js-style `x-*` directives bound to the isomorphic store. A native
+interactive component is **single-file**: a `.tsx` whose `export default` is the
+JSX template (→ jinja, server-rendered, unchanged) and whose co-located
+`export const behavior` is the client logic.
+
+```tsx
+// components/AddToTeamButton.tsx
+import { signal, computed } from 'brustjs/store'
+import { client } from 'brustjs/client'
+import { teamStore } from '../stores/team'
+
+export const behavior = ({ props }) => {            // → client chunk (react-free)
+  const busy = signal(false)
+  const label = computed(() => (/* reads teamStore */ '＋ Add to team'))
+  async function toggle() { /* action + teamStore.members.set(...) */ }
+  return { busy, label, toggle }
+}
+
+export default function AddToTeamButton({ data }: { data: string }) {  // → jinja
+  return (
+    <div x-data="addToTeamButton" x-props={data}>
+      <button x-text="label" x-bind-disabled="busy" x-on-click="toggle">＋ Add to team</button>
+    </div>
+  )
+}
+// detail page: <AddToTeamButton native data={d.addProps} />   (loader precomputes addProps = JSON.stringify(...))
+```
+
+- **Directive set (v1, Scheme 1 — JSX-safe):** `x-data` (mount + component name),
+  `x-props` (JSON initial props), `x-text`, `x-show`, `x-bind-<attr>` (e.g.
+  `x-bind-class`/`x-bind-disabled`), `x-on-<event>` (e.g. `x-on-click`), `x-for`.
+  **No colon forms** (`x-on:click`/`:class`) — the native compiler rejects
+  namespaced (`:`) attributes, so v1 uses hyphenated lowercase names, which pass
+  through `lower_attr` as static string attrs (no compiler change for the attrs).
+- **No inline expression eval** (no `new Function`/`with`): directive values name
+  instance members (`x-text="label"`) or, inside `x-for`, dotted paths
+  (`x-text="item.name"`) resolved by a tiny path resolver. All logic lives in the
+  typed `behavior` — CSP-safe, XSS-safe.
+- **Runtime** (`runtime/native/runtime.ts`, react-free, built on `effect`): each
+  binding is one `effect`; `x-on-*` is an `addEventListener`; a `MutationObserver`
+  on `document.body` mounts added subtrees and disposes removed ones — so it works
+  on initial load, SPA-nav swaps, and dynamic content with no coupling to the
+  islands bootstrap.
+- **Single-file needs one compiler relaxation.** The co-located
+  `export const behavior` made the native compiler's `find_default_export`
+  (`lower.rs`) error (`UnexpectedStatement` on any top-level statement besides
+  imports + the single default function). It now **tolerates and ignores** extra
+  top-level statements and lowers only the default export — the *only* Rust change
+  for directives.
+- **Code-split, loaded on demand.** `buildDirectives` emits the shared runtime
+  `_directives.js` (register/start/observer; exposes `register` on
+  `globalThis[Symbol.for('brust.directive.register')]`) PLUS one
+  `<name>.directive.js` chunk per component (behavior + store/treaty;
+  self-registers via that global; react-leak-guarded per chunk). The runtime
+  `<script>` is baked into **every** native page when the app has any directive
+  (so it's live to catch SPA-nav swaps); a component's chunk is **dynamically
+  `import()`ed on demand** the first time its `x-data="<name>"` appears — a page
+  never downloads JS for components it doesn't render. Chunks served from the same
+  `/_brust/islands/` route as island chunks (no Rust change).
+- **Cross-paradigm:** a native `x-on-click` mutating `teamStore` is observed
+  reactively by a React island reading the same store (the global reactive ctx
+  above is what makes this work across chunks). Dogfood: pokedex
+  `AddToTeamButton` is native; `TeamBuilder` stays a React island sharing the
+  store.
+
+---
+
 ## Styling
 
 - **Tailwind v4** — `<scanRoot>/app.css` convention, compiled via
@@ -736,6 +850,8 @@ crates/jsx-rust-compiler/  — JSX → minijinja (+ JS factories) compiler
 
 runtime/                  — the TS framework
   index.ts routes.ts config.ts            host + dispatcher + config
+  store/    (signal.ts, define-store.ts, server-context.ts, react.ts, serialize.ts)  isomorphic store
+  native/   (runtime.ts, build.ts, index.ts)   directive runtime + per-component chunk build
   islands/  (island.tsx, build.ts, native-render.ts, bootstrap.ts, isr-jsx.ts, …)
   cli/      (build.ts, dev.ts, new.ts, native-routes-emit.ts, …)
   mcp/      (extractor.ts, server.ts, schema.ts)
@@ -783,11 +899,15 @@ middleware · per-route LRU cache + stats + invalidation · component-addressed
 islands (4 triggers) · server actions (defineActions + treaty client) · MCP server · SSE +
 WebSockets (literal paths) · SPA navigation · native routes (JSX→minijinja) +
 **SSR components** + **conditional rendering** + **native inline** + **ISR cache
-(islands & SSR components)** · Tailwind v4 + component CSS (partial) · `brust
-build` → `dist/` · `brust dev` / `brust new` (partial).
+(islands & SSR components)** · **isomorphic store** (`signal`/`computed`/`defineStore`,
+window-singleton client + per-request ALS server) · **native interactivity** (Alpine-style
+`x-*` DOM directives + single-file components, per-component chunks loaded on demand) ·
+Tailwind v4 + component CSS (partial) · `brust build` → `dist/` · `brust dev` / `brust new`
+(partial).
 
-**Not yet / deferred:** whole-route cache for native routes · `Fragment`
-lowering · global `app/middleware.ts` + header deletion · build-time client RPC
+**Not yet / deferred:** native store-snapshot SSR injection (native stores seed via
+loader/`init()` fetch) · keyed `x-for` diff (v1 full re-renders) · whole-route cache for
+native routes · `Fragment` lowering · global `app/middleware.ts` + header deletion · build-time client RPC
 auto-rewrite · content-hashed island filenames + per-chunk CSS extraction ·
 single-binary `--compile` · multi-thread tokio · N slots per worker · HTTP/2 ·
 TLS · graceful drain · tsfn retry / health checks.

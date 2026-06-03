@@ -87,6 +87,17 @@ brustjs new   <name>              # scaffold a project (partial — see Status)
   `renderToString` runs once per key, then serves a frozen pair from Rust.
 - **`native: true` routes** — JSX compiled to a jinja template at build time and
   rendered Rust-side (`minijinja`), skipping React on the server entirely.
+- **Native interactivity without islands** — Alpine.js-style `x-*` DOM directives
+  (`x-data`/`x-text`/`x-show`/`x-bind-*`/`x-on-*`/`x-for`) on a `native` page,
+  bound to the store by a small react-free runtime. Logic lives in a co-located
+  `export const behavior` (single-file component); each component's JS is a
+  separate chunk loaded **on demand** — a page never downloads a component it
+  doesn't render.
+- **Isomorphic store** — `brustjs/store`: `signal`/`computed`/`effect` +
+  `defineStore(name, factory)`. One `window` singleton per name on the client (so
+  separate island/directive chunks share state), a per-request `AsyncLocalStorage`
+  instance on the server. `useStore` adapter for React islands; a native directive
+  button and a React island reactively share the same store.
 - **Typed actions** — `defineActions().get/post/put/patch/delete/head(path, ctx => R, { body, query })`
   on the server; `client<typeof actions>()` is an Eden-Treaty-style proxy that
   infers the whole API from the server types (no codegen) and returns
@@ -119,7 +130,7 @@ bun test tests/integration.test.ts   # integration (real server)
 ```
 crates/brust/             Rust: accept loop, worker pool, napi exports, SAB
 crates/jsx-rust-compiler/ JSX → jinja compiler for native: true routes
-runtime/                  Bun-side: routing, render, actions, CLI
+runtime/                  Bun-side: routing, render, actions, store, native directives, CLI
 example/                  pokedex native-first demo
 bench/ · docs/ · architecture.md
 ```
