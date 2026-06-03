@@ -17,12 +17,12 @@ import { DIRECTIVES_BOOTSTRAP, ISLANDS_IMPORTMAP_AND_BOOTSTRAP } from '../island
  * compiler. */
 export function gatherComponentSources(pageSourcePath: string): {
   sources: Record<string, string>
-  mergedImports: Map<string, string>
+  mergedImports: Map<string, ResolvedImport>
 } {
   const sources: Record<string, string> = {}
-  // mergedImports accumulates ident→resolvedPath across ALL visited files.
+  // mergedImports accumulates ident→ResolvedImport across ALL visited files.
   // The page's own imports win on conflict (inserted last below).
-  const mergedImports = new Map<string, string>()
+  const mergedImports = new Map<string, ResolvedImport>()
   const visited = new Set<string>()
 
   // Queue items: { ident, resolvedPath } — ident is how the PARENT imported it.
@@ -36,11 +36,11 @@ export function gatherComponentSources(pageSourcePath: string): {
     // Record source keyed by ident — detect ambiguity.
     if (ident in sources) {
       // Same ident already seen — only an error if it resolves to a different path.
-      // We get the previous path from mergedImports (which maps ident → resolvedPath).
-      const existingPath = mergedImports.get(ident)
-      if (existingPath && existingPath !== filePath) {
+      // We get the previous spec from mergedImports (which maps ident → ResolvedImport).
+      const existing = mergedImports.get(ident)
+      if (existing && existing.spec !== filePath) {
         throw new Error(
-          `native build: ambiguous component ident "${ident}" resolves to two paths: ${existingPath} and ${filePath}`,
+          `native build: ambiguous component ident "${ident}" resolves to two paths: ${existing.spec} and ${filePath}`,
         )
       }
     } else {
@@ -48,36 +48,43 @@ export function gatherComponentSources(pageSourcePath: string): {
     }
 
     // Scan this file's imports and recurse into local ones.
-    const childImports = scanImports(filePath)
-    for (const [childIdent, childPath] of childImports) {
-      // Merge into mergedImports — check for ambiguity.
+    const childImports = scanImportRefs(filePath)
+    for (const [childIdent, ref] of childImports) {
+      // Merge into mergedImports — check for ambiguity (compare by spec). Only
+      // Capitalized idents can be COMPONENT sources; lowercase idents (stores,
+      // hooks, utils) legitimately repeat across files and must not throw.
       const existing = mergedImports.get(childIdent)
-      if (existing !== undefined && existing !== childPath) {
-        throw new Error(
-          `native build: ambiguous component ident "${childIdent}" resolves to two paths: ${existing} and ${childPath}`,
-        )
+      if (existing !== undefined && existing.spec !== ref.spec) {
+        if (isComponentIdent(childIdent)) {
+          throw new Error(
+            `native build: ambiguous component ident "${childIdent}" resolves to two paths: ${existing.spec} and ${ref.spec}`,
+          )
+        }
+        // Non-component collision — keep the first, don't recurse the duplicate.
+        continue
       }
       if (existing === undefined) {
-        mergedImports.set(childIdent, childPath)
+        mergedImports.set(childIdent, ref)
       }
-      // Recurse into local files (skip node_modules / unresolved paths).
-      if (!childPath.includes('node_modules')) {
-        visit(childPath, childIdent)
+      // Recurse into LOCAL files only (a bare spec has no readable file —
+      // !bare, not the old node_modules string-check which a bare spec evades).
+      if (!ref.bare) {
+        visit(ref.spec, childIdent)
       }
     }
   }
 
   // Seed: scan the page's own imports and visit each local file.
-  const pageImports = scanImports(pageSourcePath)
-  for (const [ident, resolvedPath] of pageImports) {
-    if (!resolvedPath.includes('node_modules')) {
-      visit(resolvedPath, ident)
+  const pageImports = scanImportRefs(pageSourcePath)
+  for (const [ident, ref] of pageImports) {
+    if (!ref.bare) {
+      visit(ref.spec, ident)
     }
   }
 
   // Page's own imports win on ident conflict — merge them last.
-  for (const [ident, resolvedPath] of pageImports) {
-    mergedImports.set(ident, resolvedPath)
+  for (const [ident, ref] of pageImports) {
+    mergedImports.set(ident, ref)
   }
 
   return { sources, mergedImports }
@@ -99,9 +106,9 @@ export function gatherComponentSources(pageSourcePath: string): {
 export function gatherChainSources(
   chainNames: string[],
   importMap: Map<string, string>,
-): { sources: Record<string, string>; mergedImports: Map<string, string> } {
+): { sources: Record<string, string>; mergedImports: Map<string, ResolvedImport> } {
   const sources: Record<string, string> = {}
-  const mergedImports = new Map<string, string>()
+  const mergedImports = new Map<string, ResolvedImport>()
 
   for (const compName of chainNames) {
     const compPath = importMap.get(compName)
@@ -116,20 +123,28 @@ export function gatherChainSources(
     const { sources: subSources, mergedImports: subImports } = gatherComponentSources(compPath)
     for (const [ident, src] of Object.entries(subSources)) {
       if (ident in sources && sources[ident] !== src) {
-        throw new Error(
-          `native build: ambiguous component ident "${ident}" — two different sources in one chain`,
-        )
+        // Only Capitalized idents are COMPONENT sources; a lowercase collision
+        // (e.g. two stores both named `teamStore`) is legitimate — keep first.
+        if (isComponentIdent(ident)) {
+          throw new Error(
+            `native build: ambiguous component ident "${ident}" — two different sources in one chain`,
+          )
+        }
+        continue
       }
       sources[ident] = src
     }
-    for (const [ident, p] of subImports) {
+    for (const [ident, ref] of subImports) {
       const existing = mergedImports.get(ident)
-      if (existing !== undefined && existing !== p) {
-        throw new Error(
-          `native build: ambiguous component ident "${ident}" resolves to two paths: ${existing} and ${p}`,
-        )
+      if (existing !== undefined && existing.spec !== ref.spec) {
+        if (isComponentIdent(ident)) {
+          throw new Error(
+            `native build: ambiguous component ident "${ident}" resolves to two paths: ${existing.spec} and ${ref.spec}`,
+          )
+        }
+        continue
       }
-      mergedImports.set(ident, p)
+      mergedImports.set(ident, ref)
     }
 
     // Inject the chain component's OWN source keyed by its ident — it is the
@@ -142,7 +157,9 @@ export function gatherChainSources(
       )
     }
     sources[compName] = ownSrc
-    mergedImports.set(compName, compPath)
+    // The chain component is resolved by name from the routes entry — a LOCAL
+    // default-imported source file (route-name resolution is local-only).
+    mergedImports.set(compName, { spec: compPath, bare: false, kind: 'default' })
   }
 
   return { sources, mergedImports }
@@ -332,7 +349,7 @@ function toRelativeSpecifier(from: string, to: string): string {
 function emitComponentArtifacts(
   jinjaPath: string,
   componentsJsonStr: string,
-  pageImports: Map<string, string>,
+  pageImports: Map<string, ResolvedImport>,
   routeName: string,
 ): { islandIdsFromComponents: string[] } {
   const raw = JSON.parse(componentsJsonStr) as RawComponentEntry[]
@@ -341,25 +358,27 @@ function emitComponentArtifacts(
   const jinjaDir = dirname(jinjaPath)
   const projectRoot = process.cwd()
 
-  // Enrich with ABSOLUTE source paths resolved from page's own imports — kept
-  // absolute for the readFileSync island scan further down.
-  const enriched: EnrichedComponentEntry[] = raw.map((entry) => {
-    const sourcePath = pageImports.get(entry.component)
-    if (!sourcePath) {
+  // Enrich with the resolved import ref. For local imports `ref.spec` is an
+  // ABSOLUTE path (kept absolute for the readFileSync island scan below); for
+  // bare imports it's the verbatim package specifier.
+  const enriched: Array<EnrichedComponentEntry & { ref: ResolvedImport }> = raw.map((entry) => {
+    const ref = pageImports.get(entry.component)
+    if (!ref) {
       throw new Error(
         `SSR component "${entry.component}" in native route "${routeName}" has no matching import in the page source (expected \`import ${entry.component} from "..."\`)`,
       )
     }
-    return { ...entry, sourcePath }
+    return { ...entry, sourcePath: ref.spec, ref }
   })
 
-  // Write <Name>.components.json with PROJECT-RELATIVE sourcePaths. (sourcePath
-  // is build-time metadata — resolveComponentContext imports the factory, not
-  // these paths — so relative is purely a portability/readability win.)
+  // Write <Name>.components.json. For LOCAL imports sourcePath is PROJECT-RELATIVE
+  // (cwd-relative — no build-machine path baked in); for BARE imports it's the
+  // package spec verbatim. (sourcePath is build-time metadata — the factory
+  // import is what's load-bearing at runtime.)
   const compJsonPath = jinjaPath.replace(/\.jinja$/, '.components.json')
-  const compJsonEntries = enriched.map((e) => ({
+  const compJsonEntries = enriched.map(({ ref, ...e }) => ({
     ...e,
-    sourcePath: relative(projectRoot, e.sourcePath).replaceAll('\\', '/'),
+    sourcePath: ref.bare ? ref.spec : relative(projectRoot, ref.spec).replaceAll('\\', '/'),
   }))
   writeFileSync(compJsonPath, JSON.stringify(compJsonEntries))
 
@@ -374,25 +393,38 @@ function emitComponentArtifacts(
     importLines.push("import { Island } from 'brustjs'")
   }
 
-  // Import each referenced component RELATIVE to the factory file's own dir so
-  // `await import(factory)` resolves them at runtime regardless of where the
-  // project lives (no absolute build-machine path baked in).
+  // Import each referenced component, regenerating the correct import FORM per
+  // kind. Local specs are relativized to the factory file's own dir (so
+  // `await import(factory)` resolves them at runtime regardless of project
+  // location); bare specs are kept verbatim.
   const allReferenced = [...new Set(enriched.flatMap((e) => e.referencedComponents))]
   for (const compName of allReferenced) {
     if (seen.has(compName)) continue
     seen.add(compName)
-    const srcPath = pageImports.get(compName)
-    if (srcPath) {
-      const spec = toRelativeSpecifier(jinjaDir, srcPath)
-      importLines.push(`import ${compName} from ${JSON.stringify(spec)}`)
+    const ref = pageImports.get(compName)
+    if (!ref) continue
+    const spec = ref.bare ? ref.spec : toRelativeSpecifier(jinjaDir, ref.spec)
+    const specStr = JSON.stringify(spec)
+    if (ref.kind === 'namespace') {
+      importLines.push(`import * as ${compName} from ${specStr}`)
+    } else if (ref.kind === 'named') {
+      // Collapse the redundant `{ X as X }` to `{ X }` when the local name equals
+      // the imported name (idiomatic + avoids no-useless-rename lint on the factory).
+      const named =
+        ref.imported && ref.imported !== compName ? `${ref.imported} as ${compName}` : compName
+      importLines.push(`import { ${named} } from ${specStr}`)
+    } else {
+      importLines.push(`import ${compName} from ${specStr}`)
     }
   }
 
   // Scan SSR component sources for <Island component={X}> to discover Island
-  // chunk identifiers that don't appear in the page's own .islands.json.
+  // chunk identifiers that don't appear in the page's own .islands.json. Bare
+  // imports have no readable local file — skip them (no readFileSync attempt).
   const islandIdsFromComponents: string[] = []
   const islandAttrRe = /<Island\s[^>]*component=\{(\w+)\}/g
   for (const entry of enriched) {
+    if (entry.ref.bare) continue
     try {
       const src = readFileSync(entry.sourcePath, 'utf8')
       islandAttrRe.lastIndex = 0
@@ -512,7 +544,7 @@ export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<vo
     let routeSource: string
     let routeSourcePath: string
     let sources: Record<string, string>
-    let mergedImports: Map<string, string>
+    let mergedImports: Map<string, ResolvedImport>
     if (chainNames.length > 1) {
       routeSource = buildChainWrapperSource(chainNames)
       // Synthetic path: a placeholder under the leaf's dir. The compiler keys
@@ -585,9 +617,129 @@ export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<vo
   )
 }
 
+/** A JSX SSR-component ident is always Capitalized — `<Search/>` lowers to an
+ * SsrComponent while `<search/>` is a host element. The Rust compiler only lists
+ * Capitalized idents in `componentsJson`/`islandsJson`, so only Capitalized
+ * idents can collide as ambiguous COMPONENT sources. Lowercase idents (hooks,
+ * store singletons like `teamStore`, util fns) are never components — two local
+ * files legitimately sharing such a name (e.g. `teamStore` from two stores) must
+ * NOT trip the component-ambiguity guard. (Pre-`scanImportRefs`, the
+ * default-only scanner never saw named/namespace lowercase imports at all.) */
+function isComponentIdent(ident: string): boolean {
+  return /^[A-Z]/.test(ident)
+}
+
+/** A resolved import reference, capturing the import FORM so the SSR factory can
+ * regenerate the correct `import` statement. Used only by the SSR-component path
+ * (`gatherComponentSources`/`gatherChainSources` → `emitComponentArtifacts` /
+ * `reconcileIslandManifest`), NOT by `scanImports` (which stays local-default
+ * string-valued for the two external callers in islands/native build). */
+export interface ResolvedImport {
+  /** Module specifier: an ABSOLUTE file path for local imports, or the verbatim
+   * bare specifier for package imports. */
+  spec: string
+  /** true ⇒ `spec` is a package/bare specifier (keep verbatim; do not
+   * readFileSync/relativize/recurse). */
+  bare: boolean
+  /** How the symbol was imported, so the factory regenerates the right import. */
+  kind: 'default' | 'named' | 'namespace'
+  /** For `named`, the exported name (may differ from the local alias). */
+  imported?: string
+}
+
+/** Resolve a module specifier as it appears in an import: a `.`/`..`-prefixed
+ * (local) spec resolves to an absolute file path via the `.tsx/.ts/index.*`
+ * candidate logic; any other (bare/package) spec is kept verbatim. Returns
+ * `undefined` for a local spec that resolves to no existing file (matches
+ * scanImports' silent-drop behavior). */
+function resolveSpec(spec: string, fromFile: string): ResolvedImport | undefined {
+  if (!spec.startsWith('.')) {
+    // Package/bare specifier — keep verbatim, never resolve/readFileSync.
+    return { spec, bare: true, kind: 'default' }
+  }
+  const baseDir = dirname(fromFile)
+  const resolved = resolve(baseDir, spec)
+  const candidates = [
+    `${resolved}.tsx`,
+    `${resolved}.ts`,
+    `${resolved}/index.tsx`,
+    `${resolved}/index.ts`,
+  ]
+  const found = candidates.find((p) => existsSync(p))
+  if (!found) return undefined
+  return { spec: found, bare: false, kind: 'default' }
+}
+
+/** Scan ALL import forms in `file` and resolve each local-name binding to a
+ * {@link ResolvedImport}. Unlike {@link scanImports} (default-local only, kept
+ * stable for external callers), this:
+ * - parses default / `* as ns` / `{ a, b as c }` / mixed `d, { a }` forms;
+ * - keeps package/bare specifiers verbatim (`bare:true`) instead of skipping
+ *   them — the SSR path needs them to regenerate `import` lines and to SSR
+ *   third-party components (e.g. lucide-react icons).
+ *
+ * Returns `Map<localName, ResolvedImport>` (localName = the in-source identifier
+ * used in JSX). Namespace imports are recorded parse-only (the Rust compiler
+ * rejects member-expression elements, so `<Ns.Member/>` isn't renderable yet). */
+export function scanImportRefs(file: string): Map<string, ResolvedImport> {
+  const source = readFileSync(file, 'utf8')
+  const map = new Map<string, ResolvedImport>()
+  // Match any import statement's clause + specifier. The clause is parsed below.
+  const re = /^import\s+([^'"]+?)\s+from\s+['"]([^'"]+)['"]/gm
+  for (let m = re.exec(source); m !== null; m = re.exec(source)) {
+    const clause = m[1]!.trim()
+    // `import type …` / `import type { … }` / `import type * as …` are erased at
+    // build — they bind no runtime value, so a type alias must never enter the
+    // map (a Capitalized type name could otherwise collide with a real component).
+    if (/^type[\s{*]/.test(clause)) continue
+    const spec = m[2]!
+    const resolved = resolveSpec(spec, file)
+    if (!resolved) continue // local spec that resolves to no file — silent drop
+
+    // Namespace: `* as Ns`
+    const nsMatch = /^\*\s+as\s+([A-Za-z_$][\w$]*)$/.exec(clause)
+    if (nsMatch) {
+      map.set(nsMatch[1]!, { ...resolved, kind: 'namespace' })
+      continue
+    }
+
+    // Split a possible mixed clause `Default, { a, b as c }` into default +
+    // named parts. The default ident (if any) is the leading bare identifier.
+    const rest = clause
+    const namedStart = rest.indexOf('{')
+    let defaultPart = namedStart === -1 ? rest : rest.slice(0, namedStart)
+    defaultPart = defaultPart.replace(/,\s*$/, '').trim()
+    if (defaultPart) {
+      const defMatch = /^([A-Za-z_$][\w$]*)$/.exec(defaultPart)
+      if (defMatch) {
+        map.set(defMatch[1]!, { ...resolved, kind: 'default' })
+      }
+    }
+
+    if (namedStart !== -1) {
+      const namedEnd = rest.indexOf('}', namedStart)
+      const inner = rest.slice(namedStart + 1, namedEnd === -1 ? undefined : namedEnd)
+      for (const raw of inner.split(',')) {
+        const piece = raw.trim()
+        if (!piece) continue
+        const aliasMatch = /^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/.exec(piece)
+        if (aliasMatch) {
+          map.set(aliasMatch[2]!, { ...resolved, kind: 'named', imported: aliasMatch[1]! })
+        } else if (/^[A-Za-z_$][\w$]*$/.test(piece)) {
+          map.set(piece, { ...resolved, kind: 'named', imported: piece })
+        }
+      }
+    }
+  }
+  return map
+}
+
 /** Scan the entry file's `import Name from './path'` declarations and build a
- * map of localName -> resolved absolute path. Extension resolution tries
- * `.tsx`, `.ts`, `/index.tsx`, `/index.ts` in order. */
+ * map of localName -> resolved absolute path (DEFAULT-LOCAL only — package
+ * specifiers skipped). Extension resolution tries `.tsx`, `.ts`, `/index.tsx`,
+ * `/index.ts` in order. Kept string-valued + default-local for the external
+ * callers in islands/build.ts + native/build.ts; the SSR-component path uses the
+ * richer {@link scanImportRefs} instead. */
 export function scanImports(entryFile: string): Map<string, string> {
   const source = readFileSync(entryFile, 'utf8')
   const map = new Map<string, string>()
@@ -628,7 +780,7 @@ export function scanImports(entryFile: string): Map<string, string> {
 export function reconcileIslandManifest(
   jinjaPath: string,
   islandsJsonPath: string,
-  pageImports: Map<string, string>,
+  pageImports: Map<string, ResolvedImport>,
   routeName: string,
 ): void {
   if (!existsSync(islandsJsonPath)) return
@@ -644,13 +796,21 @@ export function reconcileIslandManifest(
   // the SSR import. Mirrors the .components.json contract (emitComponentArtifacts).
   const projectRoot = process.cwd()
   const enriched: EnrichedIslandEntry[] = raw.map((entry) => {
-    const sourcePath = pageImports.get(entry.component)
-    if (!sourcePath) {
+    const ref = pageImports.get(entry.component)
+    if (!ref) {
       throw new Error(
         `island component "${entry.component}" in native route "${routeName}" has no matching import in the page source (expected \`import ${entry.component} from "..."\`)`,
       )
     }
-    return { ...entry, sourcePath: relative(projectRoot, sourcePath).replaceAll('\\', '/') }
+    // Islands are LOCAL-only: the runtime (`loadIslandManifest`) rehydrates
+    // sourcePath against cwd, so a bare/package spec would break hydration. A
+    // bare-import island is a hard error, not a silently-written bad manifest.
+    if (ref.bare) {
+      throw new Error(
+        `island component "${entry.component}" in native route "${routeName}" resolves to a bare/package import "${ref.spec}" — islands must be imported from a local file (the manifest's sourcePath is rehydrated against cwd at runtime)`,
+      )
+    }
+    return { ...entry, sourcePath: relative(projectRoot, ref.spec).replaceAll('\\', '/') }
   })
 
   writeFileSync(islandsJsonPath, JSON.stringify(enriched))
