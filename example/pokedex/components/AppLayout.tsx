@@ -11,7 +11,6 @@
 // AppLayout owns the single <main> (leaves are fragments in the <Outlet/> slot).
 import { BrustPage, Island, Outlet } from 'brustjs'
 import type { TeamMember } from '../lib/types'
-import Breadcrumb from './Breadcrumb'
 import NavLink from './NavLink'
 import NavPreloader from './NavPreloader'
 import TeamBuilder from './TeamBuilder'
@@ -19,12 +18,10 @@ import ThemeToggle from './ThemeToggle'
 
 export default function AppLayout({
   title,
-  crumb,
   teamProps,
   mode,
 }: {
   title: string
-  crumb: string
   teamProps: { teamInitial: TeamMember[] }
   mode: 'dark' | 'light'
 }) {
@@ -56,13 +53,6 @@ export default function AppLayout({
                   dead affordance — cross-chunk toggle wiring is out of scope. */}
             </div>
           </nav>
-          <div className="mx-auto flex max-w-6xl items-center gap-1.5 px-4 pb-2 text-xs text-slate-400">
-            <a href="/" className="no-underline hover:text-slate-600 dark:hover:text-slate-200">
-              PokéDex
-            </a>
-            <span>›</span>
-            <Breadcrumb native crumb={crumb} />
-          </div>
         </header>
 
         <main className="mx-auto max-w-6xl px-4 py-8">

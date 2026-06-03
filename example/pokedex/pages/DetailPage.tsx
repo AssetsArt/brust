@@ -10,6 +10,7 @@
 // evolution chain is loaded BLOCKING in the loader (native routes have no React
 // tree, so <Suspense> streaming is impossible).
 import AddToTeamButton from '../components/AddToTeamButton'
+import Breadcrumb from '../components/Breadcrumb'
 import type { DetailData } from '../lib/types'
 
 export default function DetailPage({
@@ -34,13 +35,13 @@ export default function DetailPage({
 }: DetailData) {
   return (
     <section className="py-2">
-      <a
-        href="/pokedex"
-        className="mb-4 inline-flex items-center gap-1 text-sm font-semibold text-brand-600 no-underline hover:underline dark:text-brand-50"
-      >
-        ‹ Pokédex
-      </a>
-
+      <div className="mx-auto flex max-w-6xl items-center gap-1.5 px-4 pb-2 text-xs text-slate-400">
+          <a href="/" className="no-underline hover:text-slate-600 dark:hover:text-slate-200">
+            PokéDex
+          </a>
+          <span>›</span>
+          <Breadcrumb native crumb={displayName} />
+      </div>
       {notFound ? (
         <div className="mx-auto max-w-md rounded-3xl border border-slate-200 bg-white px-6 py-16 text-center shadow-sm dark:border-slate-800 dark:bg-slate-900">
           <div className="text-6xl font-black tracking-tighter text-brand-500">404</div>
