@@ -26,3 +26,7 @@ export type { TreatyResponse, ClientOptions } from '../treaty.ts'
 // surface and cannot be bundled for the browser. react.ts → define-store.ts is
 // browser-safe (no node:async_hooks; the server resolver is injected separately).
 export { useStore } from '../store/react.ts'
+
+// Navigation-state view adapter (same rationale as useStore — browser/island
+// entry only). brustjs/navigation itself stays React-free; the hook lives here.
+export { useNav } from '../navigation/react.ts'

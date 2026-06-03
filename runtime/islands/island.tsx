@@ -13,8 +13,11 @@ export interface IslandProps<P> {
    * component (no anonymous default export). */
   component: ComponentType<P>
   /** Props passed to the component on both server and client. Must be
-   * JSON-serializable (no functions, classes, DOM nodes, etc.). */
-  props: P
+   * JSON-serializable (no functions, classes, DOM nodes, etc.). Optional — a
+   * propless island (e.g. one that reads only global/client state) may omit it;
+   * it defaults to `{}`. On native routes, omitting `props` lowers to an empty
+   * props_path the renderer fills with `{}`. */
+  props?: P
   /** When to hydrate. Default 'load'. */
   hydrate?: HydrateTrigger
   /** Native routes only: render this island server-side (renderToString during
@@ -74,7 +77,8 @@ export function Island<P extends object>({
         'export or a minified/inlined function.',
     )
   }
-  const propsJson = JSON.stringify(props)
+  const resolvedProps = (props ?? {}) as P
+  const propsJson = JSON.stringify(resolvedProps)
   return createElement(
     'div',
     {
@@ -82,6 +86,6 @@ export function Island<P extends object>({
       'data-brust-props': propsJson,
       'data-brust-hydrate': hydrate,
     },
-    createElement(Component, props),
+    createElement(Component, resolvedProps),
   )
 }

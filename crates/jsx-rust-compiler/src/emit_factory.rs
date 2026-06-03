@@ -151,9 +151,16 @@ fn emit_child(node: &JsxNode, fo: &mut FactoryOutput) {
         } => {
             fo.uses_island = true;
             fo.referenced.push(component.clone());
+            // Empty props_path = a propless island → emit `props: {}` (a present
+            // path emits `props: ctx.<path>`).
+            let props_expr = if props_path.is_empty() {
+                "{}".to_string()
+            } else {
+                format!("ctx.{props_path}")
+            };
             let _ = write!(
                 fo.expr,
-                "h(Island, {{component: {component}, props: ctx.{props_path}, hydrate: \"{hydrate}\"",
+                "h(Island, {{component: {component}, props: {props_expr}, hydrate: \"{hydrate}\"",
             );
             if *ssr {
                 fo.expr.push_str(", ssr: true");

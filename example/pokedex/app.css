@@ -1685,3 +1685,29 @@ code, pre { font-family: var(--font-mono); }
 .dex-type--fairy, .dex-tc__colhead--fairy, .dex-tc__rowhead--fairy { background: var(--magenta-300); }
 
 .dex-hide { display: none !important; }
+
+/* ----------------------------------------------------------------------------
+ * SPA navigation preloader — a top progress bar rendered by the NavPreloader
+ * React ISLAND (components/NavPreloader.tsx) while brustjs/navigation reports
+ * phase === 'loading'. The island reads the nav store via useNav() and mounts
+ * this bar only during a navigation; the bar is fixed so it escapes the .aa-app
+ * grid and sits above the sticky topbar (z-index:10).
+ * ------------------------------------------------------------------------- */
+.nav-preloader {
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: 3px;
+  z-index: 9999;
+  overflow: hidden;
+  pointer-events: none;
+}
+.nav-preloader__bar {
+  height: 100%;
+  width: 40%;
+  background: var(--aa-gradient, #1B75BB);
+  animation: nav-preloader-slide 0.9s ease-in-out infinite;
+}
+@keyframes nav-preloader-slide {
+  from { transform: translateX(-110%); }
+  to   { transform: translateX(360%); }
+}

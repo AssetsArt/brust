@@ -149,7 +149,9 @@ export async function resolveIslandContext(
 ): Promise<Record<string, string>> {
   const out: Record<string, string> = {}
   for (const entry of manifest) {
-    const props = pathInto(data, entry.propsPath)
+    // Empty propsPath = a propless island → `{}`. (pathInto('') returns the whole
+    // context, which is NOT what an absent `props` attr means.)
+    const props = entry.propsPath === '' ? {} : pathInto(data, entry.propsPath)
     // `?? null` handles undefined props; the `?? 'null'` belt-and-braces covers
     // the case where JSON.stringify itself returns undefined (e.g. a function
     // value), so entityEncode never receives undefined. Hoisted ABOVE the ssr

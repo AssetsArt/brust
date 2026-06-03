@@ -16,6 +16,8 @@
 import { createRoot, hydrateRoot, type Root } from 'react-dom/client'
 import { createElement } from 'react'
 import { applyStoreSnapshot } from '../store/client-hydrate.ts'
+import { __navStart, __navCommit, __navError, __navInit } from '../navigation/store.ts'
+import { installActiveNav } from '../navigation/active-nav.ts'
 
 // Track React roots created by hydrateOne so we can unmount them before
 // removing their DOM in swapMainContent. Without this, removing the DOM
@@ -205,11 +207,12 @@ export function isInternalLink(a: HTMLAnchorElement, event: MouseEvent): boolean
 
 let inFlight: AbortController | null = null
 
-async function navigate(url: URL, push: boolean): Promise<void> {
+export async function navigate(url: URL, push: boolean): Promise<void> {
   inFlight?.abort()
   const ac = new AbortController()
   inFlight = ac
   try {
+    __navStart(url.pathname, url.search)
     const resp = await fetch(`/_brust/page${url.pathname}${url.search}`, {
       signal: ac.signal,
       headers: { Accept: 'application/json' },
@@ -229,8 +232,10 @@ async function navigate(url: URL, push: boolean): Promise<void> {
     if (push) history.pushState({}, '', url.href)
     window.scrollTo(0, 0)
     hydrateMarkersIn(main as HTMLElement)
+    __navCommit(url.pathname, url.search)
   } catch (err) {
     if ((err as Error).name === 'AbortError') return
+    __navError(url.pathname, err)
     console.warn('[brust] SPA navigation failed, falling back to full reload:', err)
     location.href = url.href
   } finally {
@@ -260,10 +265,14 @@ function installInterceptor(): void {
 if (typeof document !== 'undefined') {
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
+      __navInit(location.pathname, location.search)
+      installActiveNav()
       hydrateMarkersIn(document.body)
       installInterceptor()
     })
   } else {
+    __navInit(location.pathname, location.search)
+    installActiveNav()
     hydrateMarkersIn(document.body)
     installInterceptor()
   }

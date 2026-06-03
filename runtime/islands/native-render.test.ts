@@ -103,6 +103,22 @@ test('resolveIslandContext: client-only entry contributes only _props', async ()
   expect(Object.keys(out)).toEqual(['island_0_props'])
 })
 
+test('resolveIslandContext: empty propsPath (propless island) yields {} not the whole context', async () => {
+  const manifest: NativeIslandEntry[] = [
+    {
+      component: 'NavPreloader',
+      instance: 0,
+      propsPath: '',
+      ssr: false,
+      hydrate: 'load',
+      sourcePath: '/x',
+    },
+  ]
+  const data = { secret: 'should-not-leak', title: 'Home' }
+  const out = await resolveIslandContext(manifest, data)
+  expect(out.island_0_props).toBe(entityEncode(JSON.stringify({})))
+})
+
 test('resolveIslandContext: mixed manifest — ssr entry gets _html, client-only sibling does not', async () => {
   // Proves the `if (!entry.ssr) continue` gate: ssr entry pointed at a valid
   // in-repo fixture server-renders to _html; the client-only sibling gets only
