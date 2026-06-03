@@ -5,7 +5,10 @@ import { isAbsolute, join, relative } from 'node:path'
 import { DIRECTIVES_BOOTSTRAP, ISLANDS_IMPORTMAP_AND_BOOTSTRAP } from '../islands/importmap.ts'
 import {
   bakeDirectivesIfUsed,
+  buildChainWrapperSource,
+  countMainTags,
   emitNativeTemplates,
+  gatherChainSources,
   gatherComponentSources,
   reconcileIslandManifest,
 } from './native-routes-emit.ts'
@@ -382,6 +385,123 @@ describe('gatherComponentSources', () => {
     )
 
     expect(() => gatherComponentSources(pagePath)).toThrow(/ambiguous component ident "Card"/)
+  })
+})
+
+describe('countMainTags', () => {
+  test('counts opening <main> tags (with attrs, self-closing, plain)', () => {
+    expect(countMainTags('<body><main class="x">a</main></body>')).toBe(1)
+    expect(countMainTags('<main>a</main><main>b</main>')).toBe(2)
+    expect(countMainTags('<main/>')).toBe(1)
+    expect(countMainTags('<body><div>no main</div></body>')).toBe(0)
+  })
+  test('does not match substrings like <maintenance>', () => {
+    expect(countMainTags('<maintenance>x</maintenance>')).toBe(0)
+  })
+})
+
+describe('buildChainWrapperSource', () => {
+  test('two-node chain emits a default-export wrapper with native on every tag', () => {
+    const src = buildChainWrapperSource(['AppLayout', 'Leaf'])
+    expect(src).toBe(
+      'export default function Leaf__chain() { return <AppLayout native><Leaf native/></AppLayout>; }',
+    )
+  })
+
+  test('deep chain nests parent→leaf with native on every tag', () => {
+    const src = buildChainWrapperSource(['AppLayout', 'Mid', 'Leaf'])
+    expect(src).toBe(
+      'export default function Leaf__chain() { return <AppLayout native><Mid native><Leaf native/></Mid></AppLayout>; }',
+    )
+    // EVERY tag carries native (load-bearing — else children become SsrComponents).
+    expect((src.match(/native/g) ?? []).length).toBe(3)
+  })
+
+  test('throws on a chain shorter than 2 (caller must use the flat path)', () => {
+    expect(() => buildChainWrapperSource(['OnlyLeaf'])).toThrow(/length >= 2/)
+  })
+})
+
+describe('gatherChainSources', () => {
+  test('unions sources over the whole chain — keys for AppLayout AND Leaf (B1 fix)', () => {
+    // AppLayout.tsx — the layout (an ancestor that the leaf no longer imports).
+    const layoutPath = join(dir, 'AppLayout.tsx')
+    writeFileSync(
+      layoutPath,
+      'export default function AppLayout({ children }: { children: any }) { return <main>{children}</main>; }',
+    )
+    // Leaf.tsx — a bare fragment that imports NOTHING (the new model).
+    const leafPath = join(dir, 'Leaf.tsx')
+    writeFileSync(leafPath, 'export default function Leaf() { return <p>leaf</p>; }')
+
+    // The routes entry imports both by name → importMap resolves both.
+    const importMap = new Map([
+      ['AppLayout', layoutPath],
+      ['Leaf', leafPath],
+    ])
+
+    const { sources } = gatherChainSources(['AppLayout', 'Leaf'], importMap)
+    // CRITICAL: both chain components must be present, keyed by ident — without
+    // the layout source, <AppLayout native> soft-falls to an SsrComponent.
+    expect('AppLayout' in sources).toBe(true)
+    expect('Leaf' in sources).toBe(true)
+    expect(sources.AppLayout).toContain('function AppLayout')
+    expect(sources.Leaf).toContain('function Leaf')
+  })
+
+  test('throws when a chain component has no import in the routes entry', () => {
+    expect(() => gatherChainSources(['Ghost', 'Leaf'], new Map())).toThrow(
+      /Ghost.*no matching import|no matching import.*Ghost/,
+    )
+  })
+})
+
+describe('emitNativeTemplates — native chain composition (T2)', () => {
+  test('composes a 2-node native chain into one native template via <Outlet/>', async () => {
+    // AppLayout.tsx — native layout with an <Outlet/> children slot.
+    const layoutPath = join(dir, 'AppLayout.tsx')
+    writeFileSync(
+      layoutPath,
+      'export default function AppLayout({ title }: { title: string }) { return <div><header><h1>{title}</h1></header><main><Outlet/></main></div>; }',
+    )
+    // Leaf.tsx — bare native fragment, imports nothing.
+    const leafPath = join(dir, 'Leaf.tsx')
+    writeFileSync(
+      leafPath,
+      'export default function Leaf({ name }: { name: string }) { return <p>hi {name}</p>; }',
+    )
+    // routes.tsx — entry imports BOTH chain components by name.
+    const routesPath = join(dir, 'routes.tsx')
+    writeFileSync(routesPath, "import AppLayout from './AppLayout'\nimport Leaf from './Leaf'\n")
+
+    const outDir = join(dir, 'jinja')
+    mkdirSync(outDir, { recursive: true })
+
+    await emitNativeTemplates({
+      entryFile: routesPath,
+      // Full FlatRoute-shaped stub: chain parent→leaf, nativeTemplate = leaf.
+      flatRoutes: [
+        {
+          nativeTemplate: 'Leaf',
+          chain: [{ Component: { name: 'AppLayout' } }, { Component: { name: 'Leaf' } }],
+        },
+      ],
+      outDir,
+      repoRoot: dir,
+    })
+
+    // Output is under the LEAF's template name (route table unchanged).
+    const jinjaPath = join(outDir, 'Leaf.jinja')
+    expect(existsSync(jinjaPath)).toBe(true)
+    const tmpl = readFileSync(jinjaPath, 'utf8')
+    // Leaf body is inlined where <Outlet/> was, inside the layout's <main>.
+    expect(tmpl).toContain('<header><h1>')
+    expect(tmpl).toContain('<main><p>hi')
+    // The <Outlet/> tag itself is substituted away — none survives in the output.
+    expect(tmpl).not.toContain('<Outlet')
+    // Fully native — no SsrComponent slot in the template, no fallback artifacts.
+    expect(tmpl).not.toContain('comp_')
+    expect(existsSync(join(outDir, 'Leaf.components.json'))).toBe(false)
   })
 })
 

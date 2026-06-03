@@ -83,6 +83,125 @@ export function gatherComponentSources(pageSourcePath: string): {
   return { sources, mergedImports }
 }
 
+/** T2 / B1 fix — gather component sources for an ENTIRE native chain.
+ *
+ * The leaf of a composed chain is a bare fragment that no longer imports its
+ * ancestors, so seeding `gatherComponentSources` from the leaf alone would
+ * leave every ancestor's source ABSENT — `<AppLayout native>` would then
+ * silently soft-fall to an SsrComponent (React render) and break native. This
+ * unions `gatherComponentSources` over EVERY chain component's resolved source
+ * file (resolved name→file via the entry's `importMap`), then injects each
+ * chain component's OWN source keyed by its ident.
+ *
+ * Returns the merged `sources` map and `mergedImports` (ident→absolute path).
+ * Post-condition: `sources` has a key for every chain component name. Throws if
+ * a chain component name can't be resolved to a source file via `importMap`. */
+export function gatherChainSources(
+  chainNames: string[],
+  importMap: Map<string, string>,
+): { sources: Record<string, string>; mergedImports: Map<string, string> } {
+  const sources: Record<string, string> = {}
+  const mergedImports = new Map<string, string>()
+
+  for (const compName of chainNames) {
+    const compPath = importMap.get(compName)
+    if (!compPath) {
+      throw new Error(
+        `native chain component "${compName}" has no matching import in the routes entry ` +
+          `(expected \`import ${compName} from "..."\`)`,
+      )
+    }
+
+    // Union the transitive sources reachable from THIS chain component.
+    const { sources: subSources, mergedImports: subImports } = gatherComponentSources(compPath)
+    for (const [ident, src] of Object.entries(subSources)) {
+      if (ident in sources && sources[ident] !== src) {
+        throw new Error(
+          `native build: ambiguous component ident "${ident}" — two different sources in one chain`,
+        )
+      }
+      sources[ident] = src
+    }
+    for (const [ident, p] of subImports) {
+      const existing = mergedImports.get(ident)
+      if (existing !== undefined && existing !== p) {
+        throw new Error(
+          `native build: ambiguous component ident "${ident}" resolves to two paths: ${existing} and ${p}`,
+        )
+      }
+      mergedImports.set(ident, p)
+    }
+
+    // Inject the chain component's OWN source keyed by its ident — it is the
+    // route source for `gatherComponentSources(compPath)` (which seeds from the
+    // file's imports, not the file itself), so it would otherwise be missing.
+    const ownSrc = readFileSync(compPath, 'utf8')
+    if (compName in sources && sources[compName] !== ownSrc) {
+      throw new Error(
+        `native build: ambiguous component ident "${compName}" — two different sources in one chain`,
+      )
+    }
+    sources[compName] = ownSrc
+    mergedImports.set(compName, compPath)
+  }
+
+  return { sources, mergedImports }
+}
+
+/** T2 — build the synthetic wrapper SOURCE STRING for a native route chain.
+ *
+ * Given the component identifiers parent→leaf (e.g. `['AppLayout', 'Leaf']`),
+ * emit a default-exported function whose body nests every component, leaf
+ * innermost, with the `native` attribute on EVERY tag:
+ *
+ *   export default function Leaf__chain() { return <AppLayout native><Leaf native/></AppLayout>; }
+ *
+ * Load-bearing details:
+ * - `export default function` is required — the Rust compiler's
+ *   `find_default_export` only matches that exact form.
+ * - `native` on every tag — without it a nested component lowers to an
+ *   SsrComponent (React render) instead of being inlined into the chain.
+ * - The leaf tag is self-closing; each ancestor wraps the next via `<Outlet/>`
+ *   inside the ancestor's own source (the compiler substitutes the children
+ *   slot for `<Outlet/>`).
+ *
+ * The wrapper function name is `${leafName}__chain` — purely cosmetic (the
+ * compiler keys off the default export, not the name). */
+export function buildChainWrapperSource(chainNames: string[]): string {
+  if (chainNames.length < 2) {
+    throw new Error(
+      `buildChainWrapperSource requires a chain of length >= 2 (got ${chainNames.length})`,
+    )
+  }
+  // The names are interpolated raw into a JSX source string fed to the compiler.
+  // They come from `Component.name` (build-time idents) so injection isn't a real
+  // attack surface, but a pathological name would emit malformed JSX (a confusing
+  // compiler parse error) — reject anything that isn't a valid component identifier.
+  for (const name of chainNames) {
+    if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name)) {
+      throw new Error(
+        `native chain component name is not a valid identifier: ${JSON.stringify(name)}`,
+      )
+    }
+  }
+  const leafName = chainNames[chainNames.length - 1]!
+  // Build nested JSX inner→outer: <Leaf native/> wrapped by each ancestor.
+  let jsx = `<${leafName} native/>`
+  for (let i = chainNames.length - 2; i >= 0; i--) {
+    const name = chainNames[i]!
+    jsx = `<${name} native>${jsx}</${name}>`
+  }
+  return `export default function ${leafName}__chain() { return ${jsx}; }`
+}
+
+/** Count opening `<main>` tags in a compiled template. SPA navigation extracts
+ * the FIRST `<main>…</main>` block (routes.ts), so a composed native template
+ * must contain exactly one `<main>` — the layout owns it and leaf fragments must
+ * not add their own. More than one silently truncates the SPA-nav payload. */
+export function countMainTags(template: string): number {
+  return (template.match(/<main[\s/>]/g) ?? []).length
+}
+
 /** Dev-only: splice the /_brust/dev WS client `<script>` into a compiled native
  * template so `native: true` (jinja) routes auto-reload like React-SSR routes.
  *
@@ -133,8 +252,13 @@ export interface NativeRouteEmitOpts {
   /** User's routes entry file (absolute path). Scanned for ImportDeclarations
    * to resolve each native: true route's Component to its source .tsx. */
   entryFile: string
-  /** Flat routes array; only entries with `nativeTemplate` are emitted. */
-  flatRoutes: { nativeTemplate?: string }[]
+  /** Flat routes array; only entries with `nativeTemplate` are emitted. The
+   * runtime objects are full FlatRoutes — `chain` (parent→leaf route nodes,
+   * each carrying its `Component`) drives T2 native-chain composition. */
+  flatRoutes: {
+    nativeTemplate?: string
+    chain?: Array<{ Component?: { name?: string } }>
+  }[]
   /** `.brust/jinja` absolute output dir. Created if missing. */
   outDir: string
   /** Repo root. Retained for call-site compatibility; native compilation now
@@ -364,20 +488,68 @@ export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<vo
     }
     const outPath = resolve(opts.outDir, `${name}.jinja`)
 
-    // Gather transitive component sources for native inlining and build the
-    // merged import map that covers nested components (e.g. islands inside an
-    // inlined native component that don't appear in the page's own imports).
-    const { sources, mergedImports } = gatherComponentSources(sourcePath)
+    // T2 — derive the route chain (parent→leaf component idents). A chain of
+    // length > 1 is a NESTED native route: synthesize a per-leaf wrapper that
+    // composes the whole chain into one native template, and gather sources for
+    // every chain component (B1 fix). Output stays under the LEAF's template
+    // name so the Rust route table is unchanged.
+    const chain = r.chain ?? []
+    const chainNames = chain
+      .map((node) => node.Component?.name)
+      .filter((n): n is string => typeof n === 'string' && n.length > 0)
+    // A nested route (chain.length > 1) whose names collapsed (anonymous/missing
+    // Component.name) must NOT silently fall through to the flat path — that would
+    // emit the leaf-only template and drop the layout. Fail loud instead.
+    if (chain.length > 1 && chainNames.length !== chain.length) {
+      throw new Error(
+        `native nested route "${name}" has ${chain.length} chain levels but only ${chainNames.length} named components — every level needs a named component`,
+      )
+    }
+
+    // Route source + sources map fed to the compiler. For a flat route
+    // (chain.length <= 1) this is the leaf source itself, seeded from its own
+    // imports — the EXISTING, untouched code path (no synth, no regression).
+    let routeSource: string
+    let routeSourcePath: string
+    let sources: Record<string, string>
+    let mergedImports: Map<string, string>
+    if (chainNames.length > 1) {
+      routeSource = buildChainWrapperSource(chainNames)
+      // Synthetic path: a placeholder under the leaf's dir. The compiler keys
+      // off the default export + componentSources, not a real file on disk.
+      routeSourcePath = resolve(dirname(sourcePath), `${name}__chain.tsx`)
+      ;({ sources, mergedImports } = gatherChainSources(chainNames, importMap))
+    } else {
+      // Gather transitive component sources for native inlining and build the
+      // merged import map that covers nested components (e.g. islands inside an
+      // inlined native component that don't appear in the page's own imports).
+      routeSource = readFileSync(sourcePath, 'utf8')
+      routeSourcePath = sourcePath
+      ;({ sources, mergedImports } = gatherComponentSources(sourcePath))
+    }
 
     let compiled: { template: string; islandsJson: string; warnings?: string[] }
     try {
-      compiled = compileJsx!(readFileSync(sourcePath, 'utf8'), sourcePath, sources)
+      compiled = compileJsx!(routeSource, routeSourcePath, sources)
     } catch (e) {
-      throw new Error(`native route "${name}" failed to compile (${sourcePath}):\n${String(e)}`)
+      throw new Error(
+        `native route "${name}" failed to compile (${routeSourcePath}):\n${String(e)}`,
+      )
     }
 
     // Print non-fatal compiler warnings to stderr.
     for (const w of compiled.warnings ?? []) process.stderr.write(`brust: ${w}\n`)
+
+    // SPA navigation extracts the FIRST <main>…</main> block, so a native route
+    // template must hold exactly one <main>. More than one (typically a leaf
+    // fragment adding its own under a layout that already owns one) silently
+    // truncates the nav payload — warn at build time (convention: layout owns <main>).
+    if (countMainTags(compiled.template) > 1) {
+      process.stderr.write(
+        `brust: native route "${name}" has more than one <main> — SPA navigation extracts only the first <main>…</main>. ` +
+          `Keep a single <main> (the layout owns it; leaf fragments must not add their own).\n`,
+      )
+    }
 
     // Dev-only: native routes don't pass through the React renderer's dev-client
     // injection, so splice the /_brust/dev WS script in here. reEmitJinja() runs

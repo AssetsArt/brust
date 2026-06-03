@@ -1,5 +1,7 @@
-// Route "/pokemon/{name}" — NATIVE detail page. Per the decision to push native
-// as far as possible, the evolution chain is loaded BLOCKING in the loader (a
+// Route "/pokemon/{name}" — NATIVE detail leaf route, rendered into AppLayout's
+// <Outlet/> slot (chrome lives in AppLayout). Returns JUST its inner aa-content
+// fragment — no <BrustPage>, no <main>. Per the decision to push native as far
+// as possible, the evolution chain is loaded BLOCKING in the loader (a
 // native/jinja route has no React tree, so <Suspense> streaming is impossible —
 // see ../FRAMEWORK-GAPS.md S3).
 //
@@ -7,15 +9,14 @@
 // `{notFound ? <NotFound/> : <Content/>}` branch, `{hasAbilities && …}` /
 // `{hasEvolution && …}` sections, and per-item `{!s.isFirst && <Arrow/>}` /
 // `{s.showLevel && <Level/>}` separators — no more loader-computed hide-classes.
-// The <title> is dynamic via `<BrustPage title={pageTitle}>` (S8) and inline
-// styles use `style={{…}}` objects (S1).
+// The <title> is dynamic via AppLayout's `<BrustPage title={title}>` (S8, the
+// loader merges `title` into the shared context) and inline styles use
+// `style={{…}}` objects (S1).
 import AddToTeamButton from '../components/AddToTeamButton'
-import PageLayout from '../components/PageLayout'
 import type { DetailData } from '../lib/types'
 
 export default function DetailPage({
   notFound,
-  pageTitle,
   hasAbilities,
   hasEvolution,
   displayName,
@@ -33,10 +34,9 @@ export default function DetailPage({
   abilities,
   evolution,
   addProps,
-  teamProps,
 }: DetailData) {
   return (
-    <PageLayout native title={pageTitle} active="list" crumb={displayName} teamProps={teamProps}>
+    <>
       <a className="aa-btn aa-btn--ghost aa-btn--sm dex-back" href="/">
         ‹ Pokédex
       </a>
@@ -161,6 +161,6 @@ export default function DetailPage({
           )}
         </>
       )}
-    </PageLayout>
+    </>
   )
 }

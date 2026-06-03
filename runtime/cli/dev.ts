@@ -82,7 +82,10 @@ export async function runDev(args: string[]): Promise<void> {
   const jinjaDir = path.join(process.cwd(), '.brust/jinja')
   const emitOpts = {
     entryFile: existsSync(routesFile) ? routesFile : entry,
-    flatRoutes: loadedRoutes as { nativeTemplate?: string }[],
+    flatRoutes: loadedRoutes as {
+      nativeTemplate?: string
+      chain?: Array<{ Component?: { name?: string } }>
+    }[],
     outDir: jinjaDir,
     repoRoot: REPO_ROOT,
   }

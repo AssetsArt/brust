@@ -1,19 +1,14 @@
-// Route "/type-chart" — NATIVE route. A static 18×18 type-effectiveness matrix:
-// pure read-only data, the ideal native page (compiled to jinja, rendered in
-// Rust, zero React on the server). The 19×19 grid uses nested `.map()` on the
-// native path: rows.map(r => r.cells.map(c => …)) into a CSS grid.
-import PageLayout from '../components/PageLayout'
+// Route "/type-chart" — NATIVE leaf route, rendered into AppLayout's <Outlet/>
+// slot (chrome lives in AppLayout). Returns JUST its inner aa-content fragment.
+// A static 18×18 type-effectiveness matrix: pure read-only data, the ideal
+// native page (compiled to jinja, rendered in Rust, zero React on the server).
+// The 19×19 grid uses nested `.map()` on the native path: rows.map(r =>
+// r.cells.map(c => …)) into a CSS grid.
 import type { TypeChartData } from '../lib/types'
 
-export default function TypeChart({ rows, teamProps }: TypeChartData) {
+export default function TypeChart({ rows }: TypeChartData) {
   return (
-    <PageLayout
-      native
-      title="PokéDex · type chart"
-      active="typechart"
-      crumb="Type chart"
-      teamProps={teamProps}
-    >
+    <>
       <div className="aa-page-header">
         <div>
           <h1 className="aa-page-header__title">Type chart</h1>
@@ -49,6 +44,6 @@ export default function TypeChart({ rows, teamProps }: TypeChartData) {
           ))}
         </div>
       </div>
-    </PageLayout>
+    </>
   )
 }

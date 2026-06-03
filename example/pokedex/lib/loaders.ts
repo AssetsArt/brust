@@ -81,6 +81,11 @@ export async function listLoader({ req }: LoaderCtx): Promise<ListData> {
     hasNext,
     prevHref: hasPrev ? (prevOffset > 0 ? `/?offset=${prevOffset}` : '/') : '#',
     nextHref: hasNext ? `/?offset=${offset + PAGE}` : '#',
+    // Chrome fields (ChromeData) — merged into the flat jinja context and read by
+    // the router-level AppLayout (Approach a: native <Outlet/> nesting).
+    title: 'PokéDex · brust example',
+    active: 'list',
+    crumb: 'All Pokémon',
     teamProps: { teamInitial: teamStore.list() },
   }
 }
@@ -144,7 +149,10 @@ export async function detailLoader({ params }: LoaderCtx): Promise<DetailData | 
 
   return {
     notFound: false,
-    pageTitle: `${cap(p.name)} · PokéDex`,
+    // Chrome fields (ChromeData) read by AppLayout from the merged context.
+    title: `${cap(p.name)} · PokéDex`,
+    active: 'list',
+    crumb: cap(p.name),
     name: p.name,
     id: p.id,
     displayName: cap(p.name),
@@ -181,7 +189,10 @@ export async function detailLoader({ params }: LoaderCtx): Promise<DetailData | 
 function emptyDetail(name: string): DetailData {
   return {
     notFound: true,
-    pageTitle: `${cap(name)} · PokéDex`,
+    // Chrome fields (ChromeData) read by AppLayout from the merged context.
+    title: `${cap(name)} · PokéDex`,
+    active: 'list',
+    crumb: cap(name),
     name,
     id: 0,
     displayName: cap(name),
@@ -311,6 +322,10 @@ export async function typeChartLoader(): Promise<TypeChartData> {
 
   return {
     rows,
+    // Chrome fields (ChromeData) read by AppLayout from the merged context.
+    title: 'PokéDex · type chart',
+    active: 'typechart',
+    crumb: 'Type chart',
     teamProps: { teamInitial: teamStore.list() },
   }
 }

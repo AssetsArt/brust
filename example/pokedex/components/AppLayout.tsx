@@ -1,29 +1,33 @@
-// Shared native layout shell. INLINED into each route at build time (T6): the
-// route's root is <PageLayout native …>, whose expansion roots in <BrustPage>,
-// which the compiler now promotes to the document shell. Pages supply only
-// title/active/crumb + their aa-content inner.
+// Router-level native layout (Approach a: nested routes + <Outlet/>). Written
+// ONCE and nested as the parent of every page route in routes.tsx. The synth
+// wrapper the compiler builds is `<AppLayout native><Leaf native/></AppLayout>`
+// — AppLayout receives NO props at the call site, so the chrome data it renders
+// (title / active / crumb / teamProps) comes from the MERGED LOADER CONTEXT
+// instead (F5 chrome-prop migration). Each leaf loader returns those fields and
+// the chain-loader merge folds them into one flat jinja context; the names
+// below are destructured so the native compiler resolves them as member-paths
+// ({{ title }}, active === 'list', <TeamBuilder props={teamProps}/>).
 //
 // MUST stay single-return with no local bindings above it — a local `const`
 // would make the compiler soft-fall-back to an SSR component (no <html> shell).
 // active-nav uses conditional ELEMENTS (S11), not a className ternary
-// (unsupported). See ../FRAMEWORK-GAPS.md.
-import { BrustPage, Island } from 'brustjs'
-import type { ReactNode } from 'react'
+// (unsupported). AppLayout owns the single <main> (leaves are fragments in the
+// <Outlet/> slot) — a leaf adding its own <main> breaks SPA-nav extraction.
+// See ../FRAMEWORK-GAPS.md.
+import { BrustPage, Island, Outlet } from 'brustjs'
 import type { TeamMember } from '../lib/types'
 import TeamBuilder from './TeamBuilder'
 
-export default function PageLayout({
+export default function AppLayout({
   title,
   active,
   crumb,
   teamProps,
-  children,
 }: {
   title: string
   active: 'list' | 'typechart'
   crumb: string
   teamProps: { teamInitial: TeamMember[] }
-  children: ReactNode
 }) {
   return (
     <BrustPage
@@ -85,7 +89,9 @@ export default function PageLayout({
             </div>
           </header>
 
-          <div className="aa-content">{children}</div>
+          <div className="aa-content">
+            <Outlet />
+          </div>
         </main>
 
         <Island component={TeamBuilder} props={teamProps} ssr hydrate="load" />

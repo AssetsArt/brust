@@ -12,6 +12,8 @@ import { counter }   from './stores/counter'
 import NativeProfile from './pages/NativeProfile'
 import NativeNestedMap from './pages/NativeNestedMap'
 import NativeDataAttr  from './pages/NativeDataAttr'
+import NativeOutletLayout from './pages/NativeOutletLayout'
+import NativeOutletLeaf   from './pages/NativeOutletLeaf'
 import NativeIslandPage from './NativeIslandPage'
 import NativeSsrIslandPage from './NativeSsrIslandPage'
 import NativeTwoIslandPage from './NativeTwoIslandPage'
@@ -119,6 +121,27 @@ export const routes = defineRoutes([
     Component: NativeDataAttr,
     native: true,
     loader: async () => ({ mode: 'r42' }),
+  },
+  // T4 — native <Outlet> nested-route E2E. A native PARENT layout
+  // (NativeOutletLayout, BrustPage shell + <nav> + <main><Outlet/></main>)
+  // wrapping a native LEAF fragment (NativeOutletLeaf). The build composes the
+  // whole chain into ONE native template (synth wrapper → <Outlet/> filled with
+  // the leaf body). Each node has its OWN loader; runNativeChainLoaders merges
+  // them top-down (child-wins) so the composed template sees BOTH the parent's
+  // `section`/`title` AND the leaf's `widget`. Proves T1+T2+T3 together.
+  {
+    path: '/_test/outlet',
+    Component: NativeOutletLayout,
+    native: true,
+    loader: async () => ({ title: 'Outlet Page', section: 'parent-zone' }),
+    children: [
+      {
+        index: true,
+        Component: NativeOutletLeaf,
+        native: true,
+        loader: async () => ({ widget: 'leaf-thing' }),
+      },
+    ],
   },
   // Sub-project J / native islands — native: true route hosting a CLIENT-ONLY
   // <Island> (no ssr). The compiled .jinja emits an empty data-brust-csr mount

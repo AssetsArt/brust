@@ -328,7 +328,10 @@ export async function runBuild(args: string[]): Promise<void> {
     // an empty importMap (no native routes to emit anyway).
     await emitNativeTemplates({
       entryFile: existsSync(routesFile) ? routesFile : entry,
-      flatRoutes: (loadedRoutes ?? []) as { nativeTemplate?: string }[],
+      flatRoutes: (loadedRoutes ?? []) as {
+        nativeTemplate?: string
+        chain?: Array<{ Component?: { name?: string } }>
+      }[],
       outDir: jinjaDir,
       repoRoot: REPO_ROOT,
     })
