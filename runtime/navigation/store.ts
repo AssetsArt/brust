@@ -40,6 +40,12 @@ interface NavInternal extends NavStore {
   _before: Set<BeforeCb>
   _success: Set<NavCb>
   _error: Set<ErrorCb>
+  // version bumps once per committed transition (in emit); `_snap` memoizes the
+  // NavState for that version so getNavState() returns a referentially-stable
+  // object — required by React's useSyncExternalStore (a fresh object each call
+  // would infinite-loop "getSnapshot should be cached"). Mirrors defineStore.
+  _version: number
+  _snap: { value: NavState; version: number } | null
 }
 
 function createNav(): NavInternal {
@@ -54,6 +60,8 @@ function createNav(): NavInternal {
     _before: new Set(),
     _success: new Set(),
     _error: new Set(),
+    _version: 0,
+    _snap: null,
   }
 }
 
@@ -78,7 +86,10 @@ export const nav: NavStore = new Proxy({} as NavStore, {
 
 export function getNavState(): NavState {
   const s = store()
-  return {
+  // Return the memoized snapshot if no transition has happened since it was
+  // built (referential stability for useSyncExternalStore).
+  if (s._snap && s._snap.version === s._version) return s._snap.value
+  const value: NavState = {
     path: s.path(),
     search: s.search(),
     phase: s.phase(),
@@ -86,6 +97,16 @@ export function getNavState(): NavState {
     from: s.from(),
     to: s.to(),
   }
+  s._snap = { value, version: s._version }
+  return value
+}
+
+// Bump the snapshot version immediately after a batch of signal writes so the
+// NEXT getNavState() rebuilds (the lifecycle callbacks + emit must see committed
+// state, not the stale memoized snapshot). Called once per transition, right
+// after the batch and before any callback/getNavState read.
+function bumpVersion(s: NavInternal): void {
+  s._version += 1
 }
 
 function emit(s: NavInternal): void {
@@ -129,6 +150,7 @@ export function __navInit(path: string, search: string): void {
     s.to.set(null)
     s.error.set(null)
   })
+  bumpVersion(s)
   emit(s)
 }
 
@@ -144,6 +166,7 @@ export function __navStart(toPath: string, _toSearch: string): void {
     s.error.set(null)
     s.phase.set('loading')
   })
+  bumpVersion(s)
   for (const cb of [...s._before]) cb({ from, to: toPath })
   emit(s)
 }
@@ -157,6 +180,7 @@ export function __navCommit(toPath: string, toSearch: string): void {
     s.error.set(null)
     s.phase.set('success')
   })
+  bumpVersion(s)
   const snap = getNavState()
   for (const cb of [...s._success]) cb(snap)
   emit(s)
@@ -173,6 +197,7 @@ export function __navError(toPath: string, error: unknown): void {
     s.error.set(err)
     s.phase.set('error')
   })
+  bumpVersion(s)
   for (const cb of [...s._error]) cb({ to: toPath, error: err })
   emit(s)
 }

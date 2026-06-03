@@ -10,24 +10,24 @@
 //
 // MUST stay single-return with no local bindings above it — a local `const`
 // would make the compiler soft-fall-back to an SSR component (no <html> shell).
-// active-nav uses conditional ELEMENTS (S11), not a className ternary
-// (unsupported). AppLayout owns the single <main> (leaves are fragments in the
-// <Outlet/> slot) — a leaf adding its own <main> breaks SPA-nav extraction.
-// See ../FRAMEWORK-GAPS.md.
+// Active-nav is now CLIENT-driven: each <NavLink> is a native directive component
+// whose behavior watches brustjs/navigation's `nav.path` and sets is-active itself
+// (no SSR `active` conditional, no data-brust-active-nav magic). AppLayout owns the
+// single <main> (leaves are fragments in the <Outlet/> slot) — a leaf adding its
+// own <main> breaks SPA-nav extraction. See ../FRAMEWORK-GAPS.md.
 import { BrustPage, Island, Outlet } from 'brustjs'
 import type { TeamMember } from '../lib/types'
+import NavLink from './NavLink'
 import TeamBuilder from './TeamBuilder'
 import ThemeToggle from './ThemeToggle'
 
 export default function AppLayout({
   title,
-  active,
   crumb,
   teamProps,
   mode,
 }: {
   title: string
-  active: 'list' | 'typechart'
   crumb: string
   teamProps: { teamInitial: TeamMember[] }
   mode: 'dark' | 'light'
@@ -49,28 +49,10 @@ export default function AppLayout({
             </div>
             <span className="aa-sidebar__env">native</span>
           </div>
-          <nav className="aa-sidebar__nav" data-brust-active-nav>
+          <nav className="aa-sidebar__nav">
             <div className="aa-sidebar__group-title">Pokédex</div>
-            {active === 'list' ? (
-              <a className="aa-nav-item is-active" href="/">
-                <span>All Pokémon</span>
-              </a>
-            ) : (
-              <a className="aa-nav-item" href="/">
-                <span>All Pokémon</span>
-              </a>
-            )}
-            {active === 'typechart' ? (
-              <a className="aa-nav-item is-active" href="/type-chart">
-                <span>Type chart</span>
-                <span className="aa-nav-item__count">native</span>
-              </a>
-            ) : (
-              <a className="aa-nav-item" href="/type-chart">
-                <span>Type chart</span>
-                <span className="aa-nav-item__count">native</span>
-              </a>
-            )}
+            <NavLink native href="/" label="All Pokémon" />
+            <NavLink native href="/type-chart" label="Type chart" count="native" />
           </nav>
           <div className="aa-sidebar__user">
             <span className="aa-avatar aa-avatar--sm dex-brand-avatar">B</span>

@@ -112,6 +112,18 @@ test('__navError coerces a non-Error throw into an Error', () => {
   expect(seen[0].error).toBeInstanceOf(Error)
 })
 
+test('getNavState is referentially stable between transitions (useSyncExternalStore-safe)', () => {
+  __navInit('/a', '')
+  const a1 = getNavState()
+  const a2 = getNavState()
+  expect(a2).toBe(a1) // same ref — no transition happened
+  __navCommit('/b', '') // a transition
+  const b1 = getNavState()
+  expect(b1).not.toBe(a1) // new ref after the transition
+  expect(getNavState()).toBe(b1) // stable again
+  expect(b1.path).toBe('/b')
+})
+
 test('batched writes: an effect reading path + phase re-runs once per transition', () => {
   __navInit('/a', '')
   const seen: Array<[string, string]> = []
