@@ -427,8 +427,14 @@ design ใช้ `[data-mode="dark"]` toggle. `<BrustPage>` **ตอนนี้
 (literal + member-path, HTML-escaped, ชื่อ lowercase) — `[data-mode]`-style theming hooks ทำงานได้.
 ตัวอย่าง: `<BrustPage data-mode="dark">` → `<html lang="en" data-mode="dark">`.
 
-**FULL dark-mode toggle** (cookie round-trip + toggle control island) ยังเลื่อน (composite feature) —
-แต่ฝั่ง framework unblocked แล้ว: `className={d.themeClass}` (member-path, S8) + `data-mode={d.mode}` ทำได้พร้อมกัน.
+**✅ FULL dark-mode toggle — DONE (B4):** composite ทำงานครบแล้ว ประกอบ primitive ที่ ship —
+app.css เลิก `.dark` ใช้ `[data-mode="dark"]`; `AppLayout` `<BrustPage data-mode={mode}>` (member-path,
+อ่าน `mode` จาก loader ที่อ่าน `req.cookies.mode`, default dark → ไม่ flash); native `ThemeToggle`
+(`x-on-click` directive, ไม่ใช่ React island) flip `document.documentElement.dataset.mode` ทันที +
+POST `/theme` action `cookies.set('mode',…)` (B3) persist. smoke: `curl /` → `data-mode="dark"`,
+`-b mode=light` → `data-mode="light"`, POST `/theme` → 200 + `Set-Cookie`. spec
+`docs/superpowers/specs/2026-06-03-pokedex-dark-mode-toggle-design.md`. (ไม่มี framework change —
+dogfood ล้วน บน data-* + B3 cookies + native directives.)
 
 > workaround เดิม: rewrite CSS เป็น `.dark` แล้ว `<html class="dark">` (ตัด toggle). ตอนนี้ไม่จำเป็นแล้ว.
 

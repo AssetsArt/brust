@@ -6,7 +6,7 @@
 //   api.team({ id }).delete()      → DELETE /_brust/action/team/{id}
 
 import { z } from 'zod'
-import { defineActions, ActionError } from 'brustjs'
+import { cookies, defineActions, ActionError } from 'brustjs'
 import { MAX_TEAM, teamStore } from './lib/team-store'
 
 const TeamMemberInput = z.object({
@@ -34,5 +34,13 @@ export const actions = defineActions()
     teamStore.remove(Number(params.id))
     return { team: teamStore.list(), max: MAX_TEAM }
   })
+  .post(
+    '/theme',
+    ({ body }) => {
+      cookies.set('mode', body.mode, { path: '/', maxAge: 31536000, sameSite: 'Lax' })
+      return { mode: body.mode }
+    },
+    { body: z.object({ mode: z.enum(['dark', 'light']) }) },
+  )
 
 export type Actions = typeof actions
