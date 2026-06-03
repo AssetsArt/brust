@@ -1,5 +1,15 @@
 import { test, expect } from 'bun:test'
-import { flattenRoutes, joinPath, type Route } from './routes.ts'
+import {
+  flattenRoutes,
+  joinPath,
+  notFound,
+  redirect,
+  runNativeChainLoaders,
+  type Route,
+} from './routes.ts'
+import { defineStore } from './store/define-store.ts'
+import { signal } from './store/signal.ts'
+import { runInStoreContext } from './store/server-context.ts'
 
 // Minimal component stub used in fixtures.
 const C: any = () => null
@@ -354,4 +364,109 @@ test('flattenRoutes rejects native: true + cache (deferred)', () => {
       { path: '/x', Component: NamedPage, native: true, cache: { ttl_seconds: 60 } } as Route,
     ]),
   ).toThrow(/cannot coexist with 'cache'/)
+})
+
+// --- T3: native <Outlet> chain-loader merge (runNativeChainLoaders) -----------
+
+const NLC_CTX = {
+  params: {} as Record<string, string>,
+  path: '/x',
+  req: {} as never,
+}
+
+test('runNativeChainLoaders: two-level chain merges, child keys win', async () => {
+  const chain: Route[] = [
+    { path: '', Component: C, loader: async () => ({ a: 1, shared: 'p' }) } as Route,
+    { path: 'leaf', Component: C, loader: async () => ({ b: 2, shared: 'c' }) } as Route,
+  ]
+  const res = await runNativeChainLoaders(chain, NLC_CTX)
+  expect(res).toEqual({ data: { a: 1, b: 2, shared: 'c' } })
+})
+
+test('runNativeChainLoaders: parent verdict short-circuits, leaf loader NOT called', async () => {
+  let leafCalled = false
+  const chain: Route[] = [
+    { path: '', Component: C, loader: async () => notFound({ msg: 'gone' }) } as Route,
+    {
+      path: 'leaf',
+      Component: C,
+      loader: async () => {
+        leafCalled = true
+        return { b: 2 }
+      },
+    } as Route,
+  ]
+  const res = await runNativeChainLoaders(chain, NLC_CTX)
+  expect(leafCalled).toBe(false)
+  expect('verdict' in res).toBe(true)
+  if ('verdict' in res) {
+    expect(res.verdict.status).toBe(404)
+    expect(res.verdict.render).toBe(true)
+    expect(res.verdict.data).toEqual({ msg: 'gone' })
+  }
+})
+
+test('runNativeChainLoaders: parent redirect verdict short-circuits', async () => {
+  const chain: Route[] = [
+    { path: '', Component: C, loader: async () => redirect('/login', 302) } as Route,
+    { path: 'leaf', Component: C, loader: async () => ({ b: 2 }) } as Route,
+  ]
+  const res = await runNativeChainLoaders(chain, NLC_CTX)
+  expect('verdict' in res).toBe(true)
+  if ('verdict' in res) {
+    expect(res.verdict.status).toBe(302)
+    expect(res.verdict.render).toBe(false)
+    expect(res.verdict.headers).toEqual({ Location: '/login' })
+  }
+})
+
+test('runNativeChainLoaders: chain.length === 1 behaves as leaf-only (no regression)', async () => {
+  const chain: Route[] = [
+    { path: 'x', Component: C, loader: async () => ({ only: 'leaf' }) } as Route,
+  ]
+  const res = await runNativeChainLoaders(chain, NLC_CTX)
+  expect(res).toEqual({ data: { only: 'leaf' } })
+})
+
+test('runNativeChainLoaders: nodes without a loader are skipped', async () => {
+  const chain: Route[] = [
+    { path: '', Component: C } as Route, // no loader
+    { path: 'mid', Component: C, loader: async () => ({ a: 1 }) } as Route,
+    { path: 'leaf', Component: C } as Route, // no loader
+  ]
+  const res = await runNativeChainLoaders(chain, NLC_CTX)
+  expect(res).toEqual({ data: { a: 1 } })
+})
+
+test('runNativeChainLoaders: empty chain → empty merged object', async () => {
+  const res = await runNativeChainLoaders([], NLC_CTX)
+  expect(res).toEqual({ data: {} })
+})
+
+test('runNativeChainLoaders: loaders share ONE store context (parent write → child read)', async () => {
+  if (typeof (globalThis as Record<string, unknown>).window !== 'undefined') {
+    ;(globalThis as Record<string, unknown>).window = undefined
+  }
+  const store = defineStore('t3-shared', () => {
+    const token = signal<string>('')
+    return { token }
+  })
+  const chain: Route[] = [
+    {
+      path: '',
+      Component: C,
+      loader: async () => {
+        store.token.set('parent-wrote')
+        return { a: 1 }
+      },
+    } as Route,
+    {
+      path: 'leaf',
+      Component: C,
+      loader: async () => ({ seen: store.token() }),
+    } as Route,
+  ]
+  // Caller (the native render site) wraps the whole loop in ONE runInStoreContext.
+  const res = await runInStoreContext(() => runNativeChainLoaders(chain, NLC_CTX))
+  expect(res).toEqual({ data: { a: 1, seen: 'parent-wrote' } })
 })

@@ -181,6 +181,54 @@ export function isNativeVerdict(x: unknown): x is NativeVerdict {
   )
 }
 
+/** Loader context passed to native chain loaders. */
+export interface NativeLoaderCtx {
+  params: Record<string, string>
+  path: string
+  req: BrustRequest
+}
+
+/** Result of running a native route's chain loaders top-down: either a merged
+ * flat context object (all loader results shallow-merged, child keys win), or
+ * the first verdict encountered (top-down) which short-circuits the chain. */
+export type NativeChainResult = { data: Record<string, unknown> } | { verdict: NativeVerdict }
+
+/** Run a native route's `flat.chain` loaders top-down (parent → leaf) and merge
+ * their results into ONE flat context object.
+ *
+ * Semantics (T3 — native <Outlet> loader chain):
+ *  - Each chain node may lack a loader → skip it.
+ *  - Results merge shallow: `merged = { ...merged, ...result }` — later (child)
+ *    keys win over earlier (parent) keys.
+ *  - First verdict wins: if any loader returns a `notFound()`/`redirect()`
+ *    verdict (top-down), STOP — remaining loaders are NOT run — and return it.
+ *  - `chain.length === 1` (or only the leaf has a loader) → behaves exactly as
+ *    the old leaf-only read (no regression).
+ *
+ * The caller is responsible for wrapping this in a SINGLE `runInStoreContext`
+ * (one Map per request) so parent loader store writes are visible to child
+ * loaders — mirroring the React path. This helper itself does NOT open a store
+ * scope. */
+export async function runNativeChainLoaders(
+  chain: Route[],
+  ctx: NativeLoaderCtx,
+): Promise<NativeChainResult> {
+  let merged: Record<string, unknown> = {}
+  for (const node of chain) {
+    if (!node.loader) continue
+    // `as never` bypasses per-route Params narrowing — NativeLoaderCtx is the
+    // default-instantiated loader ctx shape ({ params, path, req }).
+    const result = await node.loader(ctx as never)
+    if (isNativeVerdict(result)) {
+      return { verdict: result }
+    }
+    if (result && typeof result === 'object') {
+      merged = { ...merged, ...(result as Record<string, unknown>) }
+    }
+  }
+  return { data: merged }
+}
+
 /** Middleware contract — Express/Koa-style chain. Receives a structured
  * request and a `next()` that runs the rest of the chain (eventually the
  * loader + render). Return a `RouteResponse` to short-circuit, or call
@@ -666,43 +714,48 @@ export function makeRenderer(
       // deferred to v2.x. If your middleware needs to mutate, use a React
       // route for now.
       if (flat.nativeTemplate !== undefined) {
-        let data: unknown = {}
-        const leaf = flat.chain[flat.chain.length - 1]
-        if (leaf.loader) {
-          const ctx = { params: call.params, path: call.path, req: call.req }
-          try {
-            // Native loaders may write to a defineStore; run them in a per-request
-            // store scope so those writes are isolated per request. No snapshot is
-            // collected and no <script> is injected on native paths — Spec B owns
-            // native store delivery (hard non-goal here).
-            data = await runInStoreContext(() => leaf.loader!(ctx as any))
-          } catch (err) {
-            console.error(`[brust] loader failed for native route ${flat.fullPath}:`, err)
-            // FAST LANE: native routes take dispatch_single_chunk (no chunk
-            // channel), so every native fallback MUST pack + return a length.
-            return packSingleChunkResponse(view, encoder, {
-              status: 500,
-              contentType: 'text/html; charset=utf-8',
-              body: 'internal error',
-            })
-          }
+        let data: Record<string, unknown>
+        const ctx = { params: call.params, path: call.path, req: call.req }
+        let chainResult: NativeChainResult
+        try {
+          // Run the WHOLE route chain's loaders top-down (parent → leaf) and
+          // merge into ONE flat context (child keys win), mirroring the React
+          // chain-loader path. Wrap the entire loop in a SINGLE per-request
+          // store scope so a parent loader's defineStore writes are visible to
+          // child loaders (one Map per request — NOT one per loader). No
+          // snapshot is collected and no <script> is injected on native paths —
+          // Spec B owns native store delivery (hard non-goal here).
+          chainResult = await runInStoreContext(() => runNativeChainLoaders(flat.chain, ctx))
+        } catch (err) {
+          console.error(`[brust] loader failed for native route ${flat.fullPath}:`, err)
+          // FAST LANE: native routes take dispatch_single_chunk (no chunk
+          // channel), so every native fallback MUST pack + return a length.
+          return packSingleChunkResponse(view, encoder, {
+            status: 500,
+            contentType: 'text/html; charset=utf-8',
+            body: 'internal error',
+          })
         }
         let renderStatus: number | undefined
-        if (isNativeVerdict(data)) {
-          if (!data.render) {
+        if ('verdict' in chainResult) {
+          // First verdict wins (top-down). Remaining loaders already skipped.
+          const verdict = chainResult.verdict
+          if (!verdict.render) {
             // redirect — no template render; fast-lane packed response with Location.
             return packSingleChunkResponse(view, encoder, {
-              status: data.status,
+              status: verdict.status,
               contentType: 'text/html; charset=utf-8',
               body: '',
-              headers: data.headers,
+              headers: verdict.headers,
             })
           }
           // notFound — render the route's own template, but with the verdict's status.
-          renderStatus = data.status
-          data = data.data ?? {}
+          renderStatus = verdict.status
+          data = (verdict.data ?? {}) as Record<string, unknown>
+        } else {
+          data = chainResult.data
         }
-        const json = JSON.stringify(data ?? {})
+        const json = JSON.stringify(data)
         // Sub-project J — islands + components. If this template has an enriched
         // islands manifest or a components manifest, merge per-island context vars
         // (island_<id>_props, plus island_<id>_html for ssr entries) and per-component
@@ -1047,7 +1100,8 @@ async function navigationBranch(
 
 /** Render a native (jinja) route to its full HTML document for a SPA navigation.
  *
- * Mirrors the render-branch native path: run the leaf loader, merge island /
+ * Mirrors the render-branch native path: run the whole route chain's loaders
+ * (top-down, merged), merge island /
  * component manifest context, then call the SYNC `napiRenderJinja`, which writes
  * a framed `[meta_len u16 BE][meta JSON][body]` response into the SAB and returns
  * its length. Here — unlike the render branch, which returns that length so Rust
@@ -1064,24 +1118,25 @@ async function renderNativeRouteToHtml(
   workerId: bigint,
 ): Promise<string> {
   const templateName = flat.nativeTemplate as string
-  const leaf = flat.chain[flat.chain.length - 1]
 
-  let data: unknown = {}
-  if (leaf.loader) {
-    // Per-request store scope for native loader writes (isolation only). No
-    // snapshot collected / no <script> injected — Spec B owns native delivery.
-    data = await runInStoreContext(() =>
-      leaf.loader!({ params: call.params, path: call.path, req: call.req } as any),
-    )
-  }
+  // Run the WHOLE route chain's loaders top-down and merge into ONE flat context
+  // (child keys win), mirroring the full-render branch. One per-request store
+  // scope wraps the entire loop (isolation only — no snapshot / no <script>).
+  const chainResult = await runInStoreContext(() =>
+    runNativeChainLoaders(flat.chain, {
+      params: call.params,
+      path: call.path,
+      req: call.req,
+    }),
+  )
 
-  if (isNativeVerdict(data)) {
+  if ('verdict' in chainResult) {
     // SPA nav can't emit a redirect/404 in-place; force the client's full-reload
     // fallback so the document path produces the authoritative status.
     throw new Error('native verdict on SPA navigation — falling back to full reload')
   }
 
-  let ctx = (data ?? {}) as Record<string, unknown>
+  let ctx = chainResult.data
   const manifest = loadIslandManifest(templateName)
   const compManifest = loadComponentManifest(templateName)
   if ((manifest && manifest.length > 0) || (compManifest && compManifest.length > 0)) {
