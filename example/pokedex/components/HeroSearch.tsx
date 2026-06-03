@@ -43,7 +43,7 @@ export default function HeroSearch() {
         type="submit"
         className="inline-flex items-center gap-1.5 rounded-xl bg-brand-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-brand-600"
       >
-        <Search size={16} />
+        <Search size={16} isr={{ key: 'LcIconSearch' }} />
         Search
       </button>
     </form>
