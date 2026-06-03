@@ -14,5 +14,5 @@ dist
 .antigravitycli
 
 # Unrelated local spike — kept on disk, never tracked (swept into #20 by accident)
-tools/jsx-rust-compiler/example/pokedex.bak.*
+tools/jsx-rust-compiler
 pokedex.bak.*
