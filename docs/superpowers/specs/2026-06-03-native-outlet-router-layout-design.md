@@ -71,32 +71,53 @@ multi-level ได้ (`<A><B><Leaf/></B></A>`).
 
 ### 2. `runtime/cli/native-routes-emit.ts` — synth wrapper
 - `emitNativeTemplates` (~`:313`): ต่อ native leaf ที่ `chain.length > 1` synthesize wrapper source
-  `<Parent native><...><Leaf native/>...</Parent>` (nest ตาม chain order, parent → leaf).
+  ที่เป็น **`export default function`** (find_default_export match แค่ default export —
+  `lower.rs:406`; bare `function` → `UnexpectedStatement`):
+  ```tsx
+  export default function ListPage__chain() {
+    return <AppLayout native><Leaf native/></AppLayout>   // 3-level: <A native><Mid native><Leaf native/></Mid></A>
+  }
+  ```
   **ทุก level ต้องมี attr `native`** (probe ยืนยัน — ลืม `native` บน child = ตกเป็น SsrComponent/React-render).
-- `gatherComponentSources` (~`:18`) เก็บ source ของทุก component ใน chain (parent layouts + leaf) ให้
-  compiler inline ได้.
+- **B1 (load-bearing) — gather sources ทั้ง chain ไม่ใช่แค่ leaf:** `gatherComponentSources` (~`:71`)
+  seed จาก import graph ของ **leaf เท่านั้น** (`scanImports(leafFile)`). โมเดลใหม่ leaf เป็น fragment ที่
+  **ไม่ import layout แล้ว** → layout source จะ**หาย**จาก map → `<AppLayout native>` soft-fall เป็น
+  SsrComponent (พัง native เงียบๆ). synth step ต้อง **union `gatherComponentSources()` ของ source-path
+  ของ component ทุกตัวใน chain** (resolve แต่ละตัวจาก import map ของ `routes.tsx` ที่ `scanImports(entryFile)`
+  ผลิตอยู่แล้ว ~`:342`) + ใส่ source ของ synth wrapper เอง.
+- **F2:** widen type `flatRoutes` ใน 3 จุด (`native-routes-emit.ts:137`, `build.ts:331`, `dev.ts:85`) ให้
+  expose `chain` (object จริงเป็น `FlatRoute` มี `chain` runtime อยู่แล้ว — `routes.ts:421`).
 - ชื่อ template = leaf `nativeTemplate`. chain.length===1 → path เดิม (ไม่ synth, ไม่ regress).
 
 ### 3. Compiler (`crates/jsx-rust-compiler/`) — `<Outlet/>` builtin
-- `lower.rs`: รับ `<Outlet/>` (และ `<Outlet />`) เป็น builtin → lower เป็น `JsxNode::ChildrenSlot`
-  (`ir.rs:112`). ปัจจุบัน `{children}`→slot เฉพาะ inline mode (`lower.rs:2530`); `<Outlet/>` ควร
-  lower เป็น slot ใน **layout component body** (ซึ่งถูก inline ในตอน synth) — ยืนยันด้วย probe (Task 0).
-- `<Outlet/>` ห้ามมี children/props (void). ถ้ามี → error ใหม่ `OutletMustBeEmpty` (หรือ reuse existing).
+- `lower.rs` `lower_element`: รับ `<Outlet/>` เป็น builtin **ก่อน** arm capitalized-tag→SsrComponent
+  (~`:588-593`; วันนี้ `<Outlet/>` ตกที่ arm นั้น → SsrComponent ตาม probe) → emit `JsxNode::ChildrenSlot`
+  (`ir.rs:112`) **unconditional** (ไม่ gate ด้วย `scope.inline`). หมายเหตุ: gate `{children}`→slot ที่
+  `lower.rs:2530` เป็น **expr-path** ไม่กระทบ element-path; `splice_children_slots` (`:1558`) จัดการเคส
+  zero call-site children ได้อยู่แล้ว.
+- `<Outlet/>` ห้ามมี children/props (void) → error ใหม่ `OutletMustBeEmpty` (สำหรับ native compile path
+  แม้ TS signature จะกันอยู่แล้ว).
 - เก็บ `{children}` ให้ทำงานเหมือนเดิม (PageLayout composition ที่ ship แล้วต้องไม่ regress).
 
 ### 4. Exports — `runtime/index.ts`
-- `Outlet` ฝั่ง native เป็น **compile-time builtin tag** (เหมือน `<BrustPage>`) — ต้องมี JSX symbol
-  ให้ TS ยอม. ตรวจว่า React `Outlet` ที่ export อยู่แล้ว (`routes.ts:427-438`) ใช้ได้กับ native หรือ
-  ต้องมี native-shim (probe).
+- **Q2 resolved:** `Outlet` export อยู่แล้ว (`index.ts:732` → `routes.ts:437`, `Outlet(): ReactNode` ไม่มี
+  props) — `<Outlet/>` type-check ผ่าน, `<Outlet prop/>`/`<Outlet>x</Outlet>` เป็น TS error อยู่แล้ว.
+  **reuse ได้ ไม่ต้อง native-shim.** (native path เห็น `<Outlet/>` เป็น builtin tag ใน compiler; React path
+  ใช้ฟังก์ชันเดิม.)
 
 ## Loader semantics (สำคัญ — the hard sub-problem)
 
 native = flat jinja context เดียว. chain loaders รัน **top-down** (parent ก่อน leaf), ผลลัพธ์
 **shallow-merge** เป็น object เดียว (`{...parentData, ...childData}`) — **child key ชนะ** เมื่อชื่อชน
 (documented). เหตุผล: minijinja ไม่มี per-fragment scope; merge เป็นทางเดียวที่ template ทั้ง chain
-อ้าง key ได้. นี่ต่างจาก React "no merge" (`2026-05-24-nested-routes-design.md`) โดยตั้งใจ — native
-constraint. **verdict:** loader แรกใน chain (top-down) ที่คืน `notFound()`/`redirect()` short-circuit ทันที
-(parent verdict ชนะ; ไม่รัน loader ที่เหลือ). chain.length===1 → merge = leaf data เดิม (ไม่ regress).
+อ้าง key ได้. inlined component ทุกตัว emit prop refs เป็น `Expr::Field(name)` → `{{ name }}` lookup จาก
+flat context นี้ (`lower.rs:2958`) → merge เข้ากันได้. นี่ต่างจาก React "no merge"
+(`2026-05-24-nested-routes-design.md`) โดยตั้งใจ — native constraint.
+- **F3 (load-bearing):** chain loaders ต้องรันใน **`runInStoreContext` เดียวครอบทั้ง chain** (ไม่ใช่ per-loader).
+  `runInStoreContext` alloc Map ใหม่ทุกครั้ง (`server-context.ts:12`); React chain path รันทุก loader ใน scope
+  เดียว (`routes.ts:759`,`:1106`). ถ้า wrap แยก parent store-writes จะมองไม่เห็นใน child loader (diverge จาก React).
+- **verdict:** loader แรกใน chain (top-down) ที่คืน `notFound()`/`redirect()` short-circuit ทันที
+  (parent verdict ชนะ; ไม่รัน loader ที่เหลือ). chain.length===1 → merge = leaf data เดิม (ไม่ regress).
 
 ## Tests
 
@@ -125,13 +146,25 @@ constraint. **verdict:** loader แรกใน chain (top-down) ที่คื
 5. dogfood: pokedex routes.tsx เป็น nested (AppLayout + 3 leaf), layout เขียนครั้งเดียว ใช้ `<Outlet/>`;
    ทั้ง 3 หน้า build + render ฝั่ง Rust ได้ (view-source มี shell + content); SPA-nav ไม่ full-reload;
    pixel/structure เท่าเดิม (sidebar/topbar/team-dock + content).
+   - **F5 — chrome-prop migration (จำเป็นต่อ AC5):** วันนี้ leaf ส่ง `title/active/crumb/teamProps` เป็น
+     **props** ให้ `<PageLayout>` (`ListPage.tsx:25`) แล้ว PageLayout branch บนมัน (`active==='list'`
+     `PageLayout.tsx:47`; Island `props={teamProps}` `:91`). โมเดลใหม่ synth wrapper = `<AppLayout native>
+     <Leaf native/></AppLayout>` **ไม่มี props บน AppLayout** → ค่าพวกนี้หาย. ต้อง: **แต่ละ leaf loader คืน
+     `title/active/crumb/teamProps`** ลง merged context แล้ว **AppLayout อ่านเป็น member-path/conditional**
+     (`{{ title }}`, `data.active === 'list'` (S11), `<TeamBuilder props={data.teamProps}/>`). ไม่งั้น
+     active-nav/title/team-dock ใช้ไม่ได้.
 6. chain.length===1 (route เดี่ยวไม่ nest) ทำงานเหมือนเดิม (ทั้ง pokedex ปัจจุบันถ้ายังไม่ย้าย).
 
 ## Known limitations (documented)
 - layout duplicated ลง **แต่ละ leaf template** (build-time inline) — ไม่ share template ตอน runtime
   (นั่นคือ approach b). disk/template size โตตามจำนวน leaf × layout — ยอมรับ.
-- loader **merge** (ไม่ใช่ per-level scope) → key collision ต้องระวัง (child wins, documented).
-- mixed native/non-native ใน chain เดียว = ไม่รองรับ (reject).
+- loader **merge** (ไม่ใช่ per-level scope) → key collision **silent, child wins** (Q3). กับ propless
+  layout, field refs ของ layout เองก็ alias เข้า shared loader namespace เดียวกัน — ชนกันเงียบ. documented.
+- **`<main>` convention (Q1):** SPA-nav extract `<main>` ตัวแรกถึง `</main>` ตัวแรก (`routes.ts:991`).
+  composed template มี `<main>` เดียวเพราะ **layout เป็นเจ้าของ `<main>`** (leaf เป็น fragment ใน slot).
+  ถ้า leaf ใส่ `<main>` เองด้วย → extraction truncate ผิด. **convention: layout owns `<main>`, leaf ห้ามมี**
+  → plan เพิ่ม build warning ถ้า leaf fragment มี `<main>` (nice-to-have).
+- mixed native/non-native ใน chain เดียว = ไม่รองรับ (reject ด้วย error ชัด).
 
 ## Open questions → resolve at plan-time / Task 0 probe
 - **`<Outlet/>` lowering ใน synth wrapper จริงๆ ผ่านไหม** (vs ต้องใช้ `{children}` + destructured prop)?
