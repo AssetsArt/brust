@@ -91,11 +91,28 @@ export function isActionError(v: unknown): v is ActionError {
 - **`message` default = `code`** ถ้าไม่ส่ง — error อ่านง่ายใน log โดยไม่บังคับเขียนซ้ำ.
 - `status`/`code`/`data` เป็น `readonly`.
 
-### `runtime/routes.ts` — `dispatchAction` terminal catch (แก้จุดเดียว ~line 1376)
+### `runtime/routes.ts` — `dispatchAction`: แก้ **สอง** catch (สำคัญ)
 
-เดิม:
+ActionError ที่ throw จาก **handler** ตกที่ `terminal` catch (~line 1376); แต่ ActionError
+ที่ throw จาก **middleware** (ก่อน `next()`) ไม่เข้า `terminal` เลย — propagate ไป outer
+`chain()` catch (~line 1391, ปัจจุบัน map ทุก throw เป็น generic 500 `"internal error"`).
+**ต้องแก้ทั้งสองจุด ให้ ActionError ออก body เดียวกันเป๊ะ.**
+
+ทำ helper เดียวกันใช้ทั้งสองที่ (กัน drift):
+```ts
+function actionErrorResponse(err: ActionError): RouteResponse {
+  return {
+    status: err.status,
+    body: JSON.stringify({ code: err.code, message: err.message, data: err.data }),
+    contentType: 'application/json; charset=utf-8',
+  }
+}
+```
+
+**terminal catch** (~1376) — เพิ่ม branch ก่อน fallback 500:
 ```ts
 } catch (err) {
+  if (isActionError(err)) return actionErrorResponse(err)   // ไม่ console.error — domain signal ไม่ใช่ bug
   const e = err instanceof Error ? err : new Error(String(err))
   console.error(`[brust] action ${def.method} ${def.path} threw:`, err)
   return { status: 500, body: JSON.stringify({ error: { message: e.message, name: e.name } }),
@@ -103,22 +120,23 @@ export function isActionError(v: unknown): v is ActionError {
 }
 ```
 
-ใหม่ (เพิ่ม branch ActionError ก่อน fallback 500):
+**outer chain() catch** (~1391) — เพิ่ม branch เดียวกัน:
 ```ts
+try {
+  response = await chain()
 } catch (err) {
   if (isActionError(err)) {
-    return {
-      status: err.status,
-      body: JSON.stringify({ code: err.code, message: err.message, data: err.data }),
-      contentType: 'application/json; charset=utf-8',
-    }
+    response = actionErrorResponse(err)            // body เดียวกับ terminal เป๊ะ
+  } else {
+    console.error('[brust] action middleware uncaught:', err)
+    response = { status: 500, body: '{"error":{"message":"internal error"}}',
+      contentType: 'application/json; charset=utf-8' }
   }
-  const e = err instanceof Error ? err : new Error(String(err))
-  console.error(`[brust] action ${def.method} ${def.path} threw:`, err)
-  return { status: 500, body: JSON.stringify({ error: { message: e.message, name: e.name } }),
-    contentType: 'application/json; charset=utf-8' }
 }
 ```
+
+**Logging decision:** ActionError = deliberate domain signal → **ไม่** `console.error` ในทั้งสอง
+catch (ไม่ใช่ error condition ของ server). non-ActionError → log เหมือนเดิม.
 
 หมายเหตุ serialize: `JSON.stringify({ …, data: undefined })` จะ **ละ** key `data` เมื่อ
 `data` เป็น `undefined` (พฤติกรรม JSON.stringify ปกติ) — body จึงเป็น `{code,message}` เมื่อไม่ส่ง data.
@@ -145,6 +163,12 @@ client อ่าน `r.error.value.code`.
 (enveloped `{ error: { message, … } }`, ไม่มี top-level `code`). ผู้ใช้แยกได้: ถ้า
 `r.error.value.code` มี → domain ActionError; ไม่งั้น framework error (422/500).
 
+**Client guard ต้องทน non-object `error.value`:** treaty client (`treaty.ts:102-117`) ตั้ง
+`error.value = parsed` (object) เมื่อ body เป็น JSON, แต่เป็น **raw string** เมื่อ body ไม่ใช่ JSON,
+และเป็น **Error** เมื่อ network fail (status 0). ฉะนั้น guard ต้องใช้ optional-chaining
+`(error?.value as ActionErrorBody)?.code` (yield `undefined` บน string/Error → fall through ถูก) —
+**ห้าม** `JSON.parse(error.value)` หรือสมมุติว่าเป็น object เสมอ.
+
 ## Dogfood — `example/pokedex/`
 
 ### `actions.ts` POST `/team`
@@ -159,6 +183,9 @@ client อ่าน `r.error.value.code`.
   `else if ((error?.value as ActionErrorBody)?.code === 'TEAM_FULL') { /* feedback */ }`.
 - เพิ่ม feedback ขั้นต่ำ (เช่น set signal `full` แล้ว label/aria สะท้อน) — ดีกว่าเดิมที่
   เต็มแล้วเงียบสนิท. ขอบเขต feedback ให้ minimal (signal + button label), ไม่ทำ toast system.
+- **same-commit:** การลบ `full` ออกจาก return type ของ POST (`actions.ts`) ทำให้ `data?.full`
+  ที่ `AddToTeamButton.tsx:55` กลายเป็น TS error (property หายจาก inferred type) — นั่นคือสัญญาณ
+  ที่ต้องการ แต่ **ต้องลบ/แก้บรรทัดนั้นใน commit เดียวกัน** ไม่งั้น `bun run ci`/build แตก (AC 4).
 
 ## Tests
 
@@ -175,8 +202,10 @@ client อ่าน `r.error.value.code`.
   `JSON.parse(res.body)` deep-eq `{ code:'TEAM_FULL', message:'TEAM_FULL', data:{max:6} }`.
 - handler throw `ActionError(400,'BAD',{message:'nope'})` ไม่มี data → body `{code:'BAD',message:'nope'}` (ไม่มี key `data`).
 - handler throw `new Error('boom')` ปกติ → ยัง `res.status===500`, body `{error:{message:'boom',name:'Error'}}` (regression: non-ActionError ไม่เปลี่ยน).
-- ActionError ที่ throw จาก **middleware** (ผ่าน `composeChain`) → ก็ map เป็น typed body
-  เช่นกัน (ยืนยัน catch ครอบ chain — ดู Open questions).
+- ActionError ที่ throw จาก **middleware** (ก่อน `next()`) → map เป็น typed body **เดียวกับ
+  terminal เป๊ะ** (assert body deep-eq ไม่ใช่แค่ status — outer-catch path เป็น load-bearing).
+- `respond()` + `throw ActionError` ในตัวเดียวกัน → **throw ชนะ** (catch ทำงานก่อนเช็ค respond
+  sentinel). test: handler ที่เรียก respond แล้ว throw → ได้ ActionError body ไม่ใช่ respond body.
 
 ## Behavior invariants
 
