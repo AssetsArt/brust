@@ -171,14 +171,12 @@ dependency tracking inside the reconcile effect).
   so `itemSig.set()` inside it cannot re-trigger it (no infinite loop). Verified by: key computed
   from plain scope; item/idx reads happen only inside child-bound effects, which are separate
   `effect()` consumers.
-- **Key paths MUST resolve to non-signal values (precondition).** The no-loop guarantee holds only
-  if the key read inside the reconcile effect tracks nothing. Key paths are read against a plain
-  throwaway scope `{ [itemName]: item, [indexName]: i }`, so as long as `item` itself contains no
-  signal/computed *along the key path* (the normal contract — list elements are plain data), the read
-  tracks nothing. If a list element nested a signal exactly on a key path (`{id: signal(1)}` + `by
-  item.id`), unwrap-each-hop would track it inside the reconcile effect → churn. This is a documented
-  misuse, not supported; the `effect.running` re-entrancy guard (`signal.ts:152`) is a backstop
-  against a single re-entrant run but not against per-pass churn. Keys = plain data.
+- **Key extraction uses `resolveRaw`, NOT `read`** — `resolveRaw` walks the path without calling any
+  signal getter, so the key read inside the reconcile effect tracks nothing *unconditionally* (even if
+  a list element nested a signal on a key path). The no-self-retrigger invariant therefore does not
+  depend on a "keys are plain" precondition. Keys are still expected to be plain identity data by
+  contract (a signal on a key path would stringify the signal function — deterministic but useless as
+  a key); `resolveRaw` just removes the footgun from the loop-safety argument.
 - **Node identity:** a kept key's `node` object is the SAME `HTMLElement` across updates → focus,
   scroll position, and uncontrolled `<input>` value survive.
 - **Value reactivity:** changing a kept key's item (new object/value in the list) → `itemSig.set` →

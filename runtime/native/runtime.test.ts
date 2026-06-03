@@ -186,6 +186,286 @@ describe('x-for', () => {
     register('f2', () => ({ items: signal([]) }))
     expect(() => start(win.document)).not.toThrow()
   })
+
+  test('keyed: reorder preserves node identity', async () => {
+    const win = setupDom(
+      '<ul x-data="k1"><li x-for="t in items by t.id" x-text="t.name"></li></ul>',
+    )
+    const { register, start } = await import(`./runtime.ts?k1=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const items = signal([
+      { id: 1, name: 'a' },
+      { id: 2, name: 'b' },
+    ])
+    register('k1', () => ({ items }))
+    start(win.document)
+    const ul = win.document.querySelector('ul')!
+    const before = Array.from(ul.querySelectorAll('li'))
+    expect(before.map((l) => l.textContent)).toEqual(['a', 'b'])
+    items.set([
+      { id: 2, name: 'b' },
+      { id: 1, name: 'a' },
+    ]) // swap
+    const after = Array.from(ul.querySelectorAll('li'))
+    expect(after.map((l) => l.textContent)).toEqual(['b', 'a'])
+    expect(after[0]).toBe(before[1]) // SAME node object — reused, not rebuilt
+    expect(after[1]).toBe(before[0])
+  })
+
+  test('keyed: value change on kept key updates same node', async () => {
+    const win = setupDom(
+      '<ul x-data="k2"><li x-for="t in items by t.id" x-text="t.name"></li></ul>',
+    )
+    const { register, start } = await import(`./runtime.ts?k2=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const items = signal([{ id: 1, name: 'old' }])
+    register('k2', () => ({ items }))
+    start(win.document)
+    const ul = win.document.querySelector('ul')!
+    const before = ul.querySelector('li')!
+    expect(before.textContent).toBe('old')
+    items.set([{ id: 1, name: 'new' }])
+    const after = ul.querySelector('li')!
+    expect(after).toBe(before) // same node ref
+    expect(after.textContent).toBe('new')
+  })
+
+  test('keyed: index reactive on reorder', async () => {
+    const win = setupDom(
+      '<ul x-data="k3"><li x-for="(t, i) in items by t.id" x-text="i"></li></ul>',
+    )
+    const { register, start } = await import(`./runtime.ts?k3=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const items = signal([
+      { id: 1, name: 'a' },
+      { id: 2, name: 'b' },
+    ])
+    register('k3', () => ({ items }))
+    start(win.document)
+    const ul = win.document.querySelector('ul')!
+    const before = Array.from(ul.querySelectorAll('li'))
+    expect(before.map((l) => l.textContent)).toEqual(['0', '1'])
+    items.set([
+      { id: 2, name: 'b' },
+      { id: 1, name: 'a' },
+    ]) // swap
+    const after = Array.from(ul.querySelectorAll('li'))
+    // id=2 now at index 0, id=1 now at index 1 — same node refs, new indices
+    expect(after[0]).toBe(before[1])
+    expect(after[1]).toBe(before[0])
+    expect(after.map((l) => l.textContent)).toEqual(['0', '1'])
+  })
+
+  test('keyed: insert/delete touch only changed keys', async () => {
+    const win = setupDom(
+      '<ul x-data="k4"><li x-for="t in items by t.id" x-text="t.name"></li></ul>',
+    )
+    const { register, start } = await import(`./runtime.ts?k4=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const items = signal([
+      { id: 1, name: 'a' },
+      { id: 2, name: 'b' },
+    ])
+    register('k4', () => ({ items }))
+    start(win.document)
+    const ul = win.document.querySelector('ul')!
+    const before = Array.from(ul.querySelectorAll('li'))
+    // insert one in the middle
+    items.set([
+      { id: 1, name: 'a' },
+      { id: 3, name: 'c' },
+      { id: 2, name: 'b' },
+    ])
+    let after = Array.from(ul.querySelectorAll('li'))
+    expect(after.map((l) => l.textContent)).toEqual(['a', 'c', 'b'])
+    expect(after[0]).toBe(before[0]) // id=1 kept
+    expect(after[2]).toBe(before[1]) // id=2 kept
+    const inserted = after[1]!
+    // delete one
+    items.set([
+      { id: 1, name: 'a' },
+      { id: 3, name: 'c' },
+    ])
+    after = Array.from(ul.querySelectorAll('li'))
+    expect(after.map((l) => l.textContent)).toEqual(['a', 'c'])
+    expect(after[0]).toBe(before[0]) // id=1 still kept
+    expect(after[1]).toBe(inserted) // id=3 still kept
+    expect(after.includes(before[1]!)).toBe(false) // id=2 gone
+  })
+
+  test('keyed: composite key avoids collision', async () => {
+    const win = setupDom(
+      '<ul x-data="k5"><li x-for="t in items by t.a, t.b" x-text="t.name"></li></ul>',
+    )
+    const { register, start } = await import(`./runtime.ts?k5=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    // "1","23" vs "12","3" must NOT collide (NUL join)
+    const items = signal([
+      { a: 1, b: 23, name: 'x' },
+      { a: 12, b: 3, name: 'y' },
+    ])
+    register('k5', () => ({ items }))
+    start(win.document)
+    const ul = win.document.querySelector('ul')!
+    const lis = Array.from(ul.querySelectorAll('li'))
+    expect(lis).toHaveLength(2)
+    expect(lis.map((l) => l.textContent)).toEqual(['x', 'y'])
+  })
+
+  test('keyed: duplicate key warns, does not crash', async () => {
+    const win = setupDom(
+      '<ul x-data="k6"><li x-for="t in items by t.id" x-text="t.name"></li></ul>',
+    )
+    const { register, start } = await import(`./runtime.ts?k6=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const warn = console.warn
+    const calls: unknown[][] = []
+    console.warn = (...a: unknown[]) => {
+      calls.push(a)
+    }
+    try {
+      const items = signal([
+        { id: 1, name: 'a' },
+        { id: 1, name: 'b' },
+      ])
+      register('k6', () => ({ items }))
+      expect(() => start(win.document)).not.toThrow()
+      const ul = win.document.querySelector('ul')!
+      const lis = Array.from(ul.querySelectorAll('li'))
+      expect(lis).toHaveLength(2) // both still rendered
+      expect(lis.map((l) => l.textContent)).toEqual(['a', 'b'])
+      expect(calls.some((a) => String(a[0]).includes('duplicate x-for key'))).toBe(true)
+    } finally {
+      console.warn = warn
+    }
+  })
+
+  test('keyed: focus survives reorder (node identity = focus survival)', async () => {
+    // happy-dom drops document.activeElement on ANY insertBefore-move of the focused
+    // node or its ancestor (verified: a bare ul.insertBefore(li, ...) clears it too),
+    // so we cannot assert activeElement here. In a real browser, insertBefore MOVES a
+    // node and preserves focus — the reconcile's load-bearing guarantee is that the
+    // focused input is the SAME node object after reorder (reused, not rebuilt), which
+    // is what makes focus/scroll/uncontrolled-input state survive. Phase 6 verifies the
+    // live-browser activeElement behavior; here we lock node identity through the move.
+    const win = setupDom(
+      '<ul x-data="k7"><li x-for="t in items by t.id"><input x-bind-value="t.name"></li></ul>',
+    )
+    const { register, start } = await import(`./runtime.ts?k7=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const items = signal([
+      { id: 1, name: 'a' },
+      { id: 2, name: 'b' },
+    ])
+    register('k7', () => ({ items }))
+    start(win.document)
+    const ul = win.document.querySelector('ul')!
+    const inputs = Array.from(ul.querySelectorAll('input'))
+    const target = inputs[1]! // id=2's input
+    target.focus()
+    expect(win.document.activeElement).toBe(target) // focus took before any move
+    items.set([
+      { id: 2, name: 'b' },
+      { id: 1, name: 'a' },
+    ]) // swap
+    // SAME input node now at position 0 — reused via insertBefore move, not rebuilt.
+    expect(Array.from(ul.querySelectorAll('input'))[0]).toBe(target)
+    expect((target as unknown as { value: string }).value).toBe('b') // value reactive
+  })
+
+  test('keyed: unmount disposes all live entries', async () => {
+    const win = setupDom(
+      '<div id="host"><ul x-data="k8"><li x-for="t in items by t.id" x-text="t.name"></li></ul></div>',
+    )
+    const { register, start } = await import(`./runtime.ts?k8=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    // per-item name signal — after unmount, setting it must NOT update a detached node
+    const n1 = signal('a')
+    const items = signal([{ id: 1, name: n1 }])
+    register('k8', () => ({ items }))
+    start(win.document)
+    const ul = win.document.querySelector('ul')!
+    const li = ul.querySelector('li')!
+    expect(li.textContent).toBe('a')
+    win.document.getElementById('host')!.innerHTML = '' // remove host → disposeTree
+    await Promise.resolve()
+    n1.set('b') // must NOT update detached node / must not throw
+    expect(li.textContent).toBe('a')
+  })
+
+  test('legacy index: (t, i) in items without by', async () => {
+    const win = setupDom('<ul x-data="k9"><li x-for="(t, i) in items" x-text="i"></li></ul>')
+    const { register, start } = await import(`./runtime.ts?k9=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const items = signal([{ name: 'a' }, { name: 'b' }, { name: 'c' }])
+    register('k9', () => ({ items }))
+    start(win.document)
+    const ul = win.document.querySelector('ul')!
+    expect(Array.from(ul.querySelectorAll('li')).map((l) => l.textContent)).toEqual(['0', '1', '2'])
+    items.set([{ name: 'x' }])
+    expect(Array.from(ul.querySelectorAll('li')).map((l) => l.textContent)).toEqual(['0'])
+  })
+})
+
+describe('parseFor', () => {
+  test('grammar forms', async () => {
+    const { parseFor } = await import(`./runtime.ts?pf=${Math.random()}`)
+    expect(parseFor('t in items')).toEqual({
+      itemName: 't',
+      indexName: undefined,
+      listPath: 'items',
+      keyPaths: undefined,
+    })
+    expect(parseFor('(t, i) in items')).toEqual({
+      itemName: 't',
+      indexName: 'i',
+      listPath: 'items',
+      keyPaths: undefined,
+    })
+    expect(parseFor('t in items by t.id')).toEqual({
+      itemName: 't',
+      indexName: undefined,
+      listPath: 'items',
+      keyPaths: ['t.id'],
+    })
+    expect(parseFor('(t, i) in items by t.id, t.color')).toEqual({
+      itemName: 't',
+      indexName: 'i',
+      listPath: 'items',
+      keyPaths: ['t.id', 't.color'],
+    })
+    // malformed → null
+    for (const bad of [
+      'garbage',
+      't in',
+      'in items',
+      '(a,b,c) in x',
+      't in items by',
+      't in items by !',
+      't in it ems',
+    ]) {
+      expect(parseFor(bad)).toBeNull()
+    }
+  })
+})
+
+describe('read (unwrap each hop)', () => {
+  test('leaf + intermediate + plain + computed + fn + null', async () => {
+    const { read } = await import(`./runtime.ts?rd=${Math.random()}`)
+    const { signal, computed } = await import('../store/index.ts')
+    // leaf signal (regression)
+    expect(read({ n: signal(5) }, 'n')).toBe(5)
+    // intermediate signal unwrapped then descended (NEW)
+    expect(read({ item: signal({ name: 'fire' }) }, 'item.name')).toBe('fire')
+    // plain nested path unchanged
+    expect(read({ a: { b: 'x' } }, 'a.b')).toBe('x')
+    // computed at leaf
+    expect(read({ c: computed(() => 9) }, 'c')).toBe(9)
+    // zero-arg function at leaf called (regression)
+    expect(read({ f: () => 'r' }, 'f')).toBe('r')
+    // null mid-path
+    expect(read({ a: null }, 'a.b')).toBeUndefined()
+  })
 })
 
 describe('lifecycle', () => {
