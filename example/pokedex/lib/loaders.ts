@@ -163,14 +163,17 @@ export async function detailLoader({ params }: LoaderCtx): Promise<DetailData | 
     hasAbilities: abilities.length > 0,
     evolution,
     hasEvolution,
-    addProps: {
+    // Native templates can't call JSON.stringify, so precompute the x-props JSON
+    // here. The compiler emits it as x-props="{{ (addProps) | e }}" (XSS-safe);
+    // the directive runtime JSON.parses it back into the behavior's `props`.
+    addProps: JSON.stringify({
       id: p.id,
       name: p.name,
       displayName: cap(p.name),
       num: pad(p.id),
       types: p.types,
       artwork: p.artwork,
-    },
+    }),
     teamProps: { teamInitial: teamStore.list() },
   }
 }
@@ -197,7 +200,14 @@ function emptyDetail(name: string): DetailData {
     hasAbilities: false,
     evolution: [],
     hasEvolution: false,
-    addProps: { id: 0, name, displayName: cap(name), num: '', types: [], artwork: '' },
+    addProps: JSON.stringify({
+      id: 0,
+      name,
+      displayName: cap(name),
+      num: '',
+      types: [],
+      artwork: '',
+    }),
     teamProps: { teamInitial: teamStore.list() },
   }
 }

@@ -9,7 +9,6 @@
 // `{s.showLevel && <Level/>}` separators — no more loader-computed hide-classes.
 // The <title> is dynamic via `<BrustPage title={pageTitle}>` (S8) and inline
 // styles use `style={{…}}` objects (S1).
-import { Island } from 'brustjs'
 import AddToTeamButton from '../components/AddToTeamButton'
 import PageLayout from '../components/PageLayout'
 import type { DetailData } from '../lib/types'
@@ -71,7 +70,7 @@ export default function DetailPage({
                   </span>
                 ))}
               </div>
-              <Island component={AddToTeamButton} props={addProps} hydrate="load" />
+              <AddToTeamButton native data={addProps} />
             </div>
 
             <div className="dex-detail-right">

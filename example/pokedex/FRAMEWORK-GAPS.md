@@ -26,11 +26,19 @@ S13 SPA-nav (รอบก่อน) · **native layout (chrome ซ้ำ 3 ห�
 พ่วง **XSS hardening** (`5a4c4ca`): dynamic HTML output ทุกจุด escape ด้วย `{{ (expr) | e }}`
 แล้ว (เดิม verbatim = ช่อง XSS จริง — request param ไหลเข้า `<title>` ได้).
 
-**ยังเปิด:** S4/S6/S7 (island store / session / typed error) · S2 (loader cache) ·
+**ยังเปิด:** S7 (typed treaty error) · S2 (loader cache) ·
 native **Outlet/router-level layout injection** · nested `.map()` · dark-mode `data-*` (`<html>` only) ·
 **BY-DESIGN:** S3 (Suspense). · **✅ static/public asset serving** (boot manifest, static-wins) ·
-**✅ `<BrustPage head={[…]}>` typed head array + `dangerouslySetInnerHTML` — รอบนี้**
-(favicon auto-ref ปิดแล้ว: `head={[{tag:'link',rel:'icon',href:'/favicon.svg'}]}`).
+**✅ `<BrustPage head={[…]}>` typed head array + `dangerouslySetInnerHTML`**
+(favicon auto-ref ปิดแล้ว: `head={[{tag:'link',rel:'icon',href:'/favicon.svg'}]}`) ·
+**✅ S4/S6 (isomorphic store) — Spec A** (`signal`/`computed`/`defineStore`, window singleton + per-request ALS) ·
+**✅ native interactivity (Spec B) — รอบนี้:** native page โต้ตอบได้โดยไม่ต้องมี React island ผ่าน **DOM directives**
+(`x-data`/`x-props`/`x-text`/`x-show`/`x-bind-*`/`x-on-*`/`x-for`) + **single-file component** (`export const behavior`
+ไฟล์เดียวกับ template; compiler `find_default_export` ผ่อนให้มี top-level statement อื่นได้). directive runtime
+(`brustjs/native`, react-free, สร้างบน `effect`) bind DOM ผ่าน store เดียวกับ React island — **`AddToTeamButton`
+เป็น native แล้ว** (เขียน `teamStore` → `TeamBuilder` island dock อัปเดต reactive ข้าม paradigm; TeamBuilder คง island
+ไว้เป็น showcase). **ยังเลื่อน:** native store-snapshot SSR injection (store seed ผ่าน `init()` fetch), keyed `x-for` diff,
+colon directive (`x-on:click` — compiler reject `:` ใช้ `x-on-click`).
 
 ## สรุปสั้น (native เขียนยังไงให้ผ่าน — หลัง Cluster A)
 

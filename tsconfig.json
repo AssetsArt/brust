@@ -20,7 +20,9 @@
       "brustjs": ["./runtime/index.ts"],
       "brustjs/routes": ["./runtime/routes.ts"],
       "brustjs/client": ["./runtime/client/index.ts"],
-      "brustjs/create": ["./runtime/create.ts"]
+      "brustjs/create": ["./runtime/create.ts"],
+      "brustjs/store": ["./runtime/store/index.ts"],
+      "brustjs/native": ["./runtime/native/index.ts"]
     },
 
     "verbatimModuleSyntax": true,

@@ -68,7 +68,8 @@
     "./routes": "./runtime/routes.ts",
     "./client": "./runtime/client/index.ts",
     "./create": "./runtime/create.ts",
-    "./store": "./runtime/store/index.ts"
+    "./store": "./runtime/store/index.ts",
+    "./native": "./runtime/native/index.ts"
   },
   "files": [
     "runtime",

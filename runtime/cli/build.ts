@@ -248,6 +248,47 @@ export async function runBuild(args: string[]): Promise<void> {
     console.log('[brust build] islands: skipped (no <Island> usage)')
   }
 
+  // 3.5. Build the directive runtime bundle (if any native interactive component —
+  // a file with `export const behavior` — is reachable from the routes graph).
+  // MUST run AFTER buildIslands: buildIslands does `rm -rf outDir/islands`, so
+  // running this first would wipe _directives.js. This block creates the islands
+  // dir itself (the islands block is skipped when there are no <Island> usages).
+  {
+    const { scanDirectiveComponents, buildDirectives } = await import('../native/build.ts')
+    let directiveComponents = new Map<string, string>()
+    if (existsSync(routesFile)) {
+      try {
+        directiveComponents = scanDirectiveComponents(routesFile)
+      } catch (err) {
+        // e.g. two files derive the same directive register name — surface a clean
+        // message instead of an unformatted stack out of `brust build`.
+        console.error(`[brust build] directives: ${(err as Error).message}`)
+        process.exit(1)
+      }
+    }
+    if (directiveComponents.size > 0) {
+      const islandsOutDir = path.join(outDir, 'islands')
+      const result = await buildDirectives(directiveComponents, { outDir: islandsOutDir })
+      console.log(
+        `[brust build] directives: runtime + ${result.count} component chunk(s) → ${islandsOutDir}`,
+      )
+
+      // Mirror every directive file (_directives.js + each <name>.directive.js) into
+      // cwd/.brust/islands for the source runtime (the islands block's whole-dir mirror
+      // ran before these existed, so copy them explicitly). Create the dir in case the
+      // islands block was skipped.
+      const localIslandsDir = path.join(process.cwd(), '.brust', 'islands')
+      if (path.resolve(localIslandsDir) !== path.resolve(islandsOutDir)) {
+        await mkdir(localIslandsDir, { recursive: true })
+        for (const f of result.files) {
+          await cp(path.join(islandsOutDir, f), path.join(localIslandsDir, f))
+        }
+      }
+    } else {
+      console.log('[brust build] directives: skipped (no export-const-behavior components)')
+    }
+  }
+
   // 4. MCP manifest (if routes.tsx exists).
   let loadedRoutes: any[] | undefined
   if (existsSync(routesFile)) {

@@ -35,38 +35,56 @@ interface Consumer {
   running: boolean
 }
 
-let activeConsumer: Consumer | null = null
-let batchDepth = 0
-const pendingNotify = new Set<Consumer>()
+// The dependency-tracking state (the "currently running consumer", the batch
+// depth, the pending-notify queue) MUST be shared across chunks, for the SAME
+// reason the brands use Symbol.for: every island / the directive runtime is a
+// SEPARATE Bun.build that inlines its own copy of THIS module. If `activeConsumer`
+// were a module-local `let`, each chunk would have its own — so an `effect` in
+// chunk B reading a `signal` created in chunk A would register against chunk A's
+// (always-null) activeConsumer and never subscribe. Concretely: a native directive
+// button's effect (its own chunk) would never re-run when a React island (another
+// chunk) mutated the shared store, even though the store value changed. Holding the
+// context on `globalThis` under a Symbol.for key makes all chunks share ONE tracker.
+interface ReactiveCtx {
+  activeConsumer: Consumer | null
+  batchDepth: number
+  pendingNotify: Set<Consumer>
+}
+const CTX_KEY = Symbol.for('brust.reactive.ctx')
+const ctxHolder = globalThis as { [CTX_KEY]?: ReactiveCtx }
+if (!ctxHolder[CTX_KEY]) {
+  ctxHolder[CTX_KEY] = { activeConsumer: null, batchDepth: 0, pendingNotify: new Set<Consumer>() }
+}
+const ctx: ReactiveCtx = ctxHolder[CTX_KEY]
 
 function track(subscribers: Set<Consumer>): void {
-  if (activeConsumer) {
-    subscribers.add(activeConsumer)
-    activeConsumer.deps.add(subscribers)
+  if (ctx.activeConsumer) {
+    subscribers.add(ctx.activeConsumer)
+    ctx.activeConsumer.deps.add(subscribers)
   }
 }
 
 function notify(subscribers: Set<Consumer>): void {
   // Snapshot — a consumer re-running mutates the set.
   for (const c of [...subscribers]) {
-    if (batchDepth > 0) pendingNotify.add(c)
+    if (ctx.batchDepth > 0) ctx.pendingNotify.add(c)
     else c.run()
   }
 }
 
 function flush(): void {
-  const queued = [...pendingNotify]
-  pendingNotify.clear()
+  const queued = [...ctx.pendingNotify]
+  ctx.pendingNotify.clear()
   for (const c of queued) c.run()
 }
 
 export function batch(fn: () => void): void {
-  batchDepth++
+  ctx.batchDepth++
   try {
     fn()
   } finally {
-    batchDepth--
-    if (batchDepth === 0) flush()
+    ctx.batchDepth--
+    if (ctx.batchDepth === 0) flush()
   }
 }
 
@@ -114,13 +132,13 @@ export function computed<T>(fn: () => T): Computed<T> {
     track(subscribers)
     if (dirty) {
       clearDeps(self)
-      const prev = activeConsumer
-      activeConsumer = self
+      const prev = ctx.activeConsumer
+      ctx.activeConsumer = self
       try {
         cached = fn()
         dirty = false
       } finally {
-        activeConsumer = prev
+        ctx.activeConsumer = prev
       }
     }
     return cached
@@ -137,12 +155,12 @@ export function effect(fn: () => void): () => void {
       if (self.running) return
       self.running = true
       clearDeps(self)
-      const prev = activeConsumer
-      activeConsumer = self
+      const prev = ctx.activeConsumer
+      ctx.activeConsumer = self
       try {
         fn()
       } finally {
-        activeConsumer = prev
+        ctx.activeConsumer = prev
         self.running = false
       }
     },

@@ -1,0 +1,242 @@
+import { beforeEach, describe, expect, test } from 'bun:test'
+import { Window } from 'happy-dom'
+
+// Fresh happy-dom window per test; assign globals the runtime reads.
+function setupDom(html: string): Window {
+  const win = new Window()
+  // happy-dom 20.9.0 under Bun: Window does not expose SyntaxError, and its
+  // SelectorParser reaches `new this.window.SyntaxError(...)` on EVERY selector,
+  // throwing a TypeError that breaks all querySelectorAll calls. Polyfill it so
+  // selector queries work. (Env quirk only — no behavior assertion is affected.)
+  // @ts-expect-error happy-dom Window lacks SyntaxError; alias the global one
+  win.SyntaxError = SyntaxError
+  win.document.body.innerHTML = html
+  // @ts-expect-error assign happy-dom globals onto globalThis for the runtime
+  globalThis.document = win.document
+  // @ts-expect-error
+  globalThis.MutationObserver = win.MutationObserver
+  // @ts-expect-error
+  globalThis.HTMLElement = win.HTMLElement
+  return win
+}
+
+describe('x-data mount', () => {
+  beforeEach(() => {
+    // Re-import a fresh module per test to reset the registry + started flag.
+  })
+
+  test('instantiates a registered behavior and parses x-props JSON', async () => {
+    const win = setupDom('<div x-data="probe" x-props=\'{"id":"7"}\'></div>')
+    const seen: any[] = []
+    const { register, start } = await import(`./runtime.ts?mount=${Math.random()}`)
+    register('probe', ({ el, props }: any) => {
+      seen.push({ tag: el.tagName, props })
+      return {}
+    })
+    start(win.document)
+    expect(seen).toHaveLength(1)
+    expect(seen[0].props).toEqual({ id: '7' })
+    expect(seen[0].tag).toBe('DIV')
+  })
+
+  test('runs init() exactly once after mount', async () => {
+    const win = setupDom('<div x-data="probe2"></div>')
+    let inits = 0
+    const { register, start } = await import(`./runtime.ts?init=${Math.random()}`)
+    register('probe2', () => ({
+      init() {
+        inits++
+      },
+    }))
+    start(win.document)
+    start(win.document) // idempotent — must not re-mount
+    expect(inits).toBe(1)
+  })
+
+  test('unknown component warns and skips (no throw)', async () => {
+    const win = setupDom('<div x-data="missing"></div>')
+    const { start } = await import(`./runtime.ts?unknown=${Math.random()}`)
+    expect(() => start(win.document)).not.toThrow()
+  })
+})
+
+describe('x-text', () => {
+  test('binds initial value and updates on signal change; reads a computed', async () => {
+    const win = setupDom('<div x-data="t1"><span x-text="label"></span><b x-text="msg"></b></div>')
+    const { register, start } = await import(`./runtime.ts?xtext=${Math.random()}`)
+    const { signal, computed } = await import('../store/index.ts')
+    const n = signal(1)
+    register('t1', () => ({ msg: n, label: computed(() => `n=${n()}`) }))
+    start(win.document)
+    const span = win.document.querySelector('span')!
+    const b = win.document.querySelector('b')!
+    expect(span.textContent).toBe('n=1')
+    expect(b.textContent).toBe('1')
+    n.set(5)
+    expect(span.textContent).toBe('n=5')
+    expect(b.textContent).toBe('5')
+  })
+
+  test('removing the x-data element disposes effects (no detached update)', async () => {
+    const win = setupDom('<div id="host"><div x-data="t2"><span x-text="msg"></span></div></div>')
+    const { register, start } = await import(`./runtime.ts?disp=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const n = signal('a')
+    register('t2', () => ({ msg: n }))
+    start(win.document)
+    const span = win.document.querySelector('span')!
+    expect(span.textContent).toBe('a')
+    win.document.getElementById('host')!.innerHTML = '' // MutationObserver fires removal
+    await Promise.resolve() // let the observer callback run
+    n.set('b') // must NOT update the detached span / must not throw
+    expect(span.textContent).toBe('a')
+  })
+})
+
+describe('x-show + x-bind', () => {
+  test('x-show toggles display', async () => {
+    const win = setupDom('<div x-data="s1"><p x-show="open">hi</p></div>')
+    const { register, start } = await import(`./runtime.ts?show=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const open = signal(false)
+    register('s1', () => ({ open }))
+    start(win.document)
+    const p = win.document.querySelector('p')!
+    expect(p.style.display).toBe('none')
+    open.set(true)
+    expect(p.style.display).toBe('')
+  })
+
+  test('x-bind-class sets className; x-bind-disabled toggles property+attr; generic attr', async () => {
+    const win = setupDom(
+      '<div x-data="s2"><button x-bind-class="cls" x-bind-disabled="busy" x-bind-data-x="tag">b</button></div>',
+    )
+    const { register, start } = await import(`./runtime.ts?bind=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const cls = signal('a b')
+    const busy = signal(true)
+    const tag = signal('v1')
+    register('s2', () => ({ cls, busy, tag }))
+    start(win.document)
+    const btn = win.document.querySelector('button')! as any
+    expect(btn.className).toBe('a b')
+    expect(btn.disabled).toBe(true)
+    expect(btn.getAttribute('disabled')).toBe('')
+    expect(btn.getAttribute('data-x')).toBe('v1')
+    busy.set(false)
+    cls.set('c')
+    expect(btn.disabled).toBe(false)
+    expect(btn.hasAttribute('disabled')).toBe(false)
+    expect(btn.className).toBe('c')
+  })
+})
+
+describe('x-on', () => {
+  test('x-on-click calls the named method with the event', async () => {
+    const win = setupDom('<div x-data="o1"><button x-on-click="inc">+</button></div>')
+    const { register, start } = await import(`./runtime.ts?on=${Math.random()}`)
+    let calls = 0
+    let lastType = ''
+    register('o1', () => ({
+      inc(e: Event) {
+        calls++
+        lastType = e.type
+      },
+    }))
+    start(win.document)
+    const btn = win.document.querySelector('button')!
+    btn.dispatchEvent(new win.Event('click', { bubbles: true }))
+    expect(calls).toBe(1)
+    expect(lastType).toBe('click')
+  })
+
+  test('x-on target that is not a function warns, does not throw', async () => {
+    const win = setupDom('<div x-data="o2"><button x-on-click="nope">x</button></div>')
+    const { register, start } = await import(`./runtime.ts?on2=${Math.random()}`)
+    register('o2', () => ({ nope: 5 }))
+    start(win.document)
+    const btn = win.document.querySelector('button')!
+    expect(() => btn.dispatchEvent(new win.Event('click', { bubbles: true }))).not.toThrow()
+  })
+})
+
+describe('x-for', () => {
+  test('renders one node per item, updates on change, child reads loop item + instance member', async () => {
+    const win = setupDom(
+      '<ul x-data="f1"><li x-for="t in items" x-text="t.name" x-bind-class="cls"></li></ul>',
+    )
+    const { register, start } = await import(`./runtime.ts?for=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const items = signal([{ name: 'fire' }, { name: 'water' }])
+    register('f1', () => ({ items, cls: signal('chip') }))
+    start(win.document)
+    const ul = win.document.querySelector('ul')!
+    let lis = ul.querySelectorAll('li')
+    expect(Array.from(lis).map((l) => l.textContent)).toEqual(['fire', 'water'])
+    expect(lis[0]!.className).toBe('chip') // instance member visible in loop scope
+    items.set([{ name: 'grass' }])
+    lis = ul.querySelectorAll('li')
+    expect(Array.from(lis).map((l) => l.textContent)).toEqual(['grass'])
+  })
+
+  test('malformed x-for expression warns and skips', async () => {
+    const win = setupDom('<ul x-data="f2"><li x-for="garbage" x-text="t"></li></ul>')
+    const { register, start } = await import(`./runtime.ts?for2=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    register('f2', () => ({ items: signal([]) }))
+    expect(() => start(win.document)).not.toThrow()
+  })
+})
+
+describe('lifecycle', () => {
+  test('dynamic add mounts; nested x-data is independent and not double-bound by the outer', async () => {
+    const win = setupDom('<div id="host"></div>')
+    const { register, start } = await import(`./runtime.ts?life=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    let outerInits = 0
+    let innerInits = 0
+    register('outer', () => ({
+      init() {
+        outerInits++
+      },
+      msg: signal('O'),
+    }))
+    register('inner', () => ({
+      init() {
+        innerInits++
+      },
+      msg: signal('I'),
+    }))
+    start(win.document)
+    // dynamically inject an outer wrapping an inner, each with its own x-text
+    win.document.getElementById('host')!.innerHTML =
+      '<div x-data="outer"><span class="o" x-text="msg"></span>' +
+      '<div x-data="inner"><span class="i" x-text="msg"></span></div></div>'
+    await Promise.resolve()
+    expect(outerInits).toBe(1)
+    expect(innerInits).toBe(1)
+    expect(win.document.querySelector('.o')!.textContent).toBe('O')
+    expect(win.document.querySelector('.i')!.textContent).toBe('I') // inner owns its subtree
+  })
+
+  test('SPA-nav swap shape: remove old x-data + add new in one batch → dispose then mount', async () => {
+    const win = setupDom(
+      '<main id="m"><div x-data="pg" x-props=\'{"v":"1"}\'><span x-text="v"></span></div></main>',
+    )
+    const { register, start } = await import(`./runtime.ts?swap=${Math.random()}`)
+    const mounts: string[] = []
+    register('pg', ({ props }: any) => {
+      mounts.push(props.v)
+      return { v: props.v }
+    })
+    start(win.document)
+    expect(mounts).toEqual(['1'])
+    expect(win.document.querySelector('span')!.textContent).toBe('1')
+    // emulate swapMainContent: replace the <main> contents wholesale
+    win.document.getElementById('m')!.innerHTML =
+      '<div x-data="pg" x-props=\'{"v":"2"}\'><span x-text="v"></span></div>'
+    await Promise.resolve()
+    expect(mounts).toEqual(['1', '2']) // old disposed, new mounted exactly once
+    expect(win.document.querySelector('span')!.textContent).toBe('2')
+  })
+})
