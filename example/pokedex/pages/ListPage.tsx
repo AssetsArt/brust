@@ -1,12 +1,12 @@
-// Route "/" — the Pokédex list. NATIVE route: this whole tree is compiled to a
-// minijinja template and rendered in Rust (no React on the server). The only
-// non-host tags are <BrustPage> (the document shell) and <Island> (the floating
-// team dock) — both intercepted by the compiler.
+// Route "/" — the Pokédex list. NATIVE leaf route: compiled to a minijinja
+// template and rendered into AppLayout's <Outlet/> slot (chrome lives in
+// AppLayout, nested as the parent in routes.tsx). The page therefore returns
+// JUST its inner aa-content fragment — no <BrustPage>, no <main>: AppLayout owns
+// the document shell and the single <main>.
 //
 // Native route components support `.map()` AND conditionals (S11): pagination
 // "disabled" state is a real `{hasPrev ? <a/> : <span/>}` branch, not a
 // precomputed hide-class. See ../FRAMEWORK-GAPS.md S11.
-import PageLayout from '../components/PageLayout'
 import type { ListData } from '../lib/types'
 
 export default function ListPage({
@@ -19,16 +19,9 @@ export default function ListPage({
   hasNext,
   prevHref,
   nextHref,
-  teamProps,
 }: ListData) {
   return (
-    <PageLayout
-      native
-      title="PokéDex · brust example"
-      active="list"
-      crumb="All Pokémon"
-      teamProps={teamProps}
-    >
+    <>
       <div className="aa-page-header">
         <div>
           <h1 className="aa-page-header__title">Pokédex</h1>
@@ -78,6 +71,6 @@ export default function ListPage({
           )}
         </div>
       </div>
-    </PageLayout>
+    </>
   )
 }

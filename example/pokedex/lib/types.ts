@@ -7,6 +7,19 @@
 // multi-property style strings (templates have no template-literals / arithmetic
 // / helper calls). See ../FRAMEWORK-GAPS.md.
 
+/** Chrome view-model the router-level AppLayout reads from the MERGED loader
+ *  context (Approach a — native <Outlet/> nesting). AppLayout takes NO props at
+ *  its call site (`<AppLayout native>`), so each leaf loader returns these
+ *  fields and the chain-loader merge folds them into the one flat jinja context
+ *  AppLayout's template reads ({{ title }}, active === 'list', teamProps). The
+ *  key names are chosen NOT to collide with any page-data field. */
+export interface ChromeData {
+  title: string // dynamic <title> + nav header, via AppLayout's <BrustPage title={title}>
+  active: 'list' | 'typechart' // which sidebar nav item gets is-active (S11 conditional)
+  crumb: string // topbar breadcrumb leaf label
+  teamProps: { teamInitial: TeamMember[] } // floating team-dock island initial state
+}
+
 /** A single list cell — derived from the list endpoint alone (no detail fetch,
  *  see FRAMEWORK-GAPS.md S2 / N+1 avoidance). */
 export interface CardVM {
@@ -18,7 +31,7 @@ export interface CardVM {
   detailHref: string // "/pokemon/bulbasaur"
 }
 
-export interface ListData {
+export interface ListData extends ChromeData {
   items: CardVM[]
   total: number
   totalLabel: string // "1,302"
@@ -32,7 +45,6 @@ export interface ListData {
   prevHref: string
   nextHref: string
   offsetLabel: string // raw offset for the loader-echo line
-  teamProps: { teamInitial: TeamMember[] }
 }
 
 export interface TypeBadgeVM {
@@ -70,12 +82,13 @@ export interface EvolutionStageVM {
 }
 
 /** The full view-model handed to DetailPage. Every field is render-ready. */
-export interface DetailData {
+export interface DetailData extends ChromeData {
   notFound: boolean
   // Native routes now branch with `{notFound ? <NotFound/> : <Content/>}` (S11),
   // so the content and 404 block are mutually exclusive at render time rather
   // than both emitted with one hidden via a precomputed class.
-  pageTitle: string // dynamic <title> via `<BrustPage title={d.pageTitle}>` (S8)
+  // The dynamic <title> is `title` (ChromeData), read by AppLayout's
+  // <BrustPage title={title}> — no separate pageTitle field.
   name: string
   // present only when notFound === false:
   id: number
@@ -99,7 +112,6 @@ export interface DetailData {
   // object literals). addProps is the loader-precomputed JSON string handed to
   // <AddToTeamButton data={addProps} /> → x-props (Spec B native directives).
   addProps: string
-  teamProps: { teamInitial: TeamMember[] }
 }
 
 /** Shape of the AddToTeamButton native behavior's `props` (JSON-parsed from
@@ -129,9 +141,8 @@ export interface TypeChartRowVM {
   cells: TypeChartCellVM[] // 19 cells (1 head + 18)
 }
 
-export interface TypeChartData {
+export interface TypeChartData extends ChromeData {
   rows: TypeChartRowVM[] // 19 rows (1 header + 18), each 19 cells
-  teamProps: { teamInitial: TeamMember[] }
 }
 
 /** In-process team store member. */
