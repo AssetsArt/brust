@@ -37,7 +37,7 @@ runtime/islands/bootstrap.ts  ← imports store hooks; calls them inside navigat
 ```
 
 - **`store.ts`** owns a module-level singleton `nav` (a bag of `signal()`s) stashed on `globalThis.__BRUST_NAV__` so the bootstrap chunk and any island chunk share **one** instance. (The `Symbol.for` tracker in `signal.ts:11,53-58` is shared cross-chunk, but the `nav` *object* is not — without the stash each chunk builds its own bag. The stash is necessary and is the object-identity fix.) (Signals already share their reactive tracker cross-chunk via `Symbol.for`, per `runtime/store/signal.ts`; the stash makes the *object* identity shared too.) It is built with `signal()` directly — **not** `defineStore` — because `defineStore.resolve()` throws on the server when no request scope exists (`runtime/store/define-store.ts:120-122`), and nav state must be SSR-safe and never serialized.
-- **`active-nav.ts`** is the only DOM-touching file; `store.ts` stays DOM-free (it reads `location` behind a `typeof window` guard only inside `__navInit`). `installActiveNav()` runs an `effect()` over `nav.path` and, on each change, reconciles `is-active` + `aria-current="page"` across links inside `[data-brust-nav]` containers.
+- **`active-nav.ts`** is the only DOM-touching file; `store.ts` is **fully DOM-free** — `__navInit(path, search)` takes the initial path/search as **arguments** (bootstrap reads `location` and passes them in), so `store.ts` imports nothing web-API and unit-tests without a DOM. `installActiveNav()` installs TWO `effect()`s: one over `nav.path` reconciling `is-active` + `aria-current="page"` across links inside `[data-brust-active-nav]` containers, and one over `nav.phase` mirroring it to `<html data-brust-nav>` (mapping the transient `'success'` phase → `'idle'` attr value). Both DOM writes thus live in `active-nav.ts`, not `store.ts`.
 - **`bootstrap.ts`** calls `__navStart` before the fetch, `__navCommit` after the swap, `__navError` in the catch, and `__navInit` once on load (which also calls `installActiveNav`).
 
 ## API surface — `brustjs/navigation`
@@ -85,7 +85,7 @@ export function __navInit(): void
 
 ### State machine (exact transitions)
 
-`__navInit()` (once, on load): `path/search ← location`; `phase ← 'idle'`; `from/to/error ← null/null/null`; sets `html[data-brust-nav="idle"]`; calls `installActiveNav()` (which reconciles the sidebar against the initial path). `from` is `null` **only** in the window between `__navInit` and the first `__navStart`; after the first navigation it is always a real pathname (never returns to `null`). Bootstrap calls `__navInit()` **before** `installInterceptor()` in both load branches (`bootstrap.ts:261-269`), so no click can fire `__navStart` before init — load-bearing for `from` correctness; the plan adds a test asserting this ordering.
+`__navInit(path, search)` (once, on load): `path/search ← args`; `phase ← 'idle'`; `from/to/error ← null/null/null`. It does NOT touch the DOM. Bootstrap calls `__navInit(location.pathname, location.search)` then `installActiveNav()` (the active-nav `phase` effect sets `<html data-brust-nav="idle">` and the `path` effect reconciles the sidebar against the initial path). `from` is `null` **only** in the window between `__navInit` and the first `__navStart`; after the first navigation it is always a real pathname (never returns to `null`). Bootstrap runs `__navInit()` + `installActiveNav()` **before** `installInterceptor()` in both load branches (`bootstrap.ts:261-269`), so no click can fire `__navStart` before init — load-bearing for `from` correctness; the plan adds a test asserting this ordering.
 
 `__navStart(toPath, toSearch)` (before fetch):
 - `from ← nav.path()` (current committed path), `to ← toPath`, `phase ← 'loading'`, `error ← null`
@@ -119,9 +119,9 @@ AbortError (a superseded in-flight nav): **no** state transition — `navigate()
 `installActiveNav()`:
 - Runs `effect(() => { const p = nav.path(); reconcile(p) })` so it re-reconciles on every committed path change **and** once immediately (effect runs eagerly).
 - `reconcile(currentPath)`:
-  - For each container `el` matching `[data-brust-nav]`:
-    - `activeClass = el.dataset.brustNavActive || 'is-active'`
-    - `match = el.dataset.brustNavMatch === 'prefix' ? prefix : exact`
+  - For each container `el` matching `[data-brust-active-nav]` (NOTE: deliberately distinct from the `<html data-brust-nav>` phase attr — using `[data-brust-nav]` here would also match `<html>` and toggle `is-active` on every `<a>` in the document):
+    - `activeClass = el.dataset.brustActiveClass || 'is-active'`
+    - `match = el.dataset.brustActiveMatch === 'prefix' ? prefix : exact`
     - For each `a` in `el.querySelectorAll('a[href]')`:
       - `linkPath = new URL(a.href, location.href).pathname`
       - `isActive = match === 'prefix' ? (currentPath === linkPath || currentPath.startsWith(linkPath.replace(/\/$/, '') + '/')) : currentPath === linkPath`
@@ -129,7 +129,7 @@ AbortError (a superseded in-flight nav): **no** state transition — `navigate()
 - DOM-guarded: no-op if `typeof document === 'undefined'`.
 - Idempotent: a **module-scoped install flag** in `active-nav.ts` ensures the `effect()` is installed only once even if `installActiveNav()` is called repeatedly. In production only one load branch fires, so double-install isn't reachable — the flag exists for tests, which call `__navInit`/`installActiveNav` repeatedly. **Tests must reset this flag AND `globalThis.__BRUST_NAV__` between cases** (export a `__resetNavForTest()` from `store.ts` that clears the singleton, and reset the active-nav flag, so the effect does not leak across test cases).
 
-Authors opt in by adding `data-brust-nav` to a nav container (and optionally `data-brust-nav-active="<class>"` / `data-brust-nav-match="prefix"`). Links are plain `<a href>`; first-paint active state still comes from SSR (the existing AppLayout conditional), and the updater keeps it in sync on SPA nav.
+Authors opt in by adding `data-brust-active-nav` to a nav container (and optionally `data-brust-active-class="<class>"` / `data-brust-active-match="prefix"`). Links are plain `<a href>`; first-paint active state still comes from SSR (the existing AppLayout conditional), and the updater keeps it in sync on SPA nav.
 
 ## bootstrap.ts integration (exact edits)
 
@@ -150,13 +150,13 @@ No other bootstrap behavior changes. The `__navStart`/`__navCommit`/`__navError`
 
 ## pokedex consumption (`AppLayout.tsx` + CSS)
 
-1. **`AppLayout.tsx`**: add `data-brust-nav` to the sidebar `<nav className="aa-sidebar__nav">`. Keep the existing SSR conditional-element active rendering for first paint (native-template-safe). No other structural change. (The native compiler accepts static `data-*` attributes; only *dynamic* content is member-path/`.map`-restricted.)
+1. **`AppLayout.tsx`**: add `data-brust-active-nav` to the sidebar `<nav className="aa-sidebar__nav">`. Keep the existing SSR conditional-element active rendering for first paint (native-template-safe). No other structural change. (The native compiler accepts static `data-*` attributes; only *dynamic* content is member-path/`.map`-restricted.)
 2. **Loading indicator (CSS only)**: add a top progress bar to `example/pokedex/app.css` (the single stylesheet; `aa-nav-item` lives at `app.css:1112`, `.is-active` at `app.css:1129`). Implement as a `position:fixed` `body::before` bar gated by the `<html>` attribute, exact selector **`html[data-brust-nav="loading"] body::before`** (the attr is on `<html>` per `brust-page.tsx:87-90`; `body { margin:0 }` at `app.css:431` and the `.aa-app` grid is a child of `<body>`, so a fixed `::before` escapes the grid). Use `z-index` **above** the sticky topbar (`.aa-topbar { z-index:10 }`, `app.css:1165`) — e.g. `z-index:9999`. Add an error tint via `html[data-brust-nav="error"] body::before`. Pure CSS, no JS, no markup in the example.
 
 ## Tests
 
 - **`runtime/navigation/store.test.ts`** (no DOM needed; guard `window`): `__navStart` sets `phase='loading'`, `from`/`to`; `__navCommit` sets `path`/`search`/`phase='success'`, clears `to`; `__navError` sets `phase='error'`/`error`; `onBeforeNavigate`/`onNavigate`/`onNavigateError` fire with correct payloads and unsubscribe; `subscribe` fires on any change; `getNavState()` returns a plain snapshot; cross-chunk singleton (same `nav` ref via globalThis). Reset `globalThis.__BRUST_NAV__` between tests.
-- **`runtime/navigation/active-nav.test.ts`** (DOM harness — mirror the DOM setup in `runtime/islands/bootstrap.test.ts`): given a `[data-brust-nav]` container with `<a href="/">`/`<a href="/type-chart">`, committing `path='/type-chart'` toggles `is-active` + `aria-current` onto the matching link and off the others; `data-brust-nav-active` overrides the class; `data-brust-nav-match="prefix"` activates `/foo/bar` for an `/foo` link; runs correctly on initial `installActiveNav()`.
+- **`runtime/navigation/active-nav.test.ts`** (DOM harness — mirror the DOM setup in `runtime/islands/bootstrap.test.ts`): given a `[data-brust-active-nav]` container with `<a href="/">`/`<a href="/type-chart">`, committing `path='/type-chart'` toggles `is-active` + `aria-current` onto the matching link and off the others; `data-brust-active-class` overrides the class; `data-brust-active-match="prefix"` activates `/foo/bar` for an `/foo` link; runs correctly on initial `installActiveNav()`; a `<html data-brust-nav="loading">` in the doc is NOT treated as a container.
 - **`runtime/islands/bootstrap.test.ts`** (extend): the suite uses **happy-dom** (`new Window()` + `Object.assign(globalThis, {...})` in `beforeAll`) and `mock.module` for island chunks — but it does **NOT** mock `fetch` today, and `navigate` is not currently exported/tested. The extension must **introduce** a `fetch` mock: `globalThis.fetch = mock(async () => ({ ok: true, json: async () => ({ html: '<p>x</p>', title: 'T', store: undefined }) }))` (return `store: undefined` so `applyStoreSnapshot` is skipped — `bootstrap.ts:227` guards on truthiness). Then calling the now-exported `navigate(url, true)` drives `nav.phase` `loading → success` (assert via `subscribe`/`getNavState()`) and commits `nav.path`. **Import-time footgun:** importing `bootstrap.ts` runs `installInterceptor()` + `__navInit()` at module load (DOM present), which mutates `globalThis.__BRUST_NAV__` and sets `html[data-brust-nav]`. Reset the nav singleton in `beforeEach` via `__resetNavForTest()`. `active-nav.test.ts` must **not** import `bootstrap.ts` (would double-install the interceptor + effect); it imports `store.ts` + `active-nav.ts` directly.
 
 Run separately from combined integration suites (native-island port-race flake — see memory). The store + active-nav tests need a DOM only for `active-nav` (mirror bootstrap.test.ts's happy-dom `beforeAll`); `store.test.ts` itself is DOM-free except `__navInit` (guard or stub `location`).
@@ -178,5 +178,5 @@ Run separately from combined integration suites (native-island port-race flake �
 ## Open questions resolved at plan-time
 
 - **Plain singleton vs defineStore:** plain `signal()` singleton (resolved above — server-safety + no serialization).
-- **Active-link opt-in:** container marker `data-brust-nav` (not per-link, not automatic-on-all-`<a>`).
-- **Match semantics:** exact by default, `prefix` opt-in via `data-brust-nav-match`.
+- **Active-link opt-in:** container marker `data-brust-active-nav` (not per-link, not automatic-on-all-`<a>`); distinct from the `<html data-brust-nav>` phase attr to avoid the reconciler matching `<html>`.
+- **Match semantics:** exact by default, `prefix` opt-in via `data-brust-active-match`.
