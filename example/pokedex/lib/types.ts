@@ -42,6 +42,34 @@ export interface TypeBadgeVM {
   color: string // hex tint — fed into an inline style value
 }
 
+/** One base-stat bar row on the detail page. All formatting precomputed. */
+export interface StatBarVM {
+  label: string // "HP" / "Atk" …
+  base: number // raw base value
+  barWidth: string // "62%" — fed into style={{ width }}
+  barColor: string // hex per bucket — fed into style={{ background }}
+}
+
+/** One ability chip on the detail page. */
+export interface AbilityVM {
+  displayName: string // "Overgrow"
+  initial: string // "O"
+  iconColor: string // hex tint — style={{ background }}
+}
+
+/** One stage of the evolution chain. */
+export interface EvoStageVM {
+  id: number
+  displayName: string
+  num: string // "#0001"
+  artwork: string
+  detailHref: string // "/pokemon/ivysaur"
+  levelLabel: string // "Lv 16" or ""
+  isFirst: boolean
+  showLevel: boolean
+  isCurrent: boolean
+}
+
 /** One "browse by type" tile on the home page. */
 export interface TypeTileVM {
   name: string // raw type key, used as the .map() key
@@ -62,23 +90,47 @@ export interface BrowseData extends ChromeData {
   dexProps: string
 }
 
-/** Detail page data. Fields beyond chrome land in a later slice. */
+/** Detail page data. Every formatted string / className / inline-style value /
+ *  x-props JSON is precomputed here so the native template only interpolates. */
 export interface DetailData extends ChromeData {
   notFound: boolean
   name: string
+  id: number
   displayName: string
+  num: string // "#0001"
+  artwork: string
+  genus: string // "Seed Pokémon"
+  flavorText: string
+  heightLabel: string // "0.7 m"
+  weightLabel: string // "6.9 kg"
+  abilityCount: number
+  heroBg: string // CSS gradient string built in the loader from the type tint
+  types: TypeBadgeVM[]
+  stats: StatBarVM[]
+  statTotal: number
+  abilities: AbilityVM[]
+  hasAbilities: boolean
+  evolution: EvoStageVM[]
+  hasEvolution: boolean
   addProps: string // loader-precomputed x-props JSON for AddToTeamButton
 }
 
 /** One cell of the type chart. */
 export interface TypeChartCellVM {
   id: string // stable key "row-col"
-  className: string // static utility string
+  className: string // static Tailwind utility string the loader picks per effectiveness
   content: string // "2", "½", "0", a type short-code, or ""
   title: string // tooltip
+  bg: string // inline background — type hex for header/row-head cells, '' for data cells
 }
 
-/** Type chart page data. */
+/** One row (header or attack) of the type chart — nested cells. */
+export interface TypeChartRowVM {
+  id: string
+  cells: TypeChartCellVM[]
+}
+
+/** Type chart page data — nested rows[].cells[] grid, rendered with nested .map(). */
 export interface TypeChartData extends ChromeData {
-  heading: string
+  rows: TypeChartRowVM[]
 }
