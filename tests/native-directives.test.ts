@@ -35,10 +35,14 @@ test('directive component is discovered and bundled into a react-free _directive
   const outDir = join(root, 'islands')
   const res = await buildDirectives(components, { outDir })
   expect(res.count).toBe(1)
+  // Runtime + a per-component chunk; the behavior lives in the chunk, not the runtime.
+  expect(res.files).toEqual(['_directives.js', 'counter.directive.js'])
   expect(existsSync(join(outDir, '_directives.js'))).toBe(true)
-  const js = readFileSync(join(outDir, '_directives.js'), 'utf8')
-  expect(js).toContain('counter')
-  expect(/createRoot|hydrateRoot|react-dom/.test(js)).toBe(false)
+  const runtime = readFileSync(join(outDir, '_directives.js'), 'utf8')
+  expect(/createRoot|hydrateRoot|react-dom/.test(runtime)).toBe(false)
+  const chunk = readFileSync(join(outDir, 'counter.directive.js'), 'utf8')
+  expect(chunk).toContain('counter')
+  expect(/createRoot|hydrateRoot|react-dom/.test(chunk)).toBe(false)
 })
 
 test('bake helper: template with x-data gets the directives <script>, without does not', async () => {

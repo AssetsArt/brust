@@ -47,6 +47,40 @@ export function scanDirectiveComponents(routesEntryFile: string): Map<string, st
 export interface BuildDirectivesResult {
   outDir: string
   count: number
+  /** All emitted filenames (basenames): `_directives.js` (the shared runtime) plus
+   * one `<name>.directive.js` per component. Callers mirror these into .brust/islands. */
+  files: string[]
+}
+
+// Absolute path to the directive runtime source — bundled into `_directives.js`.
+const RUNTIME_SRC = resolve(import.meta.dir, 'runtime.ts')
+
+async function bundleOne(entryPath: string, outDir: string, naming: string): Promise<void> {
+  const result = await Bun.build({
+    entrypoints: [entryPath],
+    outdir: outDir,
+    naming,
+    format: 'esm',
+    target: 'browser',
+    external: [], // self-contained; react (if any leaks in) is caught by the guard
+    minify: true,
+    define: { 'process.env.NODE_ENV': '"production"' },
+  })
+  if (!result.success) {
+    throw new Error(
+      `buildDirectives: Bun.build failed:\n${result.logs.map((l) => String(l)).join('\n')}`,
+    )
+  }
+}
+
+function assertReactFree(file: string): void {
+  if (REACT_MARKER_RE.test(readFileSync(file, 'utf8'))) {
+    throw new Error(
+      `buildDirectives: React leaked into ${file.split('/').pop()} — a behavior imported a ` +
+        'react-pulling symbol (e.g. useStore from brustjs/client). Use signal/computed ' +
+        'from brustjs/store; keep behaviors react-free.',
+    )
+  }
 }
 
 // React-presence markers in a bundled output. `external: []` inlines react, so we
@@ -58,8 +92,13 @@ export interface BuildDirectivesResult {
 const REACT_MARKER_RE =
   /createRoot|hydrateRoot|react-dom|__SECRET_INTERNALS|__CLIENT_INTERNALS|react\.dev|useSyncExternalStore/
 
-/** Generate a registration entry, bundle it self-contained to
- * `<outDir>/_directives.js`, and assert no React leaked in. */
+/** Build the shared directive runtime (`_directives.js`, loaded on every native page)
+ * PLUS one `<name>.directive.js` chunk per component (loaded ON DEMAND by the runtime
+ * when an `x-data="<name>"` appears). Splitting behaviors into per-component chunks
+ * keeps a page from downloading the JS of components it never renders; the runtime
+ * dynamically `import()`s a chunk the first time its name is seen (initial or post
+ * SPA-nav). Each chunk self-registers via the global `register` handle (so it needs
+ * no runtime import). React must not leak into any chunk — asserted per file. */
 export async function buildDirectives(
   components: Map<string, string>,
   options: { outDir: string },
@@ -68,46 +107,41 @@ export async function buildDirectives(
     ? options.outDir
     : resolve(process.cwd(), options.outDir)
   mkdirSync(outDir, { recursive: true })
-  if (components.size === 0) return { outDir, count: 0 }
+  if (components.size === 0) return { outDir, count: 0, files: [] }
 
-  // Generate the entry: import each behavior, register it, then start().
-  const lines = ["import { register, start } from 'brustjs/native'"]
-  let i = 0
-  for (const [name, src] of components) {
-    lines.push(`import { behavior as b${i} } from ${JSON.stringify(src)}`)
-    lines.push(`register(${JSON.stringify(name)}, b${i})`)
-    i++
-  }
-  lines.push('start()')
-  const entryPath = resolve(outDir, '_directives.entry.ts')
-  writeFileSync(entryPath, `${lines.join('\n')}\n`)
+  const files: string[] = []
 
+  // 1. Shared runtime → _directives.js. Importing runtime.ts runs its module body
+  //    (which exposes `register` on the global), then start() boots scan + observer.
+  const runtimeEntry = resolve(outDir, '_directives.entry.ts')
+  writeFileSync(runtimeEntry, `import { start } from ${JSON.stringify(RUNTIME_SRC)}\nstart()\n`)
   try {
-    const result = await Bun.build({
-      entrypoints: [entryPath],
-      outdir: outDir,
-      naming: '_directives.js',
-      format: 'esm',
-      target: 'browser',
-      external: [], // self-contained — bundle store + treaty; react is tree-shaken out
-      minify: true,
-      define: { 'process.env.NODE_ENV': '"production"' },
-    })
-    if (!result.success) {
-      const messages = result.logs.map((l) => String(l)).join('\n')
-      throw new Error(`buildDirectives: Bun.build failed:\n${messages}`)
-    }
+    await bundleOne(runtimeEntry, outDir, '_directives.js')
   } finally {
-    rmSync(entryPath, { force: true })
+    rmSync(runtimeEntry, { force: true })
+  }
+  assertReactFree(resolve(outDir, '_directives.js'))
+  files.push('_directives.js')
+
+  // 2. Per-component behavior chunks → <name>.directive.js. Each self-registers into
+  //    the shared runtime via the global handle (no runtime import → tiny chunk).
+  for (const [name, src] of components) {
+    const entry = resolve(outDir, `${name}.directive.entry.ts`)
+    writeFileSync(
+      entry,
+      `import { behavior } from ${JSON.stringify(src)}\n` +
+        `;(globalThis as Record<symbol, (n: string, b: unknown) => void>)` +
+        `[Symbol.for('brust.directive.register')](${JSON.stringify(name)}, behavior)\n`,
+    )
+    const chunkName = `${name}.directive.js`
+    try {
+      await bundleOne(entry, outDir, chunkName)
+    } finally {
+      rmSync(entry, { force: true })
+    }
+    assertReactFree(resolve(outDir, chunkName))
+    files.push(chunkName)
   }
 
-  const out = readFileSync(resolve(outDir, '_directives.js'), 'utf8')
-  if (REACT_MARKER_RE.test(out)) {
-    throw new Error(
-      'buildDirectives: React leaked into _directives.js — a behavior imported a ' +
-        'react-pulling symbol (e.g. useStore from brustjs/client). Use signal/computed ' +
-        'from brustjs/store; keep behaviors react-free.',
-    )
-  }
-  return { outDir, count: components.size }
+  return { outDir, count: components.size, files }
 }

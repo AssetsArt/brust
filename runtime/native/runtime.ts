@@ -11,12 +11,25 @@ interface Mounted {
 
 const registry = new Map<string, Behavior>()
 const mounted = new WeakMap<HTMLElement, Mounted>()
+const loading = new Map<string, Promise<unknown>>()
 let started = false
 
-/** Register a component behavior under `name` (called by the generated entry). */
+/** Per-component behavior chunk URL. Each native interactive component is built to
+ * its OWN `<name>.directive.js` chunk (served from the islands static route) and
+ * loaded ON DEMAND — only when an `x-data="<name>"` for it actually appears (initial
+ * render OR after an SPA-nav swap). The chunk self-registers via the global below. */
+const CHUNK_BASE = '/_brust/islands/'
+
+/** Register a component behavior under `name`. Called by `<name>.directive.js` chunks
+ * via the global handle below (they do NOT import this module — keeps each chunk to
+ * just its behavior, with the runtime shared as the single `_directives.js` copy). */
 export function register(name: string, behavior: Behavior): void {
   registry.set(name, behavior)
 }
+// Expose `register` on a global so dynamically-imported behavior chunks self-register
+// into THIS runtime's registry without importing/duplicating the runtime. Symbol.for
+// → shared across chunks (same rationale as the store's brands/reactive ctx).
+;(globalThis as { [k: symbol]: unknown })[Symbol.for('brust.directive.register')] = register
 
 /** Scan `root` (default: document) for [x-data], mount each, and (once) attach a
  * MutationObserver for dynamic mount/dispose. Idempotent. NOTE: `root` scopes the
@@ -52,7 +65,8 @@ function mountElement(el: HTMLElement): void {
   const name = el.getAttribute('x-data') ?? ''
   const behavior = registry.get(name)
   if (!behavior) {
-    console.warn(`[brust] unknown x-data component "${name}"`)
+    // Behavior chunk not loaded yet → fetch it on demand, then mount this name.
+    loadBehavior(name)
     return
   }
   let props: unknown = {}
@@ -77,6 +91,34 @@ function mountElement(el: HTMLElement): void {
       console.error('[brust] x-data init() threw:', e)
     }
   }
+}
+
+// Dynamically import a component's behavior chunk (once), then mount every pending
+// element for that name. The chunk self-registers via the global register handle.
+function loadBehavior(name: string): void {
+  if (registry.has(name) || loading.has(name)) return
+  if (!/^[A-Za-z0-9_-]+$/.test(name)) {
+    console.warn(`[brust] unsafe x-data component name "${name}" — not loaded`)
+    return
+  }
+  // Promise.resolve().then(...) so a synchronous import() throw (e.g. happy-dom in
+  // unit tests, or a bad specifier) becomes a rejection the .catch() handles.
+  const p = Promise.resolve()
+    .then(() => import(/* @vite-ignore */ `${CHUNK_BASE}${name}.directive.js`))
+    .then(() => {
+      if (!registry.has(name)) {
+        console.warn(`[brust] "${name}.directive.js" loaded but did not register "${name}"`)
+        return
+      }
+      // Mount every element waiting on this name (initial + swapped-in).
+      if (typeof document !== 'undefined') {
+        for (const el of Array.from(document.querySelectorAll<HTMLElement>(`[x-data="${name}"]`))) {
+          mountElement(el)
+        }
+      }
+    })
+    .catch((e) => console.error(`[brust] failed to load directive component "${name}":`, e))
+  loading.set(name, p)
 }
 
 // Bind this element's directives, then recurse — but never descend into a nested

@@ -25,7 +25,9 @@ export const behavior = ({ props }: { props: AddToTeamProps }) => {
   // x-on-click mutation is therefore seen reactively by a React island.
   const busy = signal(false)
   const inTeam = computed(() => (teamStore.members() ?? []).some((m) => m.id === props.id))
-  const label = computed(() => (inTeam() ? '✓ In your team' : disabled() ? 'Team Full' : '＋ Add to team'))
+  const label = computed(() =>
+    inTeam() ? '✓ In your team' : disabled() ? 'Team Full' : '＋ Add to team',
+  )
   const btnClass = computed(() => `aa-btn aa-btn--full${inTeam() ? ' aa-btn--secondary' : ''}`)
   const disabled = computed(() => busy() || ((teamStore.members()?.length ?? 0) >= 6 && !inTeam()))
 

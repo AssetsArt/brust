@@ -75,7 +75,7 @@ describe('scanDirectiveComponents', () => {
 })
 
 describe('buildDirectives', () => {
-  test('emits a react-free _directives.js for a react-free behavior', async () => {
+  test('emits a react-free runtime + a per-component chunk; name lives in the chunk', async () => {
     const root = tmp()
     const outDir = join(root, 'islands')
     // A behavior importing only signal/computed from brustjs/store (react-free).
@@ -88,11 +88,19 @@ describe('buildDirectives', () => {
     )
     const res = await buildDirectives(new Map([['probe', compPath]]), { outDir })
     expect(res.count).toBe(1)
-    const outFile = join(outDir, '_directives.js')
-    expect(existsSync(outFile)).toBe(true)
-    const out = rf(outFile, 'utf8')
-    expect(out).toContain('probe') // registered name present
-    expect(/createRoot|hydrateRoot|react-dom/.test(out)).toBe(false) // react-free
+    expect(res.files).toEqual(['_directives.js', 'probe.directive.js'])
+    // Runtime exists, is react-free, and does NOT bundle the behavior (name is in the chunk).
+    const runtime = join(outDir, '_directives.js')
+    expect(existsSync(runtime)).toBe(true)
+    const runtimeOut = rf(runtime, 'utf8')
+    expect(/createRoot|hydrateRoot|react-dom/.test(runtimeOut)).toBe(false)
+    expect(runtimeOut).not.toContain('probe') // behavior split OUT of the runtime
+    // Per-component chunk exists, registers the name, react-free.
+    const chunk = join(outDir, 'probe.directive.js')
+    expect(existsSync(chunk)).toBe(true)
+    const chunkOut = rf(chunk, 'utf8')
+    expect(chunkOut).toContain('probe') // self-registers under its name
+    expect(/createRoot|hydrateRoot|react-dom/.test(chunkOut)).toBe(false)
   })
 
   test('react-leak guard throws when a behavior pulls react (useStore)', async () => {

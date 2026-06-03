@@ -270,19 +270,19 @@ export async function runBuild(args: string[]): Promise<void> {
       const islandsOutDir = path.join(outDir, 'islands')
       const result = await buildDirectives(directiveComponents, { outDir: islandsOutDir })
       console.log(
-        `[brust build] directives: ${result.count} component(s) → ${islandsOutDir}/_directives.js`,
+        `[brust build] directives: runtime + ${result.count} component chunk(s) → ${islandsOutDir}`,
       )
 
-      // Mirror _directives.js into cwd/.brust/islands for the source runtime (the
-      // islands block's whole-dir mirror ran before this file existed, so copy it
-      // explicitly). Create the dir in case the islands block was skipped.
+      // Mirror every directive file (_directives.js + each <name>.directive.js) into
+      // cwd/.brust/islands for the source runtime (the islands block's whole-dir mirror
+      // ran before these existed, so copy them explicitly). Create the dir in case the
+      // islands block was skipped.
       const localIslandsDir = path.join(process.cwd(), '.brust', 'islands')
       if (path.resolve(localIslandsDir) !== path.resolve(islandsOutDir)) {
         await mkdir(localIslandsDir, { recursive: true })
-        await cp(
-          path.join(islandsOutDir, '_directives.js'),
-          path.join(localIslandsDir, '_directives.js'),
-        )
+        for (const f of result.files) {
+          await cp(path.join(islandsOutDir, f), path.join(localIslandsDir, f))
+        }
       }
     } else {
       console.log('[brust build] directives: skipped (no export-const-behavior components)')
