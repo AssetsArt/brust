@@ -18,6 +18,7 @@
     "treaty.type-test.ts",
     "navigation/index.ts",
     "navigation/store.ts",
-    "navigation/active-nav.ts"
+    "navigation/active-nav.ts",
+    "navigation/navigate.ts"
   ]
 }
