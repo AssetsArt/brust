@@ -585,6 +585,32 @@ fn lower_element(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode
         return Err(LowerError::at(ident.span, ErrorKind::BrustPageMustBeRoot));
     }
 
+    // `<Outlet/>` is a native builtin: it lowers to the same `JsxNode::ChildrenSlot`
+    // that an inline `{children}` produces, marking where child routes / nested
+    // content splice in. Recognized BEFORE the capitalised-tag → SsrComponent fall
+    // so it never becomes a `comp_N` SSR slot (which would React-render on the
+    // server). It must be empty: any meaningful children or attributes are a hard
+    // `OutletMustBeEmpty` error (whitespace-only text — e.g. a formatter's
+    // `<Outlet>\n</Outlet>` — is tolerated, mirroring `<Island>`). It is only valid
+    // INSIDE a layout being inlined (`scope.inline` set); a surviving `ChildrenSlot`
+    // would otherwise reach emit and `unreachable!`-panic — so an `<Outlet/>` in a
+    // standalone (non-inlined) route is a hard `OutletOutsideLayout` error.
+    if let JSXElementName::Ident(ident) = &el.opening.name
+        && ident.sym.as_ref() == "Outlet"
+    {
+        let has_meaningful_child = el.children.iter().any(|c| match c {
+            JSXElementChild::JSXText(t) => !t.value.trim().is_empty(),
+            _ => true,
+        });
+        if has_meaningful_child || !el.opening.attrs.is_empty() {
+            return Err(LowerError::at(ident.span, ErrorKind::OutletMustBeEmpty));
+        }
+        if scope.inline.is_none() {
+            return Err(LowerError::at(ident.span, ErrorKind::OutletOutsideLayout));
+        }
+        return Ok(JsxNode::ChildrenSlot);
+    }
+
     // Third path: any other capitalised tag → SSR component.
     if let JSXElementName::Ident(ident) = &el.opening.name {
         let s = ident.sym.as_ref();
@@ -1502,8 +1528,12 @@ fn try_native_inline(
     ) {
         Ok(n) => n,
         Err(e) => {
-            // CircularInline is a hard error — propagate it immediately.
-            if matches!(e.kind, ErrorKind::CircularInline(_)) {
+            // CircularInline and OutletMustBeEmpty are hard authoring errors —
+            // propagate immediately rather than degrading to a fallback warning.
+            if matches!(
+                e.kind,
+                ErrorKind::CircularInline(_) | ErrorKind::OutletMustBeEmpty
+            ) {
                 env.cycle.borrow_mut().pop();
                 return Err(e);
             }

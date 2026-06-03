@@ -612,6 +612,14 @@ pub enum ErrorKind {
     )]
     BrustPageMustBeRoot,
     #[error(
+        "`<Outlet/>` must be empty and self-closing — it marks where child routes render and takes no attributes or children"
+    )]
+    OutletMustBeEmpty,
+    #[error(
+        "`<Outlet/>` is only valid inside a layout component that wraps child routes — it cannot appear in a standalone route with no children to inject"
+    )]
+    OutletOutsideLayout,
+    #[error(
         "`<BrustPage {0}=…>` must be a string literal (e.g. `{0}=\"…\"`) or a member-path (e.g. `{0}={{data.{0}}}`) — the document shell is rendered in Rust, so its attributes can't be call/arithmetic/spread expressions"
     )]
     BrustPageAttrMustBeStringLiteral(String),
@@ -1564,6 +1572,94 @@ mod tests {
             c.warnings.is_empty(),
             "expected no warnings, got: {:?}",
             c.warnings
+        );
+    }
+
+    #[test]
+    fn outlet_lowers_to_children_slot() {
+        let route = r#"export default function Chain() { return <AppLayout native><Leaf native/></AppLayout>; }"#;
+        let layout = r#"import { BrustPage } from 'brustjs'
+export default function AppLayout() { return <BrustPage title="x"><main class="c"><Outlet/></main></BrustPage>; }"#;
+        let leaf = r#"export default function Leaf() { return <section>leaf</section>; }"#;
+        let mut s = std::collections::HashMap::new();
+        s.insert("AppLayout".to_string(), layout.to_string());
+        s.insert("Leaf".to_string(), leaf.to_string());
+        let c = compile_full(route, "<t>", s).unwrap();
+        assert!(
+            c.template
+                .contains(r#"<main class="c"><section>leaf</section></main>"#),
+            "got: {}",
+            c.template
+        );
+        assert!(
+            !c.template.contains("comp_0_html"),
+            "Outlet must NOT become an SSR component; got: {}",
+            c.template
+        );
+    }
+
+    #[test]
+    fn outlet_must_be_empty() {
+        let layout = r#"export default function L() { return <div><Outlet>x</Outlet></div>; }"#;
+        let route = r#"export default function C() { return <L native/>; }"#;
+        let mut s = std::collections::HashMap::new();
+        s.insert("L".to_string(), layout.to_string());
+        let err = compile_full(route, "<t>", s).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::OutletMustBeEmpty),
+            "got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn outlet_whitespace_only_child_tolerated() {
+        // a formatter may emit `<Outlet>\n</Outlet>` — whitespace-only text is NOT a
+        // meaningful child, so it must compile (mirrors <Island>), not error.
+        let route =
+            r#"export default function Chain() { return <Lay native><Leaf native/></Lay>; }"#;
+        let lay = r#"import { BrustPage } from 'brustjs'
+export default function Lay() { return <BrustPage title="x"><main>
+  <Outlet>
+  </Outlet>
+</main></BrustPage>; }"#;
+        let leaf = r#"export default function Leaf() { return <p>hi</p>; }"#;
+        let mut s = std::collections::HashMap::new();
+        s.insert("Lay".to_string(), lay.to_string());
+        s.insert("Leaf".to_string(), leaf.to_string());
+        let c = compile_full(route, "<t>", s).unwrap();
+        assert!(c.template.contains("<p>hi</p>"), "got: {}", c.template);
+    }
+
+    #[test]
+    fn outlet_outside_layout_errors() {
+        // <Outlet/> in a standalone route (never inlined into a parent) would leave a
+        // dangling ChildrenSlot that panics at emit — must be a graceful compile error.
+        let route = r#"import { BrustPage } from 'brustjs'
+export default function Solo() { return <BrustPage title="x"><main><Outlet/></main></BrustPage>; }"#;
+        let err = compile_full(route, "<t>", std::collections::HashMap::new()).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::OutletOutsideLayout),
+            "got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn children_composition_still_works() {
+        let route =
+            r#"export default function Chain() { return <Lay native><Leaf native/></Lay>; }"#;
+        let lay = r#"import { BrustPage } from 'brustjs'
+export default function Lay({ children }) { return <BrustPage title="x"><main>{children}</main></BrustPage>; }"#;
+        let leaf = r#"export default function Leaf() { return <p>hi</p>; }"#;
+        let mut s = std::collections::HashMap::new();
+        s.insert("Lay".to_string(), lay.to_string());
+        s.insert("Leaf".to_string(), leaf.to_string());
+        let c = compile_full(route, "<t>", s).unwrap();
+        assert!(
+            c.template.contains("<main><p>hi</p></main>"),
+            "got: {}",
+            c.template
         );
     }
 
