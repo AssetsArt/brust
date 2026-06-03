@@ -110,31 +110,44 @@ Commit: `test(store): lock buildStoreScripts contract the native path relies on 
 
 ### 3a. Fixture — a native route whose loader writes a defineStore
 
-**Files:** `tests/fixtures/app/` (additive — must not change existing routes' output).
+**File:** `tests/fixtures/app/routes.tsx` (additive — ONE new route; no new
+component, no new store). Everything needed already exists:
+- `counter` store: `tests/fixtures/app/stores/counter.ts` = `defineStore('counter',
+  () => ({ value: signal(0) }))`, already imported in `routes.tsx:11`
+  (`import { counter } from './stores/counter'`).
+- `NativeDataAttr` page (`pages/NativeDataAttr.tsx`) is a **BrustPage full
+  document** (compiles to a `<head>`-bearing native template — confirmed). Its
+  loader data shape is `{ mode: string }`.
+- The React `/store-demo` route (`routes.tsx:69-77`) shows the seed pattern.
 
-1. A store module, e.g. `tests/fixtures/app/store-counter.ts`:
-   ```ts
-   import { defineStore } from '../../../runtime/store/index.ts'
-   import { signal } from '../../../runtime/store/signal.ts'   // match existing import style
-   export const counterStore = defineStore('counter', () => ({ count: signal(0) }))
-   ```
-   (Confirm the exact `defineStore`/`signal` import paths + factory shape against
-   an existing `defineStore` usage in the repo before writing — mirror it.)
+Add ONE native route reusing `NativeDataAttr`, whose loader BOTH seeds the store
+and returns the page's `mode` data:
+```ts
+// B7 — native store-snapshot SSR. Reuses NativeDataAttr (a BrustPage document);
+// the loader seeds the per-request `counter` store from ?seed=N, mirroring
+// /store-demo. The native render injects <script data-brust-store="counter">.
+{
+  path: '/_test/native-store',
+  Component: NativeDataAttr,
+  native: true,
+  loader: async ({ req }: { req: { search: Record<string, string> } }) => {
+    const seed = Number(req.search['seed'] ?? '0')
+    counter.value.set(Number.isFinite(seed) ? seed : 0)
+    return { mode: 'store' }
+  },
+}
+```
+(Match the EXACT native-route registration + loader-arg typing already used in the
+file — copy the shape of an existing `native: true` route with a loader, e.g.
+`/_test/data-attr` at `routes.tsx:119-124`, and the `req.search` access from
+`/store-demo`.)
 
-2. A native full-document page (BrustPage/Document shell), modeled on an existing
-   native fixture page (e.g. `NativeSsrIslandPage.tsx`), e.g.
-   `tests/fixtures/app/NativeStorePage.tsx` — minimal `<BrustPage title="store">…</BrustPage>`.
+The **negative** case needs no new fixture: the existing `/_test/data-attr` route
+uses the SAME `NativeDataAttr` template but its loader does not touch the store,
+so its served HTML must contain no `data-brust-store` script.
 
-3. A route in `tests/fixtures/app/routes.tsx` with a loader that writes the store:
-   ```ts
-   { path: '/_test/native-store', native: true, Component: NativeStorePage,
-     loader: async () => { counterStore.count.set(42); return {} } }
-   ```
-   (Match the existing native-route registration shape in that file.)
-
-**Verify the fixture builds:** the route must compile as native. Reuse the
-`native-island-ssr.test.ts` harness style (it runs `brust build` on the fixture)
-OR assert via the source-mode boot — pick the harness in 3c.
+**Verify the fixture builds** via the `native-island-ssr.test.ts` harness (it runs
+`brust build` on the fixture, then boots).
 
 ### 3b. GREEN — wire `runtime/routes.ts`
 
@@ -176,7 +189,10 @@ test('B7: native route loader-written defineStore is injected into <head>', asyn
   expect(head).toContain('42')                         // the loader-set count
 })
 test('B7: a native route that touches no store injects no store <script>', async () => {
-  const res = await fetch(`${BASE_URL}/_test/native-island-ssr`)
+  // Same NativeDataAttr template as /_test/native-store, but this loader does not
+  // write the store → the slot renders '' → no script. Proves it's the loader's
+  // store write, not the template, that drives injection.
+  const res = await fetch(`${BASE_URL}/_test/data-attr`)
   const html = await res.text()
   expect(html).not.toContain('data-brust-store=')
 })
