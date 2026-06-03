@@ -1617,6 +1617,7 @@ code, pre { font-family: var(--font-mono); }
 .dex-tc-legend__item { display: inline-flex; align-items: center; gap: 6px; }
 .dex-tc-scroll { overflow-x: auto; border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--surface-raised); }
 .dex-tc { display: grid; grid-template-columns: 58px repeat(18, minmax(30px, 1fr)); min-width: 700px; }
+.dex-tc__row { display: contents; }
 .dex-tc__corner {
   font-size: 8px;
   font-weight: 700;

@@ -1,12 +1,11 @@
 // Route "/type-chart" — NATIVE route. A static 18×18 type-effectiveness matrix:
 // pure read-only data, the ideal native page (compiled to jinja, rendered in
-// Rust, zero React on the server). The 19×19 grid is pre-flattened in the loader
-// to a single row-major `cells` array so the template uses ONE `.map()` into a
-// CSS grid (nested maps aren't proven on the native path — see GAPS S10).
+// Rust, zero React on the server). The 19×19 grid uses nested `.map()` on the
+// native path: rows.map(r => r.cells.map(c => …)) into a CSS grid.
 import PageLayout from '../components/PageLayout'
 import type { TypeChartData } from '../lib/types'
 
-export default function TypeChart({ cells, teamProps }: TypeChartData) {
+export default function TypeChart({ rows, teamProps }: TypeChartData) {
   return (
     <PageLayout
       native
@@ -39,9 +38,13 @@ export default function TypeChart({ cells, teamProps }: TypeChartData) {
 
       <div className="dex-tc-scroll">
         <div className="dex-tc">
-          {cells.map((c) => (
-            <div key={c.id} className={c.className} title={c.title}>
-              {c.content}
+          {rows.map((r) => (
+            <div key={r.id} className="dex-tc__row">
+              {r.cells.map((c) => (
+                <div key={c.id} className={c.className} title={c.title}>
+                  {c.content}
+                </div>
+              ))}
             </div>
           ))}
         </div>

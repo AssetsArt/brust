@@ -22,7 +22,7 @@ import {
   TYPE_COLOR,
 } from './pokeapi'
 import { teamStore } from './team-store'
-import type { DetailData, ListData, TypeBadgeVM, TypeChartData } from './types'
+import type { DetailData, ListData, TypeBadgeVM, TypeChartCellVM, TypeChartData } from './types'
 
 /** Loader context shape — `loader: ({ params, path, req }) => data`. */
 interface LoaderCtx {
@@ -238,63 +238,79 @@ export async function typeChartLoader(): Promise<TypeChartData> {
   // fan out 18 fetches by hand with Promise.all (and there is no dedupe).
   const relations = await Promise.all(ALL_TYPES.map((t) => fetchTypeRelations(t)))
 
-  // Flatten the 19×19 grid (1 header row/col + 18×18 matrix) into a single
-  // row-major array so the native template renders it with ONE `.map()`.
-  const cells: Array<Omit<TypeChartData['cells'][number], 'id'>> = []
+  // Build the 19×19 grid as nested rows (header row + one row per attacking
+  // type). The native template renders it with nested `.map()` — rows.map(r =>
+  // r.cells.map(c => …)) — into the CSS grid (`.dex-tc__row{display:contents}`
+  // keeps every cell a direct grid item, so the layout is unchanged).
+  const rows: TypeChartData['rows'] = []
 
   // Header row: corner + 18 defending-type column heads.
-  cells.push({
-    className: 'dex-tc__corner',
-    content: 'ATK ＼ DEF',
-    title: 'Attacking ＼ Defending',
-  })
-  for (const def of ALL_TYPES) {
-    cells.push({
+  const headerCells: TypeChartCellVM[] = [
+    {
+      id: '0-0',
+      className: 'dex-tc__corner',
+      content: 'ATK ＼ DEF',
+      title: 'Attacking ＼ Defending',
+    },
+  ]
+  ALL_TYPES.forEach((def, j) => {
+    headerCells.push({
+      id: `0-${j + 1}`,
       className: `dex-tc__colhead dex-tc__colhead--${def}`,
       content: SHORT[def] ?? def.slice(0, 3).toUpperCase(),
       title: cap(def),
     })
-  }
+  })
+  rows.push({ id: '0', cells: headerCells })
 
   // One row per attacking type: row head + 18 effectiveness cells.
   ALL_TYPES.forEach((atk, i) => {
     const rel = relations[i]!
-    cells.push({
-      className: `dex-tc__rowhead dex-tc__rowhead--${atk}`,
-      content: SHORT[atk] ?? atk.slice(0, 3).toUpperCase(),
-      title: cap(atk),
-    })
-    for (const def of ALL_TYPES) {
+    const rowCells: TypeChartCellVM[] = [
+      {
+        id: `${i + 1}-0`,
+        className: `dex-tc__rowhead dex-tc__rowhead--${atk}`,
+        content: SHORT[atk] ?? atk.slice(0, 3).toUpperCase(),
+        title: cap(atk),
+      },
+    ]
+    ALL_TYPES.forEach((def, j) => {
       const mult = rel[def]
+      const id = `${i + 1}-${j + 1}`
       if (mult === 2)
-        cells.push({
+        rowCells.push({
+          id,
           className: 'dex-tc__cell dex-tc__cell--super',
           content: '2',
           title: `${cap(atk)} → ${cap(def)}: 2× (super effective)`,
         })
       else if (mult === 0.5)
-        cells.push({
+        rowCells.push({
+          id,
           className: 'dex-tc__cell dex-tc__cell--weak',
           content: '½',
           title: `${cap(atk)} → ${cap(def)}: ½× (not very effective)`,
         })
       else if (mult === 0)
-        cells.push({
+        rowCells.push({
+          id,
           className: 'dex-tc__cell dex-tc__cell--none',
           content: '0',
           title: `${cap(atk)} → ${cap(def)}: 0× (no effect)`,
         })
       else
-        cells.push({
+        rowCells.push({
+          id,
           className: 'dex-tc__cell',
           content: '',
           title: `${cap(atk)} → ${cap(def)}: 1×`,
         })
-    }
+    })
+    rows.push({ id: String(i + 1), cells: rowCells })
   })
 
   return {
-    cells: cells.map((c, i) => ({ id: String(i), ...c })),
+    rows,
     teamProps: { teamInitial: teamStore.list() },
   }
 }

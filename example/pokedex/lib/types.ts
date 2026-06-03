@@ -113,18 +113,24 @@ export interface AddToTeamProps {
   artwork: string
 }
 
-/** One cell of the type chart, FLATTENED into a single row-major array so the
- *  native template renders it with ONE `.map()` into a CSS grid — nested maps
- *  aren't proven on the native path, so we avoid them. See FRAMEWORK-GAPS.md S10. */
+/** One cell of the type chart. */
 export interface TypeChartCellVM {
-  id: string // stable key (row/col coordinate)
+  id: string // stable key "row-col"
   className: string // "dex-tc__cell dex-tc__cell--super"
   content: string // "2", "½", "0", a type short-code, or ""
   title: string // tooltip
 }
 
+/** One row of the type chart (header row + one row per attacking type). The
+ *  native template renders rows.map(r => r.cells.map(c => …)) — nested `.map()`
+ *  is supported on the native path. */
+export interface TypeChartRowVM {
+  id: string // row index as string
+  cells: TypeChartCellVM[] // 19 cells (1 head + 18)
+}
+
 export interface TypeChartData {
-  cells: TypeChartCellVM[] // (18+1) × (18+1) row-major, including headers
+  rows: TypeChartRowVM[] // 19 rows (1 header + 18), each 19 cells
   teamProps: { teamInitial: TeamMember[] }
 }
 
