@@ -76,14 +76,19 @@ and correctly get no slot — matching the "full-document SSR only" scope.
 
 ### 2. `runtime/routes.ts` — native branch
 
-- Import `buildStoreScripts` from `./render/inject-store.ts` (this introduces the
-  first caller of that module's `buildStoreScripts`/`injectBrustStore`).
-  `collectSnapshot` is already imported (line 13).
-- Collect the snapshot **inside** the existing `runInRequestContext` closure
-  (~line 740), right after `runNativeChainLoaders` resolves — that is the only
-  point where native store writes happen (the render is Rust-side and touches no
-  store), and `collectSnapshot()` must run while the AsyncLocalStorage store scope
-  is still open:
+- Import `buildStoreScripts` from `./render/inject-store.ts`. (The React
+  *streaming* path already calls `buildStoreScripts`/`injectBrustStore` —
+  `runtime/render/stream.ts:158,220`; the module is live, not dead code. Native is
+  its first **standalone** caller: it uses `buildStoreScripts` to produce the
+  `<script>` string for the jinja context var, without `injectBrustStore`'s
+  post-render byte-splice, which the fast lane cannot use.) `collectSnapshot` is
+  already imported (line 13).
+- The native loader closure at ~line 740 is currently a non-async arrow
+  (`() => runNativeChainLoaders(flat.chain, ctx)`). It must become `async` so the
+  snapshot can be collected **after** loaders resolve but **inside** the scope —
+  the only point where native store writes happen (the render is Rust-side and
+  touches no store), and `collectSnapshot()` must run while the AsyncLocalStorage
+  store scope is still open (mirrors the React pattern at `routes.ts:866-885`):
 
   ```ts
   let storeSnapshot: Record<string, Record<string, unknown>> | null = null
@@ -106,17 +111,21 @@ and correctly get no slot — matching the "full-document SSR only" scope.
   ```
 
   `buildStoreScripts(null)` returns `''`, so `__brust_store__` is **always** a
-  string — never undefined — which keeps minijinja from rendering/erroring on an
-  undefined variable. Both render sub-paths inherit the key for free: the
-  island/component path parses `json` into `rt` (which now contains the key) and
-  spreads it into `ctx`; the no-island path encodes `json` directly.
+  string. `data` is typed `Record<string, unknown>` in both the verdict and else
+  branches, so the `typeof data === 'object'` guard is dead-defensive (always
+  true) — kept only as belt-and-braces. Both render sub-paths inherit the key for
+  free: the island/component path parses `json` into `rt` (which now contains the
+  key) and spreads it into `ctx`; the no-island path encodes `json` directly.
 
 ### 3. (no change) client + server.rs
 
-`runtime/store/define-store.ts` already hydrates a store from
-`document.getElementById(...)` → `parseStoreScript(el)` on first access. Because
-native and React both emit via `storeScriptTag`, the injected `<script>` is
-byte-identical and the existing client hydration path works unmodified.
+`runtime/store/define-store.ts` (~line 114) already hydrates a store on first
+access via `document.querySelector('script[data-brust-store="<name>"]')` →
+`parseStoreScript(el)`. The tag carries `type="application/json"
+data-brust-store="<name>"` (no `id`). Because native and React both emit via the
+same `storeScriptTag`, the injected `<script>` is byte-identical and the existing
+client hydration path works unmodified — the parity test (Tests §4) asserts the
+`data-brust-store` attribute + `type`, not an `id`.
 
 ## Data flow
 
@@ -172,5 +181,12 @@ native loader writes defineStore('cart', …)   (inside runInRequestContext / AL
 - **Where exactly the slot sits:** after the framework `head={[…]}` loop, before
   `</head>`, so user-authored `<head>` entries are unaffected and the store script
   is last in `<head>` (consistent with React's "before first `</head>`" splice).
-- **Undefined safety:** `__brust_store__` is always set (to `''`) — verified against
-  brust's minijinja undefined behavior at plan time before relying on it.
+- **Undefined safety:** brust's minijinja (`Environment::new()`, `UndefinedBehavior::Chainable`,
+  minijinja 2.20.0) renders an undefined `{{ x | safe }}` as `''` with **no error**
+  (empirically verified during spec review). Always setting `__brust_store__` to
+  `''` is therefore defensive, not strictly required — kept to future-proof against
+  an undefined-behavior change.
+- **XSS / tag-breakout:** SAFE. `storeScriptTag` escapes the JSON via `toScriptJson`
+  (`< > & U+2028 U+2029` → `\uXXXX`) and sanitizes the store `name`, so
+  request-derived store state cannot break out of the `<script>` (verified in
+  review; consistent with the `brust-jinja-autoescape-none` memory).
