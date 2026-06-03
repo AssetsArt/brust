@@ -37,7 +37,8 @@ Spec B delivers:
    it with `x-data`.
 3. A **build step** (`runtime/native/build.ts`, mirrors `runtime/islands/build.ts`)
    that scans the routes graph for behavior-bearing components, generates a
-   registration entry, `Bun.build`s a self-contained `_directives.js`, and **bakes its
+   registration entry, `Bun.build`s the shared runtime `_directives.js` plus one
+   on-demand `<name>.directive.js` chunk per component (rev 2 code-split), and **bakes its
    `<script>` tag into the jinja** at build time (mirrors `reconcileIslandManifest`'s
    `{% raw %}…{% endraw %}` bootstrap baking) — **the build/bake path needs no Rust change.**
    (The one Rust change Spec B does make is the `find_default_export` relaxation for single-file
@@ -102,15 +103,21 @@ BUILD (brust build / brust dev — runtime/cli/build.ts, runtime/cli/dev.ts)
         │                                   iff its source has `export const behavior`
         │                                   AND a native template references x-data="<name>"
         ▼
-  buildDirectives(components, {outDir})  ── mirrors buildIslands:
-        1. generate registration entry: register(name, behavior) for each, then start()
-        2. Bun.build → <outDir>/islands/_directives.js   (self-contained, react tree-shaken out)
+  buildDirectives(components, {outDir})  ── CODE-SPLIT (rev 2), mirrors buildIslands:
+        1. Bun.build the shared runtime → <outDir>/islands/_directives.js (runtime ONLY:
+           register/start/MutationObserver; exposes register on a global; react-free)
+        2. Bun.build EACH component → <outDir>/islands/<name>.directive.js (behavior +
+           store/treaty; self-registers via globalThis[Symbol.for('brust.directive.register')];
+           react-leak-guarded per chunk). A page never downloads a component it doesn't render.
         ▼
-  bake DIRECTIVES_BOOTSTRAP <script> into each native .jinja that uses x-data
-        (mirrors reconcileIslandManifest's {% raw %}bootstrap{% endraw %} append)
+  bake DIRECTIVES_BOOTSTRAP (the _directives.js runtime <script>) into EVERY native .jinja
+        when the app has any directive (rev 2 — app-wide, not per-x-data: the runtime must be
+        live on the page you SPA-nav FROM; the islands swap doesn't execute swapped <script>s)
 
-RUNTIME (browser — runtime/native/runtime.ts, shipped in _directives.js)
+RUNTIME (browser — runtime/native/runtime.ts, shipped as _directives.js, loaded everywhere)
   start() ── scan document for [x-data], instantiate; MutationObserver for add/remove
+  on an [x-data="name"] with no registered behavior → dynamic import('/_brust/islands/<name>.directive.js')
+       (once per name; the chunk self-registers, then every pending [x-data="name"] is mounted)
   per [x-data="name"]:
      instance = factory({ el, props: JSON.parse(el@x-props || '{}') }); instance.init?.()
      walk subtree (stop at nested x-data):
@@ -263,22 +270,24 @@ Mirrors `runtime/islands/build.ts`:
 //   bundled-but-unreferenced behavior is harmless — start() simply finds no matching element.)
 export function scanDirectiveComponents(routesEntryFile: string): Map<string, string>
 
-// buildDirectives(components, {outDir}): writes <outDir>/_directives.js (and nothing if empty)
-//   1. generate an in-memory entry:
-//        import { register, start } from 'brustjs/native'
-//        import { behavior as addToTeamButton } from '<abs source>'
-//        register('addToTeamButton', addToTeamButton)
-//        ...
-//        start()
-//   2. Bun.build({ entrypoints:[tmpEntry], outdir, naming:'_directives.js',
-//                  format:'esm', target:'browser', minify:true, external:[],   // NO externals — self-contained
-//                  define:{'process.env.NODE_ENV':'"production"'} })
-//   3. ASSERT react is not bundled — scan the output text for a concrete react marker
-//      (e.g. a react-dom / react internal symbol or the importmap bare specifier 'react'),
-//      NOT a size threshold (treaty.ts + signal.ts are tiny, so a size guard false-passes/
-//      fails). A hit means a behavior imported a react-pulling symbol (e.g. useStore) →
-//      fail the build loud.
-export async function buildDirectives(components, options): Promise<{ outDir: string; count: number }>
+// buildDirectives(components, {outDir}): CODE-SPLIT (rev 2). Emits the shared runtime +
+//   one chunk per component (nothing if empty). Returns { outDir, count, files }.
+//   1. runtime → _directives.js: entry `import { start } from '<runtime.ts>'; start()`.
+//      Importing runtime.ts runs its body, which exposes `register` on
+//      globalThis[Symbol.for('brust.directive.register')]. Bundled self-contained, react-free.
+//   2. per component → <name>.directive.js: entry imports the behavior and calls the GLOBAL
+//      register (NOT an import of the runtime — keeps the chunk to just behavior+store/treaty):
+//        import { behavior } from '<abs source>'
+//        ;(globalThis[Symbol.for('brust.directive.register')])('<name>', behavior)
+//      The runtime dynamically import()s this chunk on demand when it sees x-data="<name>".
+//   3. ASSERT react is not bundled in EACH file — scan output for a concrete react marker
+//      (react-dom / __CLIENT_INTERNALS (React 19) / __SECRET_INTERNALS (React 18) / react.dev /
+//      useSyncExternalStore / createRoot / hydrateRoot), NOT a size threshold. A hit means a
+//      behavior imported a react-pulling symbol (e.g. useStore) → fail the build loud.
+export async function buildDirectives(
+  components,
+  options,
+): Promise<{ outDir: string; count: number; files: string[] }>
 ```
 
 `DIRECTIVES_BOOTSTRAP = '<script type="module" src="/_brust/islands/_directives.js" defer></script>'`
