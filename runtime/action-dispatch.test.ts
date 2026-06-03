@@ -1,6 +1,7 @@
 import { test, expect } from 'bun:test'
 import { z } from 'zod'
 import { ActionError } from './action-error.ts'
+import { cookies } from './cookies.ts'
 import { defineActions } from './define-actions.ts'
 import { dispatchAction } from './routes.ts'
 
@@ -281,4 +282,61 @@ test('respond() then throw ActionError → throw wins', async () => {
   )
   expect(res.status).toBe(409)
   expect(JSON.parse(res.body)).toEqual({ code: 'TEAM_FULL', message: 'TEAM_FULL' })
+})
+
+test('cookies.set in a handler flushes onto the response Set-Cookie header', async () => {
+  const a = defineActions().post('/t', () => {
+    cookies.set('mode', 'dark', { path: '/' })
+    return { ok: true }
+  })
+  const res = await dispatchAction(
+    {
+      kind: 'action',
+      action_id: '0',
+      content_type: 'application/json',
+      params: {},
+      body_text: 'null',
+      req: { method: 'POST', ...reqBase } as any,
+    },
+    table(a),
+  )
+  expect(res.status).toBe(200)
+  expect(JSON.parse(res.body)).toEqual({ ok: true })
+  expect(res.headers?.['set-cookie']).toContain('mode=dark')
+  expect(res.headers?.['set-cookie']).toContain('Path=/')
+})
+
+test('explicit respond({headers:{set-cookie}}) wins over cookies.set', async () => {
+  const a = defineActions().post('/t', ({ respond }) => {
+    cookies.set('mode', 'dark')
+    return respond({ ok: true }, { headers: { 'set-cookie': 'x=1' } })
+  })
+  const res = await dispatchAction(
+    {
+      kind: 'action',
+      action_id: '0',
+      content_type: 'application/json',
+      params: {},
+      body_text: 'null',
+      req: { method: 'POST', ...reqBase } as any,
+    },
+    table(a),
+  )
+  expect(res.headers?.['set-cookie']).toBe('x=1')
+})
+
+test('no cookies.set → no set-cookie header', async () => {
+  const a = defineActions().post('/t', () => ({ ok: true }))
+  const res = await dispatchAction(
+    {
+      kind: 'action',
+      action_id: '0',
+      content_type: 'application/json',
+      params: {},
+      body_text: 'null',
+      req: { method: 'POST', ...reqBase } as any,
+    },
+    table(a),
+  )
+  expect(res.headers?.['set-cookie']).toBeUndefined()
 })

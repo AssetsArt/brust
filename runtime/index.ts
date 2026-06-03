@@ -791,3 +791,7 @@ export type { IslandsBuildResult, BuildIslandsOptions } from './islands/build.ts
 
 export { cache } from './cache.ts'
 export type { InvalidateArgs } from './cache.ts'
+
+export { getRequestContext } from './request-context.ts'
+export { cookies } from './cookies.ts'
+export type { CookieOptions } from './cookies.ts'

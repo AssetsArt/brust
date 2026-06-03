@@ -12,6 +12,7 @@ import * as native from './index.js'
 import { renderBranchStreaming } from './render/stream.ts'
 import { runInStoreContext, collectSnapshot } from './store/server-context.ts'
 import { runInRequestCache } from './loader-cache.ts'
+import { runInRequestScope, __scope } from './request-context.ts'
 import {
   loadIslandManifest,
   resolveIslandContext,
@@ -24,11 +25,14 @@ import type { EndpointDef } from './define-actions.ts'
 import { isRespondSentinel, makeRespond } from './define-actions.ts'
 import { validate } from './standard-schema.ts'
 
-// S2 — request-scoped loader cache/dedupe. The request cache is the OUTER scope
-// so `cachedFetch`/`dedupe` calls made during loaders OR render share one Map
-// per request, while store reads still resolve the per-request store instance.
-function runInRequestContext<T>(fn: () => T): T {
-  return runInRequestCache(() => runInStoreContext(fn))
+// S2 + B3 — unified per-request scope. The request scope (B3 cookies/context) is
+// the OUTERMOST layer, then the request-scoped loader cache/dedupe (S2: one Map
+// per request for `cachedFetch`/`dedupe` across loaders AND render), then the
+// store scope (per-request store instance). `reqCookies` is the parsed incoming
+// Cookie header so a loader's `cookies.get` reads it and `cookies.set` stages
+// onto this scope (flushed onto response headers via flushSetCookie).
+function runInRequestContext<T>(reqCookies: Record<string, string>, fn: () => T): T {
+  return runInRequestScope(reqCookies, () => runInRequestCache(() => runInStoreContext(fn)))
 }
 
 // Sub-project J — island ISR cache, backed by the Rust-side store (shared across
@@ -733,7 +737,9 @@ export function makeRenderer(
           // child loaders (one Map per request — NOT one per loader). No
           // snapshot is collected and no <script> is injected on native paths —
           // Spec B owns native store delivery (hard non-goal here).
-          chainResult = await runInRequestContext(() => runNativeChainLoaders(flat.chain, ctx))
+          chainResult = await runInRequestContext(call.req?.cookies ?? {}, () =>
+            runNativeChainLoaders(flat.chain, ctx),
+          )
         } catch (err) {
           console.error(`[brust] loader failed for native route ${flat.fullPath}:`, err)
           // FAST LANE: native routes take dispatch_single_chunk (no chunk
@@ -764,6 +770,13 @@ export function makeRenderer(
           data = chainResult.data
         }
         const json = JSON.stringify(data)
+        // napiRenderJinja has no headers param — any Set-Cookie staged by a
+        // native loader is dropped on this path. Dev-warn so it's not silent.
+        if ((__scope()?.setCookies.length ?? 0) > 0 && process.env.BRUST_DEV === '1') {
+          console.warn(
+            `[brust] cookies.set in a native loader for "${flat.nativeTemplate}" is dropped — native render has no headers; use a React route to write cookies`,
+          )
+        }
         // Sub-project J — islands + components. If this template has an enriched
         // islands manifest or a components manifest, merge per-island context vars
         // (island_<id>_props, plus island_<id>_html for ssr entries) and per-component
@@ -850,7 +863,7 @@ export function makeRenderer(
       // or render resolves the same per-request instance. Snapshot is collected
       // after loaders (buildRenderElement resolved) — that's where Spec A stores
       // are seeded — and threaded into the render for <script> injection.
-      return await runInRequestContext(async () => {
+      return await runInRequestContext(call.req?.cookies ?? {}, async () => {
         let element: ReactNode
         let errorBoundary: ComponentType<{ error: Error }>
         try {
@@ -877,7 +890,7 @@ export function makeRenderer(
           napi,
           errorBoundary,
           status: verdict.status,
-          headers: verdict.headers,
+          headers: flushSetCookie(verdict.headers),
           routePath: flat.fullPath,
           storeSnapshot,
         })
@@ -1055,12 +1068,19 @@ async function navigationBranch(
     // nav payload so the client can apply it to its live stores. Native nav
     // collects no snapshot (Spec B owns native store delivery).
     let store: Record<string, Record<string, unknown>> | null = null
+    // Set-Cookie staged by a React nav loader, flushed onto the nav response
+    // below. The request scope is opened per-path (inside runInRequestContext),
+    // so capture the flushed headers inside that scope — the emit runs after the
+    // scope has closed. Native nav (renderNativeRouteToHtml) opens its own scope
+    // with no headers param, so staged cookies are dropped there (same as the
+    // full-document native render path).
+    let navHeaders: Record<string, string> | undefined
     if (flat.nativeTemplate !== undefined) {
       fullHtml = await renderNativeRouteToHtml(call, flat, view, encoder, workerId)
     } else {
       // Wrap loader run (inside buildRenderElement) + render in one store scope so
       // store reads resolve the per-request instance; collect after render.
-      fullHtml = await runInRequestContext(async () => {
+      fullHtml = await runInRequestContext(call.req?.cookies ?? {}, async () => {
         const element = await buildRenderElement(call as any, flat, getWorkerId)
         if (!element) throw new Error('render setup failed')
         // Use renderToPipeableStream + onAllReady so pages with <Suspense> emit
@@ -1069,6 +1089,7 @@ async function navigationBranch(
         // would otherwise ship "loading…" and never recover.
         const html = await renderToAwaitedString(element)
         store = collectSnapshot()
+        navHeaders = flushSetCookie(undefined)
         return html
       })
     }
@@ -1095,6 +1116,7 @@ async function navigationBranch(
       status: 200,
       contentType: 'application/json; charset=utf-8',
       body,
+      headers: navHeaders,
     })
   } catch (err) {
     console.error('[brust] navigation render failed:', err)
@@ -1130,7 +1152,7 @@ async function renderNativeRouteToHtml(
   // Run the WHOLE route chain's loaders top-down and merge into ONE flat context
   // (child keys win), mirroring the full-render branch. One per-request store
   // scope wraps the entire loop (isolation only — no snapshot / no <script>).
-  const chainResult = await runInRequestContext(() =>
+  const chainResult = await runInRequestContext(call.req?.cookies ?? {}, () =>
     runNativeChainLoaders(flat.chain, {
       params: call.params,
       path: call.path,
@@ -1405,6 +1427,42 @@ function actionErrorResponse(err: ActionError): RouteResponse {
   }
 }
 
+/** Flush any cookies staged via `cookies.set`/`cookies.delete` in the active
+ * request scope onto the response headers.
+ *
+ * The Rust response-header writer stores worker-response headers in a
+ * CASE-SENSITIVE map (no lowercase dedup), so a mix of 'Set-Cookie' /
+ * 'set-cookie' would emit two lines. We therefore use the SINGLE canonical key
+ * 'set-cookie' (lowercase) for ALL cookie writes.
+ *
+ * RouteResponse.headers is Record<string,string>, so only ONE Set-Cookie per
+ * response is representable. If multiple were staged, only the LAST is sent
+ * (documented limitation; dev-warn). If the handler already set a 'set-cookie'
+ * header explicitly (respond({ headers })), the explicit value WINS and staged
+ * cookies are dropped (dev-warn on conflict). */
+function flushSetCookie(
+  headers: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  const staged = __scope()?.setCookies ?? []
+  if (staged.length === 0) return headers
+  if (headers && 'set-cookie' in headers) {
+    if (process.env.BRUST_DEV === '1') {
+      console.warn(
+        '[brust] cookies.set conflicts with an explicit set-cookie header — explicit respond() wins',
+      )
+    }
+    return headers
+  }
+  if (staged.length > 1 && process.env.BRUST_DEV === '1') {
+    console.warn(
+      `[brust] ${staged.length} cookies staged but only one Set-Cookie per response is supported — only the last is sent`,
+    )
+  }
+  const out = { ...(headers ?? {}) }
+  out['set-cookie'] = staged[staged.length - 1]
+  return out
+}
+
 export async function dispatchAction(
   call: Extract<RouteCall, { kind: 'action' }>,
   byId: Map<string, EndpointDef>,
@@ -1495,28 +1553,33 @@ export async function dispatchAction(
     }
   }
 
-  const chain = composeChain(call.req, def.middleware, terminal)
-  let response: RouteResponse
-  try {
-    response = await chain()
-  } catch (err) {
-    if (isActionError(err)) {
-      response = actionErrorResponse(err)
-    } else {
-      console.error('[brust] action middleware uncaught:', err)
-      response = {
-        status: 500,
-        body: '{"error":{"message":"internal error"}}',
-        contentType: 'application/json; charset=utf-8',
+  // Open a per-request scope (OUTER) so cookies.set during middleware/handler
+  // stage onto this request, then flush the staged Set-Cookie onto the response
+  // headers. The cache + store scopes wrap INNER — request-scope is outermost.
+  return await runInRequestContext(call.req.cookies ?? {}, async () => {
+    const chain = composeChain(call.req, def.middleware, terminal)
+    let response: RouteResponse
+    try {
+      response = await chain()
+    } catch (err) {
+      if (isActionError(err)) {
+        response = actionErrorResponse(err)
+      } else {
+        console.error('[brust] action middleware uncaught:', err)
+        response = {
+          status: 500,
+          body: '{"error":{"message":"internal error"}}',
+          contentType: 'application/json; charset=utf-8',
+        }
       }
     }
-  }
-  return {
-    status: response.status,
-    body: response.body,
-    contentType: response.contentType ?? 'application/json; charset=utf-8',
-    headers: response.headers,
-  }
+    return {
+      status: response.status,
+      body: response.body,
+      contentType: response.contentType ?? 'application/json; charset=utf-8',
+      headers: flushSetCookie(response.headers),
+    }
+  })
 }
 
 async function mcpBranchToResponse(
