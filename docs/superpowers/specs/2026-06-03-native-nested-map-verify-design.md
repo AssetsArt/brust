@@ -72,17 +72,24 @@ Prove the nested `{% for %}` renders through brust's real pipeline (loader →
 SAB → minijinja → `[meta_len][meta][body]`), not just the compiler.
 
 - **New fixture page** `tests/fixtures/app/pages/NativeNestedMap.tsx`: a
-  `native: true` page that maps `rows.map(r => <div class="row">{r.cells.map(c
-  => <span class="cell">{c.label}</span>)}</div>)`.
-- **Route** in `tests/fixtures/app/routes.tsx`: `native: true`, `Component:
-  NativeNestedMap`, path `/_test/nested-map`, with an inline loader returning
-  nested data, e.g. `{ rows: [{ id:'r0', cells:[{label:'a'},{label:'b'}] },
-  { id:'r1', cells:[{label:'c'}] }] }`.
+  `native: true` page that maps (JSX source uses `className`, which compiles to
+  the `class` attribute): `rows.map(r => <div className="row">{r.cells.map(c =>
+  <span className="cell">{c.label}</span>)}</div>)`.
+- **Route + wiring (must-not-forget)** in `tests/fixtures/app/routes.tsx`:
+  `import NativeNestedMap` at top (mirror NativeProfile at routes.tsx:12) AND a
+  `native: true` route: `Component: NativeNestedMap`, path `/_test/nested-map`,
+  with an inline loader returning nested data, e.g.
+  `{ rows: [{ id:'r0', cells:[{label:'a'},{label:'b'}] },
+  { id:'r1', cells:[{label:'c'}] }] }`. Native pages are emitted only for
+  route-table entries with `nativeTemplate` — without BOTH the import and the
+  route, `brust build` will not compile the page.
 - **Assertions** appended to `tests/jinja-route.test.ts` (reuses the existing
   port-3801 boot of `fixtures/app` — no new test file, avoids a second
   server-boot/port-race): `GET /_test/nested-map` → 200, body contains the
-  rendered nested structure (`<div class="row">` ×2, `<span class="cell">a`,
-  `b`, `c` in order).
+  rendered nested structure — assert against the **emitted** attribute
+  (`class="row"` ×2, `<span class="cell">a`, `b`, `c` in order), NOT `className`
+  (JSX `className` → HTML `class`). `id`/`key` are React-only and dropped on the
+  native path, so the cell-id scheme is cosmetic for rendered output.
 
 The fixture's data is **static in the loader** (no external fetch) to keep the
 test hermetic.
