@@ -153,3 +153,72 @@ test('GET /_test/data-attr — BrustPage data-* lands on <html>', async () => {
   const body = await res.text()
   expect(body).toContain('<html lang="en" data-mode="dark" data-rev="r42">')
 })
+
+// T4 — native <Outlet> nested route E2E. A native PARENT layout
+// (NativeOutletLayout: BrustPage shell + <nav> + <main><Outlet/></main>)
+// wrapping a native LEAF fragment (NativeOutletLeaf), each with its own loader.
+// The build composes the chain into ONE native template (synth wrapper fills
+// <Outlet/> with the leaf body); runNativeChainLoaders merges both loaders
+// top-down. This proves T1 (<Outlet/> lowering) + T2 (chain compose) + T3
+// (loader merge) end-to-end through the minijinja render pipeline.
+test('GET /_test/outlet — nested native chain composes layout + leaf with merged loaders', async () => {
+  const res = await fetch(`${BASE_URL}/_test/outlet`)
+  expect(res.status).toBe(200)
+  expect(res.headers.get('content-type')).toContain('text/html')
+  const body = await res.text()
+
+  // Shell: BrustPage owns <html> + framework <head>; layout chrome <nav> present.
+  expect(body).toContain('<html')
+  expect(body).toContain('<nav class="chrome">')
+
+  // Exactly ONE <main> and ONE <title> — no duplicate shell from the leaf, no
+  // surviving wrapper artifacts.
+  expect((body.match(/<main[\s>]/g) ?? []).length).toBe(1)
+  expect((body.match(/<title[\s>]/g) ?? []).length).toBe(1)
+
+  // The <Outlet/> tag must NOT survive into the rendered HTML — it is replaced
+  // by the leaf body at build time.
+  expect(body).not.toContain('<Outlet')
+  expect(body.toLowerCase()).not.toContain('outlet />')
+
+  // The leaf content lives INSIDE <main> (composed at the <Outlet/> slot).
+  const mainMatch = body.match(/<main[^>]*>([\s\S]*?)<\/main>/i)
+  expect(mainMatch).not.toBeNull()
+  const mainInner = mainMatch![1]
+  expect(mainInner).toContain('<article class="leaf">')
+  expect(mainInner).toContain('widget: leaf-thing')
+
+  // Ordering: <main> ... leaf-content ... </main>, leaf rendered after <main>.
+  const mainOpen = body.search(/<main[\s>]/)
+  const leafIdx = body.indexOf('<article class="leaf">')
+  const mainClose = body.indexOf('</main>')
+  expect(mainOpen).toBeGreaterThanOrEqual(0)
+  expect(mainOpen).toBeLessThan(leafIdx)
+  expect(leafIdx).toBeLessThan(mainClose)
+
+  // BOTH loaders' data rendered → proves the top-down chain merge (T3):
+  //   parent loader → `section` (in <nav>) and `title` (in <title>),
+  //   leaf loader   → `widget` (in <article>).
+  expect(body).toContain('section: parent-zone') // parent-chain loader field
+  expect(body).toContain('widget: leaf-thing') // leaf loader field
+  expect(body).toContain('<title>Outlet Page</title>') // parent loader → BrustPage title
+})
+
+// T4 — SPA-nav path. /_brust/page/{path} returns { html, title } where html is
+// the <main> inner content. Exercises renderNativeRouteToHtml's chain-loader
+// merge (the SPA path was previously leaf-only). Confirms the composed leaf
+// body + merged loader data flow through the navigation branch too.
+test('GET /_brust/page/_test/outlet — SPA-nav envelope carries composed leaf + merged title', async () => {
+  const res = await fetch(`${BASE_URL}/_brust/page/_test/outlet`)
+  expect(res.status).toBe(200)
+  const payload = (await res.json()) as { html: string; title: string }
+
+  // <main> inner content (extracted server-side) holds the composed leaf body.
+  expect(payload.html).toContain('<article class="leaf">')
+  expect(payload.html).toContain('widget: leaf-thing')
+  // The shell <nav> lives OUTSIDE <main>, so it must NOT appear in the inner html.
+  expect(payload.html).not.toContain('<nav class="chrome">')
+
+  // Title comes from the PARENT loader (proves the merge reached the SPA path).
+  expect(payload.title).toBe('Outlet Page')
+})
