@@ -50,23 +50,42 @@ AND native directive/chain components**, can be imported via any of:
   - named → `import { <imported> as X } from '<spec>'`
   - namespace → `import * as X from '<spec>'`
 
-## Member-expression usage (`<Lucide.Search/>`) — scoped
+## Member-expression usage (`<Lucide.Search/>`) — namespace is PARSE-ONLY (confirmed)
 
-`import * as Lucide` is typically used as `<Lucide.Search/>` (a member-expression component). Whether
-the Rust compiler lists member-expression components in `componentsJson` is **unverified**.
-- **At impl, verify empirically** (build a native page with `import * as L from 'lucide-react'` +
-  `<L.Search/>`). 
-- If Rust lists it → support it (the factory imports the namespace + renders `L.Search`).
-- If Rust does NOT list it → **out of scope** (documented Rust follow-up). The namespace import FORM is
-  still parsed (so an `import * as L` line never breaks the scanner) and a simple-ident component from
-  any import form resolves. The headline lucide use-cases (`import { Search }` named, or
-  `import Search from '.../search.mjs'` default-package) are fully covered without member-expr.
+`import * as Lucide` is typically used as `<Lucide.Search/>` (member-expression component). **Confirmed
+via source (spec-review B2):** the Rust compiler REJECTS member-expression elements — `lower.rs:2160`
+returns `MemberComponentNotSupported` ("member-expression JSX element not supported"); only uppercase
+`JSXElementName::Ident` becomes an SsrComponent (`lower.rs:614-620`). So `<Lucide.Search/>` fails the
+native compile BEFORE reaching the TS side — it is NOT renderable in native routes today.
+
+Therefore namespace support here is **parse-only**: `scanImportRefs` records `import * as L` (so the
+line never breaks scanning, and the model is future-proof for when/if Rust adds member-expr elements),
+but there is no usable native component form for it yet. **The lucide use-cases that actually work** —
+and the real goal — are the **named** (`import { Search } from 'lucide-react'`) and **default-package**
+(`import Search from 'lucide-react/dist/esm/icons/search.mjs'`) forms; both reduce to a simple-ident
+`<Search/>` which the Rust compiler already lists. Member-expression `<Ns.Member/>` rendering is a
+documented **Rust follow-up**, out of scope for this slice.
 
 ## High-level design
 
-### Import model (the core change)
-`scanImports` (and the maps it feeds — `mergedImports` in `gatherComponentSources`/`gatherChainSources`)
-change their value type from `string` to a structured `ResolvedImport`:
+### Blast-radius containment (spec-review B1)
+`scanImports` is **exported and consumed by two OTHER files** that treat its values as `string` file
+paths and `readFileSync` them:
+- `runtime/islands/build.ts` (`scanIslandChunks` — BFS of local island sources to bundle; the
+  `readFileSync` at ~:47 is UNguarded).
+- `runtime/native/build.ts` (`scanDirectiveComponents` — local directive sources).
+Both legitimately want LOCAL files only. Therefore **`scanImports` is NOT changed** — it keeps its
+`Map<string,string>` signature + the local-default-only behavior (the `startsWith('.')` skip stays).
+Those two files are untouched.
+
+The richer resolution lives in a NEW function used ONLY by the SSR-component path:
+
+### Import model (the core change) — new `scanImportRefs`
+Add `scanImportRefs(file): Map<localName, ResolvedImport>` (all import forms + package specifiers).
+`gatherComponentSources`/`gatherChainSources` build their `mergedImports` from `scanImportRefs`
+(recursing into LOCAL entries only); `emitComponentArtifacts` + `reconcileIslandManifest` consume
+`Map<string, ResolvedImport>`. `scanImports` (local, string) is retained for native route-name
+resolution + the two external callers.
 
 ```ts
 export interface ResolvedImport {
@@ -81,11 +100,11 @@ export interface ResolvedImport {
   imported?: string
 }
 ```
-`scanImports` returns `Map<localName, ResolvedImport>`. (A localName is the in-source identifier used
-in JSX, e.g. `Search`, `Icon`, `Lucide`.)
+`scanImportRefs` returns `Map<localName, ResolvedImport>`. (A localName is the in-source identifier
+used in JSX, e.g. `Search`, `Icon`, `Lucide`.)
 
-### `scanImports` — parse all forms
-Replace the single default-only regex with a scanner matching:
+### `scanImportRefs` — parse all forms
+A scanner matching:
 - `import Default from '<spec>'` → `{kind:'default'}`
 - `import * as Ns from '<spec>'` → `{kind:'namespace'}`
 - `import { A, B as C } from '<spec>'` → one entry per specifier; `B as C` → local `C`, imported `B`,
@@ -95,9 +114,11 @@ Resolve `spec`: local (`.`-prefixed) → absolute file via the existing `.tsx/.t
 (`bare:false`); else keep verbatim (`bare:true`). NO `continue`-skip of package specs.
 
 ### Consumers updated for `ResolvedImport`
-- `gatherComponentSources` / `gatherChainSources`: only **recurse/`visit`** into LOCAL (`!bare`) imports
-  (a bare spec has no local source to BFS). mergedImports carries all (local + bare). Ambiguity check
-  compares by `spec`.
+- `gatherComponentSources` / `gatherChainSources`: build `mergedImports` from `scanImportRefs`. The
+  recursion guard MUST switch from the current `!childPath.includes('node_modules')` string-check to
+  **`!ref.bare`** — a bare spec (`lucide-react`) does not contain the literal "node_modules", so the old
+  check would wrongly `visit()`+`readFileSync` it. Only recurse into LOCAL (`!bare`) entries. mergedImports
+  carries all (local + bare). Ambiguity check compares by `spec`.
 - `emitComponentArtifacts`:
   - resolution lookup returns a `ResolvedImport` (or undefined → the existing error).
   - `components.json` `sourcePath`: for local → project-relative path (as today); for bare → the bare
@@ -106,8 +127,10 @@ Resolve `spec`: local (`.`-prefixed) → absolute file via the existing `.tsx/.t
     `!bare` (local), kept verbatim when `bare`.
   - the `<Island component={X}>` scan that does `readFileSync(entry.sourcePath)`: **guard** — skip
     entries whose import is `bare` (no readable local file).
-- `reconcileIslandManifest`: same lookup-type change; islands imported from packages are rare but the
-  type must line up (an island is normally a local default import — behavior unchanged for that case).
+- `reconcileIslandManifest`: same `ResolvedImport` lookup-type change. Islands stay **local-only** — a
+  bare-spec island sourcePath would break `loadIslandManifest`'s runtime cwd-rehydration (it resolves
+  sourcePath against cwd). If an island entry resolves to a `bare` import, **throw** (don't silently
+  write a bare spec into the manifest). Normal local default-import islands: behavior unchanged.
 
 ### `.factory.ts` SSR render
 Unchanged in mechanism — `createElement(Component, props)` + `renderToString`. lucide-react icons are
@@ -115,11 +138,14 @@ ordinary React components, so SSR-rendering them yields `<svg>…</svg>` inline 
 output. (This is why icons "just work" once the import resolves.)
 
 ## File structure
-- `runtime/cli/native-routes-emit.ts` — `scanImports`, `ResolvedImport` (exported), `gatherComponentSources`,
-  `gatherChainSources`, `emitComponentArtifacts`, `reconcileIslandManifest`. One file.
+- `runtime/cli/native-routes-emit.ts` — NEW `scanImportRefs` + `ResolvedImport` (exported);
+  `gatherComponentSources`/`gatherChainSources` switch their internal scan to `scanImportRefs` +
+  `!bare` recursion guard; `emitComponentArtifacts` + `reconcileIslandManifest` consume `ResolvedImport`.
+  **`scanImports` (Map<string,string>, local-default) is KEPT unchanged** (route-name resolution + the
+  two external callers below). One file.
 - `runtime/cli/native-routes-emit.test.ts` — extend.
-- No Rust / no napi rebuild (verify member-expr question doesn't force Rust; if it does, that part is a
-  separate follow-up, not this slice).
+- **NOT touched:** `runtime/islands/build.ts`, `runtime/native/build.ts` (they call `scanImports`, which
+  is unchanged). No Rust / no napi rebuild (member-expr is parse-only — confirmed, no Rust).
 
 ## Behavior invariants
 - **Backward compat:** existing local default imports (`import X from './X'`) resolve identically; the
@@ -142,8 +168,10 @@ output. (This is why icons "just work" once the import resolves.)
 ## Acceptance criteria
 1. `cd runtime && bun run ci` (biome) clean; `bun test runtime/cli/native-routes-emit.test.ts` green +
    full `bun test runtime/` no regression (baseline 449).
-2. No Rust change (assert `git diff --stat` = `native-routes-emit.ts` + its test + this spec/plan).
-   If member-expr forces Rust → STOP, descope member-expr, note it.
+2. No Rust change (assert `git diff --stat` = `native-routes-emit.ts` + its test + this spec/plan +
+   the example files that add lucide icons). **`runtime/islands/build.ts` + `runtime/native/build.ts`
+   are NOT touched** (scanImports kept stable — verify they're absent from the diff). Member-expr is
+   already descoped (parse-only) — no Rust.
 3. **Empirical lucide verify** (the real goal): in the example, `import { Search } from 'lucide-react'`
    (and `import * as L from 'lucide-react'` for the namespace-form parse) used in a native directive →
    `brust build` succeeds AND the rendered native template contains the inline `<svg>` (lucide icon
