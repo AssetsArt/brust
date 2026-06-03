@@ -107,10 +107,12 @@ function injectDevClientIntoTemplate(template: string): string {
 /** Bake the directive runtime loader into a native template iff it uses any
  * x-data directive. Idempotent. Wrapped in {% raw %} for symmetry with the islands
  * bootstrap bake (the tag has no {{ }} but the wrap is harmless + consistent). */
-export function bakeDirectivesIfUsed(template: string): string {
-  // Attribute-anchored (`x-data=`) so a literal "x-data" in text/content can't
+export function bakeDirectivesIfUsed(template: string, force = false): string {
+  // `force` (app has ≥1 directive component) bakes on EVERY native page so the
+  // runtime is live to catch SPA-nav swaps into a directive page. Otherwise
+  // attribute-anchored (`x-data=`) so a literal "x-data" in text/content can't
   // trigger a stray <script> that would 404 (no bundle built for that route).
-  if (!/x-data=/.test(template)) return template
+  if (!force && !/x-data=/.test(template)) return template
   const baked = `{% raw %}${DIRECTIVES_BOOTSTRAP}{% endraw %}`
   if (template.includes(baked)) return template
   return template + baked
@@ -339,6 +341,17 @@ export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<vo
   const importMap =
     nativeRoutes.length > 0 ? scanImports(opts.entryFile) : new Map<string, string>()
 
+  // App-wide directive presence: if ANY native interactive component exists, the
+  // directive runtime (`_directives.js`) must load on EVERY native page — not just
+  // pages whose own template uses x-data. SPA nav (owned by the islands bootstrap)
+  // swaps <main> but does NOT execute <script> tags in the swapped HTML, so the
+  // runtime must already be live on the page you navigate FROM for its
+  // MutationObserver to mount the incoming x-data. Dynamic import = call-time
+  // (avoids a module-eval cycle with native/build.ts → scanImports here).
+  const hasDirectives =
+    nativeRoutes.length > 0 &&
+    (await import('../native/build.ts')).scanDirectiveComponents(opts.entryFile).size > 0
+
   const built: string[] = []
   for (const r of nativeRoutes) {
     const name = r.nativeTemplate!
@@ -369,7 +382,7 @@ export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<vo
     // Dev-only: native routes don't pass through the React renderer's dev-client
     // injection, so splice the /_brust/dev WS script in here. reEmitJinja() runs
     // this on every hot reload, so the script is always present in dev.
-    const withDirectives = bakeDirectivesIfUsed(compiled.template)
+    const withDirectives = bakeDirectivesIfUsed(compiled.template, hasDirectives)
     const template =
       process.env.BRUST_DEV === '1' ? injectDevClientIntoTemplate(withDirectives) : withDirectives
     writeFileSync(outPath, template)
