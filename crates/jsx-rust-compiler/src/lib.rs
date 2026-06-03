@@ -1586,4 +1586,59 @@ mod tests {
             err.kind
         );
     }
+
+    #[test]
+    fn native_nested_map_member_source() {
+        let src = r#"export default function P({ rows }) {
+  return <table>{rows.map((r) => (<tr>{r.cells.map((c) => (<td>{c.label}</td>))}</tr>))}</table>;
+}"#;
+        assert_eq!(
+            compile(src).unwrap(),
+            "<table>{% for r in rows %}<tr>{% for c in r.cells %}<td>{{ (c.label) | e }}</td>{% endfor %}</tr>{% endfor %}</table>"
+        );
+    }
+
+    #[test]
+    fn native_nested_map_inner_refs_outer_binding() {
+        let src = r#"export default function P({ rows }) {
+  return <table>{rows.map((r) => (<tr>{r.cells.map((c) => (<td>{r.type}:{c.label}</td>))}</tr>))}</table>;
+}"#;
+        assert_eq!(
+            compile(src).unwrap(),
+            "<table>{% for r in rows %}<tr>{% for c in r.cells %}<td>{{ (r.type) | e }}:{{ (c.label) | e }}</td>{% endfor %}</tr>{% endfor %}</table>"
+        );
+    }
+
+    #[test]
+    fn native_nested_map_three_levels() {
+        let src = r#"export default function P({ groups }) {
+  return <div>{groups.map((g) => (<section>{g.rows.map((r) => (<ul>{r.items.map((i) => (<li>{i.name}</li>))}</ul>))}</section>))}</div>;
+}"#;
+        assert_eq!(
+            compile(src).unwrap(),
+            "<div>{% for g in groups %}<section>{% for r in g.rows %}<ul>{% for i in r.items %}<li>{{ (i.name) | e }}</li>{% endfor %}</ul>{% endfor %}</section>{% endfor %}</div>"
+        );
+    }
+
+    #[test]
+    fn native_nested_map_binding_is_array() {
+        let src = r#"export default function P({ matrix }) {
+  return <table>{matrix.map((row) => (<tr>{row.map((cell) => (<td>{cell.v}</td>))}</tr>))}</table>;
+}"#;
+        assert_eq!(
+            compile(src).unwrap(),
+            "<table>{% for row in matrix %}<tr>{% for cell in row %}<td>{{ (cell.v) | e }}</td>{% endfor %}</tr>{% endfor %}</table>"
+        );
+    }
+
+    #[test]
+    fn native_nested_map_with_per_item_conditional() {
+        let src = r#"export default function P({ rows }) {
+  return <table>{rows.map((r) => (<tr>{r.cells.map((c) => (c.hot ? <td class="hot">{c.v}</td> : <td>{c.v}</td>))}</tr>))}</table>;
+}"#;
+        assert_eq!(
+            compile(src).unwrap(),
+            "<table>{% for r in rows %}<tr>{% for c in r.cells %}{% if c.hot %}<td class=\"hot\">{{ (c.v) | e }}</td>{% else %}<td>{{ (c.v) | e }}</td>{% endif %}{% endfor %}</tr>{% endfor %}</table>"
+        );
+    }
 }
