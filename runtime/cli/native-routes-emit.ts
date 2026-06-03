@@ -635,6 +635,14 @@ export function reconcileIslandManifest(
 
   const raw = JSON.parse(readFileSync(islandsJsonPath, 'utf8')) as RawIslandEntry[]
 
+  // sourcePath is written PROJECT-RELATIVE (relative to the build's cwd), never
+  // the build machine's absolute path — the absolute path leaks the developer's
+  // username into shipped dist/jinja artifacts, and a relative path survives the
+  // dual-emit copy into `.brust/jinja` (both dirs sit directly under cwd, so the
+  // same relative string resolves correctly from either). The runtime
+  // (`loadIslandManifest`) rehydrates it to an absolute path against cwd before
+  // the SSR import. Mirrors the .components.json contract (emitComponentArtifacts).
+  const projectRoot = process.cwd()
   const enriched: EnrichedIslandEntry[] = raw.map((entry) => {
     const sourcePath = pageImports.get(entry.component)
     if (!sourcePath) {
@@ -642,7 +650,7 @@ export function reconcileIslandManifest(
         `island component "${entry.component}" in native route "${routeName}" has no matching import in the page source (expected \`import ${entry.component} from "..."\`)`,
       )
     }
-    return { ...entry, sourcePath }
+    return { ...entry, sourcePath: relative(projectRoot, sourcePath).replaceAll('\\', '/') }
   })
 
   writeFileSync(islandsJsonPath, JSON.stringify(enriched))

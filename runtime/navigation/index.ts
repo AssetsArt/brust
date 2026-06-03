@@ -11,3 +11,5 @@ export {
   onNavigateError,
 } from './store.ts'
 export { installActiveNav } from './active-nav.ts'
+export { navigate, buildSearch } from './navigate.ts'
+export type { NavigateOptions, QueryInit, QueryValue } from './navigate.ts'

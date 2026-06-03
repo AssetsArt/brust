@@ -933,6 +933,7 @@ mod tests {
             "<title>Built to Brust</title>",
             "<meta name=\"description\" content=\"Bun + Rust SSR\"/>",
             "<link rel=\"stylesheet\" href=\"/_brust/css/app.css\"/>",
+            "{{ __brust_store__ | safe }}",
             "</head>",
             "<body class=\"brust-body\">",
             "<main>",
@@ -966,6 +967,7 @@ mod tests {
                 "<meta charset=\"utf-8\"/>",
                 "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>",
                 "<link rel=\"stylesheet\" href=\"/_brust/css/app.css\"/>",
+                "{{ __brust_store__ | safe }}",
                 "</head>",
                 "<body><main>hi</main></body></html>",
             )

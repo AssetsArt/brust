@@ -11,6 +11,7 @@ import { Buffer } from 'node:buffer'
 import * as native from './index.js'
 import { renderBranchStreaming } from './render/stream.ts'
 import { runInStoreContext, collectSnapshot } from './store/server-context.ts'
+import { buildStoreScripts } from './render/inject-store.ts'
 import { runInRequestCache } from './loader-cache.ts'
 import { runInRequestScope, __scope } from './request-context.ts'
 import {
@@ -729,17 +730,22 @@ export function makeRenderer(
         let data: Record<string, unknown>
         const ctx = { params: call.params, path: call.path, req: call.req }
         let chainResult: NativeChainResult
+        let storeSnapshot: Record<string, Record<string, unknown>> | null = null
         try {
           // Run the WHOLE route chain's loaders top-down (parent → leaf) and
           // merge into ONE flat context (child keys win), mirroring the React
           // chain-loader path. Wrap the entire loop in a SINGLE per-request
           // store scope so a parent loader's defineStore writes are visible to
-          // child loaders (one Map per request — NOT one per loader). No
-          // snapshot is collected and no <script> is injected on native paths —
-          // Spec B owns native store delivery (hard non-goal here).
-          chainResult = await runInRequestContext(call.req?.cookies ?? {}, () =>
-            runNativeChainLoaders(flat.chain, ctx),
-          )
+          // child loaders (one Map per request — NOT one per loader). B7: the
+          // store snapshot IS collected here, inside the request-store scope and
+          // AFTER the loaders run (the only point native store writes happen —
+          // the render is Rust-side and touches no store), feeding the
+          // document-shell `{{ __brust_store__ }}` slot below.
+          chainResult = await runInRequestContext(call.req?.cookies ?? {}, async () => {
+            const r = await runNativeChainLoaders(flat.chain, ctx)
+            storeSnapshot = collectSnapshot()
+            return r
+          })
         } catch (err) {
           console.error(`[brust] loader failed for native route ${flat.fullPath}:`, err)
           // FAST LANE: native routes take dispatch_single_chunk (no chunk
@@ -768,6 +774,24 @@ export function makeRenderer(
           data = (verdict.data ?? {}) as Record<string, unknown>
         } else {
           data = chainResult.data
+        }
+        // B7 — native store-snapshot SSR. Fill the framework-owned
+        // `{{ __brust_store__ | safe }}` slot (emitted into every native
+        // full-document <head>) with the defineStore SSR snapshot collected
+        // inside the request-store scope above. buildStoreScripts(null) === '',
+        // so the key is always a string and both render sub-paths (the
+        // island/component JSON.parse path and the no-island encode path)
+        // inherit it for free.
+        if (data && typeof data === 'object') {
+          // `__brust_store__` is a framework-reserved render-context key. A user
+          // loader returning it would be silently overwritten here; dev-warn so
+          // the collision isn't invisible (mirrors the Set-Cookie warning below).
+          if (process.env.BRUST_DEV === '1' && '__brust_store__' in data) {
+            console.warn(
+              `[brust] native loader for "${flat.nativeTemplate}" returned a reserved "__brust_store__" key — overwritten by the store snapshot`,
+            )
+          }
+          ;(data as Record<string, unknown>).__brust_store__ = buildStoreScripts(storeSnapshot)
         }
         const json = JSON.stringify(data)
         // napiRenderJinja has no headers param — any Set-Cookie staged by a

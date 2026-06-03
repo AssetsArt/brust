@@ -1,8 +1,22 @@
 import { expect, test } from 'bun:test'
+import { storeScriptTag } from '../store/serialize.ts'
 import { _resetWarnedForTests, buildStoreScripts, injectBrustStore } from './inject-store.ts'
 
 const ENC = new TextEncoder()
 const DEC = new TextDecoder()
+
+// B7 — the native store-snapshot SSR path uses buildStoreScripts standalone (it
+// can't post-splice the Rust fast-lane HTML, so it feeds the string into a jinja
+// context var instead of injectBrustStore). Lock the contract it relies on: one
+// storeScriptTag per store, byte-identical to the React path, and '' for empty.
+test('buildStoreScripts equals storeScriptTag per store (native injection contract)', () => {
+  expect(buildStoreScripts({ cart: { count: 1 } })).toBe(storeScriptTag('cart', { count: 1 }))
+})
+
+test('buildStoreScripts returns empty string for null / empty snapshot', () => {
+  expect(buildStoreScripts(null)).toBe('')
+  expect(buildStoreScripts({})).toBe('')
+})
 
 test('null snapshot → body unchanged (same reference)', () => {
   const body = ENC.encode('<html><head></head><body></body></html>')

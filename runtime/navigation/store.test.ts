@@ -13,6 +13,8 @@ import {
   __navError,
   __navInit,
   __resetNavForTest,
+  registerNavigator,
+  _getNavigator,
 } from './store.ts'
 
 beforeEach(() => __resetNavForTest())
@@ -122,6 +124,16 @@ test('getNavState is referentially stable between transitions (useSyncExternalSt
   expect(b1).not.toBe(a1) // new ref after the transition
   expect(getNavState()).toBe(b1) // stable again
   expect(b1.path).toBe('/b')
+})
+
+test('registerNavigator stores the fn; _getNavigator returns it; reset clears it', () => {
+  __resetNavForTest()
+  expect(_getNavigator()).toBeNull()
+  const fn = async () => {}
+  registerNavigator(fn)
+  expect(_getNavigator()).toBe(fn)
+  __resetNavForTest()
+  expect(_getNavigator()).toBeNull()
 })
 
 test('batched writes: an effect reading path + phase re-runs once per transition', () => {

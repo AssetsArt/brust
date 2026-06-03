@@ -101,6 +101,9 @@ beforeAll(async () => {
   await mkdir(join(dir, 'public', 'img'), { recursive: true })
   await writeFile(join(dir, 'public', 'favicon.svg'), FAVICON_SVG)
   await writeFile(join(dir, 'public', 'img', 'dot.png'), DOT_PNG)
+  // A filename with a space — the manifest key is the RAW name ("a b.png"), so a
+  // request must be percent-decoded ("/img/a%20b.png" → "/img/a b.png") to match.
+  await writeFile(join(dir, 'public', 'img', 'a b.png'), DOT_PNG)
 
   const p = await freePort()
   proc = spawn({
@@ -154,4 +157,28 @@ test('static asset carries the prod Cache-Control', async () => {
   // is_dev_mode() is false → prod cache header.
   const r = await fetch(`http://127.0.0.1:${port}/favicon.svg`)
   expect(r.headers.get('cache-control')).toBe('public, max-age=3600')
+})
+
+test('B6: percent-encoded path resolves to the raw manifest key (/img/a%20b.png → "a b.png")', async () => {
+  const r = await fetch(`http://127.0.0.1:${port}/img/a%20b.png`)
+  expect(r.status).toBe(200)
+  expect(r.headers.get('content-type')).toBe('image/png')
+  const body = Buffer.from(await r.arrayBuffer())
+  expect(body.equals(DOT_PNG)).toBe(true)
+})
+
+test('B6: HEAD on a static asset → 200, full Content-Length, empty body', async () => {
+  const r = await fetch(`http://127.0.0.1:${port}/img/dot.png`, { method: 'HEAD' })
+  expect(r.status).toBe(200)
+  expect(r.headers.get('content-type')).toBe('image/png')
+  // Content-Length must reflect the FULL entity size (HEAD semantics)…
+  expect(r.headers.get('content-length')).toBe(String(DOT_PNG.length))
+  // …but no body bytes are sent.
+  const body = Buffer.from(await r.arrayBuffer())
+  expect(body.length).toBe(0)
+})
+
+test('B6: HEAD on a missing asset → 404', async () => {
+  const r = await fetch(`http://127.0.0.1:${port}/definitely-missing-xyz.png`, { method: 'HEAD' })
+  expect(r.status).toBe(404)
 })

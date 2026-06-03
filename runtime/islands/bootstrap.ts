@@ -16,7 +16,13 @@
 import { createRoot, hydrateRoot, type Root } from 'react-dom/client'
 import { createElement } from 'react'
 import { applyStoreSnapshot } from '../store/client-hydrate.ts'
-import { __navStart, __navCommit, __navError, __navInit } from '../navigation/store.ts'
+import {
+  __navStart,
+  __navCommit,
+  __navError,
+  __navInit,
+  registerNavigator,
+} from '../navigation/store.ts'
 import { installActiveNav } from '../navigation/active-nav.ts'
 
 // Track React roots created by hydrateOne so we can unmount them before
@@ -207,7 +213,7 @@ export function isInternalLink(a: HTMLAnchorElement, event: MouseEvent): boolean
 
 let inFlight: AbortController | null = null
 
-export async function navigate(url: URL, push: boolean): Promise<void> {
+export async function navigate(url: URL, mode: 'push' | 'replace' | 'none'): Promise<void> {
   inFlight?.abort()
   const ac = new AbortController()
   inFlight = ac
@@ -229,7 +235,8 @@ export async function navigate(url: URL, push: boolean): Promise<void> {
     swapMainContent(main as HTMLElement, html)
     if (store) applyStoreSnapshot(store)
     if (title) document.title = title
-    if (push) history.pushState({}, '', url.href)
+    if (mode === 'push') history.pushState({}, '', url.href)
+    else if (mode === 'replace') history.replaceState({}, '', url.href)
     window.scrollTo(0, 0)
     hydrateMarkersIn(main as HTMLElement)
     __navCommit(url.pathname, url.search)
@@ -255,14 +262,15 @@ function installInterceptor(): void {
     e.preventDefault()
     // 'reload' = clicking the page we're already on → no-op (no refetch).
     if (intent === 'reload') return
-    void navigate(new URL(a.href, location.href), /* push */ true)
+    void navigate(new URL(a.href, location.href), 'push')
   })
   window.addEventListener('popstate', () => {
-    void navigate(new URL(location.href), /* push */ false)
+    void navigate(new URL(location.href), 'none')
   })
 }
 
 if (typeof document !== 'undefined') {
+  registerNavigator((url, replace) => navigate(url, replace ? 'replace' : 'push'))
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
       __navInit(location.pathname, location.search)

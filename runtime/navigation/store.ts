@@ -46,6 +46,7 @@ interface NavInternal extends NavStore {
   // would infinite-loop "getSnapshot should be cached"). Mirrors defineStore.
   _version: number
   _snap: { value: NavState; version: number } | null
+  _navigator: ((url: URL, replace: boolean) => Promise<void>) | null
 }
 
 function createNav(): NavInternal {
@@ -62,6 +63,7 @@ function createNav(): NavInternal {
     _error: new Set(),
     _version: 0,
     _snap: null,
+    _navigator: null,
   }
 }
 
@@ -200,6 +202,16 @@ export function __navError(toPath: string, error: unknown): void {
   bumpVersion(s)
   for (const cb of [...s._error]) cb({ to: toPath, error: err })
   emit(s)
+}
+
+/** Register the SPA navigator implementation (bootstrap's swap). Last-write-wins;
+ * re-registration with the same closure (HMR / multiple chunks) is idempotent. */
+export function registerNavigator(fn: (url: URL, replace: boolean) => Promise<void>): void {
+  store()._navigator = fn
+}
+/** @internal — the registered navigator, or null when no islands bootstrap loaded. */
+export function _getNavigator(): ((url: URL, replace: boolean) => Promise<void>) | null {
+  return store()._navigator
 }
 
 // Test-only: drop the singleton so the next access rebuilds fresh signals.

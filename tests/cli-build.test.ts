@@ -1,6 +1,6 @@
 import { test, expect, afterAll } from 'bun:test'
 import { spawn, $ } from 'bun'
-import { existsSync, symlinkSync } from 'node:fs'
+import { existsSync, rmSync, symlinkSync } from 'node:fs'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -196,6 +196,60 @@ test('GET /_brust/css/..%2Fetc%2Fpasswd is 404', async () => {
   const r = await fetch(`http://127.0.0.1:${port}/_brust/css/..%2Fetc%2Fpasswd`)
   expect(r.status).toBe(404)
 })
+
+// B6 regression: a prebuilt dist must serve native-route island props WITHOUT
+// cwd/.brust present. The worker thread (not main) runs native render, so it
+// must `configureJinjaDir(<distDir>/jinja)` at boot too — otherwise it falls
+// back to `cwd/.brust/jinja`, which only happens to exist because `brust build`
+// dual-emits there. Remove that crutch and the island's `data-brust-props`
+// renders EMPTY → the client's `JSON.parse('')` throws "Unexpected end of JSON
+// input" and the React island never hydrates. Build into an ISOLATED cwd so the
+// removal never touches the repo's own `.brust`.
+let proc2: ReturnType<typeof spawn> | undefined
+const port2 = 38292
+afterAll(async () => {
+  if (proc2) {
+    proc2.kill('SIGINT')
+    await proc2.exited
+  }
+})
+
+test('prebuilt dist serves native island props without cwd/.brust (worker configureJinjaDir)', async () => {
+  const proj = await mkdtemp(path.join(tmpdir(), 'brust-proj-nobrust-'))
+  const dist2 = await mkdtemp(path.join(tmpdir(), 'brust-dist-nobrust-'))
+
+  // Build from the isolated cwd so `.brust` lands in `proj`, not the repo. The
+  // entry stays the shared fixture (absolute path) — its island sourcePaths are
+  // written project-relative to `proj` and rehydrated against cwd at runtime.
+  const build =
+    await $`bun ${path.join(REPO, 'runtime/cli/index.ts')} build ${path.join(REPO, 'tests/fixtures/app/index.ts')} --out-dir ${dist2}`
+      .cwd(proj)
+      .nothrow()
+  expect(build.exitCode).toBe(0)
+
+  // react/react-dom are external in the dist bundle — resolve them from the repo
+  // (same copy the source islands import, so SSR shares one React).
+  symlinkSync(path.join(REPO, 'node_modules'), path.join(dist2, 'node_modules'), 'dir')
+
+  // Remove the dual-emit crutch: the worker must read <dist2>/jinja, not this.
+  rmSync(path.join(proj, '.brust'), { recursive: true, force: true })
+
+  proc2 = spawn({
+    cmd: ['bun', 'run', path.join(dist2, 'index.js')],
+    cwd: proj,
+    env: { ...process.env, BRUST_PORT: String(port2), BRUST_WORKERS: '1', RUST_LOG: 'brust=warn' },
+    stdout: 'pipe',
+    stderr: 'inherit',
+  })
+  await waitForPort(port2, 10_000)
+
+  const html = await (await fetch(`http://127.0.0.1:${port2}/_test/native-island-ssr`)).text()
+  // Props are present and non-empty (the exact SSR props the fixture passes).
+  expect(html).toContain('data-brust-props="{&quot;start&quot;:5}"')
+  expect(html).not.toContain('data-brust-props=""')
+  // And the island genuinely server-rendered (mount markup present, not a bare shell).
+  expect(html).toContain('data-testid="counter"')
+}, 60_000)
 
 async function waitForPort(port: number, timeoutMs: number): Promise<void> {
   const start = Date.now()

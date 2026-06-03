@@ -399,3 +399,19 @@ test('GET /native-ssr-comp — Island nested in the SSR component still hydrates
   expect(body).toContain('<script type="importmap">')
   expect(body).toContain('/_brust/islands/_bootstrap.js')
 })
+
+test('B7: native route loader-written defineStore is injected into <head>', async () => {
+  const res = await fetch(`${BASE_URL}/_test/native-store?seed=42`)
+  expect(res.status).toBe(200)
+  const html = await res.text()
+  const head = html.slice(0, html.indexOf('</head>'))
+  expect(head).toContain('data-brust-store="counter"')
+  expect(head).toContain('42')
+})
+test('B7: a native route that touches no store injects no store <script>', async () => {
+  // Same NativeDataAttr template as /_test/native-store, but this loader does not
+  // write the store → slot renders '' → no script.
+  const res = await fetch(`${BASE_URL}/_test/data-attr`)
+  const html = await res.text()
+  expect(html).not.toContain('data-brust-store=')
+})

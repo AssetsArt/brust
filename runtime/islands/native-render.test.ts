@@ -448,6 +448,40 @@ test('loadIslandManifest: malformed JSON → null (no throw), cached', () => {
   expect(loadIslandManifest('broken', dir)).toBeNull()
 })
 
+test('loadIslandManifest: a PROJECT-RELATIVE sourcePath is resolved to an absolute path against cwd', () => {
+  // B6: the manifest now ships project-relative sourcePaths (no leaked absolute
+  // build path). The SSR import in resolveIslandContext needs an absolute path,
+  // so loadIslandManifest rehydrates each relative sourcePath against cwd.
+  // Absolute sourcePaths pass through untouched (back-compat with old manifests).
+  const dir = mkdtempSync(path.join(tmpdir(), 'brust-islands-rel-'))
+  const manifest = [
+    {
+      component: 'Counter',
+      instance: 0,
+      propsPath: 'data.counter',
+      ssr: true,
+      hydrate: 'load',
+      sourcePath: 'components/Counter.tsx',
+    },
+    {
+      component: 'Legacy',
+      instance: 1,
+      propsPath: '',
+      ssr: false,
+      hydrate: 'load',
+      sourcePath: '/already/absolute/Legacy.tsx',
+    },
+  ]
+  writeFileSync(path.join(dir, 'relpage.islands.json'), JSON.stringify(manifest))
+
+  const loaded = loadIslandManifest('relpage', dir)
+  expect(loaded).not.toBeNull()
+  expect(loaded![0]!.sourcePath).toBe(path.resolve(process.cwd(), 'components/Counter.tsx'))
+  expect(path.isAbsolute(loaded![0]!.sourcePath)).toBe(true)
+  // Absolute path untouched.
+  expect(loaded![1]!.sourcePath).toBe('/already/absolute/Legacy.tsx')
+})
+
 describe('resolveComponentContext', () => {
   let dir: string
 

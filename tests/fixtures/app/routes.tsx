@@ -122,6 +122,18 @@ export const routes = defineRoutes([
     native: true,
     loader: async () => ({ mode: 'r42' }),
   },
+  // B7 — native store-snapshot SSR. Reuses NativeDataAttr (a BrustPage document);
+  // loader seeds the per-request `counter` store from ?seed=N (mirrors /store-demo).
+  {
+    path: '/_test/native-store',
+    Component: NativeDataAttr,
+    native: true,
+    loader: async ({ req }) => {
+      const seed = Number(req.search['seed'] ?? '0')
+      counter.value.set(Number.isFinite(seed) ? seed : 0)
+      return { mode: 'store' }
+    },
+  },
   // T4 — native <Outlet> nested-route E2E. A native PARENT layout
   // (NativeOutletLayout, BrustPage shell + <nav> + <main><Outlet/></main>)
   // wrapping a native LEAF fragment (NativeOutletLeaf). The build composes the

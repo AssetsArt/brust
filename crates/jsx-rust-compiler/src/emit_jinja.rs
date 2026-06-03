@@ -148,6 +148,11 @@ fn emit_node(node: &JsxNode, out: &mut String) {
                     out.push('>');
                 }
             }
+            // B7 store-snapshot SSR: a framework-owned slot the JS native renderer fills
+            // with the defineStore snapshot <script>(s) (empty string when no store was
+            // touched). RAW — framework-controlled markup, not a user value; brust's
+            // minijinja is AutoEscape::None so `| safe` documents intent.
+            out.push_str("{{ __brust_store__ | safe }}");
             out.push_str("</head><body");
             if let Some(c) = body_class {
                 emit_head_attr(out, "class", c);
@@ -930,6 +935,25 @@ mod tests {
         assert!(
             out.contains("<meta name=\"description\" content=\"{{ (d.desc) | e }}\"/>"),
             "unexpected output: {out}"
+        );
+    }
+
+    #[test]
+    fn document_emits_store_snapshot_slot_after_app_css_before_head_close() {
+        // B7 store-snapshot SSR: the framework-owned `__brust_store__` slot must
+        // sit in <head>, after the auto-injected app.css link and before
+        // </head>, so the JS native renderer can fill it with the defineStore
+        // snapshot.
+        let ir = document_with(None, None);
+        let out = emit(&component(ir));
+        let link = out.find("/_brust/css/app.css").unwrap();
+        let slot = out
+            .find("{{ __brust_store__ | safe }}")
+            .expect("store slot emitted");
+        let head_close = out.find("</head>").unwrap();
+        assert!(
+            link < slot && slot < head_close,
+            "slot after app.css link, before </head>: {out}"
         );
     }
 }
