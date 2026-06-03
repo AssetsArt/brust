@@ -459,6 +459,39 @@ export const brust = {
       const jinjaDir = prebuilt
         ? path.join(distDir!, 'jinja')
         : path.resolve(process.cwd(), '.brust/jinja')
+
+      // Source mode (`bun run <entry>`, not prebuilt): the emitted native
+      // templates in `.brust/jinja` may be missing (never built) or older than
+      // the authored `.tsx` (edited since). Recompile them at boot so a native
+      // route doesn't 404/stale without a prior `brust build` — the "must build
+      // first" papercut. `brust dev` already emits before this boot, so the
+      // staleness check is a no-op there; prebuilt ships the templates and skips
+      // entirely. A compile failure warns and continues (non-native routes still
+      // boot). The heavy emitter is imported lazily so it never enters the hot
+      // path (or the prebuilt bundle's live code).
+      if (!prebuilt) {
+        const routesPath = path.join(scanRoot, 'routes.tsx')
+        if (existsSync(routesPath)) {
+          const { isJinjaStale } = await import('./cli/jinja-staleness.ts')
+          if (isJinjaStale(scanRoot, jinjaDir)) {
+            try {
+              const { emitNativeTemplates } = await import('./cli/native-routes-emit.ts')
+              await emitNativeTemplates({
+                entryFile: routesPath,
+                flatRoutes: opts.routes as { nativeTemplate?: string }[],
+                outDir: jinjaDir,
+                repoRoot: process.cwd(),
+              })
+              console.log(`[brust] main: compiled native templates → ${jinjaDir}`)
+            } catch (err) {
+              console.warn(
+                `[brust] main: native template recompile failed (run \`brust build\`): ${(err as Error).message}`,
+              )
+            }
+          }
+        }
+      }
+
       configureJinjaDir(jinjaDir)
       loadJinjaOnce(jinjaDir)
       if (prebuilt && existsSync(jinjaDir)) {
