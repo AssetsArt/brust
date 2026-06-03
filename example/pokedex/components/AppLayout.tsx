@@ -11,6 +11,7 @@
 // AppLayout owns the single <main> (leaves are fragments in the <Outlet/> slot).
 import { BrustPage, Island, Outlet } from 'brustjs'
 import type { TeamMember } from '../lib/types'
+import Breadcrumb from './Breadcrumb'
 import NavLink from './NavLink'
 import NavPreloader from './NavPreloader'
 import TeamBuilder from './TeamBuilder'
@@ -60,7 +61,7 @@ export default function AppLayout({
               PokéDex
             </a>
             <span>›</span>
-            <b className="text-slate-600 dark:text-slate-300">{crumb}</b>
+            <Breadcrumb native crumb={crumb} />
           </div>
         </header>
 
