@@ -49,7 +49,7 @@ export default function AppLayout({
             </div>
             <span className="aa-sidebar__env">native</span>
           </div>
-          <nav className="aa-sidebar__nav">
+          <nav className="aa-sidebar__nav" data-brust-active-nav>
             <div className="aa-sidebar__group-title">Pokédex</div>
             {active === 'list' ? (
               <a className="aa-nav-item is-active" href="/">
