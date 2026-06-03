@@ -51,16 +51,24 @@ Example:
 
 If `path` already contains a `?...`, the option `query` is **merged on top**:
 - The base params come from `path`'s own query string.
-- For each key in the `query` object, that key's existing base values are
-  **removed**, then the object's value(s) are appended. (i.e. the option key
-  REPLACES the base key, it does not duplicate.) Keys present only in the base are
-  preserved; keys present only in the object are added.
+- For each key in the `query` object, **all** existing base occurrences of that key
+  are **removed** (`params.delete(k)` drops every duplicate), then the object's
+  value(s) are appended. (i.e. the option key REPLACES the base key — including a
+  base key that appeared multiple times — it does not duplicate.) Keys present
+  only in the base are preserved; keys present only in the object are added.
 - `null`/`undefined` in the object still means "omit" — and because the base key
   was removed first, passing `{ q: null }` against `path='/x?q=1'` **deletes** `q`.
 
 This is implemented by parsing `path`'s query into `URLSearchParams`, then
 `params.delete(k)` + `params.append(k, …)` per object key (skipping null/undef
-after the delete).
+after the delete). **Ordering note:** delete-then-append moves a replaced key to
+the END of the param list, so `navigate('/x?a=1&b=2', { query: { a: 9 } })` yields
+`/x?b=2&a=9` (NOT `a=9&b=2`). Functionally identical; tests assert via parsed
+`URLSearchParams` equality, not exact string order. To keep `buildSearch` and the
+merge path from duplicating the per-key coercion rules, both go through one
+internal `applyQuery(params: URLSearchParams, query: QueryInit): void` helper;
+`buildSearch` calls it on a fresh `URLSearchParams` and the merge calls it on the
+params parsed from `path`.
 
 ## High-level architecture — registered navigator (layering-clean)
 
@@ -106,26 +114,34 @@ identically. No change to the observe side.
 | `runtime/navigation/navigate.ts` | NEW — `navigate()`, `buildSearch()`, `NavigateOptions`/`QueryInit`/`QueryValue` types |
 | `runtime/navigation/store.ts` | `_navigator` slot in `NavInternal` + `createNav`; `registerNavigator(fn)`; a `_getNavigator()`/internal accessor; reset clears it |
 | `runtime/navigation/index.ts` | re-export `navigate`, `NavigateOptions`, `QueryInit`, `QueryValue` |
-| `runtime/islands/bootstrap.ts` | `navigate(url, mode)` signature; 3 call-site updates; `registerNavigator(...)` at boot |
+| `runtime/islands/bootstrap.ts` | `navigate(url, mode)` signature; 3 call-site updates; add `registerNavigator` to the existing `'../navigation/store.ts'` import (line 19, where `__nav*` already comes from — NOT the barrel) + call it at boot |
+| `runtime/tsconfig.typecheck.json` | add `runtime/navigation/navigate.ts` to the explicit `files` array (treaty uses `files`, not `include` — an unlisted module is silently skipped) |
 
 ## Tests
 
 1. **`buildSearch` unit (`navigation/navigate.test.ts`):** empty → `''`; string/number/boolean
    coercion; array → repeated keys; null/undefined skipped; empty array → no key;
    key+array ordering deterministic; special chars encoded.
-2. **`navigate` unit (same file, DOM-free with a registered spy):** register a spy
+2. **`navigate` unit (same file, with a registered spy):** register a spy
    navigator via `registerNavigator`; assert `navigate('/x', { query:{a:1}, replace:true })`
-   calls the spy with the right `URL` (`/x?a=1`) and `replace=true`; assert the
-   merge case (`navigate('/x?a=1&b=2',{query:{a:9}})` → `/x?a=9&b=2`); assert
-   `{ a: null }` against `?a=1` deletes `a`. Use `__resetNavForTest()` between.
-   For the fallback path, assert that with NO navigator registered it does not
-   throw and (if feasibly stubbable) calls `location.assign` — otherwise cover the
-   "registered wins" branch and leave fallback to integration.
+   calls the spy with a `URL` whose `pathname==='/x'` + `searchParams` has `a=1`,
+   and `replace===true`; assert the merge case (`navigate('/x?a=1&b=2',{query:{a:9}})`
+   → a URL whose params are `{a:'9', b:'2'}`, asserted via parsed `URLSearchParams`
+   equality NOT exact-string order — the real string is `/x?b=2&a=9`); assert
+   `{ a: null }` against `?a=1` deletes `a`. Use `__resetNavForTest()` between. This
+   file needs `location.href` present to construct `new URL(...)`; the bootstrap
+   test harness installs happy-dom globals — reuse it, or set a minimal
+   `globalThis.location`. The **no-navigator fallback** (`location.assign`) is
+   covered in `bootstrap.test.ts` (#4 below), which already has the happy-dom DOM
+   harness — keep the registered-spy/buildSearch/merge cases here.
 3. **`store.ts` unit:** `registerNavigator` sets the slot on the singleton;
    `__resetNavForTest()` clears it (next access null).
-4. **bootstrap mode unit (extend existing bootstrap tests if present):** `'replace'`
-   → `history.replaceState`, `'none'` → no history write, `'push'` → `pushState`
-   (mock history; the existing bootstrap test harness shows the pattern).
+4. **bootstrap mode unit + fallback (`bootstrap.test.ts` — has the happy-dom harness):**
+   `'replace'` → `history.replaceState`, `'none'` → no history write, `'push'` →
+   `pushState` (mock history; the existing harness shows the pattern). ALSO the
+   `navigate()` no-navigator fallback: with `__resetNavForTest()` (navigator unset),
+   `navigate('/x')` calls `location.assign` (spy `globalThis.location.assign`) and
+   does not throw.
 5. **Integration smoke (manual, Phase 6):** in pokedex (or fixture), call
    `navigate('/type-chart')` from the console / a button and confirm SPA swap +
    `useNav()` phase transition, no full reload.
@@ -151,6 +167,14 @@ identically. No change to the observe side.
   (ergonomics choice; functionality is identical either way).
 - **No relative-path resolution** beyond `new URL(path, location.href)` (so `'./x'`
   / `'../x'` resolve against the current location, as the browser would).
+- **`#hash` in `path` is carried into the URL bar but inert for scroll.** `new URL`
+  preserves the hash and `pushState` writes it, but the SPA swap fetches
+  `/_brust/page${pathname}${search}` and hard-codes `scrollTo(0,0)`
+  (`bootstrap.ts:233`) — no hash deep-link scroll. Same behavior as the existing
+  cross-page click path.
+- **No same-URL dedup.** The click path no-ops a click on the current page
+  (`bootstrap.ts:257` `'reload'`); programmatic `navigate(currentUrl)` instead
+  refetches + re-swaps. Acceptable; callers that want a guard can check `nav.path()`.
 - **No navigation cancellation API** from `navigate()` — `onBeforeNavigate` already
   observes transitions; a veto/guard API is out of scope.
 - **No SSR/server use** — `navigate()` is a client action; it reads
@@ -159,8 +183,10 @@ identically. No change to the observe side.
 ## Open questions resolved at plan-time
 
 - **Where `registerNavigator` lives:** `store.ts` (owns the singleton). `navigate.ts`
-  imports the accessor from `store.ts`; bootstrap imports `registerNavigator` from
-  the navigation barrel (same as it imports `__nav*`).
+  imports the accessor from `store.ts`; bootstrap adds `registerNavigator` to its
+  existing **direct** `'../navigation/store.ts'` import (`bootstrap.ts:19`, where
+  `__nav*` already comes from — NOT the barrel, which doesn't re-export them).
+  `registerNavigator` is internal wiring; only `navigate` + types are barrel-exported.
 - **Pure helper boundary:** `buildSearch` takes only `QueryInit` and returns a
   string — no `location` access — so it unit-tests without a DOM and the URL
   resolution (`new URL(..., location.href)`) stays in `navigate()`.
