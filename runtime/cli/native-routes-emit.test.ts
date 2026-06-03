@@ -6,6 +6,7 @@ import { DIRECTIVES_BOOTSTRAP, ISLANDS_IMPORTMAP_AND_BOOTSTRAP } from '../island
 import {
   bakeDirectivesIfUsed,
   buildChainWrapperSource,
+  countMainTags,
   emitNativeTemplates,
   gatherChainSources,
   gatherComponentSources,
@@ -384,6 +385,18 @@ describe('gatherComponentSources', () => {
     )
 
     expect(() => gatherComponentSources(pagePath)).toThrow(/ambiguous component ident "Card"/)
+  })
+})
+
+describe('countMainTags', () => {
+  test('counts opening <main> tags (with attrs, self-closing, plain)', () => {
+    expect(countMainTags('<body><main class="x">a</main></body>')).toBe(1)
+    expect(countMainTags('<main>a</main><main>b</main>')).toBe(2)
+    expect(countMainTags('<main/>')).toBe(1)
+    expect(countMainTags('<body><div>no main</div></body>')).toBe(0)
+  })
+  test('does not match substrings like <maintenance>', () => {
+    expect(countMainTags('<maintenance>x</maintenance>')).toBe(0)
   })
 })
 

@@ -194,6 +194,14 @@ export function buildChainWrapperSource(chainNames: string[]): string {
   return `export default function ${leafName}__chain() { return ${jsx}; }`
 }
 
+/** Count opening `<main>` tags in a compiled template. SPA navigation extracts
+ * the FIRST `<main>…</main>` block (routes.ts), so a composed native template
+ * must contain exactly one `<main>` — the layout owns it and leaf fragments must
+ * not add their own. More than one silently truncates the SPA-nav payload. */
+export function countMainTags(template: string): number {
+  return (template.match(/<main[\s/>]/g) ?? []).length
+}
+
 /** Dev-only: splice the /_brust/dev WS client `<script>` into a compiled native
  * template so `native: true` (jinja) routes auto-reload like React-SSR routes.
  *
@@ -531,6 +539,17 @@ export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<vo
 
     // Print non-fatal compiler warnings to stderr.
     for (const w of compiled.warnings ?? []) process.stderr.write(`brust: ${w}\n`)
+
+    // SPA navigation extracts the FIRST <main>…</main> block, so a native route
+    // template must hold exactly one <main>. More than one (typically a leaf
+    // fragment adding its own under a layout that already owns one) silently
+    // truncates the nav payload — warn at build time (convention: layout owns <main>).
+    if (countMainTags(compiled.template) > 1) {
+      process.stderr.write(
+        `brust: native route "${name}" has more than one <main> — SPA navigation extracts only the first <main>…</main>. ` +
+          `Keep a single <main> (the layout owns it; leaf fragments must not add their own).\n`,
+      )
+    }
 
     // Dev-only: native routes don't pass through the React renderer's dev-client
     // injection, so splice the /_brust/dev WS script in here. reEmitJinja() runs
