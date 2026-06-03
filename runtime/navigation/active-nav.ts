@@ -8,20 +8,36 @@
 import { effect } from '../store/signal.ts'
 import { nav, type NavPhase } from './store.ts'
 
-let installed = false
+// The install guard lives on globalThis (like __BRUST_NAV__), NOT as a module
+// `let`: every Bun.build island chunk inlines its own copy of this module, so a
+// module-local flag would not stop a second chunk from installing a duplicate
+// pair of effects (both resolve the same singleton signals → double reconcile).
+interface ActiveNavState {
+  installed: boolean
+  disposers: Array<() => void>
+}
+const GA = globalThis as { __BRUST_ACTIVE_NAV__?: ActiveNavState }
+function activeNavState(): ActiveNavState {
+  if (!GA.__BRUST_ACTIVE_NAV__) GA.__BRUST_ACTIVE_NAV__ = { installed: false, disposers: [] }
+  return GA.__BRUST_ACTIVE_NAV__
+}
 
 export function installActiveNav(): void {
-  if (installed) return
-  installed = true
-  // effect() runs eagerly once and re-runs whenever a signal it read changes.
-  effect(() => {
-    const path = nav.path()
-    reconcileActiveLinks(path)
-  })
-  effect(() => {
-    const phase = nav.phase()
-    setHtmlNav(phase)
-  })
+  const a = activeNavState()
+  if (a.installed) return
+  a.installed = true
+  // effect() runs eagerly once and re-runs whenever a signal it read changes;
+  // it returns a disposer we keep so __resetActiveNavForTest can unsubscribe.
+  a.disposers = [
+    effect(() => {
+      const path = nav.path()
+      reconcileActiveLinks(path)
+    }),
+    effect(() => {
+      const phase = nav.phase()
+      setHtmlNav(phase)
+    }),
+  ]
 }
 
 function setHtmlNav(phase: NavPhase): void {
@@ -50,8 +66,10 @@ function reconcileActiveLinks(currentPath: string): void {
   }
 }
 
-// Test-only: allow re-install after __resetNavForTest so the effect rebinds to
-// the fresh singleton.
+// Test-only: dispose the installed effects and clear the guard so a subsequent
+// installActiveNav() rebinds to the fresh singleton (after __resetNavForTest).
 export function __resetActiveNavForTest(): void {
-  installed = false
+  const a = activeNavState()
+  for (const d of a.disposers) d()
+  GA.__BRUST_ACTIVE_NAV__ = undefined
 }

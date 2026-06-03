@@ -9,7 +9,7 @@
 // signals share their reactive tracker cross-chunk via Symbol.for (see
 // store/signal.ts), but the bag OBJECT must also be shared or each Bun.build
 // chunk would build its own — the stash gives one object identity for all chunks.
-import { signal, type Signal } from '../store/signal.ts'
+import { batch, signal, type Signal } from '../store/signal.ts'
 
 export type NavPhase = 'idle' | 'loading' | 'success' | 'error'
 
@@ -67,7 +67,11 @@ function store(): NavInternal {
 // so (a) every chunk's `nav` points at the one globalThis bag, and (b) tests that
 // reset the singleton see the fresh signals.
 export const nav: NavStore = new Proxy({} as NavStore, {
-  get(_t, prop: string) {
+  get(_t, prop: string | symbol) {
+    // Symbol keys (Symbol.toPrimitive, Symbol.for('brust.signal') brand probes,
+    // React DevTools, etc.) are never store fields — return undefined without
+    // forcing a lazy singleton init.
+    if (typeof prop !== 'string') return undefined
     return (store() as unknown as Record<string, unknown>)[prop]
   },
 })
@@ -110,46 +114,66 @@ export function onNavigateError(cb: ErrorCb): () => void {
   return () => s._error.delete(cb)
 }
 
+// Each lifecycle mutator writes several signals. We wrap the writes in batch()
+// so a consumer effect reading multiple fields (e.g. nav.path() + nav.phase())
+// re-runs ONCE on the settled state instead of firing on each torn intermediate
+// write. The lifecycle callbacks (_before/_success/_error) and emit() run AFTER
+// the batch so they observe fully-committed state.
 export function __navInit(path: string, search: string): void {
   const s = store()
-  s.path.set(path)
-  s.search.set(search)
-  s.phase.set('idle')
-  s.from.set(null)
-  s.to.set(null)
-  s.error.set(null)
+  batch(() => {
+    s.path.set(path)
+    s.search.set(search)
+    s.phase.set('idle')
+    s.from.set(null)
+    s.to.set(null)
+    s.error.set(null)
+  })
   emit(s)
 }
 
+// `toSearch` is intentionally unused during 'loading': search is part of the
+// COMMITTED state and is written by __navCommit, not while the fetch is pending.
+// Kept in the signature for call-site symmetry with __navCommit.
 export function __navStart(toPath: string, _toSearch: string): void {
   const s = store()
   const from = s.path()
-  s.from.set(from)
-  s.to.set(toPath)
-  s.error.set(null)
-  s.phase.set('loading')
+  batch(() => {
+    s.from.set(from)
+    s.to.set(toPath)
+    s.error.set(null)
+    s.phase.set('loading')
+  })
   for (const cb of [...s._before]) cb({ from, to: toPath })
   emit(s)
 }
 
 export function __navCommit(toPath: string, toSearch: string): void {
   const s = store()
-  s.path.set(toPath)
-  s.search.set(toSearch)
-  s.to.set(null)
-  s.error.set(null)
-  s.phase.set('success')
+  batch(() => {
+    s.path.set(toPath)
+    s.search.set(toSearch)
+    s.to.set(null)
+    s.error.set(null)
+    s.phase.set('success')
+  })
   const snap = getNavState()
   for (const cb of [...s._success]) cb(snap)
   emit(s)
 }
 
-export function __navError(toPath: string, error: Error): void {
+// Accepts `unknown` because the only caller is bootstrap's catch block (err is
+// `unknown` under strict TS); coerce non-Error throws (strings, DOMException)
+// into an Error so consumers always get a stable shape.
+export function __navError(toPath: string, error: unknown): void {
   const s = store()
-  s.to.set(null)
-  s.error.set(error)
-  s.phase.set('error')
-  for (const cb of [...s._error]) cb({ to: toPath, error })
+  const err = error instanceof Error ? error : new Error(String(error))
+  batch(() => {
+    s.to.set(null)
+    s.error.set(err)
+    s.phase.set('error')
+  })
+  for (const cb of [...s._error]) cb({ to: toPath, error: err })
   emit(s)
 }
 

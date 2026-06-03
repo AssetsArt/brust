@@ -95,3 +95,35 @@ test('<html data-brust-nav> is NOT treated as an active-nav container', () => {
   // link is outside any [data-brust-active-nav] container → untouched
   expect(document.querySelector('a')!.classList.contains('is-active')).toBe(false)
 })
+
+test('cold start: installActiveNav BEFORE __navInit reconciles once init commits the path', () => {
+  navMarkup('<a href="/">Home</a><a href="/type-chart">Chart</a>')
+  // install first — eager run sees path='' (no link matches), all inactive
+  installActiveNav()
+  expect(document.querySelectorAll('a')[0].classList.contains('is-active')).toBe(false)
+  // then init provides the real path → effect re-runs and reconciles
+  __navInit('/type-chart', '')
+  const links = document.querySelectorAll('a')
+  expect(links[0].classList.contains('is-active')).toBe(false)
+  expect(links[1].classList.contains('is-active')).toBe(true)
+})
+
+test('multiple [data-brust-active-nav] containers each reconcile', () => {
+  document.body.innerHTML =
+    '<nav data-brust-active-nav id="side"><a href="/">Home</a><a href="/chart">Chart</a></nav>' +
+    '<nav data-brust-active-nav data-brust-active-match="prefix" id="crumb"><a href="/chart">C</a></nav>'
+  __navInit('/chart', '')
+  installActiveNav()
+  const side = document.querySelectorAll('#side a')
+  const crumb = document.querySelector('#crumb a')!
+  expect(side[0].classList.contains('is-active')).toBe(false)
+  expect(side[1].classList.contains('is-active')).toBe(true)
+  expect(crumb.classList.contains('is-active')).toBe(true)
+})
+
+test('no container present: a nav transition is a no-op, throws nothing', () => {
+  document.body.innerHTML = '<p>no nav here</p>'
+  __navInit('/', '')
+  expect(() => installActiveNav()).not.toThrow()
+  expect(() => __navCommit('/elsewhere', '')).not.toThrow()
+})

@@ -1,5 +1,6 @@
 // runtime/navigation/store.test.ts
 import { test, expect, beforeEach } from 'bun:test'
+import { effect } from '../store/signal.ts'
 import {
   nav,
   getNavState,
@@ -97,4 +98,30 @@ test('onBeforeNavigate unsubscribe stops delivery', () => {
   off()
   __navStart('/c', '')
   expect(n).toBe(1)
+})
+
+test('__navError coerces a non-Error throw into an Error', () => {
+  __navInit('/a', '')
+  __navStart('/b', '')
+  const seen: Array<{ to: string; error: Error }> = []
+  onNavigateError((e) => seen.push(e))
+  __navError('/b', 'string failure')
+  const s = getNavState()
+  expect(s.error).toBeInstanceOf(Error)
+  expect(s.error?.message).toBe('string failure')
+  expect(seen[0].error).toBeInstanceOf(Error)
+})
+
+test('batched writes: an effect reading path + phase re-runs once per transition', () => {
+  __navInit('/a', '')
+  const seen: Array<[string, string]> = []
+  // effect runs eagerly once, then once per settled transition (not per signal write)
+  const dispose = effect(() => {
+    seen.push([nav.path(), nav.phase()])
+  })
+  seen.length = 0 // drop the eager run
+  __navCommit('/b', '') // writes path + search + to + error + phase in one batch
+  dispose()
+  // exactly one re-run, observing fully-committed state (path AND phase settled)
+  expect(seen).toEqual([['/b', 'success']])
 })
