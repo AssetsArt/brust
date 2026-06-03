@@ -59,7 +59,7 @@ export const behavior = ({ props }: { props: AddToTeamProps }) => {
     }
   }
 
-  return { busy, inTeam, label, btnClass, init, toggle, disabled }
+  return { init, label, btnClass, toggle, disabled }
 }
 
 // default → jinja (server). The x-* directives are static string attributes the
