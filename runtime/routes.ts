@@ -333,8 +333,12 @@ function validateRoute(r: Route, basePath: string): void {
     if (r.websocket !== undefined) {
       throw new Error(`Route ${where}: 'native: true' cannot coexist with 'websocket'`)
     }
+    // T2 — `native: true` MAY have children, but only if the ENTIRE subtree is
+    // also native. The build synthesizes a per-leaf wrapper that composes the
+    // whole route chain into one native template; a non-native node anywhere in
+    // that chain can't be inlined (it would render via React, breaking native).
     if (r.children !== undefined) {
-      throw new Error(`Route ${where}: 'native: true' cannot have nested children`)
+      assertNativeSubtree(r.children, where)
     }
     if (r.cache !== undefined) {
       throw new Error(`Route ${where}: 'native: true' cannot coexist with 'cache' (deferred)`)
@@ -366,6 +370,24 @@ function validateRoute(r: Route, basePath: string): void {
     }
     if (r.children !== undefined) {
       throw new Error(`Route ${where}: 'websocket' cannot have nested children`)
+    }
+  }
+}
+
+/** T2 — recursively assert every node in a native subtree is also `native: true`.
+ * A native chain is composed into one native template at build time, so a
+ * non-native node anywhere in the subtree would have to render via React,
+ * breaking the native fast path. */
+function assertNativeSubtree(children: Route[], where: string): void {
+  for (const child of children) {
+    if (child.native !== true) {
+      // Name the offending CHILD, not the native parent — `where` is the parent.
+      throw new Error(
+        `native route cannot mix native and non-native components in one chain (offending child: ${child.path ?? child.Component?.name ?? '(no path)'}, under: ${where})`,
+      )
+    }
+    if (child.children !== undefined) {
+      assertNativeSubtree(child.children, child.path ?? where)
     }
   }
 }
@@ -417,6 +439,17 @@ function makeFlat(chain: Route[], fullPath: string): FlatRoute {
   }
   const leaf = chain[chain.length - 1]
   const cache = leaf.cache
+  // T2 — a native leaf demands an all-native chain (the build composes the
+  // whole chain into one native template). Reject a native leaf reached through
+  // a non-native ancestor. NOTE: this is the PRIMARY (not redundant) guard for the
+  // non-native-parent → native-child direction — `assertNativeSubtree` only runs
+  // from a native PARENT (validateRoute's `if (r.native)` block), so a non-native
+  // parent never triggers it; this check is what catches that case.
+  if (leaf.native === true && chain.some((node) => node.native !== true)) {
+    throw new Error(
+      `native route cannot mix native and non-native components in one chain (route: ${leaf.path ?? fullPath})`,
+    )
+  }
   const nativeTemplate = leaf.native === true && leaf.Component ? leaf.Component.name : undefined
   return { fullPath, chain, middleware, errorBoundary, cache, nativeTemplate }
 }

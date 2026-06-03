@@ -275,17 +275,77 @@ test('flattenRoutes rejects native: true + sse', () => {
   ).toThrow(/cannot coexist with 'sse'/)
 })
 
-test('flattenRoutes rejects native: true + children', () => {
+function NamedLeaf() {
+  return null
+}
+
+test('flattenRoutes accepts native: true + children when the whole subtree is native', () => {
+  const flat = flattenRoutes([
+    {
+      path: '',
+      Component: NamedPage,
+      native: true,
+      children: [{ path: 'y', Component: NamedLeaf, native: true }],
+    } as Route,
+  ])
+  expect(flat).toHaveLength(1)
+  expect(flat[0]!.fullPath).toBe('/y')
+  // chain is parent → leaf, both native; nativeTemplate is the LEAF's name.
+  expect(flat[0]!.chain.map((c) => c.Component?.name)).toEqual(['NamedPage', 'NamedLeaf'])
+  expect(flat[0]!.nativeTemplate).toBe('NamedLeaf')
+})
+
+test('flattenRoutes accepts a deep native subtree (layout → mid → leaf, all native)', () => {
+  function NamedMid() {
+    return null
+  }
+  const flat = flattenRoutes([
+    {
+      path: '',
+      Component: NamedPage,
+      native: true,
+      children: [
+        {
+          path: 'a',
+          Component: NamedMid,
+          native: true,
+          children: [{ path: 'b', Component: NamedLeaf, native: true }],
+        },
+      ],
+    } as Route,
+  ])
+  expect(flat).toHaveLength(1)
+  expect(flat[0]!.chain.map((c) => c.Component?.name)).toEqual([
+    'NamedPage',
+    'NamedMid',
+    'NamedLeaf',
+  ])
+  expect(flat[0]!.nativeTemplate).toBe('NamedLeaf')
+})
+
+test('flattenRoutes rejects a native parent with a non-native child (mixed chain)', () => {
   expect(() =>
     flattenRoutes([
       {
-        path: '/x',
+        path: '',
         Component: NamedPage,
         native: true,
-        children: [{ path: 'y', Component: NamedPage }],
+        children: [{ path: 'y', Component: NamedLeaf }],
       } as Route,
     ]),
-  ).toThrow(/nested children/)
+  ).toThrow(/cannot mix native and non-native/)
+})
+
+test('flattenRoutes rejects a non-native parent with a native child (mixed chain)', () => {
+  expect(() =>
+    flattenRoutes([
+      {
+        path: '',
+        Component: NamedPage,
+        children: [{ path: 'y', Component: NamedLeaf, native: true }],
+      } as Route,
+    ]),
+  ).toThrow(/cannot mix native and non-native/)
 })
 
 test('flattenRoutes rejects native: true + cache (deferred)', () => {
