@@ -85,6 +85,13 @@ From `native-route-authoring-constraints`:
 - `<Island props={…}>` value must be a **single member path** (or omit props).
 - AppLayout owns the single `<main>`; leaves are fragments. Leaf loaders supply chrome fields.
 - Static Tailwind utility strings in `className` pass straight through the compiler (they're literals).
+- **AppLayout (and any native layout/page) MUST be single-return with NO local `const`/bindings above
+  the `return`** — a local binding soft-falls-back to an SSR component and loses the `<html>` shell
+  (documented trap). Precompute in the loader, destructure in the signature, return JSX directly.
+- **Slice 1 build MUST gate on `@custom-variant dark (...)`** — it's the one Tailwind v4 at-rule not yet
+  proven in this repo; if the `@tailwindcss/node` compile rejects the syntax, surface it on the FIRST
+  build (slice 1), not mid-redesign. (BLOCKED fallback: fall to `@variant dark (...)` or a plain
+  `[data-mode="dark"] &` selector layer.)
 
 ## DexFilter — the keyed-`x-for` showcase (detailed)
 
@@ -94,10 +101,13 @@ keyed reconcile so matching cards keep DOM identity (no image reload/flash) and 
 
 **Data in:** `browseLoader` fetches gen-1 (151) via one `fetchList(0,151)` (no per-item fetch; artwork
 derived from id) and precomputes `dexProps = JSON.stringify({ items: [{id,name,displayName,num,artwork,
-detailHref}] })`. Browse page renders `<DexFilter native x-props-from-loader />` — i.e. the JSX template
-carries `x-props="{{ (dexProps) | e }}"` via a member-path prop, same mechanism as `addProps` today.
+detailHref}] })`. Browse page renders `<DexFilter native data={dexProps} />` (the CONCRETE form, mirroring
+the working `<AddToTeamButton native data={addProps} />`); DexFilter's default JSX carries `x-props={data}`,
+which the compiler emits as `x-props="{{ (data) | e }}"` (XSS-safe). `mountElement` `JSON.parse`s it into
+the behavior's `props`. (There is no literal `x-props-from-loader` attribute — that was shorthand.)
 
-**Behavior** (`brustjs/store` signals, react-free):
+**Behavior** (imports pinned to `brustjs/store` for `signal`/`computed`/`effect` — NOT a React hook, NOT
+`brustjs/navigation`'s store; react-free, same as `ThemeToggle`/`AddToTeamButton`):
 ```
 behavior = ({ el, props }) => {
   const all = props.items as Card[]
@@ -168,8 +178,9 @@ example/pokedex/
     pokeapi.ts             # fetch helpers (port from backup; trim to what's used)
     loaders.ts             # homeLoader, browseLoader, detailLoader, typeChartLoader
     types.ts               # view-model types
-    team-store.ts          # server-side team store (or stores/team.ts client defineStore)
-  stores/team.ts           # defineStore('pokedex.team')
+    team-store.ts          # SERVER-side team store (loaders read teamStore.list() for teamProps)
+  stores/team.ts           # CLIENT defineStore('pokedex.team') shared by TeamBuilder + AddToTeamButton
+                           # — BOTH files exist and are distinct (server snapshot vs client store)
   components/
     AppLayout.tsx          # public shell: navbar + main + Outlet + footer + islands
     NavLink.tsx            # native directive (active via nav store)
@@ -249,6 +260,8 @@ diffed), but all markup/styling is rewritten with Tailwind. Old `aa-*`/`dex-*`/`
 3. **Browse + DexFilter:** `BrowsePage` + `browseLoader` (151 dataset, dexProps JSON) + `DexFilter`
    native directive (keyed x-for) ; build + smoke the filter.
 4. **Detail:** `DetailPage` + `detailLoader` + `AddToTeamButton` restyle; `notFound` 404.
-5. **Type chart + team dock:** `TypeChart` + `typeChartLoader`; `TeamBuilder` island restyle (use keyed
-   x-for for the team list too, if cheap).
+5. **Type chart + team dock:** `TypeChart` + `typeChartLoader`; `TeamBuilder` island restyle. (TeamBuilder
+   stays a React island — it keys its list with React `key=`; do NOT convert it to a native directive /
+   keyed `x-for`. The two reconcile systems must not be conflated. keyed `x-for` is dogfooded ONLY by
+   DexFilter in slice 3.)
 6. **Polish + verify:** README, full browser smoke pass, scope/diff check.
