@@ -58,6 +58,9 @@ export interface BrustPageProps {
   head?: HeadEntry[]
   /** Page body — rendered inside `<body>`. */
   children?: ReactNode
+  /** Arbitrary `data-*` on `<html>` (e.g. `data-mode="dark"`). String literal
+   *  or loader member-path on the native path. */
+  [dataAttr: `data-${string}`]: string | undefined
 }
 
 /** React mirror of one head entry (non-native path). Native routes emit these
@@ -79,10 +82,12 @@ export function BrustPage({
   description,
   head,
   children,
+  ...rest
 }: BrustPageProps): ReactNode {
+  const dataAttrs = Object.fromEntries(Object.entries(rest).filter(([k]) => k.startsWith('data-')))
   return createElement(
     'html',
-    { lang, className },
+    { lang, className, ...dataAttrs },
     createElement(
       'head',
       null,

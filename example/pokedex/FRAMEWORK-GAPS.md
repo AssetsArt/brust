@@ -27,7 +27,7 @@ S13 SPA-nav (รอบก่อน) · **native layout (chrome ซ้ำ 3 ห�
 แล้ว (เดิม verbatim = ช่อง XSS จริง — request param ไหลเข้า `<title>` ได้).
 
 **ยังเปิด:** S7 (typed treaty error) · S2 (loader cache) ·
-native **Outlet/router-level layout injection** · dark-mode `data-*` (`<html>` only) ·
+native **Outlet/router-level layout injection** ·
 **BY-DESIGN:** S3 (Suspense). · **✅ static/public asset serving** (boot manifest, static-wins) ·
 **✅ `<BrustPage head={[…]}>` typed head array + `dangerouslySetInnerHTML`**
 (favicon auto-ref ปิดแล้ว: `head={[{tag:'link',rel:'icon',href:'/favicon.svg'}]}`) ·
@@ -388,14 +388,16 @@ bare-fragment map body (`MapShapeNotSupported`).
 
 ---
 
-## ○ dark-mode only — `<BrustPage>` ตั้งได้แค่ html class · CONFIRMED (เลี่ยงแล้ว)
+## ○ dark-mode only — `<BrustPage>` ตั้งได้แค่ html class · ✅ FIXED (data-* บน `<html>` ได้แล้ว)
 
-design ใช้ `[data-mode="dark"]` toggle. `<BrustPage>` ตั้งได้แค่ `lang`/`className` (html class)
-ไม่ตั้ง `data-*` ตามใจ → rewrite CSS เป็น `.dark` แล้ว `<html class="dark">` (dark อย่างเดียว,
-ตัด toggle). theme toggle จริงต้องเป็น island หรือ cookie round-trip.
+design ใช้ `[data-mode="dark"]` toggle. `<BrustPage>` **ตอนนี้รับ arbitrary `data-*` บน `<html>` ได้แล้ว**
+(literal + member-path, HTML-escaped, ชื่อ lowercase) — `[data-mode]`-style theming hooks ทำงานได้.
+ตัวอย่าง: `<BrustPage data-mode="dark">` → `<html lang="en" data-mode="dark">`.
 
-> อัปเดต: หลัง S8 `className={d.themeClass}` เป็น **member-path ได้แล้ว** (theme class แบบ
-> per-request ผ่าน cookie→loader ทำได้) — แต่ `<BrustPage>` ยังตั้ง `data-*` ตามใจไม่ได้ (ยังเปิด).
+**FULL dark-mode toggle** (cookie round-trip + toggle control island) ยังเลื่อน (composite feature) —
+แต่ฝั่ง framework unblocked แล้ว: `className={d.themeClass}` (member-path, S8) + `data-mode={d.mode}` ทำได้พร้อมกัน.
+
+> workaround เดิม: rewrite CSS เป็น `.dark` แล้ว `<html class="dark">` (ตัด toggle). ตอนนี้ไม่จำเป็นแล้ว.
 
 ---
 

@@ -146,3 +146,10 @@ test('GET /_test/nested-map — nested .map() renders nested HTML', async () => 
   expect(body.indexOf('>a<')).toBeLessThan(body.indexOf('>b<'))
   expect(body.indexOf('>b<')).toBeLessThan(body.indexOf('>c<'))
 })
+
+test('GET /_test/data-attr — BrustPage data-* lands on <html>', async () => {
+  const res = await fetch(`${BASE_URL}/_test/data-attr`)
+  expect(res.status).toBe(200)
+  const body = await res.text()
+  expect(body).toContain('<html lang="en" data-mode="dark" data-rev="r42">')
+})

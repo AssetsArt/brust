@@ -11,6 +11,7 @@ import StoreDemo     from './pages/StoreDemo'
 import { counter }   from './stores/counter'
 import NativeProfile from './pages/NativeProfile'
 import NativeNestedMap from './pages/NativeNestedMap'
+import NativeDataAttr  from './pages/NativeDataAttr'
 import NativeIslandPage from './NativeIslandPage'
 import NativeSsrIslandPage from './NativeSsrIslandPage'
 import NativeTwoIslandPage from './NativeTwoIslandPage'
@@ -111,6 +112,13 @@ export const routes = defineRoutes([
         { id: 'r1', cells: [{ label: 'c' }] },
       ],
     }),
+  },
+  // BrustPage data-* on <html> coverage.
+  {
+    path: '/_test/data-attr',
+    Component: NativeDataAttr,
+    native: true,
+    loader: async () => ({ mode: 'r42' }),
   },
   // Sub-project J / native islands — native: true route hosting a CLIENT-ONLY
   // <Island> (no ssr). The compiled .jinja emits an empty data-brust-csr mount
