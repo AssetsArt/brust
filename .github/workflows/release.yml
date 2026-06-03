@@ -87,11 +87,18 @@ jobs:
 
       # cargo-zigbuild backs napi's --cross-compile; zig cc provides the musl
       # sysroot per target. Only the aarch64-musl leg sets setup_zig.
+      #
+      # Install zig via a plain download (NOT mlugg/setup-zig@v2): that action
+      # still ships a Node.js-20 runtime with no node24 release upstream, which
+      # GitHub deprecates (Node 20 actions forced onto node24 on 2026-06-16).
+      # A direct tarball fetch is node-free, so the release pipeline carries no
+      # deprecated-runtime action. Runner is ubuntu-latest (x86_64 host); zig
+      # cross-compiles to aarch64-musl, so the linux-x86_64 build is correct.
       - name: Setup zig (--cross-compile targets)
         if: matrix.setup_zig
-        uses: mlugg/setup-zig@v2
-        with:
-          version: 0.13.0
+        run: |
+          curl -fsSL https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz | tar -xJ
+          echo "$PWD/zig-linux-x86_64-0.13.0" >> "$GITHUB_PATH"
       - name: Install cargo-zigbuild (--cross-compile targets)
         if: matrix.setup_zig
         run: cargo install --locked cargo-zigbuild
