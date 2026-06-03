@@ -27,7 +27,7 @@ S13 SPA-nav (รอบก่อน) · **native layout (chrome ซ้ำ 3 ห�
 แล้ว (เดิม verbatim = ช่อง XSS จริง — request param ไหลเข้า `<title>` ได้).
 
 **ยังเปิด:** S7 (typed treaty error) · S2 (loader cache) ·
-native **Outlet/router-level layout injection** · nested `.map()` · dark-mode `data-*` (`<html>` only) ·
+native **Outlet/router-level layout injection** · dark-mode `data-*` (`<html>` only) ·
 **BY-DESIGN:** S3 (Suspense). · **✅ static/public asset serving** (boot manifest, static-wins) ·
 **✅ `<BrustPage head={[…]}>` typed head array + `dangerouslySetInnerHTML`**
 (favicon auto-ref ปิดแล้ว: `head={[{tag:'link',rel:'icon',href:'/favicon.svg'}]}`) ·
@@ -367,11 +367,24 @@ className ternary. **dogfood:** ทั้ง 3 หน้าทิ้ง sidebar/
 
 ---
 
-## ○ nested `.map()` บน native ไม่มี fixture ยืนยัน · เลี่ยงไว้ก่อน
+## ○ nested `.map()` บน native · ✅ FIXED (verified + dogfooded)
 
-type chart 18×18 ถ้าทำ `rows.map(r => …r.cells.map(c => …))` (map ซ้อน map) ไม่มี golden
-fixture รับรอง เลย **flatten เป็น array เดียว 19×19 ใน loader** แล้ว `.map()` ชั้นเดียวลง CSS grid
-(`TypeChartData.cells`). ปลอดภัยกว่า + ได้ผลสวย.
+**fix:** nested `.map()` **ทำงานบน native path อยู่แล้ว** (compiler recurse เข้า
+`lower_call_as_map` ต่อ child ที่เป็น `.map()`, clone scope + push iter binding → inner body
+resolve outer binding ได้). gap จริงคือ "ไม่มี fixture ยืนยัน เลยเลี่ยง" ไม่ใช่ compiler พัง.
+รอบนี้ lock ด้วย **5 golden tests** (`native_nested_map_*` ใน `jsx-rust-compiler/src/lib.rs`:
+member source · inner refs outer binding · 3-level · binding-is-array · per-item conditional)
++ **runtime render test** (`tests/jinja-route.test.ts` route `/_test/nested-map` → nested
+`{% for %}` render ถูกผ่าน loader→SAB→minijinja). **dogfood:** type chart เลิก flatten —
+`TypeChartData.rows[].cells[]` render ด้วย `rows.map(r => r.cells.map(c => …))` (`.dex-tc__row
+{ display: contents }` คง CSS grid พิกเซลเท่าเดิม). ดู spec/plan
+`docs/superpowers/specs/2026-06-03-native-nested-map-verify-{design,plan}.md`.
+
+**อาการเดิม:** type chart 18×18 `rows.map(r => …r.cells.map(c => …))` ไม่มี golden fixture
+รับรอง เลย flatten เป็น array เดียว 19×19 ใน loader แล้ว `.map()` ชั้นเดียวลง CSS grid.
+
+**ยังเปิด (unchanged):** two-arg `(item, idx)` map (`MapIndexParamNotSupported`),
+bare-fragment map body (`MapShapeNotSupported`).
 
 ---
 

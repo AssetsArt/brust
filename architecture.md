@@ -598,6 +598,20 @@ translate: member-path truthiness, comparison (`=== !== > < >= <=`), logical
 (`&& || !`). Every IR walker recurses into both branches, so an island or SSR
 component inside a conditional branch is still collected and hydrated.
 
+### List rendering — `.map()` (incl. nested)
+
+`xs.map((x) => <li>{x.name}</li>)` lowers to `JsxNode::Map` → minijinja
+`{% for x in xs %} … {% endfor %}`. The map source is a member-path
+(`data.items`, `r.cells`) or an iter binding that is itself an array
+(`matrix.map((row) => row.map(…))`). **Nesting works to any depth** — a `.map()`
+in a child position re-enters `lower_call_as_map`, which clones the scope and
+pushes the new iter binding, so the inner body still resolves the outer binding
+(`rows.map((r) => r.cells.map((c) => <td>{r.type}:{c.label}</td>))`). Per-item
+conditionals (`c.hot ? <td/> : <td/>`) compose inside a map body. Still rejected:
+the two-arg `(item, idx)` form and a bare-fragment map body. (Golden tests:
+`native_nested_map_*` in `jsx-rust-compiler/src/lib.rs`; runtime render coverage
+in `tests/jinja-route.test.ts`.)
+
 ### Native inline — `<Comp native/>`
 
 `<Comp native/>` expands a component's JSX into the route template **at compile
