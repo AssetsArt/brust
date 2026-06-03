@@ -87,12 +87,17 @@ export async function listLoader({ req }: LoaderCtx): Promise<ListData> {
     active: 'list',
     crumb: 'All Pokémon',
     teamProps: { teamInitial: teamStore.list() },
+    mode: req.cookies.mode === 'light' ? 'light' : 'dark',
   }
 }
 
-export async function detailLoader({ params }: LoaderCtx): Promise<DetailData | NativeVerdict> {
+export async function detailLoader({
+  params,
+  req,
+}: LoaderCtx): Promise<DetailData | NativeVerdict> {
   const name = params?.name ?? ''
-  const empty = emptyDetail(name)
+  const mode = req.cookies.mode === 'light' ? 'light' : 'dark'
+  const empty = emptyDetail(name, mode)
 
   const p = await fetchPokemon(name)
   // GAP S9 (FIXED): native loaders can now `return notFound(data)` to render the
@@ -153,6 +158,7 @@ export async function detailLoader({ params }: LoaderCtx): Promise<DetailData | 
     title: `${cap(p.name)} · PokéDex`,
     active: 'list',
     crumb: cap(p.name),
+    mode,
     name: p.name,
     id: p.id,
     displayName: cap(p.name),
@@ -186,13 +192,14 @@ export async function detailLoader({ params }: LoaderCtx): Promise<DetailData | 
   }
 }
 
-function emptyDetail(name: string): DetailData {
+function emptyDetail(name: string, mode: 'dark' | 'light'): DetailData {
   return {
     notFound: true,
     // Chrome fields (ChromeData) read by AppLayout from the merged context.
     title: `${cap(name)} · PokéDex`,
     active: 'list',
     crumb: cap(name),
+    mode,
     name,
     id: 0,
     displayName: cap(name),
@@ -244,7 +251,7 @@ const SHORT: Record<string, string> = {
   fairy: 'FAI',
 }
 
-export async function typeChartLoader(): Promise<TypeChartData> {
+export async function typeChartLoader({ req }: LoaderCtx): Promise<TypeChartData> {
   // Fan out 18 distinct type fetches with Promise.all; each goes through
   // cachedFetch (S2), so duplicate in-flight GETs within the request dedupe.
   const relations = await Promise.all(ALL_TYPES.map((t) => fetchTypeRelations(t)))
@@ -327,5 +334,6 @@ export async function typeChartLoader(): Promise<TypeChartData> {
     active: 'typechart',
     crumb: 'Type chart',
     teamProps: { teamInitial: teamStore.list() },
+    mode: req.cookies.mode === 'light' ? 'light' : 'dark',
   }
 }

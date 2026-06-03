@@ -2,9 +2,9 @@
    PokéDex app.css — AssetsArt Design System (tokens + components) +
    a PokéDex (.dex-*) layer that replaces the prototype's inline styles.
    ---------------------------------------------------------------------
-   NOTE: dark-mode only. The design's [data-mode="dark"] selectors are
-   rewritten to .dark, set via <BrustPage className="dark"> (BrustPage
-   only sets <html class>, not arbitrary data-* attrs — see GAPS S8).
+   NOTE: light + dark. :root holds the LIGHT defaults; [data-mode="dark"]
+   remaps them. The mode is set on <html data-mode={mode}> via BrustPage's
+   data-* support, driven by the `mode` cookie + the native ThemeToggle.
    Remote @import of Google Fonts is dropped (the css pipeline runs through
    @tailwindcss/node); we rely on the system-font fallbacks in the stacks.
    ===================================================================== */
@@ -328,7 +328,7 @@
    The product (Cloud Server Portal) defaults to DARK; marketing + first-run
    default to LIGHT.
    ===================================================================== */
-.dark {
+[data-mode="dark"] {
   --ink-0:    #14171F;
   --ink-25:   #181B25;
   --ink-50:   #1C2030;   /* card surface */
@@ -445,7 +445,7 @@ a:hover { text-decoration: underline; }
 code, pre { font-family: var(--font-mono); }
 
 ::selection { background: var(--primary-200); color: var(--primary-900); }
-.dark ::selection { background: rgba(127,63,151,0.45); color: #fff; }
+[data-mode="dark"] ::selection { background: rgba(127,63,151,0.45); color: #fff; }
 
 /* =====================================================================
    TYPE UTILITIES — opt-in semantic typography classes
@@ -642,7 +642,7 @@ code, pre { font-family: var(--font-mono); }
   --_fg: var(--primary-500);
   --_border: var(--primary-500);
 }
-.dark .aa-btn--outline { --_fg: var(--purple-300); --_border: var(--purple-400); }
+[data-mode="dark"] .aa-btn--outline { --_fg: var(--purple-300); --_border: var(--purple-400); }
 .aa-btn--danger {
   --_bg: var(--danger-600);
   --_bg-hover: var(--danger-700);
@@ -815,11 +815,11 @@ code, pre { font-family: var(--font-mono); }
 }
 
 /* dark-mode pill foreground gets lifted */
-.dark .aa-badge--success { color: #6BD9A4; }
-.dark .aa-badge--warning { color: #F0C76A; }
-.dark .aa-badge--danger  { color: #F195B2; }
-.dark .aa-badge--info    { color: #7BB6E2; }
-.dark .aa-badge--soft    { color: #C9A4D8; }
+[data-mode="dark"] .aa-badge--success { color: #6BD9A4; }
+[data-mode="dark"] .aa-badge--warning { color: #F0C76A; }
+[data-mode="dark"] .aa-badge--danger  { color: #F195B2; }
+[data-mode="dark"] .aa-badge--info    { color: #7BB6E2; }
+[data-mode="dark"] .aa-badge--soft    { color: #C9A4D8; }
 
 /* Status dot pill (used in tables) */
 .aa-pill {
@@ -843,10 +843,10 @@ code, pre { font-family: var(--font-mono); }
 .aa-pill--muted { background: var(--ink-100);    color: var(--text-tertiary); }
 .aa-pill--no-dot::before { display: none; }
 
-.dark .aa-pill--ok   { color: #6BD9A4; }
-.dark .aa-pill--warn { color: #F0C76A; }
-.dark .aa-pill--err  { color: #F195B2; }
-.dark .aa-pill--info { color: #7BB6E2; }
+[data-mode="dark"] .aa-pill--ok   { color: #6BD9A4; }
+[data-mode="dark"] .aa-pill--warn { color: #F0C76A; }
+[data-mode="dark"] .aa-pill--err  { color: #F195B2; }
+[data-mode="dark"] .aa-pill--info { color: #7BB6E2; }
 
 /* =====================================================================
    TABLE
@@ -903,8 +903,8 @@ code, pre { font-family: var(--font-mono); }
 .aa-tab[aria-selected="true"], .aa-tab.is-active {
   color: var(--primary-600); border-color: var(--primary-600); font-weight: var(--fw-semibold);
 }
-.dark .aa-tab[aria-selected="true"],
-.dark .aa-tab.is-active { color: var(--purple-300); border-color: var(--purple-400); }
+[data-mode="dark"] .aa-tab[aria-selected="true"],
+[data-mode="dark"] .aa-tab.is-active { color: var(--purple-300); border-color: var(--purple-400); }
 
 .aa-segmented {
   display: inline-flex; padding: 3px;
@@ -947,10 +947,10 @@ code, pre { font-family: var(--font-mono); }
 .aa-alert--danger  .aa-alert__icon { color: var(--danger-600); }
 
 /* dark-mode alert text */
-.dark .aa-alert--info    { color: #9DC4E6; }
-.dark .aa-alert--success { color: #93D6B0; }
-.dark .aa-alert--warning { color: #EFCC74; }
-.dark .aa-alert--danger  { color: #F195B2; }
+[data-mode="dark"] .aa-alert--info    { color: #9DC4E6; }
+[data-mode="dark"] .aa-alert--success { color: #93D6B0; }
+[data-mode="dark"] .aa-alert--warning { color: #EFCC74; }
+[data-mode="dark"] .aa-alert--danger  { color: #F195B2; }
 
 /* =====================================================================
    AVATAR
@@ -972,7 +972,7 @@ code, pre { font-family: var(--font-mono); }
 .aa-avatar--sm { width: 28px; height: 28px; font-size: var(--text-3xs); }
 .aa-avatar--lg { width: 44px; height: 44px; font-size: var(--text-md); }
 .aa-avatar--xl { width: 64px; height: 64px; font-size: var(--text-lg); }
-.dark .aa-avatar { color: var(--purple-200); }
+[data-mode="dark"] .aa-avatar { color: var(--purple-200); }
 
 /* =====================================================================
    PROGRESS
@@ -1027,8 +1027,8 @@ code, pre { font-family: var(--font-mono); }
 .aa-kpi__delta--up   { color: var(--success-600); }
 .aa-kpi__delta--down { color: var(--danger-600); }
 .aa-kpi__delta--neutral { color: var(--text-tertiary); }
-.dark .aa-kpi__delta--up   { color: #6BD9A4; }
-.dark .aa-kpi__delta--down { color: #F195B2; }
+[data-mode="dark"] .aa-kpi__delta--up   { color: #6BD9A4; }
+[data-mode="dark"] .aa-kpi__delta--down { color: #F195B2; }
 .aa-kpi__meta {
   display: inline-flex; align-items: center; gap: 6px;
   font-size: var(--text-xs);
@@ -1092,7 +1092,7 @@ code, pre { font-family: var(--font-mono); }
   letter-spacing: 0.08em;
   margin-left: auto;
 }
-.dark .aa-sidebar__env { color: #93D6B0; }
+[data-mode="dark"] .aa-sidebar__env { color: #93D6B0; }
 
 .aa-sidebar__nav {
   flex: 1;
@@ -1131,7 +1131,7 @@ code, pre { font-family: var(--font-mono); }
   color: var(--primary-700);
   font-weight: var(--fw-semibold);
 }
-.dark .aa-nav-item.is-active { color: #C9A4D8; }
+[data-mode="dark"] .aa-nav-item.is-active { color: #C9A4D8; }
 .aa-nav-item svg { width: 16px; height: 16px; flex: none; stroke-width: 1.75; }
 .aa-nav-item__count {
   margin-left: auto;
@@ -1146,7 +1146,7 @@ code, pre { font-family: var(--font-mono); }
 }
 .aa-nav-item.is-active .aa-nav-item__count { background: var(--primary-100); color: var(--primary-700); }
 .aa-nav-item__count--alert { background: var(--danger-50); color: var(--danger-700); }
-.dark .aa-nav-item__count--alert { color: #F195B2; }
+[data-mode="dark"] .aa-nav-item__count--alert { color: #F195B2; }
 
 .aa-sidebar__user {
   padding: 12px;
@@ -1302,7 +1302,7 @@ code, pre { font-family: var(--font-mono); }
 }
 .aa-toolbar__filter:hover { border-color: var(--ink-300); }
 .aa-toolbar__filter.is-active { border-color: var(--primary-500); background: var(--primary-50); color: var(--primary-700); }
-.dark .aa-toolbar__filter.is-active { color: #C9A4D8; }
+[data-mode="dark"] .aa-toolbar__filter.is-active { color: #C9A4D8; }
 .aa-toolbar__filter svg { width: 12px; height: 12px; stroke: currentColor; fill: none; stroke-width: 2; }
 
 /* Service / category chip */
@@ -1656,8 +1656,8 @@ code, pre { font-family: var(--font-mono); }
 .dex-tc__cell--weak  { background: var(--danger-50);  color: var(--danger-700); }
 .dex-tc__cell--none  { background: var(--ink-100);    color: var(--text-muted); }
 .dex-tc__swatch { min-height: auto; width: 22px; height: 22px; border-radius: 4px; border: none; }
-.dark .dex-tc__cell--super { color: #6BD9A4; }
-.dark .dex-tc__cell--weak  { color: #F195B2; }
+[data-mode="dark"] .dex-tc__cell--super { color: #6BD9A4; }
+[data-mode="dark"] .dex-tc__cell--weak  { color: #F195B2; }
 
 /* not found */
 .dex-notfound { display: grid; place-items: center; padding: 80px 20px; text-align: center; }

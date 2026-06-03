@@ -17,22 +17,25 @@
 import { BrustPage, Island, Outlet } from 'brustjs'
 import type { TeamMember } from '../lib/types'
 import TeamBuilder from './TeamBuilder'
+import ThemeToggle from './ThemeToggle'
 
 export default function AppLayout({
   title,
   active,
   crumb,
   teamProps,
+  mode,
 }: {
   title: string
   active: 'list' | 'typechart'
   crumb: string
   teamProps: { teamInitial: TeamMember[] }
+  mode: 'dark' | 'light'
 }) {
   return (
     <BrustPage
       lang="en"
-      className="dark"
+      data-mode={mode}
       title={title}
       head={[{ tag: 'link', rel: 'icon', href: '/favicon.svg' }]}
     >
@@ -87,6 +90,7 @@ export default function AppLayout({
               <span className="dex-crumb__sep">›</span>
               <b>{crumb}</b>
             </div>
+            <ThemeToggle native />
           </header>
 
           <div className="aa-content">

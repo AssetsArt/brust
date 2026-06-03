@@ -18,6 +18,7 @@ export interface ChromeData {
   active: 'list' | 'typechart' // which sidebar nav item gets is-active (S11 conditional)
   crumb: string // topbar breadcrumb leaf label
   teamProps: { teamInitial: TeamMember[] } // floating team-dock island initial state
+  mode: 'dark' | 'light' // theme, read from the `mode` cookie → <html data-mode={mode}>
 }
 
 /** A single list cell — derived from the list endpoint alone (no detail fetch,
