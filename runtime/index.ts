@@ -781,6 +781,11 @@ export type { BrustPageProps, HeadEntry } from './islands/brust-page.tsx'
 export { defineStore, signal, computed, effect, batch } from './store/index.ts'
 export type { StoreHandle, Snapshot, Signal, Computed } from './store/index.ts'
 
+// S2 — request-scoped loader cache/dedupe helpers. `runInRequestCache` (the
+// scope opener) is owned by the runtime route handler and intentionally NOT
+// exported.
+export { dedupe, cachedFetch } from './loader-cache.ts'
+
 export { buildIslands } from './islands/build.ts'
 export type { IslandsBuildResult, BuildIslandsOptions } from './islands/build.ts'
 

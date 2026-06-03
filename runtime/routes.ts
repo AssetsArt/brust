@@ -11,6 +11,7 @@ import { Buffer } from 'node:buffer'
 import * as native from './index.js'
 import { renderBranchStreaming } from './render/stream.ts'
 import { runInStoreContext, collectSnapshot } from './store/server-context.ts'
+import { runInRequestCache } from './loader-cache.ts'
 import {
   loadIslandManifest,
   resolveIslandContext,
@@ -22,6 +23,13 @@ import { isActionError, type ActionError, type ActionErrorBody } from './action-
 import type { EndpointDef } from './define-actions.ts'
 import { isRespondSentinel, makeRespond } from './define-actions.ts'
 import { validate } from './standard-schema.ts'
+
+// S2 — request-scoped loader cache/dedupe. The request cache is the OUTER scope
+// so `cachedFetch`/`dedupe` calls made during loaders OR render share one Map
+// per request, while store reads still resolve the per-request store instance.
+function runInRequestContext<T>(fn: () => T): T {
+  return runInRequestCache(() => runInStoreContext(fn))
+}
 
 // Sub-project J — island ISR cache, backed by the Rust-side store (shared across
 // the worker pool) via NAPI. napi-rs maps snake→camel: island_cache_get →
@@ -725,7 +733,7 @@ export function makeRenderer(
           // child loaders (one Map per request — NOT one per loader). No
           // snapshot is collected and no <script> is injected on native paths —
           // Spec B owns native store delivery (hard non-goal here).
-          chainResult = await runInStoreContext(() => runNativeChainLoaders(flat.chain, ctx))
+          chainResult = await runInRequestContext(() => runNativeChainLoaders(flat.chain, ctx))
         } catch (err) {
           console.error(`[brust] loader failed for native route ${flat.fullPath}:`, err)
           // FAST LANE: native routes take dispatch_single_chunk (no chunk
@@ -842,7 +850,7 @@ export function makeRenderer(
       // or render resolves the same per-request instance. Snapshot is collected
       // after loaders (buildRenderElement resolved) — that's where Spec A stores
       // are seeded — and threaded into the render for <script> injection.
-      return await runInStoreContext(async () => {
+      return await runInRequestContext(async () => {
         let element: ReactNode
         let errorBoundary: ComponentType<{ error: Error }>
         try {
@@ -1052,7 +1060,7 @@ async function navigationBranch(
     } else {
       // Wrap loader run (inside buildRenderElement) + render in one store scope so
       // store reads resolve the per-request instance; collect after render.
-      fullHtml = await runInStoreContext(async () => {
+      fullHtml = await runInRequestContext(async () => {
         const element = await buildRenderElement(call as any, flat, getWorkerId)
         if (!element) throw new Error('render setup failed')
         // Use renderToPipeableStream + onAllReady so pages with <Suspense> emit
@@ -1122,7 +1130,7 @@ async function renderNativeRouteToHtml(
   // Run the WHOLE route chain's loaders top-down and merge into ONE flat context
   // (child keys win), mirroring the full-render branch. One per-request store
   // scope wraps the entire loop (isolation only — no snapshot / no <script>).
-  const chainResult = await runInStoreContext(() =>
+  const chainResult = await runInRequestContext(() =>
     runNativeChainLoaders(flat.chain, {
       params: call.params,
       path: call.path,
