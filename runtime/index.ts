@@ -754,6 +754,9 @@ export type {
   ActionsBuilder,
 } from './define-actions.ts'
 
+export { ActionError, isActionError } from './action-error.ts'
+export type { ActionErrorBody } from './action-error.ts'
+
 export { loadConfig, BrustConfigError } from './config.ts'
 export type { BrustConfig } from './config.ts'
 
