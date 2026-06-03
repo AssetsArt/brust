@@ -46,6 +46,10 @@ export interface EndpointOptions {
   middleware?: Middleware[]
   /** Build-time MCP tool description (read by the manifest extractor). */
   description?: string
+  /** Declared domain errors, keyed by code. Each value is a StandardSchema for
+   * the error's `data` payload. TYPE-ONLY: flows into the treaty client's typed
+   * error union; the runtime ignores it (handlers throw `ActionError`). */
+  errors?: Record<string, StandardSchemaV1>
 }
 export interface EndpointDef {
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD'
@@ -72,8 +76,19 @@ type QueryOf<O> = O extends { query: infer S }
     ? InferOutput<S>
     : unknown
   : Record<string, string>
+/** Discriminated error union derived from `opts.errors`. Each declared code maps
+ * to `{ code; message; data }` where `data` is the schema's inferred output. */
+type ErrorOf<O> = O extends { errors: infer E }
+  ? {
+      [K in keyof E & string]: {
+        code: K
+        message: string
+        data: E[K] extends StandardSchemaV1 ? InferOutput<E[K]> : unknown
+      }
+    }[keyof E & string]
+  : never
 
-export type EndpointEntry = { input: unknown; output: unknown }
+export type EndpointEntry = { input: unknown; output: unknown; error: unknown }
 export type EndpointMap = Record<string, Partial<Record<EndpointDef['method'], EndpointEntry>>>
 
 export function isValidEndpointPath(p: string): boolean {
@@ -88,32 +103,44 @@ export interface ActionsBuilder<Acc extends EndpointMap = {}> {
     path: P,
     handler: Handler<BodyOf<O>, Params<P>, QueryOf<O>, R>,
     opts?: O,
-  ): ActionsBuilder<Acc & { [K in P]: { GET: { input: QueryOf<O>; output: Awaited<R> } } }>
+  ): ActionsBuilder<
+    Acc & { [K in P]: { GET: { input: QueryOf<O>; output: Awaited<R>; error: ErrorOf<O> } } }
+  >
   post<P extends string, O extends EndpointOptions, R>(
     path: P,
     handler: Handler<BodyOf<O>, Params<P>, QueryOf<O>, R>,
     opts?: O,
-  ): ActionsBuilder<Acc & { [K in P]: { POST: { input: BodyOf<O>; output: Awaited<R> } } }>
+  ): ActionsBuilder<
+    Acc & { [K in P]: { POST: { input: BodyOf<O>; output: Awaited<R>; error: ErrorOf<O> } } }
+  >
   put<P extends string, O extends EndpointOptions, R>(
     path: P,
     handler: Handler<BodyOf<O>, Params<P>, QueryOf<O>, R>,
     opts?: O,
-  ): ActionsBuilder<Acc & { [K in P]: { PUT: { input: BodyOf<O>; output: Awaited<R> } } }>
+  ): ActionsBuilder<
+    Acc & { [K in P]: { PUT: { input: BodyOf<O>; output: Awaited<R>; error: ErrorOf<O> } } }
+  >
   patch<P extends string, O extends EndpointOptions, R>(
     path: P,
     handler: Handler<BodyOf<O>, Params<P>, QueryOf<O>, R>,
     opts?: O,
-  ): ActionsBuilder<Acc & { [K in P]: { PATCH: { input: BodyOf<O>; output: Awaited<R> } } }>
+  ): ActionsBuilder<
+    Acc & { [K in P]: { PATCH: { input: BodyOf<O>; output: Awaited<R>; error: ErrorOf<O> } } }
+  >
   delete<P extends string, O extends EndpointOptions, R>(
     path: P,
     handler: Handler<BodyOf<O>, Params<P>, QueryOf<O>, R>,
     opts?: O,
-  ): ActionsBuilder<Acc & { [K in P]: { DELETE: { input: BodyOf<O>; output: Awaited<R> } } }>
+  ): ActionsBuilder<
+    Acc & { [K in P]: { DELETE: { input: BodyOf<O>; output: Awaited<R>; error: ErrorOf<O> } } }
+  >
   head<P extends string, O extends EndpointOptions, R>(
     path: P,
     handler: Handler<BodyOf<O>, Params<P>, QueryOf<O>, R>,
     opts?: O,
-  ): ActionsBuilder<Acc & { [K in P]: { HEAD: { input: QueryOf<O>; output: Awaited<R> } } }>
+  ): ActionsBuilder<
+    Acc & { [K in P]: { HEAD: { input: QueryOf<O>; output: Awaited<R>; error: ErrorOf<O> } } }
+  >
 }
 
 export function defineActions(): ActionsBuilder {

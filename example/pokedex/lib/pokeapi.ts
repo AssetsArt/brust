@@ -4,6 +4,8 @@
 // constraint). Their job is to fetch from PokeAPI and return fully render-ready
 // view-models so the native (jinja) page templates only interpolate fields.
 
+import { cachedFetch } from 'brustjs'
+
 export const API = 'https://pokeapi.co/api/v2'
 
 export const idFromUrl = (url: string): number => Number((url.match(/\/pokemon\/(\d+)\//) || [])[1])
@@ -79,7 +81,7 @@ export interface RawEvolutionStage {
 }
 
 export async function fetchList(offset: number, limit: number) {
-  const res = await fetch(`${API}/pokemon?limit=${limit}&offset=${offset}`)
+  const res = await cachedFetch(`${API}/pokemon?limit=${limit}&offset=${offset}`)
   if (!res.ok) throw new Error(`PokeAPI list ${res.status}`)
   const page = (await res.json()) as {
     count: number
@@ -92,7 +94,7 @@ export async function fetchList(offset: number, limit: number) {
 }
 
 export async function fetchPokemon(name: string): Promise<RawPokemon | null> {
-  const res = await fetch(`${API}/pokemon/${name}`)
+  const res = await cachedFetch(`${API}/pokemon/${name}`)
   if (!res.ok) return null
   const p = (await res.json()) as any
   return {
@@ -108,7 +110,7 @@ export async function fetchPokemon(name: string): Promise<RawPokemon | null> {
 }
 
 export async function fetchSpecies(id: number): Promise<RawSpecies> {
-  const res = await fetch(`${API}/pokemon-species/${id}`)
+  const res = await cachedFetch(`${API}/pokemon-species/${id}`)
   const s = (await res.json()) as any
   const flavor = s.flavor_text_entries?.find((e: any) => e.language.name === 'en')?.flavor_text as
     | string
@@ -124,7 +126,7 @@ export async function fetchSpecies(id: number): Promise<RawSpecies> {
  *  flattened to the first branch — noted as an open question in the design. */
 export async function fetchEvolution(url: string): Promise<RawEvolutionStage[]> {
   if (!url) return []
-  const res = await fetch(url)
+  const res = await cachedFetch(url)
   if (!res.ok) return []
   const data = (await res.json()) as any
   const stages: RawEvolutionStage[] = []
@@ -162,7 +164,7 @@ export const ALL_TYPES = [
 
 /** Fetch one type's damage relations → a map of defendingType → multiplier. */
 export async function fetchTypeRelations(type: string): Promise<Record<string, number>> {
-  const res = await fetch(`${API}/type/${type}`)
+  const res = await cachedFetch(`${API}/type/${type}`)
   if (!res.ok) return {}
   const d = (await res.json()) as any
   const rel = d.damage_relations

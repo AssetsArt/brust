@@ -325,9 +325,15 @@ POST `/team` `throw new ActionError(409,'TEAM_FULL',{data:{max:MAX_TEAM}})` แ�
 `AddToTeamButton` อ่าน `(error?.value as ActionErrorBody)?.code === 'TEAM_FULL'` → set signal `full`
 (เลิก silent no-op + เลิกเช็ค `data.full`). 10 tests (5 unit + 5 dispatch incl middleware/respond+throw).
 
-**ยังเปิด (out of scope, follow-up):** treaty proxy ยังคืน `TreatyResponse<any,any>` —
-`error.value` typed `any` ต้อง `as ActionErrorBody` เอง; per-endpoint typed error union
-(เช่น `opts.errors` accumulate เข้า endpoint type) gate ด้วยการทำ proxy ให้ typed ก่อน.
+**✅ follow-up FIXED (B2, รอบนี้):** treaty proxy typed ต่อ endpoint สำหรับ **static path** แล้ว —
+`opts.errors: { CODE: schema }` declaration → `EndpointEntry.error` (discriminated `{code,message,data}`
+union); `Treaty<App>` ใหม่ (static-path node ∩ `PermissiveProxy` fallback) ให้ `api.team.post(b)` คืน
+`TreatyResponse<Output, ErrorUnion>` typed — `AddToTeamButton` เลิก `as ActionErrorBody` cast,
+อ่าน `error.value.code` typed ตรงๆ. **ยังเปิด (approach รอง):** param-path tracking
+(`api.team({id}).delete()` → permissive `any` — Eden-scale, descoped); input(body) typing หลวม
+(permissive intersection — value อยู่ที่ typed output+error). type-only → verify ผ่าน isolated
+`bun run typecheck:treaty` (full tsc stack-overflows; wired เข้า ci.yml). spec
+`docs/superpowers/specs/2026-06-03-s7-typed-treaty-client-design.md`.
 **known limitation (dogfood UI):** `full` signal เป็น local ต่อปุ่ม — ถ้าได้ TEAM_FULL แล้วทีม
 ว่างผ่าน TeamBuilder ทีหลัง label ค้าง 'Team Full' จน add สำเร็จครั้งถัดไป (เกิดเฉพาะ multi-client
 race; `disabled()` กันเคสปกติอยู่แล้ว).
