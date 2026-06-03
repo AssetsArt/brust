@@ -9,6 +9,7 @@
 // the client), `client` from brustjs/client (the treaty action client). The
 // toggle flips <html data-mode> immediately (no reload) AND persists via the
 // /theme action which sets the `mode` cookie — so SSR matches on the next load.
+import { Moon, Sun } from 'lucide-react'
 import { client } from 'brustjs/client'
 import { computed, signal } from 'brustjs/store'
 import type { Actions } from '../actions'
@@ -21,7 +22,11 @@ export const behavior = () => {
   const mode = signal(
     typeof document !== 'undefined' ? (document.documentElement.dataset.mode ?? 'dark') : 'dark',
   )
-  const label = computed(() => (mode() === 'dark' ? '☀ Light' : '🌙 Dark'))
+  const label = computed(() => (mode() === 'dark' ? 'Light' : 'Dark'))
+  // x-text can't host an SSR icon (it replaces textContent), so the sun/moon
+  // icons live in sibling spans toggled by x-show on these mode computeds.
+  const isDark = computed(() => mode() === 'dark')
+  const isLight = computed(() => mode() === 'light')
 
   async function toggle() {
     const next = mode() === 'dark' ? 'light' : 'dark'
@@ -30,7 +35,7 @@ export const behavior = () => {
     await api.theme.post({ mode: next }) // persist via cookie for the next SSR
   }
 
-  return { toggle, label }
+  return { toggle, label, isDark, isLight }
 }
 
 // default → jinja (server). The x-* directives are static string attributes the
@@ -41,11 +46,17 @@ export default function ThemeToggle() {
     <button
       type="button"
       x-data="themeToggle"
-      x-text="label"
       x-on-click="toggle"
-      className="inline-flex items-center rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+      aria-label="Toggle theme"
+      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
     >
-      🌙 Dark
+      <span x-show="isDark" className="inline-flex">
+        <Sun size={16} />
+      </span>
+      <span x-show="isLight" className="inline-flex">
+        <Moon size={16} />
+      </span>
+      <span x-text="label">Dark</span>
     </button>
   )
 }

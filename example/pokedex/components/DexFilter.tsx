@@ -7,6 +7,7 @@
 // minijinja. The full item list arrives as the loader-precomputed `x-props`
 // JSON string (native templates can't call JSON.stringify), parsed into the
 // behavior `props`. NO react imports — `signal`/`computed` from brustjs/store.
+import { ArrowDownAZ, Hash, Search } from 'lucide-react'
 import { computed, signal } from 'brustjs/store'
 
 interface Card {
@@ -39,26 +40,34 @@ export default function DexFilter({ data }: { data?: string }) {
   return (
     <section x-data="dexFilter" x-props={data}>
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <input
-          type="search"
-          x-on-input="onInput"
-          placeholder="Search Pokémon…"
-          className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 shadow-sm transition-colors placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30 dark:border-slate-700 dark:bg-slate-900 dark:text-white sm:max-w-xs"
-        />
+        <div className="relative w-full sm:max-w-xs">
+          <Search
+            size={16}
+            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+          />
+          <input
+            type="search"
+            x-on-input="onInput"
+            placeholder="Search Pokémon…"
+            className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-4 text-sm text-slate-900 shadow-sm transition-colors placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+          />
+        </div>
         <div className="flex items-center gap-3">
           <div className="inline-flex overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700">
             <button
               type="button"
               x-on-click="setDex"
-              className="px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
             >
+              <Hash size={14} />
               Dex#
             </button>
             <button
               type="button"
               x-on-click="setAz"
-              className="border-l border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+              className="inline-flex items-center gap-1.5 border-l border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
             >
+              <ArrowDownAZ size={14} />
               A–Z
             </button>
           </div>

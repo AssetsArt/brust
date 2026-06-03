@@ -8,6 +8,7 @@
 // The behavior is react-free: `signal`/`computed` from brustjs/store (the window
 // singleton on the client), `client` from brustjs/client (the treaty action
 // client — also react-free), and the shared teamStore. NO react imports.
+import { Plus } from 'lucide-react'
 import { client } from 'brustjs/client'
 import { computed, signal } from 'brustjs/store'
 import type { Actions } from '../actions'
@@ -41,7 +42,7 @@ export const behavior = ({ props }: { props: AddToTeamProps }) => {
   )
   const disabled = computed(() => busy() || ((teamStore.members()?.length ?? 0) >= 6 && !inTeam()))
   const label = computed(() =>
-    inTeam() ? '✓ In your team' : disabled() || full() ? 'Team Full' : '＋ Add to team',
+    inTeam() ? 'In your team' : disabled() || full() ? 'Team Full' : 'Add to team',
   )
   const btnClass = computed(() => (inTeam() ? IN_TEAM : BASE))
 
@@ -86,7 +87,11 @@ export const behavior = ({ props }: { props: AddToTeamProps }) => {
 // string, emitted by the compiler as x-props="{{ (data) | e }}" (XSS-safe).
 export default function AddToTeamButton({ data }: { data: string }) {
   return (
-    <div x-data="addToTeamButton" x-props={data}>
+    <div x-data="addToTeamButton" x-props={data} className="relative">
+      <Plus
+        size={16}
+        className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-white"
+      />
       <button
         type="button"
         x-text="label"
@@ -95,7 +100,7 @@ export default function AddToTeamButton({ data }: { data: string }) {
         x-on-click="toggle"
         className="inline-flex w-full items-center justify-center rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-brand-600 disabled:opacity-50"
       >
-        ＋ Add to team
+        Add to team
       </button>
     </div>
   )

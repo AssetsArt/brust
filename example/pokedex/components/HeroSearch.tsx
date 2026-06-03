@@ -8,6 +8,7 @@
 // `navigate` from brustjs/navigation (imperative SPA navigation). On submit the
 // behavior pushes /pokedex with the typed query — dogfooding imperative
 // navigate() + query-object serialization.
+import { Search } from 'lucide-react'
 import { navigate } from 'brustjs/navigation'
 import { signal } from 'brustjs/store'
 
@@ -40,8 +41,9 @@ export default function HeroSearch() {
       />
       <button
         type="submit"
-        className="inline-flex items-center rounded-xl bg-brand-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-brand-600"
+        className="inline-flex items-center gap-1.5 rounded-xl bg-brand-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-brand-600"
       >
+        <Search size={16} />
         Search
       </button>
     </form>

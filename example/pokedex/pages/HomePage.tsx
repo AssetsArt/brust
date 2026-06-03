@@ -6,6 +6,19 @@
 // (each carrying its own hex `color` for an inline style, since Tailwind's
 // scanner can't see runtime-built type-color classes). The hero search box is
 // the HeroSearch native directive (imperative navigate() dogfood).
+import {
+  ArrowRight,
+  Box,
+  Component,
+  Cookie,
+  Database,
+  Layout,
+  List,
+  Navigation,
+  Server,
+  Table,
+  Zap,
+} from 'lucide-react'
 import HeroSearch from '../components/HeroSearch'
 import type { HomeData } from '../lib/types'
 
@@ -27,14 +40,16 @@ export default function HomePage({ featured, typeTiles }: HomeData) {
         <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
           <a
             href="/pokedex"
-            className="inline-flex items-center rounded-xl bg-white px-5 py-2.5 text-sm font-semibold text-brand-700 no-underline shadow-sm transition-transform hover:-translate-y-0.5"
+            className="inline-flex items-center gap-2 rounded-xl bg-white px-5 py-2.5 text-sm font-semibold text-brand-700 no-underline shadow-sm transition-transform hover:-translate-y-0.5"
           >
             Browse Pokédex
+            <ArrowRight size={16} />
           </a>
           <a
             href="/type-chart"
-            className="inline-flex items-center rounded-xl bg-white/15 px-5 py-2.5 text-sm font-semibold text-white no-underline ring-1 ring-white/30 transition-colors hover:bg-white/25"
+            className="inline-flex items-center gap-2 rounded-xl bg-white/15 px-5 py-2.5 text-sm font-semibold text-white no-underline ring-1 ring-white/30 transition-colors hover:bg-white/25"
           >
+            <Table size={16} />
             Type chart
           </a>
         </div>
@@ -47,9 +62,10 @@ export default function HomePage({ featured, typeTiles }: HomeData) {
           </h2>
           <a
             href="/pokedex"
-            className="text-sm font-semibold text-brand-600 no-underline hover:underline dark:text-brand-50"
+            className="inline-flex items-center gap-1 text-sm font-semibold text-brand-600 no-underline hover:underline dark:text-brand-50"
           >
-            View all →
+            View all
+            <ArrowRight size={14} />
           </a>
         </div>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -107,9 +123,10 @@ export default function HomePage({ featured, typeTiles }: HomeData) {
           </div>
           <a
             href="/pokedex"
-            className="inline-flex shrink-0 items-center rounded-xl bg-brand-500 px-5 py-2.5 text-sm font-semibold text-white no-underline shadow-sm transition-colors hover:bg-brand-600"
+            className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-brand-500 px-5 py-2.5 text-sm font-semibold text-white no-underline shadow-sm transition-colors hover:bg-brand-600"
           >
-            Start picking →
+            Start picking
+            <ArrowRight size={16} />
           </a>
         </div>
       </section>
@@ -124,7 +141,8 @@ export default function HomePage({ featured, typeTiles }: HomeData) {
         </p>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <div className="text-sm font-bold text-slate-900 dark:text-white">
+            <div className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white">
+              <Server size={16} className="text-brand-500" />
               Native SSR routes
             </div>
             <div className="mt-1 text-sm text-slate-500 dark:text-slate-400">
@@ -132,13 +150,17 @@ export default function HomePage({ featured, typeTiles }: HomeData) {
             </div>
           </div>
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <div className="text-sm font-bold text-slate-900 dark:text-white">Loaders + ISR</div>
+            <div className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white">
+              <Database size={16} className="text-brand-500" />
+              Loaders + ISR
+            </div>
             <div className="mt-1 text-sm text-slate-500 dark:text-slate-400">
               Loaders fetch PokeAPI and precompute the view-model; cached responses stay fast.
             </div>
           </div>
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <div className="text-sm font-bold text-slate-900 dark:text-white">
+            <div className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white">
+              <Cookie size={16} className="text-brand-500" />
               Cookies / request-context
             </div>
             <div className="mt-1 text-sm text-slate-500 dark:text-slate-400">
@@ -146,13 +168,17 @@ export default function HomePage({ featured, typeTiles }: HomeData) {
             </div>
           </div>
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <div className="text-sm font-bold text-slate-900 dark:text-white">defineStore</div>
+            <div className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white">
+              <Box size={16} className="text-brand-500" />
+              defineStore
+            </div>
             <div className="mt-1 text-sm text-slate-500 dark:text-slate-400">
               The team dock is a window-singleton store shared across islands.
             </div>
           </div>
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <div className="text-sm font-bold text-slate-900 dark:text-white">
+            <div className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white">
+              <Navigation size={16} className="text-brand-500" />
               Client navigation
             </div>
             <div className="mt-1 text-sm text-slate-500 dark:text-slate-400">
@@ -161,19 +187,26 @@ export default function HomePage({ featured, typeTiles }: HomeData) {
             </div>
           </div>
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <div className="text-sm font-bold text-slate-900 dark:text-white">React islands</div>
+            <div className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white">
+              <Component size={16} className="text-brand-500" />
+              React islands
+            </div>
             <div className="mt-1 text-sm text-slate-500 dark:text-slate-400">
               The team dock hydrates as a React island while the page stays native.
             </div>
           </div>
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <div className="text-sm font-bold text-slate-900 dark:text-white">Keyed x-for</div>
+            <div className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white">
+              <List size={16} className="text-brand-500" />
+              Keyed x-for
+            </div>
             <div className="mt-1 text-sm text-slate-500 dark:text-slate-400">
               The browse grid filters and sorts live with a keyed, react-free reconcile.
             </div>
           </div>
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <div className="text-sm font-bold text-slate-900 dark:text-white">
+            <div className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white">
+              <Layout size={16} className="text-brand-500" />
               Nested Outlet layout
             </div>
             <div className="mt-1 text-sm text-slate-500 dark:text-slate-400">
@@ -181,7 +214,10 @@ export default function HomePage({ featured, typeTiles }: HomeData) {
             </div>
           </div>
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <div className="text-sm font-bold text-slate-900 dark:text-white">Treaty actions</div>
+            <div className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white">
+              <Zap size={16} className="text-brand-500" />
+              Treaty actions
+            </div>
             <div className="mt-1 text-sm text-slate-500 dark:text-slate-400">
               Add-to-team and theme persistence call type-safe server actions over treaty.
             </div>

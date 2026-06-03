@@ -9,6 +9,7 @@
 // MUST stay single-return with NO local bindings above it — a local `const`
 // would make the compiler soft-fall-back to an SSR component (no <html> shell).
 // AppLayout owns the single <main> (leaves are fragments in the <Outlet/> slot).
+import { GitFork } from 'lucide-react'
 import { BrustPage, Island, Outlet } from 'brustjs'
 import type { TeamMember } from '../lib/types'
 import NavLink from './NavLink'
@@ -61,8 +62,15 @@ export default function AppLayout({
           </div>
         </main>
 
-        <footer className="border-t border-slate-200 py-6 text-center text-xs text-slate-400 dark:border-slate-800">
-          Built with brust · data from PokeAPI
+        <footer className="flex items-center justify-center gap-3 border-t border-slate-200 py-6 text-center text-xs text-slate-400 dark:border-slate-800">
+          <span>Built with brust · data from PokeAPI</span>
+          <a
+            href="https://github.com/AssetsArt/brust"
+            className="inline-flex items-center text-slate-400 transition-colors hover:text-slate-600 dark:hover:text-slate-200"
+            aria-label="brust on GitHub"
+          >
+            <GitFork size={16} />
+          </a>
         </footer>
 
         <Island component={TeamBuilder} props={teamProps} ssr hydrate="load" />
