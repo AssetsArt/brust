@@ -11,6 +11,7 @@ import { Buffer } from 'node:buffer'
 import * as native from './index.js'
 import { renderBranchStreaming } from './render/stream.ts'
 import { runInStoreContext, collectSnapshot } from './store/server-context.ts'
+import { runInRequestScope, __scope } from './request-context.ts'
 import {
   loadIslandManifest,
   resolveIslandContext,
@@ -714,87 +715,128 @@ export function makeRenderer(
       // deferred to v2.x. If your middleware needs to mutate, use a React
       // route for now.
       if (flat.nativeTemplate !== undefined) {
-        let data: Record<string, unknown>
-        const ctx = { params: call.params, path: call.path, req: call.req }
-        let chainResult: NativeChainResult
-        try {
-          // Run the WHOLE route chain's loaders top-down (parent → leaf) and
-          // merge into ONE flat context (child keys win), mirroring the React
-          // chain-loader path. Wrap the entire loop in a SINGLE per-request
-          // store scope so a parent loader's defineStore writes are visible to
-          // child loaders (one Map per request — NOT one per loader). No
-          // snapshot is collected and no <script> is injected on native paths —
-          // Spec B owns native store delivery (hard non-goal here).
-          chainResult = await runInStoreContext(() => runNativeChainLoaders(flat.chain, ctx))
-        } catch (err) {
-          console.error(`[brust] loader failed for native route ${flat.fullPath}:`, err)
-          // FAST LANE: native routes take dispatch_single_chunk (no chunk
-          // channel), so every native fallback MUST pack + return a length.
-          return packSingleChunkResponse(view, encoder, {
-            status: 500,
-            contentType: 'text/html; charset=utf-8',
-            body: 'internal error',
-          })
-        }
-        let renderStatus: number | undefined
-        if ('verdict' in chainResult) {
-          // First verdict wins (top-down). Remaining loaders already skipped.
-          const verdict = chainResult.verdict
-          if (!verdict.render) {
-            // redirect — no template render; fast-lane packed response with Location.
+        // Per-request scope (OUTER) so a native loader's cookies.get reads
+        // req.cookies and cookies.set has a scope. napiRenderJinja has NO
+        // headers param, so staged Set-Cookie is DROPPED on the native path —
+        // a dev-warn fires just before render if any cookie was staged.
+        return await runInRequestScope(call.req?.cookies ?? {}, async () => {
+          let data: Record<string, unknown>
+          const ctx = { params: call.params, path: call.path, req: call.req }
+          let chainResult: NativeChainResult
+          try {
+            // Run the WHOLE route chain's loaders top-down (parent → leaf) and
+            // merge into ONE flat context (child keys win), mirroring the React
+            // chain-loader path. Wrap the entire loop in a SINGLE per-request
+            // store scope so a parent loader's defineStore writes are visible to
+            // child loaders (one Map per request — NOT one per loader). No
+            // snapshot is collected and no <script> is injected on native paths —
+            // Spec B owns native store delivery (hard non-goal here).
+            chainResult = await runInStoreContext(() => runNativeChainLoaders(flat.chain, ctx))
+          } catch (err) {
+            console.error(`[brust] loader failed for native route ${flat.fullPath}:`, err)
+            // FAST LANE: native routes take dispatch_single_chunk (no chunk
+            // channel), so every native fallback MUST pack + return a length.
             return packSingleChunkResponse(view, encoder, {
-              status: verdict.status,
+              status: 500,
               contentType: 'text/html; charset=utf-8',
-              body: '',
-              headers: verdict.headers,
+              body: 'internal error',
             })
           }
-          // notFound — render the route's own template, but with the verdict's status.
-          renderStatus = verdict.status
-          data = (verdict.data ?? {}) as Record<string, unknown>
-        } else {
-          data = chainResult.data
-        }
-        const json = JSON.stringify(data)
-        // Sub-project J — islands + components. If this template has an enriched
-        // islands manifest or a components manifest, merge per-island context vars
-        // (island_<id>_props, plus island_<id>_html for ssr entries) and per-component
-        // context vars (comp_<id>_html for SSR components) into the loader data before
-        // shipping it. Both resolvers are async; run them in parallel via Promise.all.
-        const manifest = loadIslandManifest(flat.nativeTemplate)
-        const compManifest = loadComponentManifest(flat.nativeTemplate)
-        if ((manifest && manifest.length > 0) || (compManifest && compManifest.length > 0)) {
-          const rt = JSON.parse(json) as Record<string, unknown>
-          const [islandExtra, componentExtra] = await Promise.all([
-            manifest && manifest.length > 0
-              ? resolveIslandContext(manifest, rt, islandCache)
-              : Promise.resolve({} as Record<string, string>),
-            compManifest && compManifest.length > 0
-              ? resolveComponentContext(
-                  compManifest,
-                  rt,
-                  flat.nativeTemplate,
-                  undefined,
-                  islandCache,
-                )
-              : Promise.resolve({} as Record<string, string>),
-          ])
-          const ctx = { ...rt, ...islandExtra, ...componentExtra }
-          const finalBytes = encoder.encode(JSON.stringify(ctx))
-          // The original size check guarded the pre-island bytes; the merged
-          // context (with island props + component html) can be larger. Re-check on finalBytes.
-          if (finalBytes.length > view.length) {
+          let renderStatus: number | undefined
+          if ('verdict' in chainResult) {
+            // First verdict wins (top-down). Remaining loaders already skipped.
+            const verdict = chainResult.verdict
+            if (!verdict.render) {
+              // redirect — no template render; fast-lane packed response with Location.
+              return packSingleChunkResponse(view, encoder, {
+                status: verdict.status,
+                contentType: 'text/html; charset=utf-8',
+                body: '',
+                headers: verdict.headers,
+              })
+            }
+            // notFound — render the route's own template, but with the verdict's status.
+            renderStatus = verdict.status
+            data = (verdict.data ?? {}) as Record<string, unknown>
+          } else {
+            data = chainResult.data
+          }
+          const json = JSON.stringify(data)
+          // napiRenderJinja has no headers param — any Set-Cookie staged by a
+          // native loader is dropped on this path. Dev-warn so it's not silent.
+          if ((__scope()?.setCookies.length ?? 0) > 0 && process.env.BRUST_DEV === '1') {
+            console.warn(
+              `[brust] cookies.set in a native loader for "${flat.nativeTemplate}" is dropped — native render has no headers; use a React route to write cookies`,
+            )
+          }
+          // Sub-project J — islands + components. If this template has an enriched
+          // islands manifest or a components manifest, merge per-island context vars
+          // (island_<id>_props, plus island_<id>_html for ssr entries) and per-component
+          // context vars (comp_<id>_html for SSR components) into the loader data before
+          // shipping it. Both resolvers are async; run them in parallel via Promise.all.
+          const manifest = loadIslandManifest(flat.nativeTemplate)
+          const compManifest = loadComponentManifest(flat.nativeTemplate)
+          if ((manifest && manifest.length > 0) || (compManifest && compManifest.length > 0)) {
+            const rt = JSON.parse(json) as Record<string, unknown>
+            const [islandExtra, componentExtra] = await Promise.all([
+              manifest && manifest.length > 0
+                ? resolveIslandContext(manifest, rt, islandCache)
+                : Promise.resolve({} as Record<string, string>),
+              compManifest && compManifest.length > 0
+                ? resolveComponentContext(
+                    compManifest,
+                    rt,
+                    flat.nativeTemplate,
+                    undefined,
+                    islandCache,
+                  )
+                : Promise.resolve({} as Record<string, string>),
+            ])
+            const ctx = { ...rt, ...islandExtra, ...componentExtra }
+            const finalBytes = encoder.encode(JSON.stringify(ctx))
+            // The original size check guarded the pre-island bytes; the merged
+            // context (with island props + component html) can be larger. Re-check on finalBytes.
+            if (finalBytes.length > view.length) {
+              return packSingleChunkResponse(view, encoder, {
+                status: 413,
+                contentType: 'text/plain; charset=utf-8',
+                body: 'loader data too large for SAB',
+              })
+            }
+            view.set(finalBytes, 0)
+            try {
+              return (native as any).napiRenderJinja(
+                Number(workerId),
+                finalBytes.length,
+                flat.nativeTemplate,
+                renderStatus,
+              )
+            } catch (err) {
+              console.error(`[brust] napiRenderJinja failed for "${flat.nativeTemplate}":`, err)
+              return packSingleChunkResponse(view, encoder, {
+                status: 500,
+                contentType: 'text/html; charset=utf-8',
+                body: 'internal error',
+              })
+            }
+          }
+          const dataBytes = encoder.encode(json)
+          if (dataBytes.length > view.length) {
             return packSingleChunkResponse(view, encoder, {
               status: 413,
               contentType: 'text/plain; charset=utf-8',
               body: 'loader data too large for SAB',
             })
           }
-          view.set(finalBytes, 0)
+          view.set(dataBytes, 0)
           try {
+            // FAST LANE: napiRenderJinja is a SYNC napi call — renders Rust-side,
+            // writes the framed response into the SAB, and returns its length
+            // directly (no Promise round-trip). Return it up to the tsfn; Rust's
+            // fast-lane arm reads the SAB directly (no chunk channel).
             return (native as any).napiRenderJinja(
               Number(workerId),
-              finalBytes.length,
+              dataBytes.length,
               flat.nativeTemplate,
               renderStatus,
             )
@@ -806,35 +848,7 @@ export function makeRenderer(
               body: 'internal error',
             })
           }
-        }
-        const dataBytes = encoder.encode(json)
-        if (dataBytes.length > view.length) {
-          return packSingleChunkResponse(view, encoder, {
-            status: 413,
-            contentType: 'text/plain; charset=utf-8',
-            body: 'loader data too large for SAB',
-          })
-        }
-        view.set(dataBytes, 0)
-        try {
-          // FAST LANE: napiRenderJinja is a SYNC napi call — renders Rust-side,
-          // writes the framed response into the SAB, and returns its length
-          // directly (no Promise round-trip). Return it up to the tsfn; Rust's
-          // fast-lane arm reads the SAB directly (no chunk channel).
-          return (native as any).napiRenderJinja(
-            Number(workerId),
-            dataBytes.length,
-            flat.nativeTemplate,
-            renderStatus,
-          )
-        } catch (err) {
-          console.error(`[brust] napiRenderJinja failed for "${flat.nativeTemplate}":`, err)
-          return packSingleChunkResponse(view, encoder, {
-            status: 500,
-            contentType: 'text/html; charset=utf-8',
-            body: 'internal error',
-          })
-        }
+        })
       }
 
       // Wrap the loader run (inside buildRenderElement) AND the React render in
@@ -842,40 +856,45 @@ export function makeRenderer(
       // or render resolves the same per-request instance. Snapshot is collected
       // after loaders (buildRenderElement resolved) — that's where Spec A stores
       // are seeded — and threaded into the render for <script> injection.
-      return await runInStoreContext(async () => {
-        let element: ReactNode
-        let errorBoundary: ComponentType<{ error: Error }>
-        try {
-          element = await buildRenderElement(call, flat, opts.getWorkerId)
-          errorBoundary =
-            flat.errorBoundary ??
-            (({ error }) => createElement('div', null, `Internal Server Error: ${error.message}`))
-        } catch (err) {
-          // Setup failure BEFORE renderToPipeableStream — loader throw, params
-          // bind throw. Shape matches the legacy "internal error" path so
-          // existing integration tests stay green.
-          console.error(`[brust] render setup failed:`, err)
-          return await emitSingleChunkResponse(view, napi, workerId, encoder, {
-            status: 500,
-            contentType: 'text/html; charset=utf-8',
-            body: 'internal error',
+      // Per-request scope (OUTER) wraps the store scope (INNER) so cookies.set
+      // in a loader stages onto this request; flushed onto the render headers
+      // after loaders resolve (cookies.set runs during buildRenderElement).
+      return await runInRequestScope(call.req?.cookies ?? {}, () =>
+        runInStoreContext(async () => {
+          let element: ReactNode
+          let errorBoundary: ComponentType<{ error: Error }>
+          try {
+            element = await buildRenderElement(call, flat, opts.getWorkerId)
+            errorBoundary =
+              flat.errorBoundary ??
+              (({ error }) => createElement('div', null, `Internal Server Error: ${error.message}`))
+          } catch (err) {
+            // Setup failure BEFORE renderToPipeableStream — loader throw, params
+            // bind throw. Shape matches the legacy "internal error" path so
+            // existing integration tests stay green.
+            console.error(`[brust] render setup failed:`, err)
+            return await emitSingleChunkResponse(view, napi, workerId, encoder, {
+              status: 500,
+              contentType: 'text/html; charset=utf-8',
+              body: 'internal error',
+            })
+          }
+          const storeSnapshot = collectSnapshot()
+          await renderBranchStreaming({
+            element,
+            view,
+            workerId,
+            napi,
+            errorBoundary,
+            status: verdict.status,
+            headers: flushSetCookie(verdict.headers),
+            routePath: flat.fullPath,
+            storeSnapshot,
           })
-        }
-        const storeSnapshot = collectSnapshot()
-        await renderBranchStreaming({
-          element,
-          view,
-          workerId,
-          napi,
-          errorBoundary,
-          status: verdict.status,
-          headers: verdict.headers,
-          routePath: flat.fullPath,
-          storeSnapshot,
-        })
-        // renderBranchStreaming wrote via the chunk channel.
-        return 0
-      })
+          // renderBranchStreaming wrote via the chunk channel.
+          return 0
+        }),
+      )
     }
     if (call.kind === 'navigation') {
       await navigationBranch(call, byRouteId, view, encoder, opts.getWorkerId)
@@ -1036,57 +1055,63 @@ async function navigationBranch(
   }
 
   try {
-    // Native (jinja) routes have no React tree, so we can't renderToString them.
-    // Render the template Rust-side (same path as a full document load) and use
-    // its HTML; React routes keep the renderToAwaitedString path below. Without
-    // this branch, a SPA navigation to a native route React-renders a component
-    // whose loader fields arrive undefined → throws → 500 → full-reload fallback
-    // on every internal link.
-    let fullHtml: string
-    // React nav: snapshot of stores seeded during loader+render, shipped in the
-    // nav payload so the client can apply it to its live stores. Native nav
-    // collects no snapshot (Spec B owns native store delivery).
-    let store: Record<string, Record<string, unknown>> | null = null
-    if (flat.nativeTemplate !== undefined) {
-      fullHtml = await renderNativeRouteToHtml(call, flat, view, encoder, workerId)
-    } else {
-      // Wrap loader run (inside buildRenderElement) + render in one store scope so
-      // store reads resolve the per-request instance; collect after render.
-      fullHtml = await runInStoreContext(async () => {
-        const element = await buildRenderElement(call as any, flat, getWorkerId)
-        if (!element) throw new Error('render setup failed')
-        // Use renderToPipeableStream + onAllReady so pages with <Suspense> emit
-        // their RESOLVED markup, not the fallback. renderToString would only
-        // capture the shell — navigating SPA-style to a Suspense-using route
-        // would otherwise ship "loading…" and never recover.
-        const html = await renderToAwaitedString(element)
-        store = collectSnapshot()
-        return html
+    // Per-request scope (OUTER) so cookies.set in a nav loader stages onto this
+    // request; flushed onto the nav response headers below. Store scope (React
+    // path) wraps INNER.
+    await runInRequestScope(call.req?.cookies ?? {}, async () => {
+      // Native (jinja) routes have no React tree, so we can't renderToString them.
+      // Render the template Rust-side (same path as a full document load) and use
+      // its HTML; React routes keep the renderToAwaitedString path below. Without
+      // this branch, a SPA navigation to a native route React-renders a component
+      // whose loader fields arrive undefined → throws → 500 → full-reload fallback
+      // on every internal link.
+      let fullHtml: string
+      // React nav: snapshot of stores seeded during loader+render, shipped in the
+      // nav payload so the client can apply it to its live stores. Native nav
+      // collects no snapshot (Spec B owns native store delivery).
+      let store: Record<string, Record<string, unknown>> | null = null
+      if (flat.nativeTemplate !== undefined) {
+        fullHtml = await renderNativeRouteToHtml(call, flat, view, encoder, workerId)
+      } else {
+        // Wrap loader run (inside buildRenderElement) + render in one store scope so
+        // store reads resolve the per-request instance; collect after render.
+        fullHtml = await runInStoreContext(async () => {
+          const element = await buildRenderElement(call as any, flat, getWorkerId)
+          if (!element) throw new Error('render setup failed')
+          // Use renderToPipeableStream + onAllReady so pages with <Suspense> emit
+          // their RESOLVED markup, not the fallback. renderToString would only
+          // capture the shell — navigating SPA-style to a Suspense-using route
+          // would otherwise ship "loading…" and never recover.
+          const html = await renderToAwaitedString(element)
+          store = collectSnapshot()
+          return html
+        })
+      }
+
+      // Extract <main> inner content. If the page didn't render a <main>,
+      // ship the full HTML — the client's no-main check will fire its
+      // full-reload fallback.
+      //
+      // Known limitation: the lazy regex truncates at the first </main>, so
+      // a page that renders nested <main> elements (invalid per the HTML
+      // spec but allowed by React) would lose content after the inner
+      // </main>. A future task can replace this with stack-counting
+      // extraction or DOMParser if real apps hit it.
+      const mainMatch = fullHtml.match(/<main[^>]*>([\s\S]*?)<\/main>/i)
+      const innerHtml = mainMatch ? mainMatch[1] : fullHtml
+
+      // Extract <title> text. React 18 inserts <!-- --> markers between
+      // adjacent text nodes inside <title>; strip those before serialising.
+      const titleMatch = fullHtml.match(/<title[^>]*>([\s\S]*?)<\/title>/i)
+      const title = titleMatch ? titleMatch[1].replace(/<!--.*?-->/g, '').trim() : ''
+
+      const body = JSON.stringify({ html: innerHtml, title, store })
+      await emitSingleChunkResponse(view, napi, workerId, encoder, {
+        status: 200,
+        contentType: 'application/json; charset=utf-8',
+        body,
+        headers: flushSetCookie(undefined),
       })
-    }
-
-    // Extract <main> inner content. If the page didn't render a <main>,
-    // ship the full HTML — the client's no-main check will fire its
-    // full-reload fallback.
-    //
-    // Known limitation: the lazy regex truncates at the first </main>, so
-    // a page that renders nested <main> elements (invalid per the HTML
-    // spec but allowed by React) would lose content after the inner
-    // </main>. A future task can replace this with stack-counting
-    // extraction or DOMParser if real apps hit it.
-    const mainMatch = fullHtml.match(/<main[^>]*>([\s\S]*?)<\/main>/i)
-    const innerHtml = mainMatch ? mainMatch[1] : fullHtml
-
-    // Extract <title> text. React 18 inserts <!-- --> markers between
-    // adjacent text nodes inside <title>; strip those before serialising.
-    const titleMatch = fullHtml.match(/<title[^>]*>([\s\S]*?)<\/title>/i)
-    const title = titleMatch ? titleMatch[1].replace(/<!--.*?-->/g, '').trim() : ''
-
-    const body = JSON.stringify({ html: innerHtml, title, store })
-    await emitSingleChunkResponse(view, napi, workerId, encoder, {
-      status: 200,
-      contentType: 'application/json; charset=utf-8',
-      body,
     })
   } catch (err) {
     console.error('[brust] navigation render failed:', err)
@@ -1397,6 +1422,42 @@ function actionErrorResponse(err: ActionError): RouteResponse {
   }
 }
 
+/** Flush any cookies staged via `cookies.set`/`cookies.delete` in the active
+ * request scope onto the response headers.
+ *
+ * The Rust response-header writer stores worker-response headers in a
+ * CASE-SENSITIVE map (no lowercase dedup), so a mix of 'Set-Cookie' /
+ * 'set-cookie' would emit two lines. We therefore use the SINGLE canonical key
+ * 'set-cookie' (lowercase) for ALL cookie writes.
+ *
+ * RouteResponse.headers is Record<string,string>, so only ONE Set-Cookie per
+ * response is representable. If multiple were staged, only the LAST is sent
+ * (documented limitation; dev-warn). If the handler already set a 'set-cookie'
+ * header explicitly (respond({ headers })), the explicit value WINS and staged
+ * cookies are dropped (dev-warn on conflict). */
+function flushSetCookie(
+  headers: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  const staged = __scope()?.setCookies ?? []
+  if (staged.length === 0) return headers
+  if (headers && 'set-cookie' in headers) {
+    if (process.env.BRUST_DEV === '1') {
+      console.warn(
+        '[brust] cookies.set conflicts with an explicit set-cookie header — explicit respond() wins',
+      )
+    }
+    return headers
+  }
+  if (staged.length > 1 && process.env.BRUST_DEV === '1') {
+    console.warn(
+      `[brust] ${staged.length} cookies staged but only one Set-Cookie per response is supported — only the last is sent`,
+    )
+  }
+  const out = { ...(headers ?? {}) }
+  out['set-cookie'] = staged[staged.length - 1]
+  return out
+}
+
 export async function dispatchAction(
   call: Extract<RouteCall, { kind: 'action' }>,
   byId: Map<string, EndpointDef>,
@@ -1487,28 +1548,33 @@ export async function dispatchAction(
     }
   }
 
-  const chain = composeChain(call.req, def.middleware, terminal)
-  let response: RouteResponse
-  try {
-    response = await chain()
-  } catch (err) {
-    if (isActionError(err)) {
-      response = actionErrorResponse(err)
-    } else {
-      console.error('[brust] action middleware uncaught:', err)
-      response = {
-        status: 500,
-        body: '{"error":{"message":"internal error"}}',
-        contentType: 'application/json; charset=utf-8',
+  // Open a per-request scope (OUTER) so cookies.set during middleware/handler
+  // stage onto this request, then flush the staged Set-Cookie onto the response
+  // headers. The store scope (if any) wraps INNER — request-scope is outermost.
+  return await runInRequestScope(call.req.cookies ?? {}, async () => {
+    const chain = composeChain(call.req, def.middleware, terminal)
+    let response: RouteResponse
+    try {
+      response = await chain()
+    } catch (err) {
+      if (isActionError(err)) {
+        response = actionErrorResponse(err)
+      } else {
+        console.error('[brust] action middleware uncaught:', err)
+        response = {
+          status: 500,
+          body: '{"error":{"message":"internal error"}}',
+          contentType: 'application/json; charset=utf-8',
+        }
       }
     }
-  }
-  return {
-    status: response.status,
-    body: response.body,
-    contentType: response.contentType ?? 'application/json; charset=utf-8',
-    headers: response.headers,
-  }
+    return {
+      status: response.status,
+      body: response.body,
+      contentType: response.contentType ?? 'application/json; charset=utf-8',
+      headers: flushSetCookie(response.headers),
+    }
+  })
 }
 
 async function mcpBranchToResponse(
