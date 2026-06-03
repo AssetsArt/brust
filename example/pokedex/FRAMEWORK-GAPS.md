@@ -26,8 +26,9 @@ S13 SPA-nav (รอบก่อน) · **native layout (chrome ซ้ำ 3 ห�
 พ่วง **XSS hardening** (`5a4c4ca`): dynamic HTML output ทุกจุด escape ด้วย `{{ (expr) | e }}`
 แล้ว (เดิม verbatim = ช่อง XSS จริง — request param ไหลเข้า `<title>` ได้).
 
-**ยังเปิด:** S7 (typed treaty error) · S2 (loader cache) ·
+**ยังเปิด:** S2 (loader cache) ·
 native **Outlet/router-level layout injection** ·
+(**S7 typed treaty error — ✅ FIXED รอบนี้:** `ActionError` primitive + dispatch map flat body) ·
 **BY-DESIGN:** S3 (Suspense). · **✅ static/public asset serving** (boot manifest, static-wins) ·
 **✅ `<BrustPage head={[…]}>` typed head array + `dangerouslySetInnerHTML`**
 (favicon auto-ref ปิดแล้ว: `head={[{tag:'link',rel:'icon',href:'/favicon.svg'}]}`) ·
@@ -307,13 +308,31 @@ multi-user ไม่ได้ถ้าไม่มี context primitive.
 
 ---
 
-## ◆ S7 — ไม่มี typed domain-error ผ่าน treaty · CONFIRMED
+## ◆ S7 — typed domain-error ผ่าน treaty · ✅ FIXED (แก้ framework แล้ว)
 
-handler "ไม่ throw" ผ่าน boundary → "ทีมเต็ม" ต้อง encode ใน success payload เอง
+**fix:** เพิ่ม primitive `ActionError` (`brustjs` export) — `throw new ActionError(status, code,
+{ message?, data? })` จาก handler (หรือ business logic ลึกๆ / middleware) → `dispatchAction`
+map เป็น HTTP non-2xx พร้อม **flat body** `{ code, message, data? }`. brand ด้วย
+`Symbol.for('brust.actionError')` (กัน class identity แตกข้าม bundle — `isActionError` เช็ค brand
+ไม่ใช่ `instanceof`). map ทั้ง **terminal catch** (handler throw) และ **outer chain() catch**
+(middleware throw ก่อน `next()`) ผ่าน helper เดียว `actionErrorResponse` (body เหมือนกันเป๊ะ).
+non-ActionError throw → ยัง 500 envelope `{error:{message,name}}` เดิม (ไม่ leak). ActionError
+ไม่ถูก `console.error` (domain signal ไม่ใช่ bug). `code` เป็น discriminator แยก domain error
+(flat, มี `code`) ออกจาก framework error (enveloped `{error:{…}}`). ดู spec/plan
+`docs/superpowers/specs/2026-06-03-s7-typed-treaty-error-{design,plan}.md`. **dogfood:**
+POST `/team` `throw new ActionError(409,'TEAM_FULL',{data:{max:MAX_TEAM}})` แทน `full` flag;
+`AddToTeamButton` อ่าน `(error?.value as ActionErrorBody)?.code === 'TEAM_FULL'` → set signal `full`
+(เลิก silent no-op + เลิกเช็ค `data.full`). 10 tests (5 unit + 5 dispatch incl middleware/respond+throw).
+
+**ยังเปิด (out of scope, follow-up):** treaty proxy ยังคืน `TreatyResponse<any,any>` —
+`error.value` typed `any` ต้อง `as ActionErrorBody` เอง; per-endpoint typed error union
+(เช่น `opts.errors` accumulate เข้า endpoint type) gate ด้วยการทำ proxy ให้ typed ก่อน.
+**known limitation (dogfood UI):** `full` signal เป็น local ต่อปุ่ม — ถ้าได้ TEAM_FULL แล้วทีม
+ว่างผ่าน TeamBuilder ทีหลัง label ค้าง 'Team Full' จน add สำเร็จครั้งถัดไป (เกิดเฉพาะ multi-client
+race; `disabled()` กันเคสปกติอยู่แล้ว).
+
+**อาการเดิม:** handler "ไม่ throw" ผ่าน boundary → "ทีมเต็ม" ต้อง encode ใน success payload เอง
 (`{ team, max, full: true }`) แล้ว client เช็คสองที่ (`error` ของ transport + `data.full`).
-ดู `actions.ts`.
-
-**proposal:** `throw new ActionError(status, code)` → treaty map เป็น typed discriminated union.
 
 ---
 
