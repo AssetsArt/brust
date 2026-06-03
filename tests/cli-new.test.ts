@@ -273,7 +273,9 @@ test('templates: pokedex extraFiles synthesizes package.json/tsconfig/.gitignore
   expect(pkg.dependencies.brustjs).toBe('^9.9.9')
   expect(pkg.dependencies.zod).toBeTruthy()
   expect(pkg.dependencies['react-dom']).toBeTruthy()
-  expect(pkg.dependencies.tailwindcss).toBeUndefined()
+  // pokedex is now Tailwind v4 + lucide icons (redesigned public webpage).
+  expect(pkg.dependencies.tailwindcss).toBeTruthy()
+  expect(pkg.dependencies['lucide-react']).toBeTruthy()
   expect(pkg.scripts.dev).toBe('brustjs dev')
 })
 
@@ -415,7 +417,9 @@ test('brust new --template pokedex: emits pokedex tree, no docs, synth package.j
     expect(pkg.dependencies.brustjs).toMatch(/^file:/)
     expect(pkg.dependencies.zod).toBeTruthy()
     expect(pkg.dependencies['react-dom']).toBeTruthy()
-    expect(pkg.dependencies.tailwindcss).toBeUndefined()
+    // pokedex is now Tailwind v4 + lucide icons (redesigned public webpage).
+    expect(pkg.dependencies.tailwindcss).toBeTruthy()
+    expect(pkg.dependencies['lucide-react']).toBeTruthy()
     expect(pkg.scripts.dev).toBe('brustjs dev')
 
     const allFiles = await collectFiles(projectDir)

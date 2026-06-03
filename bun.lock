@@ -16,17 +16,18 @@
         "@types/react": "^19.2.15",
         "@types/react-dom": "^19.2.3",
         "happy-dom": "^20.9.0",
+        "lucide-react": "^1.17.0",
         "react": "^19.2.6",
         "react-dom": "^19.2.6",
         "zod": "^4.4.3",
       },
       "optionalDependencies": {
-        "brustjs-darwin-arm64": "0.1.14-alpha",
-        "brustjs-darwin-x64": "0.1.14-alpha",
-        "brustjs-linux-arm64-gnu": "0.1.14-alpha",
-        "brustjs-linux-arm64-musl": "0.1.14-alpha",
-        "brustjs-linux-x64-gnu": "0.1.14-alpha",
-        "brustjs-linux-x64-musl": "0.1.14-alpha",
+        "brustjs-darwin-arm64": "0.1.28-alpha",
+        "brustjs-darwin-x64": "0.1.28-alpha",
+        "brustjs-linux-arm64-gnu": "0.1.28-alpha",
+        "brustjs-linux-arm64-musl": "0.1.28-alpha",
+        "brustjs-linux-x64-gnu": "0.1.28-alpha",
+        "brustjs-linux-x64-musl": "0.1.28-alpha",
       },
       "peerDependencies": {
         "react": "^19.2.6",
@@ -103,17 +104,17 @@
 
     "@types/ws": ["@types/ws@8.18.1", "", { "dependencies": { "@types/node": "*" } }, "sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg=="],
 
-    "brustjs-darwin-arm64": ["brustjs-darwin-arm64@0.1.14-alpha", "", { "os": "darwin", "cpu": "arm64" }, "sha512-panM8vhmhQGpgXXwiyss36asQwt1vJfAG9Iyv7oDavxJxzHoRclkKFcjl4tm23xw7uGbefAdUMezzSrJ6hp0SQ=="],
+    "brustjs-darwin-arm64": ["brustjs-darwin-arm64@0.1.28-alpha", "", { "os": "darwin", "cpu": "arm64" }, "sha512-2dygAwPNFC4yc/PcCJ+aTCeFbnSKQWQP70KG4OILB3ieKDQpBFCHAtvazmJJK37ojnSAvzWhkQ3LHhplY1Tc9w=="],
 
-    "brustjs-darwin-x64": ["brustjs-darwin-x64@0.1.14-alpha", "", { "os": "darwin", "cpu": "x64" }, "sha512-cUEwVru8t0D4uu+Sj3uf/0O0wLkjVs2WwlA3jq72fwDfNcO5DfghydFNduxkUKGA571hNBTLxgokm8i31tbc2A=="],
+    "brustjs-darwin-x64": ["brustjs-darwin-x64@0.1.28-alpha", "", { "os": "darwin", "cpu": "x64" }, "sha512-VrrW00YW6KH+irfayNmo0yy767MOoZV8ToUrcqQBiy8SLuC1NdXXwcf5FlzYc12P4SNQCabL9hNfYXG81+cTLQ=="],
 
-    "brustjs-linux-arm64-gnu": ["brustjs-linux-arm64-gnu@0.1.14-alpha", "", { "os": "linux", "cpu": "arm64" }, "sha512-BAfaVo+apb3zPsQvK6Gn+WcW3G2GVJb9+1Kyj6bLf8MhiU11P0e9qninFzSmQb4nX9p2j+YOBe+mYYsvTetC2Q=="],
+    "brustjs-linux-arm64-gnu": ["brustjs-linux-arm64-gnu@0.1.28-alpha", "", { "os": "linux", "cpu": "arm64" }, "sha512-GmpeqU+SaTXOUsowd+g2y/cEQt0P8Mt0i5G92mT+ITMyx8JFgOzQr9WYHFoxXWPzPlK5l3t6VuaRwBOJI9hHMw=="],
 
-    "brustjs-linux-arm64-musl": ["brustjs-linux-arm64-musl@0.1.14-alpha", "", { "os": "linux", "cpu": "arm64" }, "sha512-ul0hYnUuh1M6otBVEJkd4/m7MfL/kqopQp8S6vyZ4z+JEDq7KPnLASUbuIUIquv3D78AVFmOeBYgOLV7QGkw/Q=="],
+    "brustjs-linux-arm64-musl": ["brustjs-linux-arm64-musl@0.1.28-alpha", "", { "os": "linux", "cpu": "arm64" }, "sha512-QmRUaD7jruOa494eEkY9or6hr+OU28OO2hjD6J3tV4tnsEut+fm+zjPbwTiuzXf9X/BP+KfmMxyWeuBF9L19yg=="],
 
-    "brustjs-linux-x64-gnu": ["brustjs-linux-x64-gnu@0.1.14-alpha", "", { "os": "linux", "cpu": "x64" }, "sha512-6ix4ifu7Q5cAC9oCW1cBhQNbyJxV2Ugm0J6IVpGIDnk9lHyrv5pGq2JxbmrDiwSbPmeAGLLVh1Qd8Gk97UV3RQ=="],
+    "brustjs-linux-x64-gnu": ["brustjs-linux-x64-gnu@0.1.28-alpha", "", { "os": "linux", "cpu": "x64" }, "sha512-77iTJ5cmGrVI3xfawtYQyIOAVlJ3SkCJzBjljWC55Ii1cFsdF5K+e8YusLqwrulZC+HYRIGbm/TI1++42NMlOw=="],
 
-    "brustjs-linux-x64-musl": ["brustjs-linux-x64-musl@0.1.14-alpha", "", { "os": "linux", "cpu": "x64" }, "sha512-k77hCWK/0PXnE6N066nniiEYGYQ9VLISjA8M0hukYSXqtsfFTyZt7LsfAZgDgXXCRtEFPrM2ri7HX4hoowN6RA=="],
+    "brustjs-linux-x64-musl": ["brustjs-linux-x64-musl@0.1.28-alpha", "", { "os": "linux", "cpu": "x64" }, "sha512-DgroOHhK494KVIVCCm9t2PJ0qbXWYb03BOK3AZTBqE8aKWM+C5RnWRS4GtepRxXKNYPr0JeaGrvDijGL4r9mng=="],
 
     "bun-types": ["bun-types@1.3.14", "", { "dependencies": { "@types/node": "*" } }, "sha512-4N0ig0fEomHt5R0KCFWjovxow98rIoRwKolrYdCcknNwMekCXRnWEUvgu5soYV8QXtVsrUD8B95MBOZGPvr6KQ=="],
 
@@ -154,6 +155,8 @@
     "lightningcss-win32-arm64-msvc": ["lightningcss-win32-arm64-msvc@1.32.0", "", { "os": "win32", "cpu": "arm64" }, "sha512-8SbC8BR40pS6baCM8sbtYDSwEVQd4JlFTOlaD3gWGHfThTcABnNDBda6eTZeqbofalIJhFx0qKzgHJmcPTnGdw=="],
 
     "lightningcss-win32-x64-msvc": ["lightningcss-win32-x64-msvc@1.32.0", "", { "os": "win32", "cpu": "x64" }, "sha512-Amq9B/SoZYdDi1kFrojnoqPLxYhQ4Wo5XiL8EVJrVsB8ARoC1PWW6VGtT0WKCemjy8aC+louJnjS7U18x3b06Q=="],
+
+    "lucide-react": ["lucide-react@1.17.0", "", { "peerDependencies": { "react": "^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0" } }, "sha512-9FA9evdox/JQL5PT57fdA1x/yg8T7knJ98+zjTL3UfKza6pflQUUh3XtaQIHKvnsJw1lmsEyHVlt5jchYxOQ5w=="],
 
     "magic-string": ["magic-string@0.30.21", "", { "dependencies": { "@jridgewell/sourcemap-codec": "^1.5.5" } }, "sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ=="],
 

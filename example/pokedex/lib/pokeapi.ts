@@ -20,28 +20,28 @@ export const cap = (s: string): string =>
 
 export const pad = (n: number): string => `#${String(n).padStart(4, '0')}`
 
-/** Pokémon type → AssetsArt design-token CSS variable (stays inside brand —
- *  no canonical Pokémon colours). Mirrored by `.dex-type--<name>` rules in
- *  app.css. */
+/** Pokémon type → real hex color. Tailwind's scanner can't see runtime-built
+ *  class strings, so type tints are applied as inline `style` values from the
+ *  loader using these hexes. */
 export const TYPE_COLOR: Record<string, string> = {
-  normal: 'var(--ink-400)',
-  fire: 'var(--magenta-500)',
-  water: 'var(--blue-500)',
-  grass: 'var(--success-500)',
-  electric: 'var(--warning-500)',
-  ice: 'var(--viz-4)',
-  fighting: 'var(--viz-3)',
-  poison: 'var(--purple-600)',
-  ground: 'var(--viz-7)',
-  flying: 'var(--viz-5)',
-  psychic: 'var(--purple-500)',
-  bug: 'var(--viz-8)',
-  rock: 'var(--ink-500)',
-  ghost: 'var(--purple-700)',
-  dragon: 'var(--viz-2)',
-  dark: 'var(--ink-800)',
-  steel: 'var(--ink-400)',
-  fairy: 'var(--magenta-300)',
+  normal: '#9099a1',
+  fire: '#ef7444',
+  water: '#4d90d5',
+  grass: '#63bb5b',
+  electric: '#f5c84b',
+  ice: '#74cec0',
+  fighting: '#ce4069',
+  poison: '#ab6ac8',
+  ground: '#d97746',
+  flying: '#8fa8dd',
+  psychic: '#f06fa0',
+  bug: '#90c12c',
+  rock: '#c7b78b',
+  ghost: '#5269ac',
+  dragon: '#0a6dc4',
+  dark: '#5a5366',
+  steel: '#5a8ea1',
+  fairy: '#ec8fe6',
 }
 
 export const STAT_LABEL: Record<string, string> = {

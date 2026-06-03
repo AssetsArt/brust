@@ -11,6 +11,7 @@ import {
   gatherChainSources,
   gatherComponentSources,
   reconcileIslandManifest,
+  scanImportRefs,
 } from './native-routes-emit.ts'
 
 let dir: string
@@ -41,7 +42,9 @@ describe('reconcileIslandManifest', () => {
     // build machine's absolute path (which would leak the developer's username
     // into shipped dist/jinja artifacts). Mirrors the .components.json contract.
     const absSource = join(process.cwd(), 'components', 'Counter.tsx')
-    const pageImports = new Map([['Counter', absSource]])
+    const pageImports = new Map([
+      ['Counter', { spec: absSource, bare: false, kind: 'default' as const }],
+    ])
     reconcileIslandManifest(jinjaPath, islandsJsonPath, pageImports, 'Page')
 
     const enriched = JSON.parse(readFileSync(islandsJsonPath, 'utf8'))
@@ -73,7 +76,7 @@ describe('reconcileIslandManifest', () => {
     reconcileIslandManifest(
       jinjaPath,
       islandsJsonPath,
-      new Map([['Counter', '/abs/Counter.tsx']]),
+      new Map([['Counter', { spec: '/abs/Counter.tsx', bare: false, kind: 'default' as const }]]),
       'Page',
     )
 
@@ -99,7 +102,7 @@ describe('reconcileIslandManifest', () => {
     reconcileIslandManifest(
       jinjaPath,
       islandsJsonPath,
-      new Map([['Counter', '/abs/Counter.tsx']]),
+      new Map([['Counter', { spec: '/abs/Counter.tsx', bare: false, kind: 'default' as const }]]),
       'Page',
     )
 
@@ -125,7 +128,7 @@ describe('reconcileIslandManifest', () => {
       reconcileIslandManifest(
         jinjaPath,
         islandsJsonPath,
-        new Map([['Counter', '/abs/Counter.tsx']]),
+        new Map([['Counter', { spec: '/abs/Counter.tsx', bare: false, kind: 'default' as const }]]),
         'Page',
       ),
     ).toThrow(/Ghost.*Page|Page.*Ghost/)
@@ -292,8 +295,8 @@ describe('gatherComponentSources', () => {
     expect(sources.B).toContain('function B')
 
     // mergedImports should contain both A and B with their resolved paths
-    expect(mergedImports.get('A')).toBe(aPath)
-    expect(mergedImports.get('B')).toBe(bPath)
+    expect(mergedImports.get('A')!.spec).toBe(aPath)
+    expect(mergedImports.get('B')!.spec).toBe(bPath)
   })
 
   test('merges imports so a nested island reconciles (BLOCKER regression)', () => {
@@ -321,9 +324,9 @@ describe('gatherComponentSources', () => {
     const { mergedImports } = gatherComponentSources(pagePath)
 
     // Counter must be in mergedImports even though Page never imports it directly
-    expect(mergedImports.get('Counter')).toBe(counterPath)
+    expect(mergedImports.get('Counter')!.spec).toBe(counterPath)
     // Layout must also be present
-    expect(mergedImports.get('Layout')).toBe(layoutPath)
+    expect(mergedImports.get('Layout')!.spec).toBe(layoutPath)
   })
 
   test('dedupes cycles — A imports B, B imports A — terminates and both present', () => {
@@ -391,6 +394,322 @@ describe('gatherComponentSources', () => {
     )
 
     expect(() => gatherComponentSources(pagePath)).toThrow(/ambiguous component ident "Card"/)
+  })
+
+  test('lowercase ident collision (e.g. two stores named `teamStore`) does NOT throw — only Capitalized component idents are ambiguous', () => {
+    // Two distinct local store files both export-default-less but imported NAMED
+    // as the same lowercase ident `teamStore` (a store singleton, not a JSX
+    // component). scanImportRefs now sees named imports, but a lowercase
+    // collision must not trip the component-ambiguity guard.
+    const storeAPath = join(dir, 'storeA.ts')
+    writeFileSync(storeAPath, 'export const teamStore = { id: "a" };')
+    const storeBPath = join(dir, 'storeB.ts')
+    writeFileSync(storeBPath, 'export const teamStore = { id: "b" };')
+
+    const compAPath = join(dir, 'CompA.tsx')
+    writeFileSync(
+      compAPath,
+      `import { teamStore } from './storeA'\nexport default function CompA() { return <div>{teamStore.id}</div>; }`,
+    )
+    const compBPath = join(dir, 'CompB.tsx')
+    writeFileSync(
+      compBPath,
+      `import { teamStore } from './storeB'\nexport default function CompB() { return <div>{teamStore.id}</div>; }`,
+    )
+
+    const pagePath = join(dir, 'StorePage.tsx')
+    writeFileSync(
+      pagePath,
+      `import CompA from './CompA'\nimport CompB from './CompB'\nexport default function StorePage() { return <div><CompA/><CompB/></div>; }`,
+    )
+
+    expect(() => gatherComponentSources(pagePath)).not.toThrow()
+  })
+})
+
+describe('scanImportRefs', () => {
+  test('default-local: bare:false, kind:default, spec is absolute resolved path', () => {
+    const localPath = join(dir, 'Widget.tsx')
+    writeFileSync(localPath, 'export default function Widget() { return <div/>; }')
+    const file = join(dir, 'Page.tsx')
+    writeFileSync(
+      file,
+      "import Widget from './Widget'\nexport default function Page() { return <Widget/>; }",
+    )
+
+    const refs = scanImportRefs(file)
+    const w = refs.get('Widget')
+    expect(w).toBeDefined()
+    expect(w!.bare).toBe(false)
+    expect(w!.kind).toBe('default')
+    expect(w!.spec).toBe(localPath)
+    expect(isAbsolute(w!.spec)).toBe(true)
+    expect(w!.imported).toBeUndefined()
+  })
+
+  test('default-package: bare:true, kept verbatim (not skipped, not resolved)', () => {
+    const file = join(dir, 'Page.tsx')
+    writeFileSync(
+      file,
+      "import Search from 'lucide-react/dist/esm/icons/search.mjs'\nexport default function Page() { return <Search/>; }",
+    )
+    const refs = scanImportRefs(file)
+    const s = refs.get('Search')
+    expect(s).toBeDefined()
+    expect(s!.bare).toBe(true)
+    expect(s!.kind).toBe('default')
+    expect(s!.spec).toBe('lucide-react/dist/esm/icons/search.mjs')
+  })
+
+  test('named import: kind:named, imported === local', () => {
+    const file = join(dir, 'Page.tsx')
+    writeFileSync(
+      file,
+      "import { Search } from 'lucide-react'\nexport default function Page() { return <Search/>; }",
+    )
+    const refs = scanImportRefs(file)
+    const s = refs.get('Search')
+    expect(s).toBeDefined()
+    expect(s!.bare).toBe(true)
+    expect(s!.kind).toBe('named')
+    expect(s!.imported).toBe('Search')
+    expect(s!.spec).toBe('lucide-react')
+  })
+
+  test('named import with alias: local C, imported B', () => {
+    const file = join(dir, 'Page.tsx')
+    writeFileSync(
+      file,
+      "import { Search as Icon } from 'lucide-react'\nexport default function Page() { return <Icon/>; }",
+    )
+    const refs = scanImportRefs(file)
+    expect(refs.has('Search')).toBe(false)
+    const icon = refs.get('Icon')
+    expect(icon).toBeDefined()
+    expect(icon!.kind).toBe('named')
+    expect(icon!.imported).toBe('Search')
+    expect(icon!.bare).toBe(true)
+    expect(icon!.spec).toBe('lucide-react')
+  })
+
+  test('named import: multiple specifiers → one entry each', () => {
+    const file = join(dir, 'Page.tsx')
+    writeFileSync(
+      file,
+      "import { Search, Menu as Bars } from 'lucide-react'\nexport default function Page() { return <Search/>; }",
+    )
+    const refs = scanImportRefs(file)
+    expect(refs.get('Search')!.imported).toBe('Search')
+    expect(refs.get('Bars')!.imported).toBe('Menu')
+    expect(refs.get('Search')!.kind).toBe('named')
+    expect(refs.get('Bars')!.kind).toBe('named')
+  })
+
+  test('namespace import: kind:namespace, recorded parse-only', () => {
+    const file = join(dir, 'Page.tsx')
+    writeFileSync(
+      file,
+      "import * as Lucide from 'lucide-react'\nexport default function Page() { return <div/>; }",
+    )
+    const refs = scanImportRefs(file)
+    const l = refs.get('Lucide')
+    expect(l).toBeDefined()
+    expect(l!.kind).toBe('namespace')
+    expect(l!.bare).toBe(true)
+    expect(l!.spec).toBe('lucide-react')
+    expect(l!.imported).toBeUndefined()
+  })
+
+  test('mixed default + named: both entries recorded', () => {
+    const file = join(dir, 'Page.tsx')
+    writeFileSync(
+      file,
+      "import React, { useState } from 'react'\nexport default function Page() { return <div/>; }",
+    )
+    const refs = scanImportRefs(file)
+    const r = refs.get('React')
+    expect(r).toBeDefined()
+    expect(r!.kind).toBe('default')
+    expect(r!.bare).toBe(true)
+    const u = refs.get('useState')
+    expect(u).toBeDefined()
+    expect(u!.kind).toBe('named')
+    expect(u!.imported).toBe('useState')
+  })
+
+  test('local namespace + named resolve spec to absolute path (bare:false)', () => {
+    const localPath = join(dir, 'lib.tsx')
+    writeFileSync(
+      localPath,
+      'export const Foo = () => <div/>; export function Bar() { return <div/>; }',
+    )
+    const file = join(dir, 'Page.tsx')
+    writeFileSync(
+      file,
+      "import { Bar } from './lib'\nimport * as Lib from './lib'\nexport default function Page() { return <Bar/>; }",
+    )
+    const refs = scanImportRefs(file)
+    expect(refs.get('Bar')!.bare).toBe(false)
+    expect(refs.get('Bar')!.spec).toBe(localPath)
+    expect(refs.get('Lib')!.bare).toBe(false)
+    expect(refs.get('Lib')!.spec).toBe(localPath)
+  })
+
+  test('type-only imports are skipped (no phantom bindings)', () => {
+    const file = join(dir, 'Page.tsx')
+    writeFileSync(
+      file,
+      "import type { Props } from 'lib'\nimport type Cfg from './cfg'\nimport { Icon } from 'lucide-react'\nexport default function Page() { return <Icon/>; }",
+    )
+    const refs = scanImportRefs(file)
+    expect(refs.has('Props')).toBe(false)
+    expect(refs.has('Cfg')).toBe(false)
+    expect(refs.has('type')).toBe(false)
+    expect(refs.get('Icon')!.kind).toBe('named')
+  })
+
+  test('multiline named import parses (regex [^quotes] spans newlines)', () => {
+    const file = join(dir, 'Page.tsx')
+    writeFileSync(
+      file,
+      "import {\n  Search,\n  Menu as M,\n} from 'lucide-react'\nexport default function Page() { return <Search/>; }",
+    )
+    const refs = scanImportRefs(file)
+    expect(refs.get('Search')!.kind).toBe('named')
+    expect(refs.get('Search')!.spec).toBe('lucide-react')
+    expect(refs.get('M')!.imported).toBe('Menu')
+  })
+})
+
+describe('emitComponentArtifacts — import-form regeneration (via emitNativeTemplates)', () => {
+  test('bare named import: factory regenerates `import { imported as Local }`, components.json keeps bare spec, Island scan skipped', async () => {
+    // Page uses a named import from lucide-react; <Search/> is a simple-ident SSR component.
+    const pagePath = join(dir, 'Page.tsx')
+    writeFileSync(
+      pagePath,
+      "import { Search } from 'lucide-react'\nexport default function Page() { return <div><Search/></div>; }",
+    )
+    const routesPath = join(dir, 'routes.tsx')
+    writeFileSync(routesPath, "import Page from './Page'\n")
+
+    const outDir = join(dir, 'jinja')
+    mkdirSync(outDir, { recursive: true })
+
+    await emitNativeTemplates({
+      entryFile: routesPath,
+      flatRoutes: [{ nativeTemplate: 'Page' }],
+      outDir,
+      repoRoot: dir,
+    })
+
+    const factoryContent = readFileSync(join(outDir, 'Page.factory.ts'), 'utf8')
+    expect(factoryContent).toContain('import { Search } from "lucide-react"')
+    // bare spec is never relativized
+    expect(factoryContent).not.toMatch(/import .* from "\.\.?\//)
+
+    const compEntries = JSON.parse(
+      readFileSync(join(outDir, 'Page.components.json'), 'utf8'),
+    ) as Array<{
+      component: string
+      sourcePath: string
+    }>
+    const search = compEntries.find((e) => e.component === 'Search')
+    expect(search).toBeDefined()
+    // bare spec kept verbatim in components.json
+    expect(search!.sourcePath).toBe('lucide-react')
+  })
+
+  test('bare named alias: factory uses `import { imported as Local }`', async () => {
+    const pagePath = join(dir, 'Page.tsx')
+    writeFileSync(
+      pagePath,
+      "import { Search as Icon } from 'lucide-react'\nexport default function Page() { return <div><Icon/></div>; }",
+    )
+    const routesPath = join(dir, 'routes.tsx')
+    writeFileSync(routesPath, "import Page from './Page'\n")
+    const outDir = join(dir, 'jinja')
+    mkdirSync(outDir, { recursive: true })
+
+    await emitNativeTemplates({
+      entryFile: routesPath,
+      flatRoutes: [{ nativeTemplate: 'Page' }],
+      outDir,
+      repoRoot: dir,
+    })
+
+    const factoryContent = readFileSync(join(outDir, 'Page.factory.ts'), 'utf8')
+    expect(factoryContent).toContain('import { Search as Icon } from "lucide-react"')
+  })
+
+  test('bare default-package import: factory regenerates `import X from "<spec>"` verbatim', async () => {
+    const pagePath = join(dir, 'Page.tsx')
+    writeFileSync(
+      pagePath,
+      "import Search from 'lucide-react/dist/esm/icons/search.mjs'\nexport default function Page() { return <div><Search/></div>; }",
+    )
+    const routesPath = join(dir, 'routes.tsx')
+    writeFileSync(routesPath, "import Page from './Page'\n")
+    const outDir = join(dir, 'jinja')
+    mkdirSync(outDir, { recursive: true })
+
+    await emitNativeTemplates({
+      entryFile: routesPath,
+      flatRoutes: [{ nativeTemplate: 'Page' }],
+      outDir,
+      repoRoot: dir,
+    })
+
+    const factoryContent = readFileSync(join(outDir, 'Page.factory.ts'), 'utf8')
+    expect(factoryContent).toContain('import Search from "lucide-react/dist/esm/icons/search.mjs"')
+  })
+
+  test('backward-compat: local default import factory output byte-identical to before', async () => {
+    const layoutPath = join(dir, 'Layout.tsx')
+    writeFileSync(
+      layoutPath,
+      'export default function Layout({ title }: { title: string }) { return <h1>{title}</h1>; }',
+    )
+    const pagePath = join(dir, 'Page.tsx')
+    writeFileSync(
+      pagePath,
+      "import Layout from './Layout'\nexport default function Page() { return <Layout/>; }",
+    )
+    const routesPath = join(dir, 'routes.tsx')
+    writeFileSync(routesPath, "import Page from './Page'\n")
+    const outDir = join(dir, 'jinja')
+    mkdirSync(outDir, { recursive: true })
+
+    await emitNativeTemplates({
+      entryFile: routesPath,
+      flatRoutes: [{ nativeTemplate: 'Page' }],
+      outDir,
+      repoRoot: dir,
+    })
+
+    const factoryContent = readFileSync(join(outDir, 'Page.factory.ts'), 'utf8')
+    // Local default import: relativized exactly as before — `import Layout from "../Layout.tsx"`
+    expect(factoryContent).toContain('import Layout from "../Layout.tsx"')
+    expect(factoryContent).not.toMatch(/import Layout from "\//)
+  })
+})
+
+describe('reconcileIslandManifest — bare island guard', () => {
+  test('throws when an island entry resolves to a bare (package) import', () => {
+    const jinjaPath = join(dir, 'Page.jinja')
+    const islandsJsonPath = join(dir, 'Page.islands.json')
+    writeFileSync(jinjaPath, '<div>hi</div>')
+    writeFileSync(
+      islandsJsonPath,
+      JSON.stringify([
+        { component: 'Search', instance: 0, propsPath: 'data.x', ssr: false, hydrate: 'load' },
+      ]),
+    )
+    const pageImports = new Map([
+      ['Search', { spec: 'lucide-react', bare: true, kind: 'named' as const, imported: 'Search' }],
+    ])
+    expect(() => reconcileIslandManifest(jinjaPath, islandsJsonPath, pageImports, 'Page')).toThrow(
+      /Search.*bare|bare.*Search|package/,
+    )
   })
 })
 
