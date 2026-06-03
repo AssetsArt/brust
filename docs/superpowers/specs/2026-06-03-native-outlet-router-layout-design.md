@@ -71,7 +71,8 @@ multi-level ได้ (`<A><B><Leaf/></B></A>`).
 
 ### 2. `runtime/cli/native-routes-emit.ts` — synth wrapper
 - `emitNativeTemplates` (~`:313`): ต่อ native leaf ที่ `chain.length > 1` synthesize wrapper source
-  `<Parent native><...><Leaf/>...</Parent>` (nest ตาม chain order, parent → leaf).
+  `<Parent native><...><Leaf native/>...</Parent>` (nest ตาม chain order, parent → leaf).
+  **ทุก level ต้องมี attr `native`** (probe ยืนยัน — ลืม `native` บน child = ตกเป็น SsrComponent/React-render).
 - `gatherComponentSources` (~`:18`) เก็บ source ของทุก component ใน chain (parent layouts + leaf) ให้
   compiler inline ได้.
 - ชื่อ template = leaf `nativeTemplate`. chain.length===1 → path เดิม (ไม่ synth, ไม่ regress).
@@ -139,12 +140,22 @@ constraint. **verdict:** loader แรกใน chain (top-down) ที่คื
 - mixed chain (native parent + React child หรือกลับกัน) — reject ด้วย error ชัด หรือ allow? → reject (scope).
 - parent layout มี island/`x-*` directives ใน chain ได้ไหม → ควรได้ (inline เดิมรองรับ); ยืนยันใน dogfood.
 
-## Reproduce-first probe (Task 0, ก่อนสร้างจริง)
-Build `target/debug/jsx-rustc` แล้วลอง 2 อย่าง:
-1. **synth wrapper compiles?** เขียน fixture `<AppLayout native><ListPage/></AppLayout>` (AppLayout ใช้
-   `<Outlet/>` หรือ `{children}`; ListPage = fragment) → `jsx-rustc fixture.tsx -o out.jinja` → ดูว่าได้
-   Document + content ใน slot ไหม, หรือ error อะไร.
-2. **ban probe:** ใส่ native+children ใน `routes.tsx` ชั่วคราว → build → ยืนยัน `validateRoute` throw
-   (`routes.ts:337`) เป็นกำแพงจริง.
-ผลลัพธ์ probe → ปรับ plan ก่อนลงมือ task ถัดไป (ถ้า `<Outlet/>` ต้องเป็น `{children}` หรือ synth
-ไม่ผ่าน → re-scope แล้ว escalate ผ่าน AskUserQuestion).
+## Reproduce-first probe — ✅ DONE (2026-06-03, ก่อน review)
+
+รันผ่าน throwaway test เรียก `compile_full(route, path, component_sources)` จริง (jsx-rustc CLI
+ส่ง map ว่าง inline ไม่ได้ — same-file ไม่ resolve). **ผลยืนยัน core premise + ลด scope:**
+
+1. **synth wrapper inline + splice ทำงานวันนี้ผ่าน `{children}`** — ไม่ต้องแตะ doc_root/splice เลย:
+   - `<AppLayout native><Leaf native/></AppLayout>` (AppLayout มี `{children}`, Leaf = `<section>`)
+     → `<html><head>…<title>x</title>…</head><body><nav>chrome</nav><main class="content"><section>leaf-content</section></main></body></html>` — **composed Document เต็ม, 0 React, content splice เข้า slot สะอาด**.
+   - **3-level** `<A native><Mid native><Leaf native/></Mid></A>` → `<main class="content"><div class="mid"><section>leaf-content</section></div></main>` — recurse ถูก.
+   - **เงื่อนไขสำคัญ:** child ทุก level ต้องมี attr `native` (synth wrapper ต้อง emit `<Leaf native/>`).
+     ถ้าลืม → child ตกเป็น **SsrComponent** (`{{ comp_0_html | safe }}` = React-render, พัง native).
+2. **`<Outlet/>` วันนี้ = SsrComponent** (`<BrustPage>…<Outlet/></>` → `{{ comp_0_html | safe }}`) →
+   **ยืนยันต้องเพิ่ม `<Outlet/>` builtin** lower → `ChildrenSlot` (ไม่งั้น native React-render Outlet).
+   `<Outlet/>` เป็น **sugar** เหนือ `{children}` — layout เขียน `{children}` ก็ทำงานได้แล้ว แต่ `<Outlet/>`
+   idiomatic + ตรง React routes + ไม่ต้อง destructure `children` param.
+
+**ผลต่อ scope (ลดลง):** compiler งานใหม่เหลือแค่ `<Outlet/>` → ChildrenSlot lowering (doc_root/splice/
+inline-recursion reuse ได้หมด, ยืนยันแล้ว). TS: synth wrapper ต้อง **mark ทุก level เป็น `native`**
+(ข้อ 1 ข้างบน — load-bearing). ban probe (`routes.ts:337`) ไม่ต้องรันซ้ำ — code อ่านชัดว่าเป็นกำแพง.
