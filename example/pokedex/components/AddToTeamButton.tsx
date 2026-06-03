@@ -1,9 +1,9 @@
 // NATIVE INTERACTIVE COMPONENT (Spec B dogfood) — the "Add to team / In your
-// team" toggle on the detail page. Formerly a React island; now a single-file
-// native directive component: a co-located `export const behavior` (client
-// logic, react-free) + a JSX `default` export (the native template the compiler
-// lowers to minijinja). The build bundles ONLY `behavior` into _directives.js;
-// the JSX default is tree-shaken out so react never leaks into the client bundle.
+// team" toggle on the detail page. A single-file native directive component: a
+// co-located `export const behavior` (client logic, react-free) + a JSX
+// `default` export (the native template the compiler lowers to minijinja). The
+// build bundles ONLY `behavior` into _directives.js; the JSX default is
+// tree-shaken out so react never leaks into the client bundle.
 //
 // The behavior is react-free: `signal`/`computed` from brustjs/store (the window
 // singleton on the client), `client` from brustjs/client (the treaty action
@@ -11,26 +11,39 @@
 import { client } from 'brustjs/client'
 import { computed, signal } from 'brustjs/store'
 import type { Actions } from '../actions'
-import type { AddToTeamProps } from '../lib/types'
+import type { TeamMember } from '../lib/types'
 import { teamStore } from '../stores/team'
 
 const api = client<Actions>()
+
+interface AddToTeamProps {
+  id: number
+  name: string
+  displayName: string
+  num: string
+  types: string[]
+  artwork: string
+}
+
+const BASE =
+  'inline-flex w-full items-center justify-center rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-brand-600 disabled:opacity-50'
+const IN_TEAM =
+  'inline-flex w-full items-center justify-center rounded-lg bg-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors disabled:opacity-50 dark:bg-slate-700 dark:text-slate-100'
 
 // behavior → client bundle, registered as "addToTeamButton" (camelCase filename).
 // `props` is the JSON parsed out of the element's x-props attribute (precomputed
 // by the loader as a JSON string — native templates can't call JSON.stringify).
 export const behavior = ({ props }: { props: AddToTeamProps }) => {
-  // Shared store (GAP S4): writing teamStore.members here is observed by the
-  // TeamBuilder island — they resolve the same window singleton. A native
-  // x-on-click mutation is therefore seen reactively by a React island.
   const busy = signal(false)
   const full = signal(false)
-  const inTeam = computed(() => (teamStore.members() ?? []).some((m) => m.id === props.id))
+  const inTeam = computed(() =>
+    ((teamStore.members() ?? []) as TeamMember[]).some((m) => m.id === props.id),
+  )
+  const disabled = computed(() => busy() || ((teamStore.members()?.length ?? 0) >= 6 && !inTeam()))
   const label = computed(() =>
     inTeam() ? '✓ In your team' : disabled() || full() ? 'Team Full' : '＋ Add to team',
   )
-  const btnClass = computed(() => `aa-btn aa-btn--full${inTeam() ? ' aa-btn--secondary' : ''}`)
-  const disabled = computed(() => busy() || ((teamStore.members()?.length ?? 0) >= 6 && !inTeam()))
+  const btnClass = computed(() => (inTeam() ? IN_TEAM : BASE))
 
   async function init() {
     const r = await api.team.get()
@@ -41,7 +54,6 @@ export const behavior = ({ props }: { props: AddToTeamProps }) => {
     busy.set(true)
     try {
       if (inTeam()) {
-        // Bodyless DELETE is OK now (GAPS S12 fixed) — no more `.delete({})`.
         const { data } = await api.team({ id: props.id }).delete()
         if (data) teamStore.members.set(data.team)
       } else {
@@ -57,7 +69,7 @@ export const behavior = ({ props }: { props: AddToTeamProps }) => {
           full.set(false)
           teamStore.members.set(data.team)
         } else if (error?.value.code === 'TEAM_FULL') {
-          full.set(true) // server rejected — team full; surface instead of silent no-op
+          full.set(true)
         }
       }
     } finally {
@@ -74,15 +86,14 @@ export const behavior = ({ props }: { props: AddToTeamProps }) => {
 // string, emitted by the compiler as x-props="{{ (data) | e }}" (XSS-safe).
 export default function AddToTeamButton({ data }: { data: string }) {
   return (
-    <div x-data="addToTeamButton" x-props={data} style={{ position: 'relative' }}>
+    <div x-data="addToTeamButton" x-props={data}>
       <button
         type="button"
         x-text="label"
         x-bind-class="btnClass"
         x-bind-disabled="disabled"
         x-on-click="toggle"
-        className="aa-btn aa-btn--full"
-        style={{ width: '100%' }}
+        className="inline-flex w-full items-center justify-center rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-brand-600 disabled:opacity-50"
       >
         ＋ Add to team
       </button>

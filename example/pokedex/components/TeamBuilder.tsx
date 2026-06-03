@@ -3,7 +3,7 @@
 // Rendered with `ssr` so the initial team (from the loader) ships in the HTML
 // and the dock count is correct on first paint, then hydrates. Stays in sync
 // with AddToTeamButton through the shared `teamStore` (one window singleton — see
-// ../stores/team.ts / GAPS S4; replaced the old window-event bus).
+// ../stores/team.ts).
 import { useEffect, useState } from 'react'
 import { client, useStore } from 'brustjs/client'
 import type { Actions } from '../actions'
@@ -19,24 +19,24 @@ export default function TeamBuilder({ teamInitial }: { teamInitial: TeamMember[]
   const [mounted, setMounted] = useState(false)
   const [open, setOpen] = useState(false)
 
-  // This island is `ssr`, but Spec A does not server-seed native client state, so
-  // the store is empty during SSR. Drive the first render (server + client) from
-  // the `teamInitial` prop so the dock count is correct on first paint AND the
-  // hydration markup matches; switch to the live store once mounted. (Full
-  // server-seeded native snapshot is Spec B.)
+  // This island is `ssr`, but the store is empty during SSR. Drive the first
+  // render (server + client) from the `teamInitial` prop so the dock count is
+  // correct on first paint AND the hydration markup matches; switch to the live
+  // store once mounted.
   const team = mounted ? (members ?? []) : (teamInitial ?? [])
 
   useEffect(() => {
     if (teamInitial?.length) teamStore.members.set(teamInitial)
     setMounted(true)
-    // Re-sync from the server on mount (the SSR snapshot may be stale by now).
-    api.team.get().then((r) => {
-      if (r.data) teamStore.members.set(r.data.team)
-    })
+    api.team
+      .get()
+      .then((r) => {
+        if (r.data) teamStore.members.set(r.data.team)
+      })
+      .catch(console.error)
   }, [teamInitial])
 
   async function remove(id: number) {
-    // `.delete({})` — empty body is required (bodyless DELETE → 411). See GAPS S12.
     const { data } = await api.team({ id }).delete({})
     if (data) teamStore.members.set(data.team)
   }
@@ -44,119 +44,54 @@ export default function TeamBuilder({ teamInitial }: { teamInitial: TeamMember[]
   const coverage = [...new Set(team.flatMap((m) => m.types))]
 
   return (
-    <div style={{ position: 'fixed', right: 20, bottom: 20, zIndex: 200 }}>
+    <div className="fixed bottom-5 right-5 z-[200]">
       {open && (
-        <div
-          className="aa-card"
-          style={{
-            width: 320,
-            marginBottom: 12,
-            boxShadow: 'var(--shadow-xl)',
-            border: '1px solid var(--border-default)',
-          }}
-        >
-          <div style={{ height: 3, background: 'var(--aa-gradient)' }} />
-          <div
-            style={{
-              padding: '14px 16px',
-              borderBottom: '1px solid var(--border-subtle)',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-            }}
-          >
-            <span
-              style={{
-                fontFamily: 'var(--font-display)',
-                fontWeight: 800,
-                fontSize: 'var(--text-sm)',
-              }}
-            >
-              My team
-            </span>
-            <span className="aa-pill aa-pill--muted aa-pill--no-dot" style={{ marginLeft: 'auto' }}>
+        <div className="mb-3 w-80 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900">
+          <div className="h-1 bg-brand-500" />
+          <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-3 dark:border-slate-800">
+            <span className="text-sm font-extrabold text-slate-900 dark:text-white">My team</span>
+            <span className="ml-auto rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
               {team.length} / {MAX}
             </span>
           </div>
 
           {team.length === 0 ? (
-            <div
-              style={{
-                padding: '28px 20px',
-                textAlign: 'center',
-                color: 'var(--text-tertiary)',
-                fontSize: 'var(--text-xs)',
-                lineHeight: 1.6,
-              }}
-            >
-              ยังไม่มี Pokémon ในทีม
+            <div className="px-5 py-7 text-center text-xs leading-relaxed text-slate-400">
+              No Pokémon on your team yet.
               <br />
-              เปิดหน้า detail แล้วกด <b style={{ color: 'var(--text-secondary)' }}>Add to team</b>
+              Open a detail page and tap{' '}
+              <b className="text-slate-600 dark:text-slate-200">Add to team</b>.
             </div>
           ) : (
             <>
-              <div style={{ maxHeight: 300, overflowY: 'auto' }}>
+              <div className="max-h-72 overflow-y-auto">
                 {team.map((m) => (
                   <div
                     key={m.id}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 10,
-                      padding: '9px 14px',
-                      borderBottom: '1px solid var(--border-subtle)',
-                    }}
+                    className="flex items-center gap-2.5 border-b border-slate-100 px-3.5 py-2.5 dark:border-slate-800"
                   >
-                    <div
-                      style={{
-                        width: 36,
-                        height: 36,
-                        borderRadius: 'var(--radius-md)',
-                        background: 'var(--surface-sunken)',
-                        display: 'grid',
-                        placeItems: 'center',
-                        flex: 'none',
-                      }}
-                    >
-                      <img
-                        src={m.artwork}
-                        alt={m.displayName}
-                        style={{ width: 30, height: 30, objectFit: 'contain' }}
-                      />
+                    <div className="grid h-9 w-9 flex-none place-items-center rounded-md bg-slate-100 dark:bg-slate-800">
+                      <img src={m.artwork} alt={m.displayName} className="h-7 w-7 object-contain" />
                     </div>
-                    <a
-                      href={`/pokemon/${m.name}`}
-                      style={{ flex: 1, minWidth: 0, textDecoration: 'none' }}
-                    >
-                      <div
-                        style={{
-                          fontWeight: 600,
-                          fontSize: 'var(--text-xs)',
-                          color: 'var(--text-primary)',
-                        }}
-                      >
+                    <a href={`/pokemon/${m.name}`} className="min-w-0 flex-1 no-underline">
+                      <div className="text-xs font-semibold text-slate-900 dark:text-white">
                         {m.displayName}
                       </div>
-                      <div
-                        style={{
-                          fontFamily: 'var(--font-mono)',
-                          fontSize: 'var(--text-3xs)',
-                          color: 'var(--text-tertiary)',
-                        }}
-                      >
-                        {m.num}
-                      </div>
+                      <div className="font-mono text-[0.625rem] text-slate-400">{m.num}</div>
                     </a>
-                    <div style={{ display: 'flex', gap: 4 }}>
+                    <div className="flex gap-1">
                       {m.types.map((t) => (
-                        <span key={t} className={`dex-type dex-type--${t} dex-type--sm`}>
+                        <span
+                          key={t}
+                          className="rounded bg-slate-100 px-1.5 py-0.5 text-[0.625rem] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+                        >
                           {t}
                         </span>
                       ))}
                     </div>
                     <button
                       type="button"
-                      className="aa-btn aa-btn--ghost aa-btn--icon aa-btn--xs"
+                      className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800"
                       onClick={() => remove(m.id)}
                       aria-label="Remove"
                     >
@@ -166,28 +101,16 @@ export default function TeamBuilder({ teamInitial }: { teamInitial: TeamMember[]
                 ))}
               </div>
               {coverage.length > 0 && (
-                <div
-                  style={{
-                    padding: '11px 14px',
-                    background: 'var(--ink-25)',
-                    borderTop: '1px solid var(--border-subtle)',
-                  }}
-                >
-                  <div
-                    style={{
-                      fontSize: 'var(--text-3xs)',
-                      fontWeight: 700,
-                      color: 'var(--text-tertiary)',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.08em',
-                      marginBottom: 7,
-                    }}
-                  >
+                <div className="border-t border-slate-100 bg-slate-50 px-3.5 py-3 dark:border-slate-800 dark:bg-slate-800/40">
+                  <div className="mb-2 text-[0.625rem] font-bold uppercase tracking-wider text-slate-400">
                     Type coverage
                   </div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                  <div className="flex flex-wrap gap-1.5">
                     {coverage.map((t) => (
-                      <span key={t} className={`dex-type dex-type--${t} dex-type--sm`}>
+                      <span
+                        key={t}
+                        className="rounded bg-slate-100 px-1.5 py-0.5 text-[0.625rem] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+                      >
                         {t}
                       </span>
                     ))}
@@ -201,21 +124,11 @@ export default function TeamBuilder({ teamInitial }: { teamInitial: TeamMember[]
 
       <button
         type="button"
-        className="aa-btn aa-btn--lg"
+        className="inline-flex items-center gap-1.5 rounded-full bg-brand-500 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-brand-500/30 transition-colors hover:bg-brand-600"
         onClick={() => setOpen((o) => !o)}
-        style={{ boxShadow: 'var(--shadow-brand)', paddingInline: 18 }}
       >
         My team
-        <span
-          style={{
-            marginLeft: 6,
-            padding: '1px 8px',
-            borderRadius: 'var(--radius-pill)',
-            background: 'rgba(255,255,255,0.22)',
-            fontWeight: 800,
-            fontSize: 'var(--text-xs)',
-          }}
-        >
+        <span className="rounded-full bg-white/25 px-2 py-0.5 text-xs font-extrabold">
           {team.length}
         </span>
       </button>

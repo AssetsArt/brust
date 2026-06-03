@@ -1,9 +1,9 @@
-// NATIVE INTERACTIVE COMPONENT (B4 dogfood) — the dark/light theme toggle in
-// the topbar. Single-file native directive component: a co-located
-// `export const behavior` (client logic, react-free) + a JSX `default` export
-// (the native template the compiler lowers to minijinja). The build bundles
-// ONLY `behavior` into _directives.js, registered as "themeToggle" (camelCase
-// filename); the JSX default is tree-shaken out so react never leaks client-side.
+// NATIVE INTERACTIVE COMPONENT — the dark/light theme toggle in the navbar.
+// Single-file native directive component: a co-located `export const behavior`
+// (client logic, react-free) + a JSX `default` export (the native template the
+// compiler lowers to minijinja). The build bundles ONLY `behavior` into
+// _directives.js, registered as "themeToggle" (camelCase filename); the JSX
+// default is tree-shaken out so react never leaks client-side.
 //
 // react-free: `signal`/`computed` from brustjs/store (the window singleton on
 // the client), `client` from brustjs/client (the treaty action client). The
@@ -43,7 +43,7 @@ export default function ThemeToggle() {
       x-data="themeToggle"
       x-text="label"
       x-on-click="toggle"
-      className="aa-btn aa-btn--outline aa-btn--sm"
+      className="inline-flex items-center rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
     >
       🌙 Dark
     </button>
