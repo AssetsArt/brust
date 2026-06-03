@@ -10,6 +10,7 @@ import SlowSuspense  from './pages/SlowSuspense'
 import StoreDemo     from './pages/StoreDemo'
 import { counter }   from './stores/counter'
 import NativeProfile from './pages/NativeProfile'
+import NativeNestedMap from './pages/NativeNestedMap'
 import NativeIslandPage from './NativeIslandPage'
 import NativeSsrIslandPage from './NativeSsrIslandPage'
 import NativeTwoIslandPage from './NativeTwoIslandPage'
@@ -98,6 +99,18 @@ export const routes = defineRoutes([
     Component: NativeProfile,
     native: true,
     loader: async () => redirect('/_test/native/landed'),
+  },
+  // Nested `.map()` native-render coverage (verify gap).
+  {
+    path: '/_test/nested-map',
+    Component: NativeNestedMap,
+    native: true,
+    loader: async () => ({
+      rows: [
+        { id: 'r0', cells: [{ label: 'a' }, { label: 'b' }] },
+        { id: 'r1', cells: [{ label: 'c' }] },
+      ],
+    }),
   },
   // Sub-project J / native islands — native: true route hosting a CLIENT-ONLY
   // <Island> (no ssr). The compiled .jinja emits an empty data-brust-csr mount

@@ -131,3 +131,18 @@ test('GET / — HelloWorld React route still works', async () => {
   const body = await res.text()
   expect(body.length).toBeGreaterThan(0)
 })
+
+test('GET /_test/nested-map — nested .map() renders nested HTML', async () => {
+  const res = await fetch(`${BASE_URL}/_test/nested-map`)
+  expect(res.status).toBe(200)
+  expect(res.headers.get('content-type')).toContain('text/html')
+  const body = await res.text()
+  // Outer map → 2 rows; inner map → 3 cells total (2 + 1), in order.
+  expect((body.match(/class="row"/g) ?? []).length).toBe(2)
+  expect(body).toContain('<span class="cell">a</span>')
+  expect(body).toContain('<span class="cell">b</span>')
+  expect(body).toContain('<span class="cell">c</span>')
+  // 'a' before 'b' before 'c'.
+  expect(body.indexOf('>a<')).toBeLessThan(body.indexOf('>b<'))
+  expect(body.indexOf('>b<')).toBeLessThan(body.indexOf('>c<'))
+})
