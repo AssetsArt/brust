@@ -15,7 +15,7 @@ let hydrateMarkersIn: (root?: ParentNode) => void
 let swapMainContent: (main: HTMLElement, html: string) => void
 let hydrateOne: (el: HTMLElement) => Promise<void>
 let unmountIslandsIn: (root: ParentNode) => void
-let navigate: (url: URL, push: boolean) => Promise<void>
+let navigate: (url: URL, mode: 'push' | 'replace' | 'none') => Promise<void>
 
 // react-dom/client is a STATIC top-level binding in bootstrap.ts, so the mock
 // must be registered before `await import('./bootstrap')` runs (below) for it
@@ -295,10 +295,40 @@ test('navigate() drives nav store loading → success and commits path', async (
   }))
   const phases: string[] = []
   const unsub = subscribe((s) => phases.push(s.phase))
-  await navigate(new URL('http://localhost/type-chart'), true)
+  await navigate(new URL('http://localhost/type-chart'), 'push')
   unsub()
   expect(phases).toContain('loading')
   expect(getNavState().path).toBe('/type-chart')
   expect(getNavState().phase).toBe('success')
   expect(document.querySelector('main')!.textContent).toContain('swapped')
+})
+
+test('navigate mode: replace → replaceState, none → no history write, push → pushState', async () => {
+  __resetNavForTest()
+  document.body.innerHTML = '<main></main>'
+  ;(globalThis as Record<string, unknown>).fetch = mock(async () => ({
+    ok: true,
+    json: async () => ({ html: '<p>x</p>', title: 'T' }),
+  }))
+  const push = mock(() => {})
+  const replace = mock(() => {})
+  ;(globalThis.history as unknown as Record<string, unknown>).pushState = push
+  ;(globalThis.history as unknown as Record<string, unknown>).replaceState = replace
+  await navigate(new URL('http://localhost/a'), 'push')
+  expect(push).toHaveBeenCalledTimes(1)
+  expect(replace).toHaveBeenCalledTimes(0)
+  await navigate(new URL('http://localhost/b'), 'replace')
+  expect(replace).toHaveBeenCalledTimes(1)
+  await navigate(new URL('http://localhost/c'), 'none')
+  expect(push).toHaveBeenCalledTimes(1) // unchanged by 'none'
+})
+
+test('public navigate() falls back to location.assign when no navigator registered', async () => {
+  __resetNavForTest()
+  const assign = mock((_url?: string) => {})
+  ;(globalThis.location as unknown as Record<string, unknown>).assign = assign
+  const { navigate: publicNavigate } = await import('../navigation/navigate.ts')
+  await publicNavigate('/fallback', { query: { a: 1 } })
+  expect(assign).toHaveBeenCalledTimes(1)
+  expect(String(assign.mock.calls[0]![0])).toContain('/fallback?a=1')
 })
