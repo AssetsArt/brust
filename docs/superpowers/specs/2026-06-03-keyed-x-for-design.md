@@ -77,6 +77,14 @@ Invariants preserved:
   mid-path. A method sitting mid-path stays a function (descending into it yields `undefined`, same
   as today). This keeps `resolveRaw`/`callMethod` (x-on) semantics untouched — those never call `read`.
 
+**Regression argument (verified, no current path regresses):** every `read()` call site lives in
+`runtime.ts` — `:179` (listPath, single hop), `:202` (x-text), `:211` (x-show), `:220` (x-bind). The
+only multi-hop path exercised today is `t.name` in the legacy x-for test, where `t` is a **plain**
+object (legacy keeps `childScope[itemName] = item` plain). No current path has a signal/computed at
+an *intermediate* hop, so unwrap-each-hop cannot change any existing path's result. `read` is module-
+private in effect (exported but consumed only by those 4 in-file sites). The regression tests below
+lock this in.
+
 ### 2. `bindFor()` — parse helper + keyed reconcile branch
 
 **Parser** — replace the single `FOR_RE` with a small structured helper:
@@ -115,8 +123,10 @@ On each effect run (triggered by the list signal changing):
 3. Walk `list` in order. For each `(item, i)`:
    - `key = keyPaths.map(p => String(read(childScopeProbe, p))).join('\x00')` where the key is read
      against a scope exposing `item`/`index` (see note). On **duplicate** key in this pass:
-     `console.warn` + use a positional fallback key `${key}\x00#${i}` so the map stays 1:1 (the dup
-     occurrence is treated as a fresh node, never reused).
+     `console.warn` + use a positional fallback key `${key}\x00#${i}` so the map stays 1:1. Because
+     the fallback is position-derived, a stable duplicate at a stable index reuses across passes; a
+     duplicate that shifts index churns (create+dispose). Acceptable — dup keys are a flagged misuse;
+     we just don't crash.
    - **reuse** (old map has key): `batch(() => { entry.itemSig.set(item); entry.idxSig?.set(i) })`,
      `parent.insertBefore(entry.node, anchor)` to place it in the new order, move entry old→new map.
    - **create** (new key): `itemSig = signal(item)`, `idxSig = indexName ? signal(i) : undefined`,
@@ -125,6 +135,17 @@ On each effect run (triggered by the list signal changing):
      entryDisposers)`, `insertBefore(clone, anchor)`, add to new map.
 4. After the walk: every entry remaining in the **old** map (not reused) → run its disposers + remove
    its node.
+5. **Component-unmount teardown (load-bearing — mirrors the v1 `disposers.push(clear)` at line 191):**
+   `bindFor` MUST push ONE disposer into the **component-level** `disposers` array that walks every
+   live `Map` entry and runs its `entryDisposers` + removes its node. Without this, unmounting a
+   component (`disposeElement`, `runtime.ts:257`) with a non-empty keyed list leaks every entry's
+   child effects and event listeners. The per-pass disposal in step 4 only covers keys removed
+   *during a reconcile*; the unmount path needs the all-entries teardown.
+
+**Per-entry disposer threading (load-bearing):** on create, the clone is bound with
+`bindTree(clone, childScope, entry.disposers)` — the per-entry `disposers` array, NOT the
+component-level one. This is what lets both step-4 (per-pass) and step-5 (unmount) teardown actually
+tear down each clone's child effects/listeners. Passing the wrong array silently breaks disposal.
 
 Ordering: inserting every node before the trailing `anchor` comment in list order yields correct DOM
 order (a reused node already in the DOM is *moved*, not cloned, by `insertBefore`). v1 does no
@@ -150,6 +171,14 @@ dependency tracking inside the reconcile effect).
   so `itemSig.set()` inside it cannot re-trigger it (no infinite loop). Verified by: key computed
   from plain scope; item/idx reads happen only inside child-bound effects, which are separate
   `effect()` consumers.
+- **Key paths MUST resolve to non-signal values (precondition).** The no-loop guarantee holds only
+  if the key read inside the reconcile effect tracks nothing. Key paths are read against a plain
+  throwaway scope `{ [itemName]: item, [indexName]: i }`, so as long as `item` itself contains no
+  signal/computed *along the key path* (the normal contract — list elements are plain data), the read
+  tracks nothing. If a list element nested a signal exactly on a key path (`{id: signal(1)}` + `by
+  item.id`), unwrap-each-hop would track it inside the reconcile effect → churn. This is a documented
+  misuse, not supported; the `effect.running` re-entrancy guard (`signal.ts:152`) is a backstop
+  against a single re-entrant run but not against per-pass churn. Keys = plain data.
 - **Node identity:** a kept key's `node` object is the SAME `HTMLElement` across updates → focus,
   scroll position, and uncontrolled `<input>` value survive.
 - **Value reactivity:** changing a kept key's item (new object/value in the list) → `itemSig.set` →
@@ -187,7 +216,11 @@ dependency tracking inside the reconcile effect).
 - value change on kept key → `x-text` content updates, node ref unchanged
 - index updates on reorder → `x-text="i"` reflects new position, node ref unchanged
 - composite key → two items differing only in 2nd key part are distinct nodes (no collision)
-- duplicate key → `console.warn` called, both rendered (no crash)
+- duplicate key → `console.warn` called, both rendered (no crash). Test MUST spy + restore
+  `console.warn` (the suite relies on real console warns elsewhere — `runtime.ts:78,101,110,149,323`).
+- **unmount teardown** → mount a keyed list with N entries, then dispose the component
+  (remove the `[x-data]` host / trigger `disposeElement`); assert every entry's child effect disposer
+  ran (spy a disposer or assert an effect stops reacting after unmount). Guards the Fix-#1 gap.
 
 **focus preservation (integration):**
 - focus an `<input>` inside a clone → reorder list → `document.activeElement` is the same node.
