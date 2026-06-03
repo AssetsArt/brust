@@ -399,10 +399,14 @@ table ไม่แตะ (1 leaf → 1 composed template). **dogfood:** pokedex 
 (propless, `<Outlet/>`), 3 หน้าเป็น fragment, chrome (`title/active/crumb/teamProps`) มาจาก leaf
 loader. ดู spec/plan `docs/superpowers/specs/2026-06-03-native-outlet-router-layout-{design,plan}.md`.
 
-**ยังเปิด (out of scope → approach b):** layout duplicated ลงแต่ละ leaf template (build-time inline,
-ไม่ share runtime); runtime separate-template composition (minijinja block override / template chain
-ใน Rust); per-level loader scope (ตอนนี้ merge child-wins, collision เงียบ). convention: layout owns
-`<main>` (leaf ห้ามมี — จะทำ SPA-nav extraction พัง).
+**✅ ปิดแล้ว (approach a = คำตอบที่ accept; approach b = WON'T-DO):** approach a (build-time
+desugar) คือทางที่ตัดสินใจใช้อย่างเป็นทางการ. approach b (runtime separate-template composition
+ผ่าน minijinja `{% extends %}/{% block outlet %}`) **ตัดสินใจไม่ทำ** — ROI ต่ำ: layout duplication
+ตอน build ไม่ painful จริง (output runtime เหมือนกันเป๊ะ) และ approach b มี 2 blockers ที่ probe มองข้าม
+((1) island ที่ layout เป็นเจ้าของหาย เพราะ manifest resolve by leaf name; (2) bootstrap/dev `<script>`
+ที่ append ท้าย leaf ถูก minijinja ทิ้งตอน extends → ไม่มี hydration). **known limitation ที่เหลือ:**
+per-level loader scope ยัง merge child-wins (collision เงียบ) — ยังไม่มี use case จริง, ถ้าโดน pain
+ค่อย revisit approach b. convention: layout owns `<main>` (leaf ห้ามมี — จะทำ SPA-nav extraction พัง).
 
 ---
 

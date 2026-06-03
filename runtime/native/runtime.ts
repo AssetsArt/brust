@@ -1,6 +1,7 @@
 // Directive runtime — react-free, dom-only. Scans the DOM for x-* directives and
 // binds them to per-element component instances via brustjs/store's `effect`.
-import { effect, isComputed, isSignal } from '../store/index.ts'
+import { batch, effect, isComputed, isSignal, signal } from '../store/index.ts'
+import type { Signal } from '../store/index.ts'
 
 export type Instance = Record<string, unknown>
 export type Behavior = (ctx: { el: HTMLElement; props: unknown }) => Instance
@@ -136,21 +137,64 @@ function bindTree(el: HTMLElement, instance: Instance, disposers: Array<() => vo
   }
 }
 
-const FOR_RE = /^\s*(\w+)\s+in\s+([\w.]+)\s*$/
+export interface ForExpr {
+  itemName: string
+  indexName?: string
+  listPath: string
+  keyPaths?: string[]
+}
+
+const PATH_RE = /^[\w.]+$/
+const ITEM_RE = /^(?:\(\s*(\w+)\s*,\s*(\w+)\s*\)|(\w+))$/
+
+/** Parse an x-for expression. Grammar:
+ *   (item[, index]) in listPath [by keyPath, keyPath, ...]
+ * Returns null on malformed input (caller warns + skips). */
+export function parseFor(raw: string): ForExpr | null {
+  const trimmed = raw.trim()
+  let head = trimmed
+  let keyPart: string | undefined
+  const byIdx = trimmed.search(/\sby\s/)
+  if (byIdx !== -1) {
+    head = trimmed.slice(0, byIdx)
+    keyPart = trimmed.slice(byIdx + 4) // skip " by "
+  }
+  const m = /^(.*?)\s+in\s+(.+)$/.exec(head.trim())
+  if (!m) return null
+  const itemRaw = (m[1] as string).trim()
+  const listPath = (m[2] as string).trim()
+  if (!PATH_RE.test(listPath)) return null
+  const im = ITEM_RE.exec(itemRaw)
+  if (!im) return null
+  const itemName = (im[1] ?? im[3]) as string
+  const indexName = im[2] // undefined for the simple form
+  let keyPaths: string[] | undefined
+  if (keyPart !== undefined) {
+    keyPaths = keyPart.split(',').map((s) => s.trim())
+    if (keyPaths.length === 0 || keyPaths.some((p) => !PATH_RE.test(p))) return null
+  }
+  return { itemName, indexName, listPath, keyPaths }
+}
+
+interface ForEntry {
+  node: HTMLElement
+  itemSig: Signal<unknown>
+  idxSig?: Signal<number>
+  disposers: Array<() => void>
+}
 
 // `x-for="item in member"` — the element is the template. Replace it with a comment
-// anchor; on each change of `member`, clear previous clones and render one per item,
-// binding each clone with a child scope { [item]: value } prototype-linked to the
-// instance (so instance members + methods stay visible). v1 = full re-render.
+// anchor. Without a `by` key clause this is a full re-render on each list change
+// (legacy v1, now with optional plain index). With `by <keypath>...` it is an opt-in
+// keyed reconcile that reuses DOM nodes (focus/scroll survive) and is reactive
+// per-item via a per-clone `signal(item)` resolved through `read`'s unwrap-each-hop.
 function bindFor(tplEl: HTMLElement, instance: Instance, disposers: Array<() => void>): void {
-  const raw = tplEl.getAttribute('x-for') ?? ''
-  const m = FOR_RE.exec(raw)
-  if (!m) {
-    console.warn(`[brust] malformed x-for expression: "${raw}"`)
+  const expr = parseFor(tplEl.getAttribute('x-for') ?? '')
+  if (!expr) {
+    console.warn(`[brust] malformed x-for expression: "${tplEl.getAttribute('x-for')}"`)
     return
   }
-  const itemName = m[1] as string
-  const listPath = m[2] as string
+  const { itemName, indexName, listPath, keyPaths } = expr
   const parent = tplEl.parentNode
   if (!parent) return
   const anchor = tplEl.ownerDocument.createComment(`x-for:${itemName}`)
@@ -159,36 +203,101 @@ function bindFor(tplEl: HTMLElement, instance: Instance, disposers: Array<() => 
   const template = tplEl.cloneNode(true) as HTMLElement
   tplEl.remove()
 
-  const rendered: HTMLElement[] = []
-  const childDisposers: Array<() => void> = []
+  // ---- legacy (no `by`) — full re-render, with optional plain index ----
+  if (!keyPaths) {
+    const rendered: HTMLElement[] = []
+    const childDisposers: Array<() => void> = []
+    const clear = () => {
+      for (const d of childDisposers.splice(0)) {
+        try {
+          d()
+        } catch {
+          /* keep clearing */
+        }
+      }
+      for (const node of rendered.splice(0)) node.remove()
+    }
+    disposers.push(
+      effect(() => {
+        clear()
+        const list = read(instance, listPath)
+        if (!Array.isArray(list)) return
+        for (let i = 0; i < list.length; i++) {
+          const clone = template.cloneNode(true) as HTMLElement
+          const childScope: Instance = Object.create(instance)
+          childScope[itemName] = list[i]
+          if (indexName) childScope[indexName] = i
+          bindTree(clone, childScope, childDisposers)
+          parent.insertBefore(clone, anchor) // before anchor → preserves order
+          rendered.push(clone)
+        }
+      }),
+    )
+    disposers.push(clear)
+    return
+  }
 
-  const clear = () => {
-    for (const d of childDisposers.splice(0)) {
+  // ---- keyed reconcile ----
+  let map = new Map<string, ForEntry>()
+  const disposeEntry = (e: ForEntry) => {
+    for (const d of e.disposers.splice(0)) {
       try {
         d()
       } catch {
-        /* keep clearing */
+        /* keep tearing down */
       }
     }
-    for (const node of rendered.splice(0)) node.remove()
+    e.node.remove()
   }
-
   disposers.push(
     effect(() => {
-      clear()
-      const list = read(instance, listPath)
-      if (!Array.isArray(list)) return
-      for (const item of list) {
-        const clone = template.cloneNode(true) as HTMLElement
-        const childScope: Instance = Object.create(instance)
-        childScope[itemName] = item
-        bindTree(clone, childScope, childDisposers)
-        parent.insertBefore(clone, anchor) // before anchor → preserves order
-        rendered.push(clone)
+      const list = read(instance, listPath) // tracks ONLY the list signal
+      const arr = Array.isArray(list) ? list : []
+      const next = new Map<string, ForEntry>()
+      for (let i = 0; i < arr.length; i++) {
+        const item = arr[i]
+        const probe: Instance = { [itemName]: item } // plain scope for key extraction
+        if (indexName) probe[indexName] = i
+        // resolveRaw (NOT read): never calls signal getters → the reconcile effect
+        // tracks ONLY the list signal, even if a list item nests a signal on a key
+        // path. Keys are plain identity data by contract; this just makes the
+        // no-self-retrigger invariant hold unconditionally.
+        let key = keyPaths.map((p) => String(resolveRaw(probe, p))).join('\x00')
+        if (next.has(key)) {
+          console.warn(`[brust] duplicate x-for key "${key}"`)
+          key = `${key}\x00#${i}`
+        }
+        const existing = map.get(key)
+        if (existing) {
+          batch(() => {
+            existing.itemSig.set(item)
+            existing.idxSig?.set(i)
+          })
+          parent.insertBefore(existing.node, anchor) // move into new order
+          map.delete(key)
+          next.set(key, existing)
+        } else {
+          const clone = template.cloneNode(true) as HTMLElement
+          const itemSig = signal(item)
+          const idxSig = indexName ? signal(i) : undefined
+          const childScope: Instance = Object.create(instance)
+          childScope[itemName] = itemSig
+          if (indexName && idxSig) childScope[indexName] = idxSig
+          const entryDisposers: Array<() => void> = []
+          bindTree(clone, childScope, entryDisposers)
+          parent.insertBefore(clone, anchor)
+          next.set(key, { node: clone, itemSig, idxSig, disposers: entryDisposers })
+        }
       }
+      for (const e of map.values()) disposeEntry(e) // not reused this pass → gone
+      map = next
     }),
   )
-  disposers.push(clear)
+  // component-unmount teardown of all live entries (mirrors legacy `clear`)
+  disposers.push(() => {
+    for (const e of map.values()) disposeEntry(e)
+    map.clear()
+  })
 }
 
 function bindAttrs(el: HTMLElement, scope: Instance, disposers: Array<() => void>): void {
@@ -293,12 +402,17 @@ export function setBound(el: HTMLElement, attr: string, value: unknown): void {
 
 // --- reactive read helpers (used by later tasks) -------------------------------
 
-/** Walk a dotted member path against `scope`; at the LEAF, call signals/computeds/
- * functions to obtain the reactive value (this read is what `effect` tracks). */
+/** Walk a dotted member path against `scope`, unwrapping a signal/computed at EVERY
+ * hop (so an intermediate item-signal is tracked by `effect`); at the LEAF also call
+ * a plain function to obtain its value (this read is what `effect` tracks). */
 export function read(scope: Instance, path: string): unknown {
   let cur: unknown = scope
   for (const part of path.split('.')) {
     if (cur == null) return undefined
+    // Unwrap a signal/computed BEFORE descending (intermediate hop) so reading
+    // `item.name` calls the item signal here → effect() tracks it. Plain functions
+    // are NOT called mid-path (only signal/computed), preserving x-on/method semantics.
+    if (isSignal(cur) || isComputed(cur)) cur = (cur as () => unknown)()
     cur = (cur as Record<string, unknown>)[part]
   }
   if (isSignal(cur) || isComputed(cur)) return (cur as () => unknown)()
