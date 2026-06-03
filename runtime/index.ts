@@ -392,11 +392,25 @@ export const brust = {
         if (existsSync(routesPath)) {
           const { scanIslandChunks, buildIslands: build } = await import('./islands/build.ts')
           const islandMap = scanIslandChunks(routesPath)
+          let islandsDir: string | undefined
           if (islandMap.size > 0) {
             const islands = await build(islandMap)
-            this.configureIslandsDir(islands.outDir)
+            islandsDir = islands.outDir
             console.log(`[brust] main: built ${islands.islandCount} island chunk(s)`)
           }
+          // Directive runtime bundle (Spec B) — build AFTER islands (buildIslands
+          // rm -rf's its outDir) into the SAME dir so a native page's _directives.js
+          // is served. Independent of islands: a directives-only app still needs it.
+          const { scanDirectiveComponents, buildDirectives } = await import('./native/build.ts')
+          const directiveComponents = scanDirectiveComponents(routesPath)
+          if (directiveComponents.size > 0) {
+            const res = await buildDirectives(directiveComponents, {
+              outDir: islandsDir ?? path.join(process.cwd(), '.brust', 'islands'),
+            })
+            islandsDir = res.outDir
+            console.log(`[brust] main: built directive runtime (${res.count} component(s))`)
+          }
+          if (islandsDir) this.configureIslandsDir(islandsDir)
         }
       }
 
@@ -540,6 +554,15 @@ export const brust = {
               const islandMap = scanIslandChunks(routesPath)
               if (islandMap.size > 0) {
                 await buildIslands(islandMap)
+              }
+              // Spec B: rebuild the directive bundle after islands (which rm -rf's
+              // the dir) so a hot reload doesn't drop _directives.js.
+              const { scanDirectiveComponents, buildDirectives } = await import('./native/build.ts')
+              const directiveComponents = scanDirectiveComponents(routesPath)
+              if (directiveComponents.size > 0) {
+                await buildDirectives(directiveComponents, {
+                  outDir: pathModule.join(process.cwd(), '.brust', 'islands'),
+                })
               }
             }
           },
