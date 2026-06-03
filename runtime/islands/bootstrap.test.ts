@@ -2,6 +2,7 @@
 // globals in beforeAll so this file is self-contained (no --preload needed).
 import { test, expect, beforeAll, beforeEach, mock } from 'bun:test'
 import { Window } from 'happy-dom'
+import { getNavState, subscribe, __resetNavForTest } from '../navigation/store.ts'
 
 // isInternalLink and hydrateMarkersIn are imported lazily (after DOM is up)
 // via a module-level variable populated in beforeAll.
@@ -14,6 +15,7 @@ let hydrateMarkersIn: (root?: ParentNode) => void
 let swapMainContent: (main: HTMLElement, html: string) => void
 let hydrateOne: (el: HTMLElement) => Promise<void>
 let unmountIslandsIn: (root: ParentNode) => void
+let navigate: (url: URL, push: boolean) => Promise<void>
 
 // react-dom/client is a STATIC top-level binding in bootstrap.ts, so the mock
 // must be registered before `await import('./bootstrap')` runs (below) for it
@@ -59,6 +61,7 @@ beforeAll(async () => {
     HTMLElement: win.HTMLElement,
     HTMLAnchorElement: (win as unknown as Record<string, unknown>).HTMLAnchorElement,
     DOMParser: (win as unknown as Record<string, unknown>).DOMParser,
+    scrollTo: () => {},
     // IntersectionObserver intentionally absent — registerTrigger guards with typeof check
     // AbortController is provided natively by bun
   })
@@ -72,6 +75,7 @@ beforeAll(async () => {
   swapMainContent = mod.swapMainContent
   hydrateOne = mod.hydrateOne
   unmountIslandsIn = mod.unmountIslandsIn
+  navigate = mod.navigate
 })
 
 function makeLink(
@@ -280,4 +284,21 @@ test('unmountIslandsIn unmounts a root created via the createRoot (CSR) path', a
   } finally {
     document.body.removeChild(root)
   }
+})
+
+test('navigate() drives nav store loading → success and commits path', async () => {
+  __resetNavForTest()
+  document.body.innerHTML = '<main></main>'
+  ;(globalThis as Record<string, unknown>).fetch = mock(async () => ({
+    ok: true,
+    json: async () => ({ html: '<p>swapped</p>', title: 'Chart', store: undefined }),
+  }))
+  const phases: string[] = []
+  const unsub = subscribe((s) => phases.push(s.phase))
+  await navigate(new URL('http://localhost/type-chart'), true)
+  unsub()
+  expect(phases).toContain('loading')
+  expect(getNavState().path).toBe('/type-chart')
+  expect(getNavState().phase).toBe('success')
+  expect(document.querySelector('main')!.textContent).toContain('swapped')
 })
