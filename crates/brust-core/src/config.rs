@@ -21,6 +21,7 @@ use crate::cache::response_cache::{CacheStats, ResponseCache};
 use crate::render::pool::WorkerPool;
 use crate::routing::action::ActionRouter;
 use crate::routing::routes::RouteTable;
+use crate::server::tls::TlsConfig;
 
 /// The pure server state. Shared as `Arc<AppState>` between the napi binding,
 /// the accept loop, and every connection task.
@@ -62,6 +63,11 @@ pub struct AppState {
     pub(crate) public_assets: RwLock<HashMap<String, PathBuf>>,
     pub(crate) action_router: RwLock<ActionRouter>,
     pub(crate) action_prefix: RwLock<String>,
+    /// Optional in-process TLS termination config (cert + key paths). `None` =
+    /// plaintext (the default, unchanged behavior). Set ONCE at boot by the
+    /// binding via [`AppState::set_tls`] before `begin_serve`; the accept loop
+    /// reads it via [`AppState::tls`].
+    pub(crate) tls: RwLock<Option<TlsConfig>>,
 }
 
 impl Default for AppState {
@@ -89,7 +95,21 @@ impl AppState {
             public_assets: RwLock::new(HashMap::new()),
             action_router: RwLock::new(ActionRouter::new()),
             action_prefix: RwLock::new("/_brust/action".to_string()),
+            tls: RwLock::new(None),
         }
+    }
+
+    // ----- TLS -----
+
+    /// Configure in-process TLS termination. Pass `None` to keep plaintext.
+    /// Set once at boot before `begin_serve`.
+    pub fn set_tls(&self, cfg: Option<TlsConfig>) {
+        *self.tls.write() = cfg;
+    }
+
+    /// The configured TLS settings, if any. `None` = plaintext.
+    pub fn tls(&self) -> Option<TlsConfig> {
+        self.tls.read().clone()
     }
 
     // ----- dev mode -----

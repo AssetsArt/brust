@@ -19,6 +19,7 @@ use crate::server::body::{ResponseBody, channel_body, empty_body, raw_http_to_re
 
 pub mod body;
 pub mod static_assets;
+pub mod tls;
 
 use static_assets::{
     asset_lookup_key, content_type_for, is_safe_css_filename, is_safe_island_filename,
@@ -122,8 +123,23 @@ pub fn start(addr: SocketAddr, state: Arc<AppState>, conn_workers: usize, tuning
                 }
             };
 
+            // Optional in-process TLS termination. Built ONCE before the accept
+            // loop: a configured-but-broken cert/key is fatal at boot (mirrors
+            // bind failure). `None` = plaintext, behavior unchanged.
+            let acceptor: Option<tokio_rustls::TlsAcceptor> = match state.tls() {
+                Some(cfg) => match tls::build_acceptor(&cfg) {
+                    Ok(a) => Some(a),
+                    Err(e) => {
+                        error!(error = %e, "tls acceptor build failed");
+                        std::process::exit(1);
+                    }
+                },
+                None => None,
+            };
+
             state.ready.notified().await; // wait until all napi workers registered
-            println!("[brust] listening on {addr} (io: {IO_NAME})");
+            let tls_label = if acceptor.is_some() { ", tls" } else { "" };
+            println!("[brust] listening on {addr} (io: {IO_NAME}{tls_label})");
             let _ = std::io::Write::flush(&mut std::io::stdout());
 
             let sem = Arc::new(tokio::sync::Semaphore::new(accept_cap));
@@ -153,23 +169,61 @@ pub fn start(addr: SocketAddr, state: Arc<AppState>, conn_workers: usize, tuning
                 let state = Arc::clone(&state);
                 let read_buf_cap = tuning.read_buf_cap;
                 let max_req = tuning.max_request_bytes;
+                let acceptor = acceptor.clone();
                 tokio::spawn(async move {
                     let _permit = permit; // released when the connection ends
-                    let io = TokioIo::new(tcp);
                     let svc = service_fn(move |req| handle_request(req, Arc::clone(&state)));
 
-                    let mut builder = auto::Builder::new(TokioExecutor::new());
-                    // Mirror the old header-byte cap and read-buffer sizing.
-                    builder
-                        .http1()
-                        .max_buf_size(max_req.max(read_buf_cap).max(8192));
-                    if let Err(e) = builder.serve_connection_with_upgrades(io, svc).await {
-                        debug!(error = %e, "connection error");
+                    // The two branches produce different concrete IO types
+                    // (TlsStream vs plain TcpStream), so each calls the generic
+                    // `serve_io` in its own arm — they can't share one variable
+                    // without boxing.
+                    match acceptor {
+                        Some(acceptor) => {
+                            // A bad client handshake is NOT fatal: log + drop.
+                            let tls_stream = match acceptor.accept(tcp).await {
+                                Ok(s) => s,
+                                Err(e) => {
+                                    debug!(error = %e, "tls handshake failed");
+                                    return;
+                                }
+                            };
+                            serve_io(TokioIo::new(tls_stream), svc, max_req, read_buf_cap).await;
+                        }
+                        None => {
+                            serve_io(TokioIo::new(tcp), svc, max_req, read_buf_cap).await;
+                        }
                     }
                 });
             }
         });
     });
+}
+
+/// Serve one already-accepted connection with hyper's auto (H1+H2) builder.
+/// Generic over the IO type so both the plaintext (`TokioIo<TcpStream>`) and the
+/// TLS (`TokioIo<TlsStream<TcpStream>>`) branches share one body — the concrete
+/// `TokioIo<...>` types differ, so this is the clean way to avoid boxing.
+/// `serve_connection_with_upgrades` keeps the WS-upgrade path working over TLS.
+async fn serve_io<I, S, B>(io: I, svc: S, max_req: usize, read_buf_cap: usize)
+where
+    I: hyper::rt::Read + hyper::rt::Write + Unpin + Send + 'static,
+    S: hyper::service::Service<Request<Incoming>, Response = Response<B>, Error = Infallible>
+        + Send
+        + 'static,
+    S::Future: Send + 'static,
+    B: http_body::Body + Send + 'static,
+    B::Data: Send,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    let mut builder = auto::Builder::new(TokioExecutor::new());
+    // Mirror the old header-byte cap and read-buffer sizing.
+    builder
+        .http1()
+        .max_buf_size(max_req.max(read_buf_cap).max(8192));
+    if let Err(e) = builder.serve_connection_with_upgrades(io, svc).await {
+        debug!(error = %e, "connection error");
+    }
 }
 
 /// Reconstruct a raw HTTP/1.1 request header block

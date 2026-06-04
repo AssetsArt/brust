@@ -55,6 +55,12 @@ pub struct ServeOptions {
     pub tuning: Option<ServeTuning>,
     /// Optional action prefix override. Defaults to `/_brust/action`.
     pub action_prefix: Option<String>,
+    /// Optional in-process TLS: PEM certificate (chain) path. When BOTH this and
+    /// `tls_key_path` are present, the server terminates TLS itself (ALPN
+    /// h2+http/1.1). Omit either to serve plaintext (unchanged default).
+    pub tls_cert_path: Option<String>,
+    /// Optional in-process TLS: PEM private-key path. See `tls_cert_path`.
+    pub tls_key_path: Option<String>,
 }
 
 /// Runtime-tunable server limits, all optional. Maps onto `server::Tuning`
@@ -150,6 +156,23 @@ pub fn begin_serve(opts: ServeOptions) -> NapiResult<()> {
             )));
         }
         state().set_action_prefix(p.clone());
+    }
+
+    // Optional in-process TLS: only enabled when BOTH cert + key are supplied.
+    // Additive — an app that omits them serves plaintext, byte-for-byte unchanged.
+    match (&opts.tls_cert_path, &opts.tls_key_path) {
+        (Some(cert), Some(key)) => {
+            s.set_tls(Some(brust_core::server::tls::TlsConfig {
+                cert_path: std::path::PathBuf::from(cert),
+                key_path: std::path::PathBuf::from(key),
+            }));
+        }
+        (None, None) => {}
+        _ => {
+            return Err(napi::Error::from_reason(
+                "tlsCertPath and tlsKeyPath must be provided together",
+            ));
+        }
     }
 
     // Process shutdown is owned by the TS layer: runtime/index.ts installs

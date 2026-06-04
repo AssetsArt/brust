@@ -30,6 +30,12 @@ http-body-util    = "0.1"
 http-body         = "1"
 http              = "1"
 tokio-stream      = "0.1"
+tokio-rustls      = "0.26"
+rustls            = "0.23"
+rustls-pemfile    = "2"
 
 [dev-dependencies]
 tempfile = "3"
+# client feature is dev-only (the production lib is server-only) so the TLS
+# smoke test can drive an h2-over-TLS client request.
+hyper = { version = "1", features = ["client"] }
