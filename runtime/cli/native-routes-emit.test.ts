@@ -8,6 +8,7 @@ import {
   buildChainWrapperSource,
   countMainTags,
   emitNativeTemplates,
+  extractLucideIcons,
   gatherChainSources,
   gatherComponentSources,
   reconcileIslandManifest,
@@ -840,5 +841,58 @@ describe('bakeDirectivesIfUsed', () => {
   test('leaves a template without x-data byte-identical', () => {
     const tmpl = '<html><head></head><body><div>static</div></body></html>'
     expect(bakeDirectivesIfUsed(tmpl)).toBe(tmpl)
+  })
+})
+
+describe('extractLucideIcons', () => {
+  test('AC9: extracts static icon node for a named lucide import, stripping `key`', async () => {
+    const pagePath = join(dir, 'Page.tsx')
+    writeFileSync(pagePath, `import { Search } from 'lucide-react'\n`)
+
+    const map = await extractLucideIcons(pagePath)
+
+    expect('Search' in map).toBe(true)
+    const parsed = JSON.parse(map.Search!)
+    expect(parsed.cls).toBe('lucide lucide-search')
+    expect(Array.isArray(parsed.node)).toBe(true)
+    expect(parsed.node.length).toBeGreaterThan(0)
+    // node = [[tag, [[attr,val],…]], …] — no nested attr pair may carry `key`.
+    for (const [, pairs] of parsed.node as Array<[string, [string, string][]]>) {
+      for (const [k] of pairs) {
+        expect(k).not.toBe('key')
+      }
+    }
+  })
+
+  test('AC10: PascalCase icon name → kebab-case cls', async () => {
+    const pagePath = join(dir, 'Page.tsx')
+    writeFileSync(pagePath, `import { ChevronRight } from 'lucide-react'\n`)
+
+    const map = await extractLucideIcons(pagePath)
+
+    expect('ChevronRight' in map).toBe(true)
+    const parsed = JSON.parse(map.ChevronRight!)
+    expect(parsed.cls).toBe('lucide lucide-chevron-right')
+  })
+
+  test('AC11: aliased import keys by local name, node sourced from the imported icon', async () => {
+    const pagePath = join(dir, 'Page.tsx')
+    writeFileSync(pagePath, `import { Search as Icon } from 'lucide-react'\n`)
+
+    const map = await extractLucideIcons(pagePath)
+
+    expect('Icon' in map).toBe(true)
+    expect('Search' in map).toBe(false)
+    const parsed = JSON.parse(map.Icon!)
+    expect(parsed.cls).toBe('lucide lucide-search')
+  })
+
+  test('AC12: an unresolvable icon name is omitted (no throw)', async () => {
+    const pagePath = join(dir, 'Page.tsx')
+    writeFileSync(pagePath, `import { NotARealIconXYZ123 } from 'lucide-react'\n`)
+
+    const map = await extractLucideIcons(pagePath)
+
+    expect('NotARealIconXYZ123' in map).toBe(false)
   })
 })

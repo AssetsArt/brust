@@ -734,6 +734,50 @@ export function scanImportRefs(file: string): Map<string, ResolvedImport> {
   return map
 }
 
+/** Convert a PascalCase/camelCase identifier to kebab-case
+ * (`ChevronRight` → `chevron-right`). Used to map a lucide icon's exported
+ * name to its per-icon ESM module filename. */
+function toKebabCase(s: string): string {
+  return s.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase()
+}
+
+/** Extract static SVG node data for every `lucide-react` icon imported by
+ * `file`, keyed by its in-source local name.
+ *
+ * For each lucide import (`entry.bare && entry.spec === 'lucide-react'`), the
+ * icon's exported name (`imported` for named/aliased, the local name for a
+ * default import) is kebab-cased to locate `lucide-react/dist/esm/icons/
+ * <kebab>.mjs`, whose `__iconNode` array is reshaped into the JSON the Rust
+ * compiler deserializes: `{ cls, node: [[tag, [[attr,val],…]], …] }`. The
+ * lucide-internal `key` attr is stripped and all attr values are coerced to
+ * strings. An unresolvable icon name is silently omitted. */
+export async function extractLucideIcons(file: string): Promise<Record<string, string>> {
+  const refs = scanImportRefs(file)
+  const out: Record<string, string> = {}
+  for (const [local, entry] of refs) {
+    if (!entry.bare || entry.spec !== 'lucide-react') continue
+    const pascal = entry.imported ?? local // default import → local name
+    const kebab = toKebabCase(pascal)
+    try {
+      const mod = await import(`lucide-react/dist/esm/icons/${kebab}.mjs`)
+      const iconNode = mod.__iconNode
+      if (!Array.isArray(iconNode)) continue
+      const node = iconNode.map(([tag, attrs]: [string, Record<string, unknown>]) => {
+        const pairs: [string, string][] = []
+        for (const [k, v] of Object.entries(attrs)) {
+          if (k === 'key') continue
+          pairs.push([k, String(v)])
+        }
+        return [tag, pairs]
+      })
+      out[local] = JSON.stringify({ cls: `lucide lucide-${kebab}`, node })
+    } catch {
+      // unresolvable icon name → omit (graceful)
+    }
+  }
+  return out
+}
+
 /** Scan the entry file's `import Name from './path'` declarations and build a
  * map of localName -> resolved absolute path (DEFAULT-LOCAL only — package
  * specifiers skipped). Extension resolution tries `.tsx`, `.ts`, `/index.tsx`,
