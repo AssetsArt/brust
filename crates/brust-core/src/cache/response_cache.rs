@@ -110,6 +110,11 @@ impl ResponseCache {
     }
 
     pub fn stats(&self) -> CacheStats {
+        // moka's `entry_count` is eventually consistent — drive pending tasks so
+        // the observability endpoint reflects the current entry count instead of
+        // a stale lower bound (otherwise a freshly-inserted entry reads as len=0
+        // right after the insert). hits/misses are atomic and already exact.
+        self.inner.run_pending_tasks();
         CacheStats {
             hits: self.hits.load(Ordering::Relaxed),
             misses: self.misses.load(Ordering::Relaxed),

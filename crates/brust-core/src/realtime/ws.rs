@@ -237,9 +237,10 @@ use tokio_tungstenite::{
 /// the Close frame being enqueued via send_tx and recognized by the
 /// is_close flag below.
 ///
-/// The S generic is the underlying transport — typically TcpStream on
-/// non-Linux, but the trait bound (AsyncRead + AsyncWrite + Unpin) is
-/// what tokio-tungstenite's WebSocketStream<S> requires.
+/// The S generic is the underlying transport — now a hyper `Upgraded` stream
+/// wrapped in `TokioIo` (it was a raw TcpStream pre-hyper). The trait bound
+/// (AsyncRead + AsyncWrite + Unpin) is what tokio-tungstenite's
+/// WebSocketStream<S> requires; both satisfy it.
 pub async fn ws_conn_task<S>(
     ws: WebSocketStream<S>,
     conn_id: u64,

@@ -44,43 +44,6 @@ pub(crate) fn split_meta(buf: &[u8]) -> Result<(&[u8], &[u8]), &'static str> {
     Ok((&buf[2..2 + meta_len], &buf[2 + meta_len..]))
 }
 
-/// Format an HTTP/1.1 chunked-encoded chunk: `<hex_len>\r\n<bytes>\r\n`.
-/// Empty `body` (len=0) returns the terminator (`0\r\n\r\n`).
-///
-/// Allocates one Vec per call. This matches the spec's per-chunk
-/// write_all pattern (S7) — one alloc + one socket write + one drop per
-/// chunk is acceptable cost given chunks are typically 4-64 KB. If
-/// benchmarks ever show alloc pressure here, the signature can shift to
-/// `(&[u8], &mut Vec<u8>)` without changing call sites materially.
-pub(crate) fn format_chunk_framed(body: &[u8]) -> Vec<u8> {
-    if body.is_empty() {
-        return b"0\r\n\r\n".to_vec();
-    }
-    let mut out = format!("{:x}\r\n", body.len()).into_bytes();
-    out.extend_from_slice(body);
-    out.extend_from_slice(b"\r\n");
-    out
-}
-
-/// Build the HTTP/1.1 response headers (no body) for a chunked stream.
-/// Emits status line, fixed Transfer-Encoding: chunked, content-type,
-/// then any extra headers from `meta.headers`, then the blank line.
-/// Includes `Connection: keep-alive` for parity with build_single_response_bytes.
-pub(crate) fn build_chunked_response_head(meta: &ChunkMeta) -> Vec<u8> {
-    let mut out = format!(
-        "HTTP/1.1 {} {}\r\nTransfer-Encoding: chunked\r\nContent-Type: {}\r\nConnection: keep-alive\r\n",
-        meta.status,
-        status_reason(meta.status),
-        meta.content_type,
-    )
-    .into_bytes();
-    for (k, v) in &meta.headers {
-        out.extend_from_slice(format!("{}: {}\r\n", k, v).as_bytes());
-    }
-    out.extend_from_slice(b"\r\n");
-    out
-}
-
 /// Build a complete single-chunk HTTP/1.1 response with Content-Length.
 /// Bytes-identical to today's renderToString wire shape for no-Suspense
 /// routes (spec S1 criterion #1).
@@ -188,33 +151,6 @@ mod tests {
     }
 
     #[test]
-    fn chunked_hex_prefix_format_small() {
-        let out = format_chunk_framed(b"hello");
-        assert_eq!(out, b"5\r\nhello\r\n");
-    }
-
-    #[test]
-    fn chunked_hex_prefix_format_large() {
-        let body = vec![b'a'; 0x1000];
-        let out = format_chunk_framed(&body);
-        assert!(out.starts_with(b"1000\r\n"));
-        assert!(out.ends_with(b"\r\n"));
-        assert_eq!(out.len(), 6 + 4096 + 2);
-    }
-
-    #[test]
-    fn chunked_hex_prefix_format_at_sab_boundary() {
-        let body = vec![b'b'; 256 * 1024];
-        let out = format_chunk_framed(&body);
-        assert!(out.starts_with(b"40000\r\n"));
-    }
-
-    #[test]
-    fn chunked_terminator_format() {
-        assert_eq!(format_chunk_framed(b""), b"0\r\n\r\n");
-    }
-
-    #[test]
     fn single_chunk_buffer_to_content_length() {
         let meta = ChunkMeta {
             status: 200,
@@ -229,22 +165,6 @@ mod tests {
         assert!(s.contains("Content-Length: 14\r\n"));
         assert!(s.contains("Content-Type: text/html; charset=utf-8\r\n"));
         assert!(s.ends_with("<html>x</html>"));
-    }
-
-    #[test]
-    fn chunked_response_head_format() {
-        let meta = ChunkMeta {
-            status: 200,
-            content_type: "text/html; charset=utf-8".to_string(),
-            headers: [("X-Render-Ms".to_string(), "12".to_string())].into(),
-            streaming: true,
-        };
-        let head = build_chunked_response_head(&meta);
-        let s = std::str::from_utf8(&head).unwrap();
-        assert!(s.starts_with("HTTP/1.1 200 OK\r\n"));
-        assert!(s.contains("Transfer-Encoding: chunked\r\n"));
-        assert!(s.contains("X-Render-Ms: 12\r\n"));
-        assert!(s.ends_with("\r\n\r\n"));
     }
 
     #[test]

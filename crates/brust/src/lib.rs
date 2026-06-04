@@ -78,6 +78,10 @@ pub struct ServeTuning {
     /// queued, not failed-fast). Lets `connWorkers > workers` avoid 503 storms.
     /// Default 10000.
     pub claim_timeout_ms: Option<u32>,
+    /// tokio I/O runtime worker-thread count for the hyper server. Runs inside
+    /// Bun (which has its own threads + render workers), so this defaults to a
+    /// small value (2), NOT one-per-core. Default 2.
+    pub worker_threads: Option<u32>,
 }
 
 /// Resolve `host:port` to a bindable SocketAddr. Accepts literal IPs and
@@ -134,6 +138,7 @@ pub fn begin_serve(opts: ServeOptions) -> NapiResult<()> {
             .and_then(|x| x.claim_timeout_ms)
             .map(|v| (v as u64).max(1))
             .unwrap_or(defaults.claim_timeout_ms),
+        worker_threads: pick(t.and_then(|x| x.worker_threads), defaults.worker_threads),
     };
 
     let addr: SocketAddr = resolve_bind_addr(opts.host.trim(), opts.port)?;
