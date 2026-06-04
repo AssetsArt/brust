@@ -180,7 +180,8 @@ pub fn begin_serve(opts: ServeOptions) -> NapiResult<()> {
     // tokio::signal::ctrl_c() can fire in this process, so a Rust-side handler
     // is a no-op under Bun. until_shutdown() below parks the calling Promise
     // on s.shutdown forever; the parking ends when JS exits the process.
-    brust_core::start(addr, Arc::clone(s), conn_workers, tuning);
+    brust_core::start(addr, Arc::clone(s), conn_workers, tuning)
+        .map_err(napi::Error::from_reason)?;
     Ok(())
 }
 

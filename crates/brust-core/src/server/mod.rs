@@ -97,7 +97,12 @@ fn tuning() -> Tuning {
 /// alongside `conn_queue_cap` (taking the max, so an explicit `connWorkers`
 /// override still raises the ceiling), keeping the historical backpressure
 /// tunable meaningful.
-pub fn start(addr: SocketAddr, state: Arc<AppState>, conn_workers: usize, tuning: Tuning) {
+pub fn start(
+    addr: SocketAddr,
+    state: Arc<AppState>,
+    conn_workers: usize,
+    tuning: Tuning,
+) -> Result<(), String> {
     // Set the process-wide tunables before any connection is served. `start`
     // runs once per process (re-serve is rejected in begin_serve), so a
     // best-effort set is correct; the Err arm only fires if already set.
@@ -108,18 +113,30 @@ pub fn start(addr: SocketAddr, state: Arc<AppState>, conn_workers: usize, tuning
     // render-worker count in the binding).
     let accept_cap = tuning.conn_queue_cap.max(conn_workers).max(1);
 
+    // Boot channel: the spawned runtime thread reports the outcome of the two
+    // BOOT-time fallible steps (TCP bind + TLS-acceptor build) back here. On
+    // success `start` returns Ok and the thread proceeds into the accept loop in
+    // the background; on failure the operator-fixable error propagates up to the
+    // napi/JS layer as a thrown error instead of `process::exit` nuking the Bun
+    // host (it runs INSIDE the Bun process).
+    let (boot_tx, boot_rx) = std::sync::mpsc::sync_channel::<Result<(), String>>(1);
+
     std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(tuning.worker_threads.max(1))
             .enable_all()
             .build()
+            // If the runtime can't build, this thread panics BEFORE sending on
+            // boot_tx; the dropped sender makes `boot_rx.recv()` return Err,
+            // which `start` maps to a boot error.
             .expect("tokio runtime");
         rt.block_on(async move {
             let listener = match tokio::net::TcpListener::bind(addr).await {
                 Ok(l) => l,
                 Err(e) => {
                     error!(error = %e, %addr, "bind failed");
-                    std::process::exit(1);
+                    let _ = boot_tx.send(Err(format!("bind failed on {addr}: {e}")));
+                    return;
                 }
             };
 
@@ -131,11 +148,16 @@ pub fn start(addr: SocketAddr, state: Arc<AppState>, conn_workers: usize, tuning
                     Ok(a) => Some(a),
                     Err(e) => {
                         error!(error = %e, "tls acceptor build failed");
-                        std::process::exit(1);
+                        let _ = boot_tx.send(Err(format!("tls acceptor build failed: {e}")));
+                        return;
                     }
                 },
                 None => None,
             };
+
+            // Bind + acceptor both succeeded: report boot success. The thread
+            // keeps running below (ready gate + accept loop) in the background.
+            let _ = boot_tx.send(Ok(()));
 
             state.ready.notified().await; // wait until all napi workers registered
             let tls_label = if acceptor.is_some() { ", tls" } else { "" };
@@ -149,6 +171,7 @@ pub fn start(addr: SocketAddr, state: Arc<AppState>, conn_workers: usize, tuning
                     Ok(pair) => pair,
                     Err(e) => {
                         error!(error = %e, "accept failed");
+                        // NOTE: post-boot fatal; see FU#3 scope
                         std::process::exit(1);
                     }
                 };
@@ -162,6 +185,7 @@ pub fn start(addr: SocketAddr, state: Arc<AppState>, conn_workers: usize, tuning
                     // Semaphore is never closed; treat as fatal if it somehow is.
                     Err(_) => {
                         error!("accept semaphore closed");
+                        // NOTE: post-boot fatal; see FU#3 scope
                         std::process::exit(1);
                     }
                 };
@@ -212,6 +236,15 @@ pub fn start(addr: SocketAddr, state: Arc<AppState>, conn_workers: usize, tuning
             }
         });
     });
+
+    // Block briefly until the spawned thread reports the bind+acceptor outcome.
+    // Bind is fast, so this is a short wait; the thread continues into the
+    // ready-gate + accept loop in the background after sending Ok.
+    match boot_rx.recv() {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(msg)) => Err(msg),
+        Err(_) => Err("server thread died before binding".into()),
+    }
 }
 
 /// Serve one already-accepted connection with hyper's auto (H1+H2) builder.
@@ -1557,6 +1590,29 @@ fn lookup_vary_headers(request_buf: &[u8], vary: &[String]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Boot-error propagation: binding `start` to an address already held by a
+    /// live `TcpListener` must return `Err(..)` (a normal value the napi layer
+    /// maps to a thrown JS error), NOT call `process::exit` and kill the host.
+    #[test]
+    fn start_returns_err_when_addr_already_bound() {
+        // Hold an ephemeral port for the duration of the test.
+        let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = occupied.local_addr().unwrap();
+
+        let state = Arc::new(AppState::new());
+        let res = start(addr, state, 1, Tuning::default());
+
+        assert!(
+            res.is_err(),
+            "start should return Err on bind failure, got {res:?}"
+        );
+        let msg = res.unwrap_err();
+        assert!(
+            msg.contains("bind failed"),
+            "unexpected error message: {msg}"
+        );
+    }
 
     #[test]
     fn reconstruct_raw_headers_round_trips_through_httparse() {
