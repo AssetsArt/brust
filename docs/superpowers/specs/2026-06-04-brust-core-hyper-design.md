@@ -45,9 +45,27 @@ The real napi coupling is two Bun-specific primitives:
    (envelope: `A(u32)` = SAB framed-response length, `B(String)` = inline JSON).
 2. **SAB pointer** — `BufPtr(*mut u8)` + capacity, read after the call resolves.
 
-Everything else in `pool.rs` (claim/wait, in-flight counting, idle CAS gate,
+The rest of `pool.rs` (claim/wait, in-flight counting, idle CAS gate,
 `RenderChunk`/`RenderSlot` over tokio oneshot/mpsc, `RenderClaim` RAII) is pure
 tokio/std and moves into core unchanged.
+
+**Two functions are NOT pure and must be rewritten (not moved):**
+
+- `pool.rs::dispatch_sse` and `pool.rs::dispatch_ws` (≈ lines 316/338) call
+  `entry.tsfn.call_async(Either::B(json))` directly and return
+  `Result<(), napi::Error>`. They are **deleted from `pool.rs`**. Their callers
+  (`server.rs` ≈ 840/979) instead call
+  `entry.dispatch.call(RenderEnvelope::Inline(json)).await.map(|_| ())` and match
+  `Err(RenderError)`. The resolved `u32` is discarded as today.
+- `server.rs::dispatch_to_worker_and_stream_chunks` / `dispatch_single_chunk`
+  contain an inline `RenderOutcome { EnqueueFailed(napi::Error), PromiseRejected(napi::Error) }`
+  enum (≈ 1277-1279) and two direct `entry.tsfn.call_async(Either::A(envelope_len))`
+  sites (≈ 1310/1628). These move to `server/conn.rs`; `RenderOutcome` is
+  rewritten to carry **`RenderError`** (not `napi::Error`) and the call sites
+  become `entry.dispatch.call(RenderEnvelope::Sab(envelope_len)).await`. The
+  `tracing::error!(error = %e)` sites work because `RenderError` impls `Display`
+  (the `String` payload). **These were the only `napi::` references in the
+  soon-to-be-core code; after this rewrite `brust-core` has zero `napi` deps.**
 
 Core defines:
 
@@ -88,7 +106,9 @@ pub trait RenderDispatch: Send + Sync + 'static {
 to `{ dispatch: Box<dyn RenderDispatch> }` (plus the existing pure fields:
 `id`, `in_flight`, `idle`, `render_slot`). The `Option`/`register_for_test`
 affordance is replaced by a core test-only `MockDispatch` implementing
-`RenderDispatch` (no napi symbols needed in `cargo test`).
+`RenderDispatch` (no napi symbols needed in `cargo test`). `MockDispatch` owns the
+leaked fake SAB allocation that `register_for_test` currently does
+(`Box::leak(vec![0u8; 256*1024])`), returned from its `buf_ptr()/buf_len()`.
 
 The napi crate provides:
 
@@ -153,56 +173,87 @@ jsx_compile.rs          #[napi] jsx-rust-compiler binding (unchanged)
 
 `ResponseCache` (was `LruCache`) is reimplemented on `moka::sync::Cache<CacheKey, CachedEntry>`:
 
-- **Capacity:** `max_capacity(CACHE_CAPACITY)` (1000), unchanged default.
+- **Builder:** `Cache::builder().max_capacity(CACHE_CAPACITY)` (1000, unchanged
+  default) **`.support_invalidation_closures()`** (REQUIRED — without it
+  `invalidate_entries_if` returns `Err(PredicateError::InvalidationClosuresDisabled)`
+  at runtime, silently breaking every `invalidate_path` call) `.expire_after(ResponseExpiry)`.
 - **Per-entry TTL:** moka's cache-wide `time_to_live` is **insufficient** — each
-  `CacheConfig` carries its own `ttl_seconds`. Use moka's **`Expiry` trait**
-  (`expire_after_create` returning the entry's `ttl`) so per-entry TTL is honored
-  natively. `CachedEntry` keeps `ttl`; `inserted_at`/`is_expired()` are removed
-  (moka owns expiration). `get()` no longer hand-checks expiry.
+  `CacheConfig` carries its own `ttl_seconds`. Implement
+  `moka::Expiry<CacheKey, CachedEntry>` (call it `ResponseExpiry`) whose
+  `expire_after_create(&self, _k, value, _created) -> Option<Duration>` returns
+  `Some(value.ttl)`. `CachedEntry` keeps `ttl`; `inserted_at`/`is_expired()` are
+  removed (moka owns expiration). `get()` no longer hand-checks expiry.
 - **Hits/misses:** keep the manual `AtomicU64` counters (moka's own stats are not
   wired); increment in `get()`.
 - **`invalidate_path(method, path)`:** moka has no snapshot-iter under lock like
-  `lru`. Use `invalidate_entries_if(predicate)` (requires moka `sync` predicate
-  support) matching `k.method == method && k.path == path`. Note: moka
-  `invalidate_entries_if` is **asynchronous** (applied on the next maintenance
+  `lru`. Use `invalidate_entries_if(|k, _v| k.method == method && k.path == path)`,
+  which returns `Result<PredicateId, PredicateError>` — log+swallow the `Err`
+  (only fires if `support_invalidation_closures()` was omitted, which it is not).
+  moka `invalidate_entries_if` is **asynchronous** (applied on the next maintenance
   tick / `run_pending_tasks`). The route returns a best-effort count; call
   `run_pending_tasks()` before reading `entry_count()` where a synchronous view
   is needed. **This is a behavior-visible change from `lru`'s immediate removal —
   call it out in the PR.** All four existing `cache.rs` unit tests must be ported
-  and pass (adjusting for moka's eventual-invalidation where the test asserts
-  post-invalidate state — insert a `run_pending_tasks()` in the test).
-- **`resize`:** moka `Cache` capacity is fixed at build; expose resize via
-  rebuild-or-`policy().set_max_capacity` if available in the pinned moka version,
-  else document as a known limitation (the `resize` caller is the tuning setter).
-- **`clear`:** `invalidate_all()` + `run_pending_tasks()`; return prior `entry_count`.
-- Drop `lru` from `crates/brust/Cargo.toml` (now `brust-core/Cargo.toml`).
+  and pass; the two that assert post-invalidate state
+  (`invalidate_path_removes_only_matching_entries`, `clear_removes_all_entries`)
+  get a `cache.run_pending_tasks()` after the invalidate/clear and before the
+  assertions.
+- **`resize`:** moka 0.12 `Cache` capacity is fixed at build (no live
+  `set_max_capacity` on `Cache`/`Policy`). **Decision: `resize` becomes a
+  documented no-op that logs a `warn!`** rather than a conditional. The only caller
+  is the tuning setter; capacity stays at the build-time default.
+- **`clear`:** read `entry_count()` FIRST (prior count, matching `lru`'s
+  `removed = guard.len()`), then `invalidate_all()` + `run_pending_tasks()`;
+  return the saved prior count.
+- Drop `lru` from the dependency tree (it moves nowhere — `brust-core/Cargo.toml`
+  uses only `moka`).
 
 ## hyper wiring
 
-- `crates/brust-core/Cargo.toml` adds: `hyper` (features `http1`, `http2`,
-  `server`), `hyper-util` (`tokio`, `server-auto`, `server-graceful`), `http-body-util`,
-  `tokio` (multi-thread `rt-multi-thread`, `net`, `io-util`, `macros`, `signal`,
-  `sync`, `time`, `fs`), `tokio-rustls` + `rustls` + `rustls-pemfile` (TLS).
+- `crates/brust-core/Cargo.toml` adds (pin minors at plan-time to what the
+  workspace resolves — currently `hyper` 1.8.x, `hyper-util` 0.1.20): `hyper`
+  (features `http1`, `http2`, `server`), `hyper-util` (`tokio`, `server-auto`,
+  `server-graceful`), `http-body-util` (for `Full`/`StreamBody`/`BoxBody`), `http`,
+  `tokio` (`rt-multi-thread`, `net`, `io-util`, `macros`, `signal`, `sync`, `time`,
+  `fs`), `tokio-rustls` + `rustls` + `rustls-pemfile` (TLS). **`flume` is dropped**
+  (see accept-model note below).
+- **Body type:** the service returns `Response<BoxBody<Bytes, std::io::Error>>`.
+  - Fast-lane / canned responses (raw `Vec<u8>`): wrap as
+    `Full::new(Bytes::from(vec)).map_err(|e| match e {}).boxed()`.
+  - Streaming (React Suspense chunk channel, SSE): a `tokio::sync::mpsc` channel
+    fed by the worker chunk loop, wrapped as
+    `StreamBody::new(ReceiverStream::new(rx).map(|b| Ok(Frame::data(b)))).boxed()`.
+    The existing `RenderChunk` ack handshake drives the sender.
 - `server/mod.rs::serve()`:
   - Build a `tokio::runtime::Builder::new_multi_thread()` runtime on the dedicated
     server OS thread (replaces `run_io`'s current-thread / uring start).
-  - `tokio::net::TcpListener::bind`, accept loop. Per accepted stream: optionally
-    wrap with the rustls acceptor (`server/tls.rs`), then
-    `hyper_util::server::conn::auto::Builder::new(TokioExecutor).serve_connection_with_upgrades(io, service)`.
-  - `service` = `service_fn` closure → `conn.rs::handle_request(req, state)` returning
-    `Response<BoxBody>`.
+  - `tokio::net::TcpListener::bind`, accept loop. **Accept model change:** the old
+    `flume` bounded queue → N conn-worker tasks is replaced by hyper's per-connection
+    model: each accepted stream is `tokio::spawn`-ed directly. Render backpressure
+    is unchanged — it lives in `WorkerPool::claim_or_wait` (the pool gate), NOT the
+    accept queue. **Accept-level backpressure (the old `conn_queue_cap`) is dropped;**
+    if a bound is still wanted, gate spawns behind a `tokio::sync::Semaphore` sized
+    to `conn_queue_cap`. Decision: keep a `Semaphore` to preserve the tunable's
+    meaning. Per accepted stream: optionally wrap with the rustls acceptor
+    (`server/tls.rs`), then
+    `auto::Builder::new(TokioExecutor::new()).serve_connection_with_upgrades(TokioIo::new(io), service)`.
+  - `service` = `service_fn` closure → `conn.rs::handle_request(req, state)`.
 - `conn.rs`: port the routing/decision logic from `handle_conn`. hyper owns
-  parsing/keep-alive/chunked. Request method/path/headers come from `http::Request`.
-  Streaming responses (React Suspense chunk channel, SSE) use
-  `http_body_util::StreamBody` / channel body fed by the worker chunk loop.
-- **WebSocket:** replace manual `s.into_inner()` + `from_raw_socket` with
-  `hyper::upgrade::on(req)`; wrap the `Upgraded` in `hyper_util::rt::TokioIo` (which is
-  `AsyncRead+AsyncWrite+Unpin`) and hand to
-  `tokio_tungstenite::WebSocketStream::from_raw_socket`. The handshake validation in
-  `ws.rs::parse_handshake` is unchanged; the 101 response is returned via hyper's
-  upgrade mechanism. Delete the `SseIo`/`into_inner` platform abstraction.
-- **SSE:** the per-conn SSE task writes through the response body stream instead of
-  the raw socket; the `SseIo` trait is removed (hyper body handles the socket).
+  parsing/keep-alive/chunked. Method/path/headers come from `http::Request<Incoming>`;
+  request body via `http_body_util::BodyExt::collect` for sized POST/action bodies.
+- **WebSocket** (upgrade is a 3-step departure from the write-then-wrap pattern):
+  1. validate via the unchanged `ws.rs::parse_handshake`, then call
+     `hyper::upgrade::on(&mut req)` to get the `OnUpgrade` future BEFORE responding.
+  2. return a `101 Switching Protocols` `Response` (empty body) with the computed
+     `Sec-WebSocket-Accept` / chosen subprotocol headers — hyper performs the upgrade.
+  3. in a spawned task, `let upgraded = on_upgrade.await?;` wrap in
+     `hyper_util::rt::TokioIo::new(upgraded)` (→ `AsyncRead+AsyncWrite+Unpin`) and
+     hand to `tokio_tungstenite::WebSocketStream::from_raw_socket(.., Role::Server, None)`.
+     The existing `ws.rs` driver loop runs unchanged on that stream.
+- **SSE:** the per-conn SSE task pushes frames into the streaming-body `mpsc` sender
+  (type above) instead of writing the raw socket. `sse_conn_task`'s `S: SseIo`
+  generic is removed; it takes the channel sender. The `SseIo` trait and the whole
+  `src/io/{mod,linux,other}.rs` platform abstraction (incl. `into_inner`) are deleted.
 
 ## Behavior / concurrency invariants (must hold)
 
@@ -255,8 +306,11 @@ jsx_compile.rs          #[napi] jsx-rust-compiler binding (unchanged)
 - Cache `invalidate_path`/`clear` become eventually-consistent (moka maintenance tick)
   vs `lru`'s immediate removal. Mitigated with `run_pending_tasks()` where a sync view
   is required.
-- `ResponseCache::resize` semantics depend on the pinned moka version's capability;
-  may degrade to a documented no-op-with-warning if `set_max_capacity` is unavailable.
+- `ResponseCache::resize` is a documented no-op (logs `warn!`) — moka 0.12 `Cache`
+  capacity is fixed at build. The tuning setter that called it no longer resizes.
+- Accept-level backpressure changes from a flume bounded queue to a
+  `tokio::sync::Semaphore` sized to `conn_queue_cap`; render backpressure
+  (`WorkerPool::claim_or_wait`) is unchanged.
 - TLS is wired but cert management is out of scope; default deployment remains
   HTTP/1.1 plaintext behind a reverse proxy unless TLS config is provided.
 - Linux React-SSR slow path (memory `linux-react-ssr-perf`) is unaffected and not
@@ -264,8 +318,15 @@ jsx_compile.rs          #[napi] jsx-rust-compiler binding (unchanged)
 
 ## Open questions resolved at plan-time
 
-- Exact pinned versions of hyper/hyper-util/rustls/moka (latest compatible).
-- Whether `WorkerPool` uses `Box<dyn RenderDispatch>` (chosen — avoids generic spread)
-  vs generic `WorkerPool<D>` (rejected: propagates through State).
-- Whether TLS is feature-gated (`features = ["tls"]`) or always-compiled-off-by-config
-  (lean: always compiled, off by default via config — simpler build matrix).
+- Exact pinned versions of hyper/hyper-util/rustls/moka (latest compatible; the
+  workspace currently resolves hyper 1.8.x, hyper-util 0.1.20).
+- `WorkerPool` uses `Box<dyn RenderDispatch>` (chosen — avoids generic spread vs
+  generic `WorkerPool<D>` which propagates through State).
+- TLS is always-compiled, off by default via config (simpler build matrix than a
+  `["tls"]` feature gate).
+- Response body is `BoxBody<Bytes, std::io::Error>`; fast-lane → `Full`, streaming/SSE
+  → `StreamBody` over a tokio mpsc channel (resolved above).
+- Accept model: direct `tokio::spawn` per connection + `Semaphore(conn_queue_cap)`,
+  flume dropped (resolved above).
+- WS upgrade: `hyper::upgrade::on` → 101 response → spawned task wraps `TokioIo`
+  into `from_raw_socket` (resolved above).
