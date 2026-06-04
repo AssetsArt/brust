@@ -51,10 +51,10 @@ export default function ThemeToggle() {
       className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
     >
       <span x-show="isDark" className="inline-flex">
-        <Sun size={16} isr={{ key: 'LcIconSun' }} />
+        <Sun size={16} />
       </span>
       <span x-show="isLight" className="inline-flex">
-        <Moon size={16} isr={{ key: 'LcIconMoon' }} />
+        <Moon size={16} />
       </span>
       <span x-text="label">Dark</span>
     </button>

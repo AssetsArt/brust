@@ -69,7 +69,7 @@ export default function AppLayout({
             className="inline-flex items-center text-slate-400 transition-colors hover:text-slate-600 dark:hover:text-slate-200"
             aria-label="brust on GitHub"
           >
-            <GitFork size={16} isr={{ key: 'LcIconGitFork' }} />
+            <GitFork size={16} />
           </a>
         </footer>
 
