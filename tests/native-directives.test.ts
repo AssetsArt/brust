@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { buildDirectives, scanDirectiveComponents } from '../runtime/native/build.ts'
+import { buildDirectives, directiveName, scanDirectiveComponents } from '../runtime/native/build.ts'
 
 // Temp dirs MUST live under the repo so Bun.build can self-resolve brustjs/* (see the
 // note in runtime/native/build.test.ts). `.brust/` is gitignored.
@@ -31,17 +31,24 @@ test('directive component is discovered and bundled into a react-free _directive
       `export default function Counter(){ return null as any }\n`,
   )
   const components = scanDirectiveComponents(join(root, 'routes.tsx'))
-  expect([...components.keys()]).toEqual(['counter'])
+  // Path-hashed name (T1): camelCase(basename) + "_" + 8 hex of sha256(rel path).
+  // This is the SINGLE name contract — the compiler-injected x-data, the registry
+  // key, and the chunk filename all derive from it.
+  const counterName = directiveName(join(root, 'components/Counter.tsx'), process.cwd())
+  expect(counterName).toMatch(/^counter_[0-9a-f]{8}$/)
+  expect([...components.keys()]).toEqual([counterName])
   const outDir = join(root, 'islands')
   const res = await buildDirectives(components, { outDir })
   expect(res.count).toBe(1)
   // Runtime + a per-component chunk; the behavior lives in the chunk, not the runtime.
-  expect(res.files).toEqual(['_directives.js', 'counter.directive.js'])
+  // The chunk filename MUST equal `<name>.directive.js` (the F4 name contract: the
+  // compiler-injected `x-data="<name>"` fetches exactly this chunk at runtime).
+  expect(res.files).toEqual(['_directives.js', `${counterName}.directive.js`])
   expect(existsSync(join(outDir, '_directives.js'))).toBe(true)
   const runtime = readFileSync(join(outDir, '_directives.js'), 'utf8')
   expect(/createRoot|hydrateRoot|react-dom/.test(runtime)).toBe(false)
-  const chunk = readFileSync(join(outDir, 'counter.directive.js'), 'utf8')
-  expect(chunk).toContain('counter')
+  const chunk = readFileSync(join(outDir, `${counterName}.directive.js`), 'utf8')
+  expect(chunk).toContain(counterName)
   expect(/createRoot|hydrateRoot|react-dom/.test(chunk)).toBe(false)
 })
 

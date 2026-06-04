@@ -1,4 +1,4 @@
-import { describe, expect, test, afterEach } from 'bun:test'
+import { describe, expect, it, test, afterEach } from 'bun:test'
 import {
   existsSync,
   mkdirSync,
@@ -8,7 +8,29 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { buildDirectives, scanDirectiveComponents } from './build.ts'
+import { buildDirectives, directiveName, scanDirectiveComponents } from './build.ts'
+
+describe('directiveName', () => {
+  const root = '/proj'
+  it('is camelCase basename + _ + 8 hex, matches the runtime chunk-name guard', () => {
+    const n = directiveName('/proj/components/AddToTeamButton.tsx', root)
+    expect(n).toMatch(/^addToTeamButton_[0-9a-f]{8}$/)
+    expect(n).toMatch(/^[A-Za-z0-9_-]+$/) // loadBehavior guard in runtime.ts
+  })
+  it('is deterministic for the same relative path', () => {
+    expect(directiveName('/proj/a/B.tsx', root)).toBe(directiveName('/proj/a/B.tsx', root))
+  })
+  it('differs for different paths sharing a basename (collision avoided)', () => {
+    expect(directiveName('/proj/x/Button.tsx', root)).not.toBe(
+      directiveName('/proj/y/Button.tsx', root),
+    )
+  })
+  it('hashes the cwd-relative path (stable across an absolute prefix move)', () => {
+    expect(directiveName('/ci/app/c/W.tsx', '/ci/app')).toBe(
+      directiveName('/srv/app/c/W.tsx', '/srv/app'),
+    )
+  })
+})
 
 // IMPORTANT: temp dirs MUST live UNDER the repo (not os.tmpdir()/`/tmp`). Task 8's
 // buildDirectives runs `Bun.build` on a generated entry that imports `brustjs/native`
@@ -46,8 +68,11 @@ describe('scanDirectiveComponents', () => {
       `export default function Plain(){ return null as any }\n`,
     )
     const found = scanDirectiveComponents(join(root, 'routes.tsx'))
-    expect([...found.keys()]).toEqual(['addToTeamButton'])
-    expect(found.get('addToTeamButton')).toBe(join(root, 'components/AddToTeamButton.tsx'))
+    const compPath = join(root, 'components/AddToTeamButton.tsx')
+    const expectedName = directiveName(compPath, process.cwd())
+    expect([...found.keys()]).toEqual([expectedName])
+    expect(expectedName).toMatch(/^addToTeamButton_[0-9a-f]{8}$/)
+    expect(found.get(expectedName)).toBe(compPath)
   })
 
   test('discovers multiple behaviors across the import graph (distinct names)', () => {
@@ -68,9 +93,13 @@ describe('scanDirectiveComponents', () => {
       `import Widget from '../a/Widget'\nexport const behavior = () => ({})\nexport default function Other(){return null as any}\n`,
     )
     // both 'Widget' (via a) and 'Other' (via b) qualify with distinct names → no throw here;
-    // instead assert two DISTINCT names are found:
+    // instead assert two DISTINCT hashed names are found:
     const found = scanDirectiveComponents(join(root, 'routes.tsx'))
-    expect(new Set(found.keys())).toEqual(new Set(['widget', 'other']))
+    const widgetName = directiveName(join(root, 'a/Widget.tsx'), process.cwd())
+    const otherName = directiveName(join(root, 'b/Other.tsx'), process.cwd())
+    expect(widgetName).toMatch(/^widget_[0-9a-f]{8}$/)
+    expect(otherName).toMatch(/^other_[0-9a-f]{8}$/)
+    expect(new Set(found.keys())).toEqual(new Set([widgetName, otherName]))
   })
 })
 

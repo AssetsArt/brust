@@ -483,6 +483,7 @@ export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<vo
         path: string,
         componentSources?: Record<string, string>,
         lucideIcons?: Record<string, string>,
+        directiveNames?: Record<string, string>,
       ) => { template: string; islandsJson: string; warnings?: string[] })
     | null = null
   if (nativeRoutes.length > 0) {
@@ -573,9 +574,24 @@ export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<vo
     const lucideIcons: Record<string, string> = {}
     for (const p of lucidePaths) Object.assign(lucideIcons, await extractLucideIcons(p))
 
+    // Build directive name map: for each ident in `sources` whose source text
+    // contains `export const behavior`, resolve its absolute path from
+    // `mergedImports` and derive the canonical directive name. Uses a dynamic
+    // import to avoid a circular dependency (native/build.ts → scanImports here).
+    const { directiveName } = await import('../native/build.ts')
+    const BEHAVIOR_RE = /export\s+const\s+behavior\b/
+    const directiveNames: Record<string, string> = {}
+    for (const [ident, src] of Object.entries(sources)) {
+      if (!BEHAVIOR_RE.test(src)) continue
+      const ref = mergedImports.get(ident)
+      if (ref && !ref.bare && typeof ref.spec === 'string') {
+        directiveNames[ident] = directiveName(ref.spec, process.cwd())
+      }
+    }
+
     let compiled: { template: string; islandsJson: string; warnings?: string[] }
     try {
-      compiled = compileJsx!(routeSource, routeSourcePath, sources, lucideIcons)
+      compiled = compileJsx!(routeSource, routeSourcePath, sources, lucideIcons, directiveNames)
     } catch (e) {
       throw new Error(
         `native route "${name}" failed to compile (${routeSourcePath}):\n${String(e)}`,

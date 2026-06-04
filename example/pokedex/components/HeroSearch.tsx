@@ -29,7 +29,6 @@ export const behavior = () => {
 export default function HeroSearch() {
   return (
     <form
-      x-data="heroSearch"
       x-on-submit="go"
       className="mx-auto mt-8 flex w-full max-w-md items-center gap-2 rounded-2xl bg-white/95 p-2 shadow-lg ring-1 ring-black/5 dark:bg-slate-900/90 dark:ring-white/10"
     >

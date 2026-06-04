@@ -17,7 +17,7 @@ pub fn compile(source: &str) -> Result<String, CompileError> {
 /// harness depends on this signature, so it stays a thin delegate to
 /// `compile_full` (which also collects the island manifest).
 pub fn compile_with_path(source: &str, path: &str) -> Result<String, CompileError> {
-    compile_full(source, path, HashMap::new(), HashMap::new()).map(|c| c.template)
+    compile_full(source, path, HashMap::new(), HashMap::new(), HashMap::new()).map(|c| c.template)
 }
 
 /// Result of a full compile: the jinja template plus the island manifest
@@ -89,11 +89,17 @@ pub struct IslandMeta {
 /// `lucide_icons` maps a local lucide tag name → its icon JSON (for compile-time
 /// static-SVG emission). Pass `HashMap::new()` for the no-op path (byte-identical
 /// to before this feature).
+///
+/// `directive_names` maps a native behavior-component ident → its app-unique
+/// directive name (camelCase basename + hash). When a `<Comp native/>` inlined
+/// here matches this map, the compiler auto-injects `x-data="<name>"` on its host
+/// element. Pass `HashMap::new()` for the no-op path (byte-identical to before).
 pub fn compile_full(
     source: &str,
     path: &str,
     component_sources: HashMap<String, String>,
     lucide_icons: HashMap<String, String>,
+    directive_names: HashMap<String, String>,
 ) -> Result<Compiled, CompileError> {
     let parsed = parser::parse(source, path).map_err(|e| CompileError {
         path: path.to_string(),
@@ -102,8 +108,9 @@ pub fn compile_full(
         kind: ErrorKind::Parse(e.to_string()),
     })?;
 
-    let (mut ir, warnings) = lower::lower_with_sources(&parsed, component_sources, lucide_icons)
-        .map_err(|e| CompileError::from_lower(e, path, &parsed))?;
+    let (mut ir, warnings) =
+        lower::lower_with_sources(&parsed, component_sources, lucide_icons, directive_names)
+            .map_err(|e| CompileError::from_lower(e, path, &parsed))?;
     // Assign each island a source-order `instance` index. Runs after lower
     // (which sets `instance: 0` as a placeholder) and before emit/collect so
     // both read the final indices.
@@ -667,6 +674,14 @@ pub enum ErrorKind {
     InlineUntranslatable(String),
     #[error("circular native inline: {0}")]
     CircularInline(String),
+    #[error(
+        "native component `<{0}>` has `export const behavior` but its root is {1}, not a single element to host its mount; tag the host with a bare `x-behavior` or wrap it in one root element."
+    )]
+    BehaviorHostNotElement(String, &'static str),
+    #[error(
+        "native component `<{0}>` has more than one `x-behavior` marker or a valued `x-behavior` — exactly one bare `x-behavior` may mark the mount host"
+    )]
+    XBehaviorMisuse(String),
 }
 
 impl CompileError {
@@ -720,7 +735,14 @@ mod tests {
     <Island component={B} props={data.b} hydrate="visible" />
   </div>;
 }"#;
-        let c = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap();
+        let c = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap();
         assert_eq!(
             c.islands,
             vec![
@@ -757,7 +779,14 @@ mod tests {
     #[test]
     fn compile_full_no_islands_yields_empty_vec() {
         let src = "export default function Page() { return <p>hi</p>; }";
-        let c = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap();
+        let c = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap();
         assert_eq!(c.islands, vec![]);
     }
 
@@ -768,7 +797,14 @@ mod tests {
         let src = r#"export default function Page({ data }) {
   return <div><Island component={C} props={data.a} /><Island component={C} props={data.b} /></div>;
 }"#;
-        let c = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap();
+        let c = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap();
         assert_eq!(
             c.islands,
             vec![
@@ -806,7 +842,14 @@ mod tests {
         let src = r#"export default function Page({ data }) {
   return <Island component={C} id="X" props={data.a} />;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
+        let err = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::IslandIdAttrRemoved),
             "expected IslandIdAttrRemoved, got {:?}",
@@ -822,7 +865,14 @@ mod tests {
         let src = r#"export default function Page({ data }) {
   return <Island component={Foo$Bar} props={data.a} />;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
+        let err = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap_err();
         match err.kind {
             ErrorKind::IslandBadComponentName(name) => assert_eq!(name, "Foo$Bar"),
             other => panic!("expected IslandBadComponentName, got {other:?}"),
@@ -834,7 +884,14 @@ mod tests {
         let src = r#"export default function Page({ data }) {
   return <main><section><Island component={Deep} props={data.x} /></section></main>;
 }"#;
-        let c = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap();
+        let c = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap();
         assert_eq!(
             c.islands,
             vec![IslandMeta {
@@ -947,7 +1004,14 @@ mod tests {
     </BrustPage>
   );
 }"#;
-        let c = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap();
+        let c = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap();
         let expected = concat!(
             "<html lang=\"en\" class=\"dark\">",
             "<head>",
@@ -981,7 +1045,14 @@ mod tests {
         let src = r#"export default function Home() {
   return <BrustPage><main>hi</main></BrustPage>;
 }"#;
-        let c = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap();
+        let c = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap();
         assert_eq!(
             c.template,
             concat!(
@@ -1002,7 +1073,14 @@ mod tests {
         let src = r#"export default function Home() {
   return <BrustPage><head><title>x</title></head><main>hi</main></BrustPage>;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
+        let err = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::BrustPageLiteralHeadNotSupported),
             "expected BrustPageLiteralHeadNotSupported, got {:?}",
@@ -1015,7 +1093,14 @@ mod tests {
         let src = r#"export default function Home() {
   return <div><BrustPage><main>hi</main></BrustPage></div>;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
+        let err = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::BrustPageMustBeRoot),
             "expected BrustPageMustBeRoot, got {:?}",
@@ -1030,7 +1115,14 @@ mod tests {
         let src = r#"export default function Home({ lang }) {
   return <BrustPage lang={lang}><main>hi</main></BrustPage>;
 }"#;
-        let c = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap();
+        let c = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap();
         assert!(
             c.template.contains("lang=\"{{ (lang) | e }}\""),
             "expected interpolated lang, got: {}",
@@ -1044,7 +1136,14 @@ mod tests {
         let src = r#"export default function Home({ getLang }) {
   return <BrustPage lang={getLang()}><main>hi</main></BrustPage>;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
+        let err = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap_err();
         match err.kind {
             ErrorKind::BrustPageAttrMustBeStringLiteral(name) => assert_eq!(name, "lang"),
             other => panic!("expected BrustPageAttrMustBeStringLiteral, got {other:?}"),
@@ -1058,7 +1157,14 @@ mod tests {
         let src = r#"export default function Home() {
   return <BrustPage head={[{ tag: 'link', rel: 'icon', href: '/favicon.svg' }]}><main>hi</main></BrustPage>;
 }"#;
-        let c = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap();
+        let c = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap();
         assert!(
             c.template
                 .contains("<link rel=\"icon\" href=\"/favicon.svg\"/>"),
@@ -1072,7 +1178,14 @@ mod tests {
         let src = r#"export default function Home() {
   return <BrustPage head={[{ tag: 'script', src: '/x.js', defer: true }]}><main>hi</main></BrustPage>;
 }"#;
-        let c = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap();
+        let c = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap();
         assert!(
             c.template.contains("<script src=\"/x.js\" defer></script>"),
             "got: {}",
@@ -1085,7 +1198,14 @@ mod tests {
         let src = r#"export default function Home() {
   return <BrustPage head={[{ tag: 'style', text: '.x{}' }]}><main>hi</main></BrustPage>;
 }"#;
-        let c = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap();
+        let c = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap();
         assert!(
             c.template.contains("<style>.x{}</style>"),
             "got: {}",
@@ -1098,7 +1218,14 @@ mod tests {
         let src = r#"export default function Home({ data }) {
   return <BrustPage head={[{ tag: 'meta', property: 'og:title', content: data.title }]}><main>hi</main></BrustPage>;
 }"#;
-        let c = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap();
+        let c = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap();
         assert!(
             c.template.contains("content=\"{{ (data.title) | e }}\""),
             "got: {}",
@@ -1111,7 +1238,14 @@ mod tests {
         let src = r#"export default function Home() {
   return <BrustPage head={[{ tag: 'link', rel: 'preconnect', href: '/x', crossOrigin: 'anonymous' }]}><main>hi</main></BrustPage>;
 }"#;
-        let c = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap();
+        let c = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap();
         assert!(
             c.template.contains("crossorigin=\"anonymous\""),
             "got: {}",
@@ -1124,7 +1258,14 @@ mod tests {
         let src = r#"export default function Home() {
   return <BrustPage head={[{ tag: 'meta', httpEquiv: 'content-security-policy', content: "default-src 'self'" }]}><main>hi</main></BrustPage>;
 }"#;
-        let c = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap();
+        let c = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap();
         assert!(
             c.template
                 .contains("http-equiv=\"content-security-policy\""),
@@ -1138,7 +1279,14 @@ mod tests {
         let src = r#"export default function Home() {
   return <BrustPage head={"x"}><main>hi</main></BrustPage>;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
+        let err = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::BrustPageHeadMustBeArray),
             "expected BrustPageHeadMustBeArray, got {:?}",
@@ -1151,7 +1299,14 @@ mod tests {
         let src = r#"export default function Home() {
   return <BrustPage head={[{ rel: 'icon' }]}><main>hi</main></BrustPage>;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
+        let err = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::BrustPageHeadEntryInvalid),
             "expected BrustPageHeadEntryInvalid, got {:?}",
@@ -1164,7 +1319,14 @@ mod tests {
         let src = r#"export default function Home({ data }) {
   return <BrustPage head={[{ tag: 'style', text: data.css }]}><main>hi</main></BrustPage>;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
+        let err = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::BrustPageHeadTextMustBeLiteral),
             "expected BrustPageHeadTextMustBeLiteral, got {:?}",
@@ -1177,7 +1339,14 @@ mod tests {
         let src = r#"export default function Home() {
   return <BrustPage head={[{ tag: 'link', text: 'x' }]}><main>hi</main></BrustPage>;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
+        let err = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::BrustPageHeadTextOnVoid),
             "expected BrustPageHeadTextOnVoid, got {:?}",
@@ -1192,7 +1361,14 @@ mod tests {
         let src = r#"export default function Home({ data }) {
   return <BrustPage><div dangerouslySetInnerHTML={{ __html: data.h }} /></BrustPage>;
 }"#;
-        let c = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap();
+        let c = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap();
         assert!(
             c.template.contains("<div>{{ (data.h) | safe }}</div>"),
             "got: {}",
@@ -1205,7 +1381,14 @@ mod tests {
         let src = r#"export default function Home() {
   return <BrustPage><div dangerouslySetInnerHTML={{ __html: "<b>x</b>" }} /></BrustPage>;
 }"#;
-        let c = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap();
+        let c = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap();
         assert!(
             c.template.contains("<div><b>x</b></div>"),
             "got: {}",
@@ -1218,7 +1401,14 @@ mod tests {
         let src = r#"export default function Home({ foo }) {
   return <BrustPage><div dangerouslySetInnerHTML={{ __html: foo() }} /></BrustPage>;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
+        let err = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::DangerouslySetInnerHtmlInvalid),
             "expected DangerouslySetInnerHtmlInvalid, got {:?}",
@@ -1231,7 +1421,14 @@ mod tests {
         let src = r#"export default function Home({ data }) {
   return <BrustPage><div dangerouslySetInnerHTML={{ __html: data.h }}>child</div></BrustPage>;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
+        let err = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::DangerouslySetInnerHtmlWithChildren),
             "expected DangerouslySetInnerHtmlWithChildren, got {:?}",
@@ -1244,7 +1441,14 @@ mod tests {
         let src = r#"export default function Page({ greeting }) {
   return <Layout title={greeting} />;
 }"#;
-        let c = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap();
+        let c = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap();
         assert_eq!(c.template, "{{ comp_0_html | safe }}");
     }
 
@@ -1253,7 +1457,14 @@ mod tests {
         let src = r#"export default function Page({ greeting }) {
   return <div><Header /><p>{greeting}</p></div>;
 }"#;
-        let c = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap();
+        let c = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap();
         assert_eq!(
             c.template,
             "<div>{{ comp_0_html | safe }}<p>{{ (greeting) | e }}</p></div>"
@@ -1265,7 +1476,14 @@ mod tests {
         let src = r#"export default function Page({ a, b }) {
   return <div><Nav x={a} /><Sidebar y={b} /></div>;
 }"#;
-        let c = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap();
+        let c = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap();
         assert_eq!(
             c.template,
             "<div>{{ comp_0_html | safe }}{{ comp_1_html | safe }}</div>"
@@ -1281,7 +1499,14 @@ mod tests {
     fn factory_leaf_component() {
         let src =
             "export default function Page({ greeting }) { return <Header user={greeting} />; }";
-        let c = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap();
+        let c = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap();
         assert_eq!(
             c.components[0].factory_expr,
             "(ctx) => h(Header, {user: ctx.greeting})"
@@ -1293,7 +1518,14 @@ mod tests {
     #[test]
     fn factory_component_with_static_prop() {
         let src = r#"export default function Page({ data }) { return <Card label="hello" count={data.n} />; }"#;
-        let c = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap();
+        let c = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap();
         assert_eq!(
             c.components[0].factory_expr,
             r#"(ctx) => h(Card, {label: "hello", count: ctx.data.n})"#
@@ -1305,7 +1537,14 @@ mod tests {
         let src = r#"export default function Page({ greeting, data }) {
   return <Layout title={greeting}><h1>{greeting}</h1><Island component={Counter} props={data.counter} hydrate="load" /></Layout>;
 }"#;
-        let c = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap();
+        let c = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap();
         assert_eq!(
             c.components[0].factory_expr,
             r#"(ctx) => h(Layout, {title: ctx.greeting}, h("h1", null, ctx.greeting), h(Island, {component: Counter, props: ctx.data.counter, hydrate: "load"}))"#
@@ -1329,7 +1568,14 @@ mod tests {
         // because the factory is plain JS createElement. It lowers to a JS
         // object spread `{...ctx.clientProps}`.
         let src = "export default function Page({ clientProps }) { return <Counter {...clientProps} />; }";
-        let c = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap();
+        let c = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap();
         assert_eq!(
             c.components[0].factory_expr,
             "(ctx) => h(Counter, {...ctx.clientProps})"
@@ -1341,7 +1587,14 @@ mod tests {
         // Source order is load-bearing for object spread override semantics:
         // `{...a, extra: x}` lets `extra` win; the reverse lets `a` win.
         let src = "export default function Page({ clientProps, data }) { return <Counter {...clientProps} extra={data.x} />; }";
-        let c = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap();
+        let c = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap();
         assert_eq!(
             c.components[0].factory_expr,
             "(ctx) => h(Counter, {...ctx.clientProps, extra: ctx.data.x})"
@@ -1351,7 +1604,14 @@ mod tests {
     #[test]
     fn factory_component_spread_member_access() {
         let src = "export default function Page({ data }) { return <Card {...data.card} />; }";
-        let c = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap();
+        let c = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap();
         assert_eq!(
             c.components[0].factory_expr,
             "(ctx) => h(Card, {...ctx.data.card})"
@@ -1364,7 +1624,14 @@ mod tests {
         // `{b: 1, ...ctx.a}` so the spread overrides the named prop — the
         // opposite override outcome from spread-first. Pins source-order fidelity.
         let src = "export default function Page({ data, rest }) { return <Card extra={data.x} {...rest} />; }";
-        let c = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap();
+        let c = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap();
         assert_eq!(
             c.components[0].factory_expr,
             "(ctx) => h(Card, {extra: ctx.data.x, ...ctx.rest})"
@@ -1439,7 +1706,14 @@ mod tests {
         let src = r#"export default function Page({ data }) {
   return <Layout title={data.title} isr={{ key: data.cacheKey, revalidate: 30 }} />;
 }"#;
-        let c = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap();
+        let c = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap();
         assert_eq!(c.components.len(), 1);
         assert_eq!(c.components[0].key_path.as_deref(), Some("data.cacheKey"));
         assert_eq!(c.components[0].tags_path, None);
@@ -1581,7 +1855,7 @@ mod tests {
 }"#;
         let mut sources = HashMap::new();
         sources.insert("Card".to_string(), card_src.to_string());
-        let c = compile_full(route, "<test>", sources, HashMap::new()).unwrap();
+        let c = compile_full(route, "<test>", sources, HashMap::new(), HashMap::new()).unwrap();
         assert!(
             !c.warnings.is_empty(),
             "expected at least one warning, got none"
@@ -1592,7 +1866,14 @@ mod tests {
     fn compile_full_empty_sources_yields_empty_warnings() {
         // Existing callers pass HashMap::new() — warnings must be empty.
         let src = "export default function Page() { return <p>hi</p>; }";
-        let c = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap();
+        let c = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap();
         assert!(
             c.warnings.is_empty(),
             "expected no warnings, got: {:?}",
@@ -1609,7 +1890,7 @@ export default function AppLayout() { return <BrustPage title="x"><main class="c
         let mut s = std::collections::HashMap::new();
         s.insert("AppLayout".to_string(), layout.to_string());
         s.insert("Leaf".to_string(), leaf.to_string());
-        let c = compile_full(route, "<t>", s, HashMap::new()).unwrap();
+        let c = compile_full(route, "<t>", s, HashMap::new(), HashMap::new()).unwrap();
         assert!(
             c.template
                 .contains(r#"<main class="c"><section>leaf</section></main>"#),
@@ -1629,7 +1910,7 @@ export default function AppLayout() { return <BrustPage title="x"><main class="c
         let route = r#"export default function C() { return <L native/>; }"#;
         let mut s = std::collections::HashMap::new();
         s.insert("L".to_string(), layout.to_string());
-        let err = compile_full(route, "<t>", s, HashMap::new()).unwrap_err();
+        let err = compile_full(route, "<t>", s, HashMap::new(), HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::OutletMustBeEmpty),
             "got {:?}",
@@ -1652,7 +1933,7 @@ export default function Lay() { return <BrustPage title="x"><main>
         let mut s = std::collections::HashMap::new();
         s.insert("Lay".to_string(), lay.to_string());
         s.insert("Leaf".to_string(), leaf.to_string());
-        let c = compile_full(route, "<t>", s, HashMap::new()).unwrap();
+        let c = compile_full(route, "<t>", s, HashMap::new(), HashMap::new()).unwrap();
         assert!(c.template.contains("<p>hi</p>"), "got: {}", c.template);
     }
 
@@ -1666,6 +1947,7 @@ export default function Solo() { return <BrustPage title="x"><main><Outlet/></ma
             route,
             "<t>",
             std::collections::HashMap::new(),
+            HashMap::new(),
             HashMap::new(),
         )
         .unwrap_err();
@@ -1686,7 +1968,7 @@ export default function Lay({ children }) { return <BrustPage title="x"><main>{c
         let mut s = std::collections::HashMap::new();
         s.insert("Lay".to_string(), lay.to_string());
         s.insert("Leaf".to_string(), leaf.to_string());
-        let c = compile_full(route, "<t>", s, HashMap::new()).unwrap();
+        let c = compile_full(route, "<t>", s, HashMap::new(), HashMap::new()).unwrap();
         assert!(
             c.template.contains("<main><p>hi</p></main>"),
             "got: {}",
@@ -1710,7 +1992,8 @@ export default function Lay({ children }) { return <BrustPage title="x"><main>{c
         let mut sources = HashMap::new();
         sources.insert("A".to_string(), a_src.to_string());
         sources.insert("B".to_string(), b_src.to_string());
-        let err = compile_full(route, "<test>", sources, HashMap::new()).unwrap_err();
+        let err =
+            compile_full(route, "<test>", sources, HashMap::new(), HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::CircularInline(_)),
             "expected CircularInline, got {:?}",
@@ -1886,7 +2169,14 @@ export default function Lay({ children }) { return <BrustPage title="x"><main>{c
     fn lucide_static_svg_default_props() {
         // AC1: <Search/> nested under a host element emits a static <svg>.
         let route = r#"export default function P(){ return <div><Search/></div>; }"#;
-        let c = compile_full(route, "<test>", HashMap::new(), lucide_search_map()).unwrap();
+        let c = compile_full(
+            route,
+            "<test>",
+            HashMap::new(),
+            lucide_search_map(),
+            HashMap::new(),
+        )
+        .unwrap();
         let t = &c.template;
         assert!(t.contains("<svg"), "{t}");
         assert!(t.contains("class=\"lucide lucide-search\""), "{t}");
@@ -1907,7 +2197,14 @@ export default function Lay({ children }) { return <BrustPage title="x"><main>{c
     fn lucide_static_svg_size_prop() {
         // AC2: size={16} drives width/height.
         let route = r#"export default function P(){ return <div><Search size={16}/></div>; }"#;
-        let c = compile_full(route, "<test>", HashMap::new(), lucide_search_map()).unwrap();
+        let c = compile_full(
+            route,
+            "<test>",
+            HashMap::new(),
+            lucide_search_map(),
+            HashMap::new(),
+        )
+        .unwrap();
         let t = &c.template;
         assert!(t.contains("width=\"16\""), "{t}");
         assert!(t.contains("height=\"16\""), "{t}");
@@ -1923,7 +2220,7 @@ export default function Lay({ children }) { return <BrustPage title="x"><main>{c
                 .to_string(),
         );
         let route = r#"export default function P(){ return <div><Icon/></div>; }"#;
-        let c = compile_full(route, "<test>", HashMap::new(), lucide).unwrap();
+        let c = compile_full(route, "<test>", HashMap::new(), lucide, HashMap::new()).unwrap();
         let t = &c.template;
         assert!(t.contains("class=\"lucide lucide-circle\""), "{t}");
         assert!(t.contains("<circle cx=\"12\" cy=\"12\" r=\"10\">"), "{t}");
@@ -1933,7 +2230,14 @@ export default function Lay({ children }) { return <BrustPage title="x"><main>{c
     fn lucide_no_map_entry_stays_ssr_component() {
         // AC7: <Layout/> with no map entry → still an SSR component, no panic.
         let route = r#"export default function P(){ return <div><Layout/></div>; }"#;
-        let c = compile_full(route, "<test>", HashMap::new(), lucide_search_map()).unwrap();
+        let c = compile_full(
+            route,
+            "<test>",
+            HashMap::new(),
+            lucide_search_map(),
+            HashMap::new(),
+        )
+        .unwrap();
         let t = &c.template;
         assert!(t.contains("comp_"), "{t}");
         let json = components_to_json(&c.components);
@@ -1944,7 +2248,14 @@ export default function Lay({ children }) { return <BrustPage title="x"><main>{c
     fn lucide_dynamic_color_and_stroke_width() {
         // AC3: color={data.c} strokeWidth={data.w} → dynamic stroke / stroke-width.
         let route = r#"export default function P({ data }){ return <div><Search color={data.c} strokeWidth={data.w}/></div>; }"#;
-        let c = compile_full(route, "<test>", HashMap::new(), lucide_search_map()).unwrap();
+        let c = compile_full(
+            route,
+            "<test>",
+            HashMap::new(),
+            lucide_search_map(),
+            HashMap::new(),
+        )
+        .unwrap();
         let t = &c.template;
         assert!(t.contains("stroke=\"{{ (data.c) | e }}\""), "{t}");
         assert!(t.contains("stroke-width=\"{{ (data.w) | e }}\""), "{t}");
@@ -1958,7 +2269,14 @@ export default function Lay({ children }) { return <BrustPage title="x"><main>{c
         // AC4a: className="w-4 h-4" merges into the class literal (T2 behavior).
         let route =
             r#"export default function P(){ return <div><Search className="w-4 h-4"/></div>; }"#;
-        let c = compile_full(route, "<test>", HashMap::new(), lucide_search_map()).unwrap();
+        let c = compile_full(
+            route,
+            "<test>",
+            HashMap::new(),
+            lucide_search_map(),
+            HashMap::new(),
+        )
+        .unwrap();
         let t = &c.template;
         assert!(t.contains("class=\"lucide lucide-search w-4 h-4\""), "{t}");
     }
@@ -1967,7 +2285,14 @@ export default function Lay({ children }) { return <BrustPage title="x"><main>{c
     fn lucide_dynamic_class_name() {
         // AC4b: className={data.cls} → dynamic class with icon-class prefix.
         let route = r#"export default function P({ data }){ return <div><Search className={data.cls}/></div>; }"#;
-        let c = compile_full(route, "<test>", HashMap::new(), lucide_search_map()).unwrap();
+        let c = compile_full(
+            route,
+            "<test>",
+            HashMap::new(),
+            lucide_search_map(),
+            HashMap::new(),
+        )
+        .unwrap();
         let t = &c.template;
         assert!(t.contains("lucide lucide-search"), "{t}");
         assert!(
@@ -1983,7 +2308,14 @@ export default function Lay({ children }) { return <BrustPage title="x"><main>{c
         // AC6: {...props} → SSR fallback + a warning.
         let route =
             r#"export default function P({ props }){ return <div><Search {...props}/></div>; }"#;
-        let c = compile_full(route, "<test>", HashMap::new(), lucide_search_map()).unwrap();
+        let c = compile_full(
+            route,
+            "<test>",
+            HashMap::new(),
+            lucide_search_map(),
+            HashMap::new(),
+        )
+        .unwrap();
         let t = &c.template;
         assert!(t.contains("comp_"), "{t}");
         let json = components_to_json(&c.components);
@@ -1996,7 +2328,14 @@ export default function Lay({ children }) { return <BrustPage title="x"><main>{c
         // AC-dynsize: size={data.s} → dynamic width AND height.
         let route =
             r#"export default function P({ data }){ return <div><Search size={data.s}/></div>; }"#;
-        let c = compile_full(route, "<test>", HashMap::new(), lucide_search_map()).unwrap();
+        let c = compile_full(
+            route,
+            "<test>",
+            HashMap::new(),
+            lucide_search_map(),
+            HashMap::new(),
+        )
+        .unwrap();
         let t = &c.template;
         assert!(t.contains("width=\"{{ (data.s) | e }}\""), "{t}");
         assert!(t.contains("height=\"{{ (data.s) | e }}\""), "{t}");
@@ -2008,7 +2347,14 @@ export default function Lay({ children }) { return <BrustPage title="x"><main>{c
     fn lucide_empty_map_regression() {
         // AC8: AC1 route with an EMPTY lucide map == compiling pre-feature.
         let route = r#"export default function P(){ return <div><Search/></div>; }"#;
-        let with_empty = compile_full(route, "<test>", HashMap::new(), HashMap::new()).unwrap();
+        let with_empty = compile_full(
+            route,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap();
         let baseline = compile(route).unwrap();
         assert_eq!(with_empty.template, baseline, "{}", with_empty.template);
         // Search stays an SSR component with no map.
@@ -2026,7 +2372,14 @@ export default function Lay({ children }) { return <BrustPage title="x"><main>{c
         // absoluteStrokeWidth + static strokeWidth/size → stroke-width = sw*24/size.
         // 2*24/16 = 3 (integer; rendered without a decimal point).
         let route = r#"export default function P(){ return <div><Search absoluteStrokeWidth strokeWidth={2} size={16}/></div>; }"#;
-        let c = compile_full(route, "<test>", HashMap::new(), lucide_search_map()).unwrap();
+        let c = compile_full(
+            route,
+            "<test>",
+            HashMap::new(),
+            lucide_search_map(),
+            HashMap::new(),
+        )
+        .unwrap();
         let t = &c.template;
         assert!(t.contains("stroke-width=\"3\""), "{t}");
         assert!(t.contains("<svg"), "{t}");
@@ -2037,7 +2390,14 @@ export default function Lay({ children }) { return <BrustPage title="x"><main>{c
     fn lucide_absolute_stroke_width_non_integer() {
         // 2*24/5 = 9.6 (non-integer; shortest-decimal Display → "9.6").
         let route = r#"export default function P(){ return <div><Search absoluteStrokeWidth strokeWidth={2} size={5}/></div>; }"#;
-        let c = compile_full(route, "<test>", HashMap::new(), lucide_search_map()).unwrap();
+        let c = compile_full(
+            route,
+            "<test>",
+            HashMap::new(),
+            lucide_search_map(),
+            HashMap::new(),
+        )
+        .unwrap();
         let t = &c.template;
         assert!(t.contains("stroke-width=\"9.6\""), "{t}");
         assert!(t.contains("<svg"), "{t}");
@@ -2049,7 +2409,14 @@ export default function Lay({ children }) { return <BrustPage title="x"><main>{c
         // absoluteStrokeWidth with a dynamic size can't be computed statically →
         // soft-fallback to SSR with a warning; Search becomes an SSR component.
         let route = r#"export default function P({ data }){ return <div><Search absoluteStrokeWidth strokeWidth={2} size={data.s}/></div>; }"#;
-        let c = compile_full(route, "<test>", HashMap::new(), lucide_search_map()).unwrap();
+        let c = compile_full(
+            route,
+            "<test>",
+            HashMap::new(),
+            lucide_search_map(),
+            HashMap::new(),
+        )
+        .unwrap();
         assert!(!c.warnings.is_empty(), "warnings: {:?}", c.warnings);
         let json = components_to_json(&c.components);
         assert!(json.contains("\"Search\""), "{json}");
@@ -2061,7 +2428,13 @@ export default function Lay({ children }) { return <BrustPage title="x"><main>{c
         // static-SVG check sits AFTER the `in_map` guard, so it preserves the
         // pre-existing SsrComponentInMapNotSupported hard error rather than inlining.
         let route = r#"export default function P({ items }){ return <ul>{items.map((it) => (<li><Search/></li>))}</ul>; }"#;
-        let result = compile_full(route, "<test>", HashMap::new(), lucide_search_map());
+        let result = compile_full(
+            route,
+            "<test>",
+            HashMap::new(),
+            lucide_search_map(),
+            HashMap::new(),
+        );
         let err = result.unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::SsrComponentInMapNotSupported(_)),

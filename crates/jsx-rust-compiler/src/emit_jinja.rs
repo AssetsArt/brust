@@ -55,6 +55,9 @@ fn emit_node(node: &JsxNode, out: &mut String) {
             out.push('<');
             out.push_str(tag);
             for a in attrs {
+                if a.name == "x-behavior" {
+                    continue; // compile-time-only marker; never reaches HTML
+                }
                 emit_attr(a, out);
             }
             if is_void(tag) {

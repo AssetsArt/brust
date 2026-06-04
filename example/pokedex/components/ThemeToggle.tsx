@@ -45,7 +45,6 @@ export default function ThemeToggle() {
   return (
     <button
       type="button"
-      x-data="themeToggle"
       x-on-click="toggle"
       aria-label="Toggle theme"
       className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"

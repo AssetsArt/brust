@@ -41,6 +41,7 @@ fn main() -> ExitCode {
         input_path,
         std::collections::HashMap::new(),
         std::collections::HashMap::new(),
+        std::collections::HashMap::new(),
     ) {
         Ok(compiled) => {
             if check_only {
