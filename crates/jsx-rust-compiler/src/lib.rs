@@ -2020,4 +2020,52 @@ export default function Lay({ children }) { return <BrustPage title="x"><main>{c
         let json = components_to_json(&with_empty.components);
         assert!(json.contains("\"Search\""), "{json}");
     }
+
+    #[test]
+    fn lucide_absolute_stroke_width_integer() {
+        // absoluteStrokeWidth + static strokeWidth/size → stroke-width = sw*24/size.
+        // 2*24/16 = 3 (integer; rendered without a decimal point).
+        let route = r#"export default function P(){ return <div><Search absoluteStrokeWidth strokeWidth={2} size={16}/></div>; }"#;
+        let c = compile_full(route, "<test>", HashMap::new(), lucide_search_map()).unwrap();
+        let t = &c.template;
+        assert!(t.contains("stroke-width=\"3\""), "{t}");
+        assert!(t.contains("<svg"), "{t}");
+        assert!(!t.contains("comp_"), "{t}");
+    }
+
+    #[test]
+    fn lucide_absolute_stroke_width_non_integer() {
+        // 2*24/5 = 9.6 (non-integer; shortest-decimal Display → "9.6").
+        let route = r#"export default function P(){ return <div><Search absoluteStrokeWidth strokeWidth={2} size={5}/></div>; }"#;
+        let c = compile_full(route, "<test>", HashMap::new(), lucide_search_map()).unwrap();
+        let t = &c.template;
+        assert!(t.contains("stroke-width=\"9.6\""), "{t}");
+        assert!(t.contains("<svg"), "{t}");
+        assert!(!t.contains("comp_"), "{t}");
+    }
+
+    #[test]
+    fn lucide_absolute_stroke_width_dynamic_size_falls_back() {
+        // absoluteStrokeWidth with a dynamic size can't be computed statically →
+        // soft-fallback to SSR with a warning; Search becomes an SSR component.
+        let route = r#"export default function P({ data }){ return <div><Search absoluteStrokeWidth strokeWidth={2} size={data.s}/></div>; }"#;
+        let c = compile_full(route, "<test>", HashMap::new(), lucide_search_map()).unwrap();
+        assert!(!c.warnings.is_empty(), "warnings: {:?}", c.warnings);
+        let json = components_to_json(&c.components);
+        assert!(json.contains("\"Search\""), "{json}");
+    }
+
+    #[test]
+    fn lucide_in_map_is_intentional_hard_error() {
+        // lucide in `.map()` is intentionally unsupported (spec Non-goal): the lucide
+        // static-SVG check sits AFTER the `in_map` guard, so it preserves the
+        // pre-existing SsrComponentInMapNotSupported hard error rather than inlining.
+        let route = r#"export default function P({ items }){ return <ul>{items.map((it) => (<li><Search/></li>))}</ul>; }"#;
+        let result = compile_full(route, "<test>", HashMap::new(), lucide_search_map());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::SsrComponentInMapNotSupported(_)),
+            "{err:?}"
+        );
+    }
 }

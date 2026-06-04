@@ -1423,18 +1423,23 @@ fn build_lucide_svg(
             // Stripped no-ops. `isr` is allowed and ignored (no error).
             "isr" | "key" | "ref" => continue,
             "size" => match lucide_prop_value(&jsx_attr.value, scope)? {
+                // A non-positive size would emit an invalid `width="-16"`/`width="0"`;
+                // defer to SSR (which runs the real lucide) instead.
                 LucidePropVal::Num(n) => {
+                    if n <= 0 {
+                        return Ok(None);
+                    }
                     size_num = Some(n);
                     size_attr = Some(AttrValue::StaticNum(n));
                 }
                 // A string size (`size="16"`) is still static — accept it numerically
-                // when it parses, otherwise it isn't a valid width; defer.
+                // when it parses to a positive int, otherwise it isn't a valid width; defer.
                 LucidePropVal::Str(s) => match s.parse::<i64>() {
-                    Ok(n) => {
+                    Ok(n) if n > 0 => {
                         size_num = Some(n);
                         size_attr = Some(AttrValue::StaticNum(n));
                     }
-                    Err(_) => return Ok(None),
+                    _ => return Ok(None),
                 },
                 // Dynamic size → both width and height interpolate the expr.
                 LucidePropVal::Dynamic => {
@@ -1533,15 +1538,13 @@ fn build_lucide_svg(
             (Some(sw), Some(sz)) if sz != 0 => {
                 // f64 math then format; trailing-zero-free (matches `2` not `2.0`).
                 let computed = (sw as f64) * 24.0 / (sz as f64);
+                // f64 Display (shortest-decimal / Ryu) never emits trailing zeros,
+                // so `9.6` formats to "9.6" and the integer case (`3.0`) is split off
+                // above to render as "3" — no trailing-zero trimming is needed.
                 let s = if computed.fract() == 0.0 {
                     format!("{}", computed as i64)
                 } else {
-                    // Trim a trailing newline-free fixed repr of insignificant zeros.
-                    let mut t = format!("{computed}");
-                    while t.contains('.') && t.ends_with('0') {
-                        t.pop();
-                    }
-                    t
+                    format!("{computed}")
                 };
                 stroke_width_attr = Some(AttrValue::Static(s));
             }
@@ -1559,7 +1562,7 @@ fn build_lucide_svg(
     let width_attr = size_attr.clone().unwrap_or(AttrValue::StaticNum(24));
     let height_attr = size_attr.unwrap_or(AttrValue::StaticNum(24));
     let stroke_attr = color_attr.unwrap_or_else(|| AttrValue::Static("currentColor".to_string()));
-    let sw_attr = stroke_width_attr.unwrap_or_else(|| AttrValue::Static("2".to_string()));
+    let sw_attr = stroke_width_attr.unwrap_or(AttrValue::StaticNum(2));
 
     let mut attrs: Vec<JsxAttr> = Vec::new();
     let st = |n: &str, v: &str| JsxAttr {
