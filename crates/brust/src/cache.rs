@@ -27,8 +27,13 @@ pub struct CachedEntry {
     pub ttl: Duration,
 }
 
-/// Per-entry expiry policy: each entry lives for its own `ttl` from creation.
-/// moka enforces this lazily on read and during its maintenance passes.
+/// Per-entry expiry policy: each entry lives for its own `ttl`, measured from
+/// the most recent write. moka enforces this lazily on read and during its
+/// maintenance passes. `expire_after_update` mirrors `expire_after_create` so a
+/// re-insert of an existing key resets the clock — matching the old
+/// `inserted_at = Instant::now()` on every `put` (without it, a re-render that
+/// re-caches a live key would silently inherit the stale entry's remaining
+/// lifetime instead of a fresh TTL).
 struct ResponseExpiry;
 
 impl moka::Expiry<CacheKey, CachedEntry> for ResponseExpiry {
@@ -37,6 +42,16 @@ impl moka::Expiry<CacheKey, CachedEntry> for ResponseExpiry {
         _key: &CacheKey,
         value: &CachedEntry,
         _created_at: std::time::Instant,
+    ) -> Option<Duration> {
+        Some(value.ttl)
+    }
+
+    fn expire_after_update(
+        &self,
+        _key: &CacheKey,
+        value: &CachedEntry,
+        _updated_at: std::time::Instant,
+        _duration_until_expiry: Option<Duration>,
     ) -> Option<Duration> {
         Some(value.ttl)
     }
@@ -107,7 +122,9 @@ impl ResponseCache {
     /// (`CACHE_CAPACITY`). Retained for API compatibility with the prior
     /// `lru`-backed implementation.
     pub fn resize(&self, _max: NonZeroUsize) {
-        tracing::warn!("ResponseCache::resize is a no-op on moka");
+        // debug, not warn: this is called on the normal `configureCache` startup
+        // path, so a warn would flood production logs on every boot.
+        tracing::debug!("ResponseCache::resize is a no-op on moka");
     }
 
     /// Remove every entry whose key has the given method + path (regardless
