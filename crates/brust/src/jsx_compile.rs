@@ -26,12 +26,14 @@ pub fn compile_jsx(
     path: String,
     component_sources: Option<HashMap<String, String>>,
     lucide_icons: Option<HashMap<String, String>>,
+    directive_names: Option<HashMap<String, String>>,
 ) -> Result<NapiCompiledJsx> {
     match jsx_rust_compiler::compile_full(
         &source,
         &path,
         component_sources.unwrap_or_default(),
         lucide_icons.unwrap_or_default(),
+        directive_names.unwrap_or_default(),
     ) {
         Ok(compiled) => Ok(NapiCompiledJsx {
             template: compiled.template,
@@ -79,7 +81,14 @@ mod tests {
         let src = r#"export default function Page({ greeting }) {
   return <Layout title={greeting} />;
 }"#;
-        let compiled = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap();
+        let compiled = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap();
         let json = components_to_json(&compiled.components);
         assert!(json.contains("\"component\":\"Layout\""));
         assert!(json.contains("\"instance\":0"));
@@ -95,7 +104,14 @@ mod tests {
         let src = r#"export default function Page({ greeting }) {
   return <p>{greeting}</p>;
 }"#;
-        let compiled = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap();
+        let compiled = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap();
         assert!(compiled.template.contains("<p>"));
         assert!(
             compiled.warnings.is_empty(),
@@ -106,7 +122,14 @@ mod tests {
     #[test]
     fn compile_jsx_none_lucide_behaves_as_before() {
         let src = r#"export default function Page({ g }) { return <p>{g}</p>; }"#;
-        let compiled = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap();
+        let compiled = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap();
         assert!(compiled.template.contains("<p>"));
         assert!(compiled.warnings.is_empty());
     }
@@ -125,10 +148,35 @@ mod tests {
 }"#;
         let mut sources = HashMap::new();
         sources.insert("Card".to_string(), card_src.to_string());
-        let compiled = compile_full(route, "<test>", sources, HashMap::new()).unwrap();
+        let compiled =
+            compile_full(route, "<test>", sources, HashMap::new(), HashMap::new()).unwrap();
         assert!(
             !compiled.warnings.is_empty(),
             "expected warnings from hook fallback, got none"
         );
+    }
+
+    #[test]
+    fn compile_full_directive_names_unmatched_is_noop() {
+        let src = r#"export default function Page({ g }) { return <p>{g}</p>; }"#;
+        let mut dn = std::collections::HashMap::new();
+        dn.insert("Nope".to_string(), "nope_deadbeef".to_string());
+        let with = jsx_rust_compiler::compile_full(
+            src,
+            "<t>",
+            std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
+            dn,
+        )
+        .unwrap();
+        let without = jsx_rust_compiler::compile_full(
+            src,
+            "<t>",
+            std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
+        )
+        .unwrap();
+        assert_eq!(with.template, without.template);
     }
 }

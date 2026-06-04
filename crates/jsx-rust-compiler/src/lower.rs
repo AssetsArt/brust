@@ -116,6 +116,10 @@ struct Scope {
     /// icons supplied (default). Constructed in `lower_with_sources`; read by
     /// `build_lucide_svg` (threaded through the inline recursion).
     lucide_env: Option<Rc<LucideEnv>>,
+    /// Native behavior-component directive registry (ident → app-unique name).
+    /// `None` = no behavior components supplied (default). Read at the
+    /// native-inline injection site to auto-inject `x-data` on the host element.
+    directive_names: Option<Rc<HashMap<String, String>>>,
 }
 
 /// Lowered param shape: which names are in scope inside JSX.
@@ -142,6 +146,7 @@ pub fn lower(parsed: &ParsedSource) -> Result<Component, LowerError> {
         inline: None,
         inline_env: None,
         lucide_env: None,
+        directive_names: None,
     };
 
     let return_expr = single_return_expr(body)?;
@@ -192,6 +197,7 @@ pub(crate) fn lower_with_sources(
     parsed: &ParsedSource,
     sources: HashMap<String, String>,
     lucide_icons: HashMap<String, String>,
+    directive_names: HashMap<String, String>,
 ) -> Result<(Component, Vec<String>), LowerError> {
     let (name, function) = find_default_export(&parsed.module)?;
     let body =
@@ -227,6 +233,8 @@ pub(crate) fn lower_with_sources(
         Rc::new(LucideEnv { icons, warnings })
     };
 
+    let dn = Rc::new(directive_names);
+
     let scope = Scope {
         destructured: param_shape.destructured.clone(),
         named_param: param_shape.named.clone(),
@@ -234,6 +242,7 @@ pub(crate) fn lower_with_sources(
         inline: None,
         inline_env: Some(env.clone()),
         lucide_env: Some(lucide_env.clone()),
+        directive_names: Some(dn.clone()),
     };
 
     let return_expr = single_return_expr(body)?;
@@ -316,6 +325,7 @@ pub(crate) fn lower_component_inline(
     _has_children: bool,
     env: Option<Rc<InlineEnv>>,
     lucide: Option<Rc<LucideEnv>>,
+    directive_names: Option<Rc<HashMap<String, String>>>,
     doc_root: bool,
 ) -> Result<Vec<JsxNode>, LowerError> {
     let (_, fn_expr) = find_default_export(&parsed.module)?;
@@ -337,6 +347,9 @@ pub(crate) fn lower_component_inline(
         // static-SVG inlining fires for `<Search/>` nested inside a native-inlined
         // component body (the real pokedex usage). `None` when no registry.
         lucide_env: lucide,
+        // Threaded from the parent scope so behavior-component injection can fire
+        // for a native component nested inside another native-inlined body.
+        directive_names,
     };
 
     // Try single-return first.
@@ -1777,6 +1790,7 @@ fn lower_ssr_component(
             &component,
             env,
             scope.lucide_env.clone(),
+            scope.directive_names.clone(),
             subst,
             has_spread,
             subst_err,
@@ -1993,12 +2007,14 @@ fn lower_ssr_component(
 /// Try to native-inline a component. Returns:
 /// - `Ok(Some(node))` — successfully inlined.
 /// - `Ok(None)` — soft fallback (warnings pushed to `env`); caller emits SSR component.
-/// - `Err(LowerError)` — hard error (only `CircularInline` for now).
+/// - `Err(LowerError)` — hard error (`CircularInline`, `OutletMustBeEmpty`,
+///   `BehaviorHostNotElement`, `XBehaviorMisuse`).
 #[allow(clippy::too_many_arguments)]
 fn try_native_inline(
     component: &str,
     env: &Rc<InlineEnv>,
     lucide: Option<Rc<LucideEnv>>,
+    directive_names: Option<Rc<HashMap<String, String>>>,
     subst: HashMap<String, crate::ir::Expr>,
     has_spread: bool,
     subst_err: bool,
@@ -2087,6 +2103,7 @@ fn try_native_inline(
         has_children,
         Some(env.clone()),
         lucide,
+        directive_names.clone(),
         doc_root,
     ) {
         Ok(n) => n,
@@ -2129,13 +2146,32 @@ fn try_native_inline(
 
     let mut root_node = nodes.into_iter().next().unwrap();
 
-    // 8. Splice children slots.
+    // 8. Auto-inject `x-data` for a registered behavior component, BEFORE splicing
+    // children. Host resolution must scan only THIS component's own template: the
+    // call-site children spliced below (step 9) may carry their own `x-data` for a
+    // nested mount, and that must not be mistaken for this host's "author wrote
+    // x-data" escape and suppress injection. The host is a bare `x-behavior` marker
+    // if present, else the root element. When this component isn't registered, strip
+    // any stray `x-behavior` marker and warn — it would otherwise leak into the HTML.
+    if let Some(dn) = &directive_names
+        && let Some(unique) = dn.get(component)
+    {
+        // Hard error → pop the cycle stack first, like the early-return paths above.
+        if let Err(e) = inject_directive_xdata(&mut root_node, unique, component, span) {
+            env.cycle.borrow_mut().pop();
+            return Err(e);
+        }
+    } else {
+        strip_stray_x_behavior(&mut root_node, component, env);
+    }
+
+    // 9. Splice children slots.
     splice_children_slots(&mut root_node, call_site_children);
 
-    // 9. Pop cycle stack.
+    // 10. Pop cycle stack.
     env.cycle.borrow_mut().pop();
 
-    // 10. Warn if isr was present (ignored on inlined component).
+    // 11. Warn if isr was present (ignored on inlined component).
     if has_isr {
         env.warnings.borrow_mut().push(format!(
             "isr ignored on inlined native component \"{}\"",
@@ -2223,6 +2259,262 @@ fn splice_children_slots(node: &mut JsxNode, children: &[JsxNode]) {
         | JsxNode::Island { .. }
         | JsxNode::SsrComponent { .. }
         | JsxNode::ChildrenSlot => {}
+    }
+}
+
+/// Auto-inject `x-data="<unique>"` on a behavior component's mount host, resolved
+/// over the root subtree. Host precedence: (1) a literal `x-data` already present
+/// anywhere wins — no injection (author owns it); (2) exactly one bare
+/// `x-behavior` marker → strip it, host it there; (3) no marker → the root must
+/// itself be a single `JsxNode::Element` (the host). A valued `x-behavior` or
+/// more than one `x-behavior` is an authoring error. The scan stops at any
+/// element already carrying `x-data` and at nested `SsrComponent` boundaries
+/// (separate mount scopes).
+///
+/// KNOWN LIMITATION: an `x-behavior` placed inside a nested `SsrComponent`'s
+/// child subtree is NOT a reachable host (the scan stops at that boundary) and is
+/// not stripped here; it lives in the React-rendered (factory) subtree, not the
+/// native jinja one. This is an unsupported placement — put `x-behavior` on a
+/// native element of the behavior component itself. (The element-path defensive
+/// skip in `emit_jinja` keeps it out of native HTML regardless.)
+fn inject_directive_xdata(
+    root: &mut JsxNode,
+    unique: &str,
+    component: &str,
+    span: Span,
+) -> Result<(), LowerError> {
+    let mut has_literal_x_data = false;
+    let mut bare_x_behavior = 0usize;
+    let mut valued_x_behavior = 0usize;
+    scan_host_markers(
+        root,
+        &mut has_literal_x_data,
+        &mut bare_x_behavior,
+        &mut valued_x_behavior,
+    );
+
+    // Case 1: author-supplied `x-data` wins — never inject.
+    if has_literal_x_data {
+        return Ok(());
+    }
+
+    // Case 2: a bare `x-behavior` marks the host. A valued marker or more than
+    // one marker is ambiguous → error.
+    if valued_x_behavior > 0 || bare_x_behavior > 1 {
+        return Err(LowerError::at(
+            span,
+            ErrorKind::XBehaviorMisuse(component.to_string()),
+        ));
+    }
+    if bare_x_behavior == 1 {
+        host_at_x_behavior(root, unique);
+        return Ok(());
+    }
+
+    // Case 3: no marker — the root itself must be a single element to host.
+    match root {
+        JsxNode::Element { attrs, .. } => {
+            // Insert at the front so the host reads `<tag x-data="…" …>`.
+            attrs.insert(
+                0,
+                JsxAttr {
+                    name: "x-data".to_string(),
+                    value: AttrValue::Static(unique.to_string()),
+                },
+            );
+            Ok(())
+        }
+        other => Err(LowerError::at(
+            span,
+            ErrorKind::BehaviorHostNotElement(component.to_string(), node_kind_name(other)),
+        )),
+    }
+}
+
+/// Walk the host subtree counting literal `x-data` and `x-behavior` markers
+/// (bare vs valued). Stops at any element already carrying `x-data` (its subtree
+/// is a separate `x-data` scope) and at nested `SsrComponent` boundaries.
+fn scan_host_markers(
+    node: &JsxNode,
+    has_x_data: &mut bool,
+    bare_behavior: &mut usize,
+    valued_behavior: &mut usize,
+) {
+    match node {
+        JsxNode::Element {
+            attrs, children, ..
+        } => {
+            let mut own_x_data = false;
+            for a in attrs {
+                if a.name == "x-data" {
+                    *has_x_data = true;
+                    own_x_data = true;
+                } else if a.name == "x-behavior" {
+                    if matches!(a.value, AttrValue::Empty) {
+                        *bare_behavior += 1;
+                    } else {
+                        *valued_behavior += 1;
+                    }
+                }
+            }
+            // A nested element with its own `x-data` is a separate mount scope —
+            // don't descend into it.
+            if !own_x_data {
+                for c in children {
+                    scan_host_markers(c, has_x_data, bare_behavior, valued_behavior);
+                }
+            }
+        }
+        JsxNode::Cond {
+            consequent,
+            alternate,
+            ..
+        } => {
+            scan_host_markers(consequent, has_x_data, bare_behavior, valued_behavior);
+            if let Some(alt) = alternate {
+                scan_host_markers(alt, has_x_data, bare_behavior, valued_behavior);
+            }
+        }
+        JsxNode::Map { body, .. } => {
+            scan_host_markers(body, has_x_data, bare_behavior, valued_behavior)
+        }
+        JsxNode::Fragment { children } | JsxNode::Document { body: children, .. } => {
+            for c in children {
+                scan_host_markers(c, has_x_data, bare_behavior, valued_behavior);
+            }
+        }
+        // Nested SsrComponent is a separate mount scope; leaves carry nothing.
+        JsxNode::SsrComponent { .. }
+        | JsxNode::Island { .. }
+        | JsxNode::Empty
+        | JsxNode::Text(_)
+        | JsxNode::Expr(_)
+        | JsxNode::RawHtml(_)
+        | JsxNode::ChildrenSlot => {}
+    }
+}
+
+/// Replace the (single, bare) `x-behavior` marker found in the subtree with
+/// `x-data="<unique>"` on the element that carries it. Mirrors the scan's stop
+/// conditions so it lands on the same element the scan counted.
+fn host_at_x_behavior(node: &mut JsxNode, unique: &str) -> bool {
+    match node {
+        JsxNode::Element {
+            attrs, children, ..
+        } => {
+            if attrs.iter().any(|a| a.name == "x-data") {
+                return false; // separate `x-data` scope — don't descend.
+            }
+            if let Some(pos) = attrs.iter().position(|a| a.name == "x-behavior") {
+                // Replace the marker in place so `x-data` keeps its slot.
+                attrs[pos] = JsxAttr {
+                    name: "x-data".to_string(),
+                    value: AttrValue::Static(unique.to_string()),
+                };
+                return true;
+            }
+            for c in children {
+                if host_at_x_behavior(c, unique) {
+                    return true;
+                }
+            }
+            false
+        }
+        JsxNode::Cond {
+            consequent,
+            alternate,
+            ..
+        } => {
+            if host_at_x_behavior(consequent, unique) {
+                return true;
+            }
+            alternate
+                .as_mut()
+                .is_some_and(|alt| host_at_x_behavior(alt, unique))
+        }
+        JsxNode::Map { body, .. } => host_at_x_behavior(body, unique),
+        JsxNode::Fragment { children } | JsxNode::Document { body: children, .. } => {
+            children.iter_mut().any(|c| host_at_x_behavior(c, unique))
+        }
+        JsxNode::SsrComponent { .. }
+        | JsxNode::Island { .. }
+        | JsxNode::Empty
+        | JsxNode::Text(_)
+        | JsxNode::Expr(_)
+        | JsxNode::RawHtml(_)
+        | JsxNode::ChildrenSlot => false,
+    }
+}
+
+/// Strip every `x-behavior` marker from a NON-behavior component's subtree and
+/// warn once. A stray `x-behavior` (no `export const behavior`) is a no-op
+/// marker that must never leak into HTML.
+fn strip_stray_x_behavior(node: &mut JsxNode, component: &str, env: &Rc<InlineEnv>) {
+    let mut stripped = 0usize;
+    strip_x_behavior_attrs(node, &mut stripped);
+    if stripped > 0 {
+        env.warnings.borrow_mut().push(format!(
+            "native component \"{component}\" has `x-behavior` but no `export const behavior` — the marker was stripped (it has no effect)"
+        ));
+    }
+}
+
+/// Recursively remove `x-behavior` attrs from every element in the subtree.
+fn strip_x_behavior_attrs(node: &mut JsxNode, stripped: &mut usize) {
+    match node {
+        JsxNode::Element {
+            attrs, children, ..
+        } => {
+            let before = attrs.len();
+            attrs.retain(|a| a.name != "x-behavior");
+            *stripped += before - attrs.len();
+            for c in children {
+                strip_x_behavior_attrs(c, stripped);
+            }
+        }
+        JsxNode::Cond {
+            consequent,
+            alternate,
+            ..
+        } => {
+            strip_x_behavior_attrs(consequent, stripped);
+            if let Some(alt) = alternate {
+                strip_x_behavior_attrs(alt, stripped);
+            }
+        }
+        JsxNode::Map { body, .. } => strip_x_behavior_attrs(body, stripped),
+        JsxNode::Fragment { children } | JsxNode::Document { body: children, .. } => {
+            for c in children {
+                strip_x_behavior_attrs(c, stripped);
+            }
+        }
+        JsxNode::SsrComponent { children, .. } => {
+            for c in children {
+                strip_x_behavior_attrs(c, stripped);
+            }
+        }
+        JsxNode::Island { .. }
+        | JsxNode::Empty
+        | JsxNode::Text(_)
+        | JsxNode::Expr(_)
+        | JsxNode::RawHtml(_)
+        | JsxNode::ChildrenSlot => {}
+    }
+}
+
+/// Human-readable IR node kind for the `BehaviorHostNotElement` error message.
+fn node_kind_name(n: &JsxNode) -> &'static str {
+    match n {
+        JsxNode::Element { .. } => "element",
+        JsxNode::Fragment { .. } => "fragment",
+        JsxNode::Map { .. } => "list (.map / x-for)",
+        JsxNode::Cond { .. } => "conditional",
+        JsxNode::Document { .. } => "BrustPage document",
+        JsxNode::ChildrenSlot => "children slot",
+        JsxNode::Text(_) | JsxNode::Expr(_) | JsxNode::RawHtml(_) => "text/expression",
+        JsxNode::SsrComponent { .. } => "component",
+        JsxNode::Island { .. } => "island",
+        JsxNode::Empty => "empty",
     }
 }
 
@@ -4490,6 +4782,116 @@ mod tests {
     use crate::parser::parse;
 
     #[test]
+    fn inline_behavior_component_root_gets_xdata() {
+        let route = r#"export default function Page({ data }) { return <div><Btn native data={data}/></div>; }"#;
+        let btn = r#"export const behavior = () => ({});
+export default function Btn({ data }) { return <button x-text="label">x</button>; }"#;
+        let mut sources = std::collections::HashMap::new();
+        sources.insert("Btn".to_string(), btn.to_string());
+        let mut dn = std::collections::HashMap::new();
+        dn.insert("Btn".to_string(), "btn_abc12345".to_string());
+        let c = crate::compile_full(route, "<t>", sources, std::collections::HashMap::new(), dn)
+            .unwrap();
+        assert!(
+            c.template.contains(r#"<button x-data="btn_abc12345""#),
+            "got: {}",
+            c.template
+        );
+        assert_eq!(c.template.matches("x-data=").count(), 1);
+    }
+
+    // Build a route inlining `Btn` (registered as a behavior component) with the
+    // given `Btn` return-body, returning the full compile result.
+    fn compile_btn(btn_body: &str) -> Result<crate::Compiled, crate::CompileError> {
+        let route = r#"export default function Page({ data }) { return <div><Btn native data={data}/></div>; }"#;
+        let btn = format!(
+            "export const behavior = () => ({{}});\nexport default function Btn({{data}}) {{ return {btn_body}; }}"
+        );
+        let mut sources = std::collections::HashMap::new();
+        sources.insert("Btn".to_string(), btn);
+        let mut dn = std::collections::HashMap::new();
+        dn.insert("Btn".to_string(), "btn_abc12345".to_string());
+        crate::compile_full(route, "<t>", sources, std::collections::HashMap::new(), dn)
+    }
+
+    #[test]
+    fn x_behavior_marks_non_root_host() {
+        let c =
+            compile_btn(r#"<div className="wrap"><button x-behavior x-text="l">x</button></div>"#)
+                .unwrap();
+        assert!(
+            c.template.contains(r#"<button x-data="btn_abc12345""#),
+            "got: {}",
+            c.template
+        );
+        assert!(!c.template.contains("x-behavior"));
+        assert!(!c.template.contains(r#"<div x-data"#));
+        assert_eq!(c.template.matches("x-data=").count(), 1);
+    }
+
+    #[test]
+    fn literal_x_data_wins_no_injection() {
+        let c = compile_btn(r#"<div x-data="mine" x-text="l">x</div>"#).unwrap();
+        assert!(
+            c.template.contains(r#"x-data="mine""#),
+            "got: {}",
+            c.template
+        );
+        assert!(!c.template.contains("btn_abc12345"));
+        assert_eq!(c.template.matches("x-data=").count(), 1);
+    }
+
+    #[test]
+    fn valued_x_behavior_is_error() {
+        let err = compile_btn(r#"<div x-behavior="oops">x</div>"#).unwrap_err();
+        assert!(
+            matches!(err.kind, crate::ErrorKind::XBehaviorMisuse(_)),
+            "got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn two_x_behavior_is_error() {
+        let err = compile_btn(r#"<div><a x-behavior>1</a><b x-behavior>2</b></div>"#).unwrap_err();
+        assert!(
+            matches!(err.kind, crate::ErrorKind::XBehaviorMisuse(_)),
+            "got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn non_element_root_is_error() {
+        let err = compile_btn(r#"<><span>a</span><span>b</span></>"#).unwrap_err();
+        assert!(
+            matches!(err.kind, crate::ErrorKind::BehaviorHostNotElement(_, _)),
+            "got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn stray_x_behavior_in_non_behavior_component_warns_and_strips() {
+        let route =
+            r#"export default function Page({ data }) { return <div><Plain native/></div>; }"#;
+        let plain = r#"export default function Plain() { return <p x-behavior>hi</p>; }"#;
+        let mut sources = std::collections::HashMap::new();
+        sources.insert("Plain".to_string(), plain.to_string());
+        // Plain NOT in directive_names (no behavior).
+        let c = crate::compile_full(
+            route,
+            "<t>",
+            sources,
+            std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
+        )
+        .unwrap();
+        assert!(!c.template.contains("x-behavior"), "got: {}", c.template);
+        assert!(c.warnings.iter().any(|w| w.contains("x-behavior")));
+    }
+
+    #[test]
     fn lowers_zero_prop_static_jsx() {
         let src = r#"export default function StaticHello() {
   return (
@@ -4546,7 +4948,14 @@ export const behavior = () => ({});
 export default function C() {
   return <div x-data="c" />;
 }"#;
-        let c = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap();
+        let c = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap();
         assert!(
             c.template.contains("x-data=\"c\""),
             "expected x-data attribute in template, got: {}",
@@ -4777,7 +5186,14 @@ export const behavior = () => ({});"#;
         let src = r#"export default function X() {
   return <Layout><>a</></Layout>;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
+        let err = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::FragmentInSsrComponentNotSupported),
             "expected FragmentInSsrComponentNotSupported, got {:?}",
@@ -4793,7 +5209,14 @@ export const behavior = () => ({});"#;
         let src = r#"export default function X() {
   return <Layout><div><>x</></div></Layout>;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
+        let err = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::FragmentInSsrComponentNotSupported),
             "expected FragmentInSsrComponentNotSupported, got {:?}",
@@ -5590,7 +6013,14 @@ export const behavior = () => ({});"#;
     fn lower_ssr_component_leaf() {
         let src =
             "export default function Page({ greeting }) { return <Header user={greeting} />; }";
-        let c = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap();
+        let c = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap();
         assert_eq!(c.components.len(), 1);
         assert_eq!(c.components[0].component, "Header");
         assert_eq!(c.components[0].instance, 0);
@@ -5627,7 +6057,14 @@ export const behavior = () => ({});"#;
     #[test]
     fn lower_ssr_component_event_handler_rejected() {
         let src = "export default function Page({ data }) { return <Card onClick={data.fn} />; }";
-        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
+        let err = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::EventHandlerNotSupported(_)),
             "got {:?}",
@@ -5640,7 +6077,14 @@ export const behavior = () => ({});"#;
         let src = r#"export default function Page({ items }) {
   return <ul>{items.map((item) => <Layout title={item.name} />)}</ul>;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
+        let err = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::SsrComponentInMapNotSupported(_)),
             "expected SsrComponentInMapNotSupported, got {:?}",
@@ -5655,7 +6099,14 @@ export const behavior = () => ({});"#;
         let src = r#"export default function Grid({ items }) {
   return <ul>{items.map((t) => <a x-for key={`${t.a}-${t.b}`} href={t.href} />)}</ul>;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
+        let err = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::MapXForKeyRequired),
             "expected MapXForKeyRequired, got {:?}",
@@ -5669,7 +6120,14 @@ export const behavior = () => ({});"#;
         let src = r#"export default function Grid({ items }) {
   return <ul>{items.map((t) => <a x-for href={t.href} />)}</ul>;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
+        let err = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::MapXForKeyRequired),
             "expected MapXForKeyRequired, got {:?}",
@@ -5684,7 +6142,14 @@ export const behavior = () => ({});"#;
         let src = r#"export default function Grid({ items }) {
   return <ul>{items.map((t) => <a x-for key={t} href={t.href} />)}</ul>;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
+        let err = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::MapXForKeyRequired),
             "expected MapXForKeyRequired, got {:?}",
@@ -5699,7 +6164,14 @@ export const behavior = () => ({});"#;
         let src = r#"export default function Grid({ rows }) {
   return <ul>{rows.map((row) => <ul>{row.cells.map((c) => <a x-for key={c.id} href={c.href} />)}</ul>)}</ul>;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
+        let err = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::MapXForSourceNotArray),
             "expected MapXForSourceNotArray, got {:?}",
@@ -5714,7 +6186,14 @@ export const behavior = () => ({});"#;
         let src = r#"export default function Grid({ items }) {
   return <ul>{items.map((t) => t.ok && <a x-for key={t.id} href={t.href} />)}</ul>;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
+        let err = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::MapXForBodyNotElement),
             "expected MapXForBodyNotElement, got {:?}",
@@ -5727,7 +6206,14 @@ export const behavior = () => ({});"#;
         let src = r#"export default function Page({ greeting, data }) {
   return <Layout title={greeting}><h1>{greeting}</h1><Island component={Counter} props={data.counter} hydrate="load" /></Layout>;
 }"#;
-        let c = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap();
+        let c = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap();
         assert_eq!(c.components.len(), 1);
         assert_eq!(c.components[0].component, "Layout");
         assert!(
@@ -5800,7 +6286,14 @@ export const behavior = () => ({});"#;
         let src = r#"export default function Page({ data }) {
   return <Layout isr={{ tags: data.cacheTags }} />;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
+        let err = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::ComponentIsrUnsupported(_)),
             "got {:?}",
@@ -5813,7 +6306,14 @@ export const behavior = () => ({});"#;
         let src = r#"export default function Page({ data }) {
   return <Layout isr={{ key: data.cacheKey, revalidate: data.ttl }} />;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
+        let err = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::ComponentIsrUnsupported(_)),
             "got {:?}",
@@ -5875,7 +6375,14 @@ export const behavior = () => ({});"#;
         let src = r#"export default function Page({ data }) {
   return <Island component={Counter} props={data.counter} ssr isr={{ key: "k", tags: [123] }} />;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
+        let err = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::IslandIsrUnsupported),
             "got {:?}",
@@ -5913,7 +6420,14 @@ export const behavior = () => ({});"#;
         let src = r#"export default function Page({ data }) {
   return <Layout isr={{ key: "a", key: data.x }} />;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
+        let err = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::ComponentIsrUnsupported(_)),
             "got {:?}",
@@ -5930,7 +6444,7 @@ export const behavior = () => ({});"#;
         has_children: bool,
     ) -> Result<Vec<JsxNode>, LowerError> {
         let parsed = parse(src, "<test>").unwrap();
-        super::lower_component_inline(&parsed, subst, has_children, None, None, false)
+        super::lower_component_inline(&parsed, subst, has_children, None, None, None, false)
     }
 
     // ── Document-root inline (native layout shell) ────────────────────────────
@@ -5943,7 +6457,7 @@ export const behavior = () => ({});"#;
         let parsed = parse(route_src, "<route>").unwrap();
         let mut sources = HashMap::new();
         sources.insert(layout_name.to_string(), layout_src.to_string());
-        super::lower_with_sources(&parsed, sources, HashMap::new()).unwrap()
+        super::lower_with_sources(&parsed, sources, HashMap::new(), HashMap::new()).unwrap()
     }
 
     const SHELL_LAYOUT: &str = r#"export default function PageLayout({ title, crumb, children }: any) {
@@ -5989,7 +6503,8 @@ export const behavior = () => ({});"#;
 
         let mut sources = HashMap::new();
         sources.insert("PageLayout".to_string(), SHELL_LAYOUT.to_string());
-        let compiled = crate::compile_full(route, "<route>", sources, HashMap::new()).unwrap();
+        let compiled =
+            crate::compile_full(route, "<route>", sources, HashMap::new(), HashMap::new()).unwrap();
         // The jinja head emitter wraps the path in parens before the escape
         // filter (`{{ (pageTitle) | e }}`); assert on the escaped-interpolation
         // shape that actually reaches the template.
@@ -6045,8 +6560,9 @@ export const behavior = () => ({});"#;
         // SWALLOWS it into a soft fallback (warning + SSR component emission) —
         // the route compiles, but as a NON-Document SSR component (no nested
         // <html> shell), with a "not inlined" warning recorded.
-        let (c, warnings) = super::lower_with_sources(&parsed, sources, HashMap::new())
-            .expect("nested layout soft-falls-back to SSR, does not hard-error");
+        let (c, warnings) =
+            super::lower_with_sources(&parsed, sources, HashMap::new(), HashMap::new())
+                .expect("nested layout soft-falls-back to SSR, does not hard-error");
         let dbg = format!("{:?}", c.root);
         assert!(
             !dbg.contains("Document"),
@@ -6594,7 +7110,7 @@ export const behavior = () => ({});"#;
         sources: HashMap<String, String>,
     ) -> Result<(crate::ir::Component, Vec<String>), LowerError> {
         let parsed = parse(route_src, "<test>").unwrap();
-        super::lower_with_sources(&parsed, sources, HashMap::new())
+        super::lower_with_sources(&parsed, sources, HashMap::new(), HashMap::new())
     }
 
     /// Recursively check that no SsrComponent node exists in the tree.
@@ -6938,7 +7454,8 @@ export const behavior = () => ({});"#;
         let parsed = parse(src, "<test>").unwrap();
         let comp_plain = super::lower(&parsed).unwrap();
         let (comp_with_src, warnings) =
-            super::lower_with_sources(&parsed, HashMap::new(), HashMap::new()).unwrap();
+            super::lower_with_sources(&parsed, HashMap::new(), HashMap::new(), HashMap::new())
+                .unwrap();
         assert!(
             warnings.is_empty(),
             "expected no warnings from lower_with_sources, got: {warnings:?}"
