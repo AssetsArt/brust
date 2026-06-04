@@ -78,7 +78,7 @@ export const behavior = ({ props }: { props: AddTeamProps }) => {
 // emitted by the compiler as x-props="{{ (data) | json_attr }}" (XSS-safe).
 export default function AddToTeamButton({ data }: { data: AddTeamProps }) {
   return (
-    <div x-data="addToTeamButton" x-props={data} className="relative">
+    <div x-props={data} className="relative">
       <Plus
         size={16}
         className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-white"

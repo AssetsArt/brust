@@ -42,7 +42,7 @@ export const behavior = () => {
 // bind and on every SPA navigation.
 export default function Breadcrumb({ crumb }: { crumb: string }) {
   return (
-    <b x-data="breadcrumb" x-text="label" className="text-slate-600 dark:text-slate-300">
+    <b x-text="label" className="text-slate-600 dark:text-slate-300">
       {crumb}
     </b>
   )

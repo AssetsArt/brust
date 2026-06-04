@@ -1,7 +1,8 @@
 import { beforeAll, expect, test } from 'bun:test'
 import { existsSync, readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import { spawnSync } from 'bun'
+import { directiveName } from '../runtime/native/build.ts'
 
 /** T9 / native-inline integration — proves inline + hook-fallback + Island
  * reconciliation end-to-end through the real `brust build`.
@@ -203,5 +204,56 @@ test('inlined island reconciles via merged imports', () => {
         `Expected Counter island propsPath to be "count" (remapped from WrapCounter's local "c" through inline subst), but got "${counterEntry.propsPath}".\nislands.json:\n${islandsJson}`,
       ).toBe('count')
     }
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Test 5: behavior component auto-injects x-data, and the injected name matches
+// the built directive chunk filename (the F4 single-name contract).
+//
+// NativeInline.tsx inlines <BehaviorBadge native/>. BehaviorBadge has
+// `export const behavior` and the author wrote NO literal x-data, so the
+// compiler AUTO-INJECTS `x-data="behaviorBadge_<8hex>"` onto its root element.
+// The injected value MUST equal the built `<name>.directive.js` chunk filename
+// or the runtime fetches a 404. The name is path-hashed against the BUILD cwd
+// (FIXTURE_DIR — the build above runs with cwd: FIXTURE_DIR), so we recompute it
+// with the same projectRoot rather than hard-coding the hash.
+// ---------------------------------------------------------------------------
+
+test('behavior component auto-injects x-data whose name matches its built chunk', () => {
+  const jinja = readJinja()
+
+  const expectedName = directiveName(
+    resolve(FIXTURE_DIR, 'components/BehaviorBadge.tsx'),
+    FIXTURE_DIR,
+  )
+  expect(expectedName).toMatch(/^behaviorBadge_[0-9a-f]{8}$/)
+
+  // The author wrote no literal x-data — the compiler injected the path-hashed one
+  // on BehaviorBadge's inlined root element (the <span class="bbadge">).
+  expect(
+    jinja.includes(`x-data="${expectedName}"`),
+    `Expected NativeInline.jinja to contain auto-injected x-data="${expectedName}" on the inlined BehaviorBadge root.\nActual jinja:\n${jinja}`,
+  ).toBe(true)
+
+  // F4 cross-check: the injected x-data name MUST have a matching built chunk in
+  // the served islands dir, or the runtime <name>.directive.js fetch 404s.
+  const chunkPath = resolve(FIXTURE_DIR, 'dist/islands', `${expectedName}.directive.js`)
+  expect(
+    existsSync(chunkPath),
+    `Expected directive chunk ${expectedName}.directive.js to exist at ${chunkPath} (F4 name contract: injected x-data must match a built chunk).`,
+  ).toBe(true)
+
+  // Belt-and-suspenders: no STALE non-matching x-data was injected (would mean a
+  // path-normalization disagreement between scanDirectiveComponents and the
+  // compiler's directiveNames map).
+  const allXData = [...jinja.matchAll(/x-data="([a-zA-Z][a-zA-Z0-9]*_[0-9a-f]{8})"/g)].map(
+    (m) => m[1],
+  )
+  for (const name of allXData) {
+    expect(
+      existsSync(join(FIXTURE_DIR, 'dist/islands', `${name}.directive.js`)),
+      `Injected x-data="${name}" has NO matching ${name}.directive.js chunk — path normalization between scanDirectiveComponents and emitNativeTemplates disagree.`,
+    ).toBe(true)
   }
 })

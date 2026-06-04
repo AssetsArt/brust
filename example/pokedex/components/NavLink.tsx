@@ -31,7 +31,6 @@ export const behavior = ({ el }: { el: HTMLElement }) => {
 export default function NavLink({ href, label }: { href: string; label: string }) {
   return (
     <a
-      x-data="navLink"
       x-bind-class="cls"
       x-bind-aria-current="current"
       className="inline-flex items-center rounded-lg px-3 py-1.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"

@@ -2,6 +2,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { spawn, spawnSync } from 'bun'
+import { directiveName } from '../runtime/native/build.ts'
 
 /** Sub-project J / native islands E2E — proves the full `native: true` + CLIENT-ONLY
  * <Island> pipeline end-to-end:
@@ -161,4 +162,33 @@ test('GET /_test/native/Alice — no-island native route unchanged (no bootstrap
   expect(body).not.toContain('/_brust/islands/_bootstrap.js')
   expect(body).not.toContain('<script type="importmap">')
   expect(body).not.toContain('data-brust-island')
+})
+
+test('GET /_test/native-inline — auto-injected x-data served + directive chunk 200', async () => {
+  // The native page inlines <BehaviorBadge native/>. BehaviorBadge has
+  // `export const behavior` and NO literal x-data, so the compiler auto-injects
+  // x-data="behaviorBadge_<8hex>" onto its root. The injected name is path-hashed
+  // against the BUILD cwd (FIXTURE_DIR — the build above ran with cwd: FIXTURE_DIR).
+  const name = directiveName(resolve(FIXTURE_DIR, 'components/BehaviorBadge.tsx'), FIXTURE_DIR)
+  expect(name).toMatch(/^behaviorBadge_[0-9a-f]{8}$/)
+
+  const res = await fetch(`${BASE_URL}/_test/native-inline`)
+  expect(res.status).toBe(200)
+  const body = await res.text()
+
+  // 1) The served HTML carries the auto-injected x-data on the (un-annotated)
+  //    BehaviorBadge root element.
+  expect(
+    body.includes(`x-data="${name}"`),
+    `Expected served HTML to contain auto-injected x-data="${name}".\nbody:\n${body}`,
+  ).toBe(true)
+
+  // 2) F4 single-name contract: the directive chunk the runtime fetches for that
+  //    x-data name responds 200 (a name mismatch would 404 here).
+  const chunk = await fetch(`${BASE_URL}/_brust/islands/${name}.directive.js`)
+  expect(
+    chunk.status,
+    `Expected /_brust/islands/${name}.directive.js to be 200 (F4: injected x-data must match a served chunk), got ${chunk.status}.`,
+  ).toBe(200)
+  expect(chunk.headers.get('content-type') ?? '').toContain('javascript')
 })

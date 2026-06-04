@@ -52,7 +52,7 @@ export const behavior = ({ props }: { el: HTMLElement; props: unknown }) => {
 // behavior's props — one prop, no separate pre-stringified `dexProps`.
 export default function DexFilter({ items }: { items: Card[] }) {
   return (
-    <section x-data="dexFilter" x-props={items}>
+    <section x-props={items}>
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="relative w-full sm:max-w-xs">
           <Search
