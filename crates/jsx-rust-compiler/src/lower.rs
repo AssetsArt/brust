@@ -718,20 +718,42 @@ fn try_xfor_ssr(el: &JsxNode, scope: &Scope) -> Option<JsxNode> {
     if f.key_paths.is_empty() {
         return None;
     }
-    // SSR only when the source resolves to a destructured loader prop (Field):
-    // a bare, single-segment name. A dotted source (`store.items`) would need
-    // `Expr::MemberAccess`, not `Expr::Field` — out of scope; bail to passthrough.
-    // (`scope.destructured` holds only top-level loader props and never overlaps
-    // `scope.map_bindings`, so an x-for nested in a `.map()` can't double-wrap.)
-    if f.source_name.contains('.') || !scope.destructured.contains(&f.source_name) {
-        return None;
-    }
+    // Resolve the source the way `lower_expr` resolves an ident — inline
+    // substitution first (the call-site expr when this component is inlined into a
+    // parent, e.g. `<DexFilter items={items}/>`), then a destructured loader prop.
+    // SSR only for a real template-scope path (`Field`/`MemberAccess`); a
+    // behavior-only name / map binding → None → client-only passthrough (never an
+    // error). (`scope.destructured` never overlaps `scope.map_bindings`, so an
+    // x-for nested in a `.map()` can't double-wrap.)
+    let source = resolve_xfor_source(&f.source_name, scope)?;
     let body = transform_xfor_body(el, &f)?;
     Some(JsxNode::Map {
-        source: Expr::Field(f.source_name.clone()),
+        source,
         binding: f.item_name.clone(),
         body: Box::new(body),
     })
+}
+
+/// Resolve an x-for source ident to a server-renderable array path, mirroring
+/// `lower_expr`'s ident resolution. Inline-substitution wins first: when this
+/// component is inlined into a parent (`<DexFilter items={items}/>`), the source
+/// name maps to the call-site `Expr`. Only a `Field` / `MemberAccess` (a real
+/// template-scope path) is SSR-eligible; a behavior-only name, a map binding, or a
+/// literal → None → the x-for stays client-only.
+fn resolve_xfor_source(name: &str, scope: &Scope) -> Option<Expr> {
+    if let Some(ctx) = &scope.inline
+        && let Some(sub) = ctx.subst.get(name)
+    {
+        return match sub {
+            Expr::Field(_) | Expr::MemberAccess { .. } => Some(sub.clone()),
+            _ => None,
+        };
+    }
+    if scope.destructured.iter().any(|d| d == name) {
+        Some(Expr::Field(name.to_string()))
+    } else {
+        None
+    }
 }
 
 /// Build the per-item render: transform the element subtree (x-bind-* → real
