@@ -12,7 +12,7 @@ import {
   Component,
   Cookie,
   Database,
-  Layout,
+  LayoutDashboard,
   List,
   Navigation,
   Server,
@@ -43,13 +43,13 @@ export default function HomePage({ featured, typeTiles }: HomeData) {
             className="inline-flex items-center gap-2 rounded-xl bg-white px-5 py-2.5 text-sm font-semibold text-brand-700 no-underline shadow-sm transition-transform hover:-translate-y-0.5"
           >
             Browse Pokédex
-            <ArrowRight size={16} isr={{ key: 'LcIconArrowRight' }} />
+            <ArrowRight size={16} />
           </a>
           <a
             href="/type-chart"
             className="inline-flex items-center gap-2 rounded-xl bg-white/15 px-5 py-2.5 text-sm font-semibold text-white no-underline ring-1 ring-white/30 transition-colors hover:bg-white/25"
           >
-            <Table size={16} isr={{ key: 'LcIconTable' }} />
+            <Table size={16} />
             Type chart
           </a>
         </div>
@@ -65,7 +65,7 @@ export default function HomePage({ featured, typeTiles }: HomeData) {
             className="inline-flex items-center gap-1 text-sm font-semibold text-brand-600 no-underline hover:underline dark:text-brand-50"
           >
             View all
-            <ArrowRight size={14} isr={{ key: 'LcIconArrowRight14' }} />
+            <ArrowRight size={14} />
           </a>
         </div>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -126,7 +126,7 @@ export default function HomePage({ featured, typeTiles }: HomeData) {
             className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-brand-500 px-5 py-2.5 text-sm font-semibold text-white no-underline shadow-sm transition-colors hover:bg-brand-600"
           >
             Start picking
-            <ArrowRight size={16} isr={{ key: 'LcIconArrowRight' }} />
+            <ArrowRight size={16} />
           </a>
         </div>
       </section>
@@ -142,7 +142,7 @@ export default function HomePage({ featured, typeTiles }: HomeData) {
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
             <div className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white">
-              <Server size={16} className="text-brand-500" isr={{ key: 'LcIconServer' }} />
+              <Server size={16} className="text-brand-500" />
               Native SSR routes
             </div>
             <div className="mt-1 text-sm text-slate-500 dark:text-slate-400">
@@ -151,7 +151,7 @@ export default function HomePage({ featured, typeTiles }: HomeData) {
           </div>
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
             <div className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white">
-              <Database size={16} className="text-brand-500" isr={{ key: 'LcIconDatabase' }} />
+              <Database size={16} className="text-brand-500" />
               Loaders + ISR
             </div>
             <div className="mt-1 text-sm text-slate-500 dark:text-slate-400">
@@ -160,7 +160,7 @@ export default function HomePage({ featured, typeTiles }: HomeData) {
           </div>
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
             <div className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white">
-              <Cookie size={16} className="text-brand-500" isr={{ key: 'LcIconCookie' }} />
+              <Cookie size={16} className="text-brand-500" />
               Cookies / request-context
             </div>
             <div className="mt-1 text-sm text-slate-500 dark:text-slate-400">
@@ -169,7 +169,7 @@ export default function HomePage({ featured, typeTiles }: HomeData) {
           </div>
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
             <div className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white">
-              <Box size={16} className="text-brand-500" isr={{ key: 'LcIconBox' }} />
+              <Box size={16} className="text-brand-500" />
               defineStore
             </div>
             <div className="mt-1 text-sm text-slate-500 dark:text-slate-400">
@@ -178,7 +178,7 @@ export default function HomePage({ featured, typeTiles }: HomeData) {
           </div>
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
             <div className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white">
-              <Navigation size={16} className="text-brand-500" isr={{ key: 'LcIconNavigation' }} />
+              <Navigation size={16} className="text-brand-500" />
               Client navigation
             </div>
             <div className="mt-1 text-sm text-slate-500 dark:text-slate-400">
@@ -188,7 +188,7 @@ export default function HomePage({ featured, typeTiles }: HomeData) {
           </div>
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
             <div className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white">
-              <Component size={16} className="text-brand-500" isr={{ key: 'LcIconComponent' }} />
+              <Component size={16} className="text-brand-500" />
               React islands
             </div>
             <div className="mt-1 text-sm text-slate-500 dark:text-slate-400">
@@ -197,7 +197,7 @@ export default function HomePage({ featured, typeTiles }: HomeData) {
           </div>
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
             <div className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white">
-              <List size={16} className="text-brand-500" isr={{ key: 'LcIconList' }} />
+              <List size={16} className="text-brand-500" />
               Keyed x-for
             </div>
             <div className="mt-1 text-sm text-slate-500 dark:text-slate-400">
@@ -206,7 +206,7 @@ export default function HomePage({ featured, typeTiles }: HomeData) {
           </div>
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
             <div className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white">
-              <Layout size={16} className="text-brand-500" isr={{ key: 'LcIconLayout' }} />
+              <LayoutDashboard size={16} className="text-brand-500" />
               Nested Outlet layout
             </div>
             <div className="mt-1 text-sm text-slate-500 dark:text-slate-400">
@@ -215,7 +215,7 @@ export default function HomePage({ featured, typeTiles }: HomeData) {
           </div>
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
             <div className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white">
-              <Zap size={16} className="text-brand-500" isr={{ key: 'LcIconZap' }} />
+              <Zap size={16} className="text-brand-500" />
               Treaty actions
             </div>
             <div className="mt-1 text-sm text-slate-500 dark:text-slate-400">

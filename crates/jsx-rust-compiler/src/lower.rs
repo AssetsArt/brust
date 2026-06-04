@@ -40,6 +40,42 @@ pub(crate) struct InlineEnv {
     cycle: RefCell<Vec<String>>,
 }
 
+/// Compile-time lucide-icon registry (native static-SVG feature). Built from the
+/// `lucide_icons` map passed to `lower_with_sources` and stored on the route
+/// `Scope`. `build_lucide_svg` reads `icons` to inline `<Search/>`-style lucide
+/// tags as static SVG (static-prop cases; dynamic/spread defer to the SSR path).
+#[derive(Debug)]
+pub(crate) struct LucideEnv {
+    /// Local tag name (e.g. `"Search"`) → parsed icon.
+    icons: HashMap<String, LucideIcon>,
+    /// Non-fatal diagnostics from icon-JSON parsing (merged into compile warnings).
+    warnings: RefCell<Vec<String>>,
+}
+
+/// One parsed lucide icon: its class string plus its SVG child nodes.
+#[derive(Debug, Clone)]
+pub(crate) struct LucideIcon {
+    /// e.g. `"lucide lucide-search"`.
+    cls: String,
+    /// `[(tag, [(attr, val)…])…]` — the inner SVG element children.
+    node: Vec<(String, Vec<(String, String)>)>,
+}
+
+impl LucideIcon {
+    /// Parse one lucide icon JSON value:
+    /// `{"cls":"lucide lucide-search","node":[["path",[["d","m21…"]]],…]}`.
+    /// `serde_json::from_str` into the nested tuple `Vec<(String, Vec<(String,
+    /// String)>)>` works directly (JSON arrays → tuples positionally), so no
+    /// manual `Value` walk is needed.
+    fn parse(json: &str) -> Result<LucideIcon, serde_json::Error> {
+        let v: serde_json::Value = serde_json::from_str(json)?;
+        let cls: String = serde_json::from_value(v.get("cls").cloned().unwrap_or_default())?;
+        let node: Vec<(String, Vec<(String, String)>)> =
+            serde_json::from_value(v.get("node").cloned().unwrap_or_default())?;
+        Ok(LucideIcon { cls, node })
+    }
+}
+
 #[derive(Debug)]
 pub struct LowerError {
     pub span: Span,
@@ -76,6 +112,10 @@ struct Scope {
     inline: Option<Rc<InlineCtx>>,
     /// Shared native-inline environment. `None` = no native inlining (default).
     inline_env: Option<Rc<InlineEnv>>,
+    /// Compile-time lucide-icon registry (native static-SVG). `None` = no lucide
+    /// icons supplied (default). Constructed in `lower_with_sources`; read by
+    /// `build_lucide_svg` (threaded through the inline recursion).
+    lucide_env: Option<Rc<LucideEnv>>,
 }
 
 /// Lowered param shape: which names are in scope inside JSX.
@@ -101,6 +141,7 @@ pub fn lower(parsed: &ParsedSource) -> Result<Component, LowerError> {
         map_bindings: Vec::new(),
         inline: None,
         inline_env: None,
+        lucide_env: None,
     };
 
     let return_expr = single_return_expr(body)?;
@@ -150,6 +191,7 @@ pub fn lower(parsed: &ParsedSource) -> Result<Component, LowerError> {
 pub(crate) fn lower_with_sources(
     parsed: &ParsedSource,
     sources: HashMap<String, String>,
+    lucide_icons: HashMap<String, String>,
 ) -> Result<(Component, Vec<String>), LowerError> {
     let (name, function) = find_default_export(&parsed.module)?;
     let body =
@@ -164,12 +206,34 @@ pub(crate) fn lower_with_sources(
         cycle: RefCell::new(Vec::new()),
     });
 
+    // Build the lucide-icon registry. Each value is the icon JSON; a parse
+    // failure for one entry SKIPS it and records a warning (never fails the
+    // compile). The `None`/empty path stays byte-identical to before.
+    let lucide_env = {
+        let mut icons = HashMap::new();
+        let warnings = RefCell::new(Vec::new());
+        for (local, json) in &lucide_icons {
+            match LucideIcon::parse(json) {
+                Ok(icon) => {
+                    icons.insert(local.clone(), icon);
+                }
+                Err(e) => {
+                    warnings
+                        .borrow_mut()
+                        .push(format!("lucide icon `{local}`: invalid icon JSON ({e})"));
+                }
+            }
+        }
+        Rc::new(LucideEnv { icons, warnings })
+    };
+
     let scope = Scope {
         destructured: param_shape.destructured.clone(),
         named_param: param_shape.named.clone(),
         map_bindings: Vec::new(),
         inline: None,
         inline_env: Some(env.clone()),
+        lucide_env: Some(lucide_env.clone()),
     };
 
     let return_expr = single_return_expr(body)?;
@@ -212,7 +276,8 @@ pub(crate) fn lower_with_sources(
     };
     infer_props_types(&root, &mut props)?;
 
-    let warnings = env.warnings.borrow().clone();
+    let mut warnings = env.warnings.borrow().clone();
+    warnings.extend(lucide_env.warnings.borrow().iter().cloned());
     Ok((Component { name, props, root }, warnings))
 }
 
@@ -250,6 +315,7 @@ pub(crate) fn lower_component_inline(
     subst: HashMap<String, crate::ir::Expr>,
     _has_children: bool,
     env: Option<Rc<InlineEnv>>,
+    lucide: Option<Rc<LucideEnv>>,
     doc_root: bool,
 ) -> Result<Vec<JsxNode>, LowerError> {
     let (_, fn_expr) = find_default_export(&parsed.module)?;
@@ -267,6 +333,10 @@ pub(crate) fn lower_component_inline(
         map_bindings: Vec::new(),
         inline: Some(inline_ctx),
         inline_env: env,
+        // Threaded from the parent (route or enclosing inline) scope so lucide
+        // static-SVG inlining fires for `<Search/>` nested inside a native-inlined
+        // component body (the real pokedex usage). `None` when no registry.
+        lucide_env: lucide,
     };
 
     // Try single-return first.
@@ -1234,6 +1304,339 @@ fn map_head_attr_key(k: &str) -> String {
     }
 }
 
+/// Static-vs-dynamic classification of one recognized lucide prop value.
+enum LucidePropVal {
+    /// Static string literal (`"red"`, `{"red"}`). A bare valueless attribute
+    /// (`<X foo/>`) also lands here as an empty string.
+    Str(String),
+    /// Static integer literal (`{16}`).
+    Num(i64),
+    /// Dynamic — lowers to a non-literal `Expr`. Triggers T3 soft-fallback.
+    Dynamic,
+}
+
+/// Lower one JSX attribute value into a `LucidePropVal`, distinguishing static
+/// literals from dynamic expressions. Mirrors the value branch of `lower_attr`.
+fn lucide_prop_value(
+    value: &Option<JSXAttrValue>,
+    scope: &Scope,
+) -> Result<LucidePropVal, LowerError> {
+    match value {
+        // Bare attribute (`absoluteStrokeWidth`) — treated as present-but-valueless;
+        // the caller decides. Represent as an empty static string.
+        None => Ok(LucidePropVal::Str(String::new())),
+        Some(JSXAttrValue::Str(s)) => {
+            Ok(LucidePropVal::Str(s.value.to_string_lossy().into_owned()))
+        }
+        Some(JSXAttrValue::JSXExprContainer(c)) => match &c.expr {
+            JSXExpr::JSXEmptyExpr(_) => Ok(LucidePropVal::Dynamic),
+            JSXExpr::Expr(e) => match lower_expr(e, scope)? {
+                crate::ir::Expr::StaticText(s) => Ok(LucidePropVal::Str(s)),
+                crate::ir::Expr::StaticNum(n) => Ok(LucidePropVal::Num(n)),
+                _ => Ok(LucidePropVal::Dynamic),
+            },
+        },
+        _ => Ok(LucidePropVal::Dynamic),
+    }
+}
+
+/// Lower a JSX attribute's value expression into an `Expr` (for the dynamic
+/// lucide prop arms). Errors on a non-expression / empty-expression container,
+/// mirroring the passthrough arm's handling.
+fn lower_attr_expr(
+    jsx_attr: &swc_core::ecma::ast::JSXAttr,
+    scope: &Scope,
+) -> Result<crate::ir::Expr, LowerError> {
+    match &jsx_attr.value {
+        Some(JSXAttrValue::JSXExprContainer(c)) => match &c.expr {
+            JSXExpr::Expr(e) => lower_expr(e, scope),
+            JSXExpr::JSXEmptyExpr(_) => {
+                Err(LowerError::at(c.span, ErrorKind::JsxInAttrNotSupported))
+            }
+        },
+        _ => Err(LowerError::at(
+            jsx_attr.span,
+            ErrorKind::JsxInAttrNotSupported,
+        )),
+    }
+}
+
+/// Emit an `<svg>` for a registered lucide icon (T2 static cases + T3 dynamic
+/// cases). Dynamic `size`/`color`/`strokeWidth`/`className` are lowered to an
+/// `Expr` and emitted as `{{ … | e }}` interpolations. Returns `Ok(None)` to
+/// defer to the SSR path (soft-fallback, with a warning) only for cases that
+/// can't be statically inlined: any spread, or an `absoluteStrokeWidth` whose
+/// `strokeWidth`/`size` aren't both static numerics.
+fn build_lucide_svg(
+    el: &JSXElement,
+    icon: &LucideIcon,
+    component_name: &str,
+    scope: &Scope,
+) -> Result<Option<JsxNode>, LowerError> {
+    // Push a soft-fallback warning to the shared lucide env (merged into compile
+    // warnings) when an icon can't be statically inlined.
+    let warn = |msg: String| {
+        if let Some(le) = &scope.lucide_env {
+            le.warnings.borrow_mut().push(msg);
+        }
+    };
+
+    // Recognized prop slots. Static numerics (`size`/static `strokeWidth`) are
+    // tracked separately for the absoluteStrokeWidth math; each slot also carries
+    // an optional `AttrValue` override (static OR dynamic) for emission.
+    let mut size_num: Option<i64> = None;
+    let mut size_attr: Option<AttrValue> = None;
+    let mut color_attr: Option<AttrValue> = None;
+    let mut stroke_width_num: Option<i64> = None;
+    let mut stroke_width_attr: Option<AttrValue> = None;
+    // class: static merged literal, or a dynamic Concat(icon-class-prefix, expr).
+    let mut class_name: Option<String> = None;
+    let mut class_attr: Option<AttrValue> = None;
+    let mut has_absolute_stroke_width = false;
+    // Passthrough attrs (aria-*, role, data-*, and any other plain attr), in
+    // source order, emitted verbatim.
+    let mut passthrough: Vec<JsxAttr> = Vec::new();
+    // Whether the call-site supplies any aria-* / role prop (suppresses aria-hidden).
+    let mut has_aria_or_role = false;
+
+    for attr in &el.opening.attrs {
+        let jsx_attr = match attr {
+            // Spread → soft-fallback + warn. Defer to React SSR.
+            JSXAttrOrSpread::SpreadElement(_) => {
+                warn(format!(
+                    "lucide <{component_name}/>: spread props prevent static inlining; falling back to React SSR"
+                ));
+                return Ok(None);
+            }
+            JSXAttrOrSpread::JSXAttr(a) => a,
+        };
+        let name = match &jsx_attr.name {
+            JSXAttrName::Ident(id) => id.sym.to_string(),
+            JSXAttrName::JSXNamespacedName(n) => {
+                return Err(LowerError::at(
+                    n.span,
+                    ErrorKind::NamespacedAttrNotSupported,
+                ));
+            }
+        };
+        match name.as_str() {
+            // Stripped no-ops. `isr` is allowed and ignored (no error).
+            "isr" | "key" | "ref" => continue,
+            "size" => match lucide_prop_value(&jsx_attr.value, scope)? {
+                // A non-positive size would emit an invalid `width="-16"`/`width="0"`;
+                // defer to SSR (which runs the real lucide) instead.
+                LucidePropVal::Num(n) => {
+                    if n <= 0 {
+                        return Ok(None);
+                    }
+                    size_num = Some(n);
+                    size_attr = Some(AttrValue::StaticNum(n));
+                }
+                // A string size (`size="16"`) is still static — accept it numerically
+                // when it parses to a positive int, otherwise it isn't a valid width; defer.
+                LucidePropVal::Str(s) => match s.parse::<i64>() {
+                    Ok(n) if n > 0 => {
+                        size_num = Some(n);
+                        size_attr = Some(AttrValue::StaticNum(n));
+                    }
+                    _ => return Ok(None),
+                },
+                // Dynamic size → both width and height interpolate the expr.
+                LucidePropVal::Dynamic => {
+                    size_attr = Some(AttrValue::Expr(lower_attr_expr(jsx_attr, scope)?));
+                }
+            },
+            "color" => match lucide_prop_value(&jsx_attr.value, scope)? {
+                LucidePropVal::Str(s) => color_attr = Some(AttrValue::Static(s)),
+                LucidePropVal::Num(n) => color_attr = Some(AttrValue::StaticNum(n)),
+                LucidePropVal::Dynamic => {
+                    color_attr = Some(AttrValue::Expr(lower_attr_expr(jsx_attr, scope)?));
+                }
+            },
+            "strokeWidth" => match lucide_prop_value(&jsx_attr.value, scope)? {
+                LucidePropVal::Num(n) => {
+                    stroke_width_num = Some(n);
+                    stroke_width_attr = Some(AttrValue::StaticNum(n));
+                }
+                LucidePropVal::Str(s) => {
+                    if let Ok(n) = s.parse::<i64>() {
+                        stroke_width_num = Some(n);
+                    }
+                    stroke_width_attr = Some(AttrValue::Static(s));
+                }
+                LucidePropVal::Dynamic => {
+                    stroke_width_attr = Some(AttrValue::Expr(lower_attr_expr(jsx_attr, scope)?));
+                }
+            },
+            "className" => match lucide_prop_value(&jsx_attr.value, scope)? {
+                LucidePropVal::Str(s) => {
+                    if !s.is_empty() {
+                        class_name = Some(s);
+                    }
+                }
+                // A numeric className is nonsensical; defer.
+                LucidePropVal::Num(_) => return Ok(None),
+                // Dynamic className → merge the icon class as a prefix:
+                // `Concat["lucide lucide-search ", <expr>]`.
+                LucidePropVal::Dynamic => {
+                    let expr = lower_attr_expr(jsx_attr, scope)?;
+                    class_attr = Some(AttrValue::Expr(crate::ir::Expr::Concat(vec![
+                        crate::ir::Expr::StaticText(format!("{} ", icon.cls)),
+                        expr,
+                    ])));
+                }
+            },
+            // Presence of absoluteStrokeWidth changes the stroke-width math; the
+            // resolution happens after the loop (needs both strokeWidth and size).
+            "absoluteStrokeWidth" => has_absolute_stroke_width = true,
+            // Passthrough: aria-*, role, data-*, and any other plain attribute.
+            _ => {
+                if name == "role" || name.starts_with("aria-") {
+                    has_aria_or_role = true;
+                }
+                let value = match lucide_prop_value(&jsx_attr.value, scope)? {
+                    LucidePropVal::Str(s) => {
+                        if jsx_attr.value.is_none() {
+                            AttrValue::Empty
+                        } else {
+                            AttrValue::Static(s)
+                        }
+                    }
+                    LucidePropVal::Num(n) => AttrValue::StaticNum(n),
+                    LucidePropVal::Dynamic => {
+                        // Re-lower to keep the dynamic expr verbatim (static is
+                        // enough for T2 but emitting it is harmless and lossless).
+                        match &jsx_attr.value {
+                            Some(JSXAttrValue::JSXExprContainer(c)) => match &c.expr {
+                                JSXExpr::Expr(e) => AttrValue::Expr(lower_expr(e, scope)?),
+                                JSXExpr::JSXEmptyExpr(_) => {
+                                    return Err(LowerError::at(
+                                        c.span,
+                                        ErrorKind::JsxInAttrNotSupported,
+                                    ));
+                                }
+                            },
+                            _ => {
+                                return Err(LowerError::at(
+                                    jsx_attr.span,
+                                    ErrorKind::JsxInAttrNotSupported,
+                                ));
+                            }
+                        }
+                    }
+                };
+                passthrough.push(JsxAttr { name, value });
+            }
+        }
+    }
+
+    // absoluteStrokeWidth: lucide computes `stroke-width = strokeWidth * 24 / size`.
+    // We can only do this when BOTH strokeWidth and size are static numerics and
+    // size != 0; otherwise soft-fall back to SSR (which runs the real lucide).
+    if has_absolute_stroke_width {
+        match (stroke_width_num, size_num) {
+            (Some(sw), Some(sz)) if sz != 0 => {
+                // f64 math then format; trailing-zero-free (matches `2` not `2.0`).
+                let computed = (sw as f64) * 24.0 / (sz as f64);
+                // f64 Display (shortest-decimal / Ryu) never emits trailing zeros,
+                // so `9.6` formats to "9.6" and the integer case (`3.0`) is split off
+                // above to render as "3" — no trailing-zero trimming is needed.
+                let s = if computed.fract() == 0.0 {
+                    format!("{}", computed as i64)
+                } else {
+                    format!("{computed}")
+                };
+                stroke_width_attr = Some(AttrValue::Static(s));
+            }
+            _ => {
+                warn(format!(
+                    "lucide <{component_name}/>: absoluteStrokeWidth needs static numeric strokeWidth and size; falling back to React SSR"
+                ));
+                return Ok(None);
+            }
+        }
+    }
+
+    // Resolve each slot to its emitted AttrValue, defaulting to the lucide literal.
+    // size drives BOTH width and height.
+    let width_attr = size_attr.clone().unwrap_or(AttrValue::StaticNum(24));
+    let height_attr = size_attr.unwrap_or(AttrValue::StaticNum(24));
+    let stroke_attr = color_attr.unwrap_or_else(|| AttrValue::Static("currentColor".to_string()));
+    let sw_attr = stroke_width_attr.unwrap_or(AttrValue::StaticNum(2));
+
+    let mut attrs: Vec<JsxAttr> = Vec::new();
+    let st = |n: &str, v: &str| JsxAttr {
+        name: n.to_string(),
+        value: AttrValue::Static(v.to_string()),
+    };
+    attrs.push(st("xmlns", "http://www.w3.org/2000/svg"));
+    attrs.push(JsxAttr {
+        name: "width".into(),
+        value: width_attr,
+    });
+    attrs.push(JsxAttr {
+        name: "height".into(),
+        value: height_attr,
+    });
+    attrs.push(st("viewBox", "0 0 24 24"));
+    attrs.push(st("fill", "none"));
+    attrs.push(JsxAttr {
+        name: "stroke".into(),
+        value: stroke_attr,
+    });
+    attrs.push(JsxAttr {
+        name: "stroke-width".into(),
+        value: sw_attr,
+    });
+    attrs.push(st("stroke-linecap", "round"));
+    attrs.push(st("stroke-linejoin", "round"));
+    // aria-hidden unless the call-site supplies any aria-* / role prop.
+    if !has_aria_or_role {
+        attrs.push(st("aria-hidden", "true"));
+    }
+    // Passthrough props in source order.
+    attrs.extend(passthrough);
+    // class LAST: dynamic className → Concat(icon-class-prefix, expr); else the
+    // static icon class + optional static className literal.
+    let class_value = match class_attr {
+        Some(v) => v,
+        None => {
+            let class = match &class_name {
+                Some(c) => format!("{} {}", icon.cls, c),
+                None => icon.cls.clone(),
+            };
+            AttrValue::Static(class)
+        }
+    };
+    attrs.push(JsxAttr {
+        name: "class".into(),
+        value: class_value,
+    });
+
+    // Children: each (tag, attrs) in icon.node → a childless host element.
+    let children: Vec<JsxNode> = icon
+        .node
+        .iter()
+        .map(|(tag, child_attrs)| JsxNode::Element {
+            tag: tag.clone(),
+            attrs: child_attrs
+                .iter()
+                .map(|(k, v)| JsxAttr {
+                    name: k.clone(),
+                    value: AttrValue::Static(v.clone()),
+                })
+                .collect(),
+            children: vec![],
+        })
+        .collect();
+
+    Ok(Some(JsxNode::Element {
+        tag: "svg".into(),
+        attrs,
+        children,
+    }))
+}
+
 fn lower_ssr_component(
     el: &JSXElement,
     component_name: &str,
@@ -1248,6 +1651,19 @@ fn lower_ssr_component(
         ));
     }
     let component = component_name.to_owned();
+
+    // Lucide native static-SVG: if this capitalised tag is a registered lucide
+    // icon, try to emit a static `<svg>` for the static-prop cases. Dynamic
+    // props / class-merge-with-dynamic-className / spread soft-fallback (T3)
+    // return `Ok(None)` here and fall through to the SSR path below.
+    if let Some(lenv) = &scope.lucide_env
+        && let Some(icon) = lenv.icons.get(component_name)
+    {
+        match build_lucide_svg(el, icon, component_name, scope)? {
+            Some(node) => return Ok(node),
+            None => { /* T3: soft-fallback. Fall through to the SSR path below. */ }
+        }
+    }
 
     let mut props: Vec<SsrProp> = Vec::new();
     let mut key_path: Option<String> = None;
@@ -1360,6 +1776,7 @@ fn lower_ssr_component(
         let inline_result = try_native_inline(
             &component,
             env,
+            scope.lucide_env.clone(),
             subst,
             has_spread,
             subst_err,
@@ -1581,6 +1998,7 @@ fn lower_ssr_component(
 fn try_native_inline(
     component: &str,
     env: &Rc<InlineEnv>,
+    lucide: Option<Rc<LucideEnv>>,
     subst: HashMap<String, crate::ir::Expr>,
     has_spread: bool,
     subst_err: bool,
@@ -1668,6 +2086,7 @@ fn try_native_inline(
         subst,
         has_children,
         Some(env.clone()),
+        lucide,
         doc_root,
     ) {
         Ok(n) => n,
@@ -4127,7 +4546,7 @@ export const behavior = () => ({});
 export default function C() {
   return <div x-data="c" />;
 }"#;
-        let c = compile_full(src, "<test>", HashMap::new()).unwrap();
+        let c = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap();
         assert!(
             c.template.contains("x-data=\"c\""),
             "expected x-data attribute in template, got: {}",
@@ -4358,7 +4777,7 @@ export const behavior = () => ({});"#;
         let src = r#"export default function X() {
   return <Layout><>a</></Layout>;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::FragmentInSsrComponentNotSupported),
             "expected FragmentInSsrComponentNotSupported, got {:?}",
@@ -4374,7 +4793,7 @@ export const behavior = () => ({});"#;
         let src = r#"export default function X() {
   return <Layout><div><>x</></div></Layout>;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::FragmentInSsrComponentNotSupported),
             "expected FragmentInSsrComponentNotSupported, got {:?}",
@@ -5171,7 +5590,7 @@ export const behavior = () => ({});"#;
     fn lower_ssr_component_leaf() {
         let src =
             "export default function Page({ greeting }) { return <Header user={greeting} />; }";
-        let c = compile_full(src, "<test>", HashMap::new()).unwrap();
+        let c = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap();
         assert_eq!(c.components.len(), 1);
         assert_eq!(c.components[0].component, "Header");
         assert_eq!(c.components[0].instance, 0);
@@ -5208,7 +5627,7 @@ export const behavior = () => ({});"#;
     #[test]
     fn lower_ssr_component_event_handler_rejected() {
         let src = "export default function Page({ data }) { return <Card onClick={data.fn} />; }";
-        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::EventHandlerNotSupported(_)),
             "got {:?}",
@@ -5221,7 +5640,7 @@ export const behavior = () => ({});"#;
         let src = r#"export default function Page({ items }) {
   return <ul>{items.map((item) => <Layout title={item.name} />)}</ul>;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::SsrComponentInMapNotSupported(_)),
             "expected SsrComponentInMapNotSupported, got {:?}",
@@ -5236,7 +5655,7 @@ export const behavior = () => ({});"#;
         let src = r#"export default function Grid({ items }) {
   return <ul>{items.map((t) => <a x-for key={`${t.a}-${t.b}`} href={t.href} />)}</ul>;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::MapXForKeyRequired),
             "expected MapXForKeyRequired, got {:?}",
@@ -5250,7 +5669,7 @@ export const behavior = () => ({});"#;
         let src = r#"export default function Grid({ items }) {
   return <ul>{items.map((t) => <a x-for href={t.href} />)}</ul>;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::MapXForKeyRequired),
             "expected MapXForKeyRequired, got {:?}",
@@ -5265,7 +5684,7 @@ export const behavior = () => ({});"#;
         let src = r#"export default function Grid({ items }) {
   return <ul>{items.map((t) => <a x-for key={t} href={t.href} />)}</ul>;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::MapXForKeyRequired),
             "expected MapXForKeyRequired, got {:?}",
@@ -5280,7 +5699,7 @@ export const behavior = () => ({});"#;
         let src = r#"export default function Grid({ rows }) {
   return <ul>{rows.map((row) => <ul>{row.cells.map((c) => <a x-for key={c.id} href={c.href} />)}</ul>)}</ul>;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::MapXForSourceNotArray),
             "expected MapXForSourceNotArray, got {:?}",
@@ -5295,7 +5714,7 @@ export const behavior = () => ({});"#;
         let src = r#"export default function Grid({ items }) {
   return <ul>{items.map((t) => t.ok && <a x-for key={t.id} href={t.href} />)}</ul>;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::MapXForBodyNotElement),
             "expected MapXForBodyNotElement, got {:?}",
@@ -5308,7 +5727,7 @@ export const behavior = () => ({});"#;
         let src = r#"export default function Page({ greeting, data }) {
   return <Layout title={greeting}><h1>{greeting}</h1><Island component={Counter} props={data.counter} hydrate="load" /></Layout>;
 }"#;
-        let c = compile_full(src, "<test>", HashMap::new()).unwrap();
+        let c = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap();
         assert_eq!(c.components.len(), 1);
         assert_eq!(c.components[0].component, "Layout");
         assert!(
@@ -5381,7 +5800,7 @@ export const behavior = () => ({});"#;
         let src = r#"export default function Page({ data }) {
   return <Layout isr={{ tags: data.cacheTags }} />;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::ComponentIsrUnsupported(_)),
             "got {:?}",
@@ -5394,7 +5813,7 @@ export const behavior = () => ({});"#;
         let src = r#"export default function Page({ data }) {
   return <Layout isr={{ key: data.cacheKey, revalidate: data.ttl }} />;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::ComponentIsrUnsupported(_)),
             "got {:?}",
@@ -5456,7 +5875,7 @@ export const behavior = () => ({});"#;
         let src = r#"export default function Page({ data }) {
   return <Island component={Counter} props={data.counter} ssr isr={{ key: "k", tags: [123] }} />;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::IslandIsrUnsupported),
             "got {:?}",
@@ -5494,7 +5913,7 @@ export const behavior = () => ({});"#;
         let src = r#"export default function Page({ data }) {
   return <Layout isr={{ key: "a", key: data.x }} />;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::ComponentIsrUnsupported(_)),
             "got {:?}",
@@ -5511,7 +5930,7 @@ export const behavior = () => ({});"#;
         has_children: bool,
     ) -> Result<Vec<JsxNode>, LowerError> {
         let parsed = parse(src, "<test>").unwrap();
-        super::lower_component_inline(&parsed, subst, has_children, None, false)
+        super::lower_component_inline(&parsed, subst, has_children, None, None, false)
     }
 
     // ── Document-root inline (native layout shell) ────────────────────────────
@@ -5524,7 +5943,7 @@ export const behavior = () => ({});"#;
         let parsed = parse(route_src, "<route>").unwrap();
         let mut sources = HashMap::new();
         sources.insert(layout_name.to_string(), layout_src.to_string());
-        super::lower_with_sources(&parsed, sources).unwrap()
+        super::lower_with_sources(&parsed, sources, HashMap::new()).unwrap()
     }
 
     const SHELL_LAYOUT: &str = r#"export default function PageLayout({ title, crumb, children }: any) {
@@ -5570,7 +5989,7 @@ export const behavior = () => ({});"#;
 
         let mut sources = HashMap::new();
         sources.insert("PageLayout".to_string(), SHELL_LAYOUT.to_string());
-        let compiled = crate::compile_full(route, "<route>", sources).unwrap();
+        let compiled = crate::compile_full(route, "<route>", sources, HashMap::new()).unwrap();
         // The jinja head emitter wraps the path in parens before the escape
         // filter (`{{ (pageTitle) | e }}`); assert on the escaped-interpolation
         // shape that actually reaches the template.
@@ -5626,7 +6045,7 @@ export const behavior = () => ({});"#;
         // SWALLOWS it into a soft fallback (warning + SSR component emission) —
         // the route compiles, but as a NON-Document SSR component (no nested
         // <html> shell), with a "not inlined" warning recorded.
-        let (c, warnings) = super::lower_with_sources(&parsed, sources)
+        let (c, warnings) = super::lower_with_sources(&parsed, sources, HashMap::new())
             .expect("nested layout soft-falls-back to SSR, does not hard-error");
         let dbg = format!("{:?}", c.root);
         assert!(
@@ -6175,7 +6594,7 @@ export const behavior = () => ({});"#;
         sources: HashMap<String, String>,
     ) -> Result<(crate::ir::Component, Vec<String>), LowerError> {
         let parsed = parse(route_src, "<test>").unwrap();
-        super::lower_with_sources(&parsed, sources)
+        super::lower_with_sources(&parsed, sources, HashMap::new())
     }
 
     /// Recursively check that no SsrComponent node exists in the tree.
@@ -6518,7 +6937,8 @@ export const behavior = () => ({});"#;
 }"#;
         let parsed = parse(src, "<test>").unwrap();
         let comp_plain = super::lower(&parsed).unwrap();
-        let (comp_with_src, warnings) = super::lower_with_sources(&parsed, HashMap::new()).unwrap();
+        let (comp_with_src, warnings) =
+            super::lower_with_sources(&parsed, HashMap::new(), HashMap::new()).unwrap();
         assert!(
             warnings.is_empty(),
             "expected no warnings from lower_with_sources, got: {warnings:?}"

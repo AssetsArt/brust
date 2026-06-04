@@ -58,7 +58,6 @@ export default function DexFilter({ items }: { items: Card[] }) {
           <Search
             size={16}
             className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
-            isr={{ key: 'LcIconSearchField' }}
           />
           <input
             type="search"
@@ -74,7 +73,7 @@ export default function DexFilter({ items }: { items: Card[] }) {
               x-on-click="setDex"
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
             >
-              <Hash size={14} isr={{ key: 'LcIconHash14' }} />
+              <Hash size={14} />
               Dex#
             </button>
             <button
@@ -82,7 +81,7 @@ export default function DexFilter({ items }: { items: Card[] }) {
               x-on-click="setAz"
               className="inline-flex items-center gap-1.5 border-l border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
             >
-              <ArrowDownAZ size={14} isr={{ key: 'LcIconArrowDownAZ14' }} />
+              <ArrowDownAZ size={14} />
               A–Z
             </button>
           </div>

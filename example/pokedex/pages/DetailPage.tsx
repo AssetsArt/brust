@@ -40,12 +40,12 @@ export default function DetailPage({
         <a href="/" className="no-underline hover:text-slate-600 dark:hover:text-slate-200">
           PokéDex
         </a>
-        <ChevronRight size={14} isr={{ key: 'LcIconChevronRight14' }} />
+        <ChevronRight size={14} />
         <Breadcrumb native crumb={displayName} />
       </div>
       {notFound ? (
         <div className="mx-auto max-w-md rounded-3xl border border-slate-200 bg-white px-6 py-16 text-center shadow-sm dark:border-slate-800 dark:bg-slate-900">
-          <SearchX size={48} className="mx-auto text-brand-500" isr={{ key: 'LcIconSearchX48' }} />
+          <SearchX size={48} className="mx-auto text-brand-500" />
           <div className="mt-3 text-6xl font-black tracking-tighter text-brand-500">404</div>
           <h1 className="mt-4 text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white">
             No Pokémon named “{displayName}”
@@ -57,7 +57,7 @@ export default function DetailPage({
             href="/pokedex"
             className="mt-6 inline-flex items-center gap-2 rounded-xl bg-brand-500 px-5 py-2.5 text-sm font-semibold text-white no-underline shadow-sm transition-colors hover:bg-brand-600"
           >
-            <ArrowLeft size={16} isr={{ key: 'LcIconArrowLeft' }} />
+            <ArrowLeft size={16} />
             Back to Pokédex
           </a>
         </div>
@@ -105,7 +105,7 @@ export default function DetailPage({
                       {heightLabel}
                     </div>
                     <div className="flex items-center justify-center gap-1 text-xs font-medium uppercase tracking-wide text-slate-400">
-                      <Ruler size={12} isr={{ key: 'LcIconRuler12' }} />
+                      <Ruler size={12} />
                       Height
                     </div>
                   </div>
@@ -114,7 +114,7 @@ export default function DetailPage({
                       {weightLabel}
                     </div>
                     <div className="flex items-center justify-center gap-1 text-xs font-medium uppercase tracking-wide text-slate-400">
-                      <Weight size={12} isr={{ key: 'LcIconWeight12' }} />
+                      <Weight size={12} />
                       Weight
                     </div>
                   </div>
@@ -153,7 +153,7 @@ export default function DetailPage({
                     Base stats
                   </h2>
                   <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-xs font-bold tabular-nums text-slate-500 dark:bg-slate-800 dark:text-slate-300">
-                    <Sigma size={12} isr={{ key: 'LcIconSigma12' }} />
+                    <Sigma size={12} />
                     {statTotal}
                   </span>
                 </div>

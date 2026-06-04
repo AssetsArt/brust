@@ -8,6 +8,7 @@ import {
   buildChainWrapperSource,
   countMainTags,
   emitNativeTemplates,
+  extractLucideIcons,
   gatherChainSources,
   gatherComponentSources,
   reconcileIslandManifest,
@@ -587,7 +588,7 @@ describe('emitComponentArtifacts — import-form regeneration (via emitNativeTem
     const pagePath = join(dir, 'Page.tsx')
     writeFileSync(
       pagePath,
-      "import { Search } from 'lucide-react'\nexport default function Page() { return <div><Search/></div>; }",
+      "import { Widget } from 'some-ui-lib'\nexport default function Page() { return <div><Widget/></div>; }",
     )
     const routesPath = join(dir, 'routes.tsx')
     writeFileSync(routesPath, "import Page from './Page'\n")
@@ -603,7 +604,7 @@ describe('emitComponentArtifacts — import-form regeneration (via emitNativeTem
     })
 
     const factoryContent = readFileSync(join(outDir, 'Page.factory.ts'), 'utf8')
-    expect(factoryContent).toContain('import { Search } from "lucide-react"')
+    expect(factoryContent).toContain('import { Widget } from "some-ui-lib"')
     // bare spec is never relativized
     expect(factoryContent).not.toMatch(/import .* from "\.\.?\//)
 
@@ -613,17 +614,17 @@ describe('emitComponentArtifacts — import-form regeneration (via emitNativeTem
       component: string
       sourcePath: string
     }>
-    const search = compEntries.find((e) => e.component === 'Search')
-    expect(search).toBeDefined()
+    const widget = compEntries.find((e) => e.component === 'Widget')
+    expect(widget).toBeDefined()
     // bare spec kept verbatim in components.json
-    expect(search!.sourcePath).toBe('lucide-react')
+    expect(widget!.sourcePath).toBe('some-ui-lib')
   })
 
   test('bare named alias: factory uses `import { imported as Local }`', async () => {
     const pagePath = join(dir, 'Page.tsx')
     writeFileSync(
       pagePath,
-      "import { Search as Icon } from 'lucide-react'\nexport default function Page() { return <div><Icon/></div>; }",
+      "import { Widget as Icon } from 'some-ui-lib'\nexport default function Page() { return <div><Icon/></div>; }",
     )
     const routesPath = join(dir, 'routes.tsx')
     writeFileSync(routesPath, "import Page from './Page'\n")
@@ -638,7 +639,7 @@ describe('emitComponentArtifacts — import-form regeneration (via emitNativeTem
     })
 
     const factoryContent = readFileSync(join(outDir, 'Page.factory.ts'), 'utf8')
-    expect(factoryContent).toContain('import { Search as Icon } from "lucide-react"')
+    expect(factoryContent).toContain('import { Widget as Icon } from "some-ui-lib"')
   })
 
   test('bare default-package import: factory regenerates `import X from "<spec>"` verbatim', async () => {
@@ -840,5 +841,58 @@ describe('bakeDirectivesIfUsed', () => {
   test('leaves a template without x-data byte-identical', () => {
     const tmpl = '<html><head></head><body><div>static</div></body></html>'
     expect(bakeDirectivesIfUsed(tmpl)).toBe(tmpl)
+  })
+})
+
+describe('extractLucideIcons', () => {
+  test('AC9: extracts static icon node for a named lucide import, stripping `key`', async () => {
+    const pagePath = join(dir, 'Page.tsx')
+    writeFileSync(pagePath, `import { Search } from 'lucide-react'\n`)
+
+    const map = await extractLucideIcons(pagePath)
+
+    expect('Search' in map).toBe(true)
+    const parsed = JSON.parse(map.Search!)
+    expect(parsed.cls).toBe('lucide lucide-search')
+    expect(Array.isArray(parsed.node)).toBe(true)
+    expect(parsed.node.length).toBeGreaterThan(0)
+    // node = [[tag, [[attr,val],…]], …] — no nested attr pair may carry `key`.
+    for (const [, pairs] of parsed.node as Array<[string, [string, string][]]>) {
+      for (const [k] of pairs) {
+        expect(k).not.toBe('key')
+      }
+    }
+  })
+
+  test('AC10: PascalCase icon name → kebab-case cls', async () => {
+    const pagePath = join(dir, 'Page.tsx')
+    writeFileSync(pagePath, `import { ChevronRight } from 'lucide-react'\n`)
+
+    const map = await extractLucideIcons(pagePath)
+
+    expect('ChevronRight' in map).toBe(true)
+    const parsed = JSON.parse(map.ChevronRight!)
+    expect(parsed.cls).toBe('lucide lucide-chevron-right')
+  })
+
+  test('AC11: aliased import keys by local name, node sourced from the imported icon', async () => {
+    const pagePath = join(dir, 'Page.tsx')
+    writeFileSync(pagePath, `import { Search as Icon } from 'lucide-react'\n`)
+
+    const map = await extractLucideIcons(pagePath)
+
+    expect('Icon' in map).toBe(true)
+    expect('Search' in map).toBe(false)
+    const parsed = JSON.parse(map.Icon!)
+    expect(parsed.cls).toBe('lucide lucide-search')
+  })
+
+  test('AC12: an unresolvable icon name is omitted (no throw)', async () => {
+    const pagePath = join(dir, 'Page.tsx')
+    writeFileSync(pagePath, `import { NotARealIconXYZ123 } from 'lucide-react'\n`)
+
+    const map = await extractLucideIcons(pagePath)
+
+    expect('NotARealIconXYZ123' in map).toBe(false)
   })
 })
