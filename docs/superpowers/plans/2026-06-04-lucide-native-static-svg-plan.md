@@ -3,6 +3,19 @@
 Spec: `docs/superpowers/specs/2026-06-04-lucide-native-static-svg-design.md`
 Branch: `feat/lucide-native-static-svg`
 
+## ⚠ Load-bearing reality (verified against pokedex, 2026-06-04)
+Pokedex icons live INSIDE components used as `<HeroSearch native/>` / `<DexFilter native …/>`
+etc. — i.e. **native-inlined** components. `<Search/>` (no `native` attr) inside that inlined
+body DOES reach `lower_ssr_component` as its own capitalized node → today it takes the
+standard SSR (renderToString) path. So the feature applies, BUT:
+- The icon is lowered in the **inlined-component scope** (`lower_component_inline`), which
+  threads `inline_env` but (per T1) sets `lucide_env: None`. **T2 must thread `lucide_env`
+  into `lower_component_inline`** (parallel to `env`) or the lucide branch never sees the map.
+- The icon's `import { Search } from 'lucide-react'` is in the **component file**
+  (HeroSearch.tsx), NOT the route file. **T4/T5 must extract lucide from every source in the
+  `gatherComponentSources` map**, not just `routeSourcePath`, and merge (keyed by local name;
+  cross-file same-name collisions resolve to the same icon).
+
 ## Conventions
 - **TDD:** write the failing test first in each task, then implement to green.
 - **After ANY Rust edit:** `cd runtime && bun run build` rebuilds the napi `.node`
@@ -101,6 +114,13 @@ fixtures):
 - **AC8** same route compiled with empty lucide map → identical to pre-feature template.
 
 **Implementation:**
+0. **Thread `lucide_env` into the inline recursion (REQUIRED — see Load-bearing reality).**
+   `lower_component_inline` (lower.rs ~317) currently takes `env: Option<Rc<InlineEnv>>` and
+   builds a fresh `Scope` with `lucide_env: None`. Add a parallel param
+   `lucide: Option<Rc<LucideEnv>>`, set the inline scope's `lucide_env` to it, and pass the
+   parent scope's `lucide_env.clone()` at every `lower_component_inline` call site (find them —
+   `try_native_inline` ~line 1738 is the main one). Without this, pokedex icons (inside
+   native-inlined components) never see the registry.
 1. In `lower_ssr_component` (lower.rs:1237), **after** the `in_map` guard (line 1249) and
    **before** `has_native`/attr loop (line 1259), insert:
    ```rust
@@ -234,11 +254,21 @@ from the runtime cwd, try the package's `dynamicIconImports` map
 **Implementation:**
 1. Widen the local `compileJsx` type (line 479-485): add 4th param
    `lucideIcons?: Record<string, string>`.
-2. In the per-route loop, after computing `routeSourcePath` (line 561), call
-   `const lucideIcons = await extractLucideIcons(routeSourcePath)`.
-   - For the nested-chain synthetic path (`chainNames.length > 1`), extract from each real
-     chain source and merge (icons live in the leaf/layout component files, not the synthetic
-     wrapper). Reuse the chain source paths already gathered.
+2. In the per-route loop, after computing the `sources` map (line 561), extract lucide from
+   **every component source path** plus the route file, and merge:
+   ```ts
+   const lucideIcons: Record<string, string> = {}
+   // route file itself + every gathered component source (icons import in component files)
+   const scanPaths = new Set<string>([routeSourcePath, ...mergedImports.values()]
+     .map(p => typeof p === 'string' ? p : p.spec).filter(isLocalTsxPath))
+   for (const p of scanPaths) Object.assign(lucideIcons, await extractLucideIcons(p))
+   ```
+   The exact source of paths: `mergedImports` (a `Map<string, ResolvedImport>` already built at
+   line 547/553/560) holds resolved component file paths; `extractLucideIcons` internally calls
+   `scanImportRefs(p)`, so passing each component `.tsx` path covers icons imported there.
+   Dedup by local name (later writes win; same icon name → same data, harmless).
+   - For the nested-chain synthetic path (`chainNames.length > 1`), the chain sources are
+     already in `mergedImports`/`sources` — same loop covers them.
 3. Pass as 4th arg: `compileJsx!(routeSource, routeSourcePath, sources, lucideIcons)` (line 565).
 
 **Verify (integration, AC13):**
