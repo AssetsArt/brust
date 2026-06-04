@@ -248,8 +248,18 @@ native integration separately.
 
 ## Known limitations (shipped-with)
 
-- lucide inside `.map()` → not static-inlined (preserves `in_map` hard error). Follow-up.
+- lucide inside `.map()` → not static-inlined (preserves `in_map` hard error; locked by test
+  `lucide_in_map_is_intentional_hard_error`). Follow-up.
 - dynamic `absoluteStrokeWidth` → soft-fallback to React.
+- **Alias icons** (e.g. `ArrowDownAZ`): some lucide names whose `toKebabCase` (`arrow-down-az`)
+  points at a re-export ALIAS module that only re-exports the component `default` and has NO
+  `__iconNode` (the real data lives in `arrow-down-a-z.mjs` — lucide splits consecutive
+  capitals differently). `extractLucideIcons` hits its `!Array.isArray(__iconNode)` graceful
+  skip → the icon soft-falls to React SSR (no crash, no regression). Discovered against pokedex
+  `DexFilter`. **Follow-up:** map alias names → their canonical kebab (or read the alias's
+  default export's iconNode).
+- lucide used inside a **React island** (client-rendered) stays React-rendered — out of scope
+  (spec Non-goal). Observed: `ArrowDownAZ` in pokedex `DexFilter` (which is an island).
 - On-the-wire: icon node data is embedded per-occurrence (no dedup across repeated icons on a
   page). Acceptable — static markup, no runtime cost; gzip handles repetition.
 
