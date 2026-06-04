@@ -84,11 +84,23 @@ export interface HomeData extends ChromeData {
   typeTiles: TypeTileVM[]
 }
 
-/** Browse (dex grid) page data. `dexProps` is the loader-precomputed JSON
- *  string handed to the DexFilter native directive (gen-1 grid, keyed x-for). */
+/** Browse (dex grid) page data. `items` feeds BOTH the SSR `{% for %}` and the
+ *  DexFilter directive's `x-props` (json_attr-serialized) — one array, no separate
+ *  pre-stringified JSON. */
 export interface BrowseData extends ChromeData {
-  items: DexCard[] // the SSR {% for %} source (member-path array)
-  dexProps: string // the client x-props JSON (unchanged)
+  items: DexCard[] // SSR {% for %} source + serialized x-props (one prop)
+}
+
+/** The structured x-props payload for the AddToTeamButton native directive. The
+ *  compiler serializes it via `json_attr`; the behavior reads it as an object.
+ *  `types` mirrors the loader's raw `p.types` (string keys). */
+export interface AddTeamProps {
+  id: number
+  name: string
+  displayName: string
+  num: string
+  types: string[]
+  artwork: string
 }
 
 /** Detail page data. Every formatted string / className / inline-style value /
@@ -113,7 +125,7 @@ export interface DetailData extends ChromeData {
   hasAbilities: boolean
   evolution: EvoStageVM[]
   hasEvolution: boolean
-  addProps: string // loader-precomputed x-props JSON for AddToTeamButton
+  addProps: AddTeamProps // structured x-props for AddToTeamButton (json_attr-serialized)
 }
 
 /** One cell of the type chart. */

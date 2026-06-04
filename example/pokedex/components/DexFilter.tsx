@@ -20,7 +20,7 @@ interface Card {
 }
 
 export const behavior = ({ props }: { el: HTMLElement; props: unknown }) => {
-  const all = ((props as { items?: Card[] })?.items ?? []) as Card[]
+  const all = ((props as Card[]) ?? []) as Card[]
   const items = signal(all) // seeded to the SAME data as the SSR {% for %}
   const q = signal('')
   const sortAz = signal(false)
@@ -46,13 +46,13 @@ export const behavior = ({ props }: { el: HTMLElement; props: unknown }) => {
   return { items, q, sortAz, onInput, setDex, setAz, countLabel }
 }
 
-// `items` is the loader array, written as an idiomatic `.map()` carrying a bare
-// `x-for` flag + React `key` — the compiler sugar desugars it to the SSR adopt
-// seed ({% for c in items %} + data-x-key + x-bind-href). `data` is the client
-// x-props JSON the behavior reads; the behavior re-exposes `items` as a signal.
-export default function DexFilter({ items, data }: { items: Card[]; data?: string }) {
+// `items` (the loader array) feeds BOTH the SSR list AND the client behavior: the
+// idiomatic `.map()` + bare `x-for` desugars to the `{% for c in items %}` adopt
+// seed, and `x-props={items}` serializes the SAME array (json_attr) into the
+// behavior's props — one prop, no separate pre-stringified `dexProps`.
+export default function DexFilter({ items }: { items: Card[] }) {
   return (
-    <section x-data="dexFilter" x-props={data}>
+    <section x-data="dexFilter" x-props={items}>
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="relative w-full sm:max-w-xs">
           <Search

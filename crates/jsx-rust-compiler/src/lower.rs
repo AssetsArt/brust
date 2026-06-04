@@ -3727,6 +3727,13 @@ fn infer_props_types(node: &JsxNode, props: &mut PropsShape) -> Result<(), Lower
             attrs, children, ..
         } => {
             for a in attrs {
+                // `x-props` serializes its WHOLE value via `json_attr` (shape-agnostic),
+                // so it must NOT seed a scalar `OwnedString` type for the prop — the same
+                // prop may also be a `.map()` collection source (`VecOf`), and forcing a
+                // scalar here would raise a spurious `PropTypeConflict`. Skip inference.
+                if a.name == "x-props" {
+                    continue;
+                }
                 if let AttrValue::Expr(e) = &a.value {
                     infer_from_expr(e, props)?;
                 }

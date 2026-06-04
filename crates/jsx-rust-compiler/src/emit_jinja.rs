@@ -414,7 +414,15 @@ fn emit_attr(a: &JsxAttr, out: &mut String) {
                 out.push(' ');
                 out.push_str(&a.name);
                 out.push_str("=\"");
-                emit_escaped_interp(out, other);
+                if a.name == "x-props" {
+                    // x-props carries a STRUCTURED value: JSON-serialize + entity-encode
+                    // for the double-quoted attribute (see brust json_attr filter). NOT
+                    // `| tojson | e` — tojson is safe-marked so `| e` would no-op, leaking
+                    // raw quotes that break the attribute.
+                    let _ = write!(out, "{{{{ ({}) | json_attr }}}}", emit_expr_path(other));
+                } else {
+                    emit_escaped_interp(out, other);
+                }
                 out.push('"');
             }
         },

@@ -811,6 +811,7 @@ version = "0.1.0"
 dependencies = [
  "minijinja",
  "pretty_assertions",
+ "serde_json",
  "swc_core",
  "thiserror",
 ]

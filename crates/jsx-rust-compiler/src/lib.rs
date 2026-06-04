@@ -681,6 +681,13 @@ impl CompileError {
 }
 
 fn span_to_line_col(span: &swc_core::common::Span, parsed: &parser::ParsedSource) -> (u32, u32) {
+    // A default/synthetic span (`Span::default()`, lo == BytePos(0)) has no source
+    // location — swc reserves BytePos(0) as the dummy position, and `lookup_char_pos`
+    // panics (`NoFileFor`) on it. Surface `(0, 0)` so such diagnostics report cleanly
+    // instead of aborting the build with an opaque swc panic.
+    if span.lo.0 == 0 {
+        return (0, 0);
+    }
     let loc = parsed.source_map.lookup_char_pos(span.lo);
     (loc.line as u32, loc.col.0 as u32 + 1)
 }

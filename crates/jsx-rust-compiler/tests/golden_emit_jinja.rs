@@ -20,6 +20,8 @@ const FIXTURES: &[&str] = &[
     "xfor_client_only",
     "map_xfor_sugar",
     "map_no_xfor",
+    "xprops_tojson",
+    "map_xprops_same_source",
 ];
 
 #[test]

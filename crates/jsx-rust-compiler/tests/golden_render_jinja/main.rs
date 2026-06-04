@@ -13,6 +13,7 @@ fn render_fixture(name: &str, ctx: minijinja::Value) -> String {
 
     let mut env = Environment::new();
     env.set_undefined_behavior(UndefinedBehavior::Chainable);
+    env.add_filter("json_attr", json_attr);
     env.add_template_owned(name.to_string(), jinja_src)
         .unwrap_or_else(|e| panic!("add_template {name}: {e}"));
     let tmpl = env
@@ -20,6 +21,22 @@ fn render_fixture(name: &str, ctx: minijinja::Value) -> String {
         .unwrap_or_else(|e| panic!("get_template {name}: {e}"));
     tmpl.render(ctx)
         .unwrap_or_else(|e| panic!("render {name}: {e}"))
+}
+
+// must match crates/brust/src/jinja.rs json_attr
+fn json_attr(value: minijinja::Value) -> Result<String, minijinja::Error> {
+    let json = serde_json::to_string(&value).map_err(|e| {
+        minijinja::Error::new(
+            minijinja::ErrorKind::InvalidOperation,
+            "x-props JSON serialization failed",
+        )
+        .with_source(e)
+    })?;
+    Ok(json
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;"))
 }
 
 /// Compare `actual` against the committed `<name>.expected.html`, or rewrite it
@@ -110,6 +127,15 @@ fn renders_brust_page_byte_equal() {
         },
     );
     check_golden("brust_page", &actual);
+}
+
+#[test]
+fn renders_xprops_tojson_byte_equal() {
+    let actual = render_fixture(
+        "xprops_tojson",
+        context! { items => vec![context!{ id => 1, label => "a" }, context!{ id => 2, label => "b" }] },
+    );
+    check_golden("xprops_tojson", &actual);
 }
 
 #[test]

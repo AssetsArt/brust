@@ -12,19 +12,10 @@ import { Plus } from 'lucide-react'
 import { client } from 'brustjs/client'
 import { computed, signal } from 'brustjs/store'
 import type { Actions } from '../actions'
-import type { TeamMember } from '../lib/types'
+import type { AddTeamProps, TeamMember } from '../lib/types'
 import { teamStore } from '../stores/team'
 
 const api = client<Actions>()
-
-interface AddToTeamProps {
-  id: number
-  name: string
-  displayName: string
-  num: string
-  types: string[]
-  artwork: string
-}
 
 const BASE =
   'inline-flex w-full items-center justify-center rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-brand-600 disabled:opacity-50'
@@ -32,9 +23,9 @@ const IN_TEAM =
   'inline-flex w-full items-center justify-center rounded-lg bg-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors disabled:opacity-50 dark:bg-slate-700 dark:text-slate-100'
 
 // behavior → client bundle, registered as "addToTeamButton" (camelCase filename).
-// `props` is the JSON parsed out of the element's x-props attribute (precomputed
-// by the loader as a JSON string — native templates can't call JSON.stringify).
-export const behavior = ({ props }: { props: AddToTeamProps }) => {
+// `props` is the object parsed out of the element's x-props attribute (the
+// compiler serializes the loader's structured object via `json_attr`).
+export const behavior = ({ props }: { props: AddTeamProps }) => {
   const busy = signal(false)
   const full = signal(false)
   const inTeam = computed(() =>
@@ -83,9 +74,9 @@ export const behavior = ({ props }: { props: AddToTeamProps }) => {
 
 // default → jinja (server). The x-* directives are static string attributes the
 // native compiler passes straight through; the directive runtime binds them to
-// the behavior instance on the client. `data` is the loader-precomputed JSON
-// string, emitted by the compiler as x-props="{{ (data) | e }}" (XSS-safe).
-export default function AddToTeamButton({ data }: { data: string }) {
+// the behavior instance on the client. `data` is the loader's structured object,
+// emitted by the compiler as x-props="{{ (data) | json_attr }}" (XSS-safe).
+export default function AddToTeamButton({ data }: { data: AddTeamProps }) {
   return (
     <div x-data="addToTeamButton" x-props={data} className="relative">
       <Plus
