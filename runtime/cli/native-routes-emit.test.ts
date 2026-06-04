@@ -588,7 +588,7 @@ describe('emitComponentArtifacts — import-form regeneration (via emitNativeTem
     const pagePath = join(dir, 'Page.tsx')
     writeFileSync(
       pagePath,
-      "import { Search } from 'lucide-react'\nexport default function Page() { return <div><Search/></div>; }",
+      "import { Widget } from 'some-ui-lib'\nexport default function Page() { return <div><Widget/></div>; }",
     )
     const routesPath = join(dir, 'routes.tsx')
     writeFileSync(routesPath, "import Page from './Page'\n")
@@ -604,7 +604,7 @@ describe('emitComponentArtifacts — import-form regeneration (via emitNativeTem
     })
 
     const factoryContent = readFileSync(join(outDir, 'Page.factory.ts'), 'utf8')
-    expect(factoryContent).toContain('import { Search } from "lucide-react"')
+    expect(factoryContent).toContain('import { Widget } from "some-ui-lib"')
     // bare spec is never relativized
     expect(factoryContent).not.toMatch(/import .* from "\.\.?\//)
 
@@ -614,17 +614,17 @@ describe('emitComponentArtifacts — import-form regeneration (via emitNativeTem
       component: string
       sourcePath: string
     }>
-    const search = compEntries.find((e) => e.component === 'Search')
-    expect(search).toBeDefined()
+    const widget = compEntries.find((e) => e.component === 'Widget')
+    expect(widget).toBeDefined()
     // bare spec kept verbatim in components.json
-    expect(search!.sourcePath).toBe('lucide-react')
+    expect(widget!.sourcePath).toBe('some-ui-lib')
   })
 
   test('bare named alias: factory uses `import { imported as Local }`', async () => {
     const pagePath = join(dir, 'Page.tsx')
     writeFileSync(
       pagePath,
-      "import { Search as Icon } from 'lucide-react'\nexport default function Page() { return <div><Icon/></div>; }",
+      "import { Widget as Icon } from 'some-ui-lib'\nexport default function Page() { return <div><Icon/></div>; }",
     )
     const routesPath = join(dir, 'routes.tsx')
     writeFileSync(routesPath, "import Page from './Page'\n")
@@ -639,7 +639,7 @@ describe('emitComponentArtifacts — import-form regeneration (via emitNativeTem
     })
 
     const factoryContent = readFileSync(join(outDir, 'Page.factory.ts'), 'utf8')
-    expect(factoryContent).toContain('import { Search as Icon } from "lucide-react"')
+    expect(factoryContent).toContain('import { Widget as Icon } from "some-ui-lib"')
   })
 
   test('bare default-package import: factory regenerates `import X from "<spec>"` verbatim', async () => {

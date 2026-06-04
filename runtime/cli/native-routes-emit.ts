@@ -481,6 +481,7 @@ export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<vo
         source: string,
         path: string,
         componentSources?: Record<string, string>,
+        lucideIcons?: Record<string, string>,
       ) => { template: string; islandsJson: string; warnings?: string[] })
     | null = null
   if (nativeRoutes.length > 0) {
@@ -560,9 +561,20 @@ export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<vo
       ;({ sources, mergedImports } = gatherComponentSources(sourcePath))
     }
 
+    // Lucide icons live in component files (inlined via <Comp native/>), so scan the
+    // route file plus every LOCAL component source path for lucide-react imports.
+    const lucidePaths = new Set<string>()
+    // route file only if it's a real on-disk file (synthetic __chain.tsx is not)
+    if (existsSync(routeSourcePath)) lucidePaths.add(routeSourcePath)
+    for (const imp of mergedImports.values()) {
+      if (!imp.bare && typeof imp.spec === 'string') lucidePaths.add(imp.spec)
+    }
+    const lucideIcons: Record<string, string> = {}
+    for (const p of lucidePaths) Object.assign(lucideIcons, await extractLucideIcons(p))
+
     let compiled: { template: string; islandsJson: string; warnings?: string[] }
     try {
-      compiled = compileJsx!(routeSource, routeSourcePath, sources)
+      compiled = compileJsx!(routeSource, routeSourcePath, sources, lucideIcons)
     } catch (e) {
       throw new Error(
         `native route "${name}" failed to compile (${routeSourcePath}):\n${String(e)}`,
