@@ -527,6 +527,56 @@ describe('x-for SSR adopt', () => {
     ]) // same keys
     expect(grid.querySelectorAll('#grid > a')).toHaveLength(2) // no duplication
   })
+
+  test('static fallback when the list has no backing signal', async () => {
+    const win = setupDom(
+      '<div id="grid" x-data="dexNoSig">' +
+        '<a x-for="t in items by t.id" data-x-key="1"><span x-text="t.label">A</span></a>' +
+        '<a x-for="t in items by t.id" data-x-key="2"><span x-text="t.label">B</span></a>' +
+        '</div>',
+    )
+    const { register, start } = await import(`./runtime.ts?adoptStatic=${Math.random()}`)
+    // Behavior instance exposes NO `items` — sugar-marked x-for without a backing signal.
+    register('dexNoSig', () => ({ other: 1 }))
+    const grid = win.document.getElementById('grid')!
+    const beforeFirst = grid.querySelectorAll('a')[0]!
+    const beforeSecond = grid.querySelectorAll('a')[1]!
+    start(win.document)
+    const after = grid.querySelectorAll('#grid > a')
+    expect(after).toHaveLength(2) // seeds NOT wiped
+    expect(after[0]).toBe(beforeFirst) // identity unchanged
+    expect(after[1]).toBe(beforeSecond)
+    // x-text NOT cleared — guard left the subtree fully static.
+    expect(after[0].querySelector('span')!.textContent).toBe('A')
+    expect(after[1].querySelector('span')!.textContent).toBe('B')
+  })
+
+  test('adopts when a signal IS present (regression)', async () => {
+    const win = setupDom(
+      '<div id="grid" x-data="dexSig">' +
+        '<a x-for="t in items by t.id" data-x-key="1"><span x-text="t.label">A</span></a>' +
+        '<a x-for="t in items by t.id" data-x-key="2"><span x-text="t.label">B</span></a>' +
+        '</div>',
+    )
+    const { register, start } = await import(`./runtime.ts?adoptSig=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const items = signal<any>([
+      { id: 1, label: 'A' },
+      { id: 2, label: 'B' },
+    ])
+    register('dexSig', () => ({ items }))
+    const grid = win.document.getElementById('grid')!
+    const beforeFirst = grid.querySelectorAll('a')[0]!
+    start(win.document)
+    expect(grid.querySelectorAll('#grid > a')).toHaveLength(2) // adopted, not double-mounted
+    expect(grid.querySelectorAll('a')[0]).toBe(beforeFirst) // identity reused
+    const keptId2 = grid.querySelector('a[data-x-key="2"]')!
+    items.set([{ id: 2, label: 'B' }]) // reconcile to 1 node
+    const remaining = grid.querySelectorAll('#grid > a')
+    expect(remaining).toHaveLength(1)
+    expect(remaining[0]).toBe(keptId2) // id=2 reused
+    expect(grid.querySelector('a[data-x-key="1"]')).toBeNull() // id=1 removed
+  })
 })
 
 describe('parseFor', () => {

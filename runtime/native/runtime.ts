@@ -394,6 +394,13 @@ function bindForAdopt(
   disposers: Array<() => void>,
 ): void {
   const { itemName, indexName, listPath, keyPaths } = expr
+  // Static fallback: a sugar-marked (or hand-written) x-for whose list has NO
+  // backing signal on the instance must NOT reconcile — installKeyedReconcile would
+  // wipe the SSR seeds on its first (empty-list) tick. resolveRaw returns the signal
+  // OBJECT for a registered signal (truthy); undefined only when truly absent.
+  if (resolveRaw(instance, listPath) == null) {
+    return // leave the SSR seed nodes exactly as rendered (fully static)
+  }
   const keys = keyPaths as string[]
   // template for future creates: stripped clone of the first seed.
   const template = seeds[0].cloneNode(true) as HTMLElement
