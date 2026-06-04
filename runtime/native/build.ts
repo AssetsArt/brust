@@ -1,18 +1,24 @@
+import { createHash } from 'node:crypto'
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { basename, extname, isAbsolute, resolve } from 'node:path'
+import { basename, extname, isAbsolute, relative, resolve } from 'node:path'
 import { scanImports } from '../cli/native-routes-emit.ts'
 
 const BEHAVIOR_RE = /export\s+const\s+behavior\b/
 
-/** camelCase a component basename: lowercase the first character only. */
-function registerName(sourcePath: string): string {
-  const base = basename(sourcePath, extname(sourcePath))
-  return base.length > 0 ? base[0]!.toLowerCase() + base.slice(1) : base
+/** Deterministic, app-unique directive name = camelCase(basename) + "_" + 8 hex of
+ *  sha256(cwd-relative path). The SINGLE name contract: chunk filename, runtime
+ *  registry key, and the compiler-emitted `x-data` all derive from this. */
+export function directiveName(absPath: string, projectRoot: string): string {
+  const base = basename(absPath, extname(absPath))
+  const camel = base.length > 0 ? base[0]!.toLowerCase() + base.slice(1) : base
+  const rel = relative(projectRoot, absPath).replaceAll('\\', '/')
+  const hash = createHash('sha256').update(rel).digest('hex').slice(0, 8)
+  return `${camel}_${hash}`
 }
 
-/** BFS the local import graph from the routes entry; return registerName →
+/** BFS the local import graph from the routes entry; return directiveName →
  * absolute sourcePath for every file that has `export const behavior`. Throws on
- * two distinct files deriving the same register name. */
+ * two distinct files deriving the same directive name (path-hashed, collision-resistant). */
 export function scanDirectiveComponents(routesEntryFile: string): Map<string, string> {
   const found = new Map<string, string>()
   const visited = new Set<string>()
@@ -31,11 +37,11 @@ export function scanDirectiveComponents(routesEntryFile: string): Map<string, st
       if (!visited.has(dep)) queue.push(dep)
     }
     if (BEHAVIOR_RE.test(src)) {
-      const name = registerName(filePath)
+      const name = directiveName(filePath, process.cwd())
       const existing = found.get(name)
       if (existing && existing !== filePath) {
         throw new Error(
-          `directive component name "${name}" derives from two files (${existing} and ${filePath}); component basenames must be app-unique`,
+          `directive component name "${name}" (path-hashed) derives from two files (${existing} and ${filePath}); this should be impossible — please report a bug`,
         )
       }
       found.set(name, filePath)
