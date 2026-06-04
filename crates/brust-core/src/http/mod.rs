@@ -1,10 +1,9 @@
-//! HTTP wire helpers: request parsing / response building (`response`) and
-//! gzip content negotiation (`compress`).
+//! HTTP wire helpers: gzip content negotiation (`compress`).
+//!
+//! The raw-byte response/error builders that once lived in `response` are gone:
+//! the hyper service builds typed `http::Response` values directly (see
+//! `server::body` + `render::stream::response_from_meta`), and the cache-store
+//! framing path (`render::stream::build_single_response_bytes`) carries its own
+//! reason-phrase lookup. Only the compression helpers remain here.
 
 pub mod compress;
-pub mod response;
-
-pub use response::{
-    build_response, build_response_head, error_400, error_404, error_405, error_411, error_413,
-    error_414, error_415, error_500, error_503, status_reason,
-};

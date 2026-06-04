@@ -48,7 +48,7 @@ pub(crate) fn split_meta(buf: &[u8]) -> Result<(&[u8], &[u8]), &'static str> {
 /// Bytes-identical to today's renderToString wire shape for no-Suspense
 /// routes (spec S1 criterion #1).
 ///
-/// Includes `Connection: keep-alive` to match `http::build_response` and
+/// Includes `Connection: keep-alive` to match the old `build_response` byte-builder and
 /// avoid the 47k↔109k RPS halving the team observed in A2.3: without this
 /// header, oha (and any HTTP/1.1 client honoring the spec's "no header =
 /// close" default) reconnects per request, doubling TCP setup overhead.
@@ -90,11 +90,7 @@ pub(crate) fn response_from_meta(
     }
     for (k, v) in &meta.headers {
         // Content-Type already set; framing headers are hyper-owned.
-        if k.eq_ignore_ascii_case("content-type")
-            || k.eq_ignore_ascii_case("content-length")
-            || k.eq_ignore_ascii_case("transfer-encoding")
-            || k.eq_ignore_ascii_case("connection")
-        {
+        if k.eq_ignore_ascii_case("content-type") || crate::server::body::is_framing_header(k) {
             continue;
         }
         if let Some(hm) = builder.headers_mut()

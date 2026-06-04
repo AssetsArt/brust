@@ -49,9 +49,11 @@ pub(crate) fn static_asset_response(
         extra.push(("Content-Encoding".to_string(), enc.to_string()));
     }
     // HEAD: same headers as the GET (Cache-Control / Vary / Content-Encoding)
-    // but no entity body. Content-Length is hyper-owned either way.
+    // but no entity body. RFC 7230 §3.3.2 — report the GET's true Content-Length
+    // (`body.len()`, the possibly-compressed entity size) so CDNs can probe size
+    // via HEAD. `body` is dropped; only its length is carried.
     if head {
-        resp_head(200, content_type, &extra)
+        resp_head(200, content_type, &extra, body.len())
     } else {
         resp(200, content_type, &extra, body)
     }
