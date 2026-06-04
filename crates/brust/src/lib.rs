@@ -6,9 +6,11 @@ mod compress;
 mod http;
 mod io;
 mod island_cache;
+mod dispatch_impl;
 mod jinja;
 mod jsx_compile;
 mod pool;
+mod render;
 pub mod render_stream;
 mod routes;
 mod server;
@@ -32,7 +34,8 @@ use tracing_subscriber::EnvFilter;
 
 use crate::action_router::{ActionRouter, Method};
 use crate::cache::ResponseCache;
-use crate::pool::{BufPtr, RendererTsfn, WorkerPool};
+use crate::dispatch_impl::{BufPtr, RendererTsfn, TsfnDispatch};
+use crate::pool::WorkerPool;
 use crate::routes::RouteTable;
 
 thread_local! {
@@ -259,7 +262,12 @@ pub fn register_renderer(
         (BufPtr(slice.as_mut_ptr()), slice.len())
     };
     let tsfn: RendererTsfn = f.build_threadsafe_function().build()?;
-    let id = state().pool.register(tsfn, buf_ptr, buf_len);
+    let dispatch = Box::new(TsfnDispatch {
+        tsfn: std::sync::Arc::new(tsfn),
+        buf_ptr,
+        buf_len,
+    });
+    let id = state().pool.register(dispatch);
     WORKER_ID.with(|cell| cell.set(Some(id)));
     Ok(id)
 }
@@ -866,7 +874,7 @@ pub async fn napi_render_chunk(worker_id: u32, len: u32) -> NapiResult<()> {
         .entry(worker_id)
         .ok_or_else(|| napi::Error::from_reason(format!("worker {} not registered", worker_id)))?;
     let chunk_tx =
-        crate::render_stream::check_chunk_dispatch(&entry.render_slot, len, entry.buf_len)
+        crate::render_stream::check_chunk_dispatch(&entry.render_slot, len, entry.dispatch.buf_len())
             .map_err(napi::Error::from_reason)?;
 
     let (ack_tx, ack_rx) = tokio::sync::oneshot::channel::<()>();
@@ -875,7 +883,7 @@ pub async fn napi_render_chunk(worker_id: u32, len: u32) -> NapiResult<()> {
     } else {
         // SAFETY: BufPtr is the SAB backing-store pointer pinned at register
         // time (see pool.rs::BufPtr docstring). `len` is bounds-checked above.
-        let data = unsafe { std::slice::from_raw_parts(entry.buf_ptr.0, len as usize) }.to_vec();
+        let data = unsafe { std::slice::from_raw_parts(entry.dispatch.buf_ptr(), len as usize) }.to_vec();
         crate::pool::RenderChunk::Bytes { data, ack: ack_tx }
     };
     chunk_tx
@@ -905,13 +913,13 @@ pub async fn napi_render_chunk_final(worker_id: u32, len: u32) -> NapiResult<()>
         .entry(worker_id)
         .ok_or_else(|| napi::Error::from_reason(format!("worker {} not registered", worker_id)))?;
     let chunk_tx =
-        crate::render_stream::check_chunk_dispatch(&entry.render_slot, len, entry.buf_len)
+        crate::render_stream::check_chunk_dispatch(&entry.render_slot, len, entry.dispatch.buf_len())
             .map_err(napi::Error::from_reason)?;
 
     let (ack_tx, ack_rx) = tokio::sync::oneshot::channel::<()>();
     // SAFETY: same as napi_render_chunk — BufPtr pinned at register time
     // (see pool.rs::BufPtr docstring), `len` is bounds-checked above.
-    let data = unsafe { std::slice::from_raw_parts(entry.buf_ptr.0, len as usize) }.to_vec();
+    let data = unsafe { std::slice::from_raw_parts(entry.dispatch.buf_ptr(), len as usize) }.to_vec();
     chunk_tx
         .send(crate::pool::RenderChunk::BytesAndFinal { data, ack: ack_tx })
         .await
@@ -961,10 +969,10 @@ pub fn napi_render_jinja(
         .entry(worker_id)
         .ok_or_else(|| napi::Error::from_reason(format!("worker {} not registered", worker_id)))?;
 
-    if data_len as usize > entry.buf_len {
+    if data_len as usize > entry.dispatch.buf_len() {
         return Err(napi::Error::from_reason(format!(
             "data_len {} exceeds SAB len {}",
-            data_len, entry.buf_len
+            data_len, entry.dispatch.buf_len()
         )));
     }
 
@@ -973,7 +981,7 @@ pub fn napi_render_jinja(
     // above against the SAB capacity. Copied to an owned Vec so the SAB can be
     // overwritten with the assembled response below.
     let data_json =
-        unsafe { std::slice::from_raw_parts(entry.buf_ptr.0, data_len as usize) }.to_vec();
+        unsafe { std::slice::from_raw_parts(entry.dispatch.buf_ptr(), data_len as usize) }.to_vec();
 
     let (meta_json, body): (Vec<u8>, Vec<u8>) =
         match crate::jinja::render(&template_name, &data_json) {
@@ -1023,11 +1031,11 @@ pub fn napi_render_jinja(
     // Overflow: assembled response can't fit in the SAB. Replace with a small
     // framed 500 that always fits, so the client gets a response (HTTP 500)
     // instead of hanging on a truncated body.
-    if assembled.len() > entry.buf_len {
+    if assembled.len() > entry.dispatch.buf_len() {
         tracing::error!(
             template = %template_name,
             assembled_len = assembled.len(),
-            buf_len = entry.buf_len,
+            buf_len = entry.dispatch.buf_len(),
             "jinja response exceeds SAB capacity — emitting 500",
         );
         let meta = br#"{"status":500,"contentType":"text/plain; charset=utf-8","headers":{},"streaming":false}"#;
@@ -1040,7 +1048,7 @@ pub fn napi_render_jinja(
 
     // SAFETY: same SAB pointer; the in-flight render owns it exclusively and the
     // inbound JSON was already copied out above. `assembled.len() <= buf_len`.
-    let sab = unsafe { std::slice::from_raw_parts_mut(entry.buf_ptr.0, entry.buf_len) };
+    let sab = unsafe { std::slice::from_raw_parts_mut(entry.dispatch.buf_ptr(), entry.dispatch.buf_len()) };
     sab[..assembled.len()].copy_from_slice(&assembled);
     Ok(assembled.len() as u32)
 }

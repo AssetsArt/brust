@@ -1,40 +1,10 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use napi::bindgen_prelude::{Either, Promise};
-use napi::threadsafe_function::ThreadsafeFunction;
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
 
-/// Renderer signature: takes the envelope (SAB len as `u32`, or inline JSON
-/// `String`) and resolves with a `u32` framed-response length.
-///
-/// Two response protocols, selected by the resolved `u32`:
-/// - **Fast lane** (`len > 0`): the worker wrote a complete framed single-chunk
-///   response `[meta_len: u16 BE][meta JSON][body]` into the SAB and resolved
-///   with its byte length. Rust reads it directly after `promise.await` — no
-///   chunk channel, no per-chunk ack round-trip. Used for action/native/render
-///   responses that fit in one chunk.
-/// - **Chunk channel** (`len == 0`): the worker streamed bytes via
-///   `napi_render_chunk` through the per-worker `RenderSlot.chunk_tx`. Used for
-///   React Suspense streaming; SSE/WS resolve 0 too (they own the socket
-///   independently via napiSse*/napiWs*).
-///
-/// CalleeHandled = false matches what Function::build_threadsafe_function().build() produces.
-pub type RendererTsfn =
-    ThreadsafeFunction<Either<u32, String>, Promise<u32>, Either<u32, String>, napi::Status, false>;
-
-/// Raw pointer to the worker's SharedArrayBuffer backing store. Send+Sync because the
-/// backing store is process-global memory (V8 allocates SAB backing outside the GC heap)
-/// and only read by Rust AFTER the worker's render callback resolves (napi tsfn.await
-/// provides the happens-before).
-#[derive(Copy, Clone)]
-pub struct BufPtr(pub *mut u8);
-
-// SAFETY: see BufPtr docstring. The Bun Worker keeps the SAB rooted in its module
-// scope, so the backing store lives for the worker's whole lifetime.
-unsafe impl Send for BufPtr {}
-unsafe impl Sync for BufPtr {}
+use crate::render::RenderDispatch;
 
 /// One chunk delivered from a worker's `napi_render_chunk` call to handle_conn's
 /// per-request chunk loop. `ack` resolves the worker's awaiting Promise so the
@@ -68,16 +38,11 @@ pub struct RenderSlot {
 
 pub struct TsfnEntry {
     pub id: u32,
-    /// `Option` so `#[cfg(test)] WorkerPool::register_for_test` can build
-    /// an entry without a real napi `ThreadsafeFunction` (the crate is
-    /// `cdylib`; napi C runtime symbols are resolved by the Bun host at
-    /// load time and aren't linked into the `cargo test` binary).
-    /// Production `WorkerPool::register` always sets `Some(...)`; the
-    /// three dispatch sites (`dispatch_sse`, `dispatch_ws`, server.rs
-    /// render dispatch) unwrap via `.as_ref().expect(...)`.
-    pub tsfn: Option<RendererTsfn>,
-    pub buf_ptr: BufPtr,
-    pub buf_len: usize,
+    /// The render bridge for this worker. In production this is a
+    /// `crate::dispatch_impl::TsfnDispatch` (napi tsfn + SAB pointer); tests
+    /// use `crate::render::dispatch::MockDispatch`. The seam keeps all napi
+    /// out of this module.
+    pub dispatch: Box<dyn RenderDispatch>,
     pub in_flight: AtomicU32,
     /// Lock-free exclusivity gate. A render claims the worker by CAS-ing this
     /// `true → false`; `RenderClaim::drop` restores it to `true`. This replaces
@@ -185,13 +150,11 @@ impl WorkerPool {
         Self::default()
     }
 
-    pub fn register(&self, tsfn: RendererTsfn, buf_ptr: BufPtr, buf_len: usize) -> u32 {
+    pub fn register(&self, dispatch: Box<dyn RenderDispatch>) -> u32 {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let entry = Arc::new(TsfnEntry {
             id,
-            tsfn: Some(tsfn),
-            buf_ptr,
-            buf_len,
+            dispatch,
             in_flight: AtomicU32::new(0),
             idle: AtomicBool::new(true),
             render_slot: parking_lot::Mutex::new(None),
@@ -304,74 +267,16 @@ impl WorkerPool {
     }
 }
 
-/// Dispatch an SSE envelope to the worker. Single long-lived tsfn call:
-/// the JS side branches on `kind: 'sse'`, runs middleware, signals open
-/// via napi_sse_signal_open, then enters the reader loop. The Rust side
-/// holds an in_flight_guard ONLY for the duration of the call_async
-/// handoff — the per-conn task in src/sse.rs::sse_conn_task owns the
-/// rest of the connection's lifetime independently of the worker pool.
-///
-/// Returns Err if the tsfn enqueue itself fails (e.g. worker dead).
-/// Open-signal timeout + middleware reject handling are caller concerns.
-pub async fn dispatch_sse(entry: Arc<TsfnEntry>, envelope_json: String) -> Result<(), napi::Error> {
-    let _guard = entry.in_flight_guard();
-    entry
-        .tsfn
-        .as_ref()
-        .expect("tsfn is None — only legal in cfg(test) register_for_test; production register always supplies Some")
-        .call_async(napi::bindgen_prelude::Either::B(envelope_json))
-        .await
-        .map(|_| ())
-        .map_err(|e| napi::Error::from_reason(format!("sse dispatch failed: {e}")))
-}
-
-/// Dispatch a WS envelope to the worker. Single long-lived tsfn call:
-/// the JS side branches on `kind: 'ws'`, runs middleware, signals open
-/// (101 or 4xx) via napi_ws_signal_open, then registers handler
-/// callbacks via napi_ws_register_handlers. The Rust side holds an
-/// in_flight_guard ONLY for the duration of the call_async handoff —
-/// the per-conn task in src/ws.rs::ws_conn_task owns the rest of the
-/// connection's lifetime independently of the worker pool.
-///
-/// Returns Err if the tsfn enqueue itself fails (e.g. worker dead).
-/// Open-signal timeout + middleware reject handling are caller concerns.
-pub async fn dispatch_ws(entry: Arc<TsfnEntry>, envelope_json: String) -> Result<(), napi::Error> {
-    let _guard = entry.in_flight_guard();
-    entry
-        .tsfn
-        .as_ref()
-        .expect("tsfn is None — only legal in cfg(test) register_for_test; production register always supplies Some")
-        .call_async(napi::bindgen_prelude::Either::B(envelope_json))
-        .await
-        .map(|_| ())
-        .map_err(|e| napi::Error::from_reason(format!("ws dispatch failed: {e}")))
-}
-
-#[cfg(test)]
-impl WorkerPool {
-    /// Register a worker with `tsfn: None` for pool-logic unit tests.
-    /// Production code always sets `Some(...)`; tests using this helper
-    /// MUST NOT call dispatch paths that unwrap tsfn.
-    pub fn register_for_test(&self) -> u32 {
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let entry = Arc::new(TsfnEntry {
-            id,
-            tsfn: None,
-            buf_ptr: BufPtr(Box::leak(vec![0u8; 256 * 1024].into_boxed_slice()).as_mut_ptr()),
-            buf_len: 256 * 1024,
-            in_flight: AtomicU32::new(0),
-            idle: AtomicBool::new(true),
-            render_slot: parking_lot::Mutex::new(None),
-        });
-        self.entries.write().push(entry);
-        id
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::render::dispatch::MockDispatch;
     use tokio::sync::{mpsc, oneshot};
+
+    /// Register a worker backed by `MockDispatch` for pool-logic unit tests.
+    fn register_for_test(pool: &WorkerPool) -> u32 {
+        pool.register(Box::new(MockDispatch::new()))
+    }
 
     #[test]
     fn render_slot_set_clear_round_trip() {
@@ -420,7 +325,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn drop_notifies_and_reclaims_after_all_busy() {
         let pool = WorkerPool::new();
-        pool.register_for_test();
+        register_for_test(&pool);
 
         // Claim the only worker → pool now AllBusy.
         let claim = match pool.try_claim_render_lockfree() {
@@ -475,7 +380,7 @@ mod tests {
     #[test]
     fn try_claim_render_claims_idle_worker() {
         let pool = WorkerPool::new();
-        let id = pool.register_for_test();
+        let id = register_for_test(&pool);
         let (tx, _rx) = tokio::sync::mpsc::channel::<RenderChunk>(1);
         let claim = match pool.try_claim_render(tx) {
             ClaimResult::Claimed(c) => c,
@@ -490,8 +395,8 @@ mod tests {
     #[test]
     fn try_claim_render_second_returns_other_idle_worker() {
         let pool = WorkerPool::new();
-        let id0 = pool.register_for_test();
-        let id1 = pool.register_for_test();
+        let id0 = register_for_test(&pool);
+        let id1 = register_for_test(&pool);
         let (tx0, _rx0) = tokio::sync::mpsc::channel::<RenderChunk>(1);
         let (tx1, _rx1) = tokio::sync::mpsc::channel::<RenderChunk>(1);
 
@@ -512,7 +417,7 @@ mod tests {
     #[test]
     fn try_claim_render_all_busy_returns_all_busy() {
         let pool = WorkerPool::new();
-        let _id = pool.register_for_test();
+        let _id = register_for_test(&pool);
         let (tx0, _rx0) = tokio::sync::mpsc::channel::<RenderChunk>(1);
         let (tx1, _rx1) = tokio::sync::mpsc::channel::<RenderChunk>(1);
         let _c0 = match pool.try_claim_render(tx0) {
@@ -528,7 +433,7 @@ mod tests {
     #[test]
     fn render_claim_drop_releases_slot_and_decrements_in_flight() {
         let pool = WorkerPool::new();
-        let _id = pool.register_for_test();
+        let _id = register_for_test(&pool);
         let entry = pool.entries.read()[0].clone();
         {
             let (tx, _rx) = tokio::sync::mpsc::channel::<RenderChunk>(1);
@@ -554,7 +459,7 @@ mod tests {
         // next render dispatch.
         let pool = WorkerPool::new();
         for _ in 0..4 {
-            pool.register_for_test();
+            register_for_test(&pool);
         }
         assert_eq!(pool.registered_count(), 4);
 
@@ -562,7 +467,7 @@ mod tests {
         assert_eq!(pool.registered_count(), 0, "clear must drop every entry");
 
         for _ in 0..4 {
-            pool.register_for_test();
+            register_for_test(&pool);
         }
         assert_eq!(
             pool.registered_count(),
@@ -574,7 +479,7 @@ mod tests {
     #[test]
     fn try_claim_render_after_drop_reuses_worker() {
         let pool = WorkerPool::new();
-        let _id = pool.register_for_test();
+        let _id = register_for_test(&pool);
         let (tx0, _rx0) = tokio::sync::mpsc::channel::<RenderChunk>(1);
         let (tx1, _rx1) = tokio::sync::mpsc::channel::<RenderChunk>(1);
         {
@@ -599,7 +504,7 @@ mod tests {
 
         let pool = Arc::new(WorkerPool::new());
         for _ in 0..M {
-            pool.register_for_test();
+            register_for_test(&pool);
         }
 
         // start_barrier: every task waits here before calling try_claim_render —

@@ -837,11 +837,23 @@ async fn handle_conn(
                 crate::routes::build_sse_envelope(&method, &path, &buf[..header_end], conn_id);
             let envelope_json = serde_json::to_string(&envelope).unwrap();
 
-            if let Err(e) = crate::pool::dispatch_sse(entry.clone(), envelope_json).await {
-                error!(worker_id = entry.id, error = %e, "sse tsfn call_async failed");
-                let _ = s.write_all(http::error_500()).await;
-                crate::sse::registry().lock().remove(&conn_id);
-                return;
+            // Single long-lived dispatch: the JS side branches on `kind: 'sse'`,
+            // runs middleware, signals open via napi_sse_signal_open, then enters
+            // the reader loop. Hold an in_flight_guard ONLY for the dispatch
+            // handoff — sse_conn_task owns the rest of the connection lifetime.
+            {
+                let _guard = entry.in_flight_guard();
+                if let Err(e) = entry
+                    .dispatch
+                    .call(crate::render::RenderEnvelope::Inline(envelope_json))
+                    .await
+                    .map(|_| ())
+                {
+                    error!(worker_id = entry.id, error = %e, "sse tsfn call_async failed");
+                    let _ = s.write_all(http::error_500()).await;
+                    crate::sse::registry().lock().remove(&conn_id);
+                    return;
+                }
             }
 
             // Await the open signal with timeout. Distinguish sender-dropped (JS crash)
@@ -976,11 +988,23 @@ async fn handle_conn(
                 );
                 let envelope_json = serde_json::to_string(&envelope).unwrap();
 
-                if let Err(e) = crate::pool::dispatch_ws(entry.clone(), envelope_json).await {
-                    error!(worker_id = entry.id, error = %e, "ws dispatch failed");
-                    let _ = s.write_all(http::error_500()).await;
-                    crate::ws::registry().lock().remove(&conn_id);
-                    return;
+                // Single long-lived dispatch: the JS side branches on `kind:
+                // 'ws'`, runs middleware, signals open (101 or 4xx), registers
+                // handler callbacks. Hold an in_flight_guard ONLY for the
+                // dispatch handoff — ws_conn_task owns the rest of the lifetime.
+                {
+                    let _guard = entry.in_flight_guard();
+                    if let Err(e) = entry
+                        .dispatch
+                        .call(crate::render::RenderEnvelope::Inline(envelope_json))
+                        .await
+                        .map(|_| ())
+                    {
+                        error!(worker_id = entry.id, error = %e, "ws dispatch failed");
+                        let _ = s.write_all(http::error_500()).await;
+                        crate::ws::registry().lock().remove(&conn_id);
+                        return;
+                    }
                 }
 
                 // Await open verdict with 30s timeout. Distinguish sender-drop
@@ -1273,10 +1297,10 @@ where
     // - EnqueueFailed → napi bridge dead, remove worker from pool.
     // - PromiseRejected → JS-level error, worker still alive.
     enum RenderOutcome {
-        /// napi bridge enqueue failed — worker is dead, remove it.
-        EnqueueFailed(napi::Error),
+        /// bridge enqueue failed — worker is dead, remove it.
+        EnqueueFailed(crate::render::RenderError),
         /// JS Promise rejected — JS-level error, worker is still alive.
-        PromiseRejected(napi::Error),
+        PromiseRejected(crate::render::RenderError),
         /// JS Promise resolved with a framed-response length. `len > 0` →
         /// fast lane: the worker wrote `[meta_len][meta][body]` into the SAB
         /// instead of using the chunk channel; read it directly. `len == 0` →
@@ -1287,7 +1311,7 @@ where
 
     let envelope_len = {
         let mut cursor = std::io::Cursor::new(unsafe {
-            std::slice::from_raw_parts_mut(entry.buf_ptr.0, entry.buf_len)
+            std::slice::from_raw_parts_mut(entry.dispatch.buf_ptr(), entry.dispatch.buf_len())
         });
         if let Err(e) = serde_json::to_writer(&mut cursor, &envelope) {
             if e.is_io() {
@@ -1304,17 +1328,15 @@ where
     let entry_for_future = Arc::clone(&entry);
     let render_future = async move {
         match entry_for_future
-            .tsfn
-            .as_ref()
-            .expect("tsfn is None — only legal in cfg(test) register_for_test; production register always supplies Some")
-            .call_async(napi::bindgen_prelude::Either::A(envelope_len))
+            .dispatch
+            .call(crate::render::RenderEnvelope::Sab(envelope_len))
             .await
         {
-            Err(e) => RenderOutcome::EnqueueFailed(e),
-            Ok(promise) => match promise.await {
-                Err(e) => RenderOutcome::PromiseRejected(e),
-                Ok(len) => RenderOutcome::Resolved(len),
-            },
+            Ok(len) => RenderOutcome::Resolved(len),
+            Err(e @ crate::render::RenderError::EnqueueFailed(_)) => RenderOutcome::EnqueueFailed(e),
+            Err(e @ crate::render::RenderError::PromiseRejected(_)) => {
+                RenderOutcome::PromiseRejected(e)
+            }
         }
     };
     tokio::pin!(render_future);
@@ -1479,9 +1501,9 @@ where
                         // chunk-channel logic below.
                         if !headers_written && resp_len > 0 {
                             let len = resp_len as usize;
-                            if len > entry.buf_len {
+                            if len > entry.dispatch.buf_len() {
                                 error!(
-                                    worker_id = entry.id, label, len, buf_len = entry.buf_len,
+                                    worker_id = entry.id, label, len, buf_len = entry.dispatch.buf_len(),
                                     "fast-lane resp_len exceeds SAB capacity",
                                 );
                                 let _ = s.write_all(http::error_500()).await;
@@ -1492,7 +1514,7 @@ where
                             // writing the SAB and won't touch it until the next
                             // claim. `len <= buf_len` bounds the read.
                             let buf = unsafe {
-                                std::slice::from_raw_parts(entry.buf_ptr.0, len)
+                                std::slice::from_raw_parts(entry.dispatch.buf_ptr(), len)
                             };
                             match crate::render_stream::split_meta(buf)
                                 .and_then(|(meta_slice, body)| {
@@ -1607,7 +1629,7 @@ where
 
     let envelope_len = {
         let mut cursor = std::io::Cursor::new(unsafe {
-            std::slice::from_raw_parts_mut(entry.buf_ptr.0, entry.buf_len)
+            std::slice::from_raw_parts_mut(entry.dispatch.buf_ptr(), entry.dispatch.buf_len())
         });
         if let Err(e) = serde_json::to_writer(&mut cursor, &envelope) {
             if e.is_io() {
@@ -1622,13 +1644,12 @@ where
     };
 
     let resp_len = match entry
-        .tsfn
-        .as_ref()
-        .expect("tsfn is None — only legal in cfg(test) register_for_test; production register always supplies Some")
-        .call_async(napi::bindgen_prelude::Either::A(envelope_len))
+        .dispatch
+        .call(crate::render::RenderEnvelope::Sab(envelope_len))
         .await
     {
-        Err(e) => {
+        Ok(len) => len,
+        Err(e @ crate::render::RenderError::EnqueueFailed(_)) => {
             error!(worker_id = entry.id, label, error = %e,
                    "render tsfn enqueue failed — worker dead, removing from pool");
             pool.remove(entry.id);
@@ -1639,23 +1660,20 @@ where
             let _ = s.write_all(http::build_response(502, "text/plain", &[], b"bad gateway".to_vec())).await;
             return DispatchControl::CloseConn;
         }
-        Ok(promise) => match promise.await {
-            Err(e) => {
-                error!(worker_id = entry.id, label, error = %e,
-                       "render tsfn JS Promise rejected — worker still alive");
-                let _ = s.write_all(http::error_500()).await;
-                return DispatchControl::CloseConn;
-            }
-            Ok(len) => len,
-        },
+        Err(e @ crate::render::RenderError::PromiseRejected(_)) => {
+            error!(worker_id = entry.id, label, error = %e,
+                   "render tsfn JS Promise rejected — worker still alive");
+            let _ = s.write_all(http::error_500()).await;
+            return DispatchControl::CloseConn;
+        }
     };
 
-    if resp_len == 0 || (resp_len as usize) > entry.buf_len {
+    if resp_len == 0 || (resp_len as usize) > entry.dispatch.buf_len() {
         error!(
             worker_id = entry.id,
             label,
             resp_len,
-            buf_len = entry.buf_len,
+            buf_len = entry.dispatch.buf_len(),
             "single-chunk dispatch got invalid resp_len (0 = worker used chunk channel)"
         );
         let _ = s.write_all(http::error_500()).await;
@@ -1664,7 +1682,7 @@ where
 
     // SAFETY: render Promise resolved (happens-before via napi tsfn.await), JS
     // done writing the SAB; resp_len bounds-checked above.
-    let buf = unsafe { std::slice::from_raw_parts(entry.buf_ptr.0, resp_len as usize) };
+    let buf = unsafe { std::slice::from_raw_parts(entry.dispatch.buf_ptr(), resp_len as usize) };
     match crate::render_stream::split_meta(buf).and_then(|(meta_slice, body)| {
         serde_json::from_slice::<crate::render_stream::ChunkMeta>(meta_slice)
             .map(|meta| (meta, body))
