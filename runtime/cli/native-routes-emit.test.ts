@@ -895,4 +895,21 @@ describe('extractLucideIcons', () => {
 
     expect('NotARealIconXYZ123' in map).toBe(false)
   })
+
+  test('AC-alias: alias icon (ArrowDownAZ) follows the re-export stub to the canonical __iconNode', async () => {
+    // `ArrowDownAZ` → toKebabCase → `arrow-down-az.mjs`, which is a re-export stub
+    // (`export { default } from './arrow-down-a-z.mjs'`) with NO __iconNode. The
+    // extractor must follow the alias to the canonical `arrow-down-a-z.mjs`.
+    const pagePath = join(dir, 'Page.tsx')
+    writeFileSync(pagePath, `import { ArrowDownAZ } from 'lucide-react'\n`)
+
+    const map = await extractLucideIcons(pagePath)
+
+    expect('ArrowDownAZ' in map).toBe(true)
+    const parsed = JSON.parse(map.ArrowDownAZ!)
+    // cls uses the canonical kebab (where the data actually lives).
+    expect(parsed.cls).toBe('lucide lucide-arrow-down-a-z')
+    expect(Array.isArray(parsed.node)).toBe(true)
+    expect(parsed.node.length).toBe(5)
+  })
 })
