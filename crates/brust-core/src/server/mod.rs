@@ -15,7 +15,7 @@ use tracing::{debug, error, warn};
 use crate::cache::response_cache::{CacheConfig, CacheKey};
 use crate::config::AppState;
 use crate::routing::routes::MatchResult;
-use crate::server::body::{ResponseBody, channel_body, empty_body, raw_http_to_response};
+use crate::server::body::{ResponseBody, channel_body, empty_body};
 
 pub mod body;
 pub mod static_assets;
@@ -342,10 +342,10 @@ async fn handle_request(
                 true,
                 state.is_dev_mode(),
             );
-            return Ok(raw_http_to_response(resp));
+            return Ok(resp);
         }
         if !state.path_under_action_prefix(path_no_query) {
-            return Ok(raw_http_to_response(crate::http::error_404()));
+            return Ok(body::error_404());
         }
         // else: fall through to action handling below.
     }
@@ -357,55 +357,44 @@ async fn handle_request(
         || method == "POST" && path_no_query.starts_with("/_brust/cache/invalidate")
         || method == "POST" && path_no_query == "/_brust/mcp")
     {
-        return Ok(raw_http_to_response(crate::http::error_405()));
+        return Ok(body::error_405());
     }
 
     // ----- /ping (native, bypasses pool) -----
     if path == "/ping" {
-        return Ok(raw_http_to_response(crate::http::build_response(
-            200,
-            "text/plain",
-            &[],
-            b"pong\n".to_vec(),
-        )));
+        return Ok(body::resp(200, "text/plain", &[], b"pong\n".to_vec()));
     }
 
     // ----- cache stats -----
     if path == "/_brust/cache/stats" {
         let stats = cache.stats();
         let json = serde_json::to_string(&stats).unwrap_or_else(|_| String::from("{}"));
-        return Ok(raw_http_to_response(crate::http::build_response(
-            200,
-            "application/json",
-            &[],
-            json.into_bytes(),
-        )));
+        return Ok(body::resp(200, "application/json", &[], json.into_bytes()));
     }
 
     // ----- island chunks -----
     if let Some(file) = path.strip_prefix("/_brust/islands/") {
         let file = file.split('?').next().unwrap_or(file);
         if !is_safe_island_filename(file) {
-            return Ok(raw_http_to_response(crate::http::error_404()));
+            return Ok(body::error_404());
         }
         let Some(dir) = state.islands_dir() else {
-            return Ok(raw_http_to_response(crate::http::error_404()));
+            return Ok(body::error_404());
         };
         let file_path = dir.join(file);
         return match tokio::fs::read(&file_path).await {
             Ok(bytes) => {
                 let accept_enc = header_str(req.headers(), "accept-encoding").unwrap_or_default();
-                let resp = static_asset_response(
+                Ok(static_asset_response(
                     &accept_enc,
                     "application/javascript; charset=utf-8",
                     &file_path.to_string_lossy(),
                     bytes,
                     false,
                     state.is_dev_mode(),
-                );
-                Ok(raw_http_to_response(resp))
+                ))
             }
-            Err(_) => Ok(raw_http_to_response(crate::http::error_404())),
+            Err(_) => Ok(body::error_404()),
         };
     }
 
@@ -413,26 +402,25 @@ async fn handle_request(
     if let Some(file) = path.strip_prefix("/_brust/css/") {
         let file = file.split('?').next().unwrap_or(file);
         if !is_safe_css_filename(file) {
-            return Ok(raw_http_to_response(crate::http::error_404()));
+            return Ok(body::error_404());
         }
         let Some(dir) = state.css_dir() else {
-            return Ok(raw_http_to_response(crate::http::error_404()));
+            return Ok(body::error_404());
         };
         let file_path = dir.join(file);
         return match tokio::fs::read(&file_path).await {
             Ok(bytes) => {
                 let accept_enc = header_str(req.headers(), "accept-encoding").unwrap_or_default();
-                let resp = static_asset_response(
+                Ok(static_asset_response(
                     &accept_enc,
                     "text/css; charset=utf-8",
                     &file_path.to_string_lossy(),
                     bytes,
                     false,
                     state.is_dev_mode(),
-                );
-                Ok(raw_http_to_response(resp))
+                ))
             }
-            Err(_) => Ok(raw_http_to_response(crate::http::error_404())),
+            Err(_) => Ok(body::error_404()),
         };
     }
 
@@ -443,15 +431,14 @@ async fn handle_request(
     {
         let ct = content_type_for(&file_path);
         let accept_enc = header_str(req.headers(), "accept-encoding").unwrap_or_default();
-        let resp = static_asset_response(
+        return Ok(static_asset_response(
             &accept_enc,
             ct,
             &file_path.to_string_lossy(),
             bytes,
             false,
             state.is_dev_mode(),
-        );
-        return Ok(raw_http_to_response(resp));
+        ));
     }
 
     // ----- action dispatch -----
@@ -467,7 +454,7 @@ async fn handle_request(
     // ----- cache invalidate -----
     if path.starts_with("/_brust/cache/invalidate") {
         if method != "POST" {
-            return Ok(raw_http_to_response(crate::http::error_405()));
+            return Ok(body::error_405());
         }
         let query = path.split_once('?').map(|(_, q)| q).unwrap_or("");
         let mut target_path: Option<String> = None;
@@ -487,20 +474,20 @@ async fn handle_request(
         } else if let Some(p) = target_path {
             cache.invalidate_path("GET", &p)
         } else {
-            return Ok(raw_http_to_response(crate::http::build_response(
+            return Ok(body::resp(
                 400,
                 "application/json",
                 &[],
                 br#"{"error":"missing path or all parameter"}"#.to_vec(),
-            )));
+            ));
         };
-        let body = format!(r#"{{"removed":{removed}}}"#);
-        return Ok(raw_http_to_response(crate::http::build_response(
+        let body_json = format!(r#"{{"removed":{removed}}}"#);
+        return Ok(body::resp(
             200,
             "application/json",
             &[],
-            body.into_bytes(),
-        )));
+            body_json.into_bytes(),
+        ));
     }
 
     // ----- SSE -----
@@ -516,7 +503,7 @@ async fn handle_request(
     // ----- SPA navigation interceptor -----
     if let Some(stripped) = path.strip_prefix("/_brust/page") {
         if method != "GET" {
-            return Ok(raw_http_to_response(crate::http::error_405()));
+            return Ok(body::error_405());
         }
         let real_path = if stripped.is_empty() { "/" } else { stripped };
         let envelope = match routes.match_path(&method, real_path, &raw) {
@@ -525,12 +512,12 @@ async fn handle_request(
                 envelope
             }
             MatchResult::NoMatch => {
-                return Ok(raw_http_to_response(crate::http::build_response(
+                return Ok(body::resp(
                     404,
                     "application/json; charset=utf-8",
                     &[],
                     br#"{"error":"not found"}"#.to_vec(),
-                )));
+                ));
             }
         };
         return Ok(dispatch_streaming(&pool, envelope, "navigation", None).await);
@@ -540,7 +527,7 @@ async fn handle_request(
     let (envelope, route_id) = match routes.match_path(&method, &path, &raw) {
         MatchResult::Matched { envelope, route_id } => (envelope, route_id),
         MatchResult::NoMatch => {
-            return Ok(raw_http_to_response(crate::http::error_404()));
+            return Ok(body::error_404());
         }
     };
 
@@ -553,7 +540,7 @@ async fn handle_request(
         && let Some(bytes) = cache.get(key)
     {
         // Cached bytes are a complete framed HTTP/1.1 response.
-        return Ok(raw_http_to_response(bytes));
+        return Ok(body::response_from_framed_bytes(bytes));
     }
 
     // Native (jinja) routes: single-chunk fast lane, never cache.
@@ -602,7 +589,7 @@ async fn handle_action(
     let rel = rel_owned.as_str();
     let m = match crate::routing::action::Method::from_http(method) {
         Some(m) => m,
-        None => return Ok(raw_http_to_response(crate::http::error_405())),
+        None => return Ok(body::error_405()),
     };
     let outcome = state.with_action_router(|r| r.at(m, rel));
     use crate::routing::action::MatchOutcome;
@@ -612,9 +599,9 @@ async fn handle_action(
             params,
         } => (endpoint_id, params),
         MatchOutcome::MethodNotAllowed => {
-            return Ok(raw_http_to_response(crate::http::error_405()));
+            return Ok(body::error_405());
         }
-        MatchOutcome::NotFound => return Ok(raw_http_to_response(crate::http::error_404())),
+        MatchOutcome::NotFound => return Ok(body::error_404()),
     };
 
     // Body handling. RFC 7230 §3.3.3: absent CL and TE means no body. With hyper
@@ -631,15 +618,15 @@ async fn handle_action(
     if let Some(cl) = header_str(&headers, "content-length").and_then(|s| s.parse::<usize>().ok())
         && cl > tuning().max_action_body_bytes
     {
-        return Ok(raw_http_to_response(crate::http::error_413()));
+        return Ok(body::error_413());
     }
 
     let body_bytes = match http_body_util::BodyExt::collect(req.into_body()).await {
         Ok(c) => c.to_bytes(),
-        Err(_) => return Ok(raw_http_to_response(crate::http::error_400())),
+        Err(_) => return Ok(body::error_400()),
     };
     if body_bytes.len() > tuning().max_action_body_bytes {
-        return Ok(raw_http_to_response(crate::http::error_413()));
+        return Ok(body::error_413());
     }
 
     let body_text_string: Option<String>;
@@ -653,7 +640,7 @@ async fn handle_action(
                 body_text_string = Some(s.to_string());
                 body_b64_string = None;
             }
-            Err(_) => return Ok(raw_http_to_response(crate::http::error_400())),
+            Err(_) => return Ok(body::error_400()),
         }
     } else if ct_lower.starts_with("multipart/form-data") {
         use base64::Engine as _;
@@ -661,7 +648,7 @@ async fn handle_action(
         body_text_string = None;
         body_b64_string = Some(b64);
     } else {
-        return Ok(raw_http_to_response(crate::http::error_415()));
+        return Ok(body::error_415());
     }
 
     let id_str = endpoint_id.to_string();
@@ -692,7 +679,7 @@ async fn handle_mcp(
     raw: &[u8],
 ) -> Result<Response<ResponseBody>, Infallible> {
     if method != "POST" {
-        return Ok(raw_http_to_response(crate::http::error_405()));
+        return Ok(body::error_405());
     }
     let headers = req.headers().clone();
     let content_type = header_str(&headers, "content-type").unwrap_or_default();
@@ -700,29 +687,29 @@ async fn handle_mcp(
         .to_ascii_lowercase()
         .starts_with("application/json")
     {
-        return Ok(raw_http_to_response(crate::http::error_415()));
+        return Ok(body::error_415());
     }
     // Preserve the historical 411 (Content-Length required) semantics: an MCP
     // POST must carry an explicit Content-Length.
     if header_str(&headers, "content-length").is_none() {
-        return Ok(raw_http_to_response(crate::http::error_411()));
+        return Ok(body::error_411());
     }
     if let Some(cl) = header_str(&headers, "content-length").and_then(|s| s.parse::<usize>().ok())
         && cl > tuning().max_action_body_bytes
     {
-        return Ok(raw_http_to_response(crate::http::error_413()));
+        return Ok(body::error_413());
     }
 
     let body_bytes = match http_body_util::BodyExt::collect(req.into_body()).await {
         Ok(c) => c.to_bytes(),
-        Err(_) => return Ok(raw_http_to_response(crate::http::error_400())),
+        Err(_) => return Ok(body::error_400()),
     };
     if body_bytes.len() > tuning().max_action_body_bytes {
-        return Ok(raw_http_to_response(crate::http::error_413()));
+        return Ok(body::error_413());
     }
     let body_str = match std::str::from_utf8(&body_bytes) {
         Ok(s) => s,
-        Err(_) => return Ok(raw_http_to_response(crate::http::error_400())),
+        Err(_) => return Ok(body::error_400()),
     };
 
     let envelope = crate::routing::routes::build_mcp_envelope(method, path, body_str, raw);
@@ -738,7 +725,7 @@ async fn handle_sse(
     raw: &[u8],
 ) -> Result<Response<ResponseBody>, Infallible> {
     if method != "GET" {
-        return Ok(raw_http_to_response(crate::http::error_405()));
+        return Ok(body::error_405());
     }
     let accept = crate::server::header_from_raw(raw, "accept").unwrap_or_default();
     let accept_lower = accept.to_ascii_lowercase();
@@ -746,12 +733,12 @@ async fn handle_sse(
         || accept_lower.contains("text/event-stream")
         || accept_lower.trim() == "*/*";
     if !accept_ok {
-        return Ok(raw_http_to_response(crate::http::build_response(
+        return Ok(body::resp(
             406,
             "text/plain",
             &[],
             b"406 Not Acceptable".to_vec(),
-        )));
+        ));
     }
 
     let conn_id = crate::realtime::sse::next_conn_id();
@@ -768,7 +755,7 @@ async fn handle_sse(
 
     let Some(entry) = pool.pick_least_busy() else {
         crate::realtime::sse::registry().lock().remove(&conn_id);
-        return Ok(raw_http_to_response(crate::http::error_500()));
+        return Ok(body::error_500());
     };
     let envelope = crate::routing::routes::build_sse_envelope(method, path, raw, conn_id);
     let envelope_json = match serde_json::to_string(&envelope) {
@@ -776,7 +763,7 @@ async fn handle_sse(
         Err(e) => {
             error!(conn_id, error = %e, "sse envelope serialize failed");
             crate::realtime::sse::registry().lock().remove(&conn_id);
-            return Ok(raw_http_to_response(crate::http::error_500()));
+            return Ok(body::error_500());
         }
     };
 
@@ -808,20 +795,19 @@ async fn handle_sse(
                 "sse open_tx sender dropped before signal — JS crash?"
             );
             crate::realtime::sse::registry().lock().remove(&conn_id);
-            return Ok(raw_http_to_response(crate::http::error_500()));
+            return Ok(body::error_500());
         }
         Err(_) => {
             warn!(conn_id, "sse open signal timeout (30s)");
             crate::realtime::sse::registry().lock().remove(&conn_id);
-            return Ok(raw_http_to_response(crate::http::error_500()));
+            return Ok(body::error_500());
         }
     };
 
     if open.status >= 400 {
         // Middleware rejection — a regular HTTP response with the body.
         crate::realtime::sse::registry().lock().remove(&conn_id);
-        let resp = crate::http::build_response(open.status, &open.content_type, &[], open.body);
-        return Ok(raw_http_to_response(resp));
+        return Ok(body::resp(open.status, &open.content_type, &[], open.body));
     }
 
     // Open OK — return SSE headers + streaming body. The per-conn SSE task
@@ -837,7 +823,7 @@ async fn handle_sse(
         .header("cache-control", "no-store")
         .header("x-accel-buffering", "no")
         .body(channel_body(rx))
-        .unwrap_or_else(|_| raw_http_to_response(crate::http::error_500()));
+        .unwrap_or_else(|_| body::error_500());
     Ok(resp)
 }
 
@@ -852,11 +838,11 @@ async fn handle_ws(
     raw: &[u8],
 ) -> Result<Response<ResponseBody>, Infallible> {
     if method != "GET" {
-        return Ok(raw_http_to_response(crate::http::error_405()));
+        return Ok(body::error_405());
     }
     let handshake = match crate::realtime::ws::parse_ws_handshake(raw) {
         Ok(h) => h,
-        Err(_) => return Ok(raw_http_to_response(crate::http::error_400())),
+        Err(_) => return Ok(body::error_400()),
     };
 
     let conn_id = crate::realtime::sse::next_conn_id();
@@ -888,7 +874,7 @@ async fn handle_ws(
     } else {
         let Some(entry) = pool.pick_least_busy() else {
             crate::realtime::ws::registry().lock().remove(&conn_id);
-            return Ok(raw_http_to_response(crate::http::error_500()));
+            return Ok(body::error_500());
         };
         let envelope = crate::routing::routes::build_ws_envelope(
             method,
@@ -902,7 +888,7 @@ async fn handle_ws(
             Err(e) => {
                 error!(conn_id, error = %e, "ws envelope serialize failed");
                 crate::realtime::ws::registry().lock().remove(&conn_id);
-                return Ok(raw_http_to_response(crate::http::error_500()));
+                return Ok(body::error_500());
             }
         };
         {
@@ -915,7 +901,7 @@ async fn handle_ws(
             {
                 error!(worker_id = entry.id, error = %e, "ws dispatch failed");
                 crate::realtime::ws::registry().lock().remove(&conn_id);
-                return Ok(raw_http_to_response(crate::http::error_500()));
+                return Ok(body::error_500());
             }
         }
         match tokio::time::timeout(Duration::from_secs(30), open_rx).await {
@@ -926,20 +912,19 @@ async fn handle_ws(
                     "ws open_tx sender dropped before signal — JS crash?"
                 );
                 crate::realtime::ws::registry().lock().remove(&conn_id);
-                return Ok(raw_http_to_response(crate::http::error_500()));
+                return Ok(body::error_500());
             }
             Err(_) => {
                 warn!(conn_id, "ws open signal timeout (30s)");
                 crate::realtime::ws::registry().lock().remove(&conn_id);
-                return Ok(raw_http_to_response(crate::http::error_500()));
+                return Ok(body::error_500());
             }
         }
     };
 
     if open.status != 101 {
         crate::realtime::ws::registry().lock().remove(&conn_id);
-        let resp = crate::http::build_response(open.status, &open.content_type, &[], open.body);
-        return Ok(raw_http_to_response(resp));
+        return Ok(body::resp(open.status, &open.content_type, &[], open.body));
     }
 
     // 101 happy path: take the upgrade future BEFORE building the response.
@@ -958,7 +943,7 @@ async fn handle_ws(
     }
     let resp = builder
         .body(empty_body())
-        .unwrap_or_else(|_| raw_http_to_response(crate::http::error_500()));
+        .unwrap_or_else(|_| body::error_500());
 
     // Drive the upgrade + ws loop once hyper completes the 101.
     tokio::spawn(async move {
@@ -1045,10 +1030,10 @@ fn serialize_envelope<E: serde::Serialize>(
         std::io::Cursor::new(unsafe { std::slice::from_raw_parts_mut(buf_ptr, buf_cap) });
     if let Err(e) = serde_json::to_writer(&mut cursor, envelope) {
         if e.is_io() {
-            return Err(Box::new(raw_http_to_response(crate::http::error_413())));
+            return Err(Box::new(body::error_413()));
         }
         error!(worker_id = entry.id, label, error = %e, "envelope serialization failed");
-        return Err(Box::new(raw_http_to_response(crate::http::error_500())));
+        return Err(Box::new(body::error_500()));
     }
     // Saturate rather than truncate: an over-4GB length becomes u32::MAX, which
     // the caller's existing size/is_io() 413 check then rejects, instead of
@@ -1057,11 +1042,14 @@ fn serialize_envelope<E: serde::Serialize>(
 }
 
 /// Decode a fast-lane SAB framed response `[meta_len][meta][body]` into the
-/// final HTTP/1.1 response bytes. Returns the bytes (for cache + body).
-fn decode_fast_lane(buf: &[u8]) -> Result<Vec<u8>, &'static str> {
+/// parsed `ChunkMeta` + owned body bytes. Callers build the typed Response (and
+/// the cache's framed bytes when caching) from these parts.
+fn decode_fast_lane(
+    buf: &[u8],
+) -> Result<(crate::render::stream::ChunkMeta, Vec<u8>), &'static str> {
     crate::render::stream::split_meta(buf).and_then(|(meta_slice, body)| {
         serde_json::from_slice::<crate::render::stream::ChunkMeta>(meta_slice)
-            .map(|meta| crate::render::stream::build_single_response_bytes(&meta, body))
+            .map(|meta| (meta, body.to_vec()))
             .map_err(|_| "fast-lane meta JSON parse failed")
     })
 }
@@ -1080,10 +1068,10 @@ where
     let claim = match claim_or_wait(pool, || pool.try_claim_render_lockfree()).await {
         Ok(c) => c,
         Err(ClaimWaitErr::NoWorkers) => {
-            return raw_http_to_response(crate::http::error_503("no workers"));
+            return body::error_503("no workers");
         }
         Err(ClaimWaitErr::Timeout) => {
-            return raw_http_to_response(crate::http::error_503("all workers busy"));
+            return body::error_503("all workers busy");
         }
     };
     let entry = Arc::clone(claim.entry());
@@ -1107,17 +1095,12 @@ where
                 error!("no workers left after enqueue failure — terminating process");
                 std::process::exit(1);
             }
-            return raw_http_to_response(crate::http::build_response(
-                502,
-                "text/plain",
-                &[],
-                b"bad gateway".to_vec(),
-            ));
+            return body::resp(502, "text/plain", &[], b"bad gateway".to_vec());
         }
         Err(e @ crate::render::RenderError::PromiseRejected(_)) => {
             error!(worker_id = entry.id, label, error = %e,
                    "render tsfn JS Promise rejected — worker still alive");
-            return raw_http_to_response(crate::http::error_500());
+            return body::error_500();
         }
     };
 
@@ -1129,7 +1112,7 @@ where
             buf_len = entry.dispatch.buf_len(),
             "single-chunk dispatch got invalid resp_len (0 = worker used chunk channel)"
         );
-        return raw_http_to_response(crate::http::error_500());
+        return body::error_500();
     }
 
     // SAFETY: render Promise resolved (happens-before via napi tsfn.await), JS
@@ -1137,7 +1120,7 @@ where
     let (buf_ptr, _cap) = entry.dispatch.buf();
     let buf = unsafe { std::slice::from_raw_parts(buf_ptr, resp_len as usize) };
     match decode_fast_lane(buf) {
-        Ok(resp) => raw_http_to_response(resp),
+        Ok((meta, body_bytes)) => crate::render::stream::response_from_meta(&meta, body_bytes),
         Err(e) => {
             error!(
                 worker_id = entry.id,
@@ -1145,7 +1128,7 @@ where
                 error = e,
                 "single-chunk response decode failed"
             );
-            raw_http_to_response(crate::http::error_500())
+            body::error_500()
         }
     }
 }
@@ -1172,10 +1155,10 @@ where
     let claim = match claim_or_wait(pool, || pool.try_claim_render(chunk_tx.clone())).await {
         Ok(c) => c,
         Err(ClaimWaitErr::NoWorkers) => {
-            return raw_http_to_response(crate::http::error_503("no workers"));
+            return body::error_503("no workers");
         }
         Err(ClaimWaitErr::Timeout) => {
-            return raw_http_to_response(crate::http::error_503("all workers busy"));
+            return body::error_503("all workers busy");
         }
     };
     let entry = Arc::clone(claim.entry());
@@ -1225,8 +1208,7 @@ where
                     crate::render::pool::RenderChunk::Final { ack } => {
                         let _ = ack.send(());
                         let meta = crate::render::stream::ChunkMeta::default();
-                        let resp = crate::render::stream::build_single_response_bytes(&meta, b"");
-                        return raw_http_to_response(resp);
+                        return crate::render::stream::response_from_meta(&meta, Vec::new());
                     }
                 };
                 let (meta, body_off) = match parse_chunk_meta(&data, &entry, label) {
@@ -1272,11 +1254,12 @@ where
                 // Buffered (Content-Length).
                 let _ = ack.send(());
                 if is_final {
-                    let resp = crate::render::stream::build_single_response_bytes(&meta, &body);
                     if let Some(wb) = cache_writeback {
-                        wb.cache.insert(wb.key, resp.clone(), wb.ttl);
+                        let framed =
+                            crate::render::stream::build_single_response_bytes(&meta, &body);
+                        wb.cache.insert(wb.key, framed, wb.ttl);
                     }
-                    return raw_http_to_response(resp);
+                    return crate::render::stream::response_from_meta(&meta, body);
                 }
                 // Keep draining until Final / render resolution.
                 let mut buffered = body;
@@ -1311,11 +1294,12 @@ where
                         }
                     }
                 }
-                let resp = crate::render::stream::build_single_response_bytes(&meta, &buffered);
                 if let Some(wb) = cache_writeback {
-                    wb.cache.insert(wb.key, resp.clone(), wb.ttl);
+                    let framed =
+                        crate::render::stream::build_single_response_bytes(&meta, &buffered);
+                    wb.cache.insert(wb.key, framed, wb.ttl);
                 }
-                return raw_http_to_response(resp);
+                return crate::render::stream::response_from_meta(&meta, buffered);
             }
             outcome = &mut render_future => {
                 match outcome {
@@ -1326,32 +1310,32 @@ where
                                 error!(worker_id = entry.id, label, len,
                                        buf_len = entry.dispatch.buf_len(),
                                        "fast-lane resp_len exceeds SAB capacity");
-                                return raw_http_to_response(crate::http::error_500());
+                                return body::error_500();
                             }
                             let (buf_ptr, _cap) = entry.dispatch.buf();
                             let buf = unsafe { std::slice::from_raw_parts(buf_ptr, len) };
                             match decode_fast_lane(buf) {
-                                Ok(resp) => {
+                                Ok((meta, body_bytes)) => {
                                     if let Some(wb) = cache_writeback {
-                                        wb.cache.insert(wb.key, resp.clone(), wb.ttl);
+                                        let framed = crate::render::stream::build_single_response_bytes(&meta, &body_bytes);
+                                        wb.cache.insert(wb.key, framed, wb.ttl);
                                     }
-                                    return raw_http_to_response(resp);
+                                    return crate::render::stream::response_from_meta(&meta, body_bytes);
                                 }
                                 Err(e) => {
                                     error!(worker_id = entry.id, label, error = e,
                                            "fast-lane response decode failed");
-                                    return raw_http_to_response(crate::http::error_500());
+                                    return body::error_500();
                                 }
                             }
                         }
                         let meta = crate::render::stream::ChunkMeta::default();
-                        let resp = crate::render::stream::build_single_response_bytes(&meta, b"");
-                        return raw_http_to_response(resp);
+                        return crate::render::stream::response_from_meta(&meta, Vec::new());
                     }
                     RenderOutcome::PromiseRejected(e) => {
                         error!(worker_id = entry.id, label, error = %e,
                                "render tsfn JS Promise rejected — worker still alive");
-                        return raw_http_to_response(crate::http::error_500());
+                        return body::error_500();
                     }
                     RenderOutcome::EnqueueFailed(e) => {
                         error!(worker_id = entry.id, label, error = %e,
@@ -1361,9 +1345,7 @@ where
                             error!("no workers left after enqueue failure — terminating process");
                             std::process::exit(1);
                         }
-                        return raw_http_to_response(crate::http::build_response(
-                            502, "text/plain", &[], b"bad gateway".to_vec(),
-                        ));
+                        return body::resp(502, "text/plain", &[], b"bad gateway".to_vec());
                     }
                 }
             }
@@ -1389,14 +1371,14 @@ fn parse_chunk_meta(
         Ok(x) => x,
         Err(e) => {
             error!(worker_id = entry.id, label, error = e, "split_meta failed");
-            return Err(Box::new(raw_http_to_response(crate::http::error_500())));
+            return Err(Box::new(body::error_500()));
         }
     };
     let parsed: crate::render::stream::ChunkMeta = match serde_json::from_slice(meta_slice) {
         Ok(m) => m,
         Err(e) => {
             error!(worker_id = entry.id, label, error = %e, "meta JSON parse failed");
-            return Err(Box::new(raw_http_to_response(crate::http::error_500())));
+            return Err(Box::new(body::error_500()));
         }
     };
     let body_off = data.len() - body.len();
@@ -1430,7 +1412,7 @@ fn chunked_response_from_meta(
     }
     builder
         .body(channel_body(rx))
-        .unwrap_or_else(|_| raw_http_to_response(crate::http::error_500()))
+        .unwrap_or_else(|_| body::error_500())
 }
 
 /// Pump remaining chunks of a chunked (Suspense) stream into the body channel.

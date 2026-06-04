@@ -2,7 +2,7 @@
 //! module stays focused on request dispatch. Content-type detection, safe
 //! filename validation, percent-decoding, and cache-control policy live here.
 
-use crate::http;
+use crate::server::body::{ResponseBody, resp, resp_head};
 
 /// `Cache-Control` for static assets (`/_brust/islands/*`, `/_brust/css/*`).
 /// Dev → `no-store`: chunk URLs are unhashed (`Counter.js`), so a hot-reload
@@ -18,8 +18,8 @@ pub(crate) fn asset_cache_control(dev: bool) -> &'static str {
 /// Build a static-asset response: negotiate gzip, set Cache-Control + Vary, and
 /// Content-Encoding when compressed. `path` is the on-disk path (cache key).
 /// `accept_encoding` is the request's `Accept-Encoding` header value (or "").
-/// Returns the raw HTTP/1.1 response bytes (status line + headers + body), so
-/// the hyper service wraps it in a `BoxBody` via the response-from-raw helper.
+/// Returns a typed `http::Response<ResponseBody>` built directly (hyper owns
+/// Content-Length / Connection / Date).
 pub(crate) fn static_asset_response(
     accept_encoding: &str,
     content_type: &str,
@@ -27,7 +27,7 @@ pub(crate) fn static_asset_response(
     bytes: Vec<u8>,
     head: bool,
     dev: bool,
-) -> Vec<u8> {
+) -> http::Response<ResponseBody> {
     let (body, encoding) = crate::http::compress::maybe_compress(
         Some(accept_encoding),
         content_type,
@@ -48,12 +48,12 @@ pub(crate) fn static_asset_response(
     if let Some(enc) = encoding {
         extra.push(("Content-Encoding".to_string(), enc.to_string()));
     }
-    // HEAD: same headers as the GET (incl. the content-length the GET body would
-    // have produced — compression already applied) but no entity body.
+    // HEAD: same headers as the GET (Cache-Control / Vary / Content-Encoding)
+    // but no entity body. Content-Length is hyper-owned either way.
     if head {
-        http::build_response_head(200, content_type, &extra, body.len())
+        resp_head(200, content_type, &extra)
     } else {
-        http::build_response(200, content_type, &extra, body)
+        resp(200, content_type, &extra, body)
     }
 }
 

@@ -69,6 +69,48 @@ pub(crate) fn build_single_response_bytes(meta: &ChunkMeta, body: &[u8]) -> Vec<
     out
 }
 
+/// Typed-Response equivalent of [`build_single_response_bytes`] for the
+/// buffered (Content-Length) fast-lane/render paths. Same status, Content-Type,
+/// and meta headers, but built directly as `http::Response<ResponseBody>`.
+/// Hyper owns Content-Length, Connection, and Date, so those are NOT emitted
+/// (matching the post-hyper wire output). Header values that fail validation
+/// are skipped individually; a structurally-broken builder falls back to a
+/// canned 500.
+pub(crate) fn response_from_meta(
+    meta: &ChunkMeta,
+    body: Vec<u8>,
+) -> http::Response<crate::server::body::ResponseBody> {
+    use http::{HeaderName, HeaderValue, Response, StatusCode};
+    let status = StatusCode::from_u16(meta.status).unwrap_or(StatusCode::OK);
+    let mut builder = Response::builder().status(status);
+    if let Some(hm) = builder.headers_mut()
+        && let Ok(ct) = HeaderValue::from_str(&meta.content_type)
+    {
+        hm.insert(http::header::CONTENT_TYPE, ct);
+    }
+    for (k, v) in &meta.headers {
+        // Content-Type already set; framing headers are hyper-owned.
+        if k.eq_ignore_ascii_case("content-type")
+            || k.eq_ignore_ascii_case("content-length")
+            || k.eq_ignore_ascii_case("transfer-encoding")
+            || k.eq_ignore_ascii_case("connection")
+        {
+            continue;
+        }
+        if let Some(hm) = builder.headers_mut()
+            && let (Ok(name), Ok(val)) = (
+                HeaderName::from_bytes(k.as_bytes()),
+                HeaderValue::from_str(v),
+            )
+        {
+            hm.append(name, val);
+        }
+    }
+    builder
+        .body(crate::server::body::full_body(body))
+        .unwrap_or_else(|_| crate::server::body::canned_500())
+}
+
 fn status_reason(code: u16) -> &'static str {
     match code {
         200 => "OK",
