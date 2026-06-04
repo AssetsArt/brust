@@ -183,6 +183,11 @@ interface ForEntry {
   disposers: Array<() => void>
 }
 
+// One x-for mount per (parent, listPath): the SSR seed renders N sibling nodes
+// each carrying x-for, and bindTree's parent loop visits every one — without this
+// guard, bindFor would mount the list N times.
+const forMountGuard = new WeakMap<Node, Set<string>>()
+
 // `x-for="item in member"` — the element is the template. Replace it with a comment
 // anchor. Without a `by` key clause this is a full re-render on each list change
 // (legacy v1, now with optional plain index). With `by <keypath>...` it is an opt-in
@@ -197,6 +202,27 @@ function bindFor(tplEl: HTMLElement, instance: Instance, disposers: Array<() => 
   const { itemName, indexName, listPath, keyPaths } = expr
   const parent = tplEl.parentNode
   if (!parent) return
+
+  // Idempotency: the SSR seed renders N sibling x-for nodes; bindTree's parent loop
+  // visits each. Mount the list ONCE per (parent, listPath); later siblings no-op.
+  let mountedSet = forMountGuard.get(parent)
+  if (!mountedSet) {
+    mountedSet = new Set()
+    forMountGuard.set(parent, mountedSet)
+  }
+  if (mountedSet.has(listPath)) return
+  mountedSet.add(listPath)
+  disposers.push(() => mountedSet?.delete(listPath)) // re-mount (SPA nav) works again
+
+  // ---- SSR adopt: keyed x-for whose seed nodes were server-rendered ----
+  if (keyPaths) {
+    const seeds = collectSeeds(parent, keyPaths, tplEl.getAttribute('x-for') ?? '')
+    if (seeds.length > 0) {
+      bindForAdopt(seeds, instance, parent, expr, disposers)
+      return
+    }
+  }
+
   const anchor = tplEl.ownerDocument.createComment(`x-for:${itemName}`)
   parent.insertBefore(anchor, tplEl)
   tplEl.removeAttribute('x-for')
@@ -237,8 +263,25 @@ function bindFor(tplEl: HTMLElement, instance: Instance, disposers: Array<() => 
     return
   }
 
-  // ---- keyed reconcile ----
-  let map = new Map<string, ForEntry>()
+  // ---- keyed reconcile (client-only x-for: no SSR seed) ----
+  installKeyedReconcile(instance, parent, expr, template, anchor, new Map(), disposers)
+}
+
+/** The 0.1.28 keyed reconcile, parameterized by an INITIAL `map` (empty for a
+ *  client-only x-for; pre-populated with adopted SSR seeds for an SSR-seeded one)
+ *  and a `template`/`anchor` already derived by the caller. */
+function installKeyedReconcile(
+  instance: Instance,
+  parent: Node,
+  expr: ForExpr,
+  template: HTMLElement,
+  anchor: Comment,
+  initialMap: Map<string, ForEntry>,
+  disposers: Array<() => void>,
+): void {
+  const { itemName, indexName, listPath, keyPaths } = expr
+  const keys = keyPaths as string[] // keyed path → always defined
+  let live = initialMap
   const disposeEntry = (e: ForEntry) => {
     for (const d of e.disposers.splice(0)) {
       try {
@@ -256,25 +299,21 @@ function bindFor(tplEl: HTMLElement, instance: Instance, disposers: Array<() => 
       const next = new Map<string, ForEntry>()
       for (let i = 0; i < arr.length; i++) {
         const item = arr[i]
-        const probe: Instance = { [itemName]: item } // plain scope for key extraction
+        const probe: Instance = { [itemName]: item }
         if (indexName) probe[indexName] = i
-        // resolveRaw (NOT read): never calls signal getters → the reconcile effect
-        // tracks ONLY the list signal, even if a list item nests a signal on a key
-        // path. Keys are plain identity data by contract; this just makes the
-        // no-self-retrigger invariant hold unconditionally.
-        let key = keyPaths.map((p) => String(resolveRaw(probe, p))).join('\x00')
+        let key = keys.map((p) => String(resolveRaw(probe, p))).join('\x00')
         if (next.has(key)) {
           console.warn(`[brust] duplicate x-for key "${key}"`)
           key = `${key}\x00#${i}`
         }
-        const existing = map.get(key)
+        const existing = live.get(key)
         if (existing) {
           batch(() => {
             existing.itemSig.set(item)
             existing.idxSig?.set(i)
           })
-          parent.insertBefore(existing.node, anchor) // move into new order
-          map.delete(key)
+          parent.insertBefore(existing.node, anchor)
+          live.delete(key)
           next.set(key, existing)
         } else {
           const clone = template.cloneNode(true) as HTMLElement
@@ -289,15 +328,113 @@ function bindFor(tplEl: HTMLElement, instance: Instance, disposers: Array<() => 
           next.set(key, { node: clone, itemSig, idxSig, disposers: entryDisposers })
         }
       }
-      for (const e of map.values()) disposeEntry(e) // not reused this pass → gone
-      map = next
+      for (const e of live.values()) disposeEntry(e)
+      live = next
     }),
   )
-  // component-unmount teardown of all live entries (mirrors legacy `clear`)
   disposers.push(() => {
-    for (const e of map.values()) disposeEntry(e)
-    map.clear()
+    for (const e of live.values()) disposeEntry(e)
+    live.clear()
   })
+}
+
+/** Direct-child seed nodes of THIS x-for (matched by the identical compiled
+ *  `x-for` string) carrying the SSR key attr (single `data-x-key`, composite
+ *  `data-x-key-0`). Only direct children — the key attr lives on the for-item
+ *  root, never a descendant. The x-for match prevents a sibling x-for list under
+ *  the same parent from having its seeds consumed by this one. */
+function collectSeeds(parent: Node, keyPaths: string[], xforRaw: string): HTMLElement[] {
+  const sel = keyPaths.length > 1 ? '[data-x-key-0]' : '[data-x-key]'
+  const out: HTMLElement[] = []
+  for (const c of Array.from((parent as Element).children ?? [])) {
+    if (c instanceof HTMLElement && c.matches(sel) && c.getAttribute('x-for') === xforRaw) {
+      out.push(c)
+    }
+  }
+  return out
+}
+
+/** The seed's key from markup — must match the reconcile's computed key (single
+ *  `data-x-key`, OR `data-x-key-*` joined with `\x00` IN JS — NUL never in HTML). */
+function seedKey(node: HTMLElement, keyPaths: string[]): string {
+  if (keyPaths.length > 1) {
+    return keyPaths.map((_, i) => node.getAttribute(`data-x-key-${i}`) ?? '').join('\x00')
+  }
+  return node.getAttribute('data-x-key') ?? ''
+}
+
+function stripKeyAttrs(el: HTMLElement, keyPaths: string[]): void {
+  if (keyPaths.length > 1) {
+    for (let i = 0; i < keyPaths.length; i++) el.removeAttribute(`data-x-key-${i}`)
+  } else {
+    el.removeAttribute('data-x-key')
+  }
+}
+
+/** Bind an adopted seed node as a plain subtree. The node KEEPS its x-for attr so
+ *  the parent bindTree loop's later re-visit routes back to bindFor → mount guard
+ *  no-ops; do NOT route the node itself through bindFor again here. */
+function bindAdoptedNode(node: HTMLElement, scope: Instance, disposers: Array<() => void>): void {
+  bindAttrs(node, scope, disposers)
+  for (const child of Array.from(node.children)) {
+    if (!(child instanceof HTMLElement)) continue
+    if (child.hasAttribute('x-data')) continue
+    bindTree(child, scope, disposers)
+  }
+}
+
+/** Adopt SSR-seeded keyed x-for: reuse the seed nodes (identity preserved), seed
+ *  each item-signal from the matching client item by key, wire reactivity, then
+ *  hand the pre-populated map to the shared reconcile (first run = all reused). */
+function bindForAdopt(
+  seeds: HTMLElement[],
+  instance: Instance,
+  parent: Node,
+  expr: ForExpr,
+  disposers: Array<() => void>,
+): void {
+  const { itemName, indexName, listPath, keyPaths } = expr
+  const keys = keyPaths as string[]
+  // template for future creates: stripped clone of the first seed.
+  const template = seeds[0].cloneNode(true) as HTMLElement
+  template.removeAttribute('x-for')
+  stripKeyAttrs(template, keys)
+  // anchor AFTER the last seed so future inserts keep document order.
+  const last = seeds[seeds.length - 1]
+  const anchor = last.ownerDocument.createComment(`x-for:${itemName}`)
+  parent.insertBefore(anchor, last.nextSibling)
+  // index the client list by key (same computation as the reconcile).
+  const list = read(instance, listPath)
+  const arr = Array.isArray(list) ? list : []
+  const byKey = new Map<string, { item: unknown; idx: number }>()
+  for (let i = 0; i < arr.length; i++) {
+    const probe: Instance = { [itemName]: arr[i] }
+    if (indexName) probe[indexName] = i
+    const k = keys.map((p) => String(resolveRaw(probe, p))).join('\x00')
+    if (!byKey.has(k)) byKey.set(k, { item: arr[i], idx: i })
+  }
+  // adopt each seed in place.
+  const map = new Map<string, ForEntry>()
+  for (let si = 0; si < seeds.length; si++) {
+    const node = seeds[si] as HTMLElement
+    let key = seedKey(node, keys)
+    if (map.has(key)) {
+      // mirror the reconcile's dup-key handling: suffix so the entry is tracked
+      // (and disposed on the first reconcile, since no client item matches it).
+      console.warn(`[brust] duplicate x-for seed key "${key}"`)
+      key = `${key}\x00#${si}`
+    }
+    const match = byKey.get(key)
+    const itemSig = signal(match ? match.item : undefined)
+    const idxSig = indexName ? signal(match ? match.idx : 0) : undefined
+    const childScope: Instance = Object.create(instance)
+    childScope[itemName] = itemSig
+    if (indexName && idxSig) childScope[indexName] = idxSig
+    const entryDisposers: Array<() => void> = []
+    bindAdoptedNode(node, childScope, entryDisposers)
+    map.set(key, { node, itemSig, idxSig, disposers: entryDisposers })
+  }
+  installKeyedReconcile(instance, parent, expr, template, anchor, map, disposers)
 }
 
 function bindAttrs(el: HTMLElement, scope: Instance, disposers: Array<() => void>): void {

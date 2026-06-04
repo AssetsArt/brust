@@ -407,6 +407,128 @@ describe('x-for', () => {
   })
 })
 
+describe('x-for SSR adopt', () => {
+  test('adopt reuses node identity (no double-mount)', async () => {
+    const win = setupDom(
+      '<div id="grid" x-data="dex">' +
+        '<a x-for="c in items by c.id" data-x-key="1" href="#"><span x-text="c.label">a</span></a>' +
+        '<a x-for="c in items by c.id" data-x-key="2" href="#"><span x-text="c.label">b</span></a>' +
+        '</div>',
+    )
+    const { register, start } = await import(`./runtime.ts?adopt1=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    register('dex', ({ props }: any) => ({ items: signal(props.items) }))
+    // seed props via x-props on the host so the behavior gets items
+    win.document.getElementById('grid')!.setAttribute(
+      'x-props',
+      JSON.stringify({
+        items: [
+          { id: 1, label: 'a' },
+          { id: 2, label: 'b' },
+        ],
+      }),
+    )
+    const grid = win.document.getElementById('grid')!
+    const beforeFirst = grid.querySelectorAll('a')[0]!
+    start(win.document)
+    const after = grid.querySelectorAll('#grid > a')
+    expect(after).toHaveLength(2) // NOT 4 — no double-mount
+    expect(after[0]).toBe(beforeFirst) // SAME object — adopted, not re-cloned
+  })
+
+  test('reactivity wired onto adopted node', async () => {
+    const win = setupDom(
+      '<div id="grid" x-data="dex2" x-props=\'{"items":[{"id":1,"label":"a"},{"id":2,"label":"b"}]}\'>' +
+        '<a x-for="c in items by c.id" data-x-key="1"><span x-text="c.label">a</span></a>' +
+        '<a x-for="c in items by c.id" data-x-key="2"><span x-text="c.label">b</span></a>' +
+        '</div>',
+    )
+    const { register, start } = await import(`./runtime.ts?adopt2=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const items = signal<any>([
+      { id: 1, label: 'a' },
+      { id: 2, label: 'b' },
+    ])
+    register('dex2', () => ({ items }))
+    start(win.document)
+    items.set([
+      { id: 1, label: 'A' },
+      { id: 2, label: 'b' },
+    ])
+    const span = win.document.querySelector('a[data-x-key="1"] span')!
+    expect(span.textContent).toBe('A')
+  })
+
+  test('filter reconciles, kept node REUSED', async () => {
+    const win = setupDom(
+      '<div id="grid" x-data="dex3">' +
+        '<a x-for="c in items by c.id" data-x-key="1"><span x-text="c.label">a</span></a>' +
+        '<a x-for="c in items by c.id" data-x-key="2"><span x-text="c.label">b</span></a>' +
+        '</div>',
+    )
+    const { register, start } = await import(`./runtime.ts?adopt3=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const items = signal<any>([
+      { id: 1, label: 'a' },
+      { id: 2, label: 'b' },
+    ])
+    register('dex3', () => ({ items }))
+    start(win.document)
+    const grid = win.document.getElementById('grid')!
+    const keptId2 = grid.querySelector('a[data-x-key="2"]')!
+    items.set([{ id: 2, label: 'b' }])
+    const remaining = grid.querySelectorAll('#grid > a')
+    expect(remaining).toHaveLength(1)
+    expect(remaining[0]).toBe(keptId2) // id=2 reused
+    expect(grid.querySelector('a[data-x-key="1"]')).toBeNull() // id=1 gone
+  })
+
+  test('legacy clone-fresh unchanged (no data-x-key seed)', async () => {
+    const win = setupDom(
+      '<ul id="list" x-data="dex4"><li x-for="c in items by c.id" x-text="c.label"></li></ul>',
+    )
+    const { register, start } = await import(`./runtime.ts?adopt4=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const items = signal<any>([
+      { id: 1, label: 'a' },
+      { id: 2, label: 'b' },
+      { id: 3, label: 'c' },
+    ])
+    register('dex4', () => ({ items }))
+    const list = win.document.getElementById('list')!
+    const templateLi = list.querySelector('li')!
+    start(win.document)
+    const lis = list.querySelectorAll('#list > li')
+    expect(lis).toHaveLength(3) // one per item, freshly cloned
+    expect(Array.from(lis).map((l) => l.textContent)).toEqual(['a', 'b', 'c'])
+    expect(Array.from(lis).includes(templateLi as any)).toBe(false) // template removed, not reused
+  })
+
+  test('idempotency: 2-seed mounts once, re-set same items does not duplicate', async () => {
+    const win = setupDom(
+      '<div id="grid" x-data="dex5">' +
+        '<a x-for="c in items by c.id" data-x-key="1"><span x-text="c.label">a</span></a>' +
+        '<a x-for="c in items by c.id" data-x-key="2"><span x-text="c.label">b</span></a>' +
+        '</div>',
+    )
+    const { register, start } = await import(`./runtime.ts?adopt5=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const items = signal<any>([
+      { id: 1, label: 'a' },
+      { id: 2, label: 'b' },
+    ])
+    register('dex5', () => ({ items }))
+    start(win.document)
+    const grid = win.document.getElementById('grid')!
+    expect(grid.querySelectorAll('#grid > a')).toHaveLength(2)
+    items.set([
+      { id: 1, label: 'a' },
+      { id: 2, label: 'b' },
+    ]) // same keys
+    expect(grid.querySelectorAll('#grid > a')).toHaveLength(2) // no duplication
+  })
+})
+
 describe('parseFor', () => {
   test('grammar forms', async () => {
     const { parseFor } = await import(`./runtime.ts?pf=${Math.random()}`)
