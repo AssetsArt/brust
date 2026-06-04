@@ -46,8 +46,11 @@ export const behavior = ({ props }: { el: HTMLElement; props: unknown }) => {
   return { items, q, sortAz, onInput, setDex, setAz, countLabel }
 }
 
-// biome-ignore lint/correctness/noUnusedFunctionParameters: `items` is the SSR x-for source — the compiler resolves it through inline substitution into the page's jinja context ({% for c in items %}); it is not read in JS, only `data` (x-props) is.
-export default function DexFilter({ items, data }: { items?: Card[]; data?: string }) {
+// `items` is the loader array, written as an idiomatic `.map()` carrying a bare
+// `x-for` flag + React `key` — the compiler sugar desugars it to the SSR adopt
+// seed ({% for c in items %} + data-x-key + x-bind-href). `data` is the client
+// x-props JSON the behavior reads; the behavior re-exposes `items` as a signal.
+export default function DexFilter({ items, data }: { items: Card[]; data?: string }) {
   return (
     <section x-data="dexFilter" x-props={data}>
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -91,28 +94,27 @@ export default function DexFilter({ items, data }: { items?: Card[]; data?: stri
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
-        {/* biome-ignore lint/a11y/useValidAnchor: href is bound at hydration via x-bind-href (the template clone gets c.detailHref) */}
-        <a
-          x-for="c in items by c.id"
-          x-bind-href="c.detailHref"
-          className="group flex flex-col items-center rounded-2xl border border-slate-200 bg-white p-3 no-underline shadow-sm transition-all hover:-translate-y-0.5 hover:border-brand-500/50 hover:shadow-md dark:border-slate-800 dark:bg-slate-900"
-        >
-          <span
-            x-text="c.num"
-            className="self-start text-[11px] font-semibold tabular-nums text-slate-400"
-          />
-          {/* biome-ignore lint/a11y/useAltText: alt is bound at hydration via x-bind-alt (c.displayName) */}
-          <img
-            x-bind-src="c.artwork"
-            x-bind-alt="c.displayName"
-            loading="lazy"
-            className="h-24 w-24 object-contain transition-transform group-hover:scale-110"
-          />
-          <div
-            x-text="c.displayName"
-            className="mt-1 text-sm font-semibold text-slate-800 dark:text-slate-100"
-          />
-        </a>
+        {items.map((c) => (
+          <a
+            x-for
+            key={c.id}
+            href={c.detailHref}
+            className="group flex flex-col items-center rounded-2xl border border-slate-200 bg-white p-3 no-underline shadow-sm transition-all hover:-translate-y-0.5 hover:border-brand-500/50 hover:shadow-md dark:border-slate-800 dark:bg-slate-900"
+          >
+            <span className="self-start text-[11px] font-semibold tabular-nums text-slate-400">
+              {c.num}
+            </span>
+            <img
+              src={c.artwork}
+              alt={c.displayName}
+              loading="lazy"
+              className="h-24 w-24 object-contain transition-transform group-hover:scale-110"
+            />
+            <div className="mt-1 text-sm font-semibold text-slate-800 dark:text-slate-100">
+              {c.displayName}
+            </div>
+          </a>
+        ))}
       </div>
     </section>
   )
