@@ -22,6 +22,7 @@ const FIXTURES: &[&str] = &[
     "map_no_xfor",
     "xprops_tojson",
     "map_xprops_same_source",
+    "map_xfor_nested",
 ];
 
 #[test]
