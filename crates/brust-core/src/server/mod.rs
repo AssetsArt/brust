@@ -1208,12 +1208,23 @@ where
                     // channel, then hand the rest to a pump task.
                     let (tx, rx) = tokio::sync::mpsc::channel::<Bytes>(4);
                     if !body.is_empty() && tx.send(Bytes::from(body)).await.is_err() {
-                        // Client already gone before the opening chunk landed:
-                        // drop the claim and return early (mirrors the
-                        // disconnect handling in spawn_chunk_pump). The body
-                        // receiver is dead, so no pump is started.
+                        // Client already gone before the opening chunk landed.
+                        // We must NOT drop the claim while the render future is
+                        // still in-flight (the worker may still be writing the
+                        // SAB). ACK chunk #0, then hand off to the pump to DRAIN
+                        // the worker to completion holding the claim — the pump
+                        // sees the dead `tx` immediately and discards bytes while
+                        // ACKing until the render settles / a Final arrives.
+                        // EXCEPTION: a BytesAndFinal chunk #0 means the worker is
+                        // already done — nothing left to drain — so drop directly.
                         let _ = ack.send(());
-                        drop(claim);
+                        if !is_final {
+                            spawn_chunk_pump(render_future, chunk_rx, tx, entry, pool, label, claim);
+                        } else {
+                            drop(claim);
+                        }
+                        // The rx is dead, but hyper still gets a Response (it
+                        // discards the body).
                         return chunked_response_from_meta(&meta, rx);
                     }
                     let _ = ack.send(());
@@ -1402,23 +1413,32 @@ fn spawn_chunk_pump(
     claim: crate::render::pool::RenderClaim,
 ) {
     tokio::spawn(async move {
-        // Keep the claim alive for the stream lifetime.
+        // Keep the claim alive for the stream lifetime. INVARIANT: this claim is
+        // NOT released until the worker's render future settles or a
+        // Final/BytesAndFinal arrives. On client disconnect we DRAIN (keep
+        // receiving + ACKing chunks so the worker proceeds, discarding the bytes)
+        // rather than breaking early — breaking would free the worker while its
+        // JS render is still writing the SAB, letting a new request claim and
+        // corrupt it.
         let _claim = claim;
+        let mut client_gone = false;
         loop {
             tokio::select! {
                 biased;
                 Some(chunk) = chunk_rx.recv() => {
                     match chunk {
                         crate::render::pool::RenderChunk::Bytes { data, ack } => {
-                            if tx.send(Bytes::from(data)).await.is_err() {
-                                // Client disconnected.
-                                let _ = ack.send(());
-                                break;
+                            // Once the client is gone, stop forwarding; just keep
+                            // ACKing so the worker drains to completion.
+                            if !client_gone && tx.send(Bytes::from(data)).await.is_err() {
+                                client_gone = true;
                             }
                             let _ = ack.send(());
                         }
                         crate::render::pool::RenderChunk::BytesAndFinal { data, ack } => {
-                            let _ = tx.send(Bytes::from(data)).await;
+                            if !client_gone {
+                                let _ = tx.send(Bytes::from(data)).await;
+                            }
                             let _ = ack.send(());
                             break;
                         }
@@ -1578,5 +1598,119 @@ mod tests {
         assert_eq!(key.path, "/p");
         assert_eq!(key.sorted_query, "a=1&b=2");
         assert_eq!(key.vary_values, vec!["gzip".to_string()]);
+    }
+
+    /// Regression: RenderClaim early-drop race on mid-stream client disconnect.
+    ///
+    /// When a client disconnects mid-Suspense-stream, `spawn_chunk_pump` MUST
+    /// keep holding the worker's `RenderClaim` (draining + ACKing chunks so the
+    /// worker proceeds, discarding bytes) until the render future settles or a
+    /// `Final`/`BytesAndFinal` arrives. If it released the claim on the first
+    /// failed `tx.send` (the old bug), the worker's `idle` flag flips back to
+    /// `true` and a DIFFERENT request could claim it WHILE the old JS render is
+    /// still writing the worker's SAB → corruption / UAF.
+    ///
+    /// This drives `spawn_chunk_pump` at its narrowest seam: a real
+    /// `WorkerPool`-issued claim (so `idle`/`in_flight` are observable), a
+    /// render future we hold pending via a oneshot (modelling the in-flight JS
+    /// Promise), and a body `tx` whose `rx` we drop to simulate the dead client.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn disconnect_mid_stream_holds_claim_until_render_settles() {
+        use crate::render::dispatch::MockDispatch;
+        use crate::render::pool::{ClaimResult, RenderChunk, WorkerPool};
+        use std::sync::atomic::Ordering;
+        use tokio::sync::{mpsc, oneshot};
+
+        let pool = Arc::new(WorkerPool::new());
+        let id = pool.register(Box::new(MockDispatch::new()));
+        let entry = pool.entry(id).expect("registered worker");
+
+        // Claim the worker exactly as dispatch_streaming does.
+        let (chunk_tx, chunk_rx) = mpsc::channel::<RenderChunk>(1);
+        let claim = match pool.try_claim_render(chunk_tx.clone()) {
+            ClaimResult::Claimed(c) => c,
+            _ => panic!("expected Claimed"),
+        };
+        assert!(
+            !entry.idle.load(Ordering::Acquire),
+            "worker claimed → not idle"
+        );
+
+        // Render future modelling the in-flight JS Promise: pending until we
+        // fire `render_done`. While pending, the worker's SAB is still "owned"
+        // by this render, so the claim MUST NOT be released.
+        let (render_done, render_done_rx) = oneshot::channel::<()>();
+        let render_future: std::pin::Pin<
+            Box<dyn std::future::Future<Output = RenderOutcome> + Send>,
+        > = Box::pin(async move {
+            let _ = render_done_rx.await;
+            RenderOutcome::Resolved(0)
+        });
+
+        // Body channel; drop the receiver → client is gone, so the pump's first
+        // `tx.send` errors.
+        let (tx, rx) = mpsc::channel::<Bytes>(4);
+        drop(rx);
+
+        spawn_chunk_pump(
+            render_future,
+            chunk_rx,
+            tx,
+            Arc::clone(&entry),
+            Arc::clone(&pool),
+            "test",
+            claim,
+        );
+
+        // Send a mid-stream Bytes chunk: client is gone (tx.send fails), but the
+        // render future is STILL pending. The pump must DRAIN (ack so the worker
+        // proceeds) and KEEP the claim.
+        let (ack_tx, ack_rx) = oneshot::channel::<()>();
+        chunk_tx
+            .send(RenderChunk::Bytes {
+                data: vec![1, 2, 3],
+                ack: ack_tx,
+            })
+            .await
+            .expect("pump should still be receiving");
+        // The worker must be ACKed (it keeps producing) ...
+        ack_rx
+            .await
+            .expect("pump must ack drained chunk so worker proceeds");
+        // ... and let the pump task run to its next await (loop back to recv).
+        tokio::task::yield_now().await;
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        tokio::task::yield_now().await;
+
+        // INVARIANT: claim still held — render future has NOT settled. The buggy
+        // pump `break`s on the failed tx.send, dropping the claim here.
+        assert!(
+            !entry.idle.load(Ordering::Acquire),
+            "claim must be held while render future is pending (worker mid-write)",
+        );
+        assert!(
+            matches!(
+                pool.try_claim_render(chunk_tx.clone()),
+                ClaimResult::AllBusy
+            ),
+            "worker must NOT be re-claimable while its render is in-flight",
+        );
+
+        // Now the render settles → claim may be released.
+        let _ = render_done.send(());
+        // Let the pump observe the resolved future and drop the claim.
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(
+            entry.idle.load(Ordering::Acquire),
+            "claim must be released once the render future settles",
+        );
+        assert_eq!(
+            entry.in_flight.load(Ordering::Relaxed),
+            0,
+            "in_flight must drain after release",
+        );
     }
 }

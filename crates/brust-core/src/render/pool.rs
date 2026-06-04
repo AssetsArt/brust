@@ -107,14 +107,14 @@ impl Drop for RenderClaim {
         // INVARIANT (load-bearing): a worker must NOT be released here until its
         // render Promise has settled. Every dispatch path holds this RenderClaim
         // until after `promise.await` (fast lane) or until the chunk loop breaks
-        // on the resolved future. The ONE exception is the streaming path's
-        // mid-stream `write_all`-error early-return (dispatch_to_worker_and_
-        // stream_chunks), which can drop the claim while the worker's JS is still
-        // running — a pre-existing, streaming-only window. Do NOT add disconnect
-        // cancellation / timeouts to the render/action dispatch without first
-        // gating release on Promise settlement: doing so would let a recycled
-        // worker's new request write the SAB concurrently with the old JS still
-        // touching it (data race). See the NOTE at the streaming early-returns.
+        // on the resolved future. The streaming path's client-disconnect case is
+        // NOT an exception: instead of dropping the claim early, the chunk pump
+        // DRAINS the worker (keeps ACKing chunks, discards bytes) and holds the
+        // claim until the render future settles or a Final/BytesAndFinal arrives.
+        // Do NOT add disconnect cancellation / timeouts to the render/action
+        // dispatch without first gating release on Promise settlement: doing so
+        // would let a recycled worker's new request write the SAB concurrently
+        // with the old JS still touching it (data race).
         if !self.lockfree {
             self.entry.render_slot.lock().take();
         }
