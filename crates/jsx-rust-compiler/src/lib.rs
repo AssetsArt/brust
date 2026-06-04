@@ -4,6 +4,7 @@ mod emit_jinja;
 mod ir;
 mod lower;
 pub mod parser;
+mod xfor;
 
 use ir::JsxNode;
 use std::collections::HashMap;
