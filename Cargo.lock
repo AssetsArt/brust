@@ -92,6 +92,24 @@ dependencies = [
 name = "brust"
 version = "0.1.0"
 dependencies = [
+ "brust-core",
+ "jsx-rust-compiler",
+ "napi",
+ "napi-build",
+ "napi-derive",
+ "once_cell",
+ "parking_lot",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "brust-core"
+version = "0.1.0"
+dependencies = [
  "base64",
  "bytes",
  "flate2",
@@ -102,9 +120,6 @@ dependencies = [
  "matchit",
  "minijinja",
  "moka",
- "napi",
- "napi-build",
- "napi-derive",
  "once_cell",
  "parking_lot",
  "serde",
@@ -115,7 +130,6 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

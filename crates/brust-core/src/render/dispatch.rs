@@ -43,8 +43,18 @@ pub trait RenderDispatch: Send + Sync + 'static {
         &self,
         env: RenderEnvelope,
     ) -> Pin<Box<dyn Future<Output = Result<u32, RenderError>> + Send>>;
-    fn buf_ptr(&self) -> *mut u8;
-    fn buf_len(&self) -> usize;
+
+    /// The worker's SAB backing store as a `(ptr, len)` pair. Returned together
+    /// so a raw pointer can never be obtained without its matching capacity —
+    /// this prevents pairing a pointer from one entry with a length from another
+    /// (a mismatched-ptr/len OOB-write / use-after-free footgun).
+    fn buf(&self) -> (*mut u8, usize);
+
+    /// Just the SAB capacity, for standalone bounds checks. Defaults to the
+    /// length component of [`RenderDispatch::buf`].
+    fn buf_len(&self) -> usize {
+        self.buf().1
+    }
 }
 
 /// In-process mock for pool/render unit tests: a leaked 256 KiB buffer (no napi)
@@ -87,10 +97,7 @@ impl RenderDispatch for MockDispatch {
     ) -> Pin<Box<dyn Future<Output = Result<u32, RenderError>> + Send>> {
         Box::pin(async { Ok(0u32) })
     }
-    fn buf_ptr(&self) -> *mut u8 {
-        self.ptr
-    }
-    fn buf_len(&self) -> usize {
-        self.len
+    fn buf(&self) -> (*mut u8, usize) {
+        (self.ptr, self.len)
     }
 }

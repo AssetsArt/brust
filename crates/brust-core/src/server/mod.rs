@@ -2,18 +2,15 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::Notify;
 use tracing::{error, warn};
 
-use crate::cache::{CacheConfig, CacheKey, ResponseCache};
+use crate::cache::response_cache::{CacheConfig, CacheKey};
+use crate::config::AppState;
 use crate::http::{self, ParseError, parse_request};
-use crate::io::{IO_NAME, TcpListener, TcpStream, run_io, spawn};
-use crate::pool::WorkerPool;
-use crate::routes::{MatchResult, RouteTable};
+use crate::routing::routes::MatchResult;
+use crate::server::transport::{IO_NAME, TcpListener, TcpStream, run_io, spawn};
 
-fn current_islands_dir() -> Option<std::path::PathBuf> {
-    crate::state().islands_dir.read().clone()
-}
+pub mod transport;
 
 /// `Cache-Control` for static assets (`/_brust/islands/*`, `/_brust/css/*`).
 /// Dev → `no-store`: chunk URLs are unhashed (`Counter.js`), so a hot-reload
@@ -34,11 +31,11 @@ fn static_asset_response(
     path: &str,
     bytes: Vec<u8>,
     head: bool,
+    dev: bool,
 ) -> Vec<u8> {
-    let dev = crate::is_dev_mode();
     let accept = parse_header_value(buf, "accept-encoding");
     let (body, encoding) =
-        crate::compress::maybe_compress(accept.as_deref(), content_type, path, bytes, dev);
+        crate::http::compress::maybe_compress(accept.as_deref(), content_type, path, bytes, dev);
     let mut extra: Vec<(String, String)> = vec![(
         "Cache-Control".to_string(),
         asset_cache_control(dev).to_string(),
@@ -46,7 +43,7 @@ fn static_asset_response(
     // Vary only matters for compression-eligible types — a non-compressible asset
     // (png/woff2/…) never varies by Accept-Encoding, so omitting it keeps CDN/proxy
     // cache variants minimal.
-    if crate::compress::is_compressible(content_type) {
+    if crate::http::compress::is_compressible(content_type) {
         extra.push(("Vary".to_string(), "Accept-Encoding".to_string()));
     }
     if let Some(enc) = encoding {
@@ -93,14 +90,6 @@ fn asset_lookup_key(path_no_query: &str) -> std::borrow::Cow<'_, str> {
     } else {
         std::borrow::Cow::Borrowed(path_no_query)
     }
-}
-
-fn current_css_dir() -> Option<std::path::PathBuf> {
-    crate::state().css_dir.read().clone()
-}
-
-fn current_public_asset(url_path: &str) -> Option<std::path::PathBuf> {
-    crate::state().public_assets.read().get(url_path).cloned()
 }
 
 /// Content-Type for a static public file, keyed on its file extension
@@ -204,15 +193,7 @@ fn tuning() -> Tuning {
     TUNING.get().copied().unwrap_or_default()
 }
 
-pub fn start(
-    addr: SocketAddr,
-    ready: Arc<Notify>,
-    pool: Arc<WorkerPool>,
-    routes: Arc<RouteTable>,
-    cache: Arc<ResponseCache>,
-    conn_workers: usize,
-    tuning: Tuning,
-) {
+pub fn start(addr: SocketAddr, state: Arc<AppState>, conn_workers: usize, tuning: Tuning) {
     // Set the process-wide tunables before any connection is served. `start`
     // runs once per process (re-serve is rejected in begin_serve), so a
     // best-effort set is correct; the Err arm only fires if already set.
@@ -234,12 +215,10 @@ pub fn start(
         // accept→parse→dispatch, not OS render threads.
         for _ in 0..conn_workers {
             let rx = rx.clone();
-            let pool = pool.clone();
-            let routes = routes.clone();
-            let cache = cache.clone();
+            let state = Arc::clone(&state);
             spawn(async move {
                 while let Ok(stream) = rx.recv_async().await {
-                    handle_conn(stream, pool.clone(), routes.clone(), cache.clone()).await;
+                    handle_conn(stream, Arc::clone(&state)).await;
                 }
             });
         }
@@ -249,7 +228,7 @@ pub fn start(
         // here keeps the channel "connected" forever, masking worker death.
         drop(rx);
 
-        ready.notified().await; // wait until all napi workers have registered
+        state.ready.notified().await; // wait until all napi workers have registered
         println!("[brust] listening on {addr} (io: {IO_NAME})");
         let _ = std::io::Write::flush(&mut std::io::stdout());
 
@@ -270,12 +249,14 @@ pub fn start(
     });
 }
 
-async fn handle_conn(
-    mut s: TcpStream,
-    pool: Arc<WorkerPool>,
-    routes: Arc<RouteTable>,
-    cache: Arc<ResponseCache>,
-) {
+async fn handle_conn(mut s: TcpStream, state: Arc<AppState>) {
+    // Cheap Arc clones so the existing per-branch call sites (which pass
+    // `&pool`/`pool.clone()` and move owned Arcs into spawned SSE/WS tasks)
+    // keep their original `Arc<…>` shapes. The atomic bumps are off the hot
+    // page-render path's allocation budget (one per connection, not per request).
+    let pool = Arc::clone(&state.pool);
+    let routes = Arc::clone(&state.routes);
+    let cache = Arc::clone(&state.cache);
     let mut buf = Vec::with_capacity(tuning().read_buf_cap);
     loop {
         buf.clear();
@@ -310,18 +291,24 @@ async fn handle_conn(
         // HEAD under the action prefix falls through; any other non-asset HEAD is
         // a probe for a resource we don't serve via HEAD → 404.
         if method == "HEAD" {
-            if let Some(file_path) = current_public_asset(&asset_lookup_key(path_no_query))
+            if let Some(file_path) = state.public_asset(&asset_lookup_key(path_no_query))
                 && let Ok(bytes) = tokio::fs::read(&file_path).await
             {
                 let ct = content_type_for(&file_path);
-                let resp =
-                    static_asset_response(&buf, ct, &file_path.to_string_lossy(), bytes, true);
+                let resp = static_asset_response(
+                    &buf,
+                    ct,
+                    &file_path.to_string_lossy(),
+                    bytes,
+                    true,
+                    state.is_dev_mode(),
+                );
                 if s.write_all(resp).await.is_err() {
                     return;
                 }
                 continue;
             }
-            if !crate::path_under_action_prefix(path_no_query) {
+            if !state.path_under_action_prefix(path_no_query) {
                 let _ = s.write_all(http::error_404()).await;
                 continue;
             }
@@ -332,7 +319,7 @@ async fn handle_conn(
         // configured prefix), cache-invalidate, and MCP each allow POST (or
         // any method for action paths, which are router-gated). The prefix
         // check is allocation-free — it runs on every request.
-        let under_actions = crate::path_under_action_prefix(path_no_query);
+        let under_actions = state.path_under_action_prefix(path_no_query);
         if !(method == "GET"
             || under_actions
             || method == "POST" && path_no_query.starts_with("/_brust/cache/invalidate")
@@ -372,7 +359,7 @@ async fn handle_conn(
                 let _ = s.write_all(http::error_404()).await;
                 continue;
             }
-            let dir = match current_islands_dir() {
+            let dir = match state.islands_dir() {
                 Some(d) => d,
                 None => {
                     let _ = s.write_all(http::error_404()).await;
@@ -388,6 +375,7 @@ async fn handle_conn(
                         &file_path.to_string_lossy(),
                         bytes,
                         false,
+                        state.is_dev_mode(),
                     );
                     if s.write_all(resp).await.is_err() {
                         return;
@@ -409,7 +397,7 @@ async fn handle_conn(
                 let _ = s.write_all(http::error_404()).await;
                 continue;
             }
-            let dir = match current_css_dir() {
+            let dir = match state.css_dir() {
                 Some(d) => d,
                 None => {
                     let _ = s.write_all(http::error_404()).await;
@@ -425,6 +413,7 @@ async fn handle_conn(
                         &file_path.to_string_lossy(),
                         bytes,
                         false,
+                        state.is_dev_mode(),
                     );
                     if s.write_all(resp).await.is_err() {
                         return;
@@ -444,13 +433,19 @@ async fn handle_conn(
         // already 405s non-GET general paths). `path_no_query` is used purely as
         // a map key — never joined to a path — so traversal is impossible here.
         if method == "GET"
-            && let Some(file_path) = current_public_asset(&asset_lookup_key(path_no_query))
+            && let Some(file_path) = state.public_asset(&asset_lookup_key(path_no_query))
         {
             // read error (file removed after boot) → fall through to routing
             if let Ok(bytes) = tokio::fs::read(&file_path).await {
                 let ct = content_type_for(&file_path);
-                let resp =
-                    static_asset_response(&buf, ct, &file_path.to_string_lossy(), bytes, false);
+                let resp = static_asset_response(
+                    &buf,
+                    ct,
+                    &file_path.to_string_lossy(),
+                    bytes,
+                    false,
+                    state.is_dev_mode(),
+                );
                 if s.write_all(resp).await.is_err() {
                     return;
                 }
@@ -471,7 +466,7 @@ async fn handle_conn(
         if under_actions {
             // Compute the prefix-relative path without cloning the prefix on the
             // hot path; only action requests reach here (rare vs page loads).
-            let rel_owned = crate::with_action_prefix(|p| {
+            let rel_owned = state.with_action_prefix(|p| {
                 let rel = &path_no_query[p.len()..];
                 if rel.is_empty() {
                     "/".to_string()
@@ -480,15 +475,15 @@ async fn handle_conn(
                 }
             });
             let rel = rel_owned.as_str();
-            let m = match crate::action_router::Method::from_http(&method) {
+            let m = match crate::routing::action::Method::from_http(&method) {
                 Some(m) => m,
                 None => {
                     let _ = s.write_all(http::error_405()).await;
                     continue;
                 }
             };
-            let outcome = crate::with_action_router(|r| r.at(m, rel));
-            use crate::action_router::MatchOutcome;
+            let outcome = state.with_action_router(|r| r.at(m, rel));
+            use crate::routing::action::MatchOutcome;
             let (endpoint_id, owned_params) = match outcome {
                 MatchOutcome::Found {
                     endpoint_id,
@@ -601,7 +596,7 @@ async fn handle_conn(
                 .iter()
                 .map(|(k, v)| (std::borrow::Cow::Borrowed(k.as_str()), v.as_str()))
                 .collect();
-            let envelope = crate::routes::build_action_envelope(
+            let envelope = crate::routing::routes::build_action_envelope(
                 &method,
                 &path,
                 &id_str,
@@ -705,8 +700,12 @@ async fn handle_conn(
                 }
             };
 
-            let envelope =
-                crate::routes::build_mcp_envelope(&method, &path, body_str, &buf[..header_end]);
+            let envelope = crate::routing::routes::build_mcp_envelope(
+                &method,
+                &path,
+                body_str,
+                &buf[..header_end],
+            );
 
             match dispatch_to_worker_and_stream_chunks(
                 &mut s,
@@ -784,7 +783,7 @@ async fn handle_conn(
         // SSE branch — dispatched when the matched route was registered as an SSE
         // path via brust.registerSsePaths. Method MUST be GET; Accept must allow
         // text/event-stream (default-curl `*/*` is accepted for dev ergonomics).
-        if crate::sse::path_is_sse(&path) {
+        if crate::realtime::sse::path_is_sse(&path) {
             if method != "GET" {
                 let _ = s.write_all(http::error_405()).await;
                 return;
@@ -815,12 +814,14 @@ async fn handle_conn(
             }
 
             // Register conn in REGISTRY.
-            let conn_id = crate::sse::next_conn_id();
-            let (frame_tx, frame_rx) = tokio::sync::mpsc::channel::<crate::sse::SseFrame>(32);
-            let (open_tx, open_rx) = tokio::sync::oneshot::channel::<crate::sse::SseOpenSignal>();
-            crate::sse::registry().lock().insert(
+            let conn_id = crate::realtime::sse::next_conn_id();
+            let (frame_tx, frame_rx) =
+                tokio::sync::mpsc::channel::<crate::realtime::sse::SseFrame>(32);
+            let (open_tx, open_rx) =
+                tokio::sync::oneshot::channel::<crate::realtime::sse::SseOpenSignal>();
+            crate::realtime::sse::registry().lock().insert(
                 conn_id,
-                crate::sse::SseConn {
+                crate::realtime::sse::SseConn {
                     frame_tx,
                     open_tx: Some(open_tx),
                     abort_cb: None,
@@ -830,11 +831,15 @@ async fn handle_conn(
             // Pick a worker and dispatch.
             let Some(entry) = pool.pick_least_busy() else {
                 let _ = s.write_all(http::error_500()).await;
-                crate::sse::registry().lock().remove(&conn_id);
+                crate::realtime::sse::registry().lock().remove(&conn_id);
                 return;
             };
-            let envelope =
-                crate::routes::build_sse_envelope(&method, &path, &buf[..header_end], conn_id);
+            let envelope = crate::routing::routes::build_sse_envelope(
+                &method,
+                &path,
+                &buf[..header_end],
+                conn_id,
+            );
             let envelope_json = serde_json::to_string(&envelope).unwrap();
 
             // Single long-lived dispatch: the JS side branches on `kind: 'sse'`,
@@ -851,7 +856,7 @@ async fn handle_conn(
                 {
                     error!(worker_id = entry.id, error = %e, "sse tsfn call_async failed");
                     let _ = s.write_all(http::error_500()).await;
-                    crate::sse::registry().lock().remove(&conn_id);
+                    crate::realtime::sse::registry().lock().remove(&conn_id);
                     return;
                 }
             }
@@ -868,13 +873,13 @@ async fn handle_conn(
                         "sse open_tx sender dropped before signal — JS crash?"
                     );
                     let _ = s.write_all(http::error_500()).await;
-                    crate::sse::registry().lock().remove(&conn_id);
+                    crate::realtime::sse::registry().lock().remove(&conn_id);
                     return;
                 }
                 Err(_) => {
                     warn!(conn_id, "sse open signal timeout (30s)");
                     let _ = s.write_all(http::error_500()).await;
-                    crate::sse::registry().lock().remove(&conn_id);
+                    crate::realtime::sse::registry().lock().remove(&conn_id);
                     return;
                 }
             };
@@ -892,19 +897,19 @@ async fn handle_conn(
                 let mut resp: Vec<u8> = head.into_bytes();
                 resp.extend_from_slice(&body);
                 let _ = s.write_all(resp).await;
-                crate::sse::registry().lock().remove(&conn_id);
+                crate::realtime::sse::registry().lock().remove(&conn_id);
                 return;
             }
 
             // Open OK — write SSE headers, hand the socket to the per-conn task.
-            if crate::sse::write_sse_response_headers(&mut s)
+            if crate::realtime::sse::write_sse_response_headers(&mut s)
                 .await
                 .is_err()
             {
-                crate::sse::registry().lock().remove(&conn_id);
+                crate::realtime::sse::registry().lock().remove(&conn_id);
                 return;
             }
-            crate::sse::sse_conn_task(s, conn_id, frame_rx).await;
+            crate::realtime::sse::sse_conn_task(s, conn_id, frame_rx).await;
             return;
         }
 
@@ -912,7 +917,7 @@ async fn handle_conn(
         // brust.registerWsPaths. Method MUST be GET; the Upgrade/Connection
         // headers + Sec-WebSocket-Key + Sec-WebSocket-Version must validate
         // per RFC 6455 before we accept the upgrade.
-        if crate::ws::path_is_ws(&path) {
+        if crate::realtime::ws::path_is_ws(&path) {
             if method != "GET" {
                 let _ = s.write_all(http::error_405()).await;
                 return;
@@ -924,7 +929,7 @@ async fn handle_conn(
                     return;
                 }
             };
-            let handshake = match crate::ws::parse_ws_handshake(&buf[..header_end]) {
+            let handshake = match crate::realtime::ws::parse_ws_handshake(&buf[..header_end]) {
                 Ok(h) => h,
                 Err(_) => {
                     // Any header validation failure → 400 (we don't externally
@@ -935,12 +940,14 @@ async fn handle_conn(
             };
 
             // Register conn in REGISTRY.
-            let conn_id = crate::sse::next_conn_id();
-            let (send_tx, send_rx) = tokio::sync::mpsc::channel::<crate::ws::WsOutgoing>(32);
-            let (open_tx, open_rx) = tokio::sync::oneshot::channel::<crate::ws::WsOpenSignal>();
-            crate::ws::registry().lock().insert(
+            let conn_id = crate::realtime::sse::next_conn_id();
+            let (send_tx, send_rx) =
+                tokio::sync::mpsc::channel::<crate::realtime::ws::WsOutgoing>(32);
+            let (open_tx, open_rx) =
+                tokio::sync::oneshot::channel::<crate::realtime::ws::WsOpenSignal>();
+            crate::realtime::ws::registry().lock().insert(
                 conn_id,
-                crate::ws::WsConn {
+                crate::realtime::ws::WsConn {
                     send_tx,
                     open_tx: Some(open_tx),
                     on_message: None,
@@ -951,7 +958,7 @@ async fn handle_conn(
             // Destructure so client_subprotocols moves into the envelope
             // and sec_websocket_key is still available for compute_sec_accept
             // on the 101 happy path. Avoids an unnecessary Vec<String> clone.
-            let crate::ws::ParsedHandshake {
+            let crate::realtime::ws::ParsedHandshake {
                 sec_websocket_key,
                 client_subprotocols,
             } = handshake;
@@ -965,8 +972,8 @@ async fn handle_conn(
             // worker for a middleware verdict — there is no app middleware on
             // this internal path.
             let open = if path == "/_brust/dev" {
-                crate::ws::dev_client_add(conn_id);
-                crate::ws::WsOpenSignal {
+                crate::realtime::ws::dev_client_add(conn_id);
+                crate::realtime::ws::WsOpenSignal {
                     status: 101,
                     body: Vec::new(),
                     content_type: String::new(),
@@ -976,10 +983,10 @@ async fn handle_conn(
                 // Pick a worker and dispatch.
                 let Some(entry) = pool.pick_least_busy() else {
                     let _ = s.write_all(http::error_500()).await;
-                    crate::ws::registry().lock().remove(&conn_id);
+                    crate::realtime::ws::registry().lock().remove(&conn_id);
                     return;
                 };
-                let envelope = crate::routes::build_ws_envelope(
+                let envelope = crate::routing::routes::build_ws_envelope(
                     &method,
                     &path,
                     &buf[..header_end],
@@ -1002,7 +1009,7 @@ async fn handle_conn(
                     {
                         error!(worker_id = entry.id, error = %e, "ws dispatch failed");
                         let _ = s.write_all(http::error_500()).await;
-                        crate::ws::registry().lock().remove(&conn_id);
+                        crate::realtime::ws::registry().lock().remove(&conn_id);
                         return;
                     }
                 }
@@ -1017,13 +1024,13 @@ async fn handle_conn(
                             "ws open_tx sender dropped before signal — JS crash?"
                         );
                         let _ = s.write_all(http::error_500()).await;
-                        crate::ws::registry().lock().remove(&conn_id);
+                        crate::realtime::ws::registry().lock().remove(&conn_id);
                         return;
                     }
                     Err(_) => {
                         warn!(conn_id, "ws open signal timeout (30s)");
                         let _ = s.write_all(http::error_500()).await;
-                        crate::ws::registry().lock().remove(&conn_id);
+                        crate::realtime::ws::registry().lock().remove(&conn_id);
                         return;
                     }
                 }
@@ -1042,12 +1049,12 @@ async fn handle_conn(
                 let mut resp: Vec<u8> = head.into_bytes();
                 resp.extend_from_slice(&body);
                 let _ = s.write_all(resp).await;
-                crate::ws::registry().lock().remove(&conn_id);
+                crate::realtime::ws::registry().lock().remove(&conn_id);
                 return;
             }
 
             // 101: write manual handshake response then wrap with tungstenite.
-            let accept = crate::ws::compute_sec_accept(&sec_websocket_key);
+            let accept = crate::realtime::ws::compute_sec_accept(&sec_websocket_key);
             let mut handshake_resp = String::with_capacity(256);
             handshake_resp.push_str("HTTP/1.1 101 Switching Protocols\r\n");
             handshake_resp.push_str("Upgrade: websocket\r\n");
@@ -1059,7 +1066,7 @@ async fn handle_conn(
             }
             handshake_resp.push_str("\r\n");
             if s.write_all(handshake_resp.into_bytes()).await.is_err() {
-                crate::ws::registry().lock().remove(&conn_id);
+                crate::realtime::ws::registry().lock().remove(&conn_id);
                 return;
             }
 
@@ -1078,8 +1085,8 @@ async fn handle_conn(
             // Spawn ws_conn_task as a detached task so handle_conn returns and
             // the accept-worker can take other connections. The per-conn task
             // owns the WebSocketStream + sends to TCP independently.
-            crate::io::spawn(async move {
-                crate::ws::ws_conn_task(
+            crate::server::transport::spawn(async move {
+                crate::realtime::ws::ws_conn_task(
                     ws_stream, conn_id, send_rx,
                     30_000,    // pingMs default — per-route forwarding is a follow-up
                     1_048_576, // 1 MB max msg — per-route forwarding is a follow-up
@@ -1237,9 +1244,9 @@ enum ClaimWaitErr {
 /// the streaming caller must hand a closure that clones a FRESH chunk_tx per
 /// call, since a successful claim consumes one.
 async fn claim_or_wait(
-    pool: &crate::pool::WorkerPool,
-    mut try_claim: impl FnMut() -> crate::pool::ClaimResult,
-) -> Result<crate::pool::RenderClaim, ClaimWaitErr> {
+    pool: &crate::render::pool::WorkerPool,
+    mut try_claim: impl FnMut() -> crate::render::pool::ClaimResult,
+) -> Result<crate::render::pool::RenderClaim, ClaimWaitErr> {
     let deadline =
         tokio::time::Instant::now() + std::time::Duration::from_millis(tuning().claim_timeout_ms);
     loop {
@@ -1252,9 +1259,9 @@ async fn claim_or_wait(
         notified.as_mut().enable();
 
         match try_claim() {
-            crate::pool::ClaimResult::Claimed(c) => return Ok(c),
-            crate::pool::ClaimResult::PoolEmpty => return Err(ClaimWaitErr::NoWorkers),
-            crate::pool::ClaimResult::AllBusy => {}
+            crate::render::pool::ClaimResult::Claimed(c) => return Ok(c),
+            crate::render::pool::ClaimResult::PoolEmpty => return Err(ClaimWaitErr::NoWorkers),
+            crate::render::pool::ClaimResult::AllBusy => {}
         }
 
         tokio::select! {
@@ -1266,7 +1273,7 @@ async fn claim_or_wait(
 
 async fn dispatch_to_worker_and_stream_chunks<E, F>(
     s: &mut TcpStream,
-    pool: &Arc<crate::pool::WorkerPool>,
+    pool: &Arc<crate::render::pool::WorkerPool>,
     envelope: E,
     label: &'static str,
     cache_wanted: bool,
@@ -1276,7 +1283,8 @@ where
     E: serde::Serialize,
     F: FnOnce(&[u8]),
 {
-    let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::channel::<crate::pool::RenderChunk>(1);
+    let (chunk_tx, mut chunk_rx) =
+        tokio::sync::mpsc::channel::<crate::render::pool::RenderChunk>(1);
 
     let claim = match claim_or_wait(pool, || pool.try_claim_render(chunk_tx.clone())).await {
         Ok(c) => c,
@@ -1309,9 +1317,9 @@ where
     }
 
     let envelope_len = {
-        let mut cursor = std::io::Cursor::new(unsafe {
-            std::slice::from_raw_parts_mut(entry.dispatch.buf_ptr(), entry.dispatch.buf_len())
-        });
+        let (buf_ptr, buf_cap) = entry.dispatch.buf();
+        let mut cursor =
+            std::io::Cursor::new(unsafe { std::slice::from_raw_parts_mut(buf_ptr, buf_cap) });
         if let Err(e) = serde_json::to_writer(&mut cursor, &envelope) {
             if e.is_io() {
                 let _ = s.write_all(http::error_413()).await;
@@ -1344,7 +1352,7 @@ where
 
     let mut headers_written = false;
     let mut chunked = false;
-    let mut buffered_meta: Option<crate::render_stream::ChunkMeta> = None;
+    let mut buffered_meta: Option<crate::render::stream::ChunkMeta> = None;
     let mut buffered_body: Vec<u8> = Vec::new();
     let mut response_bytes_for_cache: Vec<u8> = Vec::new();
 
@@ -1353,9 +1361,9 @@ where
             biased;
             Some(chunk) = chunk_rx.recv() => {
                 match chunk {
-                    crate::pool::RenderChunk::Bytes { data, ack } => {
+                    crate::render::pool::RenderChunk::Bytes { data, ack } => {
                         if !headers_written {
-                            let (meta_slice, body) = match crate::render_stream::split_meta(&data) {
+                            let (meta_slice, body) = match crate::render::stream::split_meta(&data) {
                                 Ok(x) => x,
                                 Err(e) => {
                                     error!(worker_id = entry.id, label, error = e, "split_meta failed");
@@ -1364,7 +1372,7 @@ where
                                     return DispatchControl::CloseConn;
                                 }
                             };
-                            let parsed: crate::render_stream::ChunkMeta =
+                            let parsed: crate::render::stream::ChunkMeta =
                                 match serde_json::from_slice(meta_slice) {
                                     Ok(m) => m,
                                     Err(e) => {
@@ -1376,12 +1384,12 @@ where
                                 };
                             chunked = parsed.streaming;
                             if chunked {
-                                let head = crate::render_stream::build_chunked_response_head(&parsed);
+                                let head = crate::render::stream::build_chunked_response_head(&parsed);
                                 if s.write_all(head).await.is_err() {
                                     let _ = ack.send(());
                                     return DispatchControl::CloseConn;
                                 }
-                                let framed = crate::render_stream::format_chunk_framed(body);
+                                let framed = crate::render::stream::format_chunk_framed(body);
                                 if s.write_all(framed).await.is_err() {
                                     let _ = ack.send(());
                                     return DispatchControl::CloseConn;
@@ -1392,7 +1400,7 @@ where
                             }
                             headers_written = true;
                         } else if chunked {
-                            let framed = crate::render_stream::format_chunk_framed(&data);
+                            let framed = crate::render::stream::format_chunk_framed(&data);
                             if s.write_all(framed).await.is_err() {
                                 let _ = ack.send(());
                                 return DispatchControl::CloseConn;
@@ -1406,12 +1414,12 @@ where
                         }
                         let _ = ack.send(());
                     }
-                    crate::pool::RenderChunk::Final { ack } => {
+                    crate::render::pool::RenderChunk::Final { ack } => {
                         if chunked {
-                            let term = crate::render_stream::format_chunk_framed(b"");
+                            let term = crate::render::stream::format_chunk_framed(b"");
                             let _ = s.write_all(term).await;
                         } else if let Some(meta) = buffered_meta.take() {
-                            let resp = crate::render_stream::build_single_response_bytes(&meta, &buffered_body);
+                            let resp = crate::render::stream::build_single_response_bytes(&meta, &buffered_body);
                             if cache_wanted {
                                 response_bytes_for_cache = resp.clone();
                             }
@@ -1423,11 +1431,11 @@ where
                         let _ = ack.send(());
                         break;
                     }
-                    crate::pool::RenderChunk::BytesAndFinal { data, ack } => {
+                    crate::render::pool::RenderChunk::BytesAndFinal { data, ack } => {
                         // Buffering-path single-call: parse meta, build full response,
                         // write to socket, populate cache write-back, ack. Byte-equivalent
                         // to Bytes-then-Final for the same `data`.
-                        let (meta_slice, body) = match crate::render_stream::split_meta(&data) {
+                        let (meta_slice, body) = match crate::render::stream::split_meta(&data) {
                             Ok(x) => x,
                             Err(e) => {
                                 error!(worker_id = entry.id, label, error = e, "split_meta failed (BytesAndFinal)");
@@ -1436,7 +1444,7 @@ where
                                 return DispatchControl::CloseConn;
                             }
                         };
-                        let parsed: crate::render_stream::ChunkMeta = match serde_json::from_slice(meta_slice) {
+                        let parsed: crate::render::stream::ChunkMeta = match serde_json::from_slice(meta_slice) {
                             Ok(m) => m,
                             Err(e) => {
                                 error!(worker_id = entry.id, label, error = %e, "meta JSON parse failed (BytesAndFinal)");
@@ -1454,17 +1462,17 @@ where
                                 worker_id = entry.id, label,
                                 "BytesAndFinal received in streaming mode — emitting chunked + terminator",
                             );
-                            let head = crate::render_stream::build_chunked_response_head(&parsed);
+                            let head = crate::render::stream::build_chunked_response_head(&parsed);
                             if s.write_all(head).await.is_err() {
                                 let _ = ack.send(());
                                 return DispatchControl::CloseConn;
                             }
-                            let framed = crate::render_stream::format_chunk_framed(body);
+                            let framed = crate::render::stream::format_chunk_framed(body);
                             if s.write_all(framed).await.is_err() {
                                 let _ = ack.send(());
                                 return DispatchControl::CloseConn;
                             }
-                            let term = crate::render_stream::format_chunk_framed(b"");
+                            let term = crate::render::stream::format_chunk_framed(b"");
                             let _ = s.write_all(term).await;
                             // No cache write-back in chunked mode (matches existing Final arm).
                         } else {
@@ -1475,7 +1483,7 @@ where
                             // 2026-05-28 N=5 medians — see plan T7 BLOCKED #2 mitigation),
                             // so we keep the concat write but preserve the cache-clone skip
                             // for the uncached hot path.
-                            let resp = crate::render_stream::build_single_response_bytes(&parsed, body);
+                            let resp = crate::render::stream::build_single_response_bytes(&parsed, body);
                             if cache_wanted {
                                 response_bytes_for_cache = resp.clone();
                             }
@@ -1514,17 +1522,16 @@ where
                             // (happens-before via napi tsfn.await), so JS is done
                             // writing the SAB and won't touch it until the next
                             // claim. `len <= buf_len` bounds the read.
-                            let buf = unsafe {
-                                std::slice::from_raw_parts(entry.dispatch.buf_ptr(), len)
-                            };
-                            match crate::render_stream::split_meta(buf)
+                            let (buf_ptr, _cap) = entry.dispatch.buf();
+                            let buf = unsafe { std::slice::from_raw_parts(buf_ptr, len) };
+                            match crate::render::stream::split_meta(buf)
                                 .and_then(|(meta_slice, body)| {
-                                    serde_json::from_slice::<crate::render_stream::ChunkMeta>(meta_slice)
+                                    serde_json::from_slice::<crate::render::stream::ChunkMeta>(meta_slice)
                                         .map(|meta| (meta, body))
                                         .map_err(|_| "fast-lane meta JSON parse failed")
                                 }) {
                                 Ok((meta, body)) => {
-                                    let resp = crate::render_stream::build_single_response_bytes(&meta, body);
+                                    let resp = crate::render::stream::build_single_response_bytes(&meta, body);
                                     if cache_wanted {
                                         response_bytes_for_cache = resp.clone();
                                     }
@@ -1547,9 +1554,9 @@ where
                         if chunked {
                             // C5: emit terminator so browser doesn't see
                             // ERR_INCOMPLETE_CHUNKED_ENCODING.
-                            let _ = s.write_all(crate::render_stream::format_chunk_framed(b"")).await;
+                            let _ = s.write_all(crate::render::stream::format_chunk_framed(b"")).await;
                         } else if let Some(meta) = buffered_meta.take() {
-                            let resp = crate::render_stream::build_single_response_bytes(&meta, &buffered_body);
+                            let resp = crate::render::stream::build_single_response_bytes(&meta, &buffered_body);
                             if cache_wanted {
                                 response_bytes_for_cache = resp.clone();
                             }
@@ -1605,7 +1612,7 @@ where
 /// contract violation here → 500.
 async fn dispatch_single_chunk<E, F>(
     s: &mut TcpStream,
-    pool: &Arc<crate::pool::WorkerPool>,
+    pool: &Arc<crate::render::pool::WorkerPool>,
     envelope: E,
     label: &'static str,
     cache_wanted: bool,
@@ -1629,9 +1636,9 @@ where
     let entry = std::sync::Arc::clone(claim.entry());
 
     let envelope_len = {
-        let mut cursor = std::io::Cursor::new(unsafe {
-            std::slice::from_raw_parts_mut(entry.dispatch.buf_ptr(), entry.dispatch.buf_len())
-        });
+        let (buf_ptr, buf_cap) = entry.dispatch.buf();
+        let mut cursor =
+            std::io::Cursor::new(unsafe { std::slice::from_raw_parts_mut(buf_ptr, buf_cap) });
         if let Err(e) = serde_json::to_writer(&mut cursor, &envelope) {
             if e.is_io() {
                 let _ = s.write_all(http::error_413()).await;
@@ -1690,14 +1697,15 @@ where
 
     // SAFETY: render Promise resolved (happens-before via napi tsfn.await), JS
     // done writing the SAB; resp_len bounds-checked above.
-    let buf = unsafe { std::slice::from_raw_parts(entry.dispatch.buf_ptr(), resp_len as usize) };
-    match crate::render_stream::split_meta(buf).and_then(|(meta_slice, body)| {
-        serde_json::from_slice::<crate::render_stream::ChunkMeta>(meta_slice)
+    let (buf_ptr, _cap) = entry.dispatch.buf();
+    let buf = unsafe { std::slice::from_raw_parts(buf_ptr, resp_len as usize) };
+    match crate::render::stream::split_meta(buf).and_then(|(meta_slice, body)| {
+        serde_json::from_slice::<crate::render::stream::ChunkMeta>(meta_slice)
             .map(|meta| (meta, body))
             .map_err(|_| "single-chunk meta JSON parse failed")
     }) {
         Ok((meta, body)) => {
-            let resp = crate::render_stream::build_single_response_bytes(&meta, body);
+            let resp = crate::render::stream::build_single_response_bytes(&meta, body);
             if cache_wanted {
                 on_success(&resp);
             }

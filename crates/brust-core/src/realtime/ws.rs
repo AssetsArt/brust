@@ -434,7 +434,7 @@ mod tests {
     async fn registry_insert_remove_round_trip() {
         let (send_tx, _send_rx) = mpsc::channel(32);
         let (open_tx, _open_rx) = oneshot::channel::<WsOpenSignal>();
-        let id = crate::sse::next_conn_id();
+        let id = crate::realtime::sse::next_conn_id();
         registry().lock().insert(
             id,
             WsConn {
@@ -452,14 +452,14 @@ mod tests {
 
     #[test]
     fn conn_ids_unique_across_sse_and_ws() {
-        let sse_id = crate::sse::next_conn_id();
-        let ws_id = crate::sse::next_conn_id();
+        let sse_id = crate::realtime::sse::next_conn_id();
+        let ws_id = crate::realtime::sse::next_conn_id();
         assert_ne!(sse_id, ws_id);
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn dev_client_set_add_remove_count() {
-        let id = crate::sse::next_conn_id();
+        let id = crate::realtime::sse::next_conn_id();
         let before = dev_client_count();
         dev_client_add(id);
         assert_eq!(dev_client_count(), before + 1);
@@ -477,8 +477,8 @@ mod tests {
         let (app_tx, mut app_rx) = mpsc::channel(32);
         let (o1, _r1) = oneshot::channel::<WsOpenSignal>();
         let (o2, _r2) = oneshot::channel::<WsOpenSignal>();
-        let dev_id = crate::sse::next_conn_id();
-        let app_id = crate::sse::next_conn_id();
+        let dev_id = crate::realtime::sse::next_conn_id();
+        let app_id = crate::realtime::sse::next_conn_id();
         registry().lock().insert(
             dev_id,
             WsConn {

@@ -3,7 +3,7 @@ use parking_lot::RwLock;
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::cache::CacheConfig;
+use crate::cache::response_cache::CacheConfig;
 
 pub fn serialize_as_map<S, K, V>(vec: &[(K, V)], serializer: S) -> Result<S::Ok, S::Error>
 where
@@ -21,11 +21,11 @@ where
 pub struct RequestEnvelope<'a> {
     pub method: &'a str,
     pub url: &'a str,
-    #[serde(serialize_with = "crate::routes::serialize_as_map")]
+    #[serde(serialize_with = "crate::routing::routes::serialize_as_map")]
     pub headers: Vec<(std::borrow::Cow<'a, str>, std::borrow::Cow<'a, str>)>,
-    #[serde(serialize_with = "crate::routes::serialize_as_map")]
+    #[serde(serialize_with = "crate::routing::routes::serialize_as_map")]
     pub cookies: Vec<(&'a str, std::borrow::Cow<'a, str>)>,
-    #[serde(serialize_with = "crate::routes::serialize_as_map")]
+    #[serde(serialize_with = "crate::routing::routes::serialize_as_map")]
     pub search: Vec<(std::borrow::Cow<'a, str>, std::borrow::Cow<'a, str>)>,
 }
 
@@ -37,7 +37,7 @@ pub struct RouteEnvelope<'a> {
     pub kind: &'static str,
     pub route_id: u32,
     pub path: &'a str,
-    #[serde(serialize_with = "crate::routes::serialize_as_map")]
+    #[serde(serialize_with = "crate::routing::routes::serialize_as_map")]
     pub params: Vec<(std::borrow::Cow<'a, str>, &'a str)>,
     pub req: RequestEnvelope<'a>,
     /// Sub-project J — when the route was registered with `native: true`,
@@ -56,7 +56,7 @@ pub struct RouteEnvelope<'a> {
 pub struct ActionEnvelope<'a> {
     pub kind: &'static str,
     pub action_id: &'a str,
-    #[serde(serialize_with = "crate::routes::serialize_as_map")]
+    #[serde(serialize_with = "crate::routing::routes::serialize_as_map")]
     pub params: Vec<(std::borrow::Cow<'a, str>, &'a str)>,
     /// Request's Content-Type header, whitespace-trimmed (case PRESERVED —
     /// JS lowercases defensively at the dispatch point). Empty string means

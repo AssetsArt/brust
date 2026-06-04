@@ -1,4 +1,4 @@
-//! napi-concrete implementation of [`crate::render::RenderDispatch`].
+//! napi-concrete implementation of [`brust_core::RenderDispatch`].
 //!
 //! This is the ONLY render-path module that touches napi. It owns the tsfn type
 //! alias and the SAB `BufPtr`, both moved here out of `pool.rs` so the core
@@ -11,7 +11,7 @@ use std::sync::Arc;
 use napi::bindgen_prelude::{Either, Promise};
 use napi::threadsafe_function::ThreadsafeFunction;
 
-use crate::render::{RenderDispatch, RenderEnvelope, RenderError};
+use brust_core::{RenderDispatch, RenderEnvelope, RenderError};
 
 /// Renderer signature: takes the envelope (SAB len as `u32`, or inline JSON
 /// `String`) and resolves with a `u32` framed-response length.
@@ -64,6 +64,10 @@ impl RenderDispatch for TsfnDispatch {
         let either = match env {
             RenderEnvelope::Sab(n) => Either::A(n),
             RenderEnvelope::Inline(s) => Either::B(s),
+            // `RenderEnvelope` is `#[non_exhaustive]` and lives in `brust-core`,
+            // so a cross-crate match needs a catch-all. A future variant would
+            // hit this; treat an unknown envelope as an empty inline payload.
+            _ => Either::B(String::new()),
         };
         // Clone the Arc (cheap atomic bump) so the future owns a 'static handle.
         let tsfn = Arc::clone(&self.tsfn);
@@ -79,11 +83,7 @@ impl RenderDispatch for TsfnDispatch {
         })
     }
 
-    fn buf_ptr(&self) -> *mut u8 {
-        self.buf_ptr.0
-    }
-
-    fn buf_len(&self) -> usize {
-        self.buf_len
+    fn buf(&self) -> (*mut u8, usize) {
+        (self.buf_ptr.0, self.buf_len)
     }
 }

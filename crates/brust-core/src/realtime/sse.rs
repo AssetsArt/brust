@@ -76,7 +76,7 @@ Connection: keep-alive\r\n\
 X-Accel-Buffering: no\r\n\
 \r\n";
 
-pub async fn write_sse_response_headers<S: crate::io::SseIo>(
+pub async fn write_sse_response_headers<S: crate::server::transport::SseIo>(
     stream: &mut S,
 ) -> std::io::Result<()> {
     stream.write_bytes(SSE_HEADER_BLOCK.to_vec()).await
@@ -85,7 +85,7 @@ pub async fn write_sse_response_headers<S: crate::io::SseIo>(
 /// Per-connection driver loop. Owns the TCP stream after the open-signal
 /// arrives + headers are written. Forwards frames to the wire, ack-ing
 /// each one so JS Promises resolve. Exits on peer close OR sender drop.
-pub async fn sse_conn_task<S: crate::io::SseIo>(
+pub async fn sse_conn_task<S: crate::server::transport::SseIo>(
     mut stream: S,
     conn_id: u64,
     mut frame_rx: mpsc::Receiver<SseFrame>,

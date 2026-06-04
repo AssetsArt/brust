@@ -128,10 +128,10 @@ fn status_reason(code: u16) -> &'static str {
 /// chunk_tx if the slot is set and `len <= buf_len`. Factored out for
 /// unit testing — the NAPI fn itself wraps this in await + send.
 pub fn check_chunk_dispatch(
-    render_slot: &parking_lot::Mutex<Option<crate::pool::RenderSlot>>,
+    render_slot: &parking_lot::Mutex<Option<crate::render::pool::RenderSlot>>,
     len: u32,
     buf_len: usize,
-) -> Result<tokio::sync::mpsc::Sender<crate::pool::RenderChunk>, String> {
+) -> Result<tokio::sync::mpsc::Sender<crate::render::pool::RenderChunk>, String> {
     if (len as usize) > buf_len {
         return Err(format!(
             "chunk len {} exceeds SAB capacity {}",
@@ -263,8 +263,8 @@ mod tests {
 
     #[test]
     fn slot_present_returns_sender() {
-        let (tx, _rx) = tokio::sync::mpsc::channel::<crate::pool::RenderChunk>(1);
-        let slot = parking_lot::Mutex::new(Some(crate::pool::RenderSlot { chunk_tx: tx }));
+        let (tx, _rx) = tokio::sync::mpsc::channel::<crate::render::pool::RenderChunk>(1);
+        let slot = parking_lot::Mutex::new(Some(crate::render::pool::RenderSlot { chunk_tx: tx }));
         assert!(check_chunk_dispatch(&slot, 5, 256 * 1024).is_ok());
     }
 }
