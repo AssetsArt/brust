@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { dirname, relative, resolve } from 'node:path'
 import { buildDevClientTag } from '../dev/client.ts'
 import { DIRECTIVES_BOOTSTRAP, ISLANDS_IMPORTMAP_AND_BOOTSTRAP } from '../islands/importmap.ts'
@@ -753,6 +754,28 @@ function toKebabCase(s: string): string {
   return s.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase()
 }
 
+const requireFromHere = createRequire(import.meta.url)
+
+/** Follow a lucide-react alias module to its canonical icon. ~249 icons (e.g.
+ * `arrow-down-az`) ship as a re-export STUB — `export { default } from
+ * './arrow-down-a-z.mjs'` — that carries NO `__iconNode` (the data lives in the
+ * canonical file, which lucide kebabs differently for consecutive capitals:
+ * `ArrowDownAZ` → `arrow-down-az` here vs `arrow-down-a-z` on disk). Read the
+ * stub's source and return the canonical kebab, or `null` if `<kebab>.mjs` is not
+ * an alias stub (i.e. already canonical / unresolvable). */
+function followLucideAlias(kebab: string): string | null {
+  try {
+    const src = readFileSync(
+      requireFromHere.resolve(`lucide-react/dist/esm/icons/${kebab}.mjs`),
+      'utf8',
+    )
+    const m = src.match(/export\s*\{\s*default\s*\}\s*from\s*['"]\.\/(.+?)\.mjs['"]/)
+    return m ? m[1]! : null
+  } catch {
+    return null
+  }
+}
+
 /** Extract static SVG node data for every `lucide-react` icon imported by
  * `file`, keyed by its in-source local name.
  *
@@ -769,10 +792,20 @@ export async function extractLucideIcons(file: string): Promise<Record<string, s
   for (const [local, entry] of refs) {
     if (!entry.bare || entry.spec !== 'lucide-react') continue
     const pascal = entry.imported ?? local // default import → local name
-    const kebab = toKebabCase(pascal)
+    let kebab = toKebabCase(pascal)
     try {
-      const mod = await import(`lucide-react/dist/esm/icons/${kebab}.mjs`)
-      const iconNode = mod.__iconNode
+      let mod = await import(`lucide-react/dist/esm/icons/${kebab}.mjs`)
+      let iconNode = mod.__iconNode
+      if (!Array.isArray(iconNode)) {
+        // Re-export alias stub (no __iconNode) → follow to the canonical icon
+        // file, and use ITS kebab for both the import and the `cls`.
+        const canonical = followLucideAlias(kebab)
+        if (canonical) {
+          mod = await import(`lucide-react/dist/esm/icons/${canonical}.mjs`)
+          iconNode = mod.__iconNode
+          kebab = canonical
+        }
+      }
       if (!Array.isArray(iconNode)) continue
       const node = iconNode.map(([tag, attrs]: [string, Record<string, unknown>]) => {
         const pairs: [string, string][] = []
