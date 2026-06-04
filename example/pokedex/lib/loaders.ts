@@ -92,7 +92,6 @@ export async function browseLoader({ req }: LoaderCtx): Promise<BrowseData> {
   return {
     ...chrome(req, 'Pokédex · Browse', 'Pokédex'),
     items,
-    dexProps: JSON.stringify({ items }),
   }
 }
 
@@ -182,16 +181,16 @@ export async function detailLoader({
     hasAbilities: abilities.length > 0,
     evolution,
     hasEvolution: evolution.length > 1,
-    // Native templates can't call JSON.stringify, so precompute the x-props JSON
-    // here. AddToTeamButton's prop contract is unchanged.
-    addProps: JSON.stringify({
+    // The compiler serializes this structured object into AddToTeamButton's
+    // x-props via `json_attr`; the behavior receives it as a parsed object.
+    addProps: {
       id: p.id,
       name: p.name,
       displayName: cap(p.name),
       num: pad(p.id),
       types: p.types,
       artwork: p.artwork,
-    }),
+    },
   }
 }
 
@@ -217,14 +216,14 @@ function emptyDetail(req: BrustRequest, name: string): DetailData {
     hasAbilities: false,
     evolution: [],
     hasEvolution: false,
-    addProps: JSON.stringify({
+    addProps: {
       id: 0,
       name,
       displayName: cap(name),
       num: '',
       types: [],
       artwork: '',
-    }),
+    },
   }
 }
 
