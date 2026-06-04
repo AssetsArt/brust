@@ -2927,11 +2927,180 @@ fn lower_call_as_map(call: &CallExpr, scope: &Scope, _in_map: bool) -> Result<Js
     // iteration is rejected (id collision + non-per-iteration props path in v1).
     let body = lower_map_body_expr(body_expr, &inner_scope)?;
 
+    let body = match scan_map_xfor_sugar(body_expr, &binding, &inner_scope)? {
+        Some(key_path) => {
+            if !matches!(&source, Expr::Field(_) | Expr::MemberAccess { .. }) {
+                return Err(LowerError::at(call.span, ErrorKind::MapXForSourceNotArray));
+            }
+            apply_map_xfor_sugar(body, &binding, &source, &key_path)
+        }
+        None => body,
+    };
+
     Ok(JsxNode::Map {
         source,
         binding,
         body: Box::new(body),
     })
+}
+
+/// Pre-scan a `.map()` body for the bare `x-for` sugar flag + its `key`. Runs on
+/// the RAW arrow body BEFORE `lower_map_body_expr` (because `lower_attr` drops
+/// `key`). Some(key_path) = flag + valid key present; None = no flag (static map);
+/// Err = malformed opt-in (the flag is explicit author intent — surface mistakes).
+fn scan_map_xfor_sugar(
+    body_expr: &SwcExpr,
+    binding: &str,
+    inner_scope: &Scope,
+) -> Result<Option<String>, LowerError> {
+    let stripped = strip_paren(body_expr);
+    let SwcExpr::JSXElement(el) = stripped else {
+        if raw_has_bare_xfor(stripped) {
+            return Err(LowerError::at(
+                stripped.span(),
+                ErrorKind::MapXForBodyNotElement,
+            ));
+        }
+        return Ok(None);
+    };
+    let mut has_flag = false;
+    let mut key_expr: Option<&SwcExpr> = None;
+    for a in &el.opening.attrs {
+        let JSXAttrOrSpread::JSXAttr(attr) = a else {
+            continue;
+        };
+        let JSXAttrName::Ident(name) = &attr.name else {
+            continue;
+        };
+        match name.sym.as_ref() {
+            "x-for" if attr.value.is_none() => has_flag = true,
+            "key" => {
+                if let Some(JSXAttrValue::JSXExprContainer(c)) = &attr.value
+                    && let JSXExpr::Expr(e) = &c.expr
+                {
+                    key_expr = Some(e);
+                }
+            }
+            _ => {}
+        }
+    }
+    if !has_flag {
+        return Ok(None);
+    }
+    let key = key_expr.ok_or_else(|| LowerError::at(el.span, ErrorKind::MapXForKeyRequired))?;
+    let key_path = match lower_expr(key, inner_scope) {
+        Ok(Expr::MapMember { root, path }) if root == binding => {
+            let mut s = root;
+            for seg in path {
+                s.push('.');
+                s.push_str(&seg);
+            }
+            s
+        }
+        // A bare `key={t}` (the whole item) is rejected: the runtime key would be
+        // the object's stringification (unstable). Require a member path `t.<x>`.
+        _ => return Err(LowerError::at(el.span, ErrorKind::MapXForKeyRequired)),
+    };
+    Ok(Some(key_path))
+}
+
+/// Shallow check: does a non-element body branch carry a bare `x-for`? (so a flag
+/// in a conditional map body errors instead of leaking a dead attr).
+fn raw_has_bare_xfor(expr: &SwcExpr) -> bool {
+    fn el_has(el: &JSXElement) -> bool {
+        el.opening.attrs.iter().any(|a| {
+            matches!(a,
+                JSXAttrOrSpread::JSXAttr(attr)
+                  if matches!(&attr.name, JSXAttrName::Ident(n) if n.sym.as_ref() == "x-for")
+                     && attr.value.is_none())
+        })
+    }
+    match strip_paren(expr) {
+        SwcExpr::JSXElement(el) => el_has(el),
+        SwcExpr::Bin(b) => {
+            raw_has_bare_xfor(b.left.as_ref()) || raw_has_bare_xfor(b.right.as_ref())
+        }
+        SwcExpr::Cond(c) => raw_has_bare_xfor(c.cons.as_ref()) || raw_has_bare_xfor(c.alt.as_ref()),
+        _ => false,
+    }
+}
+
+/// Decorate a `.map()` body element with the x-for adopt directives. INVERSE of
+/// `transform_xfor_element`: reads map-binding `Expr` attrs and adds `x-bind-*`,
+/// reads a single map-binding `Expr` text child and adds `x-text`, reconstructs
+/// the `x-for` string, adds `data-x-key`.
+fn apply_map_xfor_sugar(body: JsxNode, binding: &str, source: &Expr, key_path: &str) -> JsxNode {
+    let JsxNode::Element {
+        tag,
+        attrs,
+        children,
+    } = body
+    else {
+        return body;
+    };
+    let mut new_attrs: Vec<JsxAttr> = Vec::with_capacity(attrs.len() + 3);
+    let xfor = format!(
+        "{binding} in {} by {key_path}",
+        crate::emit_jinja::emit_expr_path(source)
+    );
+    let mut binds: Vec<JsxAttr> = Vec::with_capacity(attrs.len());
+    for a in attrs {
+        if a.name == "x-for" {
+            new_attrs.push(JsxAttr {
+                name: "x-for".into(),
+                value: AttrValue::Static(xfor.clone()),
+            });
+            continue;
+        }
+        if let AttrValue::Expr(e) = &a.value
+            && expr_roots_at(e, binding)
+        {
+            binds.push(JsxAttr {
+                name: format!("x-bind-{}", a.name),
+                value: AttrValue::Static(path_from_map_expr(e)),
+            });
+        }
+        new_attrs.push(a);
+    }
+    for b in binds {
+        set_or_push_attr(&mut new_attrs, b.name, b.value);
+    }
+    if let Some(kexpr) = crate::xfor::path_to_map_expr(key_path, binding) {
+        set_or_push_attr(&mut new_attrs, "data-x-key".into(), AttrValue::Expr(kexpr));
+    }
+    if let [JsxNode::Expr(e)] = children.as_slice()
+        && expr_roots_at(e, binding)
+    {
+        set_or_push_attr(
+            &mut new_attrs,
+            "x-text".into(),
+            AttrValue::Static(path_from_map_expr(e)),
+        );
+    }
+    JsxNode::Element {
+        tag,
+        attrs: new_attrs,
+        children,
+    }
+}
+
+fn expr_roots_at(e: &Expr, binding: &str) -> bool {
+    matches!(e, Expr::MapBinding(r) | Expr::MapMember { root: r, .. } if r == binding)
+}
+
+fn path_from_map_expr(e: &Expr) -> String {
+    match e {
+        Expr::MapMember { root, path } => {
+            let mut s = root.clone();
+            for seg in path {
+                s.push('.');
+                s.push_str(seg);
+            }
+            s
+        }
+        Expr::MapBinding(r) => r.clone(),
+        _ => String::new(),
+    }
 }
 
 /// Extract the single `(item)` ident binding from an arrow.
@@ -5028,6 +5197,80 @@ export const behavior = () => ({});"#;
         assert!(
             matches!(err.kind, ErrorKind::SsrComponentInMapNotSupported(_)),
             "expected SsrComponentInMapNotSupported, got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn map_xfor_sugar_composite_key_template_literal_rejected() {
+        // bare `x-for` + a template-literal key (not a single member path) →
+        // MapXForKeyRequired.
+        let src = r#"export default function Grid({ items }) {
+  return <ul>{items.map((t) => <a x-for key={`${t.a}-${t.b}`} href={t.href} />)}</ul>;
+}"#;
+        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::MapXForKeyRequired),
+            "expected MapXForKeyRequired, got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn map_xfor_sugar_no_key_rejected() {
+        // bare `x-for` with NO `key` → MapXForKeyRequired.
+        let src = r#"export default function Grid({ items }) {
+  return <ul>{items.map((t) => <a x-for href={t.href} />)}</ul>;
+}"#;
+        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::MapXForKeyRequired),
+            "expected MapXForKeyRequired, got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn map_xfor_sugar_bare_binding_key_rejected() {
+        // `key={t}` (the whole item, not a member path) → MapXForKeyRequired:
+        // the runtime key would be the object's unstable stringification.
+        let src = r#"export default function Grid({ items }) {
+  return <ul>{items.map((t) => <a x-for key={t} href={t.href} />)}</ul>;
+}"#;
+        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::MapXForKeyRequired),
+            "expected MapXForKeyRequired, got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn map_xfor_sugar_non_array_source_rejected() {
+        // bare `x-for` over a nested-map inner source (a map binding member, not a
+        // loader array path) → MapXForSourceNotArray.
+        let src = r#"export default function Grid({ rows }) {
+  return <ul>{rows.map((row) => <ul>{row.cells.map((c) => <a x-for key={c.id} href={c.href} />)}</ul>)}</ul>;
+}"#;
+        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::MapXForSourceNotArray),
+            "expected MapXForSourceNotArray, got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn map_xfor_sugar_conditional_body_rejected() {
+        // bare `x-for` on a conditional map body (not a single element) →
+        // MapXForBodyNotElement.
+        let src = r#"export default function Grid({ items }) {
+  return <ul>{items.map((t) => t.ok && <a x-for key={t.id} href={t.href} />)}</ul>;
+}"#;
+        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::MapXForBodyNotElement),
+            "expected MapXForBodyNotElement, got {:?}",
             err.kind
         );
     }

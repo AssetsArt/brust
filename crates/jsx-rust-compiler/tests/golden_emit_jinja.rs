@@ -18,6 +18,8 @@ const FIXTURES: &[&str] = &[
     "style_object",
     "xfor_ssr",
     "xfor_client_only",
+    "map_xfor_sugar",
+    "map_no_xfor",
 ];
 
 #[test]
