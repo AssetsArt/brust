@@ -1,0 +1,1 @@
+<section x-data="g" x-props="{{ (items) | json_attr }}">{% for c in items %}<a x-for="c in items by c.id" href="{{ (c.label) | e }}" x-bind-href="c.label" data-x-key="{{ (c.id) | e }}" x-text="c.label">{{ (c.label) | e }}</a>{% endfor %}</section>
