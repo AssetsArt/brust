@@ -1067,10 +1067,9 @@ async fn handle_conn(
             // is already done so we use from_raw_socket (skips the built-in
             // handshake which would otherwise expect to read the request line).
             //
-            // Platform-common: WebSocketStream<S> requires S: AsyncRead +
-            // AsyncWrite + Unpin. `io::TcpStream::into_inner()` provides it on
-            // both targets — tokio::net::TcpStream off-Linux, and the forked
-            // tokio_uring's `PollIo` bridge on Linux (uring completion → poll IO).
+            // WebSocketStream<S> requires S: AsyncRead + AsyncWrite + Unpin.
+            // `io::TcpStream::into_inner()` yields the inner tokio::net::TcpStream
+            // which satisfies that.
             use tokio_tungstenite::tungstenite::protocol::Role;
             let inner = s.into_inner();
             let ws_stream =
