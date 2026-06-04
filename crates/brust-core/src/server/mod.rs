@@ -42,12 +42,14 @@ const IO_NAME: &str = "hyper(tokio)";
 ///   worker pool triggers TCP backpressure (accept stalls) instead of unbounded
 ///   memory growth.
 /// - `read_buf_cap` (4096): hyper read-buffer initial sizing hint.
-/// - `worker_threads` (2): tokio worker-thread count for the I/O runtime. This
-///   runs INSIDE Bun (which has its own threads + N render workers), so we do
-///   NOT default to one-thread-per-core; the old hand-rolled loop was a single
-///   current-thread-equivalent accept worker fanned out over async tasks. 2 is a
-///   conservative default that keeps accept + per-conn H1/H2 servicing parallel
-///   without contending with Bun's render threads. Override via tuning.
+/// - `worker_threads` (`min(available_parallelism, 4)`, fallback 2): tokio
+///   worker-thread count for the I/O runtime. This runs INSIDE Bun (which has
+///   its own threads + N render workers), so we do NOT default to
+///   one-thread-per-core; we cap at 4 (enough for TLS + accept + render-adjacent
+///   tasks) so small VMs aren't overprovisioned, while never being a hard
+///   ceiling of 2 under concurrent load. The old hand-rolled loop was a single
+///   current-thread-equivalent accept worker fanned out over async tasks.
+///   Override via tuning.
 #[derive(Clone, Copy)]
 pub struct Tuning {
     pub max_request_bytes: usize,
@@ -58,7 +60,8 @@ pub struct Tuning {
     /// 503 (see `claim_or_wait`). Bounds the AllBusy→queue wait so a wedged
     /// worker pool can't park a connection forever. Default 10_000 ms.
     pub claim_timeout_ms: u64,
-    /// tokio I/O runtime worker-thread count. Default 2 (see struct docs).
+    /// tokio I/O runtime worker-thread count. Default `min(available_parallelism, 4)`
+    /// (see struct docs).
     pub worker_threads: usize,
 }
 
@@ -70,7 +73,9 @@ impl Default for Tuning {
             conn_queue_cap: 1024,
             read_buf_cap: 4096,
             claim_timeout_ms: 10_000,
-            worker_threads: 2,
+            worker_threads: std::thread::available_parallelism()
+                .map(|n| n.get().min(4))
+                .unwrap_or(2),
         }
     }
 }
@@ -665,7 +670,14 @@ async fn handle_sse(
         return Ok(raw_http_to_response(crate::http::error_500()));
     };
     let envelope = crate::routing::routes::build_sse_envelope(method, path, raw, conn_id);
-    let envelope_json = serde_json::to_string(&envelope).unwrap();
+    let envelope_json = match serde_json::to_string(&envelope) {
+        Ok(json) => json,
+        Err(e) => {
+            error!(conn_id, error = %e, "sse envelope serialize failed");
+            crate::realtime::sse::registry().lock().remove(&conn_id);
+            return Ok(raw_http_to_response(crate::http::error_500()));
+        }
+    };
 
     // The SSE dispatch Promise resolves only at STREAM END (the JS handler runs
     // the full reader loop before returning). So we must NOT await it here —
@@ -784,7 +796,14 @@ async fn handle_ws(
             conn_id,
             client_subprotocols,
         );
-        let envelope_json = serde_json::to_string(&envelope).unwrap();
+        let envelope_json = match serde_json::to_string(&envelope) {
+            Ok(json) => json,
+            Err(e) => {
+                error!(conn_id, error = %e, "ws envelope serialize failed");
+                crate::realtime::ws::registry().lock().remove(&conn_id);
+                return Ok(raw_http_to_response(crate::http::error_500()));
+            }
+        };
         {
             let _guard = entry.in_flight_guard();
             if let Err(e) = entry
@@ -930,7 +949,10 @@ fn serialize_envelope<E: serde::Serialize>(
         error!(worker_id = entry.id, label, error = %e, "envelope serialization failed");
         return Err(Box::new(raw_http_to_response(crate::http::error_500())));
     }
-    Ok(cursor.position() as u32)
+    // Saturate rather than truncate: an over-4GB length becomes u32::MAX, which
+    // the caller's existing size/is_io() 413 check then rejects, instead of
+    // wrapping into a valid-looking wrong length.
+    Ok(u32::try_from(cursor.position()).unwrap_or(u32::MAX))
 }
 
 /// Decode a fast-lane SAB framed response `[meta_len][meta][body]` into the
@@ -1117,8 +1139,14 @@ where
                     // Transfer-Encoding). Feed chunk #0's raw payload to the body
                     // channel, then hand the rest to a pump task.
                     let (tx, rx) = tokio::sync::mpsc::channel::<Bytes>(4);
-                    if !body.is_empty() {
-                        let _ = tx.try_send(Bytes::from(body));
+                    if !body.is_empty() && tx.send(Bytes::from(body)).await.is_err() {
+                        // Client already gone before the opening chunk landed:
+                        // drop the claim and return early (mirrors the
+                        // disconnect handling in spawn_chunk_pump). The body
+                        // receiver is dead, so no pump is started.
+                        let _ = ack.send(());
+                        drop(claim);
+                        return chunked_response_from_meta(&meta, rx);
                     }
                     let _ = ack.send(());
                     if !is_final {

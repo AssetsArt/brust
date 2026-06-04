@@ -79,8 +79,8 @@ pub struct ServeTuning {
     /// Default 10000.
     pub claim_timeout_ms: Option<u32>,
     /// tokio I/O runtime worker-thread count for the hyper server. Runs inside
-    /// Bun (which has its own threads + render workers), so this defaults to a
-    /// small value (2), NOT one-per-core. Default 2.
+    /// Bun (which has its own threads + render workers), so this is NOT
+    /// one-per-core. Default `min(available_parallelism, 4)` (fallback 2).
     pub worker_threads: Option<u32>,
 }
 

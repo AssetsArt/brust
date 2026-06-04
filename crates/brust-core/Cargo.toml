@@ -25,7 +25,7 @@ minijinja         = "2"
 jsx-rust-compiler = { path = "../jsx-rust-compiler" }
 tokio             = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "signal", "sync", "time", "fs"] }
 hyper             = { version = "1", features = ["http1", "http2", "server"] }
-hyper-util        = { version = "0.1", features = ["tokio", "server-auto", "server-graceful"] }
+hyper-util        = { version = "0.1", features = ["tokio", "server-auto"] }
 http-body-util    = "0.1"
 http-body         = "1"
 http              = "1"
