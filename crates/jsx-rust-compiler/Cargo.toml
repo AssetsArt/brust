@@ -16,4 +16,5 @@ thiserror = "2"
 
 [dev-dependencies]
 minijinja         = "2"
+serde_json        = "1"
 pretty_assertions = "1"

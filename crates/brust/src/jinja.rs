@@ -33,6 +33,7 @@ static ENV: RwLock<Option<Environment<'static>>> = RwLock::new(None);
 pub fn load_from(dir: &Path) -> Vec<String> {
     let mut env = Environment::new();
     env.set_undefined_behavior(UndefinedBehavior::Chainable);
+    env.add_filter("json_attr", json_attr);
     let mut names = Vec::new();
 
     if dir.exists() && dir.is_dir() {
@@ -64,6 +65,26 @@ pub fn load_from(dir: &Path) -> Vec<String> {
     // freshly recompiled templates.
     *ENV.write() = Some(env);
     names
+}
+
+/// Serialize a value to JSON, then HTML-entity-encode it for safe placement in a
+/// double-quoted attribute (e.g. `x-props`). Mirrors the islands
+/// `entityEncode(JSON.stringify(...))` path. minijinja's built-in `tojson` is
+/// `<script>`-oriented (safe-marked, does NOT escape `"`) so it is WRONG for an
+/// HTML attribute — hence this filter.
+fn json_attr(value: minijinja::Value) -> Result<String, minijinja::Error> {
+    let json = serde_json::to_string(&value).map_err(|e| {
+        minijinja::Error::new(
+            minijinja::ErrorKind::InvalidOperation,
+            "x-props JSON serialization failed",
+        )
+        .with_source(e)
+    })?;
+    Ok(json
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;"))
 }
 
 /// Render the named template against the supplied JSON bytes.
