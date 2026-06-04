@@ -3030,28 +3030,48 @@ fn raw_has_bare_xfor(expr: &SwcExpr) -> bool {
 /// reads a single map-binding `Expr` text child and adds `x-text`, reconstructs
 /// the `x-for` string, adds `data-x-key`.
 fn apply_map_xfor_sugar(body: JsxNode, binding: &str, source: &Expr, key_path: &str) -> JsxNode {
+    // Decorate the WHOLE item subtree (root + descendants), not just the root: a
+    // freshly reconciled clone is built from the template, so EVERY per-item value
+    // — `<img src={c.x}>`, a nested `<span>{c.y}</span>` — must carry a client
+    // directive, else the clone shows the template (first-seed) value. Without this
+    // recursion a list that GROWS (e.g. clearing a search) re-creates rows from the
+    // template and every new row shows the first item's content.
+    let mut decorated = decorate_map_node(body, binding);
+    // Root-only: reconstruct the `x-for` expr (replace the bare flag) + `data-x-key`.
+    if let JsxNode::Element { attrs, .. } = &mut decorated {
+        let xfor = format!(
+            "{binding} in {} by {key_path}",
+            crate::emit_jinja::emit_expr_path(source)
+        );
+        for a in attrs.iter_mut() {
+            if a.name == "x-for" {
+                a.value = AttrValue::Static(xfor.clone());
+            }
+        }
+        if let Some(kexpr) = crate::xfor::path_to_map_expr(key_path, binding) {
+            set_or_push_attr(attrs, "data-x-key".into(), AttrValue::Expr(kexpr));
+        }
+    }
+    decorated
+}
+
+/// Recursively decorate an element subtree for x-for adopt: each element's
+/// map-binding `Expr` attrs gain a sibling `x-bind-<name>` (so a client clone
+/// re-binds the per-item value); an element whose children are a SINGLE map-binding
+/// `Expr` gains `x-text`. Non-elements pass through. Does NOT touch `x-for` /
+/// `data-x-key` — those are root-only and added by `apply_map_xfor_sugar`.
+fn decorate_map_node(node: JsxNode, binding: &str) -> JsxNode {
     let JsxNode::Element {
         tag,
         attrs,
         children,
-    } = body
+    } = node
     else {
-        return body;
+        return node;
     };
-    let mut new_attrs: Vec<JsxAttr> = Vec::with_capacity(attrs.len() + 3);
-    let xfor = format!(
-        "{binding} in {} by {key_path}",
-        crate::emit_jinja::emit_expr_path(source)
-    );
-    let mut binds: Vec<JsxAttr> = Vec::with_capacity(attrs.len());
+    let mut new_attrs: Vec<JsxAttr> = Vec::with_capacity(attrs.len() + 1);
+    let mut binds: Vec<JsxAttr> = Vec::new();
     for a in attrs {
-        if a.name == "x-for" {
-            new_attrs.push(JsxAttr {
-                name: "x-for".into(),
-                value: AttrValue::Static(xfor.clone()),
-            });
-            continue;
-        }
         if let AttrValue::Expr(e) = &a.value
             && expr_roots_at(e, binding)
         {
@@ -3065,10 +3085,11 @@ fn apply_map_xfor_sugar(body: JsxNode, binding: &str, source: &Expr, key_path: &
     for b in binds {
         set_or_push_attr(&mut new_attrs, b.name, b.value);
     }
-    if let Some(kexpr) = crate::xfor::path_to_map_expr(key_path, binding) {
-        set_or_push_attr(&mut new_attrs, "data-x-key".into(), AttrValue::Expr(kexpr));
-    }
-    if let [JsxNode::Expr(e)] = children.as_slice()
+    let new_children: Vec<JsxNode> = children
+        .into_iter()
+        .map(|c| decorate_map_node(c, binding))
+        .collect();
+    if let [JsxNode::Expr(e)] = new_children.as_slice()
         && expr_roots_at(e, binding)
     {
         set_or_push_attr(
@@ -3080,7 +3101,7 @@ fn apply_map_xfor_sugar(body: JsxNode, binding: &str, source: &Expr, key_path: &
     JsxNode::Element {
         tag,
         attrs: new_attrs,
-        children,
+        children: new_children,
     }
 }
 
