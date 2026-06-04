@@ -38,41 +38,55 @@ client side, plus one new static-fallback guard.
 
 ### 1. Compiler — bare `x-for` on a `.map()` body element (Rust, `lower.rs`)
 
-In `lower_call_as_map`, AFTER the `JsxNode::Map` is built, inspect the body. If the (root) body element
-carries an `x-for` attribute with **no value** (`AttrValue::Empty` — the bare flag, distinct from the
-explicit `x-for="…"` Static string), run the sugar transform:
+This runs INSIDE `lower_call_as_map` (`lower.rs:2894`), as the final step before returning the
+`JsxNode::Map`, in TWO parts (a raw-AST pre-scan + a post-lowering transform) because of the key-drop
+ordering (resolved Blocker 1):
 
-- **Reconstruct the `x-for` expression** from the Map: `binding` (`t`) + `source` name (`typeTiles`,
-  from `emit_expr_path(source)` when it's a `Field`/`MemberAccess`) + the key path → emit
-  `x-for="t in typeTiles by t.id"` as a `Static` attr (so the runtime `parseFor`/`bindFor` works
-  unchanged). Replace the bare `x-for` Empty attr with this reconstructed Static one.
-- **Key** — read the element's `key={t.<path>}` attr (currently dropped silently in `lower_attr:2345`;
-  here it's captured at the map-body site BEFORE drop, or re-read from the JSX). The key value must be a
-  single map-binding member path (`t.id`). Emit `data-x-key="{{ (t.id) | e }}"` (single) on the root.
-  A `key` that is NOT a simple `t.<path>` member expr (literal, template string, composite) → **compile
-  error** with a message directing the author to the explicit `x-for="… by …"` form. (Do NOT silently
-  fall back — a marked map with an underivable key is an authoring mistake worth surfacing.)
-- **Auto-convert attrs whose value references the map binding** (`Expr::MapMember`/`MapBinding` rooted
-  at `t`): for `href={t.href}` (already lowered to an `Expr` attr that emits the SSR value
-  `href="{{ (t.href) | e }}"`), ADD a sibling `x-bind-href="t.href"` (`Static`) for the client to
-  re-bind on adopt. React rename applies: `className={t.cls}` → `x-bind-class`. An attr whose value is
-  **static** (a literal `className="…"`, not referencing `t`) is left untouched (it never changes per
-  item — no directive needed). This is the INVERSE of the explicit-x-for `transform_xfor_element` (which
-  reads `x-bind-*` and adds the real attr); here we read the real `Expr` attr and add the `x-bind-*`.
-- **Text child** — when the element's children are a SINGLE map-binding expr child (`{t.label}` →
-  `JsxNode::Expr(MapMember t.label)`), ADD `x-text="t.label"` (`Static`) on the element (the SSR value
-  child stays). Mixed / multiple / element children → leave as static SSR (the inner content is not
-  re-bound; documented limitation).
-- **`style={{ … }}` object referencing `t`** — leave as the SSR-static value (no `x-bind-style`).
+**Part A — raw-AST pre-scan (BEFORE `lower_map_body_expr` at `lower.rs:2928`).** `lower_attr` silently
+drops `key` (`lower.rs:2345`), so by the time the body is lowered to a `JsxNode` the `key` is GONE.
+Therefore, BEFORE lowering the body, peek the raw arrow `body_expr: &SwcExpr`:
+- Strip parens; the body must resolve to a single `JSXElement` (the map's per-item element). If it does
+  NOT (e.g. a `JsxNode::Cond` per-item conditional, a fragment, or text) AND a bare `x-for` is present on
+  it, that's unsupported in v1 → **compile error** (see limitations). If no bare `x-for`, no-op (normal
+  static map).
+- Scan the element's `opening.attrs` for a bare `x-for` (a `JSXAttr` named `x-for` with `value: None`).
+  If absent → no sugar (return the plain Map).
+- If the bare `x-for` IS present, REQUIRE a `key={…}` attr whose expression is a single map-binding
+  member path rooted at the arrow binding (`key={t.id}` → path `t.id`, root must == `binding`). Extract
+  the key path string. A `key` that is absent, a literal, a template string, a composite, or rooted at a
+  non-binding ident → **`LowerError`** (`ErrorKind::MapXForKeyRequired` or similar) directing the author
+  to the explicit `x-for="… by …"` form. (Surface the authoring mistake; never silently drop.)
+- Also require the Map `source` to resolve to a real template-scope array path (`Field`/`MemberAccess`
+  via the existing `resolve_xfor_source`); else → compile error (a bare `x-for` over a non-array source
+  is meaningless). This is stricter than the explicit path (which falls back to static) because the bare
+  flag is an explicit opt-in — a non-array source is a mistake, not a fallback.
+
+**Part B — post-lowering transform (AFTER `lower_map_body_expr`, on the lowered body `JsxNode::Element`).**
+With the captured `key_path` from Part A:
+- **Reconstruct the `x-for` expression**: `binding` + `emit_expr_path(source)` + `by <key_path>` →
+  replace the bare `x-for` `AttrValue::Empty` attr with `x-for="t in typeTiles by t.id"` (`Static`), so
+  the runtime `parseFor`/`bindFor` works unchanged.
+- **`data-x-key`**: from `key_path` via `path_to_map_expr` → `set_or_push_attr(attrs, "data-x-key",
+  Expr(MapMember t.id))` → emits `data-x-key="{{ (t.id) | e }}"`. (Single key only; reuses the existing
+  helper.)
+- **Auto-convert map-binding attrs → `x-bind-*`** (INVERSE of the explicit-path `transform_xfor_element`,
+  `lower.rs:784`, which reads `x-bind-*` and adds the real attr): for each attr whose value is
+  `AttrValue::Expr` rooted at the binding (`href` = `Expr(MapMember t.href)` — already emits the SSR
+  value `href="{{ (t.href) | e }}"`), ADD a sibling `x-bind-<name>="t.href"` (`Static`) for the client to
+  re-bind on adopt. The attr NAME is already React-renamed at lowering time (`className` → `class` via
+  `rename_attr`, `lower.rs:1834`), so the sugar reads `class` and emits `x-bind-class` — it does NOT
+  re-rename. Attrs whose value is `Static`/`StaticNum`/`Empty` (a literal `class="…"` not referencing
+  `t`) are left untouched (they never change per item).
+- **Text child** — when the element's children are a SINGLE `JsxNode::Expr` rooted at the binding
+  (`{t.label}`), ADD `x-text="t.label"` (`Static`); the SSR value child stays. Mixed / multiple /
+  element children → left as static SSR (not re-bound; documented limitation).
+- **`style={{ … }}` object referencing `t`** — left as the SSR-static value (no `x-bind-style`).
   DEFERRED per Non-goals.
-- Detection / backward-compat: only triggers on a bare-`x-for` body element whose Map `source` resolves
-  to a real template-scope array path (`Field`/`MemberAccess` via `resolve_xfor_source`, the same helper
-  the explicit path uses). A `.map()` over a behavior-computed/non-path source, or with no bare `x-for`,
-  is byte-identical to today.
 
-> Architecturally this runs in `lower_call_as_map` (NOT `lower_element`) because only the map call knows
-> the `source` (`typeTiles`); `lower_element` sees only the body element. It reuses the existing
-> `data-x-key` emit + `set_or_push_attr` dedup helpers.
+> Interaction with the explicit path: a bare `x-for` is `AttrValue::Empty`, and `try_xfor_ssr`
+> (`lower.rs:712`) matches only `("x-for", AttrValue::Static(_))`, so the bare flag passes through
+> `lower_element` UNtouched — no double-processing. The sugar in `lower_call_as_map` is the sole handler.
+> It reuses `data-x-key` emit + `set_or_push_attr` + `path_to_map_expr` + `resolve_xfor_source`.
 
 ### 2. Runtime — static fallback guard (TS, `bindForAdopt`)
 
@@ -80,12 +94,19 @@ The just-merged `bindForAdopt` reads `list = read(instance, listPath)`, builds a
 seeds, and installs the keyed reconcile. NEW guard for the "marked map, no backing signal" case (an
 author used the flag but no behavior exposes `typeTiles`, or the list is inside an unrelated `x-data`):
 
-- Before adopting, resolve the source non-reactively: `resolveRaw(instance, listPath)`. If it is
-  `undefined` (no such property/signal on the instance) → **return early WITHOUT installing the
+- Before adopting, resolve the source non-reactively: `resolveRaw(instance, listPath)`. `resolveRaw`
+  returns the value WITHOUT calling it, so for a behavior exposing `items = signal(...)` it returns the
+  **signal object** (truthy) — present-but-empty (`signal([])`) and present-but-undefined-value
+  (`signal(undefined)`) both still resolve truthy and proceed to the normal adopt/reconcile. Only a
+  TRULY ABSENT path (no `items` property/signal on the instance at all) returns `undefined`.
+- If `resolveRaw(instance, listPath) == null` (truly absent) → **return early WITHOUT installing the
   reconcile and WITHOUT touching the seed nodes** — the SSR list stays exactly as rendered (fully
   static). Do NOT bind `x-text`/`x-bind-*` either (binding against a missing source would read
   `undefined` and clear the SSR content).
-- When `listPath` resolves to a signal/array → unchanged: adopt + reconcile as today.
+- Otherwise (a signal/array is registered) → unchanged: adopt + reconcile as today. NOTE: the current
+  `bindForAdopt` ALWAYS calls `installKeyedReconcile`, whose `effect()` fires synchronously and, with an
+  empty `arr`, `disposeEntry`s every seed (`runtime.ts` ~`:293`, `node.remove()`) — i.e. the wipe is
+  active, not passive. The guard's early return is what prevents it.
 
 This makes the bare-`x-for` flag safe to use on a list that only SOMETIMES has a behavior — exactly the
 "ไม่ได้มี behavior ตลอด" requirement.
@@ -104,10 +125,15 @@ for the feature; include one small golden + a browser smoke if a natural static-
     x-bind-href="t.href" data-x-key="{{ (t.id) | e }}"><… x-text="t.label">{{ (t.label) | e }}…</a>{% endfor %}`
     (freeze from REAL emit; eyeball the reconstructed `x-for`, `data-x-key`, the added `x-bind-href`,
     the `x-text`). Attr order captured, not guessed.
+    Attr order is captured from REAL emit (the added `x-bind-*`/`data-x-key` are appended by
+    `set_or_push_attr`), never hand-guessed.
   - `map_no_xfor.tsx` — same `.map()` WITHOUT the bare `x-for` → byte-identical to today's static
     `{% for %}` (regression: no `x-for`, no `data-x-key`, no `x-bind-*`).
-  - `map_xfor_bad_key.tsx` — bare `x-for` + `key={\`${t.a}-${t.b}\`}` (not a simple member) → compile
-    ERROR (assert the diagnostic, not a panic).
+- **Compiler UNIT tests** (`lower.rs` `#[cfg(test)]`, the `compile_full(...).unwrap_err()` pattern at
+  `lower.rs:~4164/5014` — NOT the golden harness, which `panic!`s on a compile error and cannot assert
+  one): bare `x-for` + `key={\`${t.a}-${t.b}\`}` (template string, not a member) → `LowerError`; bare
+  `x-for` with NO `key` → `LowerError`; bare `x-for` over a non-array source → `LowerError`. Assert the
+  error kind, not a panic.
 - **Runtime** (`runtime.test.ts`):
   - marked seed nodes + an instance that EXPOSES `items` as a signal → adopt + reconcile (reuse identity)
     — covered by the existing adopt tests; add one asserting the sugar-emitted markup
@@ -137,3 +163,11 @@ for the feature; include one small golden + a browser smoke if a natural static-
   never hits this.
 - Single key only (`key={t.<path>}`); composite keying → explicit `x-for="… by a, b"`.
 - Text reactivity only for a single map-binding expr child; mixed/element children stay SSR-static.
+- **Conditional / non-element map body** — bare `x-for` is only supported when the `.map()` body strips
+  to a single `JSXElement`. A per-item conditional body (`t.active && <li x-for key=…>`), a fragment, or
+  a text body carrying the flag → **compile error** in the Part-A pre-scan (don't leave a dead bare
+  `x-for=""` attr in the output). Conditional-per-item reactive lists stay on the explicit path / are a
+  future follow-up.
+- **Async/undefined-value source** — the runtime guard uses `resolveRaw != null` (signal-object
+  presence), so a registered signal whose value is momentarily `undefined`/`[]` proceeds to adopt
+  (reconcile shows an empty list), NOT static-fallback. Static-fallback is strictly "no signal at all".
