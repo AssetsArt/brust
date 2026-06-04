@@ -90,13 +90,33 @@ fn client_config(alpn: Vec<Vec<u8>>) -> ClientConfig {
     cfg
 }
 
+/// A client config restricted to TLS 1.2 only. Used to prove that a 1.3-only
+/// server refuses to negotiate down: this client cannot offer TLS 1.3, so the
+/// handshake must fail. Mirrors `client_config`'s verifier wiring (`NoVerify`).
+fn client_config_tls12_only(alpn: Vec<Vec<u8>>) -> ClientConfig {
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let mut cfg = ClientConfig::builder_with_protocol_versions(&[&rustls::version::TLS12])
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(NoVerify))
+        .with_no_client_auth();
+    cfg.alpn_protocols = alpn;
+    cfg
+}
+
 /// Boot a one-shot TLS hyper server, return its bound addr. Serves a single
-/// connection then exits.
+/// connection then exits. Uses the default min version (TLS 1.2 + 1.3).
 async fn spawn_tls_server() -> std::net::SocketAddr {
+    spawn_tls_server_with(brust_core::server::tls::TlsMinVersion::default()).await
+}
+
+/// Boot a one-shot TLS hyper server with an explicit minimum TLS version.
+async fn spawn_tls_server_with(
+    min_version: brust_core::server::tls::TlsMinVersion,
+) -> std::net::SocketAddr {
     let cfg = TlsConfig {
         cert_path: fixture("cert.pem"),
         key_path: fixture("key.pem"),
-        min_version: brust_core::server::tls::TlsMinVersion::default(),
+        min_version,
     };
     let acceptor = build_acceptor(&cfg).expect("build_acceptor");
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -184,4 +204,27 @@ async fn tls_h2_request_returns_200() {
         .unwrap();
     let resp = sender.send_request(req).await.expect("send_request");
     assert_eq!(resp.status(), 200);
+}
+
+#[tokio::test]
+async fn tls13_only_server_rejects_tls12_client() {
+    // Server restricted to TLS 1.3 only; client restricted to TLS 1.2 only.
+    // There is no common protocol version, so the handshake must fail at version
+    // negotiation (the server sends a protocol_version alert). This is the
+    // end-to-end proof that `min_version: Tls13` actually rejects 1.2 clients —
+    // not just that the acceptor builds.
+    let addr = spawn_tls_server_with(brust_core::server::tls::TlsMinVersion::Tls13).await;
+
+    let connector = TlsConnector::from(Arc::new(client_config_tls12_only(vec![
+        b"h2".to_vec(),
+        b"http/1.1".to_vec(),
+    ])));
+    let tcp = TcpStream::connect(addr).await.unwrap();
+    let server_name = ServerName::try_from("localhost").unwrap();
+    let result = connector.connect(server_name, tcp).await;
+
+    assert!(
+        result.is_err(),
+        "TLS 1.3-only server must reject a TLS 1.2-only client, but the handshake succeeded"
+    );
 }

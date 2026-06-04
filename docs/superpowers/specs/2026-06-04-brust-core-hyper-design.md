@@ -345,7 +345,10 @@ the serve options; omitting it (or `"1.2"`) keeps the default 1.2 + 1.3 set and
 is byte-for-byte the prior behavior. An unrecognized value is rejected at boot
 rather than silently defaulting. `tlsCertPath` / `tlsKeyPath` are
 operator-supplied PEM paths (cert chain + private key); `tlsMinVersion` only
-takes effect when both are present.
+takes effect when both are present. The value is validated at boot even when TLS
+is otherwise unconfigured (no cert/key), so an operator typo such as
+`tlsMinVersion: "1.4"` is caught immediately rather than lying dormant until TLS
+is later enabled.
 
 ### SSE disconnect detection
 
