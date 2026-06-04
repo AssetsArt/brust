@@ -61,6 +61,11 @@ pub struct ServeOptions {
     pub tls_cert_path: Option<String>,
     /// Optional in-process TLS: PEM private-key path. See `tls_cert_path`.
     pub tls_key_path: Option<String>,
+    /// Optional minimum TLS version: `"1.2"` (default, = rustls TLS 1.2 + 1.3
+    /// safe defaults) or `"1.3"` (TLS 1.3 only, for hardened/compliance
+    /// deployments). Case-insensitive, trimmed. Only meaningful when TLS is
+    /// configured (cert + key present). An unrecognized value is rejected.
+    pub tls_min_version: Option<String>,
 }
 
 /// Runtime-tunable server limits, all optional. Maps onto `server::Tuning`
@@ -158,6 +163,20 @@ pub fn begin_serve(opts: ServeOptions) -> NapiResult<()> {
         state().set_action_prefix(p.clone());
     }
 
+    // Optional minimum TLS version. Parsed up front so an invalid value is
+    // rejected regardless of cert/key presence (never silently defaults). Only
+    // applied when TLS is actually configured below.
+    let min_version = match opts.tls_min_version.as_deref().map(str::trim) {
+        None => brust_core::server::tls::TlsMinVersion::Tls12,
+        Some(v) if v.eq_ignore_ascii_case("1.2") => brust_core::server::tls::TlsMinVersion::Tls12,
+        Some(v) if v.eq_ignore_ascii_case("1.3") => brust_core::server::tls::TlsMinVersion::Tls13,
+        Some(other) => {
+            return Err(napi::Error::from_reason(format!(
+                "tlsMinVersion must be \"1.2\" or \"1.3\": {other:?}"
+            )));
+        }
+    };
+
     // Optional in-process TLS: only enabled when BOTH cert + key are supplied.
     // Additive — an app that omits them serves plaintext, byte-for-byte unchanged.
     match (&opts.tls_cert_path, &opts.tls_key_path) {
@@ -165,6 +184,7 @@ pub fn begin_serve(opts: ServeOptions) -> NapiResult<()> {
             s.set_tls(Some(brust_core::server::tls::TlsConfig {
                 cert_path: std::path::PathBuf::from(cert),
                 key_path: std::path::PathBuf::from(key),
+                min_version,
             }));
         }
         (None, None) => {}

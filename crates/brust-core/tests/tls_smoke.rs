@@ -96,6 +96,7 @@ async fn spawn_tls_server() -> std::net::SocketAddr {
     let cfg = TlsConfig {
         cert_path: fixture("cert.pem"),
         key_path: fixture("key.pem"),
+        min_version: brust_core::server::tls::TlsMinVersion::default(),
     };
     let acceptor = build_acceptor(&cfg).expect("build_acceptor");
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

@@ -13,6 +13,19 @@ use std::sync::{Arc, Once};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tokio_rustls::TlsAcceptor;
 
+/// Minimum TLS protocol version the server will negotiate. Default
+/// [`TlsMinVersion::Tls12`] keeps rustls' own safe defaults (TLS 1.2 + 1.3);
+/// [`TlsMinVersion::Tls13`] restricts to TLS 1.3 only for hardened/compliance
+/// deployments. Set via the `tlsMinVersion` napi option (`"1.2"` / `"1.3"`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TlsMinVersion {
+    /// rustls default: TLS 1.2 + 1.3 (no RC4/export/CBC-without-MAC).
+    #[default]
+    Tls12,
+    /// TLS 1.3 only.
+    Tls13,
+}
+
 /// Configured cert + key paths for in-process TLS termination. Built by the
 /// napi binding when BOTH `tlsCertPath` and `tlsKeyPath` are supplied; absent
 /// otherwise (plaintext).
@@ -20,6 +33,9 @@ use tokio_rustls::TlsAcceptor;
 pub struct TlsConfig {
     pub cert_path: PathBuf,
     pub key_path: PathBuf,
+    /// Minimum negotiable TLS version. Default (`Tls12`) = rustls default
+    /// (TLS 1.2 + 1.3, unchanged behavior).
+    pub min_version: TlsMinVersion,
 }
 
 /// Install the process-wide rustls crypto provider exactly once. rustls 0.23
@@ -98,7 +114,16 @@ pub fn build_acceptor(cfg: &TlsConfig) -> io::Result<TlsAcceptor> {
             })?;
 
     // ----- server config -----
-    let mut config = rustls::ServerConfig::builder()
+    // Default (`Tls12`) keeps rustls' safe default versions (TLS 1.2 + 1.3);
+    // `Tls13` restricts to TLS 1.3 only. Both builders yield the same
+    // `WantsVerifier` shape, so client-auth + cert wiring is identical.
+    let builder = match cfg.min_version {
+        TlsMinVersion::Tls12 => rustls::ServerConfig::builder(),
+        TlsMinVersion::Tls13 => {
+            rustls::ServerConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])
+        }
+    };
+    let mut config = builder
         .with_no_client_auth()
         .with_single_cert(certs, key)
         .map_err(|e| {
@@ -140,6 +165,7 @@ mod tests {
         let cfg = TlsConfig {
             cert_path: cert.clone(),
             key_path: key.clone(),
+            min_version: TlsMinVersion::default(),
         };
         let acceptor = build_acceptor(&cfg);
         let _ = std::fs::remove_file(&cert);
@@ -152,10 +178,34 @@ mod tests {
     }
 
     #[test]
+    fn build_acceptor_tls13_only_builds() {
+        // `Tls13` restricts the negotiable versions to TLS 1.3 only. rustls
+        // doesn't expose the resolved version set on the built `ServerConfig`,
+        // so we assert the acceptor builds without error against the fixture —
+        // the build path differs from the default only by the version slice.
+        let cert = write_tmp("cert13.pem", TEST_CERT_PEM);
+        let key = write_tmp("key13.pem", TEST_KEY_PEM);
+        let cfg = TlsConfig {
+            cert_path: cert.clone(),
+            key_path: key.clone(),
+            min_version: TlsMinVersion::Tls13,
+        };
+        let acceptor = build_acceptor(&cfg);
+        let _ = std::fs::remove_file(&cert);
+        let _ = std::fs::remove_file(&key);
+        assert!(
+            acceptor.is_ok(),
+            "build_acceptor (TLS1.3-only) failed: {:?}",
+            acceptor.err()
+        );
+    }
+
+    #[test]
     fn build_acceptor_errors_on_missing_cert() {
         let cfg = TlsConfig {
             cert_path: PathBuf::from("/nonexistent/brust/cert.pem"),
             key_path: PathBuf::from("/nonexistent/brust/key.pem"),
+            min_version: TlsMinVersion::default(),
         };
         assert!(build_acceptor(&cfg).is_err());
     }
@@ -167,6 +217,7 @@ mod tests {
         let cfg = TlsConfig {
             cert_path: cert.clone(),
             key_path: key.clone(),
+            min_version: TlsMinVersion::default(),
         };
         let r = build_acceptor(&cfg);
         let _ = std::fs::remove_file(&cert);

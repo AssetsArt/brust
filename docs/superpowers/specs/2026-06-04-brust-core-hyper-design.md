@@ -330,3 +330,30 @@ jsx_compile.rs          #[napi] jsx-rust-compiler binding (unchanged)
   flume dropped (resolved above).
 - WS upgrade: `hyper::upgrade::on` → 101 response → spawned task wraps `TokioIo`
   into `from_raw_socket` (resolved above).
+
+## TLS & SSE operational notes
+
+These document the operator-facing posture of the optional in-process TLS path
+and a behavioral parity delta in SSE disconnect detection under hyper.
+
+### TLS versions
+
+The default negotiable versions are TLS 1.2 + 1.3 (rustls 0.23 safe defaults:
+no RC4, no export ciphers, no CBC-without-MAC). Operators in a hardened or
+compliance environment who require TLS 1.3 only set `tlsMinVersion: "1.3"` in
+the serve options; omitting it (or `"1.2"`) keeps the default 1.2 + 1.3 set and
+is byte-for-byte the prior behavior. An unrecognized value is rejected at boot
+rather than silently defaulting. `tlsCertPath` / `tlsKeyPath` are
+operator-supplied PEM paths (cert chain + private key); `tlsMinVersion` only
+takes effect when both are present.
+
+### SSE disconnect detection
+
+Under hyper, client-disconnect for a Server-Sent-Events stream is detected via
+the response body channel closing (`tx.closed()` on the hyper body sender),
+not the previous raw-socket FIN peek. Practical effect: a disconnect is observed
+when hyper drops the body receiver — on the next write attempt or at connection
+teardown — rather than via an out-of-band socket read. For normal SSE usage
+(the server keeps emitting events, so the next send surfaces the closed channel
+promptly) this is equivalent; the delta is recorded here so the parity change
+is on the record.
