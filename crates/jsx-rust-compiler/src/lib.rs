@@ -1941,6 +1941,70 @@ export default function Lay({ children }) { return <BrustPage title="x"><main>{c
     }
 
     #[test]
+    fn lucide_dynamic_color_and_stroke_width() {
+        // AC3: color={data.c} strokeWidth={data.w} → dynamic stroke / stroke-width.
+        let route = r#"export default function P({ data }){ return <div><Search color={data.c} strokeWidth={data.w}/></div>; }"#;
+        let c = compile_full(route, "<test>", HashMap::new(), lucide_search_map()).unwrap();
+        let t = &c.template;
+        assert!(t.contains("stroke=\"{{ (data.c) | e }}\""), "{t}");
+        assert!(t.contains("stroke-width=\"{{ (data.w) | e }}\""), "{t}");
+        // Still a static <svg>, not an SSR fallback.
+        assert!(t.contains("<svg"), "{t}");
+        assert!(!t.contains("comp_"), "{t}");
+    }
+
+    #[test]
+    fn lucide_static_class_name() {
+        // AC4a: className="w-4 h-4" merges into the class literal (T2 behavior).
+        let route =
+            r#"export default function P(){ return <div><Search className="w-4 h-4"/></div>; }"#;
+        let c = compile_full(route, "<test>", HashMap::new(), lucide_search_map()).unwrap();
+        let t = &c.template;
+        assert!(t.contains("class=\"lucide lucide-search w-4 h-4\""), "{t}");
+    }
+
+    #[test]
+    fn lucide_dynamic_class_name() {
+        // AC4b: className={data.cls} → dynamic class with icon-class prefix.
+        let route = r#"export default function P({ data }){ return <div><Search className={data.cls}/></div>; }"#;
+        let c = compile_full(route, "<test>", HashMap::new(), lucide_search_map()).unwrap();
+        let t = &c.template;
+        assert!(t.contains("lucide lucide-search"), "{t}");
+        assert!(
+            t.contains("class=\"{{ (\"lucide lucide-search \" ~ data.cls) | e }}\""),
+            "{t}"
+        );
+        assert!(t.contains("<svg"), "{t}");
+        assert!(!t.contains("comp_"), "{t}");
+    }
+
+    #[test]
+    fn lucide_spread_falls_back_with_warning() {
+        // AC6: {...props} → SSR fallback + a warning.
+        let route =
+            r#"export default function P({ props }){ return <div><Search {...props}/></div>; }"#;
+        let c = compile_full(route, "<test>", HashMap::new(), lucide_search_map()).unwrap();
+        let t = &c.template;
+        assert!(t.contains("comp_"), "{t}");
+        let json = components_to_json(&c.components);
+        assert!(json.contains("\"Search\""), "{json}");
+        assert!(!c.warnings.is_empty(), "warnings: {:?}", c.warnings);
+    }
+
+    #[test]
+    fn lucide_dynamic_size() {
+        // AC-dynsize: size={data.s} → dynamic width AND height.
+        let route =
+            r#"export default function P({ data }){ return <div><Search size={data.s}/></div>; }"#;
+        let c = compile_full(route, "<test>", HashMap::new(), lucide_search_map()).unwrap();
+        let t = &c.template;
+        assert!(t.contains("width=\"{{ (data.s) | e }}\""), "{t}");
+        assert!(t.contains("height=\"{{ (data.s) | e }}\""), "{t}");
+        assert!(t.contains("<svg"), "{t}");
+        assert!(!t.contains("comp_"), "{t}");
+    }
+
+    #[test]
     fn lucide_empty_map_regression() {
         // AC8: AC1 route with an EMPTY lucide map == compiling pre-feature.
         let route = r#"export default function P(){ return <div><Search/></div>; }"#;

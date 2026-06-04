@@ -1340,20 +1340,59 @@ fn lucide_prop_value(
     }
 }
 
-/// Emit a static `<svg>` for a registered lucide icon, for the STATIC-prop cases
-/// only (T2). Returns `Ok(None)` to defer to the SSR path (T3 will handle these):
-/// any spread, any recognized prop with a dynamic value, a dynamic `className`,
-/// or an `absoluteStrokeWidth` prop. Otherwise builds the SVG node directly.
+/// Lower a JSX attribute's value expression into an `Expr` (for the dynamic
+/// lucide prop arms). Errors on a non-expression / empty-expression container,
+/// mirroring the passthrough arm's handling.
+fn lower_attr_expr(
+    jsx_attr: &swc_core::ecma::ast::JSXAttr,
+    scope: &Scope,
+) -> Result<crate::ir::Expr, LowerError> {
+    match &jsx_attr.value {
+        Some(JSXAttrValue::JSXExprContainer(c)) => match &c.expr {
+            JSXExpr::Expr(e) => lower_expr(e, scope),
+            JSXExpr::JSXEmptyExpr(_) => {
+                Err(LowerError::at(c.span, ErrorKind::JsxInAttrNotSupported))
+            }
+        },
+        _ => Err(LowerError::at(
+            jsx_attr.span,
+            ErrorKind::JsxInAttrNotSupported,
+        )),
+    }
+}
+
+/// Emit an `<svg>` for a registered lucide icon (T2 static cases + T3 dynamic
+/// cases). Dynamic `size`/`color`/`strokeWidth`/`className` are lowered to an
+/// `Expr` and emitted as `{{ … | e }}` interpolations. Returns `Ok(None)` to
+/// defer to the SSR path (soft-fallback, with a warning) only for cases that
+/// can't be statically inlined: any spread, or an `absoluteStrokeWidth` whose
+/// `strokeWidth`/`size` aren't both static numerics.
 fn build_lucide_svg(
     el: &JSXElement,
     icon: &LucideIcon,
+    component_name: &str,
     scope: &Scope,
 ) -> Result<Option<JsxNode>, LowerError> {
-    // Recognized prop slots (only set when STATIC; a dynamic value bails out).
-    let mut size: Option<i64> = None;
-    let mut color: Option<String> = None;
-    let mut stroke_width: Option<String> = None;
+    // Push a soft-fallback warning to the shared lucide env (merged into compile
+    // warnings) when an icon can't be statically inlined.
+    let warn = |msg: String| {
+        if let Some(le) = &scope.lucide_env {
+            le.warnings.borrow_mut().push(msg);
+        }
+    };
+
+    // Recognized prop slots. Static numerics (`size`/static `strokeWidth`) are
+    // tracked separately for the absoluteStrokeWidth math; each slot also carries
+    // an optional `AttrValue` override (static OR dynamic) for emission.
+    let mut size_num: Option<i64> = None;
+    let mut size_attr: Option<AttrValue> = None;
+    let mut color_attr: Option<AttrValue> = None;
+    let mut stroke_width_num: Option<i64> = None;
+    let mut stroke_width_attr: Option<AttrValue> = None;
+    // class: static merged literal, or a dynamic Concat(icon-class-prefix, expr).
     let mut class_name: Option<String> = None;
+    let mut class_attr: Option<AttrValue> = None;
+    let mut has_absolute_stroke_width = false;
     // Passthrough attrs (aria-*, role, data-*, and any other plain attr), in
     // source order, emitted verbatim.
     let mut passthrough: Vec<JsxAttr> = Vec::new();
@@ -1362,8 +1401,13 @@ fn build_lucide_svg(
 
     for attr in &el.opening.attrs {
         let jsx_attr = match attr {
-            // Spread → T3 (soft-fallback + warn). Defer.
-            JSXAttrOrSpread::SpreadElement(_) => return Ok(None),
+            // Spread → soft-fallback + warn. Defer to React SSR.
+            JSXAttrOrSpread::SpreadElement(_) => {
+                warn(format!(
+                    "lucide <{component_name}/>: spread props prevent static inlining; falling back to React SSR"
+                ));
+                return Ok(None);
+            }
             JSXAttrOrSpread::JSXAttr(a) => a,
         };
         let name = match &jsx_attr.name {
@@ -1379,25 +1423,45 @@ fn build_lucide_svg(
             // Stripped no-ops. `isr` is allowed and ignored (no error).
             "isr" | "key" | "ref" => continue,
             "size" => match lucide_prop_value(&jsx_attr.value, scope)? {
-                LucidePropVal::Num(n) => size = Some(n),
+                LucidePropVal::Num(n) => {
+                    size_num = Some(n);
+                    size_attr = Some(AttrValue::StaticNum(n));
+                }
                 // A string size (`size="16"`) is still static — accept it numerically
-                // when it parses, otherwise treat the string verbatim is not a valid
-                // width; defer to T3.
+                // when it parses, otherwise it isn't a valid width; defer.
                 LucidePropVal::Str(s) => match s.parse::<i64>() {
-                    Ok(n) => size = Some(n),
+                    Ok(n) => {
+                        size_num = Some(n);
+                        size_attr = Some(AttrValue::StaticNum(n));
+                    }
                     Err(_) => return Ok(None),
                 },
-                LucidePropVal::Dynamic => return Ok(None),
+                // Dynamic size → both width and height interpolate the expr.
+                LucidePropVal::Dynamic => {
+                    size_attr = Some(AttrValue::Expr(lower_attr_expr(jsx_attr, scope)?));
+                }
             },
             "color" => match lucide_prop_value(&jsx_attr.value, scope)? {
-                LucidePropVal::Str(s) => color = Some(s),
-                LucidePropVal::Num(n) => color = Some(n.to_string()),
-                LucidePropVal::Dynamic => return Ok(None),
+                LucidePropVal::Str(s) => color_attr = Some(AttrValue::Static(s)),
+                LucidePropVal::Num(n) => color_attr = Some(AttrValue::StaticNum(n)),
+                LucidePropVal::Dynamic => {
+                    color_attr = Some(AttrValue::Expr(lower_attr_expr(jsx_attr, scope)?));
+                }
             },
             "strokeWidth" => match lucide_prop_value(&jsx_attr.value, scope)? {
-                LucidePropVal::Num(n) => stroke_width = Some(n.to_string()),
-                LucidePropVal::Str(s) => stroke_width = Some(s),
-                LucidePropVal::Dynamic => return Ok(None),
+                LucidePropVal::Num(n) => {
+                    stroke_width_num = Some(n);
+                    stroke_width_attr = Some(AttrValue::StaticNum(n));
+                }
+                LucidePropVal::Str(s) => {
+                    if let Ok(n) = s.parse::<i64>() {
+                        stroke_width_num = Some(n);
+                    }
+                    stroke_width_attr = Some(AttrValue::Static(s));
+                }
+                LucidePropVal::Dynamic => {
+                    stroke_width_attr = Some(AttrValue::Expr(lower_attr_expr(jsx_attr, scope)?));
+                }
             },
             "className" => match lucide_prop_value(&jsx_attr.value, scope)? {
                 LucidePropVal::Str(s) => {
@@ -1406,10 +1470,20 @@ fn build_lucide_svg(
                     }
                 }
                 // A numeric className is nonsensical; defer.
-                LucidePropVal::Num(_) | LucidePropVal::Dynamic => return Ok(None),
+                LucidePropVal::Num(_) => return Ok(None),
+                // Dynamic className → merge the icon class as a prefix:
+                // `Concat["lucide lucide-search ", <expr>]`.
+                LucidePropVal::Dynamic => {
+                    let expr = lower_attr_expr(jsx_attr, scope)?;
+                    class_attr = Some(AttrValue::Expr(crate::ir::Expr::Concat(vec![
+                        crate::ir::Expr::StaticText(format!("{} ", icon.cls)),
+                        expr,
+                    ])));
+                }
             },
-            // Presence of absoluteStrokeWidth changes stroke-width math → T3.
-            "absoluteStrokeWidth" => return Ok(None),
+            // Presence of absoluteStrokeWidth changes the stroke-width math; the
+            // resolution happens after the loop (needs both strokeWidth and size).
+            "absoluteStrokeWidth" => has_absolute_stroke_width = true,
             // Passthrough: aria-*, role, data-*, and any other plain attribute.
             _ => {
                 if name == "role" || name.starts_with("aria-") {
@@ -1451,10 +1525,41 @@ fn build_lucide_svg(
         }
     }
 
-    // Build the SVG attrs in the FIXED golden order.
-    let width = size.unwrap_or(24);
-    let stroke = color.unwrap_or_else(|| "currentColor".to_string());
-    let sw = stroke_width.unwrap_or_else(|| "2".to_string());
+    // absoluteStrokeWidth: lucide computes `stroke-width = strokeWidth * 24 / size`.
+    // We can only do this when BOTH strokeWidth and size are static numerics and
+    // size != 0; otherwise soft-fall back to SSR (which runs the real lucide).
+    if has_absolute_stroke_width {
+        match (stroke_width_num, size_num) {
+            (Some(sw), Some(sz)) if sz != 0 => {
+                // f64 math then format; trailing-zero-free (matches `2` not `2.0`).
+                let computed = (sw as f64) * 24.0 / (sz as f64);
+                let s = if computed.fract() == 0.0 {
+                    format!("{}", computed as i64)
+                } else {
+                    // Trim a trailing newline-free fixed repr of insignificant zeros.
+                    let mut t = format!("{computed}");
+                    while t.contains('.') && t.ends_with('0') {
+                        t.pop();
+                    }
+                    t
+                };
+                stroke_width_attr = Some(AttrValue::Static(s));
+            }
+            _ => {
+                warn(format!(
+                    "lucide <{component_name}/>: absoluteStrokeWidth needs static numeric strokeWidth and size; falling back to React SSR"
+                ));
+                return Ok(None);
+            }
+        }
+    }
+
+    // Resolve each slot to its emitted AttrValue, defaulting to the lucide literal.
+    // size drives BOTH width and height.
+    let width_attr = size_attr.clone().unwrap_or(AttrValue::StaticNum(24));
+    let height_attr = size_attr.unwrap_or(AttrValue::StaticNum(24));
+    let stroke_attr = color_attr.unwrap_or_else(|| AttrValue::Static("currentColor".to_string()));
+    let sw_attr = stroke_width_attr.unwrap_or_else(|| AttrValue::Static("2".to_string()));
 
     let mut attrs: Vec<JsxAttr> = Vec::new();
     let st = |n: &str, v: &str| JsxAttr {
@@ -1464,21 +1569,21 @@ fn build_lucide_svg(
     attrs.push(st("xmlns", "http://www.w3.org/2000/svg"));
     attrs.push(JsxAttr {
         name: "width".into(),
-        value: AttrValue::StaticNum(width),
+        value: width_attr,
     });
     attrs.push(JsxAttr {
         name: "height".into(),
-        value: AttrValue::StaticNum(width),
+        value: height_attr,
     });
     attrs.push(st("viewBox", "0 0 24 24"));
     attrs.push(st("fill", "none"));
     attrs.push(JsxAttr {
         name: "stroke".into(),
-        value: AttrValue::Static(stroke),
+        value: stroke_attr,
     });
     attrs.push(JsxAttr {
         name: "stroke-width".into(),
-        value: AttrValue::Static(sw),
+        value: sw_attr,
     });
     attrs.push(st("stroke-linecap", "round"));
     attrs.push(st("stroke-linejoin", "round"));
@@ -1488,14 +1593,21 @@ fn build_lucide_svg(
     }
     // Passthrough props in source order.
     attrs.extend(passthrough);
-    // class LAST: icon class + optional static className.
-    let class = match &class_name {
-        Some(c) => format!("{} {}", icon.cls, c),
-        None => icon.cls.clone(),
+    // class LAST: dynamic className → Concat(icon-class-prefix, expr); else the
+    // static icon class + optional static className literal.
+    let class_value = match class_attr {
+        Some(v) => v,
+        None => {
+            let class = match &class_name {
+                Some(c) => format!("{} {}", icon.cls, c),
+                None => icon.cls.clone(),
+            };
+            AttrValue::Static(class)
+        }
     };
     attrs.push(JsxAttr {
         name: "class".into(),
-        value: AttrValue::Static(class),
+        value: class_value,
     });
 
     // Children: each (tag, attrs) in icon.node → a childless host element.
@@ -1544,7 +1656,7 @@ fn lower_ssr_component(
     if let Some(lenv) = &scope.lucide_env
         && let Some(icon) = lenv.icons.get(component_name)
     {
-        match build_lucide_svg(el, icon, scope)? {
+        match build_lucide_svg(el, icon, component_name, scope)? {
             Some(node) => return Ok(node),
             None => { /* T3: soft-fallback. Fall through to the SSR path below. */ }
         }
