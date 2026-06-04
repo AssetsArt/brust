@@ -37,18 +37,41 @@ When lowering a native element carrying `x-for="<item> in <source> by <keypaths>
 - INSIDE the loop, render the element + children with the loop binding:
   - `x-text="c.x"` → the element's text becomes `{{ (c.x) | e }}` (server value) — AND keep `x-text="c.x"` as an attr (client).
   - `x-bind-<attr>="c.x"` → emit `<attr>="{{ (c.x) | e }}"` (server value) — AND keep `x-bind-<attr>="c.x"` (client).
-  - Add `data-x-key="{{ (<keypath0>) | e }}"` (joined for composite) so the runtime can match SSR nodes to keys.
+  - **Key attr (NOT `\x00` in markup — spec-review B1):** a literal NUL in an HTML attribute is replaced
+    with U+FFFD by the HTML parser, so the runtime `\x00`-join must NEVER appear in markup. Emit:
+    single keypath → `data-x-key="{{ (<keypath0>) | e }}"`; composite → ONE attr per part
+    `data-x-key-0="{{ (<kp0>) | e }}" data-x-key-1="{{ (<kp1>) | e }}" …`. The runtime reads
+    `data-x-key` (single) OR collects `data-x-key-*` in order and joins with `\x00` **in JS** to match
+    its computed key. NUL only ever exists in memory, never in HTML.
   - Keep `x-for`/`x-data` context intact so the runtime mounts + adopts.
 - The element is emitted ONCE inside the loop (not duplicated): the same element node is BOTH the SSR
   per-item render (via the for-loop) AND carries the client `x-*` attrs. The runtime treats the loop
   output as the adopt seed; the FIRST such node (or a stripped clone) is the template for future creates.
-- **Detection:** an `x-for` whose `<source>` is NOT a loader member-path (e.g. a behavior-only computed
-  like the old `filtered`) → keep the EXISTING client-only passthrough (no `{% for %}`, backward compat).
-  The compiler emits SSR only when the source resolves in the template scope. (A build note/warning when
-  an `x-for` is client-only may help authors opt into SSR by exposing a loader array.)
+- **NEW x-for source parser (spec-review B2):** `x-for` is currently an OPAQUE `AttrValue::Static`
+  string the compiler never parses. This feature adds a Rust mini-parser for the x-for grammar (mirror
+  the runtime `parseFor` at `runtime/native/runtime.ts:153`: `(item[,index]) in source by k0, k1`),
+  invoked when lowering an element that carries `x-for`. It resolves `<source>` via the existing
+  `lower_expr` ident resolution (`lower.rs:2982`).
+- **Detection / backward-compat:** route to SSR `{% for %}` ONLY when `<source>` resolves to a
+  destructured loader prop (`Field`). When it resolves to `UnresolvedIdent` / `MapBinding` / named-param
+  (a behavior-only/client name like the old `filtered`) → **fall back to today's opaque Static-attr
+  passthrough, do NOT error** (this is the existing behavior; the new parser must be additive, never
+  hard-fail a client-only x-for). Existing client-only x-for + `.map()` paths stay byte-identical.
+- **Real attrs for progressive enhancement (spec-review fix):** for `x-bind-<attr>="c.x"` the SSR MUST
+  emit the REAL attribute `<attr>="{{ (c.x) | e }}"` (today bound attrs are absent pre-JS — links dead
+  without JS). So an `<a x-bind-href>` SSR's a real `href` → the list is navigable with JS disabled.
 
-### 2. Runtime (TS) — `bindFor` adopts existing keyed children
-`bindFor` (`runtime/native/runtime.ts`, keyed branch) gains an **adopt-on-init** step:
+### 2. Runtime (TS) — `bindFor` keyed-init REWRITE for adopt (spec-review B4)
+The current keyed branch is destroy-then-clone: it inserts a comment `anchor`, snapshots
+`template = tplEl.cloneNode(true)`, then **`tplEl.remove()`** (`:202-204`) before any reconcile. Adoption
+is a REWRITE of that init (not an additive hook):
+- Pre-populate `map` by scanning `parent` for `[data-x-key]` (single) / `[data-x-key-0]` (composite)
+  children — the SSR seed. Derive each entry's key the SAME way the reconcile does (read `data-x-key`
+  or join `data-x-key-*` with `\x00`).
+- Derive the `anchor` position from the LAST seed node (not from the removed template).
+- Capture `template` for future creates from a stripped clone of the first seed node (drop `data-x-key*`).
+- Do NOT `remove()` the seed nodes — adopt them.
+Then the adopt-on-init step:
 - On first bind, BEFORE the reconcile effect, scan the parent for existing children carrying
   `data-x-key` (the SSR'd seed). For each, create a `ForEntry` adopting that node: `itemSig`/`idxSig`
   seeded from the matching client item (by key), `bindTree(node, childScope, …)` to wire the `x-*`
@@ -61,21 +84,35 @@ When lowering a native element carrying `x-for="<item> in <source> by <keypaths>
   flash). Subsequent runs (search) reconcile normally (the 0.1.28 keyed logic).
 - **No-`data-x-key` (legacy / client-only x-for):** unchanged — clone-fresh from template as today.
 
-### 3. Example — DexFilter SSR-seeded
-- `browseLoader` already provides the items; pass the **array** to the directive as a member-path
-  (for the SSR `{% for %}`) in addition to the `data` JSON (client x-props), OR restructure so the
-  x-for lives where the loader array is in scope.
-- DexFilter behavior: expose `items` as a **signal seeded to all** (matches SSR); `filtered`/sort SET
-  `items` to the subset on search (instead of a separate `filtered` computed bound to x-for).
-- `x-for="c in items by c.id"`; children keep `x-text`/`x-bind-src`/`x-bind-href` so SSR renders values
-  and client re-binds.
+### 3. Example — DexFilter RE-ARCHITECTURE (spec-review B3: the current showcase can't SSR)
+Today `DexFilter({ data })` binds `x-for="c in filtered by c.id"` where `filtered` is a behavior
+`computed` and `data` is a JSON string → the source is NOT a template-scope array, so it can't SSR.
+The REQUIRED authoring contract for SSR-seeded x-for:
+- The directive's `default` signature destructures a **real array prop** in template scope, e.g.
+  `DexFilter({ items, data })` — `items` is the loader array (member-path → SSR `{% for c in items %}`),
+  `data` is the client x-props JSON (unchanged).
+- `browseLoader` passes BOTH: `<DexFilter native items={browseItems} data={dexProps} />` (`items` a
+  member-path array; `dexProps` the JSON string).
+- The behavior exposes `items` as a **signal seeded from props.items** (matches the SSR order exactly);
+  search/sort call `items.set(subset)` (replacing the `filtered` computed). The x-for binds `c in items`.
+- Children keep `x-text="c.displayName"` / `x-bind-src="c.artwork"` / `x-bind-href="c.detailHref"` so SSR
+  renders the values + real attrs and the client re-binds on adopt.
+This authoring contract (loader-array prop + behavior signal seeded to it, same name) is the documented
+way to make any native `x-for` SSR-seeded. (A client-only `x-for` that doesn't follow it stays
+client-only — backward compatible.)
 
 ## Open design questions → resolved
 - **server array identity** ✅ x-for source must be a loader member-path (resolvable in template scope) for
   SSR; else client-only passthrough (backward compat).
 - **one name, two contexts** ✅ loader array (server) + behavior signal seeded to same data (client).
-- **adopt mechanism** ✅ `data-x-key` on SSR nodes; runtime matches + `bindTree` to wire reactivity.
+- **adopt mechanism** ✅ `data-x-key`(single)/`data-x-key-*`(composite, joined in JS) on SSR nodes; runtime
+  matches + `bindTree` to wire reactivity. NUL never in markup.
 - **template for future creates** ✅ derived from a stripped clone of an adopted node.
+- **x-for source parser + backward-compat** ✅ new Rust parser; SSR only for `Field` (loader-prop)
+  sources; `UnresolvedIdent`/`MapBinding`/named → opaque passthrough (no error).
+- **progressive enhancement** ✅ x-bind-* SSR real attrs (href/src navigable without JS).
+- **index/order invariant** ✅ SSR `{% for %}` source order MUST equal the behavior signal's seed order
+  (so `idxSig`-by-scan-position is correct); enforced by both reading the SAME loader array.
 
 ## Non-trivial / risks (call out for review + plan)
 - **Compiler: x-for is currently a passthrough attr, not a `Map` node.** The change must detect x-for at
