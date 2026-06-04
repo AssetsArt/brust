@@ -273,29 +273,6 @@ where
     }
 }
 
-/// Reconstruct a raw HTTP/1.1 request header block
-/// (`<METHOD> <path> HTTP/1.1\r\n<headers>\r\n\r\n`) from a hyper request's
-/// method/path/headers. The routing layer (`routes::match_path`,
-/// `build_*_envelope`, the cache vary lookup, the WS handshake parser) all
-/// consume raw header bytes and httparse them internally — rebuilding the byte
-/// block here keeps every one of those decisions byte-for-byte unchanged
-/// without touching the routing crate.
-fn reconstruct_raw_headers(method: &str, path: &str, headers: &http::HeaderMap) -> Vec<u8> {
-    let mut out = Vec::with_capacity(256);
-    out.extend_from_slice(method.as_bytes());
-    out.push(b' ');
-    out.extend_from_slice(path.as_bytes());
-    out.extend_from_slice(b" HTTP/1.1\r\n");
-    for (name, value) in headers.iter() {
-        out.extend_from_slice(name.as_str().as_bytes());
-        out.extend_from_slice(b": ");
-        out.extend_from_slice(value.as_bytes());
-        out.extend_from_slice(b"\r\n");
-    }
-    out.extend_from_slice(b"\r\n");
-    out
-}
-
 /// Case-insensitive single-header lookup as a trimmed `String`.
 fn header_str(headers: &http::HeaderMap, name: &str) -> Option<String> {
     headers
@@ -323,9 +300,6 @@ async fn handle_request(
         .map(|pq| pq.as_str().to_owned())
         .unwrap_or_else(|| req.uri().path().to_owned());
     let path_no_query = path.split('?').next().unwrap_or(&path);
-
-    // Reconstruct the raw header block once for the routing/envelope/cache layer.
-    let raw = reconstruct_raw_headers(&method, &path, req.headers());
 
     // ----- HEAD: static public assets only -----
     if method == "HEAD" {
@@ -443,12 +417,12 @@ async fn handle_request(
 
     // ----- action dispatch -----
     if under_actions {
-        return handle_action(req, &state, &pool, &method, &path, path_no_query, &raw).await;
+        return handle_action(req, &state, &pool, &method, &path, path_no_query).await;
     }
 
     // ----- MCP -----
     if path == "/_brust/mcp" {
-        return handle_mcp(req, &pool, &method, &path, &raw).await;
+        return handle_mcp(req, &pool, &method, &path).await;
     }
 
     // ----- cache invalidate -----
@@ -492,12 +466,12 @@ async fn handle_request(
 
     // ----- SSE -----
     if crate::realtime::sse::path_is_sse(&path) {
-        return handle_sse(&pool, &method, &path, &raw).await;
+        return handle_sse(&pool, &method, &path, req.headers()).await;
     }
 
     // ----- WebSocket -----
     if crate::realtime::ws::path_is_ws(&path) {
-        return handle_ws(&mut req, &pool, &method, &path, &raw).await;
+        return handle_ws(&mut req, &pool, &method, &path).await;
     }
 
     // ----- SPA navigation interceptor -----
@@ -506,7 +480,7 @@ async fn handle_request(
             return Ok(body::error_405());
         }
         let real_path = if stripped.is_empty() { "/" } else { stripped };
-        let envelope = match routes.match_path(&method, real_path, &raw) {
+        let envelope = match routes.match_path(&method, real_path, req.headers()) {
             MatchResult::Matched { mut envelope, .. } => {
                 envelope.kind = "navigation";
                 envelope
@@ -524,7 +498,7 @@ async fn handle_request(
     }
 
     // ----- general route match -----
-    let (envelope, route_id) = match routes.match_path(&method, &path, &raw) {
+    let (envelope, route_id) = match routes.match_path(&method, &path, req.headers()) {
         MatchResult::Matched { envelope, route_id } => (envelope, route_id),
         MatchResult::NoMatch => {
             return Ok(body::error_404());
@@ -535,7 +509,7 @@ async fn handle_request(
     let cache_config = routes.cache_for(route_id);
     let cache_key = cache_config
         .as_ref()
-        .map(|cfg| build_cache_key(&method, &path, cfg, &raw));
+        .map(|cfg| build_cache_key(&method, &path, cfg, req.headers()));
     if let Some(key) = &cache_key
         && let Some(bytes) = cache.get(key)
     {
@@ -576,7 +550,6 @@ async fn handle_action(
     method: &str,
     path: &str,
     path_no_query: &str,
-    raw: &[u8],
 ) -> Result<Response<ResponseBody>, Infallible> {
     let rel_owned = state.with_action_prefix(|p| {
         let rel = &path_no_query[p.len()..];
@@ -664,7 +637,7 @@ async fn handle_action(
         &content_type,
         body_text_string.as_deref(),
         body_b64_string.as_deref(),
-        raw,
+        &headers,
     );
 
     Ok(dispatch_single_chunk(pool, envelope, "action").await)
@@ -676,7 +649,6 @@ async fn handle_mcp(
     pool: &Arc<crate::render::pool::WorkerPool>,
     method: &str,
     path: &str,
-    raw: &[u8],
 ) -> Result<Response<ResponseBody>, Infallible> {
     if method != "POST" {
         return Ok(body::error_405());
@@ -712,7 +684,7 @@ async fn handle_mcp(
         Err(_) => return Ok(body::error_400()),
     };
 
-    let envelope = crate::routing::routes::build_mcp_envelope(method, path, body_str, raw);
+    let envelope = crate::routing::routes::build_mcp_envelope(method, path, body_str, &headers);
     Ok(dispatch_streaming(pool, envelope, "mcp", None).await)
 }
 
@@ -722,12 +694,12 @@ async fn handle_sse(
     pool: &Arc<crate::render::pool::WorkerPool>,
     method: &str,
     path: &str,
-    raw: &[u8],
+    headers: &http::HeaderMap,
 ) -> Result<Response<ResponseBody>, Infallible> {
     if method != "GET" {
         return Ok(body::error_405());
     }
-    let accept = crate::server::header_from_raw(raw, "accept").unwrap_or_default();
+    let accept = header_str(headers, "accept").unwrap_or_default();
     let accept_lower = accept.to_ascii_lowercase();
     let accept_ok = accept_lower.is_empty()
         || accept_lower.contains("text/event-stream")
@@ -757,7 +729,7 @@ async fn handle_sse(
         crate::realtime::sse::registry().lock().remove(&conn_id);
         return Ok(body::error_500());
     };
-    let envelope = crate::routing::routes::build_sse_envelope(method, path, raw, conn_id);
+    let envelope = crate::routing::routes::build_sse_envelope(method, path, headers, conn_id);
     let envelope_json = match serde_json::to_string(&envelope) {
         Ok(json) => json,
         Err(e) => {
@@ -835,12 +807,14 @@ async fn handle_ws(
     pool: &Arc<crate::render::pool::WorkerPool>,
     method: &str,
     path: &str,
-    raw: &[u8],
 ) -> Result<Response<ResponseBody>, Infallible> {
     if method != "GET" {
         return Ok(body::error_405());
     }
-    let handshake = match crate::realtime::ws::parse_ws_handshake(raw) {
+    // Clone the request headers so the immutable handshake/envelope reads don't
+    // conflict with the later `&mut req` borrow taken by `hyper::upgrade::on`.
+    let headers = req.headers().clone();
+    let handshake = match crate::realtime::ws::parse_ws_handshake(&headers) {
         Ok(h) => h,
         Err(_) => return Ok(body::error_400()),
     };
@@ -879,7 +853,7 @@ async fn handle_ws(
         let envelope = crate::routing::routes::build_ws_envelope(
             method,
             path,
-            raw,
+            &headers,
             conn_id,
             client_subprotocols,
         );
@@ -966,23 +940,6 @@ async fn handle_ws(
     });
 
     Ok(resp)
-}
-
-/// Case-insensitive header lookup against a reconstructed raw header block.
-/// Mirrors the old `parse_header_value` for the few branches that still read
-/// from the raw buffer rather than the hyper `HeaderMap`.
-fn header_from_raw(buf: &[u8], name: &str) -> Option<String> {
-    let mut headers = [httparse::EMPTY_HEADER; 64];
-    let mut req = httparse::Request::new(&mut headers);
-    let _ = req.parse(buf);
-    for h in req.headers.iter() {
-        if h.name.eq_ignore_ascii_case(name) {
-            return std::str::from_utf8(h.value)
-                .ok()
-                .map(|s| s.trim().to_string());
-        }
-    }
-    None
 }
 
 /// Why `claim_or_wait` gave up without a worker.
@@ -1490,14 +1447,14 @@ fn build_cache_key(
     method: &str,
     full_path: &str,
     cfg: &CacheConfig,
-    request_buf: &[u8],
+    headers: &http::HeaderMap,
 ) -> CacheKey {
     let (path_only, query) = match full_path.split_once('?') {
         Some((p, q)) => (p, q),
         None => (full_path, ""),
     };
     let sorted_query = sort_query(query);
-    let vary_values = lookup_vary_headers(request_buf, &cfg.vary);
+    let vary_values = lookup_vary_headers(headers, &cfg.vary);
     CacheKey {
         method: method.to_string(),
         path: path_only.to_string(),
@@ -1550,19 +1507,18 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8(out).unwrap_or_default()
 }
 
-fn lookup_vary_headers(request_buf: &[u8], vary: &[String]) -> Vec<String> {
+fn lookup_vary_headers(headers: &http::HeaderMap, vary: &[String]) -> Vec<String> {
     if vary.is_empty() {
         return Vec::new();
     }
-    let mut headers = [httparse::EMPTY_HEADER; 64];
-    let mut req = httparse::Request::new(&mut headers);
-    let _ = req.parse(request_buf);
+    // HeaderMap lookup is case-insensitive, matching the old eq_ignore_ascii_case
+    // scan; the FIRST stored value is used (as the old `.find(..)` did). A
+    // non-UTF-8 value or a missing header maps to "" — identical to before.
     vary.iter()
         .map(|name| {
-            req.headers
-                .iter()
-                .find(|h| h.name.eq_ignore_ascii_case(name))
-                .and_then(|h| std::str::from_utf8(h.value).ok())
+            headers
+                .get(name)
+                .and_then(|v| std::str::from_utf8(v.as_bytes()).ok())
                 .unwrap_or("")
                 .to_string()
         })
@@ -1597,30 +1553,19 @@ mod tests {
     }
 
     #[test]
-    fn reconstruct_raw_headers_round_trips_through_httparse() {
-        let mut hm = http::HeaderMap::new();
-        hm.insert("host", "x".parse().unwrap());
-        hm.insert("accept", "text/event-stream".parse().unwrap());
-        let raw = reconstruct_raw_headers("GET", "/sse?a=1", &hm);
-        assert_eq!(
-            header_from_raw(&raw, "accept").as_deref(),
-            Some("text/event-stream")
-        );
-        assert_eq!(header_from_raw(&raw, "host").as_deref(), Some("x"));
-        let mut headers = [httparse::EMPTY_HEADER; 16];
-        let mut req = httparse::Request::new(&mut headers);
-        assert!(req.parse(&raw).unwrap().is_complete());
-        assert_eq!(req.method, Some("GET"));
-        assert_eq!(req.path, Some("/sse?a=1"));
-    }
-
-    #[test]
-    fn vary_lookup_reads_reconstructed_headers() {
+    fn vary_lookup_reads_header_map() {
         let mut hm = http::HeaderMap::new();
         hm.insert("accept-language", "en".parse().unwrap());
-        let raw = reconstruct_raw_headers("GET", "/", &hm);
-        let v = lookup_vary_headers(&raw, &["Accept-Language".to_string()]);
+        let v = lookup_vary_headers(&hm, &["Accept-Language".to_string()]);
         assert_eq!(v, vec!["en".to_string()]);
+        // Case-insensitive lookup + missing header → "".
+        assert_eq!(
+            lookup_vary_headers(
+                &hm,
+                &["ACCEPT-LANGUAGE".to_string(), "X-Absent".to_string()]
+            ),
+            vec!["en".to_string(), String::new()]
+        );
     }
 
     #[test]
@@ -1631,8 +1576,7 @@ mod tests {
         };
         let mut hm = http::HeaderMap::new();
         hm.insert("accept-encoding", "gzip".parse().unwrap());
-        let raw = reconstruct_raw_headers("GET", "/p?b=2&a=1", &hm);
-        let key = build_cache_key("GET", "/p?b=2&a=1", &cfg, &raw);
+        let key = build_cache_key("GET", "/p?b=2&a=1", &cfg, &hm);
         assert_eq!(key.path, "/p");
         assert_eq!(key.sorted_query, "a=1&b=2");
         assert_eq!(key.vary_values, vec!["gzip".to_string()]);

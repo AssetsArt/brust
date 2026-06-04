@@ -40,46 +40,54 @@ pub enum HandshakeError {
     BadVersion,
 }
 
-/// Parse + validate WS handshake headers. Returns the Sec-WebSocket-Key
-/// (raw, base64 from the client; used to compute Sec-WebSocket-Accept)
-/// and the trimmed list of client subprotocols.
-pub fn parse_ws_handshake(headers: &[u8]) -> Result<ParsedHandshake, HandshakeError> {
-    let text = std::str::from_utf8(headers).map_err(|_| HandshakeError::MissingKey)?;
+/// Parse + validate WS handshake headers from the hyper `HeaderMap`. Returns
+/// the Sec-WebSocket-Key (raw, base64 from the client; used to compute
+/// Sec-WebSocket-Accept) and the trimmed list of client subprotocols.
+///
+/// Decisions mirror the previous raw-line parser exactly: `Upgrade` must
+/// contain `websocket` and `Connection` must contain `upgrade`
+/// (case-insensitive, substring — a `Connection: keep-alive, Upgrade` matches);
+/// `Sec-WebSocket-Version` must equal `13`; the key is taken verbatim (case
+/// preserved); subprotocols are the comma-split, trimmed, non-empty tokens.
+/// Header lookups are case-insensitive by HeaderMap construction. When a header
+/// repeats, every value is considered (matching the old line-by-line scan).
+pub fn parse_ws_handshake(headers: &http::HeaderMap) -> Result<ParsedHandshake, HandshakeError> {
     let mut sec_websocket_key: Option<String> = None;
     let mut version_ok = false;
     let mut upgrade_ok = false;
     let mut connection_upgrade_ok = false;
     let mut subprotocols: Vec<String> = Vec::new();
 
-    for line in text.lines() {
-        let lc = line.to_ascii_lowercase();
-        if let Some(rest) = lc.strip_prefix("upgrade:") {
-            if rest.contains("websocket") {
-                upgrade_ok = true;
-            }
-        } else if let Some(rest) = lc.strip_prefix("connection:") {
-            if rest.contains("upgrade") {
-                connection_upgrade_ok = true;
-            }
-        } else if lc.starts_with("sec-websocket-key:") {
-            // Preserve original-case base64 value, not the lowercased one.
-            let Some((_, val)) = line.split_once(':') else {
-                continue;
-            };
-            sec_websocket_key = Some(val.trim().to_string());
-        } else if let Some(rest) = lc.strip_prefix("sec-websocket-version:") {
-            if rest.trim() == "13" {
-                version_ok = true;
-            }
-        } else if lc.starts_with("sec-websocket-protocol:") {
-            let Some((_, val)) = line.split_once(':') else {
-                continue;
-            };
-            for sp in val.split(',') {
-                let trimmed = sp.trim();
-                if !trimmed.is_empty() {
-                    subprotocols.push(trimmed.to_string());
-                }
+    // Header values may carry non-UTF-8 bytes; treat those as the empty string
+    // (the old parser operated on a UTF-8 str view of the whole block).
+    let val_str = |v: &http::HeaderValue| -> String {
+        std::str::from_utf8(v.as_bytes()).unwrap_or("").to_string()
+    };
+
+    for v in headers.get_all(http::header::UPGRADE).iter() {
+        if val_str(v).to_ascii_lowercase().contains("websocket") {
+            upgrade_ok = true;
+        }
+    }
+    for v in headers.get_all(http::header::CONNECTION).iter() {
+        if val_str(v).to_ascii_lowercase().contains("upgrade") {
+            connection_upgrade_ok = true;
+        }
+    }
+    if let Some(v) = headers.get(http::header::SEC_WEBSOCKET_KEY) {
+        // Preserve original-case base64 value.
+        sec_websocket_key = Some(val_str(v).trim().to_string());
+    }
+    for v in headers.get_all(http::header::SEC_WEBSOCKET_VERSION).iter() {
+        if val_str(v).trim() == "13" {
+            version_ok = true;
+        }
+    }
+    for v in headers.get_all(http::header::SEC_WEBSOCKET_PROTOCOL).iter() {
+        for sp in val_str(v).split(',') {
+            let trimmed = sp.trim();
+            if !trimmed.is_empty() {
+                subprotocols.push(trimmed.to_string());
             }
         }
     }
@@ -378,6 +386,17 @@ fn fire_on_close(conn_id: u64, code: u16, reason: String) {
 mod tests {
     use super::*;
 
+    /// Build an `http::HeaderMap` from `(name, value)` pairs (appending repeats),
+    /// replacing the old raw `b"GET /ws HTTP/1.1\r\n..."` handshake fixtures.
+    fn hm(pairs: &[(&str, &str)]) -> http::HeaderMap {
+        let mut map = http::HeaderMap::new();
+        for (k, v) in pairs {
+            let name = http::header::HeaderName::from_bytes(k.as_bytes()).unwrap();
+            map.append(name, http::HeaderValue::from_str(v).unwrap());
+        }
+        map
+    }
+
     #[test]
     fn sec_accept_rfc6455_example() {
         // RFC 6455 S1.3 worked example: key "dGhlIHNhbXBsZSBub25jZQ=="
@@ -390,16 +409,28 @@ mod tests {
 
     #[test]
     fn parse_handshake_minimal_valid() {
-        let raw = b"GET /ws HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: abc==\r\nSec-WebSocket-Version: 13\r\n\r\n";
-        let h = parse_ws_handshake(raw).unwrap();
+        let headers = hm(&[
+            ("Host", "x"),
+            ("Upgrade", "websocket"),
+            ("Connection", "Upgrade"),
+            ("Sec-WebSocket-Key", "abc=="),
+            ("Sec-WebSocket-Version", "13"),
+        ]);
+        let h = parse_ws_handshake(&headers).unwrap();
         assert_eq!(h.sec_websocket_key, "abc==");
         assert!(h.client_subprotocols.is_empty());
     }
 
     #[test]
     fn parse_handshake_with_subprotocols() {
-        let raw = b"GET /ws HTTP/1.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: k==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: chat.v2, chat.v1\r\n\r\n";
-        let h = parse_ws_handshake(raw).unwrap();
+        let headers = hm(&[
+            ("Upgrade", "websocket"),
+            ("Connection", "Upgrade"),
+            ("Sec-WebSocket-Key", "k=="),
+            ("Sec-WebSocket-Version", "13"),
+            ("Sec-WebSocket-Protocol", "chat.v2, chat.v1"),
+        ]);
+        let h = parse_ws_handshake(&headers).unwrap();
         assert_eq!(
             h.client_subprotocols,
             vec!["chat.v2".to_string(), "chat.v1".to_string()]
@@ -408,18 +439,27 @@ mod tests {
 
     #[test]
     fn parse_handshake_rejects_missing_upgrade() {
-        let raw = b"GET /ws HTTP/1.1\r\nConnection: Upgrade\r\nSec-WebSocket-Key: k==\r\nSec-WebSocket-Version: 13\r\n\r\n";
+        let headers = hm(&[
+            ("Connection", "Upgrade"),
+            ("Sec-WebSocket-Key", "k=="),
+            ("Sec-WebSocket-Version", "13"),
+        ]);
         assert_eq!(
-            parse_ws_handshake(raw).unwrap_err(),
+            parse_ws_handshake(&headers).unwrap_err(),
             HandshakeError::MissingUpgrade
         );
     }
 
     #[test]
     fn parse_handshake_rejects_bad_version() {
-        let raw = b"GET /ws HTTP/1.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: k==\r\nSec-WebSocket-Version: 8\r\n\r\n";
+        let headers = hm(&[
+            ("Upgrade", "websocket"),
+            ("Connection", "Upgrade"),
+            ("Sec-WebSocket-Key", "k=="),
+            ("Sec-WebSocket-Version", "8"),
+        ]);
         assert_eq!(
-            parse_ws_handshake(raw).unwrap_err(),
+            parse_ws_handshake(&headers).unwrap_err(),
             HandshakeError::BadVersion
         );
     }

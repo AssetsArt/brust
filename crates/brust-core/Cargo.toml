@@ -6,7 +6,6 @@ edition = "2024"
 [lib]
 
 [dependencies]
-httparse          = "1"
 parking_lot       = "0.12"
 thiserror         = "2"
 tracing           = "0.1"

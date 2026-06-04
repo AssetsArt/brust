@@ -1,30 +1,11 @@
-use httparse::{EMPTY_HEADER, Request as HttpRequest, Status};
-
-pub struct ParsedRequest<'a> {
-    pub method: &'a str,
-    pub path: &'a str,
-}
-
-pub fn parse_request<'a>(buf: &'a [u8]) -> Result<ParsedRequest<'a>, ParseError> {
-    let mut headers = [EMPTY_HEADER; 32];
-    let mut req = HttpRequest::new(&mut headers);
-    match req.parse(buf) {
-        Ok(Status::Complete(_)) => Ok(ParsedRequest {
-            method: req.method.ok_or(ParseError::Incomplete)?,
-            path: req.path.ok_or(ParseError::Incomplete)?,
-        }),
-        Ok(Status::Partial) => Err(ParseError::Incomplete),
-        Err(_) => Err(ParseError::Invalid),
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum ParseError {
-    #[error("incomplete request")]
-    Incomplete,
-    #[error("invalid request")]
-    Invalid,
-}
+//! Raw HTTP/1.1 response byte-builders.
+//!
+//! NOTE: the hyper service now builds typed `http::Response` values directly
+//! (see `server::body` + `render::stream::response_from_meta`). The only
+//! byte-builder still on a live path is `render::stream::build_single_response_bytes`,
+//! which produces the framed bytes the response cache stores. The builders here
+//! are retained for their unit-tested wire-shape contracts and potential reuse
+//! by render-protocol framing; they no longer feed the request handler.
 
 pub fn build_response(
     status: u16,
