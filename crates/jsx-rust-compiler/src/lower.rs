@@ -683,11 +683,133 @@ fn lower_element(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode
         ));
     }
 
-    Ok(JsxNode::Element {
+    let element = JsxNode::Element {
         tag,
         attrs,
         children,
+    };
+    // Native x-for SSR seed: when this element carries a KEYED `x-for` whose
+    // source resolves to a loader array (Field), desugar into a `{% for %}` Map
+    // with per-item render + data-x-key + real bound attrs, RETAINING the x-*
+    // attrs for client adopt. Any failure (non-keyed, source not a Field, foreign
+    // path root, malformed) falls back to the element AS-IS — today's opaque
+    // passthrough, NEVER an error.
+    if let Some(map_node) = try_xfor_ssr(&element, scope) {
+        return Ok(map_node);
+    }
+    Ok(element)
+}
+
+/// Native x-for → SSR `{% for %}` Map seed. Returns None (→ passthrough) unless
+/// the element carries a KEYED x-for whose source is a destructured loader prop
+/// and every dynamic path roots at the item binding.
+fn try_xfor_ssr(el: &JsxNode, scope: &Scope) -> Option<JsxNode> {
+    let JsxNode::Element { attrs, .. } = el else {
+        return None;
+    };
+    let xfor_raw = attrs
+        .iter()
+        .find_map(|a| match (a.name.as_str(), &a.value) {
+            ("x-for", AttrValue::Static(s)) => Some(s.clone()),
+            _ => None,
+        })?;
+    let f = crate::xfor::parse_for(&xfor_raw)?;
+    // SSR adopt needs keys (data-x-key); a non-keyed x-for stays client-only.
+    if f.key_paths.is_empty() {
+        return None;
+    }
+    // SSR only when the source resolves to a destructured loader prop (Field):
+    // a bare, single-segment name. A dotted source (`store.items`) would need
+    // `Expr::MemberAccess`, not `Expr::Field` — out of scope; bail to passthrough.
+    // (`scope.destructured` holds only top-level loader props and never overlaps
+    // `scope.map_bindings`, so an x-for nested in a `.map()` can't double-wrap.)
+    if f.source_name.contains('.') || !scope.destructured.contains(&f.source_name) {
+        return None;
+    }
+    let body = transform_xfor_body(el, &f)?;
+    Some(JsxNode::Map {
+        source: Expr::Field(f.source_name.clone()),
+        binding: f.item_name.clone(),
+        body: Box::new(body),
     })
+}
+
+/// Build the per-item render: transform the element subtree (x-bind-* → real
+/// attr, x-text → interp child), then add data-x-key on the ROOT. Returns None if
+/// any path roots at a foreign ident (whole transform bails → passthrough).
+fn transform_xfor_body(el: &JsxNode, f: &crate::xfor::ForExpr) -> Option<JsxNode> {
+    let mut root = transform_xfor_element(el, &f.item_name)?;
+    // data-x-key on the root: single → `data-x-key`, composite → `data-x-key-0..N`.
+    // `set_or_push_attr` replaces any author-written `data-x-key*` so the runtime's
+    // synthesized key wins (no duplicate attr the HTML parser would pick first).
+    if let JsxNode::Element { attrs, .. } = &mut root {
+        if f.key_paths.len() == 1 {
+            let expr = crate::xfor::path_to_map_expr(&f.key_paths[0], &f.item_name)?;
+            set_or_push_attr(attrs, "data-x-key".to_string(), AttrValue::Expr(expr));
+        } else {
+            for (i, kp) in f.key_paths.iter().enumerate() {
+                let expr = crate::xfor::path_to_map_expr(kp, &f.item_name)?;
+                set_or_push_attr(attrs, format!("data-x-key-{i}"), AttrValue::Expr(expr));
+            }
+        }
+    }
+    Some(root)
+}
+
+/// Recursively transform one node. Elements: keep ALL attrs (x-* retained), add a
+/// real attr for each `x-bind-<attr>`, append an interp child for `x-text`,
+/// recurse children. Non-elements pass through unchanged.
+fn transform_xfor_element(node: &JsxNode, item: &str) -> Option<JsxNode> {
+    let JsxNode::Element {
+        tag,
+        attrs,
+        children,
+    } = node
+    else {
+        return Some(node.clone());
+    };
+    let mut new_attrs = attrs.clone(); // retain x-* (client re-binds on adopt)
+    for a in attrs {
+        if let Some(real) = a.name.strip_prefix("x-bind-")
+            && !real.is_empty() // guard `x-bind-=""` → would emit a nameless attr
+            && let AttrValue::Static(v) = &a.value
+        {
+            let expr = crate::xfor::path_to_map_expr(v, item)?;
+            // replace any pre-existing literal of the same name so the per-item
+            // bound value wins (HTML keeps the first attr → must not duplicate).
+            set_or_push_attr(&mut new_attrs, real.to_string(), AttrValue::Expr(expr));
+        }
+    }
+    let mut new_children = Vec::with_capacity(children.len() + 1);
+    for c in children {
+        new_children.push(transform_xfor_element(c, item)?);
+    }
+    // x-text → the server value as the interp child. x-text sets `textContent` on
+    // the client (replacing any children), so SSR must match: the expr is the SOLE
+    // child (drop any authored children, mirroring the runtime's overwrite).
+    if let Some(xt) = attrs.iter().find(|a| a.name == "x-text")
+        && let AttrValue::Static(v) = &xt.value
+    {
+        let expr = crate::xfor::path_to_map_expr(v, item)?;
+        new_children.clear();
+        new_children.push(JsxNode::Expr(expr));
+    }
+    Some(JsxNode::Element {
+        tag: tag.clone(),
+        attrs: new_attrs,
+        children: new_children,
+    })
+}
+
+/// Replace the first attr named `name` (keeping position), or push it if absent.
+/// Prevents duplicate attributes (the HTML parser keeps the first, which would
+/// shadow the synthesized per-item value).
+fn set_or_push_attr(attrs: &mut Vec<JsxAttr>, name: String, value: AttrValue) {
+    if let Some(existing) = attrs.iter_mut().find(|a| a.name == name) {
+        existing.value = value;
+    } else {
+        attrs.push(JsxAttr { name, value });
+    }
 }
 
 /// Lower a `dangerouslySetInnerHTML={{ __html: … }}` attribute value. The value
