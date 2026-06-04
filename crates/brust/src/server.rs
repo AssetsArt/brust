@@ -5,7 +5,7 @@ use std::time::Duration;
 use tokio::sync::Notify;
 use tracing::{error, warn};
 
-use crate::cache::{CacheConfig, CacheKey, LruCache};
+use crate::cache::{CacheConfig, CacheKey, ResponseCache};
 use crate::http::{self, ParseError, parse_request};
 use crate::io::{IO_NAME, TcpListener, TcpStream, run_io, spawn};
 use crate::pool::WorkerPool;
@@ -209,7 +209,7 @@ pub fn start(
     ready: Arc<Notify>,
     pool: Arc<WorkerPool>,
     routes: Arc<RouteTable>,
-    cache: Arc<LruCache>,
+    cache: Arc<ResponseCache>,
     conn_workers: usize,
     tuning: Tuning,
 ) {
@@ -274,7 +274,7 @@ async fn handle_conn(
     mut s: TcpStream,
     pool: Arc<WorkerPool>,
     routes: Arc<RouteTable>,
-    cache: Arc<LruCache>,
+    cache: Arc<ResponseCache>,
 ) {
     let mut buf = Vec::with_capacity(tuning().read_buf_cap);
     loop {

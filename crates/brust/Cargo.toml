@@ -19,7 +19,6 @@ flume              = "0.12"
 matchit            = "0.9"
 serde              = { version = "1", features = ["derive"] }
 serde_json         = "1"
-lru                = "0.18"
 moka               = { version = "0.12", features = ["sync"] }
 flate2             = "1"
 base64             = "0.22"

@@ -31,7 +31,7 @@ use tracing::error;
 use tracing_subscriber::EnvFilter;
 
 use crate::action_router::{ActionRouter, Method};
-use crate::cache::LruCache;
+use crate::cache::ResponseCache;
 use crate::pool::{BufPtr, RendererTsfn, WorkerPool};
 use crate::routes::RouteTable;
 
@@ -44,7 +44,7 @@ struct State {
     ready: Arc<Notify>,
     shutdown: Arc<Notify>,
     routes: Arc<RouteTable>,
-    cache: Arc<LruCache>,
+    cache: Arc<ResponseCache>,
     // Typed as the trait object, not concrete MokaStore, so a future RedisStore
     // backend swaps in here with zero changes to the NAPI fns / call sites.
     island_cache: std::sync::Arc<dyn crate::island_cache::CacheStore>,
@@ -81,7 +81,7 @@ pub(crate) fn state() -> &'static State {
             ready: Arc::new(Notify::new()),
             shutdown: Arc::new(Notify::new()),
             routes: Arc::new(RouteTable::new()),
-            cache: Arc::new(LruCache::new()),
+            cache: Arc::new(ResponseCache::new()),
             island_cache: std::sync::Arc::new(crate::island_cache::MokaStore::new(1000))
                 as std::sync::Arc<dyn crate::island_cache::CacheStore>,
             is_serving: AtomicBool::new(false),
