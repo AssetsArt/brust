@@ -93,6 +93,11 @@ brustjs new   <name>              # scaffold a project (partial — see Status)
   `export const behavior` (single-file component); each component's JS is a
   separate chunk loaded **on demand** — a page never downloads a component it
   doesn't render.
+- **Static lucide icons** — `lucide-react` icons on a `native` route compile to
+  inline `<svg>` at build time: **zero React**, no `renderToString`, no factory or
+  `{{ slot }}`. Static props bake into the markup; dynamic props (loader / `.map()`
+  item) become escaped jinja substitutions; `className` merges with the icon class.
+  Unsupported shapes (spread props, etc.) soft-fall to the React SSR path.
 - **Isomorphic store** — `brustjs/store`: `signal`/`computed`/`effect` +
   `defineStore(name, factory)`. One `window` singleton per name on the client (so
   separate island/directive chunks share state), a per-request `AsyncLocalStorage`
