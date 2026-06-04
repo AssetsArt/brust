@@ -108,6 +108,7 @@ impl AppState {
     }
 
     /// The configured TLS settings, if any. `None` = plaintext.
+    /// Boot-only: called once before the accept loop. Clones the (tiny) config; do not call per-connection.
     pub fn tls(&self) -> Option<TlsConfig> {
         self.tls.read().clone()
     }

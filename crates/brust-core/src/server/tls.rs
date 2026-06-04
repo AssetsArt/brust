@@ -30,10 +30,18 @@ pub struct TlsConfig {
 fn ensure_crypto_provider() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
-        // Ignore the Err: it only means a provider was already installed
-        // (by us or the host), which is exactly the state we want.
+        // Err means a provider is already installed — either ours on re-entry, or
+        // one the host (Bun) / another lib installed. We don't override it; rustls
+        // uses whatever is active. If a different provider is active (e.g. ring/FIPS),
+        // TLS still works, just not aws-lc-rs specifically.
         let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     });
+    // A genuine "no provider" state must never silently proceed: a handshake
+    // would later panic with "no process-level CryptoProvider available".
+    debug_assert!(
+        rustls::crypto::CryptoProvider::get_default().is_some(),
+        "no rustls CryptoProvider active after install attempt"
+    );
 }
 
 /// Build a [`TlsAcceptor`] from the configured cert + key (both PEM). Loads the

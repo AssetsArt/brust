@@ -181,10 +181,24 @@ pub fn start(addr: SocketAddr, state: Arc<AppState>, conn_workers: usize, tuning
                     match acceptor {
                         Some(acceptor) => {
                             // A bad client handshake is NOT fatal: log + drop.
-                            let tls_stream = match acceptor.accept(tcp).await {
-                                Ok(s) => s,
-                                Err(e) => {
+                            // Bound the handshake so a slow client can't park
+                            // here holding the accept Semaphore permit (the
+                            // permit is dropped on every return below). 10s is
+                            // hardcoded — generous for a real TLS handshake,
+                            // tight enough to foil slowloris.
+                            let tls_stream = match tokio::time::timeout(
+                                Duration::from_secs(10),
+                                acceptor.accept(tcp),
+                            )
+                            .await
+                            {
+                                Ok(Ok(s)) => s,
+                                Ok(Err(e)) => {
                                     debug!(error = %e, "tls handshake failed");
+                                    return;
+                                }
+                                Err(_) => {
+                                    debug!("tls handshake timeout");
                                     return;
                                 }
                             };
