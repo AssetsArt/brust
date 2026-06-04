@@ -40,6 +40,45 @@ pub(crate) struct InlineEnv {
     cycle: RefCell<Vec<String>>,
 }
 
+/// Compile-time lucide-icon registry (native static-SVG feature). Built from the
+/// `lucide_icons` map passed to `lower_with_sources` and stored on the route
+/// `Scope`. Constructed here but not yet READ by emission — a later task reads
+/// `icons` to inline `<Search/>`-style lucide tags as static SVG.
+#[derive(Debug)]
+pub(crate) struct LucideEnv {
+    /// Local tag name (e.g. `"Search"`) → parsed icon.
+    #[allow(dead_code)]
+    icons: HashMap<String, LucideIcon>,
+    /// Non-fatal diagnostics from icon-JSON parsing (merged into compile warnings).
+    warnings: RefCell<Vec<String>>,
+}
+
+/// One parsed lucide icon: its class string plus its SVG child nodes.
+#[derive(Debug, Clone)]
+pub(crate) struct LucideIcon {
+    /// e.g. `"lucide lucide-search"`.
+    #[allow(dead_code)]
+    cls: String,
+    /// `[(tag, [(attr, val)…])…]` — the inner SVG element children.
+    #[allow(dead_code)]
+    node: Vec<(String, Vec<(String, String)>)>,
+}
+
+impl LucideIcon {
+    /// Parse one lucide icon JSON value:
+    /// `{"cls":"lucide lucide-search","node":[["path",[["d","m21…"]]],…]}`.
+    /// `serde_json::from_str` into the nested tuple `Vec<(String, Vec<(String,
+    /// String)>)>` works directly (JSON arrays → tuples positionally), so no
+    /// manual `Value` walk is needed.
+    fn parse(json: &str) -> Result<LucideIcon, serde_json::Error> {
+        let v: serde_json::Value = serde_json::from_str(json)?;
+        let cls: String = serde_json::from_value(v.get("cls").cloned().unwrap_or_default())?;
+        let node: Vec<(String, Vec<(String, String)>)> =
+            serde_json::from_value(v.get("node").cloned().unwrap_or_default())?;
+        Ok(LucideIcon { cls, node })
+    }
+}
+
 #[derive(Debug)]
 pub struct LowerError {
     pub span: Span,
@@ -76,6 +115,11 @@ struct Scope {
     inline: Option<Rc<InlineCtx>>,
     /// Shared native-inline environment. `None` = no native inlining (default).
     inline_env: Option<Rc<InlineEnv>>,
+    /// Compile-time lucide-icon registry (native static-SVG). `None` = no lucide
+    /// icons supplied (default). Constructed in `lower_with_sources`; read by a
+    /// later task's emission logic.
+    #[allow(dead_code)]
+    lucide_env: Option<Rc<LucideEnv>>,
 }
 
 /// Lowered param shape: which names are in scope inside JSX.
@@ -101,6 +145,7 @@ pub fn lower(parsed: &ParsedSource) -> Result<Component, LowerError> {
         map_bindings: Vec::new(),
         inline: None,
         inline_env: None,
+        lucide_env: None,
     };
 
     let return_expr = single_return_expr(body)?;
@@ -150,6 +195,7 @@ pub fn lower(parsed: &ParsedSource) -> Result<Component, LowerError> {
 pub(crate) fn lower_with_sources(
     parsed: &ParsedSource,
     sources: HashMap<String, String>,
+    lucide_icons: HashMap<String, String>,
 ) -> Result<(Component, Vec<String>), LowerError> {
     let (name, function) = find_default_export(&parsed.module)?;
     let body =
@@ -164,12 +210,34 @@ pub(crate) fn lower_with_sources(
         cycle: RefCell::new(Vec::new()),
     });
 
+    // Build the lucide-icon registry. Each value is the icon JSON; a parse
+    // failure for one entry SKIPS it and records a warning (never fails the
+    // compile). The `None`/empty path stays byte-identical to before.
+    let lucide_env = {
+        let mut icons = HashMap::new();
+        let warnings = RefCell::new(Vec::new());
+        for (local, json) in &lucide_icons {
+            match LucideIcon::parse(json) {
+                Ok(icon) => {
+                    icons.insert(local.clone(), icon);
+                }
+                Err(e) => {
+                    warnings
+                        .borrow_mut()
+                        .push(format!("lucide icon `{local}`: invalid icon JSON ({e})"));
+                }
+            }
+        }
+        Rc::new(LucideEnv { icons, warnings })
+    };
+
     let scope = Scope {
         destructured: param_shape.destructured.clone(),
         named_param: param_shape.named.clone(),
         map_bindings: Vec::new(),
         inline: None,
         inline_env: Some(env.clone()),
+        lucide_env: Some(lucide_env.clone()),
     };
 
     let return_expr = single_return_expr(body)?;
@@ -212,7 +280,8 @@ pub(crate) fn lower_with_sources(
     };
     infer_props_types(&root, &mut props)?;
 
-    let warnings = env.warnings.borrow().clone();
+    let mut warnings = env.warnings.borrow().clone();
+    warnings.extend(lucide_env.warnings.borrow().iter().cloned());
     Ok((Component { name, props, root }, warnings))
 }
 
@@ -267,6 +336,9 @@ pub(crate) fn lower_component_inline(
         map_bindings: Vec::new(),
         inline: Some(inline_ctx),
         inline_env: env,
+        // Inline-component scope: lucide static-SVG inlining is a route-level
+        // concern (read off the route Scope), so it stays `None` here.
+        lucide_env: None,
     };
 
     // Try single-return first.
@@ -4127,7 +4199,7 @@ export const behavior = () => ({});
 export default function C() {
   return <div x-data="c" />;
 }"#;
-        let c = compile_full(src, "<test>", HashMap::new()).unwrap();
+        let c = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap();
         assert!(
             c.template.contains("x-data=\"c\""),
             "expected x-data attribute in template, got: {}",
@@ -4358,7 +4430,7 @@ export const behavior = () => ({});"#;
         let src = r#"export default function X() {
   return <Layout><>a</></Layout>;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::FragmentInSsrComponentNotSupported),
             "expected FragmentInSsrComponentNotSupported, got {:?}",
@@ -4374,7 +4446,7 @@ export const behavior = () => ({});"#;
         let src = r#"export default function X() {
   return <Layout><div><>x</></div></Layout>;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::FragmentInSsrComponentNotSupported),
             "expected FragmentInSsrComponentNotSupported, got {:?}",
@@ -5171,7 +5243,7 @@ export const behavior = () => ({});"#;
     fn lower_ssr_component_leaf() {
         let src =
             "export default function Page({ greeting }) { return <Header user={greeting} />; }";
-        let c = compile_full(src, "<test>", HashMap::new()).unwrap();
+        let c = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap();
         assert_eq!(c.components.len(), 1);
         assert_eq!(c.components[0].component, "Header");
         assert_eq!(c.components[0].instance, 0);
@@ -5208,7 +5280,7 @@ export const behavior = () => ({});"#;
     #[test]
     fn lower_ssr_component_event_handler_rejected() {
         let src = "export default function Page({ data }) { return <Card onClick={data.fn} />; }";
-        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::EventHandlerNotSupported(_)),
             "got {:?}",
@@ -5221,7 +5293,7 @@ export const behavior = () => ({});"#;
         let src = r#"export default function Page({ items }) {
   return <ul>{items.map((item) => <Layout title={item.name} />)}</ul>;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::SsrComponentInMapNotSupported(_)),
             "expected SsrComponentInMapNotSupported, got {:?}",
@@ -5236,7 +5308,7 @@ export const behavior = () => ({});"#;
         let src = r#"export default function Grid({ items }) {
   return <ul>{items.map((t) => <a x-for key={`${t.a}-${t.b}`} href={t.href} />)}</ul>;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::MapXForKeyRequired),
             "expected MapXForKeyRequired, got {:?}",
@@ -5250,7 +5322,7 @@ export const behavior = () => ({});"#;
         let src = r#"export default function Grid({ items }) {
   return <ul>{items.map((t) => <a x-for href={t.href} />)}</ul>;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::MapXForKeyRequired),
             "expected MapXForKeyRequired, got {:?}",
@@ -5265,7 +5337,7 @@ export const behavior = () => ({});"#;
         let src = r#"export default function Grid({ items }) {
   return <ul>{items.map((t) => <a x-for key={t} href={t.href} />)}</ul>;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::MapXForKeyRequired),
             "expected MapXForKeyRequired, got {:?}",
@@ -5280,7 +5352,7 @@ export const behavior = () => ({});"#;
         let src = r#"export default function Grid({ rows }) {
   return <ul>{rows.map((row) => <ul>{row.cells.map((c) => <a x-for key={c.id} href={c.href} />)}</ul>)}</ul>;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::MapXForSourceNotArray),
             "expected MapXForSourceNotArray, got {:?}",
@@ -5295,7 +5367,7 @@ export const behavior = () => ({});"#;
         let src = r#"export default function Grid({ items }) {
   return <ul>{items.map((t) => t.ok && <a x-for key={t.id} href={t.href} />)}</ul>;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::MapXForBodyNotElement),
             "expected MapXForBodyNotElement, got {:?}",
@@ -5308,7 +5380,7 @@ export const behavior = () => ({});"#;
         let src = r#"export default function Page({ greeting, data }) {
   return <Layout title={greeting}><h1>{greeting}</h1><Island component={Counter} props={data.counter} hydrate="load" /></Layout>;
 }"#;
-        let c = compile_full(src, "<test>", HashMap::new()).unwrap();
+        let c = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap();
         assert_eq!(c.components.len(), 1);
         assert_eq!(c.components[0].component, "Layout");
         assert!(
@@ -5381,7 +5453,7 @@ export const behavior = () => ({});"#;
         let src = r#"export default function Page({ data }) {
   return <Layout isr={{ tags: data.cacheTags }} />;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::ComponentIsrUnsupported(_)),
             "got {:?}",
@@ -5394,7 +5466,7 @@ export const behavior = () => ({});"#;
         let src = r#"export default function Page({ data }) {
   return <Layout isr={{ key: data.cacheKey, revalidate: data.ttl }} />;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::ComponentIsrUnsupported(_)),
             "got {:?}",
@@ -5456,7 +5528,7 @@ export const behavior = () => ({});"#;
         let src = r#"export default function Page({ data }) {
   return <Island component={Counter} props={data.counter} ssr isr={{ key: "k", tags: [123] }} />;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::IslandIsrUnsupported),
             "got {:?}",
@@ -5494,7 +5566,7 @@ export const behavior = () => ({});"#;
         let src = r#"export default function Page({ data }) {
   return <Layout isr={{ key: "a", key: data.x }} />;
 }"#;
-        let err = compile_full(src, "<test>", HashMap::new()).unwrap_err();
+        let err = compile_full(src, "<test>", HashMap::new(), HashMap::new()).unwrap_err();
         assert!(
             matches!(err.kind, ErrorKind::ComponentIsrUnsupported(_)),
             "got {:?}",
@@ -5524,7 +5596,7 @@ export const behavior = () => ({});"#;
         let parsed = parse(route_src, "<route>").unwrap();
         let mut sources = HashMap::new();
         sources.insert(layout_name.to_string(), layout_src.to_string());
-        super::lower_with_sources(&parsed, sources).unwrap()
+        super::lower_with_sources(&parsed, sources, HashMap::new()).unwrap()
     }
 
     const SHELL_LAYOUT: &str = r#"export default function PageLayout({ title, crumb, children }: any) {
@@ -5570,7 +5642,7 @@ export const behavior = () => ({});"#;
 
         let mut sources = HashMap::new();
         sources.insert("PageLayout".to_string(), SHELL_LAYOUT.to_string());
-        let compiled = crate::compile_full(route, "<route>", sources).unwrap();
+        let compiled = crate::compile_full(route, "<route>", sources, HashMap::new()).unwrap();
         // The jinja head emitter wraps the path in parens before the escape
         // filter (`{{ (pageTitle) | e }}`); assert on the escaped-interpolation
         // shape that actually reaches the template.
@@ -5626,7 +5698,7 @@ export const behavior = () => ({});"#;
         // SWALLOWS it into a soft fallback (warning + SSR component emission) —
         // the route compiles, but as a NON-Document SSR component (no nested
         // <html> shell), with a "not inlined" warning recorded.
-        let (c, warnings) = super::lower_with_sources(&parsed, sources)
+        let (c, warnings) = super::lower_with_sources(&parsed, sources, HashMap::new())
             .expect("nested layout soft-falls-back to SSR, does not hard-error");
         let dbg = format!("{:?}", c.root);
         assert!(
@@ -6175,7 +6247,7 @@ export const behavior = () => ({});"#;
         sources: HashMap<String, String>,
     ) -> Result<(crate::ir::Component, Vec<String>), LowerError> {
         let parsed = parse(route_src, "<test>").unwrap();
-        super::lower_with_sources(&parsed, sources)
+        super::lower_with_sources(&parsed, sources, HashMap::new())
     }
 
     /// Recursively check that no SsrComponent node exists in the tree.
@@ -6518,7 +6590,8 @@ export const behavior = () => ({});"#;
 }"#;
         let parsed = parse(src, "<test>").unwrap();
         let comp_plain = super::lower(&parsed).unwrap();
-        let (comp_with_src, warnings) = super::lower_with_sources(&parsed, HashMap::new()).unwrap();
+        let (comp_with_src, warnings) =
+            super::lower_with_sources(&parsed, HashMap::new(), HashMap::new()).unwrap();
         assert!(
             warnings.is_empty(),
             "expected no warnings from lower_with_sources, got: {warnings:?}"

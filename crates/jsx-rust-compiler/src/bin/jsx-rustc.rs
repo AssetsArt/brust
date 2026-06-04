@@ -36,7 +36,12 @@ fn main() -> ExitCode {
         }
     };
 
-    match jsx_rust_compiler::compile_full(&source, input_path, std::collections::HashMap::new()) {
+    match jsx_rust_compiler::compile_full(
+        &source,
+        input_path,
+        std::collections::HashMap::new(),
+        std::collections::HashMap::new(),
+    ) {
         Ok(compiled) => {
             if check_only {
                 // --check never writes either file — just confirm it compiles.
