@@ -21,22 +21,33 @@ interface Card {
 
 export const behavior = ({ props }: { el: HTMLElement; props: unknown }) => {
   const all = ((props as { items?: Card[] })?.items ?? []) as Card[]
+  const items = signal(all) // seeded to the SAME data as the SSR {% for %}
   const q = signal('')
   const sortAz = signal(false)
-  const filtered = computed(() => {
+  const apply = () => {
     const needle = q().trim().toLowerCase()
     let out = needle ? all.filter((c) => c.name.includes(needle)) : all.slice()
     if (sortAz()) out = out.slice().sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
-    return out
-  })
-  const onInput = (e: Event) => q.set((e.target as HTMLInputElement).value)
-  const setDex = () => sortAz.set(false)
-  const setAz = () => sortAz.set(true)
-  const countLabel = computed(() => `${filtered().length} / ${all.length}`)
-  return { q, sortAz, filtered, onInput, setDex, setAz, countLabel }
+    items.set(out)
+  }
+  const onInput = (e: Event) => {
+    q.set((e.target as HTMLInputElement).value)
+    apply()
+  }
+  const setDex = () => {
+    sortAz.set(false)
+    apply()
+  }
+  const setAz = () => {
+    sortAz.set(true)
+    apply()
+  }
+  const countLabel = computed(() => `${items().length} / ${all.length}`)
+  return { items, q, sortAz, onInput, setDex, setAz, countLabel }
 }
 
-export default function DexFilter({ data }: { data?: string }) {
+// biome-ignore lint/correctness/noUnusedFunctionParameters: `items` is the SSR x-for source — the compiler resolves it through inline substitution into the page's jinja context ({% for c in items %}); it is not read in JS, only `data` (x-props) is.
+export default function DexFilter({ items, data }: { items?: Card[]; data?: string }) {
   return (
     <section x-data="dexFilter" x-props={data}>
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -82,7 +93,7 @@ export default function DexFilter({ data }: { data?: string }) {
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
         {/* biome-ignore lint/a11y/useValidAnchor: href is bound at hydration via x-bind-href (the template clone gets c.detailHref) */}
         <a
-          x-for="c in filtered by c.id"
+          x-for="c in items by c.id"
           x-bind-href="c.detailHref"
           className="group flex flex-col items-center rounded-2xl border border-slate-200 bg-white p-3 no-underline shadow-sm transition-all hover:-translate-y-0.5 hover:border-brand-500/50 hover:shadow-md dark:border-slate-800 dark:bg-slate-900"
         >
