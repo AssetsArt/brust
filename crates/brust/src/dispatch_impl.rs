@@ -51,9 +51,9 @@ unsafe impl Sync for BufPtr {}
 /// type is `Send + Sync`, so wrapping it costs one atomic refcount per call —
 /// the same cheap-clone semantics the original inline tsfn dispatch relied on).
 pub struct TsfnDispatch {
-    pub tsfn: Arc<RendererTsfn>,
-    pub buf_ptr: BufPtr,
-    pub buf_len: usize,
+    pub(crate) tsfn: Arc<RendererTsfn>,
+    pub(crate) buf_ptr: BufPtr,
+    pub(crate) buf_len: usize,
 }
 
 impl RenderDispatch for TsfnDispatch {

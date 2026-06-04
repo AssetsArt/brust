@@ -3,10 +3,10 @@
 pub mod action_router;
 mod cache;
 mod compress;
+mod dispatch_impl;
 mod http;
 mod io;
 mod island_cache;
-mod dispatch_impl;
 mod jinja;
 mod jsx_compile;
 mod pool;
@@ -873,17 +873,21 @@ pub async fn napi_render_chunk(worker_id: u32, len: u32) -> NapiResult<()> {
         .pool
         .entry(worker_id)
         .ok_or_else(|| napi::Error::from_reason(format!("worker {} not registered", worker_id)))?;
-    let chunk_tx =
-        crate::render_stream::check_chunk_dispatch(&entry.render_slot, len, entry.dispatch.buf_len())
-            .map_err(napi::Error::from_reason)?;
+    let chunk_tx = crate::render_stream::check_chunk_dispatch(
+        &entry.render_slot,
+        len,
+        entry.dispatch.buf_len(),
+    )
+    .map_err(napi::Error::from_reason)?;
 
     let (ack_tx, ack_rx) = tokio::sync::oneshot::channel::<()>();
     let chunk = if len == 0 {
         crate::pool::RenderChunk::Final { ack: ack_tx }
     } else {
         // SAFETY: BufPtr is the SAB backing-store pointer pinned at register
-        // time (see pool.rs::BufPtr docstring). `len` is bounds-checked above.
-        let data = unsafe { std::slice::from_raw_parts(entry.dispatch.buf_ptr(), len as usize) }.to_vec();
+        // time (see dispatch_impl.rs::BufPtr docstring). `len` is bounds-checked above.
+        let data =
+            unsafe { std::slice::from_raw_parts(entry.dispatch.buf_ptr(), len as usize) }.to_vec();
         crate::pool::RenderChunk::Bytes { data, ack: ack_tx }
     };
     chunk_tx
@@ -912,14 +916,18 @@ pub async fn napi_render_chunk_final(worker_id: u32, len: u32) -> NapiResult<()>
         .pool
         .entry(worker_id)
         .ok_or_else(|| napi::Error::from_reason(format!("worker {} not registered", worker_id)))?;
-    let chunk_tx =
-        crate::render_stream::check_chunk_dispatch(&entry.render_slot, len, entry.dispatch.buf_len())
-            .map_err(napi::Error::from_reason)?;
+    let chunk_tx = crate::render_stream::check_chunk_dispatch(
+        &entry.render_slot,
+        len,
+        entry.dispatch.buf_len(),
+    )
+    .map_err(napi::Error::from_reason)?;
 
     let (ack_tx, ack_rx) = tokio::sync::oneshot::channel::<()>();
     // SAFETY: same as napi_render_chunk — BufPtr pinned at register time
-    // (see pool.rs::BufPtr docstring), `len` is bounds-checked above.
-    let data = unsafe { std::slice::from_raw_parts(entry.dispatch.buf_ptr(), len as usize) }.to_vec();
+    // (see dispatch_impl.rs::BufPtr docstring), `len` is bounds-checked above.
+    let data =
+        unsafe { std::slice::from_raw_parts(entry.dispatch.buf_ptr(), len as usize) }.to_vec();
     chunk_tx
         .send(crate::pool::RenderChunk::BytesAndFinal { data, ack: ack_tx })
         .await
@@ -972,12 +980,13 @@ pub fn napi_render_jinja(
     if data_len as usize > entry.dispatch.buf_len() {
         return Err(napi::Error::from_reason(format!(
             "data_len {} exceeds SAB len {}",
-            data_len, entry.dispatch.buf_len()
+            data_len,
+            entry.dispatch.buf_len()
         )));
     }
 
     // SAFETY: BufPtr is the SAB backing-store pointer pinned at register
-    // time (see pool.rs::BufPtr docstring). `data_len` is bounds-checked
+    // time (see dispatch_impl.rs::BufPtr docstring). `data_len` is bounds-checked
     // above against the SAB capacity. Copied to an owned Vec so the SAB can be
     // overwritten with the assembled response below.
     let data_json =
@@ -1048,7 +1057,9 @@ pub fn napi_render_jinja(
 
     // SAFETY: same SAB pointer; the in-flight render owns it exclusively and the
     // inbound JSON was already copied out above. `assembled.len() <= buf_len`.
-    let sab = unsafe { std::slice::from_raw_parts_mut(entry.dispatch.buf_ptr(), entry.dispatch.buf_len()) };
+    let sab = unsafe {
+        std::slice::from_raw_parts_mut(entry.dispatch.buf_ptr(), entry.dispatch.buf_len())
+    };
     sab[..assembled.len()].copy_from_slice(&assembled);
     Ok(assembled.len() as u32)
 }
@@ -1086,9 +1097,10 @@ fn bigint_to_u64(b: &BigInt) -> NapiResult<u64> {
 /// Test-only stub for napi runtime symbols that `ThreadsafeFunction::Drop`
 /// references. The crate is `cdylib` so the napi C runtime symbols are
 /// resolved by the host (Bun) at load time — they aren't linked into the
-/// test binary. Test code uses `WorkerPool::register_for_test` which sets
-/// `tsfn: None`, so the real Drop path never runs at test runtime; this
-/// stub exists purely to satisfy the static linker.
+/// test binary. Test code registers workers with `MockDispatch` (which holds
+/// no `ThreadsafeFunction` at all — only `TsfnDispatch`, never constructed in
+/// test builds, owns one), so `ThreadsafeFunction::drop` is unreachable from
+/// tests; this stub exists purely to satisfy the static linker.
 ///
 /// If a test ever ends up invoking this stub, that's a test-design bug —
 /// dispatch paths that would call `_napi_release_threadsafe_function`

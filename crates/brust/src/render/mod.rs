@@ -6,6 +6,9 @@
 //! later. The napi-concrete implementation lives in `crate::dispatch_impl`
 //! (`TsfnDispatch`), outside this module.
 
-pub mod dispatch;
+// Crate-internal: the stable seam items are re-exported below; the module itself
+// stays crate-private so nothing outside reaches past the trait (incl. the
+// test-only MockDispatch).
+pub(crate) mod dispatch;
 
 pub use dispatch::{RenderDispatch, RenderEnvelope, RenderError};

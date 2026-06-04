@@ -13,6 +13,7 @@ use std::pin::Pin;
 /// - `Sab(len)`: the dispatcher already serialized the request envelope into the
 ///   worker's SharedArrayBuffer; `len` is its byte length (the SAB fast lane).
 /// - `Inline(json)`: an inline JSON envelope (SSE/WS handoff) passed by value.
+#[non_exhaustive]
 pub enum RenderEnvelope {
     Sab(u32),
     Inline(String),
@@ -25,22 +26,14 @@ pub enum RenderEnvelope {
 ///   removes the worker from the pool.
 /// - `PromiseRejected`: a JS-level error rejected the render Promise — the
 ///   worker is still alive.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum RenderError {
+    #[error("enqueue failed: {0}")]
     EnqueueFailed(String),
+    #[error("promise rejected: {0}")]
     PromiseRejected(String),
 }
-
-impl std::fmt::Display for RenderError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            RenderError::EnqueueFailed(s) => write!(f, "{s}"),
-            RenderError::PromiseRejected(s) => write!(f, "{s}"),
-        }
-    }
-}
-
-impl std::error::Error for RenderError {}
 
 /// Abstracts the worker render bridge: an async call that resolves with a
 /// framed-response length (the protocol u32 — `> 0` fast lane, `0` chunk

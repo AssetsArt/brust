@@ -1333,7 +1333,9 @@ where
             .await
         {
             Ok(len) => RenderOutcome::Resolved(len),
-            Err(e @ crate::render::RenderError::EnqueueFailed(_)) => RenderOutcome::EnqueueFailed(e),
+            Err(e @ crate::render::RenderError::EnqueueFailed(_)) => {
+                RenderOutcome::EnqueueFailed(e)
+            }
             Err(e @ crate::render::RenderError::PromiseRejected(_)) => {
                 RenderOutcome::PromiseRejected(e)
             }
@@ -1657,7 +1659,14 @@ where
                 error!("no workers left after enqueue failure — terminating process");
                 std::process::exit(1);
             }
-            let _ = s.write_all(http::build_response(502, "text/plain", &[], b"bad gateway".to_vec())).await;
+            let _ = s
+                .write_all(http::build_response(
+                    502,
+                    "text/plain",
+                    &[],
+                    b"bad gateway".to_vec(),
+                ))
+                .await;
             return DispatchControl::CloseConn;
         }
         Err(e @ crate::render::RenderError::PromiseRejected(_)) => {
