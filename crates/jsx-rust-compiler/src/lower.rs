@@ -42,12 +42,11 @@ pub(crate) struct InlineEnv {
 
 /// Compile-time lucide-icon registry (native static-SVG feature). Built from the
 /// `lucide_icons` map passed to `lower_with_sources` and stored on the route
-/// `Scope`. Constructed here but not yet READ by emission — a later task reads
-/// `icons` to inline `<Search/>`-style lucide tags as static SVG.
+/// `Scope`. `build_lucide_svg` reads `icons` to inline `<Search/>`-style lucide
+/// tags as static SVG (static-prop cases; dynamic/spread defer to the SSR path).
 #[derive(Debug)]
 pub(crate) struct LucideEnv {
     /// Local tag name (e.g. `"Search"`) → parsed icon.
-    #[allow(dead_code)]
     icons: HashMap<String, LucideIcon>,
     /// Non-fatal diagnostics from icon-JSON parsing (merged into compile warnings).
     warnings: RefCell<Vec<String>>,
@@ -57,10 +56,8 @@ pub(crate) struct LucideEnv {
 #[derive(Debug, Clone)]
 pub(crate) struct LucideIcon {
     /// e.g. `"lucide lucide-search"`.
-    #[allow(dead_code)]
     cls: String,
     /// `[(tag, [(attr, val)…])…]` — the inner SVG element children.
-    #[allow(dead_code)]
     node: Vec<(String, Vec<(String, String)>)>,
 }
 
@@ -116,9 +113,8 @@ struct Scope {
     /// Shared native-inline environment. `None` = no native inlining (default).
     inline_env: Option<Rc<InlineEnv>>,
     /// Compile-time lucide-icon registry (native static-SVG). `None` = no lucide
-    /// icons supplied (default). Constructed in `lower_with_sources`; read by a
-    /// later task's emission logic.
-    #[allow(dead_code)]
+    /// icons supplied (default). Constructed in `lower_with_sources`; read by
+    /// `build_lucide_svg` (threaded through the inline recursion).
     lucide_env: Option<Rc<LucideEnv>>,
 }
 
@@ -319,6 +315,7 @@ pub(crate) fn lower_component_inline(
     subst: HashMap<String, crate::ir::Expr>,
     _has_children: bool,
     env: Option<Rc<InlineEnv>>,
+    lucide: Option<Rc<LucideEnv>>,
     doc_root: bool,
 ) -> Result<Vec<JsxNode>, LowerError> {
     let (_, fn_expr) = find_default_export(&parsed.module)?;
@@ -336,9 +333,10 @@ pub(crate) fn lower_component_inline(
         map_bindings: Vec::new(),
         inline: Some(inline_ctx),
         inline_env: env,
-        // Inline-component scope: lucide static-SVG inlining is a route-level
-        // concern (read off the route Scope), so it stays `None` here.
-        lucide_env: None,
+        // Threaded from the parent (route or enclosing inline) scope so lucide
+        // static-SVG inlining fires for `<Search/>` nested inside a native-inlined
+        // component body (the real pokedex usage). `None` when no registry.
+        lucide_env: lucide,
     };
 
     // Try single-return first.
@@ -1306,6 +1304,224 @@ fn map_head_attr_key(k: &str) -> String {
     }
 }
 
+/// Static-vs-dynamic classification of one recognized lucide prop value.
+enum LucidePropVal {
+    /// Static string literal (`"red"`, `{"red"}`). A bare valueless attribute
+    /// (`<X foo/>`) also lands here as an empty string.
+    Str(String),
+    /// Static integer literal (`{16}`).
+    Num(i64),
+    /// Dynamic — lowers to a non-literal `Expr`. Triggers T3 soft-fallback.
+    Dynamic,
+}
+
+/// Lower one JSX attribute value into a `LucidePropVal`, distinguishing static
+/// literals from dynamic expressions. Mirrors the value branch of `lower_attr`.
+fn lucide_prop_value(
+    value: &Option<JSXAttrValue>,
+    scope: &Scope,
+) -> Result<LucidePropVal, LowerError> {
+    match value {
+        // Bare attribute (`absoluteStrokeWidth`) — treated as present-but-valueless;
+        // the caller decides. Represent as an empty static string.
+        None => Ok(LucidePropVal::Str(String::new())),
+        Some(JSXAttrValue::Str(s)) => {
+            Ok(LucidePropVal::Str(s.value.to_string_lossy().into_owned()))
+        }
+        Some(JSXAttrValue::JSXExprContainer(c)) => match &c.expr {
+            JSXExpr::JSXEmptyExpr(_) => Ok(LucidePropVal::Dynamic),
+            JSXExpr::Expr(e) => match lower_expr(e, scope)? {
+                crate::ir::Expr::StaticText(s) => Ok(LucidePropVal::Str(s)),
+                crate::ir::Expr::StaticNum(n) => Ok(LucidePropVal::Num(n)),
+                _ => Ok(LucidePropVal::Dynamic),
+            },
+        },
+        _ => Ok(LucidePropVal::Dynamic),
+    }
+}
+
+/// Emit a static `<svg>` for a registered lucide icon, for the STATIC-prop cases
+/// only (T2). Returns `Ok(None)` to defer to the SSR path (T3 will handle these):
+/// any spread, any recognized prop with a dynamic value, a dynamic `className`,
+/// or an `absoluteStrokeWidth` prop. Otherwise builds the SVG node directly.
+fn build_lucide_svg(
+    el: &JSXElement,
+    icon: &LucideIcon,
+    scope: &Scope,
+) -> Result<Option<JsxNode>, LowerError> {
+    // Recognized prop slots (only set when STATIC; a dynamic value bails out).
+    let mut size: Option<i64> = None;
+    let mut color: Option<String> = None;
+    let mut stroke_width: Option<String> = None;
+    let mut class_name: Option<String> = None;
+    // Passthrough attrs (aria-*, role, data-*, and any other plain attr), in
+    // source order, emitted verbatim.
+    let mut passthrough: Vec<JsxAttr> = Vec::new();
+    // Whether the call-site supplies any aria-* / role prop (suppresses aria-hidden).
+    let mut has_aria_or_role = false;
+
+    for attr in &el.opening.attrs {
+        let jsx_attr = match attr {
+            // Spread → T3 (soft-fallback + warn). Defer.
+            JSXAttrOrSpread::SpreadElement(_) => return Ok(None),
+            JSXAttrOrSpread::JSXAttr(a) => a,
+        };
+        let name = match &jsx_attr.name {
+            JSXAttrName::Ident(id) => id.sym.to_string(),
+            JSXAttrName::JSXNamespacedName(n) => {
+                return Err(LowerError::at(
+                    n.span,
+                    ErrorKind::NamespacedAttrNotSupported,
+                ));
+            }
+        };
+        match name.as_str() {
+            // Stripped no-ops. `isr` is allowed and ignored (no error).
+            "isr" | "key" | "ref" => continue,
+            "size" => match lucide_prop_value(&jsx_attr.value, scope)? {
+                LucidePropVal::Num(n) => size = Some(n),
+                // A string size (`size="16"`) is still static — accept it numerically
+                // when it parses, otherwise treat the string verbatim is not a valid
+                // width; defer to T3.
+                LucidePropVal::Str(s) => match s.parse::<i64>() {
+                    Ok(n) => size = Some(n),
+                    Err(_) => return Ok(None),
+                },
+                LucidePropVal::Dynamic => return Ok(None),
+            },
+            "color" => match lucide_prop_value(&jsx_attr.value, scope)? {
+                LucidePropVal::Str(s) => color = Some(s),
+                LucidePropVal::Num(n) => color = Some(n.to_string()),
+                LucidePropVal::Dynamic => return Ok(None),
+            },
+            "strokeWidth" => match lucide_prop_value(&jsx_attr.value, scope)? {
+                LucidePropVal::Num(n) => stroke_width = Some(n.to_string()),
+                LucidePropVal::Str(s) => stroke_width = Some(s),
+                LucidePropVal::Dynamic => return Ok(None),
+            },
+            "className" => match lucide_prop_value(&jsx_attr.value, scope)? {
+                LucidePropVal::Str(s) => {
+                    if !s.is_empty() {
+                        class_name = Some(s);
+                    }
+                }
+                // A numeric className is nonsensical; defer.
+                LucidePropVal::Num(_) | LucidePropVal::Dynamic => return Ok(None),
+            },
+            // Presence of absoluteStrokeWidth changes stroke-width math → T3.
+            "absoluteStrokeWidth" => return Ok(None),
+            // Passthrough: aria-*, role, data-*, and any other plain attribute.
+            _ => {
+                if name == "role" || name.starts_with("aria-") {
+                    has_aria_or_role = true;
+                }
+                let value = match lucide_prop_value(&jsx_attr.value, scope)? {
+                    LucidePropVal::Str(s) => {
+                        if jsx_attr.value.is_none() {
+                            AttrValue::Empty
+                        } else {
+                            AttrValue::Static(s)
+                        }
+                    }
+                    LucidePropVal::Num(n) => AttrValue::StaticNum(n),
+                    LucidePropVal::Dynamic => {
+                        // Re-lower to keep the dynamic expr verbatim (static is
+                        // enough for T2 but emitting it is harmless and lossless).
+                        match &jsx_attr.value {
+                            Some(JSXAttrValue::JSXExprContainer(c)) => match &c.expr {
+                                JSXExpr::Expr(e) => AttrValue::Expr(lower_expr(e, scope)?),
+                                JSXExpr::JSXEmptyExpr(_) => {
+                                    return Err(LowerError::at(
+                                        c.span,
+                                        ErrorKind::JsxInAttrNotSupported,
+                                    ));
+                                }
+                            },
+                            _ => {
+                                return Err(LowerError::at(
+                                    jsx_attr.span,
+                                    ErrorKind::JsxInAttrNotSupported,
+                                ));
+                            }
+                        }
+                    }
+                };
+                passthrough.push(JsxAttr { name, value });
+            }
+        }
+    }
+
+    // Build the SVG attrs in the FIXED golden order.
+    let width = size.unwrap_or(24);
+    let stroke = color.unwrap_or_else(|| "currentColor".to_string());
+    let sw = stroke_width.unwrap_or_else(|| "2".to_string());
+
+    let mut attrs: Vec<JsxAttr> = Vec::new();
+    let st = |n: &str, v: &str| JsxAttr {
+        name: n.to_string(),
+        value: AttrValue::Static(v.to_string()),
+    };
+    attrs.push(st("xmlns", "http://www.w3.org/2000/svg"));
+    attrs.push(JsxAttr {
+        name: "width".into(),
+        value: AttrValue::StaticNum(width),
+    });
+    attrs.push(JsxAttr {
+        name: "height".into(),
+        value: AttrValue::StaticNum(width),
+    });
+    attrs.push(st("viewBox", "0 0 24 24"));
+    attrs.push(st("fill", "none"));
+    attrs.push(JsxAttr {
+        name: "stroke".into(),
+        value: AttrValue::Static(stroke),
+    });
+    attrs.push(JsxAttr {
+        name: "stroke-width".into(),
+        value: AttrValue::Static(sw),
+    });
+    attrs.push(st("stroke-linecap", "round"));
+    attrs.push(st("stroke-linejoin", "round"));
+    // aria-hidden unless the call-site supplies any aria-* / role prop.
+    if !has_aria_or_role {
+        attrs.push(st("aria-hidden", "true"));
+    }
+    // Passthrough props in source order.
+    attrs.extend(passthrough);
+    // class LAST: icon class + optional static className.
+    let class = match &class_name {
+        Some(c) => format!("{} {}", icon.cls, c),
+        None => icon.cls.clone(),
+    };
+    attrs.push(JsxAttr {
+        name: "class".into(),
+        value: AttrValue::Static(class),
+    });
+
+    // Children: each (tag, attrs) in icon.node → a childless host element.
+    let children: Vec<JsxNode> = icon
+        .node
+        .iter()
+        .map(|(tag, child_attrs)| JsxNode::Element {
+            tag: tag.clone(),
+            attrs: child_attrs
+                .iter()
+                .map(|(k, v)| JsxAttr {
+                    name: k.clone(),
+                    value: AttrValue::Static(v.clone()),
+                })
+                .collect(),
+            children: vec![],
+        })
+        .collect();
+
+    Ok(Some(JsxNode::Element {
+        tag: "svg".into(),
+        attrs,
+        children,
+    }))
+}
+
 fn lower_ssr_component(
     el: &JSXElement,
     component_name: &str,
@@ -1320,6 +1536,19 @@ fn lower_ssr_component(
         ));
     }
     let component = component_name.to_owned();
+
+    // Lucide native static-SVG: if this capitalised tag is a registered lucide
+    // icon, try to emit a static `<svg>` for the static-prop cases. Dynamic
+    // props / class-merge-with-dynamic-className / spread soft-fallback (T3)
+    // return `Ok(None)` here and fall through to the SSR path below.
+    if let Some(lenv) = &scope.lucide_env
+        && let Some(icon) = lenv.icons.get(component_name)
+    {
+        match build_lucide_svg(el, icon, scope)? {
+            Some(node) => return Ok(node),
+            None => { /* T3: soft-fallback. Fall through to the SSR path below. */ }
+        }
+    }
 
     let mut props: Vec<SsrProp> = Vec::new();
     let mut key_path: Option<String> = None;
@@ -1432,6 +1661,7 @@ fn lower_ssr_component(
         let inline_result = try_native_inline(
             &component,
             env,
+            scope.lucide_env.clone(),
             subst,
             has_spread,
             subst_err,
@@ -1653,6 +1883,7 @@ fn lower_ssr_component(
 fn try_native_inline(
     component: &str,
     env: &Rc<InlineEnv>,
+    lucide: Option<Rc<LucideEnv>>,
     subst: HashMap<String, crate::ir::Expr>,
     has_spread: bool,
     subst_err: bool,
@@ -1740,6 +1971,7 @@ fn try_native_inline(
         subst,
         has_children,
         Some(env.clone()),
+        lucide,
         doc_root,
     ) {
         Ok(n) => n,
@@ -5583,7 +5815,7 @@ export const behavior = () => ({});"#;
         has_children: bool,
     ) -> Result<Vec<JsxNode>, LowerError> {
         let parsed = parse(src, "<test>").unwrap();
-        super::lower_component_inline(&parsed, subst, has_children, None, false)
+        super::lower_component_inline(&parsed, subst, has_children, None, None, false)
     }
 
     // ── Document-root inline (native layout shell) ────────────────────────────

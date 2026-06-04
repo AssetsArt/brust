@@ -1868,4 +1868,92 @@ export default function Lay({ children }) { return <BrustPage title="x"><main>{c
             "{out}"
         );
     }
+
+    // ── Lucide native static-SVG (T2) ────────────────────────────────────────
+
+    /// Build a lucide map with one `Search` icon (path + circle children).
+    fn lucide_search_map() -> HashMap<String, String> {
+        let mut lucide = HashMap::new();
+        lucide.insert(
+            "Search".to_string(),
+            r#"{"cls":"lucide lucide-search","node":[["path",[["d","m21 21-4.34-4.34"]]],["circle",[["cx","11"],["cy","11"],["r","8"]]]]}"#
+                .to_string(),
+        );
+        lucide
+    }
+
+    #[test]
+    fn lucide_static_svg_default_props() {
+        // AC1: <Search/> nested under a host element emits a static <svg>.
+        let route = r#"export default function P(){ return <div><Search/></div>; }"#;
+        let c = compile_full(route, "<test>", HashMap::new(), lucide_search_map()).unwrap();
+        let t = &c.template;
+        assert!(t.contains("<svg"), "{t}");
+        assert!(t.contains("class=\"lucide lucide-search\""), "{t}");
+        assert!(t.contains("width=\"24\""), "{t}");
+        assert!(t.contains("height=\"24\""), "{t}");
+        assert!(t.contains("stroke=\"currentColor\""), "{t}");
+        assert!(t.contains("stroke-width=\"2\""), "{t}");
+        assert!(t.contains("aria-hidden=\"true\""), "{t}");
+        assert!(t.contains("<path d=\"m21 21-4.34-4.34\">"), "{t}");
+        assert!(t.contains("<circle cx=\"11\" cy=\"11\" r=\"8\">"), "{t}");
+        // No comp_ SSR slot for Search.
+        assert!(!t.contains("comp_"), "{t}");
+        let json = components_to_json(&c.components);
+        assert!(!json.contains("\"Search\""), "{json}");
+    }
+
+    #[test]
+    fn lucide_static_svg_size_prop() {
+        // AC2: size={16} drives width/height.
+        let route = r#"export default function P(){ return <div><Search size={16}/></div>; }"#;
+        let c = compile_full(route, "<test>", HashMap::new(), lucide_search_map()).unwrap();
+        let t = &c.template;
+        assert!(t.contains("width=\"16\""), "{t}");
+        assert!(t.contains("height=\"16\""), "{t}");
+    }
+
+    #[test]
+    fn lucide_static_svg_keyed_icon() {
+        // AC5: a differently-keyed icon emits its own class.
+        let mut lucide = HashMap::new();
+        lucide.insert(
+            "Icon".to_string(),
+            r#"{"cls":"lucide lucide-circle","node":[["circle",[["cx","12"],["cy","12"],["r","10"]]]]}"#
+                .to_string(),
+        );
+        let route = r#"export default function P(){ return <div><Icon/></div>; }"#;
+        let c = compile_full(route, "<test>", HashMap::new(), lucide).unwrap();
+        let t = &c.template;
+        assert!(t.contains("class=\"lucide lucide-circle\""), "{t}");
+        assert!(t.contains("<circle cx=\"12\" cy=\"12\" r=\"10\">"), "{t}");
+    }
+
+    #[test]
+    fn lucide_no_map_entry_stays_ssr_component() {
+        // AC7: <Layout/> with no map entry → still an SSR component, no panic.
+        let route = r#"export default function P(){ return <div><Layout/></div>; }"#;
+        let c = compile_full(route, "<test>", HashMap::new(), lucide_search_map()).unwrap();
+        let t = &c.template;
+        assert!(t.contains("comp_"), "{t}");
+        let json = components_to_json(&c.components);
+        assert!(json.contains("\"Layout\""), "{json}");
+    }
+
+    #[test]
+    fn lucide_empty_map_regression() {
+        // AC8: AC1 route with an EMPTY lucide map == compiling pre-feature.
+        let route = r#"export default function P(){ return <div><Search/></div>; }"#;
+        let with_empty = compile_full(route, "<test>", HashMap::new(), HashMap::new()).unwrap();
+        let baseline = compile(route).unwrap();
+        assert_eq!(with_empty.template, baseline, "{}", with_empty.template);
+        // Search stays an SSR component with no map.
+        assert!(
+            with_empty.template.contains("comp_"),
+            "{}",
+            with_empty.template
+        );
+        let json = components_to_json(&with_empty.components);
+        assert!(json.contains("\"Search\""), "{json}");
+    }
 }
