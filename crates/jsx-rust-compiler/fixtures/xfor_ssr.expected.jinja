@@ -1,0 +1,1 @@
+<div>{% for c in items %}<a x-for="c in items by c.id" x-bind-href="c.detailHref" href="{{ (c.detailHref) | e }}" data-x-key="{{ (c.id) | e }}"><span x-text="c.num">{{ (c.num) | e }}</span></a>{% endfor %}</div>

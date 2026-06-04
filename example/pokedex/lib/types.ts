@@ -87,7 +87,8 @@ export interface HomeData extends ChromeData {
 /** Browse (dex grid) page data. `dexProps` is the loader-precomputed JSON
  *  string handed to the DexFilter native directive (gen-1 grid, keyed x-for). */
 export interface BrowseData extends ChromeData {
-  dexProps: string
+  items: DexCard[] // the SSR {% for %} source (member-path array)
+  dexProps: string // the client x-props JSON (unchanged)
 }
 
 /** Detail page data. Every formatted string / className / inline-style value /

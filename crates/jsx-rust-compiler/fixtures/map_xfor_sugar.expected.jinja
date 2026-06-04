@@ -1,0 +1,1 @@
+<ul>{% for t in items %}<a x-for="t in items by t.id" href="{{ (t.href) | e }}" class="tile" x-bind-href="t.href" data-x-key="{{ (t.id) | e }}" x-text="t.label">{{ (t.label) | e }}</a>{% endfor %}</ul>

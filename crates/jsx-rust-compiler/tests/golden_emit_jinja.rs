@@ -16,6 +16,10 @@ const FIXTURES: &[&str] = &[
     "fragment_basic",
     "cond_native",
     "style_object",
+    "xfor_ssr",
+    "xfor_client_only",
+    "map_xfor_sugar",
+    "map_no_xfor",
 ];
 
 #[test]

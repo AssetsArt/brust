@@ -4,6 +4,7 @@ mod emit_jinja;
 mod ir;
 mod lower;
 pub mod parser;
+mod xfor;
 
 use ir::JsxNode;
 use std::collections::HashMap;
@@ -563,6 +564,16 @@ pub enum ErrorKind {
     MapIndexParamNotSupported,
     #[error("`.map(...)` shape not supported — expect `(ident) => <JSXElement>`")]
     MapShapeNotSupported,
+    #[error(
+        "`.map()` with a bare `x-for` flag requires `key={{item.path}}` — a single member path on the map item; use the explicit `x-for=\"… by …\"` for other keys"
+    )]
+    MapXForKeyRequired,
+    #[error(
+        "`.map()` bare `x-for` flag requires a single JSX element body (no conditional/fragment); use the explicit `x-for` form"
+    )]
+    MapXForBodyNotElement,
+    #[error("`.map()` bare `x-for` flag requires the map source to be a loader array path")]
+    MapXForSourceNotArray,
     #[error("non-integer numeric literal not supported in Phase A1")]
     NonIntegerNumericNotSupported,
     #[error("void element `<{0}>` cannot have children")]

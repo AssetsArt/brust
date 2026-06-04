@@ -91,6 +91,7 @@ export async function browseLoader({ req }: LoaderCtx): Promise<BrowseData> {
   }))
   return {
     ...chrome(req, 'Pokédex · Browse', 'Pokédex'),
+    items,
     dexProps: JSON.stringify({ items }),
   }
 }

@@ -271,7 +271,7 @@ fn emit_head_attr(out: &mut String, name: &str, hv: &HeadValue) {
 ///
 /// No `props.` prefix — the jinja template context is the loader's return
 /// value, whose top-level keys are the destructured prop names.
-fn emit_expr_path(e: &Expr) -> String {
+pub(crate) fn emit_expr_path(e: &Expr) -> String {
     match e {
         Expr::Field(name) => name.clone(),
         Expr::MemberAccess { root, path } => {
