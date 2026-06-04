@@ -36,31 +36,34 @@ pub struct RenderSlot {
     pub chunk_tx: mpsc::Sender<RenderChunk>,
 }
 
-pub struct TsfnEntry {
-    pub id: u32,
+pub struct WorkerEntry {
+    pub(crate) id: u32,
     /// The render bridge for this worker. In production this is a
     /// `crate::dispatch_impl::TsfnDispatch` (napi tsfn + SAB pointer); tests
     /// use `crate::render::dispatch::MockDispatch`. The seam keeps all napi
-    /// out of this module.
+    /// out of this module. `pub` because the napi binding reads `entry.dispatch`
+    /// for the SAB buf/buf_len in the render-chunk/jinja paths.
     pub dispatch: Box<dyn RenderDispatch>,
-    pub in_flight: AtomicU32,
+    pub(crate) in_flight: AtomicU32,
     /// Lock-free exclusivity gate. A render claims the worker by CAS-ing this
     /// `true → false`; `RenderClaim::drop` restores it to `true`. This replaces
     /// `render_slot.is_some()` as the busy check — the mutex below is now only
     /// touched to STORE/CLEAR the chunk_tx for streaming paths, and fast-lane
     /// claims skip it entirely.
-    pub idle: AtomicBool,
+    pub(crate) idle: AtomicBool,
+    /// `pub` because the napi binding passes `&entry.render_slot` to
+    /// `check_chunk_dispatch` in the render-chunk paths.
     pub render_slot: parking_lot::Mutex<Option<RenderSlot>>,
 }
 
-impl TsfnEntry {
+impl WorkerEntry {
     pub fn in_flight_guard(self: &Arc<Self>) -> InFlightGuard {
         self.in_flight.fetch_add(1, Ordering::Relaxed);
         InFlightGuard(Arc::clone(self))
     }
 }
 
-pub struct InFlightGuard(Arc<TsfnEntry>);
+pub struct InFlightGuard(Arc<WorkerEntry>);
 
 impl Drop for InFlightGuard {
     fn drop(&mut self) {
@@ -74,7 +77,7 @@ impl Drop for InFlightGuard {
 #[must_use = "RenderClaim must be held for the lifetime of the render; \
               dropping it immediately frees the worker and breaks the invariant"]
 pub struct RenderClaim {
-    entry: Arc<TsfnEntry>,
+    entry: Arc<WorkerEntry>,
     /// `true` → claimed via the fast lane (no chunk_tx stored in render_slot);
     /// drop skips the mutex entirely. `false` → streaming claim; drop clears
     /// the slot under the mutex.
@@ -86,7 +89,7 @@ pub struct RenderClaim {
 }
 
 impl RenderClaim {
-    pub fn entry(&self) -> &Arc<TsfnEntry> {
+    pub fn entry(&self) -> &Arc<WorkerEntry> {
         &self.entry
     }
 }
@@ -137,7 +140,7 @@ pub enum ClaimResult {
 
 #[derive(Default)]
 pub struct WorkerPool {
-    entries: RwLock<Vec<Arc<TsfnEntry>>>,
+    entries: RwLock<Vec<Arc<WorkerEntry>>>,
     next_id: AtomicU32,
     /// Notified once per worker release (see `RenderClaim::drop`). Dispatchers
     /// that hit `AllBusy` await this instead of returning 503, letting
@@ -152,7 +155,7 @@ impl WorkerPool {
 
     pub fn register(&self, dispatch: Box<dyn RenderDispatch>) -> u32 {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let entry = Arc::new(TsfnEntry {
+        let entry = Arc::new(WorkerEntry {
             id,
             dispatch,
             in_flight: AtomicU32::new(0),
@@ -172,7 +175,7 @@ impl WorkerPool {
         &self.idle_notify
     }
 
-    pub fn pick_least_busy(&self) -> Option<Arc<TsfnEntry>> {
+    pub fn pick_least_busy(&self) -> Option<Arc<WorkerEntry>> {
         let entries = self.entries.read();
         entries
             .iter()
@@ -243,7 +246,7 @@ impl WorkerPool {
         ClaimResult::AllBusy
     }
 
-    pub fn entry(&self, id: u32) -> Option<Arc<TsfnEntry>> {
+    pub fn entry(&self, id: u32) -> Option<Arc<WorkerEntry>> {
         self.entries.read().iter().find(|e| e.id == id).cloned()
     }
 

@@ -64,10 +64,6 @@ impl RenderDispatch for TsfnDispatch {
         let either = match env {
             RenderEnvelope::Sab(n) => Either::A(n),
             RenderEnvelope::Inline(s) => Either::B(s),
-            // `RenderEnvelope` is `#[non_exhaustive]` and lives in `brust-core`,
-            // so a cross-crate match needs a catch-all. A future variant would
-            // hit this; treat an unknown envelope as an empty inline payload.
-            _ => Either::B(String::new()),
         };
         // Clone the Arc (cheap atomic bump) so the future owns a 'static handle.
         let tsfn = Arc::clone(&self.tsfn);

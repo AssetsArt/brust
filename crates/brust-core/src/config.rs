@@ -25,29 +25,43 @@ use crate::routing::routes::RouteTable;
 /// The pure server state. Shared as `Arc<AppState>` between the napi binding,
 /// the accept loop, and every connection task.
 pub struct AppState {
+    /// `pub` because the binding drives the render pool directly
+    /// (register / registered_count / clear / entry) from the `#[napi]` fns.
     pub pool: Arc<WorkerPool>,
-    pub ready: Arc<Notify>,
-    pub shutdown: Arc<Notify>,
+    /// `pub` because the binding installs the route table
+    /// (`routes.install_with_config`) and the core server reads it directly.
     pub routes: Arc<RouteTable>,
+    /// `pub` because the binding resizes the response cache (`cache.resize`)
+    /// and the core server reads it directly.
     pub cache: Arc<ResponseCache>,
+    /// Worker-registration barrier. Crate-internal: the binding reaches it via
+    /// [`AppState::ready_notify`]; the core server awaits it directly.
+    pub(crate) ready: Arc<Notify>,
+    /// Process-shutdown park. Crate-internal: the binding parks on it via
+    /// [`AppState::wait_shutdown`].
+    pub(crate) shutdown: Arc<Notify>,
     /// Typed as the trait object, not concrete MokaStore, so a future RedisStore
-    /// backend swaps in here with zero changes to the call sites.
-    pub island_cache: Arc<dyn CacheStore>,
-    pub is_serving: AtomicBool,
+    /// backend swaps in here with zero changes to the call sites. Crate-internal:
+    /// the binding goes through the `island_cache_*` passthrough methods.
+    pub(crate) island_cache: Arc<dyn CacheStore>,
+    /// Crate-internal: the binding flips this via [`AppState::begin_serve`].
+    pub(crate) is_serving: AtomicBool,
     /// Dev mode (set by `configure_dev_mode` from the TS dev coordinator). When
     /// true, static assets (`/_brust/islands/*`, `/_brust/css/*`) are served
     /// `Cache-Control: no-store` so an island/CSS rebuild on hot reload is never
     /// masked by the browser cache (chunk URLs are unhashed, so a stale cached
     /// copy would otherwise survive a reload). Off in production → cacheable.
-    pub dev_mode: AtomicBool,
-    pub expected_workers: AtomicU32,
-    pub islands_dir: RwLock<Option<PathBuf>>,
-    pub css_dir: RwLock<Option<PathBuf>>,
+    /// Crate-internal: driven via `set_dev_mode` / `is_dev_mode`.
+    pub(crate) dev_mode: AtomicBool,
+    /// Crate-internal: driven via `set_expected_workers` / `expected_workers`.
+    pub(crate) expected_workers: AtomicU32,
+    pub(crate) islands_dir: RwLock<Option<PathBuf>>,
+    pub(crate) css_dir: RwLock<Option<PathBuf>>,
     /// URL path (`/favicon.ico`) → canonical absolute file path under public/.
     /// Built once at boot by the binding's `configure_public_dir`; replaced wholesale.
-    pub public_assets: RwLock<HashMap<String, PathBuf>>,
-    pub action_router: RwLock<ActionRouter>,
-    pub action_prefix: RwLock<String>,
+    pub(crate) public_assets: RwLock<HashMap<String, PathBuf>>,
+    pub(crate) action_router: RwLock<ActionRouter>,
+    pub(crate) action_prefix: RwLock<String>,
 }
 
 impl Default for AppState {
@@ -89,6 +103,37 @@ impl AppState {
     /// Enable/disable dev mode (flips static-asset caching to `no-store`).
     pub fn set_dev_mode(&self, enabled: bool) {
         self.dev_mode.store(enabled, Ordering::Relaxed);
+    }
+
+    // ----- serve lifecycle -----
+
+    /// Atomically transition into the serving state. Returns `true` if a serve
+    /// was ALREADY running (caller should reject the duplicate `begin_serve`),
+    /// `false` if this call won the transition.
+    pub fn begin_serve(&self) -> bool {
+        self.is_serving.swap(true, Ordering::SeqCst)
+    }
+
+    /// Record the worker count the serve is waiting on before it reports ready.
+    pub fn set_expected_workers(&self, n: u32) {
+        self.expected_workers.store(n, Ordering::SeqCst);
+    }
+
+    /// The worker count the serve is waiting on (see `set_expected_workers`).
+    pub fn expected_workers(&self) -> u32 {
+        self.expected_workers.load(Ordering::SeqCst)
+    }
+
+    /// The worker-registration barrier. The binding clones this to signal
+    /// readiness once every napi worker has registered.
+    pub fn ready_notify(&self) -> &Arc<Notify> {
+        &self.ready
+    }
+
+    /// Park until the process-shutdown signal fires. Under Bun, the TS layer
+    /// owns process exit, so this future stays parked for the process lifetime.
+    pub async fn wait_shutdown(&self) {
+        self.shutdown.notified().await;
     }
 
     // ----- configured dirs -----

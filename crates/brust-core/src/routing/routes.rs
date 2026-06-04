@@ -5,7 +5,7 @@ use serde::Serialize;
 
 use crate::cache::response_cache::CacheConfig;
 
-pub fn serialize_as_map<S, K, V>(vec: &[(K, V)], serializer: S) -> Result<S::Ok, S::Error>
+pub(crate) fn serialize_as_map<S, K, V>(vec: &[(K, V)], serializer: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
     K: serde::Serialize,
@@ -83,7 +83,7 @@ pub struct McpEnvelope<'a> {
     pub req: RequestEnvelope<'a>,
 }
 
-pub fn build_mcp_envelope<'a>(
+pub(crate) fn build_mcp_envelope<'a>(
     method: &'a str,
     full_path: &'a str,
     body_text: &'a str,
@@ -112,7 +112,7 @@ pub struct SseEnvelope<'a> {
     pub req: RequestEnvelope<'a>,
 }
 
-pub fn build_sse_envelope<'a>(
+pub(crate) fn build_sse_envelope<'a>(
     method: &'a str,
     full_path: &'a str,
     raw_request: &'a [u8],
@@ -145,7 +145,7 @@ pub struct WsEnvelope<'a> {
     pub req: RequestEnvelope<'a>,
 }
 
-pub fn build_ws_envelope<'a>(
+pub(crate) fn build_ws_envelope<'a>(
     method: &'a str,
     full_path: &'a str,
     raw_request: &'a [u8],
@@ -169,7 +169,7 @@ pub fn build_ws_envelope<'a>(
 /// case. Caller has already validated the action_id charset and registry
 /// membership; this function only assembles the envelope.
 #[allow(clippy::too_many_arguments)]
-pub fn build_action_envelope<'a>(
+pub(crate) fn build_action_envelope<'a>(
     method: &'a str,
     full_path: &'a str,
     action_id: &'a str,
@@ -426,7 +426,7 @@ fn url_decode(s: &str) -> std::borrow::Cow<'_, str> {
 /// unused in production. Kept (allow dead_code) pending a decision to either
 /// re-adopt it or delete it + its tests.
 #[allow(dead_code)]
-pub fn rewrite_envelope_kind(envelope_json: String, new_kind: &str) -> String {
+pub(crate) fn rewrite_envelope_kind(envelope_json: String, new_kind: &str) -> String {
     envelope_json.replacen(
         r#""kind":"render""#,
         &format!(r#""kind":"{}""#, new_kind),

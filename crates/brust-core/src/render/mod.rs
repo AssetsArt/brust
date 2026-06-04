@@ -9,9 +9,10 @@ pub mod dispatch;
 pub mod pool;
 pub mod stream;
 
-pub use dispatch::{RenderDispatch, RenderEnvelope, RenderError};
-pub use pool::{ClaimResult, RenderChunk, RenderClaim, RenderSlot, TsfnEntry, WorkerPool};
-pub use stream::{
-    ChunkMeta, build_chunked_response_head, build_single_response_bytes, check_chunk_dispatch,
-    format_chunk_framed, split_meta,
-};
+// Crate-internal re-export of the dispatch seam: in-crate callers (server, pool)
+// reach the trait + envelope/error through `crate::render::*`. The napi binding
+// does NOT use this seam — it goes through the crate-root `pub use` in `lib.rs`
+// or full submodule paths — so this stays `pub(crate)`. The `pool` and `stream`
+// items are reached via their full `render::pool::*` / `render::stream::*` paths,
+// so they need no mod-level re-export.
+pub(crate) use dispatch::{RenderDispatch, RenderEnvelope, RenderError};

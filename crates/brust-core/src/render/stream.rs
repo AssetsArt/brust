@@ -9,7 +9,7 @@ use serde::Deserialize;
 /// `split_meta` separates the JSON from the body for parsing.
 #[derive(Debug, Deserialize)]
 #[serde(default)]
-pub struct ChunkMeta {
+pub(crate) struct ChunkMeta {
     pub status: u16,
     #[serde(rename = "contentType")]
     pub content_type: String,
@@ -33,7 +33,7 @@ impl Default for ChunkMeta {
 /// Split the first-chunk SAB layout `[meta_len: u16 BE][meta JSON][body]`
 /// into (meta_slice, body_slice). Returns Err if the meta_len field is
 /// missing or exceeds the buffer.
-pub fn split_meta(buf: &[u8]) -> Result<(&[u8], &[u8]), &'static str> {
+pub(crate) fn split_meta(buf: &[u8]) -> Result<(&[u8], &[u8]), &'static str> {
     if buf.len() < 2 {
         return Err("first chunk too short for meta_len header");
     }
@@ -52,7 +52,7 @@ pub fn split_meta(buf: &[u8]) -> Result<(&[u8], &[u8]), &'static str> {
 /// chunk is acceptable cost given chunks are typically 4-64 KB. If
 /// benchmarks ever show alloc pressure here, the signature can shift to
 /// `(&[u8], &mut Vec<u8>)` without changing call sites materially.
-pub fn format_chunk_framed(body: &[u8]) -> Vec<u8> {
+pub(crate) fn format_chunk_framed(body: &[u8]) -> Vec<u8> {
     if body.is_empty() {
         return b"0\r\n\r\n".to_vec();
     }
@@ -66,7 +66,7 @@ pub fn format_chunk_framed(body: &[u8]) -> Vec<u8> {
 /// Emits status line, fixed Transfer-Encoding: chunked, content-type,
 /// then any extra headers from `meta.headers`, then the blank line.
 /// Includes `Connection: keep-alive` for parity with build_single_response_bytes.
-pub fn build_chunked_response_head(meta: &ChunkMeta) -> Vec<u8> {
+pub(crate) fn build_chunked_response_head(meta: &ChunkMeta) -> Vec<u8> {
     let mut out = format!(
         "HTTP/1.1 {} {}\r\nTransfer-Encoding: chunked\r\nContent-Type: {}\r\nConnection: keep-alive\r\n",
         meta.status,
@@ -89,7 +89,7 @@ pub fn build_chunked_response_head(meta: &ChunkMeta) -> Vec<u8> {
 /// avoid the 47k↔109k RPS halving the team observed in A2.3: without this
 /// header, oha (and any HTTP/1.1 client honoring the spec's "no header =
 /// close" default) reconnects per request, doubling TCP setup overhead.
-pub fn build_single_response_bytes(meta: &ChunkMeta, body: &[u8]) -> Vec<u8> {
+pub(crate) fn build_single_response_bytes(meta: &ChunkMeta, body: &[u8]) -> Vec<u8> {
     let mut out = format!(
         "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: keep-alive\r\n",
         meta.status,

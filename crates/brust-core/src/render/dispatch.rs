@@ -13,7 +13,6 @@ use std::pin::Pin;
 /// - `Sab(len)`: the dispatcher already serialized the request envelope into the
 ///   worker's SharedArrayBuffer; `len` is its byte length (the SAB fast lane).
 /// - `Inline(json)`: an inline JSON envelope (SSE/WS handoff) passed by value.
-#[non_exhaustive]
 pub enum RenderEnvelope {
     Sab(u32),
     Inline(String),

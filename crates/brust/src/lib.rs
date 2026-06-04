@@ -6,7 +6,6 @@ mod jsx_compile;
 use std::cell::Cell;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use napi::Result as NapiResult;
@@ -103,10 +102,10 @@ fn resolve_bind_addr(host: &str, port: u16) -> NapiResult<SocketAddr> {
 #[napi]
 pub fn begin_serve(opts: ServeOptions) -> NapiResult<()> {
     let s = state();
-    if s.is_serving.swap(true, Ordering::SeqCst) {
+    if s.begin_serve() {
         return Err(napi::Error::from_reason("serve already running"));
     }
-    s.expected_workers.store(opts.workers, Ordering::SeqCst);
+    s.set_expected_workers(opts.workers);
 
     // Resolve tunables: each field falls back to the server default, so an
     // omitted `tuning` (or omitted field) is byte-for-byte the old behaviour.
@@ -145,7 +144,7 @@ pub fn begin_serve(opts: ServeOptions) -> NapiResult<()> {
                 "action_prefix must be non-empty, start with '/', and not end with '/': {p:?}"
             )));
         }
-        *state().action_prefix.write() = p.clone();
+        state().set_action_prefix(p.clone());
     }
 
     // Process shutdown is owned by the TS layer: runtime/index.ts installs
@@ -160,9 +159,9 @@ pub fn begin_serve(opts: ServeOptions) -> NapiResult<()> {
 #[napi]
 pub async fn until_ready(timeout_ms: u32) -> NapiResult<()> {
     let s = state();
-    let expected = s.expected_workers.load(Ordering::SeqCst) as usize;
+    let expected = s.expected_workers() as usize;
     let pool = Arc::clone(&s.pool);
-    let ready = Arc::clone(&s.ready);
+    let ready = Arc::clone(s.ready_notify());
     let result = tokio::time::timeout(Duration::from_millis(timeout_ms as u64), async {
         while pool.registered_count() < expected {
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -179,7 +178,7 @@ pub async fn until_ready(timeout_ms: u32) -> NapiResult<()> {
 
 #[napi]
 pub async fn until_shutdown() -> NapiResult<()> {
-    state().shutdown.notified().await;
+    state().wait_shutdown().await;
     Ok(())
 }
 
@@ -272,7 +271,7 @@ pub fn configure_islands_dir(path: String) -> NapiResult<()> {
             "islands_dir must be an absolute path (got {path:?})"
         )));
     }
-    *state().islands_dir.write() = Some(abs);
+    state().set_islands_dir(Some(abs));
     Ok(())
 }
 
@@ -380,7 +379,7 @@ pub fn configure_public_dir(path: String) -> NapiResult<()> {
     }
     let manifest = build_public_manifest(&abs);
     tracing::info!("public: {} asset(s) from {abs:?}", manifest.len());
-    *state().public_assets.write() = manifest;
+    state().set_public_assets(manifest);
     Ok(())
 }
 
@@ -442,7 +441,7 @@ pub fn configure_css_dir(path: String) -> NapiResult<()> {
             "css_dir must be an absolute path (got {path:?})"
         )));
     }
-    *state().css_dir.write() = Some(abs);
+    state().set_css_dir(Some(abs));
     Ok(())
 }
 
@@ -466,7 +465,7 @@ pub fn register_actions(endpoints: Vec<EndpointReg>) -> NapiResult<u32> {
             .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     }
     let n = endpoints.len() as u32;
-    *state().action_router.write() = router;
+    state().set_action_router(router);
     Ok(n)
 }
 
