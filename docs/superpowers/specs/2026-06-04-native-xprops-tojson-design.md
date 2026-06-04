@@ -30,9 +30,10 @@ serializes the array; the behavior reads `props` (the array). One source, no sep
 The render-side minijinja (`crates/brust/src/jinja.rs`) and the compiler's golden-render test harness
 (`crates/jsx-rust-compiler/tests/golden_render_jinja/`) currently use `minijinja = "2"` with the default
 feature set, which does NOT include the `json` feature → `{{ x | tojson }}` errors `UnknownFilter`
-(verified empirically). Enable it: `minijinja = { version = "2", features = ["json"] }` in BOTH
-`crates/brust/Cargo.toml` and `crates/jsx-rust-compiler/Cargo.toml`. minijinja auto-registers the
-built-in `tojson` filter when the feature is on (no `add_filter` call needed). No other env change
+(verified empirically). Enable it: add `features = ["json"]` in BOTH `crates/brust/Cargo.toml` (it's a normal `[dependencies]`
+entry) and `crates/jsx-rust-compiler/Cargo.toml` (there it's a **`[dev-dependencies]`** entry — the
+golden-render harness is a test binary; change the right section). minijinja auto-registers the built-in
+`tojson` filter when the feature is on (no `add_filter` call needed). No other env change
 (`AutoEscape::None` + `UndefinedBehavior::Chainable` stay).
 
 ### 2. Compiler — `x-props` emits `| tojson | e` (`emit_jinja.rs`)
@@ -58,12 +59,24 @@ accepts it unchanged; only the EMIT changes.
 - **browseLoader** (`lib/loaders.ts`): return only `items` (drop `dexProps`).
 - **BrowsePage** (`pages/BrowsePage.tsx`): `<DexFilter native items={items} />` (drop `data={dexProps}`).
 - **BrowseData** (`lib/types.ts`): drop `dexProps: string` (keep `items: DexCard[]`).
-- **AddToTeamButton** (`components/AddToTeamButton.tsx`): `x-props={addProps}` where `addProps` is now the
-  OBJECT (not a string). The behavior reads `props.id`/`props.name`/… UNCHANGED (props is the object).
+- **AddToTeamButton** (`components/AddToTeamButton.tsx`): `x-props={data}` UNCHANGED (the JSX), but `data`
+  is now the OBJECT (was a pre-stringified string) → `x-props={data}` emits `{{ (data) | tojson | e }}`.
+  The component's own prop TYPE changes `data?: string` → the object shape; `DetailPage.tsx`'s
+  `<AddToTeamButton native data={addProps} />` is unchanged (addProps is now an object). The behavior
+  reads `props.id`/`props.name`/… UNCHANGED (props is the object). This is a TYPE-only change to the
+  component + a JS-unchanged behavior.
 - **detailLoader / emptyDetail** (`lib/loaders.ts`, 2 sites): `addProps: { id, name, … }` (drop the
   `JSON.stringify(...)` wrapper + the "can't JSON.stringify" comment).
-- **DetailData** (`lib/types.ts`): `addProps` type `string` → the object shape.
+- **DetailData** (`lib/types.ts`): `addProps` type `string` → the object shape (and the AddToTeamButton
+  component's local `data` prop type must match).
 - **NavLink** — does NOT use `x-props` (reads href off the element); UNCHANGED.
+
+> **Why the asymmetry** (DexFilter passes a bare array, AddToTeamButton passes an object): the structured
+> value each component already has differs. DexFilter receives `items` (the array, for the `.map()`) and
+> reuses it for `x-props` → a bare array; its behavior reads `props` as the array. AddToTeamButton
+> receives one pokemon's data as an object → `x-props` serializes the object; its behavior reads
+> `props.id` etc. `tojson` serializes either shape; the behavior reads to match. There is no required
+> `{items}` wrapper anymore.
 
 ## Breaking change (call out)
 
@@ -81,8 +94,11 @@ line.
   the attribute contains the HTML-escaped JSON of the array (render golden — proves `tojson` is wired +
   the json feature is on). A second fixture confirms a NON-`x-props` attr (e.g. `href={x}`) STILL emits
   plain `| e` (no tojson) — regression that the special-case is scoped to `x-props`.
-- **Runtime / behavior**: no runtime-code change; the directive runtime already `JSON.parse`s `x-props`.
-  Confirmed by the integration/browser smoke (AddToTeamButton + DexFilter both parse + work).
+- **Runtime / behavior**: the directive runtime (`runtime/native/`) is UNCHANGED — it already
+  `JSON.parse`s `x-props`. The DexFilter BEHAVIOR (component JS) changes (`props?.items` → `props as
+  Card[]`, since `x-props={items}` now serializes a bare array, not `{items}`); the AddToTeamButton
+  behavior is UNCHANGED (still reads `props.id` etc.). No directive-runtime unit test changes; confirmed
+  by the integration/browser smoke (both behaviors parse + work).
 - **Integration / browser smoke**: build pokedex; `curl /pokedex` → the `<section x-data="dexFilter"
   x-props="…">` contains the escaped JSON array (not `[object Object]`), and the 151 cards still SSR;
   after hydrate, search filters (DexFilter behavior parsed the array). Detail page: AddToTeam button
