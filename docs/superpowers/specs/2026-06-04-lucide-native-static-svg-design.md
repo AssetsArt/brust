@@ -24,11 +24,17 @@ become `{{ (expr) | e }}` jinja substitutions.
   every other 3rd-party component / `<Island>`. This feature is **lucide-react only**.
 - **Not** other icon libraries (react-icons, feather, heroicons). Only `lucide-react`.
 - **Not** lucide icons inside `.map()` bodies. `lower_ssr_component` hard-errors on `in_map`
-  (`SsrComponentInMapNotSupported`); this feature preserves that — lucide-in-`.map()` keeps
-  today's behavior (error/fallback). Deferred to a follow-up.
+  (`SsrComponentInMapNotSupported`, lower.rs:1244, fires BEFORE the lucide check); this
+  feature preserves that **hard error unchanged**. Deferred to a follow-up.
 - **Not** dynamic `absoluteStrokeWidth` (needs runtime `strokeWidth*24/size` arithmetic in
-  jinja). Static `absoluteStrokeWidth` computes at compile time; dynamic → soft-fallback.
+  jinja). Static `absoluteStrokeWidth` computes at compile time, and **only when both
+  `strokeWidth` and `size` are static** (if either is dynamic the product is uncomputable) →
+  soft-fallback. Default `size` is 24 so `<Search absoluteStrokeWidth strokeWidth={3}/>` =
+  `stroke-width="3"`.
 - **Not** React-island usage of lucide (different code path, unaffected).
+- **Not** `LucideProvider` context. The static compiler cannot observe a runtime
+  `<LucideProvider size=…>`. Lucide defaults (size 24, strokeWidth 2, color currentColor) are
+  assumed; context overrides are unsupported.
 
 ## Architecture — "Lucide-aware compiler" (Approach B)
 
@@ -82,27 +88,49 @@ pub fn compile_jsx(
   node: Vec<(String, Vec<(String,String)>)> }` (or `serde_json::Value`).
 - `None` / absent → byte-identical to today (every existing caller + the golden harness
   `compile_with_path` passes `None`/empty and is unaffected).
-- Threaded into `Scope` alongside `inline_env` (new `lucide: Option<Rc<LucideEnv>>` field, or
-  carried inside the existing `InlineEnv` struct — plan-time decision; the `inline_env`
-  pattern at lower.rs:70-78 is the template).
+- **Threaded into `Scope` as a NEW field `lucide_env: Option<Rc<LucideEnv>>`, INDEPENDENT of
+  `inline_env`** (decided — was an open question; reviewer B1/OQ1). Rationale: lucide
+  inlining must work on routes that have **no** `native`-attributed components, where
+  `inline_env` is `None`. Coupling the lucide map to `InlineEnv` would force every
+  lucide-using route to also supply `component_sources` — wrong coupling. `LucideEnv` carries
+  the parsed icon map + a `RefCell<Vec<String>>` warnings sink (mirrors `InlineEnv`'s warning
+  accumulation so soft-fallback warnings surface through the same `Compiled.warnings`).
+- Plumbing chain (ALL must take the new arg): `compile_jsx` → `compile_full`
+  (lib.rs:88) → `lower_with_sources` (lower.rs:150, grows a 3rd param) → seeds
+  `Scope.lucide_env`. The `jsx-rustc` binary (`crates/jsx-rust-compiler/src/bin/jsx-rustc.rs`,
+  calls `compile_full` directly) passes `None`/empty.
 
 ## TS extraction (native-routes-emit.ts)
 
-1. `scanImportRefs(file)` already returns `Map<localName, {spec, bare, kind, imported?}>`.
-   Lucide detection: `entry.bare && entry.spec === 'lucide-react'`.
-2. For each lucide entry actually referenced as a tag in the route (reuse the existing
-   component-usage scan; if usage detection is costly, passing all lucide imports is
-   acceptable — superset is harmless, only adds a file read):
-   - `imported` name (or local name for default import) is the PascalCase icon → `toKebabCase`
-     (`ChevronRight`→`chevron-right`, matching lucide's own util: insert `-` between
-     `[a-z0-9][A-Z]`, lowercase).
+A **new pass inside the per-route build loop** (the loop at ~line 512 that already calls
+`compileJsx!` at ~line 565). Note: the existing `importMap` is built via `scanImports`
+(line ~497), which **skips bare/package specifiers** — so lucide imports are invisible to it.
+This feature adds a **separate `scanImportRefs(routeSourcePath)` call** (that function keeps
+bare specifiers) to discover lucide imports.
+
+1. `scanImportRefs(file)` returns `Map<localName, {spec, bare, kind, imported?}>`.
+   Lucide detection: `entry.bare && entry.spec === 'lucide-react'`. (Verified: `resolveSpec`
+   seeds `kind:'default'` for bare specs but the named-import code overwrites it with
+   `kind:'named', imported:<Name>`; detection on `bare && spec` is sound — reviewer F7.)
+2. For each lucide entry (passing all lucide imports is acceptable — superset is harmless,
+   only adds a file read; gating on actual tag usage is an optional optimization):
+   - `imported` name (or local name for a default import) is the PascalCase icon →
+     `toKebabCase` (`ChevronRight`→`chevron-right`: insert `-` between `[a-z0-9][A-Z]`, then
+     lowercase — matches lucide's own util and its per-icon filename).
    - `await import('lucide-react/dist/esm/icons/<kebab>.mjs')` → read `mod.__iconNode`
      (an `Array<[tag, attrsObject]>`). This is **pure data**, no React invoked.
    - Strip the `key` property from each attrs object (lucide-internal, not an SVG attr).
-   - Build `{ cls: "lucide lucide-<kebab>", node }` and JSON-stringify.
+   - Build `{ cls: "lucide lucide-<kebab>", node }` and JSON-stringify. The TS side does NOT
+     read `defaultAttributes.mjs` — the static default SVG attrs are hard-coded on the **Rust**
+     side (already kebab-case), so the camelCase keys in `defaultAttributes` (`strokeLinecap`,
+     etc., reviewer B4) never enter the payload. The payload carries ONLY `cls` + `node`.
 3. Map is keyed by **local name** (the identifier used in JSX). Aliased import
-   `import { Search as Icon }` → key `"Icon"`, iconNode resolved from `"Search"`.
-4. Pass the `{ localName: json }` map as the 4th arg to `compileJsx`.
+   `import { Search as Icon }` → key `"Icon"`, iconNode resolved from `imported="Search"`.
+4. Pass the `{ localName: json }` map as the 4th arg to `compileJsx`. **Two type sites must
+   be updated** (reviewer B3): (a) the local annotation of the `compileJsx` binding at
+   native-routes-emit.ts ~line 479-485 (hand-written 3-arg signature — rejects a 4th arg
+   regardless of the .d.ts); (b) `runtime/index.d.ts` regenerates automatically from the
+   napi macro when the Rust binding changes.
 5. Graceful degrade: if the icon file doesn't resolve or `__iconNode` is missing, omit that
    entry (Rust then treats the tag as a normal SSR component — existing React path).
 
@@ -125,20 +153,30 @@ lucide-in-`.map()`) and **before** the `has_native` native-inline branch, add:
 | `strokeWidth={…}` | `stroke-width` | `stroke-width="2"` |
 | `className={…}` / `className="…"` | merged into `class` (see below) | `class="lucide lucide-<kebab>"` |
 | `absoluteStrokeWidth` (static only) | `stroke-width = strokeWidth*24/size` computed | n/a |
-| `aria-*`, `data-*`, valid passthrough attrs | emitted verbatim as attrs | — |
+| `aria-*`, `role`, `data-*`, valid passthrough attrs | emitted verbatim as attrs | — |
 | `isr`, `key`, `ref` | **stripped** (no-op) | — |
 | spread `{...x}` | → soft-fallback to React SSR | — |
 
-Always-static SVG attributes (emitted unless explicitly overridden by a passthrough prop):
-`xmlns="http://www.w3.org/2000/svg"`, `viewBox="0 0 24 24"`, `fill="none"`,
-`stroke-linecap="round"`, `stroke-linejoin="round"`.
+Always-static SVG attributes, **hard-coded on the Rust side as kebab-case literals** (not
+read from lucide's camelCase `defaultAttributes.mjs`), emitted unless overridden by a
+passthrough prop: `xmlns="http://www.w3.org/2000/svg"`, `viewBox="0 0 24 24"`,
+`fill="none"`, `stroke-linecap="round"`, `stroke-linejoin="round"`.
+
+**Default `aria-hidden="true"`** (reviewer F3): lucide's runtime adds `aria-hidden="true"`
+when the icon has no children and no a11y prop. To preserve a11y/visual parity, the static
+SVG emits `aria-hidden="true"` **by default**, suppressed when the call-site supplies any
+`aria-*` or `role` prop. (Also why hyphenated-prop emission is sidestepped in practice —
+[[pokedex-redesign-tailwind]].)
 
 Static prop value → emitted as a literal attr (`width="16"`). Dynamic prop value (lowered to
 a non-static `Expr`) → `AttrValue::Expr` → `emit_attr` emits `width="{{ (expr) | e }}"`.
 
 ### class merge
 
-`class` value = `"lucide lucide-<kebab>"` + optional user `className`.
+`class` value = `"lucide lucide-<kebab>"` + optional user `className`. Note we emit a
+**single** `lucide-<kebab>` class intentionally — lucide's runtime emits it twice (via both
+`toKebabCase(toPascalCase(name))` and `name`); the duplicate is cosmetic and CSS targeting
+(`.lucide`, `.lucide-search`) is unaffected (reviewer F1/OQ3).
 - `className` static literal → concat at compile time: `class="lucide lucide-search w-4 h-4"`.
 - `className` dynamic → `Expr::Concat([StaticText("lucide lucide-<kebab> "), <className expr>])`
   → `emit_attr` emits `class="lucide lucide-search {{ (className) | e }}"` (the `Concat`
@@ -157,14 +195,19 @@ comes from the trusted lucide package, embedded as literal markup.
 
 ## File structure (touch list)
 
-- `crates/brust/src/jsx_compile.rs` — add 4th param, thread to `compile_full`.
-- `crates/jsx-rust-compiler/src/lib.rs` — `compile_full` signature + thread to `lower_with_sources`.
-- `crates/jsx-rust-compiler/src/lower.rs` — `lucide` env in `Scope`; lucide branch in
-  `lower_ssr_component`; `build_lucide_svg` helper; kebab-case + class-merge logic.
-- `crates/jsx-rust-compiler/src/emit_jinja.rs` — likely **no change** (reuses Element +
-  emit_attr + Concat). Verify.
-- `runtime/cli/native-routes-emit.ts` — lucide detection + `__iconNode` extraction + pass map.
-- `runtime/native.d.ts` (or wherever `compileJsx` is typed) — add 4th param to the type.
+- `crates/brust/src/jsx_compile.rs` — add 4th param, parse JSON map, thread to `compile_full`.
+- `crates/jsx-rust-compiler/src/lib.rs` — `compile_full` 4th param + thread to `lower_with_sources`.
+- `crates/jsx-rust-compiler/src/bin/jsx-rustc.rs` — call site of `compile_full`; pass `None`/empty.
+- `crates/jsx-rust-compiler/src/lower.rs` — new `lucide_env: Option<Rc<LucideEnv>>` field in
+  `Scope` (independent of `inline_env`); `LucideEnv` struct; `lower_with_sources` 3rd param;
+  lucide branch in `lower_ssr_component` (after `in_map` guard, before `has_native` branch);
+  `build_lucide_svg` helper; kebab-case + class-merge + aria-hidden logic.
+- `crates/jsx-rust-compiler/src/emit_jinja.rs` — likely **no change** (reuses
+  `JsxNode::Element` + `emit_attr` + `Concat`-in-class path). Verify (reviewer F6 confirms).
+- `runtime/cli/native-routes-emit.ts` — `scanImportRefs`-based lucide detection +
+  `__iconNode` extraction + 4th-arg pass; update the local `compileJsx` type annotation
+  (~line 479-485) to a 4-arg signature.
+- `runtime/index.d.ts` — regenerates from napi macro (auto, via `bun run build`).
 - `example/pokedex/**` — migrate (strip now-redundant `isr` on icons; verify render).
 
 ## Tests / acceptance criteria
@@ -210,9 +253,16 @@ native integration separately.
 - On-the-wire: icon node data is embedded per-occurrence (no dedup across repeated icons on a
   page). Acceptable — static markup, no runtime cost; gzip handles repetition.
 
-## Open questions resolved at plan-time
+## Open questions — resolved (post spec-review)
 
-- Exact home of the lucide map in `Scope` (new field vs inside `InlineEnv`).
-- Whether `emit_jinja.rs` needs any change or is purely reuse (verify Concat-in-class path).
-- Internal Rust representation of the parsed icon (`serde_json::Value` vs typed struct).
-- Whether to gate extraction on actual tag-usage or pass all lucide imports (superset).
+- **Home of the lucide map** — RESOLVED: new `Scope.lucide_env: Option<Rc<LucideEnv>>`,
+  independent of `inline_env` (must work when `inline_env` is `None`).
+- **emit_jinja.rs change** — RESOLVED: no change; reuse `Element` + `emit_attr` + `Concat`
+  (reviewer F6 confirmed `emit_expr_path` joins `Concat` with ` ~ `, wrapped in `{{ … | e }}`).
+- **`__iconNode` source** — RESOLVED: per-icon `.mjs` file's `__iconNode` export (the main
+  `lucide-react` named export is the component constructor, NOT the node data — reviewer B5).
+
+### Still deferred to plan-time
+- Internal Rust representation of the parsed icon (`serde_json::Value` vs typed
+  `LucideIcon { cls, node: Vec<(String, Vec<(String,String)>)> }`).
+- Whether to gate extraction on actual tag-usage or pass all lucide imports (superset OK).
