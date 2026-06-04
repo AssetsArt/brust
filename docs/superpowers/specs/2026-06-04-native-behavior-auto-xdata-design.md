@@ -78,10 +78,10 @@ non-breaking).
                        └──────────────────────────────────────────────┬───────────────────┘
                                                                        ▼ Rust
                                        compile_full → lower_with_sources(.., directive_names)
-                                          on lowering a component (route-root OR <Comp native/>)
-                                          whose ident ∈ directive_names: resolve host
+                                          on inlining <Comp native/> whose ident ∈ directive_names:
+                                          resolve host on the LOWERED subtree
                                           (literal x-data → skip · bare x-behavior → that el,
-                                           strip it · else root) → add x-data="<uniqueName>"
+                                           strip it · else root Element) → add x-data="<uniqueName>"
                                                                        ▼
                                             jinja → HTML: <div x-data="addToTeamButton_a3f9c1" …>
                                                                        ▼ browser (unchanged)
@@ -93,17 +93,39 @@ substitutes the exact string TS supplies per ident. The three sites that must ag
 (jinja `x-data`, chunk filename, runtime registry key) all derive from the one TS
 helper.
 
+**Cross-time sync invariant (Q1).** The shipped jinja `x-data` is frozen at `brust
+build` (`emitNativeTemplates`), while the boot/dev island rebuild (`runtime/index.ts:404`)
+recomputes chunk filenames via `scanDirectiveComponents`. They stay in sync **only
+because `directiveName` is deterministic from the cwd-RELATIVE path** — which is stable
+across a dist relocation (build at `/ci/app`, run at `/srv/app`) as long as the route
+files keep the same path relative to the project root in both places (the existing
+brust contract: dist mirrors the source tree and the server runs from the project
+root). This invariant is stated, not enforced; if a future deploy mode violates it, the
+fallback is to persist `uniqueName` in `islands.json` at build and reuse it at boot
+instead of recomputing. Deferred — out of scope here.
+
 ## Components & changes
 
 ### 1. TS — `directiveName(absPath, projectRoot)` helper (`runtime/native/build.ts`)
-- New exported pure function. `camelCase(basename(path, ext)) + "_" + shortHash(rel)`.
-- `rel` = path relative to `projectRoot` (cwd), normalized to forward slashes
-  (cross-platform stable). `shortHash` = first 8 hex chars of `sha256(rel)` (node
-  `crypto`). Result matches the runtime's `^[A-Za-z0-9_-]+$` chunk-name guard.
+- New exported pure function — **the single name contract** both scanners feed (F4).
+  `camelCase(basename(path, ext)) + "_" + shortHash(rel)`.
+- `rel` = `relative(projectRoot, absPath).replaceAll('\\','/')` — the SAME normalization
+  the codebase already uses for component source paths (`native-routes-emit.ts:382,902`),
+  with `projectRoot = process.cwd()` (`:360,886`). Forward-slashed → cross-platform
+  stable. `shortHash` = first 8 hex chars of `sha256(rel)` (node `crypto`). Result
+  matches the runtime's `^[A-Za-z0-9_-]+$` chunk-name guard.
+- Both callers — `scanDirectiveComponents` (→ chunk filename + registry key, via
+  `scanImports`, `build.ts:19/30`) and `emitNativeTemplates` (→ the jinja `x-data`, via
+  `gatherComponentSources`/`scanImportRefs`, `native-routes-emit.ts:562`) — MUST pass
+  the same normalized absolute path for a given component so the three sites agree. A
+  test asserts `scanDirectiveComponents`'s name == the `x-data` the compiler emits for
+  that component.
 - `scanDirectiveComponents` returns `Map<uniqueName, absPath>` using this helper
-  instead of the bare camelCase `registerName`. The existing "two files derive the
-  same name" throw is retained as a safety net for an (astronomically unlikely) hash
-  truncation collision; the message is updated to mention the hash.
+  instead of the bare camelCase `registerName`. The existing "two files derive the same
+  name" throw is retained purely as defense-in-depth for an (astronomically unlikely)
+  `sha256[:8]` truncation collision between two distinct relpaths; message updated to
+  mention the hash. It is essentially unreachable and is NOT exercised by a test (would
+  need a contrived hash stub).
 
 ### 2. TS — `compileJsx` 5th arg (`runtime/index.d.ts`, napi binding, `native-routes-emit.ts`)
 - `compileJsx(source, path, componentSources?, lucideIcons?, directiveNames?)` where
@@ -121,28 +143,44 @@ helper.
   callers and all current Rust tests pass `HashMap::new()` — additive).
 
 ### 4. Rust — resolve the host element + inject `x-data`
-- When lowering a component whose ident is in `directive_names` — both the route-root
-  default function path and the `<Comp native/>` inline path (`lower_component_inline`)
-  — resolve the **host element** and inject `x-data="<uniqueName>"` on it. The inline
-  path already keys components by ident via `inline_env.sources`; the route-root path
-  uses the default function's name.
-- **Host resolution (in priority order):**
-  1. If any element in the component subtree carries a literal `x-data` → leave it
-     untouched (raw escape, back-compat); **no** injection for this component.
+- **Scope: the inline `<Comp native/>` path only** (`lower_component_inline`,
+  `lower.rs:320/357`, invoked from `lower_ssr_component`/`do_native_inline` at
+  `lower.rs:1653/2013` where the `component` ident — the `directive_names` key — is in
+  scope). The route-root default-function path is **out of scope**: §2 builds
+  `directive_names` from `gatherComponentSources` (`native-routes-emit.ts:19-95`), which
+  visits the page's imported children only and never adds the route file's own default
+  ident, so the compiler could never match a route-root ident anyway (the §2/§4
+  contradiction the review flagged). All migration targets are inline
+  (`<HeroSearch native/>`, `<DexFilter native …/>`, `<AddToTeamButton native …/>` in
+  `example/pokedex/pages/*.tsx`), so this scope covers every real case.
+- **Pass placement:** the host-resolution-and-strip pass runs on the **lowered IR
+  subtree** returned by `lower_component_inline` (it must read `AttrValue::Empty` to
+  tell a bare `x-behavior` from a valued one — `ir.rs:226`), AFTER the inline returns
+  and AFTER `try_xfor_ssr` post-transforms (`lower.rs:767`), at the call site in
+  `lower_ssr_component`/`do_native_inline` where the component ident is known.
+- **Host resolution (in priority order):** walk the returned subtree but **do not
+  descend into a nested mount boundary** (an element that already carries `x-data`, or
+  a nested `<Comp native/>` result that owns its own subtree):
+  1. If the (own-level) subtree carries a literal `x-data` → leave it untouched (raw
+     escape, back-compat); **no** injection for this component.
   2. Else if exactly one element carries a bare `x-behavior` → that is the host: strip
      the `x-behavior` attribute and add `x-data="<uniqueName>"`. (More than one
      `x-behavior`, or a valued `x-behavior="…"`, is a compile error.)
-  3. Else → the host is the component's **root element**: add `x-data="<uniqueName>"`.
+  3. Else → the host is the component's **root node**: add `x-data="<uniqueName>"`.
 - The injected attribute is a static string emitted through the existing attr path —
   byte-identical to a hand-written `x-data` today.
-- **Constraint:** the resolved host must be a single plain **element** (it has to host
-  an attribute). If the root is reached in case 3 but is not a plain element (fragment
-  / bare expression / `.map()` / conditional at the very root), raise a clear compile
-  error: *"native component `<Name>` has `export const behavior` but no single element
-  to host its mount; give the host a bare `x-behavior` or wrap it in one root element"*.
-  (Locked by a test, like the lucide-in-`.map()` hard error.)
+- **Constraint (checked against the lowered IR node kind, not source):** the resolved
+  host must be a single `JsxNode::Element` (`ir.rs:33-104`). If case 3's root node is
+  any non-`Element` variant — `Fragment`, `Map` (an x-for-SSR-desugared root,
+  `lower.rs:767-769`), `Cond`, `Document` (a BrustPage promotion, `lower.rs:354`),
+  `ChildrenSlot`, or a bare interp/text — raise a clear compile error: *"native
+  component `<Name>` has `export const behavior` but its root is `<kind>`, not a single
+  element to host its mount; tag the host with a bare `x-behavior` or wrap it in one
+  root element"*. (Locked by a test, like the lucide-in-`.map()` hard error.)
 - `x-behavior` is consumed entirely at compile time; it must never reach the emitted
-  jinja/HTML.
+  jinja/HTML. A bare `x-behavior` in a file with **no** `export const behavior` (ident
+  not in `directive_names`) is not visited by this pass → it would leak as a stray attr;
+  emit a compile warning and strip it so it never reaches HTML (test-locked).
 
 ### 5. Runtime — no change
 - The runtime only ever sees `x-data` (the compiled wire format); `x-behavior` is a
@@ -211,6 +249,9 @@ helper.
 - No change to the runtime mount/dispose model (the separate `effect`-in-`behavior`
   teardown follow-up is unrelated).
 - No multi-root / fragment behavior hosts — single root element required.
+- **No route-root auto-injection** — only inlined `<Comp native/>` children get
+  auto-`x-data` (§4). A route file whose own default carries `export const behavior`
+  builds a chunk but is not auto-wired; deferred until there's a real use case.
 
 ## Build / verify (mirror ci.yml)
 
