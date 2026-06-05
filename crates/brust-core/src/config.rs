@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 
 use parking_lot::RwLock;
@@ -41,6 +41,15 @@ pub struct AppState {
     /// Process-shutdown park. Crate-internal: the binding parks on it via
     /// [`AppState::wait_shutdown`].
     pub(crate) shutdown: Arc<Notify>,
+    /// Graceful-drain start signal (JS SIGINT handler → accept loop). When fired,
+    /// the accept loop stops taking new connections and `graceful_shutdown()`s the
+    /// in-flight ones (finish the current request, then close).
+    pub(crate) drain_start: Arc<Notify>,
+    /// Graceful-drain completion signal (accept loop → the `begin_drain` Promise).
+    /// Fires once all in-flight connections have drained or the timeout elapsed.
+    pub(crate) drain_done: Arc<Notify>,
+    /// Drain deadline in ms, set by `begin_drain` before it fires `drain_start`.
+    pub(crate) drain_timeout_ms: AtomicU64,
     /// Typed as the trait object, not concrete MokaStore, so a future RedisStore
     /// backend swaps in here with zero changes to the call sites. Crate-internal:
     /// the binding goes through the `island_cache_*` passthrough methods.
@@ -84,6 +93,9 @@ impl AppState {
             pool: Arc::new(WorkerPool::new()),
             ready: Arc::new(Notify::new()),
             shutdown: Arc::new(Notify::new()),
+            drain_start: Arc::new(Notify::new()),
+            drain_done: Arc::new(Notify::new()),
+            drain_timeout_ms: AtomicU64::new(10_000),
             routes: Arc::new(RouteTable::new()),
             cache: Arc::new(ResponseCache::new()),
             island_cache: Arc::new(MokaStore::new(1000)) as Arc<dyn CacheStore>,
@@ -155,6 +167,41 @@ impl AppState {
     /// owns process exit, so this future stays parked for the process lifetime.
     pub async fn wait_shutdown(&self) {
         self.shutdown.notified().await;
+    }
+
+    // ----- graceful drain -----
+
+    /// Request a graceful drain with a `timeout_ms` deadline, then fire the
+    /// `drain_start` signal the accept loop is parked on. Called by the napi
+    /// `begin_drain` before it awaits [`AppState::wait_drain_done`].
+    pub fn request_drain(&self, timeout_ms: u64) {
+        self.drain_timeout_ms
+            .store(timeout_ms.max(1), Ordering::Relaxed);
+        self.drain_start.notify_one();
+    }
+
+    /// The drain deadline (ms) set by the last `request_drain`.
+    pub fn drain_timeout_ms(&self) -> u64 {
+        self.drain_timeout_ms.load(Ordering::Relaxed)
+    }
+
+    /// Accept loop awaits this to learn a drain was requested. Registered BEFORE
+    /// the loop's `select!` so a `request_drain` that races the first poll isn't
+    /// lost (the Notify stores one permit).
+    pub fn drain_start_notify(&self) -> &Arc<Notify> {
+        &self.drain_start
+    }
+
+    /// Fired by the accept loop once every in-flight connection has drained (or
+    /// the deadline elapsed). Wakes the `begin_drain` Promise.
+    pub fn signal_drain_done(&self) {
+        self.drain_done.notify_one();
+    }
+
+    /// The napi `begin_drain` awaits this; resolves when the accept loop reports
+    /// the drain finished.
+    pub async fn wait_drain_done(&self) {
+        self.drain_done.notified().await;
     }
 
     // ----- configured dirs -----

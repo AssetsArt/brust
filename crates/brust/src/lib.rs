@@ -239,6 +239,20 @@ pub async fn until_shutdown() -> NapiResult<()> {
     Ok(())
 }
 
+/// Graceful drain: stop accepting new connections, tell every in-flight one to
+/// finish its current request then close, and resolve once they've all drained
+/// (or `timeout_ms` elapses). The TS SIGINT handler awaits this before
+/// `process.exit` so an in-flight render/stream isn't cut off mid-response (the
+/// teardown that produced spurious `split_meta` errors under load). Idempotent-ish:
+/// the accept loop only drains once; a second call just re-resolves.
+#[napi]
+pub async fn begin_drain(timeout_ms: u32) -> NapiResult<()> {
+    let s = state();
+    s.request_drain(timeout_ms as u64);
+    s.wait_drain_done().await;
+    Ok(())
+}
+
 #[napi]
 pub fn register_renderer(
     mut buf: Uint8Array,

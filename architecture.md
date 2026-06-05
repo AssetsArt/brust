@@ -193,7 +193,15 @@ the Bun render workers.
 > seccomp (`io_uring_*` syscalls denied). That is GONE — plain multi-thread tokio
 > runs everywhere, no seccomp exception needed.
 
-Not built: graceful drain, daemonisation.
+**Graceful drain.** On `SIGINT`/`SIGTERM` the TS handler calls napi `beginDrain`:
+the accept loop stops taking new connections and `graceful_shutdown()`s every
+in-flight one (finish the current request, refuse new keep-alive, close), then
+waits on an mpsc barrier until the last connection drains (or `BRUST_DRAIN_TIMEOUT_MS`,
+default 10s, elapses) before the process exits. A second signal forces an
+immediate exit. This is what keeps a slow in-flight stream from being cut off
+mid-response on shutdown.
+
+Not built: daemonisation.
 
 ---
 
@@ -942,7 +950,7 @@ serialize on the isolate either way, so the default stays 1.
 
 ## Status
 
-**Shipped:** hyper HTTP/1.1+2 server + keep-alive + optional TLS · multi-thread
+**Shipped:** hyper HTTP/1.1+2 server + keep-alive + optional TLS + graceful drain · multi-thread
 tokio · worker pool (per-slot atomic-claim, **`renderSlots`** concurrent renders
 per worker) · napi tsfn + per-slot SAB render path · HTML streaming (Suspense
 auto-detect) · declarative routing + nested routes + loaders + errorBoundary ·
@@ -961,7 +969,7 @@ Tailwind v4 + component CSS (partial) · `brust build` → `dist/` · `brust dev
 loader/`init()` fetch) · keyed `x-for` diff (v1 full re-renders) · whole-route cache for
 native routes · `Fragment` lowering · global `app/middleware.ts` + header deletion · build-time client RPC
 auto-rewrite · content-hashed island filenames + per-chunk CSS extraction ·
-single-binary `--compile` · graceful drain · tsfn retry / health checks · SSE/WS
+single-binary `--compile` · tsfn retry / health checks · SSE/WS
 no-SAB dispatch variant for `renderSlots > 1` (safe today — they never touch the
 SAB — but unenforced).
 

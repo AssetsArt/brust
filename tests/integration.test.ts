@@ -1700,6 +1700,34 @@ test('renderSlots>1: two concurrent Suspense renders interleave on ONE worker', 
   }
 }, 30_000)
 
+test('graceful drain: SIGINT lets an in-flight stream finish before the process exits', async () => {
+  const { port, proc } = await startServer({ workers: '1', rustLog: 'brust=warn' })
+  let exited = false
+  try {
+    // Open a slow Suspense stream. `await fetch` resolves once the HEADERS +
+    // shell chunk are in — at which point the render is provably in-flight (the
+    // ~200ms resolved content hasn't streamed yet).
+    const resp = await fetch(`http://127.0.0.1:${port}/slow-fresh`)
+    expect(resp.status).toBe(200)
+    // SIGINT the server mid-render. With graceful drain it stops accepting new
+    // connections but lets THIS in-flight stream finish before exiting; without
+    // it the old `process.exit(0)` would cut the body off → text() rejects or
+    // returns a truncated body missing the resolved content.
+    proc.kill('SIGINT')
+    const body = await resp.text()
+    expect(body).toContain('fresh after 200ms') // the resolved Suspense content survived
+    // And the process drains + exits cleanly (not hung) within the drain window.
+    const code = await Promise.race([
+      proc.exited,
+      new Promise<number>((_r, rej) => setTimeout(() => rej(new Error('did not exit')), 8000)),
+    ])
+    exited = true
+    expect(typeof code).toBe('number')
+  } finally {
+    if (!exited) proc.kill('SIGKILL')
+  }
+}, 20_000)
+
 test('streaming: mid-stream disconnect — second request to same worker still succeeds', async () => {
   const { port, stop } = await startServer({ workers: '1', rustLog: 'brust=warn' })
   try {

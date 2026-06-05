@@ -161,9 +161,25 @@ export const brust = {
       const { registerInitialPool } = await import('./dev/worker-registry.ts')
       registerInitialPool(workersArr, opts.entry, opts.workers, baseEnv as Record<string, string>)
     }
-    // Bun Workers intercept SIGINT before Rust's ctrl_c() handler fires.
-    // Install a JS-level handler so the process actually exits on SIGINT.
-    process.on('SIGINT', () => process.exit(0))
+    // Bun Workers intercept SIGINT before Rust's ctrl_c() handler fires, so a
+    // JS-level handler owns process exit. GRACEFUL DRAIN: stop accepting new
+    // connections, let in-flight renders/streams finish (bounded by the drain
+    // timeout), THEN exit — so a slow stream isn't cut off mid-response (the
+    // teardown that produced spurious `split_meta` errors under load). A second
+    // signal (impatient Ctrl-C) forces an immediate exit. SIGTERM too, for
+    // container orchestrators (Docker/k8s send SIGTERM on stop).
+    let draining = false
+    const drainTimeoutMs = Number(process.env.BRUST_DRAIN_TIMEOUT_MS) || 10_000
+    const gracefulExit = (code: number) => {
+      if (draining) process.exit(code)
+      draining = true
+      ;(native as any)
+        .beginDrain(drainTimeoutMs)
+        .catch(() => {})
+        .finally(() => process.exit(0))
+    }
+    process.on('SIGINT', () => gracefulExit(130))
+    process.on('SIGTERM', () => gracefulExit(143))
     await (native as any).untilReady(opts.bootTimeoutMs ?? 5000)
     await (native as any).untilShutdown()
   },

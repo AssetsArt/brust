@@ -176,10 +176,32 @@ pub fn start(
 
             let sem = Arc::new(tokio::sync::Semaphore::new(accept_cap));
 
+            // Graceful drain wiring. `drain_sig` (watch) tells each in-flight
+            // connection to finish its current request then close (refuse new
+            // keep-alive requests). `conn_token` (mpsc) is a drain barrier: every
+            // connection task holds a clone, so once the accept loop drops its own
+            // and the last connection finishes, `conn_token_rx.recv()` returns
+            // `None` — that's "all connections drained".
+            let (drain_sig_tx, drain_sig_rx) = tokio::sync::watch::channel(false);
+            let (conn_token_tx, mut conn_token_rx) = tokio::sync::mpsc::channel::<()>(1);
+
+            // Register interest on the drain signal BEFORE the accept loop so a
+            // `request_drain` that races the first `select!` poll isn't lost
+            // (`Notify` stores one permit).
+            let drain_started = state.drain_start_notify().notified();
+            tokio::pin!(drain_started);
+            drain_started.as_mut().enable();
+
             loop {
-                let (tcp, _peer) = match listener.accept().await {
-                    Ok(pair) => pair,
-                    Err(e) => {
+                let accepted = tokio::select! {
+                    biased;
+                    _ = drain_started.as_mut() => None, // drain requested → stop accepting
+                    res = listener.accept() => Some(res),
+                };
+                let (tcp, _peer) = match accepted {
+                    None => break,
+                    Some(Ok(pair)) => pair,
+                    Some(Err(e)) => {
                         error!(error = %e, "accept failed");
                         // NOTE: post-boot fatal; see FU#3 scope
                         std::process::exit(1);
@@ -204,8 +226,11 @@ pub fn start(
                 let read_buf_cap = tuning.read_buf_cap;
                 let max_req = tuning.max_request_bytes;
                 let acceptor = acceptor.clone();
+                let conn_drain = drain_sig_rx.clone();
+                let conn_token = conn_token_tx.clone();
                 tokio::spawn(async move {
                     let _permit = permit; // released when the connection ends
+                    let _conn_token = conn_token; // drain barrier — held for the conn's life
                     let svc = service_fn(move |req| handle_request(req, Arc::clone(&state)));
 
                     // The two branches produce different concrete IO types
@@ -236,14 +261,37 @@ pub fn start(
                                     return;
                                 }
                             };
-                            serve_io(TokioIo::new(tls_stream), svc, max_req, read_buf_cap).await;
+                            serve_io(
+                                TokioIo::new(tls_stream),
+                                svc,
+                                max_req,
+                                read_buf_cap,
+                                conn_drain,
+                            )
+                            .await;
                         }
                         None => {
-                            serve_io(TokioIo::new(tcp), svc, max_req, read_buf_cap).await;
+                            serve_io(TokioIo::new(tcp), svc, max_req, read_buf_cap, conn_drain)
+                                .await;
                         }
                     }
                 });
             }
+
+            // ----- graceful drain -----
+            // The accept loop broke on `drain_start`. Signal every in-flight
+            // connection to graceful-shutdown (finish its current request, refuse
+            // new keep-alive requests, then close), drop our own barrier token so
+            // the only remaining `conn_token` senders are live connections, and
+            // wait for them all to finish — bounded by the drain deadline.
+            let _ = drain_sig_tx.send(true);
+            drop(conn_token_tx);
+            let deadline = Duration::from_millis(state.drain_timeout_ms());
+            match tokio::time::timeout(deadline, conn_token_rx.recv()).await {
+                Ok(_) => info!("graceful drain: all in-flight connections finished"),
+                Err(_) => warn!("graceful drain: deadline elapsed; forcing remaining connections"),
+            }
+            state.signal_drain_done();
         });
     });
 
@@ -262,8 +310,13 @@ pub fn start(
 /// TLS (`TokioIo<TlsStream<TcpStream>>`) branches share one body — the concrete
 /// `TokioIo<...>` types differ, so this is the clean way to avoid boxing.
 /// `serve_connection_with_upgrades` keeps the WS-upgrade path working over TLS.
-async fn serve_io<I, S, B>(io: I, svc: S, max_req: usize, read_buf_cap: usize)
-where
+async fn serve_io<I, S, B>(
+    io: I,
+    svc: S,
+    max_req: usize,
+    read_buf_cap: usize,
+    mut drain: tokio::sync::watch::Receiver<bool>,
+) where
     I: hyper::rt::Read + hyper::rt::Write + Unpin + Send + 'static,
     S: hyper::service::Service<Request<Incoming>, Response = Response<B>, Error = Infallible>
         + Send
@@ -278,8 +331,29 @@ where
     builder
         .http1()
         .max_buf_size(max_req.max(read_buf_cap).max(8192));
-    if let Err(e) = builder.serve_connection_with_upgrades(io, svc).await {
-        debug!(error = %e, "connection error");
+    // Pin the connection so it can be both polled to completion AND, on drain,
+    // told to `graceful_shutdown()` (finish the in-flight request, then close).
+    let conn = builder.serve_connection_with_upgrades(io, svc);
+    tokio::pin!(conn);
+    tokio::select! {
+        res = conn.as_mut() => {
+            if let Err(e) = res {
+                debug!(error = %e, "connection error");
+            }
+        }
+        res = drain.changed() => {
+            // The drain watch only ever transitions false→true (once), so a change
+            // means drain was requested: stop serving new keep-alive requests on
+            // this connection, let the current one finish, then close. (If the
+            // watch sender vanished, just run to completion.) `changed()` yields
+            // `()`, not a `watch::Ref`, so nothing `!Send` is held across the await.
+            if res.is_ok() {
+                conn.as_mut().graceful_shutdown();
+            }
+            if let Err(e) = conn.await {
+                debug!(error = %e, "connection error (post-drain)");
+            }
+        }
     }
 }
 
