@@ -1647,6 +1647,59 @@ test('streaming: /slow-suspense uses Transfer-Encoding: chunked + shell-before-r
   }
 }, 15_000)
 
+test('renderSlots>1: two concurrent Suspense renders interleave on ONE worker', async () => {
+  // The multi-render-per-worker payoff, proven end-to-end. One worker, two render
+  // slots. `/slow-fresh` suspends ~150ms with a per-REQUEST-fresh promise, so two
+  // concurrent requests each wait independently — and on two slots those waits
+  // OVERLAP. The concurrent pair must finish in roughly one render's time, not two.
+  // (At renderSlots=1 the second request would queue behind the first → ~2×, so
+  // this also guards the env→slot plumbing from regressing.)
+  const { port, stop } = await startServer({
+    workers: '1',
+    env: { BRUST_RENDER_SLOTS: '2' },
+    rustLog: 'brust=warn',
+  })
+  try {
+    const url = `http://127.0.0.1:${port}/slow-fresh`
+    const get = () => fetch(url).then((r) => r.text())
+    const pairConcurrent = async () => {
+      const t = performance.now()
+      const [a, b] = await Promise.all([get(), get()])
+      return { ms: performance.now() - t, a, b }
+    }
+
+    // Warm up (island chunk build, JIT, first-hit costs) so the timings are clean.
+    await get()
+
+    // Serial: two back-to-back renders ≈ 2 × ~200ms.
+    const s0 = performance.now()
+    await get()
+    await get()
+    const serial = performance.now() - s0
+
+    // Concurrent: two at once ≈ ~200ms — the waits overlap across the two slots.
+    // Take the faster of two trials to filter a single full-suite-contention blip
+    // (the timer wait is I/O and overlaps regardless of host CPU, so the floor is
+    // stable; only an unlucky trial inflates).
+    const t1 = await pairConcurrent()
+    const t2 = await pairConcurrent()
+    const concurrent = Math.min(t1.ms, t2.ms)
+
+    // Both renders produced the resolved Suspense content (no cross-slot corruption).
+    for (const { a, b } of [t1, t2]) {
+      expect(a).toContain('fresh after 200ms')
+      expect(b).toContain('fresh after 200ms')
+    }
+
+    // Interleave: two overlapping ~200ms waits → ~0.5× serial. Assert < 0.75× with
+    // generous CI headroom. A regression to one-render-per-worker (e.g. the
+    // env→slot plumbing breaking) would push this to ~1.0 and fail.
+    expect(concurrent).toBeLessThan(serial * 0.75)
+  } finally {
+    await stop()
+  }
+}, 30_000)
+
 test('streaming: mid-stream disconnect — second request to same worker still succeeds', async () => {
   const { port, stop } = await startServer({ workers: '1', rustLog: 'brust=warn' })
   try {

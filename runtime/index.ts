@@ -138,8 +138,13 @@ export const brust = {
     })
     // Render slots per worker. Propagated to each worker via env (Bun Workers
     // share the OS process, so the worker reads it from process.env at
-    // registerRenderer time). Default 1 — byte-identical single in-flight render.
-    const renderSlots = Math.max(1, opts.tuning?.renderSlots ?? 1)
+    // registerRenderer time). Precedence: explicit `tuning.renderSlots`, else the
+    // `BRUST_RENDER_SLOTS` env (so it's configurable like BRUST_WORKERS without
+    // per-app wiring), else 1 — byte-identical single in-flight render.
+    const renderSlots = Math.max(
+      1,
+      opts.tuning?.renderSlots ?? (Number(process.env.BRUST_RENDER_SLOTS) || 1),
+    )
     const baseEnv = { ...process.env, BRUST_RENDER_SLOTS: String(renderSlots) }
     const workersArr: Worker[] = []
     for (let i = 0; i < opts.workers; i++) {
