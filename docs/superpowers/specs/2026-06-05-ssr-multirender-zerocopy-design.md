@@ -224,6 +224,41 @@ way. If A2 fails: leave the warning, close C, cite the numbers.
 (Phase B/C file lists live in their respective sections above, for the gated
 follow-up.)
 
+## Decision (after Phase A1 ran, 2026-06-05)
+
+Reproduce: `bun run bench/micro/interleave.ts` (numbers are point-in-time and
+NOT committed, per the standing constraint; the qualitative shape is stable).
+
+**A1 result — Phase B: GO.** Concurrent renders beat serial on Suspense /
+async-data pages by a wide and N-scaling margin (the `io-bound` cell approaches
+a near-linear speedup at N=8 — all the data-wait latency overlaps). The
+`balanced` and `io-heavy` cells show large wins too. Critically, the
+**pure-cpu** cell shows **no concurrency tax** (ratio just under 1.0 — a slight
+gain from overlapping stream-orchestration overhead, not a regression). The
+feared "K>1 hurts synchronous pages" did not materialize on this host. The
+physics held exactly: CPU serializes (pure-cpu ≈ break-even), I/O interleaves
+(io-bound ≈ N× win). → The K-slot machine is worth its cost **for Suspense
+workloads**; K=1 default keeps synchronous pages untouched.
+
+**A2 finding — zero-copy request is COUPLED to B, not standalone.** Resolving
+the SeqCst/barrier contradiction by inspection plus the original post-mortem:
+the SAB-request race was fundamentally an **aliasing** bug — request and
+response shared the SAB at offset 0, so a not-yet-published request write could
+be read as (or clobbered by) a stale response. Bun's tsfn enqueue *is* a SeqCst
+barrier, but that publishes nothing useful while the two directions alias the
+same bytes. **Phase B's disjoint per-slot regions are the structural fix:** a
+request written into slot `i`'s sub-region never aliases any response framing.
+Therefore Phase C's zero-copy-request becomes safe *by construction once B
+exists*, and the right A2 load-test is **against B's partitioning, not
+standalone** — a standalone revival at offset 0 would merely reproduce the known
+bug. → A2's 120-conn corruption/throughput test is **folded into Phase B's
+acceptance** (the partitioned SAB is exercised under load there); Phase C then
+flips the request carrier from `Inline` to `Sab(slot,len)` and re-measures.
+
+**Net:** Phase B is greenlit and now also carries the zero-copy-request proof
+(C rides on B's partitioning). The original two-independent-optimizations
+framing collapses: partitioning is the common substrate for both.
+
 ## Standing constraints (carried from prior runs)
 
 - Commit, **do not push** (`git`), ever, without explicit instruction.
