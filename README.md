@@ -13,10 +13,13 @@
 
 </div>
 
-React on the server, Rust everywhere else. One Bun host process; the HTTP accept
-loop and worker pool are pure Rust, loaded as a `.node` native module (napi-rs).
-Renders cross into Bun Worker threads via `ThreadsafeFunction` and return over
-per-worker `SharedArrayBuffer`. `tokio-uring` (io_uring) on Linux, `tokio` on macOS.
+React on the server, Rust everywhere else. One Bun host process; the HTTP server
+(hyper 1.x, HTTP/1.1 + HTTP/2) and worker pool are pure Rust, loaded as a `.node`
+native module (napi-rs). Renders cross into Bun Worker threads via
+`ThreadsafeFunction` (request as inline JSON) and return over a per-worker
+`SharedArrayBuffer`. One worker can hold several renders in-flight
+(`renderSlots`), overlapping I/O-bound (Suspense) renders. Multi-thread tokio
+runtime — runs the same everywhere (no io_uring / seccomp caveat).
 
 > Published on npm as [`brustjs`](https://www.npmjs.com/package/brustjs) (the
 > `brust` name is taken). Alpha — see **Status**.
@@ -133,7 +136,8 @@ bun test tests/integration.test.ts   # integration (real server)
 ```
 
 ```
-crates/brust/             Rust: accept loop, worker pool, napi exports, SAB
+crates/brust-core/        Rust core (pure, zero napi): hyper server, worker pool, routing, cache
+crates/brust/             Thin napi cdylib over brust-core (the .node)
 crates/jsx-rust-compiler/ JSX → jinja compiler for native: true routes
 runtime/                  Bun-side: routing, render, actions, store, native directives, CLI
 example/                  pokedex native-first demo
@@ -142,14 +146,13 @@ bench/ · docs/ · architecture.md
 
 ## Status
 
-Alpha, solo-developed. Linux is tier-1 (io_uring; glibc + musl, 6 prebuilt platform
-binaries). Known partials: `brustjs dev` reload is a full worker-respawn (not
-state-preserving HMR) — TS, islands, and `.module.css` all reload that way.
-Tailwind is opt-in — the scaffold adds it as a project dependency; `@import "tailwindcss"`
-resolves from your own `node_modules`. Deployment note: the io_uring server needs `io_uring_*`
-syscalls permitted — a default-seccomp container (Docker/k8s) must allow them or run
-`--security-opt seccomp=unconfined`. Roadmap and limitations in
-[`architecture.md`](./architecture.md).
+Alpha, solo-developed. Linux is tier-1 (glibc + musl, 6 prebuilt platform
+binaries); the multi-thread tokio server runs under default container seccomp —
+no `io_uring` exception needed. Known partials: `brustjs dev` reload is a full
+worker-respawn (not state-preserving HMR) — TS, islands, and `.module.css` all
+reload that way. Tailwind is opt-in — the scaffold adds it as a project
+dependency; `@import "tailwindcss"` resolves from your own `node_modules`.
+Roadmap and limitations in [`architecture.md`](./architecture.md).
 
 MIT.
 
