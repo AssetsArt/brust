@@ -1,4 +1,4 @@
-import { createElement, type ComponentType, type ReactNode } from 'react'
+import { createContext, createElement, useContext, type ComponentType, type ReactNode } from 'react'
 import type { IsrConfig } from './isr-jsx.ts'
 
 /** Triggers that activate hydration of an island marker. */
@@ -44,17 +44,29 @@ export interface IslandProps<P> {
   isr?: IsrConfig
 }
 
-/** Module-scope flag flipped by every `<Island>` render. `makeRenderer`
- * reads + resets it once per render to decide whether to prepend the
- * importmap + bootstrap script. */
-let __used = false
-
-/** Internal — flipped by Island, read by makeRenderer. */
-export function consumeIslandUsedFlag(): boolean {
-  const v = __used
-  __used = false
-  return v
+/** Per-render box tracking whether any `<Island>` rendered. Created fresh per
+ * render and provided through {@link IslandUsedContext}; the renderer reads
+ * `box.used` once at the end to decide whether to prepend the importmap +
+ * bootstrap script.
+ *
+ * This is REQUEST-SCOPED (not a module-scope flag) so concurrent renders in one
+ * isolate (renderSlots>1) never cross-contaminate: React restores each render's
+ * context stack across Suspense resumption, so an interleaved peer setting its
+ * own box never flips ours. A module `let` could not give that guarantee. */
+export interface IslandUsedBox {
+  used: boolean
 }
+
+/** Fresh per-render box. */
+export function createIslandUsedBox(): IslandUsedBox {
+  return { used: false }
+}
+
+/** Carries the per-render {@link IslandUsedBox} down to every `<Island>`. The
+ * renderer wraps the tree in a Provider with a fresh box; an `<Island>` rendered
+ * with no Provider (e.g. a standalone `renderToString` outside the React render
+ * path) reads `null` and is a no-op. */
+export const IslandUsedContext = createContext<IslandUsedBox | null>(null)
 
 // Constraint is `object`, NOT `Record<string, unknown>`: a TS `interface` has no
 // implicit index signature, so it does NOT satisfy `extends Record<string, unknown>`
@@ -67,7 +79,10 @@ export function Island<P extends object>({
   props,
   hydrate = 'load',
 }: IslandProps<P>): ReactNode {
-  __used = true
+  // Request-scoped: flip THIS render's box (see IslandUsedContext). No-op if
+  // rendered without a Provider (standalone renderToString).
+  const usedBox = useContext(IslandUsedContext)
+  if (usedBox) usedBox.used = true
   const resolvedId = Component.name
   if (!resolvedId) {
     throw new Error(

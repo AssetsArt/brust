@@ -4,7 +4,7 @@
 import { renderToPipeableStream, renderToString } from 'react-dom/server.node'
 import { createElement, type ReactNode, type ComponentType } from 'react'
 import { Writable } from 'node:stream'
-import { consumeIslandUsedFlag } from '../islands/island.tsx'
+import { IslandUsedContext, createIslandUsedBox } from '../islands/island.tsx'
 import { ISLANDS_IMPORTMAP_AND_BOOTSTRAP } from '../islands/importmap.ts'
 import { injectCssLink } from './inject-css-link.ts'
 import { getCssHrefs, getCssHrefsForRoute } from '../css.ts'
@@ -116,12 +116,14 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
   const successStatus = args.status ?? 200
   const extraHeaders = args.headers ?? {}
 
-  // Reset the islands flag at the start of every render — the streaming path
-  // (which doesn't read the flag at the end) would otherwise leak its setting
-  // to the next render. consumeIslandUsedFlag() reads-and-resets so calling
-  // here is safe; the actual read for the buffering path happens at _final
-  // time and sees only flips made during THIS render's React work.
-  consumeIslandUsedFlag()
+  // Request-scoped islands signal: a fresh box per render, provided to every
+  // <Island> through IslandUsedContext. The buffering path reads `box.used` at
+  // _final to decide whether to prepend the importmap + bootstrap. Per-render
+  // (not a module flag) so concurrent renders in one isolate (renderSlots>1)
+  // never cross-contaminate — React restores each render's context across
+  // Suspense resumption. No start-of-render reset needed: the box starts false.
+  const islandUsedBox = createIslandUsedBox()
+  const renderTree = createElement(IslandUsedContext.Provider, { value: islandUsedBox }, element)
 
   return new Promise<void>((resolve, reject) => {
     let finalSent = false
@@ -165,7 +167,7 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
       async final(cb: (e?: Error | null) => void) {
         try {
           if (mode === 'buffering') {
-            const islandsUsed = consumeIslandUsedFlag()
+            const islandsUsed = islandUsedBox.used
             let body = concatBuffers(buffer, islandsUsed)
             const perRouteHrefs = args.routePath ? getCssHrefsForRoute(args.routePath) : []
             body = injectCssLink(body, [...getCssHrefs(), ...perRouteHrefs])
@@ -200,7 +202,7 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
     let allReadyFired = false
     let stream: ReturnType<typeof renderToPipeableStream>
     try {
-      stream = renderToPipeableStream(element, {
+      stream = renderToPipeableStream(renderTree, {
         onShellReady() {
           // React fires onAllReady synchronously AFTER onShellReady in the
           // same microtask queue flush when there is no pending Suspense.
