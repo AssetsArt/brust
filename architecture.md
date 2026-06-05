@@ -942,10 +942,12 @@ serialize on the isolate either way, so the default stays 1.
 
 ## Status
 
-**Shipped:** Rust accept loop + keep-alive + worker pool (atomic-claim) · napi
-tsfn + per-worker SAB render path · HTML streaming (Suspense auto-detect) ·
-declarative routing + nested routes + loaders + errorBoundary · per-route
-middleware · per-route LRU cache + stats + invalidation · component-addressed
+**Shipped:** hyper HTTP/1.1+2 server + keep-alive + optional TLS · multi-thread
+tokio · worker pool (per-slot atomic-claim, **`renderSlots`** concurrent renders
+per worker) · napi tsfn + per-slot SAB render path · HTML streaming (Suspense
+auto-detect) · declarative routing + nested routes + loaders + errorBoundary ·
+per-route middleware · per-route cache (moka) + stats + invalidation ·
+component-addressed
 islands (4 triggers) · server actions (defineActions + treaty client) · MCP server · SSE +
 WebSockets (literal paths) · SPA navigation · native routes (JSX→minijinja) +
 **SSR components** + **conditional rendering** + **native inline** + **ISR cache
@@ -959,8 +961,9 @@ Tailwind v4 + component CSS (partial) · `brust build` → `dist/` · `brust dev
 loader/`init()` fetch) · keyed `x-for` diff (v1 full re-renders) · whole-route cache for
 native routes · `Fragment` lowering · global `app/middleware.ts` + header deletion · build-time client RPC
 auto-rewrite · content-hashed island filenames + per-chunk CSS extraction ·
-single-binary `--compile` · multi-thread tokio · N slots per worker · HTTP/2 ·
-TLS · graceful drain · tsfn retry / health checks.
+single-binary `--compile` · graceful drain · tsfn retry / health checks · SSE/WS
+no-SAB dispatch variant for `renderSlots > 1` (safe today — they never touch the
+SAB — but unenforced).
 
 ---
 

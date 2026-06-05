@@ -148,11 +148,13 @@ bench/ · docs/ · architecture.md
 
 Alpha, solo-developed. Linux is tier-1 (glibc + musl, 6 prebuilt platform
 binaries); the multi-thread tokio server runs under default container seccomp —
-no `io_uring` exception needed. Known partials: `brustjs dev` reload is a full
-worker-respawn (not state-preserving HMR) — TS, islands, and `.module.css` all
-reload that way. Tailwind is opt-in — the scaffold adds it as a project
-dependency; `@import "tailwindcss"` resolves from your own `node_modules`.
-Roadmap and limitations in [`architecture.md`](./architecture.md).
+no `io_uring` exception needed. The server speaks **HTTP/1.1 + HTTP/2** with
+optional in-process **TLS**, and a worker can hold several renders in-flight
+(**`renderSlots`**) to overlap Suspense / loader-bound requests. Known partials:
+`brustjs dev` reload is a full worker-respawn (not state-preserving HMR) — TS,
+islands, and `.module.css` all reload that way. Tailwind is opt-in — the scaffold
+adds it as a project dependency; `@import "tailwindcss"` resolves from your own
+`node_modules`. Roadmap and limitations in [`architecture.md`](./architecture.md).
 
 MIT.
 
