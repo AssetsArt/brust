@@ -36,6 +36,11 @@ const IO_NAME: &str = "hyper(tokio)";
 ///
 /// - `max_request_bytes` (16 KB): cap on request header bytes (enforced by
 ///   hyper's `max_buf_size` so an oversized header line can't grow unbounded).
+///   This is ALSO the only size bound on render envelopes: render requests carry
+///   no body, so their inline JSON envelope (passed through napi as a String,
+///   see `RenderEnvelope::Inline`) is bounded by this header cap. Action/MCP
+///   envelopes are bounded by `max_action_body_bytes` (the base64-encoded body
+///   inflates ~4/3, still a hard cap).
 /// - `max_action_body_bytes` (256 KB): cap on action/RPC body size. Mirrors the
 ///   SAB capacity so the largest body fits one SAB write; raising the SAB does
 ///   NOT auto-raise this — set it here too.
@@ -1103,7 +1108,7 @@ where
     };
     let entry = Arc::clone(claim.entry());
 
-    // FIX TEST: pass the request envelope INLINE (marshaled as a String through
+    // FIX: pass the request envelope INLINE (marshaled as a String through
     // napi) instead of via the worker's SAB. The streaming/chunk path's SAB
     // request write was not reliably visible to the worker under the multi-thread
     // runtime (worker read a stale prior response). Inline avoids the shared-mem
