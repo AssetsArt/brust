@@ -49,6 +49,10 @@ export interface ServeOptions {
     /** Max ms a render waits for a free worker before 503 (AllBusy queues
      * instead of failing fast). Default 10000. */
     claimTimeoutMs?: number
+    /** tokio I/O runtime worker-thread count for the hyper server. Runs inside
+     * Bun (which has its own threads + render workers), so this is NOT
+     * one-per-core. Default `min(availableParallelism, 4)` (fallback 2). */
+    workerThreads?: number
   }
 }
 

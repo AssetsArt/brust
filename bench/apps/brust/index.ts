@@ -10,13 +10,25 @@ import { actions } from './actions'
 // BRUST_WORKERS (read by loadConfig) sets render-thread count. BRUST_CONN_WORKERS
 // (optional) sets the Rust I/O concurrency separately via ServeOptions.tuning —
 // lets the bench drive render vs conn workers independently.
+// BRUST_CONN_WORKERS → accept concurrency; BRUST_WORKER_THREADS → tokio I/O
+// runtime thread count (default min(availableParallelism,4)). Both feed
+// ServeOptions.tuning so the bench can sweep them independently of BRUST_WORKERS
+// (the Bun render-thread count).
 const connWorkers = process.env.BRUST_CONN_WORKERS
   ? parseInt(process.env.BRUST_CONN_WORKERS, 10)
   : undefined
+const workerThreads = process.env.BRUST_WORKER_THREADS
+  ? parseInt(process.env.BRUST_WORKER_THREADS, 10)
+  : undefined
+
+const tuning = {
+  ...(connWorkers ? { connWorkers } : {}),
+  ...(workerThreads ? { workerThreads } : {}),
+}
 
 await brust.run({
   routes,
   entry: import.meta.url,
   actions,
-  ...(connWorkers ? { serve: { tuning: { connWorkers } } } : {}),
+  ...(Object.keys(tuning).length > 0 ? { serve: { tuning } } : {}),
 })
