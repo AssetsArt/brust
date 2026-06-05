@@ -10,7 +10,7 @@ use hyper::body::Incoming;
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::cache::response_cache::{CacheConfig, CacheKey};
 use crate::config::AppState;
@@ -127,6 +127,7 @@ pub fn start(
     let (boot_tx, boot_rx) = std::sync::mpsc::sync_channel::<Result<(), String>>(1);
 
     std::thread::spawn(move || {
+        info!("Starting Tokio runtime with {} threads", tuning.worker_threads.max(1));
         let rt = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(tuning.worker_threads.max(1))
             .enable_all()
