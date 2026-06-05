@@ -125,6 +125,16 @@ const PROBES: Probe[] = [
     contentType: 'application/json',
     scenarios: ['brust'],
   },
+  // Multi-render-per-worker probe — a React SSR route with a per-request
+  // async-data <Suspense> (~25ms). The render YIELDS while awaiting its data,
+  // so renderSlots>1 overlaps concurrent waits on one worker. Synchronous routes
+  // above are unaffected by renderSlots (they serialize on CPU); THIS one scales.
+  // Compare two full runs: `bun run bench` (renderSlots=1) vs
+  // `BRUST_RENDER_SLOTS=8 bun run bench`. Brust-only.
+  {
+    path: '/suspense-data',
+    scenarios: ['brust'],
+  },
 ]
 
 // Per-(scenario, path) display label for the markdown table. The static

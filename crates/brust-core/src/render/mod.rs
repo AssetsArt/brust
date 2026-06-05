@@ -15,4 +15,4 @@ pub mod stream;
 // or full submodule paths — so this stays `pub(crate)`. The `pool` and `stream`
 // items are reached via their full `render::pool::*` / `render::stream::*` paths,
 // so they need no mod-level re-export.
-pub(crate) use dispatch::{RenderDispatch, RenderEnvelope, RenderError};
+pub(crate) use dispatch::{RenderDispatch, RenderError};

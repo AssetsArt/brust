@@ -8,10 +8,10 @@
 
 use std::sync::Arc;
 
-use napi::bindgen_prelude::{Either, Promise};
+use napi::bindgen_prelude::{FnArgs, Promise};
 use napi::threadsafe_function::ThreadsafeFunction;
 
-use brust_core::{RenderDispatch, RenderEnvelope, RenderError};
+use brust_core::{RenderDispatch, RenderError};
 
 /// Renderer signature: takes the envelope (SAB len as `u32`, or inline JSON
 /// `String`) and resolves with a `u32` framed-response length.
@@ -27,9 +27,23 @@ use brust_core::{RenderDispatch, RenderEnvelope, RenderError};
 ///   React Suspense streaming; SSE/WS resolve 0 too (they own the socket
 ///   independently via napiSse*/napiWs*).
 ///
-/// CalleeHandled = false matches what Function::build_threadsafe_function().build() produces.
-pub type RendererTsfn =
-    ThreadsafeFunction<Either<u32, String>, Promise<u32>, Either<u32, String>, napi::Status, false>;
+/// The render slot index is passed as a SECOND tsfn argument (NOT folded into
+/// the envelope JSON) so the worker writes its response into the right SAB
+/// sub-view and calls `napi_render_chunk` with the right slot — while keeping
+/// the K=1 request envelope bytes identical to the pre-multi-slot wire.
+///
+/// `FnArgs` (not a bare tuple) so the two args are SPREAD as positional JS
+/// arguments `(requestJson, slot)` — a bare `(A, B)` tuple would arrive as a
+/// single array. The request is always the INLINE JSON `String` (the SAB-request
+/// transport is closed for good — see the `dispatch` module doc). CalleeHandled
+/// = false matches what Function::build_threadsafe_function().build() produces.
+pub type RendererTsfn = ThreadsafeFunction<
+    FnArgs<(String, u32)>,
+    Promise<u32>,
+    FnArgs<(String, u32)>,
+    napi::Status,
+    false,
+>;
 
 /// Raw pointer to the worker's SharedArrayBuffer backing store. Send+Sync because the
 /// backing store is process-global memory (V8 allocates SAB backing outside the GC heap)
@@ -54,21 +68,25 @@ pub struct TsfnDispatch {
     pub(crate) tsfn: Arc<RendererTsfn>,
     pub(crate) buf_ptr: BufPtr,
     pub(crate) buf_len: usize,
+    /// Number of render slots this worker holds. The SAB (`buf_len` bytes total)
+    /// is partitioned into `slots` disjoint sub-regions by the default
+    /// `buf_slot` impl; `slot_count` reports this count to the pool/render path.
+    pub(crate) slots: usize,
 }
 
 impl RenderDispatch for TsfnDispatch {
     fn call(
         &self,
-        env: RenderEnvelope,
+        request_json: String,
+        slot: u32,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<u32, RenderError>> + Send>> {
-        let either = match env {
-            RenderEnvelope::Sab(n) => Either::A(n),
-            RenderEnvelope::Inline(s) => Either::B(s),
-        };
         // Clone the Arc (cheap atomic bump) so the future owns a 'static handle.
         let tsfn = Arc::clone(&self.tsfn);
         Box::pin(async move {
-            match tsfn.call_async(either).await {
+            // The slot is the SECOND tsfn arg so the worker writes the right SAB
+            // sub-view; at K=1 it is always 0 and the wire stays identical.
+            // `.into()` packs the pair into `FnArgs` for positional spreading.
+            match tsfn.call_async((request_json, slot).into()).await {
                 // Bridge enqueue failed → worker dead.
                 Err(e) => Err(RenderError::EnqueueFailed(e.to_string())),
                 // Enqueued; now await the render Promise.
@@ -77,6 +95,10 @@ impl RenderDispatch for TsfnDispatch {
                     .map_err(|e| RenderError::PromiseRejected(e.to_string())),
             }
         })
+    }
+
+    fn slot_count(&self) -> usize {
+        self.slots
     }
 
     fn buf(&self) -> (*mut u8, usize) {

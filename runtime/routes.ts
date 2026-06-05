@@ -612,15 +612,19 @@ export interface MakeRendererOptions {
   actions?: EndpointDef[]
   /** MCP server instance — built once per worker at module top-level. */
   mcp?: import('./mcp/server.ts').McpServer
+  /** Render slots per worker. The `view` SAB is partitioned into this many
+   * disjoint sub-views; each render is dispatched with a `slot` index and
+   * operates on `view.subarray(slot*sub, slot*sub+sub)`. Default 1 (the whole
+   * view → byte-identical to the pre-multi-slot path). */
+  slots?: number
 }
 
 export function makeRenderer(
   routes: FlatRoute[],
   view: Uint8Array,
   opts: MakeRendererOptions = {},
-): (envelopeJsonOrLen: number | string) => Promise<number> {
+): (envelopeJson: string, slot?: number) => Promise<number> {
   const encoder = new TextEncoder()
-  const decoder = new TextDecoder()
   const byRouteId = new Map<number, FlatRoute>()
   routes.forEach((r, i) => {
     byRouteId.set(i, r)
@@ -630,28 +634,41 @@ export function makeRenderer(
     byActionId.set(String(i), e)
   })
 
+  // Slot count: the SAB is partitioned into `slots` disjoint sub-views. At
+  // slots=1 the sub-view is the whole buffer (byte-identical to before).
+  const slots = Math.max(1, opts.slots ?? 1)
+  const sub = Math.floor(view.length / slots)
+
   // napi shim for the chunk channel. The sabBytes arg is ignored by the
-  // native fn (Rust reads from the pre-registered BufPtr) — the call sites
-  // still pass it so renderBranchStreaming can be unit-tested against a
-  // mock that captures the bytes.
+  // native fn (Rust reads from the pre-registered BufPtr, offset by slot) —
+  // the call sites still pass it so renderBranchStreaming can be unit-tested
+  // against a mock that captures the bytes. The `slot` arg selects the SAB
+  // sub-region Rust reads from.
   const napi = {
-    renderChunk: async (workerId: bigint, len: number, _sabBytes: Uint8Array): Promise<void> => {
-      await (native as any).napiRenderChunk(Number(workerId), len)
-    },
-    renderChunkFinal: async (
+    renderChunk: async (
       workerId: bigint,
+      slot: number,
       len: number,
       _sabBytes: Uint8Array,
     ): Promise<void> => {
-      await (native as any).napiRenderChunkFinal(Number(workerId), len)
+      await (native as any).napiRenderChunk(Number(workerId), slot, len)
+    },
+    renderChunkFinal: async (
+      workerId: bigint,
+      slot: number,
+      len: number,
+      _sabBytes: Uint8Array,
+    ): Promise<void> => {
+      await (native as any).napiRenderChunkFinal(Number(workerId), slot, len)
     },
   }
 
-  return async (envelopeJsonOrLen: number | string): Promise<number> => {
-    const envelopeJson =
-      typeof envelopeJsonOrLen === 'number'
-        ? decoder.decode(view.subarray(0, envelopeJsonOrLen))
-        : envelopeJsonOrLen
+  return async (envelopeJson: string, slot = 0): Promise<number> => {
+    // The disjoint SAB sub-view this render owns. At slots=1, slotView === the
+    // whole view (offset 0, full length) so the K=1 path is byte-identical.
+    // The request always arrives as an INLINE JSON string (SAB-request is closed
+    // — see the dispatch module doc); the SAB is used only for the RESPONSE.
+    const slotView = slots === 1 ? view : view.subarray(slot * sub, slot * sub + sub)
     const call = JSON.parse(envelopeJson) as RouteCall
     const wid = opts.getWorkerId?.() ?? 0
     const workerId = BigInt(wid)
@@ -660,11 +677,18 @@ export function makeRenderer(
       const flat = byRouteId.get(call.route_id)
       if (!flat) {
         console.error(`[brust] unknown route_id=${call.route_id} for path=${call.path}`)
-        await emitSingleChunkResponse(view, napi, workerId, encoder, {
-          status: 404,
-          contentType: 'text/plain; charset=utf-8',
-          body: 'not found',
-        })
+        await emitSingleChunkResponse(
+          slotView,
+          napi,
+          workerId,
+          encoder,
+          {
+            status: 404,
+            contentType: 'text/plain; charset=utf-8',
+            body: 'not found',
+          },
+          slot,
+        )
         return 0
       }
       // Inject the permanently-unaborted signal — non-SSE routes don't
@@ -695,7 +719,7 @@ export function makeRenderer(
         // FAST LANE: single-chunk error. Works for both React (big dispatch
         // reads the SAB via its fast-lane arm) and native routes (which take
         // the channel-free dispatch_single_chunk).
-        return packSingleChunkResponse(view, encoder, {
+        return packSingleChunkResponse(slotView, encoder, {
           status: 500,
           contentType: 'text/html; charset=utf-8',
           body: 'internal error',
@@ -705,7 +729,7 @@ export function makeRenderer(
       if (verdict._brustStream !== STREAM_MARKER) {
         // Middleware short-circuited with a concrete response. FAST LANE —
         // single-chunk; same dual-dispatch safety as the error path above.
-        return packSingleChunkResponse(view, encoder, {
+        return packSingleChunkResponse(slotView, encoder, {
           status: verdict.status,
           contentType: verdict.contentType ?? 'text/html; charset=utf-8',
           body: verdict.body,
@@ -750,7 +774,7 @@ export function makeRenderer(
           console.error(`[brust] loader failed for native route ${flat.fullPath}:`, err)
           // FAST LANE: native routes take dispatch_single_chunk (no chunk
           // channel), so every native fallback MUST pack + return a length.
-          return packSingleChunkResponse(view, encoder, {
+          return packSingleChunkResponse(slotView, encoder, {
             status: 500,
             contentType: 'text/html; charset=utf-8',
             body: 'internal error',
@@ -762,7 +786,7 @@ export function makeRenderer(
           const verdict = chainResult.verdict
           if (!verdict.render) {
             // redirect — no template render; fast-lane packed response with Location.
-            return packSingleChunkResponse(view, encoder, {
+            return packSingleChunkResponse(slotView, encoder, {
               status: verdict.status,
               contentType: 'text/html; charset=utf-8',
               body: '',
@@ -828,24 +852,25 @@ export function makeRenderer(
           const finalBytes = encoder.encode(JSON.stringify(ctx))
           // The original size check guarded the pre-island bytes; the merged
           // context (with island props + component html) can be larger. Re-check on finalBytes.
-          if (finalBytes.length > view.length) {
-            return packSingleChunkResponse(view, encoder, {
+          if (finalBytes.length > slotView.length) {
+            return packSingleChunkResponse(slotView, encoder, {
               status: 413,
               contentType: 'text/plain; charset=utf-8',
               body: 'loader data too large for SAB',
             })
           }
-          view.set(finalBytes, 0)
+          slotView.set(finalBytes, 0)
           try {
             return (native as any).napiRenderJinja(
               Number(workerId),
+              slot,
               finalBytes.length,
               flat.nativeTemplate,
               renderStatus,
             )
           } catch (err) {
             console.error(`[brust] napiRenderJinja failed for "${flat.nativeTemplate}":`, err)
-            return packSingleChunkResponse(view, encoder, {
+            return packSingleChunkResponse(slotView, encoder, {
               status: 500,
               contentType: 'text/html; charset=utf-8',
               body: 'internal error',
@@ -853,14 +878,14 @@ export function makeRenderer(
           }
         }
         const dataBytes = encoder.encode(json)
-        if (dataBytes.length > view.length) {
-          return packSingleChunkResponse(view, encoder, {
+        if (dataBytes.length > slotView.length) {
+          return packSingleChunkResponse(slotView, encoder, {
             status: 413,
             contentType: 'text/plain; charset=utf-8',
             body: 'loader data too large for SAB',
           })
         }
-        view.set(dataBytes, 0)
+        slotView.set(dataBytes, 0)
         try {
           // FAST LANE: napiRenderJinja is a SYNC napi call — renders Rust-side,
           // writes the framed response into the SAB, and returns its length
@@ -868,13 +893,14 @@ export function makeRenderer(
           // fast-lane arm reads the SAB directly (no chunk channel).
           return (native as any).napiRenderJinja(
             Number(workerId),
+            slot,
             dataBytes.length,
             flat.nativeTemplate,
             renderStatus,
           )
         } catch (err) {
           console.error(`[brust] napiRenderJinja failed for "${flat.nativeTemplate}":`, err)
-          return packSingleChunkResponse(view, encoder, {
+          return packSingleChunkResponse(slotView, encoder, {
             status: 500,
             contentType: 'text/html; charset=utf-8',
             body: 'internal error',
@@ -900,16 +926,24 @@ export function makeRenderer(
           // bind throw. Shape matches the legacy "internal error" path so
           // existing integration tests stay green.
           console.error(`[brust] render setup failed:`, err)
-          return await emitSingleChunkResponse(view, napi, workerId, encoder, {
-            status: 500,
-            contentType: 'text/html; charset=utf-8',
-            body: 'internal error',
-          })
+          return await emitSingleChunkResponse(
+            slotView,
+            napi,
+            workerId,
+            encoder,
+            {
+              status: 500,
+              contentType: 'text/html; charset=utf-8',
+              body: 'internal error',
+            },
+            slot,
+          )
         }
         const storeSnapshot = collectSnapshot()
         await renderBranchStreaming({
           element,
-          view,
+          view: slotView,
+          slot,
           workerId,
           napi,
           errorBoundary,
@@ -923,22 +957,22 @@ export function makeRenderer(
       })
     }
     if (call.kind === 'navigation') {
-      await navigationBranch(call, byRouteId, view, encoder, opts.getWorkerId)
+      await navigationBranch(call, byRouteId, slotView, encoder, opts.getWorkerId, slot)
       return 0
     }
     if (call.kind === 'action') {
       // FAST LANE: pack the framed response into the SAB and return its length.
       // Rust reads it directly after the Promise settles — no chunk channel.
       const resp = await dispatchAction(call, byActionId)
-      return packSingleChunkResponse(view, encoder, resp)
+      return packSingleChunkResponse(slotView, encoder, resp)
     }
     if (call.kind === 'mcp') {
       const resp = await mcpBranchToResponse(call, opts.mcp)
-      return await emitSingleChunkResponse(view, napi, workerId, encoder, resp)
+      return await emitSingleChunkResponse(slotView, napi, workerId, encoder, resp, slot)
     }
     if (call.kind === 'sse') {
       try {
-        await sseBranch(call, view, encoder, routes)
+        await sseBranch(call, slotView, encoder, routes)
       } catch (err) {
         // Setup-time errors only (BigInt coerce, dynamic import resolve,
         // napi shim build). Once handleSseStream has started streaming,
@@ -951,7 +985,7 @@ export function makeRenderer(
     }
     if (call.kind === 'ws') {
       try {
-        await wsBranch(call, view, encoder, routes)
+        await wsBranch(call, slotView, encoder, routes)
       } catch (err) {
         // Setup-time errors only — same reasoning as sseBranch above.
         console.error('[brust] wsBranch uncaught:', err)
@@ -963,11 +997,18 @@ export function makeRenderer(
     // Unknown kind — log and 500. Shouldn't happen unless Rust ships
     // something out of band.
     console.error(`[brust] unknown envelope kind in worker:`, (call as { kind?: string }).kind)
-    return await emitSingleChunkResponse(view, napi, workerId, encoder, {
-      status: 500,
-      contentType: 'text/plain; charset=utf-8',
-      body: 'invalid envelope kind',
-    })
+    return await emitSingleChunkResponse(
+      slotView,
+      napi,
+      workerId,
+      encoder,
+      {
+        status: 500,
+        contentType: 'text/plain; charset=utf-8',
+        body: 'invalid envelope kind',
+      },
+      slot,
+    )
   }
 }
 
@@ -1013,24 +1054,37 @@ async function navigationBranch(
   view: Uint8Array,
   encoder: TextEncoder,
   getWorkerId: (() => number | null) | undefined,
+  slot = 0,
 ): Promise<void> {
   const workerId = BigInt(getWorkerId?.() ?? 0)
   const napi = {
-    renderChunk: async (wid: bigint, len: number, _view: Uint8Array): Promise<void> => {
-      await (native as any).napiRenderChunk(Number(wid), len)
+    renderChunk: async (wid: bigint, s: number, len: number, _view: Uint8Array): Promise<void> => {
+      await (native as any).napiRenderChunk(Number(wid), s, len)
     },
-    renderChunkFinal: async (wid: bigint, len: number, _view: Uint8Array): Promise<void> => {
-      await (native as any).napiRenderChunkFinal(Number(wid), len)
+    renderChunkFinal: async (
+      wid: bigint,
+      s: number,
+      len: number,
+      _view: Uint8Array,
+    ): Promise<void> => {
+      await (native as any).napiRenderChunkFinal(Number(wid), s, len)
     },
   }
 
   const flat = byRouteId.get(call.route_id)
   if (!flat) {
-    await emitSingleChunkResponse(view, napi, workerId, encoder, {
-      status: 404,
-      contentType: 'application/json; charset=utf-8',
-      body: '{"error":"not found"}',
-    })
+    await emitSingleChunkResponse(
+      view,
+      napi,
+      workerId,
+      encoder,
+      {
+        status: 404,
+        contentType: 'application/json; charset=utf-8',
+        body: '{"error":"not found"}',
+      },
+      slot,
+    )
     return
   }
 
@@ -1059,11 +1113,18 @@ async function navigationBranch(
     navVerdict = (await navChain()) as NavMarkerResponse
   } catch (err) {
     console.error('[brust] navigation middleware threw:', err)
-    await emitSingleChunkResponse(view, napi, workerId, encoder, {
-      status: 500,
-      contentType: 'application/json; charset=utf-8',
-      body: '{"error":"middleware threw"}',
-    })
+    await emitSingleChunkResponse(
+      view,
+      napi,
+      workerId,
+      encoder,
+      {
+        status: 500,
+        contentType: 'application/json; charset=utf-8',
+        body: '{"error":"middleware threw"}',
+      },
+      slot,
+    )
     return
   }
 
@@ -1071,12 +1132,19 @@ async function navigationBranch(
     // Middleware short-circuited — emit the verdict. Client's non-2xx check
     // triggers the full-reload fallback so the user hits the real route and
     // sees the middleware's challenge page.
-    await emitSingleChunkResponse(view, napi, workerId, encoder, {
-      status: navVerdict.status,
-      contentType: navVerdict.contentType ?? 'application/json; charset=utf-8',
-      body: navVerdict.body,
-      headers: navVerdict.headers,
-    })
+    await emitSingleChunkResponse(
+      view,
+      napi,
+      workerId,
+      encoder,
+      {
+        status: navVerdict.status,
+        contentType: navVerdict.contentType ?? 'application/json; charset=utf-8',
+        body: navVerdict.body,
+        headers: navVerdict.headers,
+      },
+      slot,
+    )
     return
   }
 
@@ -1100,7 +1168,7 @@ async function navigationBranch(
     // full-document native render path).
     let navHeaders: Record<string, string> | undefined
     if (flat.nativeTemplate !== undefined) {
-      fullHtml = await renderNativeRouteToHtml(call, flat, view, encoder, workerId)
+      fullHtml = await renderNativeRouteToHtml(call, flat, view, encoder, workerId, slot)
     } else {
       // Wrap loader run (inside buildRenderElement) + render in one store scope so
       // store reads resolve the per-request instance; collect after render.
@@ -1136,19 +1204,33 @@ async function navigationBranch(
     const title = titleMatch ? titleMatch[1].replace(/<!--.*?-->/g, '').trim() : ''
 
     const body = JSON.stringify({ html: innerHtml, title, store })
-    await emitSingleChunkResponse(view, napi, workerId, encoder, {
-      status: 200,
-      contentType: 'application/json; charset=utf-8',
-      body,
-      headers: navHeaders,
-    })
+    await emitSingleChunkResponse(
+      view,
+      napi,
+      workerId,
+      encoder,
+      {
+        status: 200,
+        contentType: 'application/json; charset=utf-8',
+        body,
+        headers: navHeaders,
+      },
+      slot,
+    )
   } catch (err) {
     console.error('[brust] navigation render failed:', err)
-    await emitSingleChunkResponse(view, napi, workerId, encoder, {
-      status: 500,
-      contentType: 'application/json; charset=utf-8',
-      body: '{"error":"render failed"}',
-    })
+    await emitSingleChunkResponse(
+      view,
+      napi,
+      workerId,
+      encoder,
+      {
+        status: 500,
+        contentType: 'application/json; charset=utf-8',
+        body: '{"error":"render failed"}',
+      },
+      slot,
+    )
   }
 }
 
@@ -1170,6 +1252,7 @@ async function renderNativeRouteToHtml(
   view: Uint8Array,
   encoder: TextEncoder,
   workerId: bigint,
+  slot = 0,
 ): Promise<string> {
   const templateName = flat.nativeTemplate as string
 
@@ -1211,6 +1294,7 @@ async function renderNativeRouteToHtml(
 
   const len = (native as any).napiRenderJinja(
     Number(workerId),
+    slot,
     bytes.length,
     templateName,
   ) as number
@@ -1331,8 +1415,8 @@ function packSingleChunkResponse(
 async function emitSingleChunkResponse(
   view: Uint8Array,
   napi: {
-    renderChunk: (w: bigint, len: number, view: Uint8Array) => Promise<void>
-    renderChunkFinal: (w: bigint, len: number, view: Uint8Array) => Promise<void>
+    renderChunk: (w: bigint, slot: number, len: number, view: Uint8Array) => Promise<void>
+    renderChunkFinal: (w: bigint, slot: number, len: number, view: Uint8Array) => Promise<void>
   },
   workerId: bigint,
   encoder: TextEncoder,
@@ -1342,6 +1426,7 @@ async function emitSingleChunkResponse(
     body: string | Uint8Array
     headers?: Record<string, string>
   },
+  slot = 0,
 ): Promise<number> {
   const bodyBytes = typeof resp.body === 'string' ? encoder.encode(resp.body) : resp.body
   const meta = JSON.stringify({
@@ -1372,14 +1457,14 @@ async function emitSingleChunkResponse(
     view[1] = errMetaBytes.length & 0xff
     view.set(errMetaBytes, 2)
     view.set(errBody, 2 + errMetaBytes.length)
-    await napi.renderChunkFinal(workerId, errTotal, view)
+    await napi.renderChunkFinal(workerId, slot, errTotal, view)
     return 0
   }
   view[0] = (metaBytes.length >> 8) & 0xff
   view[1] = metaBytes.length & 0xff
   view.set(metaBytes, 2)
   view.set(bodyBytes, 2 + metaBytes.length)
-  await napi.renderChunkFinal(workerId, total, view)
+  await napi.renderChunkFinal(workerId, slot, total, view)
   return 0
 }
 

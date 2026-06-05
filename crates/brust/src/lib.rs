@@ -93,6 +93,14 @@ pub struct ServeTuning {
     /// Bun (which has its own threads + render workers), so this is NOT
     /// one-per-core. Default `min(available_parallelism, 4)` (fallback 2).
     pub worker_threads: Option<u32>,
+    /// Number of render slots per Bun worker (concurrent in-flight renders per
+    /// isolate). Default 1 (single in-flight render per worker — byte-identical
+    /// to the pre-multi-slot behaviour). The COUNT reaches `register_renderer`
+    /// via the `BRUST_RENDER_SLOTS` worker env var set in `runtime/index.ts`; it
+    /// is NOT consumed by the Rust `Tuning` struct here (the pool learns it from
+    /// `dispatch.slot_count()`). Carried on `ServeTuning` only so the JS layer
+    /// has one tunable surface.
+    pub render_slots: Option<u32>,
 }
 
 /// Resolve `host:port` to a bindable SocketAddr. Accepts literal IPs and
@@ -234,7 +242,8 @@ pub async fn until_shutdown() -> NapiResult<()> {
 #[napi]
 pub fn register_renderer(
     mut buf: Uint8Array,
-    f: Function<napi::bindgen_prelude::Either<u32, String>, Promise<u32>>,
+    slots: u32,
+    f: Function<napi::bindgen_prelude::FnArgs<(String, u32)>, Promise<u32>>,
 ) -> NapiResult<u32> {
     // NOTE: is_worker() reads std::env::var which is not patched by Bun's Worker
     // env option (Bun Workers share the OS process).  The TS layer is responsible
@@ -242,6 +251,8 @@ pub fn register_renderer(
     //
     // Capture the SAB backing-store pointer + length here. The Bun Worker keeps the
     // SAB rooted in its module scope, so the backing store outlives every render call.
+    // `buf_len` is the WHOLE buffer; `buf_slot` derives the disjoint per-slot
+    // sub-regions from it.
     let (buf_ptr, buf_len) = unsafe {
         let slice = buf.as_mut();
         (BufPtr(slice.as_mut_ptr()), slice.len())
@@ -251,6 +262,7 @@ pub fn register_renderer(
         tsfn: std::sync::Arc::new(tsfn),
         buf_ptr,
         buf_len,
+        slots: (slots.max(1)) as usize,
     });
     let id = state().pool.register(dispatch);
     WORKER_ID.with(|cell| cell.set(Some(id)));
@@ -833,15 +845,18 @@ pub fn napi_dev_broadcast(json: String) {
 /// - Ack receiver dropped (handle_conn torn down mid-stream) → NAPI Err
 ///   (NOT hang — worker's sink propagates via cb(err) to renderer Promise).
 #[napi]
-pub async fn napi_render_chunk(worker_id: u32, len: u32) -> NapiResult<()> {
+pub async fn napi_render_chunk(worker_id: u32, slot: u32, len: u32) -> NapiResult<()> {
     let entry = state()
         .pool
         .entry(worker_id)
         .ok_or_else(|| napi::Error::from_reason(format!("worker {} not registered", worker_id)))?;
+    let render_slot = entry.render_slot_for(slot).ok_or_else(|| {
+        napi::Error::from_reason(format!("worker {} has no slot {}", worker_id, slot))
+    })?;
     let chunk_tx = brust_core::render::stream::check_chunk_dispatch(
-        &entry.render_slot,
+        render_slot,
         len,
-        entry.dispatch.buf_len(),
+        entry.dispatch.buf_slot(slot).1,
     )
     .map_err(napi::Error::from_reason)?;
 
@@ -850,8 +865,9 @@ pub async fn napi_render_chunk(worker_id: u32, len: u32) -> NapiResult<()> {
         brust_core::render::pool::RenderChunk::Final { ack: ack_tx }
     } else {
         // SAFETY: BufPtr is the SAB backing-store pointer pinned at register
-        // time (see dispatch_impl.rs::BufPtr docstring). `len` is bounds-checked above.
-        let (ptr, _cap) = entry.dispatch.buf();
+        // time (see dispatch_impl.rs::BufPtr docstring); `buf_slot` offsets it to
+        // this slot's disjoint sub-region. `len` is bounds-checked above.
+        let (ptr, _cap) = entry.dispatch.buf_slot(slot);
         let data = unsafe { std::slice::from_raw_parts(ptr, len as usize) }.to_vec();
         brust_core::render::pool::RenderChunk::Bytes { data, ack: ack_tx }
     };
@@ -876,22 +892,26 @@ pub async fn napi_render_chunk(worker_id: u32, len: u32) -> NapiResult<()> {
 ///
 /// Same error semantics as `napi_render_chunk`.
 #[napi]
-pub async fn napi_render_chunk_final(worker_id: u32, len: u32) -> NapiResult<()> {
+pub async fn napi_render_chunk_final(worker_id: u32, slot: u32, len: u32) -> NapiResult<()> {
     let entry = state()
         .pool
         .entry(worker_id)
         .ok_or_else(|| napi::Error::from_reason(format!("worker {} not registered", worker_id)))?;
+    let render_slot = entry.render_slot_for(slot).ok_or_else(|| {
+        napi::Error::from_reason(format!("worker {} has no slot {}", worker_id, slot))
+    })?;
     let chunk_tx = brust_core::render::stream::check_chunk_dispatch(
-        &entry.render_slot,
+        render_slot,
         len,
-        entry.dispatch.buf_len(),
+        entry.dispatch.buf_slot(slot).1,
     )
     .map_err(napi::Error::from_reason)?;
 
     let (ack_tx, ack_rx) = tokio::sync::oneshot::channel::<()>();
     // SAFETY: same as napi_render_chunk — BufPtr pinned at register time
-    // (see dispatch_impl.rs::BufPtr docstring), `len` is bounds-checked above.
-    let (ptr, _cap) = entry.dispatch.buf();
+    // (see dispatch_impl.rs::BufPtr docstring); `buf_slot` offsets it to this
+    // slot's disjoint sub-region. `len` is bounds-checked above.
+    let (ptr, _cap) = entry.dispatch.buf_slot(slot);
     let data = unsafe { std::slice::from_raw_parts(ptr, len as usize) }.to_vec();
     chunk_tx
         .send(brust_core::render::pool::RenderChunk::BytesAndFinal { data, ack: ack_tx })
@@ -933,6 +953,7 @@ pub async fn napi_render_chunk_final(worker_id: u32, len: u32) -> NapiResult<()>
 #[napi]
 pub fn napi_render_jinja(
     worker_id: u32,
+    slot: u32,
     data_len: u32,
     template_name: String,
     status: Option<u32>,
@@ -942,20 +963,36 @@ pub fn napi_render_jinja(
         .entry(worker_id)
         .ok_or_else(|| napi::Error::from_reason(format!("worker {} not registered", worker_id)))?;
 
-    if data_len as usize > entry.dispatch.buf_len() {
+    // Bounds-check the JS-supplied slot BEFORE any `buf_slot(slot)` call. Unlike
+    // the chunk paths (gated by `render_slot_for(slot)`), this fast-lane fn reads
+    // the slot directly; an out-of-range slot must produce a clean Err here rather
+    // than reaching `buf_slot`'s pointer math. (`buf_slot` clamps defensively too,
+    // but a bad slot returning a zero-cap region would otherwise panic on the
+    // assembled-response write below.)
+    if slot as usize >= entry.dispatch.slot_count() {
         return Err(napi::Error::from_reason(format!(
-            "data_len {} exceeds SAB len {}",
-            data_len,
-            entry.dispatch.buf_len()
+            "worker {} has no slot {}",
+            worker_id, slot
         )));
     }
 
-    // SAFETY: BufPtr is the SAB backing-store pointer pinned at register
-    // time (see dispatch_impl.rs::BufPtr docstring). `data_len` is bounds-checked
-    // above against the SAB capacity. Copied to an owned Vec so the SAB can be
-    // overwritten with the assembled response below.
-    let (data_ptr, _data_cap) = entry.dispatch.buf();
-    let data_json = unsafe { std::slice::from_raw_parts(data_ptr, data_len as usize) }.to_vec();
+    // SAFETY: BufPtr is the SAB backing-store pointer pinned at register time
+    // (see dispatch_impl.rs::BufPtr docstring); `buf_slot` offsets it to this slot's
+    // disjoint sub-region. `slot` is bounds-checked above, so `slot_cap` is the real
+    // per-slot capacity. Read once and reused for the whole fn (the geometry is
+    // invariant for this call).
+    let (slot_ptr, slot_cap) = entry.dispatch.buf_slot(slot);
+
+    if data_len as usize > slot_cap {
+        return Err(napi::Error::from_reason(format!(
+            "data_len {} exceeds SAB len {}",
+            data_len, slot_cap
+        )));
+    }
+
+    // SAFETY: `data_len <= slot_cap` (checked above). Copied to an owned Vec so the
+    // SAB can be overwritten with the assembled response below.
+    let data_json = unsafe { std::slice::from_raw_parts(slot_ptr, data_len as usize) }.to_vec();
 
     let (meta_json, body): (Vec<u8>, Vec<u8>) =
         match brust_core::template::jinja::render(&template_name, &data_json) {
@@ -1005,11 +1042,11 @@ pub fn napi_render_jinja(
     // Overflow: assembled response can't fit in the SAB. Replace with a small
     // framed 500 that always fits, so the client gets a response (HTTP 500)
     // instead of hanging on a truncated body.
-    if assembled.len() > entry.dispatch.buf_len() {
+    if assembled.len() > slot_cap {
         tracing::error!(
             template = %template_name,
             assembled_len = assembled.len(),
-            buf_len = entry.dispatch.buf_len(),
+            buf_len = slot_cap,
             "jinja response exceeds SAB capacity — emitting 500",
         );
         let meta = br#"{"status":500,"contentType":"text/plain; charset=utf-8","headers":{},"streaming":false}"#;
@@ -1020,10 +1057,10 @@ pub fn napi_render_jinja(
         assembled.extend_from_slice(body);
     }
 
-    // SAFETY: same SAB pointer; the in-flight render owns it exclusively and the
-    // inbound JSON was already copied out above. `assembled.len() <= buf_len`.
-    let (sab_ptr, sab_cap) = entry.dispatch.buf();
-    let sab = unsafe { std::slice::from_raw_parts_mut(sab_ptr, sab_cap) };
+    // SAFETY: same slot sub-region (`slot_ptr`/`slot_cap` from above); the in-flight
+    // render owns it exclusively and the inbound JSON was already copied out above.
+    // `assembled.len() <= slot_cap` (the overflow branch above guarantees it).
+    let sab = unsafe { std::slice::from_raw_parts_mut(slot_ptr, slot_cap) };
     sab[..assembled.len()].copy_from_slice(&assembled);
     Ok(assembled.len() as u32)
 }

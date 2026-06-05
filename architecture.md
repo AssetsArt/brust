@@ -26,12 +26,12 @@ React renders are dispatched into Bun Worker threads via a napi
 
 | Concern | Owner |
 |---|---|
-| HTTP/1.1 listener + accept loop | **Rust** (tokio on macOS, tokio-uring on Linux, `current_thread`) |
-| TCP connection workers | **Rust** (pre-spawned tasks over a `flume::bounded` MPMC channel) |
-| Routing / cache / native templates | **Rust** (`matchit`, `lru`, `minijinja`) |
-| React render workers | **Bun Worker threads** — one V8 isolate each |
-| Render dispatch (cross-thread) | **napi-rs 3.x** `ThreadsafeFunction` |
-| Render result transfer | per-worker `SharedArrayBuffer` (no V8 marshal) |
+| HTTP/1.1 + HTTP/2 listener | **Rust** (hyper 1.x + hyper-util, multi-thread tokio) |
+| Connection concurrency | **Rust** (`tokio::spawn` per conn, `Semaphore` accept cap) |
+| Routing / cache / native templates | **Rust** (`matchit`, `moka`, `minijinja`) |
+| React render workers | **Bun Worker threads** — one V8 isolate each, `renderSlots` in-flight |
+| Render dispatch (cross-thread) | **napi-rs 3.x** `ThreadsafeFunction` (request = inline JSON String) |
+| Render RESPONSE transfer | per-slot `SharedArrayBuffer` sub-region (no V8 marshal) |
 
 Why this shape: a traditional SSR stack renders HTML, ships the whole framework
 bundle, then re-runs everything to hydrate. Brust renders once in Rust-fronted
@@ -52,29 +52,27 @@ Bun process (one OS process)
     └─ await napi.untilReady(timeout)            # every worker registered, or exit(1)
 
   Worker threads × N  (N = os.availableParallelism(), or [workers].count / BRUST_WORKERS)
-    const sab = new SharedArrayBuffer(256 KB)    # module-scope root
-    brust.registerRenderer(new Uint8Array(sab), renderer)   # renderer = runtime/routes.ts::makeRenderer
-      renderer parses the request envelope, runs middleware + loader,
-      renders (React or native), writes [meta_len u16 BE][meta JSON][body] into the SAB
+    const sab = new SharedArrayBuffer(256 KB × renderSlots)   # module-scope root
+    brust.registerRenderer(new Uint8Array(sab), renderSlots, renderer)  # renderer = runtime/routes.ts::makeRenderer
+      renderer parses the request envelope (an inline JSON String), runs
+      middleware + loader, renders (React or native), writes
+      [meta_len u16 BE][meta JSON][body] into its render slot's SAB sub-region.
+      renderSlots > 1 lets one worker hold N renders in-flight (see IPC below).
 
 brust.node (napi cdylib, same process)
 
-  Accept thread (dedicated)
-    tokio (macOS) / tokio-uring (Linux), current_thread
-    TcpListener → flume::bounded::<TcpStream>(1024) → N TCP worker tasks
+  tokio multi-thread runtime (workerThreads = min(parallelism, 4) by default)
+    TcpListener.accept() → Semaphore(conn_queue_cap) → tokio::spawn(conn task)
 
-  TCP worker tasks × N (async, cooperative, all on the accept thread)
-    loop { stream = rx.recv_async().await; handle_conn(stream).await }  # keep-alive
+  connection task × (hyper, per socket)
+    hyper auto::Builder (HTTP/1.1 + HTTP/2) → service_fn(handle_request)  # keep-alive
 
-  handle_conn (per connection)
-    loop {
-      read_full_request → httparse
-      /ping            → static "pong\n"                       (no JS, no napi)
-      routes.match_path → 404 if no match                      (no worker)
-      cache hit        → write stored response bytes           (no worker)
-      else             → claim a worker, dispatch envelope via tsfn,
-                         drain rendered chunks from the SAB to the socket
-    }
+  handle_request (per request)
+    /ping            → static "pong\n"                       (no JS, no napi)
+    routes.match_path → 404 if no match                      (no worker)
+    cache hit        → return stored response bytes          (no worker)
+    else             → claim a render slot, dispatch envelope via tsfn,
+                       drain rendered chunks from the slot's SAB sub-region
 ```
 
 ---
@@ -83,29 +81,29 @@ brust.node (napi cdylib, same process)
 
 ```
 T0  client connects (TCP, keep-alive)
-T1  accept loop:  listener.accept() → flume.send_async(stream)
-T2  TCP worker:   rx.recv_async() → handle_conn
-T3  read_full_request (until \r\n\r\n, ≤ 16 KB) → httparse → method/path
-T4  /ping        → static response, back to T3                (no JS)
-T5  routes.match_path(method, path, buf)
+T1  listener.accept() → Semaphore permit → tokio::spawn connection task
+T2  hyper serves the connection (HTTP/1.1 or HTTP/2) → handle_request per request
+T3  hyper parses method/path/headers (oversized headers → 431)
+T4  /ping        → static response                             (no JS)
+T5  routes.match_path(method, path)
       no match   → 404                                        (no worker)
 T6  cache lookup (only if the route opted into `cache`)
-      hit        → write stored wire bytes, back to T3        (no worker)
-T7  claim a worker (atomic) → dispatch the request envelope via the renderer tsfn
+      hit        → return stored wire bytes                   (no worker)
+T7  claim a render slot (atomic per-slot CAS) → dispatch the inline JSON envelope via the renderer tsfn
       Bun Worker wakes: middleware → loader → render
         React route  → renderToString / renderToPipeableStream
         native route → minijinja render in Rust (worker only JSON.stringify's loader data)
-      worker writes [meta_len][meta JSON][body] into its SAB at offset 0
-T8  Rust drains chunk(s) from the SAB:
+      worker writes [meta_len][meta JSON][body] into its slot's SAB sub-region
+T8  Rust drains chunk(s) from the slot's SAB sub-region:
       split_meta → build_single_response_bytes(status, headers, body) → write_all
       (Suspense-streaming routes write multiple chunks, chunked transfer-encoding)
 T9  store in cache if the route opted in; back to T3 (keep-alive)
 ```
 
-Distinct status paths: `200`/`500`/`502` are emitted inline in `server.rs`;
-`400`/`404`/`405`/`414`/`503` come from `http.rs`. A render throw becomes a `500`
-without killing the worker; a tsfn dispatch failure is a `502` and evicts the
-worker from the pool.
+Distinct status paths: `200`/`500`/`502` are emitted inline in `server/mod.rs`;
+`400`/`404`/`405`/`431`/`503` come from `server/body.rs` typed builders. A render
+throw becomes a `500` without killing the worker; a tsfn dispatch failure is a
+`502` and evicts the worker from the pool.
 
 ---
 
@@ -136,79 +134,101 @@ signal             resolve Promise<u32> → await yields the length   → slice 
 the path is zero-copy end to end. (A `writev` attempt to remove the response
 memcpy regressed p99 on macOS and was reverted; the SAB→Vec copy stays.)
 
+**SAB is RESPONSE-only; the request is Inline.** The request envelope crosses as
+a napi `String` (see the table above), never via the SAB. Routing the request
+*through* the SAB was tried twice and closed both times — under the multi-thread
+runtime the Rust-side write was not reliably visible to the worker (it read a
+stale prior response as the request), and it bought nothing (both paths
+serialize + `JSON.parse` regardless). The SAB carries only the worker's response,
+where Rust is the reader with atomic semantics under its own control. See the
+`render::dispatch` module doc for the full post-mortem; do not reintroduce
+SAB-request.
+
 **SAB layout & safety.** The backing store lives outside V8's GC heap and is
 stable for the worker's lifetime. Rust reads it only *after*
 `tsfn.call_async(..).await` resolves — i.e. after the worker has returned from
 the render callback — so napi's tsfn provides the happens-before edge and there
-is no concurrent writer. The `BufPtr` wrapper in `pool.rs` carries an
-`unsafe impl Send + Sync` with this argument documented inline. Slot size is
-256 KB per worker (10 workers ≈ 2.5 MB, comfortably in L2/L3). A render that
-returns `0` or a length outside `(0, slot]` is a `500` ("oversized") — no
-spillover path yet.
+is no concurrent writer. The `BufPtr` wrapper in `dispatch_impl.rs` carries an
+`unsafe impl Send + Sync` with this argument documented inline. The SAB is sized
+`256 KB × renderSlots` and partitioned into `renderSlots` **disjoint** sub-regions
+(one per slot, via `RenderDispatch::buf_slot`); a render in slot *i* reads/writes
+only its sub-region, so concurrent renders on one worker never alias. At
+`renderSlots = 1` the sole sub-region is the whole buffer — byte-identical to the
+single-slot layout. A render that returns `0` or a length outside `(0, sub-cap]`
+is a `500` ("oversized") — no spillover path yet.
 
-**Slot ownership = one render at a time.** napi dispatches tsfn callbacks
-serially per worker (one V8 isolate), so a worker can't render two requests at
-once — the second tsfn call queues. Consequences: per-worker concurrency is 1
-(optimal for CPU-bound render); a loader can still `Promise.all` *within* one
-render; loader-bound apps cap throughput at N in-flight renders (an "N slots per
-worker" escape hatch is unbuilt).
+**Render slots = N concurrent renders per worker** (`tuning.renderSlots`, default
+1). napi dispatches tsfn callbacks onto the worker's one V8 isolate, so renders
+still serialize on CPU — but a render that *yields* (Suspense / an `await`ed
+loader) frees the isolate for a peer render on another slot. So `renderSlots > 1`
+overlaps the I/O waits of concurrent requests on a single worker: a measured
+~7× throughput on a Suspense route, while purely CPU-bound pages are unaffected
+(they serialize either way). Each slot has its own SAB sub-region + chunk channel,
+so the responses never cross. Default 1 keeps the historical one-render-per-worker
+behaviour; raise it for Suspense/loader-bound apps. SSE/WS are unaffected (they
+own their socket and never touch the SAB).
 
 ---
 
 ## HTTP layer
 
-The accept loop runs on one dedicated thread with a single-threaded async
-runtime — `tokio::runtime::new_current_thread` + `tokio::net` on macOS,
-`tokio_uring::start` + `tokio_uring::net` on Linux. There is no multi-thread
-tokio runtime; the accept loop and all TCP worker tasks are cooperatively
-scheduled on this one thread.
+The server is **hyper 1.x** (`hyper-util` `auto::Builder`, HTTP/1.1 **and**
+HTTP/2 auto-negotiated) on a **multi-thread tokio runtime**. A `service_fn`
+(`handle_request`) returns `Response<BoxBody>`; the accept loop `tokio::spawn`s a
+connection task per socket, bounded by a `Semaphore(conn_queue_cap)` for accept
+backpressure. The tokio runtime thread count is `tuning.workerThreads`
+(default `min(available_parallelism, 4)`) — these are I/O threads, separate from
+the Bun render workers.
 
-- **Dispatch:** one `flume::bounded::<TcpStream>(1024)` MPMC channel; N
-  pre-spawned TCP worker tasks clone the receiver. Accept pushes, an idle worker
-  grabs — natural work-stealing, bounded backpressure if every worker stalls.
-- **Per connection:** HTTP/1.1 keep-alive; `handle_conn` loops over requests on
-  the socket until EOF or malformed input. `read_full_request` reads to
-  `\r\n\r\n`, capped at 16 KB; `parse_request` is zero-copy `httparse`.
-- **Response:** `build_response` pre-sizes one `Vec`, writes the status line + a
-  few headers, appends the body; a single `write_all` per response.
+- **Per connection:** hyper owns keep-alive, chunked bodies, header parsing
+  (no hand-rolled `httparse`), and `Content-Length`/`Date`/header ordering.
+  WebSocket upgrades go through `hyper::upgrade::on`; SSE is a streaming body.
+- **Response:** the render bytes become a `Full`/`StreamBody` `BoxBody`; hyper
+  writes them. Oversized request headers → `431`.
+- **Optional TLS:** `tokio-rustls` terminates TLS in-process when
+  `tlsCertPath` + `tlsKeyPath` are set (ALPN `h2` + `http/1.1`; `tlsMinVersion`
+  `"1.2"`/`"1.3"`). Off by default — plaintext is byte-equivalent.
 
-> **Linux: io_uring needs permitted syscalls.** The Linux runtime calls
-> `io_uring_setup`/`io_uring_enter`/`io_uring_register`, which most container
-> seccomp profiles (Docker, podman, restrictive k8s) deny. Under a default
-> profile `tokio_uring::start` panics at boot with `ENOSYS` → no listener →
-> connections refused. Run with `--security-opt seccomp=unconfined` or a profile
-> that allows the three `io_uring_*` syscalls (glibc **and** musl — it's an
-> io_uring property, not libc). Bare-metal/VM deploys are unaffected.
+> **Containers:** the old `tokio_uring` (Linux) runtime panicked under default
+> seccomp (`io_uring_*` syscalls denied). That is GONE — plain multi-thread tokio
+> runs everywhere, no seccomp exception needed.
 
-Not built: TLS termination, HTTP/2, graceful drain, daemonisation.
+Not built: graceful drain, daemonisation.
 
 ---
 
 ## Worker pool
 
 ```
-worker-i :  tsfn_i   SAB_i (256 KB)   render_slot: Mutex<Option<…>>   in_flight: AtomicU32
+worker-i :  tsfn_i   SAB_i (256 KB × K)   slots: Vec<Slot>   in_flight: AtomicU32
+            Slot { idle: AtomicBool, render_slot: Mutex<Option<chunk_tx>> }  × K
 ```
 
-The pool (`pool.rs`) registers a worker when it calls `registerRenderer`,
-claims one per render, and evicts one whose tsfn dies (`process::exit(1)` if the
-pool empties — no respawn yet).
+The pool (`pool.rs`) registers a worker (with its `renderSlots` count `K`) when
+it calls `registerRenderer`, claims a free *slot* per render, and evicts a worker
+whose tsfn dies (`process::exit(1)` if the pool empties — no respawn yet).
 
-**Render dispatch is atomic-claim.** `try_claim_render` picks the first worker
-whose `render_slot` is `None` under a per-entry `parking_lot::Mutex`, installs
-the chunk sender, and bumps `in_flight` in one critical section. The returned
-`RenderClaim` is an RAII guard whose `Drop` clears the slot then decrements
-`in_flight` (order is load-bearing). Two renders can't claim the same worker.
-`ClaimResult::PoolEmpty` vs `AllBusy` give distinct 503 bodies (misconfig vs
-overload). SSE/WS use `pick_least_busy` instead — their per-conn model doesn't
-share the SAB chunk channel. (This atomic-claim closed an earlier TOCTOU race
-where two pickers overwrote each other's `chunk_tx`; a 16-contender/4-worker
-regression test guards it.)
+**Render dispatch is atomic per-slot claim.** Each worker holds `K` slots (pure
+concurrency permits; `K = renderSlots`, default 1). `try_claim_render` scans for a
+slot whose `idle` `AtomicBool` is `true`, CASes it `true→false` (Acquire), installs
+the chunk sender, and bumps `in_flight`. The returned `RenderClaim` carries the
+slot index; its `Drop` clears the slot's chunk_tx, decrements `in_flight`, then
+publishes `idle = true` (Release) — order is load-bearing, and the slot is NOT
+released until the render promise has settled (else a recycled slot's new request
+could race the old render). Two renders can't claim the same slot; `K` renders
+*can* run concurrently on one worker (the multi-render path). `ClaimResult::PoolEmpty`
+vs `AllBusy` give distinct 503 bodies (misconfig vs overload). SSE/WS use
+`pick_least_busy` + an `in_flight_guard` instead — they own their socket and never
+touch the SAB. (A 16-contender/4-worker two-barrier regression test guards the
+claim against TOCTOU, plus a K-slot variant proving K concurrent claims on one
+worker land on distinct slots.)
 
 **Worker count = `os.availableParallelism()`** — one worker per core. CPU-bound
 React renders saturate a core each; oversubscribing (a former `× 1.8` default)
 amplified p99 ~6× once per-render work grew past ~150 µs. Override via
-`BRUST_WORKERS` or `[workers].count` for Suspense/await-heavy apps.
+`BRUST_WORKERS` or `[workers].count`. For Suspense/await-heavy apps, prefer
+raising `renderSlots` (concurrent renders per worker) over adding workers — it
+overlaps I/O waits without oversubscribing cores.
 
 ---
 
@@ -833,6 +853,14 @@ Layered: defaults < `brust.toml` < env (`runtime/config.ts`). Shipped:
 `BRUST_WORKERS`, `BRUST_DEV`. `[build]` and a default-TTL `[cache]` knob are
 deferred (no consumer).
 
+**Serve tunables** (`brust.run({ serve: { tuning } })`, all optional):
+`connWorkers` (Rust accept concurrency, default `workers`), `workerThreads`
+(tokio I/O threads, default `min(parallelism, 4)`), **`renderSlots`** (concurrent
+in-flight renders per Bun worker, default 1 — raise for Suspense/loader-bound
+apps; also via `BRUST_RENDER_SLOTS`), plus `tlsCertPath`/`tlsKeyPath`/
+`tlsMinVersion` for in-process TLS. Each has a matching env var the bench app
+reads.
+
 ---
 
 ## Crate & module map
@@ -841,21 +869,22 @@ A Cargo **workspace** (`resolver = "2"`, shared release profile: `lto`, `strip`,
 `codegen-units=1`).
 
 ```
-crates/brust/  — the napi cdylib (brust.node)
+crates/brust-core/  — the pure-Rust core (zero napi; `cargo tree` has no napi/lru)
+  src/server/{mod,body,static_assets,tls}.rs  hyper server, response builders,
+                        /_brust/* routes (islands, css, cache, mcp, page), TLS
+  src/render/{pool,dispatch,stream}.rs  WorkerPool + Vec<Slot> + RenderClaim,
+                        the RenderDispatch napi-free seam, chunk/stream protocol
+  src/routing/          matchit router, action router, envelope build
+  src/cache.rs / cache/  route-level ResponseCache (moka) + ISR island store
+  src/template/jinja.rs minijinja ENV (OnceLock)
+  src/realtime/         sse.rs / ws.rs registries
+  src/config.rs         AppState, Tuning (defaults)
+
+crates/brust/  — the thin napi cdylib (brust.node) over brust-core
   src/lib.rs            napi exports: beginServe, untilReady, registerRenderer,
-                        registerRoutes/Actions, register{Sse,Ws}Paths, render-chunk
-                        + jinja + sse/ws + islandCache + compileJsx entries
-  src/server.rs         accept loop, handle_conn, keep-alive, chunk dispatch,
-                        native /_brust/* routes (islands, css, cache, mcp, page)
-  src/pool.rs           WorkerPool, BufPtr (Send+Sync), try_claim_render/RenderClaim
-  src/http.rs           parse_request (httparse), build_response, 4xx/5xx
-  src/routes.rs         matchit router + envelope build
-  src/cache.rs          route-level LRU
-  src/island_cache.rs   ISR store (CacheStore trait + MokaStore)
-  src/jinja.rs          minijinja ENV (OnceLock)
+                        registerRoutes/Actions, render-chunk + jinja + sse/ws
+  src/dispatch_impl.rs  TsfnDispatch (RendererTsfn + BufPtr) impl RenderDispatch
   src/jsx_compile.rs    NAPI compileJsx → jsx-rust-compiler
-  src/render_stream.rs / sse.rs / ws.rs   streaming + realtime
-  src/io/{linux,other}.rs  tokio-uring vs tokio listener/stream
 
 crates/jsx-rust-compiler/  — JSX → minijinja (+ JS factories) compiler
   src/{parser,ir,lower,analyze,emit_jinja,emit_factory,lib}.rs
@@ -902,14 +931,23 @@ claws most of back (→ 65 k) by skipping the per-request `renderToString`. Nati
 inline removes the worker crossing entirely for inlinable components, trending a
 native route back toward the jinja ceiling.
 
+These figures are at the default `renderSlots = 1`. For **Suspense / async-loader**
+routes (where the render *yields* on I/O), raising `renderSlots` overlaps the
+waits of concurrent requests on one worker — a measured ~7× throughput on a
+~25 ms-data Suspense route (`bench/apps/brust` `/suspense-data`,
+`BRUST_RENDER_SLOTS=8`). CPU-bound pages (the table above) are unaffected; they
+serialize on the isolate either way, so the default stays 1.
+
 ---
 
 ## Status
 
-**Shipped:** Rust accept loop + keep-alive + worker pool (atomic-claim) · napi
-tsfn + per-worker SAB render path · HTML streaming (Suspense auto-detect) ·
-declarative routing + nested routes + loaders + errorBoundary · per-route
-middleware · per-route LRU cache + stats + invalidation · component-addressed
+**Shipped:** hyper HTTP/1.1+2 server + keep-alive + optional TLS · multi-thread
+tokio · worker pool (per-slot atomic-claim, **`renderSlots`** concurrent renders
+per worker) · napi tsfn + per-slot SAB render path · HTML streaming (Suspense
+auto-detect) · declarative routing + nested routes + loaders + errorBoundary ·
+per-route middleware · per-route cache (moka) + stats + invalidation ·
+component-addressed
 islands (4 triggers) · server actions (defineActions + treaty client) · MCP server · SSE +
 WebSockets (literal paths) · SPA navigation · native routes (JSX→minijinja) +
 **SSR components** + **conditional rendering** + **native inline** + **ISR cache
@@ -923,8 +961,9 @@ Tailwind v4 + component CSS (partial) · `brust build` → `dist/` · `brust dev
 loader/`init()` fetch) · keyed `x-for` diff (v1 full re-renders) · whole-route cache for
 native routes · `Fragment` lowering · global `app/middleware.ts` + header deletion · build-time client RPC
 auto-rewrite · content-hashed island filenames + per-chunk CSS extraction ·
-single-binary `--compile` · multi-thread tokio · N slots per worker · HTTP/2 ·
-TLS · graceful drain · tsfn retry / health checks.
+single-binary `--compile` · graceful drain · tsfn retry / health checks · SSE/WS
+no-SAB dispatch variant for `renderSlots > 1` (safe today — they never touch the
+SAB — but unenforced).
 
 ---
 

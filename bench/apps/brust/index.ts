@@ -20,10 +20,17 @@ const connWorkers = process.env.BRUST_CONN_WORKERS
 const workerThreads = process.env.BRUST_WORKER_THREADS
   ? parseInt(process.env.BRUST_WORKER_THREADS, 10)
   : undefined
+// BRUST_RENDER_SLOTS → in-flight renders per worker (multi-render-per-worker).
+// Lets the bench sweep concurrency-per-isolate; the win shows on Suspense /
+// async-data routes (synchronous pages serialize on CPU and see no gain).
+const renderSlots = process.env.BRUST_RENDER_SLOTS
+  ? parseInt(process.env.BRUST_RENDER_SLOTS, 10)
+  : undefined
 
 const tuning = {
   ...(connWorkers ? { connWorkers } : {}),
   ...(workerThreads ? { workerThreads } : {}),
+  ...(renderSlots ? { renderSlots } : {}),
 }
 
 await brust.run({

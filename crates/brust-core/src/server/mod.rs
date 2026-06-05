@@ -37,8 +37,8 @@ const IO_NAME: &str = "hyper(tokio)";
 /// - `max_request_bytes` (16 KB): cap on request header bytes (enforced by
 ///   hyper's `max_buf_size` so an oversized header line can't grow unbounded).
 ///   This is ALSO the only size bound on render envelopes: render requests carry
-///   no body, so their inline JSON envelope (passed through napi as a String,
-///   see `RenderEnvelope::Inline`) is bounded by this header cap. Action/MCP
+///   no body, so their inline JSON envelope (passed through napi as a String) is
+///   bounded by this header cap. Action/MCP
 ///   envelopes are bounded by `max_action_body_bytes` (the base64-encoded body
 ///   inflates ~4/3, still a hard cap).
 /// - `max_action_body_bytes` (256 KB): cap on action/RPC body size. Mirrors the
@@ -126,7 +126,10 @@ pub fn start(
     // host (it runs INSIDE the Bun process).
     let (boot_tx, boot_rx) = std::sync::mpsc::sync_channel::<Result<(), String>>(1);
 
-    info!("Starting Tokio runtime with {} threads", tuning.worker_threads.max(1));
+    info!(
+        "Starting Tokio runtime with {} threads",
+        tuning.worker_threads.max(1)
+    );
     info!("Accept cap: {}", accept_cap);
     std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_multi_thread()
@@ -756,9 +759,17 @@ async fn handle_sse(
     let dispatch_entry = Arc::clone(&entry);
     tokio::spawn(async move {
         let _guard = dispatch_entry.in_flight_guard();
+        // SSE owns the socket via the napiSse* registry and never reads or writes
+        // the SAB response, so slot 0 is fine (no RenderClaim here — in_flight_guard
+        // only). LOAD-BEARING for K>1: because SSE/WS hold no per-slot RenderClaim,
+        // a concurrent HTTP render CAN hold slot 0 simultaneously. That is safe ONLY
+        // as long as this JS handler never touches the SAB. Before render_slots>1 is
+        // made safe (the K>1-enablement task), SSE/WS need a no-SAB dispatch variant
+        // (or must assert they never write the SAB); do NOT let this path write the
+        // slot-0 sub-region. See the Phase B plan, B-BLK / SSE-WS note.
         if let Err(e) = dispatch_entry
             .dispatch
-            .call(crate::render::RenderEnvelope::Inline(envelope_json))
+            .call(envelope_json, 0)
             .await
             .map(|_| ())
         {
@@ -874,12 +885,13 @@ async fn handle_ws(
         };
         {
             let _guard = entry.in_flight_guard();
-            if let Err(e) = entry
-                .dispatch
-                .call(crate::render::RenderEnvelope::Inline(envelope_json))
-                .await
-                .map(|_| ())
-            {
+            // WS owns the socket via the napiWs* registry and never reads or writes
+            // the SAB response, so slot 0 is fine (no RenderClaim here —
+            // in_flight_guard only). LOAD-BEARING for K>1: see the matching SSE note
+            // above — SSE/WS hold no per-slot claim, so a concurrent render can own
+            // slot 0; safe only while this handler never touches the SAB. Needs a
+            // no-SAB dispatch variant before render_slots>1 is enabled.
+            if let Err(e) = entry.dispatch.call(envelope_json, 0).await.map(|_| ()) {
                 error!(worker_id = entry.id, error = %e, "ws dispatch failed");
                 crate::realtime::ws::registry().lock().remove(&conn_id);
                 return Ok(body::error_500());
@@ -1016,6 +1028,7 @@ where
         }
     };
     let entry = Arc::clone(claim.entry());
+    let slot = claim.slot();
 
     // FIX: pass the request envelope INLINE (see dispatch_streaming) — the SAB
     // request write was not reliably visible to the worker under the multi-thread
@@ -1028,11 +1041,7 @@ where
         }
     };
 
-    let resp_len = match entry
-        .dispatch
-        .call(crate::render::RenderEnvelope::Inline(envelope_json))
-        .await
-    {
+    let resp_len = match entry.dispatch.call(envelope_json, slot).await {
         Ok(len) => len,
         Err(e @ crate::render::RenderError::EnqueueFailed(_)) => {
             error!(worker_id = entry.id, label, error = %e,
@@ -1051,20 +1060,20 @@ where
         }
     };
 
-    if resp_len == 0 || (resp_len as usize) > entry.dispatch.buf_len() {
+    if resp_len == 0 || (resp_len as usize) > entry.dispatch.buf_slot(slot).1 {
         error!(
             worker_id = entry.id,
             label,
             resp_len,
-            buf_len = entry.dispatch.buf_len(),
+            buf_len = entry.dispatch.buf_slot(slot).1,
             "single-chunk dispatch got invalid resp_len (0 = worker used chunk channel)"
         );
         return body::error_500();
     }
 
     // SAFETY: render Promise resolved (happens-before via napi tsfn.await), JS
-    // done writing the SAB; resp_len bounds-checked above.
-    let (buf_ptr, _cap) = entry.dispatch.buf();
+    // done writing the slot's SAB sub-region; resp_len bounds-checked above.
+    let (buf_ptr, _cap) = entry.dispatch.buf_slot(slot);
     let buf = unsafe { std::slice::from_raw_parts(buf_ptr, resp_len as usize) };
     match decode_fast_lane(buf) {
         Ok((meta, body_bytes)) => crate::render::stream::response_from_meta(&meta, body_bytes),
@@ -1109,6 +1118,8 @@ where
         }
     };
     let entry = Arc::clone(claim.entry());
+    // Read the slot before `claim` is moved into spawn_chunk_pump (it's `u32` Copy).
+    let slot = claim.slot();
 
     // FIX: pass the request envelope INLINE (marshaled as a String through
     // napi) instead of via the worker's SAB. The streaming/chunk path's SAB
@@ -1130,11 +1141,7 @@ where
     // RAII lifetime.
     let entry_for_future = Arc::clone(&entry);
     let render_future = async move {
-        match entry_for_future
-            .dispatch
-            .call(crate::render::RenderEnvelope::Inline(envelope_json))
-            .await
-        {
+        match entry_for_future.dispatch.call(envelope_json, slot).await {
             Ok(len) => RenderOutcome::Resolved(len),
             Err(e @ crate::render::RenderError::EnqueueFailed(_)) => {
                 RenderOutcome::EnqueueFailed(e)
@@ -1261,13 +1268,13 @@ where
                     RenderOutcome::Resolved(resp_len) => {
                         if resp_len > 0 {
                             let len = resp_len as usize;
-                            if len > entry.dispatch.buf_len() {
+                            if len > entry.dispatch.buf_slot(slot).1 {
                                 error!(worker_id = entry.id, label, len,
-                                       buf_len = entry.dispatch.buf_len(),
+                                       buf_len = entry.dispatch.buf_slot(slot).1,
                                        "fast-lane resp_len exceeds SAB capacity");
                                 return body::error_500();
                             }
-                            let (buf_ptr, _cap) = entry.dispatch.buf();
+                            let (buf_ptr, _cap) = entry.dispatch.buf_slot(slot);
                             let buf = unsafe { std::slice::from_raw_parts(buf_ptr, len) };
                             match decode_fast_lane(buf) {
                                 Ok((meta, body_bytes)) => {
@@ -1611,10 +1618,7 @@ mod tests {
             ClaimResult::Claimed(c) => c,
             _ => panic!("expected Claimed"),
         };
-        assert!(
-            !entry.idle.load(Ordering::Acquire),
-            "worker claimed → not idle"
-        );
+        assert!(!entry.slot(0).is_idle(), "worker claimed → not idle");
 
         // Render future modelling the in-flight JS Promise: pending until we
         // fire `render_done`. While pending, the worker's SAB is still "owned"
@@ -1665,7 +1669,7 @@ mod tests {
         // INVARIANT: claim still held — render future has NOT settled. The buggy
         // pump `break`s on the failed tx.send, dropping the claim here.
         assert!(
-            !entry.idle.load(Ordering::Acquire),
+            !entry.slot(0).is_idle(),
             "claim must be held while render future is pending (worker mid-write)",
         );
         assert!(
@@ -1684,7 +1688,7 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
         assert!(
-            entry.idle.load(Ordering::Acquire),
+            entry.slot(0).is_idle(),
             "claim must be released once the render future settles",
         );
         assert_eq!(

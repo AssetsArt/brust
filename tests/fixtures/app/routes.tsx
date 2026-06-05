@@ -7,6 +7,7 @@ import { counterStream, idleStream } from './sse-streams.ts'
 import HelloWorld    from './pages/HelloWorld'
 import BlogPost      from './pages/BlogPost'
 import SlowSuspense  from './pages/SlowSuspense'
+import SlowFresh     from './pages/SlowFresh'
 import StoreDemo     from './pages/StoreDemo'
 import { counter }   from './stores/counter'
 import NativeProfile from './pages/NativeProfile'
@@ -60,6 +61,7 @@ export const routes = defineRoutes([
   { path: '/blog/{slug}',  Component: BlogPost,
     loader: async ({ params }) => ({ title: `Post: ${params.slug}` }) },
   { path: '/slow-suspense', Component: SlowSuspense },
+  { path: '/slow-fresh', Component: SlowFresh },
 
   // Spec A / isomorphic store (T8) — React-path route whose loader seeds the
   // per-request `counter` store from a `?seed=N` query param. The render

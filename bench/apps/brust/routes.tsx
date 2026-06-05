@@ -4,14 +4,21 @@ import HelloWorld from '../_shared/HelloWorld'
 import NativeProfile from './pages/NativeProfile'
 import NativeIslands from './pages/NativeIslands'
 import NativeIslandsIsr from './pages/NativeIslandsIsr'
+import SuspenseData from './pages/SuspenseData'
 
 /** Benchmark route table — one route per `scripts/benchmark.ts` PROBE.
- * Intentionally minimal: no SSE/WS/Suspense/blog routes (the bench doesn't
- * probe them, and dead routes would only add boot cost + drift risk). */
+ * Intentionally minimal: SSE/WS/blog routes are omitted (not probed). The one
+ * Suspense route exists specifically to probe multi-render-per-worker
+ * (renderSlots>1) — the only shape it speeds up. */
 export const routes = defineRoutes([
   // React SSR — same `/` workload the bun-serve baseline renders
   // (it imports the same `_shared/HelloWorld`), so the comparison is fair.
   { path: '/', Component: HelloWorld },
+
+  // React SSR with a per-request async-data <Suspense> (~25ms). The render
+  // yields while awaiting its data, so renderSlots>1 overlaps concurrent waits
+  // on one worker. Probe at BRUST_RENDER_SLOTS=1 vs N to see the interleave win.
+  { path: '/suspense-data', Component: SuspenseData },
 
   // Native (jinja) route, no islands — the no-island fast-lane floor.
   {
