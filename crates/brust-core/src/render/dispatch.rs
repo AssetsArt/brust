@@ -22,6 +22,21 @@ use std::pin::Pin;
 ///   SAB is used only for the worker's RESPONSE (read back via `napi_render_chunk`'s
 ///   copy, which the napi call publishes correctly). The variant is retained only
 ///   because `TsfnDispatch::call` still maps it; nothing constructs it.
+///
+/// `Sab`-request was RE-EVALUATED 2026-06-05 (Phase C) and CLOSED with evidence.
+/// The hypothesis was that per-slot DISJOINT SAB sub-regions (multi-render-per-
+/// worker) removed the request/response aliasing the race lived in. A flag-gated
+/// `Sab`-request impl was soaked at 120-conn on the multi-thread runtime: it
+/// STILL corrupted — `SyntaxError: JSON Parse error: Unrecognized token ' '` (the
+/// worker read a stale prior-response byte as the request) within 30s on the
+/// streaming path, even though tsfn enqueue is a `SeqCst` barrier. The race is a
+/// genuine cross-core visibility/timing issue (weak-ordered hardware + non-atomic
+/// JS TypedArray reads of the SAB), NOT mere aliasing, so disjoint regions do not
+/// fix it. AND it bought nothing: `Sab` vs `Inline` throughput was identical
+/// (native 85.1k≈85.1k rps; `/` within noise) — both paths serialize in Rust and
+/// `JSON.parse` in JS, so swapping napi-String transport for a SAB memcpy saves no
+/// work. Zero benefit + real corruption → `Inline` is the permanent request
+/// carrier. Do not try this a third time.
 pub enum RenderEnvelope {
     Sab(u32),
     Inline(String),
