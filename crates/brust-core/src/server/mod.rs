@@ -975,29 +975,6 @@ async fn claim_or_wait(
     }
 }
 
-/// Serialize `envelope` into the worker's SAB; returns the byte length or a
-/// pre-built error response.
-fn serialize_envelope<E: serde::Serialize>(
-    entry: &crate::render::pool::WorkerEntry,
-    envelope: &E,
-    label: &'static str,
-) -> Result<u32, Box<Response<ResponseBody>>> {
-    let (buf_ptr, buf_cap) = entry.dispatch.buf();
-    let mut cursor =
-        std::io::Cursor::new(unsafe { std::slice::from_raw_parts_mut(buf_ptr, buf_cap) });
-    if let Err(e) = serde_json::to_writer(&mut cursor, envelope) {
-        if e.is_io() {
-            return Err(Box::new(body::error_413()));
-        }
-        error!(worker_id = entry.id, label, error = %e, "envelope serialization failed");
-        return Err(Box::new(body::error_500()));
-    }
-    // Saturate rather than truncate: an over-4GB length becomes u32::MAX, which
-    // the caller's existing size/is_io() 413 check then rejects, instead of
-    // wrapping into a valid-looking wrong length.
-    Ok(u32::try_from(cursor.position()).unwrap_or(u32::MAX))
-}
-
 /// Decode a fast-lane SAB framed response `[meta_len][meta][body]` into the
 /// parsed `ChunkMeta` + owned body bytes. Callers build the typed Response (and
 /// the cache's framed bytes when caching) from these parts.
@@ -1033,14 +1010,20 @@ where
     };
     let entry = Arc::clone(claim.entry());
 
-    let envelope_len = match serialize_envelope(&entry, &envelope, label) {
-        Ok(n) => n,
-        Err(resp) => return *resp,
+    // FIX: pass the request envelope INLINE (see dispatch_streaming) — the SAB
+    // request write was not reliably visible to the worker under the multi-thread
+    // runtime. The SAB is still used for the worker's RESPONSE.
+    let envelope_json = match serde_json::to_string(&envelope) {
+        Ok(s) => s,
+        Err(e) => {
+            error!(worker_id = entry.id, label, error = %e, "envelope serialization failed");
+            return body::error_500();
+        }
     };
 
     let resp_len = match entry
         .dispatch
-        .call(crate::render::RenderEnvelope::Sab(envelope_len))
+        .call(crate::render::RenderEnvelope::Inline(envelope_json))
         .await
     {
         Ok(len) => len,
@@ -1120,21 +1103,29 @@ where
     };
     let entry = Arc::clone(claim.entry());
 
-    let envelope_len = match serialize_envelope(&entry, &envelope, label) {
-        Ok(n) => n,
-        Err(resp) => return *resp,
+    // FIX TEST: pass the request envelope INLINE (marshaled as a String through
+    // napi) instead of via the worker's SAB. The streaming/chunk path's SAB
+    // request write was not reliably visible to the worker under the multi-thread
+    // runtime (worker read a stale prior response). Inline avoids the shared-mem
+    // visibility dependency; the SAB is still used for the RESPONSE chunks.
+    let envelope_json = match serde_json::to_string(&envelope) {
+        Ok(s) => s,
+        Err(e) => {
+            error!(worker_id = entry.id, label, error = %e, "envelope serialization failed");
+            return body::error_500();
+        }
     };
 
-    // The render future is `'static` (holds only an Arc + u32), so it can be
-    // moved into the chunk-pump task on the chunked path. `claim` (the RAII
-    // slot/in-flight guard) is moved alongside it so the worker stays reserved
-    // for the entire stream — on the buffered path it is dropped when this fn
-    // returns, exactly like the old RAII lifetime.
+    // The render future is `'static`, so it can be moved into the chunk-pump task
+    // on the chunked path. `claim` (the RAII slot/in-flight guard) is moved
+    // alongside it so the worker stays reserved for the entire stream — on the
+    // buffered path it is dropped when this fn returns, exactly like the old
+    // RAII lifetime.
     let entry_for_future = Arc::clone(&entry);
     let render_future = async move {
         match entry_for_future
             .dispatch
-            .call(crate::render::RenderEnvelope::Sab(envelope_len))
+            .call(crate::render::RenderEnvelope::Inline(envelope_json))
             .await
         {
             Ok(len) => RenderOutcome::Resolved(len),

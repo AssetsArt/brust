@@ -10,9 +10,18 @@ use std::pin::Pin;
 
 /// The render envelope handed to a worker.
 ///
-/// - `Sab(len)`: the dispatcher already serialized the request envelope into the
-///   worker's SharedArrayBuffer; `len` is its byte length (the SAB fast lane).
-/// - `Inline(json)`: an inline JSON envelope (SSE/WS handoff) passed by value.
+/// - `Inline(json)`: the request envelope marshaled as a JSON string through
+///   napi. This is the ONLY variant the dispatch paths construct.
+/// - `Sab(len)`: legacy "write the request into the worker's SharedArrayBuffer,
+///   pass the byte length" fast lane. **DO NOT REINTRODUCE for request passing.**
+///   Under the multi-thread tokio runtime the Rust-side SAB write was not
+///   reliably visible to the Bun worker thread (the worker read its own stale
+///   prior response from the SAB → corrupt envelope / `meta_len exceeds chunk
+///   size` under load). The tsfn call did not publish the SAB write across cores
+///   the way a single-thread runtime's timing masked. Requests go `Inline`; the
+///   SAB is used only for the worker's RESPONSE (read back via `napi_render_chunk`'s
+///   copy, which the napi call publishes correctly). The variant is retained only
+///   because `TsfnDispatch::call` still maps it; nothing constructs it.
 pub enum RenderEnvelope {
     Sab(u32),
     Inline(String),
