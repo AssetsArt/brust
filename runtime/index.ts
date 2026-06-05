@@ -65,10 +65,11 @@ export interface ServeOptions {
 // (the worker wrote `[meta_len][meta][body]` into the SAB; Rust reads it
 // directly), `0` → the worker used the chunk channel via
 // `napi.renderChunk(workerId, len)` (React Suspense streaming) or owns the
-// socket independently (SSE/WS). The argument is a JSON envelope
-// `{ route_id, path, params }` produced by Rust's route table — see
+// socket independently (SSE/WS). The argument is the INLINE JSON envelope
+// `{ route_id, path, params }` produced by Rust's route table (the request
+// always crosses as a string — SAB-request is closed) — see
 // runtime/routes.ts::RouteCall.
-export type RenderFn = (envelopeJsonOrLen: number | string, slot: number) => Promise<number>
+export type RenderFn = (envelopeJson: string, slot: number) => Promise<number>
 
 // Bun Workers run in the same OS process as the main thread; the `env` option
 // only patches the JS-visible process.env, not the native OS environment that

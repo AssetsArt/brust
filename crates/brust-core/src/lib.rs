@@ -20,7 +20,7 @@ pub mod template;
 // ----- public core API surface used by the napi binding -----
 
 pub use config::AppState;
-pub use render::dispatch::{RenderDispatch, RenderEnvelope, RenderError};
+pub use render::dispatch::{RenderDispatch, RenderError};
 pub use render::pool::{RenderChunk, WorkerPool};
 pub use render::stream::check_chunk_dispatch;
 pub use server::Tuning;

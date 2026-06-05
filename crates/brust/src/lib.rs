@@ -240,15 +240,10 @@ pub async fn until_shutdown() -> NapiResult<()> {
 }
 
 #[napi]
-#[allow(clippy::type_complexity)] // the FnArgs tuple is the napi wire shape; aliasing it
-// would emit a dangling `RendererFn` type into the generated index.d.ts.
 pub fn register_renderer(
     mut buf: Uint8Array,
     slots: u32,
-    f: Function<
-        napi::bindgen_prelude::FnArgs<(napi::bindgen_prelude::Either<u32, String>, u32)>,
-        Promise<u32>,
-    >,
+    f: Function<napi::bindgen_prelude::FnArgs<(String, u32)>, Promise<u32>>,
 ) -> NapiResult<u32> {
     // NOTE: is_worker() reads std::env::var which is not patched by Bun's Worker
     // env option (Bun Workers share the OS process).  The TS layer is responsible

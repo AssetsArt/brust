@@ -8,10 +8,10 @@
 
 use std::sync::Arc;
 
-use napi::bindgen_prelude::{Either, FnArgs, Promise};
+use napi::bindgen_prelude::{FnArgs, Promise};
 use napi::threadsafe_function::ThreadsafeFunction;
 
-use brust_core::{RenderDispatch, RenderEnvelope, RenderError};
+use brust_core::{RenderDispatch, RenderError};
 
 /// Renderer signature: takes the envelope (SAB len as `u32`, or inline JSON
 /// `String`) and resolves with a `u32` framed-response length.
@@ -33,13 +33,14 @@ use brust_core::{RenderDispatch, RenderEnvelope, RenderError};
 /// the K=1 request envelope bytes identical to the pre-multi-slot wire.
 ///
 /// `FnArgs` (not a bare tuple) so the two args are SPREAD as positional JS
-/// arguments `(envelope, slot)` — a bare `(A, B)` tuple would arrive as a single
-/// array. CalleeHandled = false matches what
-/// Function::build_threadsafe_function().build() produces.
+/// arguments `(requestJson, slot)` — a bare `(A, B)` tuple would arrive as a
+/// single array. The request is always the INLINE JSON `String` (the SAB-request
+/// transport is closed for good — see the `dispatch` module doc). CalleeHandled
+/// = false matches what Function::build_threadsafe_function().build() produces.
 pub type RendererTsfn = ThreadsafeFunction<
-    FnArgs<(Either<u32, String>, u32)>,
+    FnArgs<(String, u32)>,
     Promise<u32>,
-    FnArgs<(Either<u32, String>, u32)>,
+    FnArgs<(String, u32)>,
     napi::Status,
     false,
 >;
@@ -76,20 +77,16 @@ pub struct TsfnDispatch {
 impl RenderDispatch for TsfnDispatch {
     fn call(
         &self,
-        env: RenderEnvelope,
+        request_json: String,
         slot: u32,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<u32, RenderError>> + Send>> {
-        let either = match env {
-            RenderEnvelope::Sab(n) => Either::A(n),
-            RenderEnvelope::Inline(s) => Either::B(s),
-        };
         // Clone the Arc (cheap atomic bump) so the future owns a 'static handle.
         let tsfn = Arc::clone(&self.tsfn);
         Box::pin(async move {
             // The slot is the SECOND tsfn arg so the worker writes the right SAB
             // sub-view; at K=1 it is always 0 and the wire stays identical.
             // `.into()` packs the pair into `FnArgs` for positional spreading.
-            match tsfn.call_async((either, slot).into()).await {
+            match tsfn.call_async((request_json, slot).into()).await {
                 // Bridge enqueue failed → worker dead.
                 Err(e) => Err(RenderError::EnqueueFailed(e.to_string())),
                 // Enqueued; now await the render Promise.

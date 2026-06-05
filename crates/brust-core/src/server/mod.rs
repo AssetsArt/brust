@@ -37,8 +37,8 @@ const IO_NAME: &str = "hyper(tokio)";
 /// - `max_request_bytes` (16 KB): cap on request header bytes (enforced by
 ///   hyper's `max_buf_size` so an oversized header line can't grow unbounded).
 ///   This is ALSO the only size bound on render envelopes: render requests carry
-///   no body, so their inline JSON envelope (passed through napi as a String,
-///   see `RenderEnvelope::Inline`) is bounded by this header cap. Action/MCP
+///   no body, so their inline JSON envelope (passed through napi as a String) is
+///   bounded by this header cap. Action/MCP
 ///   envelopes are bounded by `max_action_body_bytes` (the base64-encoded body
 ///   inflates ~4/3, still a hard cap).
 /// - `max_action_body_bytes` (256 KB): cap on action/RPC body size. Mirrors the
@@ -769,7 +769,7 @@ async fn handle_sse(
         // slot-0 sub-region. See the Phase B plan, B-BLK / SSE-WS note.
         if let Err(e) = dispatch_entry
             .dispatch
-            .call(crate::render::RenderEnvelope::Inline(envelope_json), 0)
+            .call(envelope_json, 0)
             .await
             .map(|_| ())
         {
@@ -891,12 +891,7 @@ async fn handle_ws(
             // above — SSE/WS hold no per-slot claim, so a concurrent render can own
             // slot 0; safe only while this handler never touches the SAB. Needs a
             // no-SAB dispatch variant before render_slots>1 is enabled.
-            if let Err(e) = entry
-                .dispatch
-                .call(crate::render::RenderEnvelope::Inline(envelope_json), 0)
-                .await
-                .map(|_| ())
-            {
+            if let Err(e) = entry.dispatch.call(envelope_json, 0).await.map(|_| ()) {
                 error!(worker_id = entry.id, error = %e, "ws dispatch failed");
                 crate::realtime::ws::registry().lock().remove(&conn_id);
                 return Ok(body::error_500());
@@ -1046,11 +1041,7 @@ where
         }
     };
 
-    let resp_len = match entry
-        .dispatch
-        .call(crate::render::RenderEnvelope::Inline(envelope_json), slot)
-        .await
-    {
+    let resp_len = match entry.dispatch.call(envelope_json, slot).await {
         Ok(len) => len,
         Err(e @ crate::render::RenderError::EnqueueFailed(_)) => {
             error!(worker_id = entry.id, label, error = %e,
@@ -1150,11 +1141,7 @@ where
     // RAII lifetime.
     let entry_for_future = Arc::clone(&entry);
     let render_future = async move {
-        match entry_for_future
-            .dispatch
-            .call(crate::render::RenderEnvelope::Inline(envelope_json), slot)
-            .await
-        {
+        match entry_for_future.dispatch.call(envelope_json, slot).await {
             Ok(len) => RenderOutcome::Resolved(len),
             Err(e @ crate::render::RenderError::EnqueueFailed(_)) => {
                 RenderOutcome::EnqueueFailed(e)

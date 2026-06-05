@@ -1,46 +1,27 @@
 //! `RenderDispatch` — the napi-free seam between the render path and the worker.
 //!
 //! The only real napi coupling in the soon-to-be-core modules was (a) the tsfn
-//! call `RendererTsfn::call_async(Either<u32, String>) -> Promise<u32>` and (b)
-//! the SAB raw pointer. Both are abstracted here so `pool.rs`/`server.rs` carry
-//! zero napi. The concrete tsfn-backed impl is `crate::dispatch_impl::TsfnDispatch`.
+//! call `RendererTsfn::call_async(String) -> Promise<u32>` and (b) the SAB raw
+//! pointer. Both are abstracted here so `pool.rs`/`server.rs` carry zero napi.
+//! The concrete tsfn-backed impl is `crate::dispatch_impl::TsfnDispatch`.
+//!
+//! REQUEST transport — DO NOT change to SharedArrayBuffer. The render request
+//! envelope crosses to the worker INLINE, as a JSON `String` marshaled through
+//! napi. Passing it via the SAB instead was tried twice and CLOSED both times:
+//! (1) under the multi-thread tokio runtime the Rust-side SAB write was not
+//! reliably visible to the Bun worker thread — the worker read a stale prior
+//! response from the SAB as the request (`JSON Parse error: Unrecognized token`
+//! / `meta_len exceeds chunk size` under load); (2) re-evaluated 2026-06-05
+//! (Phase C) with per-slot DISJOINT SAB regions, soaked 120-conn — it STILL
+//! corrupted (genuine cross-core visibility/timing: weak-ordered HW + non-atomic
+//! JS TypedArray SAB reads, not aliasing), AND bought nothing (`Sab` ≈ `Inline`
+//! throughput — both serialize in Rust + `JSON.parse` in JS; the transport swap
+//! is a wash). `Inline` is the permanent request carrier. The SAB is used ONLY
+//! for the worker's RESPONSE (Rust is the reader there, with atomic semantics
+//! under its own control). Do not try SAB-request a third time.
 
 use std::future::Future;
 use std::pin::Pin;
-
-/// The render envelope handed to a worker.
-///
-/// - `Inline(json)`: the request envelope marshaled as a JSON string through
-///   napi. This is the ONLY variant the dispatch paths construct.
-/// - `Sab(len)`: legacy "write the request into the worker's SharedArrayBuffer,
-///   pass the byte length" fast lane. **DO NOT REINTRODUCE for request passing.**
-///   Under the multi-thread tokio runtime the Rust-side SAB write was not
-///   reliably visible to the Bun worker thread (the worker read its own stale
-///   prior response from the SAB → corrupt envelope / `meta_len exceeds chunk
-///   size` under load). The tsfn call did not publish the SAB write across cores
-///   the way a single-thread runtime's timing masked. Requests go `Inline`; the
-///   SAB is used only for the worker's RESPONSE (read back via `napi_render_chunk`'s
-///   copy, which the napi call publishes correctly). The variant is retained only
-///   because `TsfnDispatch::call` still maps it; nothing constructs it.
-///
-/// `Sab`-request was RE-EVALUATED 2026-06-05 (Phase C) and CLOSED with evidence.
-/// The hypothesis was that per-slot DISJOINT SAB sub-regions (multi-render-per-
-/// worker) removed the request/response aliasing the race lived in. A flag-gated
-/// `Sab`-request impl was soaked at 120-conn on the multi-thread runtime: it
-/// STILL corrupted — `SyntaxError: JSON Parse error: Unrecognized token ' '` (the
-/// worker read a stale prior-response byte as the request) within 30s on the
-/// streaming path, even though tsfn enqueue is a `SeqCst` barrier. The race is a
-/// genuine cross-core visibility/timing issue (weak-ordered hardware + non-atomic
-/// JS TypedArray reads of the SAB), NOT mere aliasing, so disjoint regions do not
-/// fix it. AND it bought nothing: `Sab` vs `Inline` throughput was identical
-/// (native 85.1k≈85.1k rps; `/` within noise) — both paths serialize in Rust and
-/// `JSON.parse` in JS, so swapping napi-String transport for a SAB memcpy saves no
-/// work. Zero benefit + real corruption → `Inline` is the permanent request
-/// carrier. Do not try this a third time.
-pub enum RenderEnvelope {
-    Sab(u32),
-    Inline(String),
-}
 
 /// Failure layers from a render dispatch, mirroring the old
 /// `RenderOutcome::{EnqueueFailed, PromiseRejected}` napi arms.
@@ -62,9 +43,12 @@ pub enum RenderError {
 /// framed-response length (the protocol u32 — `> 0` fast lane, `0` chunk
 /// channel), plus access to the worker's SAB backing store.
 pub trait RenderDispatch: Send + Sync + 'static {
+    /// Dispatch a render. `request_json` is the request envelope marshaled as a
+    /// JSON string (the INLINE request transport — see the module doc; do NOT
+    /// route the request through the SAB). `slot` is the claimed render slot.
     fn call(
         &self,
-        env: RenderEnvelope,
+        request_json: String,
         slot: u32,
     ) -> Pin<Box<dyn Future<Output = Result<u32, RenderError>> + Send>>;
 
@@ -165,7 +149,7 @@ unsafe impl Sync for MockDispatch {}
 impl RenderDispatch for MockDispatch {
     fn call(
         &self,
-        _env: RenderEnvelope,
+        _request_json: String,
         _slot: u32,
     ) -> Pin<Box<dyn Future<Output = Result<u32, RenderError>> + Send>> {
         Box::pin(async { Ok(0u32) })

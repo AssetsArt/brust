@@ -623,9 +623,8 @@ export function makeRenderer(
   routes: FlatRoute[],
   view: Uint8Array,
   opts: MakeRendererOptions = {},
-): (envelopeJsonOrLen: number | string, slot?: number) => Promise<number> {
+): (envelopeJson: string, slot?: number) => Promise<number> {
   const encoder = new TextEncoder()
-  const decoder = new TextDecoder()
   const byRouteId = new Map<number, FlatRoute>()
   routes.forEach((r, i) => {
     byRouteId.set(i, r)
@@ -664,14 +663,12 @@ export function makeRenderer(
     },
   }
 
-  return async (envelopeJsonOrLen: number | string, slot = 0): Promise<number> => {
+  return async (envelopeJson: string, slot = 0): Promise<number> => {
     // The disjoint SAB sub-view this render owns. At slots=1, slotView === the
     // whole view (offset 0, full length) so the K=1 path is byte-identical.
+    // The request always arrives as an INLINE JSON string (SAB-request is closed
+    // — see the dispatch module doc); the SAB is used only for the RESPONSE.
     const slotView = slots === 1 ? view : view.subarray(slot * sub, slot * sub + sub)
-    const envelopeJson =
-      typeof envelopeJsonOrLen === 'number'
-        ? decoder.decode(slotView.subarray(0, envelopeJsonOrLen))
-        : envelopeJsonOrLen
     const call = JSON.parse(envelopeJson) as RouteCall
     const wid = opts.getWorkerId?.() ?? 0
     const workerId = BigInt(wid)
