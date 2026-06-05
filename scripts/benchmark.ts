@@ -66,9 +66,9 @@ const SCENARIOS: Scenario[] = [
     // post-mortem 2026-05-28; 6 keeps render workers under the core count.
     env: {
       BRUST_PORT: '38201',
-      BRUST_WORKER_THREADS: process.env.BRUST_WORKER_THREADS ?? '14',
+      BRUST_WORKER_THREADS: process.env.BRUST_WORKER_THREADS ?? '4',
       BRUST_WORKERS: process.env.BRUST_WORKERS ?? '6',
-      BRUST_CONN_WORKERS: process.env.BRUST_CONN_WORKERS ?? '2000',
+      BRUST_CONN_WORKERS: process.env.BRUST_CONN_WORKERS ?? '1024',
     },
     expectedPortLog: /listening on 127\.0\.0\.1:(\d+)/,
   },
