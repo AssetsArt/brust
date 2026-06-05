@@ -53,6 +53,11 @@ export interface ServeOptions {
      * Bun (which has its own threads + render workers), so this is NOT
      * one-per-core. Default `min(availableParallelism, 4)` (fallback 2). */
     workerThreads?: number
+    /** Render slots per Bun worker — concurrent in-flight renders per isolate.
+     * Default 1 (byte-identical to single in-flight render per worker). The
+     * count is propagated to each worker via the `BRUST_RENDER_SLOTS` env var
+     * and scales the per-worker SAB so each slot keeps the single-slot capacity. */
+    renderSlots?: number
   }
 }
 
@@ -63,7 +68,7 @@ export interface ServeOptions {
 // socket independently (SSE/WS). The argument is a JSON envelope
 // `{ route_id, path, params }` produced by Rust's route table — see
 // runtime/routes.ts::RouteCall.
-export type RenderFn = (envelopeJsonOrLen: number | string) => Promise<number>
+export type RenderFn = (envelopeJsonOrLen: number | string, slot: number) => Promise<number>
 
 // Bun Workers run in the same OS process as the main thread; the `env` option
 // only patches the JS-visible process.env, not the native OS environment that
@@ -131,7 +136,11 @@ export const brust = {
       // leaving the prefix at its default — which broke custom-prefix routing.
       actionPrefix: opts.actionPrefix,
     })
-    const baseEnv = { ...process.env }
+    // Render slots per worker. Propagated to each worker via env (Bun Workers
+    // share the OS process, so the worker reads it from process.env at
+    // registerRenderer time). Default 1 — byte-identical single in-flight render.
+    const renderSlots = Math.max(1, opts.tuning?.renderSlots ?? 1)
+    const baseEnv = { ...process.env, BRUST_RENDER_SLOTS: String(renderSlots) }
     const workersArr: Worker[] = []
     for (let i = 0; i < opts.workers; i++) {
       // Bun.Worker requires the JS entry (post-bundling). For the skeleton,
@@ -251,8 +260,8 @@ export const brust = {
   // (or any ArrayBuffer the worker keeps rooted) — Rust captures the backing-store
   // pointer once here and reuses it for every render call. The buffer is held alive
   // by the worker's module scope; do not let it go out of scope.
-  registerRenderer(buf: Uint8Array, fn: RenderFn): number {
-    return (native as any).registerRenderer(buf, fn)
+  registerRenderer(buf: Uint8Array, slots: number, fn: RenderFn): number {
+    return (native as any).registerRenderer(buf, slots, fn)
   },
 
   /**
@@ -728,7 +737,11 @@ export const brust = {
         }
       }
 
-      const sab = new SharedArrayBuffer(opts.sabBytes ?? 256 * 1024)
+      // Render slots for this worker (set in serve() via the worker env). The
+      // SAB scales with the slot count so each slot's disjoint sub-region keeps
+      // the single-slot capacity; at K=1 this is byte-identical to before.
+      const renderSlots = Math.max(1, Number(process.env.BRUST_RENDER_SLOTS ?? 1) || 1)
+      const sab = new SharedArrayBuffer((opts.sabBytes ?? 256 * 1024) * renderSlots)
       const view = new Uint8Array(sab)
 
       let mcpManifest: import('./mcp/manifest.ts').McpManifest | null
@@ -770,8 +783,9 @@ export const brust = {
         actions: endpoints,
         getWorkerId: () => wid,
         mcp: mcpServer,
+        slots: renderSlots,
       })
-      wid = this.registerRenderer(view, renderer)
+      wid = this.registerRenderer(view, renderSlots, renderer)
     }
   },
 }

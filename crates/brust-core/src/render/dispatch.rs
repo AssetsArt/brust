@@ -50,13 +50,54 @@ pub trait RenderDispatch: Send + Sync + 'static {
     fn call(
         &self,
         env: RenderEnvelope,
+        slot: u32,
     ) -> Pin<Box<dyn Future<Output = Result<u32, RenderError>> + Send>>;
+
+    /// Number of render slots this worker holds. Each slot is an independent
+    /// in-flight render reservation backed by a disjoint sub-region of the SAB
+    /// (see [`RenderDispatch::buf_slot`]). Defaults to 1 (single in-flight
+    /// render per worker — byte-identical to the pre-multi-slot behaviour).
+    fn slot_count(&self) -> usize {
+        1
+    }
 
     /// The worker's SAB backing store as a `(ptr, len)` pair. Returned together
     /// so a raw pointer can never be obtained without its matching capacity —
     /// this prevents pairing a pointer from one entry with a length from another
     /// (a mismatched-ptr/len OOB-write / use-after-free footgun).
     fn buf(&self) -> (*mut u8, usize);
+
+    /// The disjoint SAB sub-region reserved for `slot` as a `(ptr, cap)` pair.
+    ///
+    /// With `(base, total) = self.buf()` and `k = self.slot_count()`, the
+    /// per-slot capacity is `sub = total / k` and slot `i` owns the bytes
+    /// `[i * sub, i * sub + sub)`. The slots are disjoint and tile `[0, total)`;
+    /// when `k` does not divide `total` evenly the trailing `total % k` bytes
+    /// are unused (acceptable). All the offset-0-relative read/write code stays
+    /// correct because it now operates relative to the slot's base pointer.
+    ///
+    /// At `k == 1` this returns the whole buffer, so single-slot callers are
+    /// byte-identical to [`RenderDispatch::buf`].
+    fn buf_slot(&self, slot: u32) -> (*mut u8, usize) {
+        let (base, total) = self.buf();
+        // `.max(1)` guards against a (mis)implementation returning 0 → div-by-zero.
+        let k = self.slot_count().max(1);
+        let sub = total / k;
+        // Defense-in-depth: an out-of-range `slot` must NEVER produce out-of-bounds
+        // pointer arithmetic (UB even if the pointer is never dereferenced). Callers
+        // that hold a `RenderClaim` always pass a valid slot, and the napi entry
+        // points (`napi_render_chunk`/`_final`/`_jinja`) bounds-check the JS-supplied
+        // slot and return a clean `Err` before reaching here. This clamp is the last
+        // line: a bad slot yields a benign in-bounds `(base, 0)` region — zero
+        // capacity makes every downstream bounds check fail safely instead of UB.
+        if slot as usize >= k {
+            return (base, 0);
+        }
+        // SAFETY: `slot < k` (checked above) ⇒ `slot * sub + sub <= k * sub <= total`,
+        // so the offset stays within the backing store.
+        let ptr = unsafe { base.add(slot as usize * sub) };
+        (ptr, sub)
+    }
 
     /// Just the SAB capacity, for standalone bounds checks. Defaults to the
     /// length component of [`RenderDispatch::buf`].
@@ -71,15 +112,23 @@ pub trait RenderDispatch: Send + Sync + 'static {
 pub struct MockDispatch {
     ptr: *mut u8,
     len: usize,
+    slots: usize,
 }
 
 #[cfg(test)]
 impl MockDispatch {
     pub fn new() -> Self {
-        let b = vec![0u8; 256 * 1024].into_boxed_slice();
+        Self::with_slots(1)
+    }
+
+    /// Like [`MockDispatch::new`] but with `k` render slots. The leaked buffer
+    /// scales to `k * 256 KiB` so each slot keeps the single-slot capacity.
+    pub fn with_slots(k: usize) -> Self {
+        let k = k.max(1);
+        let b = vec![0u8; 256 * 1024 * k].into_boxed_slice();
         let len = b.len();
         let ptr = Box::leak(b).as_mut_ptr();
-        Self { ptr, len }
+        Self { ptr, len, slots: k }
     }
 }
 
@@ -102,10 +151,77 @@ impl RenderDispatch for MockDispatch {
     fn call(
         &self,
         _env: RenderEnvelope,
+        _slot: u32,
     ) -> Pin<Box<dyn Future<Output = Result<u32, RenderError>> + Send>> {
         Box::pin(async { Ok(0u32) })
     }
+    fn slot_count(&self) -> usize {
+        self.slots
+    }
     fn buf(&self) -> (*mut u8, usize) {
         (self.ptr, self.len)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Offset of a slot's base pointer from the buffer base, in bytes.
+    fn off(d: &MockDispatch, slot: u32) -> usize {
+        let (base, _) = d.buf();
+        let (p, _) = d.buf_slot(slot);
+        (p as usize) - (base as usize)
+    }
+
+    #[test]
+    fn buf_slot_disjoint_and_tiles() {
+        let d = MockDispatch::with_slots(4);
+        let (_, total) = d.buf();
+        let sub = total / 4;
+        // Each slot starts at i*sub with capacity sub: disjoint, in-bounds, tiling.
+        for i in 0..4u32 {
+            let (_, cap) = d.buf_slot(i);
+            assert_eq!(cap, sub, "slot {i} cap");
+            assert_eq!(off(&d, i), i as usize * sub, "slot {i} offset");
+            // Last byte of this slot stays within the backing store.
+            assert!(off(&d, i) + cap <= total, "slot {i} overruns buffer");
+        }
+        // Adjacent slots don't overlap: slot i ends exactly where slot i+1 begins.
+        for i in 0..3u32 {
+            assert_eq!(
+                off(&d, i) + sub,
+                off(&d, i + 1),
+                "slots {i}/{} overlap",
+                i + 1
+            );
+        }
+    }
+
+    #[test]
+    fn buf_slot_k1_is_whole_buffer() {
+        let d = MockDispatch::new();
+        assert_eq!(d.slot_count(), 1);
+        let (bp, bl) = d.buf();
+        let (sp, sl) = d.buf_slot(0);
+        assert_eq!(sp, bp, "k=1 slot 0 base must equal buf base");
+        assert_eq!(sl, bl, "k=1 slot 0 cap must equal whole buffer");
+    }
+
+    #[test]
+    fn buf_slot_out_of_range_is_benign_not_ub() {
+        // An out-of-range slot must NEVER produce out-of-bounds pointer math.
+        // It returns the buffer base with ZERO capacity, so callers' bounds checks
+        // fail safely. (Guards the napi_render_jinja JS-supplied-slot path.)
+        let d = MockDispatch::with_slots(4);
+        let (base, _) = d.buf();
+        for bad in [4u32, 5, 1000, u32::MAX] {
+            let (p, cap) = d.buf_slot(bad);
+            assert_eq!(cap, 0, "out-of-range slot {bad} must have zero cap");
+            assert_eq!(
+                p, base,
+                "out-of-range slot {bad} must stay at base (no OOB add)"
+            );
+        }
     }
 }

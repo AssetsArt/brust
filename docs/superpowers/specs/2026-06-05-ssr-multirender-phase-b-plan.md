@@ -148,9 +148,23 @@ suite unchanged.
   serve native routes clamps `renderSlots=1` at `register_renderer` (documented
   degradation, zero corruption). Guard + log.
 
+**B-BLK3 — SSE/WS slot-0 dispatch (surfaced by the Rust core review).** SSE and
+WS call `dispatch.call(env, 0)` WITHOUT holding a per-slot `RenderClaim` (they
+use `in_flight_guard` and own their socket via the napiSse*/napiWs* registries).
+At K=1 this is byte-identical to today and safe (those handlers never touch the
+SAB). At K>1 it is a latent hazard: a concurrent HTTP render legitimately owns
+slot 0 while SSE/WS also passes slot 0 — safe ONLY because SSE/WS never write the
+SAB, an invariant enforced by JS contract, not Rust. Before enabling K>1, add a
+**no-SAB dispatch variant** (e.g. a `RenderEnvelope`/call path that carries no
+slot / cannot touch the response region) for SSE/WS, OR assert at the boundary
+that those handlers never write the slot. The call sites carry a LOAD-BEARING
+comment (`server/mod.rs` SSE ~762, WS ~882). Do not enable `render_slots>1`
+until this is resolved.
+
 **Tests:** integration — a native route + a React route, `renderSlots=2`, two
 concurrent requests (one native, one React); assert both bytes-correct, no
-cross-corruption. MUST fail first if jinja still hardcodes offset 0.
+cross-corruption. MUST fail first if jinja still hardcodes offset 0. Add an
+SSE-during-render concurrent test once the no-SAB variant lands (B-BLK3).
 **Green:** `cargo test`; `bun run ci`; native-island integration suite green
 (run files separately — memory `native-island-integration-flake`).
 

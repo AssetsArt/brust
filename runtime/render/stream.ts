@@ -15,11 +15,26 @@ import { getDevClientSnippet } from '../dev/inject.ts'
 
 export interface RenderBranchStreamingArgs {
   element: ReactNode
+  /** The render's SAB sub-view (whole buffer at slots=1). All chunk encodes
+   * write at offset 0 of this view → automatically the slot's base. */
   view: Uint8Array
+  /** The render slot index, passed to every napi.renderChunk* call so Rust
+   * reads/writes the matching SAB sub-region. Default 0 (single-slot path). */
+  slot?: number
   workerId: bigint
   napi: {
-    renderChunk: (workerId: bigint, len: number, sabBytes: Uint8Array) => Promise<void>
-    renderChunkFinal: (workerId: bigint, len: number, sabBytes: Uint8Array) => Promise<void>
+    renderChunk: (
+      workerId: bigint,
+      slot: number,
+      len: number,
+      sabBytes: Uint8Array,
+    ) => Promise<void>
+    renderChunkFinal: (
+      workerId: bigint,
+      slot: number,
+      len: number,
+      sabBytes: Uint8Array,
+    ) => Promise<void>
   }
   errorBoundary: ComponentType<{ error: Error }>
   /** Status for the successful (non-error) render. Default 200. Used by
@@ -97,6 +112,7 @@ function concatBuffers(parts: Uint8Array[], withBootstrap: boolean): Uint8Array 
 
 export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<void> {
   const { element, view, workerId, napi, errorBoundary } = args
+  const slot = args.slot ?? 0
   const successStatus = args.status ?? 200
   const extraHeaders = args.headers ?? {}
 
@@ -113,7 +129,7 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
       if (finalSent) return
       finalSent = true
       try {
-        await napi.renderChunk(workerId, 0, view)
+        await napi.renderChunk(workerId, slot, 0, view)
         resolve()
       } catch (e) {
         reject(e)
@@ -139,7 +155,7 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
             // Wait for the header chunk to be flushed before sending body chunks.
             if (headerSent) await headerSent
             const len = encodeBodyChunk(view, chunk)
-            await napi.renderChunk(workerId, len, view)
+            await napi.renderChunk(workerId, slot, len, view)
           }
           cb()
         } catch (e) {
@@ -162,7 +178,7 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
               headers: extraHeaders,
             })
             const len = encodeFirstChunk(view, meta, body)
-            await napi.renderChunkFinal(workerId, len, view)
+            await napi.renderChunkFinal(workerId, slot, len, view)
             finalSent = true
             resolve()
             mode = 'done'
@@ -247,7 +263,7 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
             ;(async () => {
               try {
                 const len = encodeFirstChunk(view, meta, flushed)
-                await napi.renderChunk(workerId, len, view)
+                await napi.renderChunk(workerId, slot, len, view)
                 resolveHeader()
               } catch (e) {
                 rejectHeader(e)
@@ -267,7 +283,7 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
             ;(async () => {
               try {
                 const len = encodeFirstChunk(view, meta, encoder.encode(html))
-                await napi.renderChunkFinal(workerId, len, view)
+                await napi.renderChunkFinal(workerId, slot, len, view)
                 finalSent = true
                 resolve()
               } catch (e) {
@@ -285,7 +301,7 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
             ;(async () => {
               try {
                 const len = encodeFirstChunk(view, meta, encoder.encode('Internal Server Error'))
-                await napi.renderChunkFinal(workerId, len, view)
+                await napi.renderChunkFinal(workerId, slot, len, view)
                 finalSent = true
                 resolve()
               } catch (e) {
@@ -307,7 +323,7 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
       ;(async () => {
         try {
           const len = encodeFirstChunk(view, meta, encoder.encode('Internal Server Error'))
-          await napi.renderChunkFinal(workerId, len, view)
+          await napi.renderChunkFinal(workerId, slot, len, view)
           finalSent = true
           resolve()
         } catch (ee) {

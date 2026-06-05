@@ -128,6 +128,10 @@ fn status_reason(code: u16) -> &'static str {
 /// Bounds check + slot lookup for napi_render_chunk. Returns the cloned
 /// chunk_tx if the slot is set and `len <= buf_len`. Factored out for
 /// unit testing — the NAPI fn itself wraps this in await + send.
+///
+/// `render_slot` is the PER-SLOT render-slot mutex (`entry.render_slot_for(slot)`)
+/// and `buf_len` is the PER-SLOT sub-cap (`entry.dispatch.buf_slot(slot).1`), so
+/// the bound is checked against the slot's sub-region — not the whole SAB.
 pub fn check_chunk_dispatch(
     render_slot: &parking_lot::Mutex<Option<crate::render::pool::RenderSlot>>,
     len: u32,
