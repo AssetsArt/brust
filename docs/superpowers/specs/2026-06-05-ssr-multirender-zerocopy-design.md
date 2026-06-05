@@ -2,229 +2,232 @@
 
 **Branch:** `perf/ssr-multirender-zerocopy` (off `feat/brust-core-hyper`)
 **Date:** 2026-06-05
-**Status:** design (research-backed; gated on a decision microbenchmark)
+**Status:** design — **decomposed**. This run ships the *decision harnesses*
+(Phase A); the invasive machines (Phase B / C) are gated on their data.
 
-## Goal
+## Why this is decomposed (the honest version)
 
-Raise brust's React-SSR throughput on Bun by:
+The original single-spec goal ("N renders per worker + zero-copy") survived
+contact with two things that shrink its value and raise its cost:
 
-1. **Letting one Bun worker hold N renders in-flight concurrently** so the
-   isolate's CPU is reclaimed while a render is parked awaiting async data
-   (Suspense / `await`ed loaders), instead of the current strict
-   one-render-per-worker gate.
-2. **Cutting the per-render TS↔Rust copy cost** toward zero-copy where Bun's
-   primitives actually allow it.
+1. **Physics (from Bun source).** CPU-bound SSR serializes inside one JSC
+   isolate. Multi-render concurrency buys throughput **only** for renders that
+   *yield* — i.e. Suspense / `await`ed loaders. Synchronous pages get nothing.
+2. **A spec review found the machine is far more invasive than "partition the
+   SAB."** Interleaving two renders in one isolate corrupts **module-scope
+   mutable JS state** (`consumeIslandUsedFlag`'s `__used`) and races the
+   **synchronous native-jinja SAB path** (`napi_render_jinja`, hardcoded
+   offset 0). Making it safe means request-scoping every render global AND
+   slot-addressing the jinja path — a large, risky surface.
 
-Optimized against Bun's *real* execution model (verified from
-`/Users/detoro/code/bun` source), not an assumed one.
+Building that machine **before** proving the win exists would violate this
+spec's own decision gate and the debug-mantra "reproduce/falsify first" rule.
+So we split into independently-gated pieces and **ship the cheap, high-signal
+decision harnesses first**:
 
-## The physics that bounds this work (READ FIRST — it reframes the goal)
+- **Phase A (this run):** two standalone measurement harnesses that answer
+  "is either optimization worth its cost?" with numbers. Ships harness *code*
+  (committed); reports the *numbers* (not committed — standing constraint).
+- **Phase B (gated on A1):** the K-slot multi-render machine, with the two
+  blockers fully addressed. Built only if A1 shows a real interleave win.
+- **Phase C (gated on A2):** zero-copy SAB request passing. Built only if A2
+  proves it safe under multi-thread load AND faster than `Inline`.
 
-Verified from Bun source. These are hard constraints; the design respects them.
+B and C are **independent**: C (cheaper per-render marshal) helps *every*
+render regardless of B.
 
-1. **CPU-bound SSR serializes inside one isolate.** Each Bun `Worker` is one
-   JSC `VirtualMachine` with one cooperative event loop
-   (`src/jsc/web_worker.rs`). Two `renderToPipeableStream` calls that never
-   `await` run back-to-back, not in parallel. **Concurrency only buys anything
-   when a render yields** — i.e. when components suspend on async data. A purely
-   synchronous page (the bench's `/`, native jinja) gets **zero** speedup from
-   multi-render and pays a small scheduling tax.
+## The physics that bounds this work (verified from `/Users/detoro/code/bun`)
 
-   → **This feature targets data-driven / Suspense pages.** We will say so in
-   every user-facing place. We are NOT claiming in-isolate CPU parallelism;
-   that is physically impossible on JSC.
-
-2. **`napi_call_threadsafe_function` enqueue is a `SeqCst` full barrier** in Bun
-   (`src/runtime/napi/napi_body.rs`, `fetch_add(1, SeqCst)` at enqueue, concurrent
-   task posted to the worker loop). This **contradicts** the assumption recorded
-   in the prior SAB-request-race fix ("the tsfn call is not a release barrier for
-   the preceding SAB store"). The contradiction is load-bearing for the zero-copy
-   request question and is **resolved empirically by Task 0's microbenchmark, not
-   by argument.** Until then we treat SAB-for-request as unproven, exactly as the
-   current `RenderEnvelope::Inline`-only code does.
-
-3. **SAB backing stores are pinned for non-growable buffers** (JSC mmap, not
-   GC-relocated) — a native `*mut u8` captured at `register_renderer` stays valid
-   for the SAB's life. Growable/resizable SAB is unsafe to borrow. We use
-   fixed-size SAB only (already the case).
-
+1. **CPU-bound SSR serializes inside one isolate.** Each `Worker` is one JSC
+   `VirtualMachine`, one cooperative event loop (`src/jsc/web_worker.rs`). Two
+   non-`await`ing renders run back-to-back. Concurrency helps **only** at yield
+   points (Suspense / async loaders).
+2. **`napi_call_threadsafe_function` enqueue is a `SeqCst` full barrier**
+   (`src/runtime/napi/napi_body.rs`, `fetch_add(1, SeqCst)` + concurrent task
+   posted to the worker loop). This **contradicts** the prior SAB-request-race
+   fix's premise ("tsfn is not a release barrier"). Code cannot resolve the
+   contradiction — **A2 resolves it empirically.**
+3. **Non-growable SAB backing stores are pinned** (JSC mmap; a `*mut u8`
+   captured at `register_renderer` stays valid). Growable SAB is unsafe to
+   borrow. We use fixed-size SAB only (already the case).
 4. **No zero-copy stream→socket for dynamic bodies.** `Bun.serve` memcpys
-   ReadableStream chunks into the uWS send buffer; only static-file `sendfile(2)`
-   is true zero-copy. So "zero-copy" here means the **TS↔Rust boundary**, not
-   TS→socket. Out of scope to change Bun.
+   ReadableStream chunks into uWS; only static `sendfile(2)` is zero-copy.
+   "Zero-copy" here = the TS↔Rust boundary, not TS→socket. Out of scope.
 
 ## Non-goals (loud)
 
-- **NOT** parallel CPU execution of renders within one isolate. Impossible on
-  JSC; see physics #1.
-- **NOT** a speedup for synchronous pages. `/ping`, native jinja, and
-  non-suspending React see no benefit; the design must not regress them
-  (acceptance criterion below).
-- **NOT** changing Bun, `Bun.serve`, or the stream→socket path.
-- **NOT** reintroducing SAB-for-request *unless* Task 0 proves it safe AND
-  faster under multi-thread load. The current `Inline(String)` request path is
-  the baseline and the fallback.
-- **NOT** touching the worker→Rust response chunk/ack protocol semantics, only
-  extending its addressing (add a slot index).
-- **NOT** removing the per-render-settlement claim invariant (the disconnect /
-  drain correctness rule from the hyper migration). Per-slot claims keep it.
+- **NOT** in-isolate CPU parallelism. Impossible on JSC (physics #1).
+- **NOT** a speedup for synchronous pages; the design must not regress them.
+- **NOT** changing Bun / `Bun.serve` / stream→socket.
+- **NOT** building B or C in this run. This run is measurement only.
+- **NOT** reintroducing SAB-for-request unless A2 proves it.
 
-## High-level architecture
+---
 
-Today: per worker, a binary `idle: AtomicBool` gate + a single
-`render_slot: Mutex<Option<RenderSlot>>` + a single SAB region at offset 0. One
-render owns the whole worker until its Promise settles AND its response drains.
+## Phase A — decision harnesses (THIS RUN's deliverable)
 
-Proposed: **K slots per worker.**
+Two small, self-contained harnesses. Each ends with a printed verdict.
+
+### A1 — interleave-win microbench (pure JS, no Rust, no machine)
+
+The whole point of B can be measured **without building B**: does running two
+Suspense renders concurrently in one isolate beat running them serially?
+
+- File: `bench/micro/interleave.ts` (Bun-runnable; `bun run bench/micro/interleave.ts`).
+- Build a React tree with a Suspense boundary whose data resolves on a timer
+  (configurable `DATA_MS`, default 20ms) plus a tunable synchronous CPU cost
+  (`CPU_MS`, render a wide list) so we can sweep the I/O:CPU ratio.
+- Measure wall-clock for: (a) **serial** — `await render1(); await render2();`
+  (b) **concurrent** — `await Promise.all([render1(), render2()])`, both via
+  `renderToReadableStream` consumed to completion.
+- Sweep `N ∈ {2,4,8}` concurrent renders and a few `DATA_MS:CPU_MS` ratios.
+- **Verdict logic:** concurrent wall-clock / serial wall-clock. `< 0.85` at the
+  Suspense-heavy ratio = real win → **Phase B is justified**. `≈ 1.0` across the
+  board = no win → **Phase B is NOT worth its cost; stop and document.**
+- Also print the pure-synchronous case (`DATA_MS=0`) to confirm/quantify the
+  expected *no-win / slight-loss* (the regression risk B must avoid).
+
+A1 needs **no** brust/Rust changes — it isolates the physics question. It is the
+single highest-signal, lowest-cost thing in the whole effort.
+
+### A2 — zero-copy-request safety+perf harness (Rust + JS)
+
+Resolve the SeqCst/barrier contradiction and decide C, empirically.
+
+- A focused integration harness (under `crates/brust` integration tests or a
+  `bench/micro/` driver) that revives SAB-for-request **into a disjoint region
+  that never aliases the response** (the original race lived in request/response
+  aliasing at offset 0), under the real multi-thread tokio runtime.
+- Drive it at the load that originally surfaced the race (120-conn, 60s) on the
+  render path.
+- **Verdict logic:** zero corruption AND throughput ≥ `Inline` baseline →
+  **Phase C is on**, SAB-request revived in a non-aliasing region. Any
+  corruption, or no throughput gain → **C is closed**, `Inline(String)` stays,
+  recorded with evidence so it is never re-litigated.
+- Do **not** commit the corruption/throughput numbers; commit the harness.
+
+If A1 says "no win," A2 is still worth running (C is independent of B). If both
+verdicts are negative, the run's deliverable is the harnesses + a documented
+"not worth it, here's the data" — itself a valid, honest outcome.
+
+### Phase A acceptance
+
+- `bench/micro/interleave.ts` runs under Bun and prints serial-vs-concurrent
+  ratios across the sweep + the synchronous baseline.
+- A2 harness runs, prints corruption count + throughput delta.
+- biome clean (`bun run ci`) for the TS; cargo fmt/clippy/test green for any
+  Rust harness.
+- No numbers committed. Harness code committed, not pushed.
+- A written **Decision** appended to this spec: B = go/stop, C = go/stop, each
+  with the measured numbers cited inline.
+
+---
+
+## Phase B — K-slot multi-render machine (GATED on A1 win)
+
+Design recorded now so B is a plan-ready unit *if* A1 justifies it. Both review
+blockers are first-class scope items here, not afterthoughts.
+
+### B architecture
+
+Today: per worker a binary `idle: AtomicBool` + single
+`render_slot: Mutex<Option<RenderSlot>>` + single SAB region at offset 0; one
+render owns the worker until its Promise settles and response drains.
+
+Proposed: **K slots per worker** (K a runtime value from tuning).
 
 ```
 WorkerEntry
- ├─ permits: Semaphore(K)            // replaces binary `idle`; K in-flight max
- ├─ slots: [Slot; K]                 // each Slot owns a disjoint SAB sub-region
- │    └─ Slot { chunk_tx: Mutex<Option>, sab_offset, sab_cap }
- └─ dispatch: Box<dyn RenderDispatch>  // tsfn; now called with a slot index
+ ├─ permits / per-slot AtomicBool[K]   // replaces the single binary `idle`
+ ├─ slots: Vec<Slot>  (len K)          // NOT [Slot;K] — K is runtime, heap Vec
+ │    └─ Slot { chunk_tx: Mutex<Option<Sender>>, sab_offset, sab_cap }
+ └─ dispatch: Box<dyn RenderDispatch>  // call() now carries a slot index
 ```
 
-- **Claim** = acquire one permit + reserve a free slot index (CAS over a small
-  bitset, or per-slot `AtomicBool`). `RenderClaim` holds **one slot**, not the
-  whole worker. Release on Promise settlement (invariant preserved per-slot).
-- **SAB partitioning.** The worker's SAB is split into K disjoint sub-regions of
-  `floor(cap/K)` bytes. Render in slot `i` reads/writes only
-  `[i*sub .. (i+1)*sub]`. Disjoint regions mean concurrent renders never alias —
-  which *also* removes the request/response aliasing that the original
-  SAB-request race lived in.
-- **Response routing for N in-flight.** `napi_render_chunk(worker_id, slot, len)`
-  gains a `slot` arg; Rust routes the chunk to that slot's `chunk_tx`. No global
-  scan. (nylon-ring's sharded/keyed routing idea, scaled to K-per-worker.)
-- **JS side.** `renderFn(envelope, slot)` is already `async`; multiple concurrent
-  invocations are fine on the event loop. Each invocation uses **its slot's SAB
-  sub-view** (`view.subarray(off, off+sub)`) for `encodeFirstChunk` / chunks.
-  Concurrent renders interleave at their `await` points — the entire point.
+- **Claim** = reserve one free slot (CAS its `AtomicBool`) + bump `in_flight`.
+  `RenderClaim` holds **one slot**; release on that render's Promise settlement
+  (the disconnect/drain invariant is preserved *per slot*).
+- **Disjoint SAB regions.** SAB splits into K regions of `floor(cap/K)`. Slot
+  `i` touches only `[i*sub .. i*sub+sub]`. Disjointness removes both
+  cross-render clobbering and the request/response aliasing C cares about.
+- **Slot-addressed response routing.** `napi_render_chunk(worker_id, slot, len)`
+  and `_final` gain `slot`; bounds-check against **sub-cap**, read at
+  `slot_base + 0`, route to that slot's `chunk_tx` (stored in `Slot`, looked up
+  by index — no global scan).
+- **K=1 is the existing path, byte-identical.** Fast-path K=1: single region =
+  whole SAB (`sub = cap`), `slot=0`, `offset=0`; the slot index travels as an
+  **explicit tsfn arg** (NOT folded into envelope JSON) so the K=1 request
+  envelope bytes are unchanged for the identity test.
 
-### Dispatch envelope / SAB ownership
+### B BLOCKER resolutions (must be in the plan)
 
-`RenderEnvelope::Inline(String)` stays the request carrier (proven safe).
-The `slot` index travels alongside the envelope (new tsfn arg or folded into the
-JSON). Zero-copy request (SAB) is a **Task 0-gated** follow-up: with disjoint
-per-slot regions the original aliasing is gone, so it may now be safe — but only
-the microbench decides.
+- **B-BLK1 — native-jinja SAB path.** `napi_render_jinja` (lib.rs ~957) is a
+  **synchronous** SAB-offset-0 read/write outside the chunk protocol. Resolution:
+  it must become **slot-addressed** too — the JS caller holds a slot, passes it,
+  and jinja reads/writes that slot's sub-region. If slot-addressing jinja is
+  judged too large for B, the fallback is a hard runtime guard: a worker that can
+  serve native routes **clamps `renderSlots` to 1** at `register_renderer` time
+  (documented degradation, no corruption). The plan MUST pick one explicitly;
+  shipping K>1 with jinja untouched is forbidden.
+- **B-BLK2 — render-global module state.** Interleaved renders corrupt
+  module-scope mutable JS state. Known instance: `consumeIslandUsedFlag` /
+  `__used` (island.tsx ~50) read at buffering `_final`. Resolution: make the
+  island-used signal **request-scoped** (carried on the per-render context /
+  slot, not a module `let`). The plan MUST include an **audit** enumerating every
+  module-scope mutable in the render path (`__used`, `getWorkerId`,
+  `STREAM_MARKER` [confirmed safe — closure-local], the module `encoder`
+  [confirmed safe — `encode()` returns fresh arrays], action-prefix / store
+  injection state) and a per-instance verdict. No module mutable may leak across
+  concurrent renders.
 
-### Request-id correlation (nylon-ring transfer)
+### B tests
 
-For K-per-worker we don't need a global SID space — `(worker_id, slot)` is a
-sufficient, dense key (K small, e.g. 2–4). We adopt nylon-ring's **idea**
-(thread-local block IDs, sharded maps) only if a global render registry proves
-necessary; for the dense `(worker, slot)` keying it is **not** needed. Recorded
-so we don't over-engineer.
+- `pool.rs` unit: K concurrent claims succeed, K+1th blocks until release;
+  **two-barrier** design (hold all K open before any drops); `--release`.
+- Disjoint-region bounds unit (`MockDispatch`, partitioned buffer): over-sub-cap
+  errors; slot 1 never reads slot 0's bytes.
+- Integration: staggered-timer two-Suspense route, `renderSlots=2`, two
+  concurrent requests → both complete, wall-clock < serial sum, bytes correct
+  under a 50-request concurrent loop; islands emit correctly (B-BLK2 regression).
+- Regression: `renderSlots=1` → 75/0, byte-identical envelopes, no throughput
+  regression.
 
-## CLI / API surface
+### B open questions for plan time
 
-Additive, backward-compatible:
+- `WorkerPool::register` signature gains K (`register_renderer(buf, slots, f)`);
+  `Slot` Vec allocated at registration.
+- `pick_least_busy` semantics under K>1 (in_flight still +1 per claim — confirm
+  least-busy stays meaningful).
+- `check_chunk_dispatch` signature must take sub-cap, not `buf_len()`.
+- fast-lane SAB read in `dispatch_single_chunk` / `dispatch_streaming` must use
+  `slot_base`, not SAB base.
 
-- `ServeOptions.tuning.renderSlots?: number` (TS) → `ServeTuning.render_slots:
-  Option<u32>` (napi, snake_case-aware — see memory `napi-object-camelcase-keys`).
-  Default **1** (today's behavior exactly; opt-in to >1).
-- Bench env `BRUST_RENDER_SLOTS` (read in `bench/apps/brust/index.ts`,
-  default unset = 1).
-- `register_renderer` gains the slot count so the worker knows how to partition
-  its SAB; `napi_render_chunk` / `napi_render_chunk_final` gain a `slot: u32` arg.
+---
 
-`renderSlots = 1` MUST be byte-identical and perf-identical to current `main`
-behavior (the single-slot path is the existing path).
+## Phase C — zero-copy SAB request (GATED on A2 pass)
 
-## File structure
+If A2 proves SAB-request safe in a non-aliasing region and faster than `Inline`:
+revive `RenderEnvelope::Sab` writing the request into the render's **slot
+sub-region** (disjoint from its response framing), pass `Sab(len)` + slot.
+Keep `Inline` as the K=1 / fallback path and the safety net. Update the
+load-bearing warning on `RenderEnvelope::Sab` to record the A2 evidence either
+way. If A2 fails: leave the warning, close C, cite the numbers.
 
-- `crates/brust-core/src/render/pool.rs` — `WorkerEntry` slots + semaphore;
-  `RenderClaim` per-slot; `try_claim_render` returns a slot index.
-- `crates/brust-core/src/render/dispatch.rs` — `RenderDispatch::call` carries a
-  slot; per-slot `buf()` sub-region accessor `buf_slot(slot) -> (*mut u8, len)`.
-- `crates/brust/src/dispatch_impl.rs` — `TsfnDispatch` passes slot to JS.
-- `crates/brust/src/lib.rs` — `register_renderer(buf, slots, f)`;
-  `napi_render_chunk(worker_id, slot, len)` + `_final`.
-- `crates/brust-core/src/server/mod.rs` — `dispatch_single_chunk` /
-  `dispatch_streaming` / `spawn_chunk_pump` thread the slot.
-- `runtime/routes.ts` (`makeRenderer`) — accept slot arg, use slot sub-view.
-- `runtime/render/stream.ts` — `encodeFirstChunk`/chunk encoders write into the
-  slot sub-view; `napi.renderChunk(workerId, slot, len, view)`.
-- `runtime/index.ts` — `ServeOptions.tuning.renderSlots` type + plumb to
-  `register_renderer`.
-- `bench/apps/brust/index.ts` — `BRUST_RENDER_SLOTS` env.
+---
 
-## Behavior / concurrency invariants
+## File structure (Phase A only, this run)
 
-1. **Per-slot claim settlement.** A slot is released only after its render
-   Promise settles (drain-on-disconnect rule preserved, now per-slot). Two slots
-   on one worker settle independently.
-2. **Disjoint SAB regions.** Slot `i` touches only its sub-region. Bounds checks
-   in `napi_render_chunk` are against the **sub-region** cap, not the whole SAB.
-3. **`renderSlots=1` ≡ today.** Single-slot collapses to the current single
-   region at offset 0, single `chunk_tx`. No semaphore contention on the hot path
-   when K=1 (fast-path the K=1 case).
-4. **No cross-slot ordering.** Chunks from slot 0 and slot 1 are independent
-   streams to independent client connections; never interleaved in one response.
-5. **Backpressure unchanged.** Each slot keeps the chunk→ack oneshot handshake.
+- `bench/micro/interleave.ts` — A1 harness (new).
+- `bench/micro/` A2 driver and/or a `crates/brust` integration harness — A2.
+- This spec — appended with the **Decision** section after A runs.
 
-## Tests
+(Phase B/C file lists live in their respective sections above, for the gated
+follow-up.)
 
-- **Rust unit (`pool.rs`):** K-slot claim/release; K concurrent claims succeed,
-  K+1th blocks until one releases (two-barrier design per skill — hold all K
-  open simultaneously before any drops, else sequential reuse inflates the
-  count). `--release` (invariant must survive optimization).
-- **Rust unit:** disjoint-region bounds — a chunk `len` exceeding the *sub*-cap
-  errors; a write in slot 1 never reads slot 0's bytes (`MockDispatch` with a
-  partitioned buffer).
-- **Integration:** a route with two Suspense boundaries resolving on staggered
-  timers, `renderSlots=2`, two concurrent requests; assert both complete and
-  total wall-clock < sum-of-serial (proves interleave). Assert bytes correct
-  (no cross-slot corruption) under a 50-request concurrent loop.
-- **Regression:** `renderSlots=1` integration suite stays 75/0; byte-identical
-  envelope vs current.
-- **Decision microbench (Task 0):** see below.
+## Standing constraints (carried from prior runs)
 
-## Task 0 — decision-gating microbenchmark (DO THIS FIRST)
-
-Before any refactor, prove the win exists and resolve the SeqCst/barrier
-contradiction. **Do NOT commit results** (standing constraint).
-
-1. **Interleave win:** a worker render that `await`s a timer-backed Suspense
-   (say 20ms data) ×2 concurrently vs serially in one isolate. Measure wall
-   clock. If concurrent ≈ serial (no win) → the feature is pointless for this
-   workload; **STOP and report**, do not build the machine.
-2. **SAB-request barrier:** under the multi-thread tokio runtime + per-slot
-   disjoint regions, hammer SAB-request passing at 120-conn (the config that
-   originally surfaced the race) for 60s. Zero corruption + ≥ Inline throughput
-   → SAB request is back on the table. Any corruption → Inline stays, zero-copy
-   request is closed for good with evidence.
-
-This is the `debug-mantra` reproduce/falsify gate. The spec's zero-copy-request
-arm is explicitly conditional on its outcome.
-
-## Acceptance criteria
-
-- `renderSlots=1`: integration 75/0, byte-identical envelopes, no throughput
-  regression vs branch baseline (`/`, native-profile, action within noise).
-- `renderSlots=2` on a Suspense route: two concurrent requests interleave
-  (wall-clock < serial sum) with zero cross-slot corruption under concurrent
-  load.
-- cargo tests green incl. new K-slot tests (`--release` for the invariant test);
-  clippy `-D warnings`; fmt; biome clean (`bun run ci`).
-- No `bench/RESULTS.*` committed. Commit, do not push (standing constraints).
-
-## Known limitations / deferred
-
-- **Synchronous pages get no win** (physics #1) — documented, not fixed.
-- **Zero-copy request (SAB)** ships only if Task 0 proves it; else Inline stays.
-- **Response `.to_vec()` copy** (worker→Rust): borrowing the SAB sub-region
-  without copying needs the slot claim pinned across the socket write — deferred
-  as a separate sub-project; this spec keeps the `.to_vec()` copy.
-- **Stream→socket copy** is Bun-owned — out of scope.
-- **Optimal K** is workload-dependent; default 1, bench sweeps it. Not
-  auto-tuned.
-
-## Open questions resolved at plan time
-
-- **Slot arg transport:** new explicit tsfn arg vs folding into envelope JSON →
-  plan picks the explicit arg (keeps envelope bytes stable for the K=1 identity
-  check).
-- **Slot reservation primitive:** per-slot `AtomicBool` array vs bitset CAS →
-  plan picks per-slot `AtomicBool` (mirrors today's `idle`, simplest correct).
+- Commit, **do not push** (`git`), ever, without explicit instruction.
+- **Never commit** `bench/RESULTS.*` or any measured numbers.
+- Stage explicit paths; **never `git add -A`** (it once swept untracked tooling
+  into a commit). TS CI gate is `bun run ci` (biome), not cargo fmt/clippy; tsc
+  stack-overflows here — don't rely on it.
