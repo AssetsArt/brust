@@ -126,8 +126,9 @@ pub fn start(
     // host (it runs INSIDE the Bun process).
     let (boot_tx, boot_rx) = std::sync::mpsc::sync_channel::<Result<(), String>>(1);
 
+    info!("Starting Tokio runtime with {} threads", tuning.worker_threads.max(1));
+    info!("Accept cap: {}", accept_cap);
     std::thread::spawn(move || {
-        info!("Starting Tokio runtime with {} threads", tuning.worker_threads.max(1));
         let rt = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(tuning.worker_threads.max(1))
             .enable_all()
