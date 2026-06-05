@@ -8,6 +8,40 @@ import { cachedFetch } from 'brustjs'
 
 export const API = 'https://pokeapi.co/api/v2'
 
+// Process-lifetime memo of PokeAPI JSON. `cachedFetch` dedupes only WITHIN one
+// request (it's AsyncLocalStorage-scoped), so on its own EVERY request re-hits
+// pokeapi.co over the network (~700 ms) — at 120 conns `/pokedex` collapses to
+// ~170 rps, bound entirely by that round-trip. PokeAPI is IMMUTABLE reference
+// data, so the parsed JSON is cached for the process lifetime here: the first
+// request warms it, every later request renders from memory. Only successful
+// (2xx) responses are cached; a non-ok response or a network error resolves
+// `null` and is NOT cached, so a transient 429/500 or a typo'd name retries.
+// (Per-request personalization — theme cookie, team — lives in `chrome()`, not
+// here, so it is never cached.)
+const jsonCache = new Map<string, Promise<unknown>>()
+
+async function getJson<T>(url: string): Promise<T | null> {
+  const hit = jsonCache.get(url) as Promise<T | null> | undefined
+  if (hit) return hit
+  const p = (async (): Promise<T | null> => {
+    const res = await cachedFetch(url)
+    if (!res.ok) return null
+    return (await res.json()) as T
+  })()
+  jsonCache.set(url, p)
+  // Evict anything that didn't yield cacheable data (null / rejected) so the
+  // next request can retry rather than memoizing a transient failure forever.
+  p.then(
+    (v) => {
+      if (v === null && jsonCache.get(url) === p) jsonCache.delete(url)
+    },
+    () => {
+      if (jsonCache.get(url) === p) jsonCache.delete(url)
+    },
+  )
+  return p
+}
+
 export const idFromUrl = (url: string): number => Number((url.match(/\/pokemon\/(\d+)\//) || [])[1])
 
 /** Official-artwork PNG from the PokeAPI sprites CDN — derived from id so the
@@ -81,12 +115,11 @@ export interface RawEvolutionStage {
 }
 
 export async function fetchList(offset: number, limit: number) {
-  const res = await cachedFetch(`${API}/pokemon?limit=${limit}&offset=${offset}`)
-  if (!res.ok) throw new Error(`PokeAPI list ${res.status}`)
-  const page = (await res.json()) as {
+  const page = await getJson<{
     count: number
     results: { name: string; url: string }[]
-  }
+  }>(`${API}/pokemon?limit=${limit}&offset=${offset}`)
+  if (!page) throw new Error('PokeAPI list fetch failed')
   return {
     results: page.results.map((r) => ({ id: idFromUrl(r.url), name: r.name })),
     total: page.count,
@@ -94,9 +127,8 @@ export async function fetchList(offset: number, limit: number) {
 }
 
 export async function fetchPokemon(name: string): Promise<RawPokemon | null> {
-  const res = await cachedFetch(`${API}/pokemon/${name}`)
-  if (!res.ok) return null
-  const p = (await res.json()) as any
+  const p = await getJson<any>(`${API}/pokemon/${name}`)
+  if (!p) return null
   return {
     id: p.id,
     name: p.name,
@@ -110,8 +142,8 @@ export async function fetchPokemon(name: string): Promise<RawPokemon | null> {
 }
 
 export async function fetchSpecies(id: number): Promise<RawSpecies> {
-  const res = await cachedFetch(`${API}/pokemon-species/${id}`)
-  const s = (await res.json()) as any
+  const s = await getJson<any>(`${API}/pokemon-species/${id}`)
+  if (!s) return { flavorText: '', genus: '', evolutionUrl: '' }
   const flavor = s.flavor_text_entries?.find((e: any) => e.language.name === 'en')?.flavor_text as
     | string
     | undefined
@@ -126,9 +158,8 @@ export async function fetchSpecies(id: number): Promise<RawSpecies> {
  *  flattened to the first branch — noted as an open question in the design. */
 export async function fetchEvolution(url: string): Promise<RawEvolutionStage[]> {
   if (!url) return []
-  const res = await cachedFetch(url)
-  if (!res.ok) return []
-  const data = (await res.json()) as any
+  const data = await getJson<any>(url)
+  if (!data) return []
   const stages: RawEvolutionStage[] = []
   let node = data.chain
   while (node) {
@@ -164,9 +195,8 @@ export const ALL_TYPES = [
 
 /** Fetch one type's damage relations → a map of defendingType → multiplier. */
 export async function fetchTypeRelations(type: string): Promise<Record<string, number>> {
-  const res = await cachedFetch(`${API}/type/${type}`)
-  if (!res.ok) return {}
-  const d = (await res.json()) as any
+  const d = await getJson<any>(`${API}/type/${type}`)
+  if (!d) return {}
   const rel = d.damage_relations
   const out: Record<string, number> = {}
   for (const t of rel.double_damage_to || []) out[t.name] = 2
