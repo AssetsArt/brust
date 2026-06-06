@@ -479,7 +479,14 @@ test('island marker + importmap injected when route uses <Island>', async () => 
 
 test('island chunk + bootstrap served at /_brust/islands/<file>', async () => {
   const port = sharedPort()
-  for (const file of ['Counter.js', '_bootstrap.js', '_react.js', '_react-dom.js']) {
+  // Island chunks are content-addressed (Counter_<hash>.js); resolve the real
+  // filename via the _islands.js map. Runtime/bootstrap chunks keep fixed names.
+  const islandsMap = await (
+    await fetch(`http://127.0.0.1:${port}/_brust/islands/_islands.js`)
+  ).text()
+  const counterFile = islandsMap.match(/"Counter":"\/_brust\/islands\/([^"]+)"/)?.[1]
+  expect(counterFile).toMatch(/^Counter_[a-f0-9]+\.js$/)
+  for (const file of [counterFile!, '_bootstrap.js', '_react.js', '_react-dom.js']) {
     const r = await fetch(`http://127.0.0.1:${port}/_brust/islands/${file}`)
     expect(r.status).toBe(200)
     expect(r.headers.get('content-type')).toBe('application/javascript; charset=utf-8')
@@ -932,8 +939,14 @@ test('action-calling island page renders marker + importmap + bootstrap', async 
     expect(html).toContain('<script type="importmap">')
     expect(html).toContain('/_brust/islands/_bootstrap.js')
 
-    // The NoteForm.js chunk is served from /_brust/islands.
-    const chunk = await fetch(`http://127.0.0.1:${port}/_brust/islands/NoteForm.js`)
+    // The NoteForm chunk is content-addressed; the _islands.js map resolves the
+    // plain id → hashed chunk URL (what the bootstrap loads).
+    const mapText = await (
+      await fetch(`http://127.0.0.1:${port}/_brust/islands/_islands.js`)
+    ).text()
+    const noteFormUrl = mapText.match(/"NoteForm":"([^"]+)"/)?.[1]
+    expect(noteFormUrl).toMatch(/^\/_brust\/islands\/NoteForm_[a-f0-9]+\.js$/)
+    const chunk = await fetch(`http://127.0.0.1:${port}${noteFormUrl}`)
     expect(chunk.status).toBe(200)
     expect(chunk.headers.get('content-type')).toContain('javascript')
   } finally {

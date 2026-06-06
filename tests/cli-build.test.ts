@@ -1,6 +1,6 @@
 import { test, expect, afterAll } from 'bun:test'
 import { spawn, $ } from 'bun'
-import { existsSync, rmSync, symlinkSync } from 'node:fs'
+import { existsSync, readdirSync, rmSync, symlinkSync } from 'node:fs'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -41,7 +41,12 @@ test('brust build → run → smoke all major paths', async () => {
   expect(existsSync(path.join(distDir, '_actions-prebuilt.ts'))).toBe(false)
   expect(existsSync(path.join(distDir, 'islands/_bootstrap.js'))).toBe(true)
   expect(existsSync(path.join(distDir, 'islands/_react.js'))).toBe(true)
-  expect(existsSync(path.join(distDir, 'islands/Counter.js'))).toBe(true)
+  // Island chunks are content-addressed (`Counter_<hash>.js`); resolve the
+  // actual filename for the existence + serve checks.
+  const counterChunkFile = readdirSync(path.join(distDir, 'islands')).find((f) =>
+    /^Counter_[a-f0-9]+\.js$/.test(f),
+  )
+  expect(counterChunkFile).toBeDefined()
 
   // native binary present (filename varies by platform — Darwin: brust.darwin-arm64.node,
   // Linux: brust.linux-x64-gnu.node, etc. — match the pattern build.ts uses).
@@ -77,9 +82,13 @@ test('brust build → run → smoke all major paths', async () => {
   expect(home.status).toBe(200)
   expect(await home.text()).toMatch(/Hello/i)
 
-  const counter = await fetch(`http://127.0.0.1:${port}/_brust/islands/Counter.js`)
+  const counter = await fetch(`http://127.0.0.1:${port}/_brust/islands/${counterChunkFile}`)
   expect(counter.status).toBe(200)
   expect(counter.headers.get('content-type')).toContain('javascript')
+  // The _islands.js map resolves the plain id → hashed chunk for the bootstrap.
+  const islandsMap = await fetch(`http://127.0.0.1:${port}/_brust/islands/_islands.js`)
+  expect(islandsMap.status).toBe(200)
+  expect(await islandsMap.text()).toContain(`/_brust/islands/${counterChunkFile}`)
 
   // Native-route island SSR: /native-islands renders a `ssr: true` Counter
   // server-side. With react bundled into dist this hit "more than one copy of
