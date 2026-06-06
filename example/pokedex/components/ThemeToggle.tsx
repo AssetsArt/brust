@@ -40,8 +40,10 @@ export const behavior = () => {
 
 // default → jinja (server). The x-* directives are static string attributes the
 // native compiler passes straight through; the directive runtime binds them to
-// the behavior instance on the client.
-export default function ThemeToggle() {
+// the behavior instance on the client. `themeLabel` is server-stamped (the
+// inverse of the active mode) so the x-text placeholder already shows the right
+// word — no Dark→Light flash before the behavior hydrates.
+export default function ThemeToggle({ themeLabel }: { themeLabel: string }) {
   return (
     <button
       type="button"
@@ -49,13 +51,13 @@ export default function ThemeToggle() {
       aria-label="Toggle theme"
       className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
     >
-      <span x-show="isDark" className="inline-flex">
+      <span x-show="isDark" className="theme-icon-dark inline-flex">
         <Sun size={16} />
       </span>
-      <span x-show="isLight" className="inline-flex">
+      <span x-show="isLight" className="theme-icon-light inline-flex">
         <Moon size={16} />
       </span>
-      <span x-text="label">Dark</span>
+      <span x-text="label">{themeLabel}</span>
     </button>
   )
 }

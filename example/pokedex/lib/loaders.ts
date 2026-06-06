@@ -50,12 +50,17 @@ interface LoaderCtx {
   req: BrustRequest
 }
 
-const chrome = (req: BrustRequest, title: string, crumb: string) => ({
-  title,
-  crumb,
-  mode: (req.cookies.mode === 'light' ? 'light' : 'dark') as 'light' | 'dark',
-  teamProps: { teamInitial: teamStore.list() },
-})
+const chrome = (req: BrustRequest, title: string, crumb: string) => {
+  const mode = (req.cookies.mode === 'light' ? 'light' : 'dark') as 'light' | 'dark'
+  return {
+    title,
+    crumb,
+    mode,
+    // The toggle button shows what it switches TO — the inverse of the active mode.
+    themeLabel: mode === 'dark' ? 'Light' : 'Dark',
+    teamProps: { teamInitial: teamStore.list() },
+  }
+}
 
 export async function homeLoader({ req }: LoaderCtx): Promise<HomeData> {
   const featured = FEATURED.map((p) => ({

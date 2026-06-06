@@ -21,10 +21,12 @@ export default function AppLayout({
   title,
   teamProps,
   mode,
+  themeLabel,
 }: {
   title: string
   teamProps: { teamInitial: TeamMember[] }
   mode: 'dark' | 'light'
+  themeLabel: string
 }) {
   return (
     <BrustPage
@@ -48,7 +50,7 @@ export default function AppLayout({
             <NavLink native href="/pokedex" label="Pokédex" />
             <NavLink native href="/type-chart" label="Type chart" />
             <div className="ml-auto flex items-center gap-2">
-              <ThemeToggle native />
+              <ThemeToggle native themeLabel={themeLabel} />
               {/* Team dock opens via the TeamBuilder island's own floating trigger
                   (the island owns its open state). A navbar button here would be a
                   dead affordance — cross-chunk toggle wiring is out of scope. */}

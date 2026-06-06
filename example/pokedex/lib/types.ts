@@ -23,6 +23,7 @@ export interface ChromeData {
   title: string // dynamic <title> + nav header, via AppLayout's <BrustPage title={title}>
   crumb: string // topbar breadcrumb leaf label
   mode: 'dark' | 'light' // theme, read from the `mode` cookie → <html data-mode={mode}>
+  themeLabel: string // server-stamped toggle label ("Light"/"Dark"), the inverse of mode — SSR placeholder for ThemeToggle's x-text so it doesn't flash
   teamProps: { teamInitial: TeamMember[] } // floating team-dock island initial state
 }
 

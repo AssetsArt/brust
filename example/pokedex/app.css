@@ -1,6 +1,13 @@
 @import "tailwindcss";
 @source "./**/*.{tsx,ts}";
 @custom-variant dark (&:where([data-mode="dark"], [data-mode="dark"] *));
+
+/* Theme-toggle icons: hide the wrong icon at SSR time via the server-rendered
+   <html data-mode> ancestor, so there's no flash before x-show hydrates. After
+   mount, x-show sets inline display (which wins over these stylesheet rules). */
+[data-mode="light"] .theme-icon-dark { display: none; }
+[data-mode="dark"] .theme-icon-light { display: none; }
+
 @theme {
   --color-brand-50:  oklch(0.97 0.02 264);
   --color-brand-500: oklch(0.55 0.20 264);
