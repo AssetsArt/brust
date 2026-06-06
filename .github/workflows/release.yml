@@ -50,18 +50,23 @@ jobs:
           - runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             napi_extra: ""
+          # All Linux CROSS legs use cargo-zigbuild (--cross-compile), not
+          # napi-cross. The TLS dep (rustls→aws-lc-sys) compiles C, which needs
+          # a per-target C compiler; napi-cross provides linkers but not the
+          # *-gcc that aws-lc-sys invokes (e.g. x86_64-linux-musl-gcc,
+          # aarch64-linux-gnu-gcc), so those legs failed with ToolNotFound.
+          # zig cc bundles a C compiler + libc (musl for every arch; glibc 2.17
+          # baseline for gnu when no version suffix is given), so it builds both
+          # the Rust and the aws-lc C sources for every target. The native
+          # x86_64-gnu leg keeps host cc (it already builds fine).
           - runner: ubuntu-latest
             target: aarch64-unknown-linux-gnu
-            napi_extra: "--use-napi-cross"
+            napi_extra: "--cross-compile"
+            setup_zig: true
           - runner: ubuntu-latest
             target: x86_64-unknown-linux-musl
-            napi_extra: "--use-napi-cross"
-          # aarch64-musl: napi-cross ships an aarch64-GNU gcc but no
-          # aarch64-MUSL one (the gnu leg above proves napi-cross works; this
-          # target failed with "linker aarch64-linux-musl-gcc not found"). Use
-          # cargo-zigbuild instead — zig cc bundles musl libc for every arch, so
-          # --cross-compile needs no per-target gcc. (x86_64-musl stays on
-          # napi-cross; it builds fine and changing a passing leg adds risk.)
+            napi_extra: "--cross-compile"
+            setup_zig: true
           - runner: ubuntu-latest
             target: aarch64-unknown-linux-musl
             napi_extra: "--cross-compile"
