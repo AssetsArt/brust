@@ -785,6 +785,36 @@ export const brust = {
         }
       }
 
+      // Worker: seed island.tsx's Component→id registry so a React `<Island>`
+      // marker carries the content-addressed id (`<Name>_<hash>`) — same-name
+      // parity for the React render path, mirroring the native jinja rewrite.
+      // Keyed by component IDENTITY (the imported default export), so two
+      // same-named components from different files get distinct markers/chunks.
+      {
+        const { configureIslandIdRegistry } = await import('./islands/island.tsx')
+        const islandsDir = prebuilt
+          ? path.join(distDir!, 'islands')
+          : path.join(process.cwd(), '.brust', 'islands')
+        const srcManifest = path.join(islandsDir, '_island-sources.json')
+        if (existsSync(srcManifest)) {
+          try {
+            const sources = JSON.parse(await Bun.file(srcManifest).text()) as Record<string, string>
+            const entries: Array<[unknown, string]> = []
+            for (const [id, rel] of Object.entries(sources)) {
+              try {
+                const mod = await import(path.resolve(process.cwd(), rel))
+                if (mod.default) entries.push([mod.default, id])
+              } catch {
+                // Unreadable source — skip; the marker falls back to Component.name.
+              }
+            }
+            configureIslandIdRegistry(entries)
+          } catch {
+            // Malformed manifest — skip (markers fall back to Component.name).
+          }
+        }
+      }
+
       // Render slots for this worker (set in serve() via the worker env). The
       // SAB scales with the slot count so each slot's disjoint sub-region keeps
       // the single-slot capacity; at K=1 this is byte-identical to before.

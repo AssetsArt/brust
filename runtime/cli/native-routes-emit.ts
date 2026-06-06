@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { createRequire } from 'node:module'
 import { dirname, relative, resolve } from 'node:path'
 import { buildDevClientTag } from '../dev/client.ts'
+import { islandChunkBasename } from '../islands/chunk-id.ts'
 import { DIRECTIVES_BOOTSTRAP, ISLANDS_IMPORTMAP_AND_BOOTSTRAP } from '../islands/importmap.ts'
 
 /** Gather transitive component sources starting from a page source file.
@@ -920,6 +921,26 @@ export function reconcileIslandManifest(
 
   writeFileSync(islandsJsonPath, JSON.stringify(enriched))
 
+  // Rewrite each marker's id from the plain component name to the
+  // content-addressed unique id (`<Name>_<hash(sourcePath)>`) — same id the
+  // chunk filename + the bootstrap use — so two same-name islands from different
+  // files get distinct markers → distinct chunks. Keyed by instance (the
+  // data-brust-props var carries it); the marker format is compiler-emitted and
+  // stable (see emit_jinja.rs).
+  const idByInstance = new Map<number, string>()
+  for (const e of enriched) {
+    const ref = pageImports.get(e.component)
+    if (ref) idByInstance.set(e.instance, islandChunkBasename(e.component, ref.spec))
+  }
+  let jinja = readFileSync(jinjaPath, 'utf8')
+  jinja = jinja.replace(
+    /data-brust-island="[^"]*"(\s+data-brust-props="\{\{ island_(\d+)_props \}\}")/g,
+    (whole, rest: string, nStr: string) => {
+      const id = idByInstance.get(Number(nStr))
+      return id ? `data-brust-island="${id}"${rest}` : whole
+    },
+  )
+
   const baked = `{% raw %}${ISLANDS_IMPORTMAP_AND_BOOTSTRAP}{% endraw %}`
-  writeFileSync(jinjaPath, readFileSync(jinjaPath, 'utf8') + baked)
+  writeFileSync(jinjaPath, jinja + baked)
 }

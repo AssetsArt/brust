@@ -464,8 +464,8 @@ test('island marker + importmap injected when route uses <Island>', async () => 
   const r = await fetch(`http://127.0.0.1:${port}/`)
   expect(r.status).toBe(200)
   const body = await r.text()
-  // Marker present, with id + JSON props + hydrate trigger.
-  expect(body).toContain('data-brust-island="Counter"')
+  // Content-addressed marker id from the Component→id registry (React render path).
+  expect(body).toMatch(/data-brust-island="Counter_[a-f0-9]{8}"/)
   expect(body).toContain('data-brust-hydrate="load"')
   expect(body).toContain('data-brust-props="{')
   // Importmap + bootstrap injected.
@@ -932,8 +932,8 @@ test('action-calling island page renders marker + importmap + bootstrap', async 
   const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
     const html = await (await fetch(`http://127.0.0.1:${port}/note`)).text()
-    // Marker for the NoteForm island
-    expect(html).toContain('data-brust-island="NoteForm"')
+    // Content-addressed marker id from the Component→id registry (React render path).
+    expect(html).toMatch(/data-brust-island="NoteForm_[a-f0-9]{8}"/)
     expect(html).toContain('data-brust-hydrate="load"')
     // Importmap + bootstrap script tags
     expect(html).toContain('<script type="importmap">')

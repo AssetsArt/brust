@@ -51,8 +51,9 @@ test('dedupes a reused component and lists each distinct one once', () => {
   const chunks = scanIslandChunks(entry)
 
   expect(chunks.size).toBe(2)
-  expect(chunks.get('Counter')).toBe(counter)
-  expect(chunks.get('Clock')).toBe(clock)
+  // Keyed by content-addressed id (`<Name>_<hash>`); assert by source value.
+  expect([...chunks.values()]).toContain(counter)
+  expect([...chunks.values()]).toContain(clock)
 })
 
 test('discovers an island nested in a component a page imports (transitive)', () => {
@@ -79,12 +80,13 @@ test('discovers an island nested in a component a page imports (transitive)', ()
   const chunks = scanIslandChunks(entry)
 
   expect(chunks.size).toBe(1)
-  expect(chunks.get('Dock')).toBe(dock)
+  expect([...chunks.values()]).toContain(dock)
 })
 
-test('throws naming both paths when two files share an island component name', () => {
-  // Two distinct component files, same local name "Widget", imported by two
-  // different pages → app-uniqueness violation.
+test('two files sharing an island component name → two distinct content-addressed chunks', () => {
+  // Same local name "Widget" from two different files, used by two pages. With
+  // content-addressed ids this is no longer an error — each gets a distinct
+  // `Widget_<hash>` chunk (the markers carry the same unique id).
   const widgetA = write('a/Widget.tsx', 'export default function Widget() { return null }\n')
   const widgetB = write('b/Widget.tsx', 'export default function Widget() { return null }\n')
   write(
@@ -102,8 +104,10 @@ test('throws naming both paths when two files share an island component name', (
     `import PageA from './PageA'\nimport PageB from './PageB'\nexport default [PageA, PageB]\n`,
   )
 
-  expect(() => scanIslandChunks(entry)).toThrow(widgetA)
-  expect(() => scanIslandChunks(entry)).toThrow(widgetB)
+  const chunks = scanIslandChunks(entry)
+  expect(chunks.size).toBe(2)
+  expect([...chunks.values()].sort()).toEqual([widgetA, widgetB].sort())
+  for (const id of chunks.keys()) expect(id).toMatch(/^Widget_[a-f0-9]{8}$/)
 })
 
 test('throws naming the page for an <Island> with no component prop (loud miss)', () => {
@@ -151,9 +155,9 @@ test('does not match an <Island> mentioned in a comment before a self-closing ta
   // Must NOT throw, and must find exactly the one real Island (Counter).
   const chunks = scanIslandChunks(entry)
   expect(chunks.size).toBe(1)
-  expect(chunks.get('Counter')).toBe(counter)
+  expect([...chunks.values()]).toContain(counter)
   // Card is a plain element here, not an island — not a chunk.
-  expect(chunks.has('Card')).toBe(false)
+  expect([...chunks.values()]).not.toContain(resolve(dir, 'Card.tsx'))
 })
 
 // buildIslands(new Map(), {outDir}) smoke: asserts the 3 unconditional runtime

@@ -62,6 +62,19 @@ export function createIslandUsedBox(): IslandUsedBox {
   return { used: false }
 }
 
+// Component function → content-addressed island id (`<Name>_<hash>`). Populated
+// at worker boot (configureIslandIdRegistry) by importing each island source and
+// mapping its default export. Keyed by FUNCTION IDENTITY, so two same-named
+// components from different files map to distinct ids — giving the React render
+// path the same same-name parity the native jinja rewrite gives native routes.
+// Empty in unit tests / when no manifest → markers fall back to Component.name.
+let islandIdRegistry: Map<unknown, string> = new Map()
+
+/** Seed the Component→id registry (worker boot). */
+export function configureIslandIdRegistry(entries: Iterable<[unknown, string]>): void {
+  islandIdRegistry = new Map(entries)
+}
+
 /** Carries the per-render {@link IslandUsedBox} down to every `<Island>`. The
  * renderer wraps the tree in a Provider with a fresh box; an `<Island>` rendered
  * with no Provider (e.g. a standalone `renderToString` outside the React render
@@ -83,7 +96,11 @@ export function Island<P extends object>({
   // rendered without a Provider (standalone renderToString).
   const usedBox = useContext(IslandUsedContext)
   if (usedBox) usedBox.used = true
-  const resolvedId = Component.name
+  // Marker id: the content-addressed island id (`<Name>_<hash>`) from the
+  // registry (keyed by component identity → same-name parity), falling back to
+  // the plain Component name when the registry isn't seeded (unit test, or a
+  // component not in the manifest — the _islands.js name→url map resolves it).
+  const resolvedId = islandIdRegistry.get(Component) ?? Component.name
   if (!resolvedId) {
     throw new Error(
       '<Island> component has no `.name`; the island id is derived from ' +

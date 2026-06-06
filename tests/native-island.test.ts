@@ -132,7 +132,7 @@ test('GET /_test/native-island — client-only island: static shell + empty CSR 
 
   // Client-only island mount: id, CSR marker, and the entity-encoded props JSON
   // of { start: 3 } (single-encoding — NOT double-escaped to &amp;quot;).
-  expect(body).toContain('data-brust-island="Counter"')
+  expect(body).toMatch(/data-brust-island="Counter_[a-f0-9]{8}"/)
   expect(body).toContain('data-brust-csr')
   expect(body).toContain('data-brust-props="{&quot;start&quot;:3}"')
 
