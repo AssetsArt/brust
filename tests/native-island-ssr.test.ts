@@ -243,8 +243,8 @@ test('GET /_test/native-island-ssr — SSR island: static shell + server-rendere
   // Static shell rendered by jinja from the loader's `greeting`.
   expect(body).toContain('<h1>SSR islands</h1>')
 
-  // The island mount: id + the entity-encoded props JSON of { start: 5 }.
-  expect(body).toContain('data-brust-island="Counter"')
+  // The island mount: content-addressed id + the entity-encoded props JSON of { start: 5 }.
+  expect(body).toMatch(/data-brust-island="Counter_[a-f0-9]{8}"/)
   expect(body).toContain('data-brust-props="{&quot;start&quot;:5}"')
 
   // SSR (not client-only): the mount must NOT carry the data-brust-csr marker.
@@ -262,7 +262,7 @@ test('GET /_test/native-island-ssr — SSR island: static shell + server-rendere
   // renderToString(Counter, {start:5}) === a <button data-testid="counter" ...>
   // whose text is "count: 5" (React inserts <!-- --> separators between the
   // dynamic text segments).
-  const open = body.indexOf('<div data-brust-island="Counter"')
+  const open = body.search(/<div data-brust-island="Counter_[a-f0-9]{8}"/)
   expect(open).toBeGreaterThanOrEqual(0)
   const tagEnd = body.indexOf('>', open)
   const close = body.indexOf('</div>', tagEnd)
@@ -300,7 +300,7 @@ test('nav: /_brust/page/<native route> returns {html,title} (regression: native 
   expect(typeof json.title).toBe('string')
   // The native page's SSR island (with its server-rendered markup) survives the
   // navigation render — proving the jinja path ran, not a broken React render.
-  expect(json.html).toContain('data-brust-island="Counter"')
+  expect(json.html).toMatch(/data-brust-island="Counter_[a-f0-9]{8}"/)
   expect(json.html).toContain('count')
   expect(json.html).toContain('5')
   // Not the old error envelope.
@@ -336,7 +336,7 @@ test('GET /_test/native-two-islands — same Counter twice (client-only + ssr): 
   // Both mounts carry the IDENTICAL component-name marker — they are
   // disambiguated by source order, not by the marker. Collect BOTH <div
   // data-brust-island="Counter" …>…</div> mounts in source order.
-  const mountRe = /<div data-brust-island="Counter"[\s\S]*?<\/div>/g
+  const mountRe = /<div data-brust-island="Counter_[a-f0-9]{8}"[\s\S]*?<\/div>/g
   const mounts = body.match(mountRe) ?? []
   expect(mounts).toHaveLength(2)
   const [m0, m1] = mounts
@@ -397,7 +397,9 @@ test('GET /native-ssr-comp — Island nested in the SSR component still hydrates
   const res = await fetch(`${BASE_URL}/native-ssr-comp`)
   const body = await res.text()
 
-  expect(body).toContain('data-brust-island="Counter"')
+  // React render path (island.tsx) emits the content-addressed id from the
+  // Component→id registry (same-name parity), same as native jinja markers.
+  expect(body).toMatch(/data-brust-island="Counter_[a-f0-9]{8}"/)
   expect(body).toContain('data-brust-props=')
   // Bootstrap must be present (injected because the SSR component uses an island)
   // — otherwise the marker ships but never hydrates.

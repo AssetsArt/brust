@@ -1,9 +1,9 @@
-import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { isAbsolute, relative, resolve } from 'node:path'
 import type { BunPlugin } from 'bun'
 import { scanImports } from '../cli/native-routes-emit.ts'
+import { islandChunkBasename } from './chunk-id.ts'
 
 export interface IslandsBuildResult {
   /** Absolute path to the output directory passed to brust's Rust side. */
@@ -35,19 +35,13 @@ export interface BuildIslandsOptions {
  *    `component={Ident}`. A tag with no `component` is a hard error (F3:
  *    never silently skip an island).
  * 3. Resolve each captured ident through that page's OWN imports.
- * 4. Dedup islands that reuse the same component+path; throw on two different
- *    files whose island components share a name (ids must be app-unique).
+ * 4. Key by the content-addressed {@link islandChunkBasename} (`<Name>_<hash>`),
+ *    NOT the bare name — so two DIFFERENT files exporting a same-named component
+ *    produce two distinct chunks. Same name + same file dedups (same id). The
+ *    marker carries this same id (native: reconcileIslandManifest rewrite;
+ *    React: the Component→id registry seeded at worker boot), so there is no
+ *    app-unique-name requirement.
  */
-/** Content-addressed island chunk basename = `<Name>_<8hex(sha256 cwd-relative
- * source path)>`. Stable + app-unique (mirrors the directive chunk scheme) so
- * the URL is content-busting-stable; the bootstrap resolves the plain marker id
- * to this via the `_islands.js` map. */
-export function islandChunkBasename(name: string, absSourcePath: string): string {
-  const rel = relative(process.cwd(), absSourcePath).replaceAll('\\', '/')
-  const hash = createHash('sha256').update(rel).digest('hex').slice(0, 8)
-  return `${name}_${hash}`
-}
-
 export function scanIslandChunks(routesEntryFile: string): Map<string, string> {
   const chunks = new Map<string, string>()
   const visited = new Set<string>()
@@ -91,16 +85,10 @@ export function scanIslandChunks(routesEntryFile: string): Map<string, string> {
             `(expected \`import ${ident} from "..."\`)`,
         )
       }
-      const existing = chunks.get(ident)
-      if (existing === undefined) {
-        chunks.set(ident, src)
-      } else if (existing !== src) {
-        throw new Error(
-          `island component name "${ident}" is used by two different files ` +
-            `(${existing} and ${src}); island component names must be app-unique`,
-        )
-      }
-      // existing === src → same component reused; dedupe (skip).
+      // Key by the content-addressed id: same name + same file → one chunk
+      // (dedup); same name + DIFFERENT file → two distinct ids → two chunks.
+      // Collisions are impossible (the id embeds a hash of the source path).
+      chunks.set(islandChunkBasename(ident, src), src)
     }
   }
 
@@ -135,10 +123,12 @@ export async function buildIslands(
   // those imports to the scoped name map (otherwise Bun emits the CSS as an asset).
   const externals = ['react', 'react/jsx-runtime', 'react-dom/client']
   const plugins = options.plugins ?? []
-  // id (plain Component name) → content-addressed chunk URL. The chunk filename
-  // is `<Name>_<hash>.js`; the data-brust-island marker stays the plain name, so
-  // the bootstrap resolves it to the hashed chunk via the `_islands.js` map below.
+  // The map is keyed by the content-addressed id (scanIslandChunks), which IS the
+  // chunk basename — the data-brust-island marker carries that same id, so the
+  // bootstrap loads the right chunk directly.
   const chunks: Record<string, string> = {}
+  const sources: Record<string, string> = {}
+  const urlsByName = new Map<string, string[]>()
   let count = 0
   for (const [id, entry] of islands) {
     if (!isValidIslandId(id)) {
@@ -147,20 +137,40 @@ export async function buildIslands(
           `allowed: [A-Za-z0-9_-]+ (matches the server's filename safety check)`,
       )
     }
-    const file = `${islandChunkBasename(id, entry)}.js`
+    const file = `${id}.js`
     await buildOne([entry], outDir, file, externals, plugins)
-    chunks[id] = `/_brust/islands/${file}`
+    const url = `/_brust/islands/${file}`
+    chunks[id] = url
+    // PROJECT-RELATIVE source path (no leaked abs build path); the worker
+    // rehydrates it against cwd to build the Component→id registry.
+    sources[id] = relative(process.cwd(), entry).replaceAll('\\', '/')
+    const name = id.replace(/_[a-f0-9]{8}$/, '')
+    const list = urlsByName.get(name)
+    if (list) list.push(url)
+    else urlsByName.set(name, [url])
     count++
+  }
+  // Also expose each chunk by its plain Component name when that name is
+  // UNAMBIGUOUS (one source) — a defensive fallback for a marker that carries
+  // the bare name (e.g. the registry wasn't seeded). Ambiguous names are omitted:
+  // those markers carry the unique id (native rewrite / React registry).
+  for (const [name, urls] of urlsByName) {
+    if (urls.length === 1 && !(name in chunks)) chunks[name] = urls[0]!
   }
 
   // id → chunk URL map, served at /_brust/islands/_islands.js. The bootstrap
-  // loads it once and resolves a marker's plain id to its hashed chunk (with a
-  // legacy `/_brust/islands/<id>.js` fallback). ESM default export.
+  // loads it once and resolves a marker's id to its chunk (legacy
+  // `/_brust/islands/<id>.js` fallback). ESM default export.
   await writeFile(
     resolve(outDir, '_islands.js'),
     `export default ${JSON.stringify(chunks)}\n`,
     'utf-8',
   )
+
+  // id → project-relative source path. The worker imports each at boot and maps
+  // the default export (component fn) → id, seeding island.tsx's registry so the
+  // React render path emits the content-addressed marker (same-name parity).
+  await writeFile(resolve(outDir, '_island-sources.json'), JSON.stringify(sources), 'utf-8')
 
   // 4. Bootstrap (react + react-dom/client external; uses importmap).
   const bootstrapSrc = resolve(import.meta.dir, 'bootstrap.ts')
