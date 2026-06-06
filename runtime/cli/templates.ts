@@ -71,6 +71,7 @@ function pokedexExtraFiles(ctx: ScaffoldCtx): EmittedFile[] {
     private: true,
     type: 'module',
     scripts: {
+      preview: 'bun run ./dist/index.js',
       dev: 'brustjs dev',
       build: 'brustjs build',
     },
