@@ -22,7 +22,7 @@ export default function Home() { return <button className={styles.primary}>x</bu
     )
 
     const outDir = path.join(dir, 'out')
-    const routes = [{ fullPath: '/', componentSource: path.join(dir, 'Home.tsx') }]
+    const routes = [{ fullPath: '/', componentSources: [path.join(dir, 'Home.tsx')] }]
     const manifest = await buildComponentCss({
       scanRoot: dir,
       outDir,
@@ -50,13 +50,17 @@ export default function Home() { return <button className={styles.primary}>x</bu
     // 4. routeChunks populated, sorted, deduplicated
     expect(manifest.routeChunks['/']?.length).toBe(2)
 
-    // 5. .d.ts generated next to .module.css
-    const dts = await readFile(path.join(dir, 'Button.module.css.d.ts'), 'utf-8')
+    // 5. .d.ts emitted into the build output (outDir/types), NOT next to the
+    // source .module.css — generated artifacts stay out of the project tree.
+    const dts = await readFile(path.join(outDir, 'types', 'Button.module.css.d.ts'), 'utf-8')
     expect(dts).toContain('readonly primary')
     expect(dts).toContain('readonly secondary')
+    // And nothing is written beside the source.
+    expect(existsSync(path.join(dir, 'Button.module.css.d.ts'))).toBe(false)
 
-    // 6. component-manifest.json written
-    const mf = await readFile(path.join(outDir, 'css', 'component-manifest.json'), 'utf-8')
+    // 6. component-manifest.json written beside the components dir (where the
+    // runtime readers look: <cssDir>/component-manifest.json).
+    const mf = await readFile(path.join(outDir, 'component-manifest.json'), 'utf-8')
     expect(JSON.parse(mf).version).toBe(1)
   })
 
@@ -68,7 +72,7 @@ export default function Home() { return <button className={styles.primary}>x</bu
       scanRoot: dir,
       outDir,
       tailwindCompile: null,
-      routes: [{ fullPath: '/', componentSource: path.join(dir, 'Home.tsx') }],
+      routes: [{ fullPath: '/', componentSources: [path.join(dir, 'Home.tsx')] }],
     })
     expect(Object.keys(manifest.modules).length).toBe(0)
     expect(Object.keys(manifest.routeChunks).length).toBe(1)

@@ -60,7 +60,14 @@ export async function buildComponentCss(
         lines.push(`  readonly ${k}: string`)
       }
       lines.push('}', 'export default styles', '')
-      await writeFile(absPath + '.d.ts', lines.join('\n'), 'utf-8')
+      // Emit the per-module .d.ts into the BUILD output (under outDir/types,
+      // mirroring the source layout) instead of next to the source .module.css —
+      // generated artifacts belong in .brust/dist, not the project tree. Import
+      // resolution uses the framework-shipped ambient `*.module.css` declaration
+      // (runtime/css-modules.d.ts); these precise files are an inspectable record.
+      const dtsPath = path.join(opts.outDir, 'types', `${rel}.d.ts`)
+      await mkdir(path.dirname(dtsPath), { recursive: true })
+      await writeFile(dtsPath, lines.join('\n'), 'utf-8')
     }
   }
 
@@ -70,9 +77,10 @@ export async function buildComponentCss(
   const routeChunks = computeRouteChunks(opts.routes, scan, lookup)
 
   const manifest: ComponentCssManifest = { version: 1, modules, routeChunks }
-  await writeComponentCssManifest(
-    path.join(opts.outDir, 'css', 'component-manifest.json'),
-    manifest,
-  )
+  // opts.outDir is already the css dir (chunks land in opts.outDir/components,
+  // served at /_brust/css/components/). The manifest sits beside it at
+  // opts.outDir/component-manifest.json — where both readers look
+  // (dist/css/component-manifest.json and .brust/css/component-manifest.json).
+  await writeComponentCssManifest(path.join(opts.outDir, 'component-manifest.json'), manifest)
   return manifest
 }

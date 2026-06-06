@@ -27,29 +27,33 @@ describe('computeRouteChunks', () => {
       [path.join(dir, 'home.css')]: { chunk: '/_brust/css/components/a.css' },
       [path.join(dir, 'home.module.css')]: { chunk: '/_brust/css/components/b.css' },
     }
-    const routes = [{ fullPath: '/', componentSource: path.join(dir, 'Home.tsx') }]
+    const routes = [{ fullPath: '/', componentSources: [path.join(dir, 'Home.tsx')] }]
     const result = computeRouteChunks(routes, scan, modules)
     expect(result['/']).toEqual(['/_brust/css/components/a.css', '/_brust/css/components/b.css'])
   })
 
-  test('deduplicates shared chunks across nested imports', async () => {
+  test('walks transitively: a chunk imported by a NESTED component links to the route', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'route-deps-'))
-    await writeFile(path.join(dir, 'A.tsx'), `import './shared.css'\n`)
+    // Only A imports the css; B default-imports A. The route names B as its
+    // component source — the chunk is reachable ONLY via the transitive walk
+    // B → A (this is what removes the need to import the .css in routes.tsx).
+    await writeFile(
+      path.join(dir, 'A.tsx'),
+      `import './shared.css'\nexport default function A(){return null}\n`,
+    )
     await writeFile(
       path.join(dir, 'B.tsx'),
-      `import './shared.css'\nimport './A'\nexport default function B() { return null }\n`,
+      `import A from './A'\nexport default function B() { return A }\n`,
     )
     await writeFile(path.join(dir, 'shared.css'), '')
 
     const sharedDep = { path: path.join(dir, 'shared.css'), isModule: false, importedName: null }
-    const scan = new Map([
-      [path.join(dir, 'A.tsx'), [sharedDep]],
-      [path.join(dir, 'B.tsx'), [sharedDep]],
-    ])
+    // Only A.tsx carries the css dep — B does NOT import it directly.
+    const scan = new Map([[path.join(dir, 'A.tsx'), [sharedDep]]])
     const modules: Record<string, { chunk: string }> = {
       [path.join(dir, 'shared.css')]: { chunk: '/_brust/css/components/shared.css' },
     }
-    const routes = [{ fullPath: '/', componentSource: path.join(dir, 'B.tsx') }]
+    const routes = [{ fullPath: '/', componentSources: [path.join(dir, 'B.tsx')] }]
     const result = computeRouteChunks(routes, scan, modules)
     expect(result['/']).toEqual(['/_brust/css/components/shared.css'])
   })
@@ -75,7 +79,7 @@ describe('computeRouteChunks', () => {
       [path.join(dir, 'a.css')]: { chunk: '/_brust/css/components/a.css' },
       [path.join(dir, 'm.css')]: { chunk: '/_brust/css/components/m.css' },
     }
-    const routes = [{ fullPath: '/', componentSource: path.join(dir, 'X.tsx') }]
+    const routes = [{ fullPath: '/', componentSources: [path.join(dir, 'X.tsx')] }]
     const result = computeRouteChunks(routes, scan, modules)
     expect(result['/']).toEqual([
       '/_brust/css/components/a.css',

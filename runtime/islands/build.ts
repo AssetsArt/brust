@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { mkdir, rm } from 'node:fs/promises'
 import { isAbsolute, resolve } from 'node:path'
+import type { BunPlugin } from 'bun'
 import { scanImports } from '../cli/native-routes-emit.ts'
 
 export interface IslandsBuildResult {
@@ -13,6 +14,12 @@ export interface IslandsBuildResult {
 export interface BuildIslandsOptions {
   /** Override the output directory. Default: `<cwd>/.brust/islands`. */
   outDir?: string
+  /** Build plugins passed straight to `Bun.build` for the per-island chunks.
+   * Needed for the component-CSS loader: global `Bun.plugin()` registrations do
+   * NOT apply to `Bun.build`, so an island that `import`s a `.module.css` must
+   * get the resolver here or Bun emits the CSS as a separate asset and collides
+   * on the output filename (X.module.css + X.tsx → both X.js). */
+  plugins?: BunPlugin[]
 }
 
 /** Scan a routes entry file for `<Island component={X} />` usage and derive the
@@ -109,8 +116,11 @@ export async function buildIslands(
   // 2. react-dom/client (react external; consumes _react.js via importmap).
   await buildOne([`${entriesDir}/react-dom.ts`], outDir, '_react-dom.js', ['react'])
 
-  // 3. Per-island chunks (all 3 runtime specifiers external).
+  // 3. Per-island chunks (all 3 runtime specifiers external). Island sources may
+  // `import styles from './X.module.css'`, so the component-CSS plugins resolve
+  // those imports to the scoped name map (otherwise Bun emits the CSS as an asset).
   const externals = ['react', 'react/jsx-runtime', 'react-dom/client']
+  const plugins = options.plugins ?? []
   let count = 0
   for (const [id, entry] of islands) {
     if (!isValidIslandId(id)) {
@@ -119,7 +129,7 @@ export async function buildIslands(
           `allowed: [A-Za-z0-9_-]+ (matches the server's filename safety check)`,
       )
     }
-    await buildOne([entry], outDir, `${id}.js`, externals)
+    await buildOne([entry], outDir, `${id}.js`, externals, plugins)
     count++
   }
 
@@ -135,6 +145,7 @@ async function buildOne(
   outdir: string,
   naming: string,
   external: string[],
+  plugins: BunPlugin[] = [],
 ): Promise<void> {
   const result = await Bun.build({
     entrypoints,
@@ -144,6 +155,7 @@ async function buildOne(
     target: 'browser',
     external,
     minify: true,
+    plugins,
     define: {
       'process.env.NODE_ENV': '"production"',
     },

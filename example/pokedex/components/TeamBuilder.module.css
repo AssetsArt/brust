@@ -1,0 +1,47 @@
+/* CSS Modules use-case (dogfood).
+ *
+ * brust runs every co-located `.module.css` through Lightning CSS at build:
+ * class + @keyframes names are scoped to `<name>_<hash>` and emitted as a
+ * per-component chunk under `dist/css/components/<sha8>.css`. The chunk is
+ * linked into the page <head> via the component-CSS manifest (route → chunks),
+ * and `import styles from './TeamBuilder.module.css'` resolves to the
+ * original→hashed name map through brust's Bun.plugin — so `styles.panel`
+ * is the scoped class string at runtime.
+ *
+ * This is for things Tailwind utilities express awkwardly: keyframe entrance
+ * animations + pseudo-elements, scoped to this island. Plain CSS only — the
+ * component-CSS pass runs without Tailwind, so no `@apply` here. */
+
+/* Roster panel: rise + fade in when the dock opens. */
+.panel {
+  animation: rise 0.18s ease-out;
+  transform-origin: bottom right;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(0.5rem) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Count badge on the floating trigger: a quick pop on (re)mount. */
+.badge {
+  animation: pop 0.22s ease-out;
+}
+
+@keyframes pop {
+  0% {
+    transform: scale(0.6);
+  }
+  60% {
+    transform: scale(1.15);
+  }
+  100% {
+    transform: scale(1);
+  }
+}

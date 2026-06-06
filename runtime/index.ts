@@ -372,11 +372,13 @@ export const brust = {
       console.log(`[brust] main: spawning ${workers} worker threads`)
       if (cacheMaxEntries !== undefined) this.configureCache({ maxEntries: cacheMaxEntries })
 
-      // Component CSS pipeline. Must run BEFORE buildIslands so the Bun.plugin
-      // is active during island bundling — otherwise Bun's default loader would
-      // see .module.css imports as separate asset outputs, producing duplicate-
-      // output-path errors when an island and its module share a basename
-      // (e.g. Counter.tsx + Counter.module.css → both want to emit Counter.js).
+      // Component CSS pipeline. Build the manifest + capture the loader plugin
+      // BEFORE buildIslands and pass it EXPLICITLY below (global Bun.plugin()
+      // does NOT reach Bun.build) — otherwise Bun's default loader emits
+      // .module.css as a separate asset and collides when an island and its
+      // module share a basename (Counter.tsx + Counter.module.css → both
+      // want to emit Counter.js).
+      const cssBuildPlugins: import('bun').BunPlugin[] = []
       {
         const { readComponentCssManifest } = await import('./css/manifest.ts')
         const { cssLoaderPlugin } = await import('./css/component-loader.ts')
@@ -390,9 +392,19 @@ export const brust = {
           const scan = await scanCssImports(scanRoot)
           if (scan.size > 0) {
             const { buildComponentCss } = await import('./css/component-build.ts')
+            const { scanImports } = await import('./cli/native-routes-emit.ts')
+            const routesFile = path.join(scanRoot, 'routes.tsx')
+            const idents = existsSync(routesFile)
+              ? scanImports(routesFile)
+              : new Map<string, string>()
             const routeForCss = opts.routes.map((r) => ({
               fullPath: r.fullPath,
-              componentSource: path.join(scanRoot, 'routes.tsx'),
+              // Resolve the route's component chain (layout → leaf) to source
+              // files; computeRouteChunks BFS-walks each subtree for CSS deps.
+              componentSources: r.chain
+                .map((node) => (node as { Component?: { name?: string } }).Component?.name)
+                .map((name) => (name ? idents.get(name) : undefined))
+                .filter((p): p is string => typeof p === 'string'),
             }))
             const cssOutDir = path.join(process.cwd(), '.brust', 'css')
             manifest = await buildComponentCss({
@@ -408,7 +420,9 @@ export const brust = {
         }
 
         if (manifest) {
-          Bun.plugin(cssLoaderPlugin(manifest))
+          const plugin = cssLoaderPlugin(manifest)
+          Bun.plugin(plugin) // runtime/SSR resolution of .module.css in the worker isolate
+          cssBuildPlugins.push(plugin) // explicit resolution for island Bun.build
           for (const [routePath, hrefs] of Object.entries(manifest.routeChunks)) {
             configureCssHrefsForRoute(routePath, hrefs)
           }
@@ -429,7 +443,7 @@ export const brust = {
           const islandMap = scanIslandChunks(routesPath)
           let islandsDir: string | undefined
           if (islandMap.size > 0) {
-            const islands = await build(islandMap)
+            const islands = await build(islandMap, { plugins: cssBuildPlugins })
             islandsDir = islands.outDir
             console.log(`[brust] main: built ${islands.islandCount} island chunk(s)`)
           }
@@ -640,9 +654,17 @@ export const brust = {
             if (scan.size === 0) return
             const { buildComponentCss } = await import('./css/component-build.ts')
             const { cssLoaderPlugin } = await import('./css/component-loader.ts')
+            const { scanImports } = await import('./cli/native-routes-emit.ts')
+            const routesFile = pathModule.join(scanRoot, 'routes.tsx')
+            const idents = existsSync(routesFile)
+              ? scanImports(routesFile)
+              : new Map<string, string>()
             const routeForCss = opts.routes.map((r) => ({
               fullPath: r.fullPath,
-              componentSource: pathModule.join(scanRoot, 'routes.tsx'),
+              componentSources: r.chain
+                .map((node) => (node as { Component?: { name?: string } }).Component?.name)
+                .map((name) => (name ? idents.get(name) : undefined))
+                .filter((p): p is string => typeof p === 'string'),
             }))
             const cssOutDir = pathModule.join(process.cwd(), '.brust', 'css')
             const manifest = await buildComponentCss({
@@ -744,9 +766,10 @@ export const brust = {
       }
 
       // Worker: register the component CSS Bun.plugin so .module.css imports
-      // resolve to the same hash map main saw. (Workers don't seed
-      // configureCssHrefsForRoute — that's a renderer concern only on the
-      // main thread.)
+      // resolve to the same hash map main saw, AND seed the per-route CSS hrefs.
+      // The streaming renderer (render/stream.ts) runs HERE in the worker and
+      // reads getCssHrefsForRoute to inject the <link> before </head> — so the
+      // route→chunk map must be configured in the worker, not just on main.
       {
         const { readComponentCssManifest } = await import('./css/manifest.ts')
         const { cssLoaderPlugin } = await import('./css/component-loader.ts')
@@ -756,6 +779,9 @@ export const brust = {
         const manifest = await readComponentCssManifest(manifestPath)
         if (manifest) {
           Bun.plugin(cssLoaderPlugin(manifest))
+          for (const [routePath, hrefs] of Object.entries(manifest.routeChunks)) {
+            configureCssHrefsForRoute(routePath, hrefs)
+          }
         }
       }
 
