@@ -82,7 +82,7 @@ export default function Home({
                   <Sparkles size={11} /> NEW
                 </span>
                 <span className="text-[13px] font-medium text-white/85">
-                  v0.1 alpha — Rust in Bun, shipping now
+                  v{version} — Rust in Bun, shipping now
                 </span>
               </span>
               <h1 className="font-display text-5xl font-black leading-[1.02] tracking-tight text-white sm:text-6xl">
@@ -147,8 +147,8 @@ export default function Home({
                 Islands + store
               </h3>
               <p className="mt-1.5 text-[14.5px] leading-relaxed text-slate-600 dark:text-slate-400">
-                Ship interactivity as opt-in islands. A signal store shares state across chunks with
-                one window singleton.
+                Hydrate a React component as an island inside a native route. A signal store shares
+                state across islands and native components — one window singleton.
               </p>
             </a>
             <a href="/docs/actions" className="b-feature-card block">
@@ -205,16 +205,18 @@ export default function Home({
         {/* ── live example ── */}
         <section className="mx-auto max-w-5xl px-6 pt-14 pb-6">
           <span className="b-pill">
-            <Boxes size={13} /> Islands
+            <Zap size={13} /> Native interactivity
           </span>
           <h2 className="mt-4 font-display text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white">
             Interactive where it counts. Static everywhere else.
           </h2>
           <p className="mt-3 max-w-2xl text-[16px] leading-relaxed text-slate-600 dark:text-slate-300">
-            This counter is a react-free directive component — its logic ships as an on-demand
-            chunk. The rest of the page is plain HTML. Click it; then open the source.
+            This counter isn't an island — it's a native component made interactive with{' '}
+            <code>x-*</code> directives and a co-located <code>behavior</code>, fully react-free.
+            Its logic ships as an on-demand chunk; the rest of the page stays plain HTML. Click it,
+            then open the source.
           </p>
-          <Example native title="Counter · native directive" codeHtml={counterHtml}>
+          <Example native title="Counter · native interactivity" codeHtml={counterHtml}>
             <Counter native />
           </Example>
         </section>

@@ -13,16 +13,24 @@
 
 export const S = {
   // ── Home ───────────────────────────────────────────────────────────────────
+  // Real routes from example/pokedex (trimmed) — every route native: compiled to
+  // a minijinja template and rendered in Rust. Nested under one AppLayout/<Outlet>.
   heroRoutes: `import { defineRoutes } from 'brustjs/routes'
-import Home from './pages/Home'
-import Dashboard from './pages/Dashboard'
+import AppLayout from './components/AppLayout'
+import { homeLoader, detailLoader } from './lib/loaders'
+import HomePage from './pages/HomePage'
+import DetailPage from './pages/DetailPage'
 
 export const routes = defineRoutes([
-  // Compiled to a minijinja template, rendered in Rust. Zero React server-side.
-  { path: '/', Component: Home, native: true, loader: homeLoader },
-
-  // React 19 streaming SSR + islands.
-  { path: '/dashboard', Component: Dashboard, loader: dashboardLoader },
+  {
+    Component: AppLayout,            // native layout — renders <Outlet/>
+    native: true,
+    children: [
+      // rendered in Rust, zero client JS
+      { path: '/', Component: HomePage, native: true, loader: homeLoader },
+      { path: '/pokemon/{name}', Component: DetailPage, native: true, loader: detailLoader },
+    ],
+  },
 ])`,
 
   // ── Introduction ────────────────────────────────────────────────────────────
