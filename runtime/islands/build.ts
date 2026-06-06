@@ -1,6 +1,8 @@
+import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { mkdir, rm } from 'node:fs/promises'
-import { isAbsolute, resolve } from 'node:path'
+import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { isAbsolute, relative, resolve } from 'node:path'
+import type { BunPlugin } from 'bun'
 import { scanImports } from '../cli/native-routes-emit.ts'
 
 export interface IslandsBuildResult {
@@ -8,11 +10,20 @@ export interface IslandsBuildResult {
   outDir: string
   /** Number of island chunks emitted (excludes runtime + bootstrap). */
   islandCount: number
+  /** id → content-addressed chunk URL (`/_brust/islands/<id>_<hash>.js`). Also
+   * written to `_islands.js` for the client bootstrap to resolve at runtime. */
+  chunks: Record<string, string>
 }
 
 export interface BuildIslandsOptions {
   /** Override the output directory. Default: `<cwd>/.brust/islands`. */
   outDir?: string
+  /** Build plugins passed straight to `Bun.build` for the per-island chunks.
+   * Needed for the component-CSS loader: global `Bun.plugin()` registrations do
+   * NOT apply to `Bun.build`, so an island that `import`s a `.module.css` must
+   * get the resolver here or Bun emits the CSS as a separate asset and collides
+   * on the output filename (X.module.css + X.tsx → both X.js). */
+  plugins?: BunPlugin[]
 }
 
 /** Scan a routes entry file for `<Island component={X} />` usage and derive the
@@ -27,6 +38,16 @@ export interface BuildIslandsOptions {
  * 4. Dedup islands that reuse the same component+path; throw on two different
  *    files whose island components share a name (ids must be app-unique).
  */
+/** Content-addressed island chunk basename = `<Name>_<8hex(sha256 cwd-relative
+ * source path)>`. Stable + app-unique (mirrors the directive chunk scheme) so
+ * the URL is content-busting-stable; the bootstrap resolves the plain marker id
+ * to this via the `_islands.js` map. */
+export function islandChunkBasename(name: string, absSourcePath: string): string {
+  const rel = relative(process.cwd(), absSourcePath).replaceAll('\\', '/')
+  const hash = createHash('sha256').update(rel).digest('hex').slice(0, 8)
+  return `${name}_${hash}`
+}
+
 export function scanIslandChunks(routesEntryFile: string): Map<string, string> {
   const chunks = new Map<string, string>()
   const visited = new Set<string>()
@@ -109,8 +130,15 @@ export async function buildIslands(
   // 2. react-dom/client (react external; consumes _react.js via importmap).
   await buildOne([`${entriesDir}/react-dom.ts`], outDir, '_react-dom.js', ['react'])
 
-  // 3. Per-island chunks (all 3 runtime specifiers external).
+  // 3. Per-island chunks (all 3 runtime specifiers external). Island sources may
+  // `import styles from './X.module.css'`, so the component-CSS plugins resolve
+  // those imports to the scoped name map (otherwise Bun emits the CSS as an asset).
   const externals = ['react', 'react/jsx-runtime', 'react-dom/client']
+  const plugins = options.plugins ?? []
+  // id (plain Component name) → content-addressed chunk URL. The chunk filename
+  // is `<Name>_<hash>.js`; the data-brust-island marker stays the plain name, so
+  // the bootstrap resolves it to the hashed chunk via the `_islands.js` map below.
+  const chunks: Record<string, string> = {}
   let count = 0
   for (const [id, entry] of islands) {
     if (!isValidIslandId(id)) {
@@ -119,15 +147,26 @@ export async function buildIslands(
           `allowed: [A-Za-z0-9_-]+ (matches the server's filename safety check)`,
       )
     }
-    await buildOne([entry], outDir, `${id}.js`, externals)
+    const file = `${islandChunkBasename(id, entry)}.js`
+    await buildOne([entry], outDir, file, externals, plugins)
+    chunks[id] = `/_brust/islands/${file}`
     count++
   }
+
+  // id → chunk URL map, served at /_brust/islands/_islands.js. The bootstrap
+  // loads it once and resolves a marker's plain id to its hashed chunk (with a
+  // legacy `/_brust/islands/<id>.js` fallback). ESM default export.
+  await writeFile(
+    resolve(outDir, '_islands.js'),
+    `export default ${JSON.stringify(chunks)}\n`,
+    'utf-8',
+  )
 
   // 4. Bootstrap (react + react-dom/client external; uses importmap).
   const bootstrapSrc = resolve(import.meta.dir, 'bootstrap.ts')
   await buildOne([bootstrapSrc], outDir, '_bootstrap.js', externals)
 
-  return { outDir, islandCount: count }
+  return { outDir, islandCount: count, chunks }
 }
 
 async function buildOne(
@@ -135,6 +174,7 @@ async function buildOne(
   outdir: string,
   naming: string,
   external: string[],
+  plugins: BunPlugin[] = [],
 ): Promise<void> {
   const result = await Bun.build({
     entrypoints,
@@ -144,6 +184,7 @@ async function buildOne(
     target: 'browser',
     external,
     minify: true,
+    plugins,
     define: {
       'process.env.NODE_ENV': '"production"',
     },

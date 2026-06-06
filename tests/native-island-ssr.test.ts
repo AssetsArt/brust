@@ -143,10 +143,10 @@ beforeAll(async () => {
   expect(inst0.propsPath).not.toBe(inst1.propsPath)
   // Both instances resolve to the SAME source file (same Counter reused).
   expect(inst0.sourcePath).toBe(inst1.sourcePath)
-  // Chunk dedup: EXACTLY one Counter*.js file in the islands output dir.
+  // Chunk dedup: EXACTLY one content-addressed Counter_<hash>.js in the output.
   const islandsOutDir = resolve(FIXTURE_DIR, '.brust/islands')
-  const counterChunks = readdirSync(islandsOutDir).filter((f) => /^Counter.*\.js$/.test(f))
-  expect(counterChunks).toEqual(['Counter.js'])
+  const counterChunks = readdirSync(islandsOutDir).filter((f) => /^Counter_[a-f0-9]+\.js$/.test(f))
+  expect(counterChunks).toHaveLength(1)
   // The two-island jinja carries BOTH instances' context keys.
   const twoJinjaSrc = readFileSync(twoJinjaPath, 'utf8')
   expect(twoJinjaSrc).toContain('island_0_props') // client-only instance
@@ -319,9 +319,14 @@ test('GET /_test/native-two-islands — same Counter twice (client-only + ssr): 
   const body = await res.text()
   expect(body).toContain('<h1>Two islands</h1>')
 
-  // Exactly ONE Counter.js chunk is SERVED (not Counter-1.js, not two files) —
-  // the served-level half of the dedup proof (build-time half is in beforeAll).
-  const chunk = await fetch(`${BASE_URL}/_brust/islands/Counter.js`)
+  // Exactly ONE Counter chunk is SERVED (not Counter-1.js, not two files) — the
+  // served-level half of the dedup proof (build-time half is in beforeAll). The
+  // chunk is content-addressed (`Counter_<hash>.js`); resolve the real filename.
+  const counterFiles = readdirSync(resolve(FIXTURE_DIR, '.brust/islands')).filter((f) =>
+    /^Counter_[a-f0-9]+\.js$/.test(f),
+  )
+  expect(counterFiles).toHaveLength(1)
+  const chunk = await fetch(`${BASE_URL}/_brust/islands/${counterFiles[0]}`)
   expect(chunk.status).toBe(200)
   expect(chunk.headers.get('content-type')).toContain('javascript')
   // The disambiguated second-instance chunk must NOT exist.

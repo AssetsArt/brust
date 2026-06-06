@@ -84,6 +84,20 @@ function registerTrigger(el: HTMLElement, trigger: Trigger, fire: () => void): v
 // Exported for unit testing — the public entry is hydrateMarkersIn, but the
 // createRoot/hydrateRoot auto-detect branch is cleanest to assert by driving
 // hydrateOne directly (the `load` trigger fires it as a detached microtask).
+// id → content-addressed chunk URL, emitted by buildIslands as _islands.js.
+// Loaded once (memoized). On any failure the map is empty and resolution falls
+// back to the legacy `/_brust/islands/<id>.js` URL, so an older build still works.
+let chunkMapPromise: Promise<Record<string, string>> | null = null
+function islandChunkMap(): Promise<Record<string, string>> {
+  if (!chunkMapPromise) {
+    const url = '/_brust/islands/_islands.js' // variable specifier → runtime import, not bundled
+    chunkMapPromise = import(url)
+      .then((m) => (m.default ?? {}) as Record<string, string>)
+      .catch(() => ({}))
+  }
+  return chunkMapPromise
+}
+
 export async function hydrateOne(el: HTMLElement): Promise<void> {
   const id = el.getAttribute('data-brust-island')
   if (!id) return
@@ -96,7 +110,8 @@ export async function hydrateOne(el: HTMLElement): Promise<void> {
     return
   }
   try {
-    const mod = await import(`/_brust/islands/${id}.js`)
+    const url = (await islandChunkMap())[id] ?? `/_brust/islands/${id}.js`
+    const mod = await import(url)
     const Component = (mod.default ?? mod) as React.ComponentType<Record<string, unknown>>
     if (typeof Component !== 'function') {
       console.error(`[brust] island "${id}": chunk has no default-exported component`)

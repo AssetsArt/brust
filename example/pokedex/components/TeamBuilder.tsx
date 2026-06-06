@@ -10,6 +10,10 @@ import { client, useStore } from 'brustjs/client'
 import type { Actions } from '../actions'
 import type { TeamMember } from '../lib/types'
 import { teamStore } from '../stores/team'
+// CSS Modules: scoped class + keyframe names; resolves to the hashed-name map
+// via brust's Bun.plugin. The chunk is linked per-route from the component-CSS
+// manifest (see routes.tsx for the route→chunk linking note).
+import styles from './TeamBuilder.module.css'
 
 const api = client<Actions>()
 const MAX = 6
@@ -47,7 +51,9 @@ export default function TeamBuilder({ teamInitial }: { teamInitial: TeamMember[]
   return (
     <div className="fixed bottom-5 right-5 z-[200]">
       {open && (
-        <div className="mb-3 w-80 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900">
+        <div
+          className={`mb-3 w-80 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900 ${styles.panel}`}
+        >
           <div className="h-1 bg-brand-500" />
           <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-3 dark:border-slate-800">
             <Users size={16} className="text-brand-500" />
@@ -132,7 +138,10 @@ export default function TeamBuilder({ teamInitial }: { teamInitial: TeamMember[]
       >
         <Users size={16} />
         My team
-        <span className="rounded-full bg-white/25 px-2 py-0.5 text-xs font-extrabold">
+        <span
+          key={team.length}
+          className={`rounded-full bg-white/25 px-2 py-0.5 text-xs font-extrabold ${styles.badge}`}
+        >
           {team.length}
         </span>
       </button>

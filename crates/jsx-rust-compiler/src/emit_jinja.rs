@@ -126,6 +126,12 @@ fn emit_node(node: &JsxNode, out: &mut String) {
                 out.push_str("\"/>");
             }
             out.push_str("<link rel=\"stylesheet\" href=\"/_brust/css/app.css\"/>");
+            // Component-CSS (.module.css / co-located .css) chunk <link>s for the
+            // route — a framework-owned slot the JS native renderer fills from the
+            // component-CSS manifest (empty when the route imports none). RAW —
+            // framework markup, AutoEscape::None so `| safe` documents intent;
+            // undefined renders empty under Chainable undefined behavior.
+            out.push_str("{{ __brust_component_css__ | safe }}");
             // `head={[…]}` entries — emitted after the framework tags, before
             // `</head>`. Attr values reuse `emit_head_attr` (literal→escaped,
             // path→`{{ (p) | e }}`); `text` is RAW (forced static-literal in lower).

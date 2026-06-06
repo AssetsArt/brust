@@ -12,6 +12,7 @@ import * as native from './index.js'
 import { renderBranchStreaming } from './render/stream.ts'
 import { runInStoreContext, collectSnapshot } from './store/server-context.ts'
 import { buildStoreScripts } from './render/inject-store.ts'
+import { getCssHrefsForRoute } from './css.ts'
 import { runInRequestCache } from './loader-cache.ts'
 import { runInRequestScope, __scope } from './request-context.ts'
 import {
@@ -816,6 +817,21 @@ export function makeRenderer(
             )
           }
           ;(data as Record<string, unknown>).__brust_store__ = buildStoreScripts(storeSnapshot)
+          // Component-CSS SSR. Fill the framework-owned
+          // `{{ __brust_component_css__ | safe }}` head slot with the route's
+          // component-CSS chunk <link>s (from the component-CSS manifest, seeded
+          // per-route in the worker). Empty string when the route imports no
+          // .module.css / co-located .css, so the slot always resolves.
+          if (process.env.BRUST_DEV === '1' && '__brust_component_css__' in data) {
+            console.warn(
+              `[brust] native loader for "${flat.nativeTemplate}" returned a reserved "__brust_component_css__" key — overwritten by the component-CSS links`,
+            )
+          }
+          ;(data as Record<string, unknown>).__brust_component_css__ = getCssHrefsForRoute(
+            flat.fullPath,
+          )
+            .map((href) => `<link rel="stylesheet" href="${href}"/>`)
+            .join('')
         }
         const json = JSON.stringify(data)
         // napiRenderJinja has no headers param — any Set-Cookie staged by a

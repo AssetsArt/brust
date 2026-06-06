@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import { copyFile, cp, mkdir, readdir, rm } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import path, { isAbsolute, resolve } from 'node:path'
+import type { BunPlugin } from 'bun'
 import { emitNativeTemplates } from './native-routes-emit.ts'
 import { nativeShimPlugin } from './native-shim-plugin.ts'
 
@@ -223,6 +224,60 @@ export async function runBuild(args: string[]): Promise<void> {
   // (S4). Computed once here and reused below.
   const routesFile = path.join(entryDir, 'routes.tsx')
 
+  // 2.7. Component CSS — Lightning CSS + CSS Modules. MUST run BEFORE the island
+  // and directive bundles: those Bun.build passes bundle components that may
+  // `import styles from './X.module.css'`, and the cssLoaderPlugin registered
+  // here (from the freshly built manifest) resolves that import to the scoped
+  // name map. Without the plugin Bun treats the .module.css as an asset and
+  // collides on the output filename (e.g. X.module.css + X.tsx → both X.js).
+  // Mirrors brust.run's ordering (plugin registered before buildIslands).
+  // Captured here and passed explicitly to buildIslands below (global
+  // Bun.plugin() does NOT reach Bun.build).
+  const cssBuildPlugins: BunPlugin[] = []
+  {
+    const { scanCssImports } = await import('../css/scan-imports.ts')
+    const scan = await scanCssImports(entryDir)
+    if (scan.size > 0) {
+      const { buildComponentCss } = await import('../css/component-build.ts')
+      const { cssLoaderPlugin } = await import('../css/component-loader.ts')
+      let routeForCss: { fullPath: string; componentSources: string[] }[] = []
+      if (existsSync(routesFile)) {
+        try {
+          const { scanImports } = await import('./native-routes-emit.ts')
+          const { routes } = await import(routesFile)
+          // component name → source file (default imports in routes.tsx).
+          const idents = scanImports(routesFile)
+          routeForCss = (routes as any[]).map((r) => ({
+            fullPath: r.fullPath,
+            // Resolve each component in the route's chain (layout → leaf) to its
+            // source; computeRouteChunks BFS-walks each subtree for CSS deps.
+            componentSources: ((r.chain ?? []) as { Component?: { name?: string } }[])
+              .map((node) => node?.Component?.name)
+              .map((name) => (name ? idents.get(name) : undefined))
+              .filter((p): p is string => typeof p === 'string'),
+          }))
+        } catch {
+          /* if routes import fails, skip — manifest still emits modules */
+        }
+      }
+      const cssOutDir = path.join(outDir, 'css')
+      const manifest = await buildComponentCss({
+        scanRoot: entryDir,
+        outDir: cssOutDir,
+        tailwindCompile: null,
+        routes: routeForCss,
+      })
+      const plugin = cssLoaderPlugin(manifest)
+      Bun.plugin(plugin) // runtime/SSR resolution of .module.css in the worker isolate
+      cssBuildPlugins.push(plugin) // explicit Bun.build resolution for island bundling
+      console.log(
+        `[brust build] css-mod: ${Object.keys(manifest.modules).length} chunk(s) → ${cssOutDir}/components/`,
+      )
+    } else {
+      console.log(`[brust build] css-mod: skipped (no component CSS imports)`)
+    }
+  }
+
   // 3. Build islands (if any <Island> usage is found in the routes graph).
   const { scanIslandChunks, buildIslands } = await import('../islands/build.ts')
   const islandMap = existsSync(routesFile)
@@ -230,7 +285,10 @@ export async function runBuild(args: string[]): Promise<void> {
     : new Map<string, string>()
   if (islandMap.size > 0) {
     const islandsOutDir = path.join(outDir, 'islands')
-    const result = await buildIslands(islandMap, { outDir: islandsOutDir })
+    const result = await buildIslands(islandMap, {
+      outDir: islandsOutDir,
+      plugins: cssBuildPlugins,
+    })
     console.log(`[brust build] islands: ${result.islandCount} chunk(s) → ${islandsOutDir}`)
 
     // Mirror into cwd/.brust/islands so the NON-prebuilt source runtime
@@ -361,39 +419,8 @@ export async function runBuild(args: string[]): Promise<void> {
     console.log(`[brust build] css:     skipped (no app.css)`)
   }
 
-  // 4.6. Component CSS — Lightning CSS + Modules.
-  {
-    const { scanCssImports } = await import('../css/scan-imports.ts')
-    const scan = await scanCssImports(entryDir)
-    if (scan.size > 0) {
-      const { buildComponentCss } = await import('../css/component-build.ts')
-      const routesFile = path.join(entryDir, 'routes.tsx')
-      let routeForCss: { fullPath: string; componentSource: string }[] = []
-      if (existsSync(routesFile)) {
-        try {
-          const { routes } = await import(routesFile)
-          routeForCss = (routes as any[]).map((r) => ({
-            fullPath: r.fullPath,
-            componentSource: routesFile,
-          }))
-        } catch {
-          /* if routes import fails, skip — manifest still emits modules */
-        }
-      }
-      const cssOutDir = path.join(outDir, 'css')
-      const manifest = await buildComponentCss({
-        scanRoot: entryDir,
-        outDir: cssOutDir,
-        tailwindCompile: null,
-        routes: routeForCss,
-      })
-      console.log(
-        `[brust build] css-mod: ${Object.keys(manifest.modules).length} chunk(s) → ${cssOutDir}/components/`,
-      )
-    } else {
-      console.log(`[brust build] css-mod: skipped (no component CSS imports)`)
-    }
-  }
+  // (Component CSS — Lightning CSS + CSS Modules — moved up to section 2.7 so the
+  // cssLoaderPlugin is registered before the island/directive bundles.)
 
   // Static public assets: copy <project>/public → <dist>/public so a deployed
   // dist is self-contained. No .brust mirror — the source/dev runtime reads
@@ -436,7 +463,10 @@ export async function runBuild(args: string[]): Promise<void> {
     // point at non-existent files. Whitespace + syntax minification still apply.
     minify: { whitespace: true, syntax: true, identifiers: false },
     banner,
-    plugins: [nativeShimPlugin(REPO_ROOT)],
+    // cssBuildPlugins resolves any `.module.css` reached from the entry graph
+    // (e.g. routes.tsx → a component's CSS module) to the scoped name map, so
+    // Bun doesn't emit the CSS as an asset and collide on the bundle name.
+    plugins: [nativeShimPlugin(REPO_ROOT), ...cssBuildPlugins],
   })
 
   if (!result.success) {

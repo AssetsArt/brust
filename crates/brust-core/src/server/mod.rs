@@ -459,13 +459,23 @@ async fn handle_request(
     // ----- CSS chunks -----
     if let Some(file) = path.strip_prefix("/_brust/css/") {
         let file = file.split('?').next().unwrap_or(file);
-        if !is_safe_css_filename(file) {
-            return Ok(body::error_404());
-        }
         let Some(dir) = state.css_dir() else {
             return Ok(body::error_404());
         };
-        let file_path = dir.join(file);
+        // Component-CSS chunks live one level down in `components/<hash>.css`.
+        // Allow exactly that subdir; the basename still goes through the
+        // traversal-safe filename check (which rejects `/`, `\`, `..`).
+        let file_path = if let Some(chunk) = file.strip_prefix("components/") {
+            if !is_safe_css_filename(chunk) {
+                return Ok(body::error_404());
+            }
+            dir.join("components").join(chunk)
+        } else {
+            if !is_safe_css_filename(file) {
+                return Ok(body::error_404());
+            }
+            dir.join(file)
+        };
         return match tokio::fs::read(&file_path).await {
             Ok(bytes) => {
                 let accept_enc = header_str(req.headers(), "accept-encoding").unwrap_or_default();
