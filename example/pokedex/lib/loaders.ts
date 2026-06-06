@@ -256,15 +256,25 @@ const SHORT: Record<string, string> = {
 // Effectiveness → static Tailwind utility class string. These are literals in a
 // .ts file scanned by `@source`, so the scanner sees every class. The header /
 // row-head / corner / data cells share a base sizing class.
+// Effectiveness → static Tailwind utility class string. Every cell gets a solid
+// fill so the `gap-px` over a slate gridline background reads as a continuous
+// grid (the old design left 1× cells transparent → black voids you couldn't
+// trace). `hover:` lifts a cell with an inset brand ring to pinpoint a matchup.
 const CELL_BASE =
-  'flex items-center justify-center text-xs font-semibold tabular-nums aspect-square'
+  'flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500'
 const HEAD_BASE =
   'flex items-center justify-center text-[10px] font-bold uppercase tracking-tight text-white aspect-square'
+// Fill hierarchy so the grid reads as FULL (every cell visibly distinct from
+// the slate gridline showing through `gap-px`):
+//   light: card white < gridline slate-200, normal slate-50, 0 slate-800
+//   dark:  card slate-900 < gridline slate-700, normal slate-800, 0 slate-950
+// (normal must NOT equal the card colour or cells vanish; 0 must differ from
+// normal or "no effect" looks like a blank.)
 const CELL_CLASS: Record<string, string> = {
-  super: `${CELL_BASE} bg-green-500/25 text-green-700 dark:text-green-300`,
-  weak: `${CELL_BASE} bg-red-500/20 text-red-700 dark:text-red-300`,
-  none: `${CELL_BASE} bg-slate-800/80 text-slate-200`,
-  normal: `${CELL_BASE} text-slate-300 dark:text-slate-600`,
+  super: `${CELL_BASE} bg-emerald-500 text-white`,
+  weak: `${CELL_BASE} bg-rose-400 text-white dark:bg-rose-500`,
+  none: `${CELL_BASE} bg-slate-800 text-slate-100 dark:bg-slate-950 dark:text-slate-400`,
+  normal: `${CELL_BASE} bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600`,
 }
 
 export async function typeChartLoader({ req }: LoaderCtx): Promise<TypeChartData> {

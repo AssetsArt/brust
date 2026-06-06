@@ -14,39 +14,43 @@ import type { TypeChartData } from '../lib/types'
 export default function TypeChart({ rows }: TypeChartData) {
   return (
     <section className="py-2">
-      <div className="mb-5">
+      <div className="mb-6">
         <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white">
           Type chart
         </h1>
-        <p className="mt-2 max-w-2xl text-slate-500 dark:text-slate-400">
-          Damage relations — rows attack, columns defend. Rendered server-side in Rust from jinja
-          (native:true · no React runtime in the payload).
+        <p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-500 dark:text-slate-400">
+          Damage relations — read a row (attacker) across to a column (defender). Rendered
+          server-side in Rust from jinja (native:true · no React runtime in the payload).
         </p>
       </div>
 
-      <div className="mb-4 flex flex-wrap items-center gap-4 text-sm text-slate-500 dark:text-slate-400">
-        <span className="inline-flex items-center gap-1.5">
-          <span className="flex h-5 w-5 items-center justify-center rounded bg-green-500/25 text-xs font-bold text-green-700 dark:text-green-300">
+      <div className="mb-5 flex flex-wrap items-center gap-2.5 text-sm">
+        <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+          <span className="flex h-5 w-5 items-center justify-center rounded bg-emerald-500 text-xs font-bold text-white">
             2
           </span>
           super effective
         </span>
-        <span className="inline-flex items-center gap-1.5">
-          <span className="flex h-5 w-5 items-center justify-center rounded bg-red-500/20 text-xs font-bold text-red-700 dark:text-red-300">
+        <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+          <span className="flex h-5 w-5 items-center justify-center rounded bg-rose-400 text-xs font-bold text-white dark:bg-rose-500">
             ½
           </span>
           not very effective
         </span>
-        <span className="inline-flex items-center gap-1.5">
-          <span className="flex h-5 w-5 items-center justify-center rounded bg-slate-800/80 text-xs font-bold text-slate-200">
+        <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+          <span className="flex h-5 w-5 items-center justify-center rounded bg-slate-800 text-xs font-bold text-slate-100 dark:bg-slate-950 dark:text-slate-400">
             0
           </span>
           no effect
         </span>
+        <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+          <span className="h-5 w-5 rounded bg-slate-50 ring-1 ring-slate-200 dark:bg-slate-800 dark:ring-slate-700" />
+          normal (1×)
+        </span>
       </div>
 
-      <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-        <div className="grid w-max grid-cols-[2.75rem_repeat(18,2.25rem)] gap-px">
+      <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div className="grid w-full grid-cols-[2.75rem_repeat(18,minmax(1.75rem,1fr))] gap-px overflow-hidden rounded-xl bg-slate-200 dark:bg-slate-700">
           {rows.map((r) => (
             <div key={r.id} className="contents">
               {r.cells.map((c) => (
