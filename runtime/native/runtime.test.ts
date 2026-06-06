@@ -692,3 +692,66 @@ describe('lifecycle', () => {
     expect(win.document.querySelector('span')!.textContent).toBe('2')
   })
 })
+
+describe('behavior ctx: effect + onCleanup', () => {
+  test('ctx.effect runs reactively; its disposer joins the lifecycle (no run after unmount)', async () => {
+    const win = setupDom('<div id="host"><div x-data="fx"></div></div>')
+    const { register, start } = await import(`./runtime.ts?fx=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const n = signal(0)
+    const runs: number[] = []
+    register('fx', ({ effect }: any) => {
+      effect(() => {
+        runs.push(n())
+      })
+      return {}
+    })
+    start(win.document)
+    expect(runs).toEqual([0]) // runs immediately on mount
+    n.set(1)
+    expect(runs).toEqual([0, 1]) // reactive
+    win.document.getElementById('host')!.innerHTML = '' // unmount → observer disposes
+    await Promise.resolve()
+    n.set(2)
+    expect(runs).toEqual([0, 1]) // disposer joined lifecycle → no detached run
+  })
+
+  test('ctx.effect returned cleanup runs before each re-run and once on unmount', async () => {
+    const win = setupDom('<div id="host"><div x-data="fx2"></div></div>')
+    const { register, start } = await import(`./runtime.ts?fx2=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const n = signal(0)
+    const log: string[] = []
+    register('fx2', ({ effect }: any) => {
+      effect(() => {
+        const v = n()
+        return () => log.push(`cleanup:${v}`)
+      })
+      return {}
+    })
+    start(win.document)
+    expect(log).toEqual([])
+    n.set(1)
+    expect(log).toEqual(['cleanup:0']) // prev cleanup fires before re-run
+    win.document.getElementById('host')!.innerHTML = ''
+    await Promise.resolve()
+    expect(log).toEqual(['cleanup:0', 'cleanup:1']) // final cleanup on unmount
+  })
+
+  test('ctx.onCleanup registers a teardown that runs on unmount', async () => {
+    const win = setupDom('<div id="host"><div x-data="fx3"></div></div>')
+    const { register, start } = await import(`./runtime.ts?fx3=${Math.random()}`)
+    let torn = 0
+    register('fx3', ({ onCleanup }: any) => {
+      onCleanup(() => {
+        torn++
+      })
+      return {}
+    })
+    start(win.document)
+    expect(torn).toBe(0)
+    win.document.getElementById('host')!.innerHTML = ''
+    await Promise.resolve()
+    expect(torn).toBe(1)
+  })
+})

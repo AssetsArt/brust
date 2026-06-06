@@ -89,6 +89,60 @@ test('effect that reads and conditionally writes the same signal does not stack-
   expect(runs).toBe(2)
 })
 
+test('effect cleanup: returned fn runs before each re-run and once on dispose', () => {
+  const s = signal(0)
+  const log: string[] = []
+  const dispose = effect(() => {
+    const v = s()
+    log.push(`run:${v}`)
+    return () => log.push(`cleanup:${v}`)
+  })
+  expect(log).toEqual(['run:0'])
+  // re-run: previous run's cleanup fires FIRST (React useEffect re-run order).
+  s.set(1)
+  expect(log).toEqual(['run:0', 'cleanup:0', 'run:1'])
+  // dispose: the current run's cleanup fires once.
+  dispose()
+  expect(log).toEqual(['run:0', 'cleanup:0', 'run:1', 'cleanup:1'])
+  // disposed → no further runs or cleanups.
+  s.set(2)
+  expect(log).toEqual(['run:0', 'cleanup:0', 'run:1', 'cleanup:1'])
+})
+
+test('effect cleanup runs UNTRACKED — reading a signal inside cleanup adds no dependency', () => {
+  const dep = signal(0)
+  const other = signal(0)
+  let runs = 0
+  const dispose = effect(() => {
+    dep()
+    runs++
+    return () => {
+      other() // reading here must NOT subscribe the effect to `other`
+    }
+  })
+  expect(runs).toBe(1)
+  dep.set(1) // re-run → previous cleanup reads `other`
+  expect(runs).toBe(2)
+  other.set(1) // had cleanup subscribed, this would re-run the effect → it must NOT
+  expect(runs).toBe(2)
+  dispose()
+})
+
+test('effect with no returned cleanup (void) still works and disposes cleanly', () => {
+  const s = signal(0)
+  let runs = 0
+  const dispose = effect(() => {
+    s()
+    runs++
+  })
+  expect(runs).toBe(1)
+  s.set(1)
+  expect(runs).toBe(2)
+  expect(() => dispose()).not.toThrow()
+  s.set(2)
+  expect(runs).toBe(2)
+})
+
 test('brands: isSignal / isComputed', () => {
   expect(isSignal(signal(1))).toBe(true)
   expect(isSignal(computed(() => 1))).toBe(false)

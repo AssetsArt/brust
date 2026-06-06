@@ -147,18 +147,41 @@ export function computed<T>(fn: () => T): Computed<T> {
   return read
 }
 
-export function effect(fn: () => void): () => void {
+// `fn` may return a cleanup function (React `useEffect` semantics): it runs once
+// before each re-run, and once when the effect is disposed. Cleanups run UNTRACKED
+// (activeConsumer nulled) so a signal read inside a cleanup never registers a spurious
+// dependency. A `void` return is unchanged — the existing no-cleanup path.
+// biome-ignore lint/suspicious/noConfusingVoidType: `void | Destructor` is the React useEffect return shape — a callback with no `return` infers `void`, so swapping to `undefined` would type-error every cleanup-less caller.
+export function effect(fn: () => void | (() => void)): () => void {
+  // biome-ignore lint/suspicious/noConfusingVoidType: holds `fn()`'s `void | (() => void)` result; `undefined` here would reject a `void` assignment.
+  let cleanup: void | (() => void)
+  // Run the pending cleanup with dependency tracking suspended.
+  const runCleanup = () => {
+    if (typeof cleanup !== 'function') return
+    const c = cleanup
+    cleanup = undefined
+    const prev = ctx.activeConsumer
+    ctx.activeConsumer = null
+    try {
+      c()
+    } catch (e) {
+      console.error('[brust] effect cleanup threw:', e)
+    } finally {
+      ctx.activeConsumer = prev
+    }
+  }
   const self: Consumer = {
     deps: new Set(),
     running: false,
     run() {
       if (self.running) return
       self.running = true
+      runCleanup() // previous run's cleanup fires before the new run
       clearDeps(self)
       const prev = ctx.activeConsumer
       ctx.activeConsumer = self
       try {
-        fn()
+        cleanup = fn()
       } finally {
         ctx.activeConsumer = prev
         self.running = false
@@ -166,5 +189,8 @@ export function effect(fn: () => void): () => void {
     },
   }
   self.run()
-  return () => clearDeps(self)
+  return () => {
+    runCleanup() // final cleanup on dispose
+    clearDeps(self)
+  }
 }

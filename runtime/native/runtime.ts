@@ -4,7 +4,22 @@ import { batch, effect, isComputed, isSignal, signal } from '../store/index.ts'
 import type { Signal } from '../store/index.ts'
 
 export type Instance = Record<string, unknown>
-export type Behavior = (ctx: { el: HTMLElement; props: unknown }) => Instance
+
+/** What a `behavior` receives. Beyond `el`/`props`, two lifecycle helpers whose
+ * teardown auto-joins the component's disposer set (run on unmount / SPA-nav swap):
+ *  - `effect(fn)`  — a reactive effect (React `useEffect` semantics: `fn` may return
+ *                    a cleanup that runs before each re-run and on unmount). Use it
+ *                    for side-effects on signal change (sync localStorage, the DOM
+ *                    outside the component, timers). Returns the disposer too.
+ *  - `onCleanup(fn)` — register a one-shot teardown for unmount (e.g. removeEventListener). */
+export interface BehaviorCtx {
+  el: HTMLElement
+  props: unknown
+  // biome-ignore lint/suspicious/noConfusingVoidType: React useEffect return shape (`void | Destructor`) — see store `effect`.
+  effect: (fn: () => void | (() => void)) => () => void
+  onCleanup: (fn: () => void) => void
+}
+export type Behavior = (ctx: BehaviorCtx) => Instance
 
 interface Mounted {
   disposers: Array<() => void>
@@ -79,8 +94,20 @@ function mountElement(el: HTMLElement): void {
       console.warn(`[brust] x-props on "${name}" is not valid JSON`)
     }
   }
-  const instance = behavior({ el, props })
+  // Build the disposer set BEFORE invoking the behavior so the ctx `effect`/
+  // `onCleanup` helpers can register teardown that runs on unmount. A ctx effect
+  // runs immediately (during behavior()), pushing its disposer here.
   const m: Mounted = { disposers: [] }
+  // biome-ignore lint/suspicious/noConfusingVoidType: React useEffect return shape (`void | Destructor`) — see store `effect`.
+  const ctxEffect = (fn: () => void | (() => void)): (() => void) => {
+    const dispose = effect(fn)
+    m.disposers.push(dispose)
+    return dispose
+  }
+  const onCleanup = (fn: () => void): void => {
+    m.disposers.push(fn)
+  }
+  const instance = behavior({ el, props, effect: ctxEffect, onCleanup })
   mounted.set(el, m)
   bindTree(el, instance, m.disposers)
   if (typeof instance.init === 'function') {
