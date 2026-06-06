@@ -5,7 +5,6 @@
 // — each link carries a precomputed `cls` (a loader-var member-path the native
 // template renders directly), so the highlight ships as static HTML with no JS.
 
-export const VERSION = '0.1.39-alpha'
 export const REPO = 'https://github.com/AssetsArt/brust'
 
 export interface NavLinkItem {

@@ -7,7 +7,8 @@
 
 import { z } from 'zod'
 import { defineActions } from 'brustjs'
-import { NAV, VERSION } from './lib/nav'
+import { NAV } from './lib/nav'
+import { VERSION } from './lib/version'
 
 export const actions = defineActions()
   .get('/docs', () => ({ nav: NAV, version: VERSION }))

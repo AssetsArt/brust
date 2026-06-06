@@ -10,9 +10,10 @@ import { source as counterSource } from '../components/Counter'
 import { source as playgroundSource } from '../components/Playground'
 import { source as toggleSource } from '../components/Toggle'
 import { highlightCode } from './highlight'
-import { NAV, navFor, prevNextFor, REPO, VERSION } from './nav'
+import { NAV, navFor, prevNextFor, REPO } from './nav'
 import { S } from './snippets'
 import * as T from './tables'
+import { VERSION } from './version'
 
 const hl = highlightCode
 
