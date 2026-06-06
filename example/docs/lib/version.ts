@@ -1,30 +1,44 @@
-// Framework version — single source of truth = the latest git release TAG
-// (e.g. `v0.1.39-alpha`), resolved once at server start. Falls back to the
-// installed `brustjs` package version when git isn't available (a deployed build
-// with no .git). Server-only: imported only by loaders.ts / actions.ts (Bun
-// worker), never by an island bundle, so neither git nor the JSON reaches the
-// browser. The leading `v` is stripped (the UI renders it as `v{version}`).
+// Framework version — sourced from the GitHub releases/tags API (the real, live
+// "latest release"), NOT from git or a hardcode (a deployed service has no .git
+// and no git binary). Design:
+//   - synchronous `version()` for callers — NEVER blocks a request on the network.
+//   - a background refresh (fired once at worker boot) updates the cached value
+//     from the GitHub tags API; until it lands, callers get the installed
+//     `brustjs` package version as the fallback.
+//   - if the API is unreachable (offline/rate-limited), the fallback stands — the
+//     page always renders.
+// Server-only: imported by loaders.ts / actions.ts (Bun worker), never by an
+// island bundle, so neither the fetch nor the JSON reaches the browser.
 // @ts-expect-error — brustjs ships no type decl for ./package.json; Bun resolves it at runtime.
 import pkg from 'brustjs/package.json'
 
-function latestGitTag(): string | null {
+const TAGS_API = 'https://api.github.com/repos/AssetsArt/brust/tags?per_page=1'
+const FALLBACK = (pkg as { version: string }).version
+
+// Cached, synchronously readable. Seeded with the installed package version so the
+// very first render (before the API responds) is still correct, then upgraded to
+// the live latest tag once the background fetch resolves.
+let current = FALLBACK
+
+async function refresh(): Promise<void> {
   try {
-    // Highest semver tag, version-sorted (independent of reachability).
-    const r = Bun.spawnSync(['git', 'tag', '--sort=-v:refname'], {
-      cwd: process.cwd(),
-      stdout: 'pipe',
-      stderr: 'ignore',
+    const res = await fetch(TAGS_API, {
+      headers: { 'User-Agent': 'brust-docs', Accept: 'application/vnd.github+json' },
+      signal: AbortSignal.timeout(3000),
     })
-    if (r.exitCode !== 0) return null
-    const first = r.stdout.toString().split('\n')[0]?.trim()
-    return first ? first : null
+    if (!res.ok) return
+    const tags = (await res.json()) as Array<{ name?: string }>
+    const name = tags[0]?.name
+    if (name) current = name.replace(/^v/, '') // tags are `v0.1.39-alpha`; UI prepends `v`
   } catch {
-    return null
+    // offline / rate-limited / timed out → keep the package-version fallback
   }
 }
 
-const tag = latestGitTag()
-const raw = tag ?? `v${(pkg as { version: string }).version}`
+// Fire once at module load (worker boot); never awaited on the request path.
+void refresh()
 
-/** Release version WITHOUT the leading `v` (UI prepends it). */
-export const VERSION: string = raw.replace(/^v/, '')
+/** The latest release version (without a leading `v`). Always returns immediately. */
+export function version(): string {
+  return current
+}

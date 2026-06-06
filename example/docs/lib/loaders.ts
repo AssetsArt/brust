@@ -13,7 +13,7 @@ import { highlightCode } from './highlight'
 import { NAV, navFor, prevNextFor, REPO } from './nav'
 import { S } from './snippets'
 import * as T from './tables'
-import { VERSION } from './version'
+import { version } from './version'
 
 const hl = highlightCode
 
@@ -23,7 +23,7 @@ function chrome(active: string, title: string) {
   return {
     title,
     mode: 'dark' as const,
-    version: VERSION,
+    version: version(),
     repo: REPO,
     nav: navFor(active),
     ...prevNextFor(active),
@@ -35,7 +35,7 @@ export async function homeLoader() {
   return {
     title: 'brust — fast SSR for Bun + Rust',
     mode: 'dark' as const,
-    version: VERSION,
+    version: version(),
     repo: REPO,
     heroHtml: hl(S.heroRoutes, 'tsx'),
     counterHtml: hl(counterSource, 'tsx'),

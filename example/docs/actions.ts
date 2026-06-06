@@ -8,10 +8,10 @@
 import { z } from 'zod'
 import { defineActions } from 'brustjs'
 import { NAV } from './lib/nav'
-import { VERSION } from './lib/version'
+import { version } from './lib/version'
 
 export const actions = defineActions()
-  .get('/docs', () => ({ nav: NAV, version: VERSION }))
+  .get('/docs', () => ({ nav: NAV, version: version() }))
   .post('/echo', ({ body }) => ({ youSent: body.message, length: body.message.length, ok: true }), {
     body: z.object({ message: z.string() }),
   })
