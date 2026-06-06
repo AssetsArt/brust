@@ -94,21 +94,25 @@ function mountElement(el: HTMLElement): void {
       console.warn(`[brust] x-props on "${name}" is not valid JSON`)
     }
   }
-  // Build the disposer set BEFORE invoking the behavior so the ctx `effect`/
-  // `onCleanup` helpers can register teardown that runs on unmount. A ctx effect
-  // runs immediately (during behavior()), pushing its disposer here.
+  // Build the disposer set and register the element as mounted BEFORE invoking the
+  // behavior, so (a) the ctx `effect`/`onCleanup` helpers can register teardown
+  // (a ctx effect runs immediately during behavior(), pushing its disposer here),
+  // and (b) a behavior that synchronously triggers a re-entrant mount of THIS
+  // element (e.g. a ctx effect whose signal write reaches scanAndMount) hits the
+  // `mounted.has(el)` guard above instead of creating a second, leaked Mounted.
   const m: Mounted = { disposers: [] }
-  // biome-ignore lint/suspicious/noConfusingVoidType: React useEffect return shape (`void | Destructor`) — see store `effect`.
-  const ctxEffect = (fn: () => void | (() => void)): (() => void) => {
+  mounted.set(el, m)
+  // ctxEffect/onCleanup typed via BehaviorCtx so the `void | Destructor` shape is
+  // declared in one place (the interface) — no inline void-union to suppress here.
+  const ctxEffect: BehaviorCtx['effect'] = (fn) => {
     const dispose = effect(fn)
     m.disposers.push(dispose)
     return dispose
   }
-  const onCleanup = (fn: () => void): void => {
+  const onCleanup: BehaviorCtx['onCleanup'] = (fn) => {
     m.disposers.push(fn)
   }
   const instance = behavior({ el, props, effect: ctxEffect, onCleanup })
-  mounted.set(el, m)
   bindTree(el, instance, m.disposers)
   if (typeof instance.init === 'function') {
     try {

@@ -190,7 +190,18 @@ export function effect(fn: () => void | (() => void)): () => void {
   }
   self.run()
   return () => {
-    runCleanup() // final cleanup on dispose
-    clearDeps(self)
+    // Guard the dispose path with the same re-entrancy flag as run(): a cleanup
+    // that writes a signal this effect still depends on (clearDeps runs AFTER
+    // runCleanup) would otherwise synchronously re-notify and re-run the body of
+    // an already-disposed effect. The flag drops that re-entrant run; a second
+    // dispose() is then a no-op (cleanup already consumed, deps already cleared).
+    if (self.running) return
+    self.running = true
+    try {
+      runCleanup() // final cleanup on dispose
+      clearDeps(self)
+    } finally {
+      self.running = false
+    }
   }
 }

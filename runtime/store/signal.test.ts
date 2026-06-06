@@ -128,6 +128,31 @@ test('effect cleanup runs UNTRACKED — reading a signal inside cleanup adds no 
   dispose()
 })
 
+test('disposing an effect whose cleanup writes a depended-on signal does NOT re-run the body', () => {
+  const s = signal(0)
+  let runs = 0
+  const dispose = effect(() => {
+    s() // subscribe
+    runs++
+    return () => {
+      s.set(99) // cleanup mutates a dep — must not resurrect the disposed effect
+    }
+  })
+  expect(runs).toBe(1)
+  dispose()
+  expect(runs).toBe(1) // disposed → the write in cleanup must not re-run the body
+})
+
+test('dispose() called twice runs cleanup exactly once and does not throw', () => {
+  const log: string[] = []
+  const dispose = effect(() => {
+    return () => log.push('cleanup')
+  })
+  dispose()
+  expect(() => dispose()).not.toThrow()
+  expect(log).toEqual(['cleanup'])
+})
+
 test('effect with no returned cleanup (void) still works and disposes cleanly', () => {
   const s = signal(0)
   let runs = 0

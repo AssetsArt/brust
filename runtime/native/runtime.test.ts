@@ -738,6 +738,37 @@ describe('behavior ctx: effect + onCleanup', () => {
     expect(log).toEqual(['cleanup:0', 'cleanup:1']) // final cleanup on unmount
   })
 
+  test('ctx.effect coexists with a directive on the same host; both reactive, both dispose on unmount', async () => {
+    const win = setupDom('<div id="host"><div x-data="fx4"><span x-text="msg"></span></div></div>')
+    const { register, start } = await import(`./runtime.ts?fx4=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const msg = signal('a')
+    const effectRuns: string[] = []
+    let torn = false
+    register('fx4', ({ effect }: any) => {
+      effect(() => {
+        effectRuns.push(msg())
+        return () => {
+          torn = true
+        }
+      })
+      return { msg }
+    })
+    start(win.document)
+    const span = win.document.querySelector('span')!
+    expect(span.textContent).toBe('a') // directive bound
+    expect(effectRuns).toEqual(['a']) // ctx effect ran, tracking the same signal
+    msg.set('b')
+    expect(span.textContent).toBe('b') // directive reactive
+    expect(effectRuns).toEqual(['a', 'b']) // ctx effect reactive
+    win.document.getElementById('host')!.innerHTML = '' // unmount → dispose both
+    await Promise.resolve()
+    expect(torn).toBe(true) // ctx effect cleanup ran
+    msg.set('c')
+    expect(span.textContent).toBe('b') // directive disposed too (no detached update)
+    expect(effectRuns).toEqual(['a', 'b']) // ctx effect disposed too (no detached run)
+  })
+
   test('ctx.onCleanup registers a teardown that runs on unmount', async () => {
     const win = setupDom('<div id="host"><div x-data="fx3"></div></div>')
     const { register, start } = await import(`./runtime.ts?fx3=${Math.random()}`)

@@ -1,7 +1,7 @@
 # Native `behavior` ctx `effect()` — React-style reactive effects
 
 Date: 2026-06-06
-Status: implemented (pipeline review pending)
+Status: implemented + reviewed (2 HIGH review findings fixed: dispose re-entrancy guard, mount-before-register)
 
 ## Goal
 
@@ -62,9 +62,15 @@ export function effect(fn: () => void | (() => void)): () => void
 - If `fn` returns a function, that cleanup runs **before each subsequent re-run** and
   **once when the returned disposer is called** (dispose).
 - Cleanups run **UNTRACKED**: `ctx.activeConsumer` is set to `null` around the call,
-  so a signal read inside a cleanup registers no dependency.
+  so a signal read inside a cleanup registers no dependency. (Meaningfully verified
+  on the re-run path; on the dispose path `clearDeps` also runs, so untracking there
+  is belt-and-suspenders.)
+- **Dispose is re-entrancy-guarded** with the same `self.running` flag as `run()`: a
+  cleanup that writes a signal the effect still depends on (clearDeps runs *after*
+  the final cleanup) must NOT synchronously re-run the body of the disposed effect.
+  A second `dispose()` is a no-op.
 - A cleanup that throws is caught and logged (`console.error('[brust] effect cleanup
-  threw:', e)`) — it must not break disposal of siblings.
+  threw:', e)`) — it must not break disposal.
 - A `void` return is the unchanged no-cleanup path.
 
 ### `native/runtime.ts`
@@ -88,11 +94,15 @@ export type Behavior = (ctx: BehaviorCtx) => Instance
 
 - **Disposer set built first.** `m.disposers` is created before `behavior(...)` is
   invoked so a ctx `effect` (which runs immediately during `behavior()`) can register.
+- **`mounted.set(el, m)` placement.** Set BEFORE `behavior(...)` is invoked (changed
+  from the original post-behavior placement). Because a ctx `effect` runs during
+  `behavior()` and could synchronously trigger a re-entrant mount of the same element,
+  registering the `Mounted` record first makes the `mounted.has(el)` guard catch the
+  re-entry instead of creating a second, leaked disposer set.
 - **Mount ordering.** ctx effects register during `behavior()`; directive effects
   (`x-text`/`x-show`/`x-bind`/`x-for`) register later during `bindTree`. On
-  `disposeElement` all disposers run (order: ctx effects first, then directives).
-- **`mounted.set(el, m)` placement.** Stays after `behavior()` (unchanged from before
-  — behavior() was always called before `mounted.set`), so no double-mount regression.
+  `disposeElement` every disposer runs (ctx effects happen to be earlier in the array,
+  but the contract is only that ALL of them tear down).
 - **Re-mount (SPA nav).** A removed subtree's `disposeTree` runs every disposer,
   including the ctx-effect final cleanup; a later re-scan re-mounts fresh. No leak, no
   duplicate effect.
@@ -102,20 +112,23 @@ export type Behavior = (ctx: BehaviorCtx) => Instance
 `runtime/store/signal.test.ts`:
 - effect returned cleanup runs before each re-run AND once on dispose (exact order).
 - effect cleanup runs UNTRACKED — a signal read in cleanup adds no dependency.
+- disposing an effect whose cleanup writes a depended-on signal does NOT re-run the body.
+- `dispose()` called twice runs cleanup exactly once and does not throw.
 - effect with no returned cleanup (void) still works and disposes cleanly.
 
 `runtime/native/runtime.test.ts` (`describe('behavior ctx: effect + onCleanup')`):
 - ctx.effect runs reactively; disposer joins lifecycle (no run after unmount).
 - ctx.effect returned cleanup runs before re-run and once on unmount.
+- ctx.effect coexists with a directive on the same host; both reactive, both dispose.
 - ctx.onCleanup registers a teardown that runs on unmount.
 
 ## Acceptance criteria
 
-- [ ] `bun test runtime/store runtime/native` green (incl. 6 new tests).
-- [ ] `bun test runtime/` green (no regression — full suite).
-- [ ] `bun run ci` (biome) clean — 0 warnings.
-- [ ] `bun run typecheck:treaty` exit 0.
-- [ ] No Rust change; no `.node` rebuild required.
+- [x] `bun test runtime/store runtime/native` green (incl. 8 new tests — 77 pass).
+- [x] `bun test runtime/` green (no regression — 495 pass).
+- [x] `bun run ci` (biome) clean — 0 warnings/errors.
+- [x] `bun run typecheck:treaty` exit 0.
+- [x] No Rust change; no `.node` rebuild required.
 
 ## Known limitations / deferred
 
