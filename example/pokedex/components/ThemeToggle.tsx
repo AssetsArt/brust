@@ -11,6 +11,7 @@
 // /theme action which sets the `mode` cookie — so SSR matches on the next load.
 import { Moon, Sun } from 'lucide-react'
 import { client } from 'brustjs/client'
+import type { BehaviorCtx } from 'brustjs/native'
 import { computed, signal } from 'brustjs/store'
 import type { Actions } from '../actions'
 
@@ -18,7 +19,7 @@ const api = client<Actions>()
 
 // behavior → client bundle, registered as "themeToggle". Reads the initial mode
 // straight off <html data-mode> (server already set it from the cookie).
-export const behavior = () => {
+export const behavior = ({ effect }: BehaviorCtx) => {
   const mode = signal(
     typeof document !== 'undefined' ? (document.documentElement.dataset.mode ?? 'dark') : 'dark',
   )
@@ -28,10 +29,17 @@ export const behavior = () => {
   const isDark = computed(() => mode() === 'dark')
   const isLight = computed(() => mode() === 'light')
 
+  // Reactive sync (dogfooding ctx `effect`): reflect `mode` onto <html data-mode>
+  // whenever it changes — the toggle just flips the signal, the DOM follows. On
+  // mount this runs once and writes the value the server already set (a no-op, so
+  // no flash). Replaces the imperative `dataset.mode = …` that lived in toggle().
+  effect(() => {
+    document.documentElement.dataset.mode = mode()
+  })
+
   async function toggle() {
     const next = mode() === 'dark' ? 'light' : 'dark'
-    document.documentElement.dataset.mode = next // flip the theme immediately
-    mode.set(next)
+    mode.set(next) // the effect flips <html data-mode> reactively
     await api.theme.post({ mode: next }) // persist via cookie for the next SSR
   }
 
