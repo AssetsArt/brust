@@ -1,6 +1,6 @@
 {
   "name": "brustjs-linux-x64-gnu",
-  "version": "0.1.35-alpha",
+  "version": "0.1.36-alpha",
   "cpu": [
     "x64"
   ],
