@@ -33,7 +33,10 @@ pub trait CacheStore: Send + Sync {
     fn clear(&self);
 }
 
-pub struct MokaStore {
+/// The concrete in-memory island-cache backend. Crate-internal: the napi
+/// binding only ever sees the `CacheStore` trait object (constructed by
+/// `AppState::new`), so the concrete type stays off the public surface.
+pub(crate) struct MokaStore {
     cache: Cache<String, CachedIsland>,
     /// tag → set of keys carrying that tag. Enables group invalidation, which
     /// moka has no native support for. Stale entries (key already evicted) are

@@ -9,7 +9,7 @@ use serde::Deserialize;
 /// `split_meta` separates the JSON from the body for parsing.
 #[derive(Debug, Deserialize)]
 #[serde(default)]
-pub struct ChunkMeta {
+pub(crate) struct ChunkMeta {
     pub status: u16,
     #[serde(rename = "contentType")]
     pub content_type: String,
@@ -33,7 +33,7 @@ impl Default for ChunkMeta {
 /// Split the first-chunk SAB layout `[meta_len: u16 BE][meta JSON][body]`
 /// into (meta_slice, body_slice). Returns Err if the meta_len field is
 /// missing or exceeds the buffer.
-pub fn split_meta(buf: &[u8]) -> Result<(&[u8], &[u8]), &'static str> {
+pub(crate) fn split_meta(buf: &[u8]) -> Result<(&[u8], &[u8]), &'static str> {
     if buf.len() < 2 {
         return Err("first chunk too short for meta_len header");
     }
@@ -44,52 +44,15 @@ pub fn split_meta(buf: &[u8]) -> Result<(&[u8], &[u8]), &'static str> {
     Ok((&buf[2..2 + meta_len], &buf[2 + meta_len..]))
 }
 
-/// Format an HTTP/1.1 chunked-encoded chunk: `<hex_len>\r\n<bytes>\r\n`.
-/// Empty `body` (len=0) returns the terminator (`0\r\n\r\n`).
-///
-/// Allocates one Vec per call. This matches the spec's per-chunk
-/// write_all pattern (S7) — one alloc + one socket write + one drop per
-/// chunk is acceptable cost given chunks are typically 4-64 KB. If
-/// benchmarks ever show alloc pressure here, the signature can shift to
-/// `(&[u8], &mut Vec<u8>)` without changing call sites materially.
-pub fn format_chunk_framed(body: &[u8]) -> Vec<u8> {
-    if body.is_empty() {
-        return b"0\r\n\r\n".to_vec();
-    }
-    let mut out = format!("{:x}\r\n", body.len()).into_bytes();
-    out.extend_from_slice(body);
-    out.extend_from_slice(b"\r\n");
-    out
-}
-
-/// Build the HTTP/1.1 response headers (no body) for a chunked stream.
-/// Emits status line, fixed Transfer-Encoding: chunked, content-type,
-/// then any extra headers from `meta.headers`, then the blank line.
-/// Includes `Connection: keep-alive` for parity with build_single_response_bytes.
-pub fn build_chunked_response_head(meta: &ChunkMeta) -> Vec<u8> {
-    let mut out = format!(
-        "HTTP/1.1 {} {}\r\nTransfer-Encoding: chunked\r\nContent-Type: {}\r\nConnection: keep-alive\r\n",
-        meta.status,
-        status_reason(meta.status),
-        meta.content_type,
-    )
-    .into_bytes();
-    for (k, v) in &meta.headers {
-        out.extend_from_slice(format!("{}: {}\r\n", k, v).as_bytes());
-    }
-    out.extend_from_slice(b"\r\n");
-    out
-}
-
 /// Build a complete single-chunk HTTP/1.1 response with Content-Length.
 /// Bytes-identical to today's renderToString wire shape for no-Suspense
 /// routes (spec S1 criterion #1).
 ///
-/// Includes `Connection: keep-alive` to match `http::build_response` and
+/// Includes `Connection: keep-alive` to match the old `build_response` byte-builder and
 /// avoid the 47k↔109k RPS halving the team observed in A2.3: without this
 /// header, oha (and any HTTP/1.1 client honoring the spec's "no header =
 /// close" default) reconnects per request, doubling TCP setup overhead.
-pub fn build_single_response_bytes(meta: &ChunkMeta, body: &[u8]) -> Vec<u8> {
+pub(crate) fn build_single_response_bytes(meta: &ChunkMeta, body: &[u8]) -> Vec<u8> {
     let mut out = format!(
         "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: keep-alive\r\n",
         meta.status,
@@ -104,6 +67,44 @@ pub fn build_single_response_bytes(meta: &ChunkMeta, body: &[u8]) -> Vec<u8> {
     out.extend_from_slice(b"\r\n");
     out.extend_from_slice(body);
     out
+}
+
+/// Typed-Response equivalent of [`build_single_response_bytes`] for the
+/// buffered (Content-Length) fast-lane/render paths. Same status, Content-Type,
+/// and meta headers, but built directly as `http::Response<ResponseBody>`.
+/// Hyper owns Content-Length, Connection, and Date, so those are NOT emitted
+/// (matching the post-hyper wire output). Header values that fail validation
+/// are skipped individually; a structurally-broken builder falls back to a
+/// canned 500.
+pub(crate) fn response_from_meta(
+    meta: &ChunkMeta,
+    body: Vec<u8>,
+) -> http::Response<crate::server::body::ResponseBody> {
+    use http::{HeaderName, HeaderValue, Response, StatusCode};
+    let status = StatusCode::from_u16(meta.status).unwrap_or(StatusCode::OK);
+    let mut builder = Response::builder().status(status);
+    if let Some(hm) = builder.headers_mut()
+        && let Ok(ct) = HeaderValue::from_str(&meta.content_type)
+    {
+        hm.insert(http::header::CONTENT_TYPE, ct);
+    }
+    for (k, v) in &meta.headers {
+        // Content-Type already set; framing headers are hyper-owned.
+        if k.eq_ignore_ascii_case("content-type") || crate::server::body::is_framing_header(k) {
+            continue;
+        }
+        if let Some(hm) = builder.headers_mut()
+            && let (Ok(name), Ok(val)) = (
+                HeaderName::from_bytes(k.as_bytes()),
+                HeaderValue::from_str(v),
+            )
+        {
+            hm.append(name, val);
+        }
+    }
+    builder
+        .body(crate::server::body::full_body(body))
+        .unwrap_or_else(|_| crate::server::body::canned_500())
 }
 
 fn status_reason(code: u16) -> &'static str {
@@ -127,11 +128,15 @@ fn status_reason(code: u16) -> &'static str {
 /// Bounds check + slot lookup for napi_render_chunk. Returns the cloned
 /// chunk_tx if the slot is set and `len <= buf_len`. Factored out for
 /// unit testing — the NAPI fn itself wraps this in await + send.
+///
+/// `render_slot` is the PER-SLOT render-slot mutex (`entry.render_slot_for(slot)`)
+/// and `buf_len` is the PER-SLOT sub-cap (`entry.dispatch.buf_slot(slot).1`), so
+/// the bound is checked against the slot's sub-region — not the whole SAB.
 pub fn check_chunk_dispatch(
-    render_slot: &parking_lot::Mutex<Option<crate::pool::RenderSlot>>,
+    render_slot: &parking_lot::Mutex<Option<crate::render::pool::RenderSlot>>,
     len: u32,
     buf_len: usize,
-) -> Result<tokio::sync::mpsc::Sender<crate::pool::RenderChunk>, String> {
+) -> Result<tokio::sync::mpsc::Sender<crate::render::pool::RenderChunk>, String> {
     if (len as usize) > buf_len {
         return Err(format!(
             "chunk len {} exceeds SAB capacity {}",
@@ -188,33 +193,6 @@ mod tests {
     }
 
     #[test]
-    fn chunked_hex_prefix_format_small() {
-        let out = format_chunk_framed(b"hello");
-        assert_eq!(out, b"5\r\nhello\r\n");
-    }
-
-    #[test]
-    fn chunked_hex_prefix_format_large() {
-        let body = vec![b'a'; 0x1000];
-        let out = format_chunk_framed(&body);
-        assert!(out.starts_with(b"1000\r\n"));
-        assert!(out.ends_with(b"\r\n"));
-        assert_eq!(out.len(), 6 + 4096 + 2);
-    }
-
-    #[test]
-    fn chunked_hex_prefix_format_at_sab_boundary() {
-        let body = vec![b'b'; 256 * 1024];
-        let out = format_chunk_framed(&body);
-        assert!(out.starts_with(b"40000\r\n"));
-    }
-
-    #[test]
-    fn chunked_terminator_format() {
-        assert_eq!(format_chunk_framed(b""), b"0\r\n\r\n");
-    }
-
-    #[test]
     fn single_chunk_buffer_to_content_length() {
         let meta = ChunkMeta {
             status: 200,
@@ -229,22 +207,6 @@ mod tests {
         assert!(s.contains("Content-Length: 14\r\n"));
         assert!(s.contains("Content-Type: text/html; charset=utf-8\r\n"));
         assert!(s.ends_with("<html>x</html>"));
-    }
-
-    #[test]
-    fn chunked_response_head_format() {
-        let meta = ChunkMeta {
-            status: 200,
-            content_type: "text/html; charset=utf-8".to_string(),
-            headers: [("X-Render-Ms".to_string(), "12".to_string())].into(),
-            streaming: true,
-        };
-        let head = build_chunked_response_head(&meta);
-        let s = std::str::from_utf8(&head).unwrap();
-        assert!(s.starts_with("HTTP/1.1 200 OK\r\n"));
-        assert!(s.contains("Transfer-Encoding: chunked\r\n"));
-        assert!(s.contains("X-Render-Ms: 12\r\n"));
-        assert!(s.ends_with("\r\n\r\n"));
     }
 
     #[test]
@@ -263,8 +225,8 @@ mod tests {
 
     #[test]
     fn slot_present_returns_sender() {
-        let (tx, _rx) = tokio::sync::mpsc::channel::<crate::pool::RenderChunk>(1);
-        let slot = parking_lot::Mutex::new(Some(crate::pool::RenderSlot { chunk_tx: tx }));
+        let (tx, _rx) = tokio::sync::mpsc::channel::<crate::render::pool::RenderChunk>(1);
+        let slot = parking_lot::Mutex::new(Some(crate::render::pool::RenderSlot { chunk_tx: tx }));
         assert!(check_chunk_dispatch(&slot, 5, 256 * 1024).is_ok());
     }
 }

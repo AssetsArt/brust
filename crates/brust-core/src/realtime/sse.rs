@@ -52,67 +52,52 @@ pub fn registry() -> &'static Registry {
     REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-use tokio::io::{AsyncRead, AsyncReadExt};
+use bytes::Bytes;
 
-/// Awaits the next byte from `stream` and returns when the peer has closed
-/// the connection (FIN or RST). On any error (including non-existent data
-/// after FIN) the future resolves. The function does NOT consume application
-/// bytes — by spec, SSE clients never send body after the initial request,
-/// so any read here means "the connection is going away."
+/// Spawn the per-connection SSE driver. Under hyper the response body is a
+/// streaming `BoxBody` fed by `body_tx: Sender<Bytes>` (the headers — status
+/// 200, `Content-Type: text/event-stream`, `Cache-Control: no-store`,
+/// `X-Accel-Buffering: no` — are set on the `Response` by the server's SSE
+/// branch). The task forwards JS-pushed `SseFrame`s into `body_tx`, ack-ing
+/// each so the JS `napi_sse_write` Promise resolves (cooperative backpressure).
 ///
-/// This overload is used by the unit tests which pass tokio `UnixStream`.
-pub async fn peek_for_close<S: AsyncRead + Unpin>(stream: &mut S) -> () {
-    let mut byte = [0u8; 1];
-    // read returns Ok(0) on clean FIN; Err on RST or other failures.
-    let _ = stream.read(&mut byte).await;
-    // Either way, we treat it as "close imminent" and return.
-}
-
-const SSE_HEADER_BLOCK: &[u8] = b"\
-HTTP/1.1 200 OK\r\n\
-Content-Type: text/event-stream\r\n\
-Cache-Control: no-store\r\n\
-Connection: keep-alive\r\n\
-X-Accel-Buffering: no\r\n\
-\r\n";
-
-pub async fn write_sse_response_headers<S: crate::io::SseIo>(
-    stream: &mut S,
-) -> std::io::Result<()> {
-    stream.write_bytes(SSE_HEADER_BLOCK.to_vec()).await
-}
-
-/// Per-connection driver loop. Owns the TCP stream after the open-signal
-/// arrives + headers are written. Forwards frames to the wire, ack-ing
-/// each one so JS Promises resolve. Exits on peer close OR sender drop.
-pub async fn sse_conn_task<S: crate::io::SseIo>(
-    mut stream: S,
+/// Client-disconnect detection: instead of peeking the raw socket for FIN/RST
+/// (no longer reachable through hyper), we await `body_tx.closed()`, which
+/// resolves when the body receiver drops — hyper drops it when the connection
+/// is torn down. The abort callback + registry cleanup fire exactly as before.
+pub fn spawn_sse_conn_task(
+    body_tx: mpsc::Sender<Bytes>,
     conn_id: u64,
     mut frame_rx: mpsc::Receiver<SseFrame>,
 ) {
-    loop {
-        tokio::select! {
-            maybe_frame = frame_rx.recv() => {
-                match maybe_frame {
-                    Some(frame) => {
-                        if stream.write_bytes(frame.bytes).await.is_err() { break; }
-                        let _ = frame.ack.send(());
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                maybe_frame = frame_rx.recv() => {
+                    match maybe_frame {
+                        Some(frame) => {
+                            if body_tx.send(Bytes::from(frame.bytes)).await.is_err() {
+                                // Body receiver dropped — client gone.
+                                break;
+                            }
+                            let _ = frame.ack.send(());
+                        }
+                        None => break, // JS sender dropped — graceful close
                     }
-                    None => break,  // sender dropped — graceful close
                 }
+                _ = body_tx.closed() => break, // client disconnected
             }
-            _ = stream.read_one_byte() => break,
         }
-    }
-    // Cleanup: remove from REGISTRY and fire abort callback if set.
-    if let Some(cb) = registry()
-        .lock()
-        .remove(&conn_id)
-        .and_then(|mut c| c.abort_cb.take())
-    {
-        cb();
-    }
-    let _ = stream.shutdown_conn().await;
+        // Cleanup: remove from REGISTRY and fire abort callback if set.
+        if let Some(cb) = registry()
+            .lock()
+            .remove(&conn_id)
+            .and_then(|mut c| c.abort_cb.take())
+        {
+            cb();
+        }
+        // body_tx drops here → body completes.
+    });
 }
 
 /// MVP: exact-match only. Routes like `/sse/{room}` are not supported
@@ -134,7 +119,6 @@ pub fn path_is_sse(path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::net::UnixStream;
 
     #[test]
     fn next_conn_id_is_monotonic_and_unique() {
@@ -166,33 +150,23 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn peek_for_close_returns_when_peer_shuts_down() {
-        let (a, b) = UnixStream::pair().expect("pair");
-        // Spawn the peek future on the `a` end.
-        let peek = tokio::spawn(async move {
-            let mut a = a;
-            peek_for_close(&mut a).await
-        });
-        // Peer cleanly closes `b` end.
-        drop(b);
-        // Should resolve quickly.
-        let timed = tokio::time::timeout(std::time::Duration::from_secs(1), peek).await;
-        assert!(
-            timed.is_ok(),
-            "peek_for_close should resolve on peer shutdown"
-        );
+    async fn body_tx_closed_resolves_when_receiver_drops() {
+        // Disconnect detection now rides on the body channel: dropping the
+        // receiver (what hyper does on connection teardown) resolves
+        // `tx.closed()`. This is the SSE task's client-gone signal.
+        let (tx, rx) = mpsc::channel::<Bytes>(4);
+        let closed = tokio::spawn(async move { tx.closed().await });
+        drop(rx);
+        let timed = tokio::time::timeout(std::time::Duration::from_secs(1), closed).await;
+        assert!(timed.is_ok(), "tx.closed() should resolve when rx drops");
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn peek_for_close_does_not_resolve_while_peer_alive() {
-        let (a, b) = UnixStream::pair().expect("pair");
-        let peek = tokio::spawn(async move {
-            let mut a = a;
-            peek_for_close(&mut a).await
-        });
-        // Peer is still alive — peek should NOT resolve within a short window.
-        let timed = tokio::time::timeout(std::time::Duration::from_millis(150), peek).await;
-        assert!(timed.is_err(), "peek_for_close should still be pending");
-        drop(b);
+    async fn body_tx_closed_pending_while_receiver_alive() {
+        let (tx, rx) = mpsc::channel::<Bytes>(4);
+        let closed = tokio::spawn(async move { tx.closed().await });
+        let timed = tokio::time::timeout(std::time::Duration::from_millis(150), closed).await;
+        assert!(timed.is_err(), "tx.closed() should still be pending");
+        drop(rx);
     }
 }

@@ -143,11 +143,14 @@ test('returns 414 when request exceeds MAX_REQUEST_BYTES', async () => {
 
   const received = new TextDecoder().decode(Buffer.concat(chunks.map((c) => Buffer.from(c))))
 
-  // The server must have answered 414, not closed silently.
+  // Hyper migration: an oversized request-header block is now rejected by
+  // hyper's own header-length guard (max_buf_size = max_request_bytes) with the
+  // RFC-correct 431 Request Header Fields Too Large + Connection: close — the
+  // hand-rolled parser used to emit a custom 414. Same intent (request too big,
+  // socket closed), more correct status code.
   try {
-    expect(received).toContain('414')
-    expect(received.toLowerCase()).toContain('uri too long')
-    expect(received).toContain('Connection: close')
+    expect(received).toContain('431')
+    expect(received.toLowerCase()).toContain('connection: close')
   } finally {
     await stop()
   }
@@ -256,8 +259,16 @@ test('cache stats endpoint reflects hits and misses', async () => {
     // Second = hit.
     await fetch(`http://127.0.0.1:${port}/cache-test`)
 
-    const r1 = await fetch(`http://127.0.0.1:${port}/_brust/cache/stats`)
-    const s1 = (await r1.json()) as { hits: number; misses: number; len: number; capacity: number }
+    // moka is eventually-consistent: hits/misses are atomic (immediate) but
+    // `len` is computed from pending tasks that may not have run yet. Poll a few
+    // times so the assertion isn't racy on a cold run.
+    let s1 = { hits: 0, misses: 0, len: 0, capacity: 0 }
+    for (let i = 0; i < 20; i++) {
+      const r1 = await fetch(`http://127.0.0.1:${port}/_brust/cache/stats`)
+      s1 = (await r1.json()) as { hits: number; misses: number; len: number; capacity: number }
+      if (s1.hits >= 1 && s1.misses >= 1 && s1.len >= 1) break
+      await new Promise((r) => setTimeout(r, 25))
+    }
     expect(s1.hits).toBeGreaterThanOrEqual(1)
     expect(s1.misses).toBeGreaterThanOrEqual(1)
     expect(s1.len).toBeGreaterThanOrEqual(1)
@@ -677,10 +688,11 @@ test('action endpoint: bodyless DELETE (no Content-Length) → 200 (RFC bodyless
   }
 }, 15_000)
 
-test('action endpoint: Transfer-Encoding chunked → 411 (unsupported)', async () => {
-  // S12: while a missing Content-Length is now allowed (bodyless), a
-  // Transfer-Encoding request is NOT supported by the server's framing path and
-  // is rejected with 411. Raw socket: fetch won't let us forge Transfer-Encoding.
+test('action endpoint: Transfer-Encoding chunked is now decoded by hyper', async () => {
+  // Hyper migration: the hand-rolled parser couldn't decode chunked bodies and
+  // rejected them with 411. Hyper de-chunks transparently, so a chunked action
+  // body now reaches the handler like any sized body — the request is no longer
+  // rejected at the transport layer. Raw socket: fetch won't forge chunked.
   const { port, stop } = await startServer({ rustLog: 'brust=warn' })
   try {
     const chunks: Uint8Array[] = []
@@ -705,15 +717,22 @@ test('action endpoint: Transfer-Encoding chunked → 411 (unsupported)', async (
         },
       },
     })
+    // A complete chunked-encoded JSON body. hyper de-chunks and hands the
+    // decoded body to the action handler.
     sock.write(
       'POST /_brust/action/notes HTTP/1.1\r\n' +
         'Host: x\r\n' +
-        'Transfer-Encoding: chunked\r\n\r\n',
+        'Content-Type: application/json\r\n' +
+        'Transfer-Encoding: chunked\r\n\r\n' +
+        'd\r\n{"text":"hi"}\r\n0\r\n\r\n',
     )
     await Promise.race([closed, new Promise<void>((r) => setTimeout(r, 1000))])
     sock.end()
     const combined = Buffer.concat(chunks).toString('utf-8')
-    expect(combined.split('\r\n')[0]).toContain('411')
+    // Transport no longer rejects with 411; the request reaches the handler and
+    // gets a normal HTTP response (2xx from the notes action).
+    expect(combined.split('\r\n')[0]).not.toContain('411')
+    expect(combined).toMatch(/^HTTP\/1\.1 2\d\d/)
   } finally {
     await stop()
   }
@@ -1154,11 +1173,11 @@ test('buffering: uncached and cached responses share wire shape', async () => {
     expect(uncached.body.length).toBe(parseInt(uncached.headers.get('content-length')!, 10))
     expect(cached.body.length).toBe(parseInt(cached.headers.get('content-length')!, 10))
 
-    // Both paths emit Content-Type before Content-Length (build_single_response_head_only
-    // and build_single_response_bytes share the same head-building code path,
-    // so header order is locked).
-    expect(uncached.headerOrder.slice(0, 2)).toEqual(['content-type', 'content-length'])
-    expect(cached.headerOrder.slice(0, 2)).toEqual(['content-type', 'content-length'])
+    // Both carry a Content-Type. (Hyper now owns header emission/order — the
+    // exact pre-hyper Content-Type-before-Content-Length ordering is no longer
+    // guaranteed by us, so we assert presence, not order. hyper also adds Date.)
+    expect(uncached.headers.get('content-type')).toBeTruthy()
+    expect(cached.headers.get('content-type')).toBeTruthy()
   } finally {
     await stop()
   }
@@ -1627,6 +1646,87 @@ test('streaming: /slow-suspense uses Transfer-Encoding: chunked + shell-before-r
     await stop()
   }
 }, 15_000)
+
+test('renderSlots>1: two concurrent Suspense renders interleave on ONE worker', async () => {
+  // The multi-render-per-worker payoff, proven end-to-end. One worker, two render
+  // slots. `/slow-fresh` suspends ~150ms with a per-REQUEST-fresh promise, so two
+  // concurrent requests each wait independently — and on two slots those waits
+  // OVERLAP. The concurrent pair must finish in roughly one render's time, not two.
+  // (At renderSlots=1 the second request would queue behind the first → ~2×, so
+  // this also guards the env→slot plumbing from regressing.)
+  const { port, stop } = await startServer({
+    workers: '1',
+    env: { BRUST_RENDER_SLOTS: '2' },
+    rustLog: 'brust=warn',
+  })
+  try {
+    const url = `http://127.0.0.1:${port}/slow-fresh`
+    const get = () => fetch(url).then((r) => r.text())
+    const pairConcurrent = async () => {
+      const t = performance.now()
+      const [a, b] = await Promise.all([get(), get()])
+      return { ms: performance.now() - t, a, b }
+    }
+
+    // Warm up (island chunk build, JIT, first-hit costs) so the timings are clean.
+    await get()
+
+    // Serial: two back-to-back renders ≈ 2 × ~200ms.
+    const s0 = performance.now()
+    await get()
+    await get()
+    const serial = performance.now() - s0
+
+    // Concurrent: two at once ≈ ~200ms — the waits overlap across the two slots.
+    // Take the faster of two trials to filter a single full-suite-contention blip
+    // (the timer wait is I/O and overlaps regardless of host CPU, so the floor is
+    // stable; only an unlucky trial inflates).
+    const t1 = await pairConcurrent()
+    const t2 = await pairConcurrent()
+    const concurrent = Math.min(t1.ms, t2.ms)
+
+    // Both renders produced the resolved Suspense content (no cross-slot corruption).
+    for (const { a, b } of [t1, t2]) {
+      expect(a).toContain('fresh after 200ms')
+      expect(b).toContain('fresh after 200ms')
+    }
+
+    // Interleave: two overlapping ~200ms waits → ~0.5× serial. Assert < 0.75× with
+    // generous CI headroom. A regression to one-render-per-worker (e.g. the
+    // env→slot plumbing breaking) would push this to ~1.0 and fail.
+    expect(concurrent).toBeLessThan(serial * 0.75)
+  } finally {
+    await stop()
+  }
+}, 30_000)
+
+test('graceful drain: SIGINT lets an in-flight stream finish before the process exits', async () => {
+  const { port, proc } = await startServer({ workers: '1', rustLog: 'brust=warn' })
+  let exited = false
+  try {
+    // Open a slow Suspense stream. `await fetch` resolves once the HEADERS +
+    // shell chunk are in — at which point the render is provably in-flight (the
+    // ~200ms resolved content hasn't streamed yet).
+    const resp = await fetch(`http://127.0.0.1:${port}/slow-fresh`)
+    expect(resp.status).toBe(200)
+    // SIGINT the server mid-render. With graceful drain it stops accepting new
+    // connections but lets THIS in-flight stream finish before exiting; without
+    // it the old `process.exit(0)` would cut the body off → text() rejects or
+    // returns a truncated body missing the resolved content.
+    proc.kill('SIGINT')
+    const body = await resp.text()
+    expect(body).toContain('fresh after 200ms') // the resolved Suspense content survived
+    // And the process drains + exits cleanly (not hung) within the drain window.
+    const code = await Promise.race([
+      proc.exited,
+      new Promise<number>((_r, rej) => setTimeout(() => rej(new Error('did not exit')), 8000)),
+    ])
+    exited = true
+    expect(typeof code).toBe('number')
+  } finally {
+    if (!exited) proc.kill('SIGKILL')
+  }
+}, 20_000)
 
 test('streaming: mid-stream disconnect — second request to same worker still succeeds', async () => {
   const { port, stop } = await startServer({ workers: '1', rustLog: 'brust=warn' })

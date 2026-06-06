@@ -1,40 +1,10 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use napi::bindgen_prelude::{Either, Promise};
-use napi::threadsafe_function::ThreadsafeFunction;
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
 
-/// Renderer signature: takes the envelope (SAB len as `u32`, or inline JSON
-/// `String`) and resolves with a `u32` framed-response length.
-///
-/// Two response protocols, selected by the resolved `u32`:
-/// - **Fast lane** (`len > 0`): the worker wrote a complete framed single-chunk
-///   response `[meta_len: u16 BE][meta JSON][body]` into the SAB and resolved
-///   with its byte length. Rust reads it directly after `promise.await` — no
-///   chunk channel, no per-chunk ack round-trip. Used for action/native/render
-///   responses that fit in one chunk.
-/// - **Chunk channel** (`len == 0`): the worker streamed bytes via
-///   `napi_render_chunk` through the per-worker `RenderSlot.chunk_tx`. Used for
-///   React Suspense streaming; SSE/WS resolve 0 too (they own the socket
-///   independently via napiSse*/napiWs*).
-///
-/// CalleeHandled = false matches what Function::build_threadsafe_function().build() produces.
-pub type RendererTsfn =
-    ThreadsafeFunction<Either<u32, String>, Promise<u32>, Either<u32, String>, napi::Status, false>;
-
-/// Raw pointer to the worker's SharedArrayBuffer backing store. Send+Sync because the
-/// backing store is process-global memory (V8 allocates SAB backing outside the GC heap)
-/// and only read by Rust AFTER the worker's render callback resolves (napi tsfn.await
-/// provides the happens-before).
-#[derive(Copy, Clone)]
-pub struct BufPtr(pub *mut u8);
-
-// SAFETY: see BufPtr docstring. The Bun Worker keeps the SAB rooted in its module
-// scope, so the backing store lives for the worker's whole lifetime.
-unsafe impl Send for BufPtr {}
-unsafe impl Sync for BufPtr {}
+use crate::render::RenderDispatch;
 
 /// One chunk delivered from a worker's `napi_render_chunk` call to handle_conn's
 /// per-request chunk loop. `ack` resolves the worker's awaiting Promise so the
@@ -66,36 +36,74 @@ pub struct RenderSlot {
     pub chunk_tx: mpsc::Sender<RenderChunk>,
 }
 
-pub struct TsfnEntry {
-    pub id: u32,
-    /// `Option` so `#[cfg(test)] WorkerPool::register_for_test` can build
-    /// an entry without a real napi `ThreadsafeFunction` (the crate is
-    /// `cdylib`; napi C runtime symbols are resolved by the Bun host at
-    /// load time and aren't linked into the `cargo test` binary).
-    /// Production `WorkerPool::register` always sets `Some(...)`; the
-    /// three dispatch sites (`dispatch_sse`, `dispatch_ws`, server.rs
-    /// render dispatch) unwrap via `.as_ref().expect(...)`.
-    pub tsfn: Option<RendererTsfn>,
-    pub buf_ptr: BufPtr,
-    pub buf_len: usize,
-    pub in_flight: AtomicU32,
-    /// Lock-free exclusivity gate. A render claims the worker by CAS-ing this
-    /// `true → false`; `RenderClaim::drop` restores it to `true`. This replaces
-    /// `render_slot.is_some()` as the busy check — the mutex below is now only
-    /// touched to STORE/CLEAR the chunk_tx for streaming paths, and fast-lane
-    /// claims skip it entirely.
-    pub idle: AtomicBool,
-    pub render_slot: parking_lot::Mutex<Option<RenderSlot>>,
+/// One render slot of a worker. A worker holds `K` of these (K = the
+/// dispatch's `slot_count()`); each slot is an independent in-flight render
+/// reservation backed by a disjoint SAB sub-region (see `RenderDispatch::buf_slot`).
+pub struct Slot {
+    /// Per-slot exclusivity gate, SAME polarity as the old per-worker `idle`:
+    /// true = free. Claim = CAS true→false (Acquire); RenderClaim::drop restores
+    /// true (Release). (Was a single per-worker AtomicBool; now one per slot.)
+    idle: AtomicBool,
+    /// Per-slot chunk sender, stored on claim for the streaming path; cleared on
+    /// drop. (Was the single per-worker render_slot Mutex.)
+    render_slot: parking_lot::Mutex<Option<RenderSlot>>,
 }
 
-impl TsfnEntry {
+impl Slot {
+    /// Per-slot exclusivity gate (`true` = free). Exposed for assertions in the
+    /// render-path tests that previously read the per-worker `idle`.
+    pub fn is_idle(&self) -> bool {
+        self.idle.load(Ordering::Acquire)
+    }
+
+    /// Per-slot chunk-sender mutex. Exposed for assertions that previously read
+    /// the per-worker `render_slot`.
+    pub fn render_slot(&self) -> &parking_lot::Mutex<Option<RenderSlot>> {
+        &self.render_slot
+    }
+}
+
+pub struct WorkerEntry {
+    pub(crate) id: u32,
+    /// The render bridge for this worker. In production this is a
+    /// `crate::dispatch_impl::TsfnDispatch` (napi tsfn + SAB pointer); tests
+    /// use `crate::render::dispatch::MockDispatch`. The seam keeps all napi
+    /// out of this module. `pub` because the napi binding reads `entry.dispatch`
+    /// for the SAB buf/buf_slot in the render-chunk/jinja paths.
+    pub dispatch: Box<dyn RenderDispatch>,
+    pub(crate) in_flight: AtomicU32,
+    /// The worker's `K` render slots (K = `dispatch.slot_count()`). Each holds a
+    /// per-slot `idle` gate + per-slot `render_slot` mutex. Replaces the single
+    /// per-worker `idle` + `render_slot` pair.
+    pub(crate) slots: Vec<Slot>,
+}
+
+impl WorkerEntry {
     pub fn in_flight_guard(self: &Arc<Self>) -> InFlightGuard {
         self.in_flight.fetch_add(1, Ordering::Relaxed);
         InFlightGuard(Arc::clone(self))
     }
+
+    /// Borrow the `i`th render slot. Used by tests asserting per-slot state.
+    pub fn slot(&self, i: usize) -> &Slot {
+        &self.slots[i]
+    }
+
+    /// Number of render slots this worker holds.
+    pub fn slot_len(&self) -> usize {
+        self.slots.len()
+    }
+
+    /// The per-slot `render_slot` mutex the napi `napi_render_chunk` paths pass
+    /// to `check_chunk_dispatch`. Returns `None` if `slot` is out of range (a
+    /// worker only has `slot_count()` slots) rather than panicking, so a bad
+    /// slot from JS is a clean error instead of an abort.
+    pub fn render_slot_for(&self, slot: u32) -> Option<&parking_lot::Mutex<Option<RenderSlot>>> {
+        self.slots.get(slot as usize).map(|s| &s.render_slot)
+    }
 }
 
-pub struct InFlightGuard(Arc<TsfnEntry>);
+pub struct InFlightGuard(Arc<WorkerEntry>);
 
 impl Drop for InFlightGuard {
     fn drop(&mut self) {
@@ -109,7 +117,11 @@ impl Drop for InFlightGuard {
 #[must_use = "RenderClaim must be held for the lifetime of the render; \
               dropping it immediately frees the worker and breaks the invariant"]
 pub struct RenderClaim {
-    entry: Arc<TsfnEntry>,
+    entry: Arc<WorkerEntry>,
+    /// Which of the worker's slots this claim reserves. The render path threads
+    /// this into `dispatch.call(env, slot)` and `dispatch.buf_slot(slot)` so the
+    /// worker writes its response into the matching SAB sub-region.
+    slot: u32,
     /// `true` → claimed via the fast lane (no chunk_tx stored in render_slot);
     /// drop skips the mutex entirely. `false` → streaming claim; drop clears
     /// the slot under the mutex.
@@ -121,8 +133,14 @@ pub struct RenderClaim {
 }
 
 impl RenderClaim {
-    pub fn entry(&self) -> &Arc<TsfnEntry> {
+    pub fn entry(&self) -> &Arc<WorkerEntry> {
         &self.entry
+    }
+
+    /// The reserved slot index. Copy `u32`; read it before the claim is moved
+    /// into the chunk-pump task.
+    pub fn slot(&self) -> u32 {
+        self.slot
     }
 }
 
@@ -136,22 +154,23 @@ impl Drop for RenderClaim {
         // transient +1 skew where a new claim is taken before this decrement
         // lands.)
         //
-        // INVARIANT (load-bearing): a worker must NOT be released here until its
+        // INVARIANT (load-bearing): a slot must NOT be released here until its
         // render Promise has settled. Every dispatch path holds this RenderClaim
         // until after `promise.await` (fast lane) or until the chunk loop breaks
-        // on the resolved future. The ONE exception is the streaming path's
-        // mid-stream `write_all`-error early-return (dispatch_to_worker_and_
-        // stream_chunks), which can drop the claim while the worker's JS is still
-        // running — a pre-existing, streaming-only window. Do NOT add disconnect
-        // cancellation / timeouts to the render/action dispatch without first
-        // gating release on Promise settlement: doing so would let a recycled
-        // worker's new request write the SAB concurrently with the old JS still
-        // touching it (data race). See the NOTE at the streaming early-returns.
+        // on the resolved future. The streaming path's client-disconnect case is
+        // NOT an exception: instead of dropping the claim early, the chunk pump
+        // DRAINS the worker (keeps ACKing chunks, discards bytes) and holds the
+        // claim until the render future settles or a Final/BytesAndFinal arrives.
+        // Do NOT add disconnect cancellation / timeouts to the render/action
+        // dispatch without first gating release on Promise settlement: doing so
+        // would let a recycled slot's new request write the SAB sub-region
+        // concurrently with the old JS still touching it (data race).
+        let slot = &self.entry.slots[self.slot as usize];
         if !self.lockfree {
-            self.entry.render_slot.lock().take();
+            slot.render_slot.lock().take();
         }
         self.entry.in_flight.fetch_sub(1, Ordering::Relaxed);
-        self.entry.idle.store(true, Ordering::Release);
+        slot.idle.store(true, Ordering::Release);
         // Wake one dispatcher parked in `claim_or_wait`. Fired AFTER the
         // `idle = true` Release store so the woken claimer's Acquire CAS sees
         // this worker idle. A missed wakeup (no waiter yet) is harmless: the
@@ -172,7 +191,7 @@ pub enum ClaimResult {
 
 #[derive(Default)]
 pub struct WorkerPool {
-    entries: RwLock<Vec<Arc<TsfnEntry>>>,
+    entries: RwLock<Vec<Arc<WorkerEntry>>>,
     next_id: AtomicU32,
     /// Notified once per worker release (see `RenderClaim::drop`). Dispatchers
     /// that hit `AllBusy` await this instead of returning 503, letting
@@ -185,16 +204,21 @@ impl WorkerPool {
         Self::default()
     }
 
-    pub fn register(&self, tsfn: RendererTsfn, buf_ptr: BufPtr, buf_len: usize) -> u32 {
+    pub fn register(&self, dispatch: Box<dyn RenderDispatch>) -> u32 {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let entry = Arc::new(TsfnEntry {
+        // Read the slot count BEFORE moving `dispatch` into the entry.
+        let k = dispatch.slot_count().max(1);
+        let slots: Vec<Slot> = (0..k)
+            .map(|_| Slot {
+                idle: AtomicBool::new(true),
+                render_slot: parking_lot::Mutex::new(None),
+            })
+            .collect();
+        let entry = Arc::new(WorkerEntry {
             id,
-            tsfn: Some(tsfn),
-            buf_ptr,
-            buf_len,
+            dispatch,
             in_flight: AtomicU32::new(0),
-            idle: AtomicBool::new(true),
-            render_slot: parking_lot::Mutex::new(None),
+            slots,
         });
         self.entries.write().push(entry);
         id
@@ -209,7 +233,7 @@ impl WorkerPool {
         &self.idle_notify
     }
 
-    pub fn pick_least_busy(&self) -> Option<Arc<TsfnEntry>> {
+    pub fn pick_least_busy(&self) -> Option<Arc<WorkerEntry>> {
         let entries = self.entries.read();
         entries
             .iter()
@@ -217,11 +241,11 @@ impl WorkerPool {
             .cloned()
     }
 
-    /// Atomically reserve an idle render worker and install the chunk
+    /// Atomically reserve an idle render slot and install the chunk
     /// sender. Returns Claimed/PoolEmpty/AllBusy.
     ///
     /// Lock ordering: ALWAYS acquire `entries` (RwLock read) BEFORE the
-    /// per-entry `render_slot` (Mutex). Inverting risks deadlock.
+    /// per-slot `render_slot` (Mutex). Inverting risks deadlock.
     pub fn try_claim_render(
         &self,
         chunk_tx: tokio::sync::mpsc::Sender<RenderChunk>,
@@ -231,29 +255,32 @@ impl WorkerPool {
             return ClaimResult::PoolEmpty;
         }
         for entry in entries.iter() {
-            // Lock-free exclusivity: CAS idle true→false. Acquire pairs with the
-            // Release store in RenderClaim::drop so the next claimer sees a clean
-            // worker. The mutex below is touched ONLY to store chunk_tx (the
-            // streaming path needs it for napi_render_chunk).
-            if entry
-                .idle
-                .compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed)
-                .is_err()
-            {
-                continue;
+            for (i, slot) in entry.slots.iter().enumerate() {
+                // Lock-free exclusivity: CAS idle true→false. Acquire pairs with
+                // the Release store in RenderClaim::drop so the next claimer sees
+                // a clean slot. The mutex below is touched ONLY to store chunk_tx
+                // (the streaming path needs it for napi_render_chunk).
+                if slot
+                    .idle
+                    .compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed)
+                    .is_err()
+                {
+                    continue;
+                }
+                entry.in_flight.fetch_add(1, Ordering::Relaxed);
+                *slot.render_slot.lock() = Some(RenderSlot { chunk_tx });
+                return ClaimResult::Claimed(RenderClaim {
+                    entry: Arc::clone(entry),
+                    slot: i as u32,
+                    lockfree: false,
+                    idle_notify: Arc::clone(&self.idle_notify),
+                });
             }
-            entry.in_flight.fetch_add(1, Ordering::Relaxed);
-            *entry.render_slot.lock() = Some(RenderSlot { chunk_tx });
-            return ClaimResult::Claimed(RenderClaim {
-                entry: Arc::clone(entry),
-                lockfree: false,
-                idle_notify: Arc::clone(&self.idle_notify),
-            });
         }
         ClaimResult::AllBusy
     }
 
-    /// Fast-lane claim: reserve an idle worker via the lock-free `idle` CAS but
+    /// Fast-lane claim: reserve an idle slot via the lock-free `idle` CAS but
     /// do NOT store a chunk_tx (no mutex touched at all). For single-chunk
     /// dispatch (action/native) where the worker takes the fast lane and never
     /// calls `napi_render_chunk`. Drop releases `idle` without locking.
@@ -263,24 +290,27 @@ impl WorkerPool {
             return ClaimResult::PoolEmpty;
         }
         for entry in entries.iter() {
-            if entry
-                .idle
-                .compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed)
-                .is_err()
-            {
-                continue;
+            for (i, slot) in entry.slots.iter().enumerate() {
+                if slot
+                    .idle
+                    .compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed)
+                    .is_err()
+                {
+                    continue;
+                }
+                entry.in_flight.fetch_add(1, Ordering::Relaxed);
+                return ClaimResult::Claimed(RenderClaim {
+                    entry: Arc::clone(entry),
+                    slot: i as u32,
+                    lockfree: true,
+                    idle_notify: Arc::clone(&self.idle_notify),
+                });
             }
-            entry.in_flight.fetch_add(1, Ordering::Relaxed);
-            return ClaimResult::Claimed(RenderClaim {
-                entry: Arc::clone(entry),
-                lockfree: true,
-                idle_notify: Arc::clone(&self.idle_notify),
-            });
         }
         ClaimResult::AllBusy
     }
 
-    pub fn entry(&self, id: u32) -> Option<Arc<TsfnEntry>> {
+    pub fn entry(&self, id: u32) -> Option<Arc<WorkerEntry>> {
         self.entries.read().iter().find(|e| e.id == id).cloned()
     }
 
@@ -304,74 +334,21 @@ impl WorkerPool {
     }
 }
 
-/// Dispatch an SSE envelope to the worker. Single long-lived tsfn call:
-/// the JS side branches on `kind: 'sse'`, runs middleware, signals open
-/// via napi_sse_signal_open, then enters the reader loop. The Rust side
-/// holds an in_flight_guard ONLY for the duration of the call_async
-/// handoff — the per-conn task in src/sse.rs::sse_conn_task owns the
-/// rest of the connection's lifetime independently of the worker pool.
-///
-/// Returns Err if the tsfn enqueue itself fails (e.g. worker dead).
-/// Open-signal timeout + middleware reject handling are caller concerns.
-pub async fn dispatch_sse(entry: Arc<TsfnEntry>, envelope_json: String) -> Result<(), napi::Error> {
-    let _guard = entry.in_flight_guard();
-    entry
-        .tsfn
-        .as_ref()
-        .expect("tsfn is None — only legal in cfg(test) register_for_test; production register always supplies Some")
-        .call_async(napi::bindgen_prelude::Either::B(envelope_json))
-        .await
-        .map(|_| ())
-        .map_err(|e| napi::Error::from_reason(format!("sse dispatch failed: {e}")))
-}
-
-/// Dispatch a WS envelope to the worker. Single long-lived tsfn call:
-/// the JS side branches on `kind: 'ws'`, runs middleware, signals open
-/// (101 or 4xx) via napi_ws_signal_open, then registers handler
-/// callbacks via napi_ws_register_handlers. The Rust side holds an
-/// in_flight_guard ONLY for the duration of the call_async handoff —
-/// the per-conn task in src/ws.rs::ws_conn_task owns the rest of the
-/// connection's lifetime independently of the worker pool.
-///
-/// Returns Err if the tsfn enqueue itself fails (e.g. worker dead).
-/// Open-signal timeout + middleware reject handling are caller concerns.
-pub async fn dispatch_ws(entry: Arc<TsfnEntry>, envelope_json: String) -> Result<(), napi::Error> {
-    let _guard = entry.in_flight_guard();
-    entry
-        .tsfn
-        .as_ref()
-        .expect("tsfn is None — only legal in cfg(test) register_for_test; production register always supplies Some")
-        .call_async(napi::bindgen_prelude::Either::B(envelope_json))
-        .await
-        .map(|_| ())
-        .map_err(|e| napi::Error::from_reason(format!("ws dispatch failed: {e}")))
-}
-
-#[cfg(test)]
-impl WorkerPool {
-    /// Register a worker with `tsfn: None` for pool-logic unit tests.
-    /// Production code always sets `Some(...)`; tests using this helper
-    /// MUST NOT call dispatch paths that unwrap tsfn.
-    pub fn register_for_test(&self) -> u32 {
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let entry = Arc::new(TsfnEntry {
-            id,
-            tsfn: None,
-            buf_ptr: BufPtr(Box::leak(vec![0u8; 256 * 1024].into_boxed_slice()).as_mut_ptr()),
-            buf_len: 256 * 1024,
-            in_flight: AtomicU32::new(0),
-            idle: AtomicBool::new(true),
-            render_slot: parking_lot::Mutex::new(None),
-        });
-        self.entries.write().push(entry);
-        id
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::render::dispatch::MockDispatch;
     use tokio::sync::{mpsc, oneshot};
+
+    /// Register a worker backed by `MockDispatch` for pool-logic unit tests.
+    fn register_for_test(pool: &WorkerPool) -> u32 {
+        pool.register(Box::new(MockDispatch::new()))
+    }
+
+    /// Register a worker whose `MockDispatch` has `k` render slots.
+    fn register_k_for_test(pool: &WorkerPool, k: usize) -> u32 {
+        pool.register(Box::new(MockDispatch::with_slots(k)))
+    }
 
     #[test]
     fn render_slot_set_clear_round_trip() {
@@ -420,7 +397,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn drop_notifies_and_reclaims_after_all_busy() {
         let pool = WorkerPool::new();
-        pool.register_for_test();
+        register_for_test(&pool);
 
         // Claim the only worker → pool now AllBusy.
         let claim = match pool.try_claim_render_lockfree() {
@@ -475,14 +452,14 @@ mod tests {
     #[test]
     fn try_claim_render_claims_idle_worker() {
         let pool = WorkerPool::new();
-        let id = pool.register_for_test();
+        let id = register_for_test(&pool);
         let (tx, _rx) = tokio::sync::mpsc::channel::<RenderChunk>(1);
         let claim = match pool.try_claim_render(tx) {
             ClaimResult::Claimed(c) => c,
             _ => panic!("expected Claimed"),
         };
         assert_eq!(claim.entry().id, id);
-        assert!(claim.entry().render_slot.lock().is_some());
+        assert!(claim.entry().slot(0).render_slot().lock().is_some());
         assert_eq!(claim.entry().in_flight.load(Ordering::Relaxed), 1);
         drop(claim);
     }
@@ -490,8 +467,8 @@ mod tests {
     #[test]
     fn try_claim_render_second_returns_other_idle_worker() {
         let pool = WorkerPool::new();
-        let id0 = pool.register_for_test();
-        let id1 = pool.register_for_test();
+        let id0 = register_for_test(&pool);
+        let id1 = register_for_test(&pool);
         let (tx0, _rx0) = tokio::sync::mpsc::channel::<RenderChunk>(1);
         let (tx1, _rx1) = tokio::sync::mpsc::channel::<RenderChunk>(1);
 
@@ -512,7 +489,7 @@ mod tests {
     #[test]
     fn try_claim_render_all_busy_returns_all_busy() {
         let pool = WorkerPool::new();
-        let _id = pool.register_for_test();
+        let _id = register_for_test(&pool);
         let (tx0, _rx0) = tokio::sync::mpsc::channel::<RenderChunk>(1);
         let (tx1, _rx1) = tokio::sync::mpsc::channel::<RenderChunk>(1);
         let _c0 = match pool.try_claim_render(tx0) {
@@ -528,7 +505,7 @@ mod tests {
     #[test]
     fn render_claim_drop_releases_slot_and_decrements_in_flight() {
         let pool = WorkerPool::new();
-        let _id = pool.register_for_test();
+        let _id = register_for_test(&pool);
         let entry = pool.entries.read()[0].clone();
         {
             let (tx, _rx) = tokio::sync::mpsc::channel::<RenderChunk>(1);
@@ -536,11 +513,11 @@ mod tests {
                 ClaimResult::Claimed(c) => c,
                 _ => panic!(),
             };
-            assert!(entry.render_slot.lock().is_some());
+            assert!(entry.slot(0).render_slot().lock().is_some());
             assert_eq!(entry.in_flight.load(Ordering::Relaxed), 1);
         }
         // Drop ran here.
-        assert!(entry.render_slot.lock().is_none());
+        assert!(entry.slot(0).render_slot().lock().is_none());
         assert_eq!(entry.in_flight.load(Ordering::Relaxed), 0);
     }
 
@@ -554,7 +531,7 @@ mod tests {
         // next render dispatch.
         let pool = WorkerPool::new();
         for _ in 0..4 {
-            pool.register_for_test();
+            register_for_test(&pool);
         }
         assert_eq!(pool.registered_count(), 4);
 
@@ -562,7 +539,7 @@ mod tests {
         assert_eq!(pool.registered_count(), 0, "clear must drop every entry");
 
         for _ in 0..4 {
-            pool.register_for_test();
+            register_for_test(&pool);
         }
         assert_eq!(
             pool.registered_count(),
@@ -574,7 +551,7 @@ mod tests {
     #[test]
     fn try_claim_render_after_drop_reuses_worker() {
         let pool = WorkerPool::new();
-        let _id = pool.register_for_test();
+        let _id = register_for_test(&pool);
         let (tx0, _rx0) = tokio::sync::mpsc::channel::<RenderChunk>(1);
         let (tx1, _rx1) = tokio::sync::mpsc::channel::<RenderChunk>(1);
         {
@@ -599,7 +576,7 @@ mod tests {
 
         let pool = Arc::new(WorkerPool::new());
         for _ in 0..M {
-            pool.register_for_test();
+            register_for_test(&pool);
         }
 
         // start_barrier: every task waits here before calling try_claim_render —
@@ -674,7 +651,7 @@ mod tests {
         // every slot is None and every in_flight is 0.
         for entry in pool.entries.read().iter() {
             assert!(
-                entry.render_slot.lock().is_none(),
+                entry.slot(0).render_slot().lock().is_none(),
                 "worker {} slot still held",
                 entry.id,
             );
@@ -685,6 +662,102 @@ mod tests {
                 entry.id,
             );
         }
+    }
+
+    // The core K-slot invariant: ONE worker with K=4 slots must permit exactly
+    // 4 CONCURRENT claims (4 distinct slot indices), with further attempts
+    // AllBusy — the single-worker analogue of the M-worker race test above.
+    // Two-barrier design forces simultaneous claims and holds them all open
+    // before any drops, so claimed_slots reflects concurrent state. Must pass
+    // under `--release`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn multi_slot_k_concurrent_claims_one_worker() {
+        use std::sync::Arc;
+        use tokio::sync::Barrier;
+
+        const K: usize = 4; // slots on the single worker
+        const N: usize = 8; // concurrent claim attempts
+
+        let pool = Arc::new(WorkerPool::new());
+        let id = register_k_for_test(&pool, K);
+        assert_eq!(pool.entry(id).unwrap().slot_len(), K);
+
+        // start_barrier: every task waits here before calling try_claim_render —
+        //                forces simultaneous contention at the claim point.
+        // hold_barrier:  every task waits here AFTER claiming/AllBusying and
+        //                BEFORE dropping, so claimed_slots reflects the concurrent
+        //                claim state, not sequential reuse.
+        let start_barrier = Arc::new(Barrier::new(N));
+        let hold_barrier = Arc::new(Barrier::new(N));
+        let mut handles = Vec::new();
+        for _ in 0..N {
+            let pool = Arc::clone(&pool);
+            let start = Arc::clone(&start_barrier);
+            let hold = Arc::clone(&hold_barrier);
+            handles.push(tokio::spawn(async move {
+                start.wait().await;
+                let (tx, _rx) = tokio::sync::mpsc::channel::<RenderChunk>(1);
+                match pool.try_claim_render(tx) {
+                    ClaimResult::Claimed(c) => {
+                        let slot = c.slot();
+                        hold.wait().await;
+                        drop(c);
+                        Some(slot)
+                    }
+                    ClaimResult::AllBusy => {
+                        hold.wait().await;
+                        None
+                    }
+                    ClaimResult::PoolEmpty => panic!("pool has one worker registered"),
+                }
+            }));
+        }
+
+        let mut claimed_slots = Vec::new();
+        let mut all_busy_count = 0usize;
+        for h in handles {
+            match h.await.unwrap() {
+                Some(slot) => claimed_slots.push(slot),
+                None => all_busy_count += 1,
+            }
+        }
+
+        // (1) Exactly K concurrent claims, N-K AllBusy.
+        assert_eq!(
+            claimed_slots.len(),
+            K,
+            "expected {K} concurrent claims, got {} (slots: {:?})",
+            claimed_slots.len(),
+            claimed_slots,
+        );
+        assert_eq!(all_busy_count, N - K);
+
+        // (2) Each successful concurrent claim is a DISTINCT slot index — two
+        // tasks must not have both observed the same slot as idle.
+        let mut sorted = claimed_slots.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(
+            sorted.len(),
+            K,
+            "duplicate slot indices in concurrent claimed set: {:?}",
+            claimed_slots,
+        );
+
+        // (3) After release, every slot is idle and in_flight is 0.
+        let entry = pool.entry(id).unwrap();
+        for i in 0..K {
+            assert!(entry.slot(i).is_idle(), "slot {i} not idle after release");
+            assert!(
+                entry.slot(i).render_slot().lock().is_none(),
+                "slot {i} still held",
+            );
+        }
+        assert_eq!(
+            entry.in_flight.load(Ordering::Relaxed),
+            0,
+            "in_flight not drained",
+        );
     }
 
     fn chunk_kind(c: &RenderChunk) -> &'static str {

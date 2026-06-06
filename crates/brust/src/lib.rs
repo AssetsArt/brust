@@ -1,24 +1,11 @@
 #![deny(clippy::all)]
 
-pub mod action_router;
-mod cache;
-mod compress;
-mod http;
-mod io;
-mod island_cache;
-mod jinja;
+mod dispatch_impl;
 mod jsx_compile;
-mod pool;
-pub mod render_stream;
-mod routes;
-mod server;
-pub mod sse;
-pub mod ws;
 
 use std::cell::Cell;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
 
 use napi::Result as NapiResult;
@@ -26,48 +13,24 @@ use napi::bindgen_prelude::{BigInt, Buffer, Function, Promise, Uint8Array};
 use napi::threadsafe_function::ThreadsafeFunctionCallMode;
 use napi_derive::napi;
 use once_cell::sync::OnceCell;
-use tokio::sync::Notify;
 use tracing::error;
 use tracing_subscriber::EnvFilter;
 
-use crate::action_router::{ActionRouter, Method};
-use crate::cache::LruCache;
-use crate::pool::{BufPtr, RendererTsfn, WorkerPool};
-use crate::routes::RouteTable;
+use brust_core::AppState;
+use brust_core::routing::action::{ActionRouter, Method};
+
+use crate::dispatch_impl::{BufPtr, RendererTsfn, TsfnDispatch};
 
 thread_local! {
     static WORKER_ID: Cell<Option<u32>> = const { Cell::new(None) };
 }
 
-struct State {
-    pool: Arc<WorkerPool>,
-    ready: Arc<Notify>,
-    shutdown: Arc<Notify>,
-    routes: Arc<RouteTable>,
-    cache: Arc<LruCache>,
-    // Typed as the trait object, not concrete MokaStore, so a future RedisStore
-    // backend swaps in here with zero changes to the NAPI fns / call sites.
-    island_cache: std::sync::Arc<dyn crate::island_cache::CacheStore>,
-    is_serving: AtomicBool,
-    /// Dev mode (set by `configure_dev_mode` from the TS dev coordinator). When
-    /// true, static assets (`/_brust/islands/*`, `/_brust/css/*`) are served
-    /// `Cache-Control: no-store` so an island/CSS rebuild on hot reload is never
-    /// masked by the browser cache (chunk URLs are unhashed, so a stale cached
-    /// copy would otherwise survive a reload). Off in production → cacheable.
-    dev_mode: AtomicBool,
-    expected_workers: AtomicU32,
-    islands_dir: parking_lot::RwLock<Option<std::path::PathBuf>>,
-    css_dir: parking_lot::RwLock<Option<std::path::PathBuf>>,
-    /// URL path (`/favicon.ico`) → canonical absolute file path under public/.
-    /// Built once at boot by `configure_public_dir`; replaced wholesale.
-    public_assets: parking_lot::RwLock<std::collections::HashMap<String, std::path::PathBuf>>,
-    action_router: parking_lot::RwLock<ActionRouter>,
-    action_prefix: parking_lot::RwLock<String>,
-}
+static STATE: OnceCell<Arc<AppState>> = OnceCell::new();
 
-static STATE: OnceCell<State> = OnceCell::new();
-
-pub(crate) fn state() -> &'static State {
+/// The process-wide pure [`AppState`], owned by the napi binding. Initialized on
+/// first use (also installs the tracing subscriber). Every `#[napi]` fn drives
+/// the core through this handle.
+pub(crate) fn state() -> &'static Arc<AppState> {
     STATE.get_or_init(|| {
         let _ = tracing_subscriber::fmt()
             .with_env_filter(
@@ -76,23 +39,7 @@ pub(crate) fn state() -> &'static State {
             .with_target(false)
             .with_writer(std::io::stderr)
             .try_init();
-        State {
-            pool: Arc::new(WorkerPool::new()),
-            ready: Arc::new(Notify::new()),
-            shutdown: Arc::new(Notify::new()),
-            routes: Arc::new(RouteTable::new()),
-            cache: Arc::new(LruCache::new()),
-            island_cache: std::sync::Arc::new(crate::island_cache::MokaStore::new(1000))
-                as std::sync::Arc<dyn crate::island_cache::CacheStore>,
-            is_serving: AtomicBool::new(false),
-            dev_mode: AtomicBool::new(false),
-            expected_workers: AtomicU32::new(0),
-            islands_dir: parking_lot::RwLock::new(None),
-            css_dir: parking_lot::RwLock::new(None),
-            public_assets: parking_lot::RwLock::new(std::collections::HashMap::new()),
-            action_router: parking_lot::RwLock::new(ActionRouter::new()),
-            action_prefix: parking_lot::RwLock::new("/_brust/action".to_string()),
-        }
+        Arc::new(AppState::new())
     })
 }
 
@@ -108,6 +55,17 @@ pub struct ServeOptions {
     pub tuning: Option<ServeTuning>,
     /// Optional action prefix override. Defaults to `/_brust/action`.
     pub action_prefix: Option<String>,
+    /// Optional in-process TLS: PEM certificate (chain) path. When BOTH this and
+    /// `tls_key_path` are present, the server terminates TLS itself (ALPN
+    /// h2+http/1.1). Omit either to serve plaintext (unchanged default).
+    pub tls_cert_path: Option<String>,
+    /// Optional in-process TLS: PEM private-key path. See `tls_cert_path`.
+    pub tls_key_path: Option<String>,
+    /// Optional minimum TLS version: `"1.2"` (default, = rustls TLS 1.2 + 1.3
+    /// safe defaults) or `"1.3"` (TLS 1.3 only, for hardened/compliance
+    /// deployments). Case-insensitive, trimmed. Only meaningful when TLS is
+    /// configured (cert + key present). An unrecognized value is rejected.
+    pub tls_min_version: Option<String>,
 }
 
 /// Runtime-tunable server limits, all optional. Maps onto `server::Tuning`
@@ -131,6 +89,18 @@ pub struct ServeTuning {
     /// queued, not failed-fast). Lets `connWorkers > workers` avoid 503 storms.
     /// Default 10000.
     pub claim_timeout_ms: Option<u32>,
+    /// tokio I/O runtime worker-thread count for the hyper server. Runs inside
+    /// Bun (which has its own threads + render workers), so this is NOT
+    /// one-per-core. Default `min(available_parallelism, 4)` (fallback 2).
+    pub worker_threads: Option<u32>,
+    /// Number of render slots per Bun worker (concurrent in-flight renders per
+    /// isolate). Default 1 (single in-flight render per worker — byte-identical
+    /// to the pre-multi-slot behaviour). The COUNT reaches `register_renderer`
+    /// via the `BRUST_RENDER_SLOTS` worker env var set in `runtime/index.ts`; it
+    /// is NOT consumed by the Rust `Tuning` struct here (the pool learns it from
+    /// `dispatch.slot_count()`). Carried on `ServeTuning` only so the JS layer
+    /// has one tunable surface.
+    pub render_slots: Option<u32>,
 }
 
 /// Resolve `host:port` to a bindable SocketAddr. Accepts literal IPs and
@@ -155,24 +125,24 @@ fn resolve_bind_addr(host: &str, port: u16) -> NapiResult<SocketAddr> {
 #[napi]
 pub fn begin_serve(opts: ServeOptions) -> NapiResult<()> {
     let s = state();
-    if s.is_serving.swap(true, Ordering::SeqCst) {
+    if s.begin_serve() {
         return Err(napi::Error::from_reason("serve already running"));
     }
-    s.expected_workers.store(opts.workers, Ordering::SeqCst);
+    s.set_expected_workers(opts.workers);
 
     // Resolve tunables: each field falls back to the server default, so an
     // omitted `tuning` (or omitted field) is byte-for-byte the old behaviour.
     // Counts/sizes are clamped to >= 1 so a 0 can never make flume::bounded(0)
     // a rendezvous channel or zero-length the read loop. `conn_workers`
     // defaults to `workers` (the historical coupling).
-    let defaults = server::Tuning::default();
+    let defaults = brust_core::Tuning::default();
     let t = opts.tuning.as_ref();
     let pick = |f: Option<u32>, d: usize| f.map(|v| (v as usize).max(1)).unwrap_or(d);
     let conn_workers = t
         .and_then(|x| x.conn_workers)
         .map(|v| (v as usize).max(1))
         .unwrap_or(opts.workers as usize);
-    let tuning = server::Tuning {
+    let tuning = brust_core::Tuning {
         max_request_bytes: pick(
             t.and_then(|x| x.max_request_bytes),
             defaults.max_request_bytes,
@@ -187,6 +157,7 @@ pub fn begin_serve(opts: ServeOptions) -> NapiResult<()> {
             .and_then(|x| x.claim_timeout_ms)
             .map(|v| (v as u64).max(1))
             .unwrap_or(defaults.claim_timeout_ms),
+        worker_threads: pick(t.and_then(|x| x.worker_threads), defaults.worker_threads),
     };
 
     let addr: SocketAddr = resolve_bind_addr(opts.host.trim(), opts.port)?;
@@ -197,7 +168,39 @@ pub fn begin_serve(opts: ServeOptions) -> NapiResult<()> {
                 "action_prefix must be non-empty, start with '/', and not end with '/': {p:?}"
             )));
         }
-        *state().action_prefix.write() = p.clone();
+        state().set_action_prefix(p.clone());
+    }
+
+    // Optional minimum TLS version. Parsed up front so an invalid value is
+    // rejected regardless of cert/key presence (never silently defaults). Only
+    // applied when TLS is actually configured below.
+    let min_version = match opts.tls_min_version.as_deref().map(str::trim) {
+        None => brust_core::server::tls::TlsMinVersion::Tls12,
+        Some(v) if v.eq_ignore_ascii_case("1.2") => brust_core::server::tls::TlsMinVersion::Tls12,
+        Some(v) if v.eq_ignore_ascii_case("1.3") => brust_core::server::tls::TlsMinVersion::Tls13,
+        Some(other) => {
+            return Err(napi::Error::from_reason(format!(
+                "tlsMinVersion must be \"1.2\" or \"1.3\": {other:?}"
+            )));
+        }
+    };
+
+    // Optional in-process TLS: only enabled when BOTH cert + key are supplied.
+    // Additive — an app that omits them serves plaintext, byte-for-byte unchanged.
+    match (&opts.tls_cert_path, &opts.tls_key_path) {
+        (Some(cert), Some(key)) => {
+            s.set_tls(Some(brust_core::server::tls::TlsConfig {
+                cert_path: std::path::PathBuf::from(cert),
+                key_path: std::path::PathBuf::from(key),
+                min_version,
+            }));
+        }
+        (None, None) => {}
+        _ => {
+            return Err(napi::Error::from_reason(
+                "tlsCertPath and tlsKeyPath must be provided together",
+            ));
+        }
     }
 
     // Process shutdown is owned by the TS layer: runtime/index.ts installs
@@ -205,24 +208,17 @@ pub fn begin_serve(opts: ServeOptions) -> NapiResult<()> {
     // tokio::signal::ctrl_c() can fire in this process, so a Rust-side handler
     // is a no-op under Bun. until_shutdown() below parks the calling Promise
     // on s.shutdown forever; the parking ends when JS exits the process.
-    server::start(
-        addr,
-        Arc::clone(&s.ready),
-        Arc::clone(&s.pool),
-        Arc::clone(&s.routes),
-        Arc::clone(&s.cache),
-        conn_workers,
-        tuning,
-    );
+    brust_core::start(addr, Arc::clone(s), conn_workers, tuning)
+        .map_err(napi::Error::from_reason)?;
     Ok(())
 }
 
 #[napi]
 pub async fn until_ready(timeout_ms: u32) -> NapiResult<()> {
     let s = state();
-    let expected = s.expected_workers.load(Ordering::SeqCst) as usize;
+    let expected = s.expected_workers() as usize;
     let pool = Arc::clone(&s.pool);
-    let ready = Arc::clone(&s.ready);
+    let ready = Arc::clone(s.ready_notify());
     let result = tokio::time::timeout(Duration::from_millis(timeout_ms as u64), async {
         while pool.registered_count() < expected {
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -239,14 +235,29 @@ pub async fn until_ready(timeout_ms: u32) -> NapiResult<()> {
 
 #[napi]
 pub async fn until_shutdown() -> NapiResult<()> {
-    state().shutdown.notified().await;
+    state().wait_shutdown().await;
+    Ok(())
+}
+
+/// Graceful drain: stop accepting new connections, tell every in-flight one to
+/// finish its current request then close, and resolve once they've all drained
+/// (or `timeout_ms` elapses). The TS SIGINT handler awaits this before
+/// `process.exit` so an in-flight render/stream isn't cut off mid-response (the
+/// teardown that produced spurious `split_meta` errors under load). Idempotent-ish:
+/// the accept loop only drains once; a second call just re-resolves.
+#[napi]
+pub async fn begin_drain(timeout_ms: u32) -> NapiResult<()> {
+    let s = state();
+    s.request_drain(timeout_ms as u64);
+    s.wait_drain_done().await;
     Ok(())
 }
 
 #[napi]
 pub fn register_renderer(
     mut buf: Uint8Array,
-    f: Function<napi::bindgen_prelude::Either<u32, String>, Promise<u32>>,
+    slots: u32,
+    f: Function<napi::bindgen_prelude::FnArgs<(String, u32)>, Promise<u32>>,
 ) -> NapiResult<u32> {
     // NOTE: is_worker() reads std::env::var which is not patched by Bun's Worker
     // env option (Bun Workers share the OS process).  The TS layer is responsible
@@ -254,19 +265,27 @@ pub fn register_renderer(
     //
     // Capture the SAB backing-store pointer + length here. The Bun Worker keeps the
     // SAB rooted in its module scope, so the backing store outlives every render call.
+    // `buf_len` is the WHOLE buffer; `buf_slot` derives the disjoint per-slot
+    // sub-regions from it.
     let (buf_ptr, buf_len) = unsafe {
         let slice = buf.as_mut();
         (BufPtr(slice.as_mut_ptr()), slice.len())
     };
     let tsfn: RendererTsfn = f.build_threadsafe_function().build()?;
-    let id = state().pool.register(tsfn, buf_ptr, buf_len);
+    let dispatch = Box::new(TsfnDispatch {
+        tsfn: std::sync::Arc::new(tsfn),
+        buf_ptr,
+        buf_len,
+        slots: (slots.max(1)) as usize,
+    });
+    let id = state().pool.register(dispatch);
     WORKER_ID.with(|cell| cell.set(Some(id)));
     Ok(id)
 }
 
 #[napi]
 pub fn register_routes(configs: Vec<String>) -> NapiResult<u32> {
-    let parsed: Vec<crate::routes::RouteConfig> = configs
+    let parsed: Vec<brust_core::routing::routes::RouteConfig> = configs
         .iter()
         .map(|s| serde_json::from_str(s))
         .collect::<Result<Vec<_>, _>>()
@@ -327,7 +346,7 @@ pub fn configure_islands_dir(path: String) -> NapiResult<()> {
             "islands_dir must be an absolute path (got {path:?})"
         )));
     }
-    *state().islands_dir.write() = Some(abs);
+    state().set_islands_dir(Some(abs));
     Ok(())
 }
 
@@ -435,7 +454,7 @@ pub fn configure_public_dir(path: String) -> NapiResult<()> {
     }
     let manifest = build_public_manifest(&abs);
     tracing::info!("public: {} asset(s) from {abs:?}", manifest.len());
-    *state().public_assets.write() = manifest;
+    state().set_public_assets(manifest);
     Ok(())
 }
 
@@ -444,14 +463,7 @@ pub fn configure_public_dir(path: String) -> NapiResult<()> {
 /// /CSS chunks (unhashed URLs) are never served stale from the browser cache.
 #[napi]
 pub fn configure_dev_mode(enabled: bool) {
-    state()
-        .dev_mode
-        .store(enabled, std::sync::atomic::Ordering::Relaxed);
-}
-
-/// Whether dev mode is active. Reads the flag set by `configure_dev_mode`.
-pub(crate) fn is_dev_mode() -> bool {
-    state().dev_mode.load(std::sync::atomic::Ordering::Relaxed)
+    state().set_dev_mode(enabled);
 }
 
 #[napi(object)]
@@ -462,7 +474,7 @@ pub struct CachedIslandJs {
 
 #[napi]
 pub fn island_cache_get(key: String) -> Option<CachedIslandJs> {
-    state().island_cache.get(&key).map(|v| CachedIslandJs {
+    state().island_cache_get(&key).map(|v| CachedIslandJs {
         html: v.html,
         props: v.props,
     })
@@ -477,23 +489,23 @@ pub fn island_cache_set(
     props: String,
 ) {
     let ttl = ttl_ms.map(|ms| std::time::Duration::from_millis(ms as u64));
-    state().island_cache.set(&key, &tags, ttl, html, props);
+    state().island_cache_set(&key, &tags, ttl, html, props);
 }
 
 #[napi]
 pub fn island_cache_invalidate(key: Option<String>, tags: Option<Vec<String>>) {
-    let c = &state().island_cache;
+    let s = state();
     if let Some(k) = key {
-        c.invalidate_key(&k);
+        s.island_cache_invalidate_key(&k);
     }
     if let Some(t) = tags {
-        c.invalidate_tags(&t);
+        s.island_cache_invalidate_tags(&t);
     }
 }
 
 #[napi]
 pub fn island_cache_clear() {
-    state().island_cache.clear();
+    state().island_cache_clear();
 }
 
 #[napi]
@@ -504,7 +516,7 @@ pub fn configure_css_dir(path: String) -> NapiResult<()> {
             "css_dir must be an absolute path (got {path:?})"
         )));
     }
-    *state().css_dir.write() = Some(abs);
+    state().set_css_dir(Some(abs));
     Ok(())
 }
 
@@ -528,27 +540,8 @@ pub fn register_actions(endpoints: Vec<EndpointReg>) -> NapiResult<u32> {
             .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     }
     let n = endpoints.len() as u32;
-    *state().action_router.write() = router;
+    state().set_action_router(router);
     Ok(n)
-}
-
-pub(crate) fn with_action_router<R>(f: impl FnOnce(&ActionRouter) -> R) -> R {
-    f(&state().action_router.read())
-}
-
-/// Run `f` with the configured action prefix borrowed — no clone. Used on the
-/// (rare) action dispatch path to compute the relative path.
-pub(crate) fn with_action_prefix<R>(f: impl FnOnce(&str) -> R) -> R {
-    f(&state().action_prefix.read())
-}
-
-/// True if `path` (caller MUST have stripped the query string already) is the
-/// action prefix itself or a path under it. Allocation-free: this runs on the
-/// method gate of EVERY request, so it must not clone or `format!`.
-pub(crate) fn path_under_action_prefix(path: &str) -> bool {
-    let p = state().action_prefix.read();
-    let p = p.as_str();
-    path == p || (path.len() > p.len() && path.as_bytes()[p.len()] == b'/' && path.starts_with(p))
 }
 
 #[cfg(test)]
@@ -558,13 +551,14 @@ mod prefix_tests {
     #[test]
     fn path_under_action_prefix_matches_prefix_and_subpaths() {
         // default prefix is "/_brust/action"
-        assert!(path_under_action_prefix("/_brust/action"));
-        assert!(path_under_action_prefix("/_brust/action/notes"));
-        assert!(path_under_action_prefix("/_brust/action/notes/5"));
+        let s = state();
+        assert!(s.path_under_action_prefix("/_brust/action"));
+        assert!(s.path_under_action_prefix("/_brust/action/notes"));
+        assert!(s.path_under_action_prefix("/_brust/action/notes/5"));
         // sibling that merely shares the prefix bytes must NOT match
-        assert!(!path_under_action_prefix("/_brust/actionXYZ"));
-        assert!(!path_under_action_prefix("/_brust/act"));
-        assert!(!path_under_action_prefix("/other"));
+        assert!(!s.path_under_action_prefix("/_brust/actionXYZ"));
+        assert!(!s.path_under_action_prefix("/_brust/act"));
+        assert!(!s.path_under_action_prefix("/other"));
     }
 }
 
@@ -577,7 +571,7 @@ mod prefix_tests {
 pub async fn napi_sse_write(conn_id: BigInt, bytes: Buffer) -> NapiResult<()> {
     let conn_id = bigint_to_u64(&conn_id)?;
     let frame_tx = {
-        let reg = crate::sse::registry().lock();
+        let reg = brust_core::realtime::sse::registry().lock();
         reg.get(&conn_id).map(|c| c.frame_tx.clone())
     };
     let Some(tx) = frame_tx else {
@@ -587,7 +581,7 @@ pub async fn napi_sse_write(conn_id: BigInt, bytes: Buffer) -> NapiResult<()> {
         )));
     };
     let (ack_tx, ack_rx) = tokio::sync::oneshot::channel::<()>();
-    let frame = crate::sse::SseFrame {
+    let frame = brust_core::realtime::sse::SseFrame {
         bytes: bytes.to_vec(),
         ack: ack_tx,
     };
@@ -614,7 +608,9 @@ pub async fn napi_sse_write(conn_id: BigInt, bytes: Buffer) -> NapiResult<()> {
 #[napi]
 pub fn napi_sse_close(conn_id: BigInt) -> NapiResult<()> {
     let conn_id = bigint_to_u64(&conn_id)?;
-    let _ = crate::sse::registry().lock().remove(&conn_id);
+    let _ = brust_core::realtime::sse::registry()
+        .lock()
+        .remove(&conn_id);
     Ok(())
 }
 
@@ -624,7 +620,7 @@ pub fn napi_sse_close(conn_id: BigInt) -> NapiResult<()> {
 pub fn napi_sse_register_abort(conn_id: BigInt, cb: Function<(), ()>) -> NapiResult<()> {
     let conn_id = bigint_to_u64(&conn_id)?;
     let tsfn = cb.build_threadsafe_function().build()?;
-    let mut reg = crate::sse::registry().lock();
+    let mut reg = brust_core::realtime::sse::registry().lock();
     if let Some(conn) = reg.get_mut(&conn_id) {
         conn.abort_cb = Some(Box::new(move || {
             // Fire-and-forget — non-blocking call into JS.
@@ -645,11 +641,11 @@ pub fn napi_sse_signal_open(
 ) -> NapiResult<()> {
     let conn_id = bigint_to_u64(&conn_id)?;
     let open_tx = {
-        let mut reg = crate::sse::registry().lock();
+        let mut reg = brust_core::realtime::sse::registry().lock();
         reg.get_mut(&conn_id).and_then(|c| c.open_tx.take())
     };
     if let Some(tx) = open_tx {
-        let _ = tx.send(crate::sse::SseOpenSignal {
+        let _ = tx.send(brust_core::realtime::sse::SseOpenSignal {
             status: status as u16,
             body: body.to_vec(),
             content_type,
@@ -666,7 +662,7 @@ pub fn napi_sse_signal_open(
 #[napi]
 pub fn napi_register_sse_paths(paths: Vec<String>) -> NapiResult<()> {
     for p in paths {
-        crate::sse::register_sse_path(p);
+        brust_core::realtime::sse::register_sse_path(p);
     }
     Ok(())
 }
@@ -701,11 +697,11 @@ pub fn napi_ws_signal_open(
 ) -> NapiResult<()> {
     let conn_id = bigint_to_u64(&conn_id)?;
     let open_tx = {
-        let mut reg = crate::ws::registry().lock();
+        let mut reg = brust_core::realtime::ws::registry().lock();
         reg.get_mut(&conn_id).and_then(|c| c.open_tx.take())
     };
     if let Some(tx) = open_tx {
-        let _ = tx.send(crate::ws::WsOpenSignal {
+        let _ = tx.send(brust_core::realtime::ws::WsOpenSignal {
             status: status as u16,
             body: body.to_vec(),
             content_type,
@@ -722,7 +718,7 @@ pub fn napi_ws_signal_open(
 pub async fn napi_ws_send(conn_id: BigInt, data: Buffer, is_binary: bool) -> NapiResult<()> {
     let conn_id = bigint_to_u64(&conn_id)?;
     let send_tx = {
-        let reg = crate::ws::registry().lock();
+        let reg = brust_core::realtime::ws::registry().lock();
         reg.get(&conn_id).map(|c| c.send_tx.clone())
     };
     let Some(tx) = send_tx else {
@@ -733,14 +729,14 @@ pub async fn napi_ws_send(conn_id: BigInt, data: Buffer, is_binary: bool) -> Nap
     };
     let (ack_tx, ack_rx) = tokio::sync::oneshot::channel::<()>();
     let frame = if is_binary {
-        crate::ws::WsFrameKind::Binary(data.to_vec())
+        brust_core::realtime::ws::WsFrameKind::Binary(data.to_vec())
     } else {
         let s = String::from_utf8(data.to_vec()).map_err(|_| {
             napi::Error::from_reason(format!("ws conn {} text frame not valid utf-8", conn_id))
         })?;
-        crate::ws::WsFrameKind::Text(s)
+        brust_core::realtime::ws::WsFrameKind::Text(s)
     };
-    let outgoing = crate::ws::WsOutgoing { frame, ack: ack_tx };
+    let outgoing = brust_core::realtime::ws::WsOutgoing { frame, ack: ack_tx };
     if tx.send(outgoing).await.is_err() {
         return Err(napi::Error::from_reason(format!(
             "ws conn {} send channel closed",
@@ -765,17 +761,19 @@ pub async fn napi_ws_send(conn_id: BigInt, data: Buffer, is_binary: bool) -> Nap
 pub async fn napi_ws_close(conn_id: BigInt, code: u32, reason: String) -> NapiResult<()> {
     let conn_id = bigint_to_u64(&conn_id)?;
     let send_tx = {
-        let reg = crate::ws::registry().lock();
+        let reg = brust_core::realtime::ws::registry().lock();
         reg.get(&conn_id).map(|c| c.send_tx.clone())
     };
     let Some(tx) = send_tx else {
         return Ok(());
     };
     let (ack_tx, _ack_rx) = tokio::sync::oneshot::channel::<()>();
-    let frame = crate::ws::WsFrameKind::Close(code as u16, reason);
+    let frame = brust_core::realtime::ws::WsFrameKind::Close(code as u16, reason);
     // Fire-and-forget on the ack — per-conn task drops the sender after
     // writing the Close frame; the ack may not arrive depending on race.
-    let _ = tx.send(crate::ws::WsOutgoing { frame, ack: ack_tx }).await;
+    let _ = tx
+        .send(brust_core::realtime::ws::WsOutgoing { frame, ack: ack_tx })
+        .await;
     Ok(())
 }
 
@@ -797,21 +795,22 @@ pub fn napi_ws_register_handlers(
     let conn_id = bigint_to_u64(&conn_id)?;
     let on_message_tsfn = on_message.build_threadsafe_function().build()?;
     let on_close_tsfn = on_close.build_threadsafe_function().build()?;
-    let on_message_box: crate::ws::WsMessageCallback = Box::new(move |bytes, is_binary| {
-        let arg = WsMessageArg {
-            data: Buffer::from(bytes),
-            is_binary,
-        };
-        on_message_tsfn.call(arg, ThreadsafeFunctionCallMode::NonBlocking);
-    });
-    let on_close_box: crate::ws::WsCloseCallback = Box::new(move |code, reason| {
+    let on_message_box: brust_core::realtime::ws::WsMessageCallback =
+        Box::new(move |bytes, is_binary| {
+            let arg = WsMessageArg {
+                data: Buffer::from(bytes),
+                is_binary,
+            };
+            on_message_tsfn.call(arg, ThreadsafeFunctionCallMode::NonBlocking);
+        });
+    let on_close_box: brust_core::realtime::ws::WsCloseCallback = Box::new(move |code, reason| {
         let arg = WsCloseArg {
             code: code as u32,
             reason,
         };
         on_close_tsfn.call(arg, ThreadsafeFunctionCallMode::NonBlocking);
     });
-    let mut reg = crate::ws::registry().lock();
+    let mut reg = brust_core::realtime::ws::registry().lock();
     if let Some(conn) = reg.get_mut(&conn_id) {
         conn.on_message = Some(on_message_box);
         conn.on_close = Some(on_close_box);
@@ -830,7 +829,7 @@ pub fn napi_ws_register_handlers(
 #[napi]
 pub fn napi_register_ws_paths(paths: Vec<String>) -> NapiResult<()> {
     for p in paths {
-        crate::ws::register_ws_path(p);
+        brust_core::realtime::ws::register_ws_path(p);
     }
     Ok(())
 }
@@ -845,7 +844,7 @@ pub fn napi_register_ws_paths(paths: Vec<String>) -> NapiResult<()> {
 /// registration with it.
 #[napi]
 pub fn napi_dev_broadcast(json: String) {
-    crate::ws::dev_broadcast(&json);
+    brust_core::realtime::ws::dev_broadcast(&json);
 }
 
 /// Worker-driven render chunk delivery. Worker calls this once per chunk
@@ -860,23 +859,31 @@ pub fn napi_dev_broadcast(json: String) {
 /// - Ack receiver dropped (handle_conn torn down mid-stream) → NAPI Err
 ///   (NOT hang — worker's sink propagates via cb(err) to renderer Promise).
 #[napi]
-pub async fn napi_render_chunk(worker_id: u32, len: u32) -> NapiResult<()> {
+pub async fn napi_render_chunk(worker_id: u32, slot: u32, len: u32) -> NapiResult<()> {
     let entry = state()
         .pool
         .entry(worker_id)
         .ok_or_else(|| napi::Error::from_reason(format!("worker {} not registered", worker_id)))?;
-    let chunk_tx =
-        crate::render_stream::check_chunk_dispatch(&entry.render_slot, len, entry.buf_len)
-            .map_err(napi::Error::from_reason)?;
+    let render_slot = entry.render_slot_for(slot).ok_or_else(|| {
+        napi::Error::from_reason(format!("worker {} has no slot {}", worker_id, slot))
+    })?;
+    let chunk_tx = brust_core::render::stream::check_chunk_dispatch(
+        render_slot,
+        len,
+        entry.dispatch.buf_slot(slot).1,
+    )
+    .map_err(napi::Error::from_reason)?;
 
     let (ack_tx, ack_rx) = tokio::sync::oneshot::channel::<()>();
     let chunk = if len == 0 {
-        crate::pool::RenderChunk::Final { ack: ack_tx }
+        brust_core::render::pool::RenderChunk::Final { ack: ack_tx }
     } else {
         // SAFETY: BufPtr is the SAB backing-store pointer pinned at register
-        // time (see pool.rs::BufPtr docstring). `len` is bounds-checked above.
-        let data = unsafe { std::slice::from_raw_parts(entry.buf_ptr.0, len as usize) }.to_vec();
-        crate::pool::RenderChunk::Bytes { data, ack: ack_tx }
+        // time (see dispatch_impl.rs::BufPtr docstring); `buf_slot` offsets it to
+        // this slot's disjoint sub-region. `len` is bounds-checked above.
+        let (ptr, _cap) = entry.dispatch.buf_slot(slot);
+        let data = unsafe { std::slice::from_raw_parts(ptr, len as usize) }.to_vec();
+        brust_core::render::pool::RenderChunk::Bytes { data, ack: ack_tx }
     };
     chunk_tx
         .send(chunk)
@@ -899,21 +906,29 @@ pub async fn napi_render_chunk(worker_id: u32, len: u32) -> NapiResult<()> {
 ///
 /// Same error semantics as `napi_render_chunk`.
 #[napi]
-pub async fn napi_render_chunk_final(worker_id: u32, len: u32) -> NapiResult<()> {
+pub async fn napi_render_chunk_final(worker_id: u32, slot: u32, len: u32) -> NapiResult<()> {
     let entry = state()
         .pool
         .entry(worker_id)
         .ok_or_else(|| napi::Error::from_reason(format!("worker {} not registered", worker_id)))?;
-    let chunk_tx =
-        crate::render_stream::check_chunk_dispatch(&entry.render_slot, len, entry.buf_len)
-            .map_err(napi::Error::from_reason)?;
+    let render_slot = entry.render_slot_for(slot).ok_or_else(|| {
+        napi::Error::from_reason(format!("worker {} has no slot {}", worker_id, slot))
+    })?;
+    let chunk_tx = brust_core::render::stream::check_chunk_dispatch(
+        render_slot,
+        len,
+        entry.dispatch.buf_slot(slot).1,
+    )
+    .map_err(napi::Error::from_reason)?;
 
     let (ack_tx, ack_rx) = tokio::sync::oneshot::channel::<()>();
     // SAFETY: same as napi_render_chunk — BufPtr pinned at register time
-    // (see pool.rs::BufPtr docstring), `len` is bounds-checked above.
-    let data = unsafe { std::slice::from_raw_parts(entry.buf_ptr.0, len as usize) }.to_vec();
+    // (see dispatch_impl.rs::BufPtr docstring); `buf_slot` offsets it to this
+    // slot's disjoint sub-region. `len` is bounds-checked above.
+    let (ptr, _cap) = entry.dispatch.buf_slot(slot);
+    let data = unsafe { std::slice::from_raw_parts(ptr, len as usize) }.to_vec();
     chunk_tx
-        .send(crate::pool::RenderChunk::BytesAndFinal { data, ack: ack_tx })
+        .send(brust_core::render::pool::RenderChunk::BytesAndFinal { data, ack: ack_tx })
         .await
         .map_err(|_| napi::Error::from_reason("render chunk channel closed (handle_conn gone)"))?;
     ack_rx
@@ -952,6 +967,7 @@ pub async fn napi_render_chunk_final(worker_id: u32, len: u32) -> NapiResult<()>
 #[napi]
 pub fn napi_render_jinja(
     worker_id: u32,
+    slot: u32,
     data_len: u32,
     template_name: String,
     status: Option<u32>,
@@ -961,22 +977,39 @@ pub fn napi_render_jinja(
         .entry(worker_id)
         .ok_or_else(|| napi::Error::from_reason(format!("worker {} not registered", worker_id)))?;
 
-    if data_len as usize > entry.buf_len {
+    // Bounds-check the JS-supplied slot BEFORE any `buf_slot(slot)` call. Unlike
+    // the chunk paths (gated by `render_slot_for(slot)`), this fast-lane fn reads
+    // the slot directly; an out-of-range slot must produce a clean Err here rather
+    // than reaching `buf_slot`'s pointer math. (`buf_slot` clamps defensively too,
+    // but a bad slot returning a zero-cap region would otherwise panic on the
+    // assembled-response write below.)
+    if slot as usize >= entry.dispatch.slot_count() {
         return Err(napi::Error::from_reason(format!(
-            "data_len {} exceeds SAB len {}",
-            data_len, entry.buf_len
+            "worker {} has no slot {}",
+            worker_id, slot
         )));
     }
 
-    // SAFETY: BufPtr is the SAB backing-store pointer pinned at register
-    // time (see pool.rs::BufPtr docstring). `data_len` is bounds-checked
-    // above against the SAB capacity. Copied to an owned Vec so the SAB can be
-    // overwritten with the assembled response below.
-    let data_json =
-        unsafe { std::slice::from_raw_parts(entry.buf_ptr.0, data_len as usize) }.to_vec();
+    // SAFETY: BufPtr is the SAB backing-store pointer pinned at register time
+    // (see dispatch_impl.rs::BufPtr docstring); `buf_slot` offsets it to this slot's
+    // disjoint sub-region. `slot` is bounds-checked above, so `slot_cap` is the real
+    // per-slot capacity. Read once and reused for the whole fn (the geometry is
+    // invariant for this call).
+    let (slot_ptr, slot_cap) = entry.dispatch.buf_slot(slot);
+
+    if data_len as usize > slot_cap {
+        return Err(napi::Error::from_reason(format!(
+            "data_len {} exceeds SAB len {}",
+            data_len, slot_cap
+        )));
+    }
+
+    // SAFETY: `data_len <= slot_cap` (checked above). Copied to an owned Vec so the
+    // SAB can be overwritten with the assembled response below.
+    let data_json = unsafe { std::slice::from_raw_parts(slot_ptr, data_len as usize) }.to_vec();
 
     let (meta_json, body): (Vec<u8>, Vec<u8>) =
-        match crate::jinja::render(&template_name, &data_json) {
+        match brust_core::template::jinja::render(&template_name, &data_json) {
             Ok(html) => {
                 let meta = serde_json::json!({
                     "status": status.unwrap_or(200),
@@ -1023,11 +1056,11 @@ pub fn napi_render_jinja(
     // Overflow: assembled response can't fit in the SAB. Replace with a small
     // framed 500 that always fits, so the client gets a response (HTTP 500)
     // instead of hanging on a truncated body.
-    if assembled.len() > entry.buf_len {
+    if assembled.len() > slot_cap {
         tracing::error!(
             template = %template_name,
             assembled_len = assembled.len(),
-            buf_len = entry.buf_len,
+            buf_len = slot_cap,
             "jinja response exceeds SAB capacity — emitting 500",
         );
         let meta = br#"{"status":500,"contentType":"text/plain; charset=utf-8","headers":{},"streaming":false}"#;
@@ -1038,9 +1071,10 @@ pub fn napi_render_jinja(
         assembled.extend_from_slice(body);
     }
 
-    // SAFETY: same SAB pointer; the in-flight render owns it exclusively and the
-    // inbound JSON was already copied out above. `assembled.len() <= buf_len`.
-    let sab = unsafe { std::slice::from_raw_parts_mut(entry.buf_ptr.0, entry.buf_len) };
+    // SAFETY: same slot sub-region (`slot_ptr`/`slot_cap` from above); the in-flight
+    // render owns it exclusively and the inbound JSON was already copied out above.
+    // `assembled.len() <= slot_cap` (the overflow branch above guarantees it).
+    let sab = unsafe { std::slice::from_raw_parts_mut(slot_ptr, slot_cap) };
     sab[..assembled.len()].copy_from_slice(&assembled);
     Ok(assembled.len() as u32)
 }
@@ -1050,7 +1084,7 @@ pub fn napi_render_jinja(
 /// `Component.name` is present (warns on mismatch per Reviewer Fix 1).
 #[napi]
 pub fn napi_list_native_templates() -> Vec<String> {
-    crate::jinja::registered_templates()
+    brust_core::template::jinja::registered_templates()
 }
 
 /// Sub-project J — boot-time loader for `.brust/jinja/*.jinja` templates.
@@ -1058,7 +1092,7 @@ pub fn napi_list_native_templates() -> Vec<String> {
 /// stem becomes the lookup key). Lenient on missing/non-directory `dir`.
 #[napi]
 pub fn napi_load_jinja_templates(dir: String) -> Vec<String> {
-    crate::jinja::load_from(std::path::Path::new(&dir))
+    brust_core::template::jinja::load_from(std::path::Path::new(&dir))
 }
 
 /// Convert a NAPI BigInt to u64, rejecting negative values.
@@ -1078,9 +1112,10 @@ fn bigint_to_u64(b: &BigInt) -> NapiResult<u64> {
 /// Test-only stub for napi runtime symbols that `ThreadsafeFunction::Drop`
 /// references. The crate is `cdylib` so the napi C runtime symbols are
 /// resolved by the host (Bun) at load time — they aren't linked into the
-/// test binary. Test code uses `WorkerPool::register_for_test` which sets
-/// `tsfn: None`, so the real Drop path never runs at test runtime; this
-/// stub exists purely to satisfy the static linker.
+/// test binary. Test code registers workers with `MockDispatch` (which holds
+/// no `ThreadsafeFunction` at all — only `TsfnDispatch`, never constructed in
+/// test builds, owns one), so `ThreadsafeFunction::drop` is unreachable from
+/// tests; this stub exists purely to satisfy the static linker.
 ///
 /// If a test ever ends up invoking this stub, that's a test-design bug —
 /// dispatch paths that would call `_napi_release_threadsafe_function`
@@ -1130,17 +1165,17 @@ mod action_router_tests {
             },
         ])
         .unwrap();
-        use crate::action_router::{MatchOutcome, Method};
+        use brust_core::routing::action::{MatchOutcome, Method};
         assert!(matches!(
-            with_action_router(|r| r.at(Method::Get, "/notes/42")),
+            state().with_action_router(|r| r.at(Method::Get, "/notes/42")),
             MatchOutcome::Found { endpoint_id: 1, .. }
         ));
         assert!(matches!(
-            with_action_router(|r| r.at(Method::Put, "/notes/42")),
+            state().with_action_router(|r| r.at(Method::Put, "/notes/42")),
             MatchOutcome::MethodNotAllowed
         ));
         assert!(matches!(
-            with_action_router(|r| r.at(Method::Get, "/nope")),
+            state().with_action_router(|r| r.at(Method::Get, "/nope")),
             MatchOutcome::NotFound
         ));
     }
@@ -1172,7 +1207,7 @@ mod island_cache_napi_tests {
         let got = island_cache_get("napi:k1".into()).expect("hit");
         assert_eq!(got.html, "<i>x</i>");
         island_cache_invalidate(None, Some(vec!["napi:t".into()]));
-        state().island_cache.clear();
+        state().island_cache_clear();
         assert!(island_cache_get("napi:k1".into()).is_none());
     }
 

@@ -59,10 +59,17 @@ const SCENARIOS: Scenario[] = [
     id: 'brust',
     label: 'Brust (Rust HTTP + napi + SAB)',
     cmd: ['bun', 'run', 'bench/apps/brust/index.ts'],
-    // No BRUST_WORKERS override — use the runtime default (availableParallelism()).
-    // Earlier benches pinned 18 (the old `* 1.8` default) which oversubscribed on
-    // CPU-bound React renders and amplified p99 ~6×; see post-mortem 2026-05-28.
-    env: { BRUST_PORT: '38201' },
+    // Default bench config (each overridable by setting the env before `bun run
+    // bench`): 14 tokio I/O threads, 6 Bun render workers, 2000 accept permits.
+    // NOTE: render workers were once pinned to 18 (the old `* 1.8` default) which
+    // oversubscribed CPU-bound React renders and amplified p99 ~6× — see
+    // post-mortem 2026-05-28; 6 keeps render workers under the core count.
+    env: {
+      BRUST_PORT: '38201',
+      BRUST_WORKER_THREADS: process.env.BRUST_WORKER_THREADS ?? '4',
+      BRUST_WORKERS: process.env.BRUST_WORKERS ?? '6',
+      BRUST_CONN_WORKERS: process.env.BRUST_CONN_WORKERS ?? '1024',
+    },
     expectedPortLog: /listening on 127\.0\.0\.1:(\d+)/,
   },
   {
@@ -116,6 +123,16 @@ const PROBES: Probe[] = [
     method: 'POST',
     body: '{"text":"hi"}',
     contentType: 'application/json',
+    scenarios: ['brust'],
+  },
+  // Multi-render-per-worker probe — a React SSR route with a per-request
+  // async-data <Suspense> (~25ms). The render YIELDS while awaiting its data,
+  // so renderSlots>1 overlaps concurrent waits on one worker. Synchronous routes
+  // above are unaffected by renderSlots (they serialize on CPU); THIS one scales.
+  // Compare two full runs: `bun run bench` (renderSlots=1) vs
+  // `BRUST_RENDER_SLOTS=8 bun run bench`. Brust-only.
+  {
+    path: '/suspense-data',
     scenarios: ['brust'],
   },
 ]

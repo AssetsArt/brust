@@ -1,8 +1,7 @@
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
 const CACHE_CAPACITY: usize = 1000;
@@ -25,13 +24,36 @@ pub struct CacheKey {
 #[derive(Clone)]
 pub struct CachedEntry {
     pub response_bytes: Vec<u8>,
-    pub inserted_at: Instant,
     pub ttl: Duration,
 }
 
-impl CachedEntry {
-    pub fn is_expired(&self) -> bool {
-        self.inserted_at.elapsed() >= self.ttl
+/// Per-entry expiry policy: each entry lives for its own `ttl`, measured from
+/// the most recent write. moka enforces this lazily on read and during its
+/// maintenance passes. `expire_after_update` mirrors `expire_after_create` so a
+/// re-insert of an existing key resets the clock — matching the old
+/// `inserted_at = Instant::now()` on every `put` (without it, a re-render that
+/// re-caches a live key would silently inherit the stale entry's remaining
+/// lifetime instead of a fresh TTL).
+struct ResponseExpiry;
+
+impl moka::Expiry<CacheKey, CachedEntry> for ResponseExpiry {
+    fn expire_after_create(
+        &self,
+        _key: &CacheKey,
+        value: &CachedEntry,
+        _created_at: std::time::Instant,
+    ) -> Option<Duration> {
+        Some(value.ttl)
+    }
+
+    fn expire_after_update(
+        &self,
+        _key: &CacheKey,
+        value: &CachedEntry,
+        _updated_at: std::time::Instant,
+        _duration_until_expiry: Option<Duration>,
+    ) -> Option<Duration> {
+        Some(value.ttl)
     }
 }
 
@@ -44,98 +66,113 @@ pub struct CacheStats {
     pub capacity: usize,
 }
 
-pub struct LruCache {
-    inner: Mutex<lru::LruCache<CacheKey, CachedEntry>>,
+pub struct ResponseCache {
+    inner: moka::sync::Cache<CacheKey, CachedEntry>,
     hits: AtomicU64,
     misses: AtomicU64,
 }
 
-impl LruCache {
+impl ResponseCache {
     pub fn new() -> Self {
         Self {
-            inner: Mutex::new(lru::LruCache::new(
-                NonZeroUsize::new(CACHE_CAPACITY).expect("CACHE_CAPACITY > 0"),
-            )),
+            inner: moka::sync::Cache::builder()
+                .max_capacity(CACHE_CAPACITY as u64)
+                .support_invalidation_closures()
+                .expire_after(ResponseExpiry)
+                .build(),
             hits: AtomicU64::new(0),
             misses: AtomicU64::new(0),
         }
     }
 
     pub fn get(&self, key: &CacheKey) -> Option<Vec<u8>> {
-        let mut guard = self.inner.lock();
-        let entry = match guard.get(key) {
-            Some(e) => e,
+        // moka enforces TTL expiry internally; an entry returned here is live.
+        match self.inner.get(key) {
+            Some(entry) => {
+                self.hits.fetch_add(1, Ordering::Relaxed);
+                Some(entry.response_bytes)
+            }
             None => {
                 self.misses.fetch_add(1, Ordering::Relaxed);
-                return None;
+                None
             }
-        };
-        if entry.is_expired() {
-            guard.pop(key);
-            self.misses.fetch_add(1, Ordering::Relaxed);
-            return None;
         }
-        let bytes = entry.response_bytes.clone();
-        self.hits.fetch_add(1, Ordering::Relaxed);
-        Some(bytes)
     }
 
     pub fn insert(&self, key: CacheKey, response_bytes: Vec<u8>, ttl: Duration) {
-        let entry = CachedEntry {
-            response_bytes,
-            inserted_at: Instant::now(),
-            ttl,
-        };
-        self.inner.lock().put(key, entry);
+        self.inner.insert(
+            key,
+            CachedEntry {
+                response_bytes,
+                ttl,
+            },
+        );
     }
 
     pub fn stats(&self) -> CacheStats {
-        let guard = self.inner.lock();
+        // moka's `entry_count` is eventually consistent — drive pending tasks so
+        // the observability endpoint reflects the current entry count instead of
+        // a stale lower bound (otherwise a freshly-inserted entry reads as len=0
+        // right after the insert). hits/misses are atomic and already exact.
+        self.inner.run_pending_tasks();
         CacheStats {
             hits: self.hits.load(Ordering::Relaxed),
             misses: self.misses.load(Ordering::Relaxed),
-            len: guard.len(),
-            capacity: guard.cap().get(),
+            len: self.inner.entry_count() as usize,
+            capacity: CACHE_CAPACITY,
         }
     }
 
-    /// Resize the LRU. If shrinking below current length, excess LRU entries
-    /// are evicted. Safe to call at any time; no-op if `max == capacity`.
-    pub fn resize(&self, max: NonZeroUsize) {
-        self.inner.lock().resize(max);
+    /// No-op on moka: the cache capacity is fixed at construction
+    /// (`CACHE_CAPACITY`). Retained for API compatibility with the prior
+    /// `lru`-backed implementation.
+    pub fn resize(&self, _max: NonZeroUsize) {
+        // debug, not warn: this is called on the normal `configureCache` startup
+        // path, so a warn would flood production logs on every boot.
+        tracing::debug!("ResponseCache::resize is a no-op on moka");
     }
 
     /// Remove every entry whose key has the given method + path (regardless
-    /// of query string or vary values). Returns the number of entries
-    /// removed. Hits/misses counters are NOT reset.
+    /// of query string or vary values). Returns the number of matching
+    /// entries at the time of the call. Hits/misses counters are NOT reset.
+    ///
+    /// moka invalidation is eventual: callers wanting the entries gone before
+    /// observing must drive `run_pending_tasks()`.
     pub fn invalidate_path(&self, method: &str, path: &str) -> usize {
-        let mut guard = self.inner.lock();
-        // `lru` has no remove-by-predicate. Snapshot the matching keys,
-        // then pop each. Allocation cost is proportional to matches, not
-        // total cache size.
-        let to_remove: Vec<CacheKey> = guard
+        let count = self
+            .inner
             .iter()
             .filter(|(k, _)| k.method == method && k.path == path)
-            .map(|(k, _)| k.clone())
-            .collect();
-        for k in &to_remove {
-            guard.pop(k);
+            .count();
+        let method = method.to_string();
+        let path = path.to_string();
+        if let Err(e) = self
+            .inner
+            .invalidate_entries_if(move |k, _| k.method == method && k.path == path)
+        {
+            tracing::warn!("ResponseCache::invalidate_path failed: {e}");
         }
-        to_remove.len()
+        self.inner.run_pending_tasks();
+        count
     }
 
     /// Remove every entry. Hits/misses counters are NOT reset (they
     /// represent lifetime totals; operators wanting a fresh window can
     /// scrape `/stats` and compute deltas).
     pub fn clear(&self) -> usize {
-        let mut guard = self.inner.lock();
-        let removed = guard.len();
-        guard.clear();
-        removed
+        let n = self.inner.entry_count() as usize;
+        self.inner.invalidate_all();
+        self.inner.run_pending_tasks();
+        n
+    }
+
+    #[cfg(test)]
+    pub(crate) fn run_pending(&self) {
+        self.inner.run_pending_tasks();
     }
 }
 
-impl Default for LruCache {
+impl Default for ResponseCache {
     fn default() -> Self {
         Self::new()
     }
@@ -156,7 +193,7 @@ mod tests {
 
     #[test]
     fn invalidate_path_removes_only_matching_entries() {
-        let c = LruCache::new();
+        let c = ResponseCache::new();
         c.insert(key("GET", "/a", ""), b"a".to_vec(), Duration::from_secs(60));
         c.insert(
             key("GET", "/a", "x=1"),
@@ -164,8 +201,10 @@ mod tests {
             Duration::from_secs(60),
         );
         c.insert(key("GET", "/b", ""), b"b".to_vec(), Duration::from_secs(60));
+        c.run_pending();
 
         let removed = c.invalidate_path("GET", "/a");
+        c.run_pending();
         assert_eq!(removed, 2);
         assert!(c.get(&key("GET", "/a", "")).is_none());
         assert!(c.get(&key("GET", "/a", "x=1")).is_none());
@@ -174,28 +213,33 @@ mod tests {
 
     #[test]
     fn invalidate_path_no_match_returns_zero() {
-        let c = LruCache::new();
+        let c = ResponseCache::new();
         c.insert(key("GET", "/a", ""), b"a".to_vec(), Duration::from_secs(60));
+        c.run_pending();
         assert_eq!(c.invalidate_path("GET", "/missing"), 0);
         assert_eq!(c.invalidate_path("POST", "/a"), 0);
+        c.run_pending();
         assert_eq!(c.stats().len, 1);
     }
 
     #[test]
     fn clear_removes_all_entries_and_returns_count() {
-        let c = LruCache::new();
+        let c = ResponseCache::new();
         c.insert(key("GET", "/a", ""), b"a".to_vec(), Duration::from_secs(60));
         c.insert(key("GET", "/b", ""), b"b".to_vec(), Duration::from_secs(60));
         c.insert(key("GET", "/c", ""), b"c".to_vec(), Duration::from_secs(60));
+        c.run_pending();
         let removed = c.clear();
+        c.run_pending();
         assert_eq!(removed, 3);
         assert_eq!(c.stats().len, 0);
     }
 
     #[test]
     fn invalidate_and_clear_preserve_hits_and_misses() {
-        let c = LruCache::new();
+        let c = ResponseCache::new();
         c.insert(key("GET", "/a", ""), b"a".to_vec(), Duration::from_secs(60));
+        c.run_pending();
         let _ = c.get(&key("GET", "/a", "")); // hit
         let _ = c.get(&key("GET", "/missing", "")); // miss
         assert_eq!(c.stats().hits, 1);

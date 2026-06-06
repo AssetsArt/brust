@@ -7,10 +7,10 @@ function makeMockNapi() {
   return {
     chunks,
     napi: {
-      async renderChunk(_workerId: bigint, len: number, sabBytes: Uint8Array) {
+      async renderChunk(_workerId: bigint, _slot: number, len: number, sabBytes: Uint8Array) {
         chunks.push({ len, bytes: len === 0 ? null : sabBytes.slice(0, len), final: false })
       },
-      async renderChunkFinal(_workerId: bigint, len: number, sabBytes: Uint8Array) {
+      async renderChunkFinal(_workerId: bigint, _slot: number, len: number, sabBytes: Uint8Array) {
         chunks.push({ len, bytes: sabBytes.slice(0, len), final: true })
       },
     },
@@ -158,10 +158,10 @@ test('errorBoundary itself throws → plain-text fallback + final fires', async 
 test('buffering path uses renderChunkFinal once — not renderChunk + renderChunk(0) [perf contract]', async () => {
   const calls: string[] = []
   const napi = {
-    async renderChunk(_w: bigint, len: number, _v: Uint8Array) {
+    async renderChunk(_w: bigint, _slot: number, len: number, _v: Uint8Array) {
       calls.push(`renderChunk(${len})`)
     },
-    async renderChunkFinal(_w: bigint, len: number, _v: Uint8Array) {
+    async renderChunkFinal(_w: bigint, _slot: number, len: number, _v: Uint8Array) {
       calls.push(`renderChunkFinal(${len})`)
     },
   }

@@ -7,41 +7,19 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [dependencies]
+brust-core         = { path = "../brust-core" }
 napi               = { version = "3", default-features = false, features = ["napi6", "async"] }
 napi-derive        = "3"
-httparse           = "1"
 parking_lot        = "0.12"
-thiserror          = "2"
 tracing            = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 once_cell          = "1"
-flume              = "0.12"
-matchit            = "0.9"
-serde              = { version = "1", features = ["derive"] }
 serde_json         = "1"
-lru                = "0.18"
-moka               = { version = "0.12", features = ["sync"] }
-flate2             = "1"
-base64             = "0.22"
-tokio-tungstenite  = { version = "0.29", default-features = false }
-sha1               = "0.11"
-futures            = "0.3"
-bytes              = "1"
-minijinja          = "2"
 jsx-rust-compiler  = { path = "../jsx-rust-compiler" }
+tokio              = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "signal", "sync", "time", "fs"] }
 
 [dev-dependencies]
 tempfile = "3"
-
-[target.'cfg(target_os = "linux")'.dependencies]
-# Fork of tokio-uring 0.5.0 (Aitthi/tokio-uring@brust-0.5): adds AsyncRead/AsyncWrite
-# (PollIo) so WebSocket works on uring, and gates statx behind cfg(gnu) so musl
-# compiles. Pinned by rev for reproducible CI/release. See docs/.../linux-tier1.
-tokio-uring = { git = "https://github.com/Aitthi/tokio-uring", rev = "b570eb3e3ddc1e7e0742297c2bdf310c4d528be8" }
-tokio       = { version = "1", features = ["rt", "macros", "signal", "sync", "time", "fs"] }
-
-[target.'cfg(not(target_os = "linux"))'.dependencies]
-tokio       = { version = "1", features = ["rt", "macros", "net", "io-util", "time", "sync", "signal", "fs"] }
 
 [build-dependencies]
 napi-build = "2"

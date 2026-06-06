@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/brust-core",
     "crates/brust",
     "crates/jsx-rust-compiler",
 ]

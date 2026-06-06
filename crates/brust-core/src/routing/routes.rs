@@ -1,11 +1,10 @@
-use httparse::EMPTY_HEADER;
 use parking_lot::RwLock;
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::cache::CacheConfig;
+use crate::cache::response_cache::CacheConfig;
 
-pub fn serialize_as_map<S, K, V>(vec: &[(K, V)], serializer: S) -> Result<S::Ok, S::Error>
+pub(crate) fn serialize_as_map<S, K, V>(vec: &[(K, V)], serializer: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
     K: serde::Serialize,
@@ -21,11 +20,11 @@ where
 pub struct RequestEnvelope<'a> {
     pub method: &'a str,
     pub url: &'a str,
-    #[serde(serialize_with = "crate::routes::serialize_as_map")]
+    #[serde(serialize_with = "crate::routing::routes::serialize_as_map")]
     pub headers: Vec<(std::borrow::Cow<'a, str>, std::borrow::Cow<'a, str>)>,
-    #[serde(serialize_with = "crate::routes::serialize_as_map")]
+    #[serde(serialize_with = "crate::routing::routes::serialize_as_map")]
     pub cookies: Vec<(&'a str, std::borrow::Cow<'a, str>)>,
-    #[serde(serialize_with = "crate::routes::serialize_as_map")]
+    #[serde(serialize_with = "crate::routing::routes::serialize_as_map")]
     pub search: Vec<(std::borrow::Cow<'a, str>, std::borrow::Cow<'a, str>)>,
 }
 
@@ -37,7 +36,7 @@ pub struct RouteEnvelope<'a> {
     pub kind: &'static str,
     pub route_id: u32,
     pub path: &'a str,
-    #[serde(serialize_with = "crate::routes::serialize_as_map")]
+    #[serde(serialize_with = "crate::routing::routes::serialize_as_map")]
     pub params: Vec<(std::borrow::Cow<'a, str>, &'a str)>,
     pub req: RequestEnvelope<'a>,
     /// Sub-project J — when the route was registered with `native: true`,
@@ -56,7 +55,7 @@ pub struct RouteEnvelope<'a> {
 pub struct ActionEnvelope<'a> {
     pub kind: &'static str,
     pub action_id: &'a str,
-    #[serde(serialize_with = "crate::routes::serialize_as_map")]
+    #[serde(serialize_with = "crate::routing::routes::serialize_as_map")]
     pub params: Vec<(std::borrow::Cow<'a, str>, &'a str)>,
     /// Request's Content-Type header, whitespace-trimmed (case PRESERVED —
     /// JS lowercases defensively at the dispatch point). Empty string means
@@ -83,17 +82,17 @@ pub struct McpEnvelope<'a> {
     pub req: RequestEnvelope<'a>,
 }
 
-pub fn build_mcp_envelope<'a>(
+pub(crate) fn build_mcp_envelope<'a>(
     method: &'a str,
     full_path: &'a str,
     body_text: &'a str,
-    raw_request: &'a [u8],
+    headers: &'a http::HeaderMap,
 ) -> McpEnvelope<'a> {
     let (_, query) = match full_path.split_once('?') {
         Some((p, q)) => (p, q),
         None => (full_path, ""),
     };
-    let req = build_request_envelope(method, full_path, query, raw_request);
+    let req = build_request_envelope(method, full_path, query, headers);
     McpEnvelope {
         kind: "mcp",
         body_text,
@@ -112,17 +111,17 @@ pub struct SseEnvelope<'a> {
     pub req: RequestEnvelope<'a>,
 }
 
-pub fn build_sse_envelope<'a>(
+pub(crate) fn build_sse_envelope<'a>(
     method: &'a str,
     full_path: &'a str,
-    raw_request: &'a [u8],
+    headers: &'a http::HeaderMap,
     conn_id: u64,
 ) -> SseEnvelope<'a> {
     let (_, query) = match full_path.split_once('?') {
         Some((p, q)) => (p, q),
         None => (full_path, ""),
     };
-    let req = build_request_envelope(method, full_path, query, raw_request);
+    let req = build_request_envelope(method, full_path, query, headers);
     SseEnvelope {
         kind: "sse",
         conn_id,
@@ -145,10 +144,10 @@ pub struct WsEnvelope<'a> {
     pub req: RequestEnvelope<'a>,
 }
 
-pub fn build_ws_envelope<'a>(
+pub(crate) fn build_ws_envelope<'a>(
     method: &'a str,
     full_path: &'a str,
-    raw_request: &'a [u8],
+    headers: &'a http::HeaderMap,
     conn_id: u64,
     client_subprotocols: Vec<String>,
 ) -> WsEnvelope<'a> {
@@ -156,7 +155,7 @@ pub fn build_ws_envelope<'a>(
         Some((p, q)) => (p, q),
         None => (full_path, ""),
     };
-    let req = build_request_envelope(method, full_path, query, raw_request);
+    let req = build_request_envelope(method, full_path, query, headers);
     WsEnvelope {
         kind: "ws",
         conn_id,
@@ -169,7 +168,7 @@ pub fn build_ws_envelope<'a>(
 /// case. Caller has already validated the action_id charset and registry
 /// membership; this function only assembles the envelope.
 #[allow(clippy::too_many_arguments)]
-pub fn build_action_envelope<'a>(
+pub(crate) fn build_action_envelope<'a>(
     method: &'a str,
     full_path: &'a str,
     action_id: &'a str,
@@ -177,13 +176,13 @@ pub fn build_action_envelope<'a>(
     content_type: &'a str,
     body_text: Option<&'a str>,
     body_b64: Option<&'a str>,
-    raw_request: &'a [u8],
+    headers: &'a http::HeaderMap,
 ) -> ActionEnvelope<'a> {
     let (_, query) = match full_path.split_once('?') {
         Some((p, q)) => (p, q),
         None => (full_path, ""),
     };
-    let req = build_request_envelope(method, full_path, query, raw_request);
+    let req = build_request_envelope(method, full_path, query, headers);
     ActionEnvelope {
         kind: "action",
         action_id,
@@ -274,7 +273,7 @@ impl RouteTable {
         &self,
         method: &'a str,
         full_path: &'a str,
-        raw_request: &'a [u8],
+        headers: &'a http::HeaderMap,
     ) -> MatchResult<'a> {
         let (path_only, query) = match full_path.split_once('?') {
             Some((p, q)) => (p, q),
@@ -288,7 +287,7 @@ impl RouteTable {
                 for (k, v) in matched.params.iter() {
                     params.push((std::borrow::Cow::Owned(k.to_string()), v));
                 }
-                let req = build_request_envelope(method, full_path, query, raw_request);
+                let req = build_request_envelope(method, full_path, query, headers);
                 let native = self
                     .native_templates
                     .read()
@@ -319,22 +318,25 @@ fn build_request_envelope<'a>(
     method: &'a str,
     full_path: &'a str,
     query: &'a str,
-    raw_request: &'a [u8],
+    request_headers: &'a http::HeaderMap,
 ) -> RequestEnvelope<'a> {
-    // 64-header ceiling matches src/server.rs::lookup_vary_headers — enough
-    // for Apache-default-shaped requests; headers beyond are dropped silently.
-    let mut headers_storage = [EMPTY_HEADER; 64];
-    let mut req = httparse::Request::new(&mut headers_storage);
-    let _ = req.parse(raw_request);
-
+    // Iterate the hyper HeaderMap directly. The pre-refactor path rebuilt a raw
+    // header block from THIS SAME HeaderMap (`reconstruct_raw_headers`) and then
+    // httparse-parsed it, so the iteration order here matches the old envelope
+    // byte-for-byte: HeaderMap::iter() yields lowercase names (HeaderName is
+    // canonical-lowercase) and repeats an entry once per stored value, exactly
+    // what the rebuilt-then-reparsed block produced.
     let mut headers = Vec::new();
     let mut cookies = Vec::new();
-    for h in req.headers.iter() {
-        if h.name.is_empty() {
+    for (name, value) in request_headers.iter() {
+        let name_str = name.as_str();
+        if name_str.is_empty() {
             continue;
         }
-        let value_str = std::str::from_utf8(h.value).unwrap_or("");
-        if h.name.eq_ignore_ascii_case("cookie") {
+        // HeaderValue may carry non-UTF-8 bytes; match the old
+        // `from_utf8(...).unwrap_or("")` fallback.
+        let value_str = std::str::from_utf8(value.as_bytes()).unwrap_or("");
+        if name == http::header::COOKIE {
             for pair in value_str.split(';') {
                 let trimmed = pair.trim();
                 if let Some((k, v)) = trimmed.split_once('=') {
@@ -342,12 +344,12 @@ fn build_request_envelope<'a>(
                 }
             }
         }
-        let name = if h.name.chars().any(|c| c.is_ascii_uppercase()) {
-            std::borrow::Cow::Owned(h.name.to_ascii_lowercase())
-        } else {
-            std::borrow::Cow::Borrowed(h.name)
-        };
-        headers.push((name, std::borrow::Cow::Borrowed(value_str)));
+        // HeaderName is always lowercase, so no per-name case normalization is
+        // needed (the old code lowercased only when an uppercase char appeared).
+        headers.push((
+            std::borrow::Cow::Borrowed(name_str),
+            std::borrow::Cow::Borrowed(value_str),
+        ));
     }
 
     let mut search = Vec::new();
@@ -426,7 +428,7 @@ fn url_decode(s: &str) -> std::borrow::Cow<'_, str> {
 /// unused in production. Kept (allow dead_code) pending a decision to either
 /// re-adopt it or delete it + its tests.
 #[allow(dead_code)]
-pub fn rewrite_envelope_kind(envelope_json: String, new_kind: &str) -> String {
+pub(crate) fn rewrite_envelope_kind(envelope_json: String, new_kind: &str) -> String {
     envelope_json.replacen(
         r#""kind":"render""#,
         &format!(r#""kind":"{}""#, new_kind),
@@ -437,6 +439,18 @@ pub fn rewrite_envelope_kind(envelope_json: String, new_kind: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Build an `http::HeaderMap` from `(name, value)` pairs, appending repeats
+    /// (so multi-Cookie tests keep both values). Names are parsed as-is;
+    /// HeaderName lowercases them, matching the wire→HeaderMap path hyper takes.
+    fn hm(pairs: &[(&str, &str)]) -> http::HeaderMap {
+        let mut map = http::HeaderMap::new();
+        for (k, v) in pairs {
+            let name = http::header::HeaderName::from_bytes(k.as_bytes()).unwrap();
+            map.append(name, http::HeaderValue::from_str(v).unwrap());
+        }
+        map
+    }
 
     #[test]
     fn url_decode_passes_through_ascii() {
@@ -487,8 +501,8 @@ mod tests {
 
     #[test]
     fn envelope_parses_cookies_from_single_header() {
-        let raw = b"GET /x HTTP/1.1\r\nHost: x\r\nCookie: user=alice; sid=xyz\r\n\r\n";
-        let env = build_request_envelope("GET", "/x", "", raw);
+        let headers = hm(&[("Host", "x"), ("Cookie", "user=alice; sid=xyz")]);
+        let env = build_request_envelope("GET", "/x", "", &headers);
         assert_eq!(
             env.cookies
                 .iter()
@@ -509,8 +523,8 @@ mod tests {
     fn envelope_merges_cookies_across_multiple_cookie_headers() {
         // RFC 6265 S5.4 allows a single Cookie header per request, but
         // some proxies fold/split. Both cookies should appear in the map.
-        let raw = b"GET /x HTTP/1.1\r\nHost: x\r\nCookie: a=1\r\nCookie: b=2\r\n\r\n";
-        let env = build_request_envelope("GET", "/x", "", raw);
+        let headers = hm(&[("Host", "x"), ("Cookie", "a=1"), ("Cookie", "b=2")]);
+        let env = build_request_envelope("GET", "/x", "", &headers);
         assert_eq!(
             env.cookies
                 .iter()
@@ -529,11 +543,12 @@ mod tests {
 
     #[test]
     fn envelope_parses_search_with_key_only_and_empty_value() {
+        let headers = http::HeaderMap::new();
         let env = build_request_envelope(
             "GET",
             "/x?name=brust&flag&empty=",
             "name=brust&flag&empty=",
-            b"",
+            &headers,
         );
         assert_eq!(
             env.search
@@ -560,11 +575,12 @@ mod tests {
 
     #[test]
     fn envelope_parses_search_with_percent_and_plus() {
+        let headers = http::HeaderMap::new();
         let env = build_request_envelope(
             "GET",
             "/x?greet=hello+world&unicode=%E2%9C%93",
             "greet=hello+world&unicode=%E2%9C%93",
-            b"",
+            &headers,
         );
         assert_eq!(
             env.search
@@ -584,7 +600,8 @@ mod tests {
 
     #[test]
     fn envelope_empty_request_safe() {
-        let env = build_request_envelope("GET", "/x", "", b"");
+        let headers = http::HeaderMap::new();
+        let env = build_request_envelope("GET", "/x", "", &headers);
         assert_eq!(env.method, "GET");
         assert_eq!(env.url, "/x");
         assert!(env.headers.is_empty());
@@ -601,8 +618,8 @@ mod tests {
             native_template: None,
         };
         table.install_with_config(&[cfg]).unwrap();
-        let raw = b"GET /foo HTTP/1.1\r\nHost: x\r\n\r\n";
-        let result = table.match_path("GET", "/foo", raw);
+        let headers = hm(&[("Host", "x")]);
+        let result = table.match_path("GET", "/foo", &headers);
         match result {
             MatchResult::Matched { envelope, .. } => {
                 let envelope_json = serde_json::to_string(&envelope).unwrap();
@@ -617,6 +634,7 @@ mod tests {
 
     #[test]
     fn action_envelope_json_path() {
+        let headers = hm(&[("Host", "x")]);
         let env = build_action_envelope(
             "POST",
             "/_brust/action/createNote",
@@ -625,7 +643,7 @@ mod tests {
             "application/json",
             Some(r#"["hello"]"#),
             None,
-            b"POST /_brust/action/createNote HTTP/1.1\r\nHost: x\r\n\r\n",
+            &headers,
         );
         let json = serde_json::to_string(&env).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -640,6 +658,7 @@ mod tests {
 
     #[test]
     fn action_envelope_form_urlencoded_path() {
+        let headers = hm(&[("Host", "x")]);
         let env = build_action_envelope(
             "POST",
             "/_brust/action/registerUser",
@@ -648,7 +667,7 @@ mod tests {
             "application/x-www-form-urlencoded",
             Some("name=Alice&age=30"),
             None,
-            b"POST /_brust/action/registerUser HTTP/1.1\r\nHost: x\r\n\r\n",
+            &headers,
         );
         let json = serde_json::to_string(&env).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -660,6 +679,7 @@ mod tests {
 
     #[test]
     fn action_envelope_multipart_path() {
+        let headers = hm(&[("Host", "x")]);
         let env = build_action_envelope(
             "POST",
             "/_brust/action/uploadAvatar",
@@ -668,7 +688,7 @@ mod tests {
             "multipart/form-data; boundary=abc",
             None,
             Some("LS1hYmMNCkNvbnRlbnQt"),
-            b"POST /_brust/action/uploadAvatar HTTP/1.1\r\nHost: x\r\n\r\n",
+            &headers,
         );
         let json = serde_json::to_string(&env).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -682,6 +702,7 @@ mod tests {
     fn action_envelope_quoting_preserved() {
         // Pinned: actionBranch in JS does JSON.parse(body_text). Any quote loss
         // between Rust → napi → JS surfaces as a parse error in production.
+        let headers = http::HeaderMap::new();
         let env = build_action_envelope(
             "POST",
             "/_brust/action/x",
@@ -690,7 +711,7 @@ mod tests {
             "application/json",
             Some(r#"["hi \"there\"", 42]"#),
             None,
-            b"",
+            &headers,
         );
         let json = serde_json::to_string(&env).unwrap();
         let outer: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -702,11 +723,12 @@ mod tests {
 
     #[test]
     fn mcp_envelope_serialises_kind_mcp() {
+        let headers = hm(&[("Host", "x"), ("Content-Type", "application/json")]);
         let env = build_mcp_envelope(
             "POST",
             "/_brust/mcp",
             r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#,
-            b"POST /_brust/mcp HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n\r\n",
+            &headers,
         );
         let json = serde_json::to_string(&env).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -721,7 +743,8 @@ mod tests {
     #[test]
     fn mcp_envelope_preserves_inner_quotes() {
         let inner = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"x","arguments":{"text":"hi \"there\""}}}"#;
-        let env = build_mcp_envelope("POST", "/_brust/mcp", inner, b"");
+        let headers = http::HeaderMap::new();
+        let env = build_mcp_envelope("POST", "/_brust/mcp", inner, &headers);
         let json = serde_json::to_string(&env).unwrap();
         let outer: serde_json::Value = serde_json::from_str(&json).unwrap();
         let recovered: serde_json::Value =
@@ -731,12 +754,8 @@ mod tests {
 
     #[test]
     fn sse_envelope_serialises_kind_sse_and_conn_id() {
-        let env = build_sse_envelope(
-            "GET",
-            "/sse-counter",
-            b"GET /sse-counter HTTP/1.1\r\nHost: x\r\nAccept: text/event-stream\r\n\r\n",
-            42u64,
-        );
+        let headers = hm(&[("Host", "x"), ("Accept", "text/event-stream")]);
+        let env = build_sse_envelope("GET", "/sse-counter", &headers, 42u64);
         let json = serde_json::to_string(&env).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["kind"], "sse");
@@ -747,12 +766,8 @@ mod tests {
 
     #[test]
     fn sse_envelope_preserves_query_string() {
-        let env = build_sse_envelope(
-            "GET",
-            "/events?topic=news",
-            b"GET /events?topic=news HTTP/1.1\r\nHost: x\r\n\r\n",
-            7u64,
-        );
+        let headers = hm(&[("Host", "x")]);
+        let env = build_sse_envelope("GET", "/events?topic=news", &headers, 7u64);
         let json = serde_json::to_string(&env).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["kind"], "sse");
@@ -762,10 +777,15 @@ mod tests {
 
     #[test]
     fn ws_envelope_serialises_kind_ws_and_conn_id() {
+        let headers = hm(&[
+            ("Host", "x"),
+            ("Upgrade", "websocket"),
+            ("Connection", "Upgrade"),
+        ]);
         let env = build_ws_envelope(
             "GET",
             "/ws/chat",
-            b"GET /ws/chat HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n",
+            &headers,
             42u64,
             vec!["chat.v2".to_string(), "chat.v1".to_string()],
         );
@@ -781,13 +801,8 @@ mod tests {
 
     #[test]
     fn ws_envelope_empty_subprotocols() {
-        let env = build_ws_envelope(
-            "GET",
-            "/ws/echo",
-            b"GET /ws/echo HTTP/1.1\r\nHost: x\r\n\r\n",
-            7u64,
-            vec![],
-        );
+        let headers = hm(&[("Host", "x")]);
+        let env = build_ws_envelope("GET", "/ws/echo", &headers, 7u64, vec![]);
         let json = serde_json::to_string(&env).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["kind"], "ws");
@@ -830,8 +845,8 @@ mod tests {
             native_template: Some("MyPage".into()),
         }];
         table.install_with_config(&cfgs).unwrap();
-        let raw = b"GET /x HTTP/1.1\r\nHost: x\r\n\r\n";
-        let result = table.match_path("GET", "/x", raw);
+        let headers = hm(&[("Host", "x")]);
+        let result = table.match_path("GET", "/x", &headers);
         match result {
             MatchResult::Matched { envelope, .. } => {
                 let envelope_json = serde_json::to_string(&envelope).unwrap();
@@ -851,8 +866,8 @@ mod tests {
             native_template: None,
         }];
         table.install_with_config(&cfgs).unwrap();
-        let raw = b"GET /y HTTP/1.1\r\nHost: x\r\n\r\n";
-        let result = table.match_path("GET", "/y", raw);
+        let headers = hm(&[("Host", "x")]);
+        let result = table.match_path("GET", "/y", &headers);
         match result {
             MatchResult::Matched { envelope, .. } => {
                 let envelope_json = serde_json::to_string(&envelope).unwrap();
