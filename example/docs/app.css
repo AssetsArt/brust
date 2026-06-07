@@ -310,7 +310,7 @@ button { cursor: pointer; }
 .b-badge { background: var(--surface-sunken); color: var(--text-tertiary); border: 1px solid var(--border-subtle); }
 .b-iconbtn { color: var(--text-secondary); }
 .b-iconbtn:hover { background: var(--surface-sunken); }
-.b-getstarted { background: var(--b-accent); color: #fff; box-shadow: 0 12px 32px -8px rgba(127, 63, 151, 0.45); }
+.b-getstarted { background: linear-gradient(135deg, #8b5cf6, #7c3aed); color: #fff; }
 .b-getstarted:hover { transform: translateY(-1px); }
 
 /* Hero navbar — a floating frosted-glass bar over the grainient (reactbits-style).

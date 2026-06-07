@@ -47,13 +47,7 @@ export default function Home({
           </div>
           <header className="b-topbar b-topbar--hero">
             <a href="/" className="flex items-center gap-2.5" aria-label="brust home">
-              <span className="b-logo-mark grid h-8 w-8 place-items-center rounded-xl">
-                <Zap size={17} />
-              </span>
-              <span className="b-wordmark text-base font-extrabold tracking-tight">brust</span>
-              <span className="b-badge hidden items-center rounded-md px-1.5 py-0.5 font-mono text-[11px] font-semibold sm:inline-flex">
-                docs
-              </span>
+              <span className="b-wordmark text-base font-extrabold tracking-tight">Brust</span>
             </a>
             <div className="flex flex-1 justify-center px-2">
               <SearchTrigger native />
@@ -62,6 +56,8 @@ export default function Home({
               <ThemeToggle native />
               <a
                 href={repo}
+                target="_blank"
+                rel="noopener noreferrer"
                 className="b-iconbtn grid h-9 w-9 place-items-center rounded-lg transition-colors"
                 aria-label="GitHub repository"
               >
@@ -103,6 +99,8 @@ export default function Home({
                 </a>
                 <a
                   href={repo}
+                  target="_blank"
+                  rel="noopener noreferrer"
                   className="b-hero-ghost inline-flex h-12 items-center gap-2 rounded-xl px-5 text-[15px] font-semibold text-white transition-colors"
                 >
                   <GitFork size={17} /> GitHub
