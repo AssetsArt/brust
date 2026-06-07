@@ -12,7 +12,6 @@ import MobileNav from './MobileNav.island'
 import SearchPalette from './SearchPalette.island'
 import SearchTrigger from './SearchTrigger'
 import ThemeToggle from './ThemeToggle'
-import Toc from './Toc.island'
 import type { NavSectionView } from '../lib/nav'
 
 export default function Layout({
@@ -108,10 +107,6 @@ export default function Layout({
               </nav>
             </div>
           </main>
-
-          <aside className="sticky top-[76px] hidden h-[calc(100vh-76px)] w-56 shrink-0 overflow-y-auto py-10 xl:block">
-            <Island component={Toc} hydrate="load" />
-          </aside>
         </div>
 
         <footer className="b-footer">
