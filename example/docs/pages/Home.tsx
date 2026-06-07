@@ -75,7 +75,7 @@ export default function Home({ version, repo }: { version: string; repo: string 
                 </span>
               </span>
               <h1 className="font-display text-5xl font-black leading-[1.04] tracking-tight text-white sm:text-6xl">
-                Separate concerns.
+                Mix native and React.
                 <br />
                 <Typewriter native />
               </h1>
