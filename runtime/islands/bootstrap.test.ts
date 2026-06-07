@@ -16,6 +16,7 @@ let swapMainContent: (main: HTMLElement, html: string) => void
 let hydrateOne: (el: HTMLElement) => Promise<void>
 let unmountIslandsIn: (root: ParentNode) => void
 let navigate: (url: URL, mode: 'push' | 'replace' | 'none') => Promise<void>
+let isFullDocumentPayload: (html: string) => boolean
 
 // react-dom/client is a STATIC top-level binding in bootstrap.ts, so the mock
 // must be registered before `await import('./bootstrap')` runs (below) for it
@@ -76,6 +77,7 @@ beforeAll(async () => {
   hydrateOne = mod.hydrateOne
   unmountIslandsIn = mod.unmountIslandsIn
   navigate = mod.navigate
+  isFullDocumentPayload = mod.isFullDocumentPayload
 })
 
 function makeLink(
@@ -141,6 +143,23 @@ test('classifyClick: not-ours → "external"', () => {
   expect(classifyClick(makeLink('https://example.com/x'), plainClick())).toBe('external')
   expect(classifyClick(makeLink('/_brust/page/x'), plainClick())).toBe('external')
   expect(classifyClick(makeLink('/x', { target: '_blank' }), plainClick())).toBe('external')
+})
+
+// Regression for the standalone-route shell-mismatch bug: a navigation payload
+// that is a FULL document (a standalone route with no shared <main>) must be
+// recognized so the navigator full-reloads instead of nesting it inside the
+// current shell's <main> (the two-topbars / sidebar-on-home artifact).
+test('isFullDocumentPayload: full <html>/<!doctype> → true (standalone route)', () => {
+  expect(isFullDocumentPayload('<html lang="en"><head></head><body>…</body></html>')).toBe(true)
+  expect(isFullDocumentPayload('<!doctype html><html></html>')).toBe(true)
+  // tolerate leading whitespace and case
+  expect(isFullDocumentPayload('  \n<HTML>')).toBe(true)
+})
+
+test('isFullDocumentPayload: inner <main> content → false (shared shell)', () => {
+  expect(isFullDocumentPayload('<h1>Routing</h1><p>…</p>')).toBe(false)
+  expect(isFullDocumentPayload('<div class="prose">…</div>')).toBe(false)
+  expect(isFullDocumentPayload('')).toBe(false)
 })
 
 // Behavioral regression for the reported bug: clicking the link to the page you

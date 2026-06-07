@@ -226,6 +226,20 @@ export function isInternalLink(a: HTMLAnchorElement, event: MouseEvent): boolean
   return classifyClick(a, event) === 'navigate'
 }
 
+/** True iff a navigation payload is a FULL HTML document rather than the inner
+ * `<main>` content of a shared shell. A standalone route (one that renders its
+ * own `<html>` with no `<main>`) ships its whole document here — see the no-main
+ * contract in routes.ts navigationBranch. Such a payload CANNOT be swapped into
+ * the current shell's `<main>` (it would nest a second document inside the live
+ * chrome — duplicate topbar/sidebar). The navigator falls back to a full load.
+ *
+ * Inner `<main>` content is the element's children and can never begin with
+ * `<html>`/`<!doctype>`, so this prefix sniff has no false positives. */
+export function isFullDocumentPayload(html: string): boolean {
+  const head = html.trimStart().slice(0, 16).toLowerCase()
+  return head.startsWith('<!doctype') || head.startsWith('<html')
+}
+
 let inFlight: AbortController | null = null
 
 export async function navigate(url: URL, mode: 'push' | 'replace' | 'none'): Promise<void> {
@@ -243,6 +257,15 @@ export async function navigate(url: URL, mode: 'push' | 'replace' | 'none'): Pro
       html: string
       title: string
       store?: Record<string, Record<string, unknown>>
+    }
+    // A standalone (no-<main>) route ships its FULL document here. We can't swap
+    // that into the current shell's <main> without nesting a second document
+    // (duplicate chrome — the classic two-topbars artifact), and the current
+    // document's own <main> existence can't tell us the TARGET has one. Detect
+    // the full-document payload and fall back to the authoritative full load.
+    if (isFullDocumentPayload(html)) {
+      location.href = url.href
+      return
     }
     const main = document.querySelector('main')
     if (!main) throw new Error('navigation: no <main> element')
