@@ -75,11 +75,11 @@ export default function NativeInteractivity({
           <Info size={18} />
         </span>
         <div className="b-callout__body">
-          <p className="b-callout__title">Two syntaxes, one meaning</p>
+          <p className="b-callout__title">Dash form only</p>
           <p>
-            Native routes compile to templates, so brust accepts both the colon form (
-            <code>x-on:click</code>) and the dash form (<code>x-on-click</code>). They compile
-            identically.
+            brust uses the dash form — <code>x-on-click</code>, <code>x-bind-class</code>. The
+            native compiler rejects colon-namespaced attributes, so <code>x-on:click</code> is a
+            build error (no Alpine-style <code>:</code> / <code>@</code> shortcuts).
           </p>
         </div>
       </div>

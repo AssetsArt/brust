@@ -30,7 +30,7 @@ export const keyFiles = t(
 export const routeFields = t(
   ['Field', 'Type', 'Default', 'Description'],
   [
-    ['path', 'string', '—', 'URL segment. Use :param for a dynamic segment.'],
+    ['path', 'string', '—', 'URL segment. Use {param} for a dynamic segment (matchit syntax).'],
     ['index', 'boolean', 'false', "Matches the parent's path exactly. Must be a leaf."],
     ['Component', 'ComponentType', '—', 'The React (or native) component to render.'],
     [
@@ -124,8 +124,8 @@ export const storePrimitives = t(
     ],
     [
       'effect(fn)',
-      '(() => void) => Dispose',
-      'Runs now and re-runs on change. Return a cleanup, or dispose it.',
+      '(() => void | (() => void)) => () => void',
+      'Runs now and re-runs on change. Return a cleanup, or call the returned dispose.',
     ],
     ['batch(fn)', '(() => void) => void', 'Coalesce multiple writes into one notification.'],
   ],
@@ -136,14 +136,14 @@ export const cliCommands = t(
   ['Command', 'Description'],
   [
     [
-      'brust dev <entry>',
+      'brustjs dev [entry]',
       'Start the dev server with hot reload and on-the-fly native compilation.',
     ],
     [
-      'brust build <entry>',
+      'brustjs build [entry]',
       'Compile native routes, bundle islands, build MCP manifest, emit dist/.',
     ],
-    ['brust new <name>', 'Scaffold a new app (same as bun create brustjs).'],
+    ['brustjs new <name>', 'Scaffold a new app (same as bun create brustjs).'],
   ],
 )
 
@@ -154,6 +154,7 @@ export const deployTargets = t(
     ['linux-x64-gnu', 'glibc', 'Default for most cloud VMs and managed runtimes.'],
     ['linux-x64-musl', 'musl', 'Alpine and distroless images. Static server binary.'],
     ['linux-arm64-gnu', 'glibc', 'Graviton / Ampere and arm64 hosts.'],
+    ['linux-arm64-musl', 'musl', 'Alpine and distroless on arm64.'],
     ['darwin-arm64', '—', 'Local production runs on Apple Silicon.'],
   ],
 )

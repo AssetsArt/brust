@@ -87,7 +87,7 @@ const SEARCH: Entry[] = [
     href: '/docs/agents',
     kw: 'mcp model context protocol tools resources agents llm',
   },
-  { title: 'CLI', group: 'Platform', href: '/docs/cli', kw: 'brust dev build new command line' },
+  { title: 'CLI', group: 'Platform', href: '/docs/cli', kw: 'brustjs dev build new command line' },
   {
     title: 'Deployment',
     group: 'Platform',

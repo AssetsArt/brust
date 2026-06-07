@@ -54,7 +54,8 @@ export default function ProjectStructure({
       <p>
         Configuration is optional. Without a <code>brust.toml</code> brust binds{' '}
         <code>localhost:1337</code> with one render worker per core. Environment variables (
-        <code>BRUST_PORT</code>, <code>BRUST_WORKERS</code>) and CLI flags override the file.
+        <code>BRUST_ADDR</code>, <code>BRUST_PORT</code>, <code>BRUST_WORKERS</code>) and CLI flags
+        override the file.
       </p>
       <CodeBlock native html={tomlHtml} lang="bash" />
     </article>

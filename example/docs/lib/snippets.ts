@@ -54,9 +54,9 @@ bun add -d @types/react @types/react-dom`,
 
   pkgScripts: `{
   "scripts": {
-    "dev": "brust dev index.ts",
-    "build": "brust build index.ts",
-    "start": "bun run dist/index.js"
+    "dev": "brustjs dev",
+    "build": "brustjs build",
+    "preview": "bun run ./dist/index.js"
   },
   "dependencies": {
     "brustjs": "^0.1.39-alpha",
@@ -119,15 +119,15 @@ export default function Home({ now }: { now: string }) {
 }`,
 
   firstRun: `bun run dev
-# ▲ brust dev  ·  http://localhost:1337  ·  ready in 9ms`,
+# ▲ brustjs dev  ·  http://localhost:1337  ·  ready in 9ms`,
 
   // ── Dev & build ──────────────────────────────────────────────────────────────
-  cmdDev: `bun run dev          # brust dev index.ts
-# ▲ brust dev  ·  http://localhost:1337
+  cmdDev: `bun run dev          # brustjs dev
+# ▲ brustjs dev  ·  http://localhost:1337
 #   native routes  2  ·  islands  1  ·  actions  2
 #   watching . — hot reload on save`,
 
-  cmdBuild: `bun run build        # brust build index.ts
+  cmdBuild: `bun run build        # brustjs build
 # islands:    1 chunk(s) → dist/islands
 # directives: runtime + 6 component chunk(s)
 # mcp:        2 tools + 5 resources → dist/mcp-manifest.json
@@ -153,7 +153,7 @@ export const routes = defineRoutes([
     children: [
       { index: true, Component: Home, native: true, loader: homeLoader },
       { path: '/dashboard', Component: Dashboard, loader: dashboardLoader },
-      { path: '/servers/:id', Component: ServerDetail, loader: serverLoader },
+      { path: '/servers/{id}', Component: ServerDetail, loader: serverLoader },
     ],
   },
 ])`,
@@ -171,7 +171,7 @@ export default function Layout({ title }: { title: string }) {
   )
 }`,
 
-  params: `// path: '/servers/:id'  →  params.id: string
+  params: `// path: '/servers/{id}'  →  params.id: string
 import { notFound } from 'brustjs/routes'
 
 export async function serverLoader({ params }: { params: { id: string } }) {
@@ -271,10 +271,10 @@ export default function Header() {
   isr: `// Cache a route's rendered HTML in the Rust layer for 300s.
 export const routes = defineRoutes([
   {
-    path: '/posts/:slug',
+    path: '/posts/{slug}',
     Component: Post,
     loader: postLoader,
-    cache: { ttl_seconds: 300, tags: ['posts'] },
+    cache: { ttl_seconds: 300 },   // TTL-based; add vary: ['cookie'] to split the key
   },
 ])`,
 
@@ -364,7 +364,8 @@ async function deploy() {
     id: 'srv_a8K9xL2P',
     sha: '4f90c12',
   })
-  if (error) return toast(error.message)
+  // error is { status, value } | null — value holds the parsed error body
+  if (error) return toast(String(error.value))
   console.log(data)   // typed from the handler's return
 }`,
 
@@ -380,7 +381,7 @@ async function deploy() {
 
   sse: `// routes.tsx — a route can stream Server-Sent Events directly.
 {
-  path: '/deploy/:id/logs',
+  path: '/deploy/{id}/logs',
   sse: (req) => new ReadableStream({
     async start(controller) {
       for await (const line of tailDeploy(req)) {
@@ -397,11 +398,15 @@ async function deploy() {
   websocket: () => import('./ws/metrics'),
 }
 
-// ws/metrics.ts
+// ws/metrics.ts — open / message / close handlers
 import type { WsHandlers } from 'brustjs/routes'
+
+const streams = new WeakMap<object, () => void>()
 export const open: WsHandlers['open'] = (socket) => {
-  const stop = watchMetrics((m) => socket.send(JSON.stringify(m)))
-  socket.onClose?.(stop)
+  streams.set(socket, watchMetrics((m) => socket.send(JSON.stringify(m))))
+}
+export const close: WsHandlers['close'] = (socket) => {
+  streams.get(socket)?.()   // stop the watcher when the socket closes
 }`,
 
   // ── Styling ──────────────────────────────────────────────────────────────────
@@ -447,7 +452,7 @@ import { actions } from './actions'
 // served at /_brust/mcp. Nothing extra to write.
 await brust.run({ routes, entry: import.meta.url, actions })`,
 
-  mcpTools: `// GET /_brust/mcp · tools/list
+  mcpTools: `// POST /_brust/mcp · tools/list (JSON-RPC)
 {
   "tools": [
     {
@@ -475,15 +480,15 @@ await brust.run({ routes, entry: import.meta.url, actions })`,
 }`,
 
   // ── CLI ──────────────────────────────────────────────────────────────────────
-  cliDev: `brust dev index.ts
+  cliDev: `brustjs dev
 #   the dev server compiles native routes on the fly, hot-reloads
 #   islands, and rebuilds the action client when your API changes.`,
 
-  cliBuild: `brust build index.ts
+  cliBuild: `brustjs build
 #   compiles native routes → minijinja, bundles island + directive
 #   chunks, builds the MCP manifest, and emits a self-contained dist/.`,
 
-  cliNew: `brust new my-app
+  cliNew: `brustjs new my-app
 #   scaffold a new app (same as: bun create brustjs my-app)`,
 
   // ── Deployment ───────────────────────────────────────────────────────────────
@@ -512,10 +517,10 @@ port = 1337
 [workers]
 count = 4
 
-# env vars override the file: BRUST_PORT / BRUST_WORKERS / BRUST_ADDRESS`,
+# env vars override the file: BRUST_PORT / BRUST_WORKERS / BRUST_ADDR`,
 
-  health: `curl -s localhost:1337/_brust/health
-# { "status": "ok" }`,
+  health: `curl -s localhost:1337/ping
+# pong`,
 } as const
 
 export type SnippetKey = keyof typeof S

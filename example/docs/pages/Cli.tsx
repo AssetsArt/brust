@@ -19,8 +19,8 @@ export default function Cli({
         <p className="b-eyebrow">Platform</p>
         <h1>CLI</h1>
         <p className="b-lead">
-          The brust CLI has three verbs: <code>dev</code>, <code>build</code>, and <code>new</code>.
-          Everything else is configuration in <code>brust.toml</code>.
+          The <code>brustjs</code> CLI has three verbs: <code>dev</code>, <code>build</code>, and{' '}
+          <code>new</code>. Everything else is configuration in <code>brust.toml</code>.
         </p>
       </header>
 
@@ -48,13 +48,13 @@ export default function Cli({
         </div>
       </div>
 
-      <h3 id="dev">brust dev</h3>
+      <h3 id="dev">brustjs dev</h3>
       <CodeBlock native html={devHtml} lang="bash" />
 
-      <h3 id="build">brust build</h3>
+      <h3 id="build">brustjs build</h3>
       <CodeBlock native html={buildHtml} lang="bash" />
 
-      <h2 id="new">brust new</h2>
+      <h2 id="new">brustjs new</h2>
       <CodeBlock native html={newHtml} lang="bash" />
       <div className="b-callout b-callout--tip">
         <span className="b-callout__ic">
@@ -63,9 +63,9 @@ export default function Cli({
         <div className="b-callout__body">
           <p className="b-callout__title">Bun script aliases</p>
           <p>
-            The scaffold wires <code>dev</code>, <code>build</code>, and <code>start</code> into{' '}
-            <code>package.json</code>, so <code>bun run dev</code> and <code>brust dev</code> do the
-            same thing.
+            The scaffold wires <code>dev</code>, <code>build</code>, and <code>preview</code> into{' '}
+            <code>package.json</code>, so <code>bun run dev</code> and <code>brustjs dev</code> do
+            the same thing.
           </p>
         </div>
       </div>

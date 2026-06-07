@@ -74,7 +74,7 @@ export default function Routing({
 
       <h2 id="params">Dynamic params</h2>
       <p>
-        A <code>:param</code> segment is parsed and handed to the loader. Return{' '}
+        A <code>{'{param}'}</code> segment is parsed and handed to the loader. Return{' '}
         <code>notFound()</code> or <code>redirect()</code> from a native loader to short-circuit the
         render.
       </p>
@@ -112,8 +112,8 @@ export default function Routing({
       <h2 id="navigation">SPA navigation</h2>
       <p>
         <code>navigate(path)</code> from <code>brustjs/navigation</code> moves on the client: brust
-        fetches the next route's data and swaps the matched segment — no full reload. React islands
-        can subscribe to navigation state with <code>useNav()</code>.
+        fetches the next route and swaps the page's <code>&lt;main&gt;</code> content — no full
+        reload. React islands can subscribe to navigation state with <code>useNav()</code>.
       </p>
       <CodeBlock native html={navHtml} lang="tsx" />
 

@@ -100,17 +100,21 @@ export default function Rendering({
       <p>
         Drop the island anywhere — including inside a native route. brust emits a hydration marker
         and loads the chunk per the <code>hydrate</code> trigger (<code>load</code> /{' '}
-        <code>visible</code> / <code>idle</code>).
+        <code>visible</code> / <code>idle</code> / <code>interaction</code>).
       </p>
       <CodeBlock native html={islandUseHtml} lang="tsx" />
 
       <h2 id="isr">ISR caching</h2>
       <p>
-        Add a <code>cache</code> to a route and brust caches its rendered output in the Rust layer
-        for <code>ttl_seconds</code>, keyed by URL. Tagged entries can be invalidated on demand.
+        Add a <code>cache</code> to a route and brust caches its rendered HTML in the Rust layer for
+        <code>ttl_seconds</code>, keyed by URL (add <code>vary</code> to split the key on a request
+        header). Route caches refresh when the TTL lapses.
       </p>
       <CodeBlock native html={isrHtml} lang="tsx" />
-      <p>Revalidate on demand — for example from an action after a publish — by tag:</p>
+      <p>
+        Component-level renders — an <code>&lt;Island&gt;</code> with an <code>isr</code> key and
+        tags — can also be evicted on demand, for example from an action after a publish:
+      </p>
       <CodeBlock native html={isrInvalidateHtml} lang="tsx" />
       <div className="b-callout b-callout--info">
         <span className="b-callout__ic">
