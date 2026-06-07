@@ -438,6 +438,16 @@ button { cursor: pointer; }
 .b-demo__label { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); }
 .b-shared { display: flex; align-items: center; gap: 10px; }
 
+/* Hero typewriter — rotating word (native behavior) + blinking caret. */
+.b-typer { white-space: nowrap; }
+.b-caret {
+  display: inline-block; width: 3px; height: 0.92em; margin-left: 3px;
+  vertical-align: -0.06em; border-radius: 1px; background: #fff; opacity: 0.9;
+  animation: b-blink 1s steps(2, start) infinite;
+}
+@keyframes b-blink { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .b-caret { animation: none; } }
+
 /* Ghost in the hero: translucent so the grainient shows through (no blur). */
 .b-hero-demo .b-demo { background: rgba(255, 255, 255, 0.08); border-color: rgba(255, 255, 255, 0.18); }
 .b-hero-demo .b-demo__head { border-bottom-color: rgba(255, 255, 255, 0.14); }

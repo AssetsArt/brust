@@ -22,6 +22,7 @@ import SearchTrigger from '../components/SearchTrigger'
 import SharedCounter from '../components/SharedCounter.island'
 import SharedNative from '../components/SharedNative'
 import ThemeToggle from '../components/ThemeToggle'
+import Typewriter from '../components/Typewriter'
 
 export default function Home({ version, repo }: { version: string; repo: string }) {
   return (
@@ -76,7 +77,7 @@ export default function Home({ version, repo }: { version: string; repo: string 
               <h1 className="font-display text-5xl font-black leading-[1.04] tracking-tight text-white sm:text-6xl">
                 Separate concerns.
                 <br />
-                <span className="b-gradient-text">Share one state.</span>
+                <Typewriter native />
               </h1>
               <p className="mt-6 max-w-xl text-lg leading-relaxed text-white/80">
                 brust renders each part of your UI the cheapest way it can — native HTML with zero
