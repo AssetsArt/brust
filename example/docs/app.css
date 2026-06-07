@@ -421,6 +421,20 @@ button { cursor: pointer; }
 .b-feature-ic { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 12px; margin-bottom: 14px; background: var(--primary-50); color: var(--b-accent-strong); border: 1px solid color-mix(in oklab, var(--b-accent) 22%, transparent); }
 .b-cta-band { position: relative; overflow: hidden; border-radius: 26px; }
 
+/* Hero demo card — "ghost": translucent glass so the grainient shows through
+   (instead of the solid surface). Scoped to the hero via .b-hero-demo. */
+.b-hero-demo .b-example {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(14px) saturate(1.2); -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  box-shadow: 0 16px 44px -18px rgba(0, 0, 0, 0.55);
+}
+.b-hero-demo .b-example__head { border-bottom-color: rgba(255, 255, 255, 0.14); }
+.b-hero-demo .b-example__title { color: rgba(255, 255, 255, 0.72); }
+.b-hero-demo .b-example__src { color: #fff; }
+.b-hero-demo .b-example__src:hover { background: rgba(255, 255, 255, 0.14); }
+.b-hero-demo .b-example__live { background: transparent; }
+
 /* ============================================================
    COUNTER demo (native directive component) — token-driven so the
    component's JSX stays clean (literal class names, not long Tailwind)

@@ -106,8 +106,12 @@ export default function Home({
             </div>
             {/* Interactive, not a static snippet: a real native directive component
                 running live in the hero (click it; open the source for the real file). */}
-            <div className="b-fade-up mt-14 max-w-2xl">
-              <Example native title="Live · native interactivity · zero React" codeHtml={counterHtml}>
+            <div className="b-fade-up b-hero-demo mt-14 max-w-2xl">
+              <Example
+                native
+                title="Live · native interactivity · zero React"
+                codeHtml={counterHtml}
+              >
                 <Counter native />
               </Example>
             </div>
