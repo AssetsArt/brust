@@ -262,9 +262,7 @@ export default function Home({
                 >
                   Read the docs <ArrowRight size={16} />
                 </a>
-                <code className="inline-flex h-12 items-center rounded-xl border border-white/15 bg-black/25 px-4 font-mono text-[14px] text-white/85">
-                  bun create brustjs my-app
-                </code>
+                <CopyCommand native />
               </div>
             </div>
           </div>
