@@ -17,6 +17,7 @@ import {
 } from 'lucide-react'
 import { BrustPage, Island } from 'brustjs'
 import CodeReveal from '../components/CodeReveal'
+import CopyCommand from '../components/CopyCommand'
 import Grainient from '../components/Grainient.island'
 import SearchPalette from '../components/SearchPalette.island'
 import SearchTrigger from '../components/SearchTrigger'
@@ -114,6 +115,9 @@ export default function Home({
                 >
                   <GitFork size={17} /> GitHub
                 </a>
+              </div>
+              <div className="mt-5">
+                <CopyCommand native />
               </div>
             </div>
 

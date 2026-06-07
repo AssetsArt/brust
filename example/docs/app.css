@@ -409,6 +409,22 @@ button { cursor: pointer; }
   background: radial-gradient(120% 90% at 50% 0%, transparent 45%, rgba(12, 8, 20, 0.45) 100%);
 }
 .b-hero-pill { background: rgba(255, 255, 255, 0); border: 1px solid rgba(255, 255, 255, 0.18); }
+/* hero scaffold-command pill (glass) with a working Copy button */
+.b-cmd {
+  display: inline-flex; align-items: center; gap: 9px; height: 44px; padding: 0 6px 0 14px;
+  border-radius: 12px; font-family: var(--font-mono);
+  background: rgba(0, 0, 0, 0.25); border: 1px solid rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+}
+.b-cmd__prompt { color: rgba(255, 255, 255, 0.45); font-size: 13px; }
+.b-cmd__text { color: rgba(255, 255, 255, 0.92); font-size: 13.5px; white-space: nowrap; }
+.b-cmd__copy {
+  display: inline-flex; align-items: center; gap: 5px; margin-left: 2px; height: 32px; padding: 0 11px;
+  border-radius: 8px; font-family: var(--font-sans); font-size: 12.5px; font-weight: 600; color: #fff;
+  background: rgba(255, 255, 255, 0.12); border: 1px solid rgba(255, 255, 255, 0.2); transition: background 0.15s;
+}
+.b-cmd__copy:hover { background: rgba(255, 255, 255, 0.22); }
+
 .b-hero-cta { background: linear-gradient(135deg, #8b5cf6, #7c3aed); box-shadow: 0 12px 32px -8px rgba(124, 58, 237, 0.6); }
 .b-hero-cta:hover { transform: translateY(-2px); }
 .b-hero-ghost { background: rgba(255, 255, 255, 0.07); border: 1px solid rgba(255, 255, 255, 0.2); }
