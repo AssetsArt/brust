@@ -353,6 +353,12 @@ button { cursor: pointer; }
 }
 .b-search:hover { border-color: var(--border-default); }
 
+/* SPA navigation progress bar (NavPreloader island, outside <main>) */
+.b-navloader { position: fixed; inset-inline: 0; top: 0; z-index: 300; height: 2px; overflow: hidden; background: color-mix(in srgb, var(--b-accent) 18%, transparent); }
+.b-navloader__bar { height: 100%; width: 40%; border-radius: 99px; background: var(--b-accent); animation: b-navloader-slide 0.9s ease-in-out infinite; }
+@keyframes b-navloader-slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(320%); } }
+@media (prefers-reduced-motion: reduce) { .b-navloader__bar { animation: none; width: 100%; opacity: 0.6; } }
+
 /* sidebar */
 .b-sidebar { padding: 26px 12px 40px 4px; }
 .b-overview { display: flex; align-items: center; gap: 10px; padding: 8px 12px; margin-bottom: 14px; border-radius: 9px; font-size: 13.5px; font-weight: 500; color: var(--text-secondary); }
@@ -366,8 +372,10 @@ button { cursor: pointer; }
 }
 .b-navlink:hover { background: var(--surface-sunken); color: var(--text-primary); }
 .b-navlink--active { background: var(--primary-50); color: var(--b-accent-strong); font-weight: 600; }
-.b-navlink__rail { position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: 3px; height: 16px; border-radius: 99px; background: var(--b-accent); }
-.b-navlink__rail--off { display: none; }
+/* Rail is driven by the parent's active class so the built-in SPA reconciler
+   (which toggles only b-navlink--active on the <a>) keeps it in sync. */
+.b-navlink__rail { display: none; position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: 3px; height: 16px; border-radius: 99px; background: var(--b-accent); }
+.b-navlink--active .b-navlink__rail { display: block; }
 
 /* TOC (On this page) */
 .b-toc { font-size: 13px; }

@@ -9,6 +9,7 @@
 import { ArrowRight, GitFork, Zap } from 'lucide-react'
 import { BrustPage, Island, Outlet } from 'brustjs'
 import MobileNav from './MobileNav.island'
+import NavPreloader from './NavPreloader.island'
 import SearchPalette from './SearchPalette.island'
 import SearchTrigger from './SearchTrigger'
 import ThemeToggle from './ThemeToggle'
@@ -79,17 +80,19 @@ export default function Layout({
             <a href="/" className="b-overview">
               <Zap size={15} /> Overview
             </a>
-            {nav.map((section) => (
-              <div key={section.title} className="b-nav-group">
-                <p className="b-nav-group__label">{section.title}</p>
-                {section.links.map((link) => (
-                  <a key={link.href} href={link.href} className={link.cls}>
-                    <span className={link.railCls}></span>
-                    {link.label}
-                  </a>
-                ))}
-              </div>
-            ))}
+            <div data-brust-active-nav="true" data-brust-active-class="b-navlink--active">
+              {nav.map((section) => (
+                <div key={section.title} className="b-nav-group">
+                  <p className="b-nav-group__label">{section.title}</p>
+                  {section.links.map((link) => (
+                    <a key={link.href} href={link.href} className={link.cls}>
+                      <span className="b-navlink__rail"></span>
+                      {link.label}
+                    </a>
+                  ))}
+                </div>
+              ))}
+            </div>
           </aside>
 
           <main className="min-w-0 flex-1 py-10">
@@ -173,6 +176,7 @@ export default function Layout({
           </div>
         </footer>
 
+        <Island component={NavPreloader} hydrate="load" />
         <Island component={SearchPalette} hydrate="load" />
       </div>
     </BrustPage>

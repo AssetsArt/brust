@@ -57,10 +57,10 @@ export const FLAT: NavLinkItem[] = [{ label: 'Home', href: '/' }, ...NAV.flatMap
 //    branch per map item, so the branch happens here) ──────────────────────────
 
 export interface NavLinkView extends NavLinkItem {
-  /** Full className for the <a>, including the active modifier when current. */
+  /** Full className for the <a>, including the active modifier when current.
+   * On SPA navigation the built-in [data-brust-active-nav] reconciler toggles
+   * `b-navlink--active` here per nav.path() — so this is only the SSR seed. */
   cls: string
-  /** Active rail span class — visible only on the current link. */
-  railCls: string
 }
 export interface NavSectionView {
   title: string
@@ -72,14 +72,10 @@ export interface NavSectionView {
 export function navFor(active: string): NavSectionView[] {
   return NAV.map((section) => ({
     title: section.title,
-    links: section.links.map((link) => {
-      const on = link.href === active
-      return {
-        ...link,
-        cls: on ? 'b-navlink b-navlink--active' : 'b-navlink',
-        railCls: on ? 'b-navlink__rail' : 'b-navlink__rail b-navlink__rail--off',
-      }
-    }),
+    links: section.links.map((link) => ({
+      ...link,
+      cls: link.href === active ? 'b-navlink b-navlink--active' : 'b-navlink',
+    })),
   }))
 }
 
