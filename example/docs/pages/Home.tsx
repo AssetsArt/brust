@@ -79,13 +79,13 @@ export default function Home({
                 </span>
               </span>
               <h1 className="font-display text-5xl font-black leading-[1.02] tracking-tight text-white sm:text-6xl">
-                Fast SSR for Bun <span className="font-light text-white/40">+</span>{' '}
-                <span className="b-gradient-text">Rust</span>
+                Server-rendered at <span className="b-gradient-text">Rust</span> speed
               </h1>
               <p className="mt-6 max-w-xl text-lg leading-relaxed text-white/80">
-                brust embeds a hyper HTTP server inside Bun through a native addon. Stream React 19,
-                render routes in Rust with zero client JS, and get a typed API that agents can
-                drive. This site is itself a native brust app — every example below is real.
+                brust runs a Rust HTTP server inside Bun as a native addon — one process, no proxy
+                hop. Render routes straight to HTML in Rust with zero client JS, hydrate React
+                islands only where it counts, and ship a typed API that's also agent-ready over MCP.
+                This whole site is a native brust app — every demo here is real.
               </p>
               <div className="mt-9 flex flex-wrap items-center gap-3">
                 <a
