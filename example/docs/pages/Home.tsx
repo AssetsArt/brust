@@ -37,38 +37,7 @@ export default function Home({
   return (
     <BrustPage lang="en" data-mode="dark" title="brust — fast SSR for Bun + Rust">
       <div className="b-canvas min-h-screen">
-        <header className="b-topbar">
-          <a href="/" className="flex items-center gap-2.5" aria-label="brust home">
-            <span className="b-logo-mark grid h-8 w-8 place-items-center rounded-xl">
-              <Zap size={17} />
-            </span>
-            <span className="b-wordmark text-base font-extrabold tracking-tight">brust</span>
-            <span className="b-badge hidden items-center rounded-md px-1.5 py-0.5 font-mono text-[11px] font-semibold sm:inline-flex">
-              docs
-            </span>
-          </a>
-          <div className="flex flex-1 justify-center px-2">
-            <SearchTrigger native />
-          </div>
-          <div className="flex items-center gap-1">
-            <ThemeToggle native />
-            <a
-              href={repo}
-              className="b-iconbtn grid h-9 w-9 place-items-center rounded-lg transition-colors"
-              aria-label="GitHub repository"
-            >
-              <GitFork size={18} />
-            </a>
-            <a
-              href="/docs/introduction"
-              className="b-getstarted ml-1 hidden h-9 items-center gap-1.5 rounded-xl px-3.5 text-[13.5px] font-semibold transition-transform sm:inline-flex"
-            >
-              Get started <ArrowRight size={15} />
-            </a>
-          </div>
-        </header>
-
-        {/* ── hero ── */}
+        {/* ── hero (the navbar floats over the grainient, reactbits-style) ── */}
         <section className="relative overflow-hidden">
           {/* reactbits Grainient as a React island; the b-hero-bg gradient is a
               static fallback shown until the canvas hydrates (no flash). */}
@@ -76,7 +45,37 @@ export default function Home({
             <Island component={Grainient} hydrate="load" />
             <div className="b-hero-overlay"></div>
           </div>
-          <div className="relative mx-auto max-w-5xl px-6 pt-24 pb-24">
+          <header className="b-topbar b-topbar--hero">
+            <a href="/" className="flex items-center gap-2.5" aria-label="brust home">
+              <span className="b-logo-mark grid h-8 w-8 place-items-center rounded-xl">
+                <Zap size={17} />
+              </span>
+              <span className="b-wordmark text-base font-extrabold tracking-tight">brust</span>
+              <span className="b-badge hidden items-center rounded-md px-1.5 py-0.5 font-mono text-[11px] font-semibold sm:inline-flex">
+                docs
+              </span>
+            </a>
+            <div className="flex flex-1 justify-center px-2">
+              <SearchTrigger native />
+            </div>
+            <div className="flex items-center gap-1">
+              <ThemeToggle native />
+              <a
+                href={repo}
+                className="b-iconbtn grid h-9 w-9 place-items-center rounded-lg transition-colors"
+                aria-label="GitHub repository"
+              >
+                <GitFork size={18} />
+              </a>
+              <a
+                href="/docs/introduction"
+                className="b-getstarted ml-1 hidden h-9 items-center gap-1.5 rounded-xl px-3.5 text-[13.5px] font-semibold transition-transform sm:inline-flex"
+              >
+                Get started <ArrowRight size={15} />
+              </a>
+            </div>
+          </header>
+          <div className="relative mx-auto max-w-5xl px-6 pt-28 pb-24">
             <div className="b-fade-up max-w-2xl">
               <span className="b-hero-pill mb-7 inline-flex items-center gap-2 rounded-full py-1 pr-3 pl-1.5">
                 <span className="inline-flex items-center gap-1 rounded-full bg-white/20 px-2 py-0.5 text-[11px] font-bold tracking-wide text-white">
