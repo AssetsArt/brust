@@ -1,43 +1,38 @@
-// Landing — a STANDALONE native route (sibling of the doc Layout, so it renders
-// full-width with no sidebar). It owns its own chrome: the glass topbar (with the
-// native SearchTrigger + ThemeToggle behaviors and the ⌘K SearchPalette island),
-// the Grainient hero, a feature grid, a live native counter, a CTA band, and the
-// footer. Everything is native (zero React server-side) except the two islands.
+// Landing — a STANDALONE native route (sibling of the doc Layout, full-width, no
+// sidebar). Owns its own chrome: a glass topbar floating over the reactbits
+// Grainient island, a unified pitch, a feature grid, a LIVE "one store, two
+// runtimes" demo (a react-free native component and a React island sharing one
+// signal store), a CTA band, and the footer. Everything is native (zero React
+// server-side) except the islands (Grainient, SearchPalette, SharedCounter).
 import {
   ArrowRight,
   Bot,
   Boxes,
   GitFork,
-  Layers,
+  Network,
   Server,
   Sparkles,
   Webhook,
   Zap,
 } from 'lucide-react'
 import { BrustPage, Island } from 'brustjs'
-import Counter from '../components/Counter'
-import Example from '../components/Example'
 import Grainient from '../components/Grainient.island'
 import SearchPalette from '../components/SearchPalette.island'
 import SearchTrigger from '../components/SearchTrigger'
+import SharedCounter from '../components/SharedCounter.island'
+import SharedNative from '../components/SharedNative'
 import ThemeToggle from '../components/ThemeToggle'
 
-export default function Home({
-  counterHtml,
-  version,
-  repo,
-}: {
-  counterHtml: string
-  version: string
-  repo: string
-}) {
+export default function Home({ version, repo }: { version: string; repo: string }) {
   return (
-    <BrustPage lang="en" data-mode="dark" title="brust — fast SSR for Bun + Rust">
+    <BrustPage
+      lang="en"
+      data-mode="dark"
+      title="brust — one model: native, islands, actions, agents"
+    >
       <div className="b-canvas min-h-screen">
         {/* ── hero (the navbar floats over the grainient, reactbits-style) ── */}
         <section className="relative overflow-hidden">
-          {/* reactbits Grainient as a React island; the b-hero-bg gradient is a
-              static fallback shown until the canvas hydrates (no flash). */}
           <div className="b-hero-bg absolute inset-0" aria-hidden="true">
             <Island component={Grainient} hydrate="load" />
             <div className="b-hero-overlay"></div>
@@ -75,17 +70,20 @@ export default function Home({
                   <Sparkles size={11} /> NEW
                 </span>
                 <span className="text-[13px] font-medium text-white/85">
-                  v{version} — Rust in Bun, shipping now
+                  v{version} — one model, native to React
                 </span>
               </span>
-              <h1 className="font-display text-5xl font-black leading-[1.02] tracking-tight text-white sm:text-6xl">
-                Server-rendered at <span className="b-gradient-text">Rust</span> speed
+              <h1 className="font-display text-5xl font-black leading-[1.04] tracking-tight text-white sm:text-6xl">
+                Separate concerns.
+                <br />
+                <span className="b-gradient-text">Share one state.</span>
               </h1>
               <p className="mt-6 max-w-xl text-lg leading-relaxed text-white/80">
-                brust runs a Rust HTTP server inside Bun as a native addon — one process, no proxy
-                hop. Render routes straight to HTML in Rust with zero client JS, hydrate React
-                islands only where it counts, and ship a typed API that's also agent-ready over MCP.
-                This whole site is a native brust app — every demo here is real.
+                brust renders each part of your UI the cheapest way it can — native HTML with zero
+                JS, react-free interactivity, or hydrated React islands — and keeps them in sync
+                through one shared signal store. The same state flows between native components and
+                React islands, and your server functions are typed actions that double as agent
+                tools.
               </p>
               <div className="mt-9 flex flex-wrap items-center gap-3">
                 <a
@@ -104,29 +102,39 @@ export default function Home({
                 </a>
               </div>
             </div>
-            {/* Interactive, not a static snippet: a real native directive component
-                running live in the hero (click it; open the source for the real file). */}
+
+            {/* LIVE demo — one signal store, shared between a react-free native
+                component and a React island. Click either; both stay in sync. */}
             <div className="b-fade-up b-hero-demo mt-14 max-w-2xl">
-              <Example
-                native
-                title="Live · native interactivity · zero React"
-                codeHtml={counterHtml}
-              >
-                <Counter native />
-              </Example>
+              <div className="b-demo">
+                <div className="b-demo__head">
+                  <span className="b-demo__title">One store · two runtimes</span>
+                  <span className="b-demo__hint">click either — both stay in sync</span>
+                </div>
+                <div className="b-demo__grid">
+                  <div className="b-demo__cell">
+                    <span className="b-demo__label">native · x-* · zero React</span>
+                    <SharedNative native />
+                  </div>
+                  <div className="b-demo__cell">
+                    <span className="b-demo__label">React island · useStore</span>
+                    <Island component={SharedCounter} hydrate="load" />
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </section>
 
         {/* ── feature grid ── */}
         <section className="mx-auto max-w-5xl px-6 pt-20 pb-6">
-          <p className="b-eyebrow">Why brust</p>
+          <p className="b-eyebrow">How it fits together</p>
           <h2 className="font-display text-3xl font-extrabold tracking-tight text-slate-900 sm:text-4xl dark:text-white">
-            Two runtimes, one framework
+            One model, rendered your way
           </h2>
           <p className="mt-3 max-w-2xl text-[17px] leading-relaxed text-slate-600 dark:text-slate-300">
-            Bun runs your JavaScript and your build. Rust serves the bytes and renders native
-            routes. You write one app; brust decides what runs where.
+            Pick the right render mode for each component, then keep one reactive store and one
+            typed API across all of them. No bridges between native and React — just one app.
           </p>
 
           <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -138,20 +146,45 @@ export default function Home({
                 Native routes
               </h3>
               <p className="mt-1.5 text-[14.5px] leading-relaxed text-slate-600 dark:text-slate-400">
-                Compile JSX to a minijinja template and render it in Rust — zero React on the
-                server, zero hydration. The fastest path to HTML.
+                JSX compiled to a template and rendered as HTML — zero React, zero hydration. The
+                cheapest path to a page.
               </p>
             </a>
-            <a href="/docs/store" className="b-feature-card block">
+            <a href="/docs/native-interactivity" className="b-feature-card block">
+              <span className="b-feature-ic">
+                <Zap size={21} />
+              </span>
+              <h3 className="font-display text-[17px] font-bold text-slate-900 dark:text-white">
+                Native interactivity
+              </h3>
+              <p className="mt-1.5 text-[14.5px] leading-relaxed text-slate-600 dark:text-slate-400">
+                Add behavior with react-free <code>x-*</code> directives and a co-located behavior.
+                Interactive pages that ship almost no JavaScript.
+              </p>
+            </a>
+            <a href="/docs/rendering" className="b-feature-card block">
               <span className="b-feature-ic">
                 <Boxes size={21} />
               </span>
               <h3 className="font-display text-[17px] font-bold text-slate-900 dark:text-white">
-                Islands + store
+                React islands
               </h3>
               <p className="mt-1.5 text-[14.5px] leading-relaxed text-slate-600 dark:text-slate-400">
-                Hydrate a React component as an island inside a native route. A signal store shares
-                state across islands and native components — one window singleton.
+                Need real React? Hydrate a component as an island inside any native page — only that
+                subtree ships React.
+              </p>
+            </a>
+            <a href="/docs/store" className="b-feature-card block">
+              <span className="b-feature-ic">
+                <Network size={21} />
+              </span>
+              <h3 className="font-display text-[17px] font-bold text-slate-900 dark:text-white">
+                One shared store
+              </h3>
+              <p className="mt-1.5 text-[14.5px] leading-relaxed text-slate-600 dark:text-slate-400">
+                <code>signal</code> / <code>computed</code> / <code>effect</code> in a single window
+                singleton. Native interactivity and React islands read and write the same state — no
+                bridge.
               </p>
             </a>
             <a href="/docs/actions" className="b-feature-card block">
@@ -162,8 +195,8 @@ export default function Home({
                 Typed actions
               </h3>
               <p className="mt-1.5 text-[14.5px] leading-relaxed text-slate-600 dark:text-slate-400">
-                defineActions gives you an end-to-end typed client — no codegen. Infer the whole API
-                from the server file.
+                <code>defineActions</code> gives you an end-to-end typed client with no codegen —
+                one source of truth for your API.
               </p>
             </a>
             <a href="/docs/agents" className="b-feature-card block">
@@ -171,35 +204,11 @@ export default function Home({
                 <Bot size={21} />
               </span>
               <h3 className="font-display text-[17px] font-bold text-slate-900 dark:text-white">
-                Agent-first (MCP)
+                Agent-ready (MCP)
               </h3>
               <p className="mt-1.5 text-[14.5px] leading-relaxed text-slate-600 dark:text-slate-400">
-                Every action auto-becomes an MCP tool at /_brust/mcp and every loader a resource.
-                Agents drive your app without scraping.
-              </p>
-            </a>
-            <a href="/docs/rendering" className="b-feature-card block">
-              <span className="b-feature-ic">
-                <Layers size={21} />
-              </span>
-              <h3 className="font-display text-[17px] font-bold text-slate-900 dark:text-white">
-                Streaming SSR
-              </h3>
-              <p className="mt-1.5 text-[14.5px] leading-relaxed text-slate-600 dark:text-slate-400">
-                React 19 renderToPipeableStream with automatic Suspense. First byte ships while the
-                rest of the tree resolves.
-              </p>
-            </a>
-            <a href="/docs/deployment" className="b-feature-card block">
-              <span className="b-feature-ic">
-                <Zap size={21} />
-              </span>
-              <h3 className="font-display text-[17px] font-bold text-slate-900 dark:text-white">
-                Fast by default
-              </h3>
-              <p className="mt-1.5 text-[14.5px] leading-relaxed text-slate-600 dark:text-slate-400">
-                A hyper HTTP server embedded in Bun through a native napi addon. HTTP/1.1 + HTTP/2,
-                glibc and musl.
+                Every action is automatically an MCP tool and every loader a resource. Agents drive
+                your app through the same typed surface your UI uses.
               </p>
             </a>
           </div>
@@ -216,11 +225,10 @@ export default function Home({
             </div>
             <div className="relative px-8 py-14 text-center">
               <h2 className="mx-auto max-w-xl font-display text-3xl font-black leading-tight text-white sm:text-4xl">
-                Spin up an app in one command
+                Build it once. Render it anywhere.
               </h2>
               <p className="mx-auto mt-4 max-w-md text-[17px] text-white/75">
-                The dev server boots in milliseconds. Production builds compile native routes ahead
-                of time.
+                Native, islands, actions, and agents — one app, one store, one typed API.
               </p>
               <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
                 <a
@@ -237,7 +245,7 @@ export default function Home({
           </div>
         </section>
 
-        {/* ── footer (inlined — native nested-component inlining is fragile) ── */}
+        {/* ── footer ── */}
         <footer className="b-footer">
           <div className="mx-auto max-w-5xl px-6 py-14">
             <div className="grid gap-10 md:grid-cols-4">
@@ -249,12 +257,14 @@ export default function Home({
                   <span className="b-wordmark font-extrabold">brust</span>
                 </div>
                 <p className="b-muted text-[14px] leading-relaxed">
-                  SSR for the web — a Rust HTTP server embedded in Bun. Streaming React, native
-                  routes, typed actions, agent-ready.
+                  One model for server-first UI — native routes, react-free interactivity, React
+                  islands, a shared store, typed actions, and agents.
                 </p>
                 <div className="mt-5 flex items-center gap-2">
                   <a
                     href={repo}
+                    target="_blank"
+                    rel="noopener noreferrer"
                     className="b-social grid h-9 w-9 place-items-center rounded-lg"
                     aria-label="GitHub"
                   >
@@ -267,11 +277,11 @@ export default function Home({
                 <a href="/docs/introduction" className="b-footer-link">
                   Introduction
                 </a>
-                <a href="/docs/routing" className="b-footer-link">
-                  Routing
+                <a href="/docs/native-interactivity" className="b-footer-link">
+                  Native interactivity
                 </a>
-                <a href="/docs/rendering" className="b-footer-link">
-                  Rendering
+                <a href="/docs/store" className="b-footer-link">
+                  State — the store
                 </a>
                 <a href="/docs/actions" className="b-footer-link">
                   Actions &amp; API
@@ -288,8 +298,8 @@ export default function Home({
                 <a href="/docs/deployment" className="b-footer-link">
                   Deployment
                 </a>
-                <a href="/docs/styling" className="b-footer-link">
-                  Styling
+                <a href="/docs/rendering" className="b-footer-link">
+                  Rendering
                 </a>
               </div>
             </div>

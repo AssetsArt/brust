@@ -33,11 +33,10 @@ function chrome(active: string, title: string) {
 // ── Home (standalone — renders its own chrome) ─────────────────────────────────
 export async function homeLoader() {
   return {
-    title: 'brust — fast SSR for Bun + Rust',
+    title: 'brust — one model: native, islands, actions, agents',
     mode: 'dark' as const,
     version: version(),
     repo: REPO,
-    counterHtml: hl(counterSource, 'tsx'),
   }
 }
 
