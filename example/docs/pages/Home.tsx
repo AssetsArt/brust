@@ -18,6 +18,7 @@ import { BrustPage, Island } from 'brustjs'
 import CodeBlock from '../components/CodeBlock'
 import Counter from '../components/Counter'
 import Example from '../components/Example'
+import Grainient from '../components/Grainient.island'
 import SearchPalette from '../components/SearchPalette.island'
 import SearchTrigger from '../components/SearchTrigger'
 import ThemeToggle from '../components/ThemeToggle'
@@ -69,11 +70,11 @@ export default function Home({
 
         {/* ── hero ── */}
         <section className="relative overflow-hidden">
-          <div className="grainient" aria-hidden="true">
-            <div className="grainient__mesh"></div>
-            <div className="grainient__mesh--b"></div>
-            <div className="grainient__grain"></div>
-            <div className="grainient__vignette"></div>
+          {/* reactbits Grainient as a React island; the b-hero-bg gradient is a
+              static fallback shown until the canvas hydrates (no flash). */}
+          <div className="b-hero-bg absolute inset-0" aria-hidden="true">
+            <Island component={Grainient} hydrate="load" />
+            <div className="b-hero-overlay"></div>
           </div>
           <div className="relative mx-auto max-w-5xl px-6 pt-24 pb-24">
             <div className="b-fade-up max-w-2xl">
