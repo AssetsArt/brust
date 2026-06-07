@@ -408,7 +408,7 @@ button { cursor: pointer; }
   position: absolute; inset: 0; pointer-events: none;
   background: radial-gradient(120% 90% at 50% 0%, transparent 45%, rgba(12, 8, 20, 0.45) 100%);
 }
-.b-hero-pill { background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.18); backdrop-filter: blur(8px); }
+.b-hero-pill { background: rgba(255, 255, 255, 0); border: 1px solid rgba(255, 255, 255, 0.18); }
 .b-hero-cta { background: linear-gradient(135deg, #8b5cf6, #7c3aed); box-shadow: 0 12px 32px -8px rgba(124, 58, 237, 0.6); }
 .b-hero-cta:hover { transform: translateY(-2px); }
 .b-hero-ghost { background: rgba(255, 255, 255, 0.07); border: 1px solid rgba(255, 255, 255, 0.2); }
