@@ -28,11 +28,15 @@ import Typewriter from '../components/Typewriter'
 export default function Home({
   version,
   repo,
-  demoHtml,
+  storeHtml,
+  nativeHtml,
+  islandHtml,
 }: {
   version: string
   repo: string
-  demoHtml: string
+  storeHtml: string
+  nativeHtml: string
+  islandHtml: string
 }) {
   return (
     <BrustPage
@@ -132,7 +136,12 @@ export default function Home({
                     <Island component={SharedCounter} hydrate="load" />
                   </div>
                 </div>
-                <CodeReveal native codeHtml={demoHtml} />
+                <CodeReveal
+                  native
+                  storeHtml={storeHtml}
+                  nativeHtml={nativeHtml}
+                  islandHtml={islandHtml}
+                />
               </div>
             </div>
           </div>
