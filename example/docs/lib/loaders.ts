@@ -6,15 +6,9 @@
 // JS. Snippets/tables live in ./snippets and ./tables; behavior sources live in
 // their component files (gap G5). Everything uses the REAL brust API.
 import { source as clockSource } from '../components/Clock'
-// Real component source, inlined at BUILD time (Bun text loader) — the Source pane
-// shows the actual file, never a hand-written approximation (no drift, dist-safe).
-// TS resolves the module to its default export (a component) and ignores the text
-// attribute, so the cast restores the real runtime type (string).
-import counterSourceText from '../components/Counter.tsx' with { type: 'text' }
+import { source as counterSource } from '../components/Counter'
 import { source as playgroundSource } from '../components/Playground'
 import { source as toggleSource } from '../components/Toggle'
-
-const counterSource = counterSourceText as unknown as string
 import { highlightCode } from './highlight'
 import { NAV, navFor, prevNextFor, REPO } from './nav'
 import { S } from './snippets'
@@ -43,7 +37,6 @@ export async function homeLoader() {
     mode: 'dark' as const,
     version: version(),
     repo: REPO,
-    heroHtml: hl(S.heroRoutes, 'tsx'),
     counterHtml: hl(counterSource, 'tsx'),
   }
 }

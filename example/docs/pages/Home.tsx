@@ -15,7 +15,6 @@ import {
   Zap,
 } from 'lucide-react'
 import { BrustPage, Island } from 'brustjs'
-import CodeBlock from '../components/CodeBlock'
 import Counter from '../components/Counter'
 import Example from '../components/Example'
 import Grainient from '../components/Grainient.island'
@@ -24,12 +23,10 @@ import SearchTrigger from '../components/SearchTrigger'
 import ThemeToggle from '../components/ThemeToggle'
 
 export default function Home({
-  heroHtml,
   counterHtml,
   version,
   repo,
 }: {
-  heroHtml: string
   counterHtml: string
   version: string
   repo: string
@@ -107,8 +104,12 @@ export default function Home({
                 </a>
               </div>
             </div>
+            {/* Interactive, not a static snippet: a real native directive component
+                running live in the hero (click it; open the source for the real file). */}
             <div className="b-fade-up mt-14 max-w-2xl">
-              <CodeBlock native html={heroHtml} lang="tsx" />
+              <Example native title="Live · native interactivity · zero React" codeHtml={counterHtml}>
+                <Counter native />
+              </Example>
             </div>
           </div>
         </section>
@@ -198,25 +199,6 @@ export default function Home({
               </p>
             </a>
           </div>
-        </section>
-
-        {/* ── live example ── */}
-        <section className="mx-auto max-w-5xl px-6 pt-14 pb-6">
-          <span className="b-pill">
-            <Zap size={13} /> Native interactivity
-          </span>
-          <h2 className="mt-4 font-display text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white">
-            Interactive where it counts. Static everywhere else.
-          </h2>
-          <p className="mt-3 max-w-2xl text-[16px] leading-relaxed text-slate-600 dark:text-slate-300">
-            This counter isn't an island — it's a native component made interactive with{' '}
-            <code>x-*</code> directives and a co-located <code>behavior</code>, fully react-free.
-            Its logic ships as an on-demand chunk; the rest of the page stays plain HTML. Click it,
-            then open the source.
-          </p>
-          <Example native title="Counter · native interactivity" codeHtml={counterHtml}>
-            <Counter native />
-          </Example>
         </section>
 
         {/* ── CTA band ── */}
