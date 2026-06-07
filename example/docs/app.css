@@ -438,6 +438,33 @@ button { cursor: pointer; }
 .b-demo__label { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); }
 .b-shared { display: flex; align-items: center; gap: 10px; }
 
+/* "Show code" toggle + revealed panel */
+.b-demo { position: relative; }
+.b-reveal { border-top: 1px solid var(--border-subtle); }
+.b-reveal__btn {
+  display: block; margin-left: auto; font-size: 12px; font-weight: 600; color: var(--b-accent-strong);
+  background: transparent; border: 0; padding: 8px 14px; border-radius: 7px; transition: background 0.15s;
+}
+.b-reveal__btn:hover { background: var(--primary-50); }
+.b-reveal__panel { border-top: 1px solid var(--border-subtle); border-radius: 0; box-shadow: none; }
+.b-hero-demo .b-reveal,
+.b-hero-demo .b-reveal__panel { border-top-color: rgba(255, 255, 255, 0.14); }
+.b-hero-demo .b-reveal__btn { color: #fff; }
+.b-hero-demo .b-reveal__btn:hover { background: rgba(255, 255, 255, 0.14); }
+
+/* Rotating border-beam — a small white light travelling around the card edge. */
+@property --beam-a { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+.b-demo::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1.5px; pointer-events: none;
+  background: conic-gradient(from var(--beam-a), transparent 0 70%, rgba(255, 255, 255, 0.65) 82%, #fff 88%, rgba(255, 255, 255, 0.65) 94%, transparent 100%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: b-beam 4.5s linear infinite;
+}
+@keyframes b-beam { to { --beam-a: 360deg; } }
+@media (prefers-reduced-motion: reduce) { .b-demo::after { animation: none; opacity: 0; } }
+
 /* Hero typewriter — rotating word (native behavior) + blinking caret. */
 .b-typer { white-space: nowrap; }
 .b-caret {

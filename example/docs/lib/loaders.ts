@@ -7,6 +7,7 @@
 // their component files (gap G5). Everything uses the REAL brust API.
 import { source as clockSource } from '../components/Clock'
 import { source as counterSource } from '../components/Counter'
+import { source as demoSource } from '../components/CodeReveal'
 import { source as playgroundSource } from '../components/Playground'
 import { source as toggleSource } from '../components/Toggle'
 import { highlightCode } from './highlight'
@@ -37,6 +38,7 @@ export async function homeLoader() {
     mode: 'dark' as const,
     version: version(),
     repo: REPO,
+    demoHtml: hl(demoSource, 'tsx'),
   }
 }
 

@@ -16,6 +16,7 @@ import {
   Zap,
 } from 'lucide-react'
 import { BrustPage, Island } from 'brustjs'
+import CodeReveal from '../components/CodeReveal'
 import Grainient from '../components/Grainient.island'
 import SearchPalette from '../components/SearchPalette.island'
 import SearchTrigger from '../components/SearchTrigger'
@@ -24,7 +25,15 @@ import SharedNative from '../components/SharedNative'
 import ThemeToggle from '../components/ThemeToggle'
 import Typewriter from '../components/Typewriter'
 
-export default function Home({ version, repo }: { version: string; repo: string }) {
+export default function Home({
+  version,
+  repo,
+  demoHtml,
+}: {
+  version: string
+  repo: string
+  demoHtml: string
+}) {
   return (
     <BrustPage
       lang="en"
@@ -105,7 +114,8 @@ export default function Home({ version, repo }: { version: string; repo: string 
             </div>
 
             {/* LIVE demo — one signal store, shared between a react-free native
-                component and a React island. Click either; both stay in sync. */}
+                component and a React island. Click either; both stay in sync.
+                "Show code" reveals the source; the card has a rotating border-beam. */}
             <div className="b-fade-up b-hero-demo mt-14 max-w-2xl">
               <div className="b-demo">
                 <div className="b-demo__head">
@@ -122,6 +132,7 @@ export default function Home({ version, repo }: { version: string; repo: string 
                     <Island component={SharedCounter} hydrate="load" />
                   </div>
                 </div>
+                <CodeReveal native codeHtml={demoHtml} />
               </div>
             </div>
           </div>
