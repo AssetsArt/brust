@@ -101,7 +101,12 @@ export default function CodeReveal({
       </button>
       <div x-show="open" className="b-reveal__body">
         <div className="b-tabs">
-          <button type="button" x-on-click="setStore" x-bind-class="storeCls" className="b-tab b-tab--on">
+          <button
+            type="button"
+            x-on-click="setStore"
+            x-bind-class="storeCls"
+            className="b-tab b-tab--on"
+          >
             shared.ts
           </button>
           <button type="button" x-on-click="setNative" x-bind-class="nativeCls" className="b-tab">
