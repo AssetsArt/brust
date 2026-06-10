@@ -40,6 +40,24 @@ describe('Coordinator', () => {
     expect(deps.buildIslands).toHaveBeenCalledTimes(1)
   })
 
+  test('md change → island rebuild + worker restart + reEmitJinja + reload (same path as ts)', async () => {
+    // Task 2.9: an .md edit must take the FULL ts-edit path. buildIslands
+    // (wired in index.ts) re-runs emitMdArtifacts — the re-splice; the worker
+    // restart is REQUIRED because loadIslandManifest caches per-isolate
+    // (islands/native-render.ts), so a re-emitted .islands.json sidecar is
+    // never re-read by a live worker.
+    const deps = makeDeps()
+    const c = new Coordinator(deps)
+    await c.handleChange({ paths: ['/content/docs/guide.md'], kind: 'md' })
+    expect(deps.clearIslandCache).toHaveBeenCalledTimes(1)
+    expect(deps.buildIslands).toHaveBeenCalledTimes(1)
+    expect(deps.workers.terminateAll).toHaveBeenCalledTimes(1)
+    expect(deps.workers.spawnAll).toHaveBeenCalledTimes(1)
+    expect(deps.reEmitJinja).toHaveBeenCalledTimes(1)
+    const types = deps.broadcast.mock.calls.map((c) => c[0].type)
+    expect(types).toEqual(['building', 'reload', 'ok'])
+  })
+
   test('css change → buildCss + broadcast building+css-update+ok, no worker restart', async () => {
     const deps = makeDeps()
     const c = new Coordinator(deps)

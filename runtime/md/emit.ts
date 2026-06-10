@@ -66,6 +66,21 @@ export interface MdEmitOpts {
   withDevClient?: boolean
 }
 
+// Once-per-process flag for the add/remove warning: every re-emit (HMR fires
+// on each md edit) would otherwise repeat it.
+let mdRoutesChangedWarned = false
+
+function warnMdRoutesChanged(): void {
+  if (mdRoutesChangedWarned) return
+  mdRoutesChangedWarned = true
+  console.warn('[brust dev] md routes changed — restart required')
+}
+
+/** Test helper. */
+export function _resetMdRoutesChangedWarnForTests(): void {
+  mdRoutesChangedWarned = false
+}
+
 /** Raw island entry as the Rust compiler emits it (camelCase JSON). */
 interface RawIslandEntry {
   component: string
@@ -119,19 +134,36 @@ export async function emitMdTemplates(opts: MdEmitOpts): Promise<{
   // already be live on every native page when ANY directive component exists.
   const hasDirectives = scanDirectiveComponents(opts.entryFile).size > 0
 
+  // Add/remove detection (task 2.9): the dev route table is frozen at boot,
+  // so a created/deleted .md file can't become/stop being a route until the
+  // dev process restarts. Compare the scanned set against the route set per
+  // content dir and tell the operator ONCE — never crash the re-emit.
+  const routeRelsByDir = new Map<string, Set<string>>()
+  for (const r of mdRoutes) {
+    const src = (r.chain as NonNullable<FlatRouteLike['chain']>)[r.chain!.length - 1]
+      ?.__mdSource as MdRouteSource
+    let rels = routeRelsByDir.get(src.contentDir)
+    if (rels === undefined) {
+      rels = new Set()
+      routeRelsByDir.set(src.contentDir, rels)
+    }
+    rels.add(src.relPath)
+  }
+
   // One scan per content dir (md bodies aren't carried on __mdSource).
   const mdFilesByDir = new Map<string, Map<string, MdFile>>()
-  const mdFileFor = (src: MdRouteSource): MdFile => {
+  const mdFileFor = (src: MdRouteSource): MdFile | undefined => {
     let files = mdFilesByDir.get(src.contentDir)
     if (files === undefined) {
       files = new Map(scanMdDir(src.contentDir).map((f) => [f.relPath, f]))
       mdFilesByDir.set(src.contentDir, files)
+      const rels = routeRelsByDir.get(src.contentDir) as Set<string>
+      const setsMatch = files.size === rels.size && [...rels].every((rel) => files!.has(rel))
+      if (!setsMatch) warnMdRoutesChanged()
     }
-    const file = files.get(src.relPath)
-    if (file === undefined) {
-      throw new Error(`md route source ${src.absPath} not found under ${src.contentDir}`)
-    }
-    return file
+    // A removed file is skipped (its stale template keeps serving until the
+    // restart the warning above asked for); the rest of the emit proceeds.
+    return files.get(src.relPath)
   }
 
   // Tag-name → classification, shared across pages (one readFileSync per name).
@@ -142,6 +174,7 @@ export async function emitMdTemplates(opts: MdEmitOpts): Promise<{
     const chain = r.chain as NonNullable<FlatRouteLike['chain']>
     const src = chain[chain.length - 1]?.__mdSource as MdRouteSource
     const mdFile = mdFileFor(src)
+    if (mdFile === undefined) continue
 
     // 1. Resolver: registry key → routes-entry default import → island/behavior.
     const resolve = (tag: string, line: number): MdComponentResolution | null => {

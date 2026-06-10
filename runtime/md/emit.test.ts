@@ -7,7 +7,13 @@ import { emitNativeTemplates } from '../cli/native-routes-emit.ts'
 import { islandChunkBasename } from '../islands/chunk-id.ts'
 import { DIRECTIVES_BOOTSTRAP, ISLANDS_IMPORTMAP_AND_BOOTSTRAP } from '../islands/importmap.ts'
 import { directiveName } from '../native/build.ts'
-import { emitMdArtifacts, emitMdTemplates, spliceMdSlot, type FlatRouteLike } from './emit.ts'
+import {
+  _resetMdRoutesChangedWarnForTests,
+  emitMdArtifacts,
+  emitMdTemplates,
+  spliceMdSlot,
+  type FlatRouteLike,
+} from './emit.ts'
 import { MD_MANIFEST_FILENAME, mdTemplateName, type MdRouteSource } from './routes.ts'
 
 const BAKED_BOOTSTRAP = `{% raw %}${ISLANDS_IMPORTMAP_AND_BOOTSTRAP}{% endraw %}`
@@ -432,6 +438,102 @@ describe('emitMdArtifacts — templates + manifest in one pass (task 2.8)', () =
     expect(mdIslands.size).toBe(0)
     expect(existsSync(join(distDir, MD_MANIFEST_FILENAME))).toBe(false)
     expect(existsSync(distDir)).toBe(false)
+  })
+})
+
+describe('emitMdTemplates — dev add/remove detection (task 2.9)', () => {
+  const RESTART_MSG = '[brust dev] md routes changed — restart required'
+
+  function routesFor(contentDir: string, relPaths: string[]): FlatRouteLike[] {
+    return relPaths.map((relPath) => {
+      const tn = mdTemplateName(relPath)
+      return {
+        nativeTemplate: tn,
+        chain: [
+          {
+            Component: { name: tn },
+            __mdSource: mdSource({ absPath: join(contentDir, relPath), relPath, contentDir }),
+          },
+        ],
+      }
+    })
+  }
+
+  test('removed md file → no crash, restart warning, surviving routes still emitted', async () => {
+    _resetMdRoutesChangedWarnForTests()
+    const f = makeFixture()
+    const contentDir = join(dir, 'content/pages')
+    write('content/pages/a.md', '# A\n')
+    write('content/pages/b.md', '# B\n')
+    const flatRoutes = routesFor(contentDir, ['a.md', 'b.md'])
+    rmSync(join(contentDir, 'b.md')) // route table is now stale (frozen at boot)
+
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      await emitMdTemplates({ entryFile: f.entryFile, flatRoutes, outDir })
+      const restartWarnings = warnSpy.mock.calls.filter((args) => String(args[0]) === RESTART_MSG)
+      expect(restartWarnings.length).toBe(1)
+    } finally {
+      warnSpy.mockRestore()
+    }
+    // a.md still emitted; b.md skipped without throwing.
+    expect(existsSync(join(outDir, `${mdTemplateName('a.md')}.jinja`))).toBe(true)
+    expect(existsSync(join(outDir, `${mdTemplateName('b.md')}.jinja`))).toBe(false)
+  })
+
+  test('added md file → restart warning, known routes still emitted', async () => {
+    _resetMdRoutesChangedWarnForTests()
+    const f = makeFixture()
+    const contentDir = join(dir, 'content/pages')
+    write('content/pages/a.md', '# A\n')
+    const flatRoutes = routesFor(contentDir, ['a.md'])
+    write('content/pages/new.md', '# New\n') // added after the route table froze
+
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      await emitMdTemplates({ entryFile: f.entryFile, flatRoutes, outDir })
+      const restartWarnings = warnSpy.mock.calls.filter((args) => String(args[0]) === RESTART_MSG)
+      expect(restartWarnings.length).toBe(1)
+    } finally {
+      warnSpy.mockRestore()
+    }
+    expect(existsSync(join(outDir, `${mdTemplateName('a.md')}.jinja`))).toBe(true)
+  })
+
+  test('warning logs ONCE per process across re-emits', async () => {
+    _resetMdRoutesChangedWarnForTests()
+    const f = makeFixture()
+    const contentDir = join(dir, 'content/pages')
+    write('content/pages/a.md', '# A\n')
+    const flatRoutes = routesFor(contentDir, ['a.md'])
+    write('content/pages/new.md', '# New\n')
+
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      await emitMdTemplates({ entryFile: f.entryFile, flatRoutes, outDir })
+      await emitMdTemplates({ entryFile: f.entryFile, flatRoutes, outDir })
+      const restartWarnings = warnSpy.mock.calls.filter((args) => String(args[0]) === RESTART_MSG)
+      expect(restartWarnings.length).toBe(1)
+    } finally {
+      warnSpy.mockRestore()
+    }
+  })
+
+  test('matching emit set → no warning', async () => {
+    _resetMdRoutesChangedWarnForTests()
+    const f = makeFixture()
+    const contentDir = join(dir, 'content/pages')
+    write('content/pages/a.md', '# A\n')
+    const flatRoutes = routesFor(contentDir, ['a.md'])
+
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      await emitMdTemplates({ entryFile: f.entryFile, flatRoutes, outDir })
+      const restartWarnings = warnSpy.mock.calls.filter((args) => String(args[0]) === RESTART_MSG)
+      expect(restartWarnings).toEqual([])
+    } finally {
+      warnSpy.mockRestore()
+    }
   })
 })
 

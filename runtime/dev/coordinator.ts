@@ -40,6 +40,12 @@ export class Coordinator {
         case 'ts':
         case 'html':
         case 'islands':
+        // 'md' (task 2.9) takes the SAME full path as a .tsx edit: buildIslands
+        // (wired in index.ts) re-runs emitMdArtifacts — the md re-splice — and
+        // the worker restart is REQUIRED because loadIslandManifest caches
+        // per-isolate (islands/native-render.ts), so a re-emitted
+        // .islands.json sidecar is never re-read by a live worker.
+        case 'md':
           // Stale frozen island renders must not survive a source edit.
           this.deps.clearIslandCache?.()
           // Rebuild island CLIENT chunks. The watcher classifies every `.tsx`
@@ -108,7 +114,9 @@ function formatStart(ev: { paths: string[]; kind: ChangeKind }): string {
         ? 'component css update'
         : ev.kind === 'islands'
           ? 'islands rebuild'
-          : 'hotreload'
+          : ev.kind === 'md'
+            ? 'md update'
+            : 'hotreload'
   return `${icon} ${label} ${ev.paths[0]}`
 }
 

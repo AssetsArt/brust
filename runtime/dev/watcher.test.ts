@@ -16,7 +16,13 @@ describe('runtime/dev/watcher classifyPath', () => {
     ['/proj/dist/index.js', null],
     ['/proj/foo.test.ts', null],
     ['/proj/foo.test.tsx', null],
-    ['/proj/README.md', null],
+    // md pages (task 2.9): any .md under the project is a content edit…
+    ['/proj/README.md', 'md'],
+    ['/proj/content/docs/guide.md', 'md'],
+    // …but ignored dirs stay ignored, same as every other kind.
+    ['/proj/node_modules/pkg/README.md', null],
+    ['/proj/.brust/jinja/notes.md', null],
+    ['/proj/dist/CHANGELOG.md', null],
     ['/proj/components/Button.module.css', 'component-css'],
     ['/proj/components/styles.css', 'component-css'],
     ['/proj/components/Button.module.css.d.ts', null],
