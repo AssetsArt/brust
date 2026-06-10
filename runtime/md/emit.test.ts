@@ -112,6 +112,12 @@ title: Docs Home
 
 # Welcome
 
+Docs about the marker \`island_0_props\` mechanism.
+
+\`\`\`
+data-brust-props="{{ island_0_props }}"
+\`\`\`
+
 <Counter start={1} />
 `
 
@@ -276,8 +282,17 @@ describe('emitMdTemplates — chained md route', () => {
     expect(tmpl).toContain(
       `data-brust-island="${counterId}" data-brust-props="{{ island_1_props }}" data-brust-hydrate="load">{{ island_1_html | safe }}</div>`,
     )
-    // No leftover local-numbered md marker beyond the TSX one.
-    expect(countOccurrences(tmpl, 'island_0_props')).toBe(1)
+    // B1 regression: marker-LOOKALIKE text in md content must NOT be renumbered
+    // (renumbering is anchored on the live `{{ island_` prefix, which cannot
+    // occur in neutralized content). The prose code-span and the neutralized
+    // fence both keep their literal island_0_props.
+    expect(tmpl).toContain('<code>island_0_props</code>')
+    // Live markers: exactly one `{{ island_0_props }}` (the TSX Widget) and one
+    // `{{ island_1_props }}` (the offset md Counter) — lookalikes excluded.
+    expect(countOccurrences(tmpl, '{{ island_0_props }}')).toBe(1)
+    expect(countOccurrences(tmpl, '{{ island_1_props }}')).toBe(1)
+    // Total literal mentions: TSX live marker + prose span + neutralized fence.
+    expect(countOccurrences(tmpl, 'island_0_props')).toBe(3)
 
     // Merged manifest: enriched TSX entry first, offset md entry appended.
     const manifest = JSON.parse(readFileSync(join(outDir, `${tn}.islands.json`), 'utf8'))

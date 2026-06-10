@@ -229,9 +229,14 @@ export async function emitMdTemplates(opts: MdEmitOpts): Promise<{
     const offset = tsxIslands.length > 0 ? Math.max(...tsxIslands.map((e) => e.instance)) + 1 : 0
     let mdHtml = rendered.html
     if (offset > 0 && rendered.islands.length > 0) {
+      // Anchored on the LIVE-jinja prefix `{{ island_`: after neutralizeBraces
+      // every literal `{{` in md content reads `{{ "{{" }}` (next char `"`),
+      // so this byte sequence exists ONLY in the injected host markers — prose
+      // or code fences that mention island_N_props are never touched. (Same
+      // anchoring discipline as reconcileIslandManifest's marker rewrite.)
       mdHtml = mdHtml.replace(
-        /\bisland_(\d+)_(props|html)\b/g,
-        (_m, n: string, kind: string) => `island_${Number(n) + offset}_${kind}`,
+        /\{\{ island_(\d+)_(props|html)/g,
+        (_m, n: string, kind: string) => `{{ island_${Number(n) + offset}_${kind}`,
       )
     }
     const template = spliceMdSlot(compiled.template, name, mdHtml)
