@@ -1,7 +1,6 @@
 import { existsSync } from 'node:fs'
 import path, { dirname, isAbsolute, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { emitMdArtifacts } from '../md/emit.ts'
 import { emitNativeTemplates } from './native-routes-emit.ts'
 
 /** repoRoot = the directory that contains runtime/. This file lives at
@@ -100,8 +99,17 @@ export async function runDev(args: string[]): Promise<void> {
     withDevClient: true,
     manifestDirs: [path.join(process.cwd(), '.brust')],
   }
+  // Lazy-load the md emit ONLY when md routes exist: md/emit.ts statically
+  // imports the md renderer (marked), and an md-free app must not pay that
+  // dependency at `brust dev` startup (same gating as build.ts / index.ts).
+  const hasMdRoutes = loadedRoutes.some((r) =>
+    (r as { chain?: { __mdSource?: unknown }[] }).chain?.some((n) => n.__mdSource),
+  )
+  const emitMd = hasMdRoutes
+    ? (await import('../md/emit.ts')).emitMdArtifacts
+    : async (_opts: typeof mdEmitOpts) => {}
   await emitNativeTemplates(emitOpts)
-  await emitMdArtifacts(mdEmitOpts)
+  await emitMd(mdEmitOpts)
 
   // Native-route HMR: on a ts/html/islands hot reload the dev coordinator calls
   // this to recompile the .jinja templates from the (edited) source and reload
@@ -113,7 +121,7 @@ export async function runDev(args: string[]): Promise<void> {
   const { registerJinjaReEmit } = await import('../dev/jinja-reload.ts')
   registerJinjaReEmit(async () => {
     await emitNativeTemplates(emitOpts)
-    await emitMdArtifacts(mdEmitOpts)
+    await emitMd(mdEmitOpts)
     const native = await import('../index.js')
     ;(native as { napiLoadJinjaTemplates: (dir: string) => unknown }).napiLoadJinjaTemplates(
       jinjaDir,

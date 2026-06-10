@@ -469,6 +469,12 @@ export const brust = {
               console.warn(
                 `[brust] main: md template emit failed (run \`brust build\`): ${(err as Error).message}`,
               )
+              // The stale templates on disk (if any) still LOAD below — md
+              // routes then silently serve previous content. Make that state
+              // operator-visible instead of indistinguishable from fresh.
+              console.warn(
+                '[brust] main: md routes may be serving previously-built templates (stale content)',
+              )
             }
           }
           const { scanIslandChunks, buildIslands: build } = await import('./islands/build.ts')
