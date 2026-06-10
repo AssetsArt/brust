@@ -63,11 +63,14 @@ test('parseArgs: --ssg-out <dir> captured as an absolute path', () => {
   expect(p.ssgOut).toBe(resolve(process.cwd(), 'custom'))
 })
 test('parseArgs: --ssg-out=<dir> form captured', () => {
-  const p = parseArgs(['--ssg-out=custom'])
+  const p = parseArgs(['--ssg', '--ssg-out=custom'])
   expect(p.ssgOut).toBe(resolve(process.cwd(), 'custom'))
 })
 test('parseArgs: --ssg-out without value → throws', () => {
-  expect(() => parseArgs(['--ssg-out'])).toThrow('--ssg-out requires a value')
+  expect(() => parseArgs(['--ssg', '--ssg-out'])).toThrow('--ssg-out requires a value')
+})
+test('parseArgs: --ssg-out without --ssg → throws', () => {
+  expect(() => parseArgs(['--ssg-out', 'custom'])).toThrow('--ssg-out requires --ssg')
 })
 test('parseArgs: --out-dir without value → throws (shared error shape)', () => {
   expect(() => parseArgs(['--out-dir'])).toThrow('--out-dir requires a value')

@@ -208,6 +208,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       : resolve(cwd, outDir)
     : resolve(cwd, 'dist')
 
+  if (ssgOut !== undefined && !ssg) {
+    throw new Error('brust build: --ssg-out requires --ssg')
+  }
   const ssgOutPath = ssgOut ? (isAbsolute(ssgOut) ? ssgOut : resolve(cwd, ssgOut)) : null
 
   return { entry: entryPath, outDir: outPath, target, ssg, ssgOut: ssgOutPath }
