@@ -27,6 +27,19 @@ import type { EndpointDef } from './define-actions.ts'
 import { isRespondSentinel, makeRespond } from './define-actions.ts'
 import { validate } from './standard-schema.ts'
 
+// Markdown pages (task 2.11): the md API is part of the `brustjs/routes`
+// surface — apps spread `...mdRoutes('content/docs', …)` into defineRoutes and
+// render sidebars from `mdNav(...)`. Re-exported here so user code never
+// imports runtime-internal paths.
+export { mdNav, mdRoutes } from './md/routes.ts'
+export type {
+  MdNavGroup,
+  MdNavItem,
+  MdRoute,
+  MdRoutesOptions,
+  MdRouteSource,
+} from './md/routes.ts'
+
 // S2 + B3 — unified per-request scope. The request scope (B3 cookies/context) is
 // the OUTERMOST layer, then the request-scoped loader cache/dedupe (S2: one Map
 // per request for `cachedFetch`/`dedupe` across loaders AND render), then the

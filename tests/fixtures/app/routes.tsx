@@ -1,4 +1,12 @@
-import { defineRoutes, notFound, redirect, type Middleware } from '../../../runtime/routes.ts'
+import { existsSync } from 'node:fs'
+import path from 'node:path'
+import {
+  defineRoutes,
+  mdRoutes,
+  notFound,
+  redirect,
+  type Middleware,
+} from '../../../runtime/routes.ts'
 import { counterStream, idleStream } from './sse-streams.ts'
 
 // Fixture-local page copies. The test fixture is SELF-CONTAINED — it must not
@@ -15,6 +23,7 @@ import NativeNestedMap from './pages/NativeNestedMap'
 import NativeDataAttr  from './pages/NativeDataAttr'
 import NativeOutletLayout from './pages/NativeOutletLayout'
 import NativeOutletLeaf   from './pages/NativeOutletLeaf'
+import MdDocsLayout from './pages/MdDocsLayout'
 import NativeIslandPage from './NativeIslandPage'
 import NativeSsrIslandPage from './NativeSsrIslandPage'
 import NativeTwoIslandPage from './NativeTwoIslandPage'
@@ -37,6 +46,29 @@ import AdminUserDetail     from './components/AdminUserDetail'
 import AdminUserThrow      from './components/AdminUserThrow'
 import AdminErrorBoundary  from './components/AdminErrorBoundary'
 
+// md component registry (task 2.10): the THREE-identity rule — the md tag name,
+// the mdRoutes `components` key, and these default-import idents must all match.
+// Counter is an island (React); BehaviorBadge is a native behavior component.
+import Counter             from './components/Counter'
+import BehaviorBadge       from './components/BehaviorBadge'
+
+// Markdown pages (task 2.10). The content dir is passed RELATIVE — the supported
+// pattern for prebuilt dists (the frozen md-manifest records the same relative
+// string, so manifest matching is cwd-stable between build and boot; an
+// import.meta-anchored absolute path would not survive bundling). Because this
+// shared fixture is also built/booted from OTHER cwds (repo root, isolated tmp
+// projects — e.g. tests/cli-build.test.ts, tests/ssg.test.ts), the md routes are
+// GATED: active when the content dir exists at cwd (source mode / builds run
+// from this dir) or when a prebuilt dist ships a frozen md-manifest.json.
+// Everywhere else the fixture stays a no-md app, preserving the byte-identical
+// no-md build invariant those tests assert.
+const MD_CONTENT_DIR = 'content/docs'
+const mdActive =
+  existsSync(MD_CONTENT_DIR) ||
+  (process.env.BRUST_PREBUILT === '1' &&
+    process.env.BRUST_DIST_DIR !== undefined &&
+    existsSync(path.join(process.env.BRUST_DIST_DIR, 'md-manifest.json')))
+
 const authRequired: Middleware = async (req, next) => {
   if (!req.cookies['user']) {
     return {
@@ -56,6 +88,16 @@ const timeIt: Middleware = async (_req, next) => {
 }
 
 export const routes = defineRoutes([
+  // Markdown pages (task 2.10) — /docs, /docs/intro, /docs/query/where under a
+  // native layout (chained mode: MdDocsLayout owns BrustPage + <main><Outlet/>).
+  ...(mdActive
+    ? mdRoutes(MD_CONTENT_DIR, {
+        prefix: '/docs',
+        layout: MdDocsLayout,
+        components: { Counter, BehaviorBadge },
+      })
+    : []),
+
   // Demo showcase routes.
   { path: '/',             Component: HelloWorld },
   { path: '/blog/{slug}',  Component: BlogPost,

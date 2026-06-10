@@ -31,6 +31,12 @@ test('renderCommandHelp(build) documents --ssg and --ssg-out', () => {
   expect(h).toContain('--ssg-out')
 })
 
+test('renderCommandHelp(build) mentions markdown pages (mdRoutes)', () => {
+  const h = renderCommandHelp('build')!
+  expect(h).toContain('mdRoutes')
+  expect(h).toContain('md-manifest.json')
+})
+
 test('renderCommandHelp(unknown) is null', () => {
   expect(renderCommandHelp('bogus')).toBeNull()
 })

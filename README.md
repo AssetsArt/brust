@@ -79,6 +79,7 @@ the empirically-found limits.
 brustjs dev   <entry>             # dev mode: watcher + WS reload + browser auto-reload
 brustjs build <entry> --out-dir D # prebuilt ./dist/ — run from the project (bun run dist/index.js)
                   --target <auto|all|TARGET[,…]> # which native binary to bundle (default: auto = host platform)
+                  --ssg [--ssg-out D]   # prerender static routes (incl. markdown pages) to HTML
 brustjs new   <name>              # scaffold a project (partial — see Status)
 ```
 
@@ -111,6 +112,10 @@ brustjs new   <name>              # scaffold a project (partial — see Status)
   infers the whole API from the server types (no codegen) and returns
   `{ data, error, status, headers }` (never throws). Standard Schema (zod)
   validation, JSON / urlencoded / multipart bodies.
+- **Markdown pages** — `mdRoutes()` compiles a directory of `.md` files
+  (GFM + frontmatter, optional shiki highlighting) into native jinja routes at
+  build time, with React islands and behavior components embeddable straight
+  from markdown.
 - **SSE & WebSockets** as first-class route shapes.
 - Nested routes + dynamic params, per-route typed loaders, request-scoped middleware,
   SPA-style navigation, in-process LRU response cache + island ISR cache, Tailwind v4 + CSS Modules.
@@ -118,6 +123,35 @@ brustjs new   <name>              # scaffold a project (partial — see Status)
   loaders become **resources** at `/_brust/mcp`; `tools/call` runs through the
   same validation + middleware as an HTTP request, so agents drive the app
   without scraping.
+
+## Markdown pages
+
+Mount a content directory as routes — each `.md` file becomes a `native: true`
+page compiled to a jinja template at build time (no React on the server, no
+markdown parsing at request time):
+
+```tsx
+// routes.tsx
+import { defineRoutes, mdRoutes } from 'brustjs/routes'
+import DocsLayout from './components/DocsLayout' // owns <BrustPage> + <main><Outlet/></main>
+import Counter from './components/Counter'
+
+export const routes = defineRoutes([
+  ...mdRoutes('content/docs', {
+    prefix: '/docs',                  // content/docs/query/where.md → /docs/query/where
+    layout: DocsLayout,               // optional; head comes from frontmatter via `__md`
+    components: { Counter },          // usable as `<Counter start={5} />` in markdown
+  }),
+])
+```
+
+Frontmatter (`title`, `description`, `nav: { group, order }`) drives `<title>`
+and the `mdNav('content/docs')` sidebar tree. Component tags on their own line
+embed islands (`<Counter start={5} />`, `csr` / `hydrate="visible"` supported)
+or native behavior components. Code fences are highlighted server-side when the
+optional `shiki` peer dependency is installed. `brust build` freezes the pages
+into the dist (`md-manifest.json` — the content dir isn't needed at runtime),
+and `brust build --ssg` prerenders them to static HTML.
 
 ## Performance
 

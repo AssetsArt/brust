@@ -448,3 +448,13 @@ describe('mdNav', () => {
     expect(() => mdRoutes(dir, { layout: anon as never })).toThrow(/NAMED component/)
   })
 })
+
+describe('brustjs/routes re-export (task 2.11)', () => {
+  test('mdRoutes + mdNav are exported from the routes module', async () => {
+    // Apps import from 'brustjs/routes' (→ runtime/routes.ts per package.json
+    // "exports"); the md API must be reachable there, not just md/routes.ts.
+    const routesModule = await import('../routes')
+    expect((routesModule as Record<string, unknown>).mdRoutes).toBe(mdRoutes)
+    expect((routesModule as Record<string, unknown>).mdNav).toBe(mdNav)
+  })
+})
