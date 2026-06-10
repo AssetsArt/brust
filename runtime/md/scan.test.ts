@@ -143,4 +143,29 @@ describe('scanMdDir', () => {
     const [file] = scanMdDir(dir)
     expect(file.frontmatter).toEqual({ title: 'A', order: 2 })
   })
+
+  test('UTF-8 BOM before the opening fence is stripped, not treated as body', () => {
+    const dir = makeContentDir({
+      'bom.md': `﻿---\ntitle: Bommed\n---\n# Body\n`,
+    })
+    const [file] = scanMdDir(dir)
+    expect(file.frontmatter).toEqual({ title: 'Bommed' })
+    expect(file.body).toBe('# Body\n')
+  })
+
+  test('fences tolerate trailing whitespace', () => {
+    const dir = makeContentDir({
+      'ws.md': ['--- ', 'title: Spaced', '---\t', '# Body', ''].join('\n'),
+    })
+    const [file] = scanMdDir(dir)
+    expect(file.frontmatter).toEqual({ title: 'Spaced' })
+    expect(file.body).toBe('# Body\n')
+  })
+
+  test('inline map entry with no value throws with file:line', () => {
+    const dir = makeContentDir({
+      'novalue.md': ['---', 'nav: { group: }', '---', 'body', ''].join('\n'),
+    })
+    expect(() => scanMdDir(dir)).toThrow(/novalue\.md:2 .*"group" has no value/)
+  })
 })

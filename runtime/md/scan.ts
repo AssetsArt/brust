@@ -56,12 +56,16 @@ function splitFrontmatter(
   source: string,
   absPath: string,
 ): { frontmatter: MdFile['frontmatter']; body: string } {
-  const lines = source.split('\n')
-  if (stripCr(lines[0] ?? '') !== '---') return { frontmatter: {}, body: source }
+  // BOM would otherwise make the opening fence read '﻿---' and the whole
+  // block silently fall through as body — common with Windows editors.
+  const lines = source.replace(/^\uFEFF/, '').split('\n')
+  // Fences tolerate trailing whitespace (and CRLF) — `--- ` is still a fence.
+  const isFence = (line: string) => line.trimEnd() === '---'
+  if (!isFence(lines[0] ?? '')) return { frontmatter: {}, body: source }
 
   let closeIdx = -1
   for (let i = 1; i < lines.length; i++) {
-    if (stripCr(lines[i] ?? '') === '---') {
+    if (isFence(lines[i] ?? '')) {
       closeIdx = i
       break
     }
@@ -135,7 +139,11 @@ function parseInlineMap(raw: string, absPath: string, fileLine: number): Record<
       )
     }
     const key = (m[1] ?? m[2] ?? m[3]) as string
-    map[key] = parseScalar((m[4] as string).trim(), absPath, fileLine)
+    const value = (m[4] as string).trim()
+    if (value === '') {
+      throw new Error(`${absPath}:${fileLine} inline map entry "${key}" has no value`)
+    }
+    map[key] = parseScalar(value, absPath, fileLine)
   }
   return map
 }
