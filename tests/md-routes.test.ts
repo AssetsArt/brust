@@ -236,6 +236,9 @@ test('dist boot without content dir — md routes serve from md-manifest.json', 
     proc2 = spawn({
       cmd: ['bun', 'run', path.join(distDir, 'index.js')],
       cwd: FIXTURE_DIR, // island sourcePaths are project-relative to the build cwd
+      // No BRUST_PREBUILT/BRUST_DIST_DIR here on purpose: `brust build` bakes
+      // both into dist/index.js's preamble, so the dist arm of the fixture's
+      // mdActive gate (and loadPrebuiltMdManifest) fires from the bundle itself.
       env: { ...process.env, BRUST_PORT: '3822', BRUST_WORKERS: '1', RUST_LOG: 'brust=warn' },
       stdout: 'pipe',
       stderr: 'inherit',
@@ -313,7 +316,8 @@ test('SSG export of /docs/* — pages + island chunks 200 from a dumb static hos
         mdRoute('/docs/query/where'),
       ]),
     })
-    process.chdir(savedCwd)
+    // cwd restored by the finally below (only there — an assert throw between
+    // here and the finally must not leave the process chdir'd).
     expect([...result.written].sort()).toEqual([
       'docs/index.html',
       'docs/intro/index.html',
@@ -354,3 +358,27 @@ test('SSG export of /docs/* — pages + island chunks 200 from a dumb static hos
     await rm(staticOut, { recursive: true, force: true })
   }
 }, 180_000)
+
+// Acceptance criterion 5 — mdNav() returns the documented tree for the FIXTURE
+// content (the unit suite covers synthetic dirs; this locks the real one).
+// Mirrors real usage: mdRoutes mounts the dir (registering its prefix), then a
+// layout calls mdNav.
+test('mdNav returns the grouped/ordered tree for the fixture content', async () => {
+  const { mdNav, mdRoutes } = await import('../runtime/md/routes.ts')
+  const contentDir = path.join(FIXTURE_DIR, 'content/docs')
+  mdRoutes(contentDir, { prefix: '/docs' })
+  const nav = mdNav(contentDir)
+  expect(nav).toEqual([
+    {
+      group: 'Start',
+      items: [
+        { title: 'Docs Home', path: '/docs', order: 1 },
+        { title: 'Intro', path: '/docs/intro', order: 2 },
+      ],
+    },
+    {
+      group: 'Query',
+      items: [{ title: 'Query Where', path: '/docs/query/where', order: 1 }],
+    },
+  ])
+})
