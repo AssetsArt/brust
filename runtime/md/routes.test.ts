@@ -376,9 +376,8 @@ describe('mdNav', () => {
 
   test('mdRoutes: anonymous layout component → clear error', () => {
     const dir = makeContentDir({ 'intro.md': '# I\n' })
-    // Property shorthand would infer a name; pull from an array for a truly
-    // anonymous function (name === '').
-    const anonymous = [() => null][0] as never
-    expect(() => mdRoutes(dir, { layout: anonymous })).toThrow(/NAMED component/)
+    // Property shorthand AND const assignment both infer a name; an inline
+    // array-literal member is the truly anonymous form (name === '').
+    expect(() => mdRoutes(dir, { layout: [() => null][0] as never })).toThrow(/NAMED component/)
   })
 })
