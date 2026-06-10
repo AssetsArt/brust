@@ -36,6 +36,7 @@
   "dependencies": {
     "@tailwindcss/node": "^4.3.0",
     "@tailwindcss/oxide": "^4.3.0",
+    "marked": "^18.0.5",
     "smol-toml": "^1.6.1",
     "typescript": "^6.0.3"
   },
@@ -49,7 +50,13 @@
   },
   "peerDependencies": {
     "react": "^19.2.6",
-    "react-dom": "^19.2.6"
+    "react-dom": "^19.2.6",
+    "shiki": "^4.2.0"
+  },
+  "peerDependenciesMeta": {
+    "shiki": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.16",
@@ -60,6 +67,7 @@
     "lucide-react": "^1.17.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
+    "shiki": "^4.2.0",
     "zod": "^4.4.3"
   },
   "type": "module",
