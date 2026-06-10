@@ -5,6 +5,14 @@ import { scanImports } from '../cli/native-routes-emit.ts'
 
 const BEHAVIOR_RE = /export\s+const\s+behavior\b/
 
+/** The single island-vs-behavior classifier: a component source is a native
+ * behavior component iff it has `export const behavior`. Shared by
+ * `scanDirectiveComponents` and the md emit step (runtime/md/emit.ts) so the
+ * two paths can never diverge. */
+export function isBehaviorSource(src: string): boolean {
+  return BEHAVIOR_RE.test(src)
+}
+
 /** Deterministic, app-unique directive name = camelCase(basename) + "_" + 8 hex of
  *  sha256(cwd-relative path). The SINGLE name contract: chunk filename, runtime
  *  registry key, and the compiler-emitted `x-data` all derive from this. */
@@ -36,7 +44,7 @@ export function scanDirectiveComponents(routesEntryFile: string): Map<string, st
     for (const dep of scanImports(filePath).values()) {
       if (!visited.has(dep)) queue.push(dep)
     }
-    if (BEHAVIOR_RE.test(src)) {
+    if (isBehaviorSource(src)) {
       const name = directiveName(filePath, process.cwd())
       const existing = found.get(name)
       if (existing && existing !== filePath) {

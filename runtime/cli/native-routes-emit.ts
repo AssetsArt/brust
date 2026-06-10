@@ -231,8 +231,12 @@ export function countMainTags(template: string): number {
  * Inserted before the first `</head>` when the page has one (a `<BrustPage>`
  * shell); otherwise appended (bare-fragment pages like a plain `<div>`). The
  * browser executes the module script in either position. Gated on `BRUST_DEV`
- * so `brust build` never bakes it into production templates. */
-function injectDevClientIntoTemplate(template: string): string {
+ * so `brust build` never bakes it into production templates.
+ *
+ * Exported for the md emit step (runtime/md/emit.ts), which bakes the same tag
+ * under its `withDevClient` option — md pages render Rust-side too, so without
+ * it they never auto-reload in dev. */
+export function injectDevClientIntoTemplate(template: string): string {
   const tag = buildDevClientTag()
   if (template.includes(tag)) return template // idempotent across re-emits
   const headClose = template.indexOf('</head>')
@@ -276,7 +280,9 @@ export interface NativeRouteEmitOpts {
    * each carrying its `Component`) drives T2 native-chain composition. */
   flatRoutes: {
     nativeTemplate?: string
-    chain?: Array<{ Component?: { name?: string } }>
+    /** Chain nodes parent→leaf. A leaf carrying `__mdSource` is a markdown
+     * page (runtime/md/routes.ts) — emitted by `emitMdTemplates`, NOT here. */
+    chain?: Array<{ Component?: { name?: string }; __mdSource?: unknown }>
   }[]
   /** `.brust/jinja` absolute output dir. Created if missing. */
   outDir: string
@@ -347,8 +353,11 @@ function toRelativeSpecifier(from: string, to: string): string {
  * path: `components.json` stores `sourcePath` relative to the project root
  * (cwd); `.factory.ts` imports relative to its own location (`.brust/jinja/`).
  * `enriched` keeps the ABSOLUTE path internally for the build-time island scan
- * below (`readFileSync`). */
-function emitComponentArtifacts(
+ * below (`readFileSync`).
+ *
+ * Exported for the md emit step (runtime/md/emit.ts), whose chained wrappers
+ * can carry layout SSR components and need the same sidecar emission. */
+export function emitComponentArtifacts(
   jinjaPath: string,
   componentsJsonStr: string,
   pageImports: Map<string, ResolvedImport>,
@@ -471,7 +480,13 @@ function emitComponentArtifacts(
 export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<void> {
   mkdirSync(opts.outDir, { recursive: true })
 
-  const nativeRoutes = opts.flatRoutes.filter((r) => r.nativeTemplate)
+  // md-route exclusion lives HERE (not at the call sites): a chain whose LEAF
+  // carries `__mdSource` is a markdown page emitted by `emitMdTemplates` —
+  // its synthetic template name has no routes-entry import, so letting it
+  // through would log a bogus "no import → skip" warning per md page.
+  const nativeRoutes = opts.flatRoutes.filter(
+    (r) => r.nativeTemplate && !r.chain?.[r.chain.length - 1]?.__mdSource,
+  )
 
   // Compile through the napi addon's `compileJsx` rather than spawning the
   // `jsx-rustc` binary. The binary only exists in the source tree's target/
@@ -881,13 +896,16 @@ export function scanImports(entryFile: string): Map<string, string> {
  *    `.islands.json`.
  * 4. Append `{% raw %}…{% endraw %}`-wrapped bootstrap to the `.jinja`. The raw
  *    block keeps the importmap's literal `}}`/`{{` inert through minijinja's
- *    boot-time compile.
+ *    boot-time compile. The md emit step passes `bakeBootstrap: false` and bakes
+ *    once itself at the END of its pipeline (the append here has no `includes()`
+ *    guard, so a second pass over the same template would double-bake).
  */
 export function reconcileIslandManifest(
   jinjaPath: string,
   islandsJsonPath: string,
   pageImports: Map<string, ResolvedImport>,
   routeName: string,
+  options?: { bakeBootstrap?: boolean },
 ): void {
   if (!existsSync(islandsJsonPath)) return
 
@@ -941,6 +959,10 @@ export function reconcileIslandManifest(
     },
   )
 
+  if (options?.bakeBootstrap === false) {
+    writeFileSync(jinjaPath, jinja)
+    return
+  }
   const baked = `{% raw %}${ISLANDS_IMPORTMAP_AND_BOOTSTRAP}{% endraw %}`
   writeFileSync(jinjaPath, jinja + baked)
 }

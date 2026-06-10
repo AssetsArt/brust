@@ -1,0 +1,345 @@
+// Task 2.7 — the md emit step. Per markdown route: render the md body to
+// jinja-safe HTML (render.ts), compile a synthetic wrapper TSX through the
+// SAME napi `compileJsx` the native pipeline uses, splice the md HTML into the
+// compiled template's slot element, merge the island manifest, and bake the
+// client runtime tags in a SINGLE idempotent pass.
+//
+// Pinned order of operations (spec §High-level architecture step 6):
+//   compileJsx(wrapper) → splice md HTML → merge manifest → single bake pass.
+//
+// No Rust changes: the integration points are jinja text files and
+// `.islands.json` sidecars, both already consumed by the existing pipeline.
+
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import path from 'node:path'
+import {
+  bakeDirectivesIfUsed,
+  buildChainWrapperSource,
+  countMainTags,
+  emitComponentArtifacts,
+  extractLucideIcons,
+  gatherChainSources,
+  injectDevClientIntoTemplate,
+  type ResolvedImport,
+  reconcileIslandManifest,
+  scanImports,
+} from '../cli/native-routes-emit.ts'
+import { islandChunkBasename } from '../islands/chunk-id.ts'
+import { ISLANDS_IMPORTMAP_AND_BOOTSTRAP } from '../islands/importmap.ts'
+import type { NativeIslandEntry } from '../islands/native-render.ts'
+import { directiveName, isBehaviorSource, scanDirectiveComponents } from '../native/build.ts'
+import { type MdComponentResolution, renderMdPage } from './render.ts'
+import type { MdRouteSource } from './routes.ts'
+import { type MdFile, scanMdDir } from './scan.ts'
+
+/** The slice of a FlatRoute the md emit step reads. The chain holds the route
+ * NODES, so the md leaf's `__mdSource` (runtime/md/routes.ts) survives into it. */
+export interface FlatRouteLike {
+  nativeTemplate?: string
+  chain?: Array<{ Component?: { name?: string }; __mdSource?: MdRouteSource }>
+}
+
+export interface MdEmitOpts {
+  /** User's routes entry file (absolute path) — scanned for the default-import
+   * idents that resolve embedded component tags, and for app-wide directives. */
+  entryFile: string
+  /** Flat routes; only chains whose LEAF carries `__mdSource` are emitted. */
+  flatRoutes: FlatRouteLike[]
+  /** Jinja output dir (same dir `emitNativeTemplates` writes to). */
+  outDir: string
+  /** Bake the /_brust/dev WS client tag (parity with the native emit's
+   * BRUST_DEV injection — md pages render Rust-side and never pass through the
+   * React renderer's dev-client injection). */
+  withDevClient?: boolean
+}
+
+/** Raw island entry as the Rust compiler emits it (camelCase JSON). */
+interface RawIslandEntry {
+  component: string
+  instance: number
+  propsPath: string
+  ssr: boolean
+  hydrate: string
+}
+
+/** Minimal shape of the napi addon's `compileJsx`. */
+type CompileJsx = (
+  source: string,
+  path: string,
+  componentSources?: Record<string, string>,
+  lucideIcons?: Record<string, string>,
+  directiveNames?: Record<string, string>,
+) => { template: string; islandsJson: string; componentsJson?: string; warnings?: string[] }
+
+/** Emit one `.jinja` (+ `.islands.json` sidecar) per md route in `flatRoutes`.
+ * Returns the islands referenced from md content (`name → absolute source
+ * path`) so the build step can thread them into island-chunk discovery as
+ * `extraIslands` (task 2.8). Behaviors are NOT in the map — their chunks are
+ * built by `scanDirectiveComponents`, which already walks the routes-entry
+ * import graph the registry keeps alive. */
+export async function emitMdTemplates(opts: MdEmitOpts): Promise<{
+  mdIslands: Map<string, string>
+}> {
+  const mdIslands = new Map<string, string>()
+  const mdRoutes = opts.flatRoutes.filter(
+    (r) => r.nativeTemplate && r.chain?.[r.chain.length - 1]?.__mdSource,
+  )
+  if (mdRoutes.length === 0) return { mdIslands }
+
+  mkdirSync(opts.outDir, { recursive: true })
+
+  // Same dynamic-import seam as emitNativeTemplates: the napi addon ships
+  // compileJsx with every platform package.
+  const native = await import('../index.js')
+  const compileJsx = (native as { compileJsx?: CompileJsx }).compileJsx
+  if (typeof compileJsx !== 'function') {
+    throw new Error(
+      'brust: the native addon does not expose compileJsx — rebuild it with ' +
+        '`cd runtime && bun run build` (or update brustjs to a build that ships it).',
+    )
+  }
+
+  const projectRoot = process.cwd()
+  const importMap = scanImports(opts.entryFile)
+  // App-wide directive presence — same force rule as emitNativeTemplates: SPA
+  // nav swaps <main> without executing scripts, so the directive runtime must
+  // already be live on every native page when ANY directive component exists.
+  const hasDirectives = scanDirectiveComponents(opts.entryFile).size > 0
+
+  // One scan per content dir (md bodies aren't carried on __mdSource).
+  const mdFilesByDir = new Map<string, Map<string, MdFile>>()
+  const mdFileFor = (src: MdRouteSource): MdFile => {
+    let files = mdFilesByDir.get(src.contentDir)
+    if (files === undefined) {
+      files = new Map(scanMdDir(src.contentDir).map((f) => [f.relPath, f]))
+      mdFilesByDir.set(src.contentDir, files)
+    }
+    const file = files.get(src.relPath)
+    if (file === undefined) {
+      throw new Error(`md route source ${src.absPath} not found under ${src.contentDir}`)
+    }
+    return file
+  }
+
+  // Tag-name → classification, shared across pages (one readFileSync per name).
+  const resolutionCache = new Map<string, { res: MdComponentResolution; absPath: string }>()
+
+  for (const r of mdRoutes) {
+    const name = r.nativeTemplate as string
+    const chain = r.chain as NonNullable<FlatRouteLike['chain']>
+    const src = chain[chain.length - 1]?.__mdSource as MdRouteSource
+    const mdFile = mdFileFor(src)
+
+    // 1. Resolver: registry key → routes-entry default import → island/behavior.
+    const resolve = (tag: string, line: number): MdComponentResolution | null => {
+      if (!Object.hasOwn(src.components, tag)) return null // unknown → render.ts errors
+      let cached = resolutionCache.get(tag)
+      if (cached === undefined) {
+        const absPath = importMap.get(tag)
+        if (absPath === undefined) {
+          // All THREE identities must coincide: the md tag name, the mdRoutes
+          // components-registry key, and the routes-entry default-import ident.
+          throw new Error(
+            `${src.absPath}:${line} — <${tag}> is in the mdRoutes components registry, but the ` +
+              `routes entry (${opts.entryFile}) has no matching default import ` +
+              `(expected \`import ${tag} from "..."\`). The md tag name, the registry key, ` +
+              `and the routes-entry import ident must all be the same name.`,
+          )
+        }
+        const res: MdComponentResolution = isBehaviorSource(readFileSync(absPath, 'utf8'))
+          ? { kind: 'behavior', directive: directiveName(absPath, projectRoot) }
+          : { kind: 'island', id: islandChunkBasename(tag, absPath) }
+        cached = { res, absPath }
+        resolutionCache.set(tag, cached)
+      }
+      if (cached.res.kind === 'island') mdIslands.set(tag, cached.absPath)
+      return cached.res
+    }
+
+    // 2. md → jinja-safe HTML with LIVE island/behavior host markers
+    //    (LOCAL instance numbers — offset below).
+    const rendered = await renderMdPage({ body: mdFile.body, absPath: src.absPath, resolve })
+
+    // 3. Wrapper TSX (in-memory — compileJsx keys off the default export +
+    //    componentSources; routeSourcePath need not exist on disk).
+    let routeSource: string
+    let routeSourcePath: string
+    let sources: Record<string, string>
+    let mergedImports: Map<string, ResolvedImport>
+    if (chain.length > 1) {
+      // Chained: bare <article> fragment composed via the EXISTING chain path —
+      // the synthetic leaf source is injected next to the gathered chain sources.
+      const ancestorNames = chain
+        .slice(0, -1)
+        .map((node) => node.Component?.name)
+        .filter((n): n is string => typeof n === 'string' && n.length > 0)
+      if (ancestorNames.length !== chain.length - 1) {
+        throw new Error(
+          `md route "${name}" (${src.absPath}) has an unnamed layout component in its chain — every chain level needs a named component`,
+        )
+      }
+      ;({ sources, mergedImports } = gatherChainSources(ancestorNames, importMap))
+      sources[name] = mdChainedLeafSource(name)
+      routeSource = buildChainWrapperSource([...ancestorNames, name])
+      const firstAncestorPath = importMap.get(ancestorNames[0] as string) as string
+      routeSourcePath = path.resolve(path.dirname(firstAncestorPath), `${name}__chain.tsx`)
+    } else {
+      // Standalone: the wrapper owns the <BrustPage> shell; frontmatter
+      // title/description become literal props.
+      sources = {}
+      mergedImports = new Map()
+      routeSource = mdStandaloneSource(name, src.frontmatter)
+      routeSourcePath = path.resolve(src.contentDir, `${name}.tsx`)
+    }
+
+    // Lucide + directive maps for inlined chain components — mirrors
+    // emitNativeTemplates (the wrapper itself can't carry either).
+    const lucideIcons: Record<string, string> = {}
+    for (const imp of mergedImports.values()) {
+      if (!imp.bare && typeof imp.spec === 'string') {
+        Object.assign(lucideIcons, await extractLucideIcons(imp.spec))
+      }
+    }
+    const directiveNames: Record<string, string> = {}
+    for (const [ident, text] of Object.entries(sources)) {
+      if (!isBehaviorSource(text)) continue
+      const ref = mergedImports.get(ident)
+      if (ref && !ref.bare && typeof ref.spec === 'string') {
+        directiveNames[ident] = directiveName(ref.spec, projectRoot)
+      }
+    }
+
+    let compiled: ReturnType<CompileJsx>
+    try {
+      compiled = compileJsx(routeSource, routeSourcePath, sources, lucideIcons, directiveNames)
+    } catch (e) {
+      throw new Error(
+        `md route "${name}" wrapper failed to compile (${src.absPath}):\n${String(e)}`,
+      )
+    }
+    for (const w of compiled.warnings ?? []) process.stderr.write(`brust: ${w}\n`)
+
+    // 4. Offset md island instances past the wrapper/layout TSX islands, then
+    //    splice. Single-pass regex — no replace cascade when offset overlaps
+    //    the local range. The md HTML is already brace-neutralized with LIVE
+    //    markers (render.ts), so it is NOT re-neutralized here.
+    const tsxIslands = JSON.parse(
+      compiled.islandsJson === '' ? '[]' : compiled.islandsJson,
+    ) as RawIslandEntry[]
+    const offset = tsxIslands.length > 0 ? Math.max(...tsxIslands.map((e) => e.instance)) + 1 : 0
+    let mdHtml = rendered.html
+    if (offset > 0 && rendered.islands.length > 0) {
+      mdHtml = mdHtml.replace(
+        /\bisland_(\d+)_(props|html)\b/g,
+        (_m, n: string, kind: string) => `island_${Number(n) + offset}_${kind}`,
+      )
+    }
+    const template = spliceMdSlot(compiled.template, name, mdHtml)
+    if (countMainTags(template) > 1) {
+      process.stderr.write(
+        `brust: md route "${name}" has more than one <main> after splice — SPA navigation extracts only the first <main>…</main>.\n`,
+      )
+    }
+    const outPath = path.resolve(opts.outDir, `${name}.jinja`)
+    writeFileSync(outPath, template)
+
+    // 5. Manifest merge: reconcile the compiler's TSX entries (sourcePath
+    //    enrichment + content-addressed marker-id rewrite — md markers carry
+    //    offset instances the rewrite map doesn't know, so they pass through
+    //    untouched), then append the md entries.
+    const islandsJsonPath = path.resolve(opts.outDir, `${name}.islands.json`)
+    if (tsxIslands.length > 0) {
+      writeFileSync(islandsJsonPath, compiled.islandsJson)
+      reconcileIslandManifest(outPath, islandsJsonPath, mergedImports, name, {
+        bakeBootstrap: false,
+      })
+    } else if (existsSync(islandsJsonPath)) {
+      rmSync(islandsJsonPath, { force: true }) // stale sidecar from a previous emit
+    }
+    const mdEntries: NativeIslandEntry[] = rendered.islands.map((use) => {
+      const absPath = (resolutionCache.get(use.name) as { absPath: string }).absPath
+      return {
+        component: use.name,
+        instance: use.instanceLocal + offset,
+        propsPath: '',
+        propsLiteral: use.props,
+        ssr: !use.csr,
+        hydrate: use.hydrate,
+        sourcePath: path.relative(projectRoot, absPath).replaceAll('\\', '/'),
+      }
+    })
+    if (mdEntries.length > 0) {
+      const existing =
+        tsxIslands.length > 0
+          ? (JSON.parse(readFileSync(islandsJsonPath, 'utf8')) as NativeIslandEntry[])
+          : []
+      writeFileSync(islandsJsonPath, JSON.stringify([...existing, ...mdEntries]))
+    }
+
+    // SSR-component sidecars (chained layouts can carry SSR components).
+    const compJsonStr = compiled.componentsJson ?? '[]'
+    if (compJsonStr !== '[]') {
+      emitComponentArtifacts(outPath, compJsonStr, mergedImports, name)
+    }
+
+    // 6. Single idempotent bake pass. Every append below is `includes()`-guarded
+    //    (reconcile's unguarded bake was skipped above), so re-running emit —
+    //    or emitComponentArtifacts having baked the bootstrap already — can
+    //    never double-bake.
+    let final = readFileSync(outPath, 'utf8')
+    if (tsxIslands.length > 0 || mdEntries.length > 0) {
+      const baked = `{% raw %}${ISLANDS_IMPORTMAP_AND_BOOTSTRAP}{% endraw %}`
+      if (!final.includes(baked)) final += baked
+    }
+    final = bakeDirectivesIfUsed(final, hasDirectives)
+    if (opts.withDevClient) final = injectDevClientIntoTemplate(final)
+    writeFileSync(outPath, final)
+  }
+
+  return { mdIslands }
+}
+
+/** Standalone wrapper: the md page owns the document shell. Frontmatter
+ * title/description thread in as literal BrustPage props — JSON.stringify
+ * yields a valid JS string literal for the JSX expression container, so
+ * quotes/backslashes/newlines in frontmatter can't break the synthetic source. */
+function mdStandaloneSource(name: string, frontmatter: MdRouteSource['frontmatter']): string {
+  const title =
+    typeof frontmatter.title === 'string' ? ` title={${JSON.stringify(frontmatter.title)}}` : ''
+  const description =
+    typeof frontmatter.description === 'string'
+      ? ` description={${JSON.stringify(frontmatter.description)}}`
+      : ''
+  return `export default function ${name}() { return <BrustPage${title}${description}><main data-brust-md-slot="${name}"></main></BrustPage>; }`
+}
+
+/** Chained leaf wrapper: a bare fragment — the layout owns the document shell
+ * and the single <main> (a nested <main> truncates SPA-nav payloads; a nested
+ * BrustPage emits a nested <html> document). */
+function mdChainedLeafSource(name: string): string {
+  return `export default function ${name}() { return <article data-brust-md-slot="${name}"></article>; }`
+}
+
+/** Replace the slot element's inner content with the md HTML. The slot attr
+ * itself stays (hydration-neutral, useful for tests). Exactly one slot must
+ * exist and it must be empty — both are emit-pipeline invariants, so a
+ * violation is a hard error, not a soft skip. `name` is a generated template
+ * name (`[A-Za-z0-9_]` only), so interpolating it into the regex is safe. */
+function spliceMdSlot(template: string, name: string, mdHtml: string): string {
+  const openRe = new RegExp(`<(main|article)\\b[^>]*\\bdata-brust-md-slot="${name}"[^>]*>`, 'g')
+  const matches = [...template.matchAll(openRe)]
+  if (matches.length !== 1) {
+    throw new Error(
+      `md route "${name}": expected exactly one data-brust-md-slot="${name}" element in the compiled template, found ${matches.length}`,
+    )
+  }
+  const m = matches[0] as RegExpMatchArray & { index: number }
+  const insertAt = m.index + m[0].length
+  const closeTag = `</${m[1]}>`
+  if (!template.startsWith(closeTag, insertAt)) {
+    throw new Error(
+      `md route "${name}": the data-brust-md-slot element must compile empty (expected ${closeTag} immediately after the open tag)`,
+    )
+  }
+  return template.slice(0, insertAt) + mdHtml + template.slice(insertAt)
+}
