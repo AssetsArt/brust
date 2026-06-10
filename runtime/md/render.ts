@@ -20,6 +20,14 @@ export interface MdIslandUse {
   line: number
 }
 
+/** One behavior-component (x-data) use found in a markdown page. */
+export interface MdBehaviorUse {
+  name: string
+  directive: string
+  /** 1-based line number within the md body (post-frontmatter). */
+  line: number
+}
+
 export type MdComponentResolution =
   | { kind: 'island'; id: string }
   | { kind: 'behavior'; directive: string }
@@ -140,7 +148,9 @@ export function neutralizeBraces(html: string): string {
  * jinja delimiters, so it passes through `neutralizeBraces` untouched and is
  * substituted with the (live-jinja) host markup afterwards.
  */
-const slotPlaceholder = (n: number) => `<!--brust-md-slot:${n}-->`
+// Per-call nonce so user content that happens to contain the literal
+// placeholder text (e.g. docs ABOUT this mechanism) can never be substituted.
+const slotPlaceholder = (nonce: string, n: number) => `<!--brust-md-slot:${nonce}:${n}-->`
 
 /** Opens like `<Name` with a capital ident — a *candidate* component-tag line. */
 const TAG_OPEN_RE = /^<([A-Z][A-Za-z0-9]*)(?=[\s/>])/
@@ -151,16 +161,19 @@ interface ExtractedTags {
   /** Host markup per placeholder index. */
   hosts: string[]
   islands: MdIslandUse[]
+  behaviors: MdBehaviorUse[]
 }
 
 function extractComponentTags(
   body: string,
   absPath: string,
   resolve: RenderMdPageOptions['resolve'],
+  nonce: string,
 ): ExtractedTags {
   const lines = body.split('\n')
   const hosts: string[] = []
   const islands: MdIslandUse[] = []
+  const behaviors: MdBehaviorUse[] = []
   let instanceLocal = 0
 
   let fence: { char: string; len: number } | null = null
@@ -215,7 +228,15 @@ function extractComponentTags(
 
     let host: string
     if (resolution.kind === 'behavior') {
+      // Behavior components have no hydration model — silently dropping these
+      // would mislead authors into thinking they did something.
+      if (hydrate !== 'load' || csr) {
+        throw new Error(
+          `${absPath}:${lineNo} — <${name}> is a native behavior component; hydrate/csr do not apply`,
+        )
+      }
       host = `<div x-data="${resolution.directive}"></div>`
+      behaviors.push({ name, directive: resolution.directive, line: lineNo })
     } else {
       const n = instanceLocal
       const common = `<div data-brust-island="${resolution.id}" data-brust-props="{{ island_${n}_props }}" data-brust-hydrate="${hydrate}"`
@@ -225,11 +246,11 @@ function extractComponentTags(
       islands.push({ name, instanceLocal: n, props, hydrate, csr, line: lineNo })
       instanceLocal++
     }
-    lines[i] = slotPlaceholder(hosts.length)
+    lines[i] = slotPlaceholder(nonce, hosts.length)
     hosts.push(host)
   }
 
-  return { source: lines.join('\n'), hosts, islands }
+  return { source: lines.join('\n'), hosts, islands, behaviors }
 }
 
 interface ParsedTagAttrs {
@@ -289,7 +310,7 @@ function parseTagAttrs(
         return fail(`attribute "${attrName}" value must be "…" or {…}`)
       }
     }
-    if (attrName in props || (attrName === 'hydrate' && 'hydrate' in props)) {
+    if (attrName in props) {
       return fail(`has duplicate attribute "${attrName}"`)
     }
     props[attrName] = value
@@ -368,7 +389,7 @@ async function renderMarkdown(source: string): Promise<string> {
     },
     renderer: {
       code(token: Tokens.Code): string {
-        return `${highlighted.get(token) ?? fallbackCodeBlock(token.text, '')}\n`
+        return `${highlighted.get(token) ?? fallbackCodeBlock(token.text, token.lang ?? '')}\n`
       },
       heading({ tokens, depth }: Tokens.Heading): string {
         const text = this.parser.parseInline(tokens, this.parser.textRenderer)
@@ -398,12 +419,18 @@ async function renderMarkdown(source: string): Promise<string> {
  */
 export async function renderMdPage(
   opts: RenderMdPageOptions,
-): Promise<{ html: string; islands: MdIslandUse[] }> {
-  const { source, hosts, islands } = extractComponentTags(opts.body, opts.absPath, opts.resolve)
+): Promise<{ html: string; islands: MdIslandUse[]; behaviors: MdBehaviorUse[] }> {
+  const nonce = Math.random().toString(16).slice(2, 10)
+  const { source, hosts, islands, behaviors } = extractComponentTags(
+    opts.body,
+    opts.absPath,
+    opts.resolve,
+    nonce,
+  )
   const rendered = await renderMarkdown(source)
   let html = neutralizeBraces(rendered)
   for (let n = 0; n < hosts.length; n++) {
-    html = html.replaceAll(slotPlaceholder(n), hosts[n] as string)
+    html = html.replaceAll(slotPlaceholder(nonce, n), hosts[n] as string)
   }
-  return { html, islands }
+  return { html, islands, behaviors }
 }

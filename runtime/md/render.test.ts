@@ -227,10 +227,29 @@ describe('component tags: island hosts', () => {
 })
 
 describe('component tags: behavior hosts', () => {
-  test('behavior → x-data host, no island entry', async () => {
-    const { html, islands } = await render('<ThemeToggle/>')
+  test('behavior → x-data host, no island entry, reported in behaviors', async () => {
+    const { html, islands, behaviors } = await render('<ThemeToggle/>')
     expect(html).toContain('<div x-data="themeToggle_11223344"></div>')
     expect(islands).toHaveLength(0)
+    expect(behaviors).toEqual([{ name: 'ThemeToggle', directive: 'themeToggle_11223344', line: 1 }])
+  })
+
+  test('behavior tag with hydrate/csr → error (no hydration model)', async () => {
+    expect(render('<ThemeToggle hydrate="visible"/>')).rejects.toThrow(
+      `${ABS}:1 — <ThemeToggle> is a native behavior component; hydrate/csr do not apply`,
+    )
+    expect(render('<ThemeToggle csr/>')).rejects.toThrow('hydrate/csr do not apply')
+  })
+})
+
+describe('placeholder hardening', () => {
+  test('literal placeholder-looking text in md content is never substituted', async () => {
+    const { html } = await render(
+      ['Docs about `<!--brust-md-slot:0-->` internals.', '', '<Counter/>'].join('\n'),
+    )
+    // The literal text survives as content; the real island host still lands.
+    expect(html).toContain('brust-md-slot:0')
+    expect(html).toContain('data-brust-island="Counter_abc12345"')
   })
 })
 
