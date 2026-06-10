@@ -1,6 +1,6 @@
 // DOM is not available in bun's default environment. We install happy-dom
 // globals in beforeAll so this file is self-contained (no --preload needed).
-import { test, expect, beforeAll, beforeEach, mock } from 'bun:test'
+import { test, expect, afterAll, beforeAll, beforeEach, mock } from 'bun:test'
 import { Window } from 'happy-dom'
 import { getNavState, subscribe, __resetNavForTest } from '../navigation/store.ts'
 
@@ -33,6 +33,15 @@ beforeEach(() => {
   renderSpy.mockClear()
   createRootSpy.mockClear()
   hydrateRootSpy.mockClear()
+})
+
+// The navigate() tests below replace globalThis.fetch with a json-only stub.
+// bun test runs every file in ONE process, so without a restore the stub leaks
+// into later files (it broke ssg.test.ts's real crawl with "resp.text is not a
+// function"). Restore the real fetch when this file is done.
+const realFetch = globalThis.fetch
+afterAll(() => {
+  globalThis.fetch = realFetch
 })
 
 beforeAll(async () => {

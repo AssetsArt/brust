@@ -533,5 +533,39 @@ export async function runBuild(args: string[]): Promise<void> {
     console.log(`[brust build] native:  ${name}`)
   }
 
+  // 8. SSG export (--ssg): boot the just-built dist once and crawl every
+  // statically-renderable route into <--ssg-out | outDir/static>. Reuses the
+  // routes module ALREADY loaded for the MCP/css steps (loadedRoutes) — no
+  // second import. Without the flag this is a strict no-op.
+  if (parsed.ssg) {
+    const { collectStaticPaths, exportStatic } = await import('./ssg.ts')
+    const decisions = collectStaticPaths(
+      (loadedRoutes ?? []) as Parameters<typeof collectStaticPaths>[0],
+    )
+    const staticOut = parsed.ssgOut ?? path.join(outDir, 'static')
+    try {
+      const { written, skipped } = await exportStatic({
+        distDir: outDir,
+        entryDir,
+        staticOut,
+        routes: decisions,
+      })
+      const counts = new Map<string, number>()
+      for (const s of skipped) {
+        const r = s.reason ?? 'unknown'
+        counts.set(r, (counts.get(r) ?? 0) + 1)
+      }
+      const reasons = [...counts.keys()]
+        .sort()
+        .map((r) => `${r}=${counts.get(r)}`)
+        .join(', ')
+      const skippedDesc = skipped.length > 0 ? ` (skipped ${skipped.length}: ${reasons})` : ''
+      console.log(`[brust build] ssg:     ${written.length} pages → ${staticOut}${skippedDesc}`)
+    } catch (err) {
+      console.error(`[brust build] ssg: ${err instanceof Error ? err.message : String(err)}`)
+      process.exit(1)
+    }
+  }
+
   console.log(`[brust build] done.`)
 }
