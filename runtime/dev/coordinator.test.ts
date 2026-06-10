@@ -40,6 +40,57 @@ describe('Coordinator', () => {
     expect(deps.buildIslands).toHaveBeenCalledTimes(1)
   })
 
+  test('md change → island rebuild + worker restart + reEmitJinja + reload (same path as ts)', async () => {
+    // Task 2.9: an .md edit must take the FULL ts-edit path. buildIslands
+    // (wired in index.ts) re-runs emitMdArtifacts — the re-splice; the worker
+    // restart is REQUIRED because loadIslandManifest caches per-isolate
+    // (islands/native-render.ts), so a re-emitted .islands.json sidecar is
+    // never re-read by a live worker.
+    const deps = makeDeps()
+    const c = new Coordinator(deps)
+    await c.handleChange({ paths: ['/content/docs/guide.md'], kind: 'md' })
+    expect(deps.clearIslandCache).toHaveBeenCalledTimes(1)
+    expect(deps.buildIslands).toHaveBeenCalledTimes(1)
+    expect(deps.workers.terminateAll).toHaveBeenCalledTimes(1)
+    expect(deps.workers.spawnAll).toHaveBeenCalledTimes(1)
+    expect(deps.reEmitJinja).toHaveBeenCalledTimes(1)
+    const types = deps.broadcast.mock.calls.map((c) => c[0].type)
+    expect(types).toEqual(['building', 'reload', 'ok'])
+  })
+
+  test('reEmitJinja runs BEFORE the worker restart (fresh workers must never serve stale jinja)', async () => {
+    // S1 regression guard: napiLoadJinjaTemplates operates on the PROCESS-GLOBAL
+    // Rust minijinja env, not on the workers — so the templates must be reloaded
+    // before spawnAll, or the fresh workers serve the OLD jinja for the window
+    // between spawn and re-emit. The WS reload stays last (after spawnAll).
+    const order: string[] = []
+    const deps = makeDeps({
+      buildIslands: mock(async () => {
+        order.push('buildIslands')
+      }),
+      reEmitJinja: mock(async () => {
+        order.push('reEmitJinja')
+      }),
+      workers: {
+        terminateAll: mock(async () => {
+          order.push('terminateAll')
+        }),
+        spawnAll: mock(async () => {
+          order.push('spawnAll')
+        }),
+      },
+      broadcast: mock(async (msg: any) => {
+        if (msg.type === 'reload') order.push('reload')
+      }),
+    })
+    // The reorder applies to the WHOLE shared ts/html/islands/md branch.
+    for (const kind of ['ts', 'html', 'islands', 'md'] as const) {
+      order.length = 0
+      await new Coordinator(deps).handleChange({ paths: ['/x'], kind })
+      expect(order).toEqual(['buildIslands', 'reEmitJinja', 'terminateAll', 'spawnAll', 'reload'])
+    }
+  })
+
   test('css change → buildCss + broadcast building+css-update+ok, no worker restart', async () => {
     const deps = makeDeps()
     const c = new Coordinator(deps)

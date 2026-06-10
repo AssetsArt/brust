@@ -40,6 +40,12 @@ export class Coordinator {
         case 'ts':
         case 'html':
         case 'islands':
+        // 'md' (task 2.9) takes the SAME full path as a .tsx edit: buildIslands
+        // (wired in index.ts) re-runs emitMdArtifacts — the md re-splice — and
+        // the worker restart is REQUIRED because loadIslandManifest caches
+        // per-isolate (islands/native-render.ts), so a re-emitted
+        // .islands.json sidecar is never re-read by a live worker.
+        case 'md':
           // Stale frozen island renders must not survive a source edit.
           this.deps.clearIslandCache?.()
           // Rebuild island CLIENT chunks. The watcher classifies every `.tsx`
@@ -51,11 +57,15 @@ export class Coordinator {
           // dev-server restart (the chunk on disk stays stale). buildIslands
           // re-scans routes + re-bundles into the served `.brust/islands` dir.
           await this.deps.buildIslands()
+          // Reload native-route templates BEFORE restarting the workers:
+          // napiLoadJinjaTemplates operates on the PROCESS-GLOBAL Rust
+          // minijinja env (it does not depend on the workers), so reloading
+          // first closes the stale-serve window where freshly spawned workers
+          // answer requests against the OLD jinja. The browser reload is
+          // broadcast last, after the new workers are up.
+          await this.deps.reEmitJinja()
           await this.deps.workers.terminateAll()
           await this.deps.workers.spawnAll()
-          // Reload native-route templates (process-global minijinja env — does
-          // not depend on the workers) just before telling the browser to reload.
-          await this.deps.reEmitJinja()
           await this.deps.broadcast({ type: 'reload' })
           break
         case 'css':
@@ -108,7 +118,9 @@ function formatStart(ev: { paths: string[]; kind: ChangeKind }): string {
         ? 'component css update'
         : ev.kind === 'islands'
           ? 'islands rebuild'
-          : 'hotreload'
+          : ev.kind === 'md'
+            ? 'md update'
+            : 'hotreload'
   return `${icon} ${label} ${ev.paths[0]}`
 }
 

@@ -372,6 +372,15 @@ export const brust = {
       console.log(`[brust] main: spawning ${workers} worker threads`)
       if (cacheMaxEntries !== undefined) this.configureCache({ maxEntries: cacheMaxEntries })
 
+      // md routes present? (leaf carries `__mdSource`, attached by mdRoutes()).
+      // Checked inline — no md-module import — so md-free apps never load the
+      // markdown pipeline. Gates the md emits below AND in the dev coordinator.
+      const hasMdRoutes = opts.routes.some(
+        (r) =>
+          (r.chain[r.chain.length - 1] as { __mdSource?: unknown } | undefined)?.__mdSource !==
+          undefined,
+      )
+
       // Component CSS pipeline. Build the manifest + capture the loader plugin
       // BEFORE buildIslands and pass it EXPLICITLY below (global Bun.plugin()
       // does NOT reach Bun.build) — otherwise Bun's default loader emits
@@ -439,8 +448,37 @@ export const brust = {
       } else {
         const routesPath = path.join(scanRoot, 'routes.tsx')
         if (existsSync(routesPath)) {
+          // md routes (task 2.8): emit `Md_*.jinja` + `.brust/md-manifest.json`
+          // BEFORE the island scan so islands used only from md content get
+          // chunks. Runs every boot when md routes exist (isJinjaStale below
+          // only watches .tsx — it can't see edited .md files); strict no-op
+          // otherwise. A failure degrades like the staleness re-emit: warn and
+          // keep booting (non-md routes still serve).
+          let mdIslands = new Map<string, string>()
+          if (hasMdRoutes) {
+            try {
+              const { emitMdArtifacts } = await import('./md/emit.ts')
+              ;({ mdIslands } = await emitMdArtifacts({
+                entryFile: routesPath,
+                flatRoutes: opts.routes,
+                outDir: path.resolve(process.cwd(), '.brust/jinja'),
+                withDevClient: dev,
+                manifestDirs: [path.resolve(process.cwd(), '.brust')],
+              }))
+            } catch (err) {
+              console.warn(
+                `[brust] main: md template emit failed (run \`brust build\`): ${(err as Error).message}`,
+              )
+              // The stale templates on disk (if any) still LOAD below — md
+              // routes then silently serve previous content. Make that state
+              // operator-visible instead of indistinguishable from fresh.
+              console.warn(
+                '[brust] main: md routes may be serving previously-built templates (stale content)',
+              )
+            }
+          }
           const { scanIslandChunks, buildIslands: build } = await import('./islands/build.ts')
-          const islandMap = scanIslandChunks(routesPath)
+          const islandMap = scanIslandChunks(routesPath, mdIslands)
           let islandsDir: string | undefined
           if (islandMap.size > 0) {
             const islands = await build(islandMap, { plugins: cssBuildPlugins })
@@ -518,11 +556,17 @@ export const brust = {
       // entirely. A compile failure warns and continues (non-native routes still
       // boot). The heavy emitter is imported lazily so it never enters the hot
       // path (or the prebuilt bundle's live code).
+      // (md templates need no staleness check here: the island block above
+      // already re-emitted them this boot — emitMdArtifacts runs whenever md
+      // routes exist, under the same !prebuilt + routes.tsx guards.)
       if (!prebuilt) {
         const routesPath = path.join(scanRoot, 'routes.tsx')
         if (existsSync(routesPath)) {
           const { isJinjaStale } = await import('./cli/jinja-staleness.ts')
-          if (isJinjaStale(scanRoot, jinjaDir)) {
+          // manifestDir passed explicitly: it is the same `.brust` dir the md
+          // emit above wrote `md-manifest.json` into (manifestDirs) — no
+          // reliance on the dirname(jinjaDir) positional default.
+          if (isJinjaStale(scanRoot, jinjaDir, path.resolve(process.cwd(), '.brust'))) {
             try {
               const { emitNativeTemplates } = await import('./cli/native-routes-emit.ts')
               await emitNativeTemplates({
@@ -633,7 +677,25 @@ export const brust = {
             const routesPath = pathModule.join(scanRoot, 'routes.tsx')
             if (fsModule.existsSync(routesPath)) {
               const { scanIslandChunks, buildIslands } = await import('./islands/build.ts')
-              const islandMap = scanIslandChunks(routesPath)
+              // md routes: re-emit (md content may be what changed) so the
+              // island scan below sees the current md-content islands. Same
+              // warn-and-continue degrade as the boot emit.
+              let mdIslands = new Map<string, string>()
+              if (hasMdRoutes) {
+                try {
+                  const { emitMdArtifacts } = await import('./md/emit.ts')
+                  ;({ mdIslands } = await emitMdArtifacts({
+                    entryFile: routesPath,
+                    flatRoutes: opts.routes,
+                    outDir: pathModule.resolve(process.cwd(), '.brust/jinja'),
+                    withDevClient: true,
+                    manifestDirs: [pathModule.resolve(process.cwd(), '.brust')],
+                  }))
+                } catch (err) {
+                  console.warn(`[brust] dev: md template emit failed: ${(err as Error).message}`)
+                }
+              }
+              const islandMap = scanIslandChunks(routesPath, mdIslands)
               if (islandMap.size > 0) {
                 await buildIslands(islandMap)
               }
@@ -689,6 +751,9 @@ export const brust = {
 
         createWatcher({
           root: scanRoot,
+          // md-free apps must not restart workers on stray .md edits
+          // (README.md etc.) — gate the watcher's 'md' kind (S4).
+          hasMdRoutes,
           onChange: (ev) => {
             void coordinator.handleChange(ev)
           },

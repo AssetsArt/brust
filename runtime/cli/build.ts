@@ -138,47 +138,60 @@ export function selectNativeBinaries(
   return { selected, errors }
 }
 
-interface ParsedArgs {
+export interface ParsedArgs {
   entry: string // absolute path to the entry file
   outDir: string // absolute path to the output dir
   target: string // --target value (default 'auto')
+  ssg: boolean // --ssg — prerender static routes after the build
+  ssgOut: string | null // --ssg-out value (absolute); null → <outDir>/static computed later
 }
 
-function parseArgs(args: string[]): ParsedArgs {
+/** Parse `brust build` argv. Pure (no fs access, no process.exit) so it's
+ * unit-testable — throws Error on bad input; runBuild owns stderr + exit. */
+export function parseArgs(args: string[]): ParsedArgs {
   let entry: string | undefined
   let outDir: string | undefined
   let target = 'auto'
+  let ssg = false
+  let ssgOut: string | undefined
 
   for (let i = 0; i < args.length; i++) {
     const a = args[i]
     if (a === '--out-dir') {
       outDir = args[++i]
       if (!outDir) {
-        console.error('brust build: --out-dir requires a value')
-        process.exit(1)
+        throw new Error('brust build: --out-dir requires a value')
       }
     } else if (a.startsWith('--out-dir=')) {
       outDir = a.slice('--out-dir='.length)
     } else if (a === '--target') {
       target = args[++i]
       if (!target) {
-        console.error('brust build: --target requires a value')
-        process.exit(1)
+        throw new Error('brust build: --target requires a value')
       }
     } else if (a.startsWith('--target=')) {
       target = a.slice('--target='.length)
       if (!target) {
-        console.error('brust build: --target= requires a value')
-        process.exit(1)
+        throw new Error('brust build: --target= requires a value')
+      }
+    } else if (a === '--ssg') {
+      ssg = true
+    } else if (a === '--ssg-out') {
+      ssgOut = args[++i]
+      if (!ssgOut) {
+        throw new Error('brust build: --ssg-out requires a value')
+      }
+    } else if (a.startsWith('--ssg-out=')) {
+      ssgOut = a.slice('--ssg-out='.length)
+      if (!ssgOut) {
+        throw new Error('brust build: --ssg-out= requires a value')
       }
     } else if (a.startsWith('-')) {
-      console.error(`brust build: unknown flag "${a}"`)
-      process.exit(1)
+      throw new Error(`brust build: unknown flag "${a}"`)
     } else if (entry === undefined) {
       entry = a
     } else {
-      console.error(`brust build: unexpected positional argument "${a}"`)
-      process.exit(1)
+      throw new Error(`brust build: unexpected positional argument "${a}"`)
     }
   }
 
@@ -189,22 +202,35 @@ function parseArgs(args: string[]): ParsedArgs {
       : resolve(cwd, entry)
     : resolve(cwd, 'index.ts')
 
-  if (!existsSync(entryPath)) {
-    console.error(`brust build: no entry file at ${entryPath}; pass a path or create ./index.ts`)
-    process.exit(1)
-  }
-
   const outPath = outDir
     ? isAbsolute(outDir)
       ? outDir
       : resolve(cwd, outDir)
     : resolve(cwd, 'dist')
 
-  return { entry: entryPath, outDir: outPath, target }
+  if (ssgOut !== undefined && !ssg) {
+    throw new Error('brust build: --ssg-out requires --ssg')
+  }
+  const ssgOutPath = ssgOut ? (isAbsolute(ssgOut) ? ssgOut : resolve(cwd, ssgOut)) : null
+
+  return { entry: entryPath, outDir: outPath, target, ssg, ssgOut: ssgOutPath }
 }
 
 export async function runBuild(args: string[]): Promise<void> {
-  const { entry, outDir, target } = parseArgs(args)
+  let parsed: ParsedArgs
+  try {
+    parsed = parseArgs(args)
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err))
+    process.exit(1)
+  }
+  const { entry, outDir, target } = parsed
+
+  // Entry existence is a runBuild concern (parseArgs stays fs-free/pure).
+  if (!existsSync(entry)) {
+    console.error(`brust build: no entry file at ${entry}; pass a path or create ./index.ts`)
+    process.exit(1)
+  }
   const entryDir = path.dirname(entry)
 
   console.log(`[brust build] entry:  ${entry}`)
@@ -278,10 +304,46 @@ export async function runBuild(args: string[]): Promise<void> {
     }
   }
 
-  // 3. Build islands (if any <Island> usage is found in the routes graph).
+  // 2.8. Routes module — loaded ONCE here, AFTER the css block (the import may
+  // transitively reach `.module.css`, which needs the cssLoaderPlugin already
+  // registered) and BEFORE the island build (the md emit + island scan below
+  // need the flat route table). The MCP and ssg steps reuse it.
+  let loadedRoutes: any[] | undefined
+  if (existsSync(routesFile)) {
+    const { routes } = await import(routesFile)
+    loadedRoutes = routes
+  }
+
+  // 2.9. md routes — emit `Md_*.jinja` into <outDir>/jinja BEFORE the island
+  // build so islands used only from md content join the chunk scan, and write
+  // the frozen `md-manifest.json` next to BOTH jinja dirs (dist root for the
+  // prebuilt boot's loadPrebuiltMdManifest, cwd/.brust for the source runtime —
+  // the same dual-emit the jinja mirror below does). Strict no-op without md
+  // routes: no files, no dirs, byte-identical dist.
+  const jinjaDir = path.join(outDir, 'jinja')
+  let mdIslands = new Map<string, string>()
+  if (existsSync(routesFile) && loadedRoutes !== undefined) {
+    const { emitMdArtifacts } = await import('../md/emit.ts')
+    ;({ mdIslands } = await emitMdArtifacts({
+      entryFile: routesFile,
+      flatRoutes: loadedRoutes,
+      outDir: jinjaDir,
+      withDevClient: false,
+      manifestDirs: [outDir, path.join(process.cwd(), '.brust')],
+      // Build is fatal on a deleted md file — a silent skip would ship a dist
+      // with the route registered but its template missing (dev paths default
+      // to 'skip-warn' so the hot-reload loop survives the same state).
+      onMissing: 'throw',
+    }))
+    const mdCount = loadedRoutes.filter((r: any) => r?.chain?.at(-1)?.__mdSource).length
+    if (mdCount > 0) console.log(`[brust build] md:      ${mdCount} page(s) → ${jinjaDir}`)
+  }
+
+  // 3. Build islands (if any <Island> usage is found in the routes graph,
+  // plus the md-content islands collected above).
   const { scanIslandChunks, buildIslands } = await import('../islands/build.ts')
   const islandMap = existsSync(routesFile)
-    ? scanIslandChunks(routesFile)
+    ? scanIslandChunks(routesFile, mdIslands)
     : new Map<string, string>()
   if (islandMap.size > 0) {
     const islandsOutDir = path.join(outDir, 'islands')
@@ -347,12 +409,11 @@ export async function runBuild(args: string[]): Promise<void> {
     }
   }
 
-  // 4. MCP manifest (if routes.tsx exists).
-  let loadedRoutes: any[] | undefined
+  // 4. MCP manifest (if routes.tsx exists). Reuses the routes module loaded in
+  // section 2.8.
   if (existsSync(routesFile)) {
     const { extractMcpManifest } = await import('../mcp/extractor.ts')
-    const { routes } = await import(routesFile)
-    loadedRoutes = routes
+    const routes = loadedRoutes ?? []
     const actionsFile = path.join(entryDir, 'actions.ts')
     const manifest = await extractMcpManifest({
       actionsFile: existsSync(actionsFile) ? actionsFile : undefined,
@@ -377,7 +438,9 @@ export async function runBuild(args: string[]): Promise<void> {
     // the other pre-built artifacts (islands, css, mcp-manifest), so a dist-only
     // deploy ships the templates. The prebuilt runtime reads them from
     // `<BRUST_DIST_DIR>/jinja` (see index.ts loadJinjaOnce / configureJinjaDir).
-    const jinjaDir = path.join(outDir, 'jinja')
+    // `jinjaDir` is computed in section 2.9, which already emitted the md
+    // templates into it; emitNativeTemplates never clears the dir, and the
+    // `.brust/jinja` mirror below copies the md templates along.
     // Spec S7 Component-source resolution: scan the routes module's source for
     // ImportDeclarations, NOT the app entry's. The app entry only imports the
     // routes module + brust; the page components are imported by routes.tsx.
@@ -505,6 +568,40 @@ export async function runBuild(args: string[]): Promise<void> {
     seen.add(name)
     await copyFile(src, path.join(nativeDir, name))
     console.log(`[brust build] native:  ${name}`)
+  }
+
+  // 8. SSG export (--ssg): boot the just-built dist once and crawl every
+  // statically-renderable route into <--ssg-out | outDir/static>. Reuses the
+  // routes module ALREADY loaded for the MCP/css steps (loadedRoutes) — no
+  // second import. Without the flag this is a strict no-op.
+  if (parsed.ssg) {
+    const { collectStaticPaths, exportStatic } = await import('./ssg.ts')
+    const decisions = collectStaticPaths(
+      (loadedRoutes ?? []) as Parameters<typeof collectStaticPaths>[0],
+    )
+    const staticOut = parsed.ssgOut ?? path.join(outDir, 'static')
+    try {
+      const { written, skipped } = await exportStatic({
+        distDir: outDir,
+        entryDir,
+        staticOut,
+        routes: decisions,
+      })
+      const counts = new Map<string, number>()
+      for (const s of skipped) {
+        const r = s.reason ?? 'unknown'
+        counts.set(r, (counts.get(r) ?? 0) + 1)
+      }
+      const reasons = [...counts.keys()]
+        .sort()
+        .map((r) => `${r}=${counts.get(r)}`)
+        .join(', ')
+      const skippedDesc = skipped.length > 0 ? ` (skipped ${skipped.length}: ${reasons})` : ''
+      console.log(`[brust build] ssg:     ${written.length} pages → ${staticOut}${skippedDesc}`)
+    } catch (err) {
+      console.error(`[brust build] ssg: ${err instanceof Error ? err.message : String(err)}`)
+      process.exit(1)
+    }
   }
 
   console.log(`[brust build] done.`)

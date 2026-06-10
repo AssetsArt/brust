@@ -719,6 +719,45 @@ loader: async ({ params, req }) => ({ product, cacheKey: `p_${params.id}` })
   `cache.invalidate({ tags })` / `{ key }`. Dev hot-reload clears the cache on any
   render-affecting edit (`ts`/`html`/`islands`); CSS-only edits keep it.
 
+### Markdown pages — `mdRoutes()` (wrapper + splice)
+
+`mdRoutes(contentDir, { prefix, layout?, components? })` (`brustjs/routes`,
+impl `runtime/md/`) turns a directory of `.md` files into ordinary `native:
+true` routes — by render time there is **nothing markdown-specific left**: each
+page is a baked jinja template served by the same Rust path as any native route.
+
+Per page, the emit step (`runtime/md/emit.ts`) runs:
+
+```
+scan .md (frontmatter + body)                      runtime/md/scan.ts
+  → markdown → HTML (marked, GFM; shiki optional)  runtime/md/render.ts
+      · brace neutralization: literal {{ }} {% %} in content become
+        jinja string-literal expressions ({{ "{{" }}) so docs ABOUT
+        templating render verbatim
+      · component tags: a top-level `<Counter start={5} />` line becomes a
+        LIVE island host (data-brust-island + {{ island_N_props }}), a
+        behavior component becomes an x-data host — injected AFTER
+        neutralization so their jinja stays live
+  → synthetic wrapper TSX → compileJsx              runtime/md/emit.ts
+      · standalone: <BrustPage title=… ><main data-brust-md-slot/></BrustPage>
+      · with layout: bare <article data-brust-md-slot/> composed through the
+        existing Outlet chain (layout owns BrustPage + the single <main>);
+        head metadata flows from the generated loader's
+        { __md: { title, description } }
+  → SPLICE the rendered md HTML into the slot element of the compiled template
+  → merge .islands.json (md island instances offset past the layout's TSX
+    islands; props stored as `propsLiteral` — no loader path)
+  → bake importmap/bootstrap + directives runtime (single idempotent pass)
+```
+
+`brust build` freezes the route list into `<dist>/md-manifest.json`, so a
+prebuilt dist boots and serves md routes **without the content directory
+present** (pass `contentDir` cwd-relative so build and boot resolve it the same
+way). md routes are static apart from the generated frontmatter loader, which
+also makes them SSG-eligible (`brust build --ssg`). In dev, `.md` edits re-emit
+and hot-reload; adding/removing files needs a restart. `mdNav(contentDir)`
+returns the grouped/ordered nav tree from frontmatter for layouts to render.
+
 ---
 
 ## Native interactivity — DOM directives

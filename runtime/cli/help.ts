@@ -37,6 +37,8 @@ interface CommandDef {
   summary: string
   usage: string
   flags: { flag: string; desc: string }[]
+  /** Free-form lines rendered after the Options block (one paragraph per entry). */
+  notes?: string[]
 }
 
 export const COMMANDS: CommandDef[] = [
@@ -51,6 +53,19 @@ export const COMMANDS: CommandDef[] = [
         flag: '--target <t>',
         desc: 'Native target(s): auto | all | <platform>-<arch>[-<libc>][,…] (default auto)',
       },
+      {
+        flag: '--ssg',
+        desc: 'Prerender static routes to HTML files after the build',
+      },
+      {
+        flag: '--ssg-out <dir>',
+        desc: 'Output directory for prerendered HTML (default <out-dir>/static)',
+      },
+    ],
+    notes: [
+      'Markdown pages: routes mounted with mdRoutes(<contentDir>) compile to native',
+      'jinja templates at build time and freeze into <out-dir>/md-manifest.json, so',
+      'the dist serves them without the markdown content directory present.',
     ],
   },
   {
@@ -125,6 +140,10 @@ export function renderCommandHelp(name: string): string | null {
   const w = Math.max(...c.flags.map((f) => f.flag.length))
   for (const f of c.flags) {
     lines.push(`  ${style.cyan(pad(f.flag, w))}  ${f.desc}`)
+  }
+  if (c.notes && c.notes.length > 0) {
+    lines.push('')
+    for (const n of c.notes) lines.push(style.dim(n))
   }
   return lines.join('\n')
 }

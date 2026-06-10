@@ -413,6 +413,100 @@ test('resolveIslandContext ISR: literal key HIT serves frozen pair, no re-render
   expect(out.island_0_props).toBe('FROZEN_PROPS') // frozen props served, not live
 })
 
+// ── Task 2.5: propsLiteral (md pages carry literal props, no loader path) ──
+
+test('resolveIslandContext: propsLiteral is used verbatim when present (client-only)', async () => {
+  const manifest: NativeIslandEntry[] = [
+    {
+      component: 'Counter',
+      instance: 0,
+      propsPath: '',
+      propsLiteral: { n: 7, label: 'md' },
+      ssr: false,
+      hydrate: 'load',
+      sourcePath: '/x',
+    },
+  ]
+  // Loader data is irrelevant — the literal wins (md entries carry propsPath: '').
+  const out = await resolveIslandContext(manifest, { n: 999 })
+  expect(out.island_0_props).toBe(entityEncode(JSON.stringify({ n: 7, label: 'md' })))
+  expect(Object.keys(out)).toEqual(['island_0_props'])
+})
+
+test('resolveIslandContext: propsLiteral takes precedence over a non-empty propsPath', async () => {
+  const manifest: NativeIslandEntry[] = [
+    {
+      component: 'Counter',
+      instance: 0,
+      propsPath: 'data.counter',
+      propsLiteral: { n: 1 },
+      ssr: false,
+      hydrate: 'load',
+      sourcePath: '/x',
+    },
+  ]
+  const out = await resolveIslandContext(manifest, { data: { counter: { n: 42 } } })
+  expect(out.island_0_props).toBe(entityEncode(JSON.stringify({ n: 1 })))
+})
+
+test('resolveIslandContext: falsy propsLiteral values (0, "", false, null) are honored', async () => {
+  const literals: Array<[unknown, string]> = [
+    [0, '0'],
+    ['', '""'],
+    [false, 'false'],
+    // null IS a valid literal — only undefined means "absent".
+    [null, 'null'],
+  ]
+  for (const [literal, json] of literals) {
+    const manifest: NativeIslandEntry[] = [
+      {
+        component: 'Falsy',
+        instance: 0,
+        propsPath: '',
+        propsLiteral: literal,
+        ssr: false,
+        hydrate: 'load',
+        sourcePath: '/x',
+      },
+    ]
+    const out = await resolveIslandContext(manifest, { ignored: true })
+    expect(out.island_0_props).toBe(entityEncode(json))
+  }
+})
+
+test('resolveIslandContext: ssr entry renders from the propsLiteral (not the empty-propsPath {})', async () => {
+  const manifest: NativeIslandEntry[] = [
+    {
+      component: 'Stub',
+      instance: 0,
+      propsPath: '',
+      propsLiteral: { n: 5 },
+      ssr: true,
+      hydrate: 'load',
+      sourcePath: STUB_PATH,
+    },
+  ]
+  const out = await resolveIslandContext(manifest, {})
+  // Without the literal branch, propsPath '' would map to {} and render <span></span>.
+  expect(out.island_0_html).toBe('<span>5</span>')
+  expect(out.island_0_props).toBe(entityEncode(JSON.stringify({ n: 5 })))
+})
+
+test('resolveIslandContext: absent propsLiteral → old propsPath behavior (empty path yields {})', async () => {
+  const manifest: NativeIslandEntry[] = [
+    {
+      component: 'Plain',
+      instance: 0,
+      propsPath: '',
+      ssr: false,
+      hydrate: 'load',
+      sourcePath: '/x',
+    },
+  ]
+  const out = await resolveIslandContext(manifest, { secret: 'x' })
+  expect(out.island_0_props).toBe(entityEncode(JSON.stringify({})))
+})
+
 test('loadIslandManifest: reads from jinjaDir, missing file → null, caches reads', () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'brust-islands-'))
   const manifest: NativeIslandEntry[] = [

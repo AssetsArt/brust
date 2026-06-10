@@ -1,15 +1,19 @@
 import { watch, type FSWatcher } from 'node:fs'
 import path from 'node:path'
 
-export type ChangeKind = 'ts' | 'css' | 'component-css' | 'html' | 'islands'
+export type ChangeKind = 'ts' | 'css' | 'component-css' | 'html' | 'islands' | 'md'
 
 const IGNORE_DIR_SEGMENTS = new Set(['node_modules', '.git', '.brust', 'dist'])
 const TS_RE = /\.(tsx?|jsx?)$/
 const TEST_RE = /\.test\.(tsx?|jsx?)$/
 
 /** Classify a changed path. Returns null when the path should be ignored.
- * `root` is used to compute the relative path for ignore-segment matching. */
-export function classifyPath(absPath: string, root: string): ChangeKind | null {
+ * `root` is used to compute the relative path for ignore-segment matching.
+ * `hasMdRoutes` gates the `'md'` kind (S4): when the app has no md routes, a
+ * project `.md` edit (README.md, notes) must not trigger the full reload path
+ * (island rebuild + worker restart) — it classifies as null instead. Defaults
+ * to true for backward compatibility with callers that don't thread the flag. */
+export function classifyPath(absPath: string, root: string, hasMdRoutes = true): ChangeKind | null {
   const rel = path.relative(root, absPath)
   const segs = rel.split(path.sep)
   for (const s of segs) {
@@ -24,6 +28,10 @@ export function classifyPath(absPath: string, root: string): ChangeKind | null {
   // any other .css (including .module.css) is component CSS
   if (absPath.endsWith('.css')) return 'component-css'
   if (absPath.endsWith('.html')) return 'html'
+  // md pages (task 2.9): a content edit re-splices the md templates and takes
+  // the full ts-edit reload path (worker restart — see coordinator). Only when
+  // the app actually has md routes — otherwise .md files are inert (null).
+  if (absPath.endsWith('.md')) return hasMdRoutes ? 'md' : null
   if (TS_RE.test(absPath)) return 'ts'
   return null
 }
@@ -65,6 +73,9 @@ export function _testCoalesce(debounceMs: number, flush: (paths: string[]) => vo
 export interface CreateWatcherOptions {
   root: string
   debounceMs?: number
+  /** Whether the app has md routes — gates `.md` classification (see
+   * classifyPath). Defaults to true (back-compat). */
+  hasMdRoutes?: boolean
   onChange: (ev: { paths: string[]; kind: ChangeKind }) => void
 }
 
@@ -78,13 +89,13 @@ export interface Watcher {
  * that subsumes the others). */
 export function createWatcher(opts: CreateWatcherOptions): Watcher {
   const debounceMs = opts.debounceMs ?? 50
-  const kindPriority: ChangeKind[] = ['islands', 'ts', 'html', 'css', 'component-css']
+  const kindPriority: ChangeKind[] = ['islands', 'ts', 'md', 'html', 'css', 'component-css']
 
   const coalesce = _testCoalesce(debounceMs, (paths) => {
     const kinds = new Set<ChangeKind>()
     const keep: string[] = []
     for (const p of paths) {
-      const k = classifyPath(p, opts.root)
+      const k = classifyPath(p, opts.root, opts.hasMdRoutes ?? true)
       if (k === null) continue
       kinds.add(k)
       keep.push(p)

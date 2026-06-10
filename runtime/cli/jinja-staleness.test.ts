@@ -78,3 +78,107 @@ describe('isJinjaStale', () => {
     expect(isJinjaStale(scanRoot, jinjaDir)).toBe(false)
   })
 })
+
+// Task 2.9: .md content edits must also count as staleness. The content dirs
+// come from `.brust/md-manifest.json` (next to jinjaDir); the md build marker
+// is the md-manifest itself (written by emitMdArtifacts alongside the md
+// templates).
+describe('isJinjaStale — md content (task 2.9)', () => {
+  /** Fresh-tsx baseline: a `_manifest.json` newer than every source. */
+  function freshTsxBaseline(): void {
+    const manifest = join(jinjaDir, '_manifest.json')
+    writeFileSync(manifest, '{}')
+    setMtime(manifest, 5000)
+  }
+
+  function writeMdManifest(epochSeconds: number, contentDir: string, entries: object[] = []): void {
+    const file = join(root, '.brust', 'md-manifest.json')
+    writeFileSync(file, JSON.stringify({ version: 1, contentDir, entries }))
+    setMtime(file, epochSeconds)
+  }
+
+  test('an .md newer than md-manifest.json → stale', () => {
+    freshTsxBaseline()
+    const contentDir = join(root, 'content')
+    mkdirSync(contentDir, { recursive: true })
+    const page = join(contentDir, 'guide.md')
+    writeFileSync(page, '# Guide\n')
+    setMtime(page, 2000)
+    writeMdManifest(1000, contentDir)
+    expect(isJinjaStale(scanRoot, jinjaDir)).toBe(true)
+  })
+
+  test('all .md older than md-manifest.json → fresh', () => {
+    freshTsxBaseline()
+    const contentDir = join(root, 'content')
+    mkdirSync(contentDir, { recursive: true })
+    const page = join(contentDir, 'guide.md')
+    writeFileSync(page, '# Guide\n')
+    setMtime(page, 500)
+    writeMdManifest(1000, contentDir)
+    expect(isJinjaStale(scanRoot, jinjaDir)).toBe(false)
+  })
+
+  test('no md-manifest.json → behaves as before (fresh)', () => {
+    freshTsxBaseline()
+    const contentDir = join(root, 'content')
+    mkdirSync(contentDir, { recursive: true })
+    const page = join(contentDir, 'guide.md')
+    writeFileSync(page, '# Guide\n')
+    setMtime(page, 9999)
+    expect(isJinjaStale(scanRoot, jinjaDir)).toBe(false)
+  })
+
+  test('unreadable md-manifest.json → behaves as before (fresh, no throw)', () => {
+    freshTsxBaseline()
+    const file = join(root, '.brust', 'md-manifest.json')
+    writeFileSync(file, 'not json')
+    setMtime(file, 1000)
+    expect(isJinjaStale(scanRoot, jinjaDir)).toBe(false)
+  })
+
+  test('explicit manifestDir overrides the dirname(jinjaDir) default (S2)', () => {
+    freshTsxBaseline()
+    const contentDir = join(root, 'content')
+    mkdirSync(contentDir, { recursive: true })
+    const page = join(contentDir, 'guide.md')
+    writeFileSync(page, '# Guide\n')
+    setMtime(page, 2000)
+    // md-manifest.json lives in a dir that is NOT dirname(jinjaDir).
+    const elsewhere = join(root, 'elsewhere')
+    mkdirSync(elsewhere, { recursive: true })
+    const file = join(elsewhere, 'md-manifest.json')
+    writeFileSync(file, JSON.stringify({ version: 1, contentDir, entries: [] }))
+    setMtime(file, 1000)
+    // Default (dirname(jinjaDir) = root/.brust) sees no manifest → fresh…
+    expect(isJinjaStale(scanRoot, jinjaDir)).toBe(false)
+    // …explicit manifestDir finds it → the newer .md makes it stale.
+    expect(isJinjaStale(scanRoot, jinjaDir, elsewhere)).toBe(true)
+  })
+
+  test('explicit manifestDir equal to dirname(jinjaDir) behaves identically (back-compat)', () => {
+    freshTsxBaseline()
+    const contentDir = join(root, 'content')
+    mkdirSync(contentDir, { recursive: true })
+    const page = join(contentDir, 'guide.md')
+    writeFileSync(page, '# Guide\n')
+    setMtime(page, 2000)
+    writeMdManifest(1000, contentDir)
+    expect(isJinjaStale(scanRoot, jinjaDir, join(root, '.brust'))).toBe(true)
+  })
+
+  test('per-entry contentDir (multi-dir manifests) is also walked', () => {
+    freshTsxBaseline()
+    const primary = join(root, 'content-a')
+    const secondary = join(root, 'content-b')
+    mkdirSync(primary, { recursive: true })
+    mkdirSync(secondary, { recursive: true })
+    const stale = join(secondary, 'page.md')
+    writeFileSync(stale, '# B\n')
+    setMtime(stale, 2000)
+    writeMdManifest(1000, primary, [
+      { relPath: 'page.md', templateName: 'Md_x', urlPath: '/b/page', contentDir: secondary },
+    ])
+    expect(isJinjaStale(scanRoot, jinjaDir)).toBe(true)
+  })
+})

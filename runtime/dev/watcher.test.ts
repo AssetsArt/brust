@@ -16,7 +16,10 @@ describe('runtime/dev/watcher classifyPath', () => {
     ['/proj/dist/index.js', null],
     ['/proj/foo.test.ts', null],
     ['/proj/foo.test.tsx', null],
-    ['/proj/README.md', null],
+    // …ignored dirs stay ignored, same as every other kind.
+    ['/proj/node_modules/pkg/README.md', null],
+    ['/proj/.brust/jinja/notes.md', null],
+    ['/proj/dist/CHANGELOG.md', null],
     ['/proj/components/Button.module.css', 'component-css'],
     ['/proj/components/styles.css', 'component-css'],
     ['/proj/components/Button.module.css.d.ts', null],
@@ -26,6 +29,32 @@ describe('runtime/dev/watcher classifyPath', () => {
       expect(classifyPath(path, '/proj')).toBe(expected)
     })
   }
+})
+
+describe('runtime/dev/watcher classifyPath — md gating (S4)', () => {
+  // md pages (task 2.9): a project .md is a content edit ONLY when the app has
+  // md routes. An md-free app must not restart its workers because README.md
+  // (or any stray .md) was saved — those classify as null (zero overhead).
+  const mdPaths = ['/proj/README.md', '/proj/content/docs/guide.md']
+  for (const p of mdPaths) {
+    test(`hasMdRoutes=true → classifyPath(${p}) = 'md'`, () => {
+      expect(classifyPath(p, '/proj', true)).toBe('md')
+    })
+    test(`hasMdRoutes=false → classifyPath(${p}) = null`, () => {
+      expect(classifyPath(p, '/proj', false)).toBe(null)
+    })
+    test(`default (omitted) stays 'md' — back-compat`, () => {
+      expect(classifyPath(p, '/proj')).toBe('md')
+    })
+  }
+  test('hasMdRoutes=false leaves every other kind untouched', () => {
+    expect(classifyPath('/proj/pages/Home.tsx', '/proj', false)).toBe('ts')
+    expect(classifyPath('/proj/app.css', '/proj', false)).toBe('css')
+    expect(classifyPath('/proj/index.html', '/proj', false)).toBe('html')
+  })
+  test('ignored dirs stay ignored regardless of the flag', () => {
+    expect(classifyPath('/proj/node_modules/pkg/README.md', '/proj', true)).toBe(null)
+  })
 })
 
 describe('runtime/dev/watcher coalesce', () => {
