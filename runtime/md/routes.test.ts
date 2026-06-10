@@ -338,8 +338,47 @@ describe('mdNav', () => {
     }))
     writeMdManifest(distDir, entries, contentDir)
     rmSync(contentDir, { recursive: true, force: true })
-    const nav = withPrebuiltEnv(distDir, () => mdNav(contentDir))
+    // Real boot order: routes.tsx mounts the dir (registering its prefix)
+    // before any layout calls mdNav. Nav paths are recomputed against the
+    // LIVE prefix, not the manifest's baked urlPaths.
+    const nav = withPrebuiltEnv(distDir, () => {
+      mdRoutes(contentDir, { prefix: '/docs' })
+      return mdNav(contentDir)
+    })
     expect(nav.map((g) => g.group)).toEqual([null, 'Getting Started', 'Query'])
     expect(nav[2]!.items.map((i) => i.path)).toEqual(['/docs/query/select', '/docs/query/where'])
+  })
+
+  test('prebuilt mode: nav follows the LIVE mdRoutes prefix over the baked manifest urlPath', () => {
+    const contentDir = makeContentDir({ 'intro.md': '---\ntitle: Intro\n---\n# I\n' })
+    const distDir = mkdtempSync(join(tmpdir(), 'brust-md-dist-'))
+    const entries = scanMdDir(contentDir).map((f) => ({
+      relPath: f.relPath,
+      templateName: mdTemplateName(f.relPath),
+      urlPath: mdUrlPath(f.relPath, '/old-prefix'),
+      frontmatter: f.frontmatter,
+    }))
+    writeMdManifest(distDir, entries, contentDir)
+    rmSync(contentDir, { recursive: true, force: true })
+    const nav = withPrebuiltEnv(distDir, () => {
+      mdRoutes(contentDir, { prefix: '/new' })
+      return mdNav(contentDir)
+    })
+    expect(nav[0]!.items[0]!.path).toBe('/new/intro')
+  })
+
+  test('readMdManifest: malformed JSON → error names the file', () => {
+    const distDir = mkdtempSync(join(tmpdir(), 'brust-md-dist-'))
+    const file = join(distDir, 'md-manifest.json')
+    writeFileSync(file, 'not json')
+    expect(() => readMdManifest(file)).toThrow(/md-manifest\.json: invalid JSON/)
+  })
+
+  test('mdRoutes: anonymous layout component → clear error', () => {
+    const dir = makeContentDir({ 'intro.md': '# I\n' })
+    // Property shorthand would infer a name; pull from an array for a truly
+    // anonymous function (name === '').
+    const anonymous = [() => null][0] as never
+    expect(() => mdRoutes(dir, { layout: anonymous })).toThrow(/NAMED component/)
   })
 })

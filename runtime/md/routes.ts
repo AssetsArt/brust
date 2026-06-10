@@ -95,7 +95,12 @@ export function writeMdManifest(
 /** Read + schema-check a frozen md manifest. Throws on a missing file, bad
  * JSON, or an unsupported version (fail loudly — the manifest is build output). */
 export function readMdManifest(file: string): MdManifest {
-  const parsed = JSON.parse(readFileSync(file, 'utf8')) as Partial<MdManifest>
+  let parsed: Partial<MdManifest>
+  try {
+    parsed = JSON.parse(readFileSync(file, 'utf8')) as Partial<MdManifest>
+  } catch (err) {
+    throw new Error(`md manifest ${file}: invalid JSON — ${(err as Error).message}`)
+  }
   if (parsed?.version !== 1) {
     throw new Error(`md manifest ${file}: unsupported version ${String(parsed?.version)}`)
   }
@@ -112,6 +117,10 @@ export function readMdManifest(file: string): MdManifest {
  * everywhere else we fs-scan. A manifest written for a DIFFERENT content dir
  * is ignored (falls back to scan). */
 function loadPrebuiltMdManifest(contentDir: string): MdManifest | null {
+  // Deliberately prebuilt-ONLY: in source mode the fs scan is the live truth
+  // (the content dir exists by definition) — reading a `.brust/` manifest there
+  // would serve stale routes after md adds/removes. The `.brust/` copy exists
+  // for jinja-staleness checks (it records contentDir), not route resolution.
   if (process.env.BRUST_PREBUILT !== '1') return null
   const distDir = process.env.BRUST_DIST_DIR
   if (!distDir) return null
@@ -160,8 +169,20 @@ function resolveMdPages(contentDir: string, prefix: string): MdManifestEntry[] {
  * carry the full prefixed path. */
 export function mdRoutes(contentDir: string, opts: MdRoutesOptions = {}): Route[] {
   const prefix = opts.prefix ?? '/'
-  mdNavPrefixes.set(path.resolve(contentDir), prefix)
+  const resolvedDir = path.resolve(contentDir)
+  const existingPrefix = mdNavPrefixes.get(resolvedDir)
+  if (existingPrefix !== undefined && existingPrefix !== prefix) {
+    console.warn(
+      `[brust] mdRoutes: content dir "${contentDir}" already mounted under prefix "${existingPrefix}"; mdNav will use "${prefix}"`,
+    )
+  }
+  mdNavPrefixes.set(resolvedDir, prefix)
   const components = opts.components ?? {}
+  if (opts.layout !== undefined && !opts.layout.name) {
+    throw new Error(
+      'mdRoutes: layout component must be a NAMED component (its name keys the native template)',
+    )
+  }
   const layoutName = opts.layout?.name
   // Normalized prefix URL ('/docs' for '/docs/', '/' for '').
   const basePath = mdUrlPath('index.md', prefix)
@@ -222,8 +243,12 @@ export interface MdNavGroup {
  * the first appearance of each group in the sorted item sequence. */
 export function mdNav(contentDir: string): MdNavGroup[] {
   const manifest = loadPrebuiltMdManifest(contentDir)
+  const navPrefix = mdNavPrefixes.get(path.resolve(contentDir)) ?? '/'
   const pages: MdManifestEntry[] = manifest
-    ? manifest.entries
+    ? // urlPath recomputed against the LIVE prefix (same rule as mdRoutes) so
+      // nav links can never diverge from the routes when prefixes change
+      // between build and boot.
+      manifest.entries.map((e) => ({ ...e, urlPath: mdUrlPath(e.relPath, navPrefix) }))
     : scanMdDir(contentDir).map((f) => ({
         relPath: f.relPath,
         templateName: mdTemplateName(f.relPath),
