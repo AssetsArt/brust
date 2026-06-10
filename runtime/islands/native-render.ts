@@ -42,6 +42,11 @@ export interface NativeIslandEntry {
   component: string
   instance: number
   propsPath: string
+  /** Literal props value baked at build time (md pages). When present
+   * (`!== undefined` — `null` and falsy literals are valid), it is used as the
+   * props value and `propsPath` is ignored (md entries carry `propsPath: ''`
+   * since the field is required). */
+  propsLiteral?: unknown
   ssr: boolean
   hydrate: string
   sourcePath: string
@@ -160,9 +165,17 @@ export async function resolveIslandContext(
 ): Promise<Record<string, string>> {
   const out: Record<string, string> = {}
   for (const entry of manifest) {
-    // Empty propsPath = a propless island → `{}`. (pathInto('') returns the whole
-    // context, which is NOT what an absent `props` attr means.)
-    const props = entry.propsPath === '' ? {} : pathInto(data, entry.propsPath)
+    // Build-time literal props (md pages) win over any loader-data path —
+    // guarded with `!== undefined` only, so `0` / `''` / `false` / `null`
+    // literals are honored. Otherwise: empty propsPath = a propless island →
+    // `{}`. (pathInto('') returns the whole context, which is NOT what an
+    // absent `props` attr means.)
+    const props =
+      entry.propsLiteral !== undefined
+        ? entry.propsLiteral
+        : entry.propsPath === ''
+          ? {}
+          : pathInto(data, entry.propsPath)
     // `?? null` handles undefined props; the `?? 'null'` belt-and-braces covers
     // the case where JSON.stringify itself returns undefined (e.g. a function
     // value), so entityEncode never receives undefined. Hoisted ABOVE the ssr
