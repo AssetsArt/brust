@@ -376,8 +376,10 @@ describe('mdNav', () => {
 
   test('mdRoutes: anonymous layout component → clear error', () => {
     const dir = makeContentDir({ 'intro.md': '# I\n' })
-    // Property shorthand AND const assignment both infer a name; an inline
-    // array-literal member is the truly anonymous form (name === '').
-    expect(() => mdRoutes(dir, { layout: [() => null][0] as never })).toThrow(/NAMED component/)
+    // JSC infers function names aggressively (even through array literals),
+    // so force the anonymous case explicitly.
+    const anon = () => null
+    Object.defineProperty(anon, 'name', { value: '' })
+    expect(() => mdRoutes(dir, { layout: anon as never })).toThrow(/NAMED component/)
   })
 })
