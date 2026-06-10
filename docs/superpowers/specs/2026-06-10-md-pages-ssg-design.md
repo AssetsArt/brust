@@ -58,8 +58,14 @@ JSX compiler. Instead, per `.md` file the build:
    `reconcileIslandManifest`'s rewrite regex cleanly:
    - React island → `<div data-brust-island="Name_<hash>" data-brust-props="…"
      data-brust-hydrate="…" [data-brust-csr]>…</div>`
-   - native behavior component (file with `export const behavior`) →
-     `<div x-data="<camelCase>_<8hex>">` host (same naming as `directiveName()`).
+   - native behavior component (file with `export const behavior`) → the component's
+     JSX BODY compiled through the existing native-inline path (same `compileJsx`,
+     literal md-tag props substituted statically, string/number only) with
+     `x-data="<camelCase>_<8hex>"` auto-injected on the inlined root (same naming as
+     `directiveName()`); a body referencing anything non-literal is a hard build error.
+     *(amended post-scrutiny: the originally spec'd bare `<div x-data>` host was
+     functionally empty — no children, no `x-on-*` targets, so the behavior could
+     never do anything)*
 3. **Generates an in-memory wrapper TSX** per md page (precedent:
    `buildChainWrapperSource` in `runtime/cli/native-routes-emit.ts:189-214` already
    compiles synthetic sources that don't exist on disk — `routeSourcePath` need not

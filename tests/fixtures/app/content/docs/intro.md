@@ -14,9 +14,9 @@ A client-only island (empty mount, `data-brust-csr`):
 
 <Counter csr start={2} label="csr" />
 
-A native behavior component (x-data host, no React):
+A native behavior component (inlined JSX body, x-data root, no React):
 
-<BehaviorBadge />
+<BehaviorBadge label="badge" />
 
 A code fence documenting the templating pipeline — the brace-bearing text below
 must render LITERALLY (neutralization + anchored renumbering end-to-end):

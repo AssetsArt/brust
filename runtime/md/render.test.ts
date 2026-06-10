@@ -227,11 +227,38 @@ describe('component tags: island hosts', () => {
 })
 
 describe('component tags: behavior hosts', () => {
-  test('behavior → x-data host, no island entry, reported in behaviors', async () => {
-    const { html, islands, behaviors } = await render('<ThemeToggle/>')
-    expect(html).toContain('<div x-data="themeToggle_11223344"></div>')
+  test('behavior → unique placeholder host, no island entry, props + marker reported', async () => {
+    const { html, islands, behaviors } = await render('<ThemeToggle label="hi" n={2}/>')
     expect(islands).toHaveLength(0)
-    expect(behaviors).toEqual([{ name: 'ThemeToggle', directive: 'themeToggle_11223344', line: 1 }])
+    expect(behaviors).toHaveLength(1)
+    const b = behaviors[0] as NonNullable<(typeof behaviors)[0]>
+    expect(b).toMatchObject({
+      name: 'ThemeToggle',
+      directive: 'themeToggle_11223344',
+      line: 1,
+      props: { label: 'hi', n: 2 },
+    })
+    // The marker is the EXACT placeholder markup (nonce-bearing, so user prose
+    // can never collide) — the emit step substitutes the compiled inline body
+    // over it by this exact string.
+    expect(b.marker).toMatch(
+      /^<div x-data="themeToggle_11223344" data-brust-md-behavior="[0-9a-f]+:0"><\/div>$/,
+    )
+    expect(html).toContain(b.marker)
+  })
+
+  test('two behavior uses get distinct markers (per-instance index)', async () => {
+    const { behaviors, html } = await render(['<ThemeToggle/>', '', '<ThemeToggle/>'].join('\n'))
+    expect(behaviors).toHaveLength(2)
+    const [a, b] = behaviors as [
+      NonNullable<(typeof behaviors)[0]>,
+      NonNullable<(typeof behaviors)[0]>,
+    ]
+    expect(a.marker).not.toBe(b.marker)
+    expect(a.marker).toContain(':0"')
+    expect(b.marker).toContain(':1"')
+    expect(html).toContain(a.marker)
+    expect(html).toContain(b.marker)
   })
 
   test('behavior tag with hydrate/csr → error (no hydration model)', async () => {
@@ -239,6 +266,21 @@ describe('component tags: behavior hosts', () => {
       `${ABS}:1 — <ThemeToggle> is a native behavior component; hydrate/csr do not apply`,
     )
     expect(render('<ThemeToggle csr/>')).rejects.toThrow('hydrate/csr do not apply')
+  })
+
+  test('behavior props must be string/number literals — bool, object, bare flag error', async () => {
+    expect(render('<ThemeToggle on={true}/>')).rejects.toThrow(
+      `${ABS}:1 — <ThemeToggle> prop "on" must be a string or number literal`,
+    )
+    expect(render('<ThemeToggle cfg={{"a":1}}/>')).rejects.toThrow('prop "cfg" must be a string')
+    expect(render('<ThemeToggle flag/>')).rejects.toThrow('prop "flag" must be a string')
+  })
+
+  test('behavior string prop with jinja delimiters → error (cannot be neutralized in the inlined host)', async () => {
+    expect(render('<ThemeToggle label="x {{ y }}"/>')).rejects.toThrow(
+      `${ABS}:1 — <ThemeToggle> prop "label" contains jinja delimiters`,
+    )
+    expect(render('<ThemeToggle label="{% if %}"/>')).rejects.toThrow('jinja delimiters')
   })
 })
 

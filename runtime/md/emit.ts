@@ -28,7 +28,7 @@ import { islandChunkBasename } from '../islands/chunk-id.ts'
 import { ISLANDS_IMPORTMAP_AND_BOOTSTRAP } from '../islands/importmap.ts'
 import type { NativeIslandEntry } from '../islands/native-render.ts'
 import { directiveName, isBehaviorSource, scanDirectiveComponents } from '../native/build.ts'
-import { type MdComponentResolution, renderMdPage } from './render.ts'
+import { type MdBehaviorUse, type MdComponentResolution, renderMdPage } from './render.ts'
 import { type MdRouteSource, mdManifestFromFlatRoutes, writeMdManifest } from './routes.ts'
 import { type MdFile, scanMdDir } from './scan.ts'
 
@@ -308,6 +308,26 @@ export async function emitMdTemplates(opts: MdEmitOpts): Promise<{
         (_m, n: string, kind: string) => `{{ island_${Number(n) + offset}_${kind}`,
       )
     }
+
+    // 4b. Behavior hosts: render.ts emitted a unique nonce-bearing placeholder
+    //     per use (it has no compileJsx access — this module does). Compile
+    //     each behavior component's BODY through the SAME native-inline path a
+    //     TSX page uses and substitute the fully inlined markup whole-tag over
+    //     the placeholder. A bare x-data div would have no children → no
+    //     x-on-* click targets → the behavior could never do anything.
+    for (const [i, use] of rendered.behaviors.entries()) {
+      const absPath = (resolutionCache.get(use.name) as { absPath: string }).absPath
+      const inlined = await compileMdBehaviorHost(compileJsx, use, absPath, src.absPath, i)
+      const at = mdHtml.indexOf(use.marker)
+      if (at === -1 || mdHtml.indexOf(use.marker, at + 1) !== -1) {
+        throw new Error(
+          `md route "${name}": behavior placeholder for <${use.name}> (${src.absPath}:${use.line}) ` +
+            'is not exactly-once in the rendered HTML — emit-pipeline invariant violated',
+        )
+      }
+      mdHtml = mdHtml.slice(0, at) + inlined + mdHtml.slice(at + use.marker.length)
+    }
+
     const template = spliceMdSlot(compiled.template, name, mdHtml)
     if (countMainTags(template) > 1) {
       process.stderr.write(
@@ -412,6 +432,78 @@ function mdStandaloneSource(name: string, frontmatter: MdRouteSource['frontmatte
       ? ` description={${JSON.stringify(frontmatter.description)}}`
       : ''
   return `export default function ${name}() { return <BrustPage${title}${description}><main data-brust-md-slot="${name}"></main></BrustPage>; }`
+}
+
+/** Compile one md behavior use into its fully inlined host markup.
+ *
+ * A synthetic wrapper (`<Name native …/>`) goes through the SAME `compileJsx`
+ * napi call as TSX pages, with the component source + the canonical directive
+ * name threaded exactly like emitNativeTemplates does (componentSources + the
+ * 5th `directiveNames` arg — that arg is what makes the compiler auto-inject
+ * `x-data="<directive>"` onto the inlined root). md tag props are literals,
+ * validated string/number in render.ts; both are passed as JS STRING literal
+ * expression containers (`label={"…"}`):
+ *   - strings inline-substitute fully static WITH proper HTML escaping
+ *     (verified empirically — plain `p="…"` attrs can't carry quotes, and
+ *     bare `n={42}` leaves live `{{ (42) | e }}` jinja in the template);
+ *   - numbers stringify output-equivalently (the body renders them as text,
+ *     and the inline path rejects arithmetic anyway).
+ *
+ * The result must be FULLY STATIC: any remaining `{{` means the body
+ * references something non-literal (a prop the tag didn't pass, route data,
+ * an island, an SSR component) → hard build error. Literal-only control flow
+ * (`{% if "yes" %}`) is allowed through — it renders correctly when the page
+ * template passes through minijinja. */
+async function compileMdBehaviorHost(
+  compileJsx: CompileJsx,
+  use: MdBehaviorUse,
+  componentPath: string,
+  mdAbsPath: string,
+  index: number,
+): Promise<string> {
+  const attrs = Object.entries(use.props)
+    .map(([k, v]) => ` ${k}={${JSON.stringify(String(v))}}`)
+    .join('')
+  const wrapperSource = `export default function MdBehaviorHost_${index}() { return <${use.name} native${attrs} /> }`
+  // Synthetic path — compileJsx keys off the default export + componentSources.
+  const wrapperPath = path.resolve(path.dirname(componentPath), `__MdBehaviorHost_${index}.tsx`)
+  // The behavior component's own file may import lucide icons (they become
+  // static SVG in native-inlined bodies) — same extraction as the chain path.
+  const lucideIcons = await extractLucideIcons(componentPath)
+
+  let compiled: ReturnType<CompileJsx>
+  try {
+    compiled = compileJsx(
+      wrapperSource,
+      wrapperPath,
+      { [use.name]: readFileSync(componentPath, 'utf8') },
+      lucideIcons,
+      { [use.name]: use.directive },
+    )
+  } catch (e) {
+    throw new Error(
+      `${mdAbsPath}:${use.line} — <${use.name}> failed to compile as an inlined md behavior host:\n${String(e)}`,
+    )
+  }
+  for (const w of compiled.warnings ?? []) process.stderr.write(`brust: ${w}\n`)
+
+  if (compiled.template.includes('{{')) {
+    throw new Error(
+      `${mdAbsPath}:${use.line} — <${use.name}> body references non-literal data; ` +
+        'md behavior components must be fully static (every value the body renders ' +
+        'must come from a literal prop on the md tag)',
+    )
+  }
+  if (!compiled.template.includes(`x-data="${use.directive}"`)) {
+    // Auto-injection puts the canonical directive name on the inlined root; a
+    // literal author x-data would win over it and desync from the built
+    // `<directive>.directive.js` chunk this md use was resolved against.
+    throw new Error(
+      `${mdAbsPath}:${use.line} — <${use.name}> compiled without x-data="${use.directive}" on its ` +
+        'root element (a literal x-data override on the component root is not supported in md)',
+    )
+  }
+  return compiled.template
 }
 
 /** Chained leaf wrapper: a bare fragment — the layout owns the document shell

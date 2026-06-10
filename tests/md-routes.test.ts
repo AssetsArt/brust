@@ -177,9 +177,17 @@ test('GET /docs/intro — CSR island host: data-brust-csr + EMPTY mount', async 
   expect(csr).toMatch(/data-brust-csr><\/div>$/)
 })
 
-test('GET /docs/intro — behavior host carries the directive x-data', async () => {
+test('GET /docs/intro — behavior host is the INLINED component body under the directive x-data', async () => {
   const html = await getOk(BASE_URL, '/docs/intro')
-  expect(html).toContain(`<div x-data="${BADGE_DIRECTIVE}"></div>`)
+  // The full inlined markup: auto-injected x-data on the component's root,
+  // authored class + x-on-click click target, literal-substituted label text.
+  // (A bare `<div x-data>` host would carry no body → the behavior could never
+  // receive a click — the functional gap this assertion locks against.)
+  expect(html).toContain(
+    `<span x-data="${BADGE_DIRECTIVE}" class="bbadge" x-on-click="bump">badge</span>`,
+  )
+  expect(html).not.toContain(`<div x-data="${BADGE_DIRECTIVE}"></div>`)
+  expect(html).not.toContain('data-brust-md-behavior')
   // The directive runtime is wired for it.
   expect(html).toContain('/_brust/islands/_directives.js')
 })
@@ -255,6 +263,7 @@ test('dist boot without content dir — md routes serve from md-manifest.json', 
     expect(intro).toContain('&quot;start&quot;:5')
     expect(intro).toContain('data-testid="counter"') // SSR island inner HTML
     expect(intro).toContain('{% endraw %}') // fence text survives the dist path too
+    expect(intro).toContain(`x-data="${BADGE_DIRECTIVE}" class="bbadge"`) // inlined behavior body too
 
     const nested = await getOk('http://127.0.0.1:3822', '/docs/query/where')
     expect(nested).toContain('<title>Query Where</title>')

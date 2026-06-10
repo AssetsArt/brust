@@ -26,6 +26,14 @@ export interface MdBehaviorUse {
   directive: string
   /** 1-based line number within the md body (post-frontmatter). */
   line: number
+  /** Literal tag props (string/number only — validated at extract time). The
+   * emit step inline-substitutes them into the component's compiled body. */
+  props: Record<string, unknown>
+  /** The EXACT placeholder host markup injected into the rendered HTML. The
+   * emit step (which owns compileJsx) substitutes the fully inlined component
+   * body over this exact string. It carries the per-render nonce, so user
+   * prose can never collide with it. */
+  marker: string
 }
 
 export type MdComponentResolution =
@@ -235,8 +243,33 @@ function extractComponentTags(
           `${absPath}:${lineNo} — <${name}> is a native behavior component; hydrate/csr do not apply`,
         )
       }
-      host = `<div x-data="${resolution.directive}"></div>`
-      behaviors.push({ name, directive: resolution.directive, line: lineNo })
+      // The emit step compiles the component's body through the native-inline
+      // path and substitutes the result over the placeholder below. That path
+      // can only inline-substitute string/number literals (bool/object props
+      // are rejected by the JSX compiler), and a string carrying jinja
+      // delimiters would land RAW in the compiled host — live jinja that can't
+      // be neutralized after the fact. Validate both here, where file:line is
+      // at hand.
+      for (const [k, v] of Object.entries(props)) {
+        if (typeof v !== 'string' && typeof v !== 'number') {
+          throw new Error(
+            `${absPath}:${lineNo} — <${name}> prop "${k}" must be a string or number literal ` +
+              `(behavior component bodies are inlined statically; got ${typeof v})`,
+          )
+        }
+        if (typeof v === 'string' && /\{\{|\}\}|\{%|%\}/.test(v)) {
+          throw new Error(
+            `${absPath}:${lineNo} — <${name}> prop "${k}" contains jinja delimiters, which cannot ` +
+              'be inlined into a md behavior host',
+          )
+        }
+      }
+      // Placeholder host: substituted whole-tag by the emit step (which owns
+      // compileJsx — this module must stay free of it). The nonce makes the
+      // marker impossible to author in md prose; the index disambiguates
+      // multiple uses of the same component on one page.
+      host = `<div x-data="${resolution.directive}" data-brust-md-behavior="${nonce}:${behaviors.length}"></div>`
+      behaviors.push({ name, directive: resolution.directive, line: lineNo, props, marker: host })
     } else {
       const n = instanceLocal
       const common = `<div data-brust-island="${resolution.id}" data-brust-props="{{ island_${n}_props }}" data-brust-hydrate="${hydrate}"`

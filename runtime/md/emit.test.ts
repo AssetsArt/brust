@@ -49,9 +49,16 @@ function makeFixture() {
     'components/Counter.tsx',
     'export default function Counter({ start }: { start?: number }) { return <button>{start ?? 0}</button>; }\n',
   )
+  // Real JSX body: the md pipeline must inline it (NOT a bare x-data div) so
+  // the behavior has actual click targets — `x-on-click` + the literal label
+  // are the meaningful assertions downstream.
   const togglePath = write(
     'components/Toggle.tsx',
-    'export const behavior = () => {}\nexport default function Toggle() { return <div />; }\n',
+    `export const behavior = ({ el }: { el: HTMLElement }) => ({ flip() { el.classList.toggle('on') } })
+export default function Toggle({ label }: { label: string }) {
+  return <button class="toggle-host" x-on-click="flip">{label}</button>
+}
+`,
   )
   const widgetPath = write(
     'components/Widget.tsx',
@@ -109,7 +116,7 @@ Inline \`{{ code }}\` stays literal.
 
 <Counter csr hydrate="idle" />
 
-<Toggle />
+<Toggle label="flip me" />
 `
 
 const CHAINED_MD = `---
@@ -176,8 +183,16 @@ describe('emitMdTemplates — standalone md route', () => {
     expect(tmpl).toContain(
       `data-brust-island="${counterId}" data-brust-props="{{ island_1_props }}" data-brust-hydrate="idle" data-brust-csr></div>`,
     )
-    // Behavior host carries the canonical directive name.
-    expect(tmpl).toContain(`x-data="${directiveName(f.togglePath, process.cwd())}"`)
+    // Behavior host: the component's BODY is inlined through the native-inline
+    // path — root carries the auto-injected canonical x-data, the authored
+    // attrs/children survive (click target + literal-substituted label), and
+    // the placeholder marker is fully consumed.
+    const toggleDirective = directiveName(f.togglePath, process.cwd())
+    expect(tmpl).toContain(
+      `<button x-data="${toggleDirective}" class="toggle-host" x-on-click="flip">flip me</button>`,
+    )
+    expect(tmpl).not.toContain('data-brust-md-behavior')
+    expect(tmpl).not.toContain(`<div x-data="${toggleDirective}"></div>`)
 
     // Single bootstrap bake + directives bake.
     expect(countOccurrences(tmpl, BAKED_BOOTSTRAP)).toBe(1)
@@ -630,6 +645,37 @@ describe('emitMdTemplates — errors', () => {
 
     await expect(emitMdTemplates({ entryFile: f.entryFile, flatRoutes, outDir })).rejects.toThrow(
       /<Ghost>.*registry.*import Ghost from/s,
+    )
+  })
+
+  test('behavior body referencing non-literal data → hard error with md file:line', async () => {
+    // Toggle's body interpolates `label`; the md tag passes NO label, so the
+    // compiled inline host would carry live jinja ({{ (label) | e }}) that has
+    // no context at render time — must be a build error, not a silent ship.
+    const f = makeFixture()
+    const contentDir = join(dir, 'content/pages')
+    const badPath = write('content/pages/bad.md', '# Bad\n\n<Toggle />\n')
+    const tn = mdTemplateName('bad.md')
+
+    const flatRoutes: FlatRouteLike[] = [
+      {
+        nativeTemplate: tn,
+        chain: [
+          {
+            Component: { name: tn },
+            __mdSource: mdSource({
+              absPath: badPath,
+              relPath: 'bad.md',
+              contentDir,
+              components: { Toggle: fakeComponent },
+            }),
+          },
+        ],
+      },
+    ]
+
+    await expect(emitMdTemplates({ entryFile: f.entryFile, flatRoutes, outDir })).rejects.toThrow(
+      `${badPath}:3 — <Toggle> body references non-literal data; md behavior components must be fully static`,
     )
   })
 })
