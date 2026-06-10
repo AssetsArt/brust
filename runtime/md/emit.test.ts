@@ -519,6 +519,73 @@ describe('emitMdTemplates — dev add/remove detection (task 2.9)', () => {
     }
   })
 
+  test("onMissing: 'throw' (build mode) → missing md file is a hard error naming file + route", async () => {
+    // S3: emitMdTemplates serves BOTH `brust build` and the dev re-emit. In a
+    // BUILD a route referencing a deleted md file must THROW — a silent skip
+    // ships an incomplete dist (the route's template is simply absent).
+    _resetMdRoutesChangedWarnForTests()
+    const f = makeFixture()
+    const contentDir = join(dir, 'content/pages')
+    write('content/pages/a.md', '# A\n')
+    write('content/pages/b.md', '# B\n')
+    const flatRoutes = routesFor(contentDir, ['a.md', 'b.md'])
+    for (const [i, r] of flatRoutes.entries()) r.fullPath = i === 0 ? '/a' : '/b'
+    rmSync(join(contentDir, 'b.md'))
+
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      await expect(
+        emitMdTemplates({ entryFile: f.entryFile, flatRoutes, outDir, onMissing: 'throw' }),
+      ).rejects.toThrow(/\/b\b.*b\.md|b\.md.*\/b\b/s)
+      // The dev-phrased restart warning must NOT appear in build mode.
+      const restartWarnings = warnSpy.mock.calls.filter((args) => String(args[0]) === RESTART_MSG)
+      expect(restartWarnings).toEqual([])
+    } finally {
+      warnSpy.mockRestore()
+    }
+  })
+
+  test("onMissing: 'skip-warn' (explicit dev mode) → skip + once-warn, same as the default", async () => {
+    _resetMdRoutesChangedWarnForTests()
+    const f = makeFixture()
+    const contentDir = join(dir, 'content/pages')
+    write('content/pages/a.md', '# A\n')
+    write('content/pages/b.md', '# B\n')
+    const flatRoutes = routesFor(contentDir, ['a.md', 'b.md'])
+    rmSync(join(contentDir, 'b.md'))
+
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      await emitMdTemplates({ entryFile: f.entryFile, flatRoutes, outDir, onMissing: 'skip-warn' })
+      const restartWarnings = warnSpy.mock.calls.filter((args) => String(args[0]) === RESTART_MSG)
+      expect(restartWarnings.length).toBe(1)
+    } finally {
+      warnSpy.mockRestore()
+    }
+    expect(existsSync(join(outDir, `${mdTemplateName('a.md')}.jinja`))).toBe(true)
+    expect(existsSync(join(outDir, `${mdTemplateName('b.md')}.jinja`))).toBe(false)
+  })
+
+  test("emitMdArtifacts threads onMissing: 'throw' through (the build.ts seam)", async () => {
+    _resetMdRoutesChangedWarnForTests()
+    const f = makeFixture()
+    const contentDir = join(dir, 'content/pages')
+    write('content/pages/gone.md', '# Gone\n')
+    const flatRoutes = routesFor(contentDir, ['gone.md'])
+    flatRoutes[0]!.fullPath = '/gone'
+    rmSync(join(contentDir, 'gone.md'))
+
+    await expect(
+      emitMdArtifacts({
+        entryFile: f.entryFile,
+        flatRoutes,
+        outDir,
+        manifestDirs: [join(dir, 'dist')],
+        onMissing: 'throw',
+      }),
+    ).rejects.toThrow(/gone\.md/)
+  })
+
   test('matching emit set → no warning', async () => {
     _resetMdRoutesChangedWarnForTests()
     const f = makeFixture()

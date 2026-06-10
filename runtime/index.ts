@@ -563,7 +563,10 @@ export const brust = {
         const routesPath = path.join(scanRoot, 'routes.tsx')
         if (existsSync(routesPath)) {
           const { isJinjaStale } = await import('./cli/jinja-staleness.ts')
-          if (isJinjaStale(scanRoot, jinjaDir)) {
+          // manifestDir passed explicitly: it is the same `.brust` dir the md
+          // emit above wrote `md-manifest.json` into (manifestDirs) — no
+          // reliance on the dirname(jinjaDir) positional default.
+          if (isJinjaStale(scanRoot, jinjaDir, path.resolve(process.cwd(), '.brust'))) {
             try {
               const { emitNativeTemplates } = await import('./cli/native-routes-emit.ts')
               await emitNativeTemplates({
@@ -748,6 +751,9 @@ export const brust = {
 
         createWatcher({
           root: scanRoot,
+          // md-free apps must not restart workers on stray .md edits
+          // (README.md etc.) — gate the watcher's 'md' kind (S4).
+          hasMdRoutes,
           onChange: (ev) => {
             void coordinator.handleChange(ev)
           },

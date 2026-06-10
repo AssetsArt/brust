@@ -42,8 +42,14 @@ function newestMtimeWithSuffix(dir: string, suffix: string): number {
  * prior `brust build`, and an edited page is picked up without a stale render.
  *
  * Staleness = the build marker (`_manifest.json`, written last by
- * `emitNativeTemplates`) is absent, OR any source `.tsx` is newer than it. */
-export function isJinjaStale(scanRoot: string, jinjaDir: string): boolean {
+ * `emitNativeTemplates`) is absent, OR any source `.tsx` is newer than it.
+ *
+ * `manifestDir` is where `md-manifest.json` lives. It defaults to
+ * `dirname(jinjaDir)` — the layout contract is `jinjaDir == <x>/jinja` with
+ * the md manifest written next to it in `<x>` (both `emitMdArtifacts` callers
+ * pass `manifestDirs: [<x>]`). A caller that already holds the manifest dir
+ * should pass it explicitly instead of relying on that positional contract. */
+export function isJinjaStale(scanRoot: string, jinjaDir: string, manifestDir?: string): boolean {
   const manifestPath = join(jinjaDir, '_manifest.json')
   if (!existsSync(manifestPath)) return true
   let manifestMtime: number
@@ -53,7 +59,7 @@ export function isJinjaStale(scanRoot: string, jinjaDir: string): boolean {
     return true
   }
   if (newestTsxMtime(scanRoot) > manifestMtime) return true
-  return isMdStale(jinjaDir)
+  return isMdStale(manifestDir ?? dirname(jinjaDir))
 }
 
 // Filename literal kept local (mirrors MD_MANIFEST_FILENAME in md/routes.ts)
@@ -61,13 +67,14 @@ export function isJinjaStale(scanRoot: string, jinjaDir: string): boolean {
 const MD_MANIFEST = 'md-manifest.json'
 
 /** Task 2.9: md pages are also "source" for the emitted templates. The frozen
- * `md-manifest.json` next to `jinjaDir` (e.g. `.brust/`) records every content
- * dir (top-level `contentDir` + optional per-entry override for multi-dir
- * apps); the manifest file itself is the md build marker — `emitMdArtifacts`
- * writes it together with the md `.jinja` templates. Missing or unreadable
- * manifest (no md routes / first boot) → not stale, same behaviour as before. */
-function isMdStale(jinjaDir: string): boolean {
-  const mdManifestPath = join(dirname(jinjaDir), MD_MANIFEST)
+ * `md-manifest.json` in `manifestDir` (e.g. `.brust/`, next to its jinja dir)
+ * records every content dir (top-level `contentDir` + optional per-entry
+ * override for multi-dir apps); the manifest file itself is the md build
+ * marker — `emitMdArtifacts` writes it together with the md `.jinja`
+ * templates. Missing or unreadable manifest (no md routes / first boot) →
+ * not stale, same behaviour as before. */
+function isMdStale(manifestDir: string): boolean {
+  const mdManifestPath = join(manifestDir, MD_MANIFEST)
   if (!existsSync(mdManifestPath)) return false
   let mdManifestMtime: number
   let manifest: { contentDir?: unknown; entries?: Array<{ contentDir?: unknown }> }

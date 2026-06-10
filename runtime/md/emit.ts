@@ -64,6 +64,15 @@ export interface MdEmitOpts {
    * BRUST_DEV injection — md pages render Rust-side and never pass through the
    * React renderer's dev-client injection). */
   withDevClient?: boolean
+  /** What to do when a route's md file no longer exists on disk (deleted after
+   * the route table was built). emitMdTemplates serves BOTH `brust build` and
+   * the dev re-emit, and the two must diverge here:
+   *   - `'throw'` (build): a missing file is a HARD error — silently skipping
+   *     ships a dist with the route registered but its template absent.
+   *   - `'skip-warn'` (default; dev boot/re-emit): skip the route and warn
+   *     once that a restart is required — the dev route table is frozen at
+   *     boot, so a crash here would take down the whole hot-reload loop. */
+  onMissing?: 'throw' | 'skip-warn'
 }
 
 // Once-per-process flag for the add/remove warning: every re-emit (HMR fires
@@ -151,6 +160,7 @@ export async function emitMdTemplates(opts: MdEmitOpts): Promise<{
   }
 
   // One scan per content dir (md bodies aren't carried on __mdSource).
+  const onMissing = opts.onMissing ?? 'skip-warn'
   const mdFilesByDir = new Map<string, Map<string, MdFile>>()
   const mdFileFor = (src: MdRouteSource): MdFile | undefined => {
     let files = mdFilesByDir.get(src.contentDir)
@@ -159,10 +169,11 @@ export async function emitMdTemplates(opts: MdEmitOpts): Promise<{
       mdFilesByDir.set(src.contentDir, files)
       const rels = routeRelsByDir.get(src.contentDir) as Set<string>
       const setsMatch = files.size === rels.size && [...rels].every((rel) => files!.has(rel))
-      if (!setsMatch) warnMdRoutesChanged()
+      // The "restart required" phrasing only makes sense in dev: in build mode
+      // a missing file throws below instead (an extra file is harmless — the
+      // build's freshly loaded route table simply doesn't reference it).
+      if (!setsMatch && onMissing === 'skip-warn') warnMdRoutesChanged()
     }
-    // A removed file is skipped (its stale template keeps serving until the
-    // restart the warning above asked for); the rest of the emit proceeds.
     return files.get(src.relPath)
   }
 
@@ -174,7 +185,19 @@ export async function emitMdTemplates(opts: MdEmitOpts): Promise<{
     const chain = r.chain as NonNullable<FlatRouteLike['chain']>
     const src = chain[chain.length - 1]?.__mdSource as MdRouteSource
     const mdFile = mdFileFor(src)
-    if (mdFile === undefined) continue
+    if (mdFile === undefined) {
+      if (onMissing === 'throw') {
+        // Build mode: the route is registered but its markdown source is gone —
+        // emitting nothing would ship an incomplete dist (template absent).
+        throw new Error(
+          `md route "${r.fullPath ?? name}" references ${src.absPath}, but the markdown ` +
+            'file no longer exists — delete the route or restore the file, then rebuild',
+        )
+      }
+      // Dev: a removed file is skipped (its stale template keeps serving until
+      // the restart the once-warn in mdFileFor asked for); the emit proceeds.
+      continue
+    }
 
     // 1. Resolver: registry key → routes-entry default import → island/behavior.
     const resolve = (tag: string, line: number): MdComponentResolution | null => {

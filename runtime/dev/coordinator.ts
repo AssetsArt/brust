@@ -57,11 +57,15 @@ export class Coordinator {
           // dev-server restart (the chunk on disk stays stale). buildIslands
           // re-scans routes + re-bundles into the served `.brust/islands` dir.
           await this.deps.buildIslands()
+          // Reload native-route templates BEFORE restarting the workers:
+          // napiLoadJinjaTemplates operates on the PROCESS-GLOBAL Rust
+          // minijinja env (it does not depend on the workers), so reloading
+          // first closes the stale-serve window where freshly spawned workers
+          // answer requests against the OLD jinja. The browser reload is
+          // broadcast last, after the new workers are up.
+          await this.deps.reEmitJinja()
           await this.deps.workers.terminateAll()
           await this.deps.workers.spawnAll()
-          // Reload native-route templates (process-global minijinja env — does
-          // not depend on the workers) just before telling the browser to reload.
-          await this.deps.reEmitJinja()
           await this.deps.broadcast({ type: 'reload' })
           break
         case 'css':

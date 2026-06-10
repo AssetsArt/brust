@@ -58,6 +58,39 @@ describe('Coordinator', () => {
     expect(types).toEqual(['building', 'reload', 'ok'])
   })
 
+  test('reEmitJinja runs BEFORE the worker restart (fresh workers must never serve stale jinja)', async () => {
+    // S1 regression guard: napiLoadJinjaTemplates operates on the PROCESS-GLOBAL
+    // Rust minijinja env, not on the workers — so the templates must be reloaded
+    // before spawnAll, or the fresh workers serve the OLD jinja for the window
+    // between spawn and re-emit. The WS reload stays last (after spawnAll).
+    const order: string[] = []
+    const deps = makeDeps({
+      buildIslands: mock(async () => {
+        order.push('buildIslands')
+      }),
+      reEmitJinja: mock(async () => {
+        order.push('reEmitJinja')
+      }),
+      workers: {
+        terminateAll: mock(async () => {
+          order.push('terminateAll')
+        }),
+        spawnAll: mock(async () => {
+          order.push('spawnAll')
+        }),
+      },
+      broadcast: mock(async (msg: any) => {
+        if (msg.type === 'reload') order.push('reload')
+      }),
+    })
+    // The reorder applies to the WHOLE shared ts/html/islands/md branch.
+    for (const kind of ['ts', 'html', 'islands', 'md'] as const) {
+      order.length = 0
+      await new Coordinator(deps).handleChange({ paths: ['/x'], kind })
+      expect(order).toEqual(['buildIslands', 'reEmitJinja', 'terminateAll', 'spawnAll', 'reload'])
+    }
+  })
+
   test('css change → buildCss + broadcast building+css-update+ok, no worker restart', async () => {
     const deps = makeDeps()
     const c = new Coordinator(deps)

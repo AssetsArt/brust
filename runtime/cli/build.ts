@@ -330,6 +330,10 @@ export async function runBuild(args: string[]): Promise<void> {
       outDir: jinjaDir,
       withDevClient: false,
       manifestDirs: [outDir, path.join(process.cwd(), '.brust')],
+      // Build is fatal on a deleted md file — a silent skip would ship a dist
+      // with the route registered but its template missing (dev paths default
+      // to 'skip-warn' so the hot-reload loop survives the same state).
+      onMissing: 'throw',
     }))
     const mdCount = loadedRoutes.filter((r: any) => r?.chain?.at(-1)?.__mdSource).length
     if (mdCount > 0) console.log(`[brust build] md:      ${mdCount} page(s) → ${jinjaDir}`)
