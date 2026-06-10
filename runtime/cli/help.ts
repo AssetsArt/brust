@@ -51,6 +51,14 @@ export const COMMANDS: CommandDef[] = [
         flag: '--target <t>',
         desc: 'Native target(s): auto | all | <platform>-<arch>[-<libc>][,…] (default auto)',
       },
+      {
+        flag: '--ssg',
+        desc: 'Prerender static routes to HTML files after the build',
+      },
+      {
+        flag: '--ssg-out <dir>',
+        desc: 'Output directory for prerendered HTML (default <out-dir>/static)',
+      },
     ],
   },
   {

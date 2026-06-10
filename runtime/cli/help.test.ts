@@ -25,6 +25,12 @@ test('renderCommandHelp(build) documents --target and --out-dir', () => {
   expect(h).toContain('--out-dir')
 })
 
+test('renderCommandHelp(build) documents --ssg and --ssg-out', () => {
+  const h = renderCommandHelp('build')!
+  expect(h).toContain('--ssg')
+  expect(h).toContain('--ssg-out')
+})
+
 test('renderCommandHelp(unknown) is null', () => {
   expect(renderCommandHelp('bogus')).toBeNull()
 })

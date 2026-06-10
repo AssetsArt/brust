@@ -138,47 +138,60 @@ export function selectNativeBinaries(
   return { selected, errors }
 }
 
-interface ParsedArgs {
+export interface ParsedArgs {
   entry: string // absolute path to the entry file
   outDir: string // absolute path to the output dir
   target: string // --target value (default 'auto')
+  ssg: boolean // --ssg — prerender static routes after the build
+  ssgOut: string | null // --ssg-out value (absolute); null → <outDir>/static computed later
 }
 
-function parseArgs(args: string[]): ParsedArgs {
+/** Parse `brust build` argv. Pure (no fs access, no process.exit) so it's
+ * unit-testable — throws Error on bad input; runBuild owns stderr + exit. */
+export function parseArgs(args: string[]): ParsedArgs {
   let entry: string | undefined
   let outDir: string | undefined
   let target = 'auto'
+  let ssg = false
+  let ssgOut: string | undefined
 
   for (let i = 0; i < args.length; i++) {
     const a = args[i]
     if (a === '--out-dir') {
       outDir = args[++i]
       if (!outDir) {
-        console.error('brust build: --out-dir requires a value')
-        process.exit(1)
+        throw new Error('brust build: --out-dir requires a value')
       }
     } else if (a.startsWith('--out-dir=')) {
       outDir = a.slice('--out-dir='.length)
     } else if (a === '--target') {
       target = args[++i]
       if (!target) {
-        console.error('brust build: --target requires a value')
-        process.exit(1)
+        throw new Error('brust build: --target requires a value')
       }
     } else if (a.startsWith('--target=')) {
       target = a.slice('--target='.length)
       if (!target) {
-        console.error('brust build: --target= requires a value')
-        process.exit(1)
+        throw new Error('brust build: --target= requires a value')
+      }
+    } else if (a === '--ssg') {
+      ssg = true
+    } else if (a === '--ssg-out') {
+      ssgOut = args[++i]
+      if (!ssgOut) {
+        throw new Error('brust build: --ssg-out requires a value')
+      }
+    } else if (a.startsWith('--ssg-out=')) {
+      ssgOut = a.slice('--ssg-out='.length)
+      if (!ssgOut) {
+        throw new Error('brust build: --ssg-out= requires a value')
       }
     } else if (a.startsWith('-')) {
-      console.error(`brust build: unknown flag "${a}"`)
-      process.exit(1)
+      throw new Error(`brust build: unknown flag "${a}"`)
     } else if (entry === undefined) {
       entry = a
     } else {
-      console.error(`brust build: unexpected positional argument "${a}"`)
-      process.exit(1)
+      throw new Error(`brust build: unexpected positional argument "${a}"`)
     }
   }
 
@@ -189,22 +202,32 @@ function parseArgs(args: string[]): ParsedArgs {
       : resolve(cwd, entry)
     : resolve(cwd, 'index.ts')
 
-  if (!existsSync(entryPath)) {
-    console.error(`brust build: no entry file at ${entryPath}; pass a path or create ./index.ts`)
-    process.exit(1)
-  }
-
   const outPath = outDir
     ? isAbsolute(outDir)
       ? outDir
       : resolve(cwd, outDir)
     : resolve(cwd, 'dist')
 
-  return { entry: entryPath, outDir: outPath, target }
+  const ssgOutPath = ssgOut ? (isAbsolute(ssgOut) ? ssgOut : resolve(cwd, ssgOut)) : null
+
+  return { entry: entryPath, outDir: outPath, target, ssg, ssgOut: ssgOutPath }
 }
 
 export async function runBuild(args: string[]): Promise<void> {
-  const { entry, outDir, target } = parseArgs(args)
+  let parsed: ParsedArgs
+  try {
+    parsed = parseArgs(args)
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err))
+    process.exit(1)
+  }
+  const { entry, outDir, target } = parsed
+
+  // Entry existence is a runBuild concern (parseArgs stays fs-free/pure).
+  if (!existsSync(entry)) {
+    console.error(`brust build: no entry file at ${entry}; pass a path or create ./index.ts`)
+    process.exit(1)
+  }
   const entryDir = path.dirname(entry)
 
   console.log(`[brust build] entry:  ${entry}`)

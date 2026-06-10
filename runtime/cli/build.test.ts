@@ -1,5 +1,6 @@
 import { test, expect } from 'bun:test'
-import { selectNativeBinaries, hostTargetInfix, VALID_TARGETS } from './build.ts'
+import { resolve } from 'node:path'
+import { selectNativeBinaries, hostTargetInfix, VALID_TARGETS, parseArgs } from './build.ts'
 
 const FIX = ['/x/brust.darwin-arm64.node', '/x/brust.linux-x64-gnu.node']
 
@@ -45,4 +46,32 @@ test('auto selects the host binary when present', () => {
 })
 test('VALID_TARGETS has the 6 published targets', () => {
   expect(VALID_TARGETS.length).toBe(6)
+})
+
+test('parseArgs: no flag → ssg false, ssgOut null', () => {
+  const p = parseArgs([])
+  expect(p.ssg).toBe(false)
+  expect(p.ssgOut).toBeNull()
+})
+test('parseArgs: --ssg → ssg true (ssgOut stays null, computed later)', () => {
+  const p = parseArgs(['--ssg'])
+  expect(p.ssg).toBe(true)
+  expect(p.ssgOut).toBeNull()
+})
+test('parseArgs: --ssg-out <dir> captured as an absolute path', () => {
+  const p = parseArgs(['--ssg', '--ssg-out', 'custom'])
+  expect(p.ssgOut).toBe(resolve(process.cwd(), 'custom'))
+})
+test('parseArgs: --ssg-out=<dir> form captured', () => {
+  const p = parseArgs(['--ssg-out=custom'])
+  expect(p.ssgOut).toBe(resolve(process.cwd(), 'custom'))
+})
+test('parseArgs: --ssg-out without value → throws', () => {
+  expect(() => parseArgs(['--ssg-out'])).toThrow('--ssg-out requires a value')
+})
+test('parseArgs: --out-dir without value → throws (shared error shape)', () => {
+  expect(() => parseArgs(['--out-dir'])).toThrow('--out-dir requires a value')
+})
+test('parseArgs: unknown flag → throws', () => {
+  expect(() => parseArgs(['--bogus'])).toThrow('unknown flag')
 })
