@@ -224,10 +224,18 @@ export async function exportStatic(opts: {
       throw err
     } finally {
       // ALWAYS kill the child — an orphaned server breaks later port users.
+      // Bounded even past SIGKILL: a build tool must never hang on a child that
+      // a shell wrapper kept alive; CI timeouts are not a cleanup strategy.
       proc.kill('SIGINT')
       const hardKill = setTimeout(() => proc.kill('SIGKILL'), KILL_GRACE_MS)
-      await proc.exited
+      const exited = await Promise.race([
+        proc.exited.then(() => true),
+        new Promise<false>((r) => setTimeout(() => r(false), KILL_GRACE_MS + 3_000)),
+      ])
       clearTimeout(hardKill)
+      if (!exited) {
+        console.warn('[brust build] ssg: dist server did not exit after SIGKILL — abandoning it')
+      }
     }
   }
 
