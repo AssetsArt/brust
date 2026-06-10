@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
 import path, { dirname, isAbsolute, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { emitMdArtifacts } from '../md/emit.ts'
 import { emitNativeTemplates } from './native-routes-emit.ts'
 
 /** repoRoot = the directory that contains runtime/. This file lives at
@@ -89,7 +90,18 @@ export async function runDev(args: string[]): Promise<void> {
     outDir: jinjaDir,
     repoRoot: REPO_ROOT,
   }
+  // md routes piggyback on the same emit sites (task 2.8): templates land in
+  // the SAME jinja dir, the frozen manifest next to it in `.brust/` (the dist
+  // counterpart is written by `brust build`). Dev pages get the WS dev client
+  // baked (md pages render Rust-side — no React-renderer injection point).
+  // Strict no-op when the app has no md routes.
+  const mdEmitOpts = {
+    ...emitOpts,
+    withDevClient: true,
+    manifestDirs: [path.join(process.cwd(), '.brust')],
+  }
   await emitNativeTemplates(emitOpts)
+  await emitMdArtifacts(mdEmitOpts)
 
   // Native-route HMR: on a ts/html/islands hot reload the dev coordinator calls
   // this to recompile the .jinja templates from the (edited) source and reload
@@ -101,6 +113,7 @@ export async function runDev(args: string[]): Promise<void> {
   const { registerJinjaReEmit } = await import('../dev/jinja-reload.ts')
   registerJinjaReEmit(async () => {
     await emitNativeTemplates(emitOpts)
+    await emitMdArtifacts(mdEmitOpts)
     const native = await import('../index.js')
     ;(native as { napiLoadJinjaTemplates: (dir: string) => unknown }).napiLoadJinjaTemplates(
       jinjaDir,

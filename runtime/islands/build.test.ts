@@ -110,6 +110,72 @@ test('two files sharing an island component name → two distinct content-addres
   for (const id of chunks.keys()) expect(id).toMatch(/^Widget_[a-f0-9]{8}$/)
 })
 
+// ── Task 2.8: extraIslands merge (md-route islands) ─────────────────────────
+
+test('extraIslands: an md-only island is merged in by its content-addressed id', () => {
+  const counter = write('Counter.tsx', 'export default function Counter() { return null }\n')
+  const mdOnly = write('MdOnly.tsx', 'export default function MdOnly() { return null }\n')
+  write(
+    'Home.tsx',
+    `import Counter from './Counter'\n` +
+      `export default function Home() { return <Island component={Counter} props={{}} /> }\n`,
+  )
+  const entry = write('routes.ts', `import Home from './Home'\nexport default [Home]\n`)
+
+  const chunks = scanIslandChunks(entry, new Map([['MdOnly', mdOnly]]))
+
+  expect(chunks.size).toBe(2)
+  expect([...chunks.values()]).toContain(counter)
+  expect([...chunks.values()]).toContain(mdOnly)
+  // Keyed by the SAME content-addressed scheme the md emit writes into markers.
+  expect([...chunks.keys()].find((k) => k.startsWith('MdOnly_'))).toMatch(/^MdOnly_[a-f0-9]{8}$/)
+})
+
+test('extraIslands: same name + same source as a routes-graph island dedups (one chunk)', () => {
+  const counter = write('Counter.tsx', 'export default function Counter() { return null }\n')
+  write(
+    'Home.tsx',
+    `import Counter from './Counter'\n` +
+      `export default function Home() { return <Island component={Counter} props={{}} /> }\n`,
+  )
+  const entry = write('routes.ts', `import Home from './Home'\nexport default [Home]\n`)
+
+  const chunks = scanIslandChunks(entry, new Map([['Counter', counter]]))
+
+  expect(chunks.size).toBe(1)
+  expect([...chunks.values()]).toEqual([counter])
+})
+
+test('extraIslands: same name from a DIFFERENT file → two distinct content-addressed chunks', () => {
+  // Mirrors the shipped same-name parity for routes-graph islands: distinct ids
+  // never collide, so both chunks build and each marker resolves its own.
+  const widgetA = write('a/Widget.tsx', 'export default function Widget() { return null }\n')
+  const widgetB = write('b/Widget.tsx', 'export default function Widget() { return null }\n')
+  write(
+    'Home.tsx',
+    `import Widget from './a/Widget'\n` +
+      `export default function Home() { return <Island component={Widget} props={{}} /> }\n`,
+  )
+  const entry = write('routes.ts', `import Home from './Home'\nexport default [Home]\n`)
+
+  const chunks = scanIslandChunks(entry, new Map([['Widget', widgetB]]))
+
+  expect(chunks.size).toBe(2)
+  expect([...chunks.values()].sort()).toEqual([widgetA, widgetB].sort())
+})
+
+test('extraIslands: undefined/empty leaves the scan result unchanged', () => {
+  write('Counter.tsx', 'export default function Counter() { return null }\n')
+  write(
+    'Home.tsx',
+    `import Counter from './Counter'\n` +
+      `export default function Home() { return <Island component={Counter} props={{}} /> }\n`,
+  )
+  const entry = write('routes.ts', `import Home from './Home'\nexport default [Home]\n`)
+
+  expect(scanIslandChunks(entry)).toEqual(scanIslandChunks(entry, new Map()))
+})
+
 test('throws naming the page for an <Island> with no component prop (loud miss)', () => {
   write('Bad.tsx', `export default function Bad() { return <Island props={{ x: 1 }} /> }\n`)
   const entry = write('routes.ts', `import Bad from './Bad'\nexport default [Bad]\n`)

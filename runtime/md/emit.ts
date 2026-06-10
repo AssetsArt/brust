@@ -29,14 +29,27 @@ import { ISLANDS_IMPORTMAP_AND_BOOTSTRAP } from '../islands/importmap.ts'
 import type { NativeIslandEntry } from '../islands/native-render.ts'
 import { directiveName, isBehaviorSource, scanDirectiveComponents } from '../native/build.ts'
 import { type MdComponentResolution, renderMdPage } from './render.ts'
-import type { MdRouteSource } from './routes.ts'
+import { type MdRouteSource, mdManifestFromFlatRoutes, writeMdManifest } from './routes.ts'
 import { type MdFile, scanMdDir } from './scan.ts'
 
 /** The slice of a FlatRoute the md emit step reads. The chain holds the route
- * NODES, so the md leaf's `__mdSource` (runtime/md/routes.ts) survives into it. */
+ * NODES, so the md leaf's `__mdSource` (runtime/md/routes.ts) survives into it.
+ * `fullPath` is only read by the manifest derivation (emitMdArtifacts).
+ * `Component` admits plain `{ name }` carriers AND real component values
+ * (function/class — both expose `.name` via the Function prototype), so a
+ * `FlatRoute[]` passes without casts. */
 export interface FlatRouteLike {
+  fullPath?: string
   nativeTemplate?: string
-  chain?: Array<{ Component?: { name?: string }; __mdSource?: MdRouteSource }>
+  chain?: Array<{
+    Component?:
+      | { name?: string }
+      | ((...args: never[]) => unknown)
+      | (abstract new (
+          ...args: never[]
+        ) => unknown)
+    __mdSource?: MdRouteSource
+  }>
 }
 
 export interface MdEmitOpts {
@@ -301,6 +314,33 @@ export async function emitMdTemplates(opts: MdEmitOpts): Promise<{
     writeFileSync(outPath, final)
   }
 
+  return { mdIslands }
+}
+
+export interface MdArtifactsOpts extends MdEmitOpts {
+  /** Dirs to write `md-manifest.json` into when the app has md routes (e.g.
+   * `<distDir>` and `<cwd>/.brust` — both "next to" their jinja dirs, where
+   * `loadPrebuiltMdManifest` / the staleness check look). Skipped entirely
+   * when there are no md routes (zero output difference for md-free apps). */
+  manifestDirs?: string[]
+}
+
+/** Task 2.8 build-integration seam: emit the md `.jinja` templates AND the
+ * frozen `md-manifest.json` (derived from the same flat route table — single
+ * source of truth) in one call. All build sites (`brust build`, `brust dev`
+ * boot/re-emit, runtime boot, dev HMR island rebuild) go through this so the
+ * template, manifest, and returned `mdIslands` chunk inputs can never diverge.
+ * Strict no-op for apps without md routes. */
+export async function emitMdArtifacts(opts: MdArtifactsOpts): Promise<{
+  mdIslands: Map<string, string>
+}> {
+  const { mdIslands } = await emitMdTemplates(opts)
+  const manifest = mdManifestFromFlatRoutes(opts.flatRoutes)
+  if (manifest !== null) {
+    for (const d of opts.manifestDirs ?? []) {
+      writeMdManifest(d, manifest.entries, manifest.contentDir)
+    }
+  }
   return { mdIslands }
 }
 

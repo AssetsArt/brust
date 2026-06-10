@@ -7,6 +7,7 @@ import { scanMdDir } from './scan'
 import {
   type MdManifestEntry,
   type MdRoute,
+  mdManifestFromFlatRoutes,
   mdNav,
   mdRoutes,
   mdTemplateName,
@@ -290,6 +291,70 @@ describe('md manifest', () => {
     const contentDir = makeContentDir({ 'index.md': '---\ntitle: Live\n---\n# Live\n' })
     const routes = withPrebuiltEnv(null, () => mdRoutes(contentDir)) as MdRoute[]
     expect(routes[0]!.__mdSource.frontmatter.title).toBe('Live')
+  })
+
+  // ── Task 2.8: manifest derived from the flat route table ──────────────────
+
+  test('mdManifestFromFlatRoutes: derives entries from md leaves (single source of truth)', () => {
+    const contentDir = makeContentDir(DOCS_FILES)
+    const flat = defineRoutes([
+      // a non-md route must be ignored
+      { path: '/about', Component: DocsLayout },
+      ...mdRoutes(contentDir, { prefix: '/docs', layout: DocsLayout }),
+    ])
+    const manifest = mdManifestFromFlatRoutes(flat)!
+    expect(manifest.contentDir).toBe(contentDir)
+    expect(manifest.entries).toHaveLength(6)
+    const intro = manifest.entries.find((e) => e.relPath === 'intro.md')!
+    expect(intro.templateName).toBe(mdTemplateName('intro.md'))
+    expect(intro.urlPath).toBe('/docs/intro')
+    expect(intro.frontmatter.title).toBe('Introduction')
+    expect(intro.contentDir).toBeUndefined() // primary dir → no per-entry field
+  })
+
+  test('mdManifestFromFlatRoutes: no md routes → null (zero-output invariant)', () => {
+    const flat = defineRoutes([{ path: '/', Component: DocsLayout }])
+    expect(mdManifestFromFlatRoutes(flat)).toBeNull()
+  })
+
+  test('mdManifestFromFlatRoutes: two content dirs → one manifest, secondary entries carry contentDir', () => {
+    const docsDir = makeContentDir({ 'index.md': '---\ntitle: D\n---\n# D\n' })
+    const pagesDir = makeContentDir({ 'about.md': '---\ntitle: P\n---\n# P\n' })
+    const flat = defineRoutes([
+      ...mdRoutes(docsDir, { prefix: '/docs' }),
+      ...mdRoutes(pagesDir, { prefix: '/pages' }),
+    ])
+    const manifest = mdManifestFromFlatRoutes(flat)!
+    expect(manifest.contentDir).toBe(docsDir)
+    const docs = manifest.entries.find((e) => e.relPath === 'index.md')!
+    const about = manifest.entries.find((e) => e.relPath === 'about.md')!
+    expect(docs.contentDir).toBeUndefined()
+    expect(about.contentDir).toBe(pagesDir)
+    expect(about.urlPath).toBe('/pages/about')
+  })
+
+  test('prebuilt mode: a two-dir manifest resolves each dir to ITS entries', () => {
+    const docsDir = makeContentDir({ 'index.md': '---\ntitle: D\n---\n# D\n' })
+    const pagesDir = makeContentDir({ 'about.md': '---\ntitle: P\n---\n# P\n' })
+    const flat = defineRoutes([
+      ...mdRoutes(docsDir, { prefix: '/docs' }),
+      ...mdRoutes(pagesDir, { prefix: '/pages' }),
+    ])
+    const manifest = mdManifestFromFlatRoutes(flat)!
+    const distDir = mkdtempSync(join(tmpdir(), 'brust-md-dist-'))
+    writeMdManifest(distDir, manifest.entries, manifest.contentDir)
+    rmSync(docsDir, { recursive: true, force: true })
+    rmSync(pagesDir, { recursive: true, force: true })
+
+    const frozen = withPrebuiltEnv(distDir, () =>
+      defineRoutes([
+        ...mdRoutes(docsDir, { prefix: '/docs' }),
+        ...mdRoutes(pagesDir, { prefix: '/pages' }),
+      ]),
+    )
+    expect(frozen.map((f) => f.fullPath).sort()).toEqual(['/docs', '/pages/about'])
+    const aboutLeaf = frozen.find((f) => f.fullPath === '/pages/about')!.chain[0] as MdRoute
+    expect(aboutLeaf.__mdSource.frontmatter.title).toBe('P')
   })
 })
 

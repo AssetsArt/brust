@@ -304,10 +304,42 @@ export async function runBuild(args: string[]): Promise<void> {
     }
   }
 
-  // 3. Build islands (if any <Island> usage is found in the routes graph).
+  // 2.8. Routes module — loaded ONCE here, AFTER the css block (the import may
+  // transitively reach `.module.css`, which needs the cssLoaderPlugin already
+  // registered) and BEFORE the island build (the md emit + island scan below
+  // need the flat route table). The MCP and ssg steps reuse it.
+  let loadedRoutes: any[] | undefined
+  if (existsSync(routesFile)) {
+    const { routes } = await import(routesFile)
+    loadedRoutes = routes
+  }
+
+  // 2.9. md routes — emit `Md_*.jinja` into <outDir>/jinja BEFORE the island
+  // build so islands used only from md content join the chunk scan, and write
+  // the frozen `md-manifest.json` next to BOTH jinja dirs (dist root for the
+  // prebuilt boot's loadPrebuiltMdManifest, cwd/.brust for the source runtime —
+  // the same dual-emit the jinja mirror below does). Strict no-op without md
+  // routes: no files, no dirs, byte-identical dist.
+  const jinjaDir = path.join(outDir, 'jinja')
+  let mdIslands = new Map<string, string>()
+  if (existsSync(routesFile) && loadedRoutes !== undefined) {
+    const { emitMdArtifacts } = await import('../md/emit.ts')
+    ;({ mdIslands } = await emitMdArtifacts({
+      entryFile: routesFile,
+      flatRoutes: loadedRoutes,
+      outDir: jinjaDir,
+      withDevClient: false,
+      manifestDirs: [outDir, path.join(process.cwd(), '.brust')],
+    }))
+    const mdCount = loadedRoutes.filter((r: any) => r?.chain?.at(-1)?.__mdSource).length
+    if (mdCount > 0) console.log(`[brust build] md:      ${mdCount} page(s) → ${jinjaDir}`)
+  }
+
+  // 3. Build islands (if any <Island> usage is found in the routes graph,
+  // plus the md-content islands collected above).
   const { scanIslandChunks, buildIslands } = await import('../islands/build.ts')
   const islandMap = existsSync(routesFile)
-    ? scanIslandChunks(routesFile)
+    ? scanIslandChunks(routesFile, mdIslands)
     : new Map<string, string>()
   if (islandMap.size > 0) {
     const islandsOutDir = path.join(outDir, 'islands')
@@ -373,12 +405,11 @@ export async function runBuild(args: string[]): Promise<void> {
     }
   }
 
-  // 4. MCP manifest (if routes.tsx exists).
-  let loadedRoutes: any[] | undefined
+  // 4. MCP manifest (if routes.tsx exists). Reuses the routes module loaded in
+  // section 2.8.
   if (existsSync(routesFile)) {
     const { extractMcpManifest } = await import('../mcp/extractor.ts')
-    const { routes } = await import(routesFile)
-    loadedRoutes = routes
+    const routes = loadedRoutes ?? []
     const actionsFile = path.join(entryDir, 'actions.ts')
     const manifest = await extractMcpManifest({
       actionsFile: existsSync(actionsFile) ? actionsFile : undefined,
@@ -403,7 +434,9 @@ export async function runBuild(args: string[]): Promise<void> {
     // the other pre-built artifacts (islands, css, mcp-manifest), so a dist-only
     // deploy ships the templates. The prebuilt runtime reads them from
     // `<BRUST_DIST_DIR>/jinja` (see index.ts loadJinjaOnce / configureJinjaDir).
-    const jinjaDir = path.join(outDir, 'jinja')
+    // `jinjaDir` is computed in section 2.9, which already emitted the md
+    // templates into it; emitNativeTemplates never clears the dir, and the
+    // `.brust/jinja` mirror below copies the md templates along.
     // Spec S7 Component-source resolution: scan the routes module's source for
     // ImportDeclarations, NOT the app entry's. The app entry only imports the
     // routes module + brust; the page components are imported by routes.tsx.

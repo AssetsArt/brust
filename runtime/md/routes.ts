@@ -62,12 +62,17 @@ export interface MdRoutesOptions {
   components?: Record<string, ComponentType<any>>
 }
 
-/** One frozen-manifest entry (everything route construction needs per page). */
+/** One frozen-manifest entry (everything route construction needs per page).
+ * `contentDir` is only present when the entry belongs to a DIFFERENT content
+ * dir than the manifest's top-level `contentDir` (apps mounting two or more
+ * `mdRoutes()` dirs share ONE manifest file per dist) — additive, so version-1
+ * manifests without it stay readable. */
 export interface MdManifestEntry {
   relPath: string
   templateName: string
   urlPath: string
   frontmatter: MdFile['frontmatter']
+  contentDir?: string
 }
 
 export interface MdManifest {
@@ -135,8 +140,59 @@ function loadPrebuiltMdManifest(contentDir: string): MdManifest | null {
     )
     return null
   }
-  if (path.resolve(manifest.contentDir) !== path.resolve(contentDir)) return null
-  return manifest
+  // Multi-dir manifests: an entry belongs to `e.contentDir ?? manifest.contentDir`.
+  // Keep only the entries for the REQUESTED dir; if the dir matches nothing at
+  // all, fall back to the fs scan (same semantics as the old whole-manifest
+  // contentDir mismatch).
+  const wanted = path.resolve(contentDir)
+  const baseMatches = path.resolve(manifest.contentDir) === wanted
+  const entries = manifest.entries.filter((e) =>
+    e.contentDir !== undefined ? path.resolve(e.contentDir) === wanted : baseMatches,
+  )
+  if (entries.length === 0 && !baseMatches) return null
+  return { ...manifest, entries }
+}
+
+/** The slice of a FlatRoute the manifest derivation reads (structural — avoids
+ * a circular import with runtime/md/emit.ts's FlatRouteLike). `Component` is
+ * declared (as unknown — never read here) so the all-optional shape shares a
+ * property with Route and FlatRoute[] passes TS weak-type detection. */
+export interface MdManifestFlatRouteLike {
+  fullPath?: string
+  nativeTemplate?: string
+  chain?: Array<{ Component?: unknown; __mdSource?: MdRouteSource }>
+}
+
+/** Derive the frozen md manifest from the FLAT ROUTE TABLE (single source of
+ * truth — never re-scan the fs at manifest-write time). Returns `null` when the
+ * app has no md routes, so callers can skip ALL md output (the `brust build`
+ * byte-identical invariant for md-free apps). With multiple `mdRoutes()` dirs,
+ * the first dir seen is the manifest's top-level `contentDir`; entries from
+ * other dirs carry a per-entry `contentDir`. */
+export function mdManifestFromFlatRoutes(
+  flatRoutes: MdManifestFlatRouteLike[],
+): { contentDir: string; entries: MdManifestEntry[] } | null {
+  let primary: string | undefined
+  const entries: MdManifestEntry[] = []
+  for (const r of flatRoutes) {
+    const src = r.chain?.[r.chain.length - 1]?.__mdSource
+    if (src === undefined || typeof r.nativeTemplate !== 'string') continue
+    if (typeof r.fullPath !== 'string') {
+      throw new Error(
+        `md route "${r.nativeTemplate}" has no fullPath — pass flattened routes (defineRoutes output)`,
+      )
+    }
+    primary ??= src.contentDir
+    const entry: MdManifestEntry = {
+      relPath: src.relPath,
+      templateName: r.nativeTemplate,
+      urlPath: r.fullPath,
+      frontmatter: src.frontmatter,
+    }
+    if (path.resolve(src.contentDir) !== path.resolve(primary)) entry.contentDir = src.contentDir
+    entries.push(entry)
+  }
+  return primary === undefined ? null : { contentDir: primary, entries }
 }
 
 /** mdNav needs the prefix mdRoutes mounted a content dir under; record it at

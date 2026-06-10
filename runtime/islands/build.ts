@@ -41,8 +41,19 @@ export interface BuildIslandsOptions {
  *    marker carries this same id (native: reconcileIslandManifest rewrite;
  *    React: the Component→id registry seeded at worker boot), so there is no
  *    app-unique-name requirement.
+ *
+ * `extraIslands` (task 2.8) merges additional islands the routes-graph scan
+ * cannot see — md-route islands resolved by `emitMdTemplates` (`name →
+ * absolute source path`, the bare-name map it returns). Each is keyed by the
+ * same content-addressed id, so same name + same path dedups against the scan
+ * result; same name + different path yields a distinct id (two chunks, the
+ * shipped same-name parity). A same-id-different-path collision is a hard
+ * error — never silently rebind a chunk id.
  */
-export function scanIslandChunks(routesEntryFile: string): Map<string, string> {
+export function scanIslandChunks(
+  routesEntryFile: string,
+  extraIslands?: Map<string, string>,
+): Map<string, string> {
   const chunks = new Map<string, string>()
   const visited = new Set<string>()
 
@@ -90,6 +101,17 @@ export function scanIslandChunks(routesEntryFile: string): Map<string, string> {
       // Collisions are impossible (the id embeds a hash of the source path).
       chunks.set(islandChunkBasename(ident, src), src)
     }
+  }
+
+  for (const [name, src] of extraIslands ?? []) {
+    const id = islandChunkBasename(name, src)
+    const existing = chunks.get(id)
+    if (existing !== undefined && existing !== src) {
+      throw new Error(
+        `island chunk id "${id}" resolves to two different sources: ${existing} and ${src}`,
+      )
+    }
+    chunks.set(id, src)
   }
 
   return chunks

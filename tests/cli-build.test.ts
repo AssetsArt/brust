@@ -260,6 +260,70 @@ test('prebuilt dist serves native island props without cwd/.brust (worker config
   expect(html).toContain('data-testid="counter"')
 }, 60_000)
 
+// ── Task 2.8: md pages in `brust build` ──────────────────────────────────────
+
+test('no-md fixture: dist carries ZERO md artifacts (byte-identical invariant)', () => {
+  // Guards the md integration's no-op path: an app without mdRoutes() must
+  // build the exact same dist as before the feature existed.
+  expect(existsSync(path.join(distDir, 'md-manifest.json'))).toBe(false)
+  const jinjaFiles = readdirSync(path.join(distDir, 'jinja'))
+  expect(jinjaFiles.filter((f) => f.startsWith('Md_'))).toEqual([])
+})
+
+test('brust build with md routes → Md_*.jinja + md-manifest.json + md-only island chunk', async () => {
+  const proj = await mkdtemp(path.join(tmpdir(), 'brust-proj-md-'))
+  const mdDist = await mkdtemp(path.join(tmpdir(), 'brust-dist-md-'))
+  try {
+    // Isolated cwd: `.brust/` mirrors land in `proj`, never the repo.
+    const build =
+      await $`bun ${path.join(REPO, 'runtime/cli/index.ts')} build ${path.join(REPO, 'tests/fixtures/md-app/index.ts')} --out-dir ${mdDist}`
+        .cwd(proj)
+        .nothrow()
+    if (build.exitCode !== 0) console.error(build.stderr.toString())
+    expect(build.exitCode).toBe(0)
+
+    // md jinja templates in the dist (one per content page).
+    const jinjaFiles = readdirSync(path.join(mdDist, 'jinja'))
+    expect(jinjaFiles.filter((f) => /^Md_.+\.jinja$/.test(f)).length).toBe(2)
+    // …and mirrored into <cwd>/.brust/jinja (the source-runtime dual-emit).
+    const mirrorFiles = readdirSync(path.join(proj, '.brust', 'jinja'))
+    expect(mirrorFiles.filter((f) => /^Md_.+\.jinja$/.test(f)).length).toBe(2)
+
+    // Frozen manifest next to BOTH jinja dirs (dist root + cwd/.brust).
+    for (const file of [
+      path.join(mdDist, 'md-manifest.json'),
+      path.join(proj, '.brust', 'md-manifest.json'),
+    ]) {
+      expect(existsSync(file)).toBe(true)
+      const manifest = JSON.parse(await Bun.file(file).text()) as {
+        version: number
+        entries: Array<{ relPath: string; urlPath: string; templateName: string }>
+      }
+      expect(manifest.version).toBe(1)
+      expect(manifest.entries.map((e) => e.urlPath).sort()).toEqual(['/docs', '/docs/guide'])
+      for (const e of manifest.entries) expect(e.templateName).toMatch(/^Md_/)
+    }
+
+    // The md-ONLY island (never referenced via <Island> in TSX) got a
+    // content-addressed chunk + an _islands.js map entry.
+    const islandFiles = readdirSync(path.join(mdDist, 'islands'))
+    const chunk = islandFiles.find((f) => /^MdCounter_[a-f0-9]{8}\.js$/.test(f))
+    expect(chunk).toBeDefined()
+    const islandsMap = await Bun.file(path.join(mdDist, 'islands', '_islands.js')).text()
+    expect(islandsMap).toContain(`/_brust/islands/${chunk}`)
+
+    // The emitted template hosts the island marker with the SAME id the chunk
+    // carries (marker ↔ chunk ↔ map coherence).
+    const mdTemplate = jinjaFiles.find((f) => /^Md_index_md_[a-f0-9]{8}\.jinja$/.test(f))!
+    const tmpl = await Bun.file(path.join(mdDist, 'jinja', mdTemplate)).text()
+    expect(tmpl).toContain(`data-brust-island="${chunk!.replace(/\.js$/, '')}"`)
+  } finally {
+    const { rm } = await import('node:fs/promises')
+    await rm(proj, { recursive: true, force: true })
+    await rm(mdDist, { recursive: true, force: true })
+  }
+}, 60_000)
+
 async function waitForPort(port: number, timeoutMs: number): Promise<void> {
   const start = Date.now()
   while (Date.now() - start < timeoutMs) {

@@ -7,8 +7,8 @@ import { emitNativeTemplates } from '../cli/native-routes-emit.ts'
 import { islandChunkBasename } from '../islands/chunk-id.ts'
 import { DIRECTIVES_BOOTSTRAP, ISLANDS_IMPORTMAP_AND_BOOTSTRAP } from '../islands/importmap.ts'
 import { directiveName } from '../native/build.ts'
-import { emitMdTemplates, spliceMdSlot, type FlatRouteLike } from './emit.ts'
-import { mdTemplateName, type MdRouteSource } from './routes.ts'
+import { emitMdArtifacts, emitMdTemplates, spliceMdSlot, type FlatRouteLike } from './emit.ts'
+import { MD_MANIFEST_FILENAME, mdTemplateName, type MdRouteSource } from './routes.ts'
 
 const BAKED_BOOTSTRAP = `{% raw %}${ISLANDS_IMPORTMAP_AND_BOOTSTRAP}{% endraw %}`
 
@@ -361,6 +361,77 @@ describe('emitMdTemplates — chained md route', () => {
     // Manifest also stays single-merged (no duplicate md entries).
     const manifest = JSON.parse(readFileSync(join(outDir, `${tn}.islands.json`), 'utf8'))
     expect(manifest.length).toBe(2)
+  })
+})
+
+describe('emitMdArtifacts — templates + manifest in one pass (task 2.8)', () => {
+  test('emits the template, returns mdIslands, and writes md-manifest.json into every manifestDir', async () => {
+    const f = makeFixture()
+    const contentDir = join(dir, 'content/pages')
+    const aboutPath = write('content/pages/about.md', STANDALONE_MD)
+    const tn = mdTemplateName('about.md')
+
+    const flatRoutes: FlatRouteLike[] = [
+      {
+        fullPath: '/about',
+        nativeTemplate: tn,
+        chain: [
+          {
+            Component: { name: tn },
+            __mdSource: mdSource({
+              absPath: aboutPath,
+              relPath: 'about.md',
+              contentDir,
+              frontmatter: { title: 'About "Us"', description: 'All about' },
+              components: { Counter: fakeComponent, Toggle: fakeComponent },
+            }),
+          },
+        ],
+      },
+    ]
+
+    const distDir = join(dir, 'dist')
+    const brustDir = join(dir, '.brust')
+    const { mdIslands } = await emitMdArtifacts({
+      entryFile: f.entryFile,
+      flatRoutes,
+      outDir,
+      manifestDirs: [distDir, brustDir],
+    })
+
+    expect(existsSync(join(outDir, `${tn}.jinja`))).toBe(true)
+    expect(mdIslands.get('Counter')).toBe(f.counterPath)
+
+    // Identical manifest in BOTH dirs, derived from the route table.
+    for (const d of [distDir, brustDir]) {
+      const manifest = JSON.parse(readFileSync(join(d, MD_MANIFEST_FILENAME), 'utf8'))
+      expect(manifest.version).toBe(1)
+      expect(manifest.contentDir).toBe(contentDir)
+      expect(manifest.entries).toEqual([
+        {
+          relPath: 'about.md',
+          templateName: tn,
+          urlPath: '/about',
+          frontmatter: { title: 'About "Us"', description: 'All about' },
+        },
+      ])
+    }
+  })
+
+  test('no md routes → no template, no manifest, no dirs created (byte-identical invariant)', async () => {
+    const f = makeFixture()
+    const distDir = join(dir, 'dist')
+    const { mdIslands } = await emitMdArtifacts({
+      entryFile: f.entryFile,
+      flatRoutes: [
+        { fullPath: '/', nativeTemplate: 'Plain', chain: [{ Component: { name: 'Plain' } }] },
+      ],
+      outDir,
+      manifestDirs: [distDir],
+    })
+    expect(mdIslands.size).toBe(0)
+    expect(existsSync(join(distDir, MD_MANIFEST_FILENAME))).toBe(false)
+    expect(existsSync(distDir)).toBe(false)
   })
 })
 
