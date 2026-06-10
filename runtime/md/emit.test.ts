@@ -439,9 +439,7 @@ describe('spliceMdSlot — pipeline invariants', () => {
 
   test('non-empty slot → hard error', () => {
     const tmpl = '<article data-brust-md-slot="Md_x_00000000">stale</article>'
-    expect(() => spliceMdSlot(tmpl, 'Md_x_00000000', '<p>md</p>')).toThrow(
-      'must compile empty',
-    )
+    expect(() => spliceMdSlot(tmpl, 'Md_x_00000000', '<p>md</p>')).toThrow('must compile empty')
   })
 
   test('invalid generated name → hard error (regex-injection guard)', () => {
