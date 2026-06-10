@@ -7,7 +7,7 @@ import { emitNativeTemplates } from '../cli/native-routes-emit.ts'
 import { islandChunkBasename } from '../islands/chunk-id.ts'
 import { DIRECTIVES_BOOTSTRAP, ISLANDS_IMPORTMAP_AND_BOOTSTRAP } from '../islands/importmap.ts'
 import { directiveName } from '../native/build.ts'
-import { emitMdTemplates, type FlatRouteLike } from './emit.ts'
+import { emitMdTemplates, spliceMdSlot, type FlatRouteLike } from './emit.ts'
 import { mdTemplateName, type MdRouteSource } from './routes.ts'
 
 const BAKED_BOOTSTRAP = `{% raw %}${ISLANDS_IMPORTMAP_AND_BOOTSTRAP}{% endraw %}`
@@ -348,9 +348,12 @@ describe('emitMdTemplates — chained md route', () => {
     ]
 
     await emitMdTemplates({ entryFile: f.entryFile, flatRoutes, outDir, withDevClient: true })
+    const firstRun = readFileSync(join(outDir, `${tn}.jinja`), 'utf8')
     await emitMdTemplates({ entryFile: f.entryFile, flatRoutes, outDir, withDevClient: true })
 
     const tmpl = readFileSync(join(outDir, `${tn}.jinja`), 'utf8')
+    // Strongest form: the whole template is byte-identical across runs.
+    expect(tmpl).toBe(firstRun)
     expect(countOccurrences(tmpl, BAKED_BOOTSTRAP)).toBe(1)
     expect(countOccurrences(tmpl, DIRECTIVES_BOOTSTRAP)).toBe(1)
     expect(countOccurrences(tmpl, buildDevClientTag())).toBe(1)
@@ -385,7 +388,7 @@ describe('emitMdTemplates — errors', () => {
       },
     ]
 
-    expect(emitMdTemplates({ entryFile: f.entryFile, flatRoutes, outDir })).rejects.toThrow(
+    await expect(emitMdTemplates({ entryFile: f.entryFile, flatRoutes, outDir })).rejects.toThrow(
       /<Ghost>.*registry.*import Ghost from/s,
     )
   })
@@ -424,5 +427,26 @@ describe('emitNativeTemplates — md-route exclusion', () => {
       warnSpy.mockRestore()
     }
     expect(existsSync(join(outDir, `${tn}.jinja`))).toBe(false)
+  })
+})
+
+describe('spliceMdSlot — pipeline invariants', () => {
+  test('zero slots → hard error naming the template', () => {
+    expect(() => spliceMdSlot('<main>nope</main>', 'Md_x_00000000', '<p>md</p>')).toThrow(
+      'expected exactly one data-brust-md-slot="Md_x_00000000" element in the compiled template, found 0',
+    )
+  })
+
+  test('non-empty slot → hard error', () => {
+    const tmpl = '<article data-brust-md-slot="Md_x_00000000">stale</article>'
+    expect(() => spliceMdSlot(tmpl, 'Md_x_00000000', '<p>md</p>')).toThrow(
+      'must compile empty',
+    )
+  })
+
+  test('invalid generated name → hard error (regex-injection guard)', () => {
+    expect(() => spliceMdSlot('<main></main>', 'bad.name', '<p>md</p>')).toThrow(
+      'not a valid generated name',
+    )
   })
 })

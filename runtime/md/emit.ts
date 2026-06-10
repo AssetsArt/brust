@@ -330,7 +330,13 @@ function mdChainedLeafSource(name: string): string {
  * exist and it must be empty — both are emit-pipeline invariants, so a
  * violation is a hard error, not a soft skip. `name` is a generated template
  * name (`[A-Za-z0-9_]` only), so interpolating it into the regex is safe. */
-function spliceMdSlot(template: string, name: string, mdHtml: string): string {
+export function spliceMdSlot(template: string, name: string, mdHtml: string): string {
+  if (!/^[A-Za-z0-9_]+$/.test(name)) {
+    throw new Error(`md route template name "${name}" is not a valid generated name`)
+  }
+  // The JSX compiler emits paired tags for empty elements (<main></main>,
+  // never <main/>) — HTML output, not XML. The empty-slot check below relies
+  // on that contract.
   const openRe = new RegExp(`<(main|article)\\b[^>]*\\bdata-brust-md-slot="${name}"[^>]*>`, 'g')
   const matches = [...template.matchAll(openRe)]
   if (matches.length !== 1) {
