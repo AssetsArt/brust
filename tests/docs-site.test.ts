@@ -57,6 +57,10 @@ const UNIFIED_NATIVE_DIRECTIVE = directiveName(
   resolve(DOCS_DIR, 'components/UnifiedNative.tsx'),
   DOCS_DIR,
 )
+const COPY_COMMAND_DIRECTIVE = directiveName(
+  resolve(DOCS_DIR, 'components/CopyCommand.tsx'),
+  DOCS_DIR,
+)
 
 /** Every md file under content/, as the URL it mounts at (mdUrlPath rules:
  * strip .md, `index` → the prefix, `a/index` → /docs/a). Count-agnostic by
@@ -236,6 +240,8 @@ test('static Home — grainient host + unified-store demo, bootstrap AND directi
   // animated connector SVG between the panels and the store node.
   expect(html).toContain(`x-data="${UNIFIED_NATIVE_DIRECTIVE}"`)
   expect(html).toContain('connector-pulse')
+  // …and the hero's copy-able create command (native behavior host).
+  expect(html).toContain(`x-data="${COPY_COMMAND_DIRECTIVE}"`)
   // The directive runtime is wired as before (behaviors exist app-wide).
   expect(html).toContain('/_brust/islands/_directives.js')
 })
