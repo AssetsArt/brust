@@ -46,6 +46,9 @@ impl PageCache {
     pub fn set(&self, key: &str, tags: &[String], ttl: Option<Duration>, payload: Vec<u8>) {
         let expires_at = ttl.map(|d| Instant::now() + d);
         // Index tags BEFORE the moka insert (panic-race tolerance; see island_cache).
+        // The tag index is not pruned when an entry lazy-expires via TTL — stale
+        // keys (already evicted) are tolerated: invalidate_tags pops a possibly-
+        // absent key (no-op), matching island_cache's documented invariant.
         if !tags.is_empty() {
             let mut idx = self.tag_index.lock();
             for tag in tags {
@@ -79,10 +82,17 @@ impl PageCache {
     }
 
     pub fn clear(&self) {
-        let mut idx = self.tag_index.lock();
-        self.cache.invalidate_all();
+        // Wipe moka + the tag index atomically from the index's perspective
+        // (a concurrent tagged `set` also locks tag_index, so it can't slip an
+        // entry in between the two wipes). run_pending_tasks runs AFTER the lock
+        // is dropped — holding the Mutex across moka's eviction callbacks risks
+        // re-entrant deadlock if a callback ever calls back into the cache.
+        {
+            let mut idx = self.tag_index.lock();
+            self.cache.invalidate_all();
+            idx.clear();
+        }
         self.cache.run_pending_tasks();
-        idx.clear();
     }
 }
 

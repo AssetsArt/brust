@@ -9,6 +9,12 @@ const CACHE_CAPACITY: usize = 1000;
 // Per-request bypass: `true` ⇒ always route to L2; a string ⇒ a key-expression
 // whose non-empty result ⇒ route to L2. Untagged so JSON `true` / "expr" both
 // deserialize. (bool and string are disjoint JSON types — no ambiguity.)
+//
+// Notes: `bypass` lives inside CacheConfig, so it only fires on a route that
+// also sets ttl_seconds. `false` is a no-op (== omitting bypass). On bypass the
+// Rust side only sets the `bypassed` envelope flag + skips L1; the L2 read/write
+// (page_cache_get/set) is owned by the TS worker — Rust provides the primitives
+// but does no L2 fallback.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
 pub enum BypassSpec {

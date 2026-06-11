@@ -5,6 +5,11 @@
 
 /// Borrowed request data the evaluator reads. Slices, not maps — the caller
 /// already holds these as small vecs at the cache-decision site.
+///
+/// NOTE: header/cookie/query values are passed through verbatim — NOT
+/// percent-decoded. An `eq(cookie(x), "/")` will not match a `%2F`-encoded
+/// value. The L1 sorted_query path is likewise undecoded, so key-building stays
+/// internally consistent.
 pub struct EvalCtx<'a> {
     pub headers: &'a [(&'a str, &'a str)],
     pub cookies: &'a [(&'a str, &'a str)],
@@ -13,6 +18,8 @@ pub struct EvalCtx<'a> {
     pub method: &'a str,
     pub host: &'a str,
     pub scheme: &'a str,
+    /// Request path WITHOUT the query string (the L1 CacheKey.path value).
+    pub path: &'a str,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,7 +73,8 @@ impl Expr {
                 "host" => ctx.host.to_string(),
                 "method" => ctx.method.to_string(),
                 "scheme" => ctx.scheme.to_string(),
-                "path" => String::new(),
+                "path" => ctx.path.to_string(),
+                // unreachable: parse() rejects any other request() field.
                 _ => String::new(),
             },
             Expr::Env(v) => v.clone(),
@@ -166,7 +174,15 @@ impl<'a> Parser<'a> {
             "cookie" => Ok(Expr::Cookie(one_str(&args)?)),
             "query" => Ok(Expr::Query(one_str(&args)?)),
             "param" => Ok(Expr::Param(one_str(&args)?)),
-            "request" => Ok(Expr::Request(one_str(&args)?)),
+            "request" => {
+                let f = one_str(&args)?;
+                match f.as_str() {
+                    "host" | "method" | "scheme" | "path" => Ok(Expr::Request(f)),
+                    other => Err(format!(
+                        "cache expression: request('{other}') — field must be host|method|scheme|path"
+                    )),
+                }
+            }
             "env" => Ok(Expr::Env(
                 std::env::var(one_str(&args)?).unwrap_or_default(),
             )),
@@ -276,11 +292,21 @@ mod tests {
             method: "GET",
             host: "shop.example.com",
             scheme: "https",
+            path: "/p/42",
         }
     }
 
     fn ev(src: &str) -> String {
         Expr::parse(src).unwrap().eval(&ctx())
+    }
+
+    #[test]
+    fn request_path_is_threaded() {
+        assert_eq!(ev("request(path)"), "/p/42");
+    }
+    #[test]
+    fn reject_unknown_request_field() {
+        assert!(Expr::parse("request(referrer)").is_err());
     }
 
     #[test]

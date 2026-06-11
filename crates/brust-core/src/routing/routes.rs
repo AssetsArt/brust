@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use parking_lot::RwLock;
 use serde::Deserialize;
 use serde::Serialize;
@@ -237,7 +239,7 @@ pub struct RouteTable {
     cache_configs: RwLock<Vec<Option<CacheConfig>>>,
     /// Compiled L1 prefix/bypass expressions, parallel to `cache_configs`.
     /// Index = route_id. Parsed once at install; evaluated per request.
-    compiled_caches: RwLock<Vec<CompiledCache>>,
+    compiled_caches: RwLock<Vec<Arc<CompiledCache>>>,
     /// Sub-project J — per-route-id native template name (parallel to
     /// `cache_configs`). Index = route_id. `None` ⇒ React-rendered route.
     native_templates: RwLock<Vec<Option<String>>>,
@@ -253,7 +255,7 @@ impl RouteTable {
     pub fn install_with_config(&self, configs: &[RouteConfig]) -> Result<u32, RouteInstallError> {
         let mut router = matchit::Router::new();
         let mut caches: Vec<Option<CacheConfig>> = Vec::with_capacity(configs.len());
-        let mut compiled: Vec<CompiledCache> = Vec::with_capacity(configs.len());
+        let mut compiled: Vec<Arc<CompiledCache>> = Vec::with_capacity(configs.len());
         let mut natives: Vec<Option<String>> = Vec::with_capacity(configs.len());
         for (idx, c) in configs.iter().enumerate() {
             router
@@ -294,7 +296,7 @@ impl RouteTable {
                 None => CompiledCache::default(),
             };
             caches.push(c.cache.clone());
-            compiled.push(compiled_cache);
+            compiled.push(Arc::new(compiled_cache));
             natives.push(c.native_template.clone());
         }
         *self.inner.write() = router;
@@ -306,7 +308,9 @@ impl RouteTable {
 
     /// Compiled L1 prefix/bypass directives for a route, parallel to
     /// `cache_for`. `None` when the route_id is out of range.
-    pub fn compiled_cache_for(&self, route_id: u32) -> Option<CompiledCache> {
+    pub fn compiled_cache_for(&self, route_id: u32) -> Option<Arc<CompiledCache>> {
+        // Returns an Arc clone (refcount bump), NOT a deep clone of the Expr
+        // trees — this is the per-request cache hot path.
         self.compiled_caches.read().get(route_id as usize).cloned()
     }
 

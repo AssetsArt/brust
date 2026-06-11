@@ -651,6 +651,7 @@ async fn handle_request(
             };
             // Path-param keying is deferred: matched params aren't readily
             // borrowable at this site. `param()` in an L1 expr evaluates to "".
+            let bare_path = path.split('?').next().unwrap_or(&path);
             let ctx = crate::cache::key_expr::EvalCtx {
                 headers: &header_pairs,
                 cookies: &cookie_pairs,
@@ -659,6 +660,7 @@ async fn handle_request(
                 method: &method,
                 host,
                 scheme,
+                path: bare_path,
             };
 
             let bypass_hit = match &cc.bypass {
