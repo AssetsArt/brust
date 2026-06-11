@@ -98,7 +98,7 @@ is workload-dependent:
 If every route is statically renderable, skip the server entirely:
 `brust build --ssg` crawls the built app into plain HTML + assets that any
 static host serves — including per-route SPA payloads, so client-side
-navigation keeps working without a server. Dynamic-param, wildcard, SSE, and WebSocket routes are
+[navigation](/docs/navigation) keeps working without a server. Dynamic-param, wildcard, SSE, and WebSocket routes are
 excluded, any non-200 fails the build, and the export must live at a domain
 root. The full walkthrough, including Cloudflare Pages settings, is in
 [Markdown Pages → Static export](/docs/markdown-pages#static-export---ssg).

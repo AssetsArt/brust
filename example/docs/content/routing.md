@@ -130,6 +130,57 @@ result. Two caveats:
   everywhere. If your middleware must mutate the rendered response, use a
   React route.
 
+## Cookies
+
+Reading incoming cookies is structural — `req.cookies` on the request, as in
+the middleware above. For *writing*, `brustjs` exports a request-scoped
+helper usable anywhere inside a request (loader, middleware, action) without
+threading the request through:
+
+```ts
+import { cookies } from 'brustjs'
+
+loader: async ({ req }) => {
+  const seen = cookies.get('seen')              // same data as req.cookies.seen
+  cookies.set('seen', '1', { maxAge: 86_400, httpOnly: true, sameSite: 'Lax' })
+  // cookies.delete('legacy')                   // Max-Age=0 under the hood
+  return { firstVisit: !seen }
+}
+```
+
+`set`/`delete` stage a `Set-Cookie` header that is flushed onto the response.
+Options: `maxAge`, `expires`, `path`, `domain`, `secure`, `httpOnly`,
+`sameSite: 'Strict' | 'Lax' | 'None'`. Values are URL-encoded; names are
+validated as RFC 6265 tokens (header-injection guarded). `serializeCookie`
+(same module) is the underlying one-liner if you build headers by hand.
+
+One caveat: on **native routes** the Rust render path owns the response, so
+staged `cookies.set()` calls are dropped — reading works everywhere, but set
+cookies from an [action](/docs/actions) or a React route. Outside a request
+scope, `set`/`delete` are no-ops (warned in dev).
+
+## Request-scoped loader helpers
+
+Loaders across a nested chain (or one loader called several times while
+rendering) often want the same data. `brustjs` exports two per-request
+memoizers — both scoped to the current request, both pass-through outside
+one:
+
+```ts
+import { dedupe, cachedFetch } from 'brustjs'
+
+// Share one in-flight promise + result for the request's lifetime:
+const user = await dedupe('user:42', () => db.users.find(42))
+
+// fetch() deduped per request for idempotent calls (GET/HEAD):
+const res = await cachedFetch('https://api.example.com/pokemon/ditto')
+```
+
+`cachedFetch` keys on **method + URL only** (not headers/body) and returns a
+fresh `Response` clone per call; non-idempotent methods bypass the cache.
+Note the scope is a single request — for caching *across* requests, use the
+response cache or [ISR islands](/docs/rendering#islands).
+
 ## notFound and redirect
 
 A **native** route loader controls the HTTP response by returning a verdict
