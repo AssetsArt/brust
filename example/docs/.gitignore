@@ -1,0 +1,7 @@
+dist/
+.brust/
+public/search-index.json
+
+# Root .gitignore ignores brust.toml as local config; HERE it is part of the
+# committed app (the spec pins [server] port = 1340) — re-include it.
+!brust.toml

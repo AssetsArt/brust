@@ -1,0 +1,464 @@
+/* brust docs site — Tailwind v4 + DESIGN.md tokens.
+   Dark is the :root DEFAULT (no data-theme attribute required); light is
+   opt-in via <html data-theme="light">. See DESIGN.md for the full table. */
+
+@import "tailwindcss";
+@source "./**/*.{tsx,ts}";
+
+/* ── Self-hosted fonts (public/fonts, latin subset; @fontsource woff2) ────
+   font-display: swap + the system stacks in the --font-* tokens below keep
+   text readable before the swap. URLs are root-absolute: public/ is
+   root-mapped by the server and copied into the SSG static root. */
+
+@font-face {
+  font-family: "Schibsted Grotesk";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url("/fonts/schibsted-grotesk-latin-400-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304,
+    U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Schibsted Grotesk";
+  font-style: italic;
+  font-display: swap;
+  font-weight: 400;
+  src: url("/fonts/schibsted-grotesk-latin-400-italic.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304,
+    U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Schibsted Grotesk";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url("/fonts/schibsted-grotesk-latin-500-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304,
+    U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Schibsted Grotesk";
+  font-style: italic;
+  font-display: swap;
+  font-weight: 500;
+  src: url("/fonts/schibsted-grotesk-latin-500-italic.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304,
+    U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Schibsted Grotesk";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 700;
+  src: url("/fonts/schibsted-grotesk-latin-700-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304,
+    U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Schibsted Grotesk";
+  font-style: italic;
+  font-display: swap;
+  font-weight: 700;
+  src: url("/fonts/schibsted-grotesk-latin-700-italic.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304,
+    U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Spline Sans Mono";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url("/fonts/spline-sans-mono-latin-400-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304,
+    U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Spline Sans Mono";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 600;
+  src: url("/fonts/spline-sans-mono-latin-600-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304,
+    U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* ── Runtime semantic tokens (theme-flipped) ──────────────────────────── */
+
+:root {
+  /* dark default — near-black, brand-hue (≈170) chroma ≤ 0.015 */
+  --bg: oklch(0.16 0.012 170);
+  --surface: oklch(0.2 0.014 170);
+  --fg: oklch(0.93 0.006 170);
+  --fg-muted: oklch(0.72 0.012 170);
+  --line: oklch(0.3 0.014 170);
+  --link: oklch(0.85 0.13 165); /* #46e7b4-class */
+  /* #139069-class, darkened a step so --accent-fg text clears the binding
+     4.5:1 (white on raw #139069 measures ≈4.0:1) */
+  --accent: oklch(0.52 0.11 168);
+  --accent-fg: oklch(0.985 0 0);
+
+  /* z-index scale — nothing else gets a z-index */
+  --z-nav: 10;
+  --z-palette-backdrop: 40;
+  --z-palette: 50;
+
+  /* motion */
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  /* true off-white, chroma 0 — NOT cream */
+  --bg: oklch(0.985 0 0);
+  --surface: oklch(0.96 0 0);
+  --fg: oklch(0.22 0.01 170);
+  --fg-muted: oklch(0.45 0.01 170);
+  --line: oklch(0.88 0 0);
+  --link: oklch(0.46 0.09 168); /* #0d684b-class */
+
+  color-scheme: light;
+}
+
+/* ── Tailwind theme ───────────────────────────────────────────────────── */
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-line: var(--line);
+  --color-link: var(--link);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+}
+
+@theme {
+  /* brand greens (static; theme-independent references) */
+  --color-brand-300: oklch(0.85 0.13 165); /* #46e7b4 dark-bg green */
+  --color-brand-500: oklch(0.58 0.115 168); /* #139069 solid CTA */
+  --color-brand-700: oklch(0.46 0.09 168); /* #0d684b light-bg green */
+
+  /* type — Schibsted Grotesk / Spline Sans Mono self-hosted (public/fonts,
+     @font-face above); the system stacks cover pre-swap + missing glyphs */
+  --font-sans: "Schibsted Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Spline Sans Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* 1.25-ratio scale from 1rem body */
+  --text-sm: 0.8rem;
+  --text-base: 1rem;
+  --text-lg: 1.25rem;
+  --text-xl: 1.5625rem;
+  --text-2xl: 1.953rem;
+  --text-3xl: 2.441rem;
+  --text-4xl: 3.052rem;
+  --text-hero: clamp(2.75rem, 1rem + 6vw, 5.5rem); /* max ≤ 5.5rem (binding) */
+  --text-hero--line-height: 1.05;
+
+  /* radius — 12px is the MAXIMUM */
+  --radius-card: 12px;
+  --radius-control: 8px;
+  --radius-chip: 6px;
+}
+
+/* ── Base ─────────────────────────────────────────────────────────────── */
+
+html {
+  background-color: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  text-wrap: balance;
+  letter-spacing: -0.02em; /* applied: −0.02em (constraint: no tighter than −0.03em) */
+}
+
+button {
+  cursor: pointer;
+}
+
+/* motion policy: grainient owns the page-load moment; everything else
+   ≤ 200ms ease-out-quart. Reduced motion → instant (grainient renders one
+   frame via its own matchMedia check in the behavior). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── Theme toggle icon swap ───────────────────────────────────────────────
+   Pure CSS off html[data-theme] so the correct icon shows before the
+   behavior mounts (the FOUC head script stamps the attribute pre-paint).
+   Sun shows in dark ("switch to light"), Moon in light. */
+
+[data-theme="light"] .theme-icon-dark {
+  display: none;
+}
+
+html:not([data-theme="light"]) .theme-icon-light {
+  display: none;
+}
+
+/* ── Search palette (the ONE React island, components/SearchPalette.tsx) ──
+   The island hydrates on idle with NO ssr markup, so the header slot must
+   own the trigger's box: fixed size here, button fills it (display:contents
+   collapses the data-brust-island host div). */
+
+.search-slot {
+  display: inline-flex;
+  width: 9rem;
+  height: 2.5rem; /* hit area ≥ 40px */
+}
+
+.search-slot [data-brust-island] {
+  display: contents;
+}
+
+/* <dialog> sits in the top layer (no stacking-context fights), but the
+   z tokens are the binding scale — applied for uniformity. */
+dialog.search-palette {
+  z-index: var(--z-palette);
+  width: min(34rem, calc(100vw - 2rem));
+  margin: 10vh auto auto;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card); /* ≤ 12px (binding max) */
+  background: var(--bg);
+  color: var(--fg);
+}
+
+dialog.search-palette::backdrop {
+  z-index: var(--z-palette-backdrop);
+  background: rgb(8 5 11 / 0.55);
+}
+
+/* open moment: ≤200ms ease-out-quart; the global reduced-motion rule above
+   flattens this to one frame (opens without transition). */
+dialog.search-palette[open] {
+  animation: palette-in 160ms var(--ease-out-quart);
+}
+
+@keyframes palette-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+/* ── Home hero: grainient canvas + glass pill (the ONE glass use) ─────── */
+
+/* WebGL2 canvas host — fills the relative hero section behind the copy */
+.grainient {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+}
+
+/* WebGL2 unavailable → the behavior adds this to the canvas's PARENT:
+   a static gradient in the same trio (#1bcf96 / #27aeff / #08050b). */
+.grainient-fallback {
+  background:
+    radial-gradient(110% 80% at 85% 8%, rgb(39 174 255 / 0.3), transparent 60%),
+    radial-gradient(120% 90% at 12% 88%, rgb(27 207 150 / 0.32), transparent 62%),
+    #08050b;
+}
+
+/* contrast scrim between the animated field and the hero copy (binding
+   ≥4.5:1 — the field can swing bright green/blue behind the text) */
+.hero-scrim {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    rgb(8 5 11 / 0.55),
+    rgb(8 5 11 / 0.55) 45%,
+    rgb(8 5 11 / 0.72)
+  );
+}
+
+.glass-pill {
+  background: rgb(8 5 11 / 0.5);
+  border: 1px solid rgb(255 255 255 / 0.14);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  backdrop-filter: blur(14px) saturate(140%);
+}
+
+/* ── Markdown prose ([data-brust-md-slot] is the md page wrapper) ─────── */
+
+[data-brust-md-slot] {
+  max-width: 72ch;
+  font-size: var(--text-base);
+  line-height: 1.65;
+}
+
+[data-brust-md-slot] p,
+[data-brust-md-slot] ul,
+[data-brust-md-slot] ol {
+  text-wrap: pretty;
+  margin-block: 1.25rem;
+}
+
+[data-brust-md-slot] h1 {
+  font-size: var(--text-3xl);
+  font-weight: 700;
+  margin-block: 0 1.5rem;
+}
+
+[data-brust-md-slot] h2 {
+  font-size: var(--text-xl);
+  font-weight: 600;
+  margin-block: 2.5rem 1rem;
+}
+
+[data-brust-md-slot] h3 {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  margin-block: 2rem 0.75rem;
+}
+
+[data-brust-md-slot] a {
+  color: var(--link);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  text-decoration-color: color-mix(in oklch, var(--link) 45%, transparent);
+  transition: text-decoration-color 150ms var(--ease-out-quart);
+}
+
+[data-brust-md-slot] a:hover {
+  text-decoration-color: var(--link);
+}
+
+[data-brust-md-slot] ul {
+  list-style: disc;
+  padding-inline-start: 1.5rem;
+}
+
+[data-brust-md-slot] ol {
+  list-style: decimal;
+  padding-inline-start: 1.5rem;
+}
+
+[data-brust-md-slot] li {
+  margin-block: 0.375rem;
+}
+
+[data-brust-md-slot] code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+/* inline code only (shiki fences carry their own background) */
+[data-brust-md-slot] :not(pre) > code {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-chip);
+  padding: 0.125rem 0.375rem;
+}
+
+[data-brust-md-slot] hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin-block: 2.5rem;
+}
+
+/* ── GFM tables: hairline borders, surface header, no zebra ───────────── */
+
+[data-brust-md-slot] table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-block: 1.5rem;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+[data-brust-md-slot] th,
+[data-brust-md-slot] td {
+  border: 1px solid var(--line);
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+[data-brust-md-slot] thead th {
+  background: var(--surface);
+  font-weight: 600;
+}
+
+/* ── Callouts: background tint + FULL hairline border (no side-stripes) ── */
+
+[data-brust-md-slot] blockquote,
+.callout {
+  background: color-mix(in oklch, var(--link) 7%, var(--bg));
+  border: 1px solid color-mix(in oklch, var(--link) 30%, var(--line));
+  border-radius: var(--radius-card);
+  padding: 0.875rem 1.25rem;
+  margin-block: 1.5rem;
+}
+
+[data-brust-md-slot] blockquote > p:first-child {
+  margin-block-start: 0;
+}
+
+[data-brust-md-slot] blockquote > p:last-child {
+  margin-block-end: 0;
+}
+
+/* ── shiki code fences (dual CSS-variables themes) ────────────────────────
+   render.ts highlights with `themes: { light: 'github-light', dark:
+   'github-dark' }` — shiki emits the LIGHT colors as inline style and the
+   dark pair as --shiki-dark/--shiki-dark-bg vars per element. Dark is the
+   site default, so the dark vars apply whenever <html> is NOT explicitly
+   data-theme="light" (the attribute may be absent entirely on first paint);
+   light mode simply lets shiki's inline light colors stand. */
+
+.shiki {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  padding: 1rem 1.25rem;
+  margin-block: 1.5rem;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+
+html:not([data-theme="light"]) .shiki,
+html:not([data-theme="light"]) .shiki span {
+  color: var(--shiki-dark) !important;
+  background-color: var(--shiki-dark-bg) !important;
+  font-style: var(--shiki-dark-font-style) !important;
+  font-weight: var(--shiki-dark-font-weight) !important;
+  text-decoration: var(--shiki-dark-text-decoration) !important;
+}
+
+/* plain (non-shiki / shiki-missing) fences still get a readable block */
+[data-brust-md-slot] pre:not(.shiki) {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  padding: 1rem 1.25rem;
+  margin-block: 1.5rem;
+  overflow-x: auto;
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
