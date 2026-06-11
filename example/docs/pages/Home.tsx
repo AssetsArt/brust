@@ -256,12 +256,12 @@ export default function Home({ version }: { version: string }) {
               </div>
               <div className="mt-10">
                 <p className="text-4xl font-bold tabular-nums text-link">
-                  84,119 <span className="text-base font-medium text-fg-muted">requests/sec</span>
+                  106,374 <span className="text-base font-medium text-fg-muted">requests/sec</span>
                 </p>
                 <p className="mt-2 max-w-[46ch] text-sm leading-relaxed text-fg-muted">
-                  One compiled page under load, versus 28,938 for the same page rendered through a
-                  JavaScript pipeline — about 2.9× (bench/RESULTS.md: oha, 120 connections,
-                  darwin/arm64).
+                  One compiled page under load, versus 44,448 for the same page rendered through a
+                  JavaScript pipeline — about 2.4× (bench/RESULTS.md: oha, 120 connections, M1 Pro
+                  10c, darwin/arm64).
                 </p>
               </div>
             </a>

@@ -358,12 +358,15 @@ test('flattenRoutes rejects a non-native parent with a native child (mixed chain
   ).toThrow(/cannot mix native and non-native/)
 })
 
-test('flattenRoutes rejects native: true + cache (deferred)', () => {
-  expect(() =>
-    flattenRoutes([
-      { path: '/x', Component: NamedPage, native: true, cache: { ttl_seconds: 60 } } as Route,
-    ]),
-  ).toThrow(/cannot coexist with 'cache'/)
+test('flattenRoutes allows native: true + cache (native is the L1 target)', () => {
+  // The native+cache guard was removed: native routes are now the primary
+  // zero-Bun L1 cache target (two-layer page cache). The cache config flows
+  // through to the FlatRoute untouched.
+  const flat = flattenRoutes([
+    { path: '/x', Component: NamedPage, native: true, cache: { ttl_seconds: 60 } } as Route,
+  ])
+  expect(flat).toHaveLength(1)
+  expect(flat[0]?.cache?.ttl_seconds).toBe(60)
 })
 
 // --- T3: native <Outlet> chain-loader merge (runNativeChainLoaders) -----------

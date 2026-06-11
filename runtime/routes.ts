@@ -156,11 +156,37 @@ export interface ErrorBoundaryProps {
   error: Error
 }
 
-export interface RouteCacheConfig {
-  /** Time-to-live in seconds. */
+/** L2 programmatic cache-key result. The `key` function builds the COMPLETE
+ * cache key (you concat url + query + DB-derived data yourself). */
+export interface CacheKeyResult {
+  /** The COMPLETE L2 cache key. */
+  key: string
+  /** Tag groups for `cache.invalidate({ tags })`. */
+  tags?: string[]
+  /** Seconds; overrides `key_ttl_seconds` / `ttl_seconds`. */
+  ttl?: number
+}
+
+export interface RouteCacheConfig<Params = Record<string, string>> {
+  /** Base TTL in seconds (L1; L2 fallback). */
   ttl_seconds: number
-  /** Request headers that affect content. Each becomes part of the cache key. */
-  vary?: string[]
+  /** L1 declarative key prefix expression (evaluated in Rust, zero-Bun on hit). */
+  prefix?: string
+  /** Route to L2 when truthy: a key-expression (conditional) or `true` (always).
+   * Absent / `false` ⇒ L1 only. */
+  bypass?: string | boolean
+  /** L2 programmatic key (runs in the worker). Returns the COMPLETE key. */
+  key?: (ctx: {
+    req: BrustRequest
+    url: URL
+    params: Params
+  }) => CacheKeyResult | Promise<CacheKeyResult>
+  /** Static L2 TTL (seconds); `CacheKeyResult.ttl` overrides per-entry. */
+  key_ttl_seconds?: number
+  /** Static L1 invalidation tags. L1 entries cached for this route carry these
+   * tags so `cache.invalidate({ tags })` evicts them (L1 is no longer
+   * TTL-only). Route-level + static — not per-request. */
+  tags?: string[]
 }
 
 /** Shape returned by a middleware or by the terminal `next()` (loader + render).
@@ -421,10 +447,8 @@ function validateRoute(r: Route, basePath: string): void {
     if (r.children !== undefined) {
       assertNativeSubtree(r.children, where)
     }
-    if (r.cache !== undefined) {
-      throw new Error(`Route ${where}: 'native: true' cannot coexist with 'cache' (deferred)`)
-    }
-    // loader + middleware are EXPLICITLY allowed.
+    // `cache` is now allowed on native routes — they are the primary L1
+    // (zero-Bun) target. loader + middleware are EXPLICITLY allowed.
   }
   if (r.sse) {
     const where = r.path ?? '(no path)'
@@ -452,6 +476,14 @@ function validateRoute(r: Route, basePath: string): void {
     if (r.children !== undefined) {
       throw new Error(`Route ${where}: 'websocket' cannot have nested children`)
     }
+  }
+  // L2 (cache.key) is only reachable via a truthy `bypass`. A key with no
+  // bypass is dead config — warn so it isn't silently ignored.
+  if (r.cache?.key && r.cache.bypass === undefined) {
+    const where = r.path ?? '(no path)'
+    console.warn(
+      `[brust] route ${where}: cache.key has no cache.bypass — L2 is unreachable (bypass never routes to it)`,
+    )
   }
 }
 
@@ -572,6 +604,9 @@ export type RouteCall =
       path: string
       params: Record<string, string>
       req: BrustRequest
+      /** Set by Rust when the route's `cache.bypass` matched — routes this
+       * request to the L2 programmatic cache (worker `cache.key`). */
+      bypassed?: boolean
     }
   | {
       kind: 'navigation'
@@ -637,6 +672,51 @@ export interface MakeRendererOptions {
    * operates on `view.subarray(slot*sub, slot*sub+sub)`. Default 1 (the whole
    * view → byte-identical to the pre-multi-slot path). */
   slots?: number
+}
+
+/** May a framed single-chunk payload (`[meta_len: u16 BE][meta JSON][body]`)
+ * enter the L2 page cache? Only a plain 200 without Set-Cookie. The status
+ * gate is load-bearing: a jinja render failure comes back as a framed 500
+ * through the SAME napiRenderJinja success return as a real render, so without
+ * it one flaky render would poison the L2 key for its full TTL. A Set-Cookie
+ * response is per-client (a cached one would leak a session). Short/truncated/
+ * malformed payloads → NOT cacheable (fail closed). */
+function payloadCacheable(payload: Uint8Array): boolean {
+  if (payload.length < 2) return false
+  const metaLen = (payload[0] << 8) | payload[1]
+  if (payload.length < 2 + metaLen) return false
+  try {
+    const meta = JSON.parse(new TextDecoder().decode(payload.subarray(2, 2 + metaLen)))
+    if (meta?.status !== 200) return false
+    const headers = (meta?.headers ?? {}) as Record<string, unknown>
+    return !Object.keys(headers).some((h) => h.toLowerCase() === 'set-cookie')
+  } catch {
+    return false
+  }
+}
+
+// Return a copy of a framed `[meta_len:u16 BE][meta JSON][body]` payload with
+// `X-Brust-Cache: HIT` added to the meta headers — stamped on an L2 replay so a
+// cache hit is observable on the wire (mirrors the L1 hit header). On any parse
+// failure the original payload is returned unchanged (never corrupt a response).
+function withCacheHitHeader(payload: Uint8Array): Uint8Array {
+  if (payload.length < 2) return payload
+  const metaLen = (payload[0] << 8) | payload[1]
+  if (payload.length < 2 + metaLen) return payload
+  try {
+    const meta = JSON.parse(new TextDecoder().decode(payload.subarray(2, 2 + metaLen)))
+    meta.headers = { ...(meta.headers ?? {}), 'X-Brust-Cache': 'HIT' }
+    const metaBytes = new TextEncoder().encode(JSON.stringify(meta))
+    const body = payload.subarray(2 + metaLen)
+    const out = new Uint8Array(2 + metaBytes.length + body.length)
+    out[0] = (metaBytes.length >> 8) & 0xff
+    out[1] = metaBytes.length & 0xff
+    out.set(metaBytes, 2)
+    out.set(body, 2 + metaBytes.length)
+    return out
+  } catch {
+    return payload
+  }
 }
 
 export function makeRenderer(
@@ -755,6 +835,78 @@ export function makeRenderer(
           body: verdict.body,
           headers: verdict.headers,
         })
+      }
+
+      // L2 programmatic page cache (Task 10). Only on a bypassed request whose
+      // route declares a `cache.key` function. Runs AFTER middleware (which may
+      // set cookies / auth context the key depends on) and BEFORE render.
+      //   HIT  → write the cached framed payload into the SAB slot, return its
+      //          length — the exact fast-lane shape Rust reads from a native
+      //          render, so the loader+render are skipped entirely.
+      //   MISS → render normally, then capture slotView[0..len] and pageCacheSet.
+      // Streaming/Suspense responses never reach the `len > 0` fast-lane return
+      // below (renderBranchStreaming returns 0), so they are never L2-cached.
+      // L2 capture/replay rides the NATIVE SAB fast-lane (a framed payload in
+      // slotView + a length return). React routes emit via the chunk channel and
+      // return 0, so engaging L2 there would return a non-zero length into the
+      // streaming path = protocol corruption. Gate L2 to native routes; a React
+      // route with `bypass` still skips L1 and renders fresh (no L2).
+      const cc = flat.cache
+      const wantL2 =
+        call.bypassed === true && typeof cc?.key === 'function' && flat.nativeTemplate !== undefined
+      let l2Key: CacheKeyResult | undefined
+      if (wantL2 && cc) {
+        const url = new URL(call.req.url, 'http://internal') // req.url is a path+query
+        try {
+          l2Key = await cc.key!({ req: call.req, url, params: call.params ?? {} })
+        } catch (err) {
+          // A throwing/rejecting key() must not crash the worker — fall back to
+          // a fresh render. l2Key stays undefined → replay skipped, store no-op.
+          console.error('[brust] cache.key threw; bypassing L2 (rendering fresh):', err)
+        }
+        if (l2Key) {
+          const cached = (native as any).pageCacheGet?.(l2Key.key) as Buffer | null | undefined
+          if (cached && cached.length > 0) {
+            // REPLAY — stamp the framed meta with X-Brust-Cache: HIT, then write
+            // it into the slot and return its length (fast lane). Prefer the
+            // stamped payload; if the extra header tips it past the slot, fall
+            // back to the verbatim bytes; only a too-large verbatim payload
+            // falls through to a fresh render (never serve truncated bytes).
+            const stamped = withCacheHitHeader(cached)
+            const out =
+              stamped.length <= slotView.length
+                ? stamped
+                : cached.length <= slotView.length
+                  ? cached
+                  : null
+            if (out) {
+              slotView.set(out, 0)
+              return out.length
+            }
+          }
+        }
+      }
+      // Capture-and-store on an L2 miss. Wraps the native success returns; a
+      // no-op when not bypassed or no key. Only single-chunk (len > 0) bytes
+      // that fit the slot and carry no Set-Cookie are stored.
+      const maybeStoreL2 = (len: number): number => {
+        if (wantL2 && cc && l2Key && len > 0 && len <= slotView.length) {
+          const payload = slotView.subarray(0, len).slice() // copy out of the SAB
+          if (payloadCacheable(payload)) {
+            const ttlSec = l2Key.ttl ?? cc.key_ttl_seconds ?? cc.ttl_seconds
+            try {
+              ;(native as any).pageCacheSet?.(
+                l2Key.key,
+                l2Key.tags ?? [],
+                Math.round(ttlSec * 1000),
+                payload,
+              )
+            } catch (err) {
+              console.error('[brust] pageCacheSet failed (response served, not cached):', err)
+            }
+          }
+        }
+        return len
       }
 
       // Sub-project J — native: true branch. Runs the leaf's loader (if any),
@@ -896,12 +1048,14 @@ export function makeRenderer(
           }
           slotView.set(finalBytes, 0)
           try {
-            return (native as any).napiRenderJinja(
-              Number(workerId),
-              slot,
-              finalBytes.length,
-              flat.nativeTemplate,
-              renderStatus,
+            return maybeStoreL2(
+              (native as any).napiRenderJinja(
+                Number(workerId),
+                slot,
+                finalBytes.length,
+                flat.nativeTemplate,
+                renderStatus,
+              ),
             )
           } catch (err) {
             console.error(`[brust] napiRenderJinja failed for "${flat.nativeTemplate}":`, err)
@@ -926,12 +1080,14 @@ export function makeRenderer(
           // writes the framed response into the SAB, and returns its length
           // directly (no Promise round-trip). Return it up to the tsfn; Rust's
           // fast-lane arm reads the SAB directly (no chunk channel).
-          return (native as any).napiRenderJinja(
-            Number(workerId),
-            slot,
-            dataBytes.length,
-            flat.nativeTemplate,
-            renderStatus,
+          return maybeStoreL2(
+            (native as any).napiRenderJinja(
+              Number(workerId),
+              slot,
+              dataBytes.length,
+              flat.nativeTemplate,
+              renderStatus,
+            ),
           )
         } catch (err) {
           console.error(`[brust] napiRenderJinja failed for "${flat.nativeTemplate}":`, err)

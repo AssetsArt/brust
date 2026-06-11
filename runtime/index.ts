@@ -1,8 +1,25 @@
+import os from 'node:os'
 import * as native from './index.js'
 import type { EndpointDef } from './define-actions.ts'
 import { loadConfig } from './config.ts'
 import { configureCssEnabled, configureCssHrefsForRoute } from './css.ts'
 import { configureJinjaDir } from './islands/native-render.ts'
+
+/** Default render slots per Bun worker: one per CPU, capped at 16. Above 16
+ * cores, set `BRUST_RENDER_SLOTS` explicitly to go higher. Slots > 1 only speed
+ * up renders that `await` DURING render (e.g. Suspense fetching async data);
+ * CPU-bound / native-jinja / cache-hit routes serialize on the worker's single
+ * JS isolate and are unaffected. Each slot costs one SAB region (`sabBytes`), so
+ * the cap bounds memory. slots > 1 is byte-identical to slots = 1. */
+function defaultRenderSlots(): number {
+  let cores: number
+  try {
+    cores = os.availableParallelism()
+  } catch {
+    cores = os.cpus().length
+  }
+  return Math.min(Math.max(cores, 1), 16)
+}
 
 export interface ServeOptions {
   /** Host/address to bind on. A hostname (e.g. `localhost`, resolved Rust-side)
@@ -54,9 +71,12 @@ export interface ServeOptions {
      * one-per-core. Default `min(availableParallelism, 4)` (fallback 2). */
     workerThreads?: number
     /** Render slots per Bun worker — concurrent in-flight renders per isolate.
-     * Default 1 (byte-identical to single in-flight render per worker). The
-     * count is propagated to each worker via the `BRUST_RENDER_SLOTS` env var
-     * and scales the per-worker SAB so each slot keeps the single-slot capacity. */
+     * Default `min(cores, 16)` (set `BRUST_RENDER_SLOTS` to go higher on >16-core
+     * hosts). Only speeds renders that `await` during render (e.g. Suspense with
+     * async data); CPU-bound/native/cache routes serialize on the one isolate and
+     * are unaffected. The count is propagated to each worker via the
+     * `BRUST_RENDER_SLOTS` env var and scales the per-worker SAB (one region per
+     * slot, so the cap bounds memory). slots > 1 is byte-identical to slots = 1. */
     renderSlots?: number
   }
 }
@@ -144,7 +164,7 @@ export const brust = {
     // per-app wiring), else 1 — byte-identical single in-flight render.
     const renderSlots = Math.max(
       1,
-      opts.tuning?.renderSlots ?? (Number(process.env.BRUST_RENDER_SLOTS) || 1),
+      opts.tuning?.renderSlots ?? (Number(process.env.BRUST_RENDER_SLOTS) || defaultRenderSlots()),
     )
     const baseEnv = { ...process.env, BRUST_RENDER_SLOTS: String(renderSlots) }
     const workersArr: Worker[] = []
@@ -190,7 +210,25 @@ export const brust = {
     const configs = routes.map((r) =>
       JSON.stringify({
         path: r.fullPath,
-        cache: r.cache ?? null,
+        // Rust-safe projection: the L2 `key` FUNCTION and `key_ttl_seconds`
+        // stay TS-side (the worker reads them off the FlatRoute). Only the
+        // L1 directives cross napi. `bypass` passes through as `true` or the
+        // string expr — serde's untagged BypassSpec handles both. `false` and
+        // absent both normalize to null → None (never bypass), so an explicitly
+        // disabled bypass doesn't ride a cross-language `false` contract. An
+        // EMPTY-STRING expr deliberately passes through: Expr::parse("") fails
+        // route install, surfacing the misconfiguration loudly at boot instead
+        // of silently never bypassing.
+        cache: r.cache
+          ? {
+              ttl_seconds: r.cache.ttl_seconds,
+              prefix: r.cache.prefix ?? null,
+              bypass: r.cache.bypass === false ? null : (r.cache.bypass ?? null),
+              // Static L1 invalidation tags carried into each L1 entry so
+              // `cache.invalidate({ tags })` can reach the response cache.
+              tags: r.cache.tags ?? null,
+            }
+          : null,
         nativeTemplate: r.nativeTemplate ?? null,
       }),
     )
@@ -229,11 +267,12 @@ export const brust = {
   registerWsPaths(paths: string[]): void {
     ;(native as any).napiRegisterWsPaths(paths)
   },
-  /** Set the response cache capacity (entries). Default is 1000.
-   * Safe to call at any time; if shrinking below current size, excess
-   * LRU entries are evicted. */
-  configureCache(opts: { maxEntries: number }): void {
-    ;(native as any).configureCache(opts.maxEntries)
+  /** Set the L1 response-cache and L2 page-cache capacities (entries).
+   * Default is 1000 each. Rust reconstructs both caches at the given
+   * capacities (moka fixes capacity at construction), so call this once at
+   * boot before serving begins. */
+  configureCache(opts: { maxEntries: number; pageMaxEntries: number }): void {
+    ;(native as any).configureCache(opts.maxEntries, opts.pageMaxEntries)
   },
   /** Tell Rust where to read `/_brust/islands/<file>` from. Called once at
    * boot after buildIslands() emits chunks. Path must be absolute. */
@@ -365,12 +404,19 @@ export const brust = {
     const endpoints: EndpointDef[] = opts.actions?.endpoints ?? []
 
     if (!isWorker) {
-      const { host, port, workers, cacheMaxEntries } = await loadConfig(process.cwd(), {
-        host: opts.address,
-        port: opts.port,
-      })
+      const { host, port, workers, cacheMaxEntries, cachePageMaxEntries } = await loadConfig(
+        process.cwd(),
+        {
+          host: opts.address,
+          port: opts.port,
+        },
+      )
       console.log(`[brust] main: spawning ${workers} worker threads`)
-      if (cacheMaxEntries !== undefined) this.configureCache({ maxEntries: cacheMaxEntries })
+      if (cacheMaxEntries !== undefined || cachePageMaxEntries !== undefined)
+        this.configureCache({
+          maxEntries: cacheMaxEntries ?? 1000,
+          pageMaxEntries: cachePageMaxEntries ?? 1000,
+        })
 
       // md routes present? (leaf carries `__mdSource`, attached by mdRoutes()).
       // Checked inline — no md-module import — so md-free apps never load the
@@ -883,7 +929,13 @@ export const brust = {
       // Render slots for this worker (set in serve() via the worker env). The
       // SAB scales with the slot count so each slot's disjoint sub-region keeps
       // the single-slot capacity; at K=1 this is byte-identical to before.
-      const renderSlots = Math.max(1, Number(process.env.BRUST_RENDER_SLOTS ?? 1) || 1)
+      // Normally main propagates the computed count via the worker env; the
+      // defaultRenderSlots() fallback keeps an in-process boot (env unset) in
+      // sync with the main-branch default above.
+      const renderSlots = Math.max(
+        1,
+        Number(process.env.BRUST_RENDER_SLOTS) || defaultRenderSlots(),
+      )
       const sab = new SharedArrayBuffer((opts.sabBytes ?? 256 * 1024) * renderSlots)
       const view = new Uint8Array(sab)
 

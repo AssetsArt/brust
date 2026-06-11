@@ -12,7 +12,7 @@ use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto;
 use tracing::{debug, error, info, warn};
 
-use crate::cache::response_cache::{CacheConfig, CacheKey};
+use crate::cache::response_cache::CacheKey;
 use crate::config::AppState;
 use crate::routing::routes::MatchResult;
 use crate::server::body::{ResponseBody, channel_body, empty_body};
@@ -374,7 +374,7 @@ async fn handle_request(
 ) -> Result<Response<ResponseBody>, Infallible> {
     let pool = Arc::clone(&state.pool);
     let routes = Arc::clone(&state.routes);
-    let cache = Arc::clone(&state.cache);
+    let cache = Arc::clone(&*state.cache.read());
 
     let method = req.method().as_str().to_owned();
     // path-and-query as the router expects (e.g. "/foo?a=1").
@@ -592,40 +592,135 @@ async fn handle_request(
     }
 
     // ----- general route match -----
-    let (envelope, route_id) = match routes.match_path(&method, &path, req.headers()) {
+    let (mut envelope, route_id) = match routes.match_path(&method, &path, req.headers()) {
         MatchResult::Matched { envelope, route_id } => (envelope, route_id),
         MatchResult::NoMatch => {
             return Ok(body::error_404());
         }
     };
 
-    // Cache lookup.
+    // ----- L1 cache decision: bypass (route to L2) vs prefix (L1 key) -----
+    // Assemble borrowed request data for the expression evaluator. The slices
+    // must outlive the eval, so build them here (before any await).
     let cache_config = routes.cache_for(route_id);
-    let cache_key = cache_config
-        .as_ref()
-        .map(|cfg| build_cache_key(&method, &path, cfg, req.headers()));
+    let compiled = routes.compiled_cache_for(route_id);
+
+    let mut bypassed = false;
+    let cache_key = match (&cache_config, &compiled) {
+        (Some(_cfg), Some(cc)) if cc.prefix.is_some() || cc.bypass.is_some() => {
+            // Header pairs (HeaderName is lowercase) + all cookies across every
+            // Cookie header (reuse build_request_envelope's parsing semantics).
+            let mut header_pairs: Vec<(&str, &str)> = Vec::new();
+            let mut cookie_pairs: Vec<(&str, &str)> = Vec::new();
+            let mut host = "";
+            for (name, value) in req.headers().iter() {
+                let n = name.as_str();
+                if n.is_empty() {
+                    continue;
+                }
+                let v = std::str::from_utf8(value.as_bytes()).unwrap_or("");
+                if name == http::header::COOKIE {
+                    for pair in v.split(';') {
+                        let trimmed = pair.trim();
+                        if let Some((k, val)) = trimmed.split_once('=') {
+                            cookie_pairs.push((k.trim(), val.trim()));
+                        }
+                    }
+                }
+                if name == http::header::HOST {
+                    host = v;
+                }
+                header_pairs.push((n, v));
+            }
+            // Query pairs (undecoded key=value; mirrors the L1 sorted_query).
+            let raw_query = path.split_once('?').map(|(_, q)| q).unwrap_or("");
+            let mut query_pairs: Vec<(&str, &str)> = Vec::new();
+            for pair in raw_query.split('&') {
+                if pair.is_empty() {
+                    continue;
+                }
+                match pair.split_once('=') {
+                    Some((k, v)) => query_pairs.push((k, v)),
+                    None => query_pairs.push((pair, "")),
+                }
+            }
+            let scheme = if state.tls().is_some() {
+                "https"
+            } else {
+                "http"
+            };
+            // Matched path params come straight off the envelope match_path
+            // already produced, so `param(id)` keys an L1 cache per route param.
+            let bare_path = path.split('?').next().unwrap_or(&path);
+            let param_pairs: Vec<(&str, &str)> = envelope
+                .params
+                .iter()
+                .map(|(k, v)| (k.as_ref(), *v))
+                .collect();
+            let ctx = crate::cache::key_expr::EvalCtx {
+                headers: &header_pairs,
+                cookies: &cookie_pairs,
+                query: &query_pairs,
+                params: &param_pairs,
+                method: &method,
+                host,
+                scheme,
+                path: bare_path,
+            };
+
+            let bypass_hit = match &cc.bypass {
+                None => false,
+                Some(None) => true, // always
+                Some(Some(expr)) => !expr.eval(&ctx).is_empty(),
+            };
+            if bypass_hit {
+                bypassed = true;
+                None // skip L1 read AND write
+            } else {
+                let prefix = cc.prefix.as_ref().map(|e| e.eval(&ctx)).unwrap_or_default();
+                Some(build_cache_key(&method, &path, prefix))
+            }
+        }
+        // cache configured but no prefix/bypass exprs → default L1 key (no prefix).
+        (Some(_cfg), _) => Some(build_cache_key(&method, &path, String::new())),
+        _ => None,
+    };
+
     if let Some(key) = &cache_key
         && let Some(bytes) = cache.get(key)
     {
-        // Cached bytes are a complete framed HTTP/1.1 response.
-        return Ok(body::response_from_framed_bytes(bytes));
+        // Cached bytes are a complete framed HTTP/1.1 response. Stamp the L1 hit
+        // so clients/CDNs can observe cache behaviour (`X-Brust-Cache: HIT`).
+        let mut resp = body::response_from_framed_bytes(bytes);
+        resp.headers_mut().insert(
+            http::header::HeaderName::from_static("x-brust-cache"),
+            http::HeaderValue::from_static("HIT"),
+        );
+        return Ok(resp);
     }
 
-    // Native (jinja) routes: single-chunk fast lane, never cache.
+    // Propagate the bypass decision to the worker (L2 capture/replay runs there).
+    envelope.bypassed = bypassed;
+
+    // Build the L1 write-back (single-chunk shape only). Shared between the
+    // native fast-lane and the React streaming path.
+    let cache_writeback = match (&cache_key, &cache_config) {
+        (Some(key), Some(cfg)) => Some(CacheWriteback {
+            cache: Arc::clone(&cache),
+            key: key.clone(),
+            ttl: Duration::from_secs(cfg.ttl_seconds),
+            tags: cfg.tags.clone().unwrap_or_default(),
+        }),
+        _ => None,
+    };
+
+    // Native (jinja) routes: single-chunk fast lane. Now L1-cacheable.
     if routes.native_template_for(route_id).is_some() {
-        return Ok(dispatch_single_chunk(&pool, envelope, "render").await);
+        return Ok(dispatch_single_chunk(&pool, envelope, "render", cache_writeback).await);
     }
 
     // React render: streaming-capable. Cache write-back on the single-chunk
     // (Content-Length) shape only — Suspense streams are never cached.
-    let cache_writeback = match (cache_key, cache_config) {
-        (Some(key), Some(cfg)) => Some(CacheWriteback {
-            cache,
-            key,
-            ttl: Duration::from_secs(cfg.ttl_seconds),
-        }),
-        _ => None,
-    };
     Ok(dispatch_streaming(&pool, envelope, "render", cache_writeback).await)
 }
 
@@ -634,6 +729,10 @@ struct CacheWriteback {
     cache: Arc<crate::cache::response_cache::ResponseCache>,
     key: CacheKey,
     ttl: Duration,
+    /// Static route-level L1 tags (from `CacheConfig::tags`), carried into the
+    /// L1 entry so `cache.invalidate({ tags })` can evict it. Empty for routes
+    /// that declare no tags.
+    tags: Vec<String>,
 }
 
 /// Action dispatch branch (single-chunk fast lane; never caches).
@@ -734,7 +833,7 @@ async fn handle_action(
         &headers,
     );
 
-    Ok(dispatch_single_chunk(pool, envelope, "action").await)
+    Ok(dispatch_single_chunk(pool, envelope, "action", None).await)
 }
 
 /// MCP JSON-RPC branch.
@@ -1098,6 +1197,7 @@ async fn dispatch_single_chunk<E>(
     pool: &Arc<crate::render::pool::WorkerPool>,
     envelope: E,
     label: &'static str,
+    writeback: Option<CacheWriteback>,
 ) -> Response<ResponseBody>
 where
     E: serde::Serialize,
@@ -1160,7 +1260,23 @@ where
     let (buf_ptr, _cap) = entry.dispatch.buf_slot(slot);
     let buf = unsafe { std::slice::from_raw_parts(buf_ptr, resp_len as usize) };
     match decode_fast_lane(buf) {
-        Ok((meta, body_bytes)) => crate::render::stream::response_from_meta(&meta, body_bytes),
+        Ok((meta, body_bytes)) => {
+            // L1 write-back: single-chunk only (always true here), skip when the
+            // response sets a cookie (per-client — never cache).
+            if let Some(wb) = writeback {
+                if !meta_cacheable(&meta) {
+                    tracing::warn!(
+                        label,
+                        "skipping cache write-back: response not cacheable (non-200 or Set-Cookie)"
+                    );
+                } else {
+                    let framed =
+                        crate::render::stream::build_single_response_bytes(&meta, &body_bytes);
+                    wb.cache.insert(wb.key, framed, wb.ttl, &wb.tags);
+                }
+            }
+            crate::render::stream::response_from_meta(&meta, body_bytes)
+        }
         Err(e) => {
             error!(
                 worker_id = entry.id,
@@ -1301,9 +1417,16 @@ where
                 let _ = ack.send(());
                 if is_final {
                     if let Some(wb) = cache_writeback {
-                        let framed =
-                            crate::render::stream::build_single_response_bytes(&meta, &body);
-                        wb.cache.insert(wb.key, framed, wb.ttl);
+                        if !meta_cacheable(&meta) {
+                            tracing::warn!(
+                                label,
+                                "skipping cache write-back: response not cacheable (non-200 or Set-Cookie)"
+                            );
+                        } else {
+                            let framed =
+                                crate::render::stream::build_single_response_bytes(&meta, &body);
+                            wb.cache.insert(wb.key, framed, wb.ttl, &wb.tags);
+                        }
                     }
                     return crate::render::stream::response_from_meta(&meta, body);
                 }
@@ -1341,9 +1464,16 @@ where
                     }
                 }
                 if let Some(wb) = cache_writeback {
-                    let framed =
-                        crate::render::stream::build_single_response_bytes(&meta, &buffered);
-                    wb.cache.insert(wb.key, framed, wb.ttl);
+                    if !meta_cacheable(&meta) {
+                        tracing::warn!(
+                            label,
+                            "skipping cache write-back: response not cacheable (non-200 or Set-Cookie)"
+                        );
+                    } else {
+                        let framed =
+                            crate::render::stream::build_single_response_bytes(&meta, &buffered);
+                        wb.cache.insert(wb.key, framed, wb.ttl, &wb.tags);
+                    }
                 }
                 return crate::render::stream::response_from_meta(&meta, buffered);
             }
@@ -1363,8 +1493,15 @@ where
                             match decode_fast_lane(buf) {
                                 Ok((meta, body_bytes)) => {
                                     if let Some(wb) = cache_writeback {
-                                        let framed = crate::render::stream::build_single_response_bytes(&meta, &body_bytes);
-                                        wb.cache.insert(wb.key, framed, wb.ttl);
+                                        if !meta_cacheable(&meta) {
+                                            tracing::warn!(
+                                                label,
+                                                "skipping cache write-back: response not cacheable (non-200 or Set-Cookie)"
+                                            );
+                                        } else {
+                                            let framed = crate::render::stream::build_single_response_bytes(&meta, &body_bytes);
+                                            wb.cache.insert(wb.key, framed, wb.ttl, &wb.tags);
+                                        }
                                     }
                                     return crate::render::stream::response_from_meta(&meta, body_bytes);
                                 }
@@ -1532,24 +1669,34 @@ fn spawn_chunk_pump(
     });
 }
 
-fn build_cache_key(
-    method: &str,
-    full_path: &str,
-    cfg: &CacheConfig,
-    headers: &http::HeaderMap,
-) -> CacheKey {
+fn build_cache_key(method: &str, full_path: &str, prefix: String) -> CacheKey {
     let (path_only, query) = match full_path.split_once('?') {
         Some((p, q)) => (p, q),
         None => (full_path, ""),
     };
-    let sorted_query = sort_query(query);
-    let vary_values = lookup_vary_headers(headers, &cfg.vary);
     CacheKey {
+        prefix,
         method: method.to_string(),
         path: path_only.to_string(),
-        sorted_query,
-        vary_values,
+        sorted_query: sort_query(query),
     }
+}
+
+/// True if the response meta carries a `Set-Cookie` header (case-insensitive).
+/// A response may enter the shared L1 cache only as a plain 200 WITHOUT
+/// Set-Cookie. The status gate is load-bearing: a transient loader/render
+/// failure arrives as a framed 500 through the SAME fast-lane length return as
+/// a success (`napi_render_jinja` converts errors to framed 500s instead of
+/// throwing; JS catch paths pack 500/413 the same way), so without it one
+/// flaky render would poison the cache for the full ttl_seconds. A Set-Cookie
+/// response is per-client and would leak a session cookie to the next
+/// requester.
+fn meta_cacheable(meta: &crate::render::stream::ChunkMeta) -> bool {
+    meta.status == 200
+        && !meta
+            .headers
+            .keys()
+            .any(|h| h.eq_ignore_ascii_case("set-cookie"))
 }
 
 fn sort_query(query: &str) -> String {
@@ -1596,24 +1743,6 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8(out).unwrap_or_default()
 }
 
-fn lookup_vary_headers(headers: &http::HeaderMap, vary: &[String]) -> Vec<String> {
-    if vary.is_empty() {
-        return Vec::new();
-    }
-    // HeaderMap lookup is case-insensitive, matching the old eq_ignore_ascii_case
-    // scan; the FIRST stored value is used (as the old `.find(..)` did). A
-    // non-UTF-8 value or a missing header maps to "" — identical to before.
-    vary.iter()
-        .map(|name| {
-            headers
-                .get(name)
-                .and_then(|v| std::str::from_utf8(v.as_bytes()).ok())
-                .unwrap_or("")
-                .to_string()
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1642,33 +1771,11 @@ mod tests {
     }
 
     #[test]
-    fn vary_lookup_reads_header_map() {
-        let mut hm = http::HeaderMap::new();
-        hm.insert("accept-language", "en".parse().unwrap());
-        let v = lookup_vary_headers(&hm, &["Accept-Language".to_string()]);
-        assert_eq!(v, vec!["en".to_string()]);
-        // Case-insensitive lookup + missing header → "".
-        assert_eq!(
-            lookup_vary_headers(
-                &hm,
-                &["ACCEPT-LANGUAGE".to_string(), "X-Absent".to_string()]
-            ),
-            vec!["en".to_string(), String::new()]
-        );
-    }
-
-    #[test]
-    fn build_cache_key_sorts_query_and_uses_vary() {
-        let cfg = CacheConfig {
-            ttl_seconds: 60,
-            vary: vec!["Accept-Encoding".to_string()],
-        };
-        let mut hm = http::HeaderMap::new();
-        hm.insert("accept-encoding", "gzip".parse().unwrap());
-        let key = build_cache_key("GET", "/p?b=2&a=1", &cfg, &hm);
-        assert_eq!(key.path, "/p");
-        assert_eq!(key.sorted_query, "a=1&b=2");
-        assert_eq!(key.vary_values, vec!["gzip".to_string()]);
+    fn build_cache_key_sorts_query_and_applies_prefix() {
+        let k = build_cache_key("GET", "/p?b=2&a=1", "tenant-acme".to_string());
+        assert_eq!(k.prefix, "tenant-acme");
+        assert_eq!(k.path, "/p");
+        assert_eq!(k.sorted_query, "a=1&b=2");
     }
 
     /// Regression: RenderClaim early-drop race on mid-stream client disconnect.

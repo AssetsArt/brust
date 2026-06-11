@@ -418,6 +418,178 @@ test('invalidate endpoint rejects GET and unsupported queries', async () => {
   }
 }, 15_000)
 
+test('L1 cache prefix: different cookie values key separate entries', async () => {
+  // Route /cache-prefix: cache: { ttl_seconds: 60, prefix: 'cookie(seg)' }
+  // Each distinct `seg` cookie value is a separate L1 cache entry.
+  const { port, stop } = await startServer({ workers: '1' })
+  try {
+    // --- seg=a: first request is a miss; second is a hit (identical body). ---
+    const r1a = await fetch(`http://127.0.0.1:${port}/cache-prefix`, {
+      headers: { cookie: 'seg=a' },
+    })
+    expect(r1a.status).toBe(200)
+    // Miss carries no cache header.
+    expect(r1a.headers.get('x-brust-cache')).toBeNull()
+    const bodyA = await r1a.text()
+    expect(bodyA).toMatch(/render=\d+/)
+
+    const r2a = await fetch(`http://127.0.0.1:${port}/cache-prefix`, {
+      headers: { cookie: 'seg=a' },
+    })
+    expect(r2a.status).toBe(200)
+    // Cache hit — X-Brust-Cache: HIT + same rendered body (counter frozen).
+    expect(r2a.headers.get('x-brust-cache')).toBe('HIT')
+    expect(await r2a.text()).toBe(bodyA)
+
+    // --- seg=b: different prefix key → fresh render (different body). ---
+    const r1b = await fetch(`http://127.0.0.1:${port}/cache-prefix`, {
+      headers: { cookie: 'seg=b' },
+    })
+    expect(r1b.status).toBe(200)
+    const bodyB = await r1b.text()
+    // Counter advanced: body must differ from the seg=a entry.
+    expect(bodyB).not.toBe(bodyA)
+
+    // --- seg=a again: original entry still alive in cache. ---
+    const r3a = await fetch(`http://127.0.0.1:${port}/cache-prefix`, {
+      headers: { cookie: 'seg=a' },
+    })
+    expect(await r3a.text()).toBe(bodyA)
+  } finally {
+    const exit = await stop()
+    expect(exit).toBe(0)
+  }
+}, 15_000)
+
+test('L1 cache prefix: matched path param keys separate entries', async () => {
+  // Route /cache-param/{id}: cache: { ttl_seconds: 60, prefix: 'param(id)' }
+  // Each distinct :id is a separate L1 cache entry (param() reads envelope params).
+  const { port, stop } = await startServer({ workers: '1' })
+  try {
+    const r1 = await fetch(`http://127.0.0.1:${port}/cache-param/alpha`)
+    expect(r1.status).toBe(200)
+    const alpha = await r1.text()
+    expect(alpha).toMatch(/render=\d+/)
+
+    // Same id → cache hit (counter frozen).
+    const r2 = await fetch(`http://127.0.0.1:${port}/cache-param/alpha`)
+    expect(await r2.text()).toBe(alpha)
+
+    // Different id → different prefix key → fresh render.
+    const r3 = await fetch(`http://127.0.0.1:${port}/cache-param/beta`)
+    expect(await r3.text()).not.toBe(alpha)
+
+    // Original id entry still alive.
+    const r4 = await fetch(`http://127.0.0.1:${port}/cache-param/alpha`)
+    expect(await r4.text()).toBe(alpha)
+  } finally {
+    const exit = await stop()
+    expect(exit).toBe(0)
+  }
+}, 15_000)
+
+test('L1 cache status gate: a 500 render is never cached (no poisoning)', async () => {
+  // Route /cache-flaky: cache: { ttl_seconds: 60 }; the component THROWS on its
+  // first render (→ framed 500 through the same single-chunk path as a 200).
+  // Without the status gate, the 500 would be written back under the route's
+  // L1 key and request #2 would replay it for the full TTL.
+  const { port, stop } = await startServer({ workers: '1' })
+  try {
+    const r1 = await fetch(`http://127.0.0.1:${port}/cache-flaky`)
+    expect(r1.status).toBe(500)
+    expect(r1.headers.get('x-brust-cache')).toBeNull()
+
+    // Fresh render (not a cached 500) — succeeds now.
+    const r2 = await fetch(`http://127.0.0.1:${port}/cache-flaky`)
+    expect(r2.status).toBe(200)
+    const body2 = await r2.text()
+    expect(body2).toMatch(/render=\d+/)
+
+    // The 200 IS cached: third request is a hit with the frozen body.
+    const r3 = await fetch(`http://127.0.0.1:${port}/cache-flaky`)
+    expect(r3.status).toBe(200)
+    expect(r3.headers.get('x-brust-cache')).toBe('HIT')
+    expect(await r3.text()).toBe(body2)
+  } finally {
+    const exit = await stop()
+    expect(exit).toBe(0)
+  }
+}, 15_000)
+
+test('L1 cache bypass: bypass cookie skips cache; absent cookie caches normally', async () => {
+  // Route /cache-bypass: cache: { ttl_seconds: 60, bypass: 'cookie(fresh)' }
+  // A non-empty `fresh` cookie bypasses L1 entirely (re-renders every time).
+  // No `fresh` cookie → normal L1 caching.
+  const { port, stop } = await startServer({ workers: '1' })
+  try {
+    // --- With fresh=1: two requests must produce DIFFERENT bodies (never cached). ---
+    const rb1 = await fetch(`http://127.0.0.1:${port}/cache-bypass`, {
+      headers: { cookie: 'fresh=1' },
+    })
+    expect(rb1.status).toBe(200)
+    const bypassBody1 = await rb1.text()
+    expect(bypassBody1).toMatch(/render=\d+/)
+
+    const rb2 = await fetch(`http://127.0.0.1:${port}/cache-bypass`, {
+      headers: { cookie: 'fresh=1' },
+    })
+    expect(rb2.status).toBe(200)
+    const bypassBody2 = await rb2.text()
+    // Both bypass → counter advanced → bodies differ.
+    expect(bypassBody2).not.toBe(bypassBody1)
+
+    // --- Without fresh cookie: first request is a miss; second is a hit. ---
+    const rc1 = await fetch(`http://127.0.0.1:${port}/cache-bypass`)
+    expect(rc1.status).toBe(200)
+    const cachedBody = await rc1.text()
+
+    const rc2 = await fetch(`http://127.0.0.1:${port}/cache-bypass`)
+    expect(rc2.status).toBe(200)
+    // Cache hit — body identical.
+    expect(await rc2.text()).toBe(cachedBody)
+  } finally {
+    const exit = await stop()
+    expect(exit).toBe(0)
+  }
+}, 15_000)
+
+test('L1 cache tag invalidation: cache.invalidate({ tags }) evicts L1 entries', async () => {
+  // Route /cache-tagged: cache: { ttl_seconds: 60, tags: ['grp-a'] }. Its L1
+  // entries carry the static `grp-a` tag. /cache-invalidate-tagged is an
+  // uncached sibling whose loader calls cache.invalidate({ tags: ['grp-a'] }),
+  // which now reaches the L1 response cache (previously TTL-only).
+  const { port, stop } = await startServer({ workers: '1' })
+  try {
+    // First request: miss (no cache header).
+    const r1 = await fetch(`http://127.0.0.1:${port}/cache-tagged`)
+    expect(r1.status).toBe(200)
+    expect(r1.headers.get('x-brust-cache')).toBeNull()
+    const body1 = await r1.text()
+    expect(body1).toMatch(/render=\d+/)
+
+    // Second request: HIT — identical frozen body.
+    const r2 = await fetch(`http://127.0.0.1:${port}/cache-tagged`)
+    expect(r2.status).toBe(200)
+    expect(r2.headers.get('x-brust-cache')).toBe('HIT')
+    expect(await r2.text()).toBe(body1)
+
+    // Drive invalidation from inside the app: the sibling loader calls
+    // cache.invalidate({ tags: ['grp-a'] }) → evicts the L1 entry.
+    const ri = await fetch(`http://127.0.0.1:${port}/cache-invalidate-tagged`)
+    expect(ri.status).toBe(200)
+
+    // Next request: MISS again (no cache header) and a FRESH render (counter
+    // advanced → body differs). This is the eviction we're asserting.
+    const r3 = await fetch(`http://127.0.0.1:${port}/cache-tagged`)
+    expect(r3.status).toBe(200)
+    expect(r3.headers.get('x-brust-cache')).toBeNull()
+    expect(await r3.text()).not.toBe(body1)
+  } finally {
+    const exit = await stop()
+    expect(exit).toBe(0)
+  }
+}, 15_000)
+
 // Regression (deterministic): a 405 sends `Connection: keep-alive`, so the
 // server MUST keep the socket open for the next request. It previously
 // `return`ed (closed) after the invalidate-GET 405 while advertising keep-alive

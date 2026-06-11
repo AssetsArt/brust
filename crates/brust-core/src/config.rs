@@ -17,6 +17,7 @@ use parking_lot::RwLock;
 use tokio::sync::Notify;
 
 use crate::cache::island_cache::{CacheStore, CachedIsland, MokaStore};
+use crate::cache::page_cache::PageCache;
 use crate::cache::response_cache::{CacheStats, ResponseCache};
 use crate::render::pool::WorkerPool;
 use crate::routing::action::ActionRouter;
@@ -32,9 +33,12 @@ pub struct AppState {
     /// `pub` because the binding installs the route table
     /// (`routes.install_with_config`) and the core server reads it directly.
     pub routes: Arc<RouteTable>,
-    /// `pub` because the binding resizes the response cache (`cache.resize`)
-    /// and the core server reads it directly.
-    pub cache: Arc<ResponseCache>,
+    /// `pub` because the core server snapshots the live Arc per-request
+    /// (`state.cache.read()`). Wrapped in an RwLock so `reconfigure_caches`
+    /// can swap in a fresh cache built at the operator-configured capacity
+    /// (moka fixes capacity at construction; this runs once at boot before
+    /// serving, so swapping an empty cache is safe).
+    pub cache: RwLock<Arc<ResponseCache>>,
     /// Worker-registration barrier. Crate-internal: the binding reaches it via
     /// [`AppState::ready_notify`]; the core server awaits it directly.
     pub(crate) ready: Arc<Notify>,
@@ -54,6 +58,12 @@ pub struct AppState {
     /// backend swaps in here with zero changes to the call sites. Crate-internal:
     /// the binding goes through the `island_cache_*` passthrough methods.
     pub(crate) island_cache: Arc<dyn CacheStore>,
+    /// L2 page cache (two-layer page cache): string-keyed framed-payload store
+    /// with tag invalidation. Process-global, shared across worker isolates.
+    /// Crate-internal: the binding goes through the `page_cache_*` methods.
+    /// Wrapped like `cache` so `reconfigure_caches` can swap in a fresh cache
+    /// at the operator-configured capacity (moka fixes capacity at construction).
+    pub(crate) page_cache: RwLock<Arc<PageCache>>,
     /// Crate-internal: the binding flips this via [`AppState::begin_serve`].
     pub(crate) is_serving: AtomicBool,
     /// Dev mode (set by `configure_dev_mode` from the TS dev coordinator). When
@@ -97,8 +107,12 @@ impl AppState {
             drain_done: Arc::new(Notify::new()),
             drain_timeout_ms: AtomicU64::new(10_000),
             routes: Arc::new(RouteTable::new()),
-            cache: Arc::new(ResponseCache::new()),
+            cache: RwLock::new(Arc::new(ResponseCache::new())),
             island_cache: Arc::new(MokaStore::new(1000)) as Arc<dyn CacheStore>,
+            // L1/L2 cache capacities default to 1000 and are operator-tunable via
+            // `brust.toml [cache] max_entries` / `page_max_entries`, applied at boot
+            // by `reconfigure_caches` (moka fixes capacity at construction).
+            page_cache: RwLock::new(Arc::new(PageCache::new(1000))),
             is_serving: AtomicBool::new(false),
             dev_mode: AtomicBool::new(false),
             expected_workers: AtomicU32::new(0),
@@ -289,9 +303,64 @@ impl AppState {
         self.island_cache.clear();
     }
 
+    // ----- response cache (L1) invalidation passthrough -----
+
+    pub fn response_cache_invalidate_tags(&self, tags: &[String]) {
+        let c = self.cache.read().clone();
+        c.invalidate_tags(tags);
+    }
+
+    pub fn response_cache_invalidate_path(&self, method: &str, path: &str) {
+        let c = self.cache.read().clone();
+        c.invalidate_path(method, path);
+    }
+
+    // ----- page cache (L2) passthrough -----
+
+    pub fn page_cache_get(&self, key: &str) -> Option<Vec<u8>> {
+        let pc = self.page_cache.read().clone();
+        pc.get(key)
+    }
+
+    pub fn page_cache_set(
+        &self,
+        key: &str,
+        tags: &[String],
+        ttl: Option<Duration>,
+        payload: Vec<u8>,
+    ) {
+        let pc = self.page_cache.read().clone();
+        pc.set(key, tags, ttl, payload);
+    }
+
+    pub fn page_cache_invalidate_key(&self, key: &str) {
+        let pc = self.page_cache.read().clone();
+        pc.invalidate_key(key);
+    }
+
+    pub fn page_cache_invalidate_tags(&self, tags: &[String]) {
+        let pc = self.page_cache.read().clone();
+        pc.invalidate_tags(tags);
+    }
+
+    pub fn page_cache_clear(&self) {
+        let pc = self.page_cache.read().clone();
+        pc.clear();
+    }
+
     // ----- response cache -----
 
     pub fn cache_stats(&self) -> CacheStats {
-        self.cache.stats()
+        self.cache.read().stats()
+    }
+
+    /// Rebuild both caches at the operator-configured capacities and swap them
+    /// in. moka fixes capacity at construction, so the only way to honor the
+    /// `brust.toml [cache]` knobs is to reconstruct. Called once at boot (via the
+    /// napi `configure_cache`) before serving begins, so swapping an empty cache
+    /// is safe.
+    pub fn reconfigure_caches(&self, response_max: u64, page_max: u64) {
+        *self.cache.write() = Arc::new(ResponseCache::with_capacity(response_max));
+        *self.page_cache.write() = Arc::new(PageCache::new(page_max));
     }
 }

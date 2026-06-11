@@ -94,8 +94,9 @@ pub struct ServeTuning {
     /// one-per-core. Default `min(available_parallelism, 4)` (fallback 2).
     pub worker_threads: Option<u32>,
     /// Number of render slots per Bun worker (concurrent in-flight renders per
-    /// isolate). Default 1 (single in-flight render per worker — byte-identical
-    /// to the pre-multi-slot behaviour). The COUNT reaches `register_renderer`
+    /// isolate). Default `min(cores, 16)` (set `BRUST_RENDER_SLOTS` to exceed 16
+    /// cores); slots > 1 only speed renders that await during render and are
+    /// byte-identical to slots = 1. The COUNT reaches `register_renderer`
     /// via the `BRUST_RENDER_SLOTS` worker env var set in `runtime/index.ts`; it
     /// is NOT consumed by the Rust `Tuning` struct here (the pool learns it from
     /// `dispatch.slot_count()`). Carried on `ServeTuning` only so the JS layer
@@ -297,11 +298,8 @@ pub fn register_routes(configs: Vec<String>) -> NapiResult<u32> {
 }
 
 #[napi]
-pub fn configure_cache(max_entries: u32) -> NapiResult<()> {
-    use std::num::NonZeroUsize;
-    let n = NonZeroUsize::new(max_entries as usize)
-        .ok_or_else(|| napi::Error::from_reason("cache max_entries must be > 0"))?;
-    state().cache.resize(n);
+pub fn configure_cache(max_entries: u32, page_max_entries: u32) -> NapiResult<()> {
+    state().reconfigure_caches(max_entries.max(1) as u64, page_max_entries.max(1) as u64);
     Ok(())
 }
 
@@ -504,8 +502,50 @@ pub fn island_cache_invalidate(key: Option<String>, tags: Option<Vec<String>>) {
 }
 
 #[napi]
+pub fn response_cache_invalidate(
+    tags: Option<Vec<String>>,
+    path: Option<String>,
+    method: Option<String>,
+) {
+    let s = state();
+    if let Some(t) = tags {
+        s.response_cache_invalidate_tags(&t);
+    }
+    if let Some(p) = path {
+        s.response_cache_invalidate_path(method.as_deref().unwrap_or("GET"), &p);
+    }
+}
+
+#[napi]
 pub fn island_cache_clear() {
     state().island_cache_clear();
+}
+
+#[napi]
+pub fn page_cache_get(key: String) -> Option<Buffer> {
+    state().page_cache_get(&key).map(Buffer::from)
+}
+
+#[napi]
+pub fn page_cache_set(key: String, tags: Vec<String>, ttl_ms: Option<u32>, payload: Buffer) {
+    let ttl = ttl_ms.map(|ms| std::time::Duration::from_millis(ms as u64));
+    state().page_cache_set(&key, &tags, ttl, payload.to_vec());
+}
+
+#[napi]
+pub fn page_cache_invalidate(key: Option<String>, tags: Option<Vec<String>>) {
+    let s = state();
+    if let Some(k) = key {
+        s.page_cache_invalidate_key(&k);
+    }
+    if let Some(t) = tags {
+        s.page_cache_invalidate_tags(&t);
+    }
+}
+
+#[napi]
+pub fn page_cache_clear() {
+    state().page_cache_clear();
 }
 
 #[napi]
