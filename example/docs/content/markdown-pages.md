@@ -301,10 +301,13 @@ concrete paths to prerender:
 `ssg.params` is called once at build time; it may be async (a database or CMS
 call is fine). The server loader is **unchanged** — it runs at build time for
 each concrete path with the same `params` it would receive at runtime, so data
-fetching and rendering are identical. `params` values that contain spaces or
-non-ASCII characters are URL-encoded in the crawl path and decoded back before
-the loader sees them, so `params.slug` inside the loader is always the raw
-string (`"sa wad-dee"`, not `"sa%20wad-dee"`).
+fetching and rendering are identical.
+
+One sharp edge for non-URL-safe values: the router does **not** decode path
+segments, at build time or live — `params.slug` inside the loader receives the
+**percent-encoded** form (`"sa%20wad-dee"`, not `"sa wad-dee"`). If your slugs
+can contain spaces or non-ASCII characters, `decodeURIComponent(params.slug)`
+in the loader before the lookup. Plain URL-safe slugs are unaffected.
 
 Routes with `{param}` and **no** `ssg.params` continue to be skipped — today's
 behavior is unchanged for routes you have not opted in to.

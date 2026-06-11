@@ -576,7 +576,9 @@ export async function runBuild(args: string[]): Promise<void> {
   // second import. Without the flag this is a strict no-op.
   if (parsed.ssg) {
     const { collectStaticPaths, expandDynamicRoutes, exportStatic } = await import('./ssg.ts')
-    let expanded: Awaited<ReturnType<typeof expandDynamicRoutes>>
+    // Initialized to [] so the post-catch read type-checks even where
+    // process.exit isn't narrowed to `never` (exit(1) still prevents use).
+    let expanded: Awaited<ReturnType<typeof expandDynamicRoutes>> = []
     try {
       expanded = await expandDynamicRoutes(
         (loadedRoutes ?? []) as Parameters<typeof expandDynamicRoutes>[0],
@@ -605,7 +607,7 @@ export async function runBuild(args: string[]): Promise<void> {
         .map((r) => `${r}=${counts.get(r)}`)
         .join(', ')
       const skippedDesc = skipped.length > 0 ? ` (skipped ${skipped.length}: ${reasons})` : ''
-      const expandedDesc = expandedCount > 0 ? `, expanded ${expandedCount} dynamic` : ''
+      const expandedDesc = expandedCount > 0 ? `, expanded ${expandedCount} dynamic page(s)` : ''
       console.log(
         `[brust build] ssg:     ${written.length} pages + ${navWritten.length} spa payloads${expandedDesc} → ${staticOut}${skippedDesc}`,
       )
