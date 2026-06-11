@@ -290,8 +290,8 @@ dialog.search-palette[open] {
   pointer-events: none;
   background: linear-gradient(
     180deg,
-    rgb(8 5 11 / 0.5),
-    rgb(8 5 11 / 0.4) 45%,
+    rgb(8 5 11 / 0.55),
+    rgb(8 5 11 / 0.55) 45%,
     rgb(8 5 11 / 0.72)
   );
 }

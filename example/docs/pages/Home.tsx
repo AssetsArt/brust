@@ -23,6 +23,8 @@ export default function Home() {
           tag: 'script',
           text: "(()=>{try{const t=localStorage.getItem('brust-docs-theme');if(t)document.documentElement.dataset.theme=t}catch{}})()",
         },
+        { tag: 'link', rel: 'icon', href: '/favicon.ico' },
+        { tag: 'link', rel: 'icon', type: 'image/png', href: '/favicon.png' },
       ]}
     >
       {/* ── Full-viewport grainient hero (dark in both themes) ─────────── */}
@@ -63,7 +65,7 @@ export default function Home() {
           <p className="mt-5 max-w-2xl text-xl font-medium text-white">
             A Rust-core, Bun-runtime web framework with native-first rendering.
           </p>
-          <p className="mt-3 max-w-xl text-base text-white/80">
+          <p className="mt-3 max-w-xl text-base text-white/95">
             JSX compiles ahead of time to templates the Rust server renders directly. JavaScript
             ships only where a page is actually interactive.
           </p>
