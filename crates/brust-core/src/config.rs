@@ -90,6 +90,17 @@ impl Default for AppState {
     }
 }
 
+/// L2 page-cache capacity (max entries). Operator-tunable via
+/// `BRUST_PAGE_CACHE_CAPACITY`; defaults to 1000. A non-positive / unparseable
+/// value falls back to the default.
+fn page_cache_capacity() -> u64 {
+    std::env::var("BRUST_PAGE_CACHE_CAPACITY")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(1000)
+}
+
 impl AppState {
     /// Construct a fresh state with framework defaults (empty routes/caches, a
     /// 1000-entry island cache, default `/_brust/action` prefix).
@@ -104,7 +115,10 @@ impl AppState {
             routes: Arc::new(RouteTable::new()),
             cache: Arc::new(ResponseCache::new()),
             island_cache: Arc::new(MokaStore::new(1000)) as Arc<dyn CacheStore>,
-            page_cache: PageCache::new(1000),
+            // Page (L2) cache capacity is operator-tunable via env (default 1000),
+            // matching the BRUST_WORKERS-style knobs — large pages × 1000 entries
+            // can dominate RSS, so deployments can bound it without a rebuild.
+            page_cache: PageCache::new(page_cache_capacity()),
             is_serving: AtomicBool::new(false),
             dev_mode: AtomicBool::new(false),
             expected_workers: AtomicU32::new(0),

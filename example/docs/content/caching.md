@@ -129,6 +129,14 @@ L1 is TTL-only — it expires on its own and is not key/tag-invalidated.
 - **`Set-Cookie` responses are never cached** (either layer) — a personalised
   response is never written to a shared cache.
 - Only single-chunk responses are cached; streaming/Suspense responses are not.
+- **A cache hit carries `X-Brust-Cache: HIT`** (both layers) so clients/CDNs can
+  observe cache behaviour; a miss (fresh render) has no such header.
+
+## Tuning
+
+- **`BRUST_PAGE_CACHE_CAPACITY`** (env, default `1000`) bounds the L2 page-cache
+  entry count. Large cached pages × 1000 entries can dominate RSS; lower it to
+  cap memory, or raise it on a cache-heavy deployment. Set before boot.
 
 ## Limitations
 

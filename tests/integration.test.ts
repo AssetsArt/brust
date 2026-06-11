@@ -428,6 +428,8 @@ test('L1 cache prefix: different cookie values key separate entries', async () =
       headers: { cookie: 'seg=a' },
     })
     expect(r1a.status).toBe(200)
+    // Miss carries no cache header.
+    expect(r1a.headers.get('x-brust-cache')).toBeNull()
     const bodyA = await r1a.text()
     expect(bodyA).toMatch(/render=\d+/)
 
@@ -435,7 +437,8 @@ test('L1 cache prefix: different cookie values key separate entries', async () =
       headers: { cookie: 'seg=a' },
     })
     expect(r2a.status).toBe(200)
-    // Cache hit — same rendered body (counter frozen).
+    // Cache hit — X-Brust-Cache: HIT + same rendered body (counter frozen).
+    expect(r2a.headers.get('x-brust-cache')).toBe('HIT')
     expect(await r2a.text()).toBe(bodyA)
 
     // --- seg=b: different prefix key → fresh render (different body). ---

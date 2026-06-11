@@ -689,8 +689,14 @@ async fn handle_request(
     if let Some(key) = &cache_key
         && let Some(bytes) = cache.get(key)
     {
-        // Cached bytes are a complete framed HTTP/1.1 response.
-        return Ok(body::response_from_framed_bytes(bytes));
+        // Cached bytes are a complete framed HTTP/1.1 response. Stamp the L1 hit
+        // so clients/CDNs can observe cache behaviour (`X-Brust-Cache: HIT`).
+        let mut resp = body::response_from_framed_bytes(bytes);
+        resp.headers_mut().insert(
+            http::header::HeaderName::from_static("x-brust-cache"),
+            http::HeaderValue::from_static("HIT"),
+        );
+        return Ok(resp);
     }
 
     // Propagate the bypass decision to the worker (L2 capture/replay runs there).

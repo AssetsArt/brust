@@ -688,6 +688,30 @@ function payloadHasSetCookie(payload: Uint8Array): boolean {
   }
 }
 
+// Return a copy of a framed `[meta_len:u16 BE][meta JSON][body]` payload with
+// `X-Brust-Cache: HIT` added to the meta headers — stamped on an L2 replay so a
+// cache hit is observable on the wire (mirrors the L1 hit header). On any parse
+// failure the original payload is returned unchanged (never corrupt a response).
+function withCacheHitHeader(payload: Uint8Array): Uint8Array {
+  if (payload.length < 2) return payload
+  const metaLen = (payload[0] << 8) | payload[1]
+  if (payload.length < 2 + metaLen) return payload
+  try {
+    const meta = JSON.parse(new TextDecoder().decode(payload.subarray(2, 2 + metaLen)))
+    meta.headers = { ...(meta.headers ?? {}), 'X-Brust-Cache': 'HIT' }
+    const metaBytes = new TextEncoder().encode(JSON.stringify(meta))
+    const body = payload.subarray(2 + metaLen)
+    const out = new Uint8Array(2 + metaBytes.length + body.length)
+    out[0] = (metaBytes.length >> 8) & 0xff
+    out[1] = metaBytes.length & 0xff
+    out.set(metaBytes, 2)
+    out.set(body, 2 + metaBytes.length)
+    return out
+  } catch {
+    return payload
+  }
+}
+
 export function makeRenderer(
   routes: FlatRoute[],
   view: Uint8Array,
@@ -835,13 +859,24 @@ export function makeRenderer(
         }
         if (l2Key) {
           const cached = (native as any).pageCacheGet?.(l2Key.key) as Buffer | null | undefined
-          if (cached && cached.length > 0 && cached.length <= slotView.length) {
-            // REPLAY — write framed bytes into the slot, return length (fast lane).
-            slotView.set(cached, 0)
-            return cached.length
+          if (cached && cached.length > 0) {
+            // REPLAY — stamp the framed meta with X-Brust-Cache: HIT, then write
+            // it into the slot and return its length (fast lane). Prefer the
+            // stamped payload; if the extra header tips it past the slot, fall
+            // back to the verbatim bytes; only a too-large verbatim payload
+            // falls through to a fresh render (never serve truncated bytes).
+            const stamped = withCacheHitHeader(cached)
+            const out =
+              stamped.length <= slotView.length
+                ? stamped
+                : cached.length <= slotView.length
+                  ? cached
+                  : null
+            if (out) {
+              slotView.set(out, 0)
+              return out.length
+            }
           }
-          // A cached payload too large for the slot falls through to a fresh
-          // render (never serve truncated bytes).
         }
       }
       // Capture-and-store on an L2 miss. Wraps the native success returns; a
