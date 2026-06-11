@@ -14,5 +14,8 @@ export const cache = {
    * against a stale addon built before this export existed (degrades to no-op). */
   invalidate(args: InvalidateArgs): void {
     ;(native as any).islandCacheInvalidate?.(args.key, args.tags)
+    // Fan out to the L2 page cache (same key/tag semantics). `?.` keeps a
+    // stale addon (built before page-cache bindings existed) a no-op.
+    ;(native as any).pageCacheInvalidate?.(args.key, args.tags)
   },
 }

@@ -9,6 +9,7 @@ import * as native from './index.js'
 
 beforeEach(() => {
   ;(native as any).islandCacheClear()
+  ;(native as any).pageCacheClear()
 })
 
 test('invalidate({ tags }) evicts every key carrying a tag', () => {
@@ -37,4 +38,30 @@ test('invalidate({}) is a no-op (evicts nothing)', () => {
   ;(native as any).islandCacheSet('k', ['t'], undefined, '<z/>', '{}')
   cache.invalidate({})
   expect((native as any).islandCacheGet('k')).not.toBeNull()
+})
+
+// --- L2 page cache (Task 11) — direct round-trip + cache.invalidate fan-out ---
+
+test('pageCacheSet/Get round-trips a payload', () => {
+  ;(native as any).pageCacheSet('t:1', ['grp'], 60000, Buffer.from('X'))
+  expect((native as any).pageCacheGet('t:1')?.length).toBe(1)
+})
+
+test('cache.invalidate({ tags }) fans out to the page cache', () => {
+  ;(native as any).pageCacheSet('t:1', ['grp'], 60000, Buffer.from('X'))
+  expect((native as any).pageCacheGet('t:1')?.length).toBe(1)
+
+  cache.invalidate({ tags: ['grp'] })
+
+  expect((native as any).pageCacheGet('t:1')).toBeNull()
+})
+
+test('cache.invalidate({ key }) fans out to the page cache', () => {
+  ;(native as any).pageCacheSet('p:a', [], 60000, Buffer.from('A'))
+  ;(native as any).pageCacheSet('p:b', [], 60000, Buffer.from('B'))
+
+  cache.invalidate({ key: 'p:a' })
+
+  expect((native as any).pageCacheGet('p:a')).toBeNull()
+  expect((native as any).pageCacheGet('p:b')?.length).toBe(1)
 })
