@@ -234,10 +234,17 @@ export default function Home() {
           </div>
 
           <div className="mt-14 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            {/* lead card (2×2): native rendering, with the measured number */}
-            <div className="flex flex-col justify-between rounded-[var(--radius-card)] border border-line bg-surface p-7 sm:col-span-2 lg:row-span-2">
+            {/* lead card (2×2): native rendering, with the measured number.
+                Every card is a LINK into its docs page (whole-card hit area;
+                hover = brand border + title shift via group). */}
+            <a
+              href="/docs/rendering"
+              className="group flex flex-col justify-between rounded-[var(--radius-card)] border border-line bg-surface p-7 text-fg no-underline transition-colors duration-150 hover:border-brand-300/60 sm:col-span-2 lg:row-span-2"
+            >
               <div>
-                <h3 className="text-lg font-semibold">Native rendering</h3>
+                <h3 className="text-lg font-semibold transition-colors duration-150 group-hover:text-link">
+                  Native rendering
+                </h3>
                 <p className="mt-2 max-w-[46ch] text-sm leading-relaxed text-fg-muted">
                   Pages compile ahead of time and are served as plain HTML — no hydration pass, no
                   framework runtime in the response. JavaScript ships only where you place an island
@@ -254,54 +261,84 @@ export default function Home() {
                   darwin/arm64).
                 </p>
               </div>
-            </div>
+            </a>
 
-            <div className="rounded-[var(--radius-card)] border border-line bg-surface p-6">
-              <h3 className="font-semibold">React islands</h3>
+            <a
+              href="/docs/rendering#islands"
+              className="group rounded-[var(--radius-card)] border border-line bg-surface p-6 text-fg no-underline transition-colors duration-150 hover:border-brand-300/60"
+            >
+              <h3 className="font-semibold transition-colors duration-150 group-hover:text-link">
+                React islands
+              </h3>
               <p className="mt-2 text-sm leading-relaxed text-fg-muted">
                 Hydrate one component, not the page. React mounts only inside the island hosts you
                 place.
               </p>
-            </div>
+            </a>
 
-            <div className="rounded-[var(--radius-card)] border border-line bg-surface p-6">
-              <h3 className="font-semibold">Native interactivity</h3>
+            <a
+              href="/docs/native-interactivity"
+              className="group rounded-[var(--radius-card)] border border-line bg-surface p-6 text-fg no-underline transition-colors duration-150 hover:border-brand-300/60"
+            >
+              <h3 className="font-semibold transition-colors duration-150 group-hover:text-link">
+                Native interactivity
+              </h3>
               <p className="mt-2 text-sm leading-relaxed text-fg-muted">
                 Counters, toggles, live text — small signal-driven behaviors that ship no React at
                 all.
               </p>
-            </div>
+            </a>
 
-            <div className="rounded-[var(--radius-card)] border border-line bg-surface p-6">
-              <h3 className="font-semibold">Typed actions end-to-end</h3>
+            <a
+              href="/docs/actions"
+              className="group rounded-[var(--radius-card)] border border-line bg-surface p-6 text-fg no-underline transition-colors duration-150 hover:border-brand-300/60"
+            >
+              <h3 className="font-semibold transition-colors duration-150 group-hover:text-link">
+                Typed actions end-to-end
+              </h3>
               <p className="mt-2 text-sm leading-relaxed text-fg-muted">
                 Server functions with end-to-end types; the treaty client calls them like local
                 code.
               </p>
-            </div>
+            </a>
 
-            <div className="rounded-[var(--radius-card)] border border-line bg-surface p-6">
-              <h3 className="font-semibold">Markdown pages + SSG</h3>
+            <a
+              href="/docs/markdown-pages"
+              className="group rounded-[var(--radius-card)] border border-line bg-surface p-6 text-fg no-underline transition-colors duration-150 hover:border-brand-300/60"
+            >
+              <h3 className="font-semibold transition-colors duration-150 group-hover:text-link">
+                Markdown pages + SSG
+              </h3>
               <p className="mt-2 text-sm leading-relaxed text-fg-muted">
                 Drop .md files in a folder for routed pages with nav — and a fully static build.
                 This site is one.
               </p>
-            </div>
+            </a>
 
-            <div className="rounded-[var(--radius-card)] border border-line bg-surface p-6">
-              <h3 className="font-semibold">One store across paradigms</h3>
+            <a
+              href="/docs/store"
+              className="group rounded-[var(--radius-card)] border border-line bg-surface p-6 text-fg no-underline transition-colors duration-150 hover:border-brand-300/60"
+            >
+              <h3 className="font-semibold transition-colors duration-150 group-hover:text-link">
+                One store across paradigms
+              </h3>
               <p className="mt-2 text-sm leading-relaxed text-fg-muted">
                 defineStore resolves to a single instance, so islands and native components share
                 state with no bridge code.
               </p>
-            </div>
+            </a>
 
-            <div className="rounded-[var(--radius-card)] border border-line bg-surface p-6">
-              <h3 className="font-semibold">MCP for agents</h3>
+            <a
+              href="/docs/agents"
+              className="group rounded-[var(--radius-card)] border border-line bg-surface p-6 text-fg no-underline transition-colors duration-150 hover:border-brand-300/60"
+            >
+              <h3 className="font-semibold transition-colors duration-150 group-hover:text-link">
+                MCP for agents
+              </h3>
               <p className="mt-2 text-sm leading-relaxed text-fg-muted">
                 Actions double as MCP tools and loaders as resources, served at /_brust/mcp.
               </p>
-            </div>
+            </a>
 
             {/* the ONE dark highlight card (stays dark in both themes) */}
             <a
