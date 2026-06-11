@@ -61,6 +61,9 @@ z-index.
 - The grainient hero is THE page-load moment. Everything else:
   ≤ 200ms, `--ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1)`.
 - No scroll-reveal scaffolding. Content never gated on animation.
+- ONE sanctioned continuous loop: the Home unified-store connector pulses
+  (`.connector-pulse`, 2.8s linear, CSS-only SVG stroke-dash travel).
+  Reduced motion removes the pulse stroke; the static hairline stays.
 - `prefers-reduced-motion: reduce` → grainient renders ONE frame (no RAF);
   all CSS transitions/animations forced instant.
 

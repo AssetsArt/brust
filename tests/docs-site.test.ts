@@ -7,8 +7,9 @@
 //      content/ has a static page (count-agnostic — Plan 2 grows content),
 //      plus Home, islands, css, search-index.json and the self-hosted fonts.
 //   2. Static serve (dumb in-test file server, NO brust process): Home has
-//      the grainient x-data host and NO _bootstrap.js (no islands on Home;
-//      _directives.js IS present — behaviors exist app-wide); a docs page has
+//      the grainient x-data host AND the unified-store demo (UnifiedIsland
+//      React host + UnifiedNative behavior host + connector SVG), so BOTH
+//      _bootstrap.js and _directives.js are wired; a docs page has
 //      exactly one aria-current="page", pager links, and the SearchPalette
 //      island host (content-addressed id hashed vs the example/docs cwd).
 //   3. Search-index anchor parity: the /docs/introduction index entry's
@@ -44,8 +45,16 @@ const PALETTE_ID = `SearchPalette_${createHash('sha256')
   .update('components/SearchPalette.tsx')
   .digest('hex')
   .slice(0, 8)}`
+const UNIFIED_ISLAND_ID = `UnifiedIsland_${createHash('sha256')
+  .update('components/UnifiedIsland.tsx')
+  .digest('hex')
+  .slice(0, 8)}`
 const GRAINIENT_DIRECTIVE = directiveName(
   resolve(DOCS_DIR, 'components/GrainientBackground.tsx'),
+  DOCS_DIR,
+)
+const UNIFIED_NATIVE_DIRECTIVE = directiveName(
+  resolve(DOCS_DIR, 'components/UnifiedNative.tsx'),
   DOCS_DIR,
 )
 
@@ -215,12 +224,19 @@ test('static export carries islands, css, search-index.json and fonts', async ()
 
 // ── 2. Page shape: Home + docs chrome ───────────────────────────────────────
 
-test('static Home — grainient x-data host, NO _bootstrap.js, directives wired', async () => {
+test('static Home — grainient host + unified-store demo, bootstrap AND directives wired', async () => {
   const html = await getOk(STATIC_BASE, '/')
   expect(html).toContain(`x-data="${GRAINIENT_DIRECTIVE}"`)
-  // Home hosts no islands → the hydration bootstrap must NOT be baked…
-  expect(html).not.toContain('_bootstrap')
-  // …but the directive runtime IS (behaviors exist app-wide, force-baked).
+  // DELIBERATE INVERSION of the original "NO _bootstrap.js" assertion: Home
+  // now hosts the unified-store demo, whose left panel is a React island
+  // (UnifiedIsland) — so the hydration bootstrap MUST be baked…
+  expect(html).toContain(`data-brust-island="${UNIFIED_ISLAND_ID}"`)
+  expect(html).toContain('/_brust/islands/_bootstrap.js')
+  // …alongside the demo's native side (zero-React behavior host) and the
+  // animated connector SVG between the panels and the store node.
+  expect(html).toContain(`x-data="${UNIFIED_NATIVE_DIRECTIVE}"`)
+  expect(html).toContain('connector-pulse')
+  // The directive runtime is wired as before (behaviors exist app-wide).
   expect(html).toContain('/_brust/islands/_directives.js')
 })
 
@@ -267,6 +283,7 @@ test('search-index anchors match the rendered /docs/introduction heading ids', a
 test('source boot serves Home + every md page 200', async () => {
   const home = await getOk(SOURCE_BASE, '/')
   expect(home).toContain(`x-data="${GRAINIENT_DIRECTIVE}"`)
+  expect(home).toContain(`data-brust-island="${UNIFIED_ISLAND_ID}"`)
   for (const url of mdUrls()) {
     const html = await getOk(SOURCE_BASE, url)
     expect(html).toContain(`data-brust-island="${PALETTE_ID}"`)
