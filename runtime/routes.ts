@@ -189,6 +189,23 @@ export interface RouteCacheConfig<Params = Record<string, string>> {
   tags?: string[]
 }
 
+/** SSG config — read ONLY by `brust build --ssg`. Live server / dev ignore it.
+ * See docs/superpowers/specs/2026-06-12-ssg-dynamic-params-design.md. */
+export interface RouteSsgConfig {
+  /** generateStaticParams: concrete param records to prerender. Each record
+   * must cover every `{name}` in the route's full path with a non-empty
+   * string. Sync or async. Values are URL-encoded into the crawl path. */
+  params?: () => Array<Record<string, string>> | Promise<Array<Record<string, string>>>
+  /** What non-prerendered paths do on a static host. 'none' (default) = skip
+   * → host 404 (today's behavior). 'client' = client-loader takeover
+   * (Phase B; requires `export const clientLoader` in the leaf component
+   * file, leaf must be a DEFAULT import in routes.tsx, React routes only). */
+  fallback?: 'none' | 'client'
+  /** Server-rendered loading UI baked into the fallback shell (Phase B).
+   * Renders in the leaf position with NO data. */
+  placeholder?: ComponentType
+}
+
 /** Shape returned by a middleware or by the terminal `next()` (loader + render).
  * Middleware can short-circuit by returning a RouteResponse without calling next,
  * or call next() and mutate the returned response (status, headers). */
@@ -322,6 +339,9 @@ export interface Route<Params = Record<string, string>, Data = unknown> {
   /** Opt-in cache. Cache config from the leaf only — parent's cache is
    * ignored when the route is reached as part of a chain. */
   cache?: RouteCacheConfig
+  /** Opt-in SSG behavior for dynamic-param routes (`/blog/{slug}`). Only
+   * consulted by `brust build --ssg`. */
+  ssg?: RouteSsgConfig
   /** Per-route middleware chain. Runs in declaration order; concatenated
    * with parent middlewares (parent runs before child). Cache lookup
    * still happens BEFORE any middleware (existing rule). */
