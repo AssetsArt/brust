@@ -27,8 +27,16 @@ The integration suite is `bun test tests/docs-site.test.ts` (repo root).
 
 ## Deploying to Cloudflare Pages
 
-The static export is a plain directory — no functions, no adapter. Manual
-setup in the Pages dashboard:
+The static export is a plain directory — no functions, no adapter.
+
+**Automated (the default):** `.github/workflows/docs-deploy.yml` builds and
+deploys to the `brust-docs` Pages project on every push to `main` that touches
+`example/docs/` (plus manual `workflow_dispatch` runs). It authenticates with
+the org secrets `CF_AID` (account id) and `CF_AC_TOKEN` (API token scoped
+Pages Read/Write) and uploads `example/docs/dist/static` via
+`wrangler pages deploy` — no dashboard build configuration needed.
+
+**Manual (dashboard-driven alternative):**
 
 | Setting | Value |
 |---|---|
