@@ -76,9 +76,18 @@ z-index.
 - Code (shiki dual-theme): dark vars applied by default
   (`html:not([data-theme="light"])` scope), shiki's inline light colors as-is
   under `[data-theme="light"]`.
-- Features section: asymmetric — one lead block + tight two-column list. No
-  identical icon-card grids, no uppercase tracked eyebrows, no numbered
-  section scaffolding.
+- Features section: bento card grid (nextjs.org card language in our colors)
+  — varied spans (one 2×2 lead card carrying the measured req/s number) plus
+  ONE dark highlight card (release notes link; stays dark in both themes,
+  `.bento-highlight`). Typography-led: NO icons, no uppercase tracked
+  eyebrows, no numbered section scaffolding.
+- Home blueprint guides: sections below the hero sit in `.home-guides`
+  (dashed `--line` hairlines at the content edges, md+) with `.home-fold`
+  dashed separators and `.guide-mark` circle marks at the intersections —
+  decorative, very low contrast, never inside the hero.
+- Hero copy command (`CopyCommand`): mono `bun create brustjs my-app` with a
+  click-to-copy behavior; the "Copied" hint is a text swap (≤1.2s), not an
+  animation loop.
 
 ## A11y
 

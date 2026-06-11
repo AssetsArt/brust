@@ -341,11 +341,109 @@ dialog.search-palette[open] {
   }
 }
 
+/* polylines (the md+ elbowed traces) would otherwise fill black; round
+   joins keep the elbows in the same language as the round dash caps */
+.connector-base,
+.connector-pulse {
+  fill: none;
+  stroke-linejoin: round;
+}
+
 /* the center "one store" node — tinted hairline treatment (callout family) */
 .unified-node {
   border: 1px solid color-mix(in oklch, var(--link) 45%, var(--line));
   background: color-mix(in oklch, var(--link) 8%, var(--bg));
   border-radius: var(--radius-card);
+}
+
+/* ── Home chip dressing: pin strips around the store node ─────────────────
+   Pure CSS decoration (next's "Powered By" chip): ::before/::after are the
+   left/right pin rows (where the circuit traces land), the two .chip-pins-x
+   spans are top/bottom. Hairline --line color — theme-flips with the rest. */
+
+.chip-frame {
+  position: relative;
+  display: inline-block;
+}
+
+.chip-frame::before,
+.chip-frame::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  translate: 0 -50%;
+  width: 9px;
+  height: 64%;
+  background: repeating-linear-gradient(to bottom, var(--line) 0 5px, transparent 5px 13px);
+}
+
+.chip-frame::before {
+  left: -9px;
+}
+
+.chip-frame::after {
+  right: -9px;
+}
+
+.chip-pins-x {
+  position: absolute;
+  left: 50%;
+  translate: -50% 0;
+  height: 9px;
+  width: 56%;
+  background: repeating-linear-gradient(to right, var(--line) 0 5px, transparent 5px 13px);
+}
+
+/* ── Home blueprint guides (nextjs.org guide-line flavor, sections below
+   the hero only): faint dashed hairlines in --line + small circle marks at
+   the fold/guide intersections. Decorative — md+ only, very low contrast. */
+
+.home-fold {
+  border-top: 1px dashed color-mix(in oklch, var(--line) 70%, transparent);
+}
+
+.guide-mark {
+  display: none;
+  position: absolute;
+  top: -4.5px;
+  width: 9px;
+  height: 9px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--bg);
+}
+
+.guide-mark-l {
+  left: -4.5px;
+}
+
+.guide-mark-r {
+  right: -4.5px;
+}
+
+@media (min-width: 768px) {
+  .home-guides {
+    border-inline: 1px dashed color-mix(in oklch, var(--line) 70%, transparent);
+  }
+
+  .guide-mark {
+    display: block;
+  }
+}
+
+/* ── Home bento highlight card — stays DARK in both themes (next's dark
+   release card). Brand-green tinted field + hairline; explicit light text
+   lives in the markup (text-white/75 ≥ 4.5:1 on this field). */
+
+.bento-highlight {
+  background:
+    radial-gradient(120% 110% at 85% -10%, rgb(27 207 150 / 0.18), transparent 55%),
+    #0b100e;
+  border: 1px solid rgb(70 231 180 / 0.3);
+}
+
+.bento-highlight:hover {
+  border-color: rgb(70 231 180 / 0.55);
 }
 
 /* ── Markdown prose ([data-brust-md-slot] is the md page wrapper) ─────── */
