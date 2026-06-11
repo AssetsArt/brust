@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
   collectStaticPaths,
+  expandDynamicRoutes,
   exportStatic,
   navPayloadFileFor,
   type FlatRouteLike,
@@ -87,6 +88,76 @@ test('navPayloadFileFor mirrors the client fetch URL /_brust/page<path>', () => 
   // yields '/_brust/page/', so the root payload must be the directory index.
   expect(navPayloadFileFor('/')).toBe('_brust/page/index.html')
   expect(navPayloadFileFor('/docs/intro')).toBe('_brust/page/docs/intro/index.html')
+})
+
+// ----- expandDynamicRoutes -----
+
+const ssgRoute = (
+  fullPath: string,
+  ssg?: Record<string, unknown>,
+  leafExtra: Record<string, unknown> = {},
+) => ({ fullPath, chain: [{ ...(ssg ? { ssg } : {}), ...leafExtra }] }) as FlatRouteLike
+
+test('expandDynamicRoutes appends concrete entries; pattern stays once in place', async () => {
+  const base = [ssgRoute('/blog/{slug}', { params: () => [{ slug: 'a' }, { slug: 'b' }] })]
+  const out = await expandDynamicRoutes(base)
+  expect(out.map((r) => r.fullPath)).toEqual(['/blog/{slug}', '/blog/a', '/blog/b'])
+  expect(out[1]!.chain).toBe(base[0]!.chain)
+})
+
+test('expansion URL-encodes values; multi-param patterns substitute every segment', async () => {
+  const out = await expandDynamicRoutes([
+    ssgRoute('/d/{a}/x/{b}', { params: () => [{ a: 'sa wad-dee', b: 'k/ก' }] }),
+  ])
+  expect(out[1]!.fullPath).toBe('/d/sa%20wad-dee/x/k%2F%E0%B8%81')
+})
+
+test('async params() supported; duplicates deduped', async () => {
+  const out = await expandDynamicRoutes([
+    ssgRoute('/p/{id}', { params: async () => [{ id: '1' }, { id: '1' }] }),
+  ])
+  expect(out.map((r) => r.fullPath)).toEqual(['/p/{id}', '/p/1'])
+})
+
+test('validation: missing key / empty value / non-array / params throw → Error with pattern', async () => {
+  await expect(
+    expandDynamicRoutes([ssgRoute('/b/{slug}', { params: () => [{ nope: 'x' }] })]),
+  ).rejects.toThrow(/\/b\/\{slug\}.*record #1.*'slug'/)
+  await expect(
+    expandDynamicRoutes([ssgRoute('/b/{slug}', { params: () => [{ slug: '' }] })]),
+  ).rejects.toThrow(/\/b\/\{slug\}/)
+  await expect(
+    expandDynamicRoutes([ssgRoute('/b/{slug}', { params: () => 'nope' as never })]),
+  ).rejects.toThrow(/\/b\/\{slug\}.*array/)
+  await expect(
+    expandDynamicRoutes([
+      ssgRoute('/b/{slug}', {
+        params: () => {
+          throw new Error('db down')
+        },
+      }),
+    ]),
+  ).rejects.toThrow(/\/b\/\{slug\}.*db down/)
+})
+
+test('validation: sentinel value rejected; ssg on non-dynamic path rejected; native+fallback:client rejected', async () => {
+  await expect(
+    expandDynamicRoutes([
+      ssgRoute('/b/{slug}', { params: () => [{ slug: '__brust_fallback__' }] }),
+    ]),
+  ).rejects.toThrow(/__brust_fallback__/)
+  await expect(
+    expandDynamicRoutes([ssgRoute('/static-page', { params: () => [] })]),
+  ).rejects.toThrow(/static-page.*no \{param\}/)
+  await expect(
+    expandDynamicRoutes([ssgRoute('/n/{x}', { fallback: 'client' }, { native: true })]),
+  ).rejects.toThrow(/native/)
+})
+
+test('routes without ssg pass through untouched (and dynamic ones stay skippable)', async () => {
+  const base = [ssgRoute('/'), ssgRoute('/blog/{slug}')]
+  const out = await expandDynamicRoutes(base)
+  expect(out).toEqual(base)
 })
 
 // ----- exportStatic (integration: builds the fixture app, boots the dist) -----

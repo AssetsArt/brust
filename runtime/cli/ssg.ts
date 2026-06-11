@@ -88,6 +88,81 @@ export function collectStaticPaths(flatRoutes: FlatRouteLike[]): SsgRouteDecisio
   return decisions
 }
 
+// ----- expandDynamicRoutes -----
+
+/** Reserved sentinel param value (Phase B fallback shell crawl). */
+export const SSG_FALLBACK_SENTINEL = '__brust_fallback__'
+
+/** Structural view of the leaf's ssg config (mirrors RouteSsgConfig). */
+export interface RouteSsgLike {
+  params?: () => Array<Record<string, string>> | Promise<Array<Record<string, string>>>
+  fallback?: 'none' | 'client'
+}
+type SsgChainNode = { sse?: unknown; websocket?: unknown; native?: unknown; ssg?: RouteSsgLike }
+
+const PARAM_RE = /\{([^/}]+)\}/g
+function paramNames(fullPath: string): string[] {
+  return [...fullPath.matchAll(PARAM_RE)].map((m) => m[1]!)
+}
+
+/** Expand `ssg.params()` routes into concrete prerenderable paths. The
+ * pattern route stays in its ORIGINAL list position (never re-appended);
+ * concrete entries are appended sharing the same chain reference. Throws on
+ * any validation error — build must exit 1, never a silent partial export. */
+export async function expandDynamicRoutes(flatRoutes: FlatRouteLike[]): Promise<FlatRouteLike[]> {
+  const out = [...flatRoutes]
+  for (const route of flatRoutes) {
+    const leaf = route.chain[route.chain.length - 1] as SsgChainNode | undefined
+    const ssg = leaf?.ssg
+    if (!ssg) continue
+    const names = paramNames(route.fullPath)
+    if (names.length === 0) {
+      throw new Error(
+        `ssg config on "${route.fullPath}": route has no {param} segment — remove the dead config`,
+      )
+    }
+    if (ssg.fallback === 'client' && leaf?.native) {
+      throw new Error(
+        `ssg.fallback 'client' on "${route.fullPath}": native (jinja) routes cannot client-render — use the island-fetch pattern instead`,
+      )
+    }
+    if (!ssg.params) continue
+    let records: Array<Record<string, string>>
+    try {
+      records = await ssg.params()
+    } catch (err) {
+      throw new Error(
+        `ssg.params for "${route.fullPath}" threw: ${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
+    if (!Array.isArray(records)) {
+      throw new Error(`ssg.params for "${route.fullPath}": expected an array of records`)
+    }
+    const seen = new Set<string>()
+    records.forEach((record, i) => {
+      let concrete = route.fullPath
+      for (const name of names) {
+        const v = record?.[name]
+        if (typeof v !== 'string' || v === '') {
+          throw new Error(
+            `ssg.params for "${route.fullPath}": record #${i + 1} missing non-empty '${name}'`,
+          )
+        }
+        if (v === SSG_FALLBACK_SENTINEL) {
+          throw new Error(
+            `ssg.params for "${route.fullPath}": record #${i + 1} uses the reserved value ${SSG_FALLBACK_SENTINEL}`,
+          )
+        }
+        concrete = concrete.replace(`{${name}}`, encodeURIComponent(v))
+      }
+      if (seen.has(concrete)) return
+      seen.add(concrete)
+      out.push({ fullPath: concrete, chain: route.chain })
+    })
+  }
+  return out
+}
+
 // ----- static export -----
 
 const READY_LINE = '[brust] listening on' // println! in brust-core server/mod.rs
