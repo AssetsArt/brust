@@ -183,6 +183,10 @@ export interface RouteCacheConfig<Params = Record<string, string>> {
   }) => CacheKeyResult | Promise<CacheKeyResult>
   /** Static L2 TTL (seconds); `CacheKeyResult.ttl` overrides per-entry. */
   key_ttl_seconds?: number
+  /** Static L1 invalidation tags. L1 entries cached for this route carry these
+   * tags so `cache.invalidate({ tags })` evicts them (L1 is no longer
+   * TTL-only). Route-level + static — not per-request. */
+  tags?: string[]
 }
 
 /** Shape returned by a middleware or by the terminal `next()` (loader + render).

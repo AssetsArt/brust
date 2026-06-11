@@ -525,6 +525,43 @@ test('L1 cache bypass: bypass cookie skips cache; absent cookie caches normally'
   }
 }, 15_000)
 
+test('L1 cache tag invalidation: cache.invalidate({ tags }) evicts L1 entries', async () => {
+  // Route /cache-tagged: cache: { ttl_seconds: 60, tags: ['grp-a'] }. Its L1
+  // entries carry the static `grp-a` tag. /cache-invalidate-tagged is an
+  // uncached sibling whose loader calls cache.invalidate({ tags: ['grp-a'] }),
+  // which now reaches the L1 response cache (previously TTL-only).
+  const { port, stop } = await startServer({ workers: '1' })
+  try {
+    // First request: miss (no cache header).
+    const r1 = await fetch(`http://127.0.0.1:${port}/cache-tagged`)
+    expect(r1.status).toBe(200)
+    expect(r1.headers.get('x-brust-cache')).toBeNull()
+    const body1 = await r1.text()
+    expect(body1).toMatch(/render=\d+/)
+
+    // Second request: HIT — identical frozen body.
+    const r2 = await fetch(`http://127.0.0.1:${port}/cache-tagged`)
+    expect(r2.status).toBe(200)
+    expect(r2.headers.get('x-brust-cache')).toBe('HIT')
+    expect(await r2.text()).toBe(body1)
+
+    // Drive invalidation from inside the app: the sibling loader calls
+    // cache.invalidate({ tags: ['grp-a'] }) → evicts the L1 entry.
+    const ri = await fetch(`http://127.0.0.1:${port}/cache-invalidate-tagged`)
+    expect(ri.status).toBe(200)
+
+    // Next request: MISS again (no cache header) and a FRESH render (counter
+    // advanced → body differs). This is the eviction we're asserting.
+    const r3 = await fetch(`http://127.0.0.1:${port}/cache-tagged`)
+    expect(r3.status).toBe(200)
+    expect(r3.headers.get('x-brust-cache')).toBeNull()
+    expect(await r3.text()).not.toBe(body1)
+  } finally {
+    const exit = await stop()
+    expect(exit).toBe(0)
+  }
+}, 15_000)
+
 // Regression (deterministic): a 405 sends `Connection: keep-alive`, so the
 // server MUST keep the socket open for the next request. It previously
 // `return`ed (closed) after the invalidate-GET 405 while advertising keep-alive

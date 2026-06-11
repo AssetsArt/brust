@@ -8,6 +8,7 @@ import {
   type Middleware,
 } from '../../../runtime/routes.ts'
 import { counterStream, idleStream } from './sse-streams.ts'
+import { cache } from '../../../runtime/cache.ts'
 
 // Fixture-local page copies. The test fixture is SELF-CONTAINED — it must not
 // import from any example/ app, so deleting or regenerating an example never
@@ -36,6 +37,7 @@ import Crash               from './components/Crash'
 import CrashBoundary       from './components/CrashBoundary'
 import CacheTest           from './components/CacheTest'
 import CachePrefixTest     from './components/CachePrefixTest'
+import CacheTaggedTest     from './components/CacheTaggedTest'
 import CacheParamTest      from './components/CacheParamTest'
 import CacheBypassTest     from './components/CacheBypassTest'
 import Protected           from './components/Protected'
@@ -278,6 +280,18 @@ export const routes = defineRoutes([
   { path: '/cache-prefix', Component: CachePrefixTest, cache: { ttl_seconds: 60, prefix: 'cookie(seg)' } },
   { path: '/cache-param/{id}', Component: CacheParamTest, cache: { ttl_seconds: 60, prefix: 'param(id)' } },
   { path: '/cache-bypass', Component: CacheBypassTest, cache: { ttl_seconds: 60, bypass: 'cookie(fresh)' } },
+  // L1 static tag invalidation: this route's L1 entries carry `grp-a`.
+  { path: '/cache-tagged', Component: CacheTaggedTest, cache: { ttl_seconds: 60, tags: ['grp-a'] } },
+  // Uncached sibling whose loader invalidates the `grp-a` L1 tag group (runs in
+  // the worker, where the napi binding lives). Hitting it evicts /cache-tagged.
+  {
+    path: '/cache-invalidate-tagged',
+    Component: CacheTaggedTest,
+    loader: async () => {
+      cache.invalidate({ tags: ['grp-a'] })
+      return {}
+    },
+  },
   { path: '/protected',    Component: Protected,    middleware: [authRequired] },
   { path: '/with-header',  Component: WithHeader,   middleware: [timeIt] },
 

@@ -26,6 +26,11 @@ pub struct CacheConfig {
     pub prefix: Option<String>,
     #[serde(default)]
     pub bypass: Option<BypassSpec>,
+    /// Static, route-level L1 invalidation tags. L1 entries for this route
+    /// carry these tags so `cache.invalidate({ tags })` can evict them (L1 is
+    /// no longer TTL-only). Mirrors the island/L2 tag-index pattern.
+    #[serde(default)]
+    pub tags: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -83,6 +88,12 @@ pub struct CacheStats {
 
 pub struct ResponseCache {
     inner: moka::sync::Cache<CacheKey, CachedEntry>,
+    /// tag → set of keys carrying that tag. Enables group invalidation, which
+    /// moka has no native support for. Mirrors `island_cache::MokaStore`. Stale
+    /// entries (key already evicted) are tolerated: invalidate pops a
+    /// possibly-absent key (no-op).
+    tag_index:
+        parking_lot::Mutex<std::collections::HashMap<String, std::collections::HashSet<CacheKey>>>,
     hits: AtomicU64,
     misses: AtomicU64,
     capacity: u64,
@@ -105,6 +116,7 @@ impl ResponseCache {
                 .support_invalidation_closures()
                 .expire_after(ResponseExpiry)
                 .build(),
+            tag_index: parking_lot::Mutex::new(std::collections::HashMap::new()),
             hits: AtomicU64::new(0),
             misses: AtomicU64::new(0),
             capacity,
@@ -125,7 +137,18 @@ impl ResponseCache {
         }
     }
 
-    pub fn insert(&self, key: CacheKey, response_bytes: Vec<u8>, ttl: Duration) {
+    pub fn insert(&self, key: CacheKey, response_bytes: Vec<u8>, ttl: Duration, tags: &[String]) {
+        // Ordering is load-bearing: index the tags BEFORE the moka insert. The
+        // reverse (insert then index) could leave a live, un-indexed entry if a
+        // panic hit between the two. With this order the worst case is a benign
+        // lost-invalidation (a concurrent invalidate_tags racing the insert just
+        // misses the not-yet-present key — the entry then lazy-expires via TTL).
+        if !tags.is_empty() {
+            let mut idx = self.tag_index.lock();
+            for tag in tags {
+                idx.entry(tag.clone()).or_default().insert(key.clone());
+            }
+        }
         self.inner.insert(
             key,
             CachedEntry {
@@ -171,6 +194,26 @@ impl ResponseCache {
         }
         self.inner.run_pending_tasks();
         count
+    }
+
+    /// Remove every L1 entry carrying any of the given tags. Mirrors
+    /// `island_cache::MokaStore::invalidate_tags`: collect the affected keys
+    /// under the tag-index lock, then DROP it before touching moka — moka's
+    /// `invalidate` does internal eviction-scheduling work, and holding the
+    /// Mutex across a large tag group would block every concurrent tagged
+    /// `insert`. moka invalidation is eventual, so we drive `run_pending_tasks`.
+    pub fn invalidate_tags(&self, tags: &[String]) {
+        let keys: Vec<CacheKey> = {
+            let mut idx = self.tag_index.lock();
+            tags.iter()
+                .filter_map(|t| idx.remove(t))
+                .flatten()
+                .collect()
+        };
+        for k in keys {
+            self.inner.invalidate(&k);
+        }
+        self.inner.run_pending_tasks();
     }
 
     /// Remove every entry. Hits/misses counters are NOT reset (they
@@ -228,13 +271,24 @@ mod tests {
     #[test]
     fn invalidate_path_removes_only_matching_entries() {
         let c = ResponseCache::new();
-        c.insert(key("GET", "/a", ""), b"a".to_vec(), Duration::from_secs(60));
+        c.insert(
+            key("GET", "/a", ""),
+            b"a".to_vec(),
+            Duration::from_secs(60),
+            &[],
+        );
         c.insert(
             key("GET", "/a", "x=1"),
             b"a-x".to_vec(),
             Duration::from_secs(60),
+            &[],
         );
-        c.insert(key("GET", "/b", ""), b"b".to_vec(), Duration::from_secs(60));
+        c.insert(
+            key("GET", "/b", ""),
+            b"b".to_vec(),
+            Duration::from_secs(60),
+            &[],
+        );
         c.run_pending();
 
         let removed = c.invalidate_path("GET", "/a");
@@ -248,7 +302,12 @@ mod tests {
     #[test]
     fn invalidate_path_no_match_returns_zero() {
         let c = ResponseCache::new();
-        c.insert(key("GET", "/a", ""), b"a".to_vec(), Duration::from_secs(60));
+        c.insert(
+            key("GET", "/a", ""),
+            b"a".to_vec(),
+            Duration::from_secs(60),
+            &[],
+        );
         c.run_pending();
         assert_eq!(c.invalidate_path("GET", "/missing"), 0);
         assert_eq!(c.invalidate_path("POST", "/a"), 0);
@@ -257,11 +316,75 @@ mod tests {
     }
 
     #[test]
+    fn invalidate_tags_removes_all_keyed_entries_in_group() {
+        let c = ResponseCache::new();
+        c.insert(
+            key("GET", "/a", ""),
+            b"a".to_vec(),
+            Duration::from_secs(60),
+            &["grp".to_string()],
+        );
+        c.insert(
+            key("GET", "/a", "x=1"),
+            b"a-x".to_vec(),
+            Duration::from_secs(60),
+            &["grp".to_string()],
+        );
+        c.insert(
+            key("GET", "/b", ""),
+            b"b".to_vec(),
+            Duration::from_secs(60),
+            &["other".to_string()],
+        );
+        c.run_pending();
+
+        c.invalidate_tags(&["grp".to_string()]);
+        c.run_pending();
+        assert!(c.get(&key("GET", "/a", "")).is_none());
+        assert!(c.get(&key("GET", "/a", "x=1")).is_none());
+        assert_eq!(
+            c.get(&key("GET", "/b", "")),
+            Some(b"b".to_vec()),
+            "untagged group survives"
+        );
+    }
+
+    #[test]
+    fn invalidate_tags_no_match_is_noop() {
+        let c = ResponseCache::new();
+        c.insert(
+            key("GET", "/a", ""),
+            b"a".to_vec(),
+            Duration::from_secs(60),
+            &["grp".to_string()],
+        );
+        c.run_pending();
+        c.invalidate_tags(&["missing".to_string()]);
+        c.run_pending();
+        assert_eq!(c.get(&key("GET", "/a", "")), Some(b"a".to_vec()));
+    }
+
+    #[test]
     fn clear_removes_all_entries_and_returns_count() {
         let c = ResponseCache::new();
-        c.insert(key("GET", "/a", ""), b"a".to_vec(), Duration::from_secs(60));
-        c.insert(key("GET", "/b", ""), b"b".to_vec(), Duration::from_secs(60));
-        c.insert(key("GET", "/c", ""), b"c".to_vec(), Duration::from_secs(60));
+        c.insert(
+            key("GET", "/a", ""),
+            b"a".to_vec(),
+            Duration::from_secs(60),
+            &[],
+        );
+        c.insert(
+            key("GET", "/b", ""),
+            b"b".to_vec(),
+            Duration::from_secs(60),
+            &[],
+        );
+        c.insert(
+            key("GET", "/c", ""),
+            b"c".to_vec(),
+            Duration::from_secs(60),
+            &[],
+        );
         c.run_pending();
         let removed = c.clear();
         c.run_pending();
@@ -272,7 +395,12 @@ mod tests {
     #[test]
     fn invalidate_and_clear_preserve_hits_and_misses() {
         let c = ResponseCache::new();
-        c.insert(key("GET", "/a", ""), b"a".to_vec(), Duration::from_secs(60));
+        c.insert(
+            key("GET", "/a", ""),
+            b"a".to_vec(),
+            Duration::from_secs(60),
+            &[],
+        );
         c.run_pending();
         let _ = c.get(&key("GET", "/a", "")); // hit
         let _ = c.get(&key("GET", "/missing", "")); // miss

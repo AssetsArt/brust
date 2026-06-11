@@ -46,6 +46,7 @@ export const routes = defineRoutes([
 | `bypass` | `string \| boolean` | — | The router (see below). |
 | `key` | `(ctx) => CacheKeyResult` | L2 | Programmatic key. Runs in the worker. **`native: true` routes only** (see Limitations). |
 | `key_ttl_seconds` | `number` | L2 | Static L2 TTL; `CacheKeyResult.ttl` overrides it per entry. |
+| `tags` | `string[]` | L1 | Static, route-level invalidation tags. L1 entries for this route carry them so `cache.invalidate({ tags })` can evict L1 (optional). |
 
 `CacheKeyResult` is `{ key: string; tags?: string[]; ttl?: number }`. `key` is
 the **complete** L2 cache key — you concatenate the URL and query yourself; no
@@ -106,18 +107,28 @@ install loudly, not at request time.
 
 ## Invalidation
 
-`cache.invalidate` (from `brustjs`) evicts by exact key and/or by tag group,
-across **both** the island cache and the page (L2) cache:
+`cache.invalidate` (from `brustjs`) evicts across **all three** caches — the
+island cache, the page (L2) cache, and the L1 response cache — by exact key,
+tag group, or request path:
 
 ```ts
 import { cache } from 'brustjs'
 
 // In an action / api / loader after the underlying data changes:
-cache.invalidate({ tags: ['user:42'] })   // every L2 entry carrying the tag
-cache.invalidate({ key: 'pricing:u:42' }) // one exact entry
+cache.invalidate({ tags: ['user:42'] })   // island + L2 + L1 entries carrying the tag
+cache.invalidate({ key: 'pricing:u:42' }) // one exact island/L2 entry
+cache.invalidate({ path: '/products' })   // every L1 entry for that path (any prefix/query)
 ```
 
-L1 is TTL-only — it expires on its own and is not key/tag-invalidated.
+L1 is no longer TTL-only. It is reached two ways:
+
+- **by tag** — declare static `cache.tags` on the route; its L1 entries carry
+  those tags, and `cache.invalidate({ tags })` evicts them (alongside the
+  matching island + L2 entries).
+- **by path** — `cache.invalidate({ path })` (optionally `method`) evicts every
+  L1 entry for that request path, regardless of `prefix` or query variant.
+
+A route that sets neither still relies on TTL expiry for its L1 entries.
 
 ## Behaviour notes
 

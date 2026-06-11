@@ -221,6 +221,9 @@ export const brust = {
               ttl_seconds: r.cache.ttl_seconds,
               prefix: r.cache.prefix ?? null,
               bypass: r.cache.bypass || null,
+              // Static L1 invalidation tags carried into each L1 entry so
+              // `cache.invalidate({ tags })` can reach the response cache.
+              tags: r.cache.tags ?? null,
             }
           : null,
         nativeTemplate: r.nativeTemplate ?? null,

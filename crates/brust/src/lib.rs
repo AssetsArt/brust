@@ -502,6 +502,21 @@ pub fn island_cache_invalidate(key: Option<String>, tags: Option<Vec<String>>) {
 }
 
 #[napi]
+pub fn response_cache_invalidate(
+    tags: Option<Vec<String>>,
+    path: Option<String>,
+    method: Option<String>,
+) {
+    let s = state();
+    if let Some(t) = tags {
+        s.response_cache_invalidate_tags(&t);
+    }
+    if let Some(p) = path {
+        s.response_cache_invalidate_path(method.as_deref().unwrap_or("GET"), &p);
+    }
+}
+
+#[napi]
 pub fn island_cache_clear() {
     state().island_cache_clear();
 }

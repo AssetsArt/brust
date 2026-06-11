@@ -709,6 +709,7 @@ async fn handle_request(
             cache: Arc::clone(&cache),
             key: key.clone(),
             ttl: Duration::from_secs(cfg.ttl_seconds),
+            tags: cfg.tags.clone().unwrap_or_default(),
         }),
         _ => None,
     };
@@ -728,6 +729,10 @@ struct CacheWriteback {
     cache: Arc<crate::cache::response_cache::ResponseCache>,
     key: CacheKey,
     ttl: Duration,
+    /// Static route-level L1 tags (from `CacheConfig::tags`), carried into the
+    /// L1 entry so `cache.invalidate({ tags })` can evict it. Empty for routes
+    /// that declare no tags.
+    tags: Vec<String>,
 }
 
 /// Action dispatch branch (single-chunk fast lane; never caches).
@@ -1267,7 +1272,7 @@ where
                 } else {
                     let framed =
                         crate::render::stream::build_single_response_bytes(&meta, &body_bytes);
-                    wb.cache.insert(wb.key, framed, wb.ttl);
+                    wb.cache.insert(wb.key, framed, wb.ttl, &wb.tags);
                 }
             }
             crate::render::stream::response_from_meta(&meta, body_bytes)
@@ -1420,7 +1425,7 @@ where
                         } else {
                             let framed =
                                 crate::render::stream::build_single_response_bytes(&meta, &body);
-                            wb.cache.insert(wb.key, framed, wb.ttl);
+                            wb.cache.insert(wb.key, framed, wb.ttl, &wb.tags);
                         }
                     }
                     return crate::render::stream::response_from_meta(&meta, body);
@@ -1467,7 +1472,7 @@ where
                     } else {
                         let framed =
                             crate::render::stream::build_single_response_bytes(&meta, &buffered);
-                        wb.cache.insert(wb.key, framed, wb.ttl);
+                        wb.cache.insert(wb.key, framed, wb.ttl, &wb.tags);
                     }
                 }
                 return crate::render::stream::response_from_meta(&meta, buffered);
@@ -1495,7 +1500,7 @@ where
                                             );
                                         } else {
                                             let framed = crate::render::stream::build_single_response_bytes(&meta, &body_bytes);
-                                            wb.cache.insert(wb.key, framed, wb.ttl);
+                                            wb.cache.insert(wb.key, framed, wb.ttl, &wb.tags);
                                         }
                                     }
                                     return crate::render::stream::response_from_meta(&meta, body_bytes);

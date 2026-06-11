@@ -936,6 +936,7 @@ mod tests {
                 ttl_seconds: 60,
                 prefix: Some("or(cookie(x)".into()),
                 bypass: None,
+                tags: None,
             }),
             native_template: None,
         }];
@@ -963,6 +964,7 @@ mod tests {
                 bypass: Some(crate::cache::response_cache::BypassSpec::Expr(
                     "uuid(v4)".into(),
                 )),
+                tags: None,
             }),
             native_template: None,
         }];
@@ -988,6 +990,7 @@ mod tests {
                 ttl_seconds: 60,
                 prefix: Some("cookie(tenant)".into()),
                 bypass: Some(crate::cache::response_cache::BypassSpec::Always(true)),
+                tags: None,
             }),
             native_template: None,
         }];

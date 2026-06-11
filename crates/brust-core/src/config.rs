@@ -303,6 +303,18 @@ impl AppState {
         self.island_cache.clear();
     }
 
+    // ----- response cache (L1) invalidation passthrough -----
+
+    pub fn response_cache_invalidate_tags(&self, tags: &[String]) {
+        let c = self.cache.read().clone();
+        c.invalidate_tags(tags);
+    }
+
+    pub fn response_cache_invalidate_path(&self, method: &str, path: &str) {
+        let c = self.cache.read().clone();
+        c.invalidate_path(method, path);
+    }
+
     // ----- page cache (L2) passthrough -----
 
     pub fn page_cache_get(&self, key: &str) -> Option<Vec<u8>> {
