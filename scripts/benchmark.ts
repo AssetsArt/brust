@@ -69,6 +69,7 @@ const SCENARIOS: Scenario[] = [
       BRUST_WORKER_THREADS: process.env.BRUST_WORKER_THREADS ?? '4',
       BRUST_WORKERS: process.env.BRUST_WORKERS ?? '6',
       BRUST_CONN_WORKERS: process.env.BRUST_CONN_WORKERS ?? '1024',
+      BRUST_RENDER_SLOTS: process.env.BRUST_RENDER_SLOTS ?? '10',
     },
     expectedPortLog: /listening on 127\.0\.0\.1:(\d+)/,
   },
