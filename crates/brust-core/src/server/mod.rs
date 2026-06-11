@@ -649,14 +649,19 @@ async fn handle_request(
             } else {
                 "http"
             };
-            // Path-param keying is deferred: matched params aren't readily
-            // borrowable at this site. `param()` in an L1 expr evaluates to "".
+            // Matched path params come straight off the envelope match_path
+            // already produced, so `param(id)` keys an L1 cache per route param.
             let bare_path = path.split('?').next().unwrap_or(&path);
+            let param_pairs: Vec<(&str, &str)> = envelope
+                .params
+                .iter()
+                .map(|(k, v)| (k.as_ref(), *v))
+                .collect();
             let ctx = crate::cache::key_expr::EvalCtx {
                 headers: &header_pairs,
                 cookies: &cookie_pairs,
                 query: &query_pairs,
-                params: &[],
+                params: &param_pairs,
                 method: &method,
                 host,
                 scheme,

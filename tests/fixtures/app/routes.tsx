@@ -36,6 +36,7 @@ import Crash               from './components/Crash'
 import CrashBoundary       from './components/CrashBoundary'
 import CacheTest           from './components/CacheTest'
 import CachePrefixTest     from './components/CachePrefixTest'
+import CacheParamTest      from './components/CacheParamTest'
 import CacheBypassTest     from './components/CacheBypassTest'
 import Protected           from './components/Protected'
 import WithHeader          from './components/WithHeader'
@@ -275,6 +276,7 @@ export const routes = defineRoutes([
   },
   { path: '/cache-test',   Component: CacheTest, cache: { ttl_seconds: 60 } },
   { path: '/cache-prefix', Component: CachePrefixTest, cache: { ttl_seconds: 60, prefix: 'cookie(seg)' } },
+  { path: '/cache-param/{id}', Component: CacheParamTest, cache: { ttl_seconds: 60, prefix: 'param(id)' } },
   { path: '/cache-bypass', Component: CacheBypassTest, cache: { ttl_seconds: 60, bypass: 'cookie(fresh)' } },
   { path: '/protected',    Component: Protected,    middleware: [authRequired] },
   { path: '/with-header',  Component: WithHeader,   middleware: [timeIt] },

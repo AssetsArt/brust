@@ -458,6 +458,33 @@ test('L1 cache prefix: different cookie values key separate entries', async () =
   }
 }, 15_000)
 
+test('L1 cache prefix: matched path param keys separate entries', async () => {
+  // Route /cache-param/{id}: cache: { ttl_seconds: 60, prefix: 'param(id)' }
+  // Each distinct :id is a separate L1 cache entry (param() reads envelope params).
+  const { port, stop } = await startServer({ workers: '1' })
+  try {
+    const r1 = await fetch(`http://127.0.0.1:${port}/cache-param/alpha`)
+    expect(r1.status).toBe(200)
+    const alpha = await r1.text()
+    expect(alpha).toMatch(/render=\d+/)
+
+    // Same id → cache hit (counter frozen).
+    const r2 = await fetch(`http://127.0.0.1:${port}/cache-param/alpha`)
+    expect(await r2.text()).toBe(alpha)
+
+    // Different id → different prefix key → fresh render.
+    const r3 = await fetch(`http://127.0.0.1:${port}/cache-param/beta`)
+    expect(await r3.text()).not.toBe(alpha)
+
+    // Original id entry still alive.
+    const r4 = await fetch(`http://127.0.0.1:${port}/cache-param/alpha`)
+    expect(await r4.text()).toBe(alpha)
+  } finally {
+    const exit = await stop()
+    expect(exit).toBe(0)
+  }
+}, 15_000)
+
 test('L1 cache bypass: bypass cookie skips cache; absent cookie caches normally', async () => {
   // Route /cache-bypass: cache: { ttl_seconds: 60, bypass: 'cookie(fresh)' }
   // A non-empty `fresh` cookie bypasses L1 entirely (re-renders every time).

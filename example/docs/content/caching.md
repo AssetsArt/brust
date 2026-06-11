@@ -76,7 +76,7 @@ false). For `bypass`, a non-empty result triggers the bypass.
 | `header(name)` | request header (case-insensitive) |
 | `cookie(name)` | cookie value (all `Cookie` headers scanned) |
 | `query(name)` | query-string parameter |
-| `param(name)` | matched path parameter *(reserved; see Limitations)* |
+| `param(name)` | matched path parameter (e.g. `:id`) |
 | `request(field)` | `host` \| `method` \| `scheme` \| `path` |
 | `env(NAME)` | environment variable (read once at boot) |
 
@@ -137,9 +137,6 @@ L1 is TTL-only — it expires on its own and is not key/tag-invalidated.
   channel, so a `key` on a React route is not yet honoured (the route still
   renders, just uncached by L2). L1 (`prefix`/`bypass`) works on both native and
   React routes.
-- **`param()` is reserved.** Path-param keying is not yet wired; `param(name)`
-  currently evaluates to `""`. Use `prefix`/`key` with cookies/headers/query, or
-  build the path into an L2 `key`.
 - **No `vary`.** The former `cache.vary` array is gone — `prefix` subsumes it:
   `vary: ['accept-language']` → `prefix: 'header(accept-language)'`.
 - **No `${...}` interpolation.** Each field is one bare expression; use
