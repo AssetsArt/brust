@@ -94,8 +94,9 @@ pub struct ServeTuning {
     /// one-per-core. Default `min(available_parallelism, 4)` (fallback 2).
     pub worker_threads: Option<u32>,
     /// Number of render slots per Bun worker (concurrent in-flight renders per
-    /// isolate). Default 1 (single in-flight render per worker — byte-identical
-    /// to the pre-multi-slot behaviour). The COUNT reaches `register_renderer`
+    /// isolate). Default `min(cores, 16)` (set `BRUST_RENDER_SLOTS` to exceed 16
+    /// cores); slots > 1 only speed renders that await during render and are
+    /// byte-identical to slots = 1. The COUNT reaches `register_renderer`
     /// via the `BRUST_RENDER_SLOTS` worker env var set in `runtime/index.ts`; it
     /// is NOT consumed by the Rust `Tuning` struct here (the pool learns it from
     /// `dispatch.slot_count()`). Carried on `ServeTuning` only so the JS layer
