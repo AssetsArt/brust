@@ -29,15 +29,10 @@ export interface DocsPagerLink {
 
 export interface DocsChrome {
   nav: DocsNavGroup[]
-  /** `hasPrev`/`hasNext` are the inline-conditional TESTS for the layout: a
-   * native cond test on `pager.prev` itself would infer the member as a
-   * scalar and conflict with the deeper `pager.prev.path`/`.title` reads
-   * (compiler PropTypeConflict) — so the booleans are precomputed siblings.
-   * `prev`/`next` are ALWAYS present (empty-string sentinels when absent):
-   * non-optional keeps the layout's `pager.prev.path` reads type-safe, and
-   * the native compiler can't lower optional chaining (`pager?.prev?.path`
-   * broke the build once — only plain member paths compile). */
-  pager: { hasPrev: boolean; hasNext: boolean; prev: DocsPagerLink; next: DocsPagerLink }
+  /** `prev`/`next` are optional — the layout tests the member directly
+   * (`{pager.prev && <a href={pager.prev.path}>}`); the native compiler now
+   * allows a truthiness test on a member alongside deeper reads of it. */
+  pager: { prev?: DocsPagerLink; next?: DocsPagerLink }
 }
 
 /** Strip the query string and any trailing slash (except root) so the loader
@@ -62,19 +57,10 @@ export function buildDocsChrome(path: string, contentDir = 'content'): DocsChrom
   }))
   const flat = nav.flatMap((g) => g.items)
   const idx = flat.findIndex((i) => i.active)
-  const pager: DocsChrome['pager'] = {
-    hasPrev: false,
-    hasNext: false,
-    prev: { title: '', path: '' },
-    next: { title: '', path: '' },
-  }
-  if (idx > 0) {
-    pager.hasPrev = true
-    pager.prev = { title: flat[idx - 1].title, path: flat[idx - 1].path }
-  }
-  if (idx !== -1 && idx < flat.length - 1) {
-    pager.hasNext = true
-    pager.next = { title: flat[idx + 1].title, path: flat[idx + 1].path }
-  }
+  const pager: DocsChrome['pager'] = {}
+  const prev = idx > 0 ? flat[idx - 1] : undefined
+  if (prev) pager.prev = { title: prev.title, path: prev.path }
+  const next = idx !== -1 && idx < flat.length - 1 ? flat[idx + 1] : undefined
+  if (next) pager.next = { title: next.title, path: next.path }
   return { nav, pager }
 }

@@ -3,13 +3,14 @@
 // public/search-index.json so the file exists in dev, in dist/public (build.ts
 // imports routes.tsx BEFORE the public copy), and in SSG output.
 //
-// scanMdDir is NOT public brustjs API — relative import into the framework
-// repo (logged in FRAMEWORK-GAPS.md: "no public md scan/slug export").
+// The md scanner, url mapper, and heading slugger are PUBLIC on `brustjs/routes`
+// — the index builds on the same scan/slug brust uses internally, so anchors
+// can't drift from the rendered heading ids (no more verbatim copies).
 // Known caveat (accepted, spec §Search index): regenerates per boot/build,
 // not on md hot-edit — restart picks edits up.
 import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { scanMdDir } from '../../../runtime/md/scan.ts'
+import { mdUrlPath, scanMdDir, slugifyHeading } from 'brustjs/routes'
 
 export interface SearchHeading {
   text: string
@@ -20,19 +21,6 @@ export interface SearchEntry {
   title: string
   path: string
   headings: SearchHeading[]
-}
-
-/**
- * Copied VERBATIM from runtime/md/render.ts:400-406 (`slugify`) — anchors in
- * the index MUST byte-match the ids render.ts stamps on <h2>/<h3>. `\w` is
- * ASCII-only there too (non-ascii heading text strips to nothing).
- */
-export function slugify(text: string): string {
-  return text
-    .toLowerCase()
-    .trim()
-    .replace(/\s+/g, '-')
-    .replace(/[^\w-]/g, '')
 }
 
 /**
@@ -104,28 +92,13 @@ export function extractHeadings(body: string): SearchHeading[] {
     const depth = (m[1] as string).length
     const text = plainHeadingText((m[2] as string).replace(/\s+#+\s*$/, ''))
 
-    const base = slugify(text)
+    const base = slugifyHeading(text)
     const seen = slugCounts.get(base) ?? 0
     slugCounts.set(base, seen + 1)
     const anchor = seen === 0 ? base : `${base}-${seen + 1}`
     if (depth === 2 || depth === 3) out.push({ text, anchor })
   }
   return out
-}
-
-/**
- * relPath → URL. Mapping rules copied from runtime/md/routes.ts:28-36
- * (`mdUrlPath`, not public API): strip `.md`, `index` → the prefix itself,
- * `a/index` → `<prefix>/a`, otherwise `<prefix>/<route>`.
- */
-function urlPath(relPath: string, prefix: string): string {
-  let base = prefix.replace(/\/+$/, '')
-  if (base !== '' && !base.startsWith('/')) base = `/${base}`
-  let route = relPath.replace(/\.md$/, '')
-  if (route === 'index') route = ''
-  else if (route.endsWith('/index')) route = route.slice(0, -'/index'.length)
-  const url = route === '' ? base : `${base}/${route}`
-  return url === '' ? '/' : url
 }
 
 export interface GenerateSearchIndexOptions {
@@ -153,7 +126,7 @@ export function generateSearchIndex(opts: GenerateSearchIndexOptions = {}): Sear
         typeof f.frontmatter.title === 'string'
           ? f.frontmatter.title
           : (f.relPath.replace(/\.md$/, '').split('/').pop() ?? f.relPath),
-      path: urlPath(f.relPath, prefix),
+      path: mdUrlPath(f.relPath, prefix),
       headings: extractHeadings(f.body),
     }))
     mkdirSync(path.dirname(outFile), { recursive: true })

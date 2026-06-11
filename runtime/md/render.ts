@@ -1,4 +1,7 @@
 import { Marked, type Tokens } from 'marked'
+// Heading slugger shared with the public `brustjs/routes` export so a consumer's
+// anchors can't drift from the ids we stamp here (FRAMEWORK-GAPS G1).
+import { slugifyHeading as slugify } from './slug.ts'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -396,14 +399,6 @@ function scanBalancedBraces(text: string, start: number): number {
 // ---------------------------------------------------------------------------
 // Markdown → HTML (marked, GFM, heading ids, shiki fences)
 // ---------------------------------------------------------------------------
-
-function slugify(text: string): string {
-  return text
-    .toLowerCase()
-    .trim()
-    .replace(/\s+/g, '-')
-    .replace(/[^\w-]/g, '')
-}
 
 async function renderMarkdown(source: string): Promise<string> {
   // Fresh instance per page: heading-id dedupe state is page-local.

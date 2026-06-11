@@ -7,13 +7,11 @@
 //   __md.{title,description} — from the md leaf's generated loader (head)
 //   nav / pager             — from the layout loader (lib/nav.ts, task 1.3)
 //
-// aria-current: the compiler rejects ternaries in ATTRIBUTE position
-// (lower_expr → ComplexExpressionNotSupported), so the ergonomic
-// `aria-current={item.active ? 'page' : undefined}` cannot compile. Binding a
-// precomputed string would render `aria-current=""` on every inactive link.
-// Instead the `.map` body uses the supported PER-ITEM TERNARY with two
-// element branches (`item.active ? <a aria-current="page"…> : <a…>`), which
-// omits the attribute entirely on inactive items. See FRAMEWORK-GAPS.md.
+// aria-current uses a CONDITIONAL ATTRIBUTE — `aria-current={item.active ?
+// 'page' : undefined}` — the `undefined` branch omits the attribute on
+// inactive links (no `aria-current=""`). The pager tests the optional member
+// directly (`{pager.prev && <a href={pager.prev.path}>}`). Both compile on
+// native routes now (no per-item-ternary or sentinel workaround needed).
 import { BrustPage, Island, Outlet } from 'brustjs'
 import type { DocsChrome } from '../lib/nav.ts'
 import NavPreloader from './NavPreloader'
@@ -107,22 +105,15 @@ export default function DocsLayout({
               <ul className="flex flex-col gap-0.5">
                 {group.items.map((item) => (
                   <li key={item.path}>
-                    {item.active ? (
-                      <a
-                        href={item.path}
-                        aria-current="page"
-                        className="block rounded-[var(--radius-control)] px-2.5 py-1.5 text-fg-muted no-underline transition-colors hover:text-fg"
-                      >
-                        {item.title}
-                      </a>
-                    ) : (
-                      <a
-                        href={item.path}
-                        className="block rounded-[var(--radius-control)] px-2.5 py-1.5 text-fg-muted no-underline transition-colors hover:text-fg"
-                      >
-                        {item.title}
-                      </a>
-                    )}
+                    {/* Single anchor with a CONDITIONAL attribute — the `undefined`
+                        branch omits aria-current entirely on inactive links. */}
+                    <a
+                      href={item.path}
+                      aria-current={item.active ? 'page' : undefined}
+                      className="block rounded-[var(--radius-control)] px-2.5 py-1.5 text-fg-muted no-underline transition-colors hover:text-fg"
+                    >
+                      {item.title}
+                    </a>
                   </li>
                 ))}
               </ul>
@@ -137,8 +128,10 @@ export default function DocsLayout({
           <main id="content">
             <Outlet />
 
+            {/* Cond TEST on the optional member itself, with deeper reads in the
+                body — no precomputed boolean siblings needed. */}
             <footer className="mt-12 flex max-w-[72ch] items-stretch justify-between gap-4 border-t border-line pt-6">
-              {pager.hasPrev && (
+              {pager.prev && (
                 <a
                   href={pager.prev.path}
                   rel="prev"
@@ -148,7 +141,7 @@ export default function DocsLayout({
                   <span className="font-medium text-link">{pager.prev.title}</span>
                 </a>
               )}
-              {pager.hasNext && (
+              {pager.next && (
                 <a
                   href={pager.next.path}
                   rel="next"

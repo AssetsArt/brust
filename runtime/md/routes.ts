@@ -60,6 +60,13 @@ export interface MdRoutesOptions {
   layout?: ComponentType<any>
   /** Component-tag registry for `<Name />` tags inside the md body. */
   components?: Record<string, ComponentType<any>>
+  /** Loader for the LAYOUT parent route — runs before each md leaf renders and
+   * its data merges into the leaf's context top-down (so it feeds the layout
+   * chrome: sidebar, pager, …). Only applies when `layout` is set. Return keys
+   * that DON'T collide with the leaf's `__md` head metadata, which must win.
+   * Without this, the layout loader had to be attached by mutating the returned
+   * route node (`tree.loader = …`) — undocumented surface (was FRAMEWORK-GAPS G2). */
+  loader?: Route['loader']
 }
 
 /** One frozen-manifest entry (everything route construction needs per page).
@@ -270,7 +277,15 @@ export function mdRoutes(contentDir: string, opts: MdRoutesOptions = {}): Route[
   })
 
   if (opts.layout === undefined) return leaves
-  return [{ path: basePath, native: true, Component: opts.layout, children: leaves }]
+  const layoutRoute: Route = {
+    path: basePath,
+    native: true,
+    Component: opts.layout,
+    children: leaves,
+  }
+  // First-class layout loader (was a post-hoc `tree.loader = …` mutation).
+  if (opts.loader !== undefined) layoutRoute.loader = opts.loader
+  return [layoutRoute]
 }
 
 /** Strip the mount base off a full url path (index page → `''`, which

@@ -125,5 +125,3 @@ stacks remain in the `--font-sans`/`--font-mono` tokens as fallback.
 ## Project context
 
 - `PRODUCT.md` / `DESIGN.md` — product framing and the binding visual system.
-- `FRAMEWORK-GAPS.md` — framework gaps found while dogfooding (this site files
-  gaps instead of patching `runtime/`).

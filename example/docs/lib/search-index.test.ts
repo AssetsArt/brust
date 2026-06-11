@@ -2,7 +2,8 @@ import { describe, expect, test } from 'bun:test'
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { extractHeadings, generateSearchIndex, slugify } from './search-index.ts'
+import { slugifyHeading } from 'brustjs/routes'
+import { extractHeadings, generateSearchIndex } from './search-index.ts'
 
 // ---------------------------------------------------------------------------
 // Slug parity — expected ids are copied VERBATIM from a real renderMdPage()
@@ -46,12 +47,12 @@ const PARITY_EXPECTED = [
   { text: 'ครอบจักรวาล non-ascii', anchor: '-non-ascii' },
 ]
 
-describe('slugify (render.ts parity)', () => {
+describe('slugifyHeading (public brustjs/routes export — the SAME slugger render.ts uses)', () => {
   test('matches the render.ts algorithm on plain text', () => {
-    expect(slugify('Page Title')).toBe('page-title')
-    expect(slugify('  Install & Run  ')).toBe('install--run')
-    expect(slugify('frontmatter.title (v1.2)')).toBe('frontmattertitle-v12')
-    expect(slugify('ครอบจักรวาล non-ascii')).toBe('-non-ascii')
+    expect(slugifyHeading('Page Title')).toBe('page-title')
+    expect(slugifyHeading('  Install & Run  ')).toBe('install--run')
+    expect(slugifyHeading('frontmatter.title (v1.2)')).toBe('frontmattertitle-v12')
+    expect(slugifyHeading('ครอบจักรวาล non-ascii')).toBe('-non-ascii')
   })
 })
 

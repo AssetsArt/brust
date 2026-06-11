@@ -385,6 +385,37 @@ pub(crate) fn emit_expr_path(e: &Expr) -> String {
 /// emitted the tag name and an implicit space-prefix is added here).
 fn emit_attr(a: &JsxAttr, out: &mut String) {
     match &a.value {
+        // Conditional attribute (G3): wrap each present branch in `{% if %}`.
+        // A `None` branch emits nothing → the attribute is omitted there, so
+        // `aria-current={active ? 'page' : undefined}` →
+        // `{% if active %} aria-current="page"{% endif %}`.
+        AttrValue::Cond {
+            test,
+            if_value,
+            else_value,
+        } => {
+            let _ = write!(out, "{{% if {} %}}", emit_expr_path(test));
+            if let Some(v) = if_value {
+                emit_attr(
+                    &JsxAttr {
+                        name: a.name.clone(),
+                        value: (**v).clone(),
+                    },
+                    out,
+                );
+            }
+            if let Some(v) = else_value {
+                out.push_str("{% else %}");
+                emit_attr(
+                    &JsxAttr {
+                        name: a.name.clone(),
+                        value: (**v).clone(),
+                    },
+                    out,
+                );
+            }
+            out.push_str("{% endif %}");
+        }
         AttrValue::Empty => {
             out.push(' ');
             out.push_str(&a.name);

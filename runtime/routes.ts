@@ -31,7 +31,7 @@ import { validate } from './standard-schema.ts'
 // surface — apps spread `...mdRoutes('content/docs', …)` into defineRoutes and
 // render sidebars from `mdNav(...)`. Re-exported here so user code never
 // imports runtime-internal paths.
-export { mdNav, mdRoutes } from './md/routes.ts'
+export { mdNav, mdRoutes, mdUrlPath } from './md/routes.ts'
 export type {
   MdNavGroup,
   MdNavItem,
@@ -39,6 +39,12 @@ export type {
   MdRoutesOptions,
   MdRouteSource,
 } from './md/routes.ts'
+// Lower-level md building blocks — the directory scanner and the heading
+// slugger — so consumers (search indexers, sitemaps) build on the SAME
+// scan/slug brust uses internally instead of copying it (FRAMEWORK-GAPS G1).
+export { scanMdDir } from './md/scan.ts'
+export type { MdFile } from './md/scan.ts'
+export { slugifyHeading } from './md/slug.ts'
 
 // S2 + B3 — unified per-request scope. The request scope (B3 cookies/context) is
 // the OUTERMOST layer, then the request-scoped loader cache/dedupe (S2: one Map
