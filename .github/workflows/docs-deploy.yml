@@ -34,6 +34,10 @@ jobs:
       # Plain install (not --frozen-lockfile) — same rationale as ci.yml: the
       # brust-<platform> optionalDependencies resolve differently per runner.
       - run: bun install
+      # @napi-rs/cli lives in runtime/, not the root (root is not a Bun
+      # workspace) — same extra install ci.yml does before build:debug.
+      - name: Install runtime build deps (@napi-rs/cli)
+        run: cd runtime && bun install
 
       # The docs build compiles native templates through the napi addon
       # (compileJsx) — build it first, debug profile is fine for build tooling.
