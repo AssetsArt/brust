@@ -16,6 +16,7 @@
 // omits the attribute entirely on inactive items. See FRAMEWORK-GAPS.md.
 import { BrustPage, Outlet } from 'brustjs'
 import type { DocsChrome } from '../lib/nav.ts'
+import ThemeToggle from './ThemeToggle'
 
 export default function DocsLayout({
   __md,
@@ -25,7 +26,19 @@ export default function DocsLayout({
   __md: { title?: string; description?: string }
 } & DocsChrome) {
   return (
-    <BrustPage title={__md.title} description={__md.description}>
+    <BrustPage
+      title={__md.title}
+      description={__md.description}
+      // pre-paint FOUC killer: stamp data-theme from localStorage before first
+      // paint. Static-literal text (compiler requirement) — the same one-liner
+      // lives in Home's shell; keep both in sync.
+      head={[
+        {
+          tag: 'script',
+          text: "(()=>{try{const t=localStorage.getItem('brust-docs-theme');if(t)document.documentElement.dataset.theme=t}catch{}})()",
+        },
+      ]}
+    >
       <a
         href="#content"
         className="sr-only focus:not-sr-only focus:block focus:bg-accent focus:px-5 focus:py-3 focus:text-sm focus:font-medium focus:text-accent-fg"
@@ -51,8 +64,7 @@ export default function DocsLayout({
             </a>
           </nav>
           <div className="ml-auto flex items-center gap-2">
-            {/* ThemeToggle host lands in task 1.4 */}
-            <span data-slot="theme-toggle" />
+            <ThemeToggle native />
             {/* SearchPalette host lands in task 1.6 */}
             <span data-slot="search-palette" />
           </div>

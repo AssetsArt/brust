@@ -19,7 +19,7 @@ Scene: developers reading docs at night next to an editor → dark is the
 | `--fg-muted` | `oklch(0.72 0.012 170)` | `oklch(0.45 0.01 170)` | secondary text; still ≥ 4.5:1 |
 | `--line` | `oklch(0.30 0.014 170)` | `oklch(0.88 0 0)` | hairlines, table borders, callout borders |
 | `--link` | `oklch(0.85 0.13 165)` (`#46e7b4`-class) | `oklch(0.46 0.09 168)` (`#0d684b`-class) | brand green, theme-flipped |
-| `--accent` | `oklch(0.58 0.115 168)` (`#139069`) | same | solid CTA fill, both themes |
+| `--accent` | `oklch(0.52 0.11 168)` (`#139069`-class, darkened) | same | solid CTA fill, both themes. Darkened a step from raw `#139069`: white text on `#139069` measures ≈4.0:1, under the binding 4.5:1; at L 0.52 `--accent-fg` clears it |
 | `--accent-fg` | `oklch(0.985 0 0)` | same | text on `--accent` |
 
 Grainient trio (WebGL uniforms, NOT CSS): `#1bcf96 / #27aeff / #08050b` —
