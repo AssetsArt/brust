@@ -49,7 +49,7 @@ export default function Home() {
             className="glass-pill flex items-center gap-1 rounded-full py-1.5 pr-1.5 pl-5 text-sm"
           >
             <a href="/" className="mr-3 text-base font-bold tracking-tight text-white no-underline">
-              brust
+              Brust
             </a>
             <a
               href="/docs"
@@ -71,7 +71,7 @@ export default function Home() {
 
         {/* hero copy */}
         <div className="relative mx-auto flex min-h-screen w-full max-w-4xl flex-col items-center justify-center px-6 py-28 text-center">
-          <h1 className="text-hero font-bold tracking-tight text-brand-300">brust</h1>
+          <h1 className="text-hero font-bold tracking-tight text-brand-300">Brust</h1>
           <p className="mt-5 max-w-2xl text-xl font-medium text-white">One core. Every paradigm.</p>
           <p className="mt-3 max-w-xl text-base text-white/95">
             Server pages, React islands, and native interactions all read and write one shared
