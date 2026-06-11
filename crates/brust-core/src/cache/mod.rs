@@ -2,6 +2,7 @@
 //! cache (`island_cache`).
 
 pub mod island_cache;
+pub mod key_expr;
 pub mod response_cache;
 
 pub use island_cache::{CacheStore, CachedIsland};
