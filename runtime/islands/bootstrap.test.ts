@@ -3,6 +3,7 @@
 import { test, expect, afterAll, beforeAll, beforeEach, mock } from 'bun:test'
 import { Window } from 'happy-dom'
 import { getNavState, subscribe, __resetNavForTest } from '../navigation/store.ts'
+import { __resetPageCacheForTest, setCachedPage } from './page-cache.ts'
 
 // isInternalLink and hydrateMarkersIn are imported lazily (after DOM is up)
 // via a module-level variable populated in beforeAll.
@@ -17,6 +18,7 @@ let hydrateOne: (el: HTMLElement) => Promise<void>
 let unmountIslandsIn: (root: ParentNode) => void
 let navigate: (url: URL, mode: 'push' | 'replace' | 'none') => Promise<void>
 let isFullDocumentPayload: (html: string) => boolean
+let prefetchUrlFor: (a: HTMLAnchorElement) => URL | null
 
 // react-dom/client is a STATIC top-level binding in bootstrap.ts, so the mock
 // must be registered before `await import('./bootstrap')` runs (below) for it
@@ -33,6 +35,9 @@ beforeEach(() => {
   renderSpy.mockClear()
   createRootSpy.mockClear()
   hydrateRootSpy.mockClear()
+  // The page cache is module-level state shared across tests in this file —
+  // reset so one test's cached navigations don't mask another's fetch asserts.
+  __resetPageCacheForTest()
 })
 
 // The navigate() tests below replace globalThis.fetch with a json-only stub.
@@ -87,6 +92,7 @@ beforeAll(async () => {
   unmountIslandsIn = mod.unmountIslandsIn
   navigate = mod.navigate
   isFullDocumentPayload = mod.isFullDocumentPayload
+  prefetchUrlFor = mod.prefetchUrlFor
 })
 
 function makeLink(
@@ -349,6 +355,89 @@ test('navigate mode: replace → replaceState, none → no history write, push �
   expect(replace).toHaveBeenCalledTimes(1)
   await navigate(new URL('http://localhost/c'), 'none')
   expect(push).toHaveBeenCalledTimes(1) // unchanged by 'none'
+})
+
+test('navigate() serves a revisited page from the in-memory cache (no refetch)', async () => {
+  __resetNavForTest()
+  document.body.innerHTML = '<main></main>'
+  const fetchSpy = mock(async (input: unknown) => {
+    const path = String(input)
+    return {
+      ok: true,
+      json: async () => ({ html: `<p>page:${path}</p>`, title: 'T' }),
+    }
+  })
+  ;(globalThis as Record<string, unknown>).fetch = fetchSpy
+  await navigate(new URL('http://localhost/cache-a'), 'push')
+  expect(fetchSpy).toHaveBeenCalledTimes(1)
+  await navigate(new URL('http://localhost/cache-b'), 'push')
+  expect(fetchSpy).toHaveBeenCalledTimes(2)
+  // Revisit /cache-a: swapped from cache, NO third fetch.
+  await navigate(new URL('http://localhost/cache-a'), 'push')
+  expect(fetchSpy).toHaveBeenCalledTimes(2)
+  expect(document.querySelector('main')!.textContent).toContain('/_brust/page/cache-a')
+  expect(getNavState().path).toBe('/cache-a')
+  expect(getNavState().phase).toBe('success')
+})
+
+test('navigate() does NOT re-apply the store snapshot when serving from cache', async () => {
+  __resetNavForTest()
+  document.body.innerHTML = '<main></main>'
+  const setSpy = mock((_v: unknown) => {})
+  ;(window as unknown as Record<string, unknown>).__BRUST_STORES__ = {
+    counter: { instance: { n: { set: setSpy } } },
+  }
+  try {
+    // Only /snap carries a snapshot — otherwise the /elsewhere hop would
+    // legitimately apply its own (fresh) snapshot and muddy the count.
+    ;(globalThis as Record<string, unknown>).fetch = mock(async (input: unknown) => ({
+      ok: true,
+      json: async () =>
+        String(input).includes('/snap')
+          ? { html: '<p>snap</p>', title: 'T', store: { counter: { n: 1 } } }
+          : { html: '<p>other</p>', title: 'T' },
+    }))
+    await navigate(new URL('http://localhost/snap'), 'push')
+    expect(setSpy).toHaveBeenCalledTimes(1) // fresh payload applies the snapshot
+    await navigate(new URL('http://localhost/elsewhere'), 'push')
+    await navigate(new URL('http://localhost/snap'), 'push')
+    // Cached replay must NOT roll live client store state back to the stale snapshot.
+    expect(setSpy).toHaveBeenCalledTimes(1)
+  } finally {
+    delete (window as unknown as Record<string, unknown>).__BRUST_STORES__
+  }
+})
+
+test('popstate (mode none) reuses a cached entry regardless of age', async () => {
+  __resetNavForTest()
+  document.body.innerHTML = '<main></main>'
+  const fetchSpy = mock(async () => ({
+    ok: true,
+    json: async () => ({ html: '<p>fresh</p>', title: 'T' }),
+  }))
+  ;(globalThis as Record<string, unknown>).fetch = fetchSpy
+  // Seed an entry that is far past PAGE_STALE_MS for forward navs.
+  setCachedPage('/old', { html: '<p>ancient</p>', title: 'Old' })
+  const entry = (await import('./page-cache.ts')).getCachedPage('/old', Number.POSITIVE_INFINITY)
+  expect(entry).not.toBeNull()
+  await navigate(new URL('http://localhost/old'), 'none')
+  expect(fetchSpy).toHaveBeenCalledTimes(0)
+  expect(document.querySelector('main')!.textContent).toContain('ancient')
+})
+
+test('prefetchUrlFor accepts internal links; rejects opt-outs, externals, and the current page', () => {
+  expect(prefetchUrlFor(makeLink('/docs/intro'))?.pathname).toBe('/docs/intro')
+  expect(prefetchUrlFor(makeLink('https://example.com/x'))).toBeNull()
+  expect(prefetchUrlFor(makeLink('/docs/intro', { target: '_blank' }))).toBeNull()
+  expect(prefetchUrlFor(makeLink('/docs/intro', { download: '' }))).toBeNull()
+  expect(prefetchUrlFor(makeLink('/docs/intro', { 'data-brust-no-intercept': '' }))).toBeNull()
+  expect(prefetchUrlFor(makeLink('/_brust/islands/x.js'))).toBeNull()
+  const noPrefetch = makeLink('/docs/intro')
+  noPrefetch.setAttribute('data-brust-no-prefetch', '')
+  expect(prefetchUrlFor(noPrefetch)).toBeNull()
+  // The page we're already on (earlier navigate tests pushState'd away from
+  // "/", so resolve the CURRENT location instead of hardcoding it).
+  expect(prefetchUrlFor(makeLink(location.pathname + location.search))).toBeNull()
 })
 
 test('public navigate() falls back to location.assign when no navigator registered', async () => {

@@ -20,13 +20,42 @@ docs site you are reading navigates client-side with no server at all.
 
 On an intercepted click the navigator:
 
-1. fetches `/_brust/page<path>` — a JSON payload `{ html, title, store }`
-   where `html` is the target page's inner `<main>` content
+1. takes the target's payload from the **in-memory page cache** if the page
+   was visited (or prefetched) before — otherwise fetches
+   `/_brust/page<path>`, a JSON payload `{ html, title, store }` where `html`
+   is the target page's inner `<main>` content
 2. unmounts islands inside the current `<main>`, swaps in the new content
-3. applies the store snapshot, updates `document.title`, pushes history,
-   scrolls to top, and hydrates any islands in the new content
+3. applies the store snapshot (fresh fetches only — a cached payload never
+   rolls live client store state back), updates `document.title`, pushes
+   history, scrolls to top, and hydrates any islands in the new content
 
-Back/forward (`popstate`) runs the same swap without pushing a new entry.
+Back/forward (`popstate`) runs the same swap without pushing a new entry,
+reuses the cache unconditionally (instant back, like the browser's bfcache),
+and restores the scroll position you left the page at.
+
+## Page cache & hover prefetch
+
+Navigation payloads are cached **in memory, per tab** — revisiting a page
+swaps instantly with no request at all. On top of that the bootstrap
+**prefetches on intent**: rest the pointer on an internal link for ~80 ms (or
+touch it) and its payload is fetched into the cache before the click, so the
+first visit usually swaps instantly too.
+
+The defaults, and the knobs:
+
+| Behavior | Detail |
+|---|---|
+| Freshness | A cached entry serves forward navigations for **5 minutes**; back/forward reuses it for the whole tab lifetime. |
+| Size | LRU-bounded to **64 pages**; a full reload (or dev rebuild) clears everything. |
+| Prefetch dedupe | Hovering many times — or clicking mid-prefetch — never double-fetches; the click awaits the in-flight prefetch. |
+| Data saver | Prefetch is skipped automatically under `Save-Data` or 2g connections; clicks still work normally. |
+| `data-brust-no-prefetch` on an `<a>` | Opt that link out of prefetch (it still SPA-navigates on click). Use it on logout-style links where a speculative GET has side effects. |
+| `data-brust-no-intercept` on an `<a>` | Opts out of SPA handling entirely — implies no prefetch. |
+
+Stores are deliberately excluded from the cache: only a **fresh** payload
+applies its server store snapshot. Replaying the snapshot captured when the
+page was first fetched would overwrite store changes made since (a theme
+toggle, a cart count) — so a cached swap keeps the live client state.
 
 Clicks the navigator deliberately leaves to the browser:
 
