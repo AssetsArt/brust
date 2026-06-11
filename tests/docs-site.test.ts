@@ -193,9 +193,10 @@ afterAll(async () => {
 
 test('every md file in content/ has a static page (and Home does too)', async () => {
   const urls = mdUrls()
-  // Plan 2 content is complete: exactly 16 md pages (index + 15 docs). Bump
-  // this lock when a page is added/removed — it catches accidental drops.
-  expect(urls.length).toBe(16)
+  // Content is complete: exactly 17 md pages (index + 16 docs; navigation.md
+  // joined in the SSG-SPA work). Bump this lock when a page is added/removed —
+  // it catches accidental drops.
+  expect(urls.length).toBe(17)
   expect(urls).toContain('/docs')
   expect(existsSync(path.join(staticOut, 'index.html'))).toBe(true) // Home
   for (const url of urls) {
@@ -224,6 +225,31 @@ test('static export carries islands, css, search-index.json and fonts', async ()
     const res = await fetch(`${STATIC_BASE}${u}`)
     expect(`${u} → ${res.status}`).toBe(`${u} → 200`)
   }
+})
+
+test('static export carries a SPA payload per page at the client-fetch URL', async () => {
+  // The client navigator fetches `/_brust/page${pathname}` (bootstrap.ts) —
+  // exportStatic writes each payload as <url>/index.html so a dumb static
+  // host (this suite's server, CF Pages) serves it at exactly that URL.
+  expect(existsSync(path.join(staticOut, '_brust/page/index.html'))).toBe(true) // Home
+  for (const url of mdUrls()) {
+    expect(
+      `${url}: ${existsSync(path.join(staticOut, '_brust/page', url.slice(1), 'index.html'))}`,
+    ).toBe(`${url}: true`)
+  }
+
+  // Served payload parses as the {html,title,store} JSON the navigator expects…
+  const raw = await getOk(STATIC_BASE, '/_brust/page/docs/introduction')
+  const payload = JSON.parse(raw) as { html: string; title: string }
+  expect(payload.title.length).toBeGreaterThan(0)
+  // …and is inner-<main> content, NOT a full document — a full-doc payload
+  // would trip isFullDocumentPayload and full-reload instead of swapping.
+  const head = payload.html.trimStart().slice(0, 16).toLowerCase()
+  expect(head.startsWith('<!doctype')).toBe(false)
+  expect(head.startsWith('<html')).toBe(false)
+  // The swapped content is the docs page body (pager present, sidebar is
+  // outside <main> so the payload must NOT carry a second nav).
+  expect(payload.html).toContain('rel="prev"')
 })
 
 // ── 2. Page shape: Home + docs chrome ───────────────────────────────────────

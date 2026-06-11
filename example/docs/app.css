@@ -109,6 +109,7 @@
   --z-nav: 10;
   --z-palette-backdrop: 40;
   --z-palette: 50;
+  --z-preloader: 60; /* SPA-nav progress bar — a 2px line over everything */
 
   /* motion */
   --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
@@ -200,6 +201,19 @@ button {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* ── Docs sidebar active item ─────────────────────────────────────────────
+   Keyed on [aria-current="page"], NOT baked utility classes: the sidebar is
+   outside <main>, so SPA navigation can't re-render it — the runtime
+   active-nav reconciler moves aria-current between links instead
+   ([data-brust-active-nav] on the nav opts in). Unlayered rule deliberately
+   outbids the Tailwind hover utility on the same links. */
+
+nav[data-brust-active-nav] a[aria-current="page"] {
+  background: var(--surface);
+  color: var(--link);
+  font-weight: 500;
 }
 
 /* ── Theme toggle icon swap ───────────────────────────────────────────────

@@ -1,7 +1,7 @@
 ---
 title: Styling
 description: app.css and Tailwind v4, CSS Modules (native routes included), and self-hosted fonts.
-nav: { group: "Concepts", order: 6 }
+nav: { group: "Concepts", order: 7 }
 ---
 
 Styling in brust is convention-driven: an `app.css` next to your entry is the

@@ -16,6 +16,7 @@
 // omits the attribute entirely on inactive items. See FRAMEWORK-GAPS.md.
 import { BrustPage, Island, Outlet } from 'brustjs'
 import type { DocsChrome } from '../lib/nav.ts'
+import NavPreloader from './NavPreloader'
 import SearchPalette from './SearchPalette'
 import ThemeToggle from './ThemeToggle'
 
@@ -49,6 +50,10 @@ export default function DocsLayout({
         Skip to content
       </a>
 
+      {/* SPA-nav progress bar — outside <main> so the navigator never tears it
+          down mid-navigation; renders null while idle. */}
+      <Island component={NavPreloader} hydrate="load" />
+
       {/* solid (opaque) header — z from the DESIGN.md scale (--z-nav: 10) */}
       <header className="sticky top-0 z-10 border-b border-line bg-bg">
         <div className="mx-auto flex h-14 max-w-6xl items-center gap-6 px-5">
@@ -81,9 +86,15 @@ export default function DocsLayout({
       </header>
 
       <div className="mx-auto grid w-full max-w-6xl gap-10 px-5 py-10 md:grid-cols-[13.5rem_minmax(0,1fr)]">
-        {/* mobile: simple stacked top list; desktop: sticky fixed-width rail */}
+        {/* mobile: simple stacked top list; desktop: sticky fixed-width rail.
+            data-brust-active-nav: the runtime reconciler (active-nav.ts) moves
+            aria-current="page" here on every SPA navigation — the sidebar sits
+            OUTSIDE <main>, so without it the active item goes stale after a
+            client-side nav. Active VISUALS are keyed on [aria-current] in
+            app.css (not baked utility classes) for the same reason. */}
         <nav
           aria-label="Docs"
+          data-brust-active-nav
           className="text-sm md:sticky md:top-24 md:max-h-[calc(100vh-7rem)] md:self-start md:overflow-y-auto"
         >
           {nav.map((group) => (
@@ -100,7 +111,7 @@ export default function DocsLayout({
                       <a
                         href={item.path}
                         aria-current="page"
-                        className="block rounded-[var(--radius-control)] bg-surface px-2.5 py-1.5 font-medium text-link no-underline"
+                        className="block rounded-[var(--radius-control)] px-2.5 py-1.5 text-fg-muted no-underline transition-colors hover:text-fg"
                       >
                         {item.title}
                       </a>
@@ -120,32 +131,35 @@ export default function DocsLayout({
         </nav>
 
         <div className="min-w-0">
+          {/* The pager footer lives INSIDE <main>: SPA navigation swaps the
+              inner-<main> payload only, so anything per-page (article + pager)
+              must be in here or it goes stale after a client-side nav. */}
           <main id="content">
             <Outlet />
-          </main>
 
-          <footer className="mt-12 flex max-w-[72ch] items-stretch justify-between gap-4 border-t border-line pt-6">
-            {pager.hasPrev && (
-              <a
-                href={pager?.prev?.path}
-                rel="prev"
-                className="group flex flex-col gap-1 rounded-[var(--radius-card)] border border-line px-4 py-3 no-underline transition-colors hover:border-fg-muted"
-              >
-                <span className="text-sm text-fg-muted">Previous</span>
-                <span className="font-medium text-link">{pager?.prev?.title}</span>
-              </a>
-            )}
-            {pager.hasNext && (
-              <a
-                href={pager?.next?.path}
-                rel="next"
-                className="group ml-auto flex flex-col items-end gap-1 rounded-[var(--radius-card)] border border-line px-4 py-3 text-right no-underline transition-colors hover:border-fg-muted"
-              >
-                <span className="text-sm text-fg-muted">Next</span>
-                <span className="font-medium text-link">{pager?.next?.title}</span>
-              </a>
-            )}
-          </footer>
+            <footer className="mt-12 flex max-w-[72ch] items-stretch justify-between gap-4 border-t border-line pt-6">
+              {pager.hasPrev && (
+                <a
+                  href={pager.prev.path}
+                  rel="prev"
+                  className="group flex flex-col gap-1 rounded-[var(--radius-card)] border border-line px-4 py-3 no-underline transition-colors hover:border-fg-muted"
+                >
+                  <span className="text-sm text-fg-muted">Previous</span>
+                  <span className="font-medium text-link">{pager.prev.title}</span>
+                </a>
+              )}
+              {pager.hasNext && (
+                <a
+                  href={pager.next.path}
+                  rel="next"
+                  className="group ml-auto flex flex-col items-end gap-1 rounded-[var(--radius-card)] border border-line px-4 py-3 text-right no-underline transition-colors hover:border-fg-muted"
+                >
+                  <span className="text-sm text-fg-muted">Next</span>
+                  <span className="font-medium text-link">{pager.next.title}</span>
+                </a>
+              )}
+            </footer>
+          </main>
         </div>
       </div>
     </BrustPage>

@@ -1,7 +1,7 @@
 ---
 title: Actions
 description: defineActions endpoints, validation, typed errors, and the treaty client.
-nav: { group: "Concepts", order: 5 }
+nav: { group: "Concepts", order: 6 }
 ---
 
 Actions are the server endpoints of a brust app: a fluent `defineActions`

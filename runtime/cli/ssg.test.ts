@@ -7,6 +7,7 @@ import path from 'node:path'
 import {
   collectStaticPaths,
   exportStatic,
+  navPayloadFileFor,
   type FlatRouteLike,
   type SsgRouteDecision,
 } from './ssg.ts'
@@ -79,6 +80,13 @@ test('output is deterministic — sorted by fullPath regardless of input order',
 test('excluded routes still carry an outFile mapping', () => {
   const [d] = collectStaticPaths([route('/blog/{slug}')])
   expect(d.outFile).toBe('blog/{slug}/index.html')
+})
+
+test('navPayloadFileFor mirrors the client fetch URL /_brust/page<path>', () => {
+  // bootstrap.ts navigate() fetches `/_brust/page${pathname}` — pathname '/'
+  // yields '/_brust/page/', so the root payload must be the directory index.
+  expect(navPayloadFileFor('/')).toBe('_brust/page/index.html')
+  expect(navPayloadFileFor('/docs/intro')).toBe('_brust/page/docs/intro/index.html')
 })
 
 // ----- exportStatic (integration: builds the fixture app, boots the dist) -----
@@ -154,11 +162,23 @@ test('exportStatic crawls included routes, writes pages + assets, kills the chil
   })
 
   expect([...result.written].sort()).toEqual(['index.html', 'store-demo/index.html'])
+  expect([...result.navWritten].sort()).toEqual([
+    '_brust/page/index.html',
+    '_brust/page/store-demo/index.html',
+  ])
   expect(result.skipped.map((s) => s.fullPath).sort()).toEqual(['/blog/{slug}', '/sse-counter'])
 
   const home = await Bun.file(path.join(staticOut, 'index.html')).text()
   expect(home).toContain('Hello from Brust')
   expect(existsSync(path.join(staticOut, 'store-demo', 'index.html'))).toBe(true)
+
+  // SPA payloads live at the exact URL the client navigator fetches and carry
+  // the same {html,title,store} JSON the live server returns.
+  const navPayload = JSON.parse(
+    await Bun.file(path.join(staticOut, '_brust', 'page', 'store-demo', 'index.html')).text(),
+  ) as { html: string; title: string }
+  expect(typeof navPayload.html).toBe('string')
+  expect(navPayload.html.length).toBeGreaterThan(0)
 
   // Asset copy preserves the live server's URL shape.
   expect(existsSync(path.join(staticOut, '_brust', 'islands', '_bootstrap.js'))).toBe(true)
@@ -201,6 +221,7 @@ test('exportStatic with zero included routes skips the server boot, still copies
     routes: [dec('/blog/{slug}', false, 'dynamic-param')],
   })
   expect(result.written).toEqual([])
+  expect(result.navWritten).toEqual([])
   expect(result.skipped.length).toBe(1)
   expect(existsSync(path.join(staticOut, '_brust', 'css', 'app.css'))).toBe(true)
   expect(await Bun.file(path.join(staticOut, 'hello.txt')).text()).toBe('hi')

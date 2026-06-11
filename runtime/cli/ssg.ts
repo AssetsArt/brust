@@ -41,6 +41,16 @@ function outFileFor(normalized: string): string {
   return `${normalized.slice(1)}/index.html`
 }
 
+/** Where a route's SPA navigation payload lands on disk. The client navigator
+ * fetches `/_brust/page${pathname}` (bootstrap.ts navigate()), so the payload
+ * must be reachable at that exact URL on a dumb static host — which means
+ * `<url>/index.html`, the same directory-index shape the pages use:
+ * '/' → '_brust/page/index.html'; '/docs/intro' → '_brust/page/docs/intro/index.html'. */
+export function navPayloadFileFor(normalized: string): string {
+  if (normalized === '/') return join('_brust', 'page', 'index.html')
+  return join('_brust', 'page', normalized.slice(1), 'index.html')
+}
+
 /** Decide, for every flattened route, whether it can be statically prerendered
  * and which file it maps to. Deterministic: trailing-slash duplicates collapse
  * to one decision (first occurrence wins) and output is sorted by fullPath. */
@@ -165,6 +175,14 @@ async function waitForListening(
 /** Boot the just-built dist on a free port, crawl every included route, and
  * write the static site to `staticOut` (clobbered first). ANY non-200 fails
  * the whole export — the partial output is removed and the error rethrown.
+ *
+ * Each route is crawled TWICE: the full document (→ outFile) and its SPA
+ * navigation payload `/_brust/page<path>` (→ navPayloadFileFor), the same
+ * JSON `{html,title,store}` the live server returns. With the payloads on
+ * disk at the URLs the client navigator already fetches, internal links on
+ * the static site navigate SPA-style instead of full-reloading; any host
+ * 404/redirect-to-HTML still lands in the navigator's full-reload fallback.
+ *
  * Asset copy preserves the live server's URL shape: islands + css under
  * /_brust/, public/ root-mapped (runtime/index.ts configurePublicDir). */
 export async function exportStatic(opts: {
@@ -172,7 +190,7 @@ export async function exportStatic(opts: {
   entryDir: string // app dir (for public/)
   staticOut: string // e.g. dist/static (clobbered first)
   routes: SsgRouteDecision[]
-}): Promise<{ written: string[]; skipped: SsgRouteDecision[] }> {
+}): Promise<{ written: string[]; navWritten: string[]; skipped: SsgRouteDecision[] }> {
   const { distDir, entryDir, staticOut, routes } = opts
   const included = routes.filter((r) => r.include)
   const skipped = routes.filter((r) => !r.include)
@@ -181,6 +199,7 @@ export async function exportStatic(opts: {
   await mkdir(staticOut, { recursive: true })
 
   const written: string[] = []
+  const navWritten: string[] = []
   if (included.length > 0) {
     const port = await freePort()
     const proc = Bun.spawn(['bun', join(distDir, 'index.js')], {
@@ -202,6 +221,31 @@ export async function exportStatic(opts: {
         await mkdir(dirname(outPath), { recursive: true })
         await Bun.write(outPath, body)
         written.push(d.outFile)
+
+        // SPA navigation payload — the document crawl above just proved this
+        // route renders 200, so a failing payload is a real bug, not a host
+        // quirk: fail the export rather than silently shipping full reloads.
+        const navUrl = `/_brust/page${d.fullPath}`
+        const navResp = await fetch(`http://127.0.0.1:${port}${navUrl}`, {
+          headers: { Accept: 'application/json' },
+        })
+        const navBody = await navResp.text()
+        if (navResp.status !== 200) {
+          throw new Error(`GET ${navUrl} → ${navResp.status}\n${navBody.slice(0, 500)}`)
+        }
+        // Guard the payload contract the client navigator parses — a non-JSON
+        // body would otherwise surface only as a runtime full-reload fallback.
+        try {
+          const parsed = JSON.parse(navBody) as { html?: unknown }
+          if (typeof parsed.html !== 'string') throw new Error('missing "html" field')
+        } catch (e) {
+          throw new Error(`GET ${navUrl} → invalid SPA payload: ${(e as Error).message}`)
+        }
+        const navFile = navPayloadFileFor(d.fullPath)
+        const navPath = join(staticOut, navFile)
+        await mkdir(dirname(navPath), { recursive: true })
+        await Bun.write(navPath, navBody)
+        navWritten.push(navFile)
       }
       const workers = Array.from(
         { length: Math.min(CRAWL_CONCURRENCY, included.length) },
@@ -253,5 +297,6 @@ export async function exportStatic(opts: {
   }
 
   written.sort()
-  return { written, skipped }
+  navWritten.sort()
+  return { written, navWritten, skipped }
 }
