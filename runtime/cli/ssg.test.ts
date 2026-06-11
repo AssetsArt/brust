@@ -160,6 +160,13 @@ test('routes without ssg pass through untouched (and dynamic ones stay skippable
   expect(out).toEqual(base)
 })
 
+test('repeated {name} in a pattern validates once and substitutes every occurrence', async () => {
+  const out = await expandDynamicRoutes([
+    ssgRoute('/x/{id}/y/{id}', { params: () => [{ id: '7' }] }),
+  ])
+  expect(out[1]!.fullPath).toBe('/x/7/y/7')
+})
+
 // ----- exportStatic (integration: builds the fixture app, boots the dist) -----
 
 const REPO = path.resolve(import.meta.dir, '..', '..')

@@ -15,8 +15,9 @@ export interface FlatRouteLike {
   /** Full path Rust matches against (e.g. '/', '/docs/intro', '/pokemon/{name}'). */
   fullPath: string
   /** Chain of Route nodes from root to leaf, inclusive. Only the LEAF node
-   * can carry sse/websocket (defineRoutes forbids children on those). */
-  chain: { sse?: unknown; websocket?: unknown }[]
+   * can carry sse/websocket (defineRoutes forbids children on those) — and
+   * only the leaf's `ssg`/`native` are consulted by expandDynamicRoutes. */
+  chain: { sse?: unknown; websocket?: unknown; native?: unknown; ssg?: RouteSsgLike }[]
 }
 
 export interface SsgRouteDecision {
@@ -98,11 +99,12 @@ export interface RouteSsgLike {
   params?: () => Array<Record<string, string>> | Promise<Array<Record<string, string>>>
   fallback?: 'none' | 'client'
 }
-type SsgChainNode = { sse?: unknown; websocket?: unknown; native?: unknown; ssg?: RouteSsgLike }
-
-const PARAM_RE = /\{([^/}]+)\}/g
+/** Unique `{name}`s in declaration order. A repeated name (`/x/{id}/y/{id}`)
+ * validates once and substitutes ALL occurrences via replaceAll below. The
+ * regex is function-local: a module-level /g regex is a stateful-lastIndex
+ * trap for any future exec/test caller. */
 function paramNames(fullPath: string): string[] {
-  return [...fullPath.matchAll(PARAM_RE)].map((m) => m[1]!)
+  return [...new Set([...fullPath.matchAll(/\{([^/}]+)\}/g)].map((m) => m[1]!))]
 }
 
 /** Expand `ssg.params()` routes into concrete prerenderable paths. The
@@ -112,7 +114,7 @@ function paramNames(fullPath: string): string[] {
 export async function expandDynamicRoutes(flatRoutes: FlatRouteLike[]): Promise<FlatRouteLike[]> {
   const out = [...flatRoutes]
   for (const route of flatRoutes) {
-    const leaf = route.chain[route.chain.length - 1] as SsgChainNode | undefined
+    const leaf = route.chain[route.chain.length - 1]
     const ssg = leaf?.ssg
     if (!ssg) continue
     const names = paramNames(route.fullPath)
@@ -139,7 +141,7 @@ export async function expandDynamicRoutes(flatRoutes: FlatRouteLike[]): Promise<
       throw new Error(`ssg.params for "${route.fullPath}": expected an array of records`)
     }
     const seen = new Set<string>()
-    records.forEach((record, i) => {
+    for (const [i, record] of records.entries()) {
       let concrete = route.fullPath
       for (const name of names) {
         const v = record?.[name]
@@ -153,12 +155,12 @@ export async function expandDynamicRoutes(flatRoutes: FlatRouteLike[]): Promise<
             `ssg.params for "${route.fullPath}": record #${i + 1} uses the reserved value ${SSG_FALLBACK_SENTINEL}`,
           )
         }
-        concrete = concrete.replace(`{${name}}`, encodeURIComponent(v))
+        concrete = concrete.replaceAll(`{${name}}`, encodeURIComponent(v))
       }
-      if (seen.has(concrete)) return
+      if (seen.has(concrete)) continue
       seen.add(concrete)
       out.push({ fullPath: concrete, chain: route.chain })
-    })
+    }
   }
   return out
 }
