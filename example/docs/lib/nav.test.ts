@@ -62,21 +62,21 @@ describe('buildDocsChrome', () => {
 
   test('first page has no prev; last page has no next', () => {
     const first = chromeFor('/docs')
-    expect(first.pager.prev).toBeUndefined()
+    expect(first.pager.prev).toEqual({ title: '', path: '' }) // sentinel — hasPrev gate rendering
     expect(first.pager.hasPrev).toBe(false)
     expect(first.pager.next).toEqual({ title: 'Introduction', path: '/docs/introduction' })
 
     const last = chromeFor('/docs/routing')
     expect(last.pager.prev).toEqual({ title: 'Introduction', path: '/docs/introduction' })
-    expect(last.pager.next).toBeUndefined()
+    expect(last.pager.next).toEqual({ title: '', path: '' }) // sentinel — hasNext gate rendering
     expect(last.pager.hasNext).toBe(false)
   })
 
   test('unknown path: nothing active, empty pager', () => {
     const chrome = chromeFor('/docs/nope')
     expect(chrome.nav.flatMap((g) => g.items).some((i) => i.active)).toBe(false)
-    expect(chrome.pager.prev).toBeUndefined()
-    expect(chrome.pager.next).toBeUndefined()
+    expect(chrome.pager.prev).toEqual({ title: '', path: '' }) // sentinel — hasPrev gate rendering
+    expect(chrome.pager.next).toEqual({ title: '', path: '' }) // sentinel — hasNext gate rendering
     expect(chrome.pager.hasPrev).toBe(false)
     expect(chrome.pager.hasNext).toBe(false)
   })

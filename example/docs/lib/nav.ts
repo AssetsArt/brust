@@ -32,8 +32,12 @@ export interface DocsChrome {
   /** `hasPrev`/`hasNext` are the inline-conditional TESTS for the layout: a
    * native cond test on `pager.prev` itself would infer the member as a
    * scalar and conflict with the deeper `pager.prev.path`/`.title` reads
-   * (compiler PropTypeConflict) — so the booleans are precomputed siblings. */
-  pager: { hasPrev: boolean; hasNext: boolean; prev?: DocsPagerLink; next?: DocsPagerLink }
+   * (compiler PropTypeConflict) — so the booleans are precomputed siblings.
+   * `prev`/`next` are ALWAYS present (empty-string sentinels when absent):
+   * non-optional keeps the layout's `pager.prev.path` reads type-safe, and
+   * the native compiler can't lower optional chaining (`pager?.prev?.path`
+   * broke the build once — only plain member paths compile). */
+  pager: { hasPrev: boolean; hasNext: boolean; prev: DocsPagerLink; next: DocsPagerLink }
 }
 
 /** Strip the query string and any trailing slash (except root) so the loader
@@ -58,7 +62,12 @@ export function buildDocsChrome(path: string, contentDir = 'content'): DocsChrom
   }))
   const flat = nav.flatMap((g) => g.items)
   const idx = flat.findIndex((i) => i.active)
-  const pager: DocsChrome['pager'] = { hasPrev: false, hasNext: false }
+  const pager: DocsChrome['pager'] = {
+    hasPrev: false,
+    hasNext: false,
+    prev: { title: '', path: '' },
+    next: { title: '', path: '' },
+  }
   if (idx > 0) {
     pager.hasPrev = true
     pager.prev = { title: flat[idx - 1].title, path: flat[idx - 1].path }
