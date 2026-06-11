@@ -303,6 +303,51 @@ dialog.search-palette[open] {
   backdrop-filter: blur(14px) saturate(140%);
 }
 
+/* ── Home unified-store diagram: connector lines + traveling pulses ──────
+   Pure CSS/SVG, no JS animation loop: a hairline base line plus a dashed
+   brand-green overlay whose dashoffset loops one full dash period
+   (14 + 110 = 124px), so the motion is seamless at ANY line length without
+   pathLength math. `.connector-rev` reverses travel so both connectors flow
+   INTO the store node. Reduced motion: the pulse stroke is removed entirely
+   and the static hairline stays (the global 0.01ms rule alone would freeze
+   a dash mid-line, which reads as a broken line). */
+
+.connector-base {
+  stroke: var(--line);
+  stroke-width: 2px;
+}
+
+.connector-pulse {
+  stroke: var(--link);
+  stroke-width: 2px;
+  stroke-linecap: round;
+  stroke-dasharray: 14 110;
+  animation: connector-travel 2.8s linear infinite;
+}
+
+.connector-rev {
+  animation-direction: reverse;
+}
+
+@keyframes connector-travel {
+  to {
+    stroke-dashoffset: -124;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .connector-pulse {
+    display: none;
+  }
+}
+
+/* the center "one store" node — tinted hairline treatment (callout family) */
+.unified-node {
+  border: 1px solid color-mix(in oklch, var(--link) 45%, var(--line));
+  background: color-mix(in oklch, var(--link) 8%, var(--bg));
+  border-radius: var(--radius-card);
+}
+
 /* ── Markdown prose ([data-brust-md-slot] is the md page wrapper) ─────── */
 
 [data-brust-md-slot] {
