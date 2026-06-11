@@ -85,22 +85,32 @@ dynamic routes on demand as today and ignore it entirely.
      chain node has `ssg.params`: call it (build process = server context; DB
      access fine), and for each returned record produce a concrete path by
      replacing every `{name}` with `encodeURIComponent(record[name])`.
-   - Emitted as additional `FlatRouteLike` entries (same `chain`) appended to
-     the list handed to `collectStaticPaths` — concrete paths contain no `{}`
-     so the existing include/crawl/payload pipeline handles them untouched.
+   - Emitted as additional `FlatRouteLike` entries (same `chain` reference)
+     **appended** to the list handed to `collectStaticPaths`; the pattern route
+     itself stays in the ORIGINAL list position and is never re-appended (so
+     reason counting sees it exactly once). Concrete paths contain no `{}` so
+     the existing include/crawl/payload pipeline handles them untouched.
+   - `expandDynamicRoutes` reads `ssg` off the leaf chain node via a widened
+     structural chain type `{ sse?; websocket?; native?; ssg?: RouteSsgLike }`
+     (the `Route` object IS stored in `chain`, so the field survives
+     flattening; existing `FlatRouteLike` consumers unchanged).
 2. Validation (throw → build exits 1, matching existing ssg error path):
    - A record missing any `{name}` in the pattern, or containing an empty
      string value → `Error("ssg.params for /blog/{slug}: record #2 missing 'slug'")`.
    - `ssg.params` returning non-array → error.
    - `ssg` on a route with NO `{param}` in fullPath → error (dead config).
    - Duplicate records → deduped silently (Set on concrete path).
+   - Any param value equal to the reserved sentinel `__brust_fallback__` →
+     error (prevents the Phase B sentinel misfire foot-gun).
 3. `ssg.params()` throwing → build fails with the route pattern in the message.
 4. The pattern route itself stays excluded (`reason: 'dynamic-param'`) —
    reporting line gains the expansion count:
    `ssg: 23 pages + 23 spa payloads → … (expanded /blog/{slug}: 20; skipped 1: dynamic-param=1)`.
-5. `fallback: 'client'` is **accepted and type-checked in Phase A but inert**
-   (Phase B activates it). `fallback` on a `native: true` route → build error
-   already in Phase A (fail early, the config can never work).
+5. `fallback: 'client'` and `placeholder` are **accepted and type-checked in
+   Phase A but inert** (Phase B activates both — the full `RouteSsgConfig`
+   type ships once in Phase A to avoid churn). `fallback` on a `native: true`
+   route → build error already in Phase A (fail early, the config can never
+   work).
 
 ### Files (Phase A)
 
@@ -110,7 +120,7 @@ dynamic routes on demand as today and ignore it entirely.
 | `runtime/cli/ssg.ts` | `expandDynamicRoutes` + `RouteSsgConfigLike` structural type; export for tests. |
 | `runtime/cli/build.ts` | Await expansion in step 8; pass expanded list to `collectStaticPaths`; report counts. |
 | `runtime/cli/ssg.test.ts` | Unit: expansion, encoding, validation errors, dedupe, no-ssg passthrough. |
-| `tests/fixtures/app/routes.tsx` + new `components/SsgBlogPost.tsx` | Fixture route `/ssg-blog/{slug}` with `ssg.params: () => [{slug:'hello'},{slug:'sa wad-dee'}]` (space tests encoding). |
+| `tests/fixtures/app/routes.tsx` + new `components/SsgBlogPost.tsx` | Fixture route `/ssg-blog/{slug}` with `ssg.params: () => [{slug:'hello'},{slug:'sa wad-dee'}]` (space tests encoding). The fixture's EXISTING `/blog/{slug}` (no `ssg`) stays untouched — `ssg.test.ts` hardcodes it as the `dynamic-param` skip case (lines 159/169/221); those assertions must remain green. |
 | e2e (`ssg.test.ts` exportStatic section) | Built fixture dist exports `ssg-blog/hello/index.html` + nav payload; pattern route still skipped. |
 | `example/docs/content/markdown-pages.md` (Static export section) | Document `ssg.params`. |
 
@@ -127,8 +137,17 @@ dynamic routes on demand as today and ignore it entirely.
    - the **leaf replaced** by
      `<div data-brust-fallback-root data-brust-fallback="<fullPath pattern>">{placeholder ?? null}</div>`,
    - leaf loader skipped,
-   - islands importmap + bootstrap injection FORCED (the shell must boot the
-     takeover runtime even when the page has no real islands).
+   - islands importmap + bootstrap injection FORCED via a new
+     `forceIslands?: boolean` field on `RenderBranchStreamingArgs`
+     (`runtime/render/stream.ts` — the injection decision is the
+     `islandUsedBox.used` gate in the buffering-sink assembly; the flag ORs
+     into it). TS-only; "zero Rust" still holds, but the render-pipeline
+     contract change is in scope and listed in the file table.
+   - Threat model note: a live request forging `x-brust-ssg: 1` + the sentinel
+     path gets the placeholder shell — which renders LESS than a normal
+     request (leaf loader skipped, no data). No enforcement beyond the header
+     gate is needed; the expansion-time sentinel-value validation (Phase A)
+     keeps real data out of the sentinel namespace.
 2. **Build emission** (`ssg.ts` exportStatic + `build.ts`): for each
    `fallback: 'client'` route —
    - crawl `GET <pattern with every {x}→__brust_fallback__>` (+ header) →
@@ -138,10 +157,19 @@ dynamic routes on demand as today and ignore it entirely.
    - build a **fallback chunk** per route: generated entry
      `import C, { clientLoader } from '<leaf component source>'; export { C as Component, clientLoader }`,
      bundled via the existing islands `buildOne` (react externals + importmap,
-     content-addressed name `Fallback_<Name>_<hash>.js`). Leaf component source
-     resolved the same way island/native source scanning resolves Components
-     from routes.tsx imports. Component file NOT exporting `clientLoader` →
-     build error.
+     content-addressed name `Fallback_<Name>_<hash>.js`).
+     **Leaf source resolution**: reuse the `scanImports` resolution from
+     `runtime/cli/native-routes-emit.ts` (the same machinery that maps a
+     routes.tsx `Component:` identifier to its source file for native emit).
+     Its known limit — **default imports only** — becomes a documented
+     constraint: a `fallback: 'client'` leaf Component must be a default
+     import in routes.tsx; unresolvable → build error naming the route and
+     the constraint. Component file NOT exporting `clientLoader` → build
+     error.
+     **Browser-safety convention** (documented): the leaf component file's
+     top-level imports must be browser-safe — server-only deps (DB clients,
+     node builtins) belong in routes.tsx's `loader` or behind dynamic import
+     inside it; violations surface as fallback-chunk bundle errors at build.
    - emit `_brust/routes.json`:
      `{ version: 1, fallbacks: [{ pattern, doc, payload, chunk }] }`. No
      fallback routes → file not written.
@@ -155,22 +183,33 @@ dynamic routes on demand as today and ignore it entirely.
      decoded segment, all else literal. Exported for unit tests.
    - `takeover(container)`: read pattern from `data-brust-fallback`, params
      from the CURRENT pathname, `import(chunk)` → `clientLoader({ params, path })`
-     → `createRoot(container).render(createElement(Component, { params, path, data }))`
+     → `unmountIslandsIn(container)` (a placeholder may carry islands) →
+     `createRoot(container).render(createElement(Component, { params, path, data }))`
      (matches the server prop shape minus `req`/`workerId` — documented).
-     Root registered so the existing unmount-on-swap path disposes it;
+     Roots tracked in fallback.ts's OWN `fallbackRoots` WeakMap; fallback.ts
+     exports `unmountFallbackRootsIn(root)` which bootstrap's
+     `unmountIslandsIn` calls (islandRoots stays module-private).
      `clientLoader` throw → `console.error` + container keeps the placeholder +
      `data-brust-fallback-error` attr set (author-level recovery = catch inside
      clientLoader and return error-shaped data).
    - **Boot path** (direct hit): after `__navInit`, if
      `[data-brust-fallback-root]` exists in the document → consume the
-     sessionStorage path (when present) via `history.replaceState` → `takeover`.
-   - **Navigate path** (SPA click): in `navigate()`, payload fetch `!resp.ok` →
+     sessionStorage path (when present) via `history.replaceState` **before**
+     `takeover` starts (the real URL shows while the placeholder loads) →
+     `takeover`.
+   - **Navigate path** (SPA click): `fetchPagePayload` THROWS on `!resp.ok`
+     (`navigation: status NNN`). The hook is in `navigate()`'s fetch branch:
+     wrap the direct-fetch call; on a non-Abort error, call
+     `attemptClientFallback(url): Promise<boolean>` —
      lazily fetch `/_brust/routes.json` (memoized; 404/invalid → empty list =
-     today's behavior) → pattern match → fetch the route's fallback **payload**
-     → swap it into `<main>` (normal swap path: scroll, history, title) →
-     `takeover` on the swapped container → `__navCommit` only after takeover
-     resolves (so `phase: 'loading'` covers the client fetch — the NavPreloader
-     stays honest). Match failure → existing full-reload fallback, unchanged.
+     today's behavior) → pattern match → fetch the **manifest's `payload` URL**
+     (`/_brust/fallback-page/...`, NOT `/_brust/page/...` — only the former
+     exists on a static host) → swap it into `<main>` (normal swap path:
+     scroll save, history push, title) → `takeover` on the swapped container →
+     `__navCommit` only after takeover resolves (so `phase: 'loading'` covers
+     the client fetch — NavPreloader stays honest) → return true. Any failure
+     or no match → return false → rethrow to the existing catch (full-reload
+     fallback, unchanged).
 4. **Page-cache interplay**: client-rendered results are NOT cached in the
    payload cache (no payload html exists; data freshness belongs to
    clientLoader). The fallback *payload* (placeholder shell) MAY be cached —
@@ -184,11 +223,12 @@ dynamic routes on demand as today and ignore it entirely.
 
 | File | Change |
 |---|---|
-| `runtime/routes.ts` | Sentinel branch in the render path (chain assembly) + forced importmap flag. |
+| `runtime/routes.ts` | Sentinel branch in the render path (chain assembly): header read from the call's `req`, leaf swap, leaf-loader skip. |
+| `runtime/render/stream.ts` | `RenderBranchStreamingArgs.forceIslands?: boolean` ORed into the `islandUsedBox.used` injection gate. |
 | `runtime/cli/ssg.ts` | Fallback crawl/emit + manifest + 404.html + sanitized path helpers. |
 | `runtime/cli/build.ts` | Fallback chunk build step (entry generation + leaf source resolution) before SSG crawl. |
 | `runtime/islands/fallback.ts` (NEW) | matcher + takeover + manifest fetch (memoized). |
-| `runtime/islands/bootstrap.ts` | boot-path check; navigate() !ok hook; unmount extension. |
+| `runtime/islands/bootstrap.ts` | boot-path check; navigate() fetch-error hook (`attemptClientFallback`); `unmountIslandsIn` delegates to `unmountFallbackRootsIn`. |
 | Tests | unit (matcher, manifest memoization, entry generation, sanitized names) + ssg e2e (fallback files exist, payload is JSON, 404.html emitted, sentinel not honored without header) + browser verify (Phase 6: serve static export, click a non-prerendered slug → client render; direct-hit via 404 redirect). |
 | `example/docs/content/markdown-pages.md` + `routing.md` | Document fallback, clientLoader convention, 404.html, host notes. |
 
