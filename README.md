@@ -88,8 +88,9 @@ Click either one — both update. [See it live](https://brust.assetsart.com/) ·
 
 - **Native rendering** — pages compile ahead of time and are served as plain
   HTML: no hydration pass, no framework runtime in the response. One compiled
-  page sustains **84,119 req/s** versus 28,938 for the same page through a
-  JavaScript pipeline — about 2.9× ([bench/RESULTS.md](./bench/RESULTS.md)).
+  page sustains **106,374 req/s** versus 44,448 for the same page through a
+  JavaScript pipeline — about 2.4×, on an M1 Pro (10c)
+  ([bench/RESULTS.md](./bench/RESULTS.md)).
   → [Rendering](https://brust.assetsart.com/docs/rendering)
 - **React islands** — hydrate one component, not the page. React 19 streaming
   SSR with auto-Suspense; SSR islands can opt into **ISR caching**
