@@ -3,6 +3,7 @@
 
 pub mod island_cache;
 pub mod key_expr;
+pub mod page_cache;
 pub mod response_cache;
 
 pub use island_cache::{CacheStore, CachedIsland};
