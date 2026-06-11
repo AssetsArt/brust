@@ -226,6 +226,31 @@ test('static export carries islands, css, search-index.json and fonts', async ()
   }
 })
 
+test('static export carries a SPA payload per page at the client-fetch URL', async () => {
+  // The client navigator fetches `/_brust/page${pathname}` (bootstrap.ts) —
+  // exportStatic writes each payload as <url>/index.html so a dumb static
+  // host (this suite's server, CF Pages) serves it at exactly that URL.
+  expect(existsSync(path.join(staticOut, '_brust/page/index.html'))).toBe(true) // Home
+  for (const url of mdUrls()) {
+    expect(
+      `${url}: ${existsSync(path.join(staticOut, '_brust/page', url.slice(1), 'index.html'))}`,
+    ).toBe(`${url}: true`)
+  }
+
+  // Served payload parses as the {html,title,store} JSON the navigator expects…
+  const raw = await getOk(STATIC_BASE, '/_brust/page/docs/introduction')
+  const payload = JSON.parse(raw) as { html: string; title: string }
+  expect(payload.title.length).toBeGreaterThan(0)
+  // …and is inner-<main> content, NOT a full document — a full-doc payload
+  // would trip isFullDocumentPayload and full-reload instead of swapping.
+  const head = payload.html.trimStart().slice(0, 16).toLowerCase()
+  expect(head.startsWith('<!doctype')).toBe(false)
+  expect(head.startsWith('<html')).toBe(false)
+  // The swapped content is the docs page body (pager present, sidebar is
+  // outside <main> so the payload must NOT carry a second nav).
+  expect(payload.html).toContain('rel="prev"')
+})
+
 // ── 2. Page shape: Home + docs chrome ───────────────────────────────────────
 
 test('static Home — grainient host + unified-store demo, bootstrap AND directives wired', async () => {

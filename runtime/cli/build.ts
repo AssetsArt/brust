@@ -581,7 +581,7 @@ export async function runBuild(args: string[]): Promise<void> {
     )
     const staticOut = parsed.ssgOut ?? path.join(outDir, 'static')
     try {
-      const { written, skipped } = await exportStatic({
+      const { written, navWritten, skipped } = await exportStatic({
         distDir: outDir,
         entryDir,
         staticOut,
@@ -597,7 +597,9 @@ export async function runBuild(args: string[]): Promise<void> {
         .map((r) => `${r}=${counts.get(r)}`)
         .join(', ')
       const skippedDesc = skipped.length > 0 ? ` (skipped ${skipped.length}: ${reasons})` : ''
-      console.log(`[brust build] ssg:     ${written.length} pages → ${staticOut}${skippedDesc}`)
+      console.log(
+        `[brust build] ssg:     ${written.length} pages + ${navWritten.length} spa payloads → ${staticOut}${skippedDesc}`,
+      )
     } catch (err) {
       console.error(`[brust build] ssg: ${err instanceof Error ? err.message : String(err)}`)
       process.exit(1)
