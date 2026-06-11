@@ -31,11 +31,15 @@ itself.
   project layout and CLI: [Introduction](/docs/introduction),
   [Installation](/docs/installation), [Your First Route](/docs/first-route),
   [Project Structure](/docs/project-structure), [Commands](/docs/commands).
-- **Concepts** — the core model: [Routing](/docs/routing), rendering modes,
-  native interactivity, stores, actions, and styling.
-- **Guides** — applied walkthroughs, including markdown pages (the feature
-  this site is built on) and deployment.
-- **Reference** — the exact CLI surface and the agent/MCP interface.
+- **Concepts** — the core model: [Routing](/docs/routing),
+  [Rendering Modes](/docs/rendering),
+  [Native Interactivity](/docs/native-interactivity), [Store](/docs/store),
+  [Actions](/docs/actions), [Styling](/docs/styling).
+- **Guides** — applied walkthroughs:
+  [Markdown Pages](/docs/markdown-pages) (the feature this site is built on)
+  and [Deployment](/docs/deployment).
+- **Reference** — the exact surface: [CLI](/docs/cli) and
+  [Agents](/docs/agents) (the built-in MCP server).
 
 If you are new, start with the [Introduction](/docs/introduction). If you
 already have a project, jump to [Routing](/docs/routing).

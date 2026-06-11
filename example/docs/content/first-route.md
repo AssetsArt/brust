@@ -82,7 +82,7 @@ export const routes = defineRoutes([
 Paths use matchit syntax: a segment written `{name}` matches one segment and
 lands in `params.name` as a string.
 
-```
+```text
 /blog/{slug}        →  /blog/hello-world   →  params.slug === 'hello-world'
 /admin/users/{id}   →  /admin/users/42     →  params.id === '42'
 ```

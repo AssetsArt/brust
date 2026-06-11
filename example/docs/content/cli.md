@@ -8,7 +8,7 @@ The exact CLI surface — what `brust help` and `brust help <command>` print.
 For a guided tour see [Commands](/docs/commands); this page is the verbatim
 reference.
 
-```
+```text
 Usage: brust <command> [options]
 ```
 
@@ -27,7 +27,7 @@ Global flags:
 
 ## brust build
 
-```
+```text
 brust build [entry] [options]
 ```
 
@@ -57,7 +57,7 @@ Notes on the flags:
 
 ## brust dev
 
-```
+```text
 brust dev [entry] [options]
 ```
 
@@ -73,7 +73,7 @@ Run the dev server with hot reload.
 
 ## brust new
 
-```
+```text
 brust new <name> [--dir <path>] [--template <name>] [--yes]
 ```
 

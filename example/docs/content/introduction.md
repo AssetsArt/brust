@@ -42,7 +42,7 @@ needs React on the server.
 Inside a native page, interactivity comes from islands: components you mount
 explicitly with `<Island component={Counter} props={...} />`. Only those
 components ship JavaScript, and each hydrates on its own schedule (`load`,
-`idle`, and so on). A server island (`ssr`) is rendered to HTML in a worker
+`idle`, and so on). An `ssr` island is rendered to HTML in a worker
 first, so it appears instantly and can even be cached incrementally.
 
 For lighter interactivity — a theme toggle, a dropdown — brust also has

@@ -33,7 +33,7 @@ Two templates are available:
 
 | Template | Description |
 |---|---|
-| `minimal` | One native route with a client island and an ISR-cached server island. The default. |
+| `minimal` | One native route with a client island and an ISR-cached `ssr` island. The default. |
 | `pokedex` | A larger example app: actions, zod schemas, lucide icons, Tailwind styling. |
 
 On an interactive terminal the scaffolder prompts you to pick one; pass

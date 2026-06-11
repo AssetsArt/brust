@@ -8,7 +8,7 @@ The CLI installs as the `brustjs` binary (scaffolded projects call it from
 the `dev` and `build` scripts). Run `brust help <command>` for the same
 information in your terminal.
 
-```
+```text
 Usage: brust <command> [options]
 ```
 
@@ -27,7 +27,7 @@ Global flags:
 
 ## brust dev
 
-```
+```text
 brust dev [entry] [options]
 ```
 
@@ -42,7 +42,7 @@ brust dev [entry] [options]
 
 ## brust build
 
-```
+```text
 brust build [entry] [options]
 ```
 
@@ -64,7 +64,7 @@ so the dist serves them without the markdown content directory present.
 
 ## brust new
 
-```
+```text
 brust new <name> [--dir <path>] [--template <name>] [--yes]
 ```
 

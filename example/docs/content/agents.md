@@ -9,7 +9,7 @@ agent needs — your [actions](/docs/actions) are typed endpoints and your route
 loaders return structured data — so it exposes both over the Model Context
 Protocol (revision `2025-06-18`) at:
 
-```
+```text
 POST /_brust/mcp        (JSON-RPC 2.0)
 ```
 

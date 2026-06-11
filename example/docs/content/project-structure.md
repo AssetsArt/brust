@@ -6,7 +6,7 @@ nav: { group: "Getting Started", order: 4 }
 
 A scaffolded brust project (the `minimal` template) looks like this:
 
-```
+```text
 my-app/
 ├── index.ts                 # entry — brust.run({ routes, entry: import.meta.url })
 ├── routes.tsx               # the route table (defineRoutes)
