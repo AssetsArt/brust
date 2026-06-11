@@ -93,6 +93,16 @@ const PROBES: Probe[] = [
     path: '/native-profile/World',
     scenarios: ['brust'],
   },
+  // Native route + L1 response cache. Identical render to /native-profile, but
+  // `cache: { ttl_seconds }` makes a hit serve straight from Rust's
+  // ResponseCache with ZERO worker dispatch (no napi crossing, no SAB). The
+  // bench hits one fixed path, so after the warmup every request is a pure L1
+  // hit — the delta vs /native-profile is the whole worker round trip the cache
+  // removes. This is the native-zero-Bun cache headline. Brust-only.
+  {
+    path: '/native-cached/World',
+    scenarios: ['brust'],
+  },
   // Sub-project J / Phase A3 — native: true route WITH islands. Same jinja
   // fast lane as /native-profile, plus per-island work in the SAME loader
   // crossing: one CLIENT-ONLY island (a props string, ~free server-side) and
@@ -145,6 +155,9 @@ function rowLabel(scenarioId: string, path: string): string {
   if (scenarioId === 'brust') {
     if (path === '/ping') return 'Brust (Rust only)'
     if (path === '/') return 'Brust (React SSR)'
+    // `/native-cached` before `/native-profile`? No prefix overlap, but keep the
+    // cache row distinct: it serves from Rust's ResponseCache (no worker).
+    if (path.startsWith('/native-cached')) return 'Brust (native + L1 cache)'
     if (path.startsWith('/native-profile')) return 'Brust (native jinja)'
     // `-isr` MUST precede the generic `/native-islands` prefix check below
     // (`/native-islands-isr`.startsWith('/native-islands') is true).

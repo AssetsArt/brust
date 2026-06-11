@@ -31,6 +31,23 @@ export const routes = defineRoutes([
     }),
   },
 
+  // Native route + L1 response cache (declarative). Identical render to
+  // /native-profile, but `cache` makes a hit serve straight from Rust's
+  // ResponseCache with ZERO worker dispatch (no napi crossing). The bench hits
+  // one fixed path, so after the cold first request every probe request is a
+  // pure L1 hit — the delta vs /native-profile is the whole napi+worker round
+  // trip the cache removes from the hot path.
+  {
+    path: '/native-cached/{user}',
+    Component: NativeProfile,
+    native: true,
+    cache: { ttl_seconds: 3600 },
+    loader: async ({ params }) => ({
+      user: params.user,
+      greeting: `Welcome, ${params.user}`,
+    }),
+  },
+
   // Native route WITH islands — one client-only island (props string only) +
   // one server island (renderToString in the loader crossing). Delta vs
   // /native-profile ≈ the ssr island's render cost.
