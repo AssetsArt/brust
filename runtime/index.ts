@@ -190,7 +190,17 @@ export const brust = {
     const configs = routes.map((r) =>
       JSON.stringify({
         path: r.fullPath,
-        cache: r.cache ?? null,
+        // Rust-safe projection: the L2 `key` FUNCTION and `key_ttl_seconds`
+        // stay TS-side (the worker reads them off the FlatRoute). Only the
+        // L1 directives cross napi. `bypass` passes through as boolean or the
+        // string expr — serde's untagged BypassSpec handles both; null → None.
+        cache: r.cache
+          ? {
+              ttl_seconds: r.cache.ttl_seconds,
+              prefix: r.cache.prefix ?? null,
+              bypass: r.cache.bypass ?? null,
+            }
+          : null,
         nativeTemplate: r.nativeTemplate ?? null,
       }),
     )
