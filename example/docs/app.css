@@ -182,7 +182,7 @@ h1,
 h2,
 h3 {
   text-wrap: balance;
-  letter-spacing: -0.02em; /* display tracking ≥ -0.03em */
+  letter-spacing: -0.02em; /* applied: −0.02em (constraint: no tighter than −0.03em) */
 }
 
 button {

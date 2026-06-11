@@ -115,17 +115,23 @@ export default function SearchPalette() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
 
-  // Fetch the index once, on first open.
+  // Fetch the index once, on first open. Aborted on unmount so a rapid
+  // open→navigate cycle never leaves a dangling setState callback.
   useEffect(() => {
     if (!open || fetchStarted.current) return
     fetchStarted.current = true
-    fetch('/search-index.json')
+    const ac = new AbortController()
+    fetch('/search-index.json', { signal: ac.signal })
       .then((res) => {
         if (!res.ok) throw new Error(`search-index.json → ${res.status}`)
         return res.json()
       })
       .then((data: SearchEntry[]) => setIndex(data))
-      .catch(() => setIndexFailed(true))
+      .catch((err) => {
+        if ((err as Error).name === 'AbortError') return
+        setIndexFailed(true)
+      })
+    return () => ac.abort()
   }, [open])
 
   // Drive the <dialog> element from state (showModal = focus trap + Esc +

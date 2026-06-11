@@ -217,7 +217,7 @@ test('static Home — grainient x-data host, NO _bootstrap.js, directives wired'
   const html = await getOk(STATIC_BASE, '/')
   expect(html).toContain(`x-data="${GRAINIENT_DIRECTIVE}"`)
   // Home hosts no islands → the hydration bootstrap must NOT be baked…
-  expect(html).not.toContain('_bootstrap.js')
+  expect(html).not.toContain('_bootstrap')
   // …but the directive runtime IS (behaviors exist app-wide, force-baked).
   expect(html).toContain('/_brust/islands/_directives.js')
 })

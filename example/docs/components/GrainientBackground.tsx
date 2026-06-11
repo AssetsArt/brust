@@ -248,6 +248,15 @@ export const behavior = ({ el, effect }: BehaviorCtx) => {
       ro.disconnect()
       cv.removeEventListener('webglcontextlost', onContextLost)
       document.removeEventListener('visibilitychange', onVisibility)
+      // Explicit GPU-object deletion BEFORE loseContext: drivers may defer
+      // reclamation after loseContext alone, which leaks shaders/buffers
+      // across repeated SPA navs to Home.
+      g.detachShader(prog, vert)
+      g.detachShader(prog, frag)
+      g.deleteShader(vert)
+      g.deleteShader(frag)
+      g.deleteBuffer(buf)
+      g.deleteProgram(prog)
       g.getExtension('WEBGL_lose_context')?.loseContext()
     }
   })
