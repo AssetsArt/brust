@@ -28,8 +28,10 @@ ported verbatim from chain-builder in `GrainientBackground.tsx`.
 ## Typography
 
 - **Family:** Schibsted Grotesk (display + body; weight contrast carries
-  hierarchy) + Spline Sans Mono (code). Self-hosted woff2 (task 1.8); until
-  procured the stacks fall back to `system-ui` / `ui-monospace`.
+  hierarchy) + Spline Sans Mono (code). Self-hosted woff2 in `public/fonts`
+  (latin subset, @fontsource builds: Schibsted 400/500/700 + italics, mono
+  400/600), `font-display: swap`; the token stacks keep `system-ui` /
+  `ui-monospace` fallbacks for pre-swap paint and missing glyphs.
 - **Scale:** 1.25 ratio from 1rem body —
   `0.8 / 1 / 1.25 / 1.5625 / 1.953 / 2.441 / 3.052 rem`
   (`--text-sm/base/lg/xl/2xl/3xl/4xl`).
