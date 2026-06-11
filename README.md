@@ -2,7 +2,7 @@
 
 # Brust
 
-### **B**un + **Rust** — an SSR framework that brusts.
+### The unified framework for the web.
 
 [![npm](https://img.shields.io/npm/v/brustjs/alpha?logo=npm&logoColor=white&label=brustjs&color=cb3837)](https://www.npmjs.com/package/brustjs)
 [![CI](https://github.com/AssetsArt/brust/actions/workflows/ci.yml/badge.svg)](https://github.com/AssetsArt/brust/actions/workflows/ci.yml)
@@ -11,22 +11,22 @@
 [![Bun](https://img.shields.io/badge/Bun-%E2%89%A51.4-fbf0df?logo=bun&logoColor=black)](https://bun.sh)
 [![React](https://img.shields.io/badge/React-19-149eca?logo=react&logoColor=white)](https://react.dev)
 
+**[brust.assetsart.com](https://brust.assetsart.com/)** — docs, guides, and a live demo of everything below.
+
 </div>
 
-React on the server, Rust everywhere else. One Bun host process; the HTTP server
-(hyper 1.x, HTTP/1.1 + HTTP/2) and worker pool are pure Rust, loaded as a `.node`
-native module (napi-rs). Renders cross into Bun Worker threads via
-`ThreadsafeFunction` (request as inline JSON) and return over a per-worker
-`SharedArrayBuffer`. One worker can hold several renders in-flight
-(`renderSlots`), overlapping I/O-bound (Suspense) renders. Multi-thread tokio
-runtime — runs the same everywhere (no io_uring / seccomp caveat).
+Brust serves compiled pages with **zero JavaScript by default** — and gives
+server templates, React islands, and native interactions **one shared store**
+the moment you add interactivity. Like unified memory: a single state substrate
+every kind of component addresses directly. No bridges, no event buses, no
+syncing two worlds. The [home page demo](https://brust.assetsart.com/) is real —
+a hydrated React island and a zero-React native component move together through
+the same store.
 
 > Published on npm as [`brustjs`](https://www.npmjs.com/package/brustjs) (the
 > `brust` name is taken). Alpha — see **Status**.
 
 ## Quick start
-
-**Scaffold a new project** (prebuilt native binary per platform — no Rust toolchain):
 
 ```bash
 bun create brustjs my-app
@@ -52,83 +52,76 @@ bun add brustjs
 > version. Pin the prerelease channel explicitly with `@alpha`
 > (`bun add brustjs@alpha`) if you want to stay on alpha once a stable ships.
 
-**Or run from source:**
+Full walkthrough: [Getting started](https://brust.assetsart.com/docs/introduction).
 
-```bash
-git clone https://github.com/AssetsArt/brust && cd brust
-bun install
-cd runtime && bun run build && cd ..                          # release addon; NOT build:debug (~2× slower)
-bun run runtime/cli/index.ts build example/pokedex/index.ts  # compile native routes → .brust/jinja
-BRUST_PORT=3100 bun run example/pokedex/index.ts             # → http://127.0.0.1:3100
+## One store. Every paradigm reads it live.
+
+The center of Brust is a store that resolves to a **single instance** wherever
+it's read — a hydrated React island, a zero-React native behavior, or the
+server during render. Components from different worlds share state with no
+bridge code:
+
+```ts
+// lib/counter.ts — one definition
+import { defineStore, signal } from 'brustjs/store'
+export const counter = defineStore('counter', () => ({ count: signal(0) }))
 ```
 
-```bash
-curl 127.0.0.1:3100/ping                  # → pong                    (pure Rust)
-curl 127.0.0.1:3100/                       # → native list page, no server React
-curl 127.0.0.1:3100/pokemon/pikachu        # → native detail, dynamic param
-curl 127.0.0.1:3100/type-chart             # → native 18×18 effectiveness grid
+```tsx
+// A React island reads and writes it…
+import { useStore } from 'brustjs/client'
+const { count } = useStore(counter)
 ```
 
-The [`example/pokedex/`](./example/pokedex) app dogfoods `native: true` across
-every route; see its [`FRAMEWORK-GAPS.md`](./example/pokedex/FRAMEWORK-GAPS.md) for
-the empirically-found limits.
-
-## CLI
-
-```
-brustjs dev   <entry>             # dev mode: watcher + WS reload + browser auto-reload
-brustjs build <entry> --out-dir D # prebuilt ./dist/ — run from the project (bun run dist/index.js)
-                  --target <auto|all|TARGET[,…]> # which native binary to bundle (default: auto = host platform)
-                  --ssg [--ssg-out D]   # prerender static routes (incl. markdown pages) to HTML
-brustjs new   <name>              # scaffold a project (partial — see Status)
+```tsx
+// …and a native behavior component (no React shipped) reads the SAME instance
+export const behavior = () => ({
+  count: computed(() => String(counter.count())),
+  bump() { counter.count.set(counter.count() + 1) },
+})
 ```
 
-## Features
+Click either one — both update. [See it live](https://brust.assetsart.com/) ·
+[Store docs](https://brust.assetsart.com/docs/store).
 
-- **React 19 SSR** via `renderToPipeableStream` (auto-Suspense → chunked streaming).
-- **Islands** — opt-in client hydration with `<Island>`; the rest ships zero JS.
-  SSR islands can opt into **ISR caching** (`isr={{ key, tags, revalidate }}`) so
-  `renderToString` runs once per key, then serves a frozen pair from Rust.
-- **`native: true` routes** — JSX compiled to a jinja template at build time and
-  rendered Rust-side (`minijinja`), skipping React on the server entirely.
-- **Native interactivity without islands** — Alpine.js-style `x-*` DOM directives
-  (`x-data`/`x-text`/`x-show`/`x-bind-*`/`x-on-*`/`x-for`) on a `native` page,
-  bound to the store by a small react-free runtime. Logic lives in a co-located
-  `export const behavior` (single-file component); each component's JS is a
-  separate chunk loaded **on demand** — a page never downloads a component it
-  doesn't render.
-- **Static lucide icons** — `lucide-react` icons on a `native` route compile to
-  inline `<svg>` at build time: **zero React**, no `renderToString`, no factory or
-  `{{ slot }}`. Static props bake into the markup; dynamic props (loader / `.map()`
-  item) become escaped jinja substitutions; `className` merges with the icon class.
-  Unsupported shapes (spread props, etc.) soft-fall to the React SSR path.
-- **Isomorphic store** — `brustjs/store`: `signal`/`computed`/`effect` +
-  `defineStore(name, factory)`. One `window` singleton per name on the client (so
-  separate island/directive chunks share state), a per-request `AsyncLocalStorage`
-  instance on the server. `useStore` adapter for React islands; a native directive
-  button and a React island reactively share the same store.
-- **Typed actions** — `defineActions().get/post/put/patch/delete/head(path, ctx => R, { body, query })`
-  on the server; `client<typeof actions>()` is an Eden-Treaty-style proxy that
-  infers the whole API from the server types (no codegen) and returns
-  `{ data, error, status, headers }` (never throws). Standard Schema (zod)
-  validation, JSON / urlencoded / multipart bodies.
-- **Markdown pages** — `mdRoutes()` compiles a directory of `.md` files
-  (GFM + frontmatter, optional shiki highlighting) into native jinja routes at
-  build time, with React islands and behavior components embeddable straight
-  from markdown.
-- **SSE & WebSockets** as first-class route shapes.
-- Nested routes + dynamic params, per-route typed loaders, request-scoped middleware,
-  SPA-style navigation, in-process LRU response cache + island ISR cache, Tailwind v4 + CSS Modules.
-- **Agent-first** — `defineActions` endpoints become MCP **tools** and route
-  loaders become **resources** at `/_brust/mcp`; `tools/call` runs through the
-  same validation + middleware as an HTTP request, so agents drive the app
-  without scraping.
+## Built in, not bolted on
+
+- **Native rendering** — pages compile ahead of time and are served as plain
+  HTML: no hydration pass, no framework runtime in the response. One compiled
+  page sustains **84,119 req/s** versus 28,938 for the same page through a
+  JavaScript pipeline — about 2.9× ([bench/RESULTS.md](./bench/RESULTS.md)).
+  → [Rendering](https://brust.assetsart.com/docs/rendering)
+- **React islands** — hydrate one component, not the page. React 19 streaming
+  SSR with auto-Suspense; SSR islands can opt into **ISR caching**
+  (`isr={{ key, tags, revalidate }}`).
+  → [Islands](https://brust.assetsart.com/docs/rendering#islands)
+- **Native interactivity** — counters, toggles, live text: `x-*` DOM directives
+  bound to the store by a small react-free runtime, with logic in a co-located
+  `export const behavior`. Each component's JS is a separate on-demand chunk.
+  → [Native interactivity](https://brust.assetsart.com/docs/native-interactivity)
+- **Typed actions end-to-end** — `defineActions()` on the server; the treaty
+  client infers the whole API from server types (no codegen) and returns
+  `{ data, error, status, headers }` — it never throws. Standard Schema (zod)
+  validation; JSON / urlencoded / multipart.
+  → [Actions](https://brust.assetsart.com/docs/actions)
+- **Markdown pages + SSG** — drop `.md` files in a folder for routed pages with
+  nav, embed islands and behaviors straight from markdown, and prerender the
+  whole site to static HTML with `brust build --ssg`. The
+  [docs site](https://brust.assetsart.com/) is built this way.
+  → [Markdown pages](https://brust.assetsart.com/docs/markdown-pages)
+- **MCP for agents** — actions double as MCP **tools** and loaders as
+  **resources** at `/_brust/mcp`; `tools/call` runs through the same validation
+  and middleware as HTTP, so agents drive the app without scraping.
+  → [Agents](https://brust.assetsart.com/docs/agents)
+- Plus: nested routes + dynamic params, typed loaders, request-scoped
+  middleware, SPA-style navigation, SSE & WebSockets as first-class route
+  shapes, response + ISR caches, Tailwind v4 + CSS Modules, static
+  `lucide-react` icons compiled to inline SVG on native routes.
 
 ## Markdown pages
 
-Mount a content directory as routes — each `.md` file becomes a `native: true`
-page compiled to a jinja template at build time (no React on the server, no
-markdown parsing at request time):
+Mount a content directory as routes — each `.md` file becomes a compiled page
+(no markdown parsing at request time):
 
 ```tsx
 // routes.tsx
@@ -153,13 +146,46 @@ optional `shiki` peer dependency is installed. `brust build` freezes the pages
 into the dist (`md-manifest.json` — the content dir isn't needed at runtime),
 and `brust build --ssg` prerenders them to static HTML.
 
-## Performance
+## CLI
 
-Two tiers, split by the napi crossing: pure-Rust paths (`/ping`, native jinja
-routes) run far faster than routes that cross into a Bun worker for React SSR.
-Full numbers, methodology, and the latency table are in
-[`bench/RESULTS.md`](./bench/RESULTS.md) (`bun run bench`); the request lifecycle
-and SAB protocol are in [`architecture.md`](./architecture.md).
+```
+brustjs dev   <entry>             # dev mode: watcher + WS reload + browser auto-reload
+brustjs build <entry> --out-dir D # prebuilt ./dist/ — run from the project (bun run dist/index.js)
+                  --target <auto|all|TARGET[,…]> # which native binary to bundle (default: auto = host platform)
+                  --ssg [--ssg-out D]   # prerender static routes (incl. markdown pages) to HTML
+brustjs new   <name>              # scaffold a project (partial — see Status)
+```
+
+Full reference: [CLI](https://brust.assetsart.com/docs/cli).
+
+## Under the hood
+
+A detail you mostly never have to think about: Brust runs as one Bun host
+process whose HTTP server (hyper 1.x, HTTP/1.1 + HTTP/2, optional in-process
+TLS), routing, caches, and native-template rendering are pure Rust, loaded as a
+napi `.node` module. React renders cross into Bun Worker threads and return
+over a per-worker `SharedArrayBuffer`; a worker can hold several renders
+in-flight (`renderSlots`) to overlap Suspense-bound requests. `native: true`
+routes compile JSX to templates at build time and never touch React on the
+server. Multi-thread tokio runtime — runs the same everywhere (no io_uring /
+seccomp caveat). The full request lifecycle and protocol live in
+[`architecture.md`](./architecture.md); numbers and methodology in
+[`bench/RESULTS.md`](./bench/RESULTS.md).
+
+## Run from source
+
+```bash
+git clone https://github.com/AssetsArt/brust && cd brust
+bun install
+cd runtime && bun run build && cd ..                          # release addon; NOT build:debug (~2× slower)
+bun run runtime/cli/index.ts build example/pokedex/index.ts  # compile native routes → .brust/jinja
+BRUST_PORT=3100 bun run example/pokedex/index.ts             # → http://127.0.0.1:3100
+```
+
+The [`example/pokedex/`](./example/pokedex) app dogfoods `native: true` across
+every route, and [`example/docs/`](./example/docs) is the documentation site
+itself — markdown pages, SSG, and the unified-store demo, deployed to
+[brust.assetsart.com](https://brust.assetsart.com/).
 
 ## Development
 
@@ -174,21 +200,19 @@ crates/brust-core/        Rust core (pure, zero napi): hyper server, worker pool
 crates/brust/             Thin napi cdylib over brust-core (the .node)
 crates/jsx-rust-compiler/ JSX → jinja compiler for native: true routes
 runtime/                  Bun-side: routing, render, actions, store, native directives, CLI
-example/                  pokedex native-first demo
+example/                  pokedex (native-first demo) · docs (the documentation site)
 bench/ · docs/ · architecture.md
 ```
 
 ## Status
 
 Alpha, solo-developed. Linux is tier-1 (glibc + musl, 6 prebuilt platform
-binaries); the multi-thread tokio server runs under default container seccomp —
-no `io_uring` exception needed. The server speaks **HTTP/1.1 + HTTP/2** with
-optional in-process **TLS**, and a worker can hold several renders in-flight
-(**`renderSlots`**) to overlap Suspense / loader-bound requests. Known partials:
+binaries) and runs under default container seccomp. Known partials:
 `brustjs dev` reload is a full worker-respawn (not state-preserving HMR) — TS,
-islands, and `.module.css` all reload that way. Tailwind is opt-in — the scaffold
-adds it as a project dependency; `@import "tailwindcss"` resolves from your own
-`node_modules`. Roadmap and limitations in [`architecture.md`](./architecture.md).
+islands, and `.module.css` all reload that way. Tailwind is opt-in — the
+scaffold adds it as a project dependency; `@import "tailwindcss"` resolves from
+your own `node_modules`. Roadmap and limitations in
+[`architecture.md`](./architecture.md).
 
 MIT.
 
