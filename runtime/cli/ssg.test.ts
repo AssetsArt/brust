@@ -108,6 +108,14 @@ test('%2F in a segment does NOT create a nested directory', () => {
   expect(d!.outFile).toBe('x/a%2Fb/index.html')
 })
 
+test('dot segments cannot traverse out of the export dir; expansion rejects them at the source', async () => {
+  const [d] = collectStaticPaths([route('/x/%2E%2E/y')])
+  expect(d!.outFile).toBe('x/%2E%2E/y/index.html')
+  await expect(
+    expandDynamicRoutes([ssgRoute('/b/{slug}', { params: () => [{ slug: '..' }] })]),
+  ).rejects.toThrow(/not a valid path segment/)
+})
+
 // ----- expandDynamicRoutes -----
 
 const ssgRoute = (

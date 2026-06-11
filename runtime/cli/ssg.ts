@@ -62,9 +62,20 @@ function decodeSegment(seg: string): string {
 }
 
 /** Produce the decoded on-disk path from a normalised URL path. Each segment
- * is decoded independently so separator characters cannot escape. */
+ * is decoded independently so separator characters cannot escape; `.`/`..`
+ * segments (raw or decoded — encodeURIComponent leaves dots alone) are
+ * percent-encoded so a hostile param value can never traverse out of the
+ * static output directory. */
 function decodePathForDisk(normalized: string): string {
-  return normalized.split('/').map(decodeSegment).join('/')
+  return normalized
+    .split('/')
+    .map((seg) => {
+      const decoded = decodeSegment(seg)
+      if (decoded === '.') return '%2E'
+      if (decoded === '..') return '%2E%2E'
+      return decoded
+    })
+    .join('/')
 }
 
 /** Strip trailing slashes ('/docs/intro/' → '/docs/intro'); root stays '/'. */
@@ -195,6 +206,14 @@ export async function expandDynamicRoutes(flatRoutes: FlatRouteLike[]): Promise<
         if (v === SSG_FALLBACK_SENTINEL) {
           throw new Error(
             `ssg.params for "${route.fullPath}": record #${i + 1} uses the reserved value ${SSG_FALLBACK_SENTINEL}`,
+          )
+        }
+        // encodeURIComponent leaves dots alone, so '.'/'..' would survive into
+        // the crawl path (where fetch normalizes them away — the crawl would
+        // silently hit a DIFFERENT route) and into the on-disk path.
+        if (v === '.' || v === '..') {
+          throw new Error(
+            `ssg.params for "${route.fullPath}": record #${i + 1} value '${v}' for '${name}' is not a valid path segment`,
           )
         }
         concrete = concrete.replaceAll(`{${name}}`, encodeURIComponent(v))
