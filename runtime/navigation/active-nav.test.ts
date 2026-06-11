@@ -78,6 +78,26 @@ test('prefix match activates a parent link for a nested path', () => {
   expect(document.querySelector('a')!.classList.contains('is-active')).toBe(true)
 })
 
+test('a trailing-slash current path (CF redirect) still activates the bare link', () => {
+  // Regression: a full load via a trailing-slash redirect set the current path
+  // to /docs/native-interactivity/ while the sidebar href is bare — the
+  // reconciler wiped the SSR-correct aria-current. Both sides canonicalize now.
+  navMarkup('<a href="/docs/store">Store</a><a href="/docs/native-interactivity">Native</a>')
+  __navInit('/docs/native-interactivity/', '')
+  installActiveNav()
+  const links = document.querySelectorAll('a')
+  expect(links[1].classList.contains('is-active')).toBe(true)
+  expect(links[1].getAttribute('aria-current')).toBe('page')
+  expect(links[0].getAttribute('aria-current')).toBe(null)
+})
+
+test('a trailing-slash link href also matches a bare current path', () => {
+  navMarkup('<a href="/docs/store/">Store</a>')
+  __navInit('/docs/store', '')
+  installActiveNav()
+  expect(document.querySelector('a')!.getAttribute('aria-current')).toBe('page')
+})
+
 test('html[data-brust-nav] mirrors phase, success maps to idle', () => {
   navMarkup('<a href="/">Home</a>')
   __navInit('/', '')

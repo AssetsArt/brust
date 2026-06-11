@@ -8,6 +8,14 @@
 import { effect } from '../store/signal.ts'
 import { nav, type NavPhase } from './store.ts'
 
+/** Drop a trailing slash (root '/' stays). Mirrors store.ts canonicalPath —
+ * kept local so this module stays a leaf with no extra import surface. */
+function canonicalPath(p: string): string {
+  let out = p
+  while (out.length > 1 && out.endsWith('/')) out = out.slice(0, -1)
+  return out
+}
+
 // The install guard lives on globalThis (like __BRUST_NAV__), NOT as a module
 // `let`: every Bun.build island chunk inlines its own copy of this module, so a
 // module-local flag would not stop a second chunk from installing a duplicate
@@ -55,10 +63,15 @@ function reconcileActiveLinks(currentPath: string): void {
     const prefix = el.dataset.brustActiveMatch === 'prefix'
     const links = el.querySelectorAll<HTMLAnchorElement>('a[href]')
     for (const a of Array.from(links)) {
-      const linkPath = new URL(a.href, location.href).pathname
+      // Canonicalize both sides (drop trailing '/', root stays '/') so a link
+      // href and a current path that differ only by a trailing slash — e.g. a
+      // full load served via a trailing-slash redirect — still match. nav.path
+      // is already canonical (store.ts), but the link href may not be.
+      const linkPath = canonicalPath(new URL(a.href, location.href).pathname)
+      const cur = canonicalPath(currentPath)
       const isActive = prefix
-        ? currentPath === linkPath || currentPath.startsWith(`${linkPath.replace(/\/$/, '')}/`)
-        : currentPath === linkPath
+        ? cur === linkPath || cur.startsWith(`${linkPath}/`)
+        : cur === linkPath
       a.classList.toggle(activeClass, isActive)
       if (isActive) a.setAttribute('aria-current', 'page')
       else a.removeAttribute('aria-current')
