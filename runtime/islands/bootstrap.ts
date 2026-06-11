@@ -24,6 +24,14 @@ import {
   registerNavigator,
 } from '../navigation/store.ts'
 import { installActiveNav } from '../navigation/active-nav.ts'
+import {
+  pageCacheKey,
+  getCachedPage,
+  fetchPagePayload,
+  inflightPage,
+  prefetchPage,
+  type PagePayload,
+} from './page-cache.ts'
 
 // Track React roots created by hydrateOne so we can unmount them before
 // removing their DOM in swapMainContent. Without this, removing the DOM
@@ -242,22 +250,47 @@ export function isFullDocumentPayload(html: string): boolean {
 
 let inFlight: AbortController | null = null
 
+// scrollY of each page we navigated away from (keyed pathname+search), so
+// back/forward restores the reading position instead of jumping to top.
+const scrollPositions = new Map<string, number>()
+// The page currently in the DOM. Tracked here (set at boot + on every commit)
+// instead of read from `location` at save time, because popstate updates
+// `location` to the DESTINATION before the event fires — reading it there
+// would record the leaving page's scroll under the wrong key.
+let currentPageKey = ''
+
 export async function navigate(url: URL, mode: 'push' | 'replace' | 'none'): Promise<void> {
   inFlight?.abort()
   const ac = new AbortController()
   inFlight = ac
   try {
     __navStart(url.pathname, url.search)
-    const resp = await fetch(`/_brust/page${url.pathname}${url.search}`, {
-      signal: ac.signal,
-      headers: { Accept: 'application/json' },
-    })
-    if (!resp.ok) throw new Error(`navigation: status ${resp.status}`)
-    const { html, title, store } = (await resp.json()) as {
-      html: string
-      title: string
-      store?: Record<string, Record<string, unknown>>
+    const key = pageCacheKey(url)
+    // Visited pages are served from the in-memory cache — no refetch. Forward
+    // navigations respect PAGE_STALE_MS (default max age); back/forward reuses
+    // any entry regardless of age, like the browser's bfcache.
+    const cached = getCachedPage(key, mode === 'none' ? Number.POSITIVE_INFINITY : undefined)
+    let payload: PagePayload
+    if (cached) {
+      payload = cached
+    } else {
+      // A hover prefetch may already have this page in flight — await it
+      // instead of double-fetching; if it failed, fall back to a direct fetch.
+      const pre = inflightPage(key)
+      if (pre) {
+        try {
+          payload = await pre
+        } catch {
+          payload = await fetchPagePayload(url, ac.signal)
+        }
+      } else {
+        payload = await fetchPagePayload(url, ac.signal)
+      }
+      // The prefetch promise isn't tied to our AbortController, so an abort
+      // during that await doesn't throw — check for supersession explicitly.
+      if (ac.signal.aborted) return
     }
+    const { html, title, store } = payload
     // A standalone (no-<main>) route ships its FULL document here. We can't swap
     // that into the current shell's <main> without nesting a second document
     // (duplicate chrome — the classic two-topbars artifact), and the current
@@ -269,14 +302,20 @@ export async function navigate(url: URL, mode: 'push' | 'replace' | 'none'): Pro
     }
     const main = document.querySelector('main')
     if (!main) throw new Error('navigation: no <main> element')
+    scrollPositions.set(currentPageKey, window.scrollY)
     unmountIslandsIn(main as HTMLElement)
     swapMainContent(main as HTMLElement, html)
-    if (store) applyStoreSnapshot(store)
+    // Only a FRESH payload re-applies the server store snapshot: replaying a
+    // cached (stale) snapshot would roll back live client store state the user
+    // changed since the page was first fetched.
+    if (!cached && store) applyStoreSnapshot(store)
     if (title) document.title = title
     if (mode === 'push') history.pushState({}, '', url.href)
     else if (mode === 'replace') history.replaceState({}, '', url.href)
-    window.scrollTo(0, 0)
+    if (mode === 'none') window.scrollTo(0, scrollPositions.get(key) ?? 0)
+    else window.scrollTo(0, 0)
     hydrateMarkersIn(main as HTMLElement)
+    currentPageKey = key
     __navCommit(url.pathname, url.search)
   } catch (err) {
     if ((err as Error).name === 'AbortError') return
@@ -288,7 +327,76 @@ export async function navigate(url: URL, mode: 'push' | 'replace' | 'none'): Pro
   }
 }
 
+/** Resolve an <a> to a prefetchable in-app URL, or null when prefetch must not
+ * run: not ours (cross-origin, target, download, /_brust/), explicitly opted
+ * out (data-brust-no-intercept disables SPA handling entirely;
+ * data-brust-no-prefetch keeps the SPA click but skips the speculative fetch),
+ * or the page we are already on. Exported for unit testing. */
+export function prefetchUrlFor(a: HTMLAnchorElement): URL | null {
+  if (a.target && a.target !== '_self') return null
+  if (a.hasAttribute('download')) return null
+  if (a.dataset.brustNoIntercept !== undefined) return null
+  if (a.dataset.brustNoPrefetch !== undefined) return null
+  if (!a.getAttribute('href')) return null
+  const url = new URL(a.href, location.href)
+  if (url.origin !== location.origin) return null
+  if (url.pathname.startsWith('/_brust/')) return null
+  if (url.pathname === location.pathname && url.search === location.search) return null
+  return url
+}
+
+// Hover-intent delay: long enough that a cursor sweeping across a nav list
+// doesn't fire a fetch per link, short enough to beat the click (~200-300ms
+// between hover and press for a deliberate click).
+const HOVER_DELAY_MS = 80
+
+/** Hover/touch prefetch: pointer rests on an internal link for HOVER_DELAY_MS
+ * (or a touch starts — the tap commits within ~100ms anyway) → fetch its nav
+ * payload into the page cache so the eventual click swaps instantly.
+ * prefetchPage dedupes in-flight fetches and respects Save-Data/2g. */
+function installPrefetch(): void {
+  const timers = new WeakMap<HTMLAnchorElement, ReturnType<typeof setTimeout>>()
+  document.addEventListener('pointerover', (e) => {
+    const a = (e.target as HTMLElement | null)?.closest('a') as HTMLAnchorElement | null
+    if (!a || timers.has(a)) return
+    const url = prefetchUrlFor(a)
+    if (!url) return
+    timers.set(
+      a,
+      setTimeout(() => {
+        timers.delete(a)
+        void prefetchPage(url)
+      }, HOVER_DELAY_MS),
+    )
+  })
+  document.addEventListener('pointerout', (e) => {
+    const a = (e.target as HTMLElement | null)?.closest('a') as HTMLAnchorElement | null
+    if (!a) return
+    // Moving between children of the same link is not a leave.
+    if (e.relatedTarget instanceof Node && a.contains(e.relatedTarget)) return
+    const t = timers.get(a)
+    if (t !== undefined) {
+      clearTimeout(t)
+      timers.delete(a)
+    }
+  })
+  document.addEventListener(
+    'touchstart',
+    (e) => {
+      const a = (e.target as HTMLElement | null)?.closest('a') as HTMLAnchorElement | null
+      if (!a) return
+      const url = prefetchUrlFor(a)
+      if (url) void prefetchPage(url)
+    },
+    { passive: true },
+  )
+}
+
 function installInterceptor(): void {
+  // We restore scroll ourselves on popstate (the page cache makes back/forward
+  // an instant in-place swap); stop the browser's automatic restoration from
+  // fighting the swap.
+  if ('scrollRestoration' in history) history.scrollRestoration = 'manual'
   document.addEventListener('click', (e) => {
     const target = e.target as HTMLElement | null
     const a = target?.closest('a') as HTMLAnchorElement | null
@@ -309,17 +417,20 @@ function installInterceptor(): void {
 
 if (typeof document !== 'undefined') {
   registerNavigator((url, replace) => navigate(url, replace ? 'replace' : 'push'))
+  currentPageKey = location.pathname + location.search
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
       __navInit(location.pathname, location.search)
       installActiveNav()
       hydrateMarkersIn(document.body)
       installInterceptor()
+      installPrefetch()
     })
   } else {
     __navInit(location.pathname, location.search)
     installActiveNav()
     hydrateMarkersIn(document.body)
     installInterceptor()
+    installPrefetch()
   }
 }
