@@ -21,16 +21,15 @@ if (!isWorker) generateSearchIndex()
 // md tag name, the registry key, and the default-import ident above must all
 // match.
 //
-// Sidebar/pager chrome: mdRoutes has no first-class loader option for the
-// layout parent (FRAMEWORK-GAPS.md), so the loader is attached to the
-// returned tree node. Chain loaders merge top-down — the leaf's `__md` head
-// fields win because buildDocsChrome returns ONLY { nav, pager }.
+// Sidebar/pager chrome: the layout loader is a first-class mdRoutes option.
+// Chain loaders merge top-down — the leaf's `__md` head fields win because
+// buildDocsChrome returns ONLY { nav, pager }.
 const [docsTree] = mdRoutes('content', {
   prefix: '/docs',
   layout: DocsLayout,
   components: { DemoBadge, DemoCounter },
+  loader: async ({ path }) => buildDocsChrome(path),
 })
-docsTree.loader = async ({ path }) => buildDocsChrome(path)
 
 // Home is a native landing page. Its loader feeds the brustjs version (read
 // from the package manifest in lib/version.ts) so the release card shows the
