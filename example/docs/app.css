@@ -130,6 +130,52 @@ html:not([data-theme="light"]) .theme-icon-light {
   display: none;
 }
 
+/* ── Search palette (the ONE React island, components/SearchPalette.tsx) ──
+   The island hydrates on idle with NO ssr markup, so the header slot must
+   own the trigger's box: fixed size here, button fills it (display:contents
+   collapses the data-brust-island host div). */
+
+.search-slot {
+  display: inline-flex;
+  width: 9rem;
+  height: 2.5rem; /* hit area ≥ 40px */
+}
+
+.search-slot [data-brust-island] {
+  display: contents;
+}
+
+/* <dialog> sits in the top layer (no stacking-context fights), but the
+   z tokens are the binding scale — applied for uniformity. */
+dialog.search-palette {
+  z-index: var(--z-palette);
+  width: min(34rem, calc(100vw - 2rem));
+  margin: 10vh auto auto;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card); /* ≤ 12px (binding max) */
+  background: var(--bg);
+  color: var(--fg);
+}
+
+dialog.search-palette::backdrop {
+  z-index: var(--z-palette-backdrop);
+  background: rgb(8 5 11 / 0.55);
+}
+
+/* open moment: ≤200ms ease-out-quart; the global reduced-motion rule above
+   flattens this to one frame (opens without transition). */
+dialog.search-palette[open] {
+  animation: palette-in 160ms var(--ease-out-quart);
+}
+
+@keyframes palette-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
 /* ── Home hero: grainient canvas + glass pill (the ONE glass use) ─────── */
 
 /* WebGL2 canvas host — fills the relative hero section behind the copy */

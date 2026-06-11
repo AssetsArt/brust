@@ -14,8 +14,9 @@
 // Instead the `.map` body uses the supported PER-ITEM TERNARY with two
 // element branches (`item.active ? <a aria-current="page"…> : <a…>`), which
 // omits the attribute entirely on inactive items. See FRAMEWORK-GAPS.md.
-import { BrustPage, Outlet } from 'brustjs'
+import { BrustPage, Island, Outlet } from 'brustjs'
 import type { DocsChrome } from '../lib/nav.ts'
+import SearchPalette from './SearchPalette'
 import ThemeToggle from './ThemeToggle'
 
 export default function DocsLayout({
@@ -65,8 +66,12 @@ export default function DocsLayout({
           </nav>
           <div className="ml-auto flex items-center gap-2">
             <ThemeToggle native />
-            {/* SearchPalette host lands in task 1.6 */}
-            <span data-slot="search-palette" />
+            {/* The site's ONLY React island. No `ssr` prop → host is empty
+                until idle hydration; .search-slot (app.css) reserves the
+                button's box so the header never shifts. */}
+            <span className="search-slot">
+              <Island component={SearchPalette} hydrate="idle" />
+            </span>
           </div>
         </div>
       </header>
