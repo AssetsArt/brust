@@ -192,13 +192,15 @@ export const brust = {
         path: r.fullPath,
         // Rust-safe projection: the L2 `key` FUNCTION and `key_ttl_seconds`
         // stay TS-side (the worker reads them off the FlatRoute). Only the
-        // L1 directives cross napi. `bypass` passes through as boolean or the
-        // string expr — serde's untagged BypassSpec handles both; null → None.
+        // L1 directives cross napi. `bypass` passes through as `true` or the
+        // string expr — serde's untagged BypassSpec handles both. `false` and
+        // absent both normalize to null → None (never bypass), so an explicitly
+        // disabled bypass doesn't ride a cross-language `false` contract.
         cache: r.cache
           ? {
               ttl_seconds: r.cache.ttl_seconds,
               prefix: r.cache.prefix ?? null,
-              bypass: r.cache.bypass ?? null,
+              bypass: r.cache.bypass || null,
             }
           : null,
         nativeTemplate: r.nativeTemplate ?? null,

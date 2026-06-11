@@ -815,20 +815,34 @@ export function makeRenderer(
       //   MISS → render normally, then capture slotView[0..len] and pageCacheSet.
       // Streaming/Suspense responses never reach the `len > 0` fast-lane return
       // below (renderBranchStreaming returns 0), so they are never L2-cached.
+      // L2 capture/replay rides the NATIVE SAB fast-lane (a framed payload in
+      // slotView + a length return). React routes emit via the chunk channel and
+      // return 0, so engaging L2 there would return a non-zero length into the
+      // streaming path = protocol corruption. Gate L2 to native routes; a React
+      // route with `bypass` still skips L1 and renders fresh (no L2).
       const cc = flat.cache
-      const wantL2 = call.bypassed === true && typeof cc?.key === 'function'
+      const wantL2 =
+        call.bypassed === true && typeof cc?.key === 'function' && flat.nativeTemplate !== undefined
       let l2Key: CacheKeyResult | undefined
       if (wantL2 && cc) {
-        const url = new URL(call.req.url, 'http://internal') // req.url is a string
-        l2Key = await cc.key!({ req: call.req, url, params: call.params ?? {} })
-        const cached = (native as any).pageCacheGet?.(l2Key.key) as Buffer | null | undefined
-        if (cached && cached.length > 0 && cached.length <= slotView.length) {
-          // REPLAY — write framed bytes into the slot, return length (fast lane).
-          slotView.set(cached, 0)
-          return cached.length
+        const url = new URL(call.req.url, 'http://internal') // req.url is a path+query
+        try {
+          l2Key = await cc.key!({ req: call.req, url, params: call.params ?? {} })
+        } catch (err) {
+          // A throwing/rejecting key() must not crash the worker — fall back to
+          // a fresh render. l2Key stays undefined → replay skipped, store no-op.
+          console.error('[brust] cache.key threw; bypassing L2 (rendering fresh):', err)
         }
-        // A cached payload too large for the slot falls through to a fresh
-        // render (never serve truncated bytes).
+        if (l2Key) {
+          const cached = (native as any).pageCacheGet?.(l2Key.key) as Buffer | null | undefined
+          if (cached && cached.length > 0 && cached.length <= slotView.length) {
+            // REPLAY — write framed bytes into the slot, return length (fast lane).
+            slotView.set(cached, 0)
+            return cached.length
+          }
+          // A cached payload too large for the slot falls through to a fresh
+          // render (never serve truncated bytes).
+        }
       }
       // Capture-and-store on an L2 miss. Wraps the native success returns; a
       // no-op when not bypassed or no key. Only single-chunk (len > 0) bytes
@@ -838,12 +852,16 @@ export function makeRenderer(
           const payload = slotView.subarray(0, len).slice() // copy out of the SAB
           if (!payloadHasSetCookie(payload)) {
             const ttlSec = l2Key.ttl ?? cc.key_ttl_seconds ?? cc.ttl_seconds
-            ;(native as any).pageCacheSet?.(
-              l2Key.key,
-              l2Key.tags ?? [],
-              Math.round(ttlSec * 1000),
-              payload,
-            )
+            try {
+              ;(native as any).pageCacheSet?.(
+                l2Key.key,
+                l2Key.tags ?? [],
+                Math.round(ttlSec * 1000),
+                payload,
+              )
+            } catch (err) {
+              console.error('[brust] pageCacheSet failed (response served, not cached):', err)
+            }
           }
         }
         return len
