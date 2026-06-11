@@ -35,6 +35,8 @@ import NativeInline from './NativeInline'
 import Crash               from './components/Crash'
 import CrashBoundary       from './components/CrashBoundary'
 import CacheTest           from './components/CacheTest'
+import CachePrefixTest     from './components/CachePrefixTest'
+import CacheBypassTest     from './components/CacheBypassTest'
 import Protected           from './components/Protected'
 import WithHeader          from './components/WithHeader'
 import NotePage            from './components/NotePage'
@@ -272,6 +274,8 @@ export const routes = defineRoutes([
     Component: CrashBoundary,
   },
   { path: '/cache-test',   Component: CacheTest, cache: { ttl_seconds: 60 } },
+  { path: '/cache-prefix', Component: CachePrefixTest, cache: { ttl_seconds: 60, prefix: 'cookie(seg)' } },
+  { path: '/cache-bypass', Component: CacheBypassTest, cache: { ttl_seconds: 60, bypass: 'cookie(fresh)' } },
   { path: '/protected',    Component: Protected,    middleware: [authRequired] },
   { path: '/with-header',  Component: WithHeader,   middleware: [timeIt] },
 

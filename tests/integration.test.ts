@@ -418,6 +418,83 @@ test('invalidate endpoint rejects GET and unsupported queries', async () => {
   }
 }, 15_000)
 
+test('L1 cache prefix: different cookie values key separate entries', async () => {
+  // Route /cache-prefix: cache: { ttl_seconds: 60, prefix: 'cookie(seg)' }
+  // Each distinct `seg` cookie value is a separate L1 cache entry.
+  const { port, stop } = await startServer({ workers: '1' })
+  try {
+    // --- seg=a: first request is a miss; second is a hit (identical body). ---
+    const r1a = await fetch(`http://127.0.0.1:${port}/cache-prefix`, {
+      headers: { cookie: 'seg=a' },
+    })
+    expect(r1a.status).toBe(200)
+    const bodyA = await r1a.text()
+    expect(bodyA).toMatch(/render=\d+/)
+
+    const r2a = await fetch(`http://127.0.0.1:${port}/cache-prefix`, {
+      headers: { cookie: 'seg=a' },
+    })
+    expect(r2a.status).toBe(200)
+    // Cache hit — same rendered body (counter frozen).
+    expect(await r2a.text()).toBe(bodyA)
+
+    // --- seg=b: different prefix key → fresh render (different body). ---
+    const r1b = await fetch(`http://127.0.0.1:${port}/cache-prefix`, {
+      headers: { cookie: 'seg=b' },
+    })
+    expect(r1b.status).toBe(200)
+    const bodyB = await r1b.text()
+    // Counter advanced: body must differ from the seg=a entry.
+    expect(bodyB).not.toBe(bodyA)
+
+    // --- seg=a again: original entry still alive in cache. ---
+    const r3a = await fetch(`http://127.0.0.1:${port}/cache-prefix`, {
+      headers: { cookie: 'seg=a' },
+    })
+    expect(await r3a.text()).toBe(bodyA)
+  } finally {
+    const exit = await stop()
+    expect(exit).toBe(0)
+  }
+}, 15_000)
+
+test('L1 cache bypass: bypass cookie skips cache; absent cookie caches normally', async () => {
+  // Route /cache-bypass: cache: { ttl_seconds: 60, bypass: 'cookie(fresh)' }
+  // A non-empty `fresh` cookie bypasses L1 entirely (re-renders every time).
+  // No `fresh` cookie → normal L1 caching.
+  const { port, stop } = await startServer({ workers: '1' })
+  try {
+    // --- With fresh=1: two requests must produce DIFFERENT bodies (never cached). ---
+    const rb1 = await fetch(`http://127.0.0.1:${port}/cache-bypass`, {
+      headers: { cookie: 'fresh=1' },
+    })
+    expect(rb1.status).toBe(200)
+    const bypassBody1 = await rb1.text()
+    expect(bypassBody1).toMatch(/render=\d+/)
+
+    const rb2 = await fetch(`http://127.0.0.1:${port}/cache-bypass`, {
+      headers: { cookie: 'fresh=1' },
+    })
+    expect(rb2.status).toBe(200)
+    const bypassBody2 = await rb2.text()
+    // Both bypass → counter advanced → bodies differ.
+    expect(bypassBody2).not.toBe(bypassBody1)
+
+    // --- Without fresh cookie: first request is a miss; second is a hit. ---
+    const rc1 = await fetch(`http://127.0.0.1:${port}/cache-bypass`)
+    expect(rc1.status).toBe(200)
+    const cachedBody = await rc1.text()
+
+    const rc2 = await fetch(`http://127.0.0.1:${port}/cache-bypass`)
+    expect(rc2.status).toBe(200)
+    // Cache hit — body identical.
+    expect(await rc2.text()).toBe(cachedBody)
+  } finally {
+    const exit = await stop()
+    expect(exit).toBe(0)
+  }
+}, 15_000)
+
 // Regression (deterministic): a 405 sends `Connection: keep-alive`, so the
 // server MUST keep the socket open for the next request. It previously
 // `return`ed (closed) after the invalidate-GET 405 while advertising keep-alive
