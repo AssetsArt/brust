@@ -62,6 +62,8 @@ export default function DocsLayout({
             <a
               href="https://github.com/AssetsArt/brust"
               className="text-fg-muted transition-colors hover:text-fg"
+              target="_blank"
+              rel="noopener noreferrer"
             >
               GitHub
             </a>
@@ -125,22 +127,22 @@ export default function DocsLayout({
           <footer className="mt-12 flex max-w-[72ch] items-stretch justify-between gap-4 border-t border-line pt-6">
             {pager.hasPrev && (
               <a
-                href={pager.prev.path}
+                href={pager?.prev?.path}
                 rel="prev"
                 className="group flex flex-col gap-1 rounded-[var(--radius-card)] border border-line px-4 py-3 no-underline transition-colors hover:border-fg-muted"
               >
                 <span className="text-sm text-fg-muted">Previous</span>
-                <span className="font-medium text-link">{pager.prev.title}</span>
+                <span className="font-medium text-link">{pager?.prev?.title}</span>
               </a>
             )}
             {pager.hasNext && (
               <a
-                href={pager.next.path}
+                href={pager?.next?.path}
                 rel="next"
                 className="group ml-auto flex flex-col items-end gap-1 rounded-[var(--radius-card)] border border-line px-4 py-3 text-right no-underline transition-colors hover:border-fg-muted"
               >
                 <span className="text-sm text-fg-muted">Next</span>
-                <span className="font-medium text-link">{pager.next.title}</span>
+                <span className="font-medium text-link">{pager?.next?.title}</span>
               </a>
             )}
           </footer>
