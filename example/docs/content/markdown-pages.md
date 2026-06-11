@@ -273,6 +273,14 @@ Assets are copied preserving the live server's URL shape: island chunks under
 `/_brust/islands/`, CSS under `/_brust/css/`, and `public/` mapped to the
 root.
 
+**SPA navigation works statically.** Alongside each page the export writes
+the route's navigation payload at `_brust/page/<path>/index.html` — the same
+`{html, title, store}` JSON the live server answers at `/_brust/page/<path>`.
+Internal links on the static site therefore swap `<main>` client-side instead
+of full-reloading, exactly like the live server (this site does it — click the
+sidebar). Cross-shell navigations (a page without a shared `<main>`, like this
+site's Home) detect a full-document payload and fall back to a normal load.
+
 **Root path only:** every generated URL is root-absolute. Deploy the export at
 a domain root (`docs.example.com`), not under a subpath — `example.com/docs/`
 would 404 every asset.
