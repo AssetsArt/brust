@@ -488,6 +488,34 @@ test('L1 cache prefix: matched path param keys separate entries', async () => {
   }
 }, 15_000)
 
+test('L1 cache status gate: a 500 render is never cached (no poisoning)', async () => {
+  // Route /cache-flaky: cache: { ttl_seconds: 60 }; the component THROWS on its
+  // first render (→ framed 500 through the same single-chunk path as a 200).
+  // Without the status gate, the 500 would be written back under the route's
+  // L1 key and request #2 would replay it for the full TTL.
+  const { port, stop } = await startServer({ workers: '1' })
+  try {
+    const r1 = await fetch(`http://127.0.0.1:${port}/cache-flaky`)
+    expect(r1.status).toBe(500)
+    expect(r1.headers.get('x-brust-cache')).toBeNull()
+
+    // Fresh render (not a cached 500) — succeeds now.
+    const r2 = await fetch(`http://127.0.0.1:${port}/cache-flaky`)
+    expect(r2.status).toBe(200)
+    const body2 = await r2.text()
+    expect(body2).toMatch(/render=\d+/)
+
+    // The 200 IS cached: third request is a hit with the frozen body.
+    const r3 = await fetch(`http://127.0.0.1:${port}/cache-flaky`)
+    expect(r3.status).toBe(200)
+    expect(r3.headers.get('x-brust-cache')).toBe('HIT')
+    expect(await r3.text()).toBe(body2)
+  } finally {
+    const exit = await stop()
+    expect(exit).toBe(0)
+  }
+}, 15_000)
+
 test('L1 cache bypass: bypass cookie skips cache; absent cookie caches normally', async () => {
   // Route /cache-bypass: cache: { ttl_seconds: 60, bypass: 'cookie(fresh)' }
   // A non-empty `fresh` cookie bypasses L1 entirely (re-renders every time).

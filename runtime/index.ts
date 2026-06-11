@@ -215,12 +215,15 @@ export const brust = {
         // L1 directives cross napi. `bypass` passes through as `true` or the
         // string expr — serde's untagged BypassSpec handles both. `false` and
         // absent both normalize to null → None (never bypass), so an explicitly
-        // disabled bypass doesn't ride a cross-language `false` contract.
+        // disabled bypass doesn't ride a cross-language `false` contract. An
+        // EMPTY-STRING expr deliberately passes through: Expr::parse("") fails
+        // route install, surfacing the misconfiguration loudly at boot instead
+        // of silently never bypassing.
         cache: r.cache
           ? {
               ttl_seconds: r.cache.ttl_seconds,
               prefix: r.cache.prefix ?? null,
-              bypass: r.cache.bypass || null,
+              bypass: r.cache.bypass === false ? null : (r.cache.bypass ?? null),
               // Static L1 invalidation tags carried into each L1 entry so
               // `cache.invalidate({ tags })` can reach the response cache.
               tags: r.cache.tags ?? null,

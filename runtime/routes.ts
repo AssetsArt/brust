@@ -674,19 +674,22 @@ export interface MakeRendererOptions {
   slots?: number
 }
 
-/** Detect a Set-Cookie header in a framed single-chunk payload
- * (`[meta_len: u16 BE][meta JSON][body]`). Used to skip L2 page-cache writes
- * for personalized responses (a cached Set-Cookie would leak one user's
- * session to others). Short/truncated/malformed payloads → false (don't block
- * the store on a parse hiccup; native renders hardcode `headers: {}`). */
-function payloadHasSetCookie(payload: Uint8Array): boolean {
+/** May a framed single-chunk payload (`[meta_len: u16 BE][meta JSON][body]`)
+ * enter the L2 page cache? Only a plain 200 without Set-Cookie. The status
+ * gate is load-bearing: a jinja render failure comes back as a framed 500
+ * through the SAME napiRenderJinja success return as a real render, so without
+ * it one flaky render would poison the L2 key for its full TTL. A Set-Cookie
+ * response is per-client (a cached one would leak a session). Short/truncated/
+ * malformed payloads → NOT cacheable (fail closed). */
+function payloadCacheable(payload: Uint8Array): boolean {
   if (payload.length < 2) return false
   const metaLen = (payload[0] << 8) | payload[1]
   if (payload.length < 2 + metaLen) return false
   try {
     const meta = JSON.parse(new TextDecoder().decode(payload.subarray(2, 2 + metaLen)))
+    if (meta?.status !== 200) return false
     const headers = (meta?.headers ?? {}) as Record<string, unknown>
-    return Object.keys(headers).some((h) => h.toLowerCase() === 'set-cookie')
+    return !Object.keys(headers).some((h) => h.toLowerCase() === 'set-cookie')
   } catch {
     return false
   }
@@ -889,7 +892,7 @@ export function makeRenderer(
       const maybeStoreL2 = (len: number): number => {
         if (wantL2 && cc && l2Key && len > 0 && len <= slotView.length) {
           const payload = slotView.subarray(0, len).slice() // copy out of the SAB
-          if (!payloadHasSetCookie(payload)) {
+          if (payloadCacheable(payload)) {
             const ttlSec = l2Key.ttl ?? cc.key_ttl_seconds ?? cc.ttl_seconds
             try {
               ;(native as any).pageCacheSet?.(

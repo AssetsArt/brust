@@ -1264,10 +1264,10 @@ where
             // L1 write-back: single-chunk only (always true here), skip when the
             // response sets a cookie (per-client — never cache).
             if let Some(wb) = writeback {
-                if meta_has_set_cookie(&meta) {
+                if !meta_cacheable(&meta) {
                     tracing::warn!(
                         label,
-                        "skipping cache write-back: response has Set-Cookie header"
+                        "skipping cache write-back: response not cacheable (non-200 or Set-Cookie)"
                     );
                 } else {
                     let framed =
@@ -1417,10 +1417,10 @@ where
                 let _ = ack.send(());
                 if is_final {
                     if let Some(wb) = cache_writeback {
-                        if meta_has_set_cookie(&meta) {
+                        if !meta_cacheable(&meta) {
                             tracing::warn!(
                                 label,
-                                "skipping cache write-back: response has Set-Cookie header"
+                                "skipping cache write-back: response not cacheable (non-200 or Set-Cookie)"
                             );
                         } else {
                             let framed =
@@ -1464,10 +1464,10 @@ where
                     }
                 }
                 if let Some(wb) = cache_writeback {
-                    if meta_has_set_cookie(&meta) {
+                    if !meta_cacheable(&meta) {
                         tracing::warn!(
                             label,
-                            "skipping cache write-back: response has Set-Cookie header"
+                            "skipping cache write-back: response not cacheable (non-200 or Set-Cookie)"
                         );
                     } else {
                         let framed =
@@ -1493,10 +1493,10 @@ where
                             match decode_fast_lane(buf) {
                                 Ok((meta, body_bytes)) => {
                                     if let Some(wb) = cache_writeback {
-                                        if meta_has_set_cookie(&meta) {
+                                        if !meta_cacheable(&meta) {
                                             tracing::warn!(
                                                 label,
-                                                "skipping cache write-back: response has Set-Cookie header"
+                                                "skipping cache write-back: response not cacheable (non-200 or Set-Cookie)"
                                             );
                                         } else {
                                             let framed = crate::render::stream::build_single_response_bytes(&meta, &body_bytes);
@@ -1683,12 +1683,20 @@ fn build_cache_key(method: &str, full_path: &str, prefix: String) -> CacheKey {
 }
 
 /// True if the response meta carries a `Set-Cookie` header (case-insensitive).
-/// A `Set-Cookie` response is per-client and must never be written to either
-/// cache layer (would leak a session/auth cookie to the next requester).
-fn meta_has_set_cookie(meta: &crate::render::stream::ChunkMeta) -> bool {
-    meta.headers
-        .keys()
-        .any(|h| h.eq_ignore_ascii_case("set-cookie"))
+/// A response may enter the shared L1 cache only as a plain 200 WITHOUT
+/// Set-Cookie. The status gate is load-bearing: a transient loader/render
+/// failure arrives as a framed 500 through the SAME fast-lane length return as
+/// a success (`napi_render_jinja` converts errors to framed 500s instead of
+/// throwing; JS catch paths pack 500/413 the same way), so without it one
+/// flaky render would poison the cache for the full ttl_seconds. A Set-Cookie
+/// response is per-client and would leak a session cookie to the next
+/// requester.
+fn meta_cacheable(meta: &crate::render::stream::ChunkMeta) -> bool {
+    meta.status == 200
+        && !meta
+            .headers
+            .keys()
+            .any(|h| h.eq_ignore_ascii_case("set-cookie"))
 }
 
 fn sort_query(query: &str) -> String {

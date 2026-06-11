@@ -45,6 +45,11 @@ pub struct CacheKey {
 pub struct CachedEntry {
     pub response_bytes: Vec<u8>,
     pub ttl: Duration,
+    /// Invalidation tags this entry was inserted under. Carried on the entry so
+    /// the eviction listener can prune `tag_index` when moka removes the entry
+    /// (capacity eviction, TTL expiry, explicit invalidation). `Arc` because the
+    /// entry is cloned on every `get`.
+    pub tags: std::sync::Arc<[String]>,
 }
 
 /// Per-entry expiry policy: each entry lives for its own `ttl`, measured from
@@ -86,14 +91,21 @@ pub struct CacheStats {
     pub capacity: usize,
 }
 
+type TagIndex =
+    parking_lot::Mutex<std::collections::HashMap<String, std::collections::HashSet<CacheKey>>>;
+
 pub struct ResponseCache {
     inner: moka::sync::Cache<CacheKey, CachedEntry>,
     /// tag → set of keys carrying that tag. Enables group invalidation, which
-    /// moka has no native support for. Mirrors `island_cache::MokaStore`. Stale
-    /// entries (key already evicted) are tolerated: invalidate pops a
-    /// possibly-absent key (no-op).
-    tag_index:
-        parking_lot::Mutex<std::collections::HashMap<String, std::collections::HashSet<CacheKey>>>,
+    /// moka has no native support for. UNLIKE the island/page caches (whose
+    /// keys are developer-controlled), L1 keys are REQUEST-derived — the
+    /// sorted query string is part of the key — so an unbounded index would be
+    /// attacker-growable (`?x=<random>` per request on any tagged route). The
+    /// eviction listener registered in `with_capacity` prunes the index
+    /// whenever moka removes an entry (capacity eviction, TTL expiry, explicit
+    /// or rejected insert), bounding the index by the live entry set. Shared
+    /// `Arc` because the listener closure needs its own handle.
+    tag_index: std::sync::Arc<TagIndex>,
     hits: AtomicU64,
     misses: AtomicU64,
     capacity: u64,
@@ -110,13 +122,39 @@ impl ResponseCache {
     /// `AppState::reconfigure_caches`). Capacity is floored at 1.
     pub fn with_capacity(max_capacity: u64) -> Self {
         let capacity = max_capacity.max(1);
+        let tag_index: std::sync::Arc<TagIndex> =
+            std::sync::Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new()));
+        // Prune the tag index whenever moka drops an entry, whatever the cause
+        // (capacity eviction, TTL expiry, explicit invalidate, rejected insert).
+        // Without this the index would grow without bound under request-derived
+        // keys. The listener runs on the thread driving moka maintenance; no
+        // caller holds the tag_index lock across a moka call (see insert /
+        // invalidate_tags / clear), so re-entry cannot deadlock.
+        let listener_index = std::sync::Arc::clone(&tag_index);
+        let inner = moka::sync::Cache::builder()
+            .max_capacity(capacity)
+            .support_invalidation_closures()
+            .expire_after(ResponseExpiry)
+            .eviction_listener(
+                move |key: std::sync::Arc<CacheKey>, value: CachedEntry, _cause| {
+                    if value.tags.is_empty() {
+                        return;
+                    }
+                    let mut idx = listener_index.lock();
+                    for tag in value.tags.iter() {
+                        if let Some(set) = idx.get_mut(tag) {
+                            set.remove(&*key);
+                            if set.is_empty() {
+                                idx.remove(tag);
+                            }
+                        }
+                    }
+                },
+            )
+            .build();
         Self {
-            inner: moka::sync::Cache::builder()
-                .max_capacity(capacity)
-                .support_invalidation_closures()
-                .expire_after(ResponseExpiry)
-                .build(),
-            tag_index: parking_lot::Mutex::new(std::collections::HashMap::new()),
+            inner,
+            tag_index,
             hits: AtomicU64::new(0),
             misses: AtomicU64::new(0),
             capacity,
@@ -154,6 +192,7 @@ impl ResponseCache {
             CachedEntry {
                 response_bytes,
                 ttl,
+                tags: tags.into(),
             },
         );
     }
@@ -221,9 +260,24 @@ impl ResponseCache {
     /// scrape `/stats` and compute deltas).
     pub fn clear(&self) -> usize {
         let n = self.inner.entry_count() as usize;
+        // Wipe the tag index alongside moka; the lock is dropped BEFORE
+        // run_pending_tasks because the eviction listener (which also locks
+        // tag_index) runs during maintenance. A concurrent tagged insert racing
+        // the wipe self-heals: its entry is either wiped by invalidate_all (and
+        // the listener prunes its index entry) or lands fresh after.
+        {
+            self.tag_index.lock().clear();
+        }
         self.inner.invalidate_all();
         self.inner.run_pending_tasks();
         n
+    }
+
+    /// Total keys currently indexed across all tags (test/observability hook
+    /// for the eviction-listener pruning invariant).
+    #[cfg(test)]
+    pub(crate) fn tag_index_size(&self) -> usize {
+        self.tag_index.lock().values().map(|s| s.len()).sum()
     }
 
     #[cfg(test)]
@@ -266,6 +320,71 @@ mod tests {
             sorted_query: String::new(),
         };
         assert_ne!(a, b, "prefix is a distinct field, cannot collide with path");
+    }
+
+    #[test]
+    fn eviction_listener_prunes_other_tags_on_invalidate() {
+        // A key tagged [a, b], invalidated via tag a: the index entry for a is
+        // removed by invalidate_tags itself; the listener must ALSO prune the
+        // key from b's set when moka drops the entry — otherwise every
+        // multi-tagged eviction leaks index entries forever.
+        let c = ResponseCache::new();
+        c.insert(
+            key("GET", "/t", ""),
+            b"t".to_vec(),
+            Duration::from_secs(60),
+            &["a".to_string(), "b".to_string()],
+        );
+        c.run_pending();
+        assert_eq!(c.tag_index_size(), 2);
+        c.invalidate_tags(&["a".to_string()]);
+        c.run_pending();
+        assert_eq!(
+            c.tag_index_size(),
+            0,
+            "listener must prune the key from tag b too"
+        );
+    }
+
+    #[test]
+    fn eviction_listener_prunes_on_invalidate_path() {
+        let c = ResponseCache::new();
+        c.insert(
+            key("GET", "/p", "x=1"),
+            b"1".to_vec(),
+            Duration::from_secs(60),
+            &["grp".to_string()],
+        );
+        c.insert(
+            key("GET", "/p", "x=2"),
+            b"2".to_vec(),
+            Duration::from_secs(60),
+            &["grp".to_string()],
+        );
+        c.run_pending();
+        assert_eq!(c.tag_index_size(), 2);
+        c.invalidate_path("GET", "/p");
+        c.run_pending();
+        assert_eq!(
+            c.tag_index_size(),
+            0,
+            "predicate invalidation must prune the tag index via the listener"
+        );
+    }
+
+    #[test]
+    fn clear_wipes_tag_index() {
+        let c = ResponseCache::new();
+        c.insert(
+            key("GET", "/w", ""),
+            b"w".to_vec(),
+            Duration::from_secs(60),
+            &["t".to_string()],
+        );
+        c.run_pending();
+        assert_eq!(c.tag_index_size(), 1);
+        c.clear();
+        assert_eq!(c.tag_index_size(), 0);
     }
 
     #[test]

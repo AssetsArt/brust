@@ -4,6 +4,7 @@
 //! opaque payload bytes. Process-global in the addon singleton; shared across
 //! the worker pool. See spec 2026-06-11-page-cache-two-modes-design.md.
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use moka::sync::Cache;
@@ -13,6 +14,9 @@ use parking_lot::Mutex;
 struct CachedPage {
     payload: Vec<u8>,
     expires_at: Option<Instant>,
+    /// Tags this entry was stored under — carried so the eviction listener can
+    /// prune `tag_index` when moka drops the entry. `Arc`: cloned on every get.
+    tags: Arc<[String]>,
 }
 
 impl CachedPage {
@@ -21,17 +25,40 @@ impl CachedPage {
     }
 }
 
+type TagIndex = Mutex<HashMap<String, HashSet<String>>>;
+
 pub struct PageCache {
     cache: Cache<String, CachedPage>,
-    tag_index: Mutex<HashMap<String, HashSet<String>>>,
+    tag_index: Arc<TagIndex>,
 }
 
 impl PageCache {
     pub fn new(max_capacity: u64) -> Self {
-        Self {
-            cache: Cache::new(max_capacity.max(1)),
-            tag_index: Mutex::new(HashMap::new()),
-        }
+        let tag_index: Arc<TagIndex> = Arc::new(Mutex::new(HashMap::new()));
+        // Prune the index on every moka removal (eviction/expiry/invalidate),
+        // mirroring response_cache. L2 keys are developer-computed, so growth is
+        // slower than L1's request-derived keys, but the same unbounded-index
+        // shape applies (e.g. per-user keys under a static tag). No caller holds
+        // the tag_index lock across a moka call, so the listener can't deadlock.
+        let listener_index = Arc::clone(&tag_index);
+        let cache = Cache::builder()
+            .max_capacity(max_capacity.max(1))
+            .eviction_listener(move |key: Arc<String>, value: CachedPage, _cause| {
+                if value.tags.is_empty() {
+                    return;
+                }
+                let mut idx = listener_index.lock();
+                for tag in value.tags.iter() {
+                    if let Some(set) = idx.get_mut(tag) {
+                        set.remove(&*key);
+                        if set.is_empty() {
+                            idx.remove(tag);
+                        }
+                    }
+                }
+            })
+            .build();
+        Self { cache, tag_index }
     }
 
     pub fn get(&self, key: &str) -> Option<Vec<u8>> {
@@ -46,9 +73,8 @@ impl PageCache {
     pub fn set(&self, key: &str, tags: &[String], ttl: Option<Duration>, payload: Vec<u8>) {
         let expires_at = ttl.map(|d| Instant::now() + d);
         // Index tags BEFORE the moka insert (panic-race tolerance; see island_cache).
-        // The tag index is not pruned when an entry lazy-expires via TTL — stale
-        // keys (already evicted) are tolerated: invalidate_tags pops a possibly-
-        // absent key (no-op), matching island_cache's documented invariant.
+        // The eviction listener prunes the index when moka drops the entry, so a
+        // stale index key only spans the gap until the next maintenance pass.
         if !tags.is_empty() {
             let mut idx = self.tag_index.lock();
             for tag in tags {
@@ -60,6 +86,7 @@ impl PageCache {
             CachedPage {
                 payload,
                 expires_at,
+                tags: tags.into(),
             },
         );
     }
@@ -93,6 +120,13 @@ impl PageCache {
             idx.clear();
         }
         self.cache.run_pending_tasks();
+    }
+
+    /// Total keys currently indexed across all tags (test hook for the
+    /// eviction-listener pruning invariant).
+    #[cfg(test)]
+    pub(crate) fn tag_index_size(&self) -> usize {
+        self.tag_index.lock().values().map(|s| s.len()).sum()
     }
 }
 
@@ -150,6 +184,27 @@ mod tests {
         assert!(s.get("b").is_none());
         assert!(s.get("c").is_some());
     }
+    #[test]
+    fn eviction_listener_prunes_other_tags_on_invalidate() {
+        let s = store();
+        s.set("k", &["a".into(), "b".into()], None, b"x".to_vec());
+        sync(&s);
+        assert_eq!(s.tag_index_size(), 2);
+        s.invalidate_tags(&["a".into()]);
+        sync(&s);
+        assert_eq!(s.tag_index_size(), 0, "listener prunes the key from b too");
+    }
+
+    #[test]
+    fn clear_wipes_tag_index() {
+        let s = store();
+        s.set("k", &["t".into()], None, b"x".to_vec());
+        sync(&s);
+        assert_eq!(s.tag_index_size(), 1);
+        s.clear();
+        assert_eq!(s.tag_index_size(), 0);
+    }
+
     #[test]
     fn clear_empties() {
         let s = store();

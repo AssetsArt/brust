@@ -37,6 +37,7 @@ import Crash               from './components/Crash'
 import CrashBoundary       from './components/CrashBoundary'
 import CacheTest           from './components/CacheTest'
 import CachePrefixTest     from './components/CachePrefixTest'
+import CacheFlakyTest      from './components/CacheFlakyTest'
 import CacheTaggedTest     from './components/CacheTaggedTest'
 import CacheParamTest      from './components/CacheParamTest'
 import CacheBypassTest     from './components/CacheBypassTest'
@@ -279,6 +280,7 @@ export const routes = defineRoutes([
   { path: '/cache-test',   Component: CacheTest, cache: { ttl_seconds: 60 } },
   { path: '/cache-prefix', Component: CachePrefixTest, cache: { ttl_seconds: 60, prefix: 'cookie(seg)' } },
   { path: '/cache-param/{id}', Component: CacheParamTest, cache: { ttl_seconds: 60, prefix: 'param(id)' } },
+  { path: '/cache-flaky',  Component: CacheFlakyTest, cache: { ttl_seconds: 60 } },
   { path: '/cache-bypass', Component: CacheBypassTest, cache: { ttl_seconds: 60, bypass: 'cookie(fresh)' } },
   // L1 static tag invalidation: this route's L1 entries carry `grp-a`.
   { path: '/cache-tagged', Component: CacheTaggedTest, cache: { ttl_seconds: 60, tags: ['grp-a'] } },
