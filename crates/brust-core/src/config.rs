@@ -17,6 +17,7 @@ use parking_lot::RwLock;
 use tokio::sync::Notify;
 
 use crate::cache::island_cache::{CacheStore, CachedIsland, MokaStore};
+use crate::cache::page_cache::PageCache;
 use crate::cache::response_cache::{CacheStats, ResponseCache};
 use crate::render::pool::WorkerPool;
 use crate::routing::action::ActionRouter;
@@ -54,6 +55,10 @@ pub struct AppState {
     /// backend swaps in here with zero changes to the call sites. Crate-internal:
     /// the binding goes through the `island_cache_*` passthrough methods.
     pub(crate) island_cache: Arc<dyn CacheStore>,
+    /// L2 page cache (two-layer page cache): string-keyed framed-payload store
+    /// with tag invalidation. Process-global, shared across worker isolates.
+    /// Crate-internal: the binding goes through the `page_cache_*` methods.
+    pub(crate) page_cache: PageCache,
     /// Crate-internal: the binding flips this via [`AppState::begin_serve`].
     pub(crate) is_serving: AtomicBool,
     /// Dev mode (set by `configure_dev_mode` from the TS dev coordinator). When
@@ -99,6 +104,7 @@ impl AppState {
             routes: Arc::new(RouteTable::new()),
             cache: Arc::new(ResponseCache::new()),
             island_cache: Arc::new(MokaStore::new(1000)) as Arc<dyn CacheStore>,
+            page_cache: PageCache::new(1000),
             is_serving: AtomicBool::new(false),
             dev_mode: AtomicBool::new(false),
             expected_workers: AtomicU32::new(0),
@@ -287,6 +293,34 @@ impl AppState {
 
     pub fn island_cache_clear(&self) {
         self.island_cache.clear();
+    }
+
+    // ----- page cache (L2) passthrough -----
+
+    pub fn page_cache_get(&self, key: &str) -> Option<Vec<u8>> {
+        self.page_cache.get(key)
+    }
+
+    pub fn page_cache_set(
+        &self,
+        key: &str,
+        tags: &[String],
+        ttl: Option<Duration>,
+        payload: Vec<u8>,
+    ) {
+        self.page_cache.set(key, tags, ttl, payload);
+    }
+
+    pub fn page_cache_invalidate_key(&self, key: &str) {
+        self.page_cache.invalidate_key(key);
+    }
+
+    pub fn page_cache_invalidate_tags(&self, tags: &[String]) {
+        self.page_cache.invalidate_tags(tags);
+    }
+
+    pub fn page_cache_clear(&self) {
+        self.page_cache.clear();
     }
 
     // ----- response cache -----

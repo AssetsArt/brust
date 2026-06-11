@@ -6,19 +6,31 @@ use serde::{Deserialize, Serialize};
 
 const CACHE_CAPACITY: usize = 1000;
 
+// Per-request bypass: `true` ⇒ always route to L2; a string ⇒ a key-expression
+// whose non-empty result ⇒ route to L2. Untagged so JSON `true` / "expr" both
+// deserialize. (bool and string are disjoint JSON types — no ambiguity.)
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum BypassSpec {
+    Always(bool),
+    Expr(String),
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct CacheConfig {
     pub ttl_seconds: u64,
     #[serde(default)]
-    pub vary: Vec<String>,
+    pub prefix: Option<String>,
+    #[serde(default)]
+    pub bypass: Option<BypassSpec>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CacheKey {
+    pub prefix: String,
     pub method: String,
     pub path: String,
     pub sorted_query: String,
-    pub vary_values: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -184,11 +196,28 @@ mod tests {
 
     fn key(method: &str, path: &str, query: &str) -> CacheKey {
         CacheKey {
+            prefix: String::new(),
             method: method.to_string(),
             path: path.to_string(),
             sorted_query: query.to_string(),
-            vary_values: Vec::new(),
         }
+    }
+
+    #[test]
+    fn prefix_is_collision_free_field() {
+        let a = CacheKey {
+            prefix: "ten".into(),
+            method: "GET".into(),
+            path: "/ant".into(),
+            sorted_query: String::new(),
+        };
+        let b = CacheKey {
+            prefix: "tenant".into(),
+            method: "GET".into(),
+            path: "".into(),
+            sorted_query: String::new(),
+        };
+        assert_ne!(a, b, "prefix is a distinct field, cannot collide with path");
     }
 
     #[test]

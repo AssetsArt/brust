@@ -2,7 +2,17 @@ use parking_lot::RwLock;
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::cache::response_cache::CacheConfig;
+use crate::cache::key_expr::Expr;
+use crate::cache::response_cache::{BypassSpec, CacheConfig};
+
+// Compiled, request-ready cache directives for one route. Parsed once at
+// install (errors surface as install failure); evaluated per request.
+#[derive(Clone, Default)]
+pub struct CompiledCache {
+    pub prefix: Option<Expr>,
+    /// None = never bypass; Some(None) = always; Some(Some(expr)) = conditional.
+    pub bypass: Option<Option<Expr>>,
+}
 
 pub(crate) fn serialize_as_map<S, K, V>(vec: &[(K, V)], serializer: S) -> Result<S::Ok, S::Error>
 where
@@ -45,6 +55,12 @@ pub struct RouteEnvelope<'a> {
     /// instead of the React render path.
     #[serde(skip_serializing_if = "Option::is_none", rename = "nativeTemplate")]
     pub native_template: Option<std::borrow::Cow<'a, str>>,
+    /// Two-layer page cache: set true by the server when `bypass` routed this
+    /// request to L2. The worker reads it to decide whether to run `cache.key`
+    /// (L2 capture/replay). Defaults false; serializes always so the worker's
+    /// `RouteCall` can read it.
+    #[serde(default)]
+    pub bypassed: bool,
 }
 
 /// Mirrors RouteEnvelope but carries a string action_id (not numeric route_id)
@@ -219,6 +235,9 @@ pub struct RouteConfig {
 pub struct RouteTable {
     inner: RwLock<matchit::Router<u32>>,
     cache_configs: RwLock<Vec<Option<CacheConfig>>>,
+    /// Compiled L1 prefix/bypass expressions, parallel to `cache_configs`.
+    /// Index = route_id. Parsed once at install; evaluated per request.
+    compiled_caches: RwLock<Vec<CompiledCache>>,
     /// Sub-project J — per-route-id native template name (parallel to
     /// `cache_configs`). Index = route_id. `None` ⇒ React-rendered route.
     native_templates: RwLock<Vec<Option<String>>>,
@@ -234,6 +253,7 @@ impl RouteTable {
     pub fn install_with_config(&self, configs: &[RouteConfig]) -> Result<u32, RouteInstallError> {
         let mut router = matchit::Router::new();
         let mut caches: Vec<Option<CacheConfig>> = Vec::with_capacity(configs.len());
+        let mut compiled: Vec<CompiledCache> = Vec::with_capacity(configs.len());
         let mut natives: Vec<Option<String>> = Vec::with_capacity(configs.len());
         for (idx, c) in configs.iter().enumerate() {
             router
@@ -242,13 +262,52 @@ impl RouteTable {
                     pattern: c.path.clone(),
                     reason: e.to_string(),
                 })?;
+            let compiled_cache = match &c.cache {
+                Some(cc) => {
+                    let prefix =
+                        match &cc.prefix {
+                            Some(s) => Some(Expr::parse(s).map_err(|reason| {
+                                RouteInstallError::CacheExpr {
+                                    pattern: c.path.clone(),
+                                    field: "prefix",
+                                    reason,
+                                }
+                            })?),
+                            None => None,
+                        };
+                    let bypass = match &cc.bypass {
+                        None => None,
+                        Some(BypassSpec::Always(true)) => Some(None),
+                        Some(BypassSpec::Always(false)) => None,
+                        Some(BypassSpec::Expr(s)) => {
+                            Some(Some(Expr::parse(s).map_err(|reason| {
+                                RouteInstallError::CacheExpr {
+                                    pattern: c.path.clone(),
+                                    field: "bypass",
+                                    reason,
+                                }
+                            })?))
+                        }
+                    };
+                    CompiledCache { prefix, bypass }
+                }
+                None => CompiledCache::default(),
+            };
             caches.push(c.cache.clone());
+            compiled.push(compiled_cache);
             natives.push(c.native_template.clone());
         }
         *self.inner.write() = router;
         *self.cache_configs.write() = caches;
+        *self.compiled_caches.write() = compiled;
         *self.native_templates.write() = natives;
         Ok(configs.len() as u32)
+    }
+
+    /// Compiled L1 prefix/bypass directives for a route, parallel to
+    /// `cache_for`. `None` when the route_id is out of range.
+    pub fn compiled_cache_for(&self, route_id: u32) -> Option<CompiledCache> {
+        self.compiled_caches.read().get(route_id as usize).cloned()
     }
 
     pub fn cache_for(&self, route_id: u32) -> Option<CacheConfig> {
@@ -300,6 +359,7 @@ impl RouteTable {
                     params,
                     req,
                     native_template: native.map(std::borrow::Cow::Owned),
+                    bypassed: false,
                 };
                 MatchResult::Matched { route_id, envelope }
             }
@@ -312,6 +372,12 @@ impl RouteTable {
 pub enum RouteInstallError {
     #[error("invalid route pattern {pattern:?}: {reason}")]
     Insert { pattern: String, reason: String },
+    #[error("route {pattern:?}: invalid cache.{field} expression: {reason}")]
+    CacheExpr {
+        pattern: String,
+        field: &'static str,
+        reason: String,
+    },
 }
 
 fn build_request_envelope<'a>(
@@ -855,6 +921,76 @@ mod tests {
             }
             _ => panic!("expected match"),
         }
+    }
+
+    #[test]
+    fn install_rejects_bad_prefix_expr() {
+        let table = RouteTable::new();
+        let cfgs = vec![RouteConfig {
+            path: "/bad".into(),
+            cache: Some(crate::cache::response_cache::CacheConfig {
+                ttl_seconds: 60,
+                prefix: Some("or(cookie(x)".into()),
+                bypass: None,
+            }),
+            native_template: None,
+        }];
+        let err = table.install_with_config(&cfgs).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                RouteInstallError::CacheExpr {
+                    field: "prefix",
+                    ..
+                }
+            ),
+            "expected CacheExpr error for malformed prefix, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn install_rejects_bad_bypass_expr() {
+        let table = RouteTable::new();
+        let cfgs = vec![RouteConfig {
+            path: "/bad".into(),
+            cache: Some(crate::cache::response_cache::CacheConfig {
+                ttl_seconds: 60,
+                prefix: None,
+                bypass: Some(crate::cache::response_cache::BypassSpec::Expr(
+                    "uuid(v4)".into(),
+                )),
+            }),
+            native_template: None,
+        }];
+        let err = table.install_with_config(&cfgs).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                RouteInstallError::CacheExpr {
+                    field: "bypass",
+                    ..
+                }
+            ),
+            "expected CacheExpr error for non-deterministic bypass, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn compiled_cache_for_parses_prefix_and_bypass() {
+        let table = RouteTable::new();
+        let cfgs = vec![RouteConfig {
+            path: "/p".into(),
+            cache: Some(crate::cache::response_cache::CacheConfig {
+                ttl_seconds: 60,
+                prefix: Some("cookie(tenant)".into()),
+                bypass: Some(crate::cache::response_cache::BypassSpec::Always(true)),
+            }),
+            native_template: None,
+        }];
+        table.install_with_config(&cfgs).unwrap();
+        let cc = table.compiled_cache_for(0).expect("compiled cache present");
+        assert!(cc.prefix.is_some());
+        assert!(matches!(cc.bypass, Some(None)), "Always(true) ⇒ Some(None)");
     }
 
     #[test]
