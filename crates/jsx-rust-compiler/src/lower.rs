@@ -9,8 +9,8 @@ use swc_core::ecma::ast::{
     CallExpr, Callee, DefaultDecl, ExportDefaultDecl, Expr as SwcExpr, ExprOrSpread, FnExpr,
     Function, JSXAttrName, JSXAttrOrSpread, JSXAttrValue, JSXElement, JSXElementChild,
     JSXElementName, JSXExpr, JSXFragment, Lit, MemberExpr, MemberProp, Module, ModuleDecl,
-    ModuleItem, ObjectLit, ObjectPatProp, ParenExpr, Pat, Prop, PropName, PropOrSpread, ReturnStmt,
-    Stmt, UnaryOp,
+    ModuleItem, ObjectLit, ObjectPatProp, OptChainBase, ParenExpr, Pat, Prop, PropName,
+    PropOrSpread, ReturnStmt, Stmt, UnaryOp,
 };
 
 use crate::ErrorKind;
@@ -3033,6 +3033,32 @@ fn lower_element_name(name: &JSXElementName) -> Result<String, LowerError> {
 /// 5. Name has any uppercase letter (not in rename table) →
 ///    `UnknownAttributeRename(name)` — catches `fooBar`, typos like `Class`.
 /// 6. Otherwise → emit verbatim (lowercase HTML attribute, `data-*`, `aria-*`).
+// True for the `undefined` identifier or a `null` literal: a conditional-attribute
+// branch that means "omit this attribute" (G3).
+fn is_undefined_or_null(expr: &SwcExpr) -> bool {
+    match strip_paren(expr) {
+        SwcExpr::Ident(id) => id.sym.as_ref() == "undefined",
+        SwcExpr::Lit(Lit::Null(_)) => true,
+        _ => false,
+    }
+}
+
+/// Lower ONE branch of a conditional attribute (G3) into an optional value:
+// Lower ONE branch of a conditional attribute (G3): `undefined`/`null` becomes
+// `None` (omit the attribute in this branch); a literal or member path becomes
+// `Some(value)`.
+fn lower_attr_branch(expr: &SwcExpr, scope: &Scope) -> Result<Option<Box<AttrValue>>, LowerError> {
+    if is_undefined_or_null(expr) {
+        return Ok(None);
+    }
+    let value = match lower_expr(expr, scope)? {
+        crate::ir::Expr::StaticNum(n) => AttrValue::StaticNum(n),
+        crate::ir::Expr::StaticText(s) => AttrValue::Static(s),
+        e => AttrValue::Expr(e),
+    };
+    Ok(Some(Box::new(value)))
+}
+
 fn lower_attr(attr: &JSXAttrOrSpread, scope: &Scope) -> Result<Option<JsxAttr>, LowerError> {
     match attr {
         JSXAttrOrSpread::SpreadElement(s) => Err(LowerError::at(
@@ -3119,6 +3145,31 @@ fn lower_attr(attr: &JSXAttrOrSpread, scope: &Scope) -> Result<Option<JsxAttr>, 
                         // reject as `JsxInAttrNotSupported`.
                         JSXExpr::JSXEmptyExpr(_) => {
                             return Err(LowerError::at(c.span, ErrorKind::JsxInAttrNotSupported));
+                        }
+                        // `attr={test ? a : b}` — a CONDITIONAL attribute (G3). An
+                        // `undefined`/`null` branch OMITS the attribute, so
+                        // `aria-current={active ? 'page' : undefined}` emits the attr
+                        // only when truthy. Intercepted before generic expr-lowering,
+                        // which rejects `Cond`.
+                        JSXExpr::Expr(e) if matches!(strip_paren(e), SwcExpr::Cond(_)) => {
+                            let SwcExpr::Cond(cond) = strip_paren(e) else {
+                                unreachable!()
+                            };
+                            let test = lower_cond_test(&cond.test, scope)?;
+                            let if_value = lower_attr_branch(&cond.cons, scope)?;
+                            let else_value = lower_attr_branch(&cond.alt, scope)?;
+                            if if_value.is_none() && else_value.is_none() {
+                                // Both branches omit — the attribute can never appear.
+                                return Err(LowerError::at(
+                                    cond.span,
+                                    ErrorKind::ComplexExpressionNotSupported,
+                                ));
+                            }
+                            AttrValue::Cond {
+                                test: Box::new(test),
+                                if_value,
+                                else_value,
+                            }
                         }
                         JSXExpr::Expr(e) => match lower_expr(e, scope)? {
                             // A `Lit::Num` in attr position keeps its specialized
@@ -4135,6 +4186,19 @@ fn lower_expr(expr: &SwcExpr, scope: &Scope) -> Result<crate::ir::Expr, LowerErr
             }
         }
         SwcExpr::Paren(p) => lower_expr(&p.expr, scope),
+        // Optional chaining `a?.b?.c`: lowers to the SAME member path as `a.b.c`.
+        // The `?.` is a JS-runtime null-guard with no template counterpart —
+        // minijinja already renders `a.b.c` empty when a segment is undefined
+        // (Chainable undefined behavior), which is exactly the guard's intent.
+        // (FRAMEWORK-GAPS G5.) Only member bases lower; an optional CALL `a?.()`
+        // is unsupported like any other call in a template.
+        SwcExpr::OptChain(oc) => match &*oc.base {
+            OptChainBase::Member(m) => lower_member(m, scope),
+            OptChainBase::Call(_) => Err(LowerError::at(
+                oc.span,
+                ErrorKind::ComplexExpressionNotSupported,
+            )),
+        },
         other => Err(LowerError::at(
             other.span(),
             ErrorKind::ComplexExpressionNotSupported,
@@ -4401,6 +4465,36 @@ fn lower_member(m: &MemberExpr, scope: &Scope) -> Result<crate::ir::Expr, LowerE
                 path_rev.push(seg);
                 cursor = &inner.obj;
             }
+            // A `?.` link mid-chain (`pager?.prev.path` → the `pager?.prev`
+            // node): same as a Member segment — record the prop, keep walking
+            // toward the root. (FRAMEWORK-GAPS G5.)
+            SwcExpr::OptChain(inner_oc) => match &*inner_oc.base {
+                OptChainBase::Member(inner) => {
+                    let seg = match &inner.prop {
+                        MemberProp::Ident(id) => id.sym.to_string(),
+                        MemberProp::Computed(_) => {
+                            return Err(LowerError::at(
+                                inner.span,
+                                ErrorKind::ComputedAccessNotSupported,
+                            ));
+                        }
+                        MemberProp::PrivateName(_) => {
+                            return Err(LowerError::at(
+                                inner.span,
+                                ErrorKind::ComplexExpressionNotSupported,
+                            ));
+                        }
+                    };
+                    path_rev.push(seg);
+                    cursor = &inner.obj;
+                }
+                OptChainBase::Call(_) => {
+                    return Err(LowerError::at(
+                        inner_oc.span,
+                        ErrorKind::ComplexExpressionNotSupported,
+                    ));
+                }
+            },
             SwcExpr::Paren(p) => {
                 cursor = &p.expr;
             }
@@ -4466,8 +4560,28 @@ fn infer_props_types(node: &JsxNode, props: &mut PropsShape) -> Result<(), Lower
                 if a.name == "x-props" {
                     continue;
                 }
-                if let AttrValue::Expr(e) = &a.value {
-                    infer_from_expr(e, props)?;
+                match &a.value {
+                    AttrValue::Expr(e) => infer_from_expr(e, props)?,
+                    // Conditional attribute (G3): the test is a truthiness check
+                    // (existence-only, G4 rules); each present branch reads a value.
+                    AttrValue::Cond {
+                        test,
+                        if_value,
+                        else_value,
+                    } => {
+                        infer_from_cond_test(test, props)?;
+                        if let Some(v) = if_value
+                            && let AttrValue::Expr(e) = &**v
+                        {
+                            infer_from_expr(e, props)?;
+                        }
+                        if let Some(v) = else_value
+                            && let AttrValue::Expr(e) = &**v
+                        {
+                            infer_from_expr(e, props)?;
+                        }
+                    }
+                    _ => {}
                 }
             }
             for c in children {
@@ -4528,7 +4642,9 @@ fn infer_props_types(node: &JsxNode, props: &mut PropsShape) -> Result<(), Lower
             consequent,
             alternate,
         } => {
-            infer_from_expr(test, props)?;
+            // A cond TEST is a truthiness check — infer existence, not shape, so
+            // it doesn't conflict with deeper reads in the body (G4).
+            infer_from_cond_test(test, props)?;
             infer_props_types(consequent, props)?;
             if let Some(alt) = alternate {
                 infer_props_types(alt, props)?;
@@ -4732,13 +4848,43 @@ fn seed_vec_at_source(
 /// non-empty path. For a single-segment path, returns
 /// `Struct { path[0] => OwnedString }`.
 fn build_struct_chain(path: &[String]) -> PropType {
-    let mut current = PropType::OwnedString;
+    build_struct_chain_with_leaf(path, PropType::OwnedString)
+}
+
+/// Like `build_struct_chain` but with a caller-chosen leaf type. A cond test
+/// uses `PropType::Any` as the leaf so the tested member stays shape-agnostic.
+fn build_struct_chain_with_leaf(path: &[String], leaf: PropType) -> PropType {
+    let mut current = leaf;
     for seg in path.iter().rev() {
         let mut map = BTreeMap::new();
         map.insert(seg.clone(), current);
         current = PropType::Struct(map);
     }
     current
+}
+
+/// Infer prop types from a Cond TEST operand. A truthiness test (`a`, `a.b`,
+/// `a && b`, `!a`) constrains EXISTENCE, not shape — its member leaf contributes
+/// `PropType::Any`, which merges with whatever the body reads (a string OR a
+/// deeper struct). Without this, `{pager.prev && <a href={pager.prev.path}/>}`
+/// pinned the test's `pager.prev` to a scalar that conflicted with the body's
+/// `pager.prev.path` struct read (FRAMEWORK-GAPS G4). A comparison test
+/// (`a.b === 'x'`) reads a real value → falls back to `infer_from_expr`.
+fn infer_from_cond_test(expr: &crate::ir::Expr, props: &mut PropsShape) -> Result<(), LowerError> {
+    match expr {
+        crate::ir::Expr::Field(name) => merge_type(props, name, PropType::Any),
+        crate::ir::Expr::MemberAccess { root, path } => {
+            let chain = build_struct_chain_with_leaf(path, PropType::Any);
+            merge_type(props, root, chain)
+        }
+        crate::ir::Expr::Not(inner) => infer_from_cond_test(inner, props),
+        crate::ir::Expr::Logical { lhs, rhs, .. } => {
+            infer_from_cond_test(lhs, props)?;
+            infer_from_cond_test(rhs, props)
+        }
+        // Comparisons and anything else read a real value.
+        other => infer_from_expr(other, props),
+    }
 }
 
 /// Merge `incoming` into `props.types[name]`. On conflict (e.g. `OwnedString`
@@ -4754,6 +4900,15 @@ fn merge_type(props: &mut PropsShape, name: &str, incoming: PropType) -> Result<
 }
 
 fn merge_into(existing: &mut PropType, incoming: PropType, name: &str) -> Result<(), LowerError> {
+    // `Any` (a truthiness-test leaf) is the top type: it never conflicts — the
+    // more specific shape wins. (FRAMEWORK-GAPS G4.)
+    if matches!(existing, PropType::Any) {
+        *existing = incoming;
+        return Ok(());
+    }
+    if matches!(incoming, PropType::Any) {
+        return Ok(());
+    }
     match (existing, incoming) {
         (PropType::OwnedString, PropType::OwnedString) => Ok(()),
         (PropType::Struct(ex_fields), PropType::Struct(in_fields)) => {
@@ -6897,6 +7052,160 @@ export const behavior = () => ({});"#;
             JsxNode::Element { children, .. } => children.into_iter().next().expect("a child"),
             other => panic!("expected element root, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn cond_attr_undefined_branch_omits_attribute() {
+        // G3: `aria-current={active ? 'page' : undefined}` emits the attribute
+        // only when truthy.
+        let src = r#"export default function X({ active }: any) {
+  return <a aria-current={active ? "page" : undefined}>x</a>;
+}"#;
+        let comp = lower(&parse(src, "<test>").unwrap()).expect("should compile");
+        let out = crate::emit_jinja::emit(&comp);
+        assert!(
+            out.contains(r#"{% if active %} aria-current="page"{% endif %}"#),
+            "got {out}"
+        );
+    }
+
+    #[test]
+    fn cond_attr_member_test_and_both_branches() {
+        // Member-path test + both branches present → if/else, no conflict with
+        // the test's existence-only inference (G3 + G4).
+        let src = r#"export default function X({ item }: any) {
+  return <a class={item.active ? "on" : "off"}>x</a>;
+}"#;
+        let comp = lower(&parse(src, "<test>").unwrap()).expect("should compile");
+        let out = crate::emit_jinja::emit(&comp);
+        assert!(
+            out.contains(r#"{% if item.active %} class="on"{% else %} class="off"{% endif %}"#),
+            "got {out}"
+        );
+    }
+
+    #[test]
+    fn cond_attr_dynamic_value_branch_is_escaped() {
+        // A member-path value in a branch is interpolated + escaped like any
+        // dynamic attribute.
+        let src = r#"export default function X({ show, href }: any) {
+  return <a data-href={show ? href : undefined}>x</a>;
+}"#;
+        let comp = lower(&parse(src, "<test>").unwrap()).expect("should compile");
+        let out = crate::emit_jinja::emit(&comp);
+        assert!(out.contains("{% if show %}"), "got {out}");
+        assert!(out.contains("(href) | e"), "got {out}");
+    }
+
+    #[test]
+    fn cond_attr_both_undefined_rejected() {
+        // Both branches omit → the attribute can never appear; reject.
+        let src = r#"export default function X({ a }: any) {
+  return <a title={a ? undefined : undefined}>x</a>;
+}"#;
+        let err = lower(&parse(src, "<test>").unwrap()).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::ComplexExpressionNotSupported),
+            "got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn cond_test_on_member_coexists_with_deeper_read() {
+        // G4: `{pager.prev && <a href={pager.prev.path}>}` — the truthiness test
+        // of `pager.prev` must NOT conflict with the body's `pager.prev.path`
+        // struct read. Compiles; `pager` infers as the deeper struct.
+        let src = r#"export default function P({ pager }: any) {
+  return <div>{pager.prev && <a href={pager.prev.path}>Back</a>}</div>;
+}"#;
+        let comp = lower(&parse(src, "<test>").unwrap()).expect("should compile");
+        match comp.props.types.get("pager") {
+            Some(PropType::Struct(fields)) => match fields.get("prev") {
+                Some(PropType::Struct(inner)) => {
+                    assert!(inner.contains_key("path"), "prev should carry .path");
+                }
+                other => panic!("prev should be a Struct, got {other:?}"),
+            },
+            other => panic!("pager should be a Struct, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cond_test_then_render_member_as_string() {
+        // The tested member may ALSO be rendered as a plain string elsewhere —
+        // Any merges with OwnedString too (no conflict).
+        let src = r#"export default function P({ pager }: any) {
+  return <div>{pager.prev && <span>{pager.prev}</span>}</div>;
+}"#;
+        lower(&parse(src, "<test>").unwrap()).expect("Any merges with OwnedString");
+    }
+
+    #[test]
+    fn real_prop_type_conflict_still_detected() {
+        // Guard: a genuine scalar-vs-struct conflict (NOT a cond test) still
+        // errors — `x` read as a struct (`x.foo`) and as a collection (`x.map`).
+        let src = r#"export default function X({ x }: any) {
+  return <ul>{x.foo}{x.map((i) => <li>{i.name}</li>)}</ul>;
+}"#;
+        let err = lower(&parse(src, "<test>").unwrap()).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::PropTypeConflict(_)),
+            "got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn optional_chaining_lowers_to_plain_member_path() {
+        // G5: `pager?.prev?.path` lowers to the SAME MemberAccess as the
+        // un-guarded `pager.prev.path` — the `?.` is a runtime null-guard with
+        // no template form (minijinja renders the path empty when absent).
+        let src = r#"export default function P({ pager }: any) {
+  return <div><a href={pager?.prev?.path}>Back</a></div>;
+}"#;
+        match route_first_child(src) {
+            JsxNode::Element { attrs, .. } => {
+                let href = attrs.iter().find(|a| a.name == "href").expect("href attr");
+                match &href.value {
+                    AttrValue::Expr(crate::ir::Expr::MemberAccess { root, path }) => {
+                        assert_eq!(root, "pager");
+                        assert_eq!(path, &["prev".to_string(), "path".to_string()]);
+                    }
+                    other => panic!("expected MemberAccess, got {other:?}"),
+                }
+            }
+            other => panic!("expected <a> element, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn optional_chaining_matches_unguarded_emit() {
+        // The emitted template is byte-identical to the un-guarded form.
+        let guarded = r#"export default function P({ pager }: any) {
+  return <a href={pager?.prev?.path}>Back</a>;
+}"#;
+        let plain = r#"export default function P({ pager }: any) {
+  return <a href={pager.prev.path}>Back</a>;
+}"#;
+        let g = crate::emit_jinja::emit(&lower(&parse(guarded, "<test>").unwrap()).unwrap());
+        let p = crate::emit_jinja::emit(&lower(&parse(plain, "<test>").unwrap()).unwrap());
+        assert_eq!(g, p);
+        assert!(g.contains("pager.prev.path"), "got {g}");
+    }
+
+    #[test]
+    fn optional_call_still_rejected() {
+        // `a?.()` is an optional CALL — no template form; must still error.
+        let src = r#"export default function P({ pager }: any) {
+  return <a href={pager?.()}>x</a>;
+}"#;
+        let err = lower(&parse(src, "<test>").unwrap()).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::ComplexExpressionNotSupported),
+            "got {:?}",
+            err.kind
+        );
     }
 
     #[test]

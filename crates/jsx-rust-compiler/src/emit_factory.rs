@@ -94,7 +94,11 @@ fn emit_h(component: &str, props: &[SsrProp], children: &[JsxNode], fo: &mut Fac
 
 fn emit_attr_kv(attr: &JsxAttr, fo: &mut FactoryOutput) {
     let _ = write!(fo.expr, "{}: ", attr.name);
-    match &attr.value {
+    emit_attr_value_js(&attr.value, fo);
+}
+
+fn emit_attr_value_js(value: &AttrValue, fo: &mut FactoryOutput) {
+    match value {
         AttrValue::Empty => fo.expr.push_str("true"),
         AttrValue::Static(s) => {
             fo.expr.push('"');
@@ -105,6 +109,28 @@ fn emit_attr_kv(attr: &JsxAttr, fo: &mut FactoryOutput) {
             let _ = write!(fo.expr, "{n}");
         }
         AttrValue::Expr(e) => fo.expr.push_str(&emit_expr(e)),
+        // Conditional attribute (G3) → a JS ternary. React drops a prop whose
+        // value is `undefined`, so an omitted branch maps to `undefined` and the
+        // attribute is absent there — same semantics as the jinja `{% if %}`.
+        AttrValue::Cond {
+            test,
+            if_value,
+            else_value,
+        } => {
+            fo.expr.push('(');
+            fo.expr.push_str(&emit_expr(test));
+            fo.expr.push_str(" ? ");
+            match if_value {
+                Some(v) => emit_attr_value_js(v, fo),
+                None => fo.expr.push_str("undefined"),
+            }
+            fo.expr.push_str(" : ");
+            match else_value {
+                Some(v) => emit_attr_value_js(v, fo),
+                None => fo.expr.push_str("undefined"),
+            }
+            fo.expr.push(')');
+        }
     }
 }
 

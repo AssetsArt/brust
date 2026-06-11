@@ -21,6 +21,11 @@ pub struct PropsShape {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum PropType {
+    /// Top type — contributes no shape constraint. A truthiness test of a member
+    /// (`{a.b && …}`) yields this at the tested leaf: it asserts existence, not
+    /// shape, so it merges with whatever the body actually reads (a string OR a
+    /// deeper struct). Never conflicts. (FRAMEWORK-GAPS G4.)
+    Any,
     /// Leaf String, referenced by direct `{name}` or via member chain bottoming here.
     OwnedString,
     /// Vec<NameItem> generated from `.map` source; element type is `Struct { fields }`.
@@ -230,6 +235,16 @@ pub enum AttrValue {
     StaticNum(i64),
     /// Expression (`href={item.href}`).
     Expr(Expr),
+    /// Conditional attribute `attr={test ? a : b}` (FRAMEWORK-GAPS G3). Each
+    /// branch is either a concrete value or `None` — `None` OMITS the attribute
+    /// in that branch (an `undefined`/`null` branch), so
+    /// `aria-current={active ? 'page' : undefined}` emits the attribute only
+    /// when `active` is truthy. Box avoids making every AttrValue this large.
+    Cond {
+        test: Box<Expr>,
+        if_value: Option<Box<AttrValue>>,
+        else_value: Option<Box<AttrValue>>,
+    },
 }
 
 #[derive(Debug, Clone)]
