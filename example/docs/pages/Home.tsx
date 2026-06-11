@@ -66,9 +66,19 @@ export default function Home() {
             </a>
             <a
               href="https://github.com/AssetsArt/brust"
+              target="_blank"
+              rel="noopener noreferrer"
               className="flex h-10 items-center rounded-full px-3 text-white/80 no-underline transition-colors duration-150 hover:text-white"
             >
               GitHub
+            </a>
+            <a
+              href="https://www.npmjs.com/package/brustjs"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex h-10 items-center rounded-full px-3 text-white/80 no-underline transition-colors duration-150 hover:text-white"
+            >
+              npm
             </a>
             <span className="text-white">
               <ThemeToggle native />
@@ -96,6 +106,8 @@ export default function Home() {
             </a>
             <a
               href="https://github.com/AssetsArt/brust"
+              target="_blank"
+              rel="noopener noreferrer"
               className="inline-flex h-11 items-center rounded-[var(--radius-control)] border border-white/30 px-6 font-medium text-white no-underline transition-colors duration-150 hover:border-white/60"
             >
               GitHub
@@ -294,6 +306,8 @@ export default function Home() {
             {/* the ONE dark highlight card (stays dark in both themes) */}
             <a
               href="https://github.com/AssetsArt/brust/releases"
+              target="_blank"
+              rel="noopener noreferrer"
               className="bento-highlight flex flex-col justify-between rounded-[var(--radius-card)] p-7 no-underline transition-colors duration-150 sm:col-span-2"
             >
               <div>
@@ -323,12 +337,24 @@ export default function Home() {
       <footer className="border-t border-line">
         <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-8 text-sm text-fg-muted">
           <p>MIT licensed.</p>
-          <a
-            href="https://github.com/AssetsArt/brust"
-            className="text-link no-underline transition-colors duration-150 hover:underline"
-          >
-            GitHub
-          </a>
+          <div className="flex items-center gap-5">
+            <a
+              href="https://github.com/AssetsArt/brust"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-link no-underline transition-colors duration-150 hover:underline"
+            >
+              GitHub
+            </a>
+            <a
+              href="https://www.npmjs.com/package/brustjs"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-link no-underline transition-colors duration-150 hover:underline"
+            >
+              npm
+            </a>
+          </div>
         </div>
       </footer>
     </BrustPage>
