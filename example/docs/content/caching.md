@@ -134,9 +134,13 @@ L1 is TTL-only — it expires on its own and is not key/tag-invalidated.
 
 ## Tuning
 
-- **`BRUST_PAGE_CACHE_CAPACITY`** (env, default `1000`) bounds the L2 page-cache
-  entry count. Large cached pages × 1000 entries can dominate RSS; lower it to
-  cap memory, or raise it on a cache-heavy deployment. Set before boot.
+Both cache capacities are operator-tunable in `brust.toml [cache]`, applied at
+boot (each defaults to `1000`):
+
+- **`[cache] max_entries`** bounds the L1 response-cache entry count.
+- **`[cache] page_max_entries`** bounds the L2 page-cache entry count. Large
+  cached pages × 1000 entries can dominate RSS; lower it to cap memory, or raise
+  it on a cache-heavy deployment.
 
 ## Limitations
 

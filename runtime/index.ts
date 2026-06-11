@@ -261,11 +261,12 @@ export const brust = {
   registerWsPaths(paths: string[]): void {
     ;(native as any).napiRegisterWsPaths(paths)
   },
-  /** Set the response cache capacity (entries). Default is 1000.
-   * Safe to call at any time; if shrinking below current size, excess
-   * LRU entries are evicted. */
-  configureCache(opts: { maxEntries: number }): void {
-    ;(native as any).configureCache(opts.maxEntries)
+  /** Set the L1 response-cache and L2 page-cache capacities (entries).
+   * Default is 1000 each. Rust reconstructs both caches at the given
+   * capacities (moka fixes capacity at construction), so call this once at
+   * boot before serving begins. */
+  configureCache(opts: { maxEntries: number; pageMaxEntries: number }): void {
+    ;(native as any).configureCache(opts.maxEntries, opts.pageMaxEntries)
   },
   /** Tell Rust where to read `/_brust/islands/<file>` from. Called once at
    * boot after buildIslands() emits chunks. Path must be absolute. */
@@ -397,12 +398,19 @@ export const brust = {
     const endpoints: EndpointDef[] = opts.actions?.endpoints ?? []
 
     if (!isWorker) {
-      const { host, port, workers, cacheMaxEntries } = await loadConfig(process.cwd(), {
-        host: opts.address,
-        port: opts.port,
-      })
+      const { host, port, workers, cacheMaxEntries, cachePageMaxEntries } = await loadConfig(
+        process.cwd(),
+        {
+          host: opts.address,
+          port: opts.port,
+        },
+      )
       console.log(`[brust] main: spawning ${workers} worker threads`)
-      if (cacheMaxEntries !== undefined) this.configureCache({ maxEntries: cacheMaxEntries })
+      if (cacheMaxEntries !== undefined || cachePageMaxEntries !== undefined)
+        this.configureCache({
+          maxEntries: cacheMaxEntries ?? 1000,
+          pageMaxEntries: cachePageMaxEntries ?? 1000,
+        })
 
       // md routes present? (leaf carries `__mdSource`, attached by mdRoutes()).
       // Checked inline — no md-module import — so md-free apps never load the

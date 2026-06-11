@@ -1,10 +1,7 @@
-use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-
-const CACHE_CAPACITY: usize = 1000;
 
 // Per-request bypass: `true` ⇒ always route to L2; a string ⇒ a key-expression
 // whose non-empty result ⇒ route to L2. Untagged so JSON `true` / "expr" both
@@ -88,18 +85,29 @@ pub struct ResponseCache {
     inner: moka::sync::Cache<CacheKey, CachedEntry>,
     hits: AtomicU64,
     misses: AtomicU64,
+    capacity: u64,
 }
 
 impl ResponseCache {
     pub fn new() -> Self {
+        Self::with_capacity(1000)
+    }
+
+    /// Build a response cache with an explicit max-entry capacity. moka fixes
+    /// capacity at construction, so the configurable knob is applied here (the
+    /// addon reconstructs + swaps the cache at boot via
+    /// `AppState::reconfigure_caches`). Capacity is floored at 1.
+    pub fn with_capacity(max_capacity: u64) -> Self {
+        let capacity = max_capacity.max(1);
         Self {
             inner: moka::sync::Cache::builder()
-                .max_capacity(CACHE_CAPACITY as u64)
+                .max_capacity(capacity)
                 .support_invalidation_closures()
                 .expire_after(ResponseExpiry)
                 .build(),
             hits: AtomicU64::new(0),
             misses: AtomicU64::new(0),
+            capacity,
         }
     }
 
@@ -137,17 +145,8 @@ impl ResponseCache {
             hits: self.hits.load(Ordering::Relaxed),
             misses: self.misses.load(Ordering::Relaxed),
             len: self.inner.entry_count() as usize,
-            capacity: CACHE_CAPACITY,
+            capacity: self.capacity as usize,
         }
-    }
-
-    /// No-op on moka: the cache capacity is fixed at construction
-    /// (`CACHE_CAPACITY`). Retained for API compatibility with the prior
-    /// `lru`-backed implementation.
-    pub fn resize(&self, _max: NonZeroUsize) {
-        // debug, not warn: this is called on the normal `configureCache` startup
-        // path, so a warn would flood production logs on every boot.
-        tracing::debug!("ResponseCache::resize is a no-op on moka");
     }
 
     /// Remove every entry whose key has the given method + path (regardless

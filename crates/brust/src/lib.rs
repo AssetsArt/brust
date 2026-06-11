@@ -298,11 +298,8 @@ pub fn register_routes(configs: Vec<String>) -> NapiResult<u32> {
 }
 
 #[napi]
-pub fn configure_cache(max_entries: u32) -> NapiResult<()> {
-    use std::num::NonZeroUsize;
-    let n = NonZeroUsize::new(max_entries as usize)
-        .ok_or_else(|| napi::Error::from_reason("cache max_entries must be > 0"))?;
-    state().cache.resize(n);
+pub fn configure_cache(max_entries: u32, page_max_entries: u32) -> NapiResult<()> {
+    state().reconfigure_caches(max_entries.max(1) as u64, page_max_entries.max(1) as u64);
     Ok(())
 }
 

@@ -374,7 +374,7 @@ async fn handle_request(
 ) -> Result<Response<ResponseBody>, Infallible> {
     let pool = Arc::clone(&state.pool);
     let routes = Arc::clone(&state.routes);
-    let cache = Arc::clone(&state.cache);
+    let cache = Arc::clone(&*state.cache.read());
 
     let method = req.method().as_str().to_owned();
     // path-and-query as the router expects (e.g. "/foo?a=1").

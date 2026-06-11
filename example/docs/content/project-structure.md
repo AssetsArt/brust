@@ -41,7 +41,8 @@ port = 8080            # default 1337
 count = 4              # default: one per CPU (availableParallelism)
 
 [cache]
-max_entries = 2000     # response cache capacity; default 1000
+max_entries = 2000        # L1 response-cache capacity; default 1000
+page_max_entries = 2000   # L2 page-cache capacity; default 1000
 ```
 
 | Key | Type | Default | Env override |
@@ -50,6 +51,7 @@ max_entries = 2000     # response cache capacity; default 1000
 | `server.port` | integer 1–65535 | `1337` | `BRUST_PORT` |
 | `workers.count` | positive integer | CPU count | `BRUST_WORKERS` |
 | `cache.max_entries` | positive integer | `1000` | — |
+| `cache.page_max_entries` | positive integer | `1000` | — |
 
 Precedence, lowest to highest: framework defaults → values passed to
 `brust.run()` in code → `brust.toml` → environment variables. So

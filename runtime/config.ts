@@ -10,8 +10,10 @@ export interface BrustConfig {
   port: number
   /** Bun Worker count for render dispatch. Default `availableParallelism()`. */
   workers: number
-  /** Cache capacity (entries). Undefined → Rust default of 1000. */
+  /** L1 response-cache capacity (entries). Undefined → Rust default of 1000. */
   cacheMaxEntries?: number
+  /** L2 page-cache capacity (entries). Undefined → Rust default of 1000. */
+  cachePageMaxEntries?: number
 }
 
 /** Caller-supplied fallbacks (e.g. `brust.run({ address, port })`) applied
@@ -77,7 +79,13 @@ export async function loadConfig(
   const port = fromEnv.port ?? fromToml.port ?? defaults.port ?? DEFAULT_PORT
   const workers = fromEnv.workers ?? fromToml.workers ?? defaultWorkers()
 
-  return { host, port, workers, cacheMaxEntries: fromToml.cacheMaxEntries }
+  return {
+    host,
+    port,
+    workers,
+    cacheMaxEntries: fromToml.cacheMaxEntries,
+    cachePageMaxEntries: fromToml.cachePageMaxEntries,
+  }
 }
 
 function extractFromToml(parsed: unknown, file: string): Partial<BrustConfig> {
@@ -145,6 +153,20 @@ function extractFromToml(parsed: unknown, file: string): Partial<BrustConfig> {
         )
       }
       out.cacheMaxEntries = maxEntries
+    }
+    const pageMaxEntries = (cache as Record<string, unknown>).page_max_entries
+    if (pageMaxEntries !== undefined) {
+      if (
+        typeof pageMaxEntries !== 'number' ||
+        !Number.isInteger(pageMaxEntries) ||
+        pageMaxEntries < 1
+      ) {
+        throw new BrustConfigError(
+          `${file}: cache.page_max_entries must be a positive integer (got ${JSON.stringify(pageMaxEntries)})`,
+          file,
+        )
+      }
+      out.cachePageMaxEntries = pageMaxEntries
     }
   }
 
