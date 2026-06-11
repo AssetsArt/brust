@@ -5,6 +5,7 @@ import DemoCounter from './components/DemoCounter'
 import DocsLayout from './components/DocsLayout'
 import { buildDocsChrome } from './lib/nav.ts'
 import { generateSearchIndex } from './lib/search-index.ts'
+import { BRUST_VERSION } from './lib/version.ts'
 import Home from './pages/Home'
 
 // Search index: generated at import time, main process only (workers share
@@ -31,5 +32,10 @@ const [docsTree] = mdRoutes('content', {
 })
 docsTree.loader = async ({ path }) => buildDocsChrome(path)
 
-// Home is a native landing page (real hero lands in task 1.5).
-export const routes = defineRoutes([{ path: '/', Component: Home, native: true }, docsTree])
+// Home is a native landing page. Its loader feeds the brustjs version (read
+// from the package manifest in lib/version.ts) so the release card shows the
+// shipped version — the SSG export freezes it at build, never a stale literal.
+export const routes = defineRoutes([
+  { path: '/', Component: Home, native: true, loader: async () => ({ version: BRUST_VERSION }) },
+  docsTree,
+])

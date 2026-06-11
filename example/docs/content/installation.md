@@ -4,8 +4,10 @@ description: Scaffold a brust project with bun create, or add brustjs to an exis
 nav: { group: "Getting Started", order: 2 }
 ---
 
-brust is published on npm as `brustjs` (the `brust` name was taken). The
-current version is `0.1.40-alpha`.
+brust is published on npm as `brustjs` (the `brust` name was taken), on the
+**alpha** channel. The commands below need no version — `latest` tracks the
+newest alpha during this phase; pin `brustjs@alpha` to stay on the prerelease
+channel once a stable ships.
 
 ## Requirements
 

@@ -30,7 +30,10 @@ import UnifiedIsland from '../components/UnifiedIsland'
 import UnifiedNative from '../components/UnifiedNative'
 import UnifiedStoreNode from '../components/UnifiedStoreNode'
 
-export default function Home() {
+// `version` is supplied by the route loader (routes.tsx) from the brustjs
+// package manifest — bound as a member path here, never hardcoded. A prop, not
+// a local binding, so the native-route-root single-return rule still holds.
+export default function Home({ version }: { version: string }) {
   return (
     <BrustPage
       title="Brust — the unified framework for the web"
@@ -348,7 +351,7 @@ export default function Home() {
               className="bento-highlight flex flex-col justify-between rounded-[var(--radius-card)] p-7 no-underline transition-colors duration-150 sm:col-span-2"
             >
               <div>
-                <h3 className="text-lg font-semibold text-white">Brust 0.1.41-alpha</h3>
+                <h3 className="text-lg font-semibold text-white">Brust {version}</h3>
                 <p className="mt-2 text-sm leading-relaxed text-white/75">
                   What landed in the latest alpha — changes, fixes, and upgrade notes, straight from
                   the repository.
