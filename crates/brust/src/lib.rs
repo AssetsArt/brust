@@ -509,6 +509,33 @@ pub fn island_cache_clear() {
 }
 
 #[napi]
+pub fn page_cache_get(key: String) -> Option<Buffer> {
+    state().page_cache_get(&key).map(Buffer::from)
+}
+
+#[napi]
+pub fn page_cache_set(key: String, tags: Vec<String>, ttl_ms: Option<u32>, payload: Buffer) {
+    let ttl = ttl_ms.map(|ms| std::time::Duration::from_millis(ms as u64));
+    state().page_cache_set(&key, &tags, ttl, payload.to_vec());
+}
+
+#[napi]
+pub fn page_cache_invalidate(key: Option<String>, tags: Option<Vec<String>>) {
+    let s = state();
+    if let Some(k) = key {
+        s.page_cache_invalidate_key(&k);
+    }
+    if let Some(t) = tags {
+        s.page_cache_invalidate_tags(&t);
+    }
+}
+
+#[napi]
+pub fn page_cache_clear() {
+    state().page_cache_clear();
+}
+
+#[napi]
 pub fn configure_css_dir(path: String) -> NapiResult<()> {
     let abs = std::path::PathBuf::from(&path);
     if !abs.is_absolute() {
