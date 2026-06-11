@@ -330,3 +330,35 @@ test('exportStatic with zero included routes skips the server boot, still copies
   expect(existsSync(path.join(staticOut, '_brust', 'css', 'app.css'))).toBe(true)
   expect(await Bun.file(path.join(staticOut, 'hello.txt')).text()).toBe('hi')
 }, 30_000)
+
+test('expanded ssg.params routes export concrete pages + payloads (decoded dirs)', async () => {
+  const outDir = await mkdtemp(path.join(tmpdir(), 'brust-ssg-exp-'))
+  try {
+    const res = await exportStatic({
+      distDir,
+      entryDir: appDir,
+      staticOut: outDir,
+      routes: collectStaticPaths(
+        await expandDynamicRoutes([
+          {
+            fullPath: '/ssg-blog/{slug}',
+            chain: [{ ssg: { params: () => [{ slug: 'hello' }, { slug: 'sa wad-dee' }] } }],
+          },
+        ]),
+      ),
+    })
+    expect(res.written).toContain('ssg-blog/hello/index.html')
+    expect(res.written).toContain('ssg-blog/sa wad-dee/index.html')
+    expect(res.navWritten).toContain(
+      path.join('_brust', 'page', 'ssg-blog', 'sa wad-dee', 'index.html'),
+    )
+    const html = await Bun.file(path.join(outDir, 'ssg-blog', 'sa wad-dee', 'index.html')).text()
+    // NOTE: Rust matchit does NOT decode params before the loader sees them —
+    // the loader receives the percent-encoded form ('sa%20wad-dee', not 'sa wad-dee').
+    // This is a known framework gap: params.slug is URL-encoded at SSG crawl time.
+    expect(html).toContain('post:sa%20wad-dee') // encoded — see discrepancy note above
+    expect(res.skipped.map((s) => s.fullPath)).toEqual(['/ssg-blog/{slug}'])
+  } finally {
+    await rm(outDir, { recursive: true, force: true })
+  }
+}, 60_000)

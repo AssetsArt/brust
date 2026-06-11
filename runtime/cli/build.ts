@@ -575,10 +575,18 @@ export async function runBuild(args: string[]): Promise<void> {
   // routes module ALREADY loaded for the MCP/css steps (loadedRoutes) — no
   // second import. Without the flag this is a strict no-op.
   if (parsed.ssg) {
-    const { collectStaticPaths, exportStatic } = await import('./ssg.ts')
-    const decisions = collectStaticPaths(
-      (loadedRoutes ?? []) as Parameters<typeof collectStaticPaths>[0],
-    )
+    const { collectStaticPaths, expandDynamicRoutes, exportStatic } = await import('./ssg.ts')
+    let expanded: Awaited<ReturnType<typeof expandDynamicRoutes>>
+    try {
+      expanded = await expandDynamicRoutes(
+        (loadedRoutes ?? []) as Parameters<typeof expandDynamicRoutes>[0],
+      )
+    } catch (err) {
+      console.error(`[brust build] ssg: ${err instanceof Error ? err.message : String(err)}`)
+      process.exit(1)
+    }
+    const expandedCount = expanded.length - (loadedRoutes ?? []).length
+    const decisions = collectStaticPaths(expanded)
     const staticOut = parsed.ssgOut ?? path.join(outDir, 'static')
     try {
       const { written, navWritten, skipped } = await exportStatic({
@@ -597,8 +605,9 @@ export async function runBuild(args: string[]): Promise<void> {
         .map((r) => `${r}=${counts.get(r)}`)
         .join(', ')
       const skippedDesc = skipped.length > 0 ? ` (skipped ${skipped.length}: ${reasons})` : ''
+      const expandedDesc = expandedCount > 0 ? `, expanded ${expandedCount} dynamic` : ''
       console.log(
-        `[brust build] ssg:     ${written.length} pages + ${navWritten.length} spa payloads → ${staticOut}${skippedDesc}`,
+        `[brust build] ssg:     ${written.length} pages + ${navWritten.length} spa payloads${expandedDesc} → ${staticOut}${skippedDesc}`,
       )
     } catch (err) {
       console.error(`[brust build] ssg: ${err instanceof Error ? err.message : String(err)}`)

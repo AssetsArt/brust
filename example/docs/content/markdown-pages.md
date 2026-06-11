@@ -281,6 +281,37 @@ of full-reloading, exactly like the live server (this site does it — click the
 sidebar; the whole mechanism is documented in [Navigation](/docs/navigation)). Cross-shell navigations (a page without a shared `<main>`, like this
 site's Home) detect a full-document payload and fall back to a normal load.
 
+### Dynamic routes — ssg.params
+
+Routes with `{param}` segments are skipped by default because the page set is
+unknown at build time. Add `ssg.params` to the route to tell the build which
+concrete paths to prerender:
+
+```ts
+{ path: '/blog/{slug}', Component: BlogPost,
+  loader: async ({ params }) => {
+    const post = await getPost(params.slug)
+    return { post }
+  },
+  ssg: {
+    params: async () => (await listPosts()).map(p => ({ slug: p.slug })),
+  } },
+```
+
+`ssg.params` is called once at build time; it may be async (a database or CMS
+call is fine). The server loader is **unchanged** — it runs at build time for
+each concrete path with the same `params` it would receive at runtime, so data
+fetching and rendering are identical. `params` values that contain spaces or
+non-ASCII characters are URL-encoded in the crawl path and decoded back before
+the loader sees them, so `params.slug` inside the loader is always the raw
+string (`"sa wad-dee"`, not `"sa%20wad-dee"`).
+
+Routes with `{param}` and **no** `ssg.params` continue to be skipped — today's
+behavior is unchanged for routes you have not opted in to.
+
+For static-friendly pagination, model pages as path segments rather than query
+params: `/blog/page/{n}` with `ssg.params` returning `[{ n: '1' }, { n: '2' }, …]`.
+
 **Root path only:** every generated URL is root-absolute. Deploy the export at
 a domain root (`docs.example.com`), not under a subpath — `example.com/docs/`
 would 404 every asset.

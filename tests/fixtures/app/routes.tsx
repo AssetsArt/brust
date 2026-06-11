@@ -51,6 +51,7 @@ import AdminUsers          from './components/AdminUsers'
 import AdminUserDetail     from './components/AdminUserDetail'
 import AdminUserThrow      from './components/AdminUserThrow'
 import AdminErrorBoundary  from './components/AdminErrorBoundary'
+import SsgBlogPost        from './components/SsgBlogPost'
 
 // md component registry (task 2.10): the THREE-identity rule — the md tag name,
 // the mdRoutes `components` key, and these default-import idents must all match.
@@ -108,6 +109,9 @@ export const routes = defineRoutes([
   { path: '/',             Component: HelloWorld },
   { path: '/blog/{slug}',  Component: BlogPost,
     loader: async ({ params }) => ({ title: `Post: ${params.slug}` }) },
+  { path: '/ssg-blog/{slug}', Component: SsgBlogPost,
+    loader: async ({ params }) => ({ title: `post:${params.slug}` }),
+    ssg: { params: () => [{ slug: 'hello' }, { slug: 'sa wad-dee' }] } },
   { path: '/slow-suspense', Component: SlowSuspense },
   { path: '/slow-fresh', Component: SlowFresh },
 
