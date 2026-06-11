@@ -1,5 +1,12 @@
+import { isWorker } from 'brustjs'
 import { defineRoutes, mdRoutes } from 'brustjs/routes'
+import { generateSearchIndex } from './lib/search-index.ts'
 import Home from './pages/Home'
+
+// Search index: generated at import time, main process only (workers share
+// the fs; regenerating per worker would race the write). Runs BEFORE mdRoutes
+// so the json exists before anything renders. See lib/search-index.ts.
+if (!isWorker) generateSearchIndex()
 
 // Home is a native landing page (real hero lands in task 1.5). Doc pages are
 // markdown under content/, mounted at /docs via mdRoutes. The content dir is
