@@ -90,6 +90,24 @@ test('navPayloadFileFor mirrors the client fetch URL /_brust/page<path>', () => 
   expect(navPayloadFileFor('/docs/intro')).toBe('_brust/page/docs/intro/index.html')
 })
 
+test('outFile decodes percent-encoded segments (static hosts decode before file lookup)', () => {
+  const [d] = collectStaticPaths([route('/ssg-blog/sa%20wad-dee')])
+  expect(d!.outFile).toBe('ssg-blog/sa wad-dee/index.html')
+  expect(navPayloadFileFor('/ssg-blog/sa%20wad-dee')).toBe(
+    path.join('_brust', 'page', 'ssg-blog', 'sa wad-dee', 'index.html'),
+  )
+})
+
+test('malformed percent sequences fall back to the raw segment', () => {
+  const [d] = collectStaticPaths([route('/x/100%25-not%2')])
+  expect(d!.outFile).toBe('x/100%-not%2/index.html')
+})
+
+test('%2F in a segment does NOT create a nested directory', () => {
+  const [d] = collectStaticPaths([route('/x/a%2Fb')])
+  expect(d!.outFile).toBe('x/a%2Fb/index.html')
+})
+
 // ----- expandDynamicRoutes -----
 
 const ssgRoute = (

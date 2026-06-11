@@ -28,6 +28,45 @@ export interface SsgRouteDecision {
   outFile: string // 'index.html' | 'docs/intro/index.html' …
 }
 
+/** Decode a single URL path segment for on-disk use. Static hosts decode the
+ * request URL before file lookup, so the file must use the decoded form. We
+ * decode per-segment (not the whole path) so that a literal '/' or '\' inside
+ * a segment (%2F / %5C) cannot create directory traversal — those are
+ * re-encoded after decoding. Malformed percent sequences that would cause
+ * decodeURIComponent to throw are decoded triplet-by-triplet: each valid
+ * triplet is decoded, each invalid one is left as-is. */
+function decodeSegment(seg: string): string {
+  // Fast path: nothing to decode.
+  if (!seg.includes('%')) return seg
+
+  // Try the whole segment first (common case: all triplets valid).
+  try {
+    const decoded = decodeURIComponent(seg)
+    // Re-encode decoded path separators to prevent directory traversal.
+    return decoded.replace(/\//g, '%2F').replace(/\\/g, '%5C')
+  } catch {
+    // Fallback: decode each /%[0-9A-Fa-f]{2}/ triplet individually.
+    const result = seg.replace(/%[0-9A-Fa-f]{2}/g, (triplet) => {
+      try {
+        const decoded = decodeURIComponent(triplet)
+        // Re-encode path separators even in the per-triplet pass.
+        if (decoded === '/') return '%2F'
+        if (decoded === '\\') return '%5C'
+        return decoded
+      } catch {
+        return triplet
+      }
+    })
+    return result
+  }
+}
+
+/** Produce the decoded on-disk path from a normalised URL path. Each segment
+ * is decoded independently so separator characters cannot escape. */
+function decodePathForDisk(normalized: string): string {
+  return normalized.split('/').map(decodeSegment).join('/')
+}
+
 /** Strip trailing slashes ('/docs/intro/' → '/docs/intro'); root stays '/'. */
 function normalizePath(p: string): string {
   let s = p.startsWith('/') ? p : `/${p}`
@@ -36,20 +75,23 @@ function normalizePath(p: string): string {
 }
 
 /** '/' → 'index.html'; '/docs/intro' → 'docs/intro/index.html'. Input must be
- * normalized (no trailing slash). */
+ * normalized (no trailing slash). On-disk names use the decoded form because
+ * static hosts decode the request URL before file lookup. */
 function outFileFor(normalized: string): string {
   if (normalized === '/') return 'index.html'
-  return `${normalized.slice(1)}/index.html`
+  return `${decodePathForDisk(normalized.slice(1))}/index.html`
 }
 
 /** Where a route's SPA navigation payload lands on disk. The client navigator
  * fetches `/_brust/page${pathname}` (bootstrap.ts navigate()), so the payload
  * must be reachable at that exact URL on a dumb static host — which means
  * `<url>/index.html`, the same directory-index shape the pages use:
- * '/' → '_brust/page/index.html'; '/docs/intro' → '_brust/page/docs/intro/index.html'. */
+ * '/' → '_brust/page/index.html'; '/docs/intro' → '_brust/page/docs/intro/index.html'.
+ * On-disk names use the decoded form for the same reason as outFileFor. */
 export function navPayloadFileFor(normalized: string): string {
   if (normalized === '/') return join('_brust', 'page', 'index.html')
-  return join('_brust', 'page', normalized.slice(1), 'index.html')
+  const decoded = decodePathForDisk(normalized.slice(1))
+  return join('_brust', 'page', decoded, 'index.html')
 }
 
 /** Decide, for every flattened route, whether it can be statically prerendered
