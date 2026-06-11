@@ -14,6 +14,8 @@ of `render.ts`'s `slugify` (render.ts:400-406) plus a textRenderer-equivalent
 inline-md normalizer, locked by parity tests against real rendered ids
 (`lib/search-index.test.ts`). Bit: any future change to the render.ts slugger
 silently desyncs index anchors — the task 1.7 integration check is the guard.
+(`mdRoutes`/`mdNav` themselves ARE public on `brustjs/routes`; only the raw
+directory scanner and the heading slugger behind them are private.)
 
 ## G2 — mdRoutes layout has no first-class loader option
 
@@ -47,3 +49,24 @@ TEST infers `pager.prev` as a scalar (`OwnedString`) while the body's
 (lower.rs:4756) treats the cross-shape merge as a `PropTypeConflict`.
 Workaround: precompute sibling BOOLEAN keys in the loader
 (`pager.hasPrev`/`pager.hasNext` in `lib/nav.ts`) and test on those.
+
+Refinement (paired with G5): `pager.prev`/`pager.next` are also declared
+NON-OPTIONAL with empty-string sentinels (`{ title: '', path: '' }` when
+absent) rather than `prev?: DocsPagerLink`. `hasPrev`/`hasNext` gate whether
+the anchor renders, so the sentinel is never read — but keeping the keys
+always-present means the body's `pager.prev.path` reads are plain member
+paths, which is what the native compiler can lower (G5). An optional member
+would have invited `pager.prev?.path`, which does not compile.
+
+## G5 — native templates can't lower optional chaining
+
+`pager?.prev?.path` (or any `?.`) in a native template does NOT compile — the
+lowerer has no `OptChain` arm (no `OptChain` handling exists in `lower.rs`;
+`lower_member` walks plain `SwcExpr::Member` chains only). Bit hard: a
+defensive `pager?.prev?.path` edit in `DocsLayout.tsx` passed `tsc`/biome but
+made the build's md-slot splice fail with `expected exactly one
+data-brust-md-slot … found 0` — the route silently fell back to a non-native
+render, which on the docs-deploy workflow surfaced only as a red CI run, not a
+local error. Rule for native routes: bind PLAIN member paths only
+(`pager.prev.path`), and guarantee the path exists in the loader (G4's
+sentinels) instead of guarding it with `?.` in the template.
