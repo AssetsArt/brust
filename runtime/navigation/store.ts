@@ -73,6 +73,21 @@ function store(): NavInternal {
   return G.__BRUST_NAV__
 }
 
+/** Canonicalize a pathname to the form routes match on: no trailing slash
+ * (root stays '/'). A full document load served via a trailing-slash redirect
+ * (e.g. Cloudflare Pages 308 `/docs/x` → `/docs/x/`) hands the bootstrap a
+ * `location.pathname` ending in `/`, while link hrefs and the server-rendered
+ * active state use the bare path — so without this, the active-nav reconciler
+ * and NavLink behaviors would compare `/docs/x/` against `/docs/x` and treat
+ * the current page as inactive. Normalizing here keeps every consumer of
+ * `nav.path()` aligned with the canonical route. Search/hash never reach this
+ * (the setters take a pathname only). */
+function canonicalPath(path: string): string {
+  let p = path
+  while (p.length > 1 && p.endsWith('/')) p = p.slice(0, -1)
+  return p
+}
+
 // Public reactive handle. A Proxy resolves the singleton on each property access
 // so (a) every chunk's `nav` points at the one globalThis bag, and (b) tests that
 // reset the singleton see the fresh signals.
@@ -145,7 +160,7 @@ export function onNavigateError(cb: ErrorCb): () => void {
 export function __navInit(path: string, search: string): void {
   const s = store()
   batch(() => {
-    s.path.set(path)
+    s.path.set(canonicalPath(path))
     s.search.set(search)
     s.phase.set('idle')
     s.from.set(null)
@@ -162,21 +177,22 @@ export function __navInit(path: string, search: string): void {
 export function __navStart(toPath: string, _toSearch: string): void {
   const s = store()
   const from = s.path()
+  const to = canonicalPath(toPath)
   batch(() => {
     s.from.set(from)
-    s.to.set(toPath)
+    s.to.set(to)
     s.error.set(null)
     s.phase.set('loading')
   })
   bumpVersion(s)
-  for (const cb of [...s._before]) cb({ from, to: toPath })
+  for (const cb of [...s._before]) cb({ from, to })
   emit(s)
 }
 
 export function __navCommit(toPath: string, toSearch: string): void {
   const s = store()
   batch(() => {
-    s.path.set(toPath)
+    s.path.set(canonicalPath(toPath))
     s.search.set(toSearch)
     s.to.set(null)
     s.error.set(null)

@@ -31,6 +31,28 @@ test('__navInit sets path/search, idle phase, null from/to/error', () => {
   })
 })
 
+test('path setters canonicalize a trailing slash (root stays "/"); search/hash untouched', () => {
+  // A full load served via a trailing-slash redirect (CF Pages 308
+  // /docs/x → /docs/x/) hands __navInit a path ending in '/'. nav.path must
+  // be the canonical route so active-nav + NavLink behaviors match link hrefs.
+  __navInit('/docs/native-interactivity/', '?q=1')
+  const s = getNavState()
+  expect(s.path).toBe('/docs/native-interactivity')
+  expect(s.search).toBe('?q=1') // search is not a path — left intact
+
+  const before: Array<{ from: string; to: string }> = []
+  onBeforeNavigate((e) => before.push(e))
+  __navStart('/docs/store/', '')
+  expect(getNavState().to).toBe('/docs/store')
+  expect(before).toEqual([{ from: '/docs/native-interactivity', to: '/docs/store' }])
+
+  __navCommit('/docs/store/', '')
+  expect(getNavState().path).toBe('/docs/store')
+
+  __navInit('/', '')
+  expect(getNavState().path).toBe('/') // root is preserved, not emptied
+})
+
 test('__navStart sets loading, from=current path, to=target, fires onBeforeNavigate', () => {
   __navInit('/a', '')
   const seen: Array<{ from: string; to: string }> = []
