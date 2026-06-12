@@ -53,39 +53,51 @@ export function viewTransitionsEnabled(doc: Document): boolean {
  *  transition when enabled, else run it directly. Returns a promise that
  *  resolves once the DOM is committed (NOT when the animation finishes), so the
  *  caller's post-commit ordering (hydration already happened inside `commit`;
- *  nav-store commit runs after) is preserved. A transition setup failure falls
- *  back to a direct commit — a navigation must never be lost to an animation. */
+ *  nav-store commit runs after) is preserved. `commit` runs EXACTLY ONCE on
+ *  every path — a navigation must never be lost to, nor doubled by, the API. */
 export async function withViewTransition(doc: Document, commit: () => void): Promise<void> {
   if (!viewTransitionsEnabled(doc)) {
     commit()
     return
   }
+  let tr: { updateCallbackDone: Promise<void> }
   try {
-    await (doc as Document & {
+    // The API can throw SYNCHRONOUSLY here — before it ever invokes `commit`.
+    // In that case the swap never happened, so we MUST run it directly or the
+    // navigation is lost (blank page, no full-reload recovery). This branch is
+    // distinguishable from a callback-threw rejection precisely because it
+    // happens at the call, not at the await below.
+    tr = (doc as Document & {
       startViewTransition: (cb: () => void) => { updateCallbackDone: Promise<void> }
-    }).startViewTransition(commit).updateCallbackDone
+    }).startViewTransition(commit)
   } catch {
-    // startViewTransition threw synchronously, or the callback rejected after
-    // already mutating the DOM. Either way the commit ran (or never will) —
-    // ensure a direct commit only when it did NOT run. We cannot tell, so we
-    // do NOT re-run (double-commit risk). The catch exists so a VT-internal
-    // rejection never propagates into navigate()'s full-reload fallback.
+    commit()
+    return
+  }
+  try {
+    await tr.updateCallbackDone
+  } catch {
+    // The callback (`commit`) already RAN and threw; re-running would just
+    // double-commit / throw again. Swallow so a VT-internal rejection never
+    // propagates into navigate()'s full-reload fallback.
   }
 }
 ```
 
-Caveat to resolve at plan-time: the catch must not double-commit. Since
-`startViewTransition(commit)` invokes `commit` exactly once (the browser
-guarantees the update callback runs once, even if the transition is later
-skipped), a rejection of `updateCallbackDone` means the callback itself threw —
-the commit is the thing that threw, re-running it would just throw again. So
-the catch swallows and the outer navigate() try/catch is the real safety net.
-The plan must include a unit test pinning "commit called exactly once".
+The two failure modes are separable by WHICH try-block throws: a synchronous
+throw at the `startViewTransition(commit)` call means `commit` never ran → run
+it directly; a rejection of `updateCallbackDone` means `commit` ran-and-threw →
+do NOT re-run. The plan MUST include unit tests pinning "commit called exactly
+once" for both throw cases (B2 — closes the lost-navigation hole).
 
 `bootstrap.ts` — both swap sites refactored to put their **synchronous**
 DOM-commit steps into a `commit` closure passed through `withViewTransition`:
 
-1. **`navigate()` normal path** (~:424-440). The closure contains, in order:
+1. **`navigate()` normal path** (commit block verified at lines 426-440;
+   closure = `unmountIslandsIn`:427 → `swapMainContent`:428 →
+   `applyStoreSnapshot`(fresh):432 → `title`:433 → history:434-435 →
+   `scrollTo`:436-437 → `hydrateMarkersIn`:438; post-await =
+   `currentPageKey`:439, `__navCommit`:440). The closure contains, in order:
    `scrollPositions.set` (read of leaving scroll happens BEFORE the closure —
    it reads the OLD page's scrollY), then inside: `unmountIslandsIn`,
    `swapMainContent`, `applyStoreSnapshot` (fresh only), `document.title`,
@@ -108,21 +120,33 @@ practice: the URL bar updates as the new frame is captured.
   ignored) to `<html>` via `BrustPage` in BOTH shells that render the document:
   `components/DocsLayout.tsx` (md pages) and `pages/Home.tsx` (home). `BrustPage`
   already forwards `data-*` props onto `<html>` (Document.html_attrs).
+  MUST be the empty-string form `data-brust-view-transitions=""` — the BARE
+  attribute (`data-brust-view-transitions` with no value) is a native-compiler
+  error (`BrustPageAttrMustBeStringLiteral`, lower.rs parse arm); the empty
+  string emits `data-brust-view-transitions=""` and `hasAttribute` returns true
+  for it (F1).
 - **CSS** in `example/docs/app.css`:
   ```css
+  /* Custom fade for users who allow motion. */
   @media (prefers-reduced-motion: no-preference) {
     ::view-transition-old(root) { animation: brust-fade-out 160ms ease both; }
     ::view-transition-new(root) { animation: brust-fade-in 200ms ease both; }
     @keyframes brust-fade-out { to { opacity: 0; } }
     @keyframes brust-fade-in { from { opacity: 0; transform: translateY(6px); } }
   }
+  /* Reduced motion: the JS gate STILL calls startViewTransition (it checks the
+   * marker + API support only), so the browser would play its DEFAULT root
+   * cross-fade unless we explicitly kill it. This makes the swap instant. */
+  @media (prefers-reduced-motion: reduce) {
+    ::view-transition-old(root),
+    ::view-transition-new(root) { animation: none; }
+  }
   ```
-  Reduced-motion users get the browser's snapshot swap with NO custom keyframes
-  (the `@media (prefers-reduced-motion: no-preference)` guard means our
-  animations simply don't exist for them; the default cross-fade is also absent
-  because we don't override it — they get an instant swap). NOTE the View
-  Transitions API does NOT auto-respect reduced-motion; the media guard is the
-  mechanism.
+  B1 correction: `startViewTransition` is invoked regardless of the media query
+  (the JS gate does not read `prefers-reduced-motion`), so without the explicit
+  `animation: none` block the browser's built-in cross-fade plays for
+  reduced-motion users. The `reduce` block is what actually delivers the instant
+  swap. The View Transitions API does NOT auto-respect reduced-motion.
 
 ### A — docs
 
@@ -164,8 +188,11 @@ that env/toml override code.
    all `signal.aborted` checks are unchanged; the transition wraps only the
    already-synchronous commit, which today runs to completion without an abort
    check in its middle, so no new interleaving is introduced.
-6. **Reduced motion:** no custom animation; the media-query guard is the only
-   gate (the API does not auto-skip).
+6. **Reduced motion:** `startViewTransition` is still invoked (JS gate ignores
+   the media query), so the CSS must explicitly set `animation: none` on the
+   `root` pseudo-elements under `@media (prefers-reduced-motion: reduce)` to
+   suppress the browser's default cross-fade and deliver an instant swap. The
+   custom fade lives under `no-preference`. (B1)
 
 ## Tests
 
@@ -176,8 +203,15 @@ that env/toml override code.
     before the returned promise resolves.
   - enabled (stub `startViewTransition` returning `{updateCallbackDone}`) →
     `commit` called once, inside the stubbed transition.
-  - `startViewTransition` throws → `commit` was still called once (the stub
-    calls it before throwing), promise resolves (no propagation).
+  - `startViewTransition` throws SYNCHRONOUSLY (before invoking commit) →
+    `commit` still called exactly once (the direct-commit fallback), promise
+    resolves. (B2 lost-navigation guard.)
+  - `updateCallbackDone` rejects AFTER the stub already invoked commit →
+    `commit` called exactly once (NOT re-run), promise resolves. (B2
+    double-commit guard.)
+  Harness note: the bun test runner uses happy-dom (no `startViewTransition`);
+  `withViewTransition(doc, commit)` takes `doc` as a param so a plain stub
+  object drives all cases with no global DOM dependency.
 - Existing `runtime/islands/bootstrap.test.ts` (classifyClick / swap unit tests)
   stay green — the refactor must not change their observable behavior.
 - Browser smoke (Phase 6, not a committed test unless the suite has a harness):
@@ -208,5 +242,8 @@ that env/toml override code.
 - Framework knob vs marker → marker (`data-brust-view-transitions`), CSS-driven.
 - Default-on vs opt-in → opt-in via marker; zero default behavior change.
 - Which swap sites → both, but fallback wraps only the sync shell swap.
-- Reduced motion → `@media (prefers-reduced-motion: no-preference)` guard owns it.
+- Reduced motion → custom fade under `no-preference` + explicit `animation:none`
+  on root pseudos under `reduce` (the API does not auto-skip — B1).
+- Lost-navigation on synchronous `startViewTransition` throw → separate the
+  call from the await so a pre-callback throw falls back to a direct commit (B2).
 - Where brust.run docs live → project-structure.md (existing config page).
