@@ -187,6 +187,42 @@ test('makeMeta defaults: contentType=text/html, headers={}, given status+streami
   expect(parsed.headers).toEqual({})
 })
 
+test('forceIslands: true → bootstrap injected even with no <Island> (buffering path)', async () => {
+  // Control: without forceIslands the existing test "no bootstrap if no islands" already
+  // asserts the injection is absent. Here we verify the flag forces it ON.
+  const { chunks, napi } = makeMockNapi()
+  await renderBranchStreaming({
+    element: createElement('div', null, 'no-island'),
+    view,
+    workerId: 0n,
+    napi,
+    errorBoundary: () => createElement('div', null, 'oops'),
+    forceIslands: true,
+  })
+  expect(chunks.length).toBe(1)
+  expect(chunks[0].final).toBe(true)
+  const { body } = decodeMeta(chunks[0].bytes!)
+  const bodyStr = new TextDecoder().decode(body)
+  expect(bodyStr).toContain('/_brust/islands/_bootstrap.js')
+  // Sanity: the element itself still renders.
+  expect(bodyStr).toContain('no-island')
+})
+
+test('forceIslands: false (default) → no bootstrap when no <Island>', async () => {
+  // Explicit false mirrors the omit-case; guards against accidental default flip.
+  const { chunks, napi } = makeMockNapi()
+  await renderBranchStreaming({
+    element: createElement('div', null, 'plain'),
+    view,
+    workerId: 0n,
+    napi,
+    errorBoundary: () => createElement('div', null, 'oops'),
+    forceIslands: false,
+  })
+  const { body } = decodeMeta(chunks[0].bytes!)
+  expect(new TextDecoder().decode(body)).not.toContain('importmap')
+})
+
 import { configureCssEnabled } from '../css.ts'
 import { injectCssLink } from './inject-css-link.ts'
 

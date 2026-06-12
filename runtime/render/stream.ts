@@ -51,6 +51,10 @@ export interface RenderBranchStreamingArgs {
    * `<script data-brust-store="…">` blob before `</head>` (buffering) or into
    * the streaming first-chunk prepend. Null/undefined → no injection. */
   storeSnapshot?: Record<string, Record<string, unknown>> | null
+  /** Inject the islands importmap + bootstrap even when no <Island> rendered.
+   * SSG fallback shells need the bootstrap (client takeover runtime) on pages
+   * that may have zero real islands. */
+  forceIslands?: boolean
 }
 
 const encoder = new TextEncoder()
@@ -167,7 +171,7 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
       async final(cb: (e?: Error | null) => void) {
         try {
           if (mode === 'buffering') {
-            const islandsUsed = islandUsedBox.used
+            const islandsUsed = islandUsedBox.used || (args.forceIslands ?? false)
             let body = concatBuffers(buffer, islandsUsed)
             const perRouteHrefs = args.routePath ? getCssHrefsForRoute(args.routePath) : []
             body = injectCssLink(body, [...getCssHrefs(), ...perRouteHrefs])

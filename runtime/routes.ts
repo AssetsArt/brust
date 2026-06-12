@@ -189,6 +189,23 @@ export interface RouteCacheConfig<Params = Record<string, string>> {
   tags?: string[]
 }
 
+/** SSG config — read ONLY by `brust build --ssg`. Live server / dev ignore it.
+ * See docs/superpowers/specs/2026-06-12-ssg-dynamic-params-design.md. */
+export interface RouteSsgConfig {
+  /** generateStaticParams: concrete param records to prerender. Each record
+   * must cover every `{name}` in the route's full path with a non-empty
+   * string. Sync or async. Values are URL-encoded into the crawl path. */
+  params?: () => Array<Record<string, string>> | Promise<Array<Record<string, string>>>
+  /** What non-prerendered paths do on a static host. 'none' (default) = skip
+   * → host 404 (today's behavior). 'client' = client-loader takeover
+   * (Phase B; requires `export const clientLoader` in the leaf component
+   * file, leaf must be a DEFAULT import in routes.tsx, React routes only). */
+  fallback?: 'none' | 'client'
+  /** Server-rendered loading UI baked into the fallback shell (Phase B).
+   * Renders in the leaf position with NO data. */
+  placeholder?: ComponentType
+}
+
 /** Shape returned by a middleware or by the terminal `next()` (loader + render).
  * Middleware can short-circuit by returning a RouteResponse without calling next,
  * or call next() and mutate the returned response (status, headers). */
@@ -322,6 +339,9 @@ export interface Route<Params = Record<string, string>, Data = unknown> {
   /** Opt-in cache. Cache config from the leaf only — parent's cache is
    * ignored when the route is reached as part of a chain. */
   cache?: RouteCacheConfig
+  /** Opt-in SSG behavior for dynamic-param routes (`/blog/{slug}`). Only
+   * consulted by `brust build --ssg`. */
+  ssg?: RouteSsgConfig
   /** Per-route middleware chain. Runs in declaration order; concatenated
    * with parent middlewares (parent runs before child). Cache lookup
    * still happens BEFORE any middleware (existing rule). */
@@ -1105,10 +1125,13 @@ export function makeRenderer(
       // after loaders (buildRenderElement resolved) — that's where Spec A stores
       // are seeded — and threaded into the render for <script> injection.
       return await runInRequestContext(call.req?.cookies ?? {}, async () => {
+        // Computed ONCE and shared by buildRenderElement (leaf swap) and
+        // renderBranchStreaming (forceIslands) so the two can never diverge.
+        const shellMode = wantsSsgFallbackShell(flat, call)
         let element: ReactNode
         let errorBoundary: ComponentType<{ error: Error }>
         try {
-          element = await buildRenderElement(call, flat, opts.getWorkerId)
+          element = await buildRenderElement(call, flat, opts.getWorkerId, shellMode)
           errorBoundary =
             flat.errorBoundary ??
             (({ error }) => createElement('div', null, `Internal Server Error: ${error.message}`))
@@ -1142,6 +1165,9 @@ export function makeRenderer(
           headers: flushSetCookie(verdict.headers),
           routePath: flat.fullPath,
           storeSnapshot,
+          // SSG fallback shells have zero islands on the page but the
+          // client-loader runtime still needs the importmap + bootstrap.
+          forceIslands: shellMode,
         })
         // renderBranchStreaming wrote via the chunk channel.
         return 0
@@ -1363,8 +1389,17 @@ async function navigationBranch(
     } else {
       // Wrap loader run (inside buildRenderElement) + render in one store scope so
       // store reads resolve the per-request instance; collect after render.
+      // Shell mode here only swaps the leaf for the marker div — no bootstrap
+      // injection is needed in a NAV payload: the payload is swapped into a
+      // document that already booted the bootstrap (the navigator IS the
+      // bootstrap), and the takeover runtime imports its chunk itself.
       fullHtml = await runInRequestContext(call.req?.cookies ?? {}, async () => {
-        const element = await buildRenderElement(call as any, flat, getWorkerId)
+        const element = await buildRenderElement(
+          call as any,
+          flat,
+          getWorkerId,
+          wantsSsgFallbackShell(flat, call as any),
+        )
         if (!element) throw new Error('render setup failed')
         // Use renderToPipeableStream + onAllReady so pages with <Suspense> emit
         // their RESOLVED markup, not the fallback. renderToString would only
@@ -1498,12 +1533,45 @@ async function renderNativeRouteToHtml(
   return decoder.decode(view.subarray(2 + metaLen, len))
 }
 
+/** Param value the SSG build crawler substitutes for every `{param}` when it
+ * requests the fallback SHELL of an `ssg.fallback: 'client'` route. */
+const SSG_FALLBACK_SENTINEL = '__brust_fallback__'
+
+/** True when this render/navigation call is the SSG build crawler asking for
+ * the fallback shell: the leaf declares `ssg.fallback: 'client'`, the route
+ * has ≥1 param and EVERY param value is the literal sentinel, AND the request
+ * carries `x-brust-ssg: 1` (BrustRequest.headers is a plain lower-cased
+ * Record — see the type doc). Live traffic never sends the header, so the
+ * sentinel namespace is unreachable in production; a forged header yields a
+ * shell that renders LESS than a normal request (leaf loader skipped). */
+function wantsSsgFallbackShell(
+  flat: FlatRoute,
+  call: { params: Record<string, string>; req: BrustRequest },
+): boolean {
+  const leaf = flat.chain[flat.chain.length - 1]
+  if (leaf?.ssg?.fallback !== 'client') return false
+  const names = Object.keys(call.params ?? {})
+  // Parameterless routes can never be in shell mode — intentional, not a
+  // vacuous-truth bug: expandDynamicRoutes already rejects ssg config on
+  // routes without {param}, and a no-param route is always fully
+  // prerenderable.
+  if (names.length === 0) return false
+  if (!names.every((name) => call.params[name] === SSG_FALLBACK_SENTINEL)) return false
+  return call.req?.headers?.['x-brust-ssg'] === '1'
+}
+
 /** Build the React element for a render or navigation call: runs loaders
  * top-down, builds the element bottom-up wrapping in OutletContext.Provider
  * so nested routes receive the deeper element via <Outlet />. The caller
  * (render branch or navigationBranch) is responsible for running the
  * middleware chain BEFORE calling this — this helper assumes middleware
  * has already passed.
+ *
+ * SSG fallback-shell mode (`wantsSsgFallbackShell`): parent loaders still run
+ * (layouts need their data) but the LEAF loader is skipped and the leaf
+ * Component is replaced by the marker div the client-loader runtime mounts
+ * into. Both the render branch and navigationBranch flow through here, so the
+ * shell swap covers full-document AND SPA-navigation payloads.
  *
  * Throws on setup failure (loader throw, etc.). The caller synthesises a 500
  * in that case.
@@ -1512,19 +1580,25 @@ async function buildRenderElement(
   call: Extract<RouteCall, { kind: 'render' }>,
   flat: FlatRoute,
   getWorkerId?: () => number | null,
+  // Computed ONCE by the caller (and reused there for forceIslands) so the
+  // shell decision and the bootstrap-injection decision can never diverge.
+  shellMode = false,
 ): Promise<ReactNode> {
   call.req.signal = NEVER_ABORTS
   const workerId = getWorkerId ? getWorkerId() : null
   const chainNodes = flat.chain
+  const leafIdx = chainNodes.length - 1
 
   // 1. Run loaders top-down (parent → leaf). Each Component receives ONLY
-  //    its own loader's data — no merge, no inheritance.
+  //    its own loader's data — no merge, no inheritance. Shell mode skips
+  //    the LEAF loader (its data comes from the clientLoader at runtime).
   const datas: unknown[] = new Array(chainNodes.length)
   for (let i = 0; i < chainNodes.length; i++) {
     const r = chainNodes[i]
-    datas[i] = r.loader
-      ? await r.loader({ params: call.params, path: call.path, req: call.req })
-      : undefined
+    datas[i] =
+      r.loader && !(shellMode && i === leafIdx)
+        ? await r.loader({ params: call.params, path: call.path, req: call.req })
+        : undefined
   }
 
   // 2. Build the React element bottom-up. Each level wraps the deeper level
@@ -1533,13 +1607,23 @@ async function buildRenderElement(
   let element: ReactNode = null
   for (let i = chainNodes.length - 1; i >= 0; i--) {
     const r = chainNodes[i]
-    const node = createElement(r.Component!, {
-      params: call.params,
-      path: call.path,
-      data: datas[i],
-      workerId,
-      req: call.req,
-    })
+    const node =
+      shellMode && i === leafIdx
+        ? createElement(
+            'div',
+            {
+              'data-brust-fallback-root': '',
+              'data-brust-fallback': flat.fullPath,
+            },
+            r.ssg?.placeholder ? createElement(r.ssg.placeholder) : null,
+          )
+        : createElement(r.Component!, {
+            params: call.params,
+            path: call.path,
+            data: datas[i],
+            workerId,
+            req: call.req,
+          })
     element = createElement(OutletContext.Provider, { value: element }, node)
   }
   return element

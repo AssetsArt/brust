@@ -32,6 +32,12 @@ import {
   prefetchPage,
   type PagePayload,
 } from './page-cache.ts'
+import {
+  matchFallback,
+  loadFallbackManifest,
+  takeover,
+  unmountFallbackRootsIn,
+} from './fallback.ts'
 
 // Track React roots created by hydrateOne so we can unmount them before
 // removing their DOM in swapMainContent. Without this, removing the DOM
@@ -162,6 +168,10 @@ export function unmountIslandsIn(root: ParentNode): void {
       islandRoots.delete(el)
     }
   }
+  // Client-takeover roots (fallback: 'client' SSG pages) live in fallback.ts's
+  // own WeakMap — delegate so navigating away from a client-rendered page
+  // disposes its React root too (same detached-root hazard as islands).
+  unmountFallbackRootsIn(root)
 }
 
 /** Scan `root` for un-hydrated island markers and register their hydration
@@ -259,6 +269,104 @@ const scrollPositions = new Map<string, number>()
 // would record the leaving page's scroll under the wrong key.
 let currentPageKey = ''
 
+/** SPA-navigate onto a `fallback: 'client'` SSG route on a static host.
+ *
+ * Called from navigate() when the normal payload fetch fails: a
+ * non-prerendered dynamic path has no `/_brust/page/...` file on a static
+ * host, so the fetch 404s. Match the path against the export's fallback
+ * manifest, fetch the route's placeholder-shell payload from the manifest's
+ * `payload` URL (`/_brust/fallback-page/...` — the only payload that exists
+ * for such a path on a static host), swap it into `<main>` with the SAME
+ * post-swap sequence the normal path uses, then client-render the real page
+ * via takeover().
+ *
+ * The payload is intentionally NOT stored in the page cache: client-rendered
+ * data must be fresh per visit (clientLoader owns freshness), and replaying
+ * the bare placeholder shell would be useless anyway.
+ *
+ * Returns false when this navigation cannot be handled here (no manifest
+ * match, payload missing/invalid, no `<main>`) — the caller rethrows into
+ * the existing full-reload fallback. Supersession (the AbortController was
+ * aborted by a newer navigation) also returns false WITHOUT touching the DOM
+ * or committing; the caller checks `signal.aborted` before rethrowing. */
+async function attemptClientFallback(
+  url: URL,
+  mode: 'push' | 'replace' | 'none',
+  signal?: AbortSignal,
+): Promise<boolean> {
+  const entries = await loadFallbackManifest()
+  const entry = entries.find((e) => matchFallback(e.pattern, url.pathname) !== null)
+  if (!entry) return false
+  let html: string
+  let title: string | undefined
+  try {
+    const resp = await fetch(entry.payload, { headers: { Accept: 'application/json' } })
+    if (!resp.ok) return false
+    const payload = (await resp.json()) as { html?: unknown; title?: unknown }
+    if (typeof payload.html !== 'string') return false
+    html = payload.html
+    title = typeof payload.title === 'string' ? payload.title : undefined
+  } catch {
+    return false
+  }
+  // Superseded while fetching → a newer navigation owns the DOM; do nothing.
+  if (signal?.aborted) return false
+  // Same full-document guard as the normal path: a standalone-route shell
+  // cannot be swapped into the current <main> — authoritative full load.
+  if (isFullDocumentPayload(html)) {
+    location.href = url.href
+    return true
+  }
+  const main = document.querySelector('main')
+  if (!main) return false
+  // From here down: the SAME post-swap sequence navigate()'s normal path runs.
+  scrollPositions.set(currentPageKey, window.scrollY)
+  unmountIslandsIn(main as HTMLElement)
+  swapMainContent(main as HTMLElement, html)
+  if (title) document.title = title
+  // History BEFORE takeover: takeover derives params from location.pathname,
+  // so the URL bar must already show the destination.
+  if (mode === 'push') history.pushState({}, '', url.href)
+  else if (mode === 'replace') history.replaceState({}, '', url.href)
+  if (mode === 'none') window.scrollTo(0, scrollPositions.get(pageCacheKey(url)) ?? 0)
+  else window.scrollTo(0, 0)
+  currentPageKey = pageCacheKey(url)
+  const container = main.querySelector<HTMLElement>('[data-brust-fallback-root]')
+  if (!container) {
+    // A fallback payload without its marker is a build bug — log it, but
+    // commit the swap so navigation doesn't brick (the shell IS on screen).
+    console.warn(
+      '[brust] fallback payload has no [data-brust-fallback-root] marker — client takeover skipped',
+    )
+    hydrateMarkersIn(main as HTMLElement)
+    __navCommit(url.pathname, url.search)
+    return true
+  }
+  // Superseded while the payload was loading → the newer navigation owns the
+  // DOM from here; handing the container to takeover would let its render
+  // land in a subtree the newer swap is about to (or already did) remove.
+  if (signal?.aborted) return true
+  // ORDER: takeover BEFORE hydrateMarkersIn. The container was JUST swapped
+  // in, so nothing inside it is hydrated yet; hydrating first would register
+  // placeholder-island triggers whose async mounts race takeover's child
+  // removal (a live root on removed DOM hangs the tab). Running takeover
+  // first means the container's children are either removed before any
+  // trigger is registered (success) or hydrated exactly once afterwards
+  // (failure keeps the placeholder, which then becomes interactive). Either
+  // way a placeholder island can never double-mount.
+  // takeover gets the SIGNAL so a supersession mid-clientLoader can't mount
+  // a React root into a container the newer navigation already detached.
+  await takeover(container, signal)
+  // Superseded during takeover → skip hydration/commit; the newer navigation
+  // owns the DOM and the nav store from here.
+  if (signal?.aborted) return true
+  hydrateMarkersIn(main as HTMLElement)
+  // Commit only after takeover resolves: phase 'loading' covers the client
+  // data fetch, so NavPreloader stays honest about in-flight work.
+  __navCommit(url.pathname, url.search)
+  return true
+}
+
 export async function navigate(url: URL, mode: 'push' | 'replace' | 'none'): Promise<void> {
   inFlight?.abort()
   const ac = new AbortController()
@@ -274,17 +382,30 @@ export async function navigate(url: URL, mode: 'push' | 'replace' | 'none'): Pro
     if (cached) {
       payload = cached
     } else {
-      // A hover prefetch may already have this page in flight — await it
-      // instead of double-fetching; if it failed, fall back to a direct fetch.
-      const pre = inflightPage(key)
-      if (pre) {
-        try {
-          payload = await pre
-        } catch {
+      try {
+        // A hover prefetch may already have this page in flight — await it
+        // instead of double-fetching; if it failed, fall back to a direct fetch.
+        const pre = inflightPage(key)
+        if (pre) {
+          try {
+            payload = await pre
+          } catch {
+            payload = await fetchPagePayload(url, ac.signal)
+          }
+        } else {
           payload = await fetchPagePayload(url, ac.signal)
         }
-      } else {
-        payload = await fetchPagePayload(url, ac.signal)
+      } catch (err) {
+        // Static-host miss: a non-prerendered `fallback: 'client'` path has
+        // no payload file, so the fetch 404s. Try the client takeover before
+        // the full-reload fallback. Abort keeps its existing meaning
+        // (supersession) and must reach the outer catch untouched.
+        if ((err as Error).name === 'AbortError') throw err
+        if (await attemptClientFallback(url, mode, ac.signal)) return
+        // Superseded during the fallback attempt → a newer navigation owns
+        // the DOM; bail without committing OR full-reloading.
+        if (ac.signal.aborted) return
+        throw err
       }
       // The prefetch promise isn't tied to our AbortController, so an abort
       // during that await doesn't throw — check for supersession explicitly.
@@ -415,6 +536,44 @@ function installInterceptor(): void {
   })
 }
 
+/** Boot-path takeover for a DIRECT hit on a non-prerendered fallback path:
+ * the static host served 404.html, which stashed the real URL in
+ * sessionStorage and redirected to the route's fallback shell document. If
+ * this document carries a fallback container, restore the real URL via
+ * replaceState BEFORE takeover starts (the user sees their URL while the
+ * placeholder loads, and takeover derives params from location.pathname),
+ * then hand the container to the client-render runtime. */
+function bootFallbackTakeover(): void {
+  const el = document.querySelector<HTMLElement>('[data-brust-fallback-root]')
+  if (!el) return
+  let saved: string | null = null
+  try {
+    saved = sessionStorage.getItem('brust:fallback-path')
+    if (saved !== null) sessionStorage.removeItem('brust:fallback-path')
+  } catch {
+    // sessionStorage unavailable (privacy mode) — 404.html couldn't have
+    // stashed a path either; takeover proceeds on the shell's own URL.
+  }
+  // Only a same-origin absolute PATH is acceptable: the value transits
+  // sessionStorage (writable by any same-origin script), so reject anything
+  // shaped like a scheme or protocol-relative URL before handing it to
+  // replaceState.
+  if (saved?.startsWith('/') && !saved.startsWith('//')) {
+    history.replaceState({}, '', saved)
+    currentPageKey = location.pathname + location.search
+    // Re-seed the nav store: __navInit ran before this with the SHELL
+    // document's URL — without the re-init, useNav()/getNavState() would
+    // report the /_brust/fallback/... path until the first SPA commit.
+    __navInit(location.pathname, location.search)
+  }
+  // Per takeover's contract: unmount any island roots inside the container
+  // first. At boot this is belt-and-braces — hydrateMarkersIn(document.body)
+  // ran just above, but its `load`-trigger mounts are detached microtasks
+  // that haven't created roots yet at this synchronous point.
+  unmountIslandsIn(el)
+  void takeover(el)
+}
+
 if (typeof document !== 'undefined') {
   registerNavigator((url, replace) => navigate(url, replace ? 'replace' : 'push'))
   currentPageKey = location.pathname + location.search
@@ -425,6 +584,7 @@ if (typeof document !== 'undefined') {
       hydrateMarkersIn(document.body)
       installInterceptor()
       installPrefetch()
+      bootFallbackTakeover()
     })
   } else {
     __navInit(location.pathname, location.search)
@@ -432,5 +592,6 @@ if (typeof document !== 'undefined') {
     hydrateMarkersIn(document.body)
     installInterceptor()
     installPrefetch()
+    bootFallbackTakeover()
   }
 }

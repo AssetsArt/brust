@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
-import { copyFile, cp, mkdir, readdir, rm } from 'node:fs/promises'
+import { copyFile, cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
 import path, { isAbsolute, resolve } from 'node:path'
 import type { BunPlugin } from 'bun'
 import { emitNativeTemplates } from './native-routes-emit.ts'
@@ -345,7 +346,17 @@ export async function runBuild(args: string[]): Promise<void> {
   const islandMap = existsSync(routesFile)
     ? scanIslandChunks(routesFile, mdIslands)
     : new Map<string, string>()
-  if (islandMap.size > 0) {
+  // `fallback: 'client'` SSG routes need the islands RUNTIME (_bootstrap.js
+  // drives the client takeover; _react*.js back the fallback chunk's
+  // externals) even when the app ships ZERO islands — buildIslands with an
+  // empty map emits exactly those runtime files. Without this, the fallback
+  // shell references a /_brust/islands/_bootstrap.js that was never built.
+  const needsFallbackRuntime =
+    parsed.ssg &&
+    ((loadedRoutes ?? []) as { chain?: Array<{ ssg?: { fallback?: string } }> }[]).some(
+      (r) => r.chain?.at(-1)?.ssg?.fallback === 'client',
+    )
+  if (islandMap.size > 0 || needsFallbackRuntime) {
     const islandsOutDir = path.join(outDir, 'islands')
     const result = await buildIslands(islandMap, {
       outDir: islandsOutDir,
@@ -570,22 +581,108 @@ export async function runBuild(args: string[]): Promise<void> {
     console.log(`[brust build] native:  ${name}`)
   }
 
+  // 7.5. SSG fallback chunks (--ssg only): for every route whose LEAF declares
+  // `ssg.fallback: 'client'`, bundle a browser chunk that re-exports the leaf
+  // component + its `clientLoader` (generated entry → islands buildOne, react
+  // externals, content-addressed `Fallback_<Name>_<hash>.js`). Constraint
+  // (documented in the spec): the leaf Component must be a DEFAULT import in
+  // routes.tsx (scanImports resolution), and its file must export clientLoader.
+  // Step 8 hands these to exportStatic (shell/payload crawl + manifest + 404).
+  const ssgFallbacks: Array<{ pattern: string; chunk: string }> = []
+  if (parsed.ssg) {
+    const fallbackRoutes = (
+      (loadedRoutes ?? []) as {
+        fullPath: string
+        chain?: Array<{ ssg?: { fallback?: string }; Component?: { name?: string } }>
+      }[]
+    ).filter((r) => r.chain?.at(-1)?.ssg?.fallback === 'client')
+    if (fallbackRoutes.length > 0) {
+      const { fallbackEntrySource, hasClientLoaderExport } = await import('./ssg.ts')
+      const { scanImports } = await import('./native-routes-emit.ts')
+      const { buildOne } = await import('../islands/build.ts')
+      const { islandChunkBasename } = await import('../islands/chunk-id.ts')
+      const importMap = scanImports(routesFile)
+      const islandsOutDir = path.join(outDir, 'islands')
+      await mkdir(islandsOutDir, { recursive: true })
+      // Temp dir for the generated entry modules; removed after the bundles land.
+      // Error paths THROW (not process.exit) so the finally's cleanup runs —
+      // exit(1) inside the try would skip it and leak the temp dir; the catch
+      // below owns stderr + exit.
+      const entryTmp = await mkdtemp(path.join(tmpdir(), 'brust-fallback-'))
+      try {
+        for (const [i, route] of fallbackRoutes.entries()) {
+          const name = route.chain?.at(-1)?.Component?.name
+          const source = name ? importMap.get(name) : undefined
+          if (!name || !source) {
+            throw new Error(
+              `[brust build] ssg: fallback 'client' on "${route.fullPath}": leaf Component must be a DEFAULT import in the routes file`,
+            )
+          }
+          const text = await readFile(source, 'utf8')
+          if (!hasClientLoaderExport(text)) {
+            throw new Error(
+              `[brust build] ssg: fallback 'client' on "${route.fullPath}": ` +
+                `${path.relative(process.cwd(), source)} must \`export const clientLoader\``,
+            )
+          }
+          const file = `Fallback_${islandChunkBasename(name, source)}.js`
+          // Index-suffixed entry name: two fallback routes may share a component
+          // NAME (different files) — the chunk name is already content-addressed.
+          const entryPath = path.join(entryTmp, `${name}_${i}.entry.ts`)
+          await writeFile(entryPath, fallbackEntrySource(source))
+          try {
+            await buildOne(
+              [entryPath],
+              islandsOutDir,
+              file,
+              ['react', 'react/jsx-runtime', 'react-dom/client'],
+              cssBuildPlugins,
+            )
+          } catch (err) {
+            // Browser-safety convention: server-only deps at the component file's
+            // top level surface here as bundle errors.
+            throw new Error(
+              `[brust build] ssg: fallback chunk for "${route.fullPath}": ${err instanceof Error ? err.message : String(err)}`,
+            )
+          }
+          ssgFallbacks.push({ pattern: route.fullPath, chunk: `/_brust/islands/${file}` })
+        }
+      } catch (err) {
+        await rm(entryTmp, { recursive: true, force: true })
+        console.error(err instanceof Error ? err.message : String(err))
+        process.exit(1)
+      }
+      await rm(entryTmp, { recursive: true, force: true })
+    }
+  }
+
   // 8. SSG export (--ssg): boot the just-built dist once and crawl every
   // statically-renderable route into <--ssg-out | outDir/static>. Reuses the
   // routes module ALREADY loaded for the MCP/css steps (loadedRoutes) — no
   // second import. Without the flag this is a strict no-op.
   if (parsed.ssg) {
-    const { collectStaticPaths, exportStatic } = await import('./ssg.ts')
-    const decisions = collectStaticPaths(
-      (loadedRoutes ?? []) as Parameters<typeof collectStaticPaths>[0],
-    )
+    const { collectStaticPaths, expandDynamicRoutes, exportStatic } = await import('./ssg.ts')
+    // Initialized to [] so the post-catch read type-checks even where
+    // process.exit isn't narrowed to `never` (exit(1) still prevents use).
+    let expanded: Awaited<ReturnType<typeof expandDynamicRoutes>> = []
+    try {
+      expanded = await expandDynamicRoutes(
+        (loadedRoutes ?? []) as Parameters<typeof expandDynamicRoutes>[0],
+      )
+    } catch (err) {
+      console.error(`[brust build] ssg: ${err instanceof Error ? err.message : String(err)}`)
+      process.exit(1)
+    }
+    const expandedCount = expanded.length - (loadedRoutes ?? []).length
+    const decisions = collectStaticPaths(expanded)
     const staticOut = parsed.ssgOut ?? path.join(outDir, 'static')
     try {
-      const { written, navWritten, skipped } = await exportStatic({
+      const { written, navWritten, fallbackWritten, skipped } = await exportStatic({
         distDir: outDir,
         entryDir,
         staticOut,
         routes: decisions,
+        fallbacks: ssgFallbacks,
       })
       const counts = new Map<string, number>()
       for (const s of skipped) {
@@ -597,9 +694,17 @@ export async function runBuild(args: string[]): Promise<void> {
         .map((r) => `${r}=${counts.get(r)}`)
         .join(', ')
       const skippedDesc = skipped.length > 0 ? ` (skipped ${skipped.length}: ${reasons})` : ''
+      const expandedDesc = expandedCount > 0 ? `, expanded ${expandedCount} dynamic page(s)` : ''
+      const fallbackDesc =
+        fallbackWritten.length > 0 ? `, ${fallbackWritten.length} fallback file(s)` : ''
       console.log(
-        `[brust build] ssg:     ${written.length} pages + ${navWritten.length} spa payloads → ${staticOut}${skippedDesc}`,
+        `[brust build] ssg:     ${written.length} pages + ${navWritten.length} spa payloads${expandedDesc}${fallbackDesc} → ${staticOut}${skippedDesc}`,
       )
+      for (const f of ssgFallbacks) {
+        console.log(
+          `[brust build] ssg:     fallback chunk ${path.basename(f.chunk)} (${f.pattern})`,
+        )
+      }
     } catch (err) {
       console.error(`[brust build] ssg: ${err instanceof Error ? err.message : String(err)}`)
       process.exit(1)

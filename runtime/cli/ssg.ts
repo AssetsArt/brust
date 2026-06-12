@@ -15,8 +15,9 @@ export interface FlatRouteLike {
   /** Full path Rust matches against (e.g. '/', '/docs/intro', '/pokemon/{name}'). */
   fullPath: string
   /** Chain of Route nodes from root to leaf, inclusive. Only the LEAF node
-   * can carry sse/websocket (defineRoutes forbids children on those). */
-  chain: { sse?: unknown; websocket?: unknown }[]
+   * can carry sse/websocket (defineRoutes forbids children on those) — and
+   * only the leaf's `ssg`/`native` are consulted by expandDynamicRoutes. */
+  chain: { sse?: unknown; websocket?: unknown; native?: unknown; ssg?: RouteSsgLike }[]
 }
 
 export interface SsgRouteDecision {
@@ -27,6 +28,56 @@ export interface SsgRouteDecision {
   outFile: string // 'index.html' | 'docs/intro/index.html' …
 }
 
+/** Decode a single URL path segment for on-disk use. Static hosts decode the
+ * request URL before file lookup, so the file must use the decoded form. We
+ * decode per-segment (not the whole path) so that a literal '/' or '\' inside
+ * a segment (%2F / %5C) cannot create directory traversal — those are
+ * re-encoded after decoding. Malformed percent sequences that would cause
+ * decodeURIComponent to throw are decoded triplet-by-triplet: each valid
+ * triplet is decoded, each invalid one is left as-is. */
+function decodeSegment(seg: string): string {
+  // Fast path: nothing to decode.
+  if (!seg.includes('%')) return seg
+
+  // Try the whole segment first (common case: all triplets valid).
+  try {
+    const decoded = decodeURIComponent(seg)
+    // Re-encode decoded path separators to prevent directory traversal.
+    return decoded.replace(/\//g, '%2F').replace(/\\/g, '%5C')
+  } catch {
+    // Fallback: decode each /%[0-9A-Fa-f]{2}/ triplet individually.
+    const result = seg.replace(/%[0-9A-Fa-f]{2}/g, (triplet) => {
+      try {
+        const decoded = decodeURIComponent(triplet)
+        // Re-encode path separators even in the per-triplet pass.
+        if (decoded === '/') return '%2F'
+        if (decoded === '\\') return '%5C'
+        return decoded
+      } catch {
+        return triplet
+      }
+    })
+    return result
+  }
+}
+
+/** Produce the decoded on-disk path from a normalised URL path. Each segment
+ * is decoded independently so separator characters cannot escape; `.`/`..`
+ * segments (raw or decoded — encodeURIComponent leaves dots alone) are
+ * percent-encoded so a hostile param value can never traverse out of the
+ * static output directory. */
+function decodePathForDisk(normalized: string): string {
+  return normalized
+    .split('/')
+    .map((seg) => {
+      const decoded = decodeSegment(seg)
+      if (decoded === '.') return '%2E'
+      if (decoded === '..') return '%2E%2E'
+      return decoded
+    })
+    .join('/')
+}
+
 /** Strip trailing slashes ('/docs/intro/' → '/docs/intro'); root stays '/'. */
 function normalizePath(p: string): string {
   let s = p.startsWith('/') ? p : `/${p}`
@@ -35,20 +86,23 @@ function normalizePath(p: string): string {
 }
 
 /** '/' → 'index.html'; '/docs/intro' → 'docs/intro/index.html'. Input must be
- * normalized (no trailing slash). */
+ * normalized (no trailing slash). On-disk names use the decoded form because
+ * static hosts decode the request URL before file lookup. */
 function outFileFor(normalized: string): string {
   if (normalized === '/') return 'index.html'
-  return `${normalized.slice(1)}/index.html`
+  return `${decodePathForDisk(normalized.slice(1))}/index.html`
 }
 
 /** Where a route's SPA navigation payload lands on disk. The client navigator
  * fetches `/_brust/page${pathname}` (bootstrap.ts navigate()), so the payload
  * must be reachable at that exact URL on a dumb static host — which means
  * `<url>/index.html`, the same directory-index shape the pages use:
- * '/' → '_brust/page/index.html'; '/docs/intro' → '_brust/page/docs/intro/index.html'. */
+ * '/' → '_brust/page/index.html'; '/docs/intro' → '_brust/page/docs/intro/index.html'.
+ * On-disk names use the decoded form for the same reason as outFileFor. */
 export function navPayloadFileFor(normalized: string): string {
   if (normalized === '/') return join('_brust', 'page', 'index.html')
-  return join('_brust', 'page', normalized.slice(1), 'index.html')
+  const decoded = decodePathForDisk(normalized.slice(1))
+  return join('_brust', 'page', decoded, 'index.html')
 }
 
 /** Decide, for every flattened route, whether it can be statically prerendered
@@ -86,6 +140,168 @@ export function collectStaticPaths(flatRoutes: FlatRouteLike[]): SsgRouteDecisio
 
   decisions.sort((a, b) => (a.fullPath < b.fullPath ? -1 : a.fullPath > b.fullPath ? 1 : 0))
   return decisions
+}
+
+// ----- expandDynamicRoutes -----
+
+/** Reserved sentinel param value (Phase B fallback shell crawl). */
+export const SSG_FALLBACK_SENTINEL = '__brust_fallback__'
+
+/** Structural view of the leaf's ssg config (mirrors RouteSsgConfig). */
+export interface RouteSsgLike {
+  params?: () => Array<Record<string, string>> | Promise<Array<Record<string, string>>>
+  fallback?: 'none' | 'client'
+}
+/** Unique `{name}`s in declaration order. A repeated name (`/x/{id}/y/{id}`)
+ * validates once and substitutes ALL occurrences via replaceAll below. The
+ * regex is function-local: a module-level /g regex is a stateful-lastIndex
+ * trap for any future exec/test caller. */
+function paramNames(fullPath: string): string[] {
+  return [...new Set([...fullPath.matchAll(/\{([^/}]+)\}/g)].map((m) => m[1]!))]
+}
+
+/** Expand `ssg.params()` routes into concrete prerenderable paths. The
+ * pattern route stays in its ORIGINAL list position (never re-appended);
+ * concrete entries are appended sharing the same chain reference. Throws on
+ * any validation error — build must exit 1, never a silent partial export. */
+export async function expandDynamicRoutes(flatRoutes: FlatRouteLike[]): Promise<FlatRouteLike[]> {
+  const out = [...flatRoutes]
+  for (const route of flatRoutes) {
+    const leaf = route.chain[route.chain.length - 1]
+    const ssg = leaf?.ssg
+    if (!ssg) continue
+    const names = paramNames(route.fullPath)
+    if (names.length === 0) {
+      throw new Error(
+        `ssg config on "${route.fullPath}": route has no {param} segment — remove the dead config`,
+      )
+    }
+    if (ssg.fallback === 'client' && leaf?.native) {
+      throw new Error(
+        `ssg.fallback 'client' on "${route.fullPath}": native (jinja) routes cannot client-render — use the island-fetch pattern instead`,
+      )
+    }
+    if (!ssg.params) continue
+    let records: Array<Record<string, string>>
+    try {
+      records = await ssg.params()
+    } catch (err) {
+      throw new Error(
+        `ssg.params for "${route.fullPath}" threw: ${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
+    if (!Array.isArray(records)) {
+      throw new Error(`ssg.params for "${route.fullPath}": expected an array of records`)
+    }
+    const seen = new Set<string>()
+    for (const [i, record] of records.entries()) {
+      let concrete = route.fullPath
+      for (const name of names) {
+        const v = record?.[name]
+        if (typeof v !== 'string' || v === '') {
+          throw new Error(
+            `ssg.params for "${route.fullPath}": record #${i + 1} missing non-empty '${name}'`,
+          )
+        }
+        if (v === SSG_FALLBACK_SENTINEL) {
+          throw new Error(
+            `ssg.params for "${route.fullPath}": record #${i + 1} uses the reserved value ${SSG_FALLBACK_SENTINEL}`,
+          )
+        }
+        // encodeURIComponent leaves dots alone, so '.'/'..' would survive into
+        // the crawl path (where fetch normalizes them away — the crawl would
+        // silently hit a DIFFERENT route) and into the on-disk path.
+        if (v === '.' || v === '..') {
+          throw new Error(
+            `ssg.params for "${route.fullPath}": record #${i + 1} value '${v}' for '${name}' is not a valid path segment`,
+          )
+        }
+        concrete = concrete.replaceAll(`{${name}}`, encodeURIComponent(v))
+      }
+      if (seen.has(concrete)) continue
+      seen.add(concrete)
+      out.push({ fullPath: concrete, chain: route.chain })
+    }
+  }
+  return out
+}
+
+// ----- fallback chunk helpers (Phase B) -----
+
+/** On-disk directory for a pattern's fallback artifacts: `{param}` → `__param__`
+ * (curly braces are hostile to static hosts / shells), leading slash stripped.
+ * '/blog/{slug}' → 'blog/__slug__'. Pure string fn. */
+export function fallbackDiskPath(pattern: string): string {
+  return pattern.replace(/^\//, '').replace(/\{([^/}]+)\}/g, '__$1__')
+}
+
+/** The URL the build crawler requests for a fallback shell: every `{param}`
+ * replaced by the reserved sentinel. '/d/{a}' → '/d/__brust_fallback__'. */
+export function fallbackSentinelPath(pattern: string): string {
+  return pattern.replace(/\{[^/}]+\}/g, SSG_FALLBACK_SENTINEL)
+}
+
+/** Generated entry module for a route's fallback chunk: re-exports the leaf
+ * component (default export) and its `clientLoader` under the names the client
+ * takeover runtime imports. */
+export function fallbackEntrySource(componentSourcePath: string): string {
+  // JSON.stringify the specifier so quotes/backslashes in the path can never
+  // break the generated module syntax.
+  const spec = JSON.stringify(componentSourcePath)
+  return `import C, { clientLoader } from ${spec}\nexport { C as Component, clientLoader }\n`
+}
+
+/** Does the component source `export` a `clientLoader`? Covers const / let /
+ * function / async-function declarations AND the `export { clientLoader }` /
+ * `export { x as clientLoader }` re-export forms. Line + block comments are
+ * stripped first so a commented-out export doesn't count (naive strip — a
+ * `//` inside a string literal on the same line as the export is the known
+ * residual; failure mode is a clear build error, not a silent miss). */
+export function hasClientLoaderExport(source: string): boolean {
+  const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '')
+  if (/export\s+(const|let|async\s+function|function)\s+clientLoader\b/.test(code)) return true
+  return /export\s*\{[^}]*\bclientLoader\b[^}]*\}/.test(code)
+}
+
+/** Static-host 404 document for `fallback: 'client'` routes: inlines the
+ * [{pattern, doc}] manifest pairs; a path matching a fallback pattern stashes
+ * the REAL url in sessionStorage (the takeover runtime restores it via
+ * history.replaceState) and redirects to the prerendered fallback shell.
+ * No match → plain 404 text. Pure string fn so the script/inline-JSON
+ * contract is unit-testable. Escapes for the <script> context: `<`/`>` (no
+ * `</script>`/`<!--`/`-->` sequences) and U+2028/U+2029 (legal in JSON,
+ * illegal in pre-ES2019-parsed JS string literals). Patterns are
+ * author-controlled — belt-and-braces, not a trust boundary. */
+export function fallback404Html(pairs: Array<{ pattern: string; doc: string }>): string {
+  const inlineJson = JSON.stringify(pairs)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029')
+  return `<!doctype html><html><head><meta charset="utf-8"><title>404</title></head><body>
+<p>Not found.</p>
+<script>
+(function () {
+  var MANIFEST = ${inlineJson};
+  function match(pattern, path) {
+    var p = pattern.split('/'), u = path.split('/')
+    if (p.length !== u.length) return false
+    for (var i = 0; i < p.length; i++) {
+      if (p[i].charAt(0) === '{') { if (!u[i]) return false }
+      else if (p[i] !== u[i]) return false
+    }
+    return true
+  }
+  for (var i = 0; i < MANIFEST.length; i++) {
+    if (match(MANIFEST[i].pattern, location.pathname)) {
+      try { sessionStorage.setItem('brust:fallback-path', location.pathname + location.search) } catch (e) {}
+      location.replace(MANIFEST[i].doc)
+      return
+    }
+  }
+})()
+</script></body></html>
+`
 }
 
 // ----- static export -----
@@ -183,6 +399,13 @@ async function waitForListening(
  * the static site navigate SPA-style instead of full-reloading; any host
  * 404/redirect-to-HTML still lands in the navigator's full-reload fallback.
  *
+ * `fallback: 'client'` routes additionally get their sentinel SHELL crawled
+ * (header `x-brust-ssg: 1` — the worker renders the placeholder shell only
+ * for that header + all-sentinel params) into `_brust/fallback{,-page}/…`,
+ * plus a `_brust/routes.json` manifest and a redirecting `404.html` (skipped
+ * with a warning when the app ships its own `public/404.html`). Without
+ * fallbacks the output is byte-identical to before this feature existed.
+ *
  * Asset copy preserves the live server's URL shape: islands + css under
  * /_brust/, public/ root-mapped (runtime/index.ts configurePublicDir). */
 export async function exportStatic(opts: {
@@ -190,8 +413,15 @@ export async function exportStatic(opts: {
   entryDir: string // app dir (for public/)
   staticOut: string // e.g. dist/static (clobbered first)
   routes: SsgRouteDecision[]
-}): Promise<{ written: string[]; navWritten: string[]; skipped: SsgRouteDecision[] }> {
-  const { distDir, entryDir, staticOut, routes } = opts
+  /** `fallback: 'client'` routes (pattern + built chunk URL) to emit shells for. */
+  fallbacks?: Array<{ pattern: string; chunk: string }>
+}): Promise<{
+  written: string[]
+  navWritten: string[]
+  fallbackWritten: string[]
+  skipped: SsgRouteDecision[]
+}> {
+  const { distDir, entryDir, staticOut, routes, fallbacks = [] } = opts
   const included = routes.filter((r) => r.include)
   const skipped = routes.filter((r) => !r.include)
 
@@ -200,7 +430,8 @@ export async function exportStatic(opts: {
 
   const written: string[] = []
   const navWritten: string[] = []
-  if (included.length > 0) {
+  const fallbackWritten: string[] = []
+  if (included.length > 0 || fallbacks.length > 0) {
     const port = await freePort()
     const proc = Bun.spawn(['bun', join(distDir, 'index.js')], {
       env: { ...process.env, BRUST_PORT: String(port), BRUST_WORKERS: '1' },
@@ -262,6 +493,85 @@ export async function exportStatic(opts: {
       const settled = await Promise.allSettled(workers)
       const failed = settled.find((s): s is PromiseRejectedResult => s.status === 'rejected')
       if (failed) throw failed.reason
+
+      // Fallback shells: crawl the sentinel path (every {param} →
+      // __brust_fallback__) with the build-internal header that unlocks the
+      // shell render. Same no-partial rule as the page crawl: any non-200
+      // fails the whole export.
+      for (const f of fallbacks) {
+        const sentinel = fallbackSentinelPath(f.pattern)
+        const resp = await fetch(`http://127.0.0.1:${port}${sentinel}`, {
+          headers: { 'x-brust-ssg': '1' },
+        })
+        const body = await resp.text()
+        if (resp.status !== 200) {
+          throw new Error(`GET ${sentinel} → ${resp.status}\n${body.slice(0, 500)}`)
+        }
+        const docFile = join('_brust', 'fallback', fallbackDiskPath(f.pattern), 'index.html')
+        const docPath = join(staticOut, docFile)
+        await mkdir(dirname(docPath), { recursive: true })
+        await Bun.write(docPath, body)
+        fallbackWritten.push(docFile)
+
+        // SPA payload of the shell — same {html,...} contract the client
+        // navigator parses (attemptClientFallback swaps it into <main>).
+        const payloadUrl = `/_brust/page${sentinel}`
+        const payloadResp = await fetch(`http://127.0.0.1:${port}${payloadUrl}`, {
+          headers: { 'x-brust-ssg': '1', Accept: 'application/json' },
+        })
+        const payloadBody = await payloadResp.text()
+        if (payloadResp.status !== 200) {
+          throw new Error(`GET ${payloadUrl} → ${payloadResp.status}\n${payloadBody.slice(0, 500)}`)
+        }
+        try {
+          const parsed = JSON.parse(payloadBody) as { html?: unknown }
+          if (typeof parsed.html !== 'string') throw new Error('missing "html" field')
+        } catch (e) {
+          throw new Error(`GET ${payloadUrl} → invalid SPA payload: ${(e as Error).message}`)
+        }
+        const payloadFile = join(
+          '_brust',
+          'fallback-page',
+          fallbackDiskPath(f.pattern),
+          'index.html',
+        )
+        const payloadPath = join(staticOut, payloadFile)
+        await mkdir(dirname(payloadPath), { recursive: true })
+        await Bun.write(payloadPath, payloadBody)
+        fallbackWritten.push(payloadFile)
+      }
+
+      if (fallbacks.length > 0) {
+        // Manifest the client takeover runtime fetches to map a 404'd path to
+        // its fallback shell. doc/payload are directory-index URLs (trailing
+        // slash) so a dumb static host serves the index.html written above.
+        const manifest = {
+          version: 1,
+          fallbacks: fallbacks.map((f) => ({
+            pattern: f.pattern,
+            doc: `/_brust/fallback/${fallbackDiskPath(f.pattern)}/`,
+            payload: `/_brust/fallback-page/${fallbackDiskPath(f.pattern)}/`,
+            chunk: f.chunk,
+          })),
+        }
+        const manifestPath = join(staticOut, '_brust', 'routes.json')
+        await mkdir(dirname(manifestPath), { recursive: true })
+        await Bun.write(manifestPath, JSON.stringify(manifest))
+
+        // 404.html redirects non-prerendered fallback paths to their shell.
+        // An app-authored public/404.html wins — it lands via the public/
+        // copy below, and the author owns the redirect contract.
+        if (existsSync(join(entryDir, 'public', '404.html'))) {
+          console.warn(
+            '[brust build] ssg: public/404.html exists — NOT overwriting; your 404 page must redirect fallback routes itself (see docs)',
+          )
+        } else {
+          await Bun.write(
+            join(staticOut, '404.html'),
+            fallback404Html(manifest.fallbacks.map(({ pattern, doc }) => ({ pattern, doc }))),
+          )
+        }
+      }
     } catch (err) {
       // No partial site: a failed crawl removes everything it wrote.
       await rm(staticOut, { recursive: true, force: true }).catch(() => {})
@@ -298,5 +608,6 @@ export async function exportStatic(opts: {
 
   written.sort()
   navWritten.sort()
-  return { written, navWritten, skipped }
+  fallbackWritten.sort()
+  return { written, navWritten, fallbackWritten, skipped }
 }
