@@ -1251,6 +1251,9 @@ export function makeRenderer(
             // at HTTP 404 — NOT the route's own Component, NOT a 500. Reuse the
             // existing 404-render machinery by re-running buildRenderElement
             // against the catch-all's chain.
+            // nfId is the array index, which IS the route_id (catch-alls keep
+            // their natural slot — see FlatRoute.notFound), so byRouteId resolves
+            // the same flat route the Rust tier picks for an unmatched path.
             const nfId = selectNotFound(routes, call.path)
             const nfFlat = nfId !== undefined ? byRouteId.get(nfId) : undefined
             renderStatus = 404
@@ -1592,6 +1595,7 @@ async function navigationBranch(
         // Rust-unmatched path) as the nav payload at HTTP 404 — NOT a 500
         // `{"error":"render failed"}`. Mirrors the full-document render path.
         navStatus = 404
+        // nfId is the array index == route_id (catch-alls keep their slot).
         const nfId = selectNotFound(routes, call.path)
         const nfFlat = nfId !== undefined ? byRouteId.get(nfId) : undefined
         if (nfFlat) {

@@ -76,6 +76,12 @@ export async function fetchPagePayload(url: URL, signal?: AbortSignal): Promise<
     if (resp.status === 404) {
       try {
         const payload = (await resp.json()) as PagePayload
+        // `html` is the SOLE discriminator: its presence means "a renderable
+        // page came back" (vs a bare transport 404). `title`/`store` are NOT
+        // required — title may legitimately be empty, and `store` is null for a
+        // native catch-all; both have downstream guards (bootstrap applies the
+        // snapshot only when truthy, same contract as the 200 path). Requiring
+        // them here would spuriously full-reload valid 404 pages.
         if (payload && typeof payload.html === 'string') {
           return { ...payload, notFound: true }
         }
