@@ -413,7 +413,13 @@ export interface FlatRoute {
    * "not found" fallback: it stays in the array at its natural index (route_id
    * stable) but install SKIPS the matchit insert for it — it only renders when
    * matchit returns NoMatch under `notFoundPrefix`. NEVER remove a flagged
-   * entry from the flat array (that would shift every later route_id). */
+   * entry from the flat array (that would shift every later route_id).
+   *
+   * A catch-all render is stamped HTTP 404 UNCONDITIONALLY (spec invariant 4:
+   * "never 200"). A `redirect()` from the catch-all's OWN loader still wins —
+   * redirect verdicts short-circuit and return before the 404 stamp on every
+   * path. A non-redirect verdict status, however, is overridden by 404 (a 404
+   * page is a 404, by definition). */
   notFound?: boolean
   /** Parent layout's path prefix this catch-all covers. Root catch-all → `''`
    * (matches everything as last resort). Longest segment-prefix wins at match
