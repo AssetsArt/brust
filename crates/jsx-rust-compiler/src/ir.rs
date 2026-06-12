@@ -202,8 +202,12 @@ pub struct HeadEntry {
     pub attrs: Vec<(String, HeadValue)>,
     /// presence attrs from boolean `true` (e.g. `defer`, `async`).
     pub bool_attrs: Vec<String>,
-    /// inner content for style/script/noscript — static literal only.
-    pub text: Option<String>,
+    /// inner content for style/script/noscript. `Literal` is developer-authored
+    /// static text emitted raw; `Path` is allowed on `style` entries ONLY
+    /// (enforced in lower) and emits `{{ (path) | style_safe }}` — the filter
+    /// scrubs `</` → `<\/` to block a `</style>` breakout without corrupting
+    /// CSS the way `| e` would.
+    pub text: Option<HeadValue>,
 }
 
 #[derive(Debug, Clone)]

@@ -38,6 +38,7 @@ fn base_env() -> Environment<'static> {
     let mut env = Environment::new();
     env.set_undefined_behavior(UndefinedBehavior::Chainable);
     env.add_filter("json_attr", json_attr);
+    env.add_filter("style_safe", style_safe);
     env
 }
 
@@ -100,6 +101,20 @@ fn json_attr(value: minijinja::Value) -> Result<String, minijinja::Error> {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;"))
+}
+
+/// CSS-safe interpolation for dynamic `<style>` text (`<BrustPage head>` style
+/// entries). HTML-escaping (`| e`) would corrupt CSS (`>` child combinators);
+/// raw output would allow a `</style>` breakout. Scrubbing every `</` to `<\/`
+/// kills the breakout (the parser only leaves CSS on `</style`) while staying
+/// valid inside CSS strings — and `</` is never valid CSS syntax outside
+/// strings. Tag-name case is irrelevant: the scrub targets the `</` sequence
+/// itself. This is a breakout GUARD, not a CSS sanitizer — dynamic style text
+/// is platform-authored (per-tenant tokens), not end-user input. Output is
+/// emitted raw (brust runs minijinja with `AutoEscape::None`).
+fn style_safe(value: minijinja::Value) -> String {
+    // `Value` Display renders undefined as empty — mirrors Chainable behavior.
+    value.to_string().replace("</", "<\\/")
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -356,6 +371,44 @@ mod tests {
 
         // Cleanup so other tests see a pristine dynamic tier.
         assert!(remove_dynamic_template("dynreg/survivor"));
+    }
+
+    #[test]
+    fn style_safe_scrubs_close_tag_sequences() {
+        let _guard = TEST_LOCK.lock();
+
+        // Direct: every `</` becomes `<\/` — kills a `</style>` breakout.
+        assert_eq!(
+            style_safe(minijinja::Value::from("a</style><script>alert(1)</script>")),
+            "a<\\/style><script>alert(1)<\\/script>"
+        );
+        // Case variants of the tag name don't matter — the scrub targets the
+        // two-byte `</` sequence itself, which has no case.
+        assert_eq!(
+            style_safe(minijinja::Value::from("</STYLE><x></Style>")),
+            "<\\/STYLE><x><\\/Style>"
+        );
+        // Plain CSS (including `>` child combinators) passes through untouched.
+        let css =
+            ".a > .b { color: red; } @media (min-width: 10px) { .c::before { content: '<'; } }";
+        assert_eq!(style_safe(minijinja::Value::from(css)), css);
+        // Undefined renders empty (mirrors Chainable undefined behavior).
+        assert_eq!(style_safe(minijinja::Value::UNDEFINED), "");
+
+        // Through a registered template — proves base_env() registration, i.e.
+        // both the boot tier and the dynamic tier see the filter.
+        register_template("stylesafe/t", "<style>{{ (css) | style_safe }}</style>")
+            .expect("register");
+        let out = render(
+            "stylesafe/t",
+            br#"{"css":"body{}</style><script>alert(1)</script>"}"#,
+        )
+        .expect("render style_safe template");
+        assert_eq!(
+            out,
+            "<style>body{}<\\/style><script>alert(1)<\\/script></style>"
+        );
+        assert!(remove_dynamic_template("stylesafe/t"));
     }
 
     #[test]

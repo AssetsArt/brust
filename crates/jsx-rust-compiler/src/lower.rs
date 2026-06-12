@@ -1183,8 +1183,11 @@ fn parse_brust_page_head_value(
 
 /// Parse a `<BrustPage head={[…]}>` array literal into `HeadEntry`s. Mirrors the
 /// SWC object-parse pattern used by `parse_isr_object`. Each element must be an
-/// object literal with a `tag` discriminant; `text` is a static string literal
-/// only (dynamic text is an XSS vector — see the design doc security model).
+/// object literal with a `tag` discriminant; `text` is a static string literal,
+/// except on `style` entries where a member-path expression is also accepted
+/// (emitted through the `style_safe` breakout guard — F1/R2). `script`/
+/// `noscript` text stays literal-only (dynamic text there is an XSS vector —
+/// see the design doc security model).
 fn parse_head_array(
     jsx_attr: &swc_core::ecma::ast::JSXAttr,
     scope: &Scope,
@@ -1219,7 +1222,9 @@ fn parse_head_array(
         let mut tag: Option<HeadTag> = None;
         let mut attrs: Vec<(String, HeadValue)> = Vec::new();
         let mut bool_attrs: Vec<String> = Vec::new();
-        let mut text: Option<String> = None;
+        // `text` is resolved AFTER the prop loop — whether a dynamic value is
+        // legal depends on `tag`, which may appear after `text` in the object.
+        let mut text_value: Option<&SwcExpr> = None;
 
         for prop in &obj.props {
             let PropOrSpread::Prop(p) = prop else {
@@ -1249,13 +1254,7 @@ fn parse_head_array(
                 continue;
             }
             if key == "text" {
-                let SwcExpr::Lit(Lit::Str(s)) = strip_paren(&kv.value) else {
-                    return Err(LowerError::at(
-                        span,
-                        ErrorKind::BrustPageHeadTextMustBeLiteral,
-                    ));
-                };
-                text = Some(s.value.to_string_lossy().into_owned());
+                text_value = Some(kv.value.as_ref());
                 continue;
             }
             // boolean presence attr (`defer`, `async`)
@@ -1293,6 +1292,37 @@ fn parse_head_array(
         let Some(tag) = tag else {
             return Err(entry_err());
         };
+        let mut text: Option<HeadValue> = None;
+        if let Some(tv) = text_value {
+            if let SwcExpr::Lit(Lit::Str(s)) = strip_paren(tv) {
+                text = Some(HeadValue::Literal(s.value.to_string_lossy().into_owned()));
+            } else {
+                // Dynamic `text` is style-only (F1/R2): emitted through the
+                // `style_safe` breakout guard. script/noscript (XSS surface)
+                // and void tags keep the literal-only error.
+                if tag != HeadTag::Style {
+                    return Err(LowerError::at(
+                        span,
+                        ErrorKind::BrustPageHeadTextMustBeLiteral,
+                    ));
+                }
+                // Same member-path subset as head attrs. `parse_head_array`
+                // runs with `scope.inline = None`, so `lower_expr` only yields
+                // Field/MemberAccess here anyway (concat/template-literal are
+                // inline-gated).
+                match lower_expr(tv, scope) {
+                    Ok(ex @ (crate::ir::Expr::Field(_) | crate::ir::Expr::MemberAccess { .. })) => {
+                        text = Some(HeadValue::Path(ex));
+                    }
+                    _ => {
+                        return Err(LowerError::at(
+                            span,
+                            ErrorKind::BrustPageHeadTextMustBeLiteral,
+                        ));
+                    }
+                }
+            }
+        }
         if text.is_some() && tag.is_void() {
             return Err(LowerError::at(span, ErrorKind::BrustPageHeadTextOnVoid));
         }

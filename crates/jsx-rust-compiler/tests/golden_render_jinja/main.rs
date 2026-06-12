@@ -14,6 +14,7 @@ fn render_fixture(name: &str, ctx: minijinja::Value) -> String {
     let mut env = Environment::new();
     env.set_undefined_behavior(UndefinedBehavior::Chainable);
     env.add_filter("json_attr", json_attr);
+    env.add_filter("style_safe", style_safe);
     env.add_template_owned(name.to_string(), jinja_src)
         .unwrap_or_else(|e| panic!("add_template {name}: {e}"));
     let tmpl = env
@@ -37,6 +38,11 @@ fn json_attr(value: minijinja::Value) -> Result<String, minijinja::Error> {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;"))
+}
+
+// must match crates/brust-core/src/template/jinja.rs style_safe
+fn style_safe(value: minijinja::Value) -> String {
+    value.to_string().replace("</", "<\\/")
 }
 
 /// Compare `actual` against the committed `<name>.expected.html`, or rewrite it
