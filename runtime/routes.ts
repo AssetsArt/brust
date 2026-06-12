@@ -1030,6 +1030,12 @@ export function makeRenderer(
         } else {
           data = chainResult.data
         }
+        // Catch-all (`path: '*'`) leaf rendered on an unmatched path: stamp HTTP
+        // 404 unconditionally, regardless of any verdict status. The loader does
+        // NOT need to call notFound() — being a catch-all IS the 404 signal.
+        if (flat.notFound === true) {
+          renderStatus = 404
+        }
         // B7 — native store-snapshot SSR. Fill the framework-owned
         // `{{ __brust_store__ | safe }}` slot (emitted into every native
         // full-document <head>) with the defineStore SSR snapshot collected
@@ -1200,7 +1206,9 @@ export function makeRenderer(
           workerId,
           napi,
           errorBoundary,
-          status: verdict.status,
+          // Catch-all (`path: '*'`) leaf rendered on an unmatched path: stamp
+          // HTTP 404 unconditionally (mirrors the native path above).
+          status: flat.notFound === true ? 404 : verdict.status,
           headers: flushSetCookie(verdict.headers),
           routePath: flat.fullPath,
           storeSnapshot,
@@ -1475,7 +1483,10 @@ async function navigationBranch(
       workerId,
       encoder,
       {
-        status: 200,
+        // Catch-all (`path: '*'`) leaf rendered as a SPA-nav payload on an
+        // unmatched path: stamp HTTP 404 while still shipping the rendered body
+        // so the client can swap it in (vs the bare `{"error":"not found"}`).
+        status: flat.notFound === true ? 404 : 200,
         contentType: 'application/json; charset=utf-8',
         body,
         headers: navHeaders,
