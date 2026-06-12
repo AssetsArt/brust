@@ -173,8 +173,9 @@ invalidation) its tag-index entries are pruned automatically.
   always run (auth, logging), use `bypass` so those requests fall through to
   the render path. An L2 hit *does* run middleware (the cache is checked in the
   worker, after middleware, before the loader + render).
-- Expression values are matched **verbatim** — header/cookie/query values are
-  not percent-decoded.
+- Expression values are matched **verbatim** for headers, cookies, and query —
+  they are not percent-decoded. Path params are the exception: `param(name)`
+  values arrive **decoded**, the same values your loader sees.
 
 ## Tuning
 

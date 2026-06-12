@@ -53,6 +53,17 @@ rest of the path.
 // /files/a/b/c → params.rest === 'a/b/c'
 ```
 
+Param values are **percent-decoded** before they reach your loader (and the
+`param()` cache-key accessor): `/post/sa%20wad-dee` gives `params.slug ===
+'sa wad-dee'`, and Thai/Unicode slugs arrive as the original characters. The
+decode is full — an encoded `%2F` becomes a literal `/` **inside the value**
+(route matching itself happens before decoding, so it cannot change which
+route matches), and `+` stays a literal `+` (space-as-plus is a query-string
+convention, not a path one). Catch-all (`{*rest}`) captures decode the same
+way. If you previously worked around encoded params with
+`decodeURIComponent(params.x)`, remove it — double-decoding corrupts values
+containing a literal `%`.
+
 ## Nesting, layouts, and `<Outlet/>`
 
 A parent with `children` becomes a layout. On the React path the parent
