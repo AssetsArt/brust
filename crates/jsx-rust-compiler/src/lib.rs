@@ -1,6 +1,7 @@
 pub mod analyze;
 mod emit_factory;
 mod emit_jinja;
+pub mod filters;
 mod ir;
 mod lower;
 pub mod parser;

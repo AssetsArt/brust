@@ -3,6 +3,7 @@
 //! `.expected.html` file.
 
 use jsx_rust_compiler::compile;
+use jsx_rust_compiler::filters::{json_attr, style_safe};
 use minijinja::{Environment, UndefinedBehavior, context};
 use pretty_assertions::assert_eq;
 
@@ -24,26 +25,8 @@ fn render_fixture(name: &str, ctx: minijinja::Value) -> String {
         .unwrap_or_else(|e| panic!("render {name}: {e}"))
 }
 
-// must match crates/brust/src/jinja.rs json_attr
-fn json_attr(value: minijinja::Value) -> Result<String, minijinja::Error> {
-    let json = serde_json::to_string(&value).map_err(|e| {
-        minijinja::Error::new(
-            minijinja::ErrorKind::InvalidOperation,
-            "x-props JSON serialization failed",
-        )
-        .with_source(e)
-    })?;
-    Ok(json
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;"))
-}
-
-// must match crates/brust-core/src/template/jinja.rs style_safe
-fn style_safe(value: minijinja::Value) -> String {
-    value.to_string().replace("</", "<\\/")
-}
+// json_attr/style_safe imported from jsx_rust_compiler::filters — the
+// compiler's emission contract, single definition (no local copies to drift).
 
 /// Compare `actual` against the committed `<name>.expected.html`, or rewrite it
 /// when `UPDATE_GOLDEN` is set. Centralized so every render test regenerates

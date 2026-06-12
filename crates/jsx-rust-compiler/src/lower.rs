@@ -464,6 +464,16 @@ fn hoist_const_bindings(body: &BlockStmt) -> Result<HoistedBody<'_>, LowerError>
     if lead == 0 {
         return Ok((Cow::Borrowed(body), HashMap::new()));
     }
+    // Sequential substitution clones each recorded init into later inits — a
+    // pathological chain where every const references all predecessors grows
+    // exponentially. 16 leading consts is far beyond any real section
+    // component; cap it before the clones, not after.
+    if lead > 16 {
+        return Err(LowerError::at(
+            body.span,
+            ErrorKind::InlineUntranslatable("too many leading consts (max 16)".to_string()),
+        ));
+    }
 
     let mut subst = ConstSubst {
         map: HashMap::new(),
@@ -1954,7 +1964,9 @@ fn parse_head_array(
         let mut bool_attrs: Vec<String> = Vec::new();
         // `text` is resolved AFTER the prop loop — whether a dynamic value is
         // legal depends on `tag`, which may appear after `text` in the object.
-        let mut text_value: Option<&SwcExpr> = None;
+        // The value's own span rides along so rejections point at the
+        // expression, not the whole head-entry object.
+        let mut text_value: Option<(&SwcExpr, Span)> = None;
 
         for prop in &obj.props {
             let PropOrSpread::Prop(p) = prop else {
@@ -1984,7 +1996,7 @@ fn parse_head_array(
                 continue;
             }
             if key == "text" {
-                text_value = Some(kv.value.as_ref());
+                text_value = Some((kv.value.as_ref(), kv.value.span()));
                 continue;
             }
             // boolean presence attr (`defer`, `async`)
@@ -2023,7 +2035,7 @@ fn parse_head_array(
             return Err(entry_err());
         };
         let mut text: Option<HeadValue> = None;
-        if let Some(tv) = text_value {
+        if let Some((tv, tv_span)) = text_value {
             if let SwcExpr::Lit(Lit::Str(s)) = strip_paren(tv) {
                 text = Some(HeadValue::Literal(s.value.to_string_lossy().into_owned()));
             } else {
@@ -2032,7 +2044,7 @@ fn parse_head_array(
                 // and void tags keep the literal-only error.
                 if tag != HeadTag::Style {
                     return Err(LowerError::at(
-                        span,
+                        tv_span,
                         ErrorKind::BrustPageHeadTextMustBeLiteral,
                     ));
                 }
@@ -2046,7 +2058,7 @@ fn parse_head_array(
                     }
                     _ => {
                         return Err(LowerError::at(
-                            span,
+                            tv_span,
                             ErrorKind::BrustPageHeadTextMustBeLiteral,
                         ));
                     }
