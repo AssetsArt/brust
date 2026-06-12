@@ -2000,6 +2000,52 @@ test('nav: /_brust/page/<protected> without cookie returns middleware verdict (4
   expect(body).not.toContain('Admin Dashboard')
 })
 
+// ----- SSG fallback-shell render (sentinel + x-brust-ssg header) -----
+
+test('ssg fallback: sentinel params + x-brust-ssg header render the shell', async () => {
+  const port = sharedPort()
+  const resp = await fetch(`http://127.0.0.1:${port}/ssg-fb/__brust_fallback__`, {
+    headers: { 'x-brust-ssg': '1' },
+  })
+  expect(resp.status).toBe(200)
+  const body = await resp.text()
+  // Marker div replaces the leaf; loader was skipped (no srv: data).
+  expect(body).toContain('data-brust-fallback-root')
+  expect(body).toContain('data-brust-fallback="/ssg-fb/{slug}"')
+  expect(body).not.toContain('srv:__brust_fallback__')
+  // forceIslands: bootstrap injected even with zero islands on the page.
+  expect(body).toContain('/_brust/islands/_bootstrap.js')
+})
+
+test('ssg fallback: sentinel WITHOUT header renders normally (leaf loader runs)', async () => {
+  const port = sharedPort()
+  const resp = await fetch(`http://127.0.0.1:${port}/ssg-fb/__brust_fallback__`)
+  expect(resp.status).toBe(200)
+  const body = await resp.text()
+  expect(body).toContain('srv:__brust_fallback__')
+  expect(body).not.toContain('data-brust-fallback-root')
+})
+
+test('ssg fallback: navigation payload carries the shell marker', async () => {
+  const port = sharedPort()
+  const resp = await fetch(`http://127.0.0.1:${port}/_brust/page/ssg-fb/__brust_fallback__`, {
+    headers: { 'x-brust-ssg': '1', Accept: 'application/json' },
+  })
+  expect(resp.status).toBe(200)
+  expect(resp.headers.get('content-type') ?? '').toContain('application/json')
+  const payload = JSON.parse(await resp.text()) as { html: string }
+  expect(payload.html).toContain('data-brust-fallback-root')
+})
+
+test('ssg fallback: concrete param without header renders normally', async () => {
+  const port = sharedPort()
+  const resp = await fetch(`http://127.0.0.1:${port}/ssg-fb/pre`)
+  expect(resp.status).toBe(200)
+  const body = await resp.text()
+  expect(body).toContain('srv:pre')
+  expect(body).not.toContain('data-brust-fallback-root')
+})
+
 // NOTE: native-route HTTP coverage — including the S9 notFound()/redirect()
 // status sentinels — lives in tests/native-island-ssr.test.ts, which runs a
 // `brust build` pre-flight so the fixture's jinja templates are registered.

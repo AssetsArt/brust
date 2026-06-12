@@ -52,6 +52,7 @@ import AdminUserDetail     from './components/AdminUserDetail'
 import AdminUserThrow      from './components/AdminUserThrow'
 import AdminErrorBoundary  from './components/AdminErrorBoundary'
 import SsgBlogPost        from './components/SsgBlogPost'
+import SsgFallbackPost    from './components/SsgFallbackPost'
 
 // md component registry (task 2.10): the THREE-identity rule — the md tag name,
 // the mdRoutes `components` key, and these default-import idents must all match.
@@ -87,6 +88,18 @@ const authRequired: Middleware = async (req, next) => {
   return next()
 }
 
+// JSON GET endpoint for the ssg-fallback clientLoader — middleware
+// short-circuit (the established pattern for non-render responses; see
+// authRequired). Never calls next(), so the route renders nothing.
+const ssgFallbackData: Middleware = async (req, _next) => {
+  const slug = decodeURIComponent((req.url.split('?')[0] ?? '').split('/').pop() ?? '')
+  return {
+    status: 200,
+    body: JSON.stringify({ title: `client:${slug}` }),
+    contentType: 'application/json; charset=utf-8',
+  }
+}
+
 const timeIt: Middleware = async (_req, next) => {
   const t0 = Date.now()
   const res = await next()
@@ -112,6 +125,14 @@ export const routes = defineRoutes([
   { path: '/ssg-blog/{slug}', Component: SsgBlogPost,
     loader: async ({ params }) => ({ title: `post:${params.slug}` }),
     ssg: { params: () => [{ slug: 'hello' }, { slug: 'sa wad-dee' }] } },
+  // Phase B — ssg.fallback: 'client'. The sentinel + x-brust-ssg header render
+  // path produces the fallback SHELL; live requests render normally.
+  { path: '/ssg-fb/{slug}', Component: SsgFallbackPost,
+    loader: async ({ params }) => ({ title: `srv:${params.slug}` }),
+    ssg: { params: () => [{ slug: 'pre' }], fallback: 'client' } },
+  // Data endpoint the clientLoader in SsgFallbackPost fetches.
+  { path: '/api/ssg-fallback-data/{slug}', Component: SsgFallbackPost,
+    middleware: [ssgFallbackData] },
   { path: '/slow-suspense', Component: SlowSuspense },
   { path: '/slow-fresh', Component: SlowFresh },
 
