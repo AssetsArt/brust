@@ -165,6 +165,8 @@ describe('emitMdTemplates — standalone md route', () => {
     expect(existsSync(jinjaPath)).toBe(true)
     const tmpl = readFileSync(jinjaPath, 'utf8')
 
+    // Generator meta tag.
+    expect(tmpl).toContain('<meta name="generator" content="brust')
     // BrustPage shell with frontmatter title/description as literals.
     expect(tmpl).toContain('<title>About "Us"</title>')
     expect(tmpl).toContain('content="All about"')

@@ -12,6 +12,7 @@
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import { insertGeneratorMeta, resolveGenerator } from '../generator.ts'
 import {
   bakeDirectivesIfUsed,
   buildChainWrapperSource,
@@ -177,6 +178,12 @@ export async function emitMdTemplates(opts: MdEmitOpts): Promise<{
     return files.get(src.relPath)
   }
 
+  // Generator meta: resolved INTERNALLY from the out dir's artifact (NOT a
+  // caller param) — emit re-runs from five call sites (build, dev, boot
+  // staleness, md boot re-emit, dev HMR) and a param would silently drop the
+  // tag on re-emit. Fallback (no artifact) = version-on defaults.
+  const generatorMeta = resolveGenerator(opts.outDir).meta
+
   // Tag-name → classification, shared across pages (one readFileSync per name).
   const resolutionCache = new Map<string, { res: MdComponentResolution; absPath: string }>()
 
@@ -328,7 +335,10 @@ export async function emitMdTemplates(opts: MdEmitOpts): Promise<{
       mdHtml = mdHtml.slice(0, at) + inlined + mdHtml.slice(at + use.marker.length)
     }
 
-    const template = spliceMdSlot(compiled.template, name, mdHtml)
+    const template = insertGeneratorMeta(
+      spliceMdSlot(compiled.template, name, mdHtml),
+      generatorMeta,
+    )
     if (countMainTags(template) > 1) {
       process.stderr.write(
         `brust: md route "${name}" has more than one <main> after splice — SPA navigation extracts only the first <main>…</main>.\n`,
