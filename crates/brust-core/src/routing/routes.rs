@@ -593,6 +593,9 @@ mod tests {
         ));
         assert!(matches!(decode_path_param("100%"), Cow::Borrowed("100%")));
         assert!(matches!(decode_path_param("%Z"), Cow::Borrowed("%Z")));
+        // %FF%41 passes the hex pre-scan (both sequences are valid hex) and
+        // falls back at the UTF-8 validation stage instead — still per-VALUE:
+        // the valid %41 must NOT decode while %FF poisons the whole value.
         assert!(matches!(
             decode_path_param("%FF%41"),
             Cow::Borrowed("%FF%41")
