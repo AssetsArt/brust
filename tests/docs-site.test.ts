@@ -193,10 +193,11 @@ afterAll(async () => {
 
 test('every md file in content/ has a static page (and Home does too)', async () => {
   const urls = mdUrls()
-  // Content is complete: exactly 17 md pages (index + 16 docs; navigation.md
-  // joined in the SSG-SPA work). Bump this lock when a page is added/removed —
-  // it catches accidental drops.
-  expect(urls.length).toBe(17)
+  // Content is complete: exactly 20 md pages (index + 19 docs; the lock had
+  // gone stale at 17 — caching.md (#69) and static-export.md (#72) joined
+  // without a bump, and dynamic-templates.md lands in R1). Bump this lock
+  // when a page is added/removed — it catches accidental drops.
+  expect(urls.length).toBe(20)
   expect(urls).toContain('/docs')
   expect(existsSync(path.join(staticOut, 'index.html'))).toBe(true) // Home
   for (const url of urls) {
