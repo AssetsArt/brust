@@ -223,6 +223,52 @@ describe('emitNativeTemplates — SSR component artifacts', () => {
     expect(jinjaContent).not.toContain('{% raw %}')
   })
 
+  test('generator meta: BrustPage documents get it after the viewport anchor; fragments are excluded', async () => {
+    // Document route — the compiler emits the full <head> with the viewport
+    // anchor, so the emitter must splice the generator meta right after it.
+    const docPath = join(dir, 'DocPage.tsx')
+    writeFileSync(
+      docPath,
+      `export default function DocPage() {
+  return (
+    <BrustPage title="Doc">
+      <main>
+        <h1>doc</h1>
+      </main>
+    </BrustPage>
+  )
+}
+`,
+    )
+    // Fragment route — no document, no anchor → spec exclusion: NO meta, no error.
+    const fragPath = join(dir, 'FragPage.tsx')
+    writeFileSync(
+      fragPath,
+      'export default function FragPage() { return <section>frag</section>; }',
+    )
+    const routesPath = join(dir, 'routes.tsx')
+    writeFileSync(
+      routesPath,
+      `import DocPage from './DocPage'\nimport FragPage from './FragPage'\n`,
+    )
+    const outDir = join(dir, 'jinja')
+    mkdirSync(outDir, { recursive: true })
+
+    await emitNativeTemplates({
+      entryFile: routesPath,
+      flatRoutes: [{ nativeTemplate: 'DocPage' }, { nativeTemplate: 'FragPage' }],
+      outDir,
+      repoRoot: dir,
+    })
+
+    const doc = readFileSync(join(outDir, 'DocPage.jinja'), 'utf8')
+    expect(doc).toMatch(
+      /<meta name="viewport" content="width=device-width, initial-scale=1"\/><meta name="generator" content="brust[^"]*"\/>/,
+    )
+    const frag = readFileSync(join(outDir, 'FragPage.jinja'), 'utf8')
+    expect(frag).not.toContain('name="generator"')
+  })
+
   test('injects importmap bootstrap into .jinja when SSR component uses an Island', async () => {
     // Counter.tsx — placeholder island component
     const counterPath = join(dir, 'Counter.tsx')

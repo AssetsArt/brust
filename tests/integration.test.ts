@@ -2072,6 +2072,15 @@ test('generator: X-Powered-By on every response kind', async () => {
     const res = await fetch(`http://127.0.0.1:${port}${p}`)
     expect(res.headers.get('x-powered-by') ?? '').toMatch(expected)
   }
+  // Action/JSON responses carry it too (the stamp lives at the service layer,
+  // not the HTML path).
+  const action = await fetch(`http://127.0.0.1:${port}/_brust/action/notes`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: 'header probe' }),
+  })
+  expect(action.status).toBe(200)
+  expect(action.headers.get('x-powered-by') ?? '').toMatch(expected)
 })
 
 // NOTE: native-route HTTP coverage — including the S9 notFound()/redirect()

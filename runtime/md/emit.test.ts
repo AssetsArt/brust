@@ -6,6 +6,7 @@ import { buildDevClientTag } from '../dev/client.ts'
 import { emitNativeTemplates } from '../cli/native-routes-emit.ts'
 import { islandChunkBasename } from '../islands/chunk-id.ts'
 import { DIRECTIVES_BOOTSTRAP, ISLANDS_IMPORTMAP_AND_BOOTSTRAP } from '../islands/importmap.ts'
+import { generatorStrings, writeGeneratorArtifact } from '../generator.ts'
 import { directiveName } from '../native/build.ts'
 import {
   _resetMdRoutesChangedWarnForTests,
@@ -253,6 +254,33 @@ describe('emitMdTemplates — standalone md route', () => {
     expect(countOccurrences(tmpl, buildDevClientTag())).toBe(1)
     // No islands anywhere in this page → no bootstrap bake.
     expect(tmpl).not.toContain(BAKED_BOOTSTRAP)
+  })
+
+  test('version-off generator.json in outDir → emitted jinja carries name-only meta', async () => {
+    const f = makeFixture()
+    const contentDir = join(dir, 'content/pages')
+    const aboutPath = write('content/pages/noversion.md', '# NoVersion\n')
+    const tn = mdTemplateName('noversion.md')
+
+    // The artifact a `brust build --no-generator-version` writes — the emitter
+    // must resolve it from outDir instead of the version-on fallback (AC2).
+    writeGeneratorArtifact(outDir, generatorStrings(false))
+
+    const flatRoutes: FlatRouteLike[] = [
+      {
+        nativeTemplate: tn,
+        chain: [
+          {
+            Component: { name: tn },
+            __mdSource: mdSource({ absPath: aboutPath, relPath: 'noversion.md', contentDir }),
+          },
+        ],
+      },
+    ]
+    await emitMdTemplates({ entryFile: f.entryFile, flatRoutes, outDir })
+    const tmpl = readFileSync(join(outDir, `${tn}.jinja`), 'utf8')
+    expect(tmpl).toContain('<meta name="generator" content="brust"/>')
+    expect(tmpl).not.toContain('content="brust ')
   })
 })
 
