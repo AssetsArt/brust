@@ -334,6 +334,9 @@ async function attemptClientFallback(
     else window.scrollTo(0, 0)
     currentPageKey = pageCacheKey(url)
   })
+  // Superseded across the view-transition await → the newer navigation owns
+  // the DOM; don't run takeover/hydrate/commit on a soon-to-be-replaced shell.
+  if (signal?.aborted) return true
   const container = main.querySelector<HTMLElement>('[data-brust-fallback-root]')
   if (!container) {
     // A fallback payload without its marker is a build bug — log it, but
@@ -443,6 +446,11 @@ export async function navigate(url: URL, mode: 'push' | 'replace' | 'none'): Pro
       else window.scrollTo(0, 0)
       hydrateMarkersIn(main as HTMLElement)
     })
+    // The view-transition await is a new suspension point: a newer navigation
+    // could have aborted us between the swap and here. The DOM is already
+    // committed (irreversible), but skip the bookkeeping so we don't advance
+    // the nav store to this stale destination — the newer navigation owns it.
+    if (ac.signal.aborted) return
     currentPageKey = key
     __navCommit(url.pathname, url.search)
   } catch (err) {

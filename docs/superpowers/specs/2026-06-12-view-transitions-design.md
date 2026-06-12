@@ -74,21 +74,25 @@ export async function withViewTransition(doc: Document, commit: () => void): Pro
     commit()
     return
   }
-  try {
-    await tr.updateCallbackDone
-  } catch {
-    // The callback (`commit`) already RAN and threw; re-running would just
-    // double-commit / throw again. Swallow so a VT-internal rejection never
-    // propagates into navigate()'s full-reload fallback.
-  }
+  // `updateCallbackDone` rejects ONLY when `commit` threw (animation failures
+  // surface on `.finished`, never awaited). A skipped transition still
+  // RESOLVES it. So a rejection = the DOM may be half-committed → PROPAGATE so
+  // the caller's catch runs __navError + full-reload, exactly as the sync path.
+  await tr.updateCallbackDone
 }
 ```
 
-The two failure modes are separable by WHICH try-block throws: a synchronous
-throw at the `startViewTransition(commit)` call means `commit` never ran → run
-it directly; a rejection of `updateCallbackDone` means `commit` ran-and-threw →
-do NOT re-run. The plan MUST include unit tests pinning "commit called exactly
-once" for both throw cases (B2 — closes the lost-navigation hole).
+The two failure modes are separable by WHICH step throws: a synchronous throw
+at the `startViewTransition(commit)` call means `commit` never ran → run it
+directly (lost-navigation guard); a rejection of `updateCallbackDone` means
+`commit` ran-and-threw → do NOT re-run, but PROPAGATE the error so navigate()'s
+existing full-reload recovery still fires (the synchronous direct-commit branch
+would have propagated it too — swallowing was a B2 over-correction). Both swap
+sites also add an abort check AFTER the `await withViewTransition(...)`: the
+await is a new suspension point, so a navigation superseded during it must skip
+its post-commit bookkeeping (`currentPageKey`/`__navCommit` / takeover), letting
+the newer navigation own the DOM and nav store. The plan MUST unit-test "commit
+called exactly once" for both throw cases plus the propagation.
 
 `bootstrap.ts` — both swap sites refactored to put their **synchronous**
 DOM-commit steps into a `commit` closure passed through `withViewTransition`:

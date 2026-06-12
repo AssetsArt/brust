@@ -86,12 +86,17 @@ describe('withViewTransition — commit runs exactly once', () => {
     })
     expect(n).toBe(1)
   })
-  test('updateCallbackDone rejects AFTER commit ran → commit once, no re-run (B2)', async () => {
+  test('updateCallbackDone rejects (commit threw) → commit once, error propagates (B2)', async () => {
     const { doc } = stubDoc({ supported: true, marked: true, rejectAfter: true })
     let n = 0
-    await withViewTransition(doc, () => {
-      n++
-    })
+    // The rejection means the swap threw mid-commit; withViewTransition must
+    // propagate it (NOT swallow, NOT re-run) so navigate()'s catch can run its
+    // __navError + full-reload recovery — same as the synchronous path.
+    await expect(
+      withViewTransition(doc, () => {
+        n++
+      }),
+    ).rejects.toThrow('callback rejected')
     expect(n).toBe(1)
   })
 })

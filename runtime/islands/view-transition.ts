@@ -20,7 +20,8 @@ export function viewTransitionsEnabled(doc: Document): boolean {
  *   - disabled/unsupported → direct call
  *   - startViewTransition throws synchronously (before the callback) → direct
  *     call (the swap never happened — losing it would blank the page, B2)
- *   - updateCallbackDone rejects (the callback ran-and-threw) → NOT re-run. */
+ *   - updateCallbackDone rejects (the callback ran-and-threw) → NOT re-run; the
+ *     rejection PROPAGATES so the caller can run its full-reload recovery. */
 export async function withViewTransition(doc: Document, commit: () => void): Promise<void> {
   if (!viewTransitionsEnabled(doc)) {
     commit()
@@ -38,9 +39,12 @@ export async function withViewTransition(doc: Document, commit: () => void): Pro
     commit()
     return
   }
-  try {
-    await tr.updateCallbackDone
-  } catch {
-    // Callback already ran and threw; re-running would double-commit. Swallow.
-  }
+  // `updateCallbackDone` rejects ONLY when the update callback (`commit`) threw
+  // — animation failures surface on `.finished`, which we never await. So a
+  // rejection means the DOM may be half-committed: propagate it (do NOT re-run
+  // `commit`) so the caller's catch runs its error path (`__navError` +
+  // full-reload), exactly as the synchronous direct-commit branch does. A
+  // transition that is merely SKIPPED (a newer startViewTransition) still
+  // resolves `updateCallbackDone`, so this never throws on supersession.
+  await tr.updateCallbackDone
 }
