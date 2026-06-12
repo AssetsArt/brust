@@ -237,6 +237,34 @@ the CSS hook above) shows exactly as it would on a server navigation. This
 applies only to routes declaring `ssg.fallback: 'client'` — every other
 unknown path still takes the full-load 404 path.
 
+## Page transitions
+
+brust can animate the `<main>` swap with the browser's
+[View Transitions API](https://developer.mozilla.org/en-US/docs/Web/API/View_Transitions_API).
+It is **opt-in and CSS-driven** — the framework default is an instant swap.
+
+To enable it, put the marker attribute on your document `<html>` (via
+`BrustPage`) and ship the transition CSS yourself:
+
+```tsx
+<BrustPage title={title} data-brust-view-transitions="">
+```
+
+```css
+@media (prefers-reduced-motion: no-preference) {
+  ::view-transition-old(root) { animation: fade-out 160ms ease both; }
+  ::view-transition-new(root) { animation: fade-in 200ms ease both; }
+}
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) { animation: none; } /* instant swap */
+}
+```
+
+Without the marker, navigation is an instant swap (no behavior change, no
+default cross-fade). Browsers without the API fall back to an instant swap too.
+This docs site uses exactly this setup — that smooth fade between pages is it.
+
 ## Next
 
 Mutate data with typed [Actions](/docs/actions), or see how the

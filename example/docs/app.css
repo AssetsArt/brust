@@ -619,3 +619,36 @@ html:not([data-theme="light"]) .shiki span {
   font-size: var(--text-sm);
   line-height: 1.6;
 }
+
+/* ── Page transitions (View Transitions API) ─────────────────────────────
+   Enabled by data-brust-view-transitions on <html> (set in the BrustPage
+   shells). The framework wraps the SPA <main> swap in startViewTransition;
+   these rules style the default `root` snapshot. */
+@media (prefers-reduced-motion: no-preference) {
+  ::view-transition-old(root) {
+    animation: brust-fade-out 160ms ease both;
+  }
+  ::view-transition-new(root) {
+    animation: brust-fade-in 200ms ease both;
+  }
+  @keyframes brust-fade-out {
+    to {
+      opacity: 0;
+    }
+  }
+  @keyframes brust-fade-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+  }
+}
+/* The JS gate calls startViewTransition regardless of motion preference, so
+   without this the browser's DEFAULT root cross-fade would play for
+   reduced-motion users. Kill it → instant swap. */
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation: none;
+  }
+}

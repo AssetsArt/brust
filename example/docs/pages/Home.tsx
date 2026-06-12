@@ -38,6 +38,7 @@ export default function Home({ version }: { version: string }) {
     <BrustPage
       title="Brust — the unified framework for the web"
       description="Server pages, React islands, and native interactions share one live store. Brust compiles pages ahead of time and ships zero JavaScript until you add interactivity."
+      data-brust-view-transitions=""
       head={[
         {
           tag: 'script',
