@@ -612,6 +612,15 @@ async fn handle_request(
                 envelope.kind = "navigation";
                 envelope
             }
+            // TODO(Task 3): dispatch catch-all at 404 so SPA gets a real body.
+            MatchResult::NotFound { .. } => {
+                return Ok(body::resp(
+                    404,
+                    "application/json; charset=utf-8",
+                    &[],
+                    br#"{"error":"not found"}"#.to_vec(),
+                ));
+            }
             MatchResult::NoMatch => {
                 return Ok(body::resp(
                     404,
@@ -627,6 +636,10 @@ async fn handle_request(
     // ----- general route match -----
     let (mut envelope, route_id) = match routes.match_path(&method, &path, req.headers()) {
         MatchResult::Matched { envelope, route_id } => (envelope, route_id),
+        // TODO(Task 3): render catch-all at HTTP 404 instead of plain error body.
+        MatchResult::NotFound { .. } => {
+            return Ok(body::error_404());
+        }
         MatchResult::NoMatch => {
             return Ok(body::error_404());
         }
