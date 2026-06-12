@@ -14,6 +14,12 @@ export interface BrustConfig {
   cacheMaxEntries?: number
   /** L2 page-cache capacity (entries). Undefined → Rust default of 1000. */
   cachePageMaxEntries?: number
+  /** R9 cross-process cache invalidation: redis/dragonfly URL. Absent →
+   * feature disabled (current single-process behavior). */
+  cacheSyncUrl?: string
+  /** Pub/sub channel for cache invalidation. Undefined → module default
+   * (`brust:cache:invalidate`). */
+  cacheSyncChannel?: string
 }
 
 /** Caller-supplied fallbacks (e.g. `brust.run({ address, port })`) applied
@@ -85,6 +91,8 @@ export async function loadConfig(
     workers,
     cacheMaxEntries: fromToml.cacheMaxEntries,
     cachePageMaxEntries: fromToml.cachePageMaxEntries,
+    cacheSyncUrl: fromEnv.cacheSyncUrl ?? fromToml.cacheSyncUrl,
+    cacheSyncChannel: fromEnv.cacheSyncChannel ?? fromToml.cacheSyncChannel,
   }
 }
 
@@ -168,6 +176,26 @@ function extractFromToml(parsed: unknown, file: string): Partial<BrustConfig> {
       }
       out.cachePageMaxEntries = pageMaxEntries
     }
+    const syncUrl = (cache as Record<string, unknown>).sync_url
+    if (syncUrl !== undefined) {
+      if (typeof syncUrl !== 'string' || syncUrl.trim() === '') {
+        throw new BrustConfigError(
+          `${file}: cache.sync_url must be a non-empty string (got ${JSON.stringify(syncUrl)})`,
+          file,
+        )
+      }
+      out.cacheSyncUrl = syncUrl.trim()
+    }
+    const syncChannel = (cache as Record<string, unknown>).sync_channel
+    if (syncChannel !== undefined) {
+      if (typeof syncChannel !== 'string' || syncChannel.trim() === '') {
+        throw new BrustConfigError(
+          `${file}: cache.sync_channel must be a non-empty string (got ${JSON.stringify(syncChannel)})`,
+          file,
+        )
+      }
+      out.cacheSyncChannel = syncChannel.trim()
+    }
   }
 
   return out
@@ -201,6 +229,20 @@ function extractFromEnv(): Partial<BrustConfig> {
       )
     }
     out.workers = n
+  }
+  if (process.env.BRUST_CACHE_SYNC_URL) {
+    const url = process.env.BRUST_CACHE_SYNC_URL.trim()
+    if (url === '') {
+      throw new BrustConfigError('BRUST_CACHE_SYNC_URL must be a non-empty string', null)
+    }
+    out.cacheSyncUrl = url
+  }
+  if (process.env.BRUST_CACHE_SYNC_CHANNEL) {
+    const channel = process.env.BRUST_CACHE_SYNC_CHANNEL.trim()
+    if (channel === '') {
+      throw new BrustConfigError('BRUST_CACHE_SYNC_CHANNEL must be a non-empty string', null)
+    }
+    out.cacheSyncChannel = channel
   }
   return out
 }

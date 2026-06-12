@@ -160,6 +160,68 @@ A route that sets neither relies on TTL expiry. The tag bookkeeping cleans up
 after itself: when an entry leaves the cache (TTL, capacity eviction, or
 invalidation) its tag-index entries are pruned automatically.
 
+## Cross-process invalidation
+
+`cache.invalidate` is in-process by default. Point brust at a Redis-protocol
+pub/sub channel (Redis or DragonflyDB — same wire protocol) and every
+`invalidate` call **also publishes** to that channel, while every brust
+instance subscribed to it **applies the invalidation locally** — so a publish
+in one process evicts matching entries across the whole fleet:
+
+```toml
+[cache]
+sync_url = "redis://127.0.0.1:6379"     # enables the feature; absent = in-process only
+sync_channel = "brust:cache:invalidate" # optional — this is the default
+```
+
+Environment variables override the TOML keys (standard precedence):
+`BRUST_CACHE_SYNC_URL` and `BRUST_CACHE_SYNC_CHANNEL`. The URL carries
+whatever Bun's `RedisClient` supports — `redis://:password@host:port/db`,
+`rediss://` for TLS.
+
+### Message contract (external publishers)
+
+Any process — not just brust — can invalidate the fleet by publishing a JSON
+message to the channel. A CMS or studio process that just saved shop 42 runs:
+
+```bash
+redis-cli PUBLISH "brust:cache:invalidate" '{"v":1,"tags":["shop:42"]}'
+```
+
+The message shape mirrors `InvalidateArgs`, versioned:
+
+```json
+{ "v": 1, "sender": "<uuid>", "key": "...", "tags": ["..."], "path": "...", "method": "GET" }
+```
+
+- `v` — required, must be `1`. Unknown versions and unparseable JSON are
+  dropped with a (throttled) warning.
+- `key` / `tags` / `path` / `method` — all optional, same semantics as
+  `cache.invalidate(...)` above.
+- `sender` — optional. Each brust process generates a per-process token and
+  skips messages carrying its own (it already applied locally before
+  publishing). External publishers simply omit it — the message is always
+  applied.
+
+### Delivery semantics
+
+Redis pub/sub is **fire-and-forget**: there is no replay, so a process that
+is down (or disconnected) during a publish misses that message — TTLs are the
+backstop, exactly as in every pub/sub invalidation bus. Local invalidation
+never depends on redis state: the in-process eviction always happens first,
+synchronously, and publish failures are logged (throttled) and swallowed. A
+down redis at boot never blocks the server — the subscriber retries in the
+background with capped exponential backoff and re-subscribes on reconnect.
+
+### Operational notes
+
+- **Connections:** one subscriber in the main isolate plus one lazy publisher
+  per worker isolate — up to `workers + 1` redis connections per process.
+  Negligible for publish-time invalidation volume.
+- **Credential redaction:** log lines never print the raw URL — only
+  `host:port` — so a password embedded in `sync_url` can't leak into logs.
+  (The env var itself is standard secret-in-env operator territory.)
+
 ## Observability
 
 - Every cache hit (either layer) carries **`X-Brust-Cache: HIT`**; a miss has
