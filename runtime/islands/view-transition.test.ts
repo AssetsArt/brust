@@ -16,15 +16,27 @@ function stubDoc(opts: {
     },
   } as unknown as Document & { startViewTransition?: unknown }
   if (opts.supported) {
+    // Faithful to the real API: startViewTransition returns the transition
+    // object FIRST and invokes the callback ASYNCHRONOUSLY (after the browser
+    // captures the old state), settling updateCallbackDone only once it runs.
+    // This makes the tests actually prove withViewTransition AWAITS
+    // updateCallbackDone — a stub that called the callback synchronously would
+    // pass even an implementation that never awaited.
     ;(doc as { startViewTransition: unknown }).startViewTransition = (cb: () => void) => {
       if (opts.throwSync) throw new Error('sync throw before callback')
-      cb()
-      calls++
-      return {
-        updateCallbackDone: opts.rejectAfter
-          ? Promise.reject(new Error('callback rejected'))
-          : Promise.resolve(),
-      }
+      const updateCallbackDone = new Promise<void>((resolve, reject) => {
+        Promise.resolve().then(() => {
+          try {
+            cb()
+            calls++
+            if (opts.rejectAfter) reject(new Error('callback rejected'))
+            else resolve()
+          } catch (e) {
+            reject(e as Error)
+          }
+        })
+      })
+      return { updateCallbackDone }
     }
   }
   return { doc, cbCalls: () => calls }
