@@ -346,7 +346,17 @@ export async function runBuild(args: string[]): Promise<void> {
   const islandMap = existsSync(routesFile)
     ? scanIslandChunks(routesFile, mdIslands)
     : new Map<string, string>()
-  if (islandMap.size > 0) {
+  // `fallback: 'client'` SSG routes need the islands RUNTIME (_bootstrap.js
+  // drives the client takeover; _react*.js back the fallback chunk's
+  // externals) even when the app ships ZERO islands — buildIslands with an
+  // empty map emits exactly those runtime files. Without this, the fallback
+  // shell references a /_brust/islands/_bootstrap.js that was never built.
+  const needsFallbackRuntime =
+    parsed.ssg &&
+    ((loadedRoutes ?? []) as { chain?: Array<{ ssg?: { fallback?: string } }> }[]).some(
+      (r) => r.chain?.at(-1)?.ssg?.fallback === 'client',
+    )
+  if (islandMap.size > 0 || needsFallbackRuntime) {
     const islandsOutDir = path.join(outDir, 'islands')
     const result = await buildIslands(islandMap, {
       outDir: islandsOutDir,

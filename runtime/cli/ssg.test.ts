@@ -590,6 +590,13 @@ await brust.run({ routes, entry: import.meta.url })
     ).text()
     expect(shell).toContain('data-brust-fallback-root')
     expect(shell).toContain('_bootstrap.js')
+    // The islands RUNTIME files must exist even though this app has ZERO
+    // islands — the shell's script tag above would otherwise 404 and the
+    // takeover never runs (regression: the islands build used to be skipped
+    // entirely without <Island> usage).
+    for (const f of ['_bootstrap.js', '_react.js', '_react-dom.js']) {
+      expect(existsSync(path.join(staticDir, '_brust', 'islands', f))).toBe(true)
+    }
     const payload = JSON.parse(
       await Bun.file(
         path.join(staticDir, '_brust', 'fallback-page', 'ssg-fb', '__slug__', 'index.html'),
