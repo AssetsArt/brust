@@ -146,10 +146,11 @@ pub fn register_template(name: &str, source: &str) -> Result<(), RegisterError> 
 /// minijinja's remove_template returns (), so existence comes from DYN_SOURCES.
 pub fn remove_dynamic_template(name: &str) -> bool {
     let mut env_guard = DYN_ENV.write();
-    let existed = DYN_SOURCES
-        .write()
-        .as_mut()
-        .is_some_and(|m| m.remove(name).is_some());
+    // Hold the sources guard across the env mutation so the two tiers never
+    // disagree mid-removal (a concurrent has_template between the map remove
+    // and the env remove would otherwise see a split-brain).
+    let mut src_guard = DYN_SOURCES.write();
+    let existed = src_guard.as_mut().is_some_and(|m| m.remove(name).is_some());
     if existed && let Some(env) = env_guard.as_mut() {
         env.remove_template(name);
     }

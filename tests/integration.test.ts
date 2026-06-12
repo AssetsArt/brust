@@ -174,6 +174,16 @@ test('unknown path returns 404', async () => {
   expect(resp.status).toBe(404)
 })
 
+test('R1 dynamic template registry: loader registers + renders a runtime template', async () => {
+  // The /dynamic-template loader runs in a WORKER isolate; the registry is
+  // process-global Rust state, so this also pins cross-isolate visibility.
+  const port = sharedPort()
+  const resp = await fetch(`http://127.0.0.1:${port}/dynamic-template`)
+  expect(resp.status).toBe(200)
+  const body = await resp.text()
+  expect(body).toContain('<div id="dyn">Hello tenant-42</div>')
+})
+
 test('errorBoundary renders when a route component throws', async () => {
   const port = sharedPort()
   const resp = await fetch(`http://127.0.0.1:${port}/crash`)

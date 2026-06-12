@@ -32,9 +32,30 @@ test('re-register replaces the template body', () => {
   expect(templates.render(NAME, { title: 'X' })).toBe('<p>X</p>')
 })
 
+// Bun's expect(fn).toThrow() ALSO passes when fn merely RETURNS an Error
+// (verified empirically) — and the napi-rs v3 sync bindings return Errors
+// under Bun rather than throwing. So a real throw must be pinned manually.
+function mustThrow(fn: () => unknown): Error {
+  let caught: unknown
+  let returned: unknown
+  let threw = false
+  try {
+    returned = fn()
+  } catch (e) {
+    caught = e
+    threw = true
+  }
+  if (!threw) {
+    throw new Error(`expected a throw, got return value: ${String(returned)}`)
+  }
+  expect(caught).toBeInstanceOf(Error)
+  return caught as Error
+}
+
 test('syntax error throws and leaves the previous registration intact', () => {
   templates.register(NAME2, '<span>{{ title }}</span>')
-  expect(() => templates.register(NAME2, '{% for x in %}')).toThrow()
+  const err = mustThrow(() => templates.register(NAME2, '{% for x in %}'))
+  expect(err.message).toContain('syntax')
   // The failed register must not clobber the good body.
   expect(templates.render(NAME2, { title: 'Y' })).toBe('<span>Y</span>')
 })
@@ -44,11 +65,11 @@ test('remove returns true then false; has/render reflect removal', () => {
   expect(templates.remove(NAME_REMOVE)).toBe(true)
   expect(templates.remove(NAME_REMOVE)).toBe(false)
   expect(templates.has(NAME_REMOVE)).toBe(false)
-  expect(() => templates.render(NAME_REMOVE)).toThrow()
+  mustThrow(() => templates.render(NAME_REMOVE))
 })
 
-test('render of an unknown template throws', () => {
-  expect(() => templates.render('no-such-template-xyz-12345')).toThrow()
+test('render of an unknown template throws (a real throw, not a returned Error)', () => {
+  mustThrow(() => templates.render('no-such-template-xyz-12345'))
 })
 
 test('render with no data arg works for a static template', () => {

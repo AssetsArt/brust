@@ -10,9 +10,9 @@ export const templates = {
    * see old or new, never missing. */
   register(name: string, jinjaSource: string): void {
     // napi-rs v3 hands back the `Error` as the RETURN VALUE for sync
-    // `Result<()>` bindings instead of throwing (verified under both Bun and
-    // Node; `Result<String>` fns like napiRenderTemplate DO throw) — normalize
-    // to the documented throw.
+    // fallible bindings under Bun instead of throwing (verified empirically
+    // for both `Result<()>` and `Result<String>`) — normalize to the
+    // documented throw.
     const err = (native as any).napiRegisterTemplate(name, jinjaSource)
     if (err instanceof Error) throw err
   },
@@ -33,6 +33,15 @@ export const templates = {
    * html — no request/store context. NOT the request fast lane; intended for
    * handlers/loaders/tooling (draft canvases, section previews). */
   render(name: string, data?: unknown): string {
-    return (native as any).napiRenderTemplate(name, JSON.stringify(data ?? {}))
+    // `data == null` (undefined OR explicit null) renders against an empty
+    // context — JSON.stringify(null) would hand minijinja a null root where
+    // every variable lookup goes Undefined.
+    const json = JSON.stringify(data == null ? {} : data)
+    // Same napi-rs v3 Bun quirk as register(): the Error comes back as the
+    // return value, not a throw — without this guard a consumer would
+    // interpolate "Error: ..." into HTML instead of catching.
+    const out = (native as any).napiRenderTemplate(name, json)
+    if (out instanceof Error) throw out
+    return out
   },
 }
