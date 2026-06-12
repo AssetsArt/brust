@@ -161,3 +161,30 @@ test('native notFound() verdict path still renders the catch-all at 404 (no regr
   expect(resp.status).toBe(404)
   expect(await resp.text()).toContain('NOT FOUND PAGE')
 })
+
+// --- Task 6 (Part B): React notFound() trigger on the SPA-nav payload site ---
+
+test('SPA-nav React loader notFound() → 404 nav payload with the catch-all body (NOT 500 render-failed)', async () => {
+  const { port } = withCatchAll!
+  const resp = await fetch(`http://127.0.0.1:${port}/_brust/page/items/missing`)
+  expect(resp.status).toBe(404)
+  const body = await resp.text()
+  // navigationBranch's generic catch turns any throw into 500
+  // `{"error":"render failed"}`. The notFound() trigger must be discriminated
+  // BEFORE that and emit the catch-all nav payload at 404 instead.
+  expect(body).not.toBe('{"error":"render failed"}')
+  const payload = JSON.parse(body) as { html?: string }
+  expect(payload.html ?? '').toContain('NOT FOUND PAGE')
+  expect(payload.html ?? '').not.toContain('ITEM PAGE')
+})
+
+test('SPA-nav React loader notFound() with NO catch-all → 404 nav payload with default body (no 500)', async () => {
+  const { port } = nfNoCatchAll!
+  const resp = await fetch(`http://127.0.0.1:${port}/_brust/page/items/anything`)
+  expect(resp.status).toBe(404)
+  const body = await resp.text()
+  expect(body).not.toBe('{"error":"render failed"}')
+  const payload = JSON.parse(body) as { html?: string }
+  // Framework default 404 body shipped as a nav payload — never a 500.
+  expect(payload.html ?? '').toContain('Not found.')
+})

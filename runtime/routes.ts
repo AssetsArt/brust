@@ -1337,7 +1337,7 @@ export function makeRenderer(
       })
     }
     if (call.kind === 'navigation') {
-      await navigationBranch(call, byRouteId, slotView, encoder, opts.getWorkerId, slot)
+      await navigationBranch(call, byRouteId, routes, slotView, encoder, opts.getWorkerId, slot)
       return 0
     }
     if (call.kind === 'action') {
@@ -1431,6 +1431,7 @@ function renderToAwaitedString(element: ReactNode): Promise<string> {
 async function navigationBranch(
   call: Extract<RouteCall, { kind: 'navigation' }>,
   byRouteId: Map<number, FlatRoute>,
+  routes: FlatRoute[],
   view: Uint8Array,
   encoder: TextEncoder,
   getWorkerId: (() => number | null) | undefined,
@@ -1547,6 +1548,14 @@ async function navigationBranch(
     // with no headers param, so staged cookies are dropped there (same as the
     // full-document native render path).
     let navHeaders: Record<string, string> | undefined
+    // The nav-payload HTTP status. Normally 200, or 404 when the matched route
+    // IS a catch-all (rendered on a genuinely-unmatched `/_brust/page/*` path).
+    // A React loader `throw notFound()` (caught below) swaps the rendered route
+    // to the nearest catch-all and forces this to 404 — mirroring the
+    // full-document render path. NOTE: in the trigger case `flat` is the MATCHED
+    // route (notFound === false), so the status must be forced to 404 explicitly,
+    // not derived from `flat.notFound`.
+    let navStatus = flat.notFound === true ? 404 : 200
     if (flat.nativeTemplate !== undefined) {
       fullHtml = await renderNativeRouteToHtml(call, flat, view, encoder, workerId, slot)
     } else {
@@ -1556,23 +1565,53 @@ async function navigationBranch(
       // injection is needed in a NAV payload: the payload is swapped into a
       // document that already booted the bootstrap (the navigator IS the
       // bootstrap), and the takeover runtime imports its chunk itself.
-      fullHtml = await runInRequestContext(call.req?.cookies ?? {}, async () => {
-        const element = await buildRenderElement(
-          call as any,
-          flat,
-          getWorkerId,
-          wantsSsgFallbackShell(flat, call as any),
-        )
-        if (!element) throw new Error('render setup failed')
-        // Use renderToPipeableStream + onAllReady so pages with <Suspense> emit
-        // their RESOLVED markup, not the fallback. renderToString would only
-        // capture the shell — navigating SPA-style to a Suspense-using route
-        // would otherwise ship "loading…" and never recover.
-        const html = await renderToAwaitedString(element)
-        store = collectSnapshot()
-        navHeaders = flushSetCookie(undefined)
-        return html
-      })
+      const renderFlatToHtml = (target: FlatRoute): Promise<string> =>
+        runInRequestContext(call.req?.cookies ?? {}, async () => {
+          const element = await buildRenderElement(
+            call as any,
+            target,
+            getWorkerId,
+            wantsSsgFallbackShell(target, call as any),
+          )
+          if (!element) throw new Error('render setup failed')
+          // Use renderToPipeableStream + onAllReady so pages with <Suspense> emit
+          // their RESOLVED markup, not the fallback. renderToString would only
+          // capture the shell — navigating SPA-style to a Suspense-using route
+          // would otherwise ship "loading…" and never recover.
+          const html = await renderToAwaitedString(element)
+          store = collectSnapshot()
+          navHeaders = flushSetCookie(undefined)
+          return html
+        })
+      try {
+        fullHtml = await renderFlatToHtml(flat)
+      } catch (err) {
+        if (!isNotFoundTrigger(err)) throw err
+        // React `notFound()` trigger on the SPA-nav path: abandon the matched
+        // route and render the NEAREST catch-all (same selection as a
+        // Rust-unmatched path) as the nav payload at HTTP 404 — NOT a 500
+        // `{"error":"render failed"}`. Mirrors the full-document render path.
+        navStatus = 404
+        const nfId = selectNotFound(routes, call.path)
+        const nfFlat = nfId !== undefined ? byRouteId.get(nfId) : undefined
+        if (nfFlat) {
+          try {
+            fullHtml = await renderFlatToHtml(nfFlat)
+          } catch (nfErr) {
+            // The catch-all's OWN loader/render threw (notFound or a real error):
+            // ship the framework default 404 body — don't recurse into another
+            // catch-all selection.
+            console.error('[brust] catch-all nav render failed:', nfErr)
+            fullHtml = DEFAULT_NOT_FOUND_BODY
+            store = null
+          }
+        } else {
+          // No catch-all registered for this prefix → framework default 404 body
+          // shipped as a nav payload (so the client swaps it in), at 404.
+          fullHtml = DEFAULT_NOT_FOUND_BODY
+          store = null
+        }
+      }
     }
 
     // Extract <main> inner content. If the page didn't render a <main>,
@@ -1600,9 +1639,10 @@ async function navigationBranch(
       encoder,
       {
         // Catch-all (`path: '*'`) leaf rendered as a SPA-nav payload on an
-        // unmatched path: stamp HTTP 404 while still shipping the rendered body
-        // so the client can swap it in (vs the bare `{"error":"not found"}`).
-        status: flat.notFound === true ? 404 : 200,
+        // unmatched path — OR a React `throw notFound()` swapped to the nearest
+        // catch-all — stamps HTTP 404 while still shipping the rendered body so
+        // the client swaps it in (vs the bare `{"error":"not found"}`).
+        status: navStatus,
         contentType: 'application/json; charset=utf-8',
         body,
         headers: navHeaders,

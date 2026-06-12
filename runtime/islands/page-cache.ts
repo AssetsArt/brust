@@ -9,7 +9,12 @@
 export interface PagePayload {
   html: string
   title: string
-  store?: Record<string, Record<string, unknown>>
+  store?: Record<string, Record<string, unknown>> | null
+  /** True when this payload was delivered at HTTP 404 (a rendered catch-all
+   * page, NOT a transport error). The caller swaps it in-place like any other
+   * payload but must NOT cache it — a 404 is not a stable, re-servable entry,
+   * and caching it would poison a later real navigation to the same path. */
+  notFound?: boolean
 }
 
 /** Bound the cache so a long session can't grow memory unbounded (LRU evict). */
@@ -60,7 +65,26 @@ export async function fetchPagePayload(url: URL, signal?: AbortSignal): Promise<
     signal,
     headers: { Accept: 'application/json' },
   })
-  if (!resp.ok) throw new Error(`navigation: status ${resp.status}`)
+  // A 404 carrying a rendered page payload (the framework's catch-all 404 page)
+  // is renderable, NOT a transport error: parse it, tag it `notFound`, and hand
+  // it to the caller to swap in-place. Anything else that isn't 2xx (5xx, other
+  // statuses) is a real transport failure → throw so the caller full-reloads or
+  // tries the `fallback:'client'` takeover. A 404 whose body is empty / not a
+  // valid `{ html }` payload is ALSO a transport failure (no page to render):
+  // the json()/shape check below throws and is caught here.
+  if (!resp.ok) {
+    if (resp.status === 404) {
+      try {
+        const payload = (await resp.json()) as PagePayload
+        if (payload && typeof payload.html === 'string') {
+          return { ...payload, notFound: true }
+        }
+      } catch {
+        // empty / non-JSON 404 body → fall through to the transport-error throw
+      }
+    }
+    throw new Error(`navigation: status ${resp.status}`)
+  }
   const payload = (await resp.json()) as PagePayload
   setCachedPage(pageCacheKey(url), payload)
   return payload
