@@ -12,4 +12,9 @@ await brust.run({
   entry: import.meta.url,
   actions,
   actionPrefix: process.env.BRUST_ACTION_PREFIX || undefined,
+  // Opt-in CORS boot for tests/cors.integration.test.ts (own process — the
+  // shared suites boot without the env and stay byte-identical, no-CORS).
+  cors: process.env.BRUST_TEST_CORS
+    ? { origins: ['http://allowed.test'], credentials: true, exposeHeaders: ['x-render-ms'] }
+    : undefined,
 })

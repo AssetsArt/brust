@@ -21,6 +21,45 @@ function defaultRenderSlots(): number {
   return Math.min(Math.max(cores, 1), 16)
 }
 
+/** Global CORS policy (one policy for the whole deployment — pages, actions,
+ * static assets alike; brust has no per-route CORS). Opt-in: omit to keep CORS
+ * disabled (byte-identical default — no `Access-Control-*` headers, OPTIONS
+ * still 405). Threaded into Rust, which answers preflights before the render
+ * pipeline and stamps actual responses at a single chokepoint. */
+export interface CorsOptions {
+  /** Allowed origins, exact scheme+host+port match (no wildcard subdomains).
+   * A list CONTAINING `'*'` is treated as wildcard: every origin allowed,
+   * echoed as the literal `*`. */
+  origins: string[]
+  /** Preflight `Access-Control-Allow-Methods`. Default: GET,POST,PUT,PATCH,DELETE,OPTIONS. */
+  methods?: string[]
+  /** Preflight `Access-Control-Allow-Headers`. Default: echo the request's
+   * `Access-Control-Request-Headers`. */
+  headers?: string[]
+  /** `Access-Control-Expose-Headers` on actual responses. Default: none. */
+  exposeHeaders?: string[]
+  /** Emit `Access-Control-Allow-Credentials: true`. INVALID combined with a
+   * wildcard origin — serve() throws at boot (browsers silently reject
+   * `Allow-Credentials` with `Allow-Origin: *`; we make it loud). */
+  credentials?: boolean
+  /** Preflight `Access-Control-Max-Age` seconds. Default 600. */
+  maxAgeSeconds?: number
+}
+
+/** Fail-fast CORS validation, mirroring Rust's `CorsConfig::validate` so a bad
+ * config throws in TS before the native call (clearer stack, same message
+ * shape). Exported for unit testing. */
+export function validateCorsOptions(cors: CorsOptions): void {
+  if (!Array.isArray(cors.origins) || cors.origins.length === 0) {
+    throw new Error('cors.origins must be non-empty')
+  }
+  if (cors.origins.includes('*') && cors.credentials) {
+    throw new Error(
+      "cors.credentials cannot be combined with a wildcard origin '*' — browsers reject Access-Control-Allow-Credentials with Access-Control-Allow-Origin: *",
+    )
+  }
+}
+
 export interface ServeOptions {
   /** Host/address to bind on. A hostname (e.g. `localhost`, resolved Rust-side)
    * or a literal IP such as `0.0.0.0` / `127.0.0.1`. */
@@ -36,6 +75,10 @@ export interface ServeOptions {
   /** URL prefix the action router mounts under (e.g. `/_actions`). Threaded
    * into Rust's ServeOptions.action_prefix. */
   actionPrefix?: string
+  /** Optional global CORS policy — see {@link CorsOptions}. Validated at boot
+   * (TS first, Rust mirrors): `origins` non-empty; `credentials` + wildcard
+   * origin throws. */
+  cors?: CorsOptions
   /** MCP support — pass a manifest built via brust.buildMcpManifest. brust.serve
    * does NOT auto-wire MCP into workers; the worker branch of the entry file must
    * call brust.loadMcpManifest() + makeMcpServer() itself and pass the McpServer
@@ -148,6 +191,9 @@ async function readManifestFromPath(
 
 export const brust = {
   async serve(opts: ServeOptions): Promise<void> {
+    // Fail fast on a bad CORS config BEFORE touching native state (Rust
+    // re-validates in begin_serve — same rules, second line of defense).
+    if (opts.cors) validateCorsOptions(opts.cors)
     if (opts.actions) {
       // Register endpoint method/path with Rust. The router keys each by its
       // registration index; the worker dispatches on that same index string.
@@ -167,6 +213,9 @@ export const brust = {
       // `actionPrefix` (not snake_case). A snake_case key is silently dropped,
       // leaving the prefix at its default — which broke custom-prefix routing.
       actionPrefix: opts.actionPrefix,
+      // Optional global CORS policy (camelCase fields — napi-rs maps them onto
+      // NapiCorsOptions' snake_case Rust fields).
+      cors: opts.cors,
       // X-Powered-By value from the build's generator.json (stashed by view
       // boot; artifact fallback covers any ordering edge). Single word — no
       // napi case-mapping trap possible.
@@ -390,6 +439,9 @@ export const brust = {
     actions?: import('./define-actions.ts').ActionsBuilder
     /** URL prefix the action router mounts under. Threaded to serve(). */
     actionPrefix?: string
+    /** Optional global CORS policy — see {@link CorsOptions}. Threaded to
+     * serve() like `actionPrefix`. */
+    cors?: CorsOptions
     /** Overrides merged into the underlying `serve()` call (main thread). */
     serve?: Partial<Omit<ServeOptions, 'entry' | 'actions' | 'mcp'>>
     /** Per-worker SAB size in bytes. Default 256 KB. */
@@ -897,6 +949,7 @@ export const brust = {
         entry: opts.entry,
         actions: opts.actions,
         actionPrefix: opts.actionPrefix,
+        cors: opts.cors,
         ...(mcpManifest ? { mcp: { manifest: mcpManifest } } : {}),
         ...opts.serve,
       })
