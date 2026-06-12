@@ -153,6 +153,7 @@ dependencies = [
  "moka",
  "once_cell",
  "parking_lot",
+ "percent-encoding",
  "rustls",
  "rustls-pemfile",
  "serde",

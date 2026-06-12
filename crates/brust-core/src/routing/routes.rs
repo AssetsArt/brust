@@ -49,7 +49,7 @@ pub struct RouteEnvelope<'a> {
     pub route_id: u32,
     pub path: &'a str,
     #[serde(serialize_with = "crate::routing::routes::serialize_as_map")]
-    pub params: Vec<(std::borrow::Cow<'a, str>, &'a str)>,
+    pub params: Vec<(std::borrow::Cow<'a, str>, std::borrow::Cow<'a, str>)>,
     pub req: RequestEnvelope<'a>,
     /// Sub-project J — when the route was registered with `native: true`,
     /// the JS-side ships `nativeTemplate: Component.name`. JS dispatcher
@@ -74,7 +74,7 @@ pub struct ActionEnvelope<'a> {
     pub kind: &'static str,
     pub action_id: &'a str,
     #[serde(serialize_with = "crate::routing::routes::serialize_as_map")]
-    pub params: Vec<(std::borrow::Cow<'a, str>, &'a str)>,
+    pub params: Vec<(std::borrow::Cow<'a, str>, std::borrow::Cow<'a, str>)>,
     /// Request's Content-Type header, whitespace-trimmed (case PRESERVED —
     /// JS lowercases defensively at the dispatch point). Empty string means
     /// the header was missing. JS dispatcher branches on this.
@@ -190,7 +190,7 @@ pub(crate) fn build_action_envelope<'a>(
     method: &'a str,
     full_path: &'a str,
     action_id: &'a str,
-    params: Vec<(std::borrow::Cow<'a, str>, &'a str)>,
+    params: Vec<(std::borrow::Cow<'a, str>, std::borrow::Cow<'a, str>)>,
     content_type: &'a str,
     body_text: Option<&'a str>,
     body_b64: Option<&'a str>,
@@ -348,7 +348,11 @@ impl RouteTable {
                 let route_id = *matched.value;
                 let mut params = Vec::new();
                 for (k, v) in matched.params.iter() {
-                    params.push((std::borrow::Cow::Owned(k.to_string()), v));
+                    // Decode at the production site — loaders, clientLoader,
+                    // L1 param() key expressions, x-props, native ctx, and
+                    // treaty all consume THIS vec (directly or serialized),
+                    // so one decode keeps every consumer consistent.
+                    params.push((std::borrow::Cow::Owned(k.to_string()), decode_path_param(v)));
                 }
                 let req = build_request_envelope(method, full_path, query, headers);
                 let native = self
@@ -448,6 +452,44 @@ fn build_request_envelope<'a>(
     }
 }
 
+/// Percent-decode ONE matched path-param value (spec:
+/// docs/superpowers/specs/2026-06-12-decode-params-design.md).
+/// Full RFC-3986 decode including `%2F`; `+` stays literal (space-as-plus is
+/// a query convention — url_decode above is NOT reusable here). Fallback is
+/// per-VALUE: any malformed `%` sequence or invalid post-decode UTF-8 returns
+/// the WHOLE raw capture, mirroring the client matchFallback's
+/// `try { decodeURIComponent } catch { raw }` so server and client always
+/// produce the same value. (percent_decode_str alone decodes per-SEQUENCE on
+/// malformed input — hence the explicit pre-validation scan.)
+pub(crate) fn decode_path_param(raw: &str) -> std::borrow::Cow<'_, str> {
+    // Fast path + pre-validation in one scan: every '%' must be followed by
+    // two hex digits, else the whole value ships raw.
+    let bytes = raw.as_bytes();
+    let mut has_pct = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            has_pct = true;
+            if i + 2 >= bytes.len()
+                || !bytes[i + 1].is_ascii_hexdigit()
+                || !bytes[i + 2].is_ascii_hexdigit()
+            {
+                return std::borrow::Cow::Borrowed(raw);
+            }
+            i += 3;
+        } else {
+            i += 1;
+        }
+    }
+    if !has_pct {
+        return std::borrow::Cow::Borrowed(raw);
+    }
+    match percent_encoding::percent_decode_str(raw).decode_utf8() {
+        Ok(decoded) => decoded,
+        Err(_) => std::borrow::Cow::Borrowed(raw),
+    }
+}
+
 /// Minimal percent-decode for query-string keys/values. Decodes %xx and treats
 /// `+` as space. Unrecognised escapes pass through unchanged.
 fn url_decode(s: &str) -> std::borrow::Cow<'_, str> {
@@ -520,6 +562,77 @@ mod tests {
             map.append(name, http::HeaderValue::from_str(v).unwrap());
         }
         map
+    }
+
+    #[test]
+    fn decode_path_param_basic_and_multibyte() {
+        use std::borrow::Cow;
+        assert_eq!(decode_path_param("sa%20wad-dee"), "sa wad-dee");
+        // Thai: สวัสดี
+        assert_eq!(
+            decode_path_param("%E0%B8%AA%E0%B8%A7%E0%B8%B1%E0%B8%AA%E0%B8%94%E0%B8%B5"),
+            "สวัสดี"
+        );
+        assert_eq!(decode_path_param("a%2Fb"), "a/b"); // full decode incl. %2F
+        assert_eq!(decode_path_param("a+b"), "a+b"); // + is literal in paths
+        assert!(matches!(
+            decode_path_param("plain-slug"),
+            Cow::Borrowed("plain-slug")
+        ));
+    }
+
+    #[test]
+    fn decode_path_param_per_value_raw_fallback() {
+        use std::borrow::Cow;
+        // Malformed % → WHOLE value raw (pre-validation), mirroring
+        // decodeURIComponent's per-value throw — NOT the crate's per-sequence
+        // behavior (a%ZZ%41 must NOT become a%ZZA).
+        assert!(matches!(
+            decode_path_param("a%ZZ%41"),
+            Cow::Borrowed("a%ZZ%41")
+        ));
+        assert!(matches!(decode_path_param("100%"), Cow::Borrowed("100%")));
+        assert!(matches!(decode_path_param("%Z"), Cow::Borrowed("%Z")));
+        assert!(matches!(
+            decode_path_param("%FF%41"),
+            Cow::Borrowed("%FF%41")
+        ));
+        assert!(matches!(
+            decode_path_param("%ED%A0%80"),
+            Cow::Borrowed("%ED%A0%80")
+        ));
+    }
+
+    #[test]
+    fn match_path_params_arrive_decoded_incl_catch_all() {
+        let table = RouteTable::new();
+        table
+            .install_with_config(&[
+                RouteConfig {
+                    path: "/post/{slug}".into(),
+                    cache: None,
+                    native_template: None,
+                },
+                RouteConfig {
+                    path: "/files/{*rest}".into(),
+                    cache: None,
+                    native_template: None,
+                },
+            ])
+            .unwrap();
+        let headers = http::HeaderMap::new();
+        match table.match_path("GET", "/post/sa%20wad-dee", &headers) {
+            MatchResult::Matched { envelope, .. } => {
+                assert_eq!(envelope.params[0].1.as_ref(), "sa wad-dee");
+            }
+            _ => panic!("no match"),
+        }
+        match table.match_path("GET", "/files/a%2Fb/c", &headers) {
+            MatchResult::Matched { envelope, .. } => {
+                assert_eq!(envelope.params[0].1.as_ref(), "a/b/c");
+            }
+            _ => panic!("no match"),
+        }
     }
 
     #[test]

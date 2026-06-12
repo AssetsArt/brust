@@ -133,7 +133,12 @@ impl ActionRouter {
                         params: m
                             .params
                             .iter()
-                            .map(|(k, v)| (k.to_string(), v.to_string()))
+                            .map(|(k, v)| {
+                                (
+                                    k.to_string(),
+                                    crate::routing::routes::decode_path_param(v).into_owned(),
+                                )
+                            })
                             .collect(),
                     },
                     None => MatchOutcome::MethodNotAllowed,
