@@ -332,6 +332,7 @@ test('exportStatic crawls included routes, writes pages + assets, kills the chil
 
   const home = await Bun.file(path.join(staticOut, 'index.html')).text()
   expect(home).toContain('Hello from Brust')
+  expect(home).toContain('<meta name="generator" content="brust')
   expect(existsSync(path.join(staticOut, 'store-demo', 'index.html'))).toBe(true)
 
   // SPA payloads live at the exact URL the client navigator fetches and carry
