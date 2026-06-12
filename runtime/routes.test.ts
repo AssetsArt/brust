@@ -393,9 +393,12 @@ test("flattenRoutes: catch-all '*' leaf flagged notFound with parent prefix, kep
   const nf = flat.filter((f) => f.notFound)
   expect(nf).toHaveLength(2)
   expect(nf.map((f) => f.notFoundPrefix).sort()).toEqual(['', '/docs'])
-  // Catch-all fullPath must NOT be a matchit pattern that matches real traffic.
+  // Catch-all fullPath must NOT be a matchit pattern that matches real traffic;
+  // it equals the notFoundPrefix by design (positive assertion, not just absence
+  // of `*` — which would pass for any arbitrary non-matching string).
   for (const f of nf) {
     expect(f.fullPath).not.toContain('*')
+    expect(f.notFoundPrefix).toBe(f.fullPath)
   }
   // route_id integrity: stable contiguous array (no removal/reindex).
   expect(flat.filter((f) => !f.notFound)).toHaveLength(2)

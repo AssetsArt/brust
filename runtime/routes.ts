@@ -580,10 +580,11 @@ function walkRoutes(
         )
       }
       seenNotFoundPrefixes.add(prefix)
-      const flat = makeFlat(chain, prefix)
-      flat.notFound = true
-      flat.notFoundPrefix = prefix
-      out.push(flat)
+      // Construct atomically (no post-hoc mutation) so the flag + prefix are
+      // never observable half-set. `fullPath === notFoundPrefix` by design; the
+      // install step gates the matchit-insert skip on the `notFound` flag, not
+      // on fullPath (see runtime/index.ts registerRoutes).
+      out.push({ ...makeFlat(chain, prefix), notFound: true, notFoundPrefix: prefix })
       continue
     }
 
