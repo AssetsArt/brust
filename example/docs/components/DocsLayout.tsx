@@ -39,7 +39,6 @@ export default function DocsLayout({
           text: "(()=>{try{const t=localStorage.getItem('brust-docs-theme');if(t)document.documentElement.dataset.theme=t}catch{}})()",
         },
         { tag: 'link', rel: 'icon', href: '/favicon.ico' },
-        { tag: 'link', rel: 'icon', type: 'image/png', href: '/favicon.png' },
       ]}
     >
       <a
