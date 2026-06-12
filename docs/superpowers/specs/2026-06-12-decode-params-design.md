@@ -34,11 +34,27 @@ with two rules:**
    segments (space-as-plus is a query-string convention). The existing
    `url_decode` (used for query strings) converts `+`→space and is therefore
    NOT reusable for params.
-2. **Invalid sequences → keep the raw capture.** If percent-decoding produces
-   invalid UTF-8 (e.g. `%FF`) the param ships as the raw matched text —
-   mirrors the client's existing `try { decodeURIComponent } catch { raw }`
-   (runtime/islands/fallback.ts:47-53). Malformed `%` sequences without valid
-   hex (e.g. a literal `%ZZ`) pass through as-is byte-for-byte.
+2. **Invalid input → the WHOLE value ships raw (per-VALUE fallback).** The
+   decoder pre-validates that every `%` is followed by two hex digits; on any
+   malformed sequence (`%ZZ`, lone trailing `%`) OR when the decoded bytes are
+   not valid UTF-8 (`%FF`, CESU-8 lone surrogates like `%ED%A0%80`), the param
+   ships as the raw matched text byte-for-byte — `a%ZZ%41` stays `a%ZZ%41`
+   (the valid `%41` does NOT decode). This deliberately mirrors
+   `decodeURIComponent`'s per-value throw semantics so the client fallback
+   matcher (`try { decodeURIComponent } catch { raw }`,
+   runtime/islands/fallback.ts:47-53) and the server produce the SAME value in
+   BOTH failure modes. NOTE: this is stricter than the raw
+   `percent_decode_str(..).decode_utf8()` behavior, which decodes per-SEQUENCE
+   on malformed `%` (`a%ZZ%41` → `a%ZZA`) — hence the explicit pre-validation
+   scan before calling the crate decoder.
+
+3. **Catch-all captures decode the same way.** Wildcard routes
+   (`'/files/{*rest}'`, documented in routing.md) flow through the same
+   production site; `/files/a%2Fb/c` captures `a%2Fb/c` → decodes to `a/b/c`,
+   indistinguishable from three real segments — consistent with the
+   full-decode policy and stated in the docs. (The client `matchFallback` does
+   fixed-segment matching and cannot match catch-alls — pre-existing,
+   unchanged, and not implied by the consistency claim above.)
 
 **Why full decode (the `%2F` question, resolved from code):** the framework
 already HAS one param decoder in production — the SSG fallback client takeover
@@ -57,9 +73,10 @@ param value containing `/` is the app's data. Documented consequence.
 |---|---|
 | `crates/brust-core/src/routing/routes.rs:349-351` (`match_path`) | decode each `v`; `RouteEnvelope.params` + `ActionEnvelope.params` type → `Vec<(Cow<'a, str>, Cow<'a, str>)>` (values were `&'a str` borrowed from `full_path`; decoded values are owned) |
 | `crates/brust-core/src/routing/action.rs:133` (action router match) | decode each `v.to_string()` → decoded owned String (already owned — no lifetime change) |
-| `crates/brust-core/src/server/mod.rs:688-702` (EvalCtx) | mechanical: `(k.as_ref(), *v)` → `(k.as_ref(), v.as_ref())`; key_expr `param()` then sees decoded values automatically — NO separate change in key_expr.rs beyond updating its "NOT percent-decoded" doc comment (key_expr.rs:8-12) |
+| `crates/brust-core/src/server/mod.rs:688-702` (EvalCtx) | mechanical: `(k.as_ref(), *v)` → `(k.as_ref(), v.as_ref())`; key_expr `param()` then sees decoded values automatically — NO logic change in key_expr.rs; EXTEND its doc comment (key_expr.rs:8-12, currently covers header/cookie/query verbatim semantics and does not mention params) with "path params ARE percent-decoded; header/cookie/query stay verbatim" |
 | `crates/brust-core/src/server/mod.rs:854-857` (action envelope assembly) | follows the action.rs decode; type-level Cow adjustment only |
-| decoder | new `decode_path_param(&str) -> Cow<str>` in routes.rs next to `url_decode`: percent-only (no `+`→space), invalid-UTF-8/malformed → `Cow::Borrowed(raw)`. Use the `percent-encoding` crate (`percent_decode_str(..).decode_utf8().ok()`) — already in Cargo.lock 2.3.2 via `url`; add as a direct dependency of brust-core. Borrowed fast path: a value with no `%` returns `Cow::Borrowed` (zero alloc — the common ASCII-slug case) |
+| `crates/brust-core/src/routing/routes.rs:189-213` (`build_action_envelope`) | its `params` parameter type changes with the ActionEnvelope field (`Vec<(Cow, Cow)>`) |
+| decoder | new `pub(crate) fn decode_path_param(&str) -> Cow<str>` in routes.rs next to `url_decode` (action.rs calls it too): pre-validate every `%` has 2 hex digits (else return `Cow::Borrowed(raw)` — per-VALUE), then `percent_decode_str(..).decode_utf8()`; `Err` (invalid UTF-8) → `Cow::Borrowed(raw)`. Percent-only — no `+`→space. `percent-encoding` already in Cargo.lock 2.3.2 via `url`; add as a direct dependency of brust-core. Verified: the crate returns `Cow::Borrowed` when nothing decodes — a no-`%` value is zero-alloc (common ASCII-slug case) |
 
 The three existing hand-rolled decoders (`url_decode`, `percent_decode`,
 `percent_decode_path`) are NOT consolidated in this change (different
@@ -76,11 +93,15 @@ decodes — now CONSISTENT with the server instead of divergent.
 ### Tests
 
 - Rust unit (routes.rs): decode cases — `%20`→space, Thai multi-byte
-  (`%E0%B8%AA…`→`สวัสดี`-class), `%2F`→`/`, `+` stays `+`, `%FF` → raw
-  passthrough, `%ZZ`/lone-`%` → raw passthrough, no-`%` value → borrowed
-  (assert no change), param() key-expr eval sees decoded value (key_expr or
-  server-level test).
+  (`%E0%B8%AA…`→`สวัสดี`-class), `%2F`→`/`, `+` stays `+`, `%FF` → WHOLE value
+  raw, `%ZZ`/lone-`%` → WHOLE value raw, the mixed cases `a%ZZ%41` → raw
+  `a%ZZ%41` and `%FF%41` → raw `%FF%41` (pin per-VALUE fallback), no-`%` value
+  → `Cow::Borrowed` (assert via matches!), catch-all `{*rest}` route with
+  `/files/a%2Fb/c` → param `a/b/c`, param() key-expr eval sees decoded value
+  (key_expr or server-level test).
 - Rust action router test: decoded action path param.
+- Rust (or integration) coverage of the `/_brust/page/...` SPA-navigation
+  match_path call site (server/mod.rs:605-625) — distinct entry, same decode.
 - `runtime/cli/ssg.test.ts:414-418`: FLIP — `expect(html).toContain('post:sa wad-dee')`
   (decoded), delete the stale "known framework gap" comment block, replace
   with a one-liner noting params arrive decoded.
@@ -88,8 +109,10 @@ decodes — now CONSISTENT with the server instead of divergent.
   (space + Thai) → loader-rendered output shows the decoded value; action
   route param decoded too.
 - Existing suites must stay green: any test that asserted encoded params is
-  part of the breaking flip (expected: the ssg one; grep for `%20`/`%E0`
-  assertions before claiming done).
+  part of the breaking flip (expected: the ssg one). Grep `%20`/`%E0`/`%2F`
+  assertions across runtime/, tests/, AND crates/ before claiming done
+  (static_assets.rs has its own `%20` tests — those cover a DIFFERENT decoder
+  and must NOT change).
 
 ### Docs (live docs site)
 
@@ -132,7 +155,11 @@ decodes — now CONSISTENT with the server instead of divergent.
    the Thai string. Same value in `cache.key` L2 and `param('slug')` L1 prefix.
 2. `brust build --ssg` with `ssg.params()` values containing spaces/Thai
    prerenders pages whose loader saw decoded values (flipped ssg.test.ts
-   assertion green).
+   assertion green). Round-trip pin: a user-supplied `ssg.params()` value
+   containing a literal `%` (e.g. `50%`) must be crawled as `/post/50%25` and
+   reach the loader as `50%` — verify how the crawler encodes expansion values
+   today (plan-time check; add the encode if missing, else this is a test
+   only).
 3. Action route params decoded identically.
 4. All baselines green: `bun run ci`, `bun test runtime/`, integration, ssg,
    cargo fmt/clippy/tests, `bun run docs:build`.
