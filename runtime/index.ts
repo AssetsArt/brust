@@ -115,6 +115,13 @@ function loadJinjaOnce(dir: string): void {
   _jinjaLoaded = true
 }
 
+// Resolved generator strings, set by the main-isolate view boot (which runs
+// before serve() binds the listener). serve() falls back to resolving the
+// artifact itself when boot hasn't stashed one (defensive — ordering holds in
+// every real entry: view registration precedes serve).
+// biome-ignore lint/correctness/noUnusedVariables: Task 6 wires this into serve(); intentionally stashed here.
+let resolvedGeneratorStrings: import('./generator.ts').GeneratorStrings | null = null
+
 function registerActionsInternal(endpoints: Array<{ method: string; path: string }>): number {
   return (native as any).registerActions(endpoints.map((e) => ({ method: e.method, path: e.path })))
 }
@@ -632,6 +639,13 @@ export const brust = {
       }
 
       configureJinjaDir(jinjaDir)
+      {
+        const { resolveGenerator } = await import('./generator.ts')
+        const gen = resolveGenerator(jinjaDir)
+        resolvedGeneratorStrings = gen
+        const { configureGeneratorMeta } = await import('./render/inject-generator.ts')
+        configureGeneratorMeta(gen.meta)
+      }
       loadJinjaOnce(jinjaDir)
       if (prebuilt && existsSync(jinjaDir)) {
         console.log(`[brust] main: using pre-built jinja at ${jinjaDir}`)
@@ -971,6 +985,11 @@ export const brust = {
         ? path.join(distDir!, 'jinja')
         : path.resolve(process.cwd(), '.brust/jinja')
       configureJinjaDir(workerJinjaDir)
+      {
+        const { resolveGenerator } = await import('./generator.ts')
+        const { configureGeneratorMeta } = await import('./render/inject-generator.ts')
+        configureGeneratorMeta(resolveGenerator(workerJinjaDir).meta)
+      }
 
       const { makeRenderer: make } = await import('./routes.ts')
       let wid: number | null = null
