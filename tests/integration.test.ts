@@ -2083,6 +2083,31 @@ test('generator: X-Powered-By on every response kind', async () => {
   expect(action.headers.get('x-powered-by') ?? '').toMatch(expected)
 })
 
+test('params: loader receives percent-decoded values (space + Thai)', async () => {
+  const port = sharedPort()
+  const cases: Array<[string, string]> = [
+    ['/blog/sa%20wad-dee', 'Post: sa wad-dee'],
+    // สวัสดี — what a browser sends for /blog/สวัสดี
+    ['/blog/%E0%B8%AA%E0%B8%A7%E0%B8%B1%E0%B8%AA%E0%B8%94%E0%B8%B5', 'Post: สวัสดี'],
+  ]
+  for (const [p, expected] of cases) {
+    const res = await fetch(`http://127.0.0.1:${port}${p}`)
+    expect(res.status).toBe(200)
+    // BlogPost renders data.title (from loader) in both <title> and <h1> inside <main>
+    expect(await res.text()).toContain(expected)
+  }
+})
+
+test('params: SPA navigation payload sees decoded values too', async () => {
+  const port = sharedPort()
+  const res = await fetch(`http://127.0.0.1:${port}/_brust/page/blog/sa%20wad-dee`)
+  expect(res.status).toBe(200)
+  // /_brust/page returns JSON { html, title }; both fields carry loader-derived text
+  const body = (await res.json()) as { html: string; title: string }
+  expect(body.html).toContain('Post: sa wad-dee')
+  expect(body.title).toContain('Post: sa wad-dee')
+})
+
 // NOTE: native-route HTTP coverage — including the S9 notFound()/redirect()
 // status sentinels — lives in tests/native-island-ssr.test.ts, which runs a
 // `brust build` pre-flight so the fixture's jinja templates are registered.
