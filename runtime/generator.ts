@@ -33,8 +33,10 @@ export function generatorStrings(versionOn: boolean): GeneratorStrings {
 const VIEWPORT_ANCHOR = '<meta name="viewport" content="width=device-width, initial-scale=1"/>'
 
 /** Insert the generator meta immediately after the compiler-emitted viewport
- * meta. Anchor missing (non-document template) → no-op, never an error. Emit
- * always starts from fresh compiler output, so re-running never duplicates. */
+ * meta. Anchor missing (non-document template) → no-op, never an error.
+ * CALLER CONTRACT: pass fresh compiler output — this function does not check
+ * for an existing tag, so calling it twice on the same string duplicates.
+ * Every emit path recompiles from source each run, which keeps this safe. */
 export function insertGeneratorMeta(jinja: string, metaTag: string): string {
   const at = jinja.indexOf(VIEWPORT_ANCHOR)
   if (at === -1) return jinja
@@ -52,9 +54,14 @@ export function writeGeneratorArtifact(dir: string, strings: GeneratorStrings): 
 export function readGeneratorArtifact(dir: string): GeneratorStrings | null {
   try {
     const raw = readFileSync(path.join(dir, 'generator.json'), 'utf8')
-    const p = JSON.parse(raw) as Partial<GeneratorStrings>
-    if (typeof p.meta === 'string' && typeof p.header === 'string') {
-      return { meta: p.meta, header: p.header }
+    // unknown + explicit narrowing (not a cast): a JSON `null`/non-object body
+    // must reach the `return null` below by DESIGN, not by riding the catch.
+    const p: unknown = JSON.parse(raw)
+    if (typeof p === 'object' && p !== null) {
+      const { meta, header } = p as Record<string, unknown>
+      if (typeof meta === 'string' && typeof header === 'string') {
+        return { meta, header }
+      }
     }
     return null
   } catch {
