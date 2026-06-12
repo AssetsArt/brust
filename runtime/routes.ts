@@ -1125,10 +1125,13 @@ export function makeRenderer(
       // after loaders (buildRenderElement resolved) — that's where Spec A stores
       // are seeded — and threaded into the render for <script> injection.
       return await runInRequestContext(call.req?.cookies ?? {}, async () => {
+        // Computed ONCE and shared by buildRenderElement (leaf swap) and
+        // renderBranchStreaming (forceIslands) so the two can never diverge.
+        const shellMode = wantsSsgFallbackShell(flat, call)
         let element: ReactNode
         let errorBoundary: ComponentType<{ error: Error }>
         try {
-          element = await buildRenderElement(call, flat, opts.getWorkerId)
+          element = await buildRenderElement(call, flat, opts.getWorkerId, shellMode)
           errorBoundary =
             flat.errorBoundary ??
             (({ error }) => createElement('div', null, `Internal Server Error: ${error.message}`))
@@ -1164,7 +1167,7 @@ export function makeRenderer(
           storeSnapshot,
           // SSG fallback shells have zero islands on the page but the
           // client-loader runtime still needs the importmap + bootstrap.
-          forceIslands: wantsSsgFallbackShell(flat, call),
+          forceIslands: shellMode,
         })
         // renderBranchStreaming wrote via the chunk channel.
         return 0
@@ -1386,8 +1389,17 @@ async function navigationBranch(
     } else {
       // Wrap loader run (inside buildRenderElement) + render in one store scope so
       // store reads resolve the per-request instance; collect after render.
+      // Shell mode here only swaps the leaf for the marker div — no bootstrap
+      // injection is needed in a NAV payload: the payload is swapped into a
+      // document that already booted the bootstrap (the navigator IS the
+      // bootstrap), and the takeover runtime imports its chunk itself.
       fullHtml = await runInRequestContext(call.req?.cookies ?? {}, async () => {
-        const element = await buildRenderElement(call as any, flat, getWorkerId)
+        const element = await buildRenderElement(
+          call as any,
+          flat,
+          getWorkerId,
+          wantsSsgFallbackShell(flat, call as any),
+        )
         if (!element) throw new Error('render setup failed')
         // Use renderToPipeableStream + onAllReady so pages with <Suspense> emit
         // their RESOLVED markup, not the fallback. renderToString would only
@@ -1539,6 +1551,10 @@ function wantsSsgFallbackShell(
   const leaf = flat.chain[flat.chain.length - 1]
   if (leaf?.ssg?.fallback !== 'client') return false
   const names = Object.keys(call.params ?? {})
+  // Parameterless routes can never be in shell mode — intentional, not a
+  // vacuous-truth bug: expandDynamicRoutes already rejects ssg config on
+  // routes without {param}, and a no-param route is always fully
+  // prerenderable.
   if (names.length === 0) return false
   if (!names.every((name) => call.params[name] === SSG_FALLBACK_SENTINEL)) return false
   return call.req?.headers?.['x-brust-ssg'] === '1'
@@ -1564,11 +1580,13 @@ async function buildRenderElement(
   call: Extract<RouteCall, { kind: 'render' }>,
   flat: FlatRoute,
   getWorkerId?: () => number | null,
+  // Computed ONCE by the caller (and reused there for forceIslands) so the
+  // shell decision and the bootstrap-injection decision can never diverge.
+  shellMode = false,
 ): Promise<ReactNode> {
   call.req.signal = NEVER_ABORTS
   const workerId = getWorkerId ? getWorkerId() : null
   const chainNodes = flat.chain
-  const shellMode = wantsSsgFallbackShell(flat, call)
   const leafIdx = chainNodes.length - 1
 
   // 1. Run loaders top-down (parent → leaf). Each Component receives ONLY
