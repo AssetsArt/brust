@@ -4,10 +4,17 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { loadConfig } from './config.ts'
 
-// loadConfig reads BRUST_PORT / BRUST_ADDR / BRUST_WORKERS from the environment.
+// loadConfig reads BRUST_PORT / BRUST_ADDR / BRUST_WORKERS /
+// BRUST_CACHE_SYNC_URL / BRUST_CACHE_SYNC_CHANNEL from the environment.
 // Snapshot and clear them so each case controls precedence explicitly.
 const SAVED: Record<string, string | undefined> = {}
-const ENV_KEYS = ['BRUST_PORT', 'BRUST_ADDR', 'BRUST_WORKERS']
+const ENV_KEYS = [
+  'BRUST_PORT',
+  'BRUST_ADDR',
+  'BRUST_WORKERS',
+  'BRUST_CACHE_SYNC_URL',
+  'BRUST_CACHE_SYNC_CHANNEL',
+]
 let dir: string
 
 beforeEach(async () => {
@@ -44,6 +51,39 @@ test('env BRUST_ADDR / BRUST_PORT win over opts defaults', async () => {
   const cfg = await loadConfig(dir, { host: '0.0.0.0', port: 4000 })
   expect(cfg.host).toBe('127.0.0.1')
   expect(cfg.port).toBe(8080)
+})
+
+test('cacheSyncUrl / cacheSyncChannel are undefined when not configured', async () => {
+  const cfg = await loadConfig(dir)
+  expect(cfg.cacheSyncUrl).toBeUndefined()
+  expect(cfg.cacheSyncChannel).toBeUndefined()
+})
+
+test('toml [cache] sync_url / sync_channel round-trip', async () => {
+  await writeFile(
+    join(dir, 'brust.toml'),
+    '[cache]\nsync_url = "redis://127.0.0.1:6379"\nsync_channel = "app:invalidate"\n',
+  )
+  const cfg = await loadConfig(dir)
+  expect(cfg.cacheSyncUrl).toBe('redis://127.0.0.1:6379')
+  expect(cfg.cacheSyncChannel).toBe('app:invalidate')
+})
+
+test('env BRUST_CACHE_SYNC_URL / _CHANNEL win over toml', async () => {
+  await writeFile(
+    join(dir, 'brust.toml'),
+    '[cache]\nsync_url = "redis://toml-host:6379"\nsync_channel = "toml:chan"\n',
+  )
+  process.env.BRUST_CACHE_SYNC_URL = 'redis://env-host:6380'
+  process.env.BRUST_CACHE_SYNC_CHANNEL = 'env:chan'
+  const cfg = await loadConfig(dir)
+  expect(cfg.cacheSyncUrl).toBe('redis://env-host:6380')
+  expect(cfg.cacheSyncChannel).toBe('env:chan')
+})
+
+test('toml [cache] sync_url must be a non-empty string', async () => {
+  await writeFile(join(dir, 'brust.toml'), '[cache]\nsync_url = 42\n')
+  await expect(loadConfig(dir)).rejects.toThrow(/cache\.sync_url/)
 })
 
 test('toml server.address / server.port win over opts but lose to env', async () => {

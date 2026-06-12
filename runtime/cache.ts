@@ -1,5 +1,6 @@
 // Dev-facing island ISR cache control. Invalidation crosses to the Rust-side
 // store (shared across the worker pool) via NAPI. Call from action/api/loader.
+import { publishCacheSync } from './cache-sync.ts'
 import * as native from './index.js'
 
 export interface InvalidateArgs {
@@ -28,5 +29,8 @@ export const cache = {
     // Fan out to the L1 response cache by tag (route must declare cache.tags)
     // and/or by path. `?.` keeps a stale addon a no-op.
     ;(native as any).responseCacheInvalidate?.(args.tags, args.path, args.method)
+    // R9: propagate to peer processes when cache-sync is configured (no-op
+    // otherwise). Fire-and-forget — local invalidation never depends on redis.
+    publishCacheSync(args)
   },
 }
