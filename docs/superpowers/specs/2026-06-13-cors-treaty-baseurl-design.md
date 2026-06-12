@@ -19,7 +19,7 @@
 
 ### TS treaty (`runtime/treaty.ts`)
 
-`ClientOpts` gains `baseUrl?: string` — absolute origin (`https://api.example.com`), trailing slash stripped. URL building becomes `(baseUrl ?? '') + prefix + '/' + segments.join('/')`. When `baseUrl` is set and `opts.prefix` is NOT, the prefix default stays `/_brust/action` (the global `__BRUST_ACTION_PREFIX__` belongs to the SERVING app, not the remote — do not consult it when baseUrl is set). Existing same-origin behavior byte-identical when `baseUrl` absent. Note in docs: cross-origin cookies require `fetch` init `credentials: 'include'` — expose `init?: RequestInit`-style passthrough ONLY if one already exists (do not add new fetch-option surface in v1; document the existing `fetch` override seam if present — verify in code).
+`ClientOptions` (existing type, lines 12-16) gains `baseUrl?: string` — absolute origin (`https://api.example.com`; path suffix like `/v2` composes by concatenation), validated `/^https?:\/\//`, trailing slash stripped. URL building becomes `(baseUrl ?? '') + prefix + '/' + segments.join('/')`. When `baseUrl` is set: prefix = `opts.prefix ?? '/_brust/action'` — the global `__BRUST_ACTION_PREFIX__` belongs to the SERVING app, never consulted under baseUrl. Existing same-origin behavior byte-identical when `baseUrl` absent. Cross-origin cookies: the existing `ClientOptions.fetch` override seam (line 15, `doFetch = opts?.fetch ?? fetch`) is the documented escape hatch for `credentials: 'include'` — NO new RequestInit surface in v1. Tests drive through the same `fetch` seam all 7 existing treaty tests already use.
 
 ### Server config
 
@@ -42,14 +42,17 @@ cors?: {
 }
 ```
 
-Validation at `serve()` boot (fail fast, Rust side mirrors): `origins` non-empty; `credentials && origins == ['*']` → boot error (browsers reject that combination silently — make it loud).
+Validation at `serve()` boot (fail fast, Rust side mirrors): `origins` non-empty; a list **containing** `'*'` is treated as wildcard (so `['*', 'https://x.com']` can't dodge the check); `credentials && wildcard` → boot error (browsers reject that combination silently — make it loud).
 
 ### Rust (`brust-core`)
 
 `CorsConfig` struct in `config.rs`, stored on AppState (set once at boot via the ServeOptions thread-through, like `action_prefix`). Behavior in `server/mod.rs::handle_request`:
 
-1. **Preflight:** `OPTIONS` + `Origin` + `Access-Control-Request-Method` present + cors configured + origin allowed → `204` with: `Access-Control-Allow-Origin` (echo origin, or `*` when configured `*` and no credentials), `Access-Control-Allow-Methods`, `Access-Control-Allow-Headers` (config list or echo of `Access-Control-Request-Headers`), `Access-Control-Max-Age`, `Access-Control-Allow-Credentials` (when configured), `Vary: Origin, Access-Control-Request-Method, Access-Control-Request-Headers`. Runs BEFORE the method gate (which currently 405s OPTIONS). `OPTIONS` without preflight headers, or disallowed origin, or no cors config → existing behavior (405) unchanged.
-2. **Actual responses:** when cors configured and request has an allowed `Origin`: insert `Access-Control-Allow-Origin` (+ `Allow-Credentials`, `Expose-Headers`, `Vary: Origin`) on the response — at the same layer that stamps `X-Powered-By` (~line 261, insert-if-absent so user middleware wins) and on the streaming/chunked path (`chunked_response_from_meta`) — verify both response-assembly sites get the headers (single helper).
+1. **Preflight:** `OPTIONS` + `Origin` + `Access-Control-Request-Method` present + cors configured + origin allowed → `204` with: `Access-Control-Allow-Origin` (echo origin, or `*` when wildcard and no credentials), `Access-Control-Allow-Methods`, `Access-Control-Allow-Headers` (config list or echo of `Access-Control-Request-Headers`), `Access-Control-Max-Age`, `Access-Control-Allow-Credentials` (when configured), `Vary: Origin, Access-Control-Request-Method, Access-Control-Request-Headers`. Runs BEFORE the method gate (~line 444). NOTE: OPTIONS under the action prefix currently passes the gate (`under_actions`) and 405s later in `handle_action` (`Method::from_http` ~803-806) — the unchanged-fallback tests must cover BOTH 405 sources. `OPTIONS` without preflight headers, or disallowed origin, or no cors config → existing behavior (405) unchanged.
+2. **Actual responses — SINGLE CHOKEPOINT:** stamp at the `service_fn` closure (~lines 259-264, where X-Powered-By is stamped) — that closure sees EVERY response path: static assets, all error helpers, L1 cache-hit framed bytes, all `response_from_meta` variants, chunked/streaming, SSE/WS rejections and upgrades. Do NOT also stamp in `chunked_response_from_meta`, and NEVER inside `response_from_meta`/dispatch — the L1 cache captures framed bytes pre-stamp, so stamping inside dispatch would bake a per-request echoed Origin into a SHARED cache entry (cache poisoning across origins). The closure must clone the `Origin` header value BEFORE `req` is moved into `handle_request`.
+   - `Access-Control-Allow-Origin` / `Allow-Credentials` / `Expose-Headers`: insert-if-absent (user middleware wins, X-Powered-By precedent), only when the request's Origin is allowed.
+   - **`Vary`: APPEND (comma-join), never insert-if-absent** — `static_asset_response` already emits `Vary: Accept-Encoding` and or_insert would silently drop the Origin variance → CDN cache poisoning. And when cors is configured with non-`*` origins, append `Vary: Origin` on EVERY response, even those without an Origin header — otherwise an intermediary caches the no-ACAO variant and replays it cross-origin.
+   - Resolve `CorsConfig` once pre-accept-loop into prebuilt `HeaderValue`s (mirror the `powered_by` resolution ~188-197); `set_cors` boot-only setter mirrors `set_tls`/`set_generator`.
 
 Origin matching: exact string match against the configured list (scheme+host+port); `*` matches all. No wildcard subdomains in v1 (documented).
 
@@ -60,7 +63,7 @@ Origin matching: exact string match against the configured list (scheme+host+por
 - `crates/brust/src/lib.rs` — NapiCorsOptions object + validation + thread to brust-core
 - `crates/brust-core/src/config.rs` — CorsConfig + AppState field + setter
 - `crates/brust-core/src/server/mod.rs` — preflight branch + response-header helper (both assembly paths)
-- `tests/cors.integration.test.ts` — new (boot fixture app WITH cors via its entry opts? — fixture entry reads env to enable cors so the shared fixture stays unchanged for other suites; verify how fixture passes opts and pick the least invasive switch, e.g. `BRUST_TEST_CORS=1` branch in fixture index.ts)
+- `tests/cors.integration.test.ts` — new, OWN file/process (combined fixture suites have a known port-race flake). Fixture switch: env branch in `tests/fixtures/app/index.ts` (`cors: process.env.BRUST_TEST_CORS ? {...} : undefined`) — exact house pattern (`BRUST_ACTION_PREFIX` precedent in the same file)
 - docs: actions docs page — "Cross-origin actions" section (baseUrl + cors config + credentials note)
 
 ## Behavior invariants
