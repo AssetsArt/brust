@@ -8,6 +8,7 @@ import {
   collectStaticPaths,
   expandDynamicRoutes,
   exportStatic,
+  fallback404Html,
   fallbackDiskPath,
   fallbackEntrySource,
   fallbackSentinelPath,
@@ -221,6 +222,26 @@ test('hasClientLoaderExport detects the export forms', () => {
   expect(hasClientLoaderExport('const clientLoader = 1')).toBe(false)
 })
 
+// ----- fallback404Html (Phase B, pure) -----
+
+test('fallback404Html inlines the pattern/doc pairs and the redirect script', () => {
+  const html = fallback404Html([
+    { pattern: '/ssg-fb/{slug}', doc: '/_brust/fallback/ssg-fb/__slug__/' },
+  ])
+  expect(html).toContain('/ssg-fb/{slug}')
+  expect(html).toContain('/_brust/fallback/ssg-fb/__slug__/')
+  expect(html).toContain("sessionStorage.setItem('brust:fallback-path'")
+  expect(html).toContain('location.replace')
+  expect(html).toContain('Not found.')
+})
+
+test('fallback404Html escapes < in the inlined JSON (script-context guard)', () => {
+  const html = fallback404Html([{ pattern: '/x/{a}</script>', doc: '/d/' }])
+  expect(html).toContain('\\u003c/script>')
+  // the only raw </script> left is the document's own closing tag
+  expect(html.match(/<\/script>/g)?.length).toBe(1)
+})
+
 // ----- exportStatic (integration: builds the fixture app, boots the dist) -----
 
 const REPO = path.resolve(import.meta.dir, '..', '..')
@@ -390,3 +411,90 @@ test('expanded ssg.params routes export concrete pages + payloads (decoded dirs)
     await rm(outDir, { recursive: true, force: true })
   }
 }, 60_000)
+
+test('fallback emission: shell doc + payload + routes.json manifest + 404.html', async () => {
+  const outDir = await mkdtemp(path.join(tmpdir(), 'brust-ssg-fb-'))
+  try {
+    const res = await exportStatic({
+      distDir,
+      entryDir: appDir,
+      staticOut: outDir,
+      routes: collectStaticPaths(
+        await expandDynamicRoutes([
+          {
+            fullPath: '/ssg-fb/{slug}',
+            chain: [{ ssg: { params: () => [{ slug: 'pre' }], fallback: 'client' } }],
+          },
+        ]),
+      ),
+      fallbacks: [{ pattern: '/ssg-fb/{slug}', chunk: '/_brust/islands/Fallback_test.js' }],
+    })
+
+    // Prerendered param page: real loader data, NO fallback marker.
+    const pre = await Bun.file(path.join(outDir, 'ssg-fb', 'pre', 'index.html')).text()
+    expect(pre).toContain('srv:pre')
+    expect(pre).not.toContain('data-brust-fallback-root')
+
+    // Fallback shell document: sentinel render with the takeover mount point
+    // and the islands bootstrap FORCED in (the shell itself has zero islands).
+    const doc = await Bun.file(
+      path.join(outDir, '_brust', 'fallback', 'ssg-fb', '__slug__', 'index.html'),
+    ).text()
+    expect(doc).toContain('data-brust-fallback-root')
+    expect(doc).toContain('_bootstrap.js')
+
+    // Fallback SPA payload: same {html,...} JSON contract as nav payloads.
+    const payload = JSON.parse(
+      await Bun.file(
+        path.join(outDir, '_brust', 'fallback-page', 'ssg-fb', '__slug__', 'index.html'),
+      ).text(),
+    ) as { html: string }
+    expect(typeof payload.html).toBe('string')
+    expect(payload.html).toContain('data-brust-fallback-root')
+
+    // Manifest: doc/payload are directory-index URLs; chunk passes through verbatim.
+    const manifest = JSON.parse(
+      await Bun.file(path.join(outDir, '_brust', 'routes.json')).text(),
+    ) as unknown
+    expect(manifest).toEqual({
+      version: 1,
+      fallbacks: [
+        {
+          pattern: '/ssg-fb/{slug}',
+          doc: '/_brust/fallback/ssg-fb/__slug__/',
+          payload: '/_brust/fallback-page/ssg-fb/__slug__/',
+          chunk: '/_brust/islands/Fallback_test.js',
+        },
+      ],
+    })
+
+    // 404.html carries the inlined pattern for the client-side redirect.
+    const notFound = await Bun.file(path.join(outDir, '404.html')).text()
+    expect(notFound).toContain('/ssg-fb/{slug}')
+
+    // ASCII sort: '-' (0x2D) < '/' (0x2F), so fallback-page/ precedes fallback/.
+    expect([...res.fallbackWritten].sort()).toEqual([
+      path.join('_brust', 'fallback-page', 'ssg-fb', '__slug__', 'index.html'),
+      path.join('_brust', 'fallback', 'ssg-fb', '__slug__', 'index.html'),
+    ])
+  } finally {
+    await rm(outDir, { recursive: true, force: true })
+  }
+}, 60_000)
+
+test('no fallbacks → NO routes.json, NO 404.html (byte-identical-today invariant)', async () => {
+  const outDir = await mkdtemp(path.join(tmpdir(), 'brust-ssg-nofb-'))
+  try {
+    const res = await exportStatic({
+      distDir,
+      entryDir: appDir,
+      staticOut: outDir,
+      routes: [dec('/blog/{slug}', false, 'dynamic-param')],
+    })
+    expect(res.fallbackWritten).toEqual([])
+    expect(existsSync(path.join(outDir, '_brust', 'routes.json'))).toBe(false)
+    expect(existsSync(path.join(outDir, '404.html'))).toBe(false)
+  } finally {
+    await rm(outDir, { recursive: true, force: true })
+  }
+}, 30_000)

@@ -254,6 +254,42 @@ export function hasClientLoaderExport(source: string): boolean {
   return /export\s+(const|async\s+function|function)\s+clientLoader\b/.test(source)
 }
 
+/** Static-host 404 document for `fallback: 'client'` routes: inlines the
+ * [{pattern, doc}] manifest pairs; a path matching a fallback pattern stashes
+ * the REAL url in sessionStorage (the takeover runtime restores it via
+ * history.replaceState) and redirects to the prerendered fallback shell.
+ * No match → plain 404 text. Pure string fn so the script/inline-JSON
+ * contract is unit-testable. The `<` escape keeps a `<` inside a pattern
+ * from closing the script context (patterns are author-controlled — this is
+ * belt-and-braces, not a trust boundary). */
+export function fallback404Html(pairs: Array<{ pattern: string; doc: string }>): string {
+  const inlineJson = JSON.stringify(pairs).replace(/</g, '\\u003c')
+  return `<!doctype html><html><head><meta charset="utf-8"><title>404</title></head><body>
+<p>Not found.</p>
+<script>
+(function () {
+  var MANIFEST = ${inlineJson};
+  function match(pattern, path) {
+    var p = pattern.split('/'), u = path.split('/')
+    if (p.length !== u.length) return false
+    for (var i = 0; i < p.length; i++) {
+      if (p[i].charAt(0) === '{') { if (!u[i]) return false }
+      else if (p[i] !== u[i]) return false
+    }
+    return true
+  }
+  for (var i = 0; i < MANIFEST.length; i++) {
+    if (match(MANIFEST[i].pattern, location.pathname)) {
+      try { sessionStorage.setItem('brust:fallback-path', location.pathname + location.search) } catch (e) {}
+      location.replace(MANIFEST[i].doc)
+      return
+    }
+  }
+})()
+</script></body></html>
+`
+}
+
 // ----- static export -----
 
 const READY_LINE = '[brust] listening on' // println! in brust-core server/mod.rs
@@ -349,6 +385,13 @@ async function waitForListening(
  * the static site navigate SPA-style instead of full-reloading; any host
  * 404/redirect-to-HTML still lands in the navigator's full-reload fallback.
  *
+ * `fallback: 'client'` routes additionally get their sentinel SHELL crawled
+ * (header `x-brust-ssg: 1` — the worker renders the placeholder shell only
+ * for that header + all-sentinel params) into `_brust/fallback{,-page}/…`,
+ * plus a `_brust/routes.json` manifest and a redirecting `404.html` (skipped
+ * with a warning when the app ships its own `public/404.html`). Without
+ * fallbacks the output is byte-identical to before this feature existed.
+ *
  * Asset copy preserves the live server's URL shape: islands + css under
  * /_brust/, public/ root-mapped (runtime/index.ts configurePublicDir). */
 export async function exportStatic(opts: {
@@ -356,8 +399,15 @@ export async function exportStatic(opts: {
   entryDir: string // app dir (for public/)
   staticOut: string // e.g. dist/static (clobbered first)
   routes: SsgRouteDecision[]
-}): Promise<{ written: string[]; navWritten: string[]; skipped: SsgRouteDecision[] }> {
-  const { distDir, entryDir, staticOut, routes } = opts
+  /** `fallback: 'client'` routes (pattern + built chunk URL) to emit shells for. */
+  fallbacks?: Array<{ pattern: string; chunk: string }>
+}): Promise<{
+  written: string[]
+  navWritten: string[]
+  fallbackWritten: string[]
+  skipped: SsgRouteDecision[]
+}> {
+  const { distDir, entryDir, staticOut, routes, fallbacks = [] } = opts
   const included = routes.filter((r) => r.include)
   const skipped = routes.filter((r) => !r.include)
 
@@ -366,7 +416,8 @@ export async function exportStatic(opts: {
 
   const written: string[] = []
   const navWritten: string[] = []
-  if (included.length > 0) {
+  const fallbackWritten: string[] = []
+  if (included.length > 0 || fallbacks.length > 0) {
     const port = await freePort()
     const proc = Bun.spawn(['bun', join(distDir, 'index.js')], {
       env: { ...process.env, BRUST_PORT: String(port), BRUST_WORKERS: '1' },
@@ -428,6 +479,85 @@ export async function exportStatic(opts: {
       const settled = await Promise.allSettled(workers)
       const failed = settled.find((s): s is PromiseRejectedResult => s.status === 'rejected')
       if (failed) throw failed.reason
+
+      // Fallback shells: crawl the sentinel path (every {param} →
+      // __brust_fallback__) with the build-internal header that unlocks the
+      // shell render. Same no-partial rule as the page crawl: any non-200
+      // fails the whole export.
+      for (const f of fallbacks) {
+        const sentinel = fallbackSentinelPath(f.pattern)
+        const resp = await fetch(`http://127.0.0.1:${port}${sentinel}`, {
+          headers: { 'x-brust-ssg': '1' },
+        })
+        const body = await resp.text()
+        if (resp.status !== 200) {
+          throw new Error(`GET ${sentinel} → ${resp.status}\n${body.slice(0, 500)}`)
+        }
+        const docFile = join('_brust', 'fallback', fallbackDiskPath(f.pattern), 'index.html')
+        const docPath = join(staticOut, docFile)
+        await mkdir(dirname(docPath), { recursive: true })
+        await Bun.write(docPath, body)
+        fallbackWritten.push(docFile)
+
+        // SPA payload of the shell — same {html,...} contract the client
+        // navigator parses (attemptClientFallback swaps it into <main>).
+        const payloadUrl = `/_brust/page${sentinel}`
+        const payloadResp = await fetch(`http://127.0.0.1:${port}${payloadUrl}`, {
+          headers: { 'x-brust-ssg': '1', Accept: 'application/json' },
+        })
+        const payloadBody = await payloadResp.text()
+        if (payloadResp.status !== 200) {
+          throw new Error(`GET ${payloadUrl} → ${payloadResp.status}\n${payloadBody.slice(0, 500)}`)
+        }
+        try {
+          const parsed = JSON.parse(payloadBody) as { html?: unknown }
+          if (typeof parsed.html !== 'string') throw new Error('missing "html" field')
+        } catch (e) {
+          throw new Error(`GET ${payloadUrl} → invalid SPA payload: ${(e as Error).message}`)
+        }
+        const payloadFile = join(
+          '_brust',
+          'fallback-page',
+          fallbackDiskPath(f.pattern),
+          'index.html',
+        )
+        const payloadPath = join(staticOut, payloadFile)
+        await mkdir(dirname(payloadPath), { recursive: true })
+        await Bun.write(payloadPath, payloadBody)
+        fallbackWritten.push(payloadFile)
+      }
+
+      if (fallbacks.length > 0) {
+        // Manifest the client takeover runtime fetches to map a 404'd path to
+        // its fallback shell. doc/payload are directory-index URLs (trailing
+        // slash) so a dumb static host serves the index.html written above.
+        const manifest = {
+          version: 1,
+          fallbacks: fallbacks.map((f) => ({
+            pattern: f.pattern,
+            doc: `/_brust/fallback/${fallbackDiskPath(f.pattern)}/`,
+            payload: `/_brust/fallback-page/${fallbackDiskPath(f.pattern)}/`,
+            chunk: f.chunk,
+          })),
+        }
+        const manifestPath = join(staticOut, '_brust', 'routes.json')
+        await mkdir(dirname(manifestPath), { recursive: true })
+        await Bun.write(manifestPath, JSON.stringify(manifest))
+
+        // 404.html redirects non-prerendered fallback paths to their shell.
+        // An app-authored public/404.html wins — it lands via the public/
+        // copy below, and the author owns the redirect contract.
+        if (existsSync(join(entryDir, 'public', '404.html'))) {
+          console.warn(
+            '[brust build] ssg: public/404.html exists — NOT overwriting; your 404 page must redirect fallback routes itself (see docs)',
+          )
+        } else {
+          await Bun.write(
+            join(staticOut, '404.html'),
+            fallback404Html(manifest.fallbacks.map(({ pattern, doc }) => ({ pattern, doc }))),
+          )
+        }
+      }
     } catch (err) {
       // No partial site: a failed crawl removes everything it wrote.
       await rm(staticOut, { recursive: true, force: true }).catch(() => {})
@@ -464,5 +594,6 @@ export async function exportStatic(opts: {
 
   written.sort()
   navWritten.sort()
-  return { written, navWritten, skipped }
+  fallbackWritten.sort()
+  return { written, navWritten, fallbackWritten, skipped }
 }

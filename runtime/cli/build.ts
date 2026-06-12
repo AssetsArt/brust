@@ -577,7 +577,7 @@ export async function runBuild(args: string[]): Promise<void> {
   // externals, content-addressed `Fallback_<Name>_<hash>.js`). Constraint
   // (documented in the spec): the leaf Component must be a DEFAULT import in
   // routes.tsx (scanImports resolution), and its file must export clientLoader.
-  // Task B4 wires these into exportStatic; step 8 reports them for now.
+  // Step 8 hands these to exportStatic (shell/payload crawl + manifest + 404).
   const ssgFallbacks: Array<{ pattern: string; chunk: string }> = []
   if (parsed.ssg) {
     const fallbackRoutes = (
@@ -664,11 +664,12 @@ export async function runBuild(args: string[]): Promise<void> {
     const decisions = collectStaticPaths(expanded)
     const staticOut = parsed.ssgOut ?? path.join(outDir, 'static')
     try {
-      const { written, navWritten, skipped } = await exportStatic({
+      const { written, navWritten, fallbackWritten, skipped } = await exportStatic({
         distDir: outDir,
         entryDir,
         staticOut,
         routes: decisions,
+        fallbacks: ssgFallbacks,
       })
       const counts = new Map<string, number>()
       for (const s of skipped) {
@@ -681,11 +682,11 @@ export async function runBuild(args: string[]): Promise<void> {
         .join(', ')
       const skippedDesc = skipped.length > 0 ? ` (skipped ${skipped.length}: ${reasons})` : ''
       const expandedDesc = expandedCount > 0 ? `, expanded ${expandedCount} dynamic page(s)` : ''
+      const fallbackDesc =
+        fallbackWritten.length > 0 ? `, ${fallbackWritten.length} fallback file(s)` : ''
       console.log(
-        `[brust build] ssg:     ${written.length} pages + ${navWritten.length} spa payloads${expandedDesc} → ${staticOut}${skippedDesc}`,
+        `[brust build] ssg:     ${written.length} pages + ${navWritten.length} spa payloads${expandedDesc}${fallbackDesc} → ${staticOut}${skippedDesc}`,
       )
-      // Task B4 wires ssgFallbacks into exportStatic (shell/payload/manifest
-      // emission); until then the built chunks are reported so the work shows.
       for (const f of ssgFallbacks) {
         console.log(
           `[brust build] ssg:     fallback chunk ${path.basename(f.chunk)} (${f.pattern})`,
