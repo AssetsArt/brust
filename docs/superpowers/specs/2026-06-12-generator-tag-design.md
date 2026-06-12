@@ -41,16 +41,27 @@ brust build [--no-generator-version]          brust dev [--no-generator-version]
         ▼                                              ▼
   generatorStrings(versionOn) ──► { meta: 'brust 0.1.48-alpha', header: 'brust/0.1.48-alpha' }
         │
+        ├─ (b — written FIRST) generator.json artifact written into every
+        │      jinja out dir (created even for React-only apps with zero
+        │      native routes): { "meta": "<full meta tag>", "header": "brust/x.y.z" }
+        │      build.ts and dev.ts are the ONLY writers; the flag's whole
+        │      effect is this artifact + the templates baked from it.
+        │
         ├─ (a) native + md jinja templates: literal insert of the meta tag
         │      right after the compiler-emitted viewport meta, applied to the
-        │      compileJsx output before it is written to disk — covers BOTH
-        │      emit paths (runtime/cli/native-routes-emit.ts and
-        │      runtime/md/emit.ts) and BOTH dual-emit locations
-        │      (dist/jinja and .brust/jinja).
-        │
-        ├─ (b) generator.json artifact written into every jinja out dir
-        │      (created even for React-only apps with zero native routes):
-        │      { "meta": "<full meta tag>", "header": "brust/x.y.z" }
+        │      compileJsx output before it is written to disk. The emitters
+        │      resolve the meta tag INTERNALLY (read the out dir's
+        │      generator.json, fallback = version-on) — NOT a caller param —
+        │      because emit re-runs from FIVE call sites and a param would
+        │      silently drop the tag on re-emit: build.ts, dev.ts,
+        │      runtime/index.ts:507 + :733 (md re-emit at every boot/hot
+        │      reload), runtime/index.ts:617 (boot staleness re-emit), and
+        │      runtime/dev/jinja-reload.ts:24 (dev HMR re-emit). Internal
+        │      resolution makes every re-emit self-consistent with zero
+        │      changes at those call sites. The `.brust/jinja` dual-emit is
+        │      a post-emit copy of the already-inserted files (build.ts:478),
+        │      so one insert covers both dirs; generator.json is written to
+        │      both dirs alongside.
         │
         └─ (c) consumed at serve time:
                • React streaming: runtime/render/stream.ts injects the meta
@@ -60,12 +71,18 @@ brust build [--no-generator-version]          brust dev [--no-generator-version]
                  the worker isolates (mirror of configureCssHrefsForRoute —
                  the worker-not-configured trap is known and load-bearing).
                • X-Powered-By: runtime/index.ts serve() reads the same
-                 artifact and threads `generator` (camelCase!) through napi
-                 ServeOptions (crates/brust/src/lib.rs) into brust-core
-                 server state; a single insertion point at the hyper
-                 service layer (crates/brust-core/src/server/mod.rs,
-                 service_fn wrapper around handle_request) stamps the header
-                 on every response, including cache HITs.
+                 artifact and threads `generator` through napi ServeOptions
+                 (crates/brust/src/lib.rs — single-word field, no
+                 snake_case/camelCase mismatch possible) into brust-core
+                 server state. The stamp lives in the service_fn wrapper
+                 closure at crates/brust-core/src/server/mod.rs:234 (NOT
+                 inside handle_request, which has ~15 early returns):
+                 every path — render, action, static, chunks, cache HIT,
+                 SAB fast-lane (builds a hyper Response, never writes the
+                 socket directly), streaming, WS 101 — returns through it.
+                 Cached framed bytes are captured pre-stamp (write-back
+                 happens inside dispatch), so stamping HITs at the wrapper
+                 produces no duplicate header.
 ```
 
 SSG (`brust build --ssg`) crawls the live server, so the static HTML inherits
@@ -91,12 +108,22 @@ places the generator meta immediately after it. The anchor is compiler-owned
 and stable; if it is ever missing (non-document template), the insert is a
 no-op — never an error.
 
-### React-path duplicate guard
+### React-path injection — two branches of stream.ts
 
-`stream.ts` skips injection when the buffered head already contains
-`name="generator"` (cheap substring check) so a hand-authored generator meta
-(e.g. via `BrustPage head={[…]}`) wins and no duplicate is emitted. The same
-guard is NOT needed on the jinja path: the insert runs once at emit time on
+- **Buffered branch** (`stream.ts:177`, the common case): inject before
+  `</head>` alongside `injectCssLink`, with a duplicate guard — skip when the
+  buffered HTML already contains `name="generator"` (cheap substring check) so
+  a hand-authored generator meta (e.g. via `BrustPage head={[…]}`) wins.
+- **Streaming-Suspense branch** (`stream.ts:222-254`): the document head
+  arrives in later chunks that bypass injection, so the meta tag is PREPENDED
+  with the other first-chunk tags before `<!DOCTYPE>`. In the raw bytes it
+  sits outside `<head>`; the HTML parser fosters it into `<head>`, so DOM-based
+  detectors (the Wappalyzer extension) and raw-regex detectors both match.
+  No duplicate guard is possible there (head bytes not visible yet) — a
+  hand-authored generator meta on a streaming route yields two tags in the
+  DOM. Accepted, documented limitation; detectors take the first match.
+
+The jinja path needs no guard: the insert runs once at emit time on fresh
 compiler-produced output. `BrustPage`'s React mirror is NOT modified —
 stream-level injection covers every React route whether or not it uses
 `BrustPage`.
@@ -121,24 +148,30 @@ otherwise, and that artifact is always written by builds that know the flag.
 
 | File | Change |
 |---|---|
-| `runtime/generator.ts` (new) | `generatorStrings(versionOn: boolean)` + `insertGeneratorMeta(jinja, metaTag)` + artifact read/write helpers + version read (help.ts pattern) |
-| `runtime/cli/build.ts` | parse `--no-generator-version`; apply insert to emitted jinja; write `generator.json` to all jinja out dirs (dual-emit); always write even for React-only apps |
-| `runtime/cli/dev.ts` | same flag; same insert + artifact in the dev pipeline |
-| `runtime/cli/native-routes-emit.ts` | accept the resolved meta tag (param) and insert after compileJsx, before the jinja write |
-| `runtime/md/emit.ts` | same insert on the md wrapper-compile path |
+| `runtime/generator.ts` (new) | `generatorStrings(versionOn: boolean)` + `insertGeneratorMeta(jinja, metaTag)` + `resolveGeneratorMeta(outDir)` (artifact read, version-on fallback) + artifact write + version read (help.ts pattern) |
+| `runtime/cli/build.ts` | parse `--no-generator-version`; write `generator.json` to all jinja out dirs BEFORE emit (dual-emit; always, even for React-only apps) |
+| `runtime/cli/dev.ts` | same flag (dev's existing reject-unknown-flags handling); write the artifact before the initial emit/boot so all re-emits and serve consumers read it |
+| `runtime/cli/native-routes-emit.ts` | resolve meta internally from the out dir's generator.json (fallback version-on) and insert after compileJsx, before the jinja write — covers all five emit call sites with no caller changes |
+| `runtime/md/emit.ts` | same internal resolve + insert on the md wrapper-compile path (insert anchors in the head; md renumbering touches only the spliced body, no conflict) |
 | `runtime/render/generator.ts` (new) | configured singleton: `configureGenerator(meta: string \| null)` / `getGeneratorMeta()` |
-| `runtime/render/stream.ts` | inject meta next to `injectCssLink` (with dupe guard) |
-| `runtime/index.ts` | main + worker boot: read artifact, seed the singleton, thread `generator` header string into napi ServeOptions |
-| `crates/brust/src/lib.rs` | `ServeOptions.generator: Option<String>` (napi camelCases it — JS passes `generator`); validate single-line ASCII; store in server state |
-| `crates/brust-core/src/server/mod.rs` | stamp `X-Powered-By` once at the service layer for every response |
+| `runtime/render/stream.ts` | buffered branch: inject next to `injectCssLink` (dupe guard); streaming branch: prepend with the first-chunk tags (no guard) |
+| `runtime/index.ts` | main + worker boot: read `<jinjaDir>/generator.json` (main configures jinjaDir at :634, worker at :970), seed the singleton, thread `generator` header string into napi ServeOptions |
+| `crates/brust/src/lib.rs` | `ServeOptions.generator: Option<String>`; validate single-line ASCII; store in server state (pattern of `action_prefix` at :57/:166) |
+| `crates/brust-core/src/server/mod.rs` | stamp `X-Powered-By` in the service_fn wrapper closure (:234), insert-if-absent |
 | `example/docs/content/cli.md` | document the flag |
 | `example/docs/content/rendering.md` | document generator meta + header + how to disable the version |
 | `example/docs/content/static-export.md` | note: static output keeps the meta, the header exists only on the brust server |
 
 ## Behavior invariants
 
-1. Name is always present; no code path produces HTML without the generator
-   meta or a server response without `X-Powered-By` (modulo invariant 5).
+1. Name is always present on every WELL-FORMED document: every routed page
+   whose template/render produces a document head carries the generator meta,
+   and every server response carries `X-Powered-By`. Enumerated exclusions
+   (meta only — the header still applies): native templates without a
+   document/anchor (anchor-missing → no-op, never an error); buffered React
+   HTML with no `</head>` (injectCssLink-style warn-once no-op); the
+   `onShellError` 500 page (`stream.ts:284` renderToString path bypasses
+   injection — header-only by design).
 2. The toggle affects ONLY the version substring, in both surfaces, atomically
    (one artifact, one decision).
 3. The jinja insert is idempotent in effect: emit always starts from fresh
@@ -173,9 +206,12 @@ otherwise, and that artifact is always written by builds that know the flag.
 
 ## Acceptance criteria
 
-1. Fresh `brust build` + boot: every HTML response contains exactly one
-   `<meta name="generator" content="brust <version>"/>` and every response
-   carries `X-Powered-By: brust/<version>`.
+1. Fresh `brust build` + boot: every DOCUMENT response of a routed page
+   (native, md, React buffered) contains exactly one
+   `<meta name="generator" content="brust <version>"/>` (streaming-Suspense
+   routes: at least one, fostered into head by the parser), and every
+   response of any kind carries `X-Powered-By: brust/<version>`. Error pages
+   and anchor-less templates are excluded from the meta criterion (invariant 1).
 2. `brust build --no-generator-version`: both surfaces show name-only.
 3. `--ssg` output files contain the meta.
 4. `brust dev` shows both surfaces too.
@@ -204,3 +240,14 @@ otherwise, and that artifact is always written by builds that know the flag.
   the Rust crate version.
 - **BrustPage mirror** → unchanged; stream-level injection covers React routes
   and avoids double tags.
+- **Param vs internal resolve for the emitters** (spec review blocker) →
+  internal resolve from the out dir's `generator.json` with version-on
+  fallback; five emit call sites stay untouched and every re-emit is
+  self-consistent.
+- **Streaming-Suspense placement** (spec review blocker) → prepend with the
+  first-chunk tags before `<!DOCTYPE>`; parser fosters into head; no dupe
+  guard there (documented limitation).
+- **onShellError 500 page** → header-only; no meta.
+- **Old artifact after brustjs upgrade without rebuild** → serve-time fallback
+  only fires when the artifact is MISSING; an existing artifact (even stale)
+  wins, matching the baked templates.
