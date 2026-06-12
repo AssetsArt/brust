@@ -61,6 +61,10 @@ export const COMMANDS: CommandDef[] = [
         flag: '--ssg-out <dir>',
         desc: 'Output directory for prerendered HTML (default <out-dir>/static)',
       },
+      {
+        flag: '--no-generator-version',
+        desc: 'Drop the version from the generator meta tag + X-Powered-By header (the name stays)',
+      },
     ],
     notes: [
       'Markdown pages: routes mounted with mdRoutes(<contentDir>) compile to native',
@@ -75,6 +79,10 @@ export const COMMANDS: CommandDef[] = [
     flags: [
       { flag: '[entry]', desc: 'Entry file (default ./index.ts)' },
       { flag: '--port <n>', desc: 'Port to listen on' },
+      {
+        flag: '--no-generator-version',
+        desc: 'Drop the version from the generator meta tag + X-Powered-By header (the name stays)',
+      },
     ],
   },
   {
