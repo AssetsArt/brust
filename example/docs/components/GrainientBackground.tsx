@@ -2,7 +2,7 @@
 // "Grainient" shader (David Haz, react-bits, MIT), raw WebGL2, zero deps.
 // Ported from chain-builder's Vue port (docs/site GrainientBackground.vue);
 // same fragment shader, same uniform tuning VERBATIM, brand palette
-// #1bcf96 / #27aeff / #08050b.
+// #F59E0B / #EA580C / #201712.
 //
 // Native behavior component: `behavior` is bundled into _directives.js and
 // runs client-side; the default export is the static <canvas> host the
@@ -18,10 +18,10 @@
 //   unmount/SPA-nav): RAF, observer, listeners, context release.
 import type { BehaviorCtx } from 'brustjs/native'
 
-// brand grainient palette (verbatim from the reference)
-const COLOR1 = '#1bcf96' // green
-const COLOR2 = '#27aeff' // blue
-const COLOR3 = '#08050b' // near-black
+// brand grainient palette
+const COLOR1 = '#F59E0B' // amber
+const COLOR2 = '#EA580C' // ember
+const COLOR3 = '#201712' // ink
 const TIME_SPEED = 0.5
 const WARP_SPEED = 0.6
 
@@ -29,9 +29,9 @@ function hexToRgb(hex: string): [number, number, number] {
   const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
   if (!m) return [1, 1, 1]
   return [
-    Number.parseInt(m[1], 16) / 255,
-    Number.parseInt(m[2], 16) / 255,
-    Number.parseInt(m[3], 16) / 255,
+    Number.parseInt(m[1]!, 16) / 255,
+    Number.parseInt(m[2]!, 16) / 255,
+    Number.parseInt(m[3]!, 16) / 255,
   ]
 }
 

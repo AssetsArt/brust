@@ -49,7 +49,7 @@ export default function Home({ version }: { version: string }) {
       ]}
     >
       {/* ── Full-viewport grainient hero (dark in both themes) ─────────── */}
-      <section className="relative isolate overflow-hidden bg-[#08050b]">
+      <section className="relative isolate overflow-hidden bg-[#201712]">
         <GrainientBackground native />
         <div className="hero-scrim" aria-hidden="true" />
 
@@ -82,7 +82,7 @@ export default function Home({ version }: { version: string }) {
               rel="noopener noreferrer"
               className="flex h-10 items-center rounded-full px-3 text-white/80 no-underline transition-colors duration-150 hover:text-white"
             >
-              npm
+              Npm
             </a>
             <span className="text-white">
               <ThemeToggle native />
@@ -393,7 +393,7 @@ export default function Home({ version }: { version: string }) {
               rel="noopener noreferrer"
               className="text-link no-underline transition-colors duration-150 hover:underline"
             >
-              npm
+              Npm
             </a>
           </div>
         </div>

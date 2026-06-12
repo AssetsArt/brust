@@ -93,17 +93,16 @@
 /* ── Runtime semantic tokens (theme-flipped) ──────────────────────────── */
 
 :root {
-  /* dark default — near-black, brand-hue (≈170) chroma ≤ 0.015 */
-  --bg: oklch(0.16 0.012 170);
-  --surface: oklch(0.2 0.014 170);
-  --fg: oklch(0.93 0.006 170);
-  --fg-muted: oklch(0.72 0.012 170);
-  --line: oklch(0.3 0.014 170);
-  --link: oklch(0.85 0.13 165); /* #46e7b4-class */
-  /* #139069-class, darkened a step so --accent-fg text clears the binding
-     4.5:1 (white on raw #139069 measures ≈4.0:1) */
-  --accent: oklch(0.52 0.11 168);
-  --accent-fg: oklch(0.985 0 0);
+  /* dark default — near-black warm ink #201712 oklch(0.18 0.014 42) */
+  --bg: oklch(0.18 0.014 42);
+  --surface: oklch(0.22 0.018 42);
+  --fg: oklch(0.935 0.021 68); /* cream #F6E9D6 */
+  --fg-muted: oklch(0.75 0.03 68);
+  --line: oklch(0.30 0.02 42);
+  --link: oklch(0.76 0.17 76); /* amber #F59E0B */
+  /* rust #C2410C solid CTA */
+  --accent: oklch(0.53 0.20 40);
+  --accent-fg: oklch(0.985 0.002 68);
 
   /* z-index scale — nothing else gets a z-index */
   --z-nav: 10;
@@ -118,13 +117,13 @@
 }
 
 [data-theme="light"] {
-  /* true off-white, chroma 0 — NOT cream */
-  --bg: oklch(0.985 0 0);
-  --surface: oklch(0.96 0 0);
-  --fg: oklch(0.22 0.01 170);
-  --fg-muted: oklch(0.45 0.01 170);
-  --line: oklch(0.88 0 0);
-  --link: oklch(0.46 0.09 168); /* #0d684b-class */
+  /* Bun theme cream #F6E9D6 background */
+  --bg: oklch(0.935 0.021 68);
+  --surface: oklch(0.90 0.03 68);
+  --fg: oklch(0.18 0.014 42); /* ink #201712 */
+  --fg-muted: oklch(0.42 0.03 45);
+  --line: oklch(0.82 0.04 68);
+  --link: oklch(0.48 0.18 38); /* darker rust to pass 4.5:1 contrast against cream */
 
   color-scheme: light;
 }
@@ -143,10 +142,10 @@
 }
 
 @theme {
-  /* brand greens (static; theme-independent references) */
-  --color-brand-300: oklch(0.85 0.13 165); /* #46e7b4 dark-bg green */
-  --color-brand-500: oklch(0.58 0.115 168); /* #139069 solid CTA */
-  --color-brand-700: oklch(0.46 0.09 168); /* #0d684b light-bg green */
+  /* brand warm palette (static; theme-independent references) */
+  --color-brand-300: oklch(0.76 0.17 76); /* #F59E0B amber */
+  --color-brand-500: oklch(0.61 0.22 42); /* #EA580C ember */
+  --color-brand-700: oklch(0.48 0.18 38); /* dark rust */
 
   /* type — Schibsted Grotesk / Spline Sans Mono self-hosted (public/fonts,
      @font-face above); the system stacks cover pre-swap + missing glyphs */
@@ -259,7 +258,7 @@ dialog.search-palette {
 
 dialog.search-palette::backdrop {
   z-index: var(--z-palette-backdrop);
-  background: rgb(8 5 11 / 0.55);
+  background: rgb(32 23 18 / 0.55); /* ink tone overlay */
 }
 
 /* open moment: ≤200ms ease-out-quart; the global reduced-motion rule above
@@ -291,22 +290,22 @@ dialog.search-palette[open] {
    a static gradient in the same trio (#1bcf96 / #27aeff / #08050b). */
 .grainient-fallback {
   background:
-    radial-gradient(110% 80% at 85% 8%, rgb(39 174 255 / 0.3), transparent 60%),
-    radial-gradient(120% 90% at 12% 88%, rgb(27 207 150 / 0.32), transparent 62%),
-    #08050b;
+    radial-gradient(110% 80% at 85% 8%, rgb(245 158 11 / 0.22), transparent 60%),
+    radial-gradient(120% 90% at 12% 88%, rgb(234 88 12 / 0.22), transparent 62%),
+    #201712;
 }
 
 /* contrast scrim between the animated field and the hero copy (binding
-   ≥4.5:1 — the field can swing bright green/blue behind the text) */
+   >=4.5:1 — the field can swing bright amber/ember behind the text) */
 .hero-scrim {
   position: absolute;
   inset: 0;
   pointer-events: none;
   background: linear-gradient(
     180deg,
-    rgb(8 5 11 / 0.55),
-    rgb(8 5 11 / 0.55) 45%,
-    rgb(8 5 11 / 0.72)
+    rgb(32 23 18 / 0.55),
+    rgb(32 23 18 / 0.55) 45%,
+    rgb(32 23 18 / 0.72)
   );
 }
 
@@ -451,13 +450,13 @@ dialog.search-palette[open] {
 
 .bento-highlight {
   background:
-    radial-gradient(120% 110% at 85% -10%, rgb(27 207 150 / 0.18), transparent 55%),
-    #0b100e;
-  border: 1px solid rgb(70 231 180 / 0.3);
+    radial-gradient(120% 110% at 85% -10%, rgb(234 88 12 / 0.15), transparent 55%),
+    #261c16;
+  border: 1px solid rgb(245 158 11 / 0.3);
 }
 
 .bento-highlight:hover {
-  border-color: rgb(70 231 180 / 0.55);
+  border-color: rgb(245 158 11 / 0.55);
 }
 
 /* ── Markdown prose ([data-brust-md-slot] is the md page wrapper) ─────── */
