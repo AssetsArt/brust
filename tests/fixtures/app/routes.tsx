@@ -9,6 +9,7 @@ import {
 } from '../../../runtime/routes.ts'
 import { counterStream, idleStream } from './sse-streams.ts'
 import { cache } from '../../../runtime/cache.ts'
+import { templates } from '../../../runtime/templates.ts'
 
 // Fixture-local page copies. The test fixture is SELF-CONTAINED — it must not
 // import from any example/ app, so deleting or regenerating an example never
@@ -39,6 +40,7 @@ import CacheTest           from './components/CacheTest'
 import CachePrefixTest     from './components/CachePrefixTest'
 import CacheFlakyTest      from './components/CacheFlakyTest'
 import CacheTaggedTest     from './components/CacheTaggedTest'
+import DynamicTemplatePage from './components/DynamicTemplatePage'
 import CacheParamTest      from './components/CacheParamTest'
 import CacheBypassTest     from './components/CacheBypassTest'
 import Protected           from './components/Protected'
@@ -317,6 +319,17 @@ export const routes = defineRoutes([
     loader: async () => {
       cache.invalidate({ tags: ['grp-a'] })
       return {}
+    },
+  },
+  // R1 dynamic template registry E2E: the loader registers a runtime jinja
+  // template (worker isolate — pins that registrations are process-global)
+  // and renders it; the page inlines the html.
+  {
+    path: '/dynamic-template',
+    Component: DynamicTemplatePage,
+    loader: async () => {
+      templates.register('itest/banner@v1', '<div id="dyn">Hello {{ who }}</div>')
+      return { html: templates.render('itest/banner@v1', { who: 'tenant-42' }) }
     },
   },
   { path: '/protected',    Component: Protected,    middleware: [authRequired] },

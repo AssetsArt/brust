@@ -1149,6 +1149,43 @@ pub fn napi_load_jinja_templates(dir: String) -> Vec<String> {
     brust_core::template::jinja::load_from(std::path::Path::new(&dir))
 }
 
+/// R1 dynamic template registry — register (or replace) a runtime template.
+/// Errors (name validation / jinja syntax) surface as a thrown JS Error with
+/// the minijinja message (includes line info).
+#[napi]
+pub fn napi_register_template(name: String, source: String) -> NapiResult<()> {
+    brust_core::template::jinja::register_template(&name, &source)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// R1 — remove a runtime-registered template. Returns whether it existed.
+/// Boot-tier (directory-loaded) templates are not removable.
+#[napi]
+pub fn napi_remove_template(name: String) -> bool {
+    brust_core::template::jinja::remove_dynamic_template(&name)
+}
+
+/// R1 — names of runtime-registered templates (dynamic tier only).
+#[napi]
+pub fn napi_list_dynamic_templates() -> Vec<String> {
+    brust_core::template::jinja::dynamic_template_names()
+}
+
+/// R1 — true when `name` resolves in either tier (dynamic first, then boot).
+#[napi]
+pub fn napi_has_template(name: String) -> bool {
+    brust_core::template::jinja::has_template(&name)
+}
+
+/// R1 — render a template (either tier) to an HTML string. NOT the request
+/// hot path (allocates a JS string per call; the fast lane is
+/// napi_render_jinja via SAB) — intended for handlers/loaders/tooling.
+#[napi]
+pub fn napi_render_template(name: String, data_json: String) -> NapiResult<String> {
+    brust_core::template::jinja::render(&name, data_json.as_bytes())
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
 /// Convert a NAPI BigInt to u64, rejecting negative values.
 /// conn_ids cross the JS/Rust boundary as BigInt because JS Number tops out
 /// at 2^53 while conn_ids are monotonic u64 from an AtomicU64.

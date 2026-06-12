@@ -24,6 +24,23 @@ use parking_lot::RwLock;
 // the previous generation instead of leaking it.
 static ENV: RwLock<Option<Environment<'static>>> = RwLock::new(None);
 
+// Dynamic tier — templates registered at runtime (per-tenant sections etc.).
+// Source of truth is DYN_SOURCES; DYN_ENV mirrors it. Lazily initialized with
+// base_env() — deliberately NOT copied from ENV (register may legally run
+// before load_from; no boot-ordering dependency). Dev hot reload replaces ENV
+// only; dynamic registrations survive.
+static DYN_ENV: RwLock<Option<Environment<'static>>> = RwLock::new(None);
+static DYN_SOURCES: RwLock<Option<std::collections::HashMap<String, String>>> = RwLock::new(None);
+
+/// Shared construction for both the boot env (`load_from`) and the dynamic
+/// tier — single source of truth for filters + undefined behavior.
+fn base_env() -> Environment<'static> {
+    let mut env = Environment::new();
+    env.set_undefined_behavior(UndefinedBehavior::Chainable);
+    env.add_filter("json_attr", json_attr);
+    env
+}
+
 /// Read every `<Name>.jinja` file in `dir` and register it under its file
 /// stem. Returns the registered template names.
 ///
@@ -31,9 +48,7 @@ static ENV: RwLock<Option<Environment<'static>>> = RwLock::new(None);
 /// returns `vec![]`. Parse errors on individual `.jinja` files panic — that's
 /// real build-pipeline drift (spec S6).
 pub fn load_from(dir: &Path) -> Vec<String> {
-    let mut env = Environment::new();
-    env.set_undefined_behavior(UndefinedBehavior::Chainable);
-    env.add_filter("json_attr", json_attr);
+    let mut env = base_env();
     let mut names = Vec::new();
 
     if dir.exists() && dir.is_dir() {
@@ -87,16 +102,108 @@ fn json_attr(value: minijinja::Value) -> Result<String, minijinja::Error> {
         .replace('"', "&quot;"))
 }
 
-/// Render the named template against the supplied JSON bytes.
+#[derive(Debug, thiserror::Error)]
+pub enum RegisterError {
+    #[error("template name must be non-empty")]
+    EmptyName,
+    #[error("template name too long (max 512 bytes)")]
+    NameTooLong,
+    #[error("template name contains control characters")]
+    NameControlChar,
+    #[error("template syntax: {0}")]
+    Syntax(String),
+}
+
+// Lock order is GLOBAL: DYN_ENV before DYN_SOURCES, always; render takes DYN
+// locks and drops them before touching ENV.
+
+/// Register (or replace) a runtime template. minijinja parses eagerly inside
+/// add_template_owned for owned inputs — on a syntax error nothing is mutated
+/// and any prior registration under `name` survives.
+pub fn register_template(name: &str, source: &str) -> Result<(), RegisterError> {
+    if name.is_empty() {
+        return Err(RegisterError::EmptyName);
+    }
+    if name.len() > 512 {
+        return Err(RegisterError::NameTooLong);
+    }
+    if name.chars().any(|c| c.is_control()) {
+        return Err(RegisterError::NameControlChar);
+    }
+
+    let mut env_guard = DYN_ENV.write();
+    let env = env_guard.get_or_insert_with(base_env);
+    env.add_template_owned(name.to_string(), source.to_string())
+        .map_err(|e| RegisterError::Syntax(e.to_string()))?;
+    DYN_SOURCES
+        .write()
+        .get_or_insert_with(Default::default)
+        .insert(name.to_string(), source.to_string());
+    Ok(())
+}
+
+/// Remove a runtime-registered template. Returns whether it existed.
+/// minijinja's remove_template returns (), so existence comes from DYN_SOURCES.
+pub fn remove_dynamic_template(name: &str) -> bool {
+    let mut env_guard = DYN_ENV.write();
+    // Hold the sources guard across the env mutation so the two tiers never
+    // disagree mid-removal (a concurrent has_template between the map remove
+    // and the env remove would otherwise see a split-brain).
+    let mut src_guard = DYN_SOURCES.write();
+    let existed = src_guard.as_mut().is_some_and(|m| m.remove(name).is_some());
+    if existed && let Some(env) = env_guard.as_mut() {
+        env.remove_template(name);
+    }
+    existed
+}
+
+/// Names of runtime-registered templates (dynamic tier only).
+pub fn dynamic_template_names() -> Vec<String> {
+    DYN_SOURCES
+        .read()
+        .as_ref()
+        .map(|m| m.keys().cloned().collect())
+        .unwrap_or_default()
+}
+
+/// True when `name` resolves in either tier (dynamic first, then boot).
+pub fn has_template(name: &str) -> bool {
+    if DYN_SOURCES
+        .read()
+        .as_ref()
+        .is_some_and(|m| m.contains_key(name))
+    {
+        return true;
+    }
+    ENV.read()
+        .as_ref()
+        .is_some_and(|env| env.get_template(name).is_ok())
+}
+
+/// Render the named template against the supplied JSON bytes. Lookup order:
+/// dynamic tier first (runtime registrations win on collision — documented
+/// override semantics), then the boot env.
 pub fn render(name: &str, data_json: &[u8]) -> Result<String, RenderError> {
+    let value: serde_json::Value =
+        serde_json::from_slice(data_json).map_err(|e| RenderError::BadJson(e.to_string()))?;
+
+    {
+        let dyn_guard = DYN_ENV.read();
+        if let Some(env) = dyn_guard.as_ref()
+            && let Ok(tmpl) = env.get_template(name)
+        {
+            return tmpl
+                .render(&value)
+                .map_err(|e| RenderError::Render(e.to_string()));
+        }
+    } // dyn lock dropped before boot lookup
+
     let guard = ENV.read();
     let env = guard.as_ref().ok_or(RenderError::NotLoaded)?;
     let tmpl = env
         .get_template(name)
         .map_err(|_| RenderError::UnknownTemplate(name.to_string()))?;
-    let value: serde_json::Value =
-        serde_json::from_slice(data_json).map_err(|e| RenderError::BadJson(e.to_string()))?;
-    tmpl.render(value)
+    tmpl.render(&value)
         .map_err(|e| RenderError::Render(e.to_string()))
 }
 
@@ -125,6 +232,10 @@ pub enum RenderError {
 mod tests {
     use super::*;
 
+    // ENV/DYN_* are process-global and cargo runs tests concurrently in one
+    // process; every test that touches the globals serializes on this lock.
+    static TEST_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
     fn write_fixture_dir() -> tempfile::TempDir {
         let dir = tempfile::tempdir().expect("temp dir");
         std::fs::write(
@@ -145,6 +256,7 @@ mod tests {
         // Single test serializing all sub-checks: ENV is process-global, so the
         // sub-checks (including the reload at the end) must run in sequence. The
         // lenient-missing-dir branch is covered structurally + by Task 6 E2E.
+        let _guard = TEST_LOCK.lock();
         let dir = write_fixture_dir();
         let names = load_from(dir.path());
         assert!(names.contains(&"HelloPage".to_string()));
@@ -187,6 +299,80 @@ mod tests {
         assert!(matches!(
             render("ListNav", b"{}"),
             Err(RenderError::UnknownTemplate(_)),
+        ));
+    }
+
+    #[test]
+    fn dynamic_registry_round_trip() {
+        let _guard = TEST_LOCK.lock();
+
+        let name = "dynreg/shop/1/section/2@v1";
+
+        // Register + render.
+        register_template(name, r#"<div class="s">{{ title }}</div>"#).expect("register");
+        let out = render(name, br#"{"title":"X"}"#).expect("render dynamic");
+        assert_eq!(out, r#"<div class="s">X</div>"#);
+
+        // Re-register same name replaces.
+        register_template(name, "<p>{{ title }}</p>").expect("re-register");
+        let out = render(name, br#"{"title":"X"}"#).expect("render after replace");
+        assert_eq!(out, "<p>X</p>");
+
+        // Syntax error: nothing mutated, prior registration survives.
+        let err = register_template(name, "{% for x in %}");
+        assert!(matches!(err, Err(RegisterError::Syntax(_))));
+        let out = render(name, br#"{"title":"X"}"#).expect("render after bad re-register");
+        assert_eq!(out, "<p>X</p>");
+
+        // Names + has_template.
+        assert!(dynamic_template_names().contains(&name.to_string()));
+        assert!(has_template(name));
+        assert!(!has_template("dynreg/missing"));
+
+        // Remove semantics.
+        assert!(remove_dynamic_template(name));
+        assert!(!remove_dynamic_template(name));
+        assert!(!has_template(name));
+
+        // Precedence: dynamic tier wins over boot env on collision.
+        let dir = tempfile::tempdir().expect("temp dir");
+        std::fs::write(dir.path().join("DynPrec.jinja"), "<b>boot</b>").unwrap();
+        load_from(dir.path());
+        register_template("DynPrec", "<b>dyn</b>").expect("register DynPrec");
+        let out = render("DynPrec", b"{}").expect("render DynPrec dynamic");
+        assert_eq!(out, "<b>dyn</b>");
+        assert!(remove_dynamic_template("DynPrec"));
+        let out = render("DynPrec", b"{}").expect("render DynPrec boot");
+        assert_eq!(out, "<b>boot</b>");
+
+        // Hot-reload survival: replacing ENV via load_from leaves the dynamic
+        // tier untouched.
+        register_template("dynreg/survivor", "<i>{{ v }}</i>").expect("register survivor");
+        let dir2 = tempfile::tempdir().expect("temp dir");
+        std::fs::write(dir2.path().join("DynPrec.jinja"), "<b>boot</b>").unwrap();
+        load_from(dir2.path());
+        let out = render("dynreg/survivor", br#"{"v":"ok"}"#).expect("render survivor");
+        assert_eq!(out, "<i>ok</i>");
+
+        // Cleanup so other tests see a pristine dynamic tier.
+        assert!(remove_dynamic_template("dynreg/survivor"));
+    }
+
+    #[test]
+    fn register_validation_errors() {
+        let _guard = TEST_LOCK.lock();
+
+        assert!(matches!(
+            register_template("", "<p>x</p>"),
+            Err(RegisterError::EmptyName)
+        ));
+        assert!(matches!(
+            register_template("bad\u{0}name", "<p>x</p>"),
+            Err(RegisterError::NameControlChar)
+        ));
+        assert!(matches!(
+            register_template(&"a".repeat(513), "<p>x</p>"),
+            Err(RegisterError::NameTooLong)
         ));
     }
 }

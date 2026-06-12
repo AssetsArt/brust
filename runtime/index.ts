@@ -261,9 +261,16 @@ export const brust = {
     // before any traffic hits.
     const expected = routes.filter((r) => r.nativeTemplate).map((r) => r.nativeTemplate!)
     if (expected.length > 0) {
-      const registered = new Set<string>((native as any).napiListNativeTemplates() ?? [])
+      // Dual-tier check (boot env + R1 dynamic registry). `napiHasTemplate`
+      // may be absent on a stale addon — fall back to the boot-tier list.
+      const hasTemplate: (name: string) => boolean = (native as any).napiHasTemplate
+        ? (name) => (native as any).napiHasTemplate(name)
+        : (() => {
+            const registered = new Set<string>((native as any).napiListNativeTemplates() ?? [])
+            return (name) => registered.has(name)
+          })()
       for (const name of expected) {
-        if (!registered.has(name)) {
+        if (!hasTemplate(name)) {
           console.warn(
             `[brust] native: true route expects template "${name}.jinja" but it's not registered (boot warning — request will 500)`,
           )
@@ -1083,6 +1090,8 @@ export type { IslandsBuildResult, BuildIslandsOptions } from './islands/build.ts
 
 export { cache } from './cache.ts'
 export type { InvalidateArgs } from './cache.ts'
+
+export { templates } from './templates.ts'
 
 export { getRequestContext } from './request-context.ts'
 export { cookies } from './cookies.ts'
