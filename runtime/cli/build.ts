@@ -332,11 +332,14 @@ export async function runBuild(args: string[]): Promise<void> {
   // .brust/jinja) picks up the same artifact. Runs unconditionally: even a
   // React-only app with zero native/md routes needs the artifact so the React
   // stream injector and X-Powered-By thread share the same decision.
+  // The .brust/jinja write is defense-in-depth: the 4.1 mirror cp below
+  // overwrites it with identical content, but this write must NOT be removed —
+  // it keeps the artifact correct even if that cp ever becomes conditional.
   {
     const { generatorStrings, writeGeneratorArtifact } = await import('../generator.ts')
     const gen = generatorStrings(parsed.generatorVersion)
     writeGeneratorArtifact(jinjaDir, gen)
-    writeGeneratorArtifact(path.resolve(process.cwd(), '.brust/jinja'), gen)
+    writeGeneratorArtifact(path.join(process.cwd(), '.brust', 'jinja'), gen)
   }
 
   let mdIslands = new Map<string, string>()
