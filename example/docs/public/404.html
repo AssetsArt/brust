@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>404 — Page not found · brust</title>
+    <meta name="robots" content="noindex" />
+    <meta name="generator" content="brust" />
+    <!-- Standalone static page: Cloudflare Pages serves this (with HTTP 404)
+         for any path that doesn't match a prerendered file. Self-contained on
+         purpose — no app.css / font dependency, so it renders even if the
+         asset pipeline paths change. Brand tokens mirror app.css. -->
+    <style>
+      :root {
+        --bg: oklch(0.16 0.012 170);
+        --surface: oklch(0.2 0.014 170);
+        --fg: oklch(0.93 0.006 170);
+        --fg-muted: oklch(0.72 0.012 170);
+        --line: oklch(0.3 0.014 170);
+        --brand: oklch(0.85 0.13 165);
+        --accent-fg: oklch(0.985 0 0);
+        --accent: oklch(0.52 0.11 168);
+        --font-sans: "Schibsted Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+        --font-mono: "Spline Sans Mono", ui-monospace, "SF Mono", Menlo, monospace;
+      }
+      @media (prefers-color-scheme: light) {
+        :root {
+          --bg: oklch(0.985 0 0);
+          --surface: oklch(0.96 0 0);
+          --fg: oklch(0.22 0.01 170);
+          --fg-muted: oklch(0.45 0.01 170);
+          --line: oklch(0.88 0 0);
+          --brand: oklch(0.46 0.09 168);
+          --accent: oklch(0.58 0.115 168);
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        height: 100%;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font-family: var(--font-sans);
+        -webkit-font-smoothing: antialiased;
+        display: grid;
+        place-items: center;
+        padding: 1.5rem;
+        line-height: 1.5;
+      }
+      main {
+        width: 100%;
+        max-width: 32rem;
+        text-align: center;
+      }
+      .code {
+        font-family: var(--font-mono);
+        font-size: clamp(4rem, 2rem + 12vw, 8rem);
+        font-weight: 600;
+        letter-spacing: -0.02em;
+        line-height: 1;
+        color: var(--brand);
+        margin: 0;
+      }
+      h1 {
+        font-size: 1.5625rem;
+        font-weight: 600;
+        margin: 1.25rem 0 0.5rem;
+      }
+      p {
+        color: var(--fg-muted);
+        margin: 0 auto;
+        max-width: 26rem;
+      }
+      .actions {
+        margin-top: 2rem;
+        display: flex;
+        gap: 0.75rem;
+        justify-content: center;
+        flex-wrap: wrap;
+      }
+      a {
+        text-decoration: none;
+        font-weight: 500;
+        font-size: 0.95rem;
+        padding: 0.6rem 1.1rem;
+        border-radius: 0.5rem;
+        transition: background 0.15s ease, border-color 0.15s ease;
+      }
+      a.primary {
+        background: var(--accent);
+        color: var(--accent-fg);
+      }
+      a.primary:hover {
+        background: var(--brand);
+      }
+      a.ghost {
+        border: 1px solid var(--line);
+        color: var(--fg);
+      }
+      a.ghost:hover {
+        border-color: var(--brand);
+        color: var(--brand);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="code">404</p>
+      <h1>Page not found</h1>
+      <p>
+        The page you’re looking for doesn’t exist or has moved. Check the URL,
+        or head back to the documentation.
+      </p>
+      <div class="actions">
+        <a class="primary" href="/">Home</a>
+        <a class="ghost" href="/docs">Documentation</a>
+      </div>
+    </main>
+  </body>
+</html>

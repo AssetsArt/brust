@@ -19,8 +19,10 @@ import { mdUrlPath, scanMdDir } from 'brustjs/routes'
 
 /** Canonical production origin, NO trailing slash. Sitemap `<loc>` entries
  *  must be absolute; llms.txt links are absolute for the same reason (an LLM
- *  may read the file detached from its host). Override in tests. */
-export const SITE_URL = 'https://brust-docs.pages.dev'
+ *  may read the file detached from its host). This is the custom domain the
+ *  docs are served from — NOT the underlying *.pages.dev deploy alias, so
+ *  search engines index a single canonical host. Override in tests. */
+export const SITE_URL = 'https://brust.assetsart.com'
 
 /** One-line project summary for the llms.txt blockquote (llmstxt.org §format).
  *  A project tagline, deliberately NOT scraped from a page's frontmatter — a
