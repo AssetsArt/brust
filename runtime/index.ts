@@ -119,7 +119,7 @@ function loadJinjaOnce(dir: string): void {
 // before serve() binds the listener). serve() falls back to resolving the
 // artifact itself when boot hasn't stashed one (defensive — ordering holds in
 // every real entry: view registration precedes serve).
-// biome-ignore lint/correctness/noUnusedVariables: Task 6 wires this into serve(); intentionally stashed here.
+// Main-isolate-only: the worker path resolves the artifact itself.
 let resolvedGeneratorStrings: import('./generator.ts').GeneratorStrings | null = null
 
 function registerActionsInternal(endpoints: Array<{ method: string; path: string }>): number {
@@ -153,6 +153,10 @@ export const brust = {
       // registration index; the worker dispatches on that same index string.
       registerActionsInternal(opts.actions.endpoints)
     }
+    const { resolveGenerator } = await import('./generator.ts')
+    const path = await import('node:path')
+    const gen =
+      resolvedGeneratorStrings ?? resolveGenerator(path.resolve(process.cwd(), '.brust/jinja'))
     ;(native as any).beginServe({
       host: opts.host,
       port: opts.port,
@@ -163,6 +167,10 @@ export const brust = {
       // `actionPrefix` (not snake_case). A snake_case key is silently dropped,
       // leaving the prefix at its default — which broke custom-prefix routing.
       actionPrefix: opts.actionPrefix,
+      // X-Powered-By value from the build's generator.json (stashed by view
+      // boot; artifact fallback covers any ordering edge). Single word — no
+      // napi case-mapping trap possible.
+      generator: gen.header,
     })
     // Render slots per worker. Propagated to each worker via env (Bun Workers
     // share the OS process, so the worker reads it from process.env at
