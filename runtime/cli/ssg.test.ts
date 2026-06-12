@@ -209,16 +209,23 @@ test('fallbackSentinelPath substitutes every param with the sentinel', () => {
   expect(fallbackSentinelPath('/d/{a}/x/{b}')).toBe('/d/__brust_fallback__/x/__brust_fallback__')
 })
 
-test('fallbackEntrySource emits the chunk entry module', () => {
+test('fallbackEntrySource emits the chunk entry module (JSON-quoted specifier)', () => {
   expect(fallbackEntrySource('/abs/components/Post.tsx')).toBe(
-    "import C, { clientLoader } from '/abs/components/Post.tsx'\nexport { C as Component, clientLoader }\n",
+    'import C, { clientLoader } from "/abs/components/Post.tsx"\nexport { C as Component, clientLoader }\n',
   )
+  // A quote in the path cannot break the generated module syntax.
+  expect(fallbackEntrySource("/a/it's/Post.tsx")).toContain('"/a/it\'s/Post.tsx"')
 })
 
 test('hasClientLoaderExport detects the export forms', () => {
   expect(hasClientLoaderExport('export const clientLoader = async () => ({})')).toBe(true)
   expect(hasClientLoaderExport('export async function clientLoader() {}')).toBe(true)
   expect(hasClientLoaderExport('export function clientLoader() {}')).toBe(true)
+  expect(hasClientLoaderExport('export let clientLoader = async () => ({})')).toBe(true)
+  expect(hasClientLoaderExport('const clientLoader = 1\nexport { clientLoader }')).toBe(true)
+  expect(hasClientLoaderExport('const x = 1\nexport { x as clientLoader }')).toBe(true)
+  expect(hasClientLoaderExport('// export const clientLoader = async () => ({})')).toBe(false)
+  expect(hasClientLoaderExport('/* export const clientLoader = 1 */')).toBe(false)
   expect(hasClientLoaderExport('const clientLoader = 1')).toBe(false)
 })
 
@@ -235,9 +242,11 @@ test('fallback404Html inlines the pattern/doc pairs and the redirect script', ()
   expect(html).toContain('Not found.')
 })
 
-test('fallback404Html escapes < in the inlined JSON (script-context guard)', () => {
-  const html = fallback404Html([{ pattern: '/x/{a}</script>', doc: '/d/' }])
-  expect(html).toContain('\\u003c/script>')
+test('fallback404Html escapes </script> + U+2028/29 in the inlined JSON (script-context guard)', () => {
+  const html = fallback404Html([{ pattern: '/x/{a}</script>', doc: '/d/ ' }])
+  expect(html).toContain('\\u003c/script\\u003e')
+  expect(html).toContain('\\u2028')
+  expect(html).not.toContain(' ')
   // the only raw </script> left is the document's own closing tag
   expect(html.match(/<\/script>/g)?.length).toBe(1)
 })

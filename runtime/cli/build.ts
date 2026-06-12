@@ -595,24 +595,25 @@ export async function runBuild(args: string[]): Promise<void> {
       const islandsOutDir = path.join(outDir, 'islands')
       await mkdir(islandsOutDir, { recursive: true })
       // Temp dir for the generated entry modules; removed after the bundles land.
+      // Error paths THROW (not process.exit) so the finally's cleanup runs —
+      // exit(1) inside the try would skip it and leak the temp dir; the catch
+      // below owns stderr + exit.
       const entryTmp = await mkdtemp(path.join(tmpdir(), 'brust-fallback-'))
       try {
         for (const [i, route] of fallbackRoutes.entries()) {
           const name = route.chain?.at(-1)?.Component?.name
           const source = name ? importMap.get(name) : undefined
           if (!name || !source) {
-            console.error(
+            throw new Error(
               `[brust build] ssg: fallback 'client' on "${route.fullPath}": leaf Component must be a DEFAULT import in the routes file`,
             )
-            process.exit(1)
           }
           const text = await readFile(source, 'utf8')
           if (!hasClientLoaderExport(text)) {
-            console.error(
+            throw new Error(
               `[brust build] ssg: fallback 'client' on "${route.fullPath}": ` +
                 `${path.relative(process.cwd(), source)} must \`export const clientLoader\``,
             )
-            process.exit(1)
           }
           const file = `Fallback_${islandChunkBasename(name, source)}.js`
           // Index-suffixed entry name: two fallback routes may share a component
@@ -630,16 +631,18 @@ export async function runBuild(args: string[]): Promise<void> {
           } catch (err) {
             // Browser-safety convention: server-only deps at the component file's
             // top level surface here as bundle errors.
-            console.error(
+            throw new Error(
               `[brust build] ssg: fallback chunk for "${route.fullPath}": ${err instanceof Error ? err.message : String(err)}`,
             )
-            process.exit(1)
           }
           ssgFallbacks.push({ pattern: route.fullPath, chunk: `/_brust/islands/${file}` })
         }
-      } finally {
+      } catch (err) {
         await rm(entryTmp, { recursive: true, force: true })
+        console.error(err instanceof Error ? err.message : String(err))
+        process.exit(1)
       }
+      await rm(entryTmp, { recursive: true, force: true })
     }
   }
 

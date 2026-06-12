@@ -245,13 +245,22 @@ export function fallbackSentinelPath(pattern: string): string {
  * component (default export) and its `clientLoader` under the names the client
  * takeover runtime imports. */
 export function fallbackEntrySource(componentSourcePath: string): string {
-  return `import C, { clientLoader } from '${componentSourcePath}'\nexport { C as Component, clientLoader }\n`
+  // JSON.stringify the specifier so quotes/backslashes in the path can never
+  // break the generated module syntax.
+  const spec = JSON.stringify(componentSourcePath)
+  return `import C, { clientLoader } from ${spec}\nexport { C as Component, clientLoader }\n`
 }
 
-/** Does the component source `export` a `clientLoader`? Covers the const /
- * function / async-function forms; a non-exported binding doesn't count. */
+/** Does the component source `export` a `clientLoader`? Covers const / let /
+ * function / async-function declarations AND the `export { clientLoader }` /
+ * `export { x as clientLoader }` re-export forms. Line + block comments are
+ * stripped first so a commented-out export doesn't count (naive strip — a
+ * `//` inside a string literal on the same line as the export is the known
+ * residual; failure mode is a clear build error, not a silent miss). */
 export function hasClientLoaderExport(source: string): boolean {
-  return /export\s+(const|async\s+function|function)\s+clientLoader\b/.test(source)
+  const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '')
+  if (/export\s+(const|let|async\s+function|function)\s+clientLoader\b/.test(code)) return true
+  return /export\s*\{[^}]*\bclientLoader\b[^}]*\}/.test(code)
 }
 
 /** Static-host 404 document for `fallback: 'client'` routes: inlines the
@@ -259,11 +268,16 @@ export function hasClientLoaderExport(source: string): boolean {
  * the REAL url in sessionStorage (the takeover runtime restores it via
  * history.replaceState) and redirects to the prerendered fallback shell.
  * No match → plain 404 text. Pure string fn so the script/inline-JSON
- * contract is unit-testable. The `<` escape keeps a `<` inside a pattern
- * from closing the script context (patterns are author-controlled — this is
- * belt-and-braces, not a trust boundary). */
+ * contract is unit-testable. Escapes for the <script> context: `<`/`>` (no
+ * `</script>`/`<!--`/`-->` sequences) and U+2028/U+2029 (legal in JSON,
+ * illegal in pre-ES2019-parsed JS string literals). Patterns are
+ * author-controlled — belt-and-braces, not a trust boundary. */
 export function fallback404Html(pairs: Array<{ pattern: string; doc: string }>): string {
-  const inlineJson = JSON.stringify(pairs).replace(/</g, '\\u003c')
+  const inlineJson = JSON.stringify(pairs)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029')
   return `<!doctype html><html><head><meta charset="utf-8"><title>404</title></head><body>
 <p>Not found.</p>
 <script>
