@@ -158,3 +158,15 @@ test('static asset Vary merges Accept-Encoding AND Origin (append, not replace)'
   expect(tokens).toContain('origin')
   expect(resp.headers.get('access-control-allow-origin')).toBe(ALLOWED)
 })
+
+test('preflight from a DISALLOWED origin falls through to the 405 path (no ACAO)', async () => {
+  const resp = await fetch(`http://127.0.0.1:${port()}/_brust/action/notes`, {
+    method: 'OPTIONS',
+    headers: {
+      Origin: 'http://evil.test',
+      'Access-Control-Request-Method': 'POST',
+    },
+  })
+  expect(resp.status).toBe(405)
+  expect(resp.headers.get('access-control-allow-origin')).toBeNull()
+})

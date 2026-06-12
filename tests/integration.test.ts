@@ -174,6 +174,30 @@ test('unknown path returns 404', async () => {
   expect(resp.status).toBe(404)
 })
 
+test('no-cors boot: OPTIONS preflight-shaped requests keep 405 from BOTH sources', async () => {
+  // CORS is opt-in — with no `cors` config a full preflight must be
+  // byte-identical to the historical behavior on both 405 sources:
+  const port = sharedPort()
+  const preflightHeaders = {
+    Origin: 'http://allowed.test',
+    'Access-Control-Request-Method': 'POST',
+  }
+  // 1. the method gate (non-action path)
+  const page = await fetch(`http://127.0.0.1:${port}/`, {
+    method: 'OPTIONS',
+    headers: preflightHeaders,
+  })
+  expect(page.status).toBe(405)
+  expect(page.headers.get('access-control-allow-origin')).toBeNull()
+  // 2. handle_action's Method::from_http (under the action prefix)
+  const action = await fetch(`http://127.0.0.1:${port}/_brust/action/notes`, {
+    method: 'OPTIONS',
+    headers: preflightHeaders,
+  })
+  expect(action.status).toBe(405)
+  expect(action.headers.get('access-control-allow-origin')).toBeNull()
+})
+
 test('R1 dynamic template registry: loader registers + renders a runtime template', async () => {
   // The /dynamic-template loader runs in a WORKER isolate; the registry is
   // process-global Rust state, so this also pins cross-isolate visibility.

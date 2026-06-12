@@ -130,7 +130,14 @@ pub fn start(
     // clones HeaderValues instead of re-joining strings per request. `set_cors`
     // is boot-only (called before begin_serve → start), so this never observes
     // a half-configured state.
-    let _ = CORS.set(state.cors().map(|c| cors::ResolvedCors::from_config(&c)));
+    if CORS
+        .set(state.cors().map(|c| cors::ResolvedCors::from_config(&c)))
+        .is_err()
+    {
+        // Boot-once semantics (TUNING precedent) — but CORS divergence between
+        // AppState and the live static is security-relevant, so say it loudly.
+        eprintln!("[brust] warning: CORS config changed after first start() — ignored (boot-once)");
+    }
 
     // The accept-concurrency ceiling: the larger of the historical accept queue
     // depth and any explicit connWorkers override (both default-coupled to the

@@ -176,16 +176,26 @@ impl ResolvedCors {
 /// present, so double-stamping (e.g. the preflight 204 passing back through the
 /// service chokepoint) never duplicates.
 pub(crate) fn append_vary_token(headers: &mut HeaderMap, token: &str) {
+    // Fast path: no existing Vary (the overwhelming majority of responses) —
+    // zero allocations on the per-response hot path.
+    if !headers.contains_key(VARY) {
+        if let Ok(v) = HeaderValue::from_str(token) {
+            headers.insert(VARY, v);
+        }
+        return;
+    }
+
     let mut parts: Vec<String> = Vec::new();
+    let mut saw_opaque = false;
     for v in headers.get_all(VARY) {
         let Ok(s) = v.to_str() else {
             // Opaque (non-UTF-8) existing Vary value we can't safely merge
-            // into: add the token as an additional Vary line (RFC-equivalent
-            // to the comma-joined form) rather than dropping the variance.
-            if let Ok(t) = HeaderValue::from_str(token) {
-                headers.append(VARY, t);
-            }
-            return;
+            // into. Keep scanning the REMAINING lines first — a later line may
+            // already carry the token or `*` (in which case nothing to add) —
+            // and only then append the token as an additional Vary line
+            // (RFC-equivalent to the comma-joined form).
+            saw_opaque = true;
+            continue;
         };
         for existing in s.split(',') {
             let existing = existing.trim();
@@ -196,6 +206,14 @@ pub(crate) fn append_vary_token(headers: &mut HeaderMap, token: &str) {
                 parts.push(existing.to_string());
             }
         }
+    }
+    if saw_opaque {
+        // Can't rebuild a merged single line without losing the opaque value:
+        // append the token as its own Vary line alongside the existing ones.
+        if let Ok(t) = HeaderValue::from_str(token) {
+            headers.append(VARY, t);
+        }
+        return;
     }
     parts.push(token.to_string());
     if let Ok(v) = HeaderValue::from_str(&parts.join(", ")) {
@@ -374,6 +392,32 @@ mod tests {
         let all: Vec<_> = h.get_all(VARY).iter().collect();
         assert_eq!(all.len(), 1);
         assert_eq!(all[0], "Accept-Encoding, Accept-Language, Origin");
+    }
+
+    #[test]
+    fn vary_append_opaque_line_does_not_mask_later_star() {
+        // Regression: an opaque (non-UTF-8) first Vary line must not stop the
+        // scan — a later `*` line means "varies on everything", so nothing is
+        // appended.
+        let mut h = HeaderMap::new();
+        h.append(VARY, HeaderValue::from_bytes(&[0xFF]).unwrap());
+        h.append(VARY, hv("*"));
+        append_vary_token(&mut h, "Origin");
+        let all: Vec<_> = h.get_all(VARY).iter().collect();
+        assert_eq!(all.len(), 2); // untouched
+    }
+
+    #[test]
+    fn vary_append_opaque_line_appends_token_as_extra_line() {
+        // Opaque value with no `*` anywhere: the token rides as its own Vary
+        // line (RFC-equivalent to comma-joining) so variance is never dropped.
+        let mut h = HeaderMap::new();
+        h.append(VARY, HeaderValue::from_bytes(&[0xFF]).unwrap());
+        h.append(VARY, hv("Accept-Encoding"));
+        append_vary_token(&mut h, "Origin");
+        let all: Vec<_> = h.get_all(VARY).iter().collect();
+        assert_eq!(all.len(), 3);
+        assert_eq!(all[2], "Origin");
     }
 
     // ----- response stamping -----
