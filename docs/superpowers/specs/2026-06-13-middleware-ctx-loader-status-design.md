@@ -31,7 +31,17 @@ params: Record<string, string>
 locals: Record<string, unknown>
 ```
 
-Population: at every site that constructs the `BrustRequest` handed to `composeChain` — render path (~933), action dispatch (~2154), SPA nav (~1491), SSE (~2276), WS (~2382) — set `params` from the already-matched RouteCall/envelope params (actions: the action router's matched params) and `locals: {}`. The SAME `req` object flows into loader ctx (`{ params, path, req }`) and action handler ctx — loaders read `req.locals`; nothing new to thread. Both fields are non-optional on the type but population must be verified at ALL construction sites (grep every `BrustRequest`-shaped literal; a missed site = runtime undefined — add a test per path).
+Population (review-verified): `req` is NOT constructed in TS — it arrives inside the Rust envelope (`JSON.parse(envelopeJson) as RouteCall`, ~893). Rust knows nothing of the new fields, so TS populates them right after parse via one helper applied at every dispatch branch BEFORE composeChain/loaders run:
+
+```ts
+function prepReq(req: BrustRequest, params: Record<string, string> | undefined): BrustRequest {
+  req.params = params ?? {}
+  req.locals = {}
+  return req
+}
+```
+
+Sites + params source (verified line numbers): render ~933 (`call.params`, always present on kind 'render'), SPA nav ~1489 (`call.params`), action ~2154 (`call.params ?? {}`), SSE ~2276 and WS ~2382 (**envelope carries NO params for these kinds — `{}` fallback, documented: SSE/WS middleware sees empty params in v1**; widening the Rust envelope is a separate change). `renderNativeRouteToHtml` (~1685) takes `call.req` directly WITHOUT re-running composeChain — it inherits the already-prepped/mutated req from the nav chain; no extra site. The SAME `req` object flows into loader ctx (`{ params, path, req }`) and action handler ctx (`ctx.req === call.req`, ~2113-2120) — locals flow with zero threading. Fields are declared non-optional on `BrustRequest` (the envelope cast is type-erased so no compile error; prepReq is the single population point). Any TEST constructing a BrustRequest literal must add the two fields.
 
 Middleware type signature unchanged (`(req, next)`) — the new data rides on `req`. Backward compatible: existing middleware ignores the new fields; existing tests unchanged.
 
@@ -48,13 +58,13 @@ export interface HttpErrorOpts { contentType?: string; headers?: Record<string, 
 export function httpError(status: number, body?: string | object, opts?: HttpErrorOpts): never
 ```
 
-`httpError` THROWS the trigger itself (like `notFound()` returns a verdict the loader throws? — CHECK actual notFound usage: native loaders `return notFound()`/`throw`? The S9 sentinel returns a verdict; React `notFound()` is thrown via trigger. For httpError: always THROW — `: never` signature, the function throws internally; consistent single usage form in docs).
+`httpError` is **throw-only** (`: never`, throws internally) — deliberately a DIFFERENT contract from `notFound()` (which native loaders RETURN): one usage form everywhere, and the native path needs interception anyway (review-verified: `runNativeChainLoaders` inspects RETURN values via `isNativeVerdict` at ~354; a thrown non-verdict lands in the outer catch ~1066 → 500). 
 
-Catch sites (all four loader paths):
-1. **Native** (runNativeChainLoaders catch ~1066 + verdict handling ~1077): recognize `isHttpErrorTrigger(err)` → fast-lane response `{status, body, contentType}` (same mechanism as the middleware short-circuit / 500 path). Headers applied.
-2. **React render** (buildRenderElement catch ~1248, where isNotFoundTrigger is handled): httpError → short-circuit RouteResponse with status/body — NOT the errorBoundary path.
-3. **SPA nav** (`/_brust/page` ~1437-1509): httpError → respond with the status + JSON body `{ error: true, status }` (or the provided body) so the client navigation surfaces the failure; verify how notFound is signaled on this path and mirror the shape.
-4. **Unknown throws** keep becoming 500 (unchanged).
+Catch sites (review-verified):
+1. **Native**: add a **per-loader try/catch inside `runNativeChainLoaders`** recognizing `isHttpErrorTrigger(err)` — it must intercept BEFORE the outer ~1066 catch turns it into a 500. Surface as a verdict-like result → fast-lane response `{status, body, contentType, headers}` (the middleware-short-circuit mechanism, which already carries arbitrary status through `packSingleChunkResponse` — the 401 precedent).
+2. **React render** (buildRenderElement catch ~1248, alongside isNotFoundTrigger): httpError → short-circuit RouteResponse with status/body — NOT the errorBoundary, NOT the ~1298 500 path.
+3. **SPA nav** (notFound catch is at ~1592, navStatus ~1561): httpError mirrors the EXISTING non-2xx middleware short-circuit semantics (~1515) — **client full-reload** on the navigated URL, which then hits the server route and gets the real httpError response. NO new JSON error shape, no client-runtime change. (notFound's rendered-catch-all-HTML-at-404 shape stays unique to notFound.)
+4. **Unknown throws** keep becoming 500 (unchanged: render ~1299, nav middleware catch ~1498).
 
 Status validation: integer 400-599, else the trigger constructor throws a plain Error immediately (programming error, loud).
 
