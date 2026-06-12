@@ -7,6 +7,7 @@ import { buildDocsChrome } from './lib/nav.ts'
 import { generateSearchIndex } from './lib/search-index.ts'
 import { generateSiteFiles } from './lib/site-files.ts'
 import { BRUST_VERSION } from './lib/version.ts'
+import NotFound from './components/NotFound'
 import Home from './pages/Home'
 
 // Search index + discovery files (sitemap.xml, llms.txt): generated at import
@@ -39,7 +40,13 @@ const [docsTree] = mdRoutes('content', {
 // Home is a native landing page. Its loader feeds the brustjs version (read
 // from the package manifest in lib/version.ts) so the release card shows the
 // shipped version — the SSG export freezes it at build, never a stale literal.
+// `{ path: '*' }` is the GLOBAL catch-all: the live server renders it at HTTP
+// 404 for any unmatched path (native + SPA), and the SSG export crawls it to
+// write `dist/static/404.html` (Cloudflare Pages serves that with HTTP 404).
+// This dogfoods the framework 404 feature and retires the old hand-written
+// `public/404.html` — the framework now owns the 404 page.
 export const routes = defineRoutes([
   { path: '/', Component: Home, native: true, loader: async () => ({ version: BRUST_VERSION }) },
   docsTree,
+  { path: '*', Component: NotFound, native: true },
 ])
