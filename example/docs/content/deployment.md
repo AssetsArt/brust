@@ -1,7 +1,7 @@
 ---
 title: Deployment
 description: Shipping a brust app — the self-contained dist/, BRUST_* environment, worker sizing, and the static-export alternative.
-nav: { group: "Guides", order: 8 }
+nav: { group: "Guides", order: 9 }
 ---
 
 A brust app deploys in one of two shapes: a **server** — the `brust build`
@@ -101,7 +101,7 @@ static host serves — including per-route SPA payloads, so client-side
 [navigation](/docs/navigation) keeps working without a server. Dynamic-param, wildcard, SSE, and WebSocket routes are
 excluded, any non-200 fails the build, and the export must live at a domain
 root. The full walkthrough, including Cloudflare Pages settings, is in
-[Markdown Pages → Static export](/docs/markdown-pages#static-export---ssg).
+[Static Export (SSG)](/docs/static-export).
 
 ## Next
 

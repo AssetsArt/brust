@@ -227,7 +227,7 @@ html[data-brust-nav='loading'] .topbar {
 all of the above (swaps, the store, active links, `navigate()`) behaves the
 same on a dumb static host as on the live server. Unknown routes 404 → the
 navigator's full-load fallback covers it. See
-[Markdown Pages → Static export](/docs/markdown-pages#static-export---ssg).
+[Static Export (SSG)](/docs/static-export).
 
 Routes that opt into `ssg.fallback: 'client'` extend this to dynamic paths
 that were never prerendered: navigating to one swaps in the route's fallback

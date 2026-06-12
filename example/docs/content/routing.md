@@ -23,6 +23,7 @@ the server binds.
 | `middleware` | `Middleware[]` | Per-route middleware chain, concatenated with ancestors (parent runs first). |
 | `errorBoundary` | `ComponentType<{ error: Error }>` | Invoked when Component or loader throws. Inherited by descendants that don't define their own (closest ancestor wins). |
 | `cache` | `{ ttl_seconds, prefix?, bypass?, tags?, key?, key_ttl_seconds? }` | Opt-in two-layer page cache (declarative L1 + programmatic L2, tag/path invalidation). Read from the **leaf only**. Works on **native** routes too — a native L1 hit is served from Rust with zero worker dispatch. See [Caching](/docs/caching). |
+| `ssg` | `{ params?, fallback?, placeholder? }` | Static-export config for dynamic-param routes, read **only** by `brust build --ssg`: `params()` enumerates the concrete paths to prerender; `fallback: 'client'` keeps the rest working on a static host via a client-side takeover (React routes only). See [Static Export (SSG)](/docs/static-export). |
 | `sse` | `(req) => ReadableStream` | Stream a `text/event-stream` response. Cannot coexist with `Component`, `loader`, or `children`. |
 | `websocket` | `() => Promise<WsHandlers>` | Accept WebSocket upgrades. Cannot coexist with `Component`, `loader`, `sse`, or `children`. |
 
