@@ -8,8 +8,8 @@ use swc_core::ecma::ast::{
     ArrayLit, ArrowExpr, AssignPatProp, BinaryOp, BindingIdent, BlockStmt, BlockStmtOrExpr,
     CallExpr, Callee, DefaultDecl, ExportDefaultDecl, Expr as SwcExpr, ExprOrSpread, FnExpr,
     Function, JSXAttrName, JSXAttrOrSpread, JSXAttrValue, JSXElement, JSXElementChild,
-    JSXElementName, JSXExpr, JSXFragment, Lit, MemberExpr, MemberProp, Module, ModuleDecl,
-    ModuleItem, ObjectLit, ObjectPatProp, OptChainBase, ParenExpr, Pat, Prop, PropName,
+    JSXElementName, JSXExpr, JSXFragment, KeyValueProp, Lit, MemberExpr, MemberProp, Module,
+    ModuleDecl, ModuleItem, ObjectLit, ObjectPatProp, OptChainBase, ParenExpr, Pat, Prop, PropName,
     PropOrSpread, ReturnStmt, Stmt, UnaryOp,
 };
 
@@ -120,6 +120,13 @@ struct Scope {
     /// `None` = no behavior components supplied (default). Read at the
     /// native-inline injection site to auto-inject `x-data` on the host element.
     directive_names: Option<Rc<HashMap<String, String>>>,
+    /// F2/F3: the inline body's hoisted `const` bindings (name → fully resolved
+    /// init expression), recorded by `hoist_const_bindings`. Consulted when a
+    /// recorded const appears as a JSX ELEMENT name: the `MAP[key]` shape lowers
+    /// to component-map dispatch (F3, `lower_dispatch_component`); any other
+    /// init is rejected as `InlineUntranslatable("dynamic component")`. `None`
+    /// outside inline lowering or when the body has no consts.
+    local_consts: Option<Rc<HashMap<String, SwcExpr>>>,
 }
 
 /// Lowered param shape: which names are in scope inside JSX.
@@ -147,6 +154,7 @@ pub fn lower(parsed: &ParsedSource) -> Result<Component, LowerError> {
         inline_env: None,
         lucide_env: None,
         directive_names: None,
+        local_consts: None,
     };
 
     let return_expr = single_return_expr(body)?;
@@ -243,6 +251,7 @@ pub(crate) fn lower_with_sources(
         inline_env: Some(env.clone()),
         lucide_env: Some(lucide_env.clone()),
         directive_names: Some(dn.clone()),
+        local_consts: None,
     };
 
     let return_expr = single_return_expr(body)?;
@@ -318,7 +327,10 @@ fn has_native_attr(el: &JSXElement) -> bool {
 /// Accepted body shapes:
 /// - Single `return <JSX>;` (or expr-bodied) → `vec![node]`.
 /// - `if (cond) return <A>; … return <B>;` → `vec![Cond{…}]`.
-/// - `const x = …; return <JSX>` or other local bindings → `Err(InlineUntranslatable)`.
+/// - Zero or more leading `const name = expr;` bindings before either shape
+///   (F2/R3a) — folded into the rest of the body by AST substitution in
+///   `hoist_const_bindings` before shape matching.
+/// - Other local bindings (`let`/`var`, destructuring) → `Err(InlineUntranslatable)`.
 pub(crate) fn lower_component_inline(
     parsed: &ParsedSource,
     subst: HashMap<String, crate::ir::Expr>,
@@ -336,6 +348,21 @@ pub(crate) fn lower_component_inline(
 
     let param_shape = lower_params(&fn_expr.function)?;
 
+    // F2 (R3a): fold leading `const` bindings into the rest of the body, then
+    // lower the residual shape exactly as before. Borrowed (no-op) when the
+    // body has no leading const decls, keeping the pre-F2 paths byte-identical.
+    let (body, mut local_consts) = hoist_const_bindings(body)?;
+    let body: &BlockStmt = &body;
+
+    // F3 (R3b): a recorded const init of shape `MAP[expr]` may reference a
+    // MODULE-level `const MAP = { … }` (the body-const case was already folded
+    // by the substitution above). Resolve those idents to their object literal
+    // here, while we still hold the parsed module, so the dispatch lowering
+    // only ever sees the canonical `<ObjectLit>[expr]` shape.
+    if !local_consts.is_empty() {
+        resolve_module_const_maps(&mut local_consts, &parsed.module);
+    }
+
     let inline_ctx = Rc::new(InlineCtx { subst });
     let scope = Scope {
         destructured: param_shape.destructured.clone(),
@@ -350,6 +377,11 @@ pub(crate) fn lower_component_inline(
         // Threaded from the parent scope so behavior-component injection can fire
         // for a native component nested inside another native-inlined body.
         directive_names,
+        local_consts: if local_consts.is_empty() {
+            None
+        } else {
+            Some(Rc::new(local_consts))
+        },
     };
 
     // Try single-return first.
@@ -391,6 +423,703 @@ pub(crate) fn lower_component_inline(
         body.span,
         ErrorKind::InlineUntranslatable("local binding".to_string()),
     ))
+}
+
+/// F2 (R3a) — inline local `const` bindings.
+///
+/// Accepts bodies of shape `[zero+ const decls, then the existing accepted
+/// shapes (single return | two-stmt if-return)]`. Each leading const is folded
+/// into everything after it by sequential AST substitution — a manual
+/// clone-and-rewrite over a cloned `BlockStmt`, NOT the swc `Fold` trait (the
+/// `ecma_transforms` feature is not enabled in this crate and must not be
+/// added). The residual body is then handed to the existing single-return /
+/// if-return lowering unchanged, so everything it already accepts (style
+/// objects, ternaries, `.map` sugar, x-props) now works with hoisted consts
+/// and everything it rejects keeps its existing error.
+///
+/// Sequential fold: for declarator N, consts 1..N-1 are substituted into its
+/// init FIRST, so every recorded init is fully resolved (no recorded name
+/// remains inside it) and the body pass never needs to re-walk an inserted
+/// clone — which also keeps init-internal shadowing (an arrow param named like
+/// a const) from being clobbered on insertion.
+///
+/// Returns `Cow::Borrowed` when the body has no leading const decls so the
+/// pre-F2 paths stay byte-identical, plus the recorded const map (name → fully
+/// resolved init) for the F3 element-name dispatch path.
+///
+/// Note on gate order: `analyze(body)` runs BEFORE this (in
+/// `try_native_inline`) and walks const inits too, so a const whose init calls
+/// a hook is already rejected upstream as `Fallback(Hook)`.
+type HoistedBody<'a> = (std::borrow::Cow<'a, BlockStmt>, HashMap<String, SwcExpr>);
+
+fn hoist_const_bindings(body: &BlockStmt) -> Result<HoistedBody<'_>, LowerError> {
+    use std::borrow::Cow;
+    use swc_core::ecma::ast::{Decl, VarDeclKind};
+
+    let lead = body
+        .stmts
+        .iter()
+        .take_while(|s| matches!(s, Stmt::Decl(Decl::Var(_))))
+        .count();
+    if lead == 0 {
+        return Ok((Cow::Borrowed(body), HashMap::new()));
+    }
+    // Sequential substitution clones each recorded init into later inits — a
+    // pathological chain where every const references all predecessors grows
+    // exponentially. 16 leading consts is far beyond any real section
+    // component; cap it before the clones, not after.
+    if lead > 16 {
+        return Err(LowerError::at(
+            body.span,
+            ErrorKind::InlineUntranslatable("too many leading consts (max 16)".to_string()),
+        ));
+    }
+
+    let mut subst = ConstSubst {
+        map: HashMap::new(),
+    };
+    for stmt in &body.stmts[..lead] {
+        let Stmt::Decl(Decl::Var(var)) = stmt else {
+            unreachable!("take_while above only admits var decls");
+        };
+        if var.kind != VarDeclKind::Const {
+            return Err(LowerError::at(
+                var.span,
+                ErrorKind::InlineUntranslatable("let/var binding — use const".to_string()),
+            ));
+        }
+        for decl in &var.decls {
+            let Pat::Ident(BindingIdent { id, .. }) = &decl.name else {
+                return Err(LowerError::at(
+                    decl.span,
+                    ErrorKind::InlineUntranslatable("destructuring binding".to_string()),
+                ));
+            };
+            let name = id.sym.to_string();
+            if subst.map.contains_key(&name) {
+                return Err(LowerError::at(
+                    id.span,
+                    ErrorKind::InlineUntranslatable("const redeclaration".to_string()),
+                ));
+            }
+            let Some(init) = &decl.init else {
+                // `const x;` is invalid JS; guard anyway.
+                return Err(LowerError::at(
+                    decl.span,
+                    ErrorKind::InlineUntranslatable("const without initializer".to_string()),
+                ));
+            };
+            let mut init = (**init).clone();
+            let mut shadowed = Vec::new();
+            subst.apply_expr(&mut init, &mut shadowed)?;
+            subst.map.insert(name, init);
+        }
+    }
+
+    let mut residual = body.clone();
+    residual.stmts.drain(..lead);
+    let mut shadowed = Vec::new();
+    for stmt in &mut residual.stmts {
+        subst.apply_stmt(stmt, &mut shadowed)?;
+    }
+    Ok((Cow::Owned(residual), subst.map))
+}
+
+/// AST substitution folder for F2. `map` holds recorded const name → fully
+/// resolved init expression. The `apply_*` methods rewrite a (cloned) body in
+/// place, replacing unshadowed `Ident` references with a clone of the recorded
+/// init.
+///
+/// The walk must NOT replace: member-expression property idents (`a.b`'s `b`),
+/// non-computed object keys, JSX attribute names, or any name shadowed by a
+/// function/arrow param or a nested declaration. `shadowed` is a push/truncate
+/// stack threaded through nested function scopes (same discipline as
+/// `Scope.map_bindings`).
+///
+/// Expression kinds the walk does not know are left untouched — downstream
+/// lowering keeps its existing accept/reject rules for them.
+struct ConstSubst {
+    map: HashMap<String, SwcExpr>,
+}
+
+impl ConstSubst {
+    fn is_shadowed(shadowed: &[String], name: &str) -> bool {
+        shadowed.iter().any(|s| s == name)
+    }
+
+    fn apply_expr(&self, expr: &mut SwcExpr, shadowed: &mut Vec<String>) -> Result<(), LowerError> {
+        match expr {
+            SwcExpr::Ident(id) => {
+                let name = id.sym.as_ref();
+                if !Self::is_shadowed(shadowed, name)
+                    && let Some(init) = self.map.get(name)
+                {
+                    // Recorded inits are fully resolved — do NOT re-walk the clone.
+                    *expr = init.clone();
+                }
+                Ok(())
+            }
+            SwcExpr::Paren(p) => self.apply_expr(&mut p.expr, shadowed),
+            SwcExpr::Member(m) => {
+                self.apply_expr(&mut m.obj, shadowed)?;
+                // Property idents are NOT references; computed props are.
+                if let MemberProp::Computed(c) = &mut m.prop {
+                    self.apply_expr(&mut c.expr, shadowed)?;
+                }
+                Ok(())
+            }
+            SwcExpr::OptChain(oc) => match &mut *oc.base {
+                OptChainBase::Member(m) => {
+                    self.apply_expr(&mut m.obj, shadowed)?;
+                    if let MemberProp::Computed(c) = &mut m.prop {
+                        self.apply_expr(&mut c.expr, shadowed)?;
+                    }
+                    Ok(())
+                }
+                OptChainBase::Call(call) => {
+                    self.apply_expr(&mut call.callee, shadowed)?;
+                    for arg in &mut call.args {
+                        self.apply_expr(&mut arg.expr, shadowed)?;
+                    }
+                    Ok(())
+                }
+            },
+            SwcExpr::Call(call) => {
+                if let Callee::Expr(callee) = &mut call.callee {
+                    self.apply_expr(callee, shadowed)?;
+                }
+                for arg in &mut call.args {
+                    self.apply_expr(&mut arg.expr, shadowed)?;
+                }
+                Ok(())
+            }
+            SwcExpr::New(n) => {
+                self.apply_expr(&mut n.callee, shadowed)?;
+                if let Some(args) = &mut n.args {
+                    for arg in args {
+                        self.apply_expr(&mut arg.expr, shadowed)?;
+                    }
+                }
+                Ok(())
+            }
+            SwcExpr::Bin(b) => {
+                self.apply_expr(&mut b.left, shadowed)?;
+                self.apply_expr(&mut b.right, shadowed)
+            }
+            SwcExpr::Cond(c) => {
+                self.apply_expr(&mut c.test, shadowed)?;
+                self.apply_expr(&mut c.cons, shadowed)?;
+                self.apply_expr(&mut c.alt, shadowed)
+            }
+            SwcExpr::Unary(u) => self.apply_expr(&mut u.arg, shadowed),
+            SwcExpr::Tpl(t) => {
+                for e in &mut t.exprs {
+                    self.apply_expr(e, shadowed)?;
+                }
+                Ok(())
+            }
+            SwcExpr::Array(a) => {
+                for elem in a.elems.iter_mut().flatten() {
+                    self.apply_expr(&mut elem.expr, shadowed)?;
+                }
+                Ok(())
+            }
+            SwcExpr::Object(o) => self.apply_object(o, shadowed),
+            SwcExpr::Arrow(a) => {
+                let base = shadowed.len();
+                for p in &a.params {
+                    collect_pat_names(p, shadowed);
+                }
+                match &mut *a.body {
+                    BlockStmtOrExpr::Expr(e) => self.apply_expr(e, shadowed)?,
+                    BlockStmtOrExpr::BlockStmt(b) => self.apply_block(b, shadowed)?,
+                }
+                shadowed.truncate(base);
+                Ok(())
+            }
+            SwcExpr::Fn(f) => {
+                let base = shadowed.len();
+                if let Some(ident) = &f.ident {
+                    shadowed.push(ident.sym.to_string());
+                }
+                for p in &f.function.params {
+                    collect_pat_names(&p.pat, shadowed);
+                }
+                if let Some(b) = &mut f.function.body {
+                    self.apply_block(b, shadowed)?;
+                }
+                shadowed.truncate(base);
+                Ok(())
+            }
+            SwcExpr::Seq(s) => {
+                for e in &mut s.exprs {
+                    self.apply_expr(e, shadowed)?;
+                }
+                Ok(())
+            }
+            SwcExpr::TsAs(t) => self.apply_expr(&mut t.expr, shadowed),
+            SwcExpr::TsNonNull(t) => self.apply_expr(&mut t.expr, shadowed),
+            SwcExpr::TsConstAssertion(t) => self.apply_expr(&mut t.expr, shadowed),
+            SwcExpr::TsSatisfies(t) => self.apply_expr(&mut t.expr, shadowed),
+            SwcExpr::TsTypeAssertion(t) => self.apply_expr(&mut t.expr, shadowed),
+            SwcExpr::JSXElement(el) => self.apply_jsx_element(el, shadowed),
+            SwcExpr::JSXFragment(f) => self.apply_jsx_children(&mut f.children, shadowed),
+            // Anything else (assignments, literals, `this`, …) is left
+            // untouched — downstream lowering decides.
+            _ => Ok(()),
+        }
+    }
+
+    fn apply_object(
+        &self,
+        obj: &mut ObjectLit,
+        shadowed: &mut Vec<String>,
+    ) -> Result<(), LowerError> {
+        for prop in &mut obj.props {
+            match prop {
+                PropOrSpread::Spread(s) => self.apply_expr(&mut s.expr, shadowed)?,
+                PropOrSpread::Prop(p) => {
+                    // Shorthand `{ color }` is a VALUE reference of `color` —
+                    // rewrite to `{ color: <init> }` when recorded. Computed
+                    // first so the replacement does not overlap the match borrow.
+                    let replacement = if let Prop::Shorthand(id) = p.as_ref() {
+                        let name = id.sym.as_ref();
+                        if Self::is_shadowed(shadowed, name) {
+                            None
+                        } else {
+                            self.map.get(name).map(|init| {
+                                Prop::KeyValue(KeyValueProp {
+                                    key: PropName::Ident(id.clone().into()),
+                                    value: Box::new(init.clone()),
+                                })
+                            })
+                        }
+                    } else {
+                        None
+                    };
+                    if let Some(r) = replacement {
+                        **p = r;
+                        continue;
+                    }
+                    if let Prop::KeyValue(kv) = p.as_mut() {
+                        // Non-computed keys are NOT references.
+                        if let PropName::Computed(c) = &mut kv.key {
+                            self.apply_expr(&mut c.expr, shadowed)?;
+                        }
+                        self.apply_expr(&mut kv.value, shadowed)?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn apply_block(
+        &self,
+        block: &mut BlockStmt,
+        shadowed: &mut Vec<String>,
+    ) -> Result<(), LowerError> {
+        let base = shadowed.len();
+        for stmt in &mut block.stmts {
+            self.apply_stmt(stmt, shadowed)?;
+        }
+        shadowed.truncate(base);
+        Ok(())
+    }
+
+    fn apply_stmt(&self, stmt: &mut Stmt, shadowed: &mut Vec<String>) -> Result<(), LowerError> {
+        use swc_core::ecma::ast::Decl;
+        match stmt {
+            Stmt::Return(r) => {
+                if let Some(arg) = &mut r.arg {
+                    self.apply_expr(arg, shadowed)?;
+                }
+                Ok(())
+            }
+            Stmt::Expr(e) => self.apply_expr(&mut e.expr, shadowed),
+            Stmt::If(i) => {
+                self.apply_expr(&mut i.test, shadowed)?;
+                self.apply_stmt(&mut i.cons, shadowed)?;
+                if let Some(alt) = &mut i.alt {
+                    self.apply_stmt(alt, shadowed)?;
+                }
+                Ok(())
+            }
+            Stmt::Block(b) => self.apply_block(b, shadowed),
+            Stmt::Decl(Decl::Var(var)) => {
+                for decl in &mut var.decls {
+                    // A nested declaration redeclaring a recorded const name is
+                    // rejected rather than scope-split (simpler; rare shape).
+                    let mut names = Vec::new();
+                    collect_pat_names(&decl.name, &mut names);
+                    if names.iter().any(|n| self.map.contains_key(n)) {
+                        return Err(LowerError::at(
+                            decl.span,
+                            ErrorKind::InlineUntranslatable("const redeclaration".to_string()),
+                        ));
+                    }
+                    if let Some(init) = &mut decl.init {
+                        self.apply_expr(init, shadowed)?;
+                    }
+                    // Shadow for the remainder of the enclosing block (popped
+                    // by `apply_block`'s truncate).
+                    shadowed.append(&mut names);
+                }
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+
+    fn apply_jsx_element(
+        &self,
+        el: &mut JSXElement,
+        shadowed: &mut Vec<String>,
+    ) -> Result<(), LowerError> {
+        // A recorded const used as a JSX ELEMENT name is NOT substituted (an
+        // element name slot can only hold an ident) — it is left in place and
+        // handled at lowering time by `lower_dispatch_component` via
+        // `Scope.local_consts`: the F3 `MAP[key]` shape lowers to a Cond
+        // dispatch chain, anything else is rejected as
+        // `InlineUntranslatable("dynamic component")`.
+        for attr in &mut el.opening.attrs {
+            match attr {
+                // Attribute NAMES are never substituted; only expr values.
+                JSXAttrOrSpread::JSXAttr(a) => {
+                    if let Some(JSXAttrValue::JSXExprContainer(c)) = &mut a.value
+                        && let JSXExpr::Expr(e) = &mut c.expr
+                    {
+                        self.apply_expr(e, shadowed)?;
+                    }
+                }
+                JSXAttrOrSpread::SpreadElement(s) => self.apply_expr(&mut s.expr, shadowed)?,
+            }
+        }
+        self.apply_jsx_children(&mut el.children, shadowed)
+    }
+
+    fn apply_jsx_children(
+        &self,
+        children: &mut [JSXElementChild],
+        shadowed: &mut Vec<String>,
+    ) -> Result<(), LowerError> {
+        for child in children {
+            match child {
+                JSXElementChild::JSXExprContainer(c) => {
+                    if let JSXExpr::Expr(e) = &mut c.expr {
+                        self.apply_expr(e, shadowed)?;
+                    }
+                }
+                JSXElementChild::JSXElement(el) => self.apply_jsx_element(el, shadowed)?,
+                JSXElementChild::JSXFragment(f) => {
+                    self.apply_jsx_children(&mut f.children, shadowed)?
+                }
+                JSXElementChild::JSXSpreadChild(s) => self.apply_expr(&mut s.expr, shadowed)?,
+                JSXElementChild::JSXText(_) => {}
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Collect every binding ident introduced by `pat` into `out` (used to build
+/// the shadowed-names stack for params and nested declarations).
+/// `strip_paren` for a mutable borrow (used by `resolve_module_const_maps` to
+/// rewrite through `(MAP)[k]`-style wrapping).
+fn strip_paren_mut(expr: &mut SwcExpr) -> &mut SwcExpr {
+    if let SwcExpr::Paren(p) = expr {
+        strip_paren_mut(&mut p.expr)
+    } else {
+        expr
+    }
+}
+
+/// F3 (R3b) — resolve module-level component maps.
+///
+/// For every recorded const init of shape `<Ident>[<computed>]` where `<Ident>`
+/// names a same-file MODULE-level `const X = { … }` (plain or `export const`),
+/// replace the ident with a clone of that object literal — canonicalizing the
+/// dispatch shape to `<ObjectLit>[expr]`, same as a body-const MAP after the F2
+/// fold. Anything that doesn't match is left untouched (the body substitution
+/// already ran, so this rewrite is only ever consulted by the element-name
+/// dispatch path).
+fn resolve_module_const_maps(consts: &mut HashMap<String, SwcExpr>, module: &Module) {
+    use swc_core::ecma::ast::{Decl, ExportDecl, VarDeclKind};
+
+    let mut maps: HashMap<String, &ObjectLit> = HashMap::new();
+    for item in &module.body {
+        let var = match item {
+            ModuleItem::Stmt(Stmt::Decl(Decl::Var(v))) => v,
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+                decl: Decl::Var(v),
+                ..
+            })) => v,
+            _ => continue,
+        };
+        if var.kind != VarDeclKind::Const {
+            continue;
+        }
+        for decl in &var.decls {
+            if let Pat::Ident(BindingIdent { id, .. }) = &decl.name
+                && let Some(init) = &decl.init
+                && let SwcExpr::Object(obj) = strip_paren(init)
+            {
+                maps.insert(id.sym.to_string(), obj);
+            }
+        }
+    }
+    if maps.is_empty() {
+        return;
+    }
+
+    for init in consts.values_mut() {
+        if let SwcExpr::Member(member) = strip_paren_mut(init)
+            && matches!(member.prop, MemberProp::Computed(_))
+            && let SwcExpr::Ident(id) = &*member.obj
+            && let Some(obj) = maps.get(id.sym.as_ref())
+        {
+            *member.obj = SwcExpr::Object((*obj).clone());
+        }
+    }
+}
+
+/// F3 (R3b) — component-map dispatch.
+///
+/// Lowers `<Comp …/>` where `Comp` is a recorded inline const whose init is
+/// `<ObjectLit>[<expr>]` (body-const MAP folded by F2 substitution, or
+/// module-level MAP canonicalized by `resolve_module_const_maps`). Each map
+/// value is inlined through the existing `try_native_inline` machinery with
+/// THIS element's call-site attrs, and the branches chain into nested
+/// `JsxNode::Cond` (`alternate` holds the next Cond; minijinja renders nested
+/// `{% if %}`s — functionally an if/elif chain):
+///
+/// `MAP = {hero: Hero, gallery: Gallery}` →
+/// `{% if (k) == ("hero") %}<Hero…>{% else %}{% if (k) == ("gallery") %}…`
+///
+/// All-or-nothing: ANY map value that soft-fails to inline (`Ok(None)`) turns
+/// into `Err(InlineUntranslatable("dispatch component not inlinable"))`, which
+/// the OUTER `try_native_inline` converts to a warning + `Ok(None)` → the host
+/// component falls back to SSR as one unit. Hard errors (`CircularInline` —
+/// e.g. a map containing the host itself) propagate unchanged. A const used as
+/// an element name with any NON-dispatch init shape is
+/// `InlineUntranslatable("dynamic component")`. An unmatched key at render
+/// time falls through every branch and renders empty (documented v1 contract).
+fn lower_dispatch_component(
+    el: &JSXElement,
+    component_name: &str,
+    init: &SwcExpr,
+    scope: &Scope,
+    in_map: bool,
+) -> Result<JsxNode, LowerError> {
+    let span = el.opening.span;
+    let dynamic_component = || {
+        LowerError::at(
+            span,
+            ErrorKind::InlineUntranslatable("dynamic component".into()),
+        )
+    };
+    let not_inlinable = || {
+        LowerError::at(
+            span,
+            ErrorKind::InlineUntranslatable("dispatch component not inlinable".into()),
+        )
+    };
+
+    // Recognize the dispatch shape: `<ObjectLit>[<expr>]`.
+    let SwcExpr::Member(member) = strip_paren(init) else {
+        return Err(dynamic_component());
+    };
+    let MemberProp::Computed(key) = &member.prop else {
+        return Err(dynamic_component());
+    };
+    let SwcExpr::Object(map) = strip_paren(&member.obj) else {
+        return Err(dynamic_component());
+    };
+    // Only active in native-inline mode (mirrors the `has_native && inline_env`
+    // gate in `lower_ssr_component`).
+    let Some(env) = &scope.inline_env else {
+        return Err(dynamic_component());
+    };
+    if in_map {
+        return Err(LowerError::at(
+            span,
+            ErrorKind::SsrComponentInMapNotSupported(component_name.to_owned()),
+        ));
+    }
+
+    // Map entries in source order: ident/string keys, component-ident values.
+    let mut entries: Vec<(String, String)> = Vec::new();
+    for prop in &map.props {
+        let PropOrSpread::Prop(p) = prop else {
+            return Err(not_inlinable());
+        };
+        match p.as_ref() {
+            Prop::KeyValue(kv) => {
+                let key = match &kv.key {
+                    PropName::Ident(i) => i.sym.to_string(),
+                    PropName::Str(s) => s.value.to_string_lossy().into_owned(),
+                    _ => return Err(not_inlinable()),
+                };
+                let SwcExpr::Ident(v) = strip_paren(&kv.value) else {
+                    return Err(not_inlinable());
+                };
+                entries.push((key, v.sym.to_string()));
+            }
+            Prop::Shorthand(i) => entries.push((i.sym.to_string(), i.sym.to_string())),
+            _ => return Err(not_inlinable()),
+        }
+    }
+    if entries.is_empty() {
+        return Err(not_inlinable());
+    }
+
+    // The dispatch key — a member-path-ish expr; `lower_expr` rejects anything
+    // it cannot translate (e.g. a call), which propagates to the outer warning.
+    let dispatch = lower_expr(&key.expr, scope)?;
+
+    // Call-site attrs → subst map (same rules as the native-inline branch of
+    // `lower_ssr_component`), applied identically to every branch.
+    let mut subst: HashMap<String, crate::ir::Expr> = HashMap::new();
+    let mut has_spread = false;
+    let mut subst_err = false;
+    let mut has_isr = false;
+    for attr in &el.opening.attrs {
+        match attr {
+            JSXAttrOrSpread::SpreadElement(_) => {
+                // NO spread props on dispatch elements in v1 — `has_spread`
+                // makes every branch soft-fail, so the whole dispatch falls back.
+                has_spread = true;
+            }
+            JSXAttrOrSpread::JSXAttr(jsx_attr) => {
+                let name = match &jsx_attr.name {
+                    JSXAttrName::Ident(id) => id.sym.to_string(),
+                    JSXAttrName::JSXNamespacedName(n) => {
+                        return Err(LowerError::at(
+                            n.span,
+                            ErrorKind::NamespacedAttrNotSupported,
+                        ));
+                    }
+                };
+                match name.as_str() {
+                    "native" | "key" => continue,
+                    "isr" => {
+                        // Inlined components ignore isr; `try_native_inline`
+                        // pushes the standard warning per branch.
+                        has_isr = true;
+                        continue;
+                    }
+                    "ref" => {
+                        return Err(LowerError::at(
+                            jsx_attr.span,
+                            ErrorKind::RefAttributeNotSupported,
+                        ));
+                    }
+                    _ if is_event_handler(&name) => {
+                        return Err(LowerError::at(
+                            jsx_attr.span,
+                            ErrorKind::EventHandlerNotSupported(name),
+                        ));
+                    }
+                    _ => {}
+                }
+                let expr_result = match &jsx_attr.value {
+                    None => Ok(crate::ir::Expr::StaticText(String::new())), // bare bool attr
+                    Some(JSXAttrValue::Str(s)) => Ok(crate::ir::Expr::StaticText(
+                        s.value.to_string_lossy().into_owned(),
+                    )),
+                    Some(JSXAttrValue::JSXExprContainer(c)) => match &c.expr {
+                        JSXExpr::JSXEmptyExpr(_) => {
+                            Err(LowerError::at(c.span, ErrorKind::JsxInAttrNotSupported))
+                        }
+                        JSXExpr::Expr(e) => lower_expr(e, scope),
+                    },
+                    _ => Err(LowerError::at(
+                        jsx_attr.span,
+                        ErrorKind::JsxInAttrNotSupported,
+                    )),
+                };
+                match expr_result {
+                    Ok(expr) => {
+                        subst.insert(name, expr);
+                    }
+                    Err(_) => {
+                        subst_err = true;
+                    }
+                }
+            }
+        }
+    }
+
+    // Call-site children, spliced into every branch's `ChildrenSlot`s.
+    let mut call_site_children: Vec<JsxNode> = Vec::new();
+    for child in &el.children {
+        if let Some(node) = lower_child(child, scope, in_map)? {
+            call_site_children.push(node);
+        }
+    }
+
+    // Inline every mapped component (source order). The circular-inline guard
+    // applies per branch inside `try_native_inline` (hard error → propagate).
+    let mut branches: Vec<(String, JsxNode)> = Vec::with_capacity(entries.len());
+    for (key_name, comp) in entries {
+        let inlined = try_native_inline(
+            &comp,
+            env,
+            scope.lucide_env.clone(),
+            scope.directive_names.clone(),
+            subst.clone(),
+            has_spread,
+            subst_err,
+            &call_site_children,
+            has_isr,
+            span,
+            false,
+        )?;
+        let Some(node) = inlined else {
+            return Err(not_inlinable());
+        };
+        branches.push((key_name, node));
+    }
+
+    // Chain: Cond{test_0, inline_0, alternate: Cond{test_1, …, alternate: None}}.
+    let mut alternate: Option<Box<JsxNode>> = None;
+    for (key_name, node) in branches.into_iter().rev() {
+        alternate = Some(Box::new(JsxNode::Cond {
+            test: crate::ir::Expr::Compare {
+                op: crate::ir::CmpOp::Eq,
+                lhs: Box::new(dispatch.clone()),
+                rhs: Box::new(crate::ir::Expr::StaticText(key_name)),
+            },
+            consequent: Box::new(node),
+            alternate,
+        }));
+    }
+    Ok(*alternate.expect("entries is non-empty"))
+}
+
+fn collect_pat_names(pat: &Pat, out: &mut Vec<String>) {
+    match pat {
+        Pat::Ident(BindingIdent { id, .. }) => out.push(id.sym.to_string()),
+        Pat::Array(a) => {
+            for p in a.elems.iter().flatten() {
+                collect_pat_names(p, out);
+            }
+        }
+        Pat::Object(o) => {
+            for prop in &o.props {
+                match prop {
+                    ObjectPatProp::KeyValue(kv) => collect_pat_names(&kv.value, out),
+                    ObjectPatProp::Assign(AssignPatProp { key, .. }) => {
+                        out.push(key.id.sym.to_string())
+                    }
+                    ObjectPatProp::Rest(r) => collect_pat_names(&r.arg, out),
+                }
+            }
+        }
+        Pat::Assign(a) => collect_pat_names(&a.left, out),
+        Pat::Rest(r) => collect_pat_names(&r.arg, out),
+        Pat::Invalid(_) | Pat::Expr(_) => {}
+    }
 }
 
 /// Try to lower a two-statement body of the form:
@@ -692,6 +1421,17 @@ fn lower_element(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode
             return Err(LowerError::at(ident.span, ErrorKind::OutletOutsideLayout));
         }
         return Ok(JsxNode::ChildrenSlot);
+    }
+
+    // F3 (R3b): an element whose name is a recorded inline `const` (any case —
+    // pre-F3 the substitution pass rejected every such use). The `MAP[key]`
+    // init shape lowers to a component-map dispatch Cond chain; anything else
+    // is `InlineUntranslatable("dynamic component")`.
+    if let JSXElementName::Ident(ident) = &el.opening.name
+        && let Some(consts) = &scope.local_consts
+        && let Some(init) = consts.get(ident.sym.as_ref())
+    {
+        return lower_dispatch_component(el, ident.sym.as_ref(), init, scope, in_map);
     }
 
     // Third path: any other capitalised tag → SSR component.
@@ -1183,8 +1923,11 @@ fn parse_brust_page_head_value(
 
 /// Parse a `<BrustPage head={[…]}>` array literal into `HeadEntry`s. Mirrors the
 /// SWC object-parse pattern used by `parse_isr_object`. Each element must be an
-/// object literal with a `tag` discriminant; `text` is a static string literal
-/// only (dynamic text is an XSS vector — see the design doc security model).
+/// object literal with a `tag` discriminant; `text` is a static string literal,
+/// except on `style` entries where a member-path expression is also accepted
+/// (emitted through the `style_safe` breakout guard — F1/R2). `script`/
+/// `noscript` text stays literal-only (dynamic text there is an XSS vector —
+/// see the design doc security model).
 fn parse_head_array(
     jsx_attr: &swc_core::ecma::ast::JSXAttr,
     scope: &Scope,
@@ -1219,7 +1962,11 @@ fn parse_head_array(
         let mut tag: Option<HeadTag> = None;
         let mut attrs: Vec<(String, HeadValue)> = Vec::new();
         let mut bool_attrs: Vec<String> = Vec::new();
-        let mut text: Option<String> = None;
+        // `text` is resolved AFTER the prop loop — whether a dynamic value is
+        // legal depends on `tag`, which may appear after `text` in the object.
+        // The value's own span rides along so rejections point at the
+        // expression, not the whole head-entry object.
+        let mut text_value: Option<(&SwcExpr, Span)> = None;
 
         for prop in &obj.props {
             let PropOrSpread::Prop(p) = prop else {
@@ -1249,13 +1996,7 @@ fn parse_head_array(
                 continue;
             }
             if key == "text" {
-                let SwcExpr::Lit(Lit::Str(s)) = strip_paren(&kv.value) else {
-                    return Err(LowerError::at(
-                        span,
-                        ErrorKind::BrustPageHeadTextMustBeLiteral,
-                    ));
-                };
-                text = Some(s.value.to_string_lossy().into_owned());
+                text_value = Some((kv.value.as_ref(), kv.value.span()));
                 continue;
             }
             // boolean presence attr (`defer`, `async`)
@@ -1293,6 +2034,37 @@ fn parse_head_array(
         let Some(tag) = tag else {
             return Err(entry_err());
         };
+        let mut text: Option<HeadValue> = None;
+        if let Some((tv, tv_span)) = text_value {
+            if let SwcExpr::Lit(Lit::Str(s)) = strip_paren(tv) {
+                text = Some(HeadValue::Literal(s.value.to_string_lossy().into_owned()));
+            } else {
+                // Dynamic `text` is style-only (F1/R2): emitted through the
+                // `style_safe` breakout guard. script/noscript (XSS surface)
+                // and void tags keep the literal-only error.
+                if tag != HeadTag::Style {
+                    return Err(LowerError::at(
+                        tv_span,
+                        ErrorKind::BrustPageHeadTextMustBeLiteral,
+                    ));
+                }
+                // Same member-path subset as head attrs. `parse_head_array`
+                // runs with `scope.inline = None`, so `lower_expr` only yields
+                // Field/MemberAccess here anyway (concat/template-literal are
+                // inline-gated).
+                match lower_expr(tv, scope) {
+                    Ok(ex @ (crate::ir::Expr::Field(_) | crate::ir::Expr::MemberAccess { .. })) => {
+                        text = Some(HeadValue::Path(ex));
+                    }
+                    _ => {
+                        return Err(LowerError::at(
+                            tv_span,
+                            ErrorKind::BrustPageHeadTextMustBeLiteral,
+                        ));
+                    }
+                }
+            }
+        }
         if text.is_some() && tag.is_void() {
             return Err(LowerError::at(span, ErrorKind::BrustPageHeadTextOnVoid));
         }
@@ -6921,6 +7693,345 @@ export const behavior = () => ({});"#;
             }
             other => panic!("expected Cond, got {other:?}"),
         }
+    }
+
+    // ── F2: inline local const bindings (R3a) ─────────────────────────────────
+
+    /// Helper: compile a route that native-inlines `Section` with the given source.
+    fn compile_with_section(section_src: &str) -> crate::Compiled {
+        let route =
+            r#"export default function Page(d: any) { return <Section native title="T"/>; }"#;
+        let mut sources = HashMap::new();
+        sources.insert("Section".to_string(), section_src.to_string());
+        crate::compile_full(route, "<route>", sources, HashMap::new(), HashMap::new()).unwrap()
+    }
+
+    #[test]
+    fn inline_const_style_object_matches_prehoisted_emission() {
+        let with_const = r#"export default function Section({ title }: any) {
+  const rootStyle = { color: "red", padding: "4px" };
+  return <div style={rootStyle}><h1>{title}</h1></div>;
+}"#;
+        let prehoisted = r#"export default function Section({ title }: any) {
+  return <div style={{ color: "red", padding: "4px" }}><h1>{title}</h1></div>;
+}"#;
+        let a = compile_with_section(with_const);
+        let b = compile_with_section(prehoisted);
+        assert!(
+            a.warnings.is_empty(),
+            "const-hoisted section must inline cleanly, got {:?}",
+            a.warnings
+        );
+        assert_eq!(
+            a.template, b.template,
+            "const-hoisted emission must equal the pre-hoisted equivalent"
+        );
+    }
+
+    #[test]
+    fn inline_const_chain_substitutes_sequentially() {
+        // `cls` references the earlier const `base` — sequential fold.
+        let with_const = r#"export default function Section({ title }: any) {
+  const base = "card";
+  const cls = `${base} card-wide`;
+  return <div className={cls}>{title}</div>;
+}"#;
+        let prehoisted = r#"export default function Section({ title }: any) {
+  return <div className={`${"card"} card-wide`}>{title}</div>;
+}"#;
+        let a = compile_with_section(with_const);
+        let b = compile_with_section(prehoisted);
+        assert!(a.warnings.is_empty(), "got {:?}", a.warnings);
+        assert_eq!(a.template, b.template);
+    }
+
+    #[test]
+    fn inline_consts_then_if_return() {
+        let src = r#"export default function C({ flag }: any) {
+  const cls = "warn";
+  if (flag) return <p className={cls}>A</p>;
+  return <p>B</p>;
+}"#;
+        let mut subst = HashMap::new();
+        subst.insert(
+            "flag".to_string(),
+            crate::ir::Expr::Field("flag".to_string()),
+        );
+        let nodes = inline_lower(src, subst, false).unwrap();
+        assert_eq!(nodes.len(), 1);
+        match &nodes[0] {
+            JsxNode::Cond { consequent, .. } => {
+                let dbg = format!("{consequent:?}");
+                assert!(
+                    dbg.contains("warn"),
+                    "const must be substituted into the if-return branch, got:\n{dbg}"
+                );
+            }
+            other => panic!("expected Cond, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inline_let_binding_rejected() {
+        let src = r#"export default function C() {
+  let cls = "warn";
+  return <div className={cls}/>;
+}"#;
+        let err = inline_lower(src, HashMap::new(), false).unwrap_err();
+        match &err.kind {
+            ErrorKind::InlineUntranslatable(s) => assert_eq!(s, "let/var binding — use const"),
+            other => panic!("expected InlineUntranslatable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inline_var_binding_rejected() {
+        let src = r#"export default function C() {
+  var cls = "warn";
+  return <div className={cls}/>;
+}"#;
+        let err = inline_lower(src, HashMap::new(), false).unwrap_err();
+        match &err.kind {
+            ErrorKind::InlineUntranslatable(s) => assert_eq!(s, "let/var binding — use const"),
+            other => panic!("expected InlineUntranslatable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inline_destructuring_binding_rejected() {
+        let src = r#"export default function C(props: any) {
+  const { cls } = props;
+  return <div className={cls}/>;
+}"#;
+        let err = inline_lower(src, HashMap::new(), false).unwrap_err();
+        match &err.kind {
+            ErrorKind::InlineUntranslatable(s) => assert_eq!(s, "destructuring binding"),
+            other => panic!("expected InlineUntranslatable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inline_const_shadowed_by_map_param_not_substituted() {
+        // `item` is BOTH a const and the `.map` callback binding: the use
+        // inside the callback must resolve to the LOOP binding, the use
+        // outside to the const.
+        let src = r#"export default function C({ items }: any) {
+  const item = "outer";
+  return <ul data-mark={item}>{items.map((item) => <li>{item.name}</li>)}</ul>;
+}"#;
+        let mut subst = HashMap::new();
+        subst.insert(
+            "items".to_string(),
+            crate::ir::Expr::Field("items".to_string()),
+        );
+        let nodes = inline_lower(src, subst, false).unwrap();
+        let dbg = format!("{:?}", nodes[0]);
+        assert!(
+            dbg.contains("outer"),
+            "outer use must be substituted, got:\n{dbg}"
+        );
+        assert!(
+            dbg.contains("MapMember"),
+            "loop-body use must stay the map binding (`item.name`), got:\n{dbg}"
+        );
+    }
+
+    #[test]
+    fn inline_const_redeclaration_in_nested_arrow_rejected() {
+        let src = r#"export default function C({ items }: any) {
+  const row = "outer";
+  return <ul>{items.map((x) => { const row = x; return <li>{row}</li>; })}</ul>;
+}"#;
+        let mut subst = HashMap::new();
+        subst.insert(
+            "items".to_string(),
+            crate::ir::Expr::Field("items".to_string()),
+        );
+        let err = inline_lower(src, subst, false).unwrap_err();
+        match &err.kind {
+            ErrorKind::InlineUntranslatable(s) => assert_eq!(s, "const redeclaration"),
+            other => panic!("expected InlineUntranslatable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inline_const_as_element_name_rejected_as_dynamic_component() {
+        // F3 (component-map dispatch) will accept `const Tag = MAP[key]` here;
+        // until then EVERY const used as a JSX element name is rejected.
+        let src = r#"export default function C() {
+  const Tag = "div";
+  return <Tag/>;
+}"#;
+        let err = inline_lower(src, HashMap::new(), false).unwrap_err();
+        match &err.kind {
+            ErrorKind::InlineUntranslatable(s) => assert_eq!(s, "dynamic component"),
+            other => panic!("expected InlineUntranslatable, got {other:?}"),
+        }
+    }
+
+    // ── F3: component-map dispatch (R3b) ──────────────────────────────────────
+
+    const HERO_SRC: &str = r#"export default function Hero({ title }: any) {
+  return <header>{title}</header>;
+}"#;
+    const GALLERY_SRC: &str = r#"export default function Gallery({ title }: any) {
+  return <section>{title}</section>;
+}"#;
+
+    /// Helper: compile a route native-inlining `Sections` (the dispatch host)
+    /// with the given component sources.
+    fn compile_sections(host_src: &str, extra: &[(&str, &str)]) -> crate::Compiled {
+        let route = r#"export default function Page(d: any) { return <Sections native sectionKey={d.sectionKey} title={d.title}/>; }"#;
+        let mut sources = HashMap::new();
+        sources.insert("Sections".to_string(), host_src.to_string());
+        for (name, src) in extra {
+            sources.insert(name.to_string(), src.to_string());
+        }
+        crate::compile_full(route, "<route>", sources, HashMap::new(), HashMap::new()).unwrap()
+    }
+
+    const BODY_MAP_HOST: &str = r#"export default function Sections({ sectionKey, title }: any) {
+  const MAP = { hero: Hero, gallery: Gallery };
+  const Comp = MAP[sectionKey];
+  return <Comp title={title}/>;
+}"#;
+
+    #[test]
+    fn dispatch_body_const_map_inlines_every_branch() {
+        let c = compile_sections(
+            BODY_MAP_HOST,
+            &[("Hero", HERO_SRC), ("Gallery", GALLERY_SRC)],
+        );
+        assert!(
+            c.warnings.is_empty(),
+            "dispatch must inline cleanly, got {:?}",
+            c.warnings
+        );
+        assert!(
+            c.template.contains(r#"{% if (sectionKey) == ("hero") %}"#),
+            "expected first-branch test, got:\n{}",
+            c.template
+        );
+        assert!(
+            c.template
+                .contains(r#"{% else %}{% if (sectionKey) == ("gallery") %}"#),
+            "expected nested else-if for the second key, got:\n{}",
+            c.template
+        );
+        assert!(
+            c.template.contains("<header>") && c.template.contains("<section>"),
+            "both mapped components must be inlined, got:\n{}",
+            c.template
+        );
+    }
+
+    #[test]
+    fn dispatch_module_level_map_works() {
+        let host = r#"const MAP = { hero: Hero, gallery: Gallery };
+export default function Sections({ sectionKey, title }: any) {
+  const Comp = MAP[sectionKey];
+  return <Comp title={title}/>;
+}"#;
+        let c = compile_sections(host, &[("Hero", HERO_SRC), ("Gallery", GALLERY_SRC)]);
+        assert!(c.warnings.is_empty(), "got {:?}", c.warnings);
+        assert!(
+            c.template.contains(r#"{% if (sectionKey) == ("hero") %}"#)
+                && c.template.contains("<header>")
+                && c.template.contains("<section>"),
+            "module-level MAP dispatch must inline both branches, got:\n{}",
+            c.template
+        );
+    }
+
+    #[test]
+    fn dispatch_forwards_props_to_every_branch() {
+        let c = compile_sections(
+            BODY_MAP_HOST,
+            &[("Hero", HERO_SRC), ("Gallery", GALLERY_SRC)],
+        );
+        assert!(c.warnings.is_empty(), "got {:?}", c.warnings);
+        // `title={title}` on the dispatch element must be substituted into BOTH
+        // inlined bodies (`{title}` in Hero and Gallery each).
+        let occurrences = c.template.matches("title").count();
+        assert!(
+            occurrences >= 2,
+            "expected the call-site `title` prop in both branches, found {} in:\n{}",
+            occurrences,
+            c.template
+        );
+    }
+
+    #[test]
+    fn dispatch_unresolvable_map_value_falls_back_to_ssr() {
+        // Gallery is NOT in the component sources → all-or-nothing: the whole
+        // host falls back to an SSR component slot with a warning.
+        let c = compile_sections(BODY_MAP_HOST, &[("Hero", HERO_SRC)]);
+        assert!(
+            c.warnings
+                .iter()
+                .any(|w| w.contains("dispatch component not inlinable")),
+            "expected the dispatch fallback warning, got {:?}",
+            c.warnings
+        );
+        assert!(
+            c.template.contains("comp_0_html"),
+            "host must fall back to the SSR slot, got:\n{}",
+            c.template
+        );
+    }
+
+    #[test]
+    fn dispatch_call_subscript_falls_back_with_warning() {
+        let host = r#"export default function Sections({ sectionKey, title }: any) {
+  const MAP = { hero: Hero };
+  const Comp = MAP[getKey()];
+  return <Comp title={title}/>;
+}"#;
+        let c = compile_sections(host, &[("Hero", HERO_SRC)]);
+        assert!(
+            c.warnings
+                .iter()
+                .any(|w| w.contains("not inlined: untranslatable")),
+            "non-member-path subscript must soft-fall back, got {:?}",
+            c.warnings
+        );
+        assert!(
+            c.template.contains("comp_0_html"),
+            "host must fall back to the SSR slot, got:\n{}",
+            c.template
+        );
+    }
+
+    #[test]
+    fn dispatch_map_containing_host_fires_circular_guard() {
+        let host = r#"export default function Sections({ sectionKey }: any) {
+  const MAP = { a: Sections };
+  const Comp = MAP[sectionKey];
+  return <Comp/>;
+}"#;
+        let route = r#"export default function Page(d: any) { return <Sections native sectionKey={d.sectionKey}/>; }"#;
+        let mut sources = HashMap::new();
+        sources.insert("Sections".to_string(), host.to_string());
+        let err = crate::compile_full(route, "<route>", sources, HashMap::new(), HashMap::new())
+            .unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::CircularInline(_)),
+            "expected CircularInline, got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn inline_no_const_emission_unchanged() {
+        // Regression pin: a no-const single-return inline takes the borrowed
+        // (pre-F2) path — its emission must stay byte-identical.
+        let route = r#"export default function Page(d: any) { return <Wrap native label="hi"/>; }"#;
+        let wrap = r#"export default function Wrap({ label }: any) { return <section><h1>{label}</h1></section>; }"#;
+        let mut sources = HashMap::new();
+        sources.insert("Wrap".to_string(), wrap.to_string());
+        let c =
+            crate::compile_full(route, "<route>", sources, HashMap::new(), HashMap::new()).unwrap();
+        assert_eq!(c.template, "<section><h1>hi</h1></section>");
     }
 
     #[test]

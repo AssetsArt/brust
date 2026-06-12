@@ -134,7 +134,9 @@ fn emit_node(node: &JsxNode, out: &mut String) {
             out.push_str("{{ __brust_component_css__ | safe }}");
             // `head={[…]}` entries — emitted after the framework tags, before
             // `</head>`. Attr values reuse `emit_head_attr` (literal→escaped,
-            // path→`{{ (p) | e }}`); `text` is RAW (forced static-literal in lower).
+            // path→`{{ (p) | e }}`); literal `text` is RAW, dynamic `text`
+            // (style entries only — enforced in lower) goes through the
+            // `style_safe` breakout guard.
             for entry in head {
                 out.push('<');
                 out.push_str(entry.tag.name());
@@ -149,8 +151,17 @@ fn emit_node(node: &JsxNode, out: &mut String) {
                     out.push_str("/>");
                 } else {
                     out.push('>');
-                    if let Some(t) = &entry.text {
-                        out.push_str(t); // RAW static literal (developer-authored)
+                    match &entry.text {
+                        // RAW static literal (developer-authored).
+                        Some(HeadValue::Literal(t)) => out.push_str(t),
+                        // Dynamic style text: `| e` would corrupt CSS (`>`
+                        // combinators); `style_safe` scrubs `</` → `<\/` so a
+                        // `</style>` breakout is impossible while the CSS
+                        // renders intact.
+                        Some(HeadValue::Path(e)) => {
+                            let _ = write!(out, "{{{{ ({}) | style_safe }}}}", emit_expr_path(e));
+                        }
+                        None => {}
                     }
                     out.push_str("</");
                     out.push_str(entry.tag.name());

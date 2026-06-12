@@ -13,6 +13,7 @@
 
 use std::path::Path;
 
+use jsx_rust_compiler::filters::{json_attr, style_safe};
 use minijinja::{Environment, UndefinedBehavior};
 use parking_lot::RwLock;
 
@@ -38,6 +39,7 @@ fn base_env() -> Environment<'static> {
     let mut env = Environment::new();
     env.set_undefined_behavior(UndefinedBehavior::Chainable);
     env.add_filter("json_attr", json_attr);
+    env.add_filter("style_safe", style_safe);
     env
 }
 
@@ -82,25 +84,11 @@ pub fn load_from(dir: &Path) -> Vec<String> {
     names
 }
 
-/// Serialize a value to JSON, then HTML-entity-encode it for safe placement in a
-/// double-quoted attribute (e.g. `x-props`). Mirrors the islands
-/// `entityEncode(JSON.stringify(...))` path. minijinja's built-in `tojson` is
-/// `<script>`-oriented (safe-marked, does NOT escape `"`) so it is WRONG for an
-/// HTML attribute — hence this filter.
-fn json_attr(value: minijinja::Value) -> Result<String, minijinja::Error> {
-    let json = serde_json::to_string(&value).map_err(|e| {
-        minijinja::Error::new(
-            minijinja::ErrorKind::InvalidOperation,
-            "x-props JSON serialization failed",
-        )
-        .with_source(e)
-    })?;
-    Ok(json
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;"))
-}
+// json_attr + style_safe live in jsx_rust_compiler::filters — they are the
+// COMPILER'S emission contract (it emits `| json_attr` / `| style_safe`
+// references into templates), so the compiler owns the single definition and
+// every render env (boot tier, dynamic tier, golden harness) registers the
+// same fns. base_env() registers them above.
 
 #[derive(Debug, thiserror::Error)]
 pub enum RegisterError {
@@ -356,6 +344,44 @@ mod tests {
 
         // Cleanup so other tests see a pristine dynamic tier.
         assert!(remove_dynamic_template("dynreg/survivor"));
+    }
+
+    #[test]
+    fn style_safe_scrubs_close_tag_sequences() {
+        let _guard = TEST_LOCK.lock();
+
+        // Direct: every `</` becomes `<\/` — kills a `</style>` breakout.
+        assert_eq!(
+            style_safe(minijinja::Value::from("a</style><script>alert(1)</script>")),
+            "a<\\/style><script>alert(1)<\\/script>"
+        );
+        // Case variants of the tag name don't matter — the scrub targets the
+        // two-byte `</` sequence itself, which has no case.
+        assert_eq!(
+            style_safe(minijinja::Value::from("</STYLE><x></Style>")),
+            "<\\/STYLE><x><\\/Style>"
+        );
+        // Plain CSS (including `>` child combinators) passes through untouched.
+        let css =
+            ".a > .b { color: red; } @media (min-width: 10px) { .c::before { content: '<'; } }";
+        assert_eq!(style_safe(minijinja::Value::from(css)), css);
+        // Undefined renders empty (mirrors Chainable undefined behavior).
+        assert_eq!(style_safe(minijinja::Value::UNDEFINED), "");
+
+        // Through a registered template — proves base_env() registration, i.e.
+        // both the boot tier and the dynamic tier see the filter.
+        register_template("stylesafe/t", "<style>{{ (css) | style_safe }}</style>")
+            .expect("register");
+        let out = render(
+            "stylesafe/t",
+            br#"{"css":"body{}</style><script>alert(1)</script>"}"#,
+        )
+        .expect("render style_safe template");
+        assert_eq!(
+            out,
+            "<style>body{}<\\/style><script>alert(1)<\\/script></style>"
+        );
+        assert!(remove_dynamic_template("stylesafe/t"));
     }
 
     #[test]

@@ -46,6 +46,22 @@ Because the output is a data-driven template, the JSX is constrained:
   component slots (a worker `renderToString` fills them per request) or, with
   the `native` attribute (`<Badge native label={x} />`), are inlined into the
   template at compile time — provided the component body is pure.
+- **Local `const` bindings hoist** inside an inlined component:
+  `const rootStyle = { padding: '8px' }` followed by `style={rootStyle}`
+  compiles — the compiler substitutes the value at build time. `const` only:
+  `let`/`var` and destructuring declarations are rejected.
+- **Component-map dispatch**: `const Comp = SECTIONS[data.kind]; return
+  <Comp …/>` — where `SECTIONS` is a map of string keys to components defined
+  in the **same file** — lowers to an if-chain with every mapped component
+  inlined. A key with no entry renders nothing.
+
+One head entry is allowed to be dynamic: a `<BrustPage>` style entry may take
+its text from loader data (`head={[{ tag: 'style', text: data.css }]}`) — the
+per-tenant design-token use-case. The value renders through a `style_safe`
+filter that rewrites `</` to `<\/` so the data cannot close the `<style>`
+element. That is a breakout guard, not a CSS sanitizer: treat the CSS as
+trusted, platform-authored content. Dynamic text stays style-only —
+`script`/`noscript` text must be a literal.
 
 The exact edges are catalogued in
 [Native Interactivity](/docs/native-interactivity), including patterns that do

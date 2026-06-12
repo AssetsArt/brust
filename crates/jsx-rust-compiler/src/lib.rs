@@ -1,6 +1,7 @@
 pub mod analyze;
 mod emit_factory;
 mod emit_jinja;
+pub mod filters;
 mod ir;
 mod lower;
 pub mod parser;
@@ -661,7 +662,7 @@ pub enum ErrorKind {
     )]
     BrustPageHeadEntryInvalid,
     #[error(
-        "`text` in a `<BrustPage head>` entry must be a string literal (no dynamic values — XSS)"
+        "`text` in a `<BrustPage head>` entry must be a string literal — use a literal; dynamic text is only supported on style entries"
     )]
     BrustPageHeadTextMustBeLiteral,
     #[error("`text` is not allowed on a void head tag (link/meta/base)")]
@@ -1317,9 +1318,56 @@ mod tests {
     }
 
     #[test]
-    fn brust_page_head_dynamic_text_is_rejected() {
+    fn brust_page_head_style_dynamic_text_emits_style_safe() {
+        // F1 (R2): member-path `text` on a STYLE entry is allowed and emits
+        // through the `style_safe` filter (scrubs `</` → `<\/` at render to
+        // block a `</style>` breakout; `| e` would corrupt CSS).
         let src = r#"export default function Home({ data }) {
   return <BrustPage head={[{ tag: 'style', text: data.css }]}><main>hi</main></BrustPage>;
+}"#;
+        let c = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap();
+        assert!(
+            c.template
+                .contains("<style>{{ (data.css) | style_safe }}</style>"),
+            "got: {}",
+            c.template
+        );
+    }
+
+    #[test]
+    fn brust_page_head_dynamic_text_is_rejected() {
+        // Dynamic `text` stays literal-only on script entries (XSS surface) —
+        // only style entries accept member-path text (F1).
+        let src = r#"export default function Home({ data }) {
+  return <BrustPage head={[{ tag: 'script', text: data.js }]}><main>hi</main></BrustPage>;
+}"#;
+        let err = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::BrustPageHeadTextMustBeLiteral),
+            "expected BrustPageHeadTextMustBeLiteral, got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn brust_page_head_dynamic_text_on_void_tag_is_rejected() {
+        // Dynamic text on a void tag (meta) keeps the literal-only error.
+        let src = r#"export default function Home({ data }) {
+  return <BrustPage head={[{ tag: 'meta', text: data.x }]}><main>hi</main></BrustPage>;
 }"#;
         let err = compile_full(
             src,

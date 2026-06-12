@@ -204,6 +204,53 @@ test('GET /_test/outlet — nested native chain composes layout + leaf with merg
   expect(body).toContain('<title>Outlet Page</title>') // parent loader → BrustPage title
 })
 
+// R2+R3 — compiler inline relaxations E2E (/_test/native-section/{key}).
+// One route proves all three features through the real pipeline:
+//   F1 (R2): loader-provided CSS rendered as dynamic <style> head text via the
+//            style_safe filter — a `</style><script>` breakout attempt embedded
+//            in the loader data must arrive scrubbed as `<\/`.
+//   F2 (R3a): HeroSection hoists `const rootStyle = {...}` into its style attr.
+//   F3 (R3b): SectionRenderer dispatches `SECTIONS[sectionKey]` — the param
+//             picks the branch; the other branch must NOT render; a key miss
+//             renders an empty dispatch slot.
+test('GET /_test/native-section/hero — dynamic head style + const style attr + hero branch', async () => {
+  const res = await fetch(`${BASE_URL}/_test/native-section/hero`)
+  expect(res.status).toBe(200)
+  expect(res.headers.get('content-type')).toContain('text/html')
+  const body = await res.text()
+
+  // F1: the loader CSS lands inside <style>, with the `</` of the embedded
+  // breakout attempt scrubbed to `<\/` (style_safe). The raw breakout sequence
+  // must NOT appear anywhere in the response.
+  expect(body).toContain('<style>.shop-token{color:#b45309}/*<\\/style><script>boom*/</style>')
+  expect(body).not.toContain('</style><script>boom')
+
+  // F2: the const-bound style object rendered on the inlined hero root.
+  expect(body).toContain('<header class="sec-hero" style="background:#fde68a;padding:8px">')
+
+  // F3: hero branch rendered with the call-site prop; banner branch absent.
+  expect(body).toContain('<h2>Section hero</h2>')
+  expect(body).not.toContain('sec-banner')
+})
+
+test('GET /_test/native-section/banner — dispatch renders the banner branch, not hero', async () => {
+  const res = await fetch(`${BASE_URL}/_test/native-section/banner`)
+  expect(res.status).toBe(200)
+  const body = await res.text()
+  expect(body).toContain('<aside class="sec-banner"><p>Section banner</p></aside>')
+  expect(body).not.toContain('sec-hero')
+})
+
+test('GET /_test/native-section/unknown — dispatch key miss renders an empty slot', async () => {
+  const res = await fetch(`${BASE_URL}/_test/native-section/unknown`)
+  expect(res.status).toBe(200)
+  const body = await res.text()
+  // Neither branch renders; the page shell (incl. the dynamic style) survives.
+  expect(body).not.toContain('sec-hero')
+  expect(body).not.toContain('sec-banner')
+  expect(body).toContain('.shop-token{color:#b45309}')
+})
+
 // T4 — SPA-nav path. /_brust/page/{path} returns { html, title } where html is
 // the <main> inner content. Exercises renderNativeRouteToHtml's chain-loader
 // merge (the SPA path was previously leaf-only). Confirms the composed leaf

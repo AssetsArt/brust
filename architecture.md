@@ -663,6 +663,24 @@ function Badge({ label, strong }: { label: string; strong: boolean }) {
 - **Expression translation:** member paths, arithmetic, template literals (→ `~`),
   an allowlisted method→filter map (`toUpperCase→upper`, `toLowerCase→lower`,
   `trim`, `slice`, `join`, `.length`), comparison / logical / `not`.
+- **Local `const` bindings** (R3a): a pre-pass substitutes body consts
+  (`const rootStyle = {…}; … style={rootStyle}`) into the remaining statements
+  before lowering — sequential (later consts may reference earlier ones),
+  shadow-aware (a `.map()` callback param shadowing a const is left alone;
+  redeclaring a recorded name in a nested scope is rejected). `const` only:
+  `let`/`var` and destructuring declarations are untranslatable. Substitution
+  is syntactic — a const used N times duplicates its expression N times.
+- **Component-map dispatch** (R3b): `const Comp = MAP[key]; return <Comp …/>`
+  (the `MAP` object literal as a body const or a module-level const in the
+  **same file**) lowers to a nested `{% if (key) == ("k") %}` chain, one branch
+  per map entry, each mapped component inlined with the call-site props. A key
+  miss renders empty. All-or-nothing: if any mapped component is not inlinable
+  the whole dispatch degrades to an SSR slot + warning.
+- **Dynamic head style** (R2): a `<BrustPage>` head **style** entry accepts a
+  member-path `text` (`head={[{ tag: 'style', text: data.css }]}`), emitted as
+  `{{ (data.css) | style_safe }}` — the filter rewrites `</` → `<\/`
+  (case-insensitive) so loader data can't close the `<style>` element. Breakout
+  guard, not a CSS sanitizer; `script`/`noscript` text stays literal-only.
 - **Prop substitution:** call-site prop expressions are lowered in the **route**
   scope, then substituted for the component's prop references. `{children}` →
   `ChildrenSlot`, spliced with the call-site children (which may contain islands
