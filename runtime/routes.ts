@@ -409,6 +409,16 @@ export interface FlatRoute {
   /** Sub-project J — Component.name when leaf had `native: true`. Captured
    * at flatten time (build-time AST identifier), so minifier-safe. */
   nativeTemplate?: string
+  /** Catch-all (`{ path: '*' }`) marker. When true this FlatRoute is a
+   * "not found" fallback: it stays in the array at its natural index (route_id
+   * stable) but install SKIPS the matchit insert for it — it only renders when
+   * matchit returns NoMatch under `notFoundPrefix`. NEVER remove a flagged
+   * entry from the flat array (that would shift every later route_id). */
+  notFound?: boolean
+  /** Parent layout's path prefix this catch-all covers. Root catch-all → `''`
+   * (matches everything as last resort). Longest segment-prefix wins at match
+   * time. Never contains `*` (it's the parent prefix, not the catch-all path). */
+  notFoundPrefix?: string
 }
 
 /** Compose a child's relative path onto a parent's base path.
@@ -530,7 +540,10 @@ function assertNativeSubtree(children: Route[], where: string): void {
  * the design spec (S3). */
 export function flattenRoutes(routes: Route[]): FlatRoute[] {
   const out: FlatRoute[] = []
-  walkRoutes(routes, [], '', out)
+  // Tracks `notFoundPrefix` values already claimed by a catch-all so a second
+  // catch-all under the same prefix throws instead of silently shadowing.
+  const seenNotFoundPrefixes = new Set<string>()
+  walkRoutes(routes, [], '', out, seenNotFoundPrefixes)
   return out
 }
 
@@ -539,6 +552,7 @@ function walkRoutes(
   parentChain: Route[],
   basePath: string,
   out: FlatRoute[],
+  seenNotFoundPrefixes: Set<string>,
 ): void {
   for (const r of routes) {
     validateRoute(r, basePath)
@@ -549,11 +563,35 @@ function walkRoutes(
       continue
     }
 
+    // Catch-all (`{ path: '*' }`) — a "not found" fallback for the `basePath`
+    // subtree. It is a LEAF (no children/index) and is KEPT in the flat array
+    // at its natural index (route_id stable) flagged `notFound`. Its fullPath
+    // is set to the parent prefix (never a `*` matchit pattern) so a later
+    // install step can skip the matchit insert and rely on the flag.
+    if (r.path === '*') {
+      if (r.children && r.children.length > 0) {
+        throw new Error(`catch-all route "*" must be a leaf (no children) under "${basePath}"`)
+      }
+      // (index is already mutually exclusive with path via validateRoute.)
+      const prefix = basePath
+      if (seenNotFoundPrefixes.has(prefix)) {
+        throw new Error(
+          `duplicate catch-all route "*": only one catch-all allowed per prefix "${prefix}"`,
+        )
+      }
+      seenNotFoundPrefixes.add(prefix)
+      const flat = makeFlat(chain, prefix)
+      flat.notFound = true
+      flat.notFoundPrefix = prefix
+      out.push(flat)
+      continue
+    }
+
     const ownPath = r.path ?? ''
     const myPath = joinPath(basePath, ownPath)
 
     if (r.children && r.children.length > 0) {
-      walkRoutes(r.children, chain, myPath, out)
+      walkRoutes(r.children, chain, myPath, out, seenNotFoundPrefixes)
     } else {
       // Leaf with a path (validated above).
       out.push(makeFlat(chain, myPath))

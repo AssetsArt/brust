@@ -245,6 +245,12 @@ export const brust = {
             }
           : null,
         nativeTemplate: r.nativeTemplate ?? null,
+        // Catch-all (`{ path: '*' }`) markers. Rust reads these via serde
+        // rename (`notFound` / `notFoundPrefix`) in a later task to skip the
+        // matchit insert + register the not-found fallback table entry.
+        // Emitting them now is harmless before Rust consumes them.
+        notFound: r.notFound === true,
+        notFoundPrefix: r.notFoundPrefix ?? '',
       }),
     )
     const result = (native as any).registerRoutes(configs)
