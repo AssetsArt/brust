@@ -84,6 +84,20 @@ it falls back to the framework default 404 body at status 404.
 
 ## High-level architecture
 
+### route_id ↔ array-index invariant (CRITICAL — read first)
+
+Both sides index routes by **array position**: Rust `install_with_config` uses
+`idx as u32` as the route_id (routes.rs:260-262); the worker builds `byRouteId` via
+`routes.forEach((r, i) => byRouteId.set(i, r))` (runtime/routes.ts:748-751), and the
+dispatcher renders a match via `byRouteId.get(route_id)` (routes.ts:797). Therefore a
+catch-all FlatRoute **MUST stay in the ordered `routes`/`configs` array at its natural
+index** — keeping its route_id, cache, and native_template registration — and remain
+renderable. "Pull the catch-all out of the matchable set" means **skip only the matchit
+`router.insert` for it** (routes.rs:261-266), NOT remove it from the array. Removing it
+would shift every later route_id and corrupt all matched routes. The flatten step keeps
+catch-alls in `out` (flagged `notFound: true`); install branches on that flag to skip
+the insert; the not-found table stores the catch-all's existing route_id.
+
 ### Post-router fallback tier (the core mechanism)
 
 The catch-all is resolved as a **second matching tier after matchit**, NOT as a matchit
@@ -112,17 +126,20 @@ the global catch-all cannot swallow them.
 
 ### Status code threading
 
-The 404 status must reach the HTTP response on every path. Today the native verdict
-already carries `status` (routes.ts ~:989, ~:1164). We extend:
+The 404 status must reach the HTTP response on every path. The render-status thread is
+`renderStatus`/`verdict.status → renderBranchStreaming` (routes.ts:975-989, 1164); the
+native verdict already carries `status` (routes.ts:240-241 → 989/1077/1109/1164). We
+extend:
 
 - **Rust unmatched (NotFound tier):** the JS render dispatch receives the selected
   catch-all route_id + a "render as 404" signal; it renders and returns a response
-  whose status the Rust side already reads from the JS wrapper (native verdict path),
-  or sets 404 for React.
-- **Native catch-all:** reuse the verdict mechanism — the catch-all render injects an
-  implicit `notFound()`-equivalent status (404) without the loader needing to call it.
-- **React catch-all / `notFound()`:** the render dispatch sets response `status: 404`
-  (same wrapper field the ActionError 404 path already uses, routes.ts ~:806/1299).
+  whose status the Rust side reads from the JS wrapper (the `renderStatus` thread).
+- **Native catch-all:** force `renderStatus = 404` unconditionally when the `flat`
+  being rendered is a catch-all (natural hook: routes.ts:975-989 where `renderStatus`
+  is computed) — the loader does NOT need to call `notFound()`.
+- **React catch-all / `notFound()`:** sets `status: 404` via the SAME `renderStatus`
+  field (routes.ts:1164) — NOT the ActionError path (ActionError is action-dispatch
+  only, routes.ts:1801-1812/1929, and does not feed render status).
 
 ### Data flow per layer
 
@@ -142,27 +159,54 @@ already carries `status` (routes.ts ~:989, ~:1164). We extend:
   `not_found_table: RwLock<Vec<(String, u32)>>` to the router; populate it during
   install from a new per-config flag; add `select_not_found(path) -> Option<u32>`
   (longest segment-prefix match); call it in `match_path` on the NoMatch branch.
-- `src/routing/config.rs` (or wherever `RouteConfig`/install structs live) — add a
-  `not_found: bool` (+ `not_found_prefix: String`) field carried from JS per route.
-- `src/server/mod.rs` — at the match site (~:631) handle `MatchResult::NotFound` by
-  dispatching a render of the route_id with a 404 marker; keep `error_404()` as the
-  last-resort when the tier yields nothing.
+- `RouteConfig` (routes.rs:224-234) — add `not_found` + `not_found_prefix` fields.
+  RouteConfig crosses the boundary as a **JSON string** (`register_routes(Vec<String>)`
+  in crates/brust/src/lib.rs:301-307 → `serde_json::from_str`), NOT as `#[napi(object)]`.
+  So the camelCase mapping is serde, mirroring the existing `nativeTemplate` field:
+  `#[serde(default, rename = "notFound")]` + `#[serde(default, rename = "notFoundPrefix")]`.
+  Missing `#[serde(default)]` or the wrong rename → silent default → feature no-ops.
+- `src/server/mod.rs` — TWO match sites must handle `MatchResult::NotFound`:
+  (a) the general render site (~:628) → dispatch a render of the route_id with a 404
+  marker; keep `error_404()` as last-resort when the tier yields nothing.
+  (b) the **SPA-nav payload site** `/_brust/page` (~:605-625), which today returns a
+  bare `{"error":"not found"}` JSON on NoMatch (~:615-621) → must ALSO dispatch the
+  NotFound tier as a navigation render at 404, so the SPA client receives a real page
+  body to swap (see bootstrap below). Without this, SPA 404s have no body.
 
 **TypeScript runtime:**
-- `runtime/routes.ts` — flatten: detect `path === '*'` leaves, pull them OUT of the
-  matchable set into a `notFound` descriptor on the flat table (with computed prefix);
-  pass `not_found` + `not_found_prefix` to the Rust install payload; export
-  `notFound()` React trigger (tagged throw) + the existing native `notFound()` stays;
-  in the render dispatch, catch the React `notFound` sentinel and render the nearest
-  catch-all at status 404; render a catch-all flat route at status 404.
-- `runtime/islands/bootstrap.ts` — on SPA nav, when the page payload responds 404 but
-  carries a rendered body/marker, APPLY it (content swap + URL + title) instead of the
-  full-reload fallback; keep full-reload only for true transport errors.
+- `runtime/routes.ts` — flatten (`walkRoutes` ~:537-562, leaf `basePath` IS the parent
+  prefix): detect `path === '*'` leaves, KEEP them in the flat array (route_id stable,
+  per the invariant above) flagged `notFound: true` with computed `notFoundPrefix`
+  (= parent `basePath`); the install payload carries `notFound`/`notFoundPrefix` so Rust
+  skips the matchit insert + records the table entry. Export a React `notFound()` trigger
+  (tagged throw) on `brustjs/routes`; the existing native `notFound()` verdict stays.
+  **React `notFound()` re-render (control-flow, not just a status tweak):** the loader
+  runs in `buildRenderElement` (~:1600); today the only catch (~:1138) turns ALL throws
+  into a 500 via `errorBoundary`. The `notFound` sentinel must be discriminated BEFORE
+  that 500 handler, then ABANDON the matched `flat` and re-run `buildRenderElement`
+  against the **nearest catch-all's** chain at `renderStatus = 404` (same selection a
+  Rust-unmatched path uses). No conflict with ActionError (action-dispatch only).
+  Rendering an unmatched catch-all flat route forces `renderStatus = 404` (native + React).
+- `runtime/islands/bootstrap.ts` + `runtime/islands/page-cache.ts` — today
+  `page-cache.ts:63` throws on `!resp.ok` → `bootstrap.ts:456-460` full-reloads. Change:
+  a 404 carrying a rendered page payload is NOT a transport error — don't throw in
+  `fetchPagePayload` for a 404-with-payload; route it through the shared swap path
+  (bootstrap.ts:435-448: content swap + URL + title). Keep full-reload ONLY for true
+  transport failures (network error, 5xx, empty body). CAVEAT: cached payloads skip
+  `applyStoreSnapshot` (bootstrap.ts:441) — a 404 swap must set the `cached` flag
+  correctly (a fresh 404 fetch is NOT cached → must apply the snapshot). Must not break
+  the `fallback:'client'` takeover path (attemptClientFallback).
 - `runtime/cli/ssg.ts` — after crawling included routes, if a **global** catch-all
-  exists and the app ships no `public/404.html`, crawl it (sentinel path) and write the
-  rendered HTML to `staticOut/404.html` (replaces the fallback404Html stub for the
-  no-fallback-routes case; the existing fallback-routes 404.html logic still applies
-  and the two must compose — global 404 page is the base, fallback redirects layer in).
+  exists and the app ships no `public/404.html` (ssg.ts:564 check), crawl it (sentinel
+  path) and write the rendered HTML to `staticOut/404.html`. SINGLE-FILE CONFLICT (not a
+  mechanical merge): there is exactly ONE `staticOut/404.html` slot. Today it holds the
+  `fallback404Html` redirect SCRIPT (ssg.ts:275-305), written only when
+  `fallbacks.length > 0` (ssg.ts:544). When BOTH a global catch-all AND `fallback:'client'`
+  routes exist, the resolution is: the crawled global-404 page is the document, and the
+  fallback-match `<script>` (the pattern→shell redirect) is INJECTED into it (before
+  `</body>`), so branded 404 + fallback takeover coexist. When only the catch-all exists:
+  pure rendered page. When only fallbacks exist: unchanged (existing behavior). This must
+  not regress the fallback-routes feature — covered by a compose test.
 
 **Docs dogfood:**
 - `example/docs/components/NotFound.tsx` (native) — branded 404, replaces the static
@@ -243,8 +287,20 @@ already carries `status` (routes.ts ~:989, ~:1164). We extend:
 
 ## Open questions resolved at plan time
 
-- Exact field names for the Rust install payload (`not_found` vs `notFound` — napi
-  camelCases, so the Rust `#[napi(object)]` field must be `notFound`/`notFoundPrefix`).
-- Whether the catch-all gets a synthetic envelope or reuses the request envelope.
-- SSG composition order when BOTH a global 404 page and `fallback:'client'` redirect
-  404.html are needed (must not regress fallback routes).
+- **Install payload field names** — RESOLVED: serde, not napi (RouteConfig is a JSON
+  string). `#[serde(default, rename = "notFound")]` + `notFoundPrefix`, mirroring
+  `nativeTemplate`. (B1)
+- **Catch-all envelope** — RESOLVED: reuse the request `RouteEnvelope` (routes.rs:46-66)
+  with empty `params` and the request's real `full_path`; no new envelope type.
+- **SSG single-404.html conflict** — RESOLVED: crawled global-404 page is the document;
+  the fallback redirect `<script>` is injected before `</body>` when fallback routes
+  also exist. Compose test required. (F3)
+- **Native catch-all implicit 404** — RESOLVED: force `renderStatus = 404` when `flat`
+  is a catch-all, at the `renderStatus` computation site (routes.ts:975-989). (F4/Q4)
+
+## Remaining open question (decide during plan)
+
+- **`mdRoutes`-hosted docs-section catch-all** — does v1 ship only a root global 404
+  (deferring the docs-sidebar-404), or add an `mdRoutes` `notFound?` option? Scope
+  decision; the core catch-all mechanism does not depend on it. Default: ship the
+  `mdRoutes` `notFound?` option IF it stays small; else root global in v1 + fast-follow.
