@@ -1235,7 +1235,7 @@ export function makeRenderer(
         // Computed ONCE and shared by buildRenderElement (leaf swap) and
         // renderBranchStreaming (forceIslands) so the two can never diverge.
         let shellMode = wantsSsgFallbackShell(flat, call)
-        let element: ReactNode
+        let element: ReactNode = null
         // The route actually rendered + its HTTP status. Normally the matched
         // `flat` at the verdict status (404 when the matched route IS a
         // catch-all). A React loader that `throw`s `notFound()` swaps both to
