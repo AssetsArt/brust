@@ -133,7 +133,12 @@ impl ActionRouter {
                         params: m
                             .params
                             .iter()
-                            .map(|(k, v)| (k.to_string(), v.to_string()))
+                            .map(|(k, v)| {
+                                (
+                                    k.to_string(),
+                                    crate::routing::routes::decode_path_param(v).into_owned(),
+                                )
+                            })
                             .collect(),
                     },
                     None => MatchOutcome::MethodNotAllowed,
@@ -163,6 +168,18 @@ mod tests {
             } => {
                 assert_eq!(endpoint_id, 0);
                 assert_eq!(params, vec![("id".to_string(), "abc".to_string())]);
+            }
+            other => panic!("expected Found, got {other:?}"),
+        }
+    }
+    #[test]
+    fn action_params_arrive_percent_decoded() {
+        // Mirrors routes.rs::match_path_params_arrive_decoded_incl_catch_all —
+        // the action router shares decode_path_param at its production site.
+        let r = router();
+        match r.at(Method::Get, "/notes/sa%20wad-dee") {
+            MatchOutcome::Found { params, .. } => {
+                assert_eq!(params, vec![("id".to_string(), "sa wad-dee".to_string())]);
             }
             other => panic!("expected Found, got {other:?}"),
         }

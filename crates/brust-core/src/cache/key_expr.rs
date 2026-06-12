@@ -9,7 +9,9 @@
 /// NOTE: header/cookie/query values are passed through verbatim — NOT
 /// percent-decoded. An `eq(cookie(x), "/")` will not match a `%2F`-encoded
 /// value. The L1 sorted_query path is likewise undecoded, so key-building stays
-/// internally consistent.
+/// internally consistent. PATH PARAMS are the exception: param() values arrive
+/// percent-DECODED (decoded once at envelope production in
+/// routing/routes.rs::decode_path_param — same values the loaders see).
 pub struct EvalCtx<'a> {
     pub headers: &'a [(&'a str, &'a str)],
     pub cookies: &'a [(&'a str, &'a str)],

@@ -198,6 +198,15 @@ test('repeated {name} in a pattern validates once and substitutes every occurren
   expect(out[1]!.fullPath).toBe('/x/7/y/7')
 })
 
+test('expansion percent-encodes literal % in user-supplied param values', async () => {
+  const out = await expandDynamicRoutes([
+    ssgRoute('/post/{slug}', { params: () => [{ slug: '50%' }] }),
+  ])
+  // The crawler encodeURIComponent-encodes the value so the URL is valid.
+  // After Rust decode the loader will see '50%' (the original value).
+  expect(out[1]!.fullPath).toBe('/post/50%25')
+})
+
 // ----- fallback chunk helpers (Phase B) -----
 
 test('fallbackDiskPath sanitizes {param} → __param__', () => {
@@ -412,10 +421,9 @@ test('expanded ssg.params routes export concrete pages + payloads (decoded dirs)
       path.join('_brust', 'page', 'ssg-blog', 'sa wad-dee', 'index.html'),
     )
     const html = await Bun.file(path.join(outDir, 'ssg-blog', 'sa wad-dee', 'index.html')).text()
-    // NOTE: Rust matchit does NOT decode params before the loader sees them —
-    // the loader receives the percent-encoded form ('sa%20wad-dee', not 'sa wad-dee').
-    // This is a known framework gap: params.slug is URL-encoded at SSG crawl time.
-    expect(html).toContain('post:sa%20wad-dee') // encoded — see discrepancy note above
+    // Params arrive percent-DECODED framework-wide (decoded once at the Rust
+    // envelope; same value in loaders, param() cache keys, and the client).
+    expect(html).toContain('post:sa wad-dee')
     expect(res.skipped.map((s) => s.fullPath)).toEqual(['/ssg-blog/{slug}'])
   } finally {
     await rm(outDir, { recursive: true, force: true })

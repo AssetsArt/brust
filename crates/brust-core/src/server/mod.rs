@@ -688,7 +688,7 @@ async fn handle_request(
             let param_pairs: Vec<(&str, &str)> = envelope
                 .params
                 .iter()
-                .map(|(k, v)| (k.as_ref(), *v))
+                .map(|(k, v)| (k.as_ref(), v.as_ref()))
                 .collect();
             let ctx = crate::cache::key_expr::EvalCtx {
                 headers: &header_pairs,
@@ -851,9 +851,16 @@ async fn handle_action(
     }
 
     let id_str = endpoint_id.to_string();
-    let params_ref: Vec<(std::borrow::Cow<str>, &str)> = owned_params
+    let params_ref: Vec<(std::borrow::Cow<str>, std::borrow::Cow<str>)> = owned_params
         .iter()
-        .map(|(k, v)| (std::borrow::Cow::Borrowed(k.as_str()), v.as_str()))
+        .map(|(k, v)| {
+            (
+                std::borrow::Cow::Borrowed(k.as_str()),
+                // Already decoded at action-router production (see action.rs);
+                // borrow it as-is — do NOT decode twice.
+                std::borrow::Cow::Borrowed(v.as_str()),
+            )
+        })
         .collect();
     let envelope = crate::routing::routes::build_action_envelope(
         method,

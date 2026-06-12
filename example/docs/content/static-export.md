@@ -69,11 +69,10 @@ call is fine). The server loader is **unchanged** — it runs at build time for
 each concrete path with the same `params` it would receive at runtime, so data
 fetching and rendering are identical.
 
-One sharp edge for non-URL-safe values: the router does **not** decode path
-segments, at build time or live — `params.slug` inside the loader receives the
-**percent-encoded** form (`"sa%20wad-dee"`, not `"sa wad-dee"`). If your slugs
-can contain spaces or non-ASCII characters, `decodeURIComponent(params.slug)`
-in the loader before the lookup. Plain URL-safe slugs are unaffected.
+Param values arrive **percent-decoded** in your loader — at build-crawl time
+and live. A slug like `sa wad-dee` (or any Thai/Unicode slug) round-trips
+as-is: the crawler encodes it into the URL, the router decodes it back before
+your loader runs. No `decodeURIComponent` needed.
 
 Routes with `{param}` and **no** `ssg.params` continue to be skipped — the
 default is unchanged for routes you have not opted in to.
