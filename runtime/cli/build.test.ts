@@ -78,3 +78,11 @@ test('parseArgs: --out-dir without value → throws (shared error shape)', () =>
 test('parseArgs: unknown flag → throws', () => {
   expect(() => parseArgs(['--bogus'])).toThrow('unknown flag')
 })
+test('--no-generator-version sets generatorVersion false', () => {
+  const p = parseArgs(['--no-generator-version'])
+  expect(p.generatorVersion).toBe(false)
+})
+test('generatorVersion defaults to true', () => {
+  const p = parseArgs([])
+  expect(p.generatorVersion).toBe(true)
+})
