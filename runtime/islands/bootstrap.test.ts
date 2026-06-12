@@ -30,7 +30,7 @@ const renderSpy = mock(() => {})
 const createRootSpy = mock(() => ({ render: renderSpy, unmount: unmountSpy }))
 const hydrateRootSpy = mock(() => ({ unmount: unmountSpy }))
 
-beforeEach(() => {
+beforeEach(async () => {
   unmountSpy.mockClear()
   renderSpy.mockClear()
   createRootSpy.mockClear()
@@ -38,6 +38,9 @@ beforeEach(() => {
   // The page cache is module-level state shared across tests in this file —
   // reset so one test's cached navigations don't mask another's fetch asserts.
   __resetPageCacheForTest()
+  // Same for the fallback manifest memo (loadFallbackManifest caches forever
+  // by design — one test's stubbed routes.json must not leak into the next).
+  ;(await import('./fallback.ts')).__resetFallbackForTest()
 })
 
 // The navigate() tests below replace globalThis.fetch with a json-only stub.
@@ -59,6 +62,12 @@ beforeAll(async () => {
   }))
   mock.module('/_brust/islands/Counter.js', () => ({ default: () => null }))
   mock.module('/_brust/islands/Server.js', () => ({ default: () => null }))
+  // Fallback chunk for the client-takeover tests: takeover() dynamic-imports
+  // the manifest's chunk URL, which resolves to this mock in-process.
+  mock.module('/mock-fb-chunk.js', () => ({
+    Component: () => null,
+    clientLoader: async () => ({ ok: true }),
+  }))
 
   const win = new Window({ url: 'http://localhost/' })
   // happy-dom 20.9.0 leaves win.SyntaxError/TypeError undefined, which
@@ -448,4 +457,114 @@ test('public navigate() falls back to location.assign when no navigator register
   await publicNavigate('/fallback', { query: { a: 1 } })
   expect(assign).toHaveBeenCalledTimes(1)
   expect(String(assign.mock.calls[0]![0])).toContain('/fallback?a=1')
+})
+
+// ----- fallback: 'client' takeover wiring (Task B6) -------------------------
+
+/** Fetch stub for the takeover tests: every /_brust/page/* 404s (static-host
+ * miss) except the paths in `okPages`; routes.json serves a one-entry
+ * manifest (or 404s when `manifest` is false); the fallback payload URL
+ * serves the placeholder shell. */
+function fallbackFetchStub(opts: { manifest: boolean; okPages?: string[] }) {
+  return mock(async (input: unknown) => {
+    const path = String(input)
+    if (path === '/_brust/routes.json') {
+      if (!opts.manifest) return { ok: false, status: 404 }
+      return {
+        ok: true,
+        json: async () => ({
+          version: 1,
+          fallbacks: [
+            {
+              pattern: '/fb/{id}',
+              doc: '/_brust/fallback/fb/__id__/',
+              payload: '/_brust/fallback-page/fb/__id__/',
+              chunk: '/mock-fb-chunk.js',
+            },
+          ],
+        }),
+      }
+    }
+    if (path === '/_brust/fallback-page/fb/__id__/') {
+      return {
+        ok: true,
+        json: async () => ({
+          html: '<div data-brust-fallback-root data-brust-fallback="/fb/{id}"></div>',
+          title: 'FB',
+        }),
+      }
+    }
+    for (const ok of opts.okPages ?? []) {
+      if (path === `/_brust/page${ok}`) {
+        return {
+          ok: true,
+          json: async () => ({ html: `<p>page:${ok}</p>`, title: 'OK' }),
+        }
+      }
+    }
+    return { ok: false, status: 404 }
+  })
+}
+
+/** Earlier navigate-mode tests shadow history.pushState/replaceState with
+ * own-property mocks and never restore them. The takeover path needs the
+ * REAL happy-dom pushState (takeover derives params from location.pathname,
+ * which only the real implementation updates) — deleting the shadows
+ * re-exposes the prototype methods. */
+function restoreRealHistory(): void {
+  Reflect.deleteProperty(globalThis.history, 'pushState')
+  Reflect.deleteProperty(globalThis.history, 'replaceState')
+}
+
+test('navigate() falls back to client takeover when the payload 404s and a fallback pattern matches', async () => {
+  __resetNavForTest()
+  restoreRealHistory()
+  document.body.innerHTML = '<main></main>'
+  ;(globalThis as Record<string, unknown>).fetch = fallbackFetchStub({ manifest: true })
+  await navigate(new URL('http://localhost/fb/x'), 'push')
+  // The placeholder shell was swapped into <main> (no full reload)…
+  expect(document.querySelector('main [data-brust-fallback-root]')).not.toBeNull()
+  expect(document.title).toBe('FB')
+  // …the URL committed to the requested path with phase success…
+  expect(getNavState().phase).toBe('success')
+  expect(getNavState().path).toBe('/fb/x')
+  expect(location.pathname).toBe('/fb/x')
+  // …and takeover client-rendered through the module-wide createRoot mock.
+  expect(createRootSpy).toHaveBeenCalledTimes(1)
+  expect(renderSpy).toHaveBeenCalledTimes(1)
+})
+
+test('navigate() full-reloads (existing behavior) when payload 404s and NO manifest', async () => {
+  __resetNavForTest()
+  restoreRealHistory()
+  document.body.innerHTML = '<main></main>'
+  ;(globalThis as Record<string, unknown>).fetch = fallbackFetchStub({ manifest: false })
+  await navigate(new URL('http://localhost/fb/missing'), 'push')
+  // No manifest match → the original fetch error reaches the existing catch:
+  // __navError fires and the navigator assigns location.href (full reload —
+  // happy-dom records the URL without actually navigating).
+  expect(getNavState().phase).toBe('error')
+  expect(location.href).toBe('http://localhost/fb/missing')
+  expect(createRootSpy).not.toHaveBeenCalled()
+})
+
+test('unmountIslandsIn delegates to unmountFallbackRootsIn (navigating away disposes the client root)', async () => {
+  __resetNavForTest()
+  restoreRealHistory()
+  document.body.innerHTML = '<main></main>'
+  ;(globalThis as Record<string, unknown>).fetch = fallbackFetchStub({
+    manifest: true,
+    okPages: ['/plain'],
+  })
+  await navigate(new URL('http://localhost/fb/y'), 'push')
+  expect(document.querySelector('main [data-brust-fallback-root]')).not.toBeNull()
+  expect(createRootSpy).toHaveBeenCalledTimes(1)
+  expect(unmountSpy).not.toHaveBeenCalled()
+  // Navigating away swaps <main>; unmountIslandsIn must dispose the takeover
+  // root via unmountFallbackRootsIn or React keeps scheduling on dead nodes.
+  await navigate(new URL('http://localhost/plain'), 'push')
+  expect(unmountSpy).toHaveBeenCalledTimes(1)
+  expect(document.querySelector('main [data-brust-fallback-root]')).toBeNull()
+  expect(getNavState().path).toBe('/plain')
+  expect(getNavState().phase).toBe('success')
 })
