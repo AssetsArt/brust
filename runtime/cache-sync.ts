@@ -26,7 +26,7 @@ export interface CacheSyncMessage {
   method?: string
 }
 
-const CHANNEL_DEFAULT = 'brust:cache:invalidate'
+export const CHANNEL_DEFAULT = 'brust:cache:invalidate'
 const CONNECT_TIMEOUT_MS = 5_000
 const BACKOFF_BASE_MS = 1_000
 const BACKOFF_MAX_MS = 30_000
@@ -59,10 +59,20 @@ export function __setTransportForTest(t: CacheSyncTransport | null): void {
 export function redactUrl(url: string): string {
   try {
     const u = new URL(url)
-    return `${u.hostname}:${u.port}`
+    return `${u.hostname}:${u.port || '6379'}`
   } catch {
     return '<unparseable redis url>'
   }
+}
+
+/** Error messages from RedisClient may embed the raw connection string —
+ * scrub the configured URL (and any redis://user:pass@ userinfo) before a
+ * message reaches the log. */
+function scrubErrorMessage(e: unknown, url: string): string {
+  const raw = String((e as Error)?.message ?? e)
+  return raw
+    .replaceAll(url, redactUrl(url))
+    .replace(/rediss?:\/\/[^@\s]+@/gi, 'redis://<redacted>@')
 }
 
 /** Once per 30s per error kind — a down redis must not spam the log on every
@@ -129,15 +139,27 @@ export function publishCacheSync(args: InvalidateArgs): void {
   try {
     const transport = testTransport ?? getPublisher(url)
     transport.publish(channel, JSON.stringify(msg)).catch((e) => {
+      // Heal the lazy client: a publisher that died (redis restart) would
+      // otherwise be returned forever by getPublisher — drop it so the next
+      // publish reconnects.
+      if (transport === publisher) {
+        try {
+          publisher?.close()
+        } catch {
+          // best-effort
+        }
+        publisher = null
+        publisherUrl = null
+      }
       warnThrottled(
         'publish',
-        `cache-sync: publish to ${redactUrl(url)} failed: ${(e as Error)?.message ?? e}`,
+        `cache-sync: publish to ${redactUrl(url)} failed: ${scrubErrorMessage(e, url)}`,
       )
     })
   } catch (e) {
     warnThrottled(
       'publish',
-      `cache-sync: publish to ${redactUrl(url)} failed: ${(e as Error)?.message ?? e}`,
+      `cache-sync: publish to ${redactUrl(url)} failed: ${scrubErrorMessage(e, url)}`,
     )
   }
 }
@@ -175,15 +197,22 @@ async function attempt(url: string, channel: string): Promise<void> {
   try {
     // Race the subscribe against a timeout: against a down host the promise
     // NEVER settles (see header) — without the race a down redis at boot
-    // would silently disable the feature forever.
+    // would silently disable the feature forever. The no-op catch keeps a
+    // late loser settling AFTER the timeout from becoming an unhandled
+    // rejection.
+    const subscribed = client.subscribe(channel, onMessage)
+    subscribed.catch(() => {})
     await Promise.race([
-      client.subscribe(channel, onMessage),
+      subscribed,
       new Promise((_, reject) => {
         timeoutTimer = setTimeout(() => reject(new Error('connect timeout')), CONNECT_TIMEOUT_MS)
         timeoutTimer.unref?.()
       }),
     ])
-    if (stopped) {
+    // Identity guard: a slow connect can settle AFTER the timeout already
+    // scheduled a retry and a newer attempt replaced `subscriber` — this
+    // stale winner must stand down, not double-subscribe.
+    if (stopped || subscriber !== client) {
       try {
         client.close()
       } catch {
@@ -194,7 +223,7 @@ async function attempt(url: string, channel: string): Promise<void> {
     backoffMs = BACKOFF_BASE_MS
     // No auto-resubscribe after a drop (see header) — re-create the client.
     client.onclose = () => {
-      if (!stopped) scheduleRetry(url, channel)
+      if (!stopped && subscriber === client) scheduleRetry(url, channel)
     }
   } catch (e) {
     try {
@@ -204,9 +233,9 @@ async function attempt(url: string, channel: string): Promise<void> {
     }
     warnThrottled(
       'connect',
-      `cache-sync: redis unreachable at ${redactUrl(url)}, retrying (${(e as Error)?.message ?? e})`,
+      `cache-sync: redis unreachable at ${redactUrl(url)}, retrying (${scrubErrorMessage(e, url)})`,
     )
-    scheduleRetry(url, channel)
+    if (subscriber === client) scheduleRetry(url, channel)
   } finally {
     if (timeoutTimer !== undefined) clearTimeout(timeoutTimer)
   }

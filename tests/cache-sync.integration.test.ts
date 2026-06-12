@@ -6,7 +6,7 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { RedisClient } from 'bun'
 import { cache } from '../runtime/cache.ts'
-import { startCacheSync, stopCacheSync } from '../runtime/cache-sync.ts'
+import { __setTransportForTest, startCacheSync, stopCacheSync } from '../runtime/cache-sync.ts'
 import * as native from '../runtime/index.js'
 
 const REDIS_URL = 'redis://127.0.0.1:6379'
@@ -45,6 +45,9 @@ beforeEach(() => {
 
 afterEach(() => {
   stopCacheSync()
+  // Forward safety: a stale injected transport would silently intercept the
+  // real-redis publishes of a later test in this worker.
+  __setTransportForTest(null)
   for (const k of ENV_KEYS) {
     if (SAVED[k] === undefined) delete process.env[k]
     else process.env[k] = SAVED[k]

@@ -463,11 +463,14 @@ export const brust = {
         // isolate only (the NAPI caches are process-global, so workers see
         // applied invalidations implicitly). The sender token identifies this
         // process so the subscriber skips its own published messages.
+        const cacheSync = await import('./cache-sync.ts')
         process.env.BRUST_CACHE_SYNC_URL = cacheSyncUrl
-        if (cacheSyncChannel) process.env.BRUST_CACHE_SYNC_CHANNEL = cacheSyncChannel
+        // Always write the RESOLVED channel: a TOML-only channel would
+        // otherwise reach the subscriber here but not the workers' env —
+        // publishers and subscriber would silently split onto two channels.
+        process.env.BRUST_CACHE_SYNC_CHANNEL = cacheSyncChannel ?? cacheSync.CHANNEL_DEFAULT
         process.env.BRUST_CACHE_SYNC_SENDER ??= crypto.randomUUID()
-        const { startCacheSync } = await import('./cache-sync.ts')
-        startCacheSync({ url: cacheSyncUrl, channel: cacheSyncChannel })
+        cacheSync.startCacheSync({ url: cacheSyncUrl, channel: cacheSyncChannel })
       }
 
       // md routes present? (leaf carries `__mdSource`, attached by mdRoutes()).
