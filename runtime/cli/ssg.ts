@@ -226,6 +226,34 @@ export async function expandDynamicRoutes(flatRoutes: FlatRouteLike[]): Promise<
   return out
 }
 
+// ----- fallback chunk helpers (Phase B) -----
+
+/** On-disk directory for a pattern's fallback artifacts: `{param}` → `__param__`
+ * (curly braces are hostile to static hosts / shells), leading slash stripped.
+ * '/blog/{slug}' → 'blog/__slug__'. Pure string fn. */
+export function fallbackDiskPath(pattern: string): string {
+  return pattern.replace(/^\//, '').replace(/\{([^/}]+)\}/g, '__$1__')
+}
+
+/** The URL the build crawler requests for a fallback shell: every `{param}`
+ * replaced by the reserved sentinel. '/d/{a}' → '/d/__brust_fallback__'. */
+export function fallbackSentinelPath(pattern: string): string {
+  return pattern.replace(/\{[^/}]+\}/g, SSG_FALLBACK_SENTINEL)
+}
+
+/** Generated entry module for a route's fallback chunk: re-exports the leaf
+ * component (default export) and its `clientLoader` under the names the client
+ * takeover runtime imports. */
+export function fallbackEntrySource(componentSourcePath: string): string {
+  return `import C, { clientLoader } from '${componentSourcePath}'\nexport { C as Component, clientLoader }\n`
+}
+
+/** Does the component source `export` a `clientLoader`? Covers the const /
+ * function / async-function forms; a non-exported binding doesn't count. */
+export function hasClientLoaderExport(source: string): boolean {
+  return /export\s+(const|async\s+function|function)\s+clientLoader\b/.test(source)
+}
+
 // ----- static export -----
 
 const READY_LINE = '[brust] listening on' // println! in brust-core server/mod.rs

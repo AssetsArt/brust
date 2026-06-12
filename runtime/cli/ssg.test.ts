@@ -8,6 +8,10 @@ import {
   collectStaticPaths,
   expandDynamicRoutes,
   exportStatic,
+  fallbackDiskPath,
+  fallbackEntrySource,
+  fallbackSentinelPath,
+  hasClientLoaderExport,
   navPayloadFileFor,
   type FlatRouteLike,
   type SsgRouteDecision,
@@ -191,6 +195,30 @@ test('repeated {name} in a pattern validates once and substitutes every occurren
     ssgRoute('/x/{id}/y/{id}', { params: () => [{ id: '7' }] }),
   ])
   expect(out[1]!.fullPath).toBe('/x/7/y/7')
+})
+
+// ----- fallback chunk helpers (Phase B) -----
+
+test('fallbackDiskPath sanitizes {param} → __param__', () => {
+  expect(fallbackDiskPath('/blog/{slug}')).toBe('blog/__slug__')
+  expect(fallbackDiskPath('/d/{a}/x/{b}')).toBe('d/__a__/x/__b__')
+})
+
+test('fallbackSentinelPath substitutes every param with the sentinel', () => {
+  expect(fallbackSentinelPath('/d/{a}/x/{b}')).toBe('/d/__brust_fallback__/x/__brust_fallback__')
+})
+
+test('fallbackEntrySource emits the chunk entry module', () => {
+  expect(fallbackEntrySource('/abs/components/Post.tsx')).toBe(
+    "import C, { clientLoader } from '/abs/components/Post.tsx'\nexport { C as Component, clientLoader }\n",
+  )
+})
+
+test('hasClientLoaderExport detects the export forms', () => {
+  expect(hasClientLoaderExport('export const clientLoader = async () => ({})')).toBe(true)
+  expect(hasClientLoaderExport('export async function clientLoader() {}')).toBe(true)
+  expect(hasClientLoaderExport('export function clientLoader() {}')).toBe(true)
+  expect(hasClientLoaderExport('const clientLoader = 1')).toBe(false)
 })
 
 // ----- exportStatic (integration: builds the fixture app, boots the dist) -----

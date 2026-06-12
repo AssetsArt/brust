@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
-import { copyFile, cp, mkdir, readdir, rm } from 'node:fs/promises'
+import { copyFile, cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
 import path, { isAbsolute, resolve } from 'node:path'
 import type { BunPlugin } from 'bun'
 import { emitNativeTemplates } from './native-routes-emit.ts'
@@ -570,6 +571,78 @@ export async function runBuild(args: string[]): Promise<void> {
     console.log(`[brust build] native:  ${name}`)
   }
 
+  // 7.5. SSG fallback chunks (--ssg only): for every route whose LEAF declares
+  // `ssg.fallback: 'client'`, bundle a browser chunk that re-exports the leaf
+  // component + its `clientLoader` (generated entry → islands buildOne, react
+  // externals, content-addressed `Fallback_<Name>_<hash>.js`). Constraint
+  // (documented in the spec): the leaf Component must be a DEFAULT import in
+  // routes.tsx (scanImports resolution), and its file must export clientLoader.
+  // Task B4 wires these into exportStatic; step 8 reports them for now.
+  const ssgFallbacks: Array<{ pattern: string; chunk: string }> = []
+  if (parsed.ssg) {
+    const fallbackRoutes = (
+      (loadedRoutes ?? []) as {
+        fullPath: string
+        chain?: Array<{ ssg?: { fallback?: string }; Component?: { name?: string } }>
+      }[]
+    ).filter((r) => r.chain?.at(-1)?.ssg?.fallback === 'client')
+    if (fallbackRoutes.length > 0) {
+      const { fallbackEntrySource, hasClientLoaderExport } = await import('./ssg.ts')
+      const { scanImports } = await import('./native-routes-emit.ts')
+      const { buildOne } = await import('../islands/build.ts')
+      const { islandChunkBasename } = await import('../islands/chunk-id.ts')
+      const importMap = scanImports(routesFile)
+      const islandsOutDir = path.join(outDir, 'islands')
+      await mkdir(islandsOutDir, { recursive: true })
+      // Temp dir for the generated entry modules; removed after the bundles land.
+      const entryTmp = await mkdtemp(path.join(tmpdir(), 'brust-fallback-'))
+      try {
+        for (const [i, route] of fallbackRoutes.entries()) {
+          const name = route.chain?.at(-1)?.Component?.name
+          const source = name ? importMap.get(name) : undefined
+          if (!name || !source) {
+            console.error(
+              `[brust build] ssg: fallback 'client' on "${route.fullPath}": leaf Component must be a DEFAULT import in the routes file`,
+            )
+            process.exit(1)
+          }
+          const text = await readFile(source, 'utf8')
+          if (!hasClientLoaderExport(text)) {
+            console.error(
+              `[brust build] ssg: fallback 'client' on "${route.fullPath}": ` +
+                `${path.relative(process.cwd(), source)} must \`export const clientLoader\``,
+            )
+            process.exit(1)
+          }
+          const file = `Fallback_${islandChunkBasename(name, source)}.js`
+          // Index-suffixed entry name: two fallback routes may share a component
+          // NAME (different files) — the chunk name is already content-addressed.
+          const entryPath = path.join(entryTmp, `${name}_${i}.entry.ts`)
+          await writeFile(entryPath, fallbackEntrySource(source))
+          try {
+            await buildOne(
+              [entryPath],
+              islandsOutDir,
+              file,
+              ['react', 'react/jsx-runtime', 'react-dom/client'],
+              cssBuildPlugins,
+            )
+          } catch (err) {
+            // Browser-safety convention: server-only deps at the component file's
+            // top level surface here as bundle errors.
+            console.error(
+              `[brust build] ssg: fallback chunk for "${route.fullPath}": ${err instanceof Error ? err.message : String(err)}`,
+            )
+            process.exit(1)
+          }
+          ssgFallbacks.push({ pattern: route.fullPath, chunk: `/_brust/islands/${file}` })
+        }
+      } finally {
+        await rm(entryTmp, { recursive: true, force: true })
+      }
+    }
+  }
+
   // 8. SSG export (--ssg): boot the just-built dist once and crawl every
   // statically-renderable route into <--ssg-out | outDir/static>. Reuses the
   // routes module ALREADY loaded for the MCP/css steps (loadedRoutes) — no
@@ -611,6 +684,13 @@ export async function runBuild(args: string[]): Promise<void> {
       console.log(
         `[brust build] ssg:     ${written.length} pages + ${navWritten.length} spa payloads${expandedDesc} → ${staticOut}${skippedDesc}`,
       )
+      // Task B4 wires ssgFallbacks into exportStatic (shell/payload/manifest
+      // emission); until then the built chunks are reported so the work shows.
+      for (const f of ssgFallbacks) {
+        console.log(
+          `[brust build] ssg:     fallback chunk ${path.basename(f.chunk)} (${f.pattern})`,
+        )
+      }
     } catch (err) {
       console.error(`[brust build] ssg: ${err instanceof Error ? err.message : String(err)}`)
       process.exit(1)

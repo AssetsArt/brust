@@ -201,7 +201,7 @@ export async function buildIslands(
   return { outDir, islandCount: count, chunks }
 }
 
-async function buildOne(
+export async function buildOne(
   entrypoints: string[],
   outdir: string,
   naming: string,
