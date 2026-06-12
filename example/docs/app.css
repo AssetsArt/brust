@@ -622,14 +622,34 @@ html:not([data-theme="light"]) .shiki span {
 
 /* ── Page transitions (View Transitions API) ─────────────────────────────
    Enabled by data-brust-view-transitions on <html> (set in the BrustPage
-   shells). The framework wraps the SPA <main> swap in startViewTransition;
-   these rules style the default `root` snapshot. */
+   shells). The framework wraps the SPA <main> swap in startViewTransition.
+
+   The fade is scoped to the CONTENT region only: <main id="content"> gets its
+   own view-transition-name so it is lifted out of the `root` snapshot. The
+   chrome (sticky header, sidebar) stays in `root`, which we DON'T animate — so
+   nothing outside the article moves. The content fade is opacity-only (no
+   translate) and the group morph is disabled, so changing page heights never
+   shift the layout up or down. */
+main#content {
+  view-transition-name: brust-content;
+}
 @media (prefers-reduced-motion: no-preference) {
-  ::view-transition-old(root) {
-    animation: brust-fade-out 160ms ease both;
+  /* In-place crossfade of the content only — no size/position morph (group
+     animation off) so a taller/shorter page can't slide the view. */
+  ::view-transition-group(brust-content) {
+    animation: none;
   }
+  ::view-transition-old(brust-content) {
+    animation: brust-fade-out 140ms ease both;
+  }
+  ::view-transition-new(brust-content) {
+    animation: brust-fade-in 180ms ease both;
+  }
+  /* The unchanged chrome must not cross-fade (that whole-page fade is what
+     made the site appear to jump). */
+  ::view-transition-old(root),
   ::view-transition-new(root) {
-    animation: brust-fade-in 200ms ease both;
+    animation: none;
   }
   @keyframes brust-fade-out {
     to {
@@ -639,14 +659,16 @@ html:not([data-theme="light"]) .shiki span {
   @keyframes brust-fade-in {
     from {
       opacity: 0;
-      transform: translateY(6px);
     }
   }
 }
 /* The JS gate calls startViewTransition regardless of motion preference, so
-   without this the browser's DEFAULT root cross-fade would play for
-   reduced-motion users. Kill it → instant swap. */
+   without this the browser would still play its default snapshot animations
+   for reduced-motion users. Kill them all → instant swap. */
 @media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(brust-content),
+  ::view-transition-old(brust-content),
+  ::view-transition-new(brust-content),
   ::view-transition-old(root),
   ::view-transition-new(root) {
     animation: none;
