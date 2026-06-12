@@ -208,6 +208,11 @@ export const brust = {
     const gracefulExit = (code: number) => {
       if (draining) process.exit(code)
       draining = true
+      // R9: stop cache-sync (close redis clients, cancel backoff timers) so a
+      // retry can't fire between drain and exit. Best-effort and PARALLEL to
+      // the drain — it must never delay exit (the dynamic import resolves from
+      // cache when sync was configured, and is a no-op module load otherwise).
+      import('./cache-sync.ts').then((m) => m.stopCacheSync()).catch(() => {})
       ;(native as any)
         .beginDrain(drainTimeoutMs)
         .catch(() => {})
@@ -432,19 +437,38 @@ export const brust = {
     const endpoints: EndpointDef[] = opts.actions?.endpoints ?? []
 
     if (!isWorker) {
-      const { host, port, workers, cacheMaxEntries, cachePageMaxEntries } = await loadConfig(
-        process.cwd(),
-        {
-          host: opts.address,
-          port: opts.port,
-        },
-      )
+      const {
+        host,
+        port,
+        workers,
+        cacheMaxEntries,
+        cachePageMaxEntries,
+        cacheSyncUrl,
+        cacheSyncChannel,
+      } = await loadConfig(process.cwd(), {
+        host: opts.address,
+        port: opts.port,
+      })
       console.log(`[brust] main: spawning ${workers} worker threads`)
       if (cacheMaxEntries !== undefined || cachePageMaxEntries !== undefined)
         this.configureCache({
           maxEntries: cacheMaxEntries ?? 1000,
           pageMaxEntries: cachePageMaxEntries ?? 1000,
         })
+
+      if (cacheSyncUrl) {
+        // R9 cross-process invalidation. Env is set BEFORE serve() spawns
+        // workers (baseEnv = { ...process.env }) so worker isolates can
+        // publish from loaders/actions; the subscriber lives HERE in the main
+        // isolate only (the NAPI caches are process-global, so workers see
+        // applied invalidations implicitly). The sender token identifies this
+        // process so the subscriber skips its own published messages.
+        process.env.BRUST_CACHE_SYNC_URL = cacheSyncUrl
+        if (cacheSyncChannel) process.env.BRUST_CACHE_SYNC_CHANNEL = cacheSyncChannel
+        process.env.BRUST_CACHE_SYNC_SENDER ??= crypto.randomUUID()
+        const { startCacheSync } = await import('./cache-sync.ts')
+        startCacheSync({ url: cacheSyncUrl, channel: cacheSyncChannel })
+      }
 
       // md routes present? (leaf carries `__mdSource`, attached by mdRoutes()).
       // Checked inline — no md-module import — so md-free apps never load the
