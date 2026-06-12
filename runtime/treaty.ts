@@ -11,6 +11,14 @@ export interface TreatyResponse<Data = unknown, Err = unknown> {
 }
 export interface ClientOptions {
   prefix?: string
+  /** Absolute origin of ANOTHER brust deployment to target, e.g.
+   * `https://api.example.com` (a path suffix like `/v2` composes by
+   * concatenation). Must match `^https?://`; a trailing slash is stripped.
+   * When set, the action prefix is `prefix ?? '/_brust/action'` — the global
+   * `__BRUST_ACTION_PREFIX__` belongs to the SERVING app and is never
+   * consulted. Cross-origin cookies: pass a `fetch` override that sets
+   * `credentials: 'include'` (and configure `cors.credentials` server-side). */
+  baseUrl?: string
   headers?: Record<string, string> | (() => Record<string, string>)
   fetch?: typeof fetch
 }
@@ -77,8 +85,22 @@ export type Treaty<App> =
 
 function resolvePrefix(opts?: ClientOptions): string {
   if (opts?.prefix) return opts.prefix
+  // The global __BRUST_ACTION_PREFIX__ is injected by the SERVING app's pages;
+  // it describes THIS origin's mount point, never a cross-origin target's.
+  if (opts?.baseUrl !== undefined) return '/_brust/action'
   const g = (globalThis as { __BRUST_ACTION_PREFIX__?: string }).__BRUST_ACTION_PREFIX__
   return g ?? '/_brust/action'
+}
+
+/** Validate + normalize `baseUrl`: absolute http(s) origin, trailing slash(es)
+ * stripped. Absent → '' (same-origin, byte-identical legacy behavior). */
+function resolveBaseUrl(opts?: ClientOptions): string {
+  const b = opts?.baseUrl
+  if (b === undefined) return ''
+  if (!/^https?:\/\//.test(b)) {
+    throw new Error(`treaty baseUrl must be an absolute http(s) origin (got ${JSON.stringify(b)})`)
+  }
+  return b.replace(/\/+$/, '')
 }
 
 /** Build a treaty proxy. Static segments accumulate as a path; a function call
@@ -86,6 +108,7 @@ function resolvePrefix(opts?: ClientOptions): string {
  * terminal method key (.get/.post/…) performs the request. URL is composed from
  * the literal accumulated segments — never from any inferred type. */
 export function client<App = unknown>(opts?: ClientOptions): Treaty<App> {
+  const baseUrl = resolveBaseUrl(opts)
   const prefix = resolvePrefix(opts)
   const doFetch = opts?.fetch ?? fetch
   function make(segments: string[]): any {
@@ -98,7 +121,7 @@ export function client<App = unknown>(opts?: ClientOptions): Treaty<App> {
               | { query?: Record<string, string>; headers?: Record<string, string> }
               | undefined
             const body = isBodyless ? undefined : arg1
-            let url = prefix + '/' + segments.join('/')
+            let url = baseUrl + prefix + '/' + segments.join('/')
             if (options?.query) {
               const qs = new URLSearchParams(options.query as Record<string, string>).toString()
               if (qs) url += '?' + qs

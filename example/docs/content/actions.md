@@ -140,6 +140,72 @@ automatically; native (template) pages don't bake it, so a treaty client used
 on a native page with a **custom** prefix should pass it explicitly:
 `client({ prefix: '/api' })`.
 
+## Cross-origin actions
+
+A treaty client can target **another brust deployment** — say a frontend app
+calling a dedicated actions/API deployment — with `baseUrl`:
+
+```ts
+import { client } from 'brustjs/client'
+import type { Actions } from '@acme/api/actions'
+
+const api = client<Actions>({ baseUrl: 'https://api.example.com' })
+
+await api.notes.post({ title: 'hello' }) // → POST https://api.example.com/_brust/action/notes
+```
+
+`baseUrl` must be an absolute `http(s)` origin (a trailing slash is stripped; a
+path suffix like `https://api.example.com/v2` composes by concatenation). With
+`baseUrl` set, the prefix is `prefix ?? '/_brust/action'` — the page-injected
+global prefix belongs to the *serving* app and is never consulted; if the
+target deployment uses a custom `actionPrefix`, pass it explicitly:
+`client({ baseUrl, prefix: '/api' })`.
+
+For browsers to allow those calls, the **target** deployment must opt in to
+CORS:
+
+```ts
+await brust.run({
+  routes,
+  entry: import.meta.url,
+  actions,
+  cors: {
+    origins: ['https://app.example.com'], // exact scheme+host+port match
+    exposeHeaders: ['x-render-ms'],       // readable by the calling page (optional)
+    credentials: true,                    // emit Access-Control-Allow-Credentials
+  },
+})
+```
+
+brust answers preflight `OPTIONS` requests itself (never reaching the render
+pipeline) and stamps `Access-Control-*` headers on actual responses. Optional
+fields: `methods` (default `GET,POST,PUT,PATCH,DELETE,OPTIONS`), `headers`
+(default: echo the request's `Access-Control-Request-Headers`), and
+`maxAgeSeconds` (default 600).
+
+Things to know:
+
+- **Wildcard:** `origins: ['*']` allows any origin (echoed as the literal
+  `*`); any list *containing* `'*'` counts as wildcard. There is no wildcard
+  *subdomain* matching — list exact origins. Combining `credentials: true`
+  with a wildcard origin throws at boot (browsers silently reject that header
+  pair; brust makes it loud).
+- **Cookies / credentials:** `cors.credentials` only emits the response
+  header. The *client* must also send credentials — use the treaty `fetch`
+  override:
+
+  ```ts
+  const api = client<Actions>({
+    baseUrl: 'https://api.example.com',
+    fetch: (input, init) => fetch(input, { ...init, credentials: 'include' }),
+  })
+  ```
+
+- **Global policy:** the policy applies to the whole deployment — pages and
+  static assets too, not just actions (there is no per-route CORS). That is
+  the intended shape for a dedicated API deployment; don't enable it on an
+  app that shouldn't be readable cross-origin.
+
 ## Actions are MCP tools
 
 Every endpoint doubles as a Model Context Protocol tool: brust mounts an MCP
