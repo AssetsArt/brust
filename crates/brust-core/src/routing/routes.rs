@@ -335,9 +335,8 @@ impl RouteTable {
             compiled.push(Arc::new(compiled_cache));
             natives.push(c.native_template.clone());
         }
-        // Sort longest prefix first so select_not_found's linear scan can
-        // use max_by_key correctly. (Sorting here avoids re-sorting per request.)
-        nf_table.sort_by_key(|(p, _)| std::cmp::Reverse(p.len()));
+        // No sort needed: select_not_found uses max_by_key, which finds the
+        // longest matching prefix regardless of table order.
         *self.inner.write() = router;
         *self.cache_configs.write() = caches;
         *self.compiled_caches.write() = compiled;
@@ -412,8 +411,14 @@ impl RouteTable {
                 MatchResult::Matched { route_id, envelope }
             }
             Err(_) => {
-                let nf_table = self.not_found_table.read();
-                match select_not_found(&nf_table, path_only) {
+                // Release the not-found-table lock before acquiring
+                // `native_templates` so no two router locks are ever held at
+                // once (avoids any lock-ordering hazard for future writers).
+                let nf_id = {
+                    let nf_table = self.not_found_table.read();
+                    select_not_found(&nf_table, path_only)
+                };
+                match nf_id {
                     Some(id) => {
                         let native = self
                             .native_templates
@@ -603,12 +608,24 @@ fn url_decode(s: &str) -> std::borrow::Cow<'_, str> {
 ///
 /// Returns the `route_id` of the entry with the longest matching prefix, or
 /// `None` when the table is empty or nothing matches.
-pub(crate) fn select_not_found(table: &[(String, u32)], path: &str) -> Option<u32> {
+///
+/// Note on ties: two DISTINCT prefixes of equal length can never both match a
+/// single path (a path cannot start with both `/foo/` and `/bar/`), so at most
+/// one surviving entry exists per length — `max_by_key`'s tie-break is never
+/// actually exercised, and install-time dedupe already forbids identical
+/// prefixes. The check is allocation-free (no `format!`) since it runs on every
+/// matchit miss.
+fn select_not_found(table: &[(String, u32)], path: &str) -> Option<u32> {
+    fn prefix_matches(p: &str, path: &str) -> bool {
+        p.is_empty()
+            || path == p
+            // proper sub-path: `path` is `p` followed by a `/` boundary, so
+            // "/docs" matches "/docs/x" but NOT "/docsy".
+            || (path.len() > p.len() && path.starts_with(p) && path.as_bytes()[p.len()] == b'/')
+    }
     table
         .iter()
-        .filter(|(p, _)| {
-            p.is_empty() || path == p.as_str() || path.starts_with(&format!("{p}/"))
-        })
+        .filter(|(p, _)| prefix_matches(p, path))
         .max_by_key(|(p, _)| p.len())
         .map(|(_, id)| *id)
 }
@@ -1192,7 +1209,9 @@ mod tests {
             MatchResult::Matched { route_id, .. } => {
                 assert_eq!(route_id, 0);
             }
-            other => panic!("expected Matched for /home, got something else: route_id would be in other variant"),
+            _other => panic!(
+                "expected Matched for /home, got something else: route_id would be in other variant"
+            ),
         }
     }
 
@@ -1206,7 +1225,10 @@ mod tests {
         let configs: Vec<RouteConfig> = serde_json::from_str(json).unwrap();
         assert!(configs[1].not_found, "not_found should be true");
         assert_eq!(configs[1].not_found_prefix, "");
-        assert_eq!(configs[1].native_template.as_deref(), Some("GlobalNotFound"));
+        assert_eq!(
+            configs[1].native_template.as_deref(),
+            Some("GlobalNotFound")
+        );
 
         let table = RouteTable::new();
         table.install_with_config(&configs).unwrap();
@@ -1216,12 +1238,12 @@ mod tests {
         // "/" is a real route (route_id 0)
         match table.match_path("GET", "/", &headers) {
             MatchResult::Matched { route_id, .. } => assert_eq!(route_id, 0),
-            other => panic!("expected Matched for /"),
+            _other => panic!("expected Matched for /"),
         }
         // "/missing" should hit the catch-all (route_id 1)
         match table.match_path("GET", "/missing", &headers) {
             MatchResult::NotFound { route_id, .. } => assert_eq!(route_id, 1),
-            other => panic!("expected NotFound for /missing"),
+            _other => panic!("expected NotFound for /missing"),
         }
         // native_template on the catch-all envelope
         match table.match_path("GET", "/anything", &headers) {
@@ -1232,7 +1254,7 @@ mod tests {
                     "catch-all envelope must carry nativeTemplate"
                 );
             }
-            other => panic!("expected NotFound for /anything"),
+            _other => panic!("expected NotFound for /anything"),
         }
         // parallel Vecs: native_template_for(1) == Some("GlobalNotFound")
         assert_eq!(
@@ -1281,17 +1303,17 @@ mod tests {
         // /docs/missing → docs catch-all (route_id 2)
         match table.match_path("GET", "/docs/missing", &headers) {
             MatchResult::NotFound { route_id, .. } => assert_eq!(route_id, 2),
-            other => panic!("expected NotFound with docs catch-all for /docs/missing"),
+            _other => panic!("expected NotFound with docs catch-all for /docs/missing"),
         }
         // /other → root catch-all (route_id 3)
         match table.match_path("GET", "/other", &headers) {
             MatchResult::NotFound { route_id, .. } => assert_eq!(route_id, 3),
-            other => panic!("expected NotFound with global catch-all for /other"),
+            _other => panic!("expected NotFound with global catch-all for /other"),
         }
         // /docsearch → root (segment boundary respected)
         match table.match_path("GET", "/docsearch", &headers) {
             MatchResult::NotFound { route_id, .. } => assert_eq!(route_id, 3),
-            other => panic!("expected global catch-all for /docsearch (boundary)"),
+            _other => panic!("expected global catch-all for /docsearch (boundary)"),
         }
     }
 
