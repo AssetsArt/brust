@@ -21,10 +21,11 @@ Two-tier environment in `crates/brust-core/src/template/jinja.rs`:
 
 - **Boot env** (existing): `static ENV: RwLock<Option<Environment>>` — loaded from directory, whole-replaced on dev hot reload. Unchanged.
 - **Dynamic env** (new): `static DYN_ENV: RwLock<Option<Environment<'static>>>` + `static DYN_SOURCES: RwLock<HashMap<String, String>>` as source of truth.
-  - `register_template(name, source)` → validate name, `add_template_owned` into DYN_ENV (creating it with the same filters/undefined-behavior as boot env if absent), insert into DYN_SOURCES. minijinja parses eagerly → syntax errors surface at register time, returned to JS as a thrown error.
-  - Re-registering an existing name **replaces** it (update path). If `add_template_owned` does not overwrite in-place, remove first then add.
-  - `remove_template(name)` → `Environment::remove_template` + remove from DYN_SOURCES; returns whether it existed.
-  - `dynamic_template_names()` → keys of DYN_SOURCES.
+  - DYN_ENV is lazily initialized on first register with a **hardcoded copy of the `load_from` setup** (`UndefinedBehavior::Chainable` + `json_attr` filter) — it must NOT read config from the boot ENV (register may legally run before `load_from`; no boot-ordering dependency). Extract the env construction into a shared `fn base_env() -> Environment<'static>` used by both `load_from` and the dynamic tier so the two cannot drift.
+  - `register_template(name, source)` → validate name, `add_template_owned` into DYN_ENV, then insert into DYN_SOURCES on success. minijinja 2.20 parses eagerly inside `add_template_owned` for owned inputs: `make_owned_template` (the parse) is evaluated **before** the map `replace` is called, and the `ok!` macro short-circuits out on parse failure — so a syntax error mutates nothing and the prior entry (if any) survives. Syntax errors are returned to JS as a thrown error.
+  - Re-registering an existing name **replaces** it atomically inside `add_template_owned` (single map insert under our write lock). No remove-then-add — that would create a window where the template is missing.
+  - `remove_dynamic_template(name)` → minijinja's `Environment::remove_template` returns `()`, so compute the bool from `DYN_SOURCES.remove(name).is_some()` (sources map is the source of truth), then call `remove_template` on the env.
+  - `dynamic_template_names()` → keys of DYN_SOURCES (do not rely on `env.templates()` iteration).
 
 **Render lookup order:** `render(name, data)` checks **dynamic env first**, then boot env. Dynamic wins on name collision (allows runtime override of a boot template; documented). `RenderError::UnknownTemplate` only when both miss. Boot-env hot reload (dev) does NOT touch the dynamic tier.
 
@@ -56,7 +57,9 @@ Name validation: non-empty, ≤ 512 bytes, no NUL/control chars. `/`, `@`, `:`, 
 #[napi] fn napi_render_template(name: String, data_json: String) -> Result<String>  // Err on unknown/render error
 ```
 
-`napi_render_template` reuses `jinja::render` (same path the request fast-lane uses) but returns the HTML string directly — pure CPU, synchronous, callable from any isolate.
+napi-rs camelCases these in JS: `napi_register_template` → `napiRegisterTemplate`, `napi_remove_template` → `napiRemoveTemplate`, `napi_list_dynamic_templates` → `napiListDynamicTemplates`, `napi_has_template` → `napiHasTemplate`, `napi_render_template` → `napiRenderTemplate`.
+
+`napi_render_template` reuses `jinja::render` at the Rust level but returns the HTML as a NAPI string allocation — a different calling convention from the SAB fast-lane (`napi_render_jinja`). It is **not** for the request hot path; it is for handlers/loaders/studio tooling that need an HTML string in JS. Document this in the TS docstring.
 
 ### TypeScript (`runtime/templates.ts`, new)
 
@@ -89,6 +92,7 @@ Exported from `brustjs` root (`runtime/index.ts`). `render` JSON-stringifies `da
 3. A failed `register` (syntax error) leaves prior state untouched (validate-then-commit: add into env first — minijinja parses eagerly on `add_template_owned`; only update DYN_SOURCES after success).
 4. Dev hot reload (`load_from`) replaces only the boot tier; dynamic registrations survive.
 5. `templates.render` never touches request/store context — it is a pure (name, data) → html function.
+6. The boot-time native-route validation in `runtime/index.ts` (~line 258, warns when a `native: true` route's template name is missing) must consult **both tiers**: replace the `napiListNativeTemplates()` set check with `napiHasTemplate(name)` per expected name, so a template registered dynamically before `registerRoutes` does not warn falsely.
 
 ## Tests
 
@@ -123,4 +127,4 @@ Integration: extend `tests/jinja-route.test.ts` or new small test — register a
 
 ## Open questions resolved at plan-time
 
-- Whether `add_template_owned` overwrites an existing name in minijinja 2.20 (if not: remove-then-add inside the same write lock).
+- ~~Whether `add_template_owned` overwrites an existing name in minijinja 2.20~~ — RESOLVED at spec review: yes, single map insert; parse failure short-circuits before any mutation (verified against minijinja 2.20.0 `loader.rs` `insert_cow`/`make_owned_template`).
