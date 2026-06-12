@@ -548,6 +548,76 @@ test('navigate() full-reloads (existing behavior) when payload 404s and NO manif
   expect(createRootSpy).not.toHaveBeenCalled()
 })
 
+// ----- Task 6 (Part A): SPA renders a 404-with-body in-place ----------------
+
+test('navigate(): a 404 carrying a JSON page payload swaps content + title (store:null), no full reload, not cached', async () => {
+  __resetNavForTest()
+  restoreRealHistory()
+  document.body.innerHTML = '<main>old</main>'
+  // Track location.href writes (a full reload would set it).
+  const hrefBefore = location.href
+  const fetchSpy = mock(async () => ({
+    ok: false,
+    status: 404,
+    json: async () => ({ html: '<p>not found page</p>', title: '404', store: null }),
+  }))
+  ;(globalThis as Record<string, unknown>).fetch = fetchSpy
+  await navigate(new URL('http://localhost/nope'), 'push')
+  // Content + title swapped in-place; store:null must NOT throw applyStoreSnapshot.
+  expect(document.querySelector('main')!.textContent).toContain('not found page')
+  expect(document.title).toBe('404')
+  expect(getNavState().phase).toBe('success')
+  // No full reload — location.href is unchanged except the pushState path update.
+  expect(location.href).not.toBe(hrefBefore) // pushState moved us to /nope
+  expect(location.pathname).toBe('/nope')
+  expect(fetchSpy).toHaveBeenCalledTimes(1)
+  // The 404 payload must NOT be cached — a re-navigation refetches it.
+  await navigate(new URL('http://localhost/nope'), 'push')
+  expect(fetchSpy).toHaveBeenCalledTimes(2)
+})
+
+test('navigate(): a 5xx still full-reloads (transport failure, not a renderable 404)', async () => {
+  __resetNavForTest()
+  restoreRealHistory()
+  document.body.innerHTML = '<main></main>'
+  ;(globalThis as Record<string, unknown>).fetch = mock(async () => ({
+    ok: false,
+    status: 500,
+    json: async () => ({ html: '<p>err</p>', title: 'E' }),
+  }))
+  await navigate(new URL('http://localhost/boom'), 'push')
+  expect(getNavState().phase).toBe('error')
+  expect(location.href).toBe('http://localhost/boom')
+})
+
+test('navigate(): a network error still full-reloads', async () => {
+  __resetNavForTest()
+  restoreRealHistory()
+  document.body.innerHTML = '<main></main>'
+  ;(globalThis as Record<string, unknown>).fetch = mock(async () => {
+    throw new Error('network down')
+  })
+  await navigate(new URL('http://localhost/down'), 'push')
+  expect(getNavState().phase).toBe('error')
+  expect(location.href).toBe('http://localhost/down')
+})
+
+test('navigate(): a 404 with an empty/non-JSON body still full-reloads', async () => {
+  __resetNavForTest()
+  restoreRealHistory()
+  document.body.innerHTML = '<main></main>'
+  ;(globalThis as Record<string, unknown>).fetch = mock(async () => ({
+    ok: false,
+    status: 404,
+    json: async () => {
+      throw new Error('Unexpected end of JSON input')
+    },
+  }))
+  await navigate(new URL('http://localhost/empty404'), 'push')
+  expect(getNavState().phase).toBe('error')
+  expect(location.href).toBe('http://localhost/empty404')
+})
+
 test('unmountIslandsIn delegates to unmountFallbackRootsIn (navigating away disposes the client root)', async () => {
   __resetNavForTest()
   restoreRealHistory()

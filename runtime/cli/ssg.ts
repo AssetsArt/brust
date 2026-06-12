@@ -147,6 +147,14 @@ export function collectStaticPaths(flatRoutes: FlatRouteLike[]): SsgRouteDecisio
 /** Reserved sentinel param value (Phase B fallback shell crawl). */
 export const SSG_FALLBACK_SENTINEL = '__brust_fallback__'
 
+/** Definitely-unmatched URL path used to crawl the GLOBAL catch-all into
+ * 404.html: the dist server's NotFound tier renders the global catch-all at
+ * status 404 for any path no real route matches. Deliberately bogus — a
+ * double-underscore-namespaced segment no app route declares. NOT `/_brust/`-
+ * prefixed: those resolve to brust-internal handlers BEFORE route matching, so
+ * the catch-all tier would never see them. */
+export const SSG_NOT_FOUND_SENTINEL_PATH = '/__brust_not_found_sentinel__'
+
 /** Structural view of the leaf's ssg config (mirrors RouteSsgConfig). */
 export interface RouteSsgLike {
   params?: () => Array<Record<string, string>> | Promise<Array<Record<string, string>>>
@@ -263,24 +271,24 @@ export function hasClientLoaderExport(source: string): boolean {
   return /export\s*\{[^}]*\bclientLoader\b[^}]*\}/.test(code)
 }
 
-/** Static-host 404 document for `fallback: 'client'` routes: inlines the
- * [{pattern, doc}] manifest pairs; a path matching a fallback pattern stashes
- * the REAL url in sessionStorage (the takeover runtime restores it via
- * history.replaceState) and redirects to the prerendered fallback shell.
- * No match → plain 404 text. Pure string fn so the script/inline-JSON
- * contract is unit-testable. Escapes for the <script> context: `<`/`>` (no
- * `</script>`/`<!--`/`-->` sequences) and U+2028/U+2029 (legal in JSON,
- * illegal in pre-ES2019-parsed JS string literals). Patterns are
- * author-controlled — belt-and-braces, not a trust boundary. */
-export function fallback404Html(pairs: Array<{ pattern: string; doc: string }>): string {
+/** The redirect-only `<script>` for `fallback: 'client'` routes (no surrounding
+ * document): inlines the [{pattern, doc}] manifest pairs; a path matching a
+ * fallback pattern stashes the REAL url in sessionStorage (the takeover runtime
+ * restores it via history.replaceState) and redirects to the prerendered
+ * fallback shell. No match → no-op (the surrounding document is the 404 body).
+ * Extracted so it can be wrapped in the minimal `fallback404Html` shell OR
+ * injected into a crawled global-404 page (compose404Html). Pure string fn so
+ * the script/inline-JSON contract is unit-testable. Escapes for the <script>
+ * context: `<`/`>` (no `</script>`/`<!--`/`-->` sequences) and U+2028/U+2029
+ * (legal in JSON, illegal in pre-ES2019-parsed JS string literals). Patterns
+ * are author-controlled — belt-and-braces, not a trust boundary. */
+export function fallback404Script(pairs: Array<{ pattern: string; doc: string }>): string {
   const inlineJson = JSON.stringify(pairs)
     .replace(/</g, '\\u003c')
     .replace(/>/g, '\\u003e')
     .replace(/\u2028/g, '\\u2028')
     .replace(/\u2029/g, '\\u2029')
-  return `<!doctype html><html><head><meta charset="utf-8"><title>404</title></head><body>
-<p>Not found.</p>
-<script>
+  return `<script>
 (function () {
   var MANIFEST = ${inlineJson};
   function match(pattern, path) {
@@ -300,8 +308,41 @@ export function fallback404Html(pairs: Array<{ pattern: string; doc: string }>):
     }
   }
 })()
-</script></body></html>
+</script>`
+}
+
+/** Static-host 404 document for `fallback: 'client'` routes when NO global
+ * catch-all page exists: the minimal shell (`<p>Not found.</p>`) wrapping the
+ * redirect `<script>` from `fallback404Script`. When a global catch-all DOES
+ * exist its crawled page is the document and the script is injected instead
+ * (compose404Html) — this shell is unused in that case. */
+export function fallback404Html(pairs: Array<{ pattern: string; doc: string }>): string {
+  return `<!doctype html><html><head><meta charset="utf-8"><title>404</title></head><body>
+<p>Not found.</p>
+${fallback404Script(pairs)}</body></html>
 `
+}
+
+/** Inject `<script>…</script>` into `html` just before the closing `</body>`
+ * (last occurrence, case-insensitive). If the document has no `</body>` the
+ * script is appended — a static host still parses a trailing script. Used to
+ * compose the fallback redirect into a crawled global-404 page. */
+export function injectBeforeBodyClose(html: string, script: string): string {
+  const idx = html.toLowerCase().lastIndexOf('</body>')
+  if (idx === -1) return `${html}\n${script}`
+  return `${html.slice(0, idx)}${script}\n${html.slice(idx)}`
+}
+
+/** Compose the final SSG `404.html` from a crawled global-catch-all page and,
+ * when `fallback: 'client'` routes also exist, the fallback redirect `<script>`
+ * injected before `</body>`. With no fallback pairs the crawled page is
+ * returned verbatim (pure rendered 404 page). */
+export function compose404Html(
+  crawled: string,
+  fallbackPairs: Array<{ pattern: string; doc: string }>,
+): string {
+  if (fallbackPairs.length === 0) return crawled
+  return injectBeforeBodyClose(crawled, fallback404Script(fallbackPairs))
 }
 
 // ----- static export -----
@@ -415,13 +456,19 @@ export async function exportStatic(opts: {
   routes: SsgRouteDecision[]
   /** `fallback: 'client'` routes (pattern + built chunk URL) to emit shells for. */
   fallbacks?: Array<{ pattern: string; chunk: string }>
+  /** True when the app declares a GLOBAL catch-all (notFoundPrefix === ''). The
+   * crawler fetches an unmatched sentinel path (→ NotFound tier renders the
+   * catch-all at 404) and writes its HTML to staticOut/404.html, composing the
+   * fallback redirect script when fallbacks also exist. An app public/404.html
+   * still wins. */
+  globalNotFound?: boolean
 }): Promise<{
   written: string[]
   navWritten: string[]
   fallbackWritten: string[]
   skipped: SsgRouteDecision[]
 }> {
-  const { distDir, entryDir, staticOut, routes, fallbacks = [] } = opts
+  const { distDir, entryDir, staticOut, routes, fallbacks = [], globalNotFound = false } = opts
   const included = routes.filter((r) => r.include)
   const skipped = routes.filter((r) => !r.include)
 
@@ -431,7 +478,7 @@ export async function exportStatic(opts: {
   const written: string[] = []
   const navWritten: string[] = []
   const fallbackWritten: string[] = []
-  if (included.length > 0 || fallbacks.length > 0) {
+  if (included.length > 0 || fallbacks.length > 0 || globalNotFound) {
     const port = await freePort()
     const proc = Bun.spawn(['bun', join(distDir, 'index.js')], {
       env: { ...process.env, BRUST_PORT: String(port), BRUST_WORKERS: '1' },
@@ -541,6 +588,13 @@ export async function exportStatic(opts: {
         fallbackWritten.push(payloadFile)
       }
 
+      // Fallback {pattern, doc} pairs for the 404.html redirect script — also
+      // inlined in the routes.json manifest. Empty when no fallback routes.
+      const fallbackPairs = fallbacks.map((f) => ({
+        pattern: f.pattern,
+        doc: `/_brust/fallback/${fallbackDiskPath(f.pattern)}/`,
+      }))
+
       if (fallbacks.length > 0) {
         // Manifest the client takeover runtime fetches to map a 404'd path to
         // its fallback shell. doc/payload are directory-index URLs (trailing
@@ -557,19 +611,36 @@ export async function exportStatic(opts: {
         const manifestPath = join(staticOut, '_brust', 'routes.json')
         await mkdir(dirname(manifestPath), { recursive: true })
         await Bun.write(manifestPath, JSON.stringify(manifest))
+      }
 
-        // 404.html redirects non-prerendered fallback paths to their shell.
-        // An app-authored public/404.html wins — it lands via the public/
-        // copy below, and the author owns the redirect contract.
+      // 404.html, single static-host slot. Resolution:
+      //  - app public/404.html present → author owns it (lands via the public/
+      //    copy below); never overwrite, warn only when it would have mattered.
+      //  - GLOBAL catch-all → crawl an unmatched sentinel (NotFound tier renders
+      //    the catch-all at 404), use its HTML as the document; inject the
+      //    fallback redirect <script> when fallbacks ALSO exist (compose404Html).
+      //  - fallbacks only → the minimal fallback404Html shell (unchanged).
+      //  - neither → no framework 404.html (byte-identical-today).
+      if (globalNotFound || fallbacks.length > 0) {
         if (existsSync(join(entryDir, 'public', '404.html'))) {
           console.warn(
             '[brust build] ssg: public/404.html exists — NOT overwriting; your 404 page must redirect fallback routes itself (see docs)',
           )
+        } else if (globalNotFound) {
+          // Crawl the global catch-all via an unmatched path: the dist server's
+          // NotFound tier renders it at status 404. A non-404 here means the
+          // catch-all isn't wired — fail the export rather than ship a wrong
+          // (or 200) page as the 404.
+          const resp = await fetch(`http://127.0.0.1:${port}${SSG_NOT_FOUND_SENTINEL_PATH}`)
+          const body = await resp.text()
+          if (resp.status !== 404) {
+            throw new Error(
+              `global catch-all crawl GET ${SSG_NOT_FOUND_SENTINEL_PATH} → ${resp.status} (expected 404)\n${body.slice(0, 500)}`,
+            )
+          }
+          await Bun.write(join(staticOut, '404.html'), compose404Html(body, fallbackPairs))
         } else {
-          await Bun.write(
-            join(staticOut, '404.html'),
-            fallback404Html(manifest.fallbacks.map(({ pattern, doc }) => ({ pattern, doc }))),
-          )
+          await Bun.write(join(staticOut, '404.html'), fallback404Html(fallbackPairs))
         }
       }
     } catch (err) {

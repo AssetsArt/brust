@@ -696,6 +696,12 @@ export async function runBuild(args: string[]): Promise<void> {
     const expandedCount = expanded.length - (loadedRoutes ?? []).length
     const decisions = collectStaticPaths(expanded)
     const staticOut = parsed.ssgOut ?? path.join(outDir, 'static')
+    // A GLOBAL catch-all (notFound flag + empty prefix) gets rendered into
+    // 404.html. Nested per-prefix catch-alls are live-only on static hosts
+    // (the spec's documented SSG limitation).
+    const globalNotFound = (
+      (loadedRoutes ?? []) as { notFound?: boolean; notFoundPrefix?: string }[]
+    ).some((r) => r.notFound === true && (r.notFoundPrefix ?? '') === '')
     try {
       const { written, navWritten, fallbackWritten, skipped } = await exportStatic({
         distDir: outDir,
@@ -703,6 +709,7 @@ export async function runBuild(args: string[]): Promise<void> {
         staticOut,
         routes: decisions,
         fallbacks: ssgFallbacks,
+        globalNotFound,
       })
       const counts = new Map<string, number>()
       for (const s of skipped) {

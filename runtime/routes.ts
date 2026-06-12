@@ -235,8 +235,25 @@ export interface NativeVerdict {
   readonly headers?: Record<string, string>
 }
 
-/** Return from a native route loader to render the route's OWN template with
- * HTTP 404. `data` (default `{}`) becomes the template context. */
+/** Signal "not found" from a route loader. ONE helper, two call shapes —
+ * matching how each render path consumes a loader result:
+ *
+ *  - NATIVE route loader: `return notFound(data?)`. The returned verdict is
+ *    inspected by `runNativeChainLoaders` and renders the route's OWN template
+ *    at HTTP 404 (`data` default `{}` becomes the template context).
+ *
+ *  - REACT route loader: `throw notFound()`. A React loader's RETURN value is
+ *    the component's `data` prop (never inspected as a verdict), so the only
+ *    way to signal not-found is to throw. The render dispatch discriminates the
+ *    thrown verdict (it is symbol-tagged — `isNativeVerdict`) BEFORE the generic
+ *    500/errorBoundary handler and renders the NEAREST catch-all (`path: '*'`)
+ *    for the route's prefix at HTTP 404 — NOT the route's own Component, NOT a
+ *    500. If no catch-all is registered for the prefix, a framework default 404
+ *    body is rendered. `data` is ignored on the React throw path (the catch-all
+ *    runs its own loader chain).
+ *
+ * Same value type (`NativeVerdict`) either way — native returns it, React
+ * throws it — so there is a single public `notFound()` API. */
 export function notFound(data?: unknown): NativeVerdict {
   return { [BRUST_VERDICT]: true, status: 404, render: true, data: data ?? {} }
 }
@@ -255,6 +272,45 @@ export function isNativeVerdict(x: unknown): x is NativeVerdict {
   return (
     typeof x === 'object' && x !== null && (x as Record<symbol, unknown>)[BRUST_VERDICT] === true
   )
+}
+
+/** Framework default 404 body, served when a React `notFound()` fires but no
+ * catch-all (`path: '*'`) is registered for the route's prefix — so the response
+ * is still HTTP 404 with a body (never a 500, never a crash). */
+const DEFAULT_NOT_FOUND_BODY =
+  '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>404 Not Found</title></head><body><main><h1>404</h1><p>Not found.</p></main></body></html>'
+
+/** True when a thrown value is the React `notFound()` trigger: a NativeVerdict
+ * that renders at HTTP 404 (vs a thrown `redirect()`, which is `render: false`).
+ * Distinct from ActionError (a different Symbol) and from real Errors, so the
+ * render-dispatch catch can re-render the catch-all ONLY for this case and let
+ * everything else fall through to the 500/errorBoundary path. */
+function isNotFoundTrigger(x: unknown): x is NativeVerdict {
+  return isNativeVerdict(x) && x.render === true && x.status === 404
+}
+
+/** Select the nearest catch-all (`path: '*'`) FlatRoute for an unmatched path —
+ * the JS-side mirror of Rust's `select_not_found` (routing/routes.rs). Returns
+ * the catch-all's route_id (array index) or `undefined` if none covers the path.
+ *
+ * Longest segment-prefix wins: a `notFoundPrefix` of `/docs` covers `/docs` and
+ * `/docs/...` but NOT `/docsearch`; the root catch-all (`''`) covers everything
+ * as the last resort. Identical precedence to the Rust unmatched-path tier, so a
+ * React `notFound()` selects the SAME catch-all a genuinely-unmatched path would. */
+function selectNotFound(routes: FlatRoute[], path: string): number | undefined {
+  let bestId: number | undefined
+  let bestLen = -1
+  for (let i = 0; i < routes.length; i++) {
+    const r = routes[i]
+    if (r.notFound !== true) continue
+    const p = r.notFoundPrefix ?? ''
+    const covers = p === '' || path === p || path.startsWith(`${p}/`)
+    if (covers && p.length > bestLen) {
+      bestLen = p.length
+      bestId = i
+    }
+  }
+  return bestId
 }
 
 /** Loader context passed to native chain loaders. */
@@ -409,6 +465,22 @@ export interface FlatRoute {
   /** Sub-project J — Component.name when leaf had `native: true`. Captured
    * at flatten time (build-time AST identifier), so minifier-safe. */
   nativeTemplate?: string
+  /** Catch-all (`{ path: '*' }`) marker. When true this FlatRoute is a
+   * "not found" fallback: it stays in the array at its natural index (route_id
+   * stable) but install SKIPS the matchit insert for it — it only renders when
+   * matchit returns NoMatch under `notFoundPrefix`. NEVER remove a flagged
+   * entry from the flat array (that would shift every later route_id).
+   *
+   * A catch-all render is stamped HTTP 404 UNCONDITIONALLY (spec invariant 4:
+   * "never 200"). A `redirect()` from the catch-all's OWN loader still wins —
+   * redirect verdicts short-circuit and return before the 404 stamp on every
+   * path. A non-redirect verdict status, however, is overridden by 404 (a 404
+   * page is a 404, by definition). */
+  notFound?: boolean
+  /** Parent layout's path prefix this catch-all covers. Root catch-all → `''`
+   * (matches everything as last resort). Longest segment-prefix wins at match
+   * time. Never contains `*` (it's the parent prefix, not the catch-all path). */
+  notFoundPrefix?: string
 }
 
 /** Compose a child's relative path onto a parent's base path.
@@ -530,7 +602,10 @@ function assertNativeSubtree(children: Route[], where: string): void {
  * the design spec (S3). */
 export function flattenRoutes(routes: Route[]): FlatRoute[] {
   const out: FlatRoute[] = []
-  walkRoutes(routes, [], '', out)
+  // Tracks `notFoundPrefix` values already claimed by a catch-all so a second
+  // catch-all under the same prefix throws instead of silently shadowing.
+  const seenNotFoundPrefixes = new Set<string>()
+  walkRoutes(routes, [], '', out, seenNotFoundPrefixes)
   return out
 }
 
@@ -539,6 +614,7 @@ function walkRoutes(
   parentChain: Route[],
   basePath: string,
   out: FlatRoute[],
+  seenNotFoundPrefixes: Set<string>,
 ): void {
   for (const r of routes) {
     validateRoute(r, basePath)
@@ -549,11 +625,36 @@ function walkRoutes(
       continue
     }
 
+    // Catch-all (`{ path: '*' }`) — a "not found" fallback for the `basePath`
+    // subtree. It is a LEAF (no children/index) and is KEPT in the flat array
+    // at its natural index (route_id stable) flagged `notFound`. Its fullPath
+    // is set to the parent prefix (never a `*` matchit pattern) so a later
+    // install step can skip the matchit insert and rely on the flag.
+    if (r.path === '*') {
+      if (r.children && r.children.length > 0) {
+        throw new Error(`catch-all route "*" must be a leaf (no children) under "${basePath}"`)
+      }
+      // (index is already mutually exclusive with path via validateRoute.)
+      const prefix = basePath
+      if (seenNotFoundPrefixes.has(prefix)) {
+        throw new Error(
+          `duplicate catch-all route "*": only one catch-all allowed per prefix "${prefix}"`,
+        )
+      }
+      seenNotFoundPrefixes.add(prefix)
+      // Construct atomically (no post-hoc mutation) so the flag + prefix are
+      // never observable half-set. `fullPath === notFoundPrefix` by design; the
+      // install step gates the matchit-insert skip on the `notFound` flag, not
+      // on fullPath (see runtime/index.ts registerRoutes).
+      out.push({ ...makeFlat(chain, prefix), notFound: true, notFoundPrefix: prefix })
+      continue
+    }
+
     const ownPath = r.path ?? ''
     const myPath = joinPath(basePath, ownPath)
 
     if (r.children && r.children.length > 0) {
-      walkRoutes(r.children, chain, myPath, out)
+      walkRoutes(r.children, chain, myPath, out, seenNotFoundPrefixes)
     } else {
       // Leaf with a path (validated above).
       out.push(makeFlat(chain, myPath))
@@ -991,6 +1092,12 @@ export function makeRenderer(
         } else {
           data = chainResult.data
         }
+        // Catch-all (`path: '*'`) leaf rendered on an unmatched path: stamp HTTP
+        // 404 unconditionally, regardless of any verdict status. The loader does
+        // NOT need to call notFound() — being a catch-all IS the 404 signal.
+        if (flat.notFound === true) {
+          renderStatus = 404
+        }
         // B7 — native store-snapshot SSR. Fill the framework-owned
         // `{{ __brust_store__ | safe }}` slot (emitted into every native
         // full-document <head>) with the defineStore SSR snapshot collected
@@ -1127,32 +1234,89 @@ export function makeRenderer(
       return await runInRequestContext(call.req?.cookies ?? {}, async () => {
         // Computed ONCE and shared by buildRenderElement (leaf swap) and
         // renderBranchStreaming (forceIslands) so the two can never diverge.
-        const shellMode = wantsSsgFallbackShell(flat, call)
-        let element: ReactNode
-        let errorBoundary: ComponentType<{ error: Error }>
+        let shellMode = wantsSsgFallbackShell(flat, call)
+        let element: ReactNode = null
+        // The route actually rendered + its HTTP status. Normally the matched
+        // `flat` at the verdict status (404 when the matched route IS a
+        // catch-all). A React loader that `throw`s `notFound()` swaps both to
+        // the nearest catch-all at 404 below.
+        let renderFlat = flat
+        let renderStatus = flat.notFound === true ? 404 : verdict.status
         try {
           element = await buildRenderElement(call, flat, opts.getWorkerId, shellMode)
-          errorBoundary =
-            flat.errorBoundary ??
-            (({ error }) => createElement('div', null, `Internal Server Error: ${error.message}`))
         } catch (err) {
-          // Setup failure BEFORE renderToPipeableStream — loader throw, params
-          // bind throw. Shape matches the legacy "internal error" path so
-          // existing integration tests stay green.
-          console.error(`[brust] render setup failed:`, err)
-          return await emitSingleChunkResponse(
-            slotView,
-            napi,
-            workerId,
-            encoder,
-            {
-              status: 500,
-              contentType: 'text/html; charset=utf-8',
-              body: 'internal error',
-            },
-            slot,
-          )
+          if (isNotFoundTrigger(err)) {
+            // React `notFound()` trigger: abandon the matched route and render
+            // the NEAREST catch-all (same selection as a Rust-unmatched path)
+            // at HTTP 404 — NOT the route's own Component, NOT a 500. Reuse the
+            // existing 404-render machinery by re-running buildRenderElement
+            // against the catch-all's chain.
+            // nfId is the array index, which IS the route_id (catch-alls keep
+            // their natural slot — see FlatRoute.notFound), so byRouteId resolves
+            // the same flat route the Rust tier picks for an unmatched path.
+            const nfId = selectNotFound(routes, call.path)
+            const nfFlat = nfId !== undefined ? byRouteId.get(nfId) : undefined
+            renderStatus = 404
+            if (nfFlat) {
+              renderFlat = nfFlat
+              shellMode = wantsSsgFallbackShell(nfFlat, call)
+              try {
+                element = await buildRenderElement(call, nfFlat, opts.getWorkerId, shellMode)
+              } catch (nfErr) {
+                // The catch-all's OWN loader/render setup failed — don't loop;
+                // fall back to the framework default 404 body at 404.
+                console.error(`[brust] catch-all render setup failed:`, nfErr)
+                return await emitSingleChunkResponse(
+                  slotView,
+                  napi,
+                  workerId,
+                  encoder,
+                  {
+                    status: 404,
+                    contentType: 'text/html; charset=utf-8',
+                    body: DEFAULT_NOT_FOUND_BODY,
+                  },
+                  slot,
+                )
+              }
+            } else {
+              // No catch-all registered for this prefix → framework default 404
+              // body at status 404 (don't crash, don't 500).
+              return await emitSingleChunkResponse(
+                slotView,
+                napi,
+                workerId,
+                encoder,
+                {
+                  status: 404,
+                  contentType: 'text/html; charset=utf-8',
+                  body: DEFAULT_NOT_FOUND_BODY,
+                },
+                slot,
+              )
+            }
+          } else {
+            // Setup failure BEFORE renderToPipeableStream — loader throw, params
+            // bind throw. Shape matches the legacy "internal error" path so
+            // existing integration tests stay green.
+            console.error(`[brust] render setup failed:`, err)
+            return await emitSingleChunkResponse(
+              slotView,
+              napi,
+              workerId,
+              encoder,
+              {
+                status: 500,
+                contentType: 'text/html; charset=utf-8',
+                body: 'internal error',
+              },
+              slot,
+            )
+          }
         }
+        const errorBoundary: ComponentType<{ error: Error }> =
+          renderFlat.errorBoundary ??
+          (({ error }) => createElement('div', null, `Internal Server Error: ${error.message}`))
         const storeSnapshot = collectSnapshot()
         await renderBranchStreaming({
           element,
@@ -1161,9 +1325,11 @@ export function makeRenderer(
           workerId,
           napi,
           errorBoundary,
-          status: verdict.status,
+          // Catch-all (`path: '*'`) leaf rendered on an unmatched path OR a
+          // React `notFound()` swap: stamp HTTP 404 (mirrors the native path).
+          status: renderStatus,
           headers: flushSetCookie(verdict.headers),
-          routePath: flat.fullPath,
+          routePath: renderFlat.fullPath,
           storeSnapshot,
           // SSG fallback shells have zero islands on the page but the
           // client-loader runtime still needs the importmap + bootstrap.
@@ -1174,7 +1340,7 @@ export function makeRenderer(
       })
     }
     if (call.kind === 'navigation') {
-      await navigationBranch(call, byRouteId, slotView, encoder, opts.getWorkerId, slot)
+      await navigationBranch(call, byRouteId, routes, slotView, encoder, opts.getWorkerId, slot)
       return 0
     }
     if (call.kind === 'action') {
@@ -1268,6 +1434,7 @@ function renderToAwaitedString(element: ReactNode): Promise<string> {
 async function navigationBranch(
   call: Extract<RouteCall, { kind: 'navigation' }>,
   byRouteId: Map<number, FlatRoute>,
+  routes: FlatRoute[],
   view: Uint8Array,
   encoder: TextEncoder,
   getWorkerId: (() => number | null) | undefined,
@@ -1384,6 +1551,14 @@ async function navigationBranch(
     // with no headers param, so staged cookies are dropped there (same as the
     // full-document native render path).
     let navHeaders: Record<string, string> | undefined
+    // The nav-payload HTTP status. Normally 200, or 404 when the matched route
+    // IS a catch-all (rendered on a genuinely-unmatched `/_brust/page/*` path).
+    // A React loader `throw notFound()` (caught below) swaps the rendered route
+    // to the nearest catch-all and forces this to 404 — mirroring the
+    // full-document render path. NOTE: in the trigger case `flat` is the MATCHED
+    // route (notFound === false), so the status must be forced to 404 explicitly,
+    // not derived from `flat.notFound`.
+    let navStatus = flat.notFound === true ? 404 : 200
     if (flat.nativeTemplate !== undefined) {
       fullHtml = await renderNativeRouteToHtml(call, flat, view, encoder, workerId, slot)
     } else {
@@ -1393,23 +1568,54 @@ async function navigationBranch(
       // injection is needed in a NAV payload: the payload is swapped into a
       // document that already booted the bootstrap (the navigator IS the
       // bootstrap), and the takeover runtime imports its chunk itself.
-      fullHtml = await runInRequestContext(call.req?.cookies ?? {}, async () => {
-        const element = await buildRenderElement(
-          call as any,
-          flat,
-          getWorkerId,
-          wantsSsgFallbackShell(flat, call as any),
-        )
-        if (!element) throw new Error('render setup failed')
-        // Use renderToPipeableStream + onAllReady so pages with <Suspense> emit
-        // their RESOLVED markup, not the fallback. renderToString would only
-        // capture the shell — navigating SPA-style to a Suspense-using route
-        // would otherwise ship "loading…" and never recover.
-        const html = await renderToAwaitedString(element)
-        store = collectSnapshot()
-        navHeaders = flushSetCookie(undefined)
-        return html
-      })
+      const renderFlatToHtml = (target: FlatRoute): Promise<string> =>
+        runInRequestContext(call.req?.cookies ?? {}, async () => {
+          const element = await buildRenderElement(
+            call as any,
+            target,
+            getWorkerId,
+            wantsSsgFallbackShell(target, call as any),
+          )
+          if (!element) throw new Error('render setup failed')
+          // Use renderToPipeableStream + onAllReady so pages with <Suspense> emit
+          // their RESOLVED markup, not the fallback. renderToString would only
+          // capture the shell — navigating SPA-style to a Suspense-using route
+          // would otherwise ship "loading…" and never recover.
+          const html = await renderToAwaitedString(element)
+          store = collectSnapshot()
+          navHeaders = flushSetCookie(undefined)
+          return html
+        })
+      try {
+        fullHtml = await renderFlatToHtml(flat)
+      } catch (err) {
+        if (!isNotFoundTrigger(err)) throw err
+        // React `notFound()` trigger on the SPA-nav path: abandon the matched
+        // route and render the NEAREST catch-all (same selection as a
+        // Rust-unmatched path) as the nav payload at HTTP 404 — NOT a 500
+        // `{"error":"render failed"}`. Mirrors the full-document render path.
+        navStatus = 404
+        // nfId is the array index == route_id (catch-alls keep their slot).
+        const nfId = selectNotFound(routes, call.path)
+        const nfFlat = nfId !== undefined ? byRouteId.get(nfId) : undefined
+        if (nfFlat) {
+          try {
+            fullHtml = await renderFlatToHtml(nfFlat)
+          } catch (nfErr) {
+            // The catch-all's OWN loader/render threw (notFound or a real error):
+            // ship the framework default 404 body — don't recurse into another
+            // catch-all selection.
+            console.error('[brust] catch-all nav render failed:', nfErr)
+            fullHtml = DEFAULT_NOT_FOUND_BODY
+            store = null
+          }
+        } else {
+          // No catch-all registered for this prefix → framework default 404 body
+          // shipped as a nav payload (so the client swaps it in), at 404.
+          fullHtml = DEFAULT_NOT_FOUND_BODY
+          store = null
+        }
+      }
     }
 
     // Extract <main> inner content. If the page didn't render a <main>,
@@ -1436,7 +1642,11 @@ async function navigationBranch(
       workerId,
       encoder,
       {
-        status: 200,
+        // Catch-all (`path: '*'`) leaf rendered as a SPA-nav payload on an
+        // unmatched path — OR a React `throw notFound()` swapped to the nearest
+        // catch-all — stamps HTTP 404 while still shipping the rendered body so
+        // the client swaps it in (vs the bare `{"error":"not found"}`).
+        status: navStatus,
         contentType: 'application/json; charset=utf-8',
         body,
         headers: navHeaders,

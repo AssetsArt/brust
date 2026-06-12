@@ -369,6 +369,87 @@ test('flattenRoutes allows native: true + cache (native is the L1 target)', () =
   expect(flat[0]?.cache?.ttl_seconds).toBe(60)
 })
 
+// --- catch-all '*' (not-found) flatten -----------------------------------------
+
+test("flattenRoutes: catch-all '*' leaf flagged notFound with parent prefix, kept in array", () => {
+  const Layout: any = () => null
+  const Intro: any = () => null
+  const DocsNF: any = () => null
+  const GlobalNF: any = () => null
+  const flat = flattenRoutes([
+    { path: '/', Component: C },
+    {
+      path: '/docs',
+      Component: Layout,
+      children: [
+        { path: 'intro', Component: Intro },
+        { path: '*', Component: DocsNF },
+      ],
+    },
+    { path: '*', Component: GlobalNF },
+  ])
+  // / , /docs/intro , docs catch-all , global catch-all = 4 entries, all kept.
+  expect(flat).toHaveLength(4)
+  const nf = flat.filter((f) => f.notFound)
+  expect(nf).toHaveLength(2)
+  expect(nf.map((f) => f.notFoundPrefix).sort()).toEqual(['', '/docs'])
+  // Catch-all fullPath must NOT be a matchit pattern that matches real traffic;
+  // it equals the notFoundPrefix by design (positive assertion, not just absence
+  // of `*` — which would pass for any arbitrary non-matching string).
+  for (const f of nf) {
+    expect(f.fullPath).not.toContain('*')
+    expect(f.notFoundPrefix).toBe(f.fullPath)
+  }
+  // route_id integrity: stable contiguous array (no removal/reindex).
+  expect(flat.filter((f) => !f.notFound)).toHaveLength(2)
+})
+
+test("flattenRoutes: root catch-all gets prefix '' ", () => {
+  const GlobalNF: any = () => null
+  const flat = flattenRoutes([
+    { path: '/', Component: C },
+    { path: '*', Component: GlobalNF },
+  ])
+  const nf = flat.find((f) => f.notFound)
+  expect(nf).toBeDefined()
+  expect(nf?.notFoundPrefix).toBe('')
+})
+
+test("flattenRoutes: catch-all '*' with children throws (must be a leaf)", () => {
+  const X: any = () => null
+  const Y: any = () => null
+  expect(() =>
+    flattenRoutes([{ path: '*', Component: X, children: [{ path: 'y', Component: Y }] }]),
+  ).toThrow(/leaf/)
+})
+
+test("flattenRoutes: catch-all '*' with index throws (must be a leaf)", () => {
+  const X: any = () => null
+  expect(() => flattenRoutes([{ path: '*', index: true, Component: X } as Route])).toThrow()
+})
+
+test('flattenRoutes: two catch-alls under the same prefix throw', () => {
+  const A: any = () => null
+  const B: any = () => null
+  expect(() =>
+    flattenRoutes([
+      { path: '*', Component: A },
+      { path: '*', Component: B },
+    ]),
+  ).toThrow(/duplicate|one catch-all/i)
+})
+
+test('flattenRoutes: catch-alls under different prefixes are both allowed', () => {
+  const Layout: any = () => null
+  const DocsNF: any = () => null
+  const GlobalNF: any = () => null
+  const flat = flattenRoutes([
+    { path: '/docs', Component: Layout, children: [{ path: '*', Component: DocsNF }] },
+    { path: '*', Component: GlobalNF },
+  ])
+  expect(flat.filter((f) => f.notFound)).toHaveLength(2)
+})
+
 // --- T3: native <Outlet> chain-loader merge (runNativeChainLoaders) -----------
 
 const NLC_CTX = {

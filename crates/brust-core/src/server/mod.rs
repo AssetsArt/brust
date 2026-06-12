@@ -612,6 +612,14 @@ async fn handle_request(
                 envelope.kind = "navigation";
                 envelope
             }
+            // Unmatched path with a registered catch-all: render the catch-all
+            // as a navigation payload (mirror the Matched arm) so the SPA client
+            // receives a real page body. HTTP 404 is stamped by the JS render
+            // wrapper (it forces renderStatus = 404 for flat.notFound routes).
+            MatchResult::NotFound { mut envelope, .. } => {
+                envelope.kind = "navigation";
+                envelope
+            }
             MatchResult::NoMatch => {
                 return Ok(body::resp(
                     404,
@@ -627,6 +635,12 @@ async fn handle_request(
     // ----- general route match -----
     let (mut envelope, route_id) = match routes.match_path(&method, &path, req.headers()) {
         MatchResult::Matched { envelope, route_id } => (envelope, route_id),
+        // Unmatched path with a registered catch-all: dispatch the catch-all's
+        // route_id through the exact same render path as a Matched route. HTTP
+        // 404 is stamped by the JS render wrapper (forces renderStatus = 404 for
+        // flat.notFound routes). error_404() remains the last resort when no
+        // catch-all is registered (the NoMatch arm below).
+        MatchResult::NotFound { envelope, route_id } => (envelope, route_id),
         MatchResult::NoMatch => {
             return Ok(body::error_404());
         }

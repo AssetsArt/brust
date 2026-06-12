@@ -6,13 +6,16 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
   collectStaticPaths,
+  compose404Html,
   expandDynamicRoutes,
   exportStatic,
   fallback404Html,
+  fallback404Script,
   fallbackDiskPath,
   fallbackEntrySource,
   fallbackSentinelPath,
   hasClientLoaderExport,
+  injectBeforeBodyClose,
   navPayloadFileFor,
   type FlatRouteLike,
   type SsgRouteDecision,
@@ -258,6 +261,64 @@ test('fallback404Html escapes </script> + U+2028/29 in the inlined JSON (script-
   expect(html).not.toContain(' ')
   // the only raw </script> left is the document's own closing tag
   expect(html.match(/<\/script>/g)?.length).toBe(1)
+})
+
+// ----- fallback404Script / compose404Html / injectBeforeBodyClose (pure) -----
+
+test('fallback404Script returns the redirect <script> only — no <p>Not found.</p> shell', () => {
+  const s = fallback404Script([
+    { pattern: '/ssg-fb/{slug}', doc: '/_brust/fallback/ssg-fb/__slug__/' },
+  ])
+  expect(s.startsWith('<script>')).toBe(true)
+  expect(s.trimEnd().endsWith('</script>')).toBe(true)
+  expect(s).not.toContain('<!doctype')
+  expect(s).not.toContain('Not found.')
+  expect(s).toContain('/ssg-fb/{slug}')
+  expect(s).toContain("sessionStorage.setItem('brust:fallback-path'")
+  expect(s).toContain('location.replace')
+})
+
+test('fallback404Html still wraps the script in its minimal shell (unchanged behavior)', () => {
+  const pairs = [{ pattern: '/ssg-fb/{slug}', doc: '/_brust/fallback/ssg-fb/__slug__/' }]
+  const html = fallback404Html(pairs)
+  expect(html).toContain('<!doctype html>')
+  expect(html).toContain('<p>Not found.</p>')
+  expect(html).toContain(fallback404Script(pairs))
+  expect(html).toContain('/ssg-fb/{slug}')
+})
+
+test('injectBeforeBodyClose inserts the script before the LAST </body>', () => {
+  const out = injectBeforeBodyClose('<html><body><h1>404</h1></body></html>', '<script>X</script>')
+  expect(out).toBe('<html><body><h1>404</h1><script>X</script>\n</body></html>')
+})
+
+test('injectBeforeBodyClose matches </body> case-insensitively', () => {
+  const out = injectBeforeBodyClose('<HTML><BODY>hi</BODY></HTML>', '<script>X</script>')
+  expect(out).toContain('<script>X</script>\n</BODY>')
+})
+
+test('injectBeforeBodyClose appends when there is no </body>', () => {
+  const out = injectBeforeBodyClose('<div>just a fragment</div>', '<script>X</script>')
+  expect(out).toBe('<div>just a fragment</div>\n<script>X</script>')
+})
+
+test('compose404Html with no fallbacks returns the crawled page verbatim', () => {
+  const page = '<!doctype html><html><body><h1>Page Not Found</h1></body></html>'
+  expect(compose404Html(page, [])).toBe(page)
+})
+
+test('compose404Html injects the fallback redirect script into the crawled page', () => {
+  const page = '<!doctype html><html><body><h1>Page Not Found</h1></body></html>'
+  const pairs = [{ pattern: '/ssg-fb/{slug}', doc: '/_brust/fallback/ssg-fb/__slug__/' }]
+  const out = compose404Html(page, pairs)
+  // Both the branded body AND the fallback redirect coexist.
+  expect(out).toContain('Page Not Found')
+  expect(out).toContain('/ssg-fb/{slug}')
+  expect(out).toContain('location.replace')
+  // No second <p>Not found.</p> shell leaked in.
+  expect(out).not.toContain('Not found.')
+  // Script lands before the closing body tag.
+  expect(out.indexOf('location.replace')).toBeLessThan(out.lastIndexOf('</body>'))
 })
 
 // ----- exportStatic (integration: builds the fixture app, boots the dist) -----
@@ -531,11 +592,16 @@ test('brust build --ssg emits fallback chunk + shells + manifest + 404 for fallb
       'export default function Home() {\n  return <h1>cli-e2e home</h1>\n}\n',
     )
     await writeFile(
+      path.join(proj, 'components', 'NotFound.tsx'),
+      'export default function NotFound() {\n  return <h1>Page Not Found __cli_404_marker__</h1>\n}\n',
+    )
+    await writeFile(
       path.join(proj, 'routes.tsx'),
       `import { defineRoutes, type Middleware } from ${JSON.stringify(
         path.join(REPO, 'runtime/routes.ts'),
       )}
 import Home from './components/Home'
+import NotFound from './components/NotFound'
 import SsgFallbackPost from './components/SsgFallbackPost'
 
 // JSON GET endpoint for the clientLoader — middleware short-circuit, mirrors
@@ -562,6 +628,9 @@ export const routes = defineRoutes([
     Component: SsgFallbackPost,
     middleware: [ssgFallbackData],
   },
+  // Global catch-all → SSG renders it into 404.html, composed with the
+  // fallback redirect script (both the fallback route above AND this exist).
+  { path: '*', Component: NotFound },
 ])
 `,
     )
@@ -622,9 +691,15 @@ await brust.run({ routes, entry: import.meta.url })
     const chunk = manifest.fallbacks[0]!.chunk
     expect(existsSync(path.join(staticDir, '_brust', 'islands', path.basename(chunk)))).toBe(true)
 
-    // 404.html inlines the pattern (JSON-quoted) for the client-side redirect.
+    // 404.html: the global catch-all page is the document AND the fallback
+    // redirect script (pattern JSON-quoted) is composed into it before </body>.
     const notFound = await Bun.file(path.join(staticDir, '404.html')).text()
-    expect(notFound).toContain('"/ssg-fb/{slug}"')
+    expect(notFound).toContain('__cli_404_marker__') // crawled catch-all body
+    expect(notFound).toContain('"/ssg-fb/{slug}"') // fallback redirect pattern
+    expect(notFound).toContain('location.replace') // fallback redirect script
+    // The minimal fallback shell's <p>Not found.</p> stub must NOT leak in —
+    // the crawled catch-all page replaced it.
+    expect(notFound).not.toContain('<p>Not found.</p>')
 
     expect(stdout).toContain('fallback chunk')
   } finally {
@@ -649,3 +724,122 @@ test('no fallbacks → NO routes.json, NO 404.html (byte-identical-today invaria
     await rm(outDir, { recursive: true, force: true })
   }
 }, 30_000)
+
+// ----- global catch-all → 404.html (Task 7) -----
+//
+// The shared fixture dist deliberately ships NO catch-all (an integration test
+// asserts the no-catch-all SPA-nav behavior). So this group builds its OWN
+// minimal dist ONCE, with a global `{ path: '*' }` catch-all, then drives
+// exportStatic directly against it. A distinct marker in the catch-all body
+// proves the crawl rendered the catch-all page (not the plain error_404 stub).
+
+const NF_MARKER = '__brust_global_404_marker__'
+
+let nfDistDir: string
+let nfProj: string
+
+beforeAll(async () => {
+  nfDistDir = await mkdtemp(path.join(tmpdir(), 'brust-ssg-nf-dist-'))
+  nfProj = await mkdtemp(path.join(tmpdir(), 'brust-ssg-nf-proj-'))
+  await mkdir(path.join(nfProj, 'components'), { recursive: true })
+  await writeFile(
+    path.join(nfProj, 'components', 'Home.tsx'),
+    'export default function Home() {\n  return <h1>nf-home</h1>\n}\n',
+  )
+  await writeFile(
+    path.join(nfProj, 'components', 'NotFound.tsx'),
+    `export default function NotFound() {\n  return <h1>Page Not Found ${NF_MARKER}</h1>\n}\n`,
+  )
+  await writeFile(
+    path.join(nfProj, 'routes.tsx'),
+    `import { defineRoutes } from ${JSON.stringify(path.join(REPO, 'runtime/routes.ts'))}
+import Home from './components/Home'
+import NotFound from './components/NotFound'
+
+export const routes = defineRoutes([
+  { path: '/', Component: Home },
+  { path: '*', Component: NotFound },
+])
+`,
+  )
+  await writeFile(
+    path.join(nfProj, 'index.ts'),
+    `import { brust } from ${JSON.stringify(path.join(REPO, 'runtime/index.ts'))}
+import { routes } from './routes'
+
+await brust.run({ routes, entry: import.meta.url })
+`,
+  )
+  symlinkSync(path.join(REPO, 'node_modules'), path.join(nfProj, 'node_modules'), 'dir')
+  const build = await $`bun ${path.join(REPO, 'runtime/cli/index.ts')} build ${path.join(
+    nfProj,
+    'index.ts',
+  )} --out-dir ${nfDistDir}`
+    .cwd(nfProj)
+    .quiet()
+    .nothrow()
+  if (build.exitCode !== 0) {
+    throw new Error(`catch-all fixture build failed:\n${build.stdout}\n${build.stderr}`)
+  }
+  symlinkSync(path.join(REPO, 'node_modules'), path.join(nfDistDir, 'node_modules'), 'dir')
+}, 180_000)
+
+afterAll(async () => {
+  for (const d of [nfDistDir, nfProj]) {
+    if (d) await rm(d, { recursive: true, force: true })
+  }
+})
+
+test('global catch-all, no fallbacks → 404.html is the crawled NotFound page', async () => {
+  const outDir = await mkdtemp(path.join(tmpdir(), 'brust-ssg-nf-only-'))
+  try {
+    await exportStatic({
+      distDir: nfDistDir,
+      entryDir: outDir, // no public/404.html here
+      staticOut: outDir,
+      routes: [dec('/')],
+      globalNotFound: true,
+    })
+    const html = await Bun.file(path.join(outDir, '404.html')).text()
+    // The crawled catch-all body, NOT the old <p>Not found.</p> stub.
+    expect(html).toContain(NF_MARKER)
+    expect(html).not.toContain('<p>Not found.</p>')
+    // No fallback routes → no redirect script composed in.
+    expect(html).not.toContain('location.replace')
+  } finally {
+    await rm(outDir, { recursive: true, force: true })
+  }
+}, 60_000)
+
+// The global-catch-all + fallback COMPOSE path (both markers in one 404.html)
+// is exercised end-to-end by the 'brust build --ssg' CLI test above, which
+// declares both a `{ path: '*' }` catch-all and a `ssg.fallback:'client'`
+// route. The compose404Html / fallback404Script unit tests cover the string
+// contract in isolation.
+
+test('app public/404.html present → framework does NOT overwrite it (global catch-all)', async () => {
+  const outDir = await mkdtemp(path.join(tmpdir(), 'brust-ssg-nf-pub-'))
+  const entry = await mkdtemp(path.join(tmpdir(), 'brust-ssg-nf-entry-'))
+  try {
+    await mkdir(path.join(entry, 'public'), { recursive: true })
+    await writeFile(
+      path.join(entry, 'public', '404.html'),
+      '<html><body>AUTHORED-404</body></html>',
+    )
+    await exportStatic({
+      distDir: nfDistDir,
+      entryDir: entry,
+      staticOut: outDir,
+      routes: [dec('/')],
+      globalNotFound: true,
+    })
+    // public/ copy lands the authored file; the framework must NOT have written
+    // its own crawled page over it.
+    const html = await Bun.file(path.join(outDir, '404.html')).text()
+    expect(html).toContain('AUTHORED-404')
+    expect(html).not.toContain(NF_MARKER)
+  } finally {
+    await rm(outDir, { recursive: true, force: true })
+    await rm(entry, { recursive: true, force: true })
+  }
+}, 60_000)

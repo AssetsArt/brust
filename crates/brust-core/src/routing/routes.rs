@@ -218,10 +218,16 @@ pub enum MatchResult<'a> {
         route_id: u32,
         envelope: RouteEnvelope<'a>,
     },
+    /// A catch-all (`path: '*'`) was registered for the best-matching prefix.
+    /// The caller should render `route_id` and stamp the response HTTP 404.
+    NotFound {
+        route_id: u32,
+        envelope: RouteEnvelope<'a>,
+    },
     NoMatch,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub struct RouteConfig {
     pub path: String,
     #[serde(default)]
@@ -231,6 +237,16 @@ pub struct RouteConfig {
     /// minijinja instead of React. See spec S3 + S4.
     #[serde(default, rename = "nativeTemplate")]
     pub native_template: Option<String>,
+    /// Set `true` by the TS flatten step when the route has `path: '*'`.
+    /// When true the route is NOT inserted into matchit; instead it is recorded
+    /// in `not_found_table` keyed by `not_found_prefix`. The route_id (array
+    /// index) is preserved so both sides can look it up via `byRouteId`.
+    #[serde(default, rename = "notFound")]
+    pub not_found: bool,
+    /// The effective prefix for this catch-all: the parent layout's `fullPath`
+    /// (root catch-all → `""`). Longest-prefix match selects it on NoMatch.
+    #[serde(default, rename = "notFoundPrefix")]
+    pub not_found_prefix: String,
 }
 
 #[derive(Default)]
@@ -243,6 +259,12 @@ pub struct RouteTable {
     /// Sub-project J — per-route-id native template name (parallel to
     /// `cache_configs`). Index = route_id. `None` ⇒ React-rendered route.
     native_templates: RwLock<Vec<Option<String>>>,
+    /// Post-router fallback tier: catch-all routes sorted by prefix length
+    /// descending (longest first). On matchit NoMatch, `select_not_found`
+    /// scans this table for the best segment-boundary prefix match and returns
+    /// the catch-all's `route_id`. Empty when the app declares no catch-alls
+    /// (feature is purely additive).
+    not_found_table: RwLock<Vec<(String, u32)>>,
 }
 
 impl RouteTable {
@@ -257,7 +279,21 @@ impl RouteTable {
         let mut caches: Vec<Option<CacheConfig>> = Vec::with_capacity(configs.len());
         let mut compiled: Vec<Arc<CompiledCache>> = Vec::with_capacity(configs.len());
         let mut natives: Vec<Option<String>> = Vec::with_capacity(configs.len());
+        let mut nf_table: Vec<(String, u32)> = Vec::new();
         for (idx, c) in configs.iter().enumerate() {
+            // Catch-all routes (notFound: true) are NOT inserted into matchit.
+            // They are registered in the not-found fallback table keyed by
+            // their effective prefix. The parallel Vecs (caches/compiled/natives)
+            // still get entries so route_id == array index is preserved on both
+            // sides (Rust idx as u32 ↔ TS byRouteId).
+            if c.not_found {
+                nf_table.push((c.not_found_prefix.clone(), idx as u32));
+                // Still push to the parallel Vecs to keep indices aligned.
+                caches.push(c.cache.clone());
+                compiled.push(Arc::new(CompiledCache::default()));
+                natives.push(c.native_template.clone());
+                continue;
+            }
             router
                 .insert(c.path.clone(), idx as u32)
                 .map_err(|e| RouteInstallError::Insert {
@@ -299,10 +335,13 @@ impl RouteTable {
             compiled.push(Arc::new(compiled_cache));
             natives.push(c.native_template.clone());
         }
+        // No sort needed: select_not_found uses max_by_key, which finds the
+        // longest matching prefix regardless of table order.
         *self.inner.write() = router;
         *self.cache_configs.write() = caches;
         *self.compiled_caches.write() = compiled;
         *self.native_templates.write() = natives;
+        *self.not_found_table.write() = nf_table;
         Ok(configs.len() as u32)
     }
 
@@ -371,7 +410,39 @@ impl RouteTable {
                 };
                 MatchResult::Matched { route_id, envelope }
             }
-            Err(_) => MatchResult::NoMatch,
+            Err(_) => {
+                // Release the not-found-table lock before acquiring
+                // `native_templates` so no two router locks are ever held at
+                // once (avoids any lock-ordering hazard for future writers).
+                let nf_id = {
+                    let nf_table = self.not_found_table.read();
+                    select_not_found(&nf_table, path_only)
+                };
+                match nf_id {
+                    Some(id) => {
+                        let native = self
+                            .native_templates
+                            .read()
+                            .get(id as usize)
+                            .and_then(|n| n.clone());
+                        let req = build_request_envelope(method, full_path, query, headers);
+                        let envelope = RouteEnvelope {
+                            kind: "render",
+                            route_id: id,
+                            path: full_path,
+                            params: Vec::new(),
+                            req,
+                            native_template: native.map(std::borrow::Cow::Owned),
+                            bypassed: false,
+                        };
+                        MatchResult::NotFound {
+                            route_id: id,
+                            envelope,
+                        }
+                    }
+                    None => MatchResult::NoMatch,
+                }
+            }
         }
     }
 }
@@ -528,6 +599,37 @@ fn url_decode(s: &str) -> std::borrow::Cow<'_, str> {
     std::borrow::Cow::Owned(String::from_utf8(out).unwrap_or_default())
 }
 
+/// Longest segment-boundary prefix match against the not-found table.
+///
+/// A prefix `p` matches `path` when:
+/// - `p` is empty (root catch-all, matches everything), OR
+/// - `path == p` (exact), OR
+/// - `path` starts with `p/` (proper sub-path, not e.g. "/docsy" for "/docs").
+///
+/// Returns the `route_id` of the entry with the longest matching prefix, or
+/// `None` when the table is empty or nothing matches.
+///
+/// Note on ties: two DISTINCT prefixes of equal length can never both match a
+/// single path (a path cannot start with both `/foo/` and `/bar/`), so at most
+/// one surviving entry exists per length — `max_by_key`'s tie-break is never
+/// actually exercised, and install-time dedupe already forbids identical
+/// prefixes. The check is allocation-free (no `format!`) since it runs on every
+/// matchit miss.
+fn select_not_found(table: &[(String, u32)], path: &str) -> Option<u32> {
+    fn prefix_matches(p: &str, path: &str) -> bool {
+        p.is_empty()
+            || path == p
+            // proper sub-path: `path` is `p` followed by a `/` boundary, so
+            // "/docs" matches "/docs/x" but NOT "/docsy".
+            || (path.len() > p.len() && path.starts_with(p) && path.as_bytes()[p.len()] == b'/')
+    }
+    table
+        .iter()
+        .filter(|(p, _)| prefix_matches(p, path))
+        .max_by_key(|(p, _)| p.len())
+        .map(|(_, id)| *id)
+}
+
 /// Swap `"kind":"<old>"` → `"kind":"<new>"` in a JS-built JSON envelope
 /// string. The envelope's field order is stable (the JS builder always
 /// emits `kind` first), so a single targeted substring replace is correct
@@ -615,11 +717,13 @@ mod tests {
                     path: "/post/{slug}".into(),
                     cache: None,
                     native_template: None,
+                    ..Default::default()
                 },
                 RouteConfig {
                     path: "/files/{*rest}".into(),
                     cache: None,
                     native_template: None,
+                    ..Default::default()
                 },
             ])
             .unwrap();
@@ -802,6 +906,7 @@ mod tests {
             path: "/foo".into(),
             cache: None,
             native_template: None,
+            ..Default::default()
         };
         table.install_with_config(&[cfg]).unwrap();
         let headers = hm(&[("Host", "x")]);
@@ -814,7 +919,9 @@ mod tests {
                 assert_eq!(parsed["route_id"], 0);
                 assert_eq!(parsed["path"], "/foo");
             }
-            MatchResult::NoMatch => panic!("expected match for /foo"),
+            MatchResult::NotFound { .. } | MatchResult::NoMatch => {
+                panic!("expected match for /foo")
+            }
         }
     }
 
@@ -996,6 +1103,220 @@ mod tests {
         assert!(parsed["client_subprotocols"].as_array().unwrap().is_empty());
     }
 
+    // ---- not-found fallback tier tests ----
+
+    #[test]
+    fn select_not_found_longest_segment_prefix() {
+        let t = vec![(String::new(), 9u32), ("/docs".into(), 3u32)];
+        assert_eq!(select_not_found(&t, "/docs/missing"), Some(3));
+        assert_eq!(select_not_found(&t, "/other"), Some(9)); // root last-resort
+        assert_eq!(select_not_found(&t, "/docs"), Some(3)); // exact prefix
+        assert_eq!(select_not_found(&t, "/docsearch"), Some(9)); // NOT /docs (boundary)
+    }
+
+    #[test]
+    fn select_not_found_empty_table_is_none() {
+        assert_eq!(select_not_found(&[], "/x"), None);
+    }
+
+    #[test]
+    fn select_not_found_root_only_matches_everything() {
+        let t = vec![(String::new(), 0u32)];
+        assert_eq!(select_not_found(&t, "/anything/at/all"), Some(0));
+        assert_eq!(select_not_found(&t, "/"), Some(0));
+    }
+
+    #[test]
+    fn select_not_found_no_root_no_match_returns_none() {
+        let t = vec![("/docs".into(), 3u32)];
+        assert_eq!(select_not_found(&t, "/other"), None);
+    }
+
+    #[test]
+    fn match_path_returns_not_found_when_catchall_registered() {
+        let table = RouteTable::new();
+        table
+            .install_with_config(&[
+                RouteConfig {
+                    path: "/home".into(),
+                    cache: None,
+                    native_template: None,
+                    not_found: false,
+                    not_found_prefix: String::new(),
+                },
+                RouteConfig {
+                    path: String::new(), // sentinel fullPath for catch-all
+                    cache: None,
+                    native_template: None,
+                    not_found: true,
+                    not_found_prefix: String::new(), // root prefix
+                },
+            ])
+            .unwrap();
+        let headers = http::HeaderMap::new();
+        match table.match_path("GET", "/unmatched", &headers) {
+            MatchResult::NotFound { route_id, .. } => {
+                assert_eq!(route_id, 1, "catch-all has route_id = 1 (index 1)");
+            }
+            MatchResult::Matched { .. } => panic!("expected NotFound, got Matched"),
+            MatchResult::NoMatch => panic!("expected NotFound, got NoMatch"),
+        }
+    }
+
+    #[test]
+    fn match_path_returns_no_match_when_table_empty() {
+        let table = RouteTable::new();
+        table
+            .install_with_config(&[RouteConfig {
+                path: "/home".into(),
+                cache: None,
+                native_template: None,
+                not_found: false,
+                not_found_prefix: String::new(),
+            }])
+            .unwrap();
+        let headers = http::HeaderMap::new();
+        match table.match_path("GET", "/unmatched", &headers) {
+            MatchResult::NoMatch => {} // expected
+            MatchResult::NotFound { .. } => panic!("expected NoMatch, got NotFound"),
+            MatchResult::Matched { .. } => panic!("expected NoMatch, got Matched"),
+        }
+    }
+
+    #[test]
+    fn match_path_real_route_still_matches_when_catchall_installed() {
+        let table = RouteTable::new();
+        table
+            .install_with_config(&[
+                RouteConfig {
+                    path: "/home".into(),
+                    cache: None,
+                    native_template: None,
+                    not_found: false,
+                    not_found_prefix: String::new(),
+                },
+                RouteConfig {
+                    path: String::new(),
+                    cache: None,
+                    native_template: None,
+                    not_found: true,
+                    not_found_prefix: String::new(),
+                },
+            ])
+            .unwrap();
+        let headers = http::HeaderMap::new();
+        match table.match_path("GET", "/home", &headers) {
+            MatchResult::Matched { route_id, .. } => {
+                assert_eq!(route_id, 0);
+            }
+            _other => panic!(
+                "expected Matched for /home, got something else: route_id would be in other variant"
+            ),
+        }
+    }
+
+    #[test]
+    fn install_not_found_config_from_json() {
+        // Simulate the JSON payload the TS side sends for a catch-all route.
+        let json = r#"[
+            {"path":"/","nativeTemplate":"Home"},
+            {"path":"","notFound":true,"notFoundPrefix":"","nativeTemplate":"GlobalNotFound"}
+        ]"#;
+        let configs: Vec<RouteConfig> = serde_json::from_str(json).unwrap();
+        assert!(configs[1].not_found, "not_found should be true");
+        assert_eq!(configs[1].not_found_prefix, "");
+        assert_eq!(
+            configs[1].native_template.as_deref(),
+            Some("GlobalNotFound")
+        );
+
+        let table = RouteTable::new();
+        table.install_with_config(&configs).unwrap();
+
+        // Catch-all must NOT be in matchit — /home should not match /
+        let headers = http::HeaderMap::new();
+        // "/" is a real route (route_id 0)
+        match table.match_path("GET", "/", &headers) {
+            MatchResult::Matched { route_id, .. } => assert_eq!(route_id, 0),
+            _other => panic!("expected Matched for /"),
+        }
+        // "/missing" should hit the catch-all (route_id 1)
+        match table.match_path("GET", "/missing", &headers) {
+            MatchResult::NotFound { route_id, .. } => assert_eq!(route_id, 1),
+            _other => panic!("expected NotFound for /missing"),
+        }
+        // native_template on the catch-all envelope
+        match table.match_path("GET", "/anything", &headers) {
+            MatchResult::NotFound { envelope, .. } => {
+                assert_eq!(
+                    envelope.native_template.as_deref(),
+                    Some("GlobalNotFound"),
+                    "catch-all envelope must carry nativeTemplate"
+                );
+            }
+            _other => panic!("expected NotFound for /anything"),
+        }
+        // parallel Vecs: native_template_for(1) == Some("GlobalNotFound")
+        assert_eq!(
+            table.native_template_for(1),
+            Some("GlobalNotFound".to_string())
+        );
+    }
+
+    #[test]
+    fn install_nested_catchall_prefix_selection() {
+        // /docs catch-all (route_id 2) should win over root (route_id 3) for /docs/missing
+        let table = RouteTable::new();
+        table
+            .install_with_config(&[
+                RouteConfig {
+                    path: "/".into(),
+                    cache: None,
+                    native_template: None,
+                    not_found: false,
+                    not_found_prefix: String::new(),
+                },
+                RouteConfig {
+                    path: "/docs/intro".into(),
+                    cache: None,
+                    native_template: None,
+                    not_found: false,
+                    not_found_prefix: String::new(),
+                },
+                RouteConfig {
+                    path: String::new(),
+                    cache: None,
+                    native_template: Some("DocsNotFound".into()),
+                    not_found: true,
+                    not_found_prefix: "/docs".into(),
+                },
+                RouteConfig {
+                    path: String::new(),
+                    cache: None,
+                    native_template: Some("GlobalNotFound".into()),
+                    not_found: true,
+                    not_found_prefix: String::new(),
+                },
+            ])
+            .unwrap();
+        let headers = http::HeaderMap::new();
+        // /docs/missing → docs catch-all (route_id 2)
+        match table.match_path("GET", "/docs/missing", &headers) {
+            MatchResult::NotFound { route_id, .. } => assert_eq!(route_id, 2),
+            _other => panic!("expected NotFound with docs catch-all for /docs/missing"),
+        }
+        // /other → root catch-all (route_id 3)
+        match table.match_path("GET", "/other", &headers) {
+            MatchResult::NotFound { route_id, .. } => assert_eq!(route_id, 3),
+            _other => panic!("expected NotFound with global catch-all for /other"),
+        }
+        // /docsearch → root (segment boundary respected)
+        match table.match_path("GET", "/docsearch", &headers) {
+            MatchResult::NotFound { route_id, .. } => assert_eq!(route_id, 3),
+            _other => panic!("expected global catch-all for /docsearch (boundary)"),
+        }
+    }
+
     #[test]
     fn route_table_natives_indexed_by_route_id() {
         let table = RouteTable::new();
@@ -1004,16 +1325,19 @@ mod tests {
                 path: "/a".into(),
                 cache: None,
                 native_template: None,
+                ..Default::default()
             },
             RouteConfig {
                 path: "/b".into(),
                 cache: None,
                 native_template: Some("Profile".into()),
+                ..Default::default()
             },
             RouteConfig {
                 path: "/c".into(),
                 cache: None,
                 native_template: None,
+                ..Default::default()
             },
         ];
         table.install_with_config(&cfgs).unwrap();
@@ -1029,6 +1353,7 @@ mod tests {
             path: "/x".into(),
             cache: None,
             native_template: Some("MyPage".into()),
+            ..Default::default()
         }];
         table.install_with_config(&cfgs).unwrap();
         let headers = hm(&[("Host", "x")]);
@@ -1055,6 +1380,7 @@ mod tests {
                 tags: None,
             }),
             native_template: None,
+            ..Default::default()
         }];
         let err = table.install_with_config(&cfgs).unwrap_err();
         assert!(
@@ -1083,6 +1409,7 @@ mod tests {
                 tags: None,
             }),
             native_template: None,
+            ..Default::default()
         }];
         let err = table.install_with_config(&cfgs).unwrap_err();
         assert!(
@@ -1109,6 +1436,7 @@ mod tests {
                 tags: None,
             }),
             native_template: None,
+            ..Default::default()
         }];
         table.install_with_config(&cfgs).unwrap();
         let cc = table.compiled_cache_for(0).expect("compiled cache present");
@@ -1123,6 +1451,7 @@ mod tests {
             path: "/y".into(),
             cache: None,
             native_template: None,
+            ..Default::default()
         }];
         table.install_with_config(&cfgs).unwrap();
         let headers = hm(&[("Host", "x")]);
