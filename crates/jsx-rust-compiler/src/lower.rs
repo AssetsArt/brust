@@ -8,8 +8,8 @@ use swc_core::ecma::ast::{
     ArrayLit, ArrowExpr, AssignPatProp, BinaryOp, BindingIdent, BlockStmt, BlockStmtOrExpr,
     CallExpr, Callee, DefaultDecl, ExportDefaultDecl, Expr as SwcExpr, ExprOrSpread, FnExpr,
     Function, JSXAttrName, JSXAttrOrSpread, JSXAttrValue, JSXElement, JSXElementChild,
-    JSXElementName, JSXExpr, JSXFragment, Lit, MemberExpr, MemberProp, Module, ModuleDecl,
-    ModuleItem, ObjectLit, ObjectPatProp, OptChainBase, ParenExpr, Pat, Prop, PropName,
+    JSXElementName, JSXExpr, JSXFragment, KeyValueProp, Lit, MemberExpr, MemberProp, Module,
+    ModuleDecl, ModuleItem, ObjectLit, ObjectPatProp, OptChainBase, ParenExpr, Pat, Prop, PropName,
     PropOrSpread, ReturnStmt, Stmt, UnaryOp,
 };
 
@@ -318,7 +318,10 @@ fn has_native_attr(el: &JSXElement) -> bool {
 /// Accepted body shapes:
 /// - Single `return <JSX>;` (or expr-bodied) → `vec![node]`.
 /// - `if (cond) return <A>; … return <B>;` → `vec![Cond{…}]`.
-/// - `const x = …; return <JSX>` or other local bindings → `Err(InlineUntranslatable)`.
+/// - Zero or more leading `const name = expr;` bindings before either shape
+///   (F2/R3a) — folded into the rest of the body by AST substitution in
+///   `hoist_const_bindings` before shape matching.
+/// - Other local bindings (`let`/`var`, destructuring) → `Err(InlineUntranslatable)`.
 pub(crate) fn lower_component_inline(
     parsed: &ParsedSource,
     subst: HashMap<String, crate::ir::Expr>,
@@ -335,6 +338,12 @@ pub(crate) fn lower_component_inline(
         })?;
 
     let param_shape = lower_params(&fn_expr.function)?;
+
+    // F2 (R3a): fold leading `const` bindings into the rest of the body, then
+    // lower the residual shape exactly as before. Borrowed (no-op) when the
+    // body has no leading const decls, keeping the pre-F2 paths byte-identical.
+    let body = hoist_const_bindings(body)?;
+    let body: &BlockStmt = &body;
 
     let inline_ctx = Rc::new(InlineCtx { subst });
     let scope = Scope {
@@ -391,6 +400,427 @@ pub(crate) fn lower_component_inline(
         body.span,
         ErrorKind::InlineUntranslatable("local binding".to_string()),
     ))
+}
+
+/// F2 (R3a) — inline local `const` bindings.
+///
+/// Accepts bodies of shape `[zero+ const decls, then the existing accepted
+/// shapes (single return | two-stmt if-return)]`. Each leading const is folded
+/// into everything after it by sequential AST substitution — a manual
+/// clone-and-rewrite over a cloned `BlockStmt`, NOT the swc `Fold` trait (the
+/// `ecma_transforms` feature is not enabled in this crate and must not be
+/// added). The residual body is then handed to the existing single-return /
+/// if-return lowering unchanged, so everything it already accepts (style
+/// objects, ternaries, `.map` sugar, x-props) now works with hoisted consts
+/// and everything it rejects keeps its existing error.
+///
+/// Sequential fold: for declarator N, consts 1..N-1 are substituted into its
+/// init FIRST, so every recorded init is fully resolved (no recorded name
+/// remains inside it) and the body pass never needs to re-walk an inserted
+/// clone — which also keeps init-internal shadowing (an arrow param named like
+/// a const) from being clobbered on insertion.
+///
+/// Returns `Cow::Borrowed` when the body has no leading const decls so the
+/// pre-F2 paths stay byte-identical.
+///
+/// Note on gate order: `analyze(body)` runs BEFORE this (in
+/// `try_native_inline`) and walks const inits too, so a const whose init calls
+/// a hook is already rejected upstream as `Fallback(Hook)`.
+fn hoist_const_bindings(body: &BlockStmt) -> Result<std::borrow::Cow<'_, BlockStmt>, LowerError> {
+    use std::borrow::Cow;
+    use swc_core::ecma::ast::{Decl, VarDeclKind};
+
+    let lead = body
+        .stmts
+        .iter()
+        .take_while(|s| matches!(s, Stmt::Decl(Decl::Var(_))))
+        .count();
+    if lead == 0 {
+        return Ok(Cow::Borrowed(body));
+    }
+
+    let mut subst = ConstSubst {
+        map: HashMap::new(),
+    };
+    for stmt in &body.stmts[..lead] {
+        let Stmt::Decl(Decl::Var(var)) = stmt else {
+            unreachable!("take_while above only admits var decls");
+        };
+        if var.kind != VarDeclKind::Const {
+            return Err(LowerError::at(
+                var.span,
+                ErrorKind::InlineUntranslatable("let/var binding — use const".to_string()),
+            ));
+        }
+        for decl in &var.decls {
+            let Pat::Ident(BindingIdent { id, .. }) = &decl.name else {
+                return Err(LowerError::at(
+                    decl.span,
+                    ErrorKind::InlineUntranslatable("destructuring binding".to_string()),
+                ));
+            };
+            let name = id.sym.to_string();
+            if subst.map.contains_key(&name) {
+                return Err(LowerError::at(
+                    id.span,
+                    ErrorKind::InlineUntranslatable("const redeclaration".to_string()),
+                ));
+            }
+            let Some(init) = &decl.init else {
+                // `const x;` is invalid JS; guard anyway.
+                return Err(LowerError::at(
+                    decl.span,
+                    ErrorKind::InlineUntranslatable("const without initializer".to_string()),
+                ));
+            };
+            let mut init = (**init).clone();
+            let mut shadowed = Vec::new();
+            subst.apply_expr(&mut init, &mut shadowed)?;
+            subst.map.insert(name, init);
+        }
+    }
+
+    let mut residual = body.clone();
+    residual.stmts.drain(..lead);
+    let mut shadowed = Vec::new();
+    for stmt in &mut residual.stmts {
+        subst.apply_stmt(stmt, &mut shadowed)?;
+    }
+    Ok(Cow::Owned(residual))
+}
+
+/// AST substitution folder for F2. `map` holds recorded const name → fully
+/// resolved init expression. The `apply_*` methods rewrite a (cloned) body in
+/// place, replacing unshadowed `Ident` references with a clone of the recorded
+/// init.
+///
+/// The walk must NOT replace: member-expression property idents (`a.b`'s `b`),
+/// non-computed object keys, JSX attribute names, or any name shadowed by a
+/// function/arrow param or a nested declaration. `shadowed` is a push/truncate
+/// stack threaded through nested function scopes (same discipline as
+/// `Scope.map_bindings`).
+///
+/// Expression kinds the walk does not know are left untouched — downstream
+/// lowering keeps its existing accept/reject rules for them.
+struct ConstSubst {
+    map: HashMap<String, SwcExpr>,
+}
+
+impl ConstSubst {
+    fn is_shadowed(shadowed: &[String], name: &str) -> bool {
+        shadowed.iter().any(|s| s == name)
+    }
+
+    fn apply_expr(&self, expr: &mut SwcExpr, shadowed: &mut Vec<String>) -> Result<(), LowerError> {
+        match expr {
+            SwcExpr::Ident(id) => {
+                let name = id.sym.as_ref();
+                if !Self::is_shadowed(shadowed, name)
+                    && let Some(init) = self.map.get(name)
+                {
+                    // Recorded inits are fully resolved — do NOT re-walk the clone.
+                    *expr = init.clone();
+                }
+                Ok(())
+            }
+            SwcExpr::Paren(p) => self.apply_expr(&mut p.expr, shadowed),
+            SwcExpr::Member(m) => {
+                self.apply_expr(&mut m.obj, shadowed)?;
+                // Property idents are NOT references; computed props are.
+                if let MemberProp::Computed(c) = &mut m.prop {
+                    self.apply_expr(&mut c.expr, shadowed)?;
+                }
+                Ok(())
+            }
+            SwcExpr::OptChain(oc) => match &mut *oc.base {
+                OptChainBase::Member(m) => {
+                    self.apply_expr(&mut m.obj, shadowed)?;
+                    if let MemberProp::Computed(c) = &mut m.prop {
+                        self.apply_expr(&mut c.expr, shadowed)?;
+                    }
+                    Ok(())
+                }
+                OptChainBase::Call(call) => {
+                    self.apply_expr(&mut call.callee, shadowed)?;
+                    for arg in &mut call.args {
+                        self.apply_expr(&mut arg.expr, shadowed)?;
+                    }
+                    Ok(())
+                }
+            },
+            SwcExpr::Call(call) => {
+                if let Callee::Expr(callee) = &mut call.callee {
+                    self.apply_expr(callee, shadowed)?;
+                }
+                for arg in &mut call.args {
+                    self.apply_expr(&mut arg.expr, shadowed)?;
+                }
+                Ok(())
+            }
+            SwcExpr::New(n) => {
+                self.apply_expr(&mut n.callee, shadowed)?;
+                if let Some(args) = &mut n.args {
+                    for arg in args {
+                        self.apply_expr(&mut arg.expr, shadowed)?;
+                    }
+                }
+                Ok(())
+            }
+            SwcExpr::Bin(b) => {
+                self.apply_expr(&mut b.left, shadowed)?;
+                self.apply_expr(&mut b.right, shadowed)
+            }
+            SwcExpr::Cond(c) => {
+                self.apply_expr(&mut c.test, shadowed)?;
+                self.apply_expr(&mut c.cons, shadowed)?;
+                self.apply_expr(&mut c.alt, shadowed)
+            }
+            SwcExpr::Unary(u) => self.apply_expr(&mut u.arg, shadowed),
+            SwcExpr::Tpl(t) => {
+                for e in &mut t.exprs {
+                    self.apply_expr(e, shadowed)?;
+                }
+                Ok(())
+            }
+            SwcExpr::Array(a) => {
+                for elem in a.elems.iter_mut().flatten() {
+                    self.apply_expr(&mut elem.expr, shadowed)?;
+                }
+                Ok(())
+            }
+            SwcExpr::Object(o) => self.apply_object(o, shadowed),
+            SwcExpr::Arrow(a) => {
+                let base = shadowed.len();
+                for p in &a.params {
+                    collect_pat_names(p, shadowed);
+                }
+                match &mut *a.body {
+                    BlockStmtOrExpr::Expr(e) => self.apply_expr(e, shadowed)?,
+                    BlockStmtOrExpr::BlockStmt(b) => self.apply_block(b, shadowed)?,
+                }
+                shadowed.truncate(base);
+                Ok(())
+            }
+            SwcExpr::Fn(f) => {
+                let base = shadowed.len();
+                if let Some(ident) = &f.ident {
+                    shadowed.push(ident.sym.to_string());
+                }
+                for p in &f.function.params {
+                    collect_pat_names(&p.pat, shadowed);
+                }
+                if let Some(b) = &mut f.function.body {
+                    self.apply_block(b, shadowed)?;
+                }
+                shadowed.truncate(base);
+                Ok(())
+            }
+            SwcExpr::Seq(s) => {
+                for e in &mut s.exprs {
+                    self.apply_expr(e, shadowed)?;
+                }
+                Ok(())
+            }
+            SwcExpr::TsAs(t) => self.apply_expr(&mut t.expr, shadowed),
+            SwcExpr::TsNonNull(t) => self.apply_expr(&mut t.expr, shadowed),
+            SwcExpr::TsConstAssertion(t) => self.apply_expr(&mut t.expr, shadowed),
+            SwcExpr::TsSatisfies(t) => self.apply_expr(&mut t.expr, shadowed),
+            SwcExpr::TsTypeAssertion(t) => self.apply_expr(&mut t.expr, shadowed),
+            SwcExpr::JSXElement(el) => self.apply_jsx_element(el, shadowed),
+            SwcExpr::JSXFragment(f) => self.apply_jsx_children(&mut f.children, shadowed),
+            // Anything else (assignments, literals, `this`, …) is left
+            // untouched — downstream lowering decides.
+            _ => Ok(()),
+        }
+    }
+
+    fn apply_object(
+        &self,
+        obj: &mut ObjectLit,
+        shadowed: &mut Vec<String>,
+    ) -> Result<(), LowerError> {
+        for prop in &mut obj.props {
+            match prop {
+                PropOrSpread::Spread(s) => self.apply_expr(&mut s.expr, shadowed)?,
+                PropOrSpread::Prop(p) => {
+                    // Shorthand `{ color }` is a VALUE reference of `color` —
+                    // rewrite to `{ color: <init> }` when recorded. Computed
+                    // first so the replacement does not overlap the match borrow.
+                    let replacement = if let Prop::Shorthand(id) = p.as_ref() {
+                        let name = id.sym.as_ref();
+                        if Self::is_shadowed(shadowed, name) {
+                            None
+                        } else {
+                            self.map.get(name).map(|init| {
+                                Prop::KeyValue(KeyValueProp {
+                                    key: PropName::Ident(id.clone().into()),
+                                    value: Box::new(init.clone()),
+                                })
+                            })
+                        }
+                    } else {
+                        None
+                    };
+                    if let Some(r) = replacement {
+                        **p = r;
+                        continue;
+                    }
+                    if let Prop::KeyValue(kv) = p.as_mut() {
+                        // Non-computed keys are NOT references.
+                        if let PropName::Computed(c) = &mut kv.key {
+                            self.apply_expr(&mut c.expr, shadowed)?;
+                        }
+                        self.apply_expr(&mut kv.value, shadowed)?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn apply_block(
+        &self,
+        block: &mut BlockStmt,
+        shadowed: &mut Vec<String>,
+    ) -> Result<(), LowerError> {
+        let base = shadowed.len();
+        for stmt in &mut block.stmts {
+            self.apply_stmt(stmt, shadowed)?;
+        }
+        shadowed.truncate(base);
+        Ok(())
+    }
+
+    fn apply_stmt(&self, stmt: &mut Stmt, shadowed: &mut Vec<String>) -> Result<(), LowerError> {
+        use swc_core::ecma::ast::Decl;
+        match stmt {
+            Stmt::Return(r) => {
+                if let Some(arg) = &mut r.arg {
+                    self.apply_expr(arg, shadowed)?;
+                }
+                Ok(())
+            }
+            Stmt::Expr(e) => self.apply_expr(&mut e.expr, shadowed),
+            Stmt::If(i) => {
+                self.apply_expr(&mut i.test, shadowed)?;
+                self.apply_stmt(&mut i.cons, shadowed)?;
+                if let Some(alt) = &mut i.alt {
+                    self.apply_stmt(alt, shadowed)?;
+                }
+                Ok(())
+            }
+            Stmt::Block(b) => self.apply_block(b, shadowed),
+            Stmt::Decl(Decl::Var(var)) => {
+                for decl in &mut var.decls {
+                    // A nested declaration redeclaring a recorded const name is
+                    // rejected rather than scope-split (simpler; rare shape).
+                    let mut names = Vec::new();
+                    collect_pat_names(&decl.name, &mut names);
+                    if names.iter().any(|n| self.map.contains_key(n)) {
+                        return Err(LowerError::at(
+                            decl.span,
+                            ErrorKind::InlineUntranslatable("const redeclaration".to_string()),
+                        ));
+                    }
+                    if let Some(init) = &mut decl.init {
+                        self.apply_expr(init, shadowed)?;
+                    }
+                    // Shadow for the remainder of the enclosing block (popped
+                    // by `apply_block`'s truncate).
+                    shadowed.append(&mut names);
+                }
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+
+    fn apply_jsx_element(
+        &self,
+        el: &mut JSXElement,
+        shadowed: &mut Vec<String>,
+    ) -> Result<(), LowerError> {
+        if let JSXElementName::Ident(id) = &el.opening.name {
+            let name = id.sym.as_ref();
+            if !Self::is_shadowed(shadowed, name)
+                && let Some(_init) = self.map.get(name)
+            {
+                // A recorded const used as a JSX ELEMENT name. This branch is
+                // the F3 (component-map dispatch) entry point: `_init` will be
+                // matched against the `MAP[key]` shape and lowered to a Cond
+                // chain here. Until F3 lands every const-as-element-name is
+                // rejected.
+                return Err(LowerError::at(
+                    el.span,
+                    ErrorKind::InlineUntranslatable("dynamic component".to_string()),
+                ));
+            }
+        }
+        for attr in &mut el.opening.attrs {
+            match attr {
+                // Attribute NAMES are never substituted; only expr values.
+                JSXAttrOrSpread::JSXAttr(a) => {
+                    if let Some(JSXAttrValue::JSXExprContainer(c)) = &mut a.value
+                        && let JSXExpr::Expr(e) = &mut c.expr
+                    {
+                        self.apply_expr(e, shadowed)?;
+                    }
+                }
+                JSXAttrOrSpread::SpreadElement(s) => self.apply_expr(&mut s.expr, shadowed)?,
+            }
+        }
+        self.apply_jsx_children(&mut el.children, shadowed)
+    }
+
+    fn apply_jsx_children(
+        &self,
+        children: &mut [JSXElementChild],
+        shadowed: &mut Vec<String>,
+    ) -> Result<(), LowerError> {
+        for child in children {
+            match child {
+                JSXElementChild::JSXExprContainer(c) => {
+                    if let JSXExpr::Expr(e) = &mut c.expr {
+                        self.apply_expr(e, shadowed)?;
+                    }
+                }
+                JSXElementChild::JSXElement(el) => self.apply_jsx_element(el, shadowed)?,
+                JSXElementChild::JSXFragment(f) => {
+                    self.apply_jsx_children(&mut f.children, shadowed)?
+                }
+                JSXElementChild::JSXSpreadChild(s) => self.apply_expr(&mut s.expr, shadowed)?,
+                JSXElementChild::JSXText(_) => {}
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Collect every binding ident introduced by `pat` into `out` (used to build
+/// the shadowed-names stack for params and nested declarations).
+fn collect_pat_names(pat: &Pat, out: &mut Vec<String>) {
+    match pat {
+        Pat::Ident(BindingIdent { id, .. }) => out.push(id.sym.to_string()),
+        Pat::Array(a) => {
+            for p in a.elems.iter().flatten() {
+                collect_pat_names(p, out);
+            }
+        }
+        Pat::Object(o) => {
+            for prop in &o.props {
+                match prop {
+                    ObjectPatProp::KeyValue(kv) => collect_pat_names(&kv.value, out),
+                    ObjectPatProp::Assign(AssignPatProp { key, .. }) => {
+                        out.push(key.id.sym.to_string())
+                    }
+                    ObjectPatProp::Rest(r) => collect_pat_names(&r.arg, out),
+                }
+            }
+        }
+        Pat::Assign(a) => collect_pat_names(&a.left, out),
+        Pat::Rest(r) => collect_pat_names(&r.arg, out),
+        Pat::Invalid(_) | Pat::Expr(_) => {}
+    }
 }
 
 /// Try to lower a two-statement body of the form:
@@ -6951,6 +7381,193 @@ export const behavior = () => ({});"#;
             }
             other => panic!("expected Cond, got {other:?}"),
         }
+    }
+
+    // ── F2: inline local const bindings (R3a) ─────────────────────────────────
+
+    /// Helper: compile a route that native-inlines `Section` with the given source.
+    fn compile_with_section(section_src: &str) -> crate::Compiled {
+        let route =
+            r#"export default function Page(d: any) { return <Section native title="T"/>; }"#;
+        let mut sources = HashMap::new();
+        sources.insert("Section".to_string(), section_src.to_string());
+        crate::compile_full(route, "<route>", sources, HashMap::new(), HashMap::new()).unwrap()
+    }
+
+    #[test]
+    fn inline_const_style_object_matches_prehoisted_emission() {
+        let with_const = r#"export default function Section({ title }: any) {
+  const rootStyle = { color: "red", padding: "4px" };
+  return <div style={rootStyle}><h1>{title}</h1></div>;
+}"#;
+        let prehoisted = r#"export default function Section({ title }: any) {
+  return <div style={{ color: "red", padding: "4px" }}><h1>{title}</h1></div>;
+}"#;
+        let a = compile_with_section(with_const);
+        let b = compile_with_section(prehoisted);
+        assert!(
+            a.warnings.is_empty(),
+            "const-hoisted section must inline cleanly, got {:?}",
+            a.warnings
+        );
+        assert_eq!(
+            a.template, b.template,
+            "const-hoisted emission must equal the pre-hoisted equivalent"
+        );
+    }
+
+    #[test]
+    fn inline_const_chain_substitutes_sequentially() {
+        // `cls` references the earlier const `base` — sequential fold.
+        let with_const = r#"export default function Section({ title }: any) {
+  const base = "card";
+  const cls = `${base} card-wide`;
+  return <div className={cls}>{title}</div>;
+}"#;
+        let prehoisted = r#"export default function Section({ title }: any) {
+  return <div className={`${"card"} card-wide`}>{title}</div>;
+}"#;
+        let a = compile_with_section(with_const);
+        let b = compile_with_section(prehoisted);
+        assert!(a.warnings.is_empty(), "got {:?}", a.warnings);
+        assert_eq!(a.template, b.template);
+    }
+
+    #[test]
+    fn inline_consts_then_if_return() {
+        let src = r#"export default function C({ flag }: any) {
+  const cls = "warn";
+  if (flag) return <p className={cls}>A</p>;
+  return <p>B</p>;
+}"#;
+        let mut subst = HashMap::new();
+        subst.insert(
+            "flag".to_string(),
+            crate::ir::Expr::Field("flag".to_string()),
+        );
+        let nodes = inline_lower(src, subst, false).unwrap();
+        assert_eq!(nodes.len(), 1);
+        match &nodes[0] {
+            JsxNode::Cond { consequent, .. } => {
+                let dbg = format!("{consequent:?}");
+                assert!(
+                    dbg.contains("warn"),
+                    "const must be substituted into the if-return branch, got:\n{dbg}"
+                );
+            }
+            other => panic!("expected Cond, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inline_let_binding_rejected() {
+        let src = r#"export default function C() {
+  let cls = "warn";
+  return <div className={cls}/>;
+}"#;
+        let err = inline_lower(src, HashMap::new(), false).unwrap_err();
+        match &err.kind {
+            ErrorKind::InlineUntranslatable(s) => assert_eq!(s, "let/var binding — use const"),
+            other => panic!("expected InlineUntranslatable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inline_var_binding_rejected() {
+        let src = r#"export default function C() {
+  var cls = "warn";
+  return <div className={cls}/>;
+}"#;
+        let err = inline_lower(src, HashMap::new(), false).unwrap_err();
+        match &err.kind {
+            ErrorKind::InlineUntranslatable(s) => assert_eq!(s, "let/var binding — use const"),
+            other => panic!("expected InlineUntranslatable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inline_destructuring_binding_rejected() {
+        let src = r#"export default function C(props: any) {
+  const { cls } = props;
+  return <div className={cls}/>;
+}"#;
+        let err = inline_lower(src, HashMap::new(), false).unwrap_err();
+        match &err.kind {
+            ErrorKind::InlineUntranslatable(s) => assert_eq!(s, "destructuring binding"),
+            other => panic!("expected InlineUntranslatable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inline_const_shadowed_by_map_param_not_substituted() {
+        // `item` is BOTH a const and the `.map` callback binding: the use
+        // inside the callback must resolve to the LOOP binding, the use
+        // outside to the const.
+        let src = r#"export default function C({ items }: any) {
+  const item = "outer";
+  return <ul data-mark={item}>{items.map((item) => <li>{item.name}</li>)}</ul>;
+}"#;
+        let mut subst = HashMap::new();
+        subst.insert(
+            "items".to_string(),
+            crate::ir::Expr::Field("items".to_string()),
+        );
+        let nodes = inline_lower(src, subst, false).unwrap();
+        let dbg = format!("{:?}", nodes[0]);
+        assert!(
+            dbg.contains("outer"),
+            "outer use must be substituted, got:\n{dbg}"
+        );
+        assert!(
+            dbg.contains("MapMember"),
+            "loop-body use must stay the map binding (`item.name`), got:\n{dbg}"
+        );
+    }
+
+    #[test]
+    fn inline_const_redeclaration_in_nested_arrow_rejected() {
+        let src = r#"export default function C({ items }: any) {
+  const row = "outer";
+  return <ul>{items.map((x) => { const row = x; return <li>{row}</li>; })}</ul>;
+}"#;
+        let mut subst = HashMap::new();
+        subst.insert(
+            "items".to_string(),
+            crate::ir::Expr::Field("items".to_string()),
+        );
+        let err = inline_lower(src, subst, false).unwrap_err();
+        match &err.kind {
+            ErrorKind::InlineUntranslatable(s) => assert_eq!(s, "const redeclaration"),
+            other => panic!("expected InlineUntranslatable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inline_const_as_element_name_rejected_as_dynamic_component() {
+        // F3 (component-map dispatch) will accept `const Tag = MAP[key]` here;
+        // until then EVERY const used as a JSX element name is rejected.
+        let src = r#"export default function C() {
+  const Tag = "div";
+  return <Tag/>;
+}"#;
+        let err = inline_lower(src, HashMap::new(), false).unwrap_err();
+        match &err.kind {
+            ErrorKind::InlineUntranslatable(s) => assert_eq!(s, "dynamic component"),
+            other => panic!("expected InlineUntranslatable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inline_no_const_emission_unchanged() {
+        // Regression pin: a no-const single-return inline takes the borrowed
+        // (pre-F2) path — its emission must stay byte-identical.
+        let route = r#"export default function Page(d: any) { return <Wrap native label="hi"/>; }"#;
+        let wrap = r#"export default function Wrap({ label }: any) { return <section><h1>{label}</h1></section>; }"#;
+        let mut sources = HashMap::new();
+        sources.insert("Wrap".to_string(), wrap.to_string());
+        let c =
+            crate::compile_full(route, "<route>", sources, HashMap::new(), HashMap::new()).unwrap();
+        assert_eq!(c.template, "<section><h1>hi</h1></section>");
     }
 
     #[test]
