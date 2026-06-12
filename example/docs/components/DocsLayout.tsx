@@ -29,6 +29,7 @@ export default function DocsLayout({
     <BrustPage
       title={__md.title}
       description={__md.description}
+      data-brust-view-transitions=""
       // pre-paint FOUC killer: stamp data-theme from localStorage before first
       // paint. Static-literal text (compiler requirement) — the same one-liner
       // lives in Home's shell; keep both in sync.

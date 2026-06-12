@@ -38,6 +38,7 @@ import {
   takeover,
   unmountFallbackRootsIn,
 } from './fallback.ts'
+import { withViewTransition } from './view-transition.ts'
 
 // Track React roots created by hydrateOne so we can unmount them before
 // removing their DOM in swapMainContent. Without this, removing the DOM
@@ -321,16 +322,21 @@ async function attemptClientFallback(
   if (!main) return false
   // From here down: the SAME post-swap sequence navigate()'s normal path runs.
   scrollPositions.set(currentPageKey, window.scrollY)
-  unmountIslandsIn(main as HTMLElement)
-  swapMainContent(main as HTMLElement, html)
-  if (title) document.title = title
-  // History BEFORE takeover: takeover derives params from location.pathname,
-  // so the URL bar must already show the destination.
-  if (mode === 'push') history.pushState({}, '', url.href)
-  else if (mode === 'replace') history.replaceState({}, '', url.href)
-  if (mode === 'none') window.scrollTo(0, scrollPositions.get(pageCacheKey(url)) ?? 0)
-  else window.scrollTo(0, 0)
-  currentPageKey = pageCacheKey(url)
+  await withViewTransition(document, () => {
+    unmountIslandsIn(main as HTMLElement)
+    swapMainContent(main as HTMLElement, html)
+    if (title) document.title = title
+    // History BEFORE takeover: takeover derives params from location.pathname,
+    // so the URL bar must already show the destination.
+    if (mode === 'push') history.pushState({}, '', url.href)
+    else if (mode === 'replace') history.replaceState({}, '', url.href)
+    if (mode === 'none') window.scrollTo(0, scrollPositions.get(pageCacheKey(url)) ?? 0)
+    else window.scrollTo(0, 0)
+    currentPageKey = pageCacheKey(url)
+  })
+  // Superseded across the view-transition await → the newer navigation owns
+  // the DOM; don't run takeover/hydrate/commit on a soon-to-be-replaced shell.
+  if (signal?.aborted) return true
   const container = main.querySelector<HTMLElement>('[data-brust-fallback-root]')
   if (!container) {
     // A fallback payload without its marker is a build bug — log it, but
@@ -423,19 +429,28 @@ export async function navigate(url: URL, mode: 'push' | 'replace' | 'none'): Pro
     }
     const main = document.querySelector('main')
     if (!main) throw new Error('navigation: no <main> element')
+    // scrollY of the LEAVING page is read before the transition (it must see
+    // the old page's position under the old key).
     scrollPositions.set(currentPageKey, window.scrollY)
-    unmountIslandsIn(main as HTMLElement)
-    swapMainContent(main as HTMLElement, html)
-    // Only a FRESH payload re-applies the server store snapshot: replaying a
-    // cached (stale) snapshot would roll back live client store state the user
-    // changed since the page was first fetched.
-    if (!cached && store) applyStoreSnapshot(store)
-    if (title) document.title = title
-    if (mode === 'push') history.pushState({}, '', url.href)
-    else if (mode === 'replace') history.replaceState({}, '', url.href)
-    if (mode === 'none') window.scrollTo(0, scrollPositions.get(key) ?? 0)
-    else window.scrollTo(0, 0)
-    hydrateMarkersIn(main as HTMLElement)
+    await withViewTransition(document, () => {
+      unmountIslandsIn(main as HTMLElement)
+      swapMainContent(main as HTMLElement, html)
+      // Only a FRESH payload re-applies the server store snapshot: replaying a
+      // cached (stale) snapshot would roll back live client store state the
+      // user changed since the page was first fetched.
+      if (!cached && store) applyStoreSnapshot(store)
+      if (title) document.title = title
+      if (mode === 'push') history.pushState({}, '', url.href)
+      else if (mode === 'replace') history.replaceState({}, '', url.href)
+      if (mode === 'none') window.scrollTo(0, scrollPositions.get(key) ?? 0)
+      else window.scrollTo(0, 0)
+      hydrateMarkersIn(main as HTMLElement)
+    })
+    // The view-transition await is a new suspension point: a newer navigation
+    // could have aborted us between the swap and here. The DOM is already
+    // committed (irreversible), but skip the bookkeeping so we don't advance
+    // the nav store to this stale destination — the newer navigation owns it.
+    if (ac.signal.aborted) return
     currentPageKey = key
     __navCommit(url.pathname, url.search)
   } catch (err) {

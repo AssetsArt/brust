@@ -60,6 +60,26 @@ can override everything with `BRUST_ADDR` / `BRUST_PORT` / `BRUST_WORKERS`
 without touching the file. A present-but-malformed `brust.toml` is a hard
 error at boot.
 
+## `brust.run()` options
+
+`brust.run({...})` is the entry call. Every field:
+
+| Option | Type | Default | Purpose |
+| --- | --- | --- | --- |
+| `routes` | `FlatRoute[]` | — (required) | The route table from `defineRoutes()`. |
+| `entry` | `string` | — (required) | `import.meta.url` of the entry file — anchors route/island scanning. |
+| `scanRoot` | `string` | dir of `entry` | Directory scanned for routes and island sources. |
+| `address` | `string` | `localhost` | Host/address to bind. |
+| `port` | `number` | `1337` | TCP port to bind. |
+| `actions` | `ActionsBuilder` | — | Server actions from `defineActions(...)`. Omit if the app has none. |
+| `actionPrefix` | `string` | `/_brust/action` | URL prefix the action router mounts under. |
+| `serve` | `Partial<ServeOptions>` | — | Lower-level server overrides merged into the listener: `tuning` (worker/connection limits — see [Deployment](/docs/deployment)), TLS, and the `generator` / `X-Powered-By` controls (see [Rendering](/docs/rendering)). |
+| `sabBytes` | `number` | `262144` (256 KB) | SharedArrayBuffer size per render worker. |
+| `dev` | `boolean` | `false` | Dev mode — hot reload, file watcher, dev WS, TUI. Also enabled by `BRUST_DEV=1`. |
+
+`address` and `port` are overridable at runtime; `brust.toml` and environment
+variables win over what you pass here (see the precedence note above).
+
 The scaffold gitignores `brust.toml`, treating it as per-machine
 configuration; commit it if your team prefers shared settings.
 
