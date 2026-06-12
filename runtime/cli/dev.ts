@@ -10,11 +10,13 @@ const REPO_ROOT = path.resolve(import.meta.dir, '..', '..')
 interface ParsedArgs {
   entry: string
   port: number | undefined
+  generatorVersion: boolean
 }
 
 function parseArgs(args: string[]): ParsedArgs {
   let entry: string | undefined
   let port: number | undefined
+  let generatorVersion = true
   for (let i = 0; i < args.length; i++) {
     const a = args[i]
     if (a === '--port') {
@@ -28,6 +30,8 @@ function parseArgs(args: string[]): ParsedArgs {
         console.error(`brust dev: invalid port ${v}`)
         process.exit(1)
       }
+    } else if (a === '--no-generator-version') {
+      generatorVersion = false
     } else if (a.startsWith('--port=')) {
       port = parseInt(a.slice('--port='.length), 10)
     } else if (a.startsWith('-')) {
@@ -50,13 +54,21 @@ function parseArgs(args: string[]): ParsedArgs {
     console.error(`brust dev: no entry file at ${entryPath}; pass a path or create ./index.ts`)
     process.exit(1)
   }
-  return { entry: entryPath, port }
+  return { entry: entryPath, port, generatorVersion }
 }
 
 export async function runDev(args: string[]): Promise<void> {
-  const { entry, port } = parseArgs(args)
+  const { entry, port, generatorVersion } = parseArgs(args)
   process.env.BRUST_DEV = '1'
   if (port !== undefined) process.env.BRUST_PORT = String(port)
+
+  // Bake the generator decision BEFORE the first emit — emitters and the boot
+  // re-emit paths all resolve <cwd>/.brust/jinja/generator.json internally.
+  const { generatorStrings, writeGeneratorArtifact } = await import('../generator.ts')
+  writeGeneratorArtifact(
+    path.join(process.cwd(), '.brust', 'jinja'),
+    generatorStrings(generatorVersion),
+  )
 
   // Sub-project J — emit .brust/jinja/<Name>.jinja templates BEFORE handing
   // off to the user's entry. The runtime loads these on boot. Dev-mode HMR
