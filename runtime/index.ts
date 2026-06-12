@@ -1059,6 +1059,8 @@ export {
   notFound,
   redirect,
   isNativeVerdict,
+  httpError,
+  isHttpErrorTrigger,
 } from './routes.ts'
 export type {
   Route,
@@ -1070,6 +1072,8 @@ export type {
   RouteResponse,
   Middleware,
   NativeVerdict,
+  HttpErrorOpts,
+  HttpErrorTrigger,
 } from './routes.ts'
 
 export { defineActions, isValidEndpointPath } from './define-actions.ts'

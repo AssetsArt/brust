@@ -31,6 +31,8 @@ function makeReq(): BrustRequest {
     headers: {},
     cookies: {},
     search: {},
+    params: {},
+    locals: {},
     signal: undefined as unknown as AbortSignal, // glue overwrites
   } as BrustRequest
 }

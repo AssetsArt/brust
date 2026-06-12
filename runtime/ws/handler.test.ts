@@ -35,6 +35,8 @@ function makeReq(): BrustRequest {
     headers: {},
     cookies: {},
     search: {},
+    params: {},
+    locals: {},
     signal: undefined as unknown as AbortSignal,
   } as BrustRequest
 }
