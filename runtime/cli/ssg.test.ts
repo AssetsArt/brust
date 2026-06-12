@@ -491,6 +491,132 @@ test('fallback emission: shell doc + payload + routes.json manifest + 404.html',
   }
 }, 60_000)
 
+// ----- full-CLI e2e: brust build --ssg with fallback routes -----
+//
+// The only test that exercises the REAL CLI pipeline end-to-end — fallback
+// chunk build (build.ts step 7.5) + crawl + shell/payload/manifest/404
+// emission in one `brust build --ssg` run. A blanket --ssg crawl of the FULL
+// fixture app fails BY DESIGN (auth-gated /admin/users → 401 → exportStatic
+// no-partial throw), so this builds a minimal app in a tmp project instead:
+// '/', the fallback route, and its clientLoader data endpoint. The component
+// file is copied verbatim from the fixture so the two stay in sync.
+test('brust build --ssg emits fallback chunk + shells + manifest + 404 for fallback routes', async () => {
+  const proj = await mkdtemp(path.join(tmpdir(), 'brust-ssg-cli-proj-'))
+  const out = await mkdtemp(path.join(tmpdir(), 'brust-ssg-cli-out-'))
+  try {
+    // react/react-dom stay external — resolve them from the repo, both at
+    // build time (proj sources) and when the ssg crawl boots the dist
+    // (resolution walks UP from out/dist; the build wipes --out-dir itself,
+    // so the symlink must live one level above it or it gets deleted before
+    // the crawl boots).
+    symlinkSync(path.join(REPO, 'node_modules'), path.join(proj, 'node_modules'), 'dir')
+    symlinkSync(path.join(REPO, 'node_modules'), path.join(out, 'node_modules'), 'dir')
+
+    await mkdir(path.join(proj, 'components'), { recursive: true })
+    await Bun.write(
+      path.join(proj, 'components', 'SsgFallbackPost.tsx'),
+      Bun.file(path.join(REPO, 'tests/fixtures/app/components/SsgFallbackPost.tsx')),
+    )
+    await writeFile(
+      path.join(proj, 'components', 'Home.tsx'),
+      'export default function Home() {\n  return <h1>cli-e2e home</h1>\n}\n',
+    )
+    await writeFile(
+      path.join(proj, 'routes.tsx'),
+      `import { defineRoutes, type Middleware } from ${JSON.stringify(
+        path.join(REPO, 'runtime/routes.ts'),
+      )}
+import Home from './components/Home'
+import SsgFallbackPost from './components/SsgFallbackPost'
+
+// JSON GET endpoint for the clientLoader — middleware short-circuit, mirrors
+// tests/fixtures/app/routes.tsx.
+const ssgFallbackData: Middleware = async (req, _next) => {
+  const slug = decodeURIComponent((req.url.split('?')[0] ?? '').split('/').pop() ?? '')
+  return {
+    status: 200,
+    body: JSON.stringify({ title: \`client:\${slug}\` }),
+    contentType: 'application/json; charset=utf-8',
+  }
+}
+
+export const routes = defineRoutes([
+  { path: '/', Component: Home },
+  {
+    path: '/ssg-fb/{slug}',
+    Component: SsgFallbackPost,
+    loader: async ({ params }) => ({ title: \`srv:\${params.slug}\` }),
+    ssg: { params: () => [{ slug: 'pre' }], fallback: 'client' },
+  },
+  {
+    path: '/api/ssg-fallback-data/{slug}',
+    Component: SsgFallbackPost,
+    middleware: [ssgFallbackData],
+  },
+])
+`,
+    )
+    await writeFile(
+      path.join(proj, 'index.ts'),
+      `import { brust } from ${JSON.stringify(path.join(REPO, 'runtime/index.ts'))}
+import { routes } from './routes'
+
+await brust.run({ routes, entry: import.meta.url })
+`,
+    )
+
+    const distDir = path.join(out, 'dist')
+    const staticDir = path.join(out, 'static')
+    const build = await $`bun ${path.join(
+      REPO,
+      'runtime/cli/index.ts',
+    )} build ${path.join(proj, 'index.ts')} --out-dir ${distDir} --ssg --ssg-out ${staticDir}`
+      .cwd(proj)
+      .quiet()
+      .nothrow()
+    const stdout = build.stdout.toString()
+    if (build.exitCode !== 0) {
+      throw new Error(`brust build --ssg failed:\n${stdout}\n${build.stderr.toString()}`)
+    }
+
+    // Prerendered param page — real loader data, NO fallback marker.
+    const pre = await Bun.file(path.join(staticDir, 'ssg-fb', 'pre', 'index.html')).text()
+    expect(pre).toContain('srv:pre')
+    expect(pre).not.toContain('data-brust-fallback-root')
+
+    // Fallback shell document + SPA payload.
+    const shell = await Bun.file(
+      path.join(staticDir, '_brust', 'fallback', 'ssg-fb', '__slug__', 'index.html'),
+    ).text()
+    expect(shell).toContain('data-brust-fallback-root')
+    expect(shell).toContain('_bootstrap.js')
+    const payload = JSON.parse(
+      await Bun.file(
+        path.join(staticDir, '_brust', 'fallback-page', 'ssg-fb', '__slug__', 'index.html'),
+      ).text(),
+    ) as { html: string }
+    expect(payload.html).toContain('data-brust-fallback-root')
+
+    // Manifest — the REAL step-7.5 chunk (content-hashed filename; assert via
+    // the manifest value, never a hardcoded name).
+    const manifest = JSON.parse(
+      await Bun.file(path.join(staticDir, '_brust', 'routes.json')).text(),
+    ) as { fallbacks: { pattern: string; chunk: string }[] }
+    expect(manifest.fallbacks[0]!.pattern).toBe('/ssg-fb/{slug}')
+    const chunk = manifest.fallbacks[0]!.chunk
+    expect(existsSync(path.join(staticDir, '_brust', 'islands', path.basename(chunk)))).toBe(true)
+
+    // 404.html inlines the pattern (JSON-quoted) for the client-side redirect.
+    const notFound = await Bun.file(path.join(staticDir, '404.html')).text()
+    expect(notFound).toContain('"/ssg-fb/{slug}"')
+
+    expect(stdout).toContain('fallback chunk')
+  } finally {
+    await rm(proj, { recursive: true, force: true })
+    await rm(out, { recursive: true, force: true })
+  }
+}, 240_000)
+
 test('no fallbacks → NO routes.json, NO 404.html (byte-identical-today invariant)', async () => {
   const outDir = await mkdtemp(path.join(tmpdir(), 'brust-ssg-nofb-'))
   try {

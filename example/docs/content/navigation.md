@@ -229,6 +229,14 @@ same on a dumb static host as on the live server. Unknown routes 404 → the
 navigator's full-load fallback covers it. See
 [Markdown Pages → Static export](/docs/markdown-pages#static-export---ssg).
 
+Routes that opt into `ssg.fallback: 'client'` extend this to dynamic paths
+that were never prerendered: navigating to one swaps in the route's fallback
+shell and runs its `clientLoader` in the browser instead of full-reloading.
+The phase stays `loading` until the client data lands, so a NavPreloader (or
+the CSS hook above) shows exactly as it would on a server navigation. This
+applies only to routes declaring `ssg.fallback: 'client'` — every other
+unknown path still takes the full-load 404 path.
+
 ## Next
 
 Mutate data with typed [Actions](/docs/actions), or see how the

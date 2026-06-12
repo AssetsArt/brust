@@ -319,6 +319,77 @@ params: `/blog/page/{n}` with `ssg.params` returning `[{ n: '1' }, { n: '2' }, �
 a domain root (`docs.example.com`), not under a subpath — `example.com/docs/`
 would 404 every asset.
 
+### Client fallback — ssg.fallback: 'client'
+
+`ssg.params` covers the pages you can enumerate. For the long tail — a path
+set too large or too fresh to prerender — add `fallback: 'client'` and the
+route keeps working on a static host:
+
+```ts
+{ path: '/blog/{slug}', Component: BlogPost,
+  loader: async ({ params }) => ({ post: await getPost(params.slug) }),
+  ssg: {
+    params: async () => (await listRecentPosts()).map(p => ({ slug: p.slug })),
+    fallback: 'client',
+  } },
+```
+
+Prerendered paths still ship as plain HTML, exactly as before. Any **other**
+path renders in the browser instead: the export ships a server-rendered
+fallback shell for the route, and the client fills it by running a
+`clientLoader` you export **from the component file** (not `routes.tsx` —
+the fallback chunk imports this file into the browser, and `routes.tsx` drags
+server-only dependencies):
+
+```tsx
+// components/BlogPost.tsx — same file as the component
+export const clientLoader = async ({ params, path }: {
+  params: Record<string, string>
+  path: string
+}) => {
+  const resp = await fetch(`/api/posts/${params.slug}`)
+  if (!resp.ok) throw new Error(`post: ${resp.status}`)
+  const data = await resp.json()
+  document.title = data.title // runs in the browser — set the title here
+  return data
+}
+
+export default function BlogPost({ params, data }) { /* … */ }
+```
+
+Two conventions make the chunk buildable: the component must be a **default
+import** in `routes.tsx`, and the component file's top-level imports must be
+**browser-safe** — DB clients and node builtins belong in the route's server
+`loader`, not here. Violations fail the build with the route named.
+
+**What gets emitted.** Alongside the prerendered pages, per fallback route:
+a fallback shell document at `_brust/fallback/<pattern>/index.html` and its
+SPA payload at `_brust/fallback-page/<pattern>/index.html` (each `{slug}`
+sanitized to `__slug__` on disk), a per-route client chunk under
+`_brust/islands/` — plus one `_brust/routes.json` manifest and a `404.html`
+at the root (skipped with a warning if your own `public/404.html` exists).
+
+**How a visit resolves.** An internal click onto a non-prerendered path swaps
+in the fallback shell and runs `clientLoader` — no full reload. A direct URL
+hit goes through the host's 404 page: `404.html` matches the path against the
+manifest, redirects to the shell, the original URL is restored, then the
+client fetch fills the page. The build produces the shell by requesting the
+route with every param set to the reserved sentinel `__brust_fallback__` —
+that value can never be a real param (`ssg.params` returning it fails the
+build).
+
+Accepted limitations:
+
+- Direct hits answer HTTP **404** at the protocol level (the
+  spa-github-pages pattern) — fine for app pages, wrong for SEO-critical
+  ones; prerender those via `ssg.params`.
+- Client-rendered props are `{ params, path, data }` only — no `req`, no
+  `workerId` (they don't exist in a browser).
+- `errorBoundary` does not wrap a `clientLoader` failure — catch inside
+  `clientLoader` and return error-shaped data for custom error UI.
+- Head patching is limited to `document.title`, settable inside
+  `clientLoader` as above.
+
 ### Cloudflare Pages
 
 The export is a plain directory — no functions, no adapter. For this site:
