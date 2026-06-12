@@ -235,8 +235,25 @@ export interface NativeVerdict {
   readonly headers?: Record<string, string>
 }
 
-/** Return from a native route loader to render the route's OWN template with
- * HTTP 404. `data` (default `{}`) becomes the template context. */
+/** Signal "not found" from a route loader. ONE helper, two call shapes —
+ * matching how each render path consumes a loader result:
+ *
+ *  - NATIVE route loader: `return notFound(data?)`. The returned verdict is
+ *    inspected by `runNativeChainLoaders` and renders the route's OWN template
+ *    at HTTP 404 (`data` default `{}` becomes the template context).
+ *
+ *  - REACT route loader: `throw notFound()`. A React loader's RETURN value is
+ *    the component's `data` prop (never inspected as a verdict), so the only
+ *    way to signal not-found is to throw. The render dispatch discriminates the
+ *    thrown verdict (it is symbol-tagged — `isNativeVerdict`) BEFORE the generic
+ *    500/errorBoundary handler and renders the NEAREST catch-all (`path: '*'`)
+ *    for the route's prefix at HTTP 404 — NOT the route's own Component, NOT a
+ *    500. If no catch-all is registered for the prefix, a framework default 404
+ *    body is rendered. `data` is ignored on the React throw path (the catch-all
+ *    runs its own loader chain).
+ *
+ * Same value type (`NativeVerdict`) either way — native returns it, React
+ * throws it — so there is a single public `notFound()` API. */
 export function notFound(data?: unknown): NativeVerdict {
   return { [BRUST_VERDICT]: true, status: 404, render: true, data: data ?? {} }
 }
@@ -255,6 +272,45 @@ export function isNativeVerdict(x: unknown): x is NativeVerdict {
   return (
     typeof x === 'object' && x !== null && (x as Record<symbol, unknown>)[BRUST_VERDICT] === true
   )
+}
+
+/** Framework default 404 body, served when a React `notFound()` fires but no
+ * catch-all (`path: '*'`) is registered for the route's prefix — so the response
+ * is still HTTP 404 with a body (never a 500, never a crash). */
+const DEFAULT_NOT_FOUND_BODY =
+  '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>404 Not Found</title></head><body><main><h1>404</h1><p>Not found.</p></main></body></html>'
+
+/** True when a thrown value is the React `notFound()` trigger: a NativeVerdict
+ * that renders at HTTP 404 (vs a thrown `redirect()`, which is `render: false`).
+ * Distinct from ActionError (a different Symbol) and from real Errors, so the
+ * render-dispatch catch can re-render the catch-all ONLY for this case and let
+ * everything else fall through to the 500/errorBoundary path. */
+function isNotFoundTrigger(x: unknown): x is NativeVerdict {
+  return isNativeVerdict(x) && x.render === true && x.status === 404
+}
+
+/** Select the nearest catch-all (`path: '*'`) FlatRoute for an unmatched path —
+ * the JS-side mirror of Rust's `select_not_found` (routing/routes.rs). Returns
+ * the catch-all's route_id (array index) or `undefined` if none covers the path.
+ *
+ * Longest segment-prefix wins: a `notFoundPrefix` of `/docs` covers `/docs` and
+ * `/docs/...` but NOT `/docsearch`; the root catch-all (`''`) covers everything
+ * as the last resort. Identical precedence to the Rust unmatched-path tier, so a
+ * React `notFound()` selects the SAME catch-all a genuinely-unmatched path would. */
+function selectNotFound(routes: FlatRoute[], path: string): number | undefined {
+  let bestId: number | undefined
+  let bestLen = -1
+  for (let i = 0; i < routes.length; i++) {
+    const r = routes[i]
+    if (r.notFound !== true) continue
+    const p = r.notFoundPrefix ?? ''
+    const covers = p === '' || path === p || path.startsWith(`${p}/`)
+    if (covers && p.length > bestLen) {
+      bestLen = p.length
+      bestId = i
+    }
+  }
+  return bestId
 }
 
 /** Loader context passed to native chain loaders. */
@@ -1178,32 +1234,86 @@ export function makeRenderer(
       return await runInRequestContext(call.req?.cookies ?? {}, async () => {
         // Computed ONCE and shared by buildRenderElement (leaf swap) and
         // renderBranchStreaming (forceIslands) so the two can never diverge.
-        const shellMode = wantsSsgFallbackShell(flat, call)
+        let shellMode = wantsSsgFallbackShell(flat, call)
         let element: ReactNode
-        let errorBoundary: ComponentType<{ error: Error }>
+        // The route actually rendered + its HTTP status. Normally the matched
+        // `flat` at the verdict status (404 when the matched route IS a
+        // catch-all). A React loader that `throw`s `notFound()` swaps both to
+        // the nearest catch-all at 404 below.
+        let renderFlat = flat
+        let renderStatus = flat.notFound === true ? 404 : verdict.status
         try {
           element = await buildRenderElement(call, flat, opts.getWorkerId, shellMode)
-          errorBoundary =
-            flat.errorBoundary ??
-            (({ error }) => createElement('div', null, `Internal Server Error: ${error.message}`))
         } catch (err) {
-          // Setup failure BEFORE renderToPipeableStream — loader throw, params
-          // bind throw. Shape matches the legacy "internal error" path so
-          // existing integration tests stay green.
-          console.error(`[brust] render setup failed:`, err)
-          return await emitSingleChunkResponse(
-            slotView,
-            napi,
-            workerId,
-            encoder,
-            {
-              status: 500,
-              contentType: 'text/html; charset=utf-8',
-              body: 'internal error',
-            },
-            slot,
-          )
+          if (isNotFoundTrigger(err)) {
+            // React `notFound()` trigger: abandon the matched route and render
+            // the NEAREST catch-all (same selection as a Rust-unmatched path)
+            // at HTTP 404 — NOT the route's own Component, NOT a 500. Reuse the
+            // existing 404-render machinery by re-running buildRenderElement
+            // against the catch-all's chain.
+            const nfId = selectNotFound(routes, call.path)
+            const nfFlat = nfId !== undefined ? byRouteId.get(nfId) : undefined
+            renderStatus = 404
+            if (nfFlat) {
+              renderFlat = nfFlat
+              shellMode = wantsSsgFallbackShell(nfFlat, call)
+              try {
+                element = await buildRenderElement(call, nfFlat, opts.getWorkerId, shellMode)
+              } catch (nfErr) {
+                // The catch-all's OWN loader/render setup failed — don't loop;
+                // fall back to the framework default 404 body at 404.
+                console.error(`[brust] catch-all render setup failed:`, nfErr)
+                return await emitSingleChunkResponse(
+                  slotView,
+                  napi,
+                  workerId,
+                  encoder,
+                  {
+                    status: 404,
+                    contentType: 'text/html; charset=utf-8',
+                    body: DEFAULT_NOT_FOUND_BODY,
+                  },
+                  slot,
+                )
+              }
+            } else {
+              // No catch-all registered for this prefix → framework default 404
+              // body at status 404 (don't crash, don't 500).
+              return await emitSingleChunkResponse(
+                slotView,
+                napi,
+                workerId,
+                encoder,
+                {
+                  status: 404,
+                  contentType: 'text/html; charset=utf-8',
+                  body: DEFAULT_NOT_FOUND_BODY,
+                },
+                slot,
+              )
+            }
+          } else {
+            // Setup failure BEFORE renderToPipeableStream — loader throw, params
+            // bind throw. Shape matches the legacy "internal error" path so
+            // existing integration tests stay green.
+            console.error(`[brust] render setup failed:`, err)
+            return await emitSingleChunkResponse(
+              slotView,
+              napi,
+              workerId,
+              encoder,
+              {
+                status: 500,
+                contentType: 'text/html; charset=utf-8',
+                body: 'internal error',
+              },
+              slot,
+            )
+          }
         }
+        const errorBoundary: ComponentType<{ error: Error }> =
+          renderFlat.errorBoundary ??
+          (({ error }) => createElement('div', null, `Internal Server Error: ${error.message}`))
         const storeSnapshot = collectSnapshot()
         await renderBranchStreaming({
           element,
@@ -1212,11 +1322,11 @@ export function makeRenderer(
           workerId,
           napi,
           errorBoundary,
-          // Catch-all (`path: '*'`) leaf rendered on an unmatched path: stamp
-          // HTTP 404 unconditionally (mirrors the native path above).
-          status: flat.notFound === true ? 404 : verdict.status,
+          // Catch-all (`path: '*'`) leaf rendered on an unmatched path OR a
+          // React `notFound()` swap: stamp HTTP 404 (mirrors the native path).
+          status: renderStatus,
           headers: flushSetCookie(verdict.headers),
-          routePath: flat.fullPath,
+          routePath: renderFlat.fullPath,
           storeSnapshot,
           // SSG fallback shells have zero islands on the page but the
           // client-loader runtime still needs the importmap + bootstrap.

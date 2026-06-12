@@ -56,14 +56,18 @@ async function startApp(entry: string): Promise<{ port: number; proc: Subprocess
 let withCatchAll: { port: number; proc: Subprocess } | null = null
 // Control app: the shared integration fixture has NO catch-all.
 let noCatchAll: { port: number; proc: Subprocess } | null = null
+// App with a React `/items/{id}` route that `throw notFound()` but NO catch-all
+// — exercises the framework default 404 body fallback (Task 5).
+let nfNoCatchAll: { port: number; proc: Subprocess } | null = null
 
 beforeAll(async () => {
   withCatchAll = await startApp('tests/fixtures/notfound-app/index.ts')
   noCatchAll = await startApp('tests/fixtures/app/index.ts')
+  nfNoCatchAll = await startApp('tests/fixtures/notfound-no-catchall-app/index.ts')
 }, 30_000)
 
 afterAll(async () => {
-  for (const s of [withCatchAll, noCatchAll]) {
+  for (const s of [withCatchAll, noCatchAll, nfNoCatchAll]) {
     if (!s) continue
     s.proc.kill('SIGINT')
     await s.proc.exited
@@ -112,4 +116,48 @@ test('app with NO catch-all → GET /nope returns the plain 404 (unchanged)', as
   // No catch-all registered → the framework's last-resort error_404() body,
   // NOT a rendered page.
   expect(await resp.text()).not.toContain('NOT FOUND PAGE')
+})
+
+// --- Task 5: React notFound() loader trigger --------------------------------
+
+test('React route loader without notFound() → 200, own Component renders', async () => {
+  const { port } = withCatchAll!
+  const resp = await fetch(`http://127.0.0.1:${port}/items/ok`)
+  expect(resp.status).toBe(200)
+  // React inserts <!-- --> markers between adjacent text/expression nodes;
+  // strip them before matching the rendered "ITEM PAGE ok".
+  const body = (await resp.text()).replace(/<!--.*?-->/g, '')
+  expect(body).toContain('ITEM PAGE ok')
+})
+
+test('React loader notFound() → nearest catch-all at HTTP 404 (not the route Component, not 500)', async () => {
+  const { port } = withCatchAll!
+  const resp = await fetch(`http://127.0.0.1:${port}/items/missing`)
+  expect(resp.status).toBe(404)
+  const body = await resp.text()
+  // The catch-all renders — NOT the route's own Component, NOT a 500 body.
+  expect(body).toContain('NOT FOUND PAGE')
+  expect(body).not.toContain('ITEM PAGE')
+  expect(body).not.toContain('Internal Server Error')
+  expect(body).not.toContain('internal error')
+})
+
+test('React loader notFound() with NO catch-all → 404 + default body (no 500, no crash)', async () => {
+  const { port } = nfNoCatchAll!
+  const resp = await fetch(`http://127.0.0.1:${port}/items/anything`)
+  expect(resp.status).toBe(404)
+  const body = await resp.text()
+  // Framework default 404 body — never a 500 / "internal error".
+  expect(body).toContain('Not found.')
+  expect(body).not.toContain('internal error')
+  expect(body).not.toContain('Internal Server Error')
+})
+
+test('native notFound() verdict path still renders the catch-all at 404 (no regression)', async () => {
+  // The unmatched-path catch-all render (native verdict status thread) is the
+  // same machinery; assert it still 404s with the catch-all body.
+  const { port } = withCatchAll!
+  const resp = await fetch(`http://127.0.0.1:${port}/totally/unmatched`)
+  expect(resp.status).toBe(404)
+  expect(await resp.text()).toContain('NOT FOUND PAGE')
 })
