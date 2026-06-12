@@ -34,7 +34,11 @@ const fallbackRoots = new WeakMap<HTMLElement, Root>()
  * else must compare literally. Returns the captured params, or null. */
 export function matchFallback(pattern: string, pathname: string): Record<string, string> | null {
   const pat = pattern.split('/')
-  const path = pathname.split('/')
+  // Route-table patterns never carry a trailing slash; static hosts (CF Pages
+  // directory rewrites among them) may append one to the live pathname —
+  // normalize so '/blog/foo/' still matches '/blog/{slug}'.
+  const normalized = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname
+  const path = normalized.split('/')
   if (pat.length !== path.length) return null
   const params: Record<string, string> = {}
   for (let i = 0; i < pat.length; i++) {
@@ -109,8 +113,13 @@ function takeoverError(container: HTMLElement, message: string, err?: unknown): 
  * CONTRACT: the caller must unmount any island roots inside the container
  * FIRST (a placeholder may carry islands) — bootstrap's unmountIslandsIn
  * does this before calling takeover. The call lives there, not here, to
- * avoid a circular import between fallback.ts and bootstrap.ts. */
-export async function takeover(container: HTMLElement): Promise<void> {
+ * avoid a circular import between fallback.ts and bootstrap.ts.
+ *
+ * `signal`: a superseding navigation aborts it. Checked after every await and
+ * BEFORE createRoot — without that gate, a takeover resumed after the next
+ * navigation's swap would mount a React root into a DETACHED container that
+ * unmountFallbackRootsIn can never find again (hung-tab hazard). */
+export async function takeover(container: HTMLElement, signal?: AbortSignal): Promise<void> {
   const pattern = container.getAttribute('data-brust-fallback')
   if (pattern === null) {
     console.error('[brust] fallback: container has no data-brust-fallback attribute')
@@ -145,6 +154,7 @@ export async function takeover(container: HTMLElement): Promise<void> {
     takeoverError(container, `failed to load chunk "${entry.chunk}"`, e)
     return
   }
+  if (signal?.aborted) return
   let data: unknown
   try {
     data = await clientLoader({ params, path })
@@ -152,6 +162,9 @@ export async function takeover(container: HTMLElement): Promise<void> {
     takeoverError(container, `clientLoader threw for "${pattern}"`, e)
     return
   }
+  // Superseded while the data was loading → the newer navigation owns the
+  // DOM; mounting here would render into a detached container.
+  if (signal?.aborted) return
   // Success: drop the placeholder, then mount a fresh client root.
   while (container.firstChild) container.removeChild(container.firstChild)
   const root = createRoot(container)

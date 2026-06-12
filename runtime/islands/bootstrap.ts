@@ -342,6 +342,10 @@ async function attemptClientFallback(
     __navCommit(url.pathname, url.search)
     return true
   }
+  // Superseded while the payload was loading → the newer navigation owns the
+  // DOM from here; handing the container to takeover would let its render
+  // land in a subtree the newer swap is about to (or already did) remove.
+  if (signal?.aborted) return true
   // ORDER: takeover BEFORE hydrateMarkersIn. The container was JUST swapped
   // in, so nothing inside it is hydrated yet; hydrating first would register
   // placeholder-island triggers whose async mounts race takeover's child
@@ -350,7 +354,9 @@ async function attemptClientFallback(
   // trigger is registered (success) or hydrated exactly once afterwards
   // (failure keeps the placeholder, which then becomes interactive). Either
   // way a placeholder island can never double-mount.
-  await takeover(container)
+  // takeover gets the SIGNAL so a supersession mid-clientLoader can't mount
+  // a React root into a container the newer navigation already detached.
+  await takeover(container, signal)
   // Superseded during takeover → skip hydration/commit; the newer navigation
   // owns the DOM and the nav store from here.
   if (signal?.aborted) return true
@@ -548,9 +554,17 @@ function bootFallbackTakeover(): void {
     // sessionStorage unavailable (privacy mode) — 404.html couldn't have
     // stashed a path either; takeover proceeds on the shell's own URL.
   }
-  if (saved !== null) {
+  // Only a same-origin absolute PATH is acceptable: the value transits
+  // sessionStorage (writable by any same-origin script), so reject anything
+  // shaped like a scheme or protocol-relative URL before handing it to
+  // replaceState.
+  if (saved?.startsWith('/') && !saved.startsWith('//')) {
     history.replaceState({}, '', saved)
     currentPageKey = location.pathname + location.search
+    // Re-seed the nav store: __navInit ran before this with the SHELL
+    // document's URL — without the re-init, useNav()/getNavState() would
+    // report the /_brust/fallback/... path until the first SPA commit.
+    __navInit(location.pathname, location.search)
   }
   // Per takeover's contract: unmount any island roots inside the container
   // first. At boot this is belt-and-braces — hydrateMarkersIn(document.body)
