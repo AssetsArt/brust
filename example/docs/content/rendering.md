@@ -125,6 +125,30 @@ The cached HTML and props are stored and served together, so hydration always
 sees matching markup. `isr` is meaningless without `ssr` (there is nothing
 server-rendered to cache).
 
+## Generator tag
+
+Every brust-rendered document carries a generator meta tag, and every response
+from the brust server carries an `X-Powered-By` header — this is how technology
+detectors like Wappalyzer identify brust sites:
+
+```html
+<meta name="generator" content="brust 0.1.47-alpha"/>
+```
+
+```http
+X-Powered-By: brust/0.1.47-alpha
+```
+
+The tag is baked into native and Markdown templates at build time and injected
+into React-streamed HTML at render time. Static export (`brust build --ssg`)
+inherits the meta tag in every prerendered file.
+
+Prefer not to advertise your framework version? Build with
+`--no-generator-version` to keep the name but drop the version (the name is
+always present). The decision is baked at build time — flipping it requires a
+rebuild. If you hand-author your own `<meta name="generator" …>` on a buffered
+route, yours wins and brust does not add a second one.
+
 ## Which mode, when
 
 | Situation | Reach for |
