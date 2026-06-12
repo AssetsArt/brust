@@ -36,6 +36,9 @@ cache.invalidate(args)                       subscriber (every brust process)
 One brust **process** = main isolate + N worker isolates (Bun Workers, same OS process). Rust caches are process-global; module state is per-isolate.
 
 - **Subscriber:** main isolate only (guard: `process.env.BRUST_WORKER_ID === undefined`). One subscription per process. Applying an invalidation via NAPI from the main isolate reaches the process-global Rust caches — workers see it implicitly.
+  - **Callback signature (verified empirically, Bun 1.4.0):** `subscribe(channel, (message: string, channel: string) => void)` — the callback receives `(message, channel)`, NOT `(err, message)`. Connection errors surface via the client's `onclose`, never through the subscribe callback.
+  - **Boot-time unreachable redis (verified empirically):** `subscribe()` against a down host returns a promise that NEVER settles and `onclose` does NOT fire — a naive implementation silently disables the feature. The implementation MUST race the connect/subscribe against a timeout (e.g. 5s): on timeout, `close()` the client (best-effort), log a redacted warn, and schedule the backoff retry. This is what makes invariants 3/5 actually hold.
+  - **Reconnect (verified empirically):** no auto-resubscribe after a drop. The `onclose` handler re-creates the client and re-subscribes via the same backoff loop.
 - **Publisher:** lazy, per-isolate (workers call `cache.invalidate` from loaders/actions). Each isolate creates its own `RedisClient` on first publish.
 - **Configuration handoff to workers:** main resolves config during `run()` (after `loadConfig`) and sets `process.env.BRUST_CACHE_SYNC_URL` / `_CHANNEL` / `_SENDER` **before** `serve()` spawns workers; `baseEnv = { ...process.env, ... }` (runtime/index.ts:184) carries them into every worker. Workers read env lazily at first publish.
 - **Self-skip:** main generates a per-process sender token (`crypto.randomUUID()`) into `BRUST_CACHE_SYNC_SENDER`; all isolates of the process share it via env. The subscriber drops messages whose `sender` equals its own token (the publishing isolate already applied locally). Without the skip it would be a harmless idempotent double-apply; the skip avoids the wasted work.
@@ -58,7 +61,13 @@ All invalidation fields optional (mirrors `InvalidateArgs`). Unknown `v` or unpa
 sync_url = "redis://127.0.0.1:6379"     # enables the feature; absent = current behavior
 sync_channel = "brust:cache:invalidate" # optional, this default
 ```
-Env overrides (win over TOML, standard precedence): `BRUST_CACHE_SYNC_URL`, `BRUST_CACHE_SYNC_CHANNEL`. New `BrustConfig` fields: `cacheSyncUrl?: string`, `cacheSyncChannel?: string`.
+Env overrides (win over TOML, standard precedence): `BRUST_CACHE_SYNC_URL`, `BRUST_CACHE_SYNC_CHANNEL`.
+
+Three changes in `config.ts` that must land TOGETHER (omitting any one breaks precedence silently):
+1. `BrustConfig` interface: `cacheSyncUrl?: string`, `cacheSyncChannel?: string`
+2. TOML extraction (`[cache]` block, next to `max_entries`): `sync_url` → `cacheSyncUrl`, `sync_channel` → `cacheSyncChannel`
+3. `extractFromEnv`: `BRUST_CACHE_SYNC_URL` → `cacheSyncUrl`, `BRUST_CACHE_SYNC_CHANNEL` → `cacheSyncChannel` (env wins over TOML, same as the other keys)
+…and `run()` must destructure the new fields from `loadConfig`'s return value (they configure `startCacheSync`); the `process.env` writes are a separate side-effect for worker propagation.
 
 ### `runtime/cache-sync.ts`
 
@@ -95,9 +104,12 @@ After `loadConfig`: when `cacheSyncUrl` present → set the three env vars (URL,
 1. Local invalidation NEVER depends on redis state: fan-out to NAPI happens first, unconditionally; publish failures are logged (throttled to once per 30s per error kind) and swallowed.
 2. Received messages apply via direct NAPI calls (`islandCacheInvalidate`, `pageCacheInvalidate`, `responseCacheInvalidate`) — never via `cache.invalidate` — so a message can never re-publish (no loop, even across misconfigured channels).
 3. Subscriber outage: on close/error, retry with capped exponential backoff (1s → 30s max), forever, with a throttled warn. Messages published while disconnected are lost (documented; TTL backstop).
-4. `invalidate({})` stays a no-op locally AND is not published (empty messages dropped at publish time).
-5. Boot is never blocked: `startCacheSync` connects in the background; a down redis at boot = warn + retry loop.
+4. `invalidate({})` stays a no-op locally AND is not published. Publish-side emptiness check: `!key && (!tags || tags.length === 0) && !path` — an explicit empty `tags: []` counts as empty.
+5. Boot is never blocked: `startCacheSync` connects in the background **with a connect timeout** (the never-settling-promise trap above); a down redis at boot = redacted warn + retry loop.
 6. Zero behavior change when not configured (no env, no toml key): no redis client is ever constructed.
+7. **Log redaction:** the redis URL may carry credentials (`redis://:pass@host`). Every log line derived from it must print only `host:port` (via `new URL(url)`) — never the raw URL. (The env-var exposure itself is standard secret-in-env operator territory; documented.)
+8. `stopCacheSync()` is wired into the graceful-drain path (`gracefulExit` in index.ts) so backoff timers can't fire between drain and exit; it also serves tests.
+9. Connection-count note (documented): each worker isolate lazily holds one publisher connection → a process can hold up to `workers + 1` redis connections. Negligible for publish-time invalidation volume.
 
 ## File structure
 
@@ -113,12 +125,12 @@ After `loadConfig`: when `cacheSyncUrl` present → set the three env vars (URL,
 
 Unit (`runtime/cache-sync.test.ts`, real addon for NAPI calls, no redis needed):
 - `applyCacheSyncMessage` evicts a seeded island/page-cache entry by tag and by key (seed via NAPI set, apply message, assert gone)
-- malformed message (bad JSON handled at subscriber; here: wrong `v`, non-array tags) → dropped, no throw
+- malformed message (bad JSON handled at subscriber; here: wrong `v` e.g. `v: 2`, non-array tags) → dropped, no throw
 - self-skip: message with sender === own token does not evict (seed, apply, still present)
 - `publishCacheSync` with no config → no-op, no throw
 - `invalidate({})` not published (spy point: exported internal `_lastPublished` or inject transport — keep a small injectable seam `__setTransportForTest(t)`)
 
-Integration (`tests/cache-sync.integration.test.ts`): `test.skipIf(!redisAvailable)` (probe `redis://127.0.0.1:6379` with a short-timeout PING at module load):
+Integration (`tests/cache-sync.integration.test.ts`): `test.skipIf(!redisAvailable)` — `skipIf` evaluates at collection time, so the PING probe must complete BEFORE it: use a **top-level `await`** on a short-timeout probe (`Promise.race([client.connect()+ping, 1s timeout])`) at module scope:
 - two RedisClients simulating two processes: process A = startCacheSync subscriber; external publisher publishes a tags message → seeded NAPI cache entry evicted within 1s (poll)
 - publisher side: `cache.invalidate({tags})` with sync env set → message observed on the channel by a raw subscriber, correct shape, sender matches env token
 
@@ -136,4 +148,4 @@ Integration (`tests/cache-sync.integration.test.ts`): `test.skipIf(!redisAvailab
 
 ## Open questions resolved at plan-time
 
-- Bun RedisClient reconnect semantics: implementer must verify whether `subscribe` auto-resubscribes after a dropped connection; if not, the backoff loop re-creates the client and re-subscribes (invariant 3 either way).
+- ~~Bun RedisClient reconnect semantics~~ — RESOLVED at spec review (empirical): no auto-resubscribe; no `onclose` on boot-time unreachable host; subscribe promise never settles against a down host. Backoff loop re-creates the client + re-subscribes; connect raced against a timeout.
