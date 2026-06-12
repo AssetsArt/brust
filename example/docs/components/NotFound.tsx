@@ -29,7 +29,7 @@ export default function NotFound() {
           text: "(()=>{try{const t=localStorage.getItem('brust-docs-theme');if(t)document.documentElement.dataset.theme=t}catch{}})()",
         },
         { tag: 'meta', name: 'robots', content: 'noindex' },
-        { tag: 'link', rel: 'icon', href: '/favicon.ico' },
+        { tag: 'link', rel: 'icon', href: '/favicon.svg' },
       ]}
     >
       <main className="grid min-h-screen place-items-center px-6 py-16">
