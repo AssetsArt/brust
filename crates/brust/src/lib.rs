@@ -70,6 +70,32 @@ pub struct ServeOptions {
     /// deployments). Case-insensitive, trimmed. Only meaningful when TLS is
     /// configured (cert + key present). An unrecognized value is rejected.
     pub tls_min_version: Option<String>,
+    /// Optional global CORS policy. Omit to keep CORS disabled (byte-identical
+    /// default behavior: no `Access-Control-*` headers, OPTIONS still 405).
+    pub cors: Option<NapiCorsOptions>,
+}
+
+/// Global CORS policy (maps onto `brust_core::CorsConfig`). napi-rs camelCases
+/// the fields, so the TS runtime sends `origins`, `methods`, `headers`,
+/// `exposeHeaders`, `credentials`, `maxAgeSeconds`.
+#[napi(object)]
+pub struct NapiCorsOptions {
+    /// Allowed origins (exact scheme+host+port match). `['*']` — or any list
+    /// CONTAINING `'*'` — allows every origin (echoed as the literal `*`).
+    pub origins: Vec<String>,
+    /// Preflight `Access-Control-Allow-Methods`. Omit for the default
+    /// `GET,POST,PUT,PATCH,DELETE,OPTIONS`.
+    pub methods: Option<Vec<String>>,
+    /// Preflight `Access-Control-Allow-Headers`. Omit to echo the request's
+    /// `Access-Control-Request-Headers`.
+    pub headers: Option<Vec<String>>,
+    /// `Access-Control-Expose-Headers` on actual responses. Omit for none.
+    pub expose_headers: Option<Vec<String>>,
+    /// Emit `Access-Control-Allow-Credentials: true`. INVALID with a wildcard
+    /// origin — serve() throws at boot.
+    pub credentials: Option<bool>,
+    /// Preflight `Access-Control-Max-Age` seconds. Omit for 600.
+    pub max_age_seconds: Option<u32>,
 }
 
 /// Runtime-tunable server limits, all optional. Maps onto `server::Tuning`
@@ -174,6 +200,21 @@ pub fn begin_serve(opts: ServeOptions) -> NapiResult<()> {
             )));
         }
         state().set_action_prefix(p.clone());
+    }
+
+    // Optional global CORS policy: validate at boot (fail fast, loud) and set
+    // on the core state BEFORE `start` resolves it pre-accept-loop.
+    if let Some(c) = &opts.cors {
+        let cfg = brust_core::CorsConfig {
+            origins: c.origins.clone(),
+            methods: c.methods.clone(),
+            headers: c.headers.clone(),
+            expose_headers: c.expose_headers.clone(),
+            credentials: c.credentials.unwrap_or(false),
+            max_age_seconds: c.max_age_seconds,
+        };
+        cfg.validate().map_err(napi::Error::from_reason)?;
+        s.set_cors(Some(cfg));
     }
 
     if let Some(g) = &opts.generator {

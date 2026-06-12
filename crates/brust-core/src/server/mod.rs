@@ -18,6 +18,7 @@ use crate::routing::routes::MatchResult;
 use crate::server::body::{ResponseBody, channel_body, empty_body};
 
 pub mod body;
+mod cors;
 pub mod static_assets;
 pub mod tls;
 
@@ -88,6 +89,17 @@ impl Default for Tuning {
 
 static TUNING: std::sync::OnceLock<Tuning> = std::sync::OnceLock::new();
 
+/// Boot-resolved CORS policy (prebuilt `HeaderValue`s — see [`cors::ResolvedCors`]).
+/// `Some(None)` = resolved, CORS disabled; outer `None` only before `start` ran
+/// (unit tests exercising handlers without booting the server → CORS off).
+static CORS: std::sync::OnceLock<Option<cors::ResolvedCors>> = std::sync::OnceLock::new();
+
+/// Hot-path accessor for the boot-resolved CORS policy. `None` = disabled.
+#[inline]
+fn resolved_cors() -> Option<&'static cors::ResolvedCors> {
+    CORS.get().and_then(|c| c.as_ref())
+}
+
 /// Hot-path accessor. Returns the values set by `start`, or `Tuning::default()`
 /// if `start` has not run yet (unit tests that exercise handlers without
 /// booting the server). `Tuning` is `Copy`, so this is a cheap load.
@@ -112,6 +124,13 @@ pub fn start(
     // runs once per process (re-serve is rejected in begin_serve), so a
     // best-effort set is correct; the Err arm only fires if already set.
     let _ = TUNING.set(tuning);
+
+    // Resolve the boot-time CORS config ONCE into prebuilt header values before
+    // the accept loop (mirror of the powered_by resolution below): the hot path
+    // clones HeaderValues instead of re-joining strings per request. `set_cors`
+    // is boot-only (called before begin_serve → start), so this never observes
+    // a half-configured state.
+    let _ = CORS.set(state.cors().map(|c| cors::ResolvedCors::from_config(&c)));
 
     // The accept-concurrency ceiling: the larger of the historical accept queue
     // depth and any explicit connWorkers override (both default-coupled to the
@@ -256,11 +275,28 @@ pub fn start(
                         let state = Arc::clone(&state);
                         let powered_by = powered_by.clone();
                         async move {
+                            // CORS stamping happens HERE and ONLY here — the single
+                            // chokepoint that sees every response path (static assets,
+                            // error helpers, L1 cache HITs, response_from_meta variants,
+                            // chunked/streaming, SSE/WS rejections and upgrades). Never
+                            // stamp inside response_from_meta/chunked_response_from_meta/
+                            // dispatch: the L1 cache captures framed bytes there, so a
+                            // per-request echoed Origin would poison a SHARED cache entry
+                            // across origins. Clone the Origin header BEFORE `req` moves
+                            // into handle_request.
+                            let origin = if resolved_cors().is_some() {
+                                req.headers().get(http::header::ORIGIN).cloned()
+                            } else {
+                                None
+                            };
                             let mut resp = handle_request(req, state).await?;
                             if let Some(v) = powered_by {
                                 resp.headers_mut()
                                     .entry(http::header::HeaderName::from_static("x-powered-by"))
                                     .or_insert(v);
+                            }
+                            if let Some(c) = resolved_cors() {
+                                c.stamp_response(resp.headers_mut(), origin.as_ref());
                             }
                             Ok::<_, Infallible>(resp)
                         }
@@ -439,6 +475,24 @@ async fn handle_request(
             return Ok(body::error_404());
         }
         // else: fall through to action handling below.
+    }
+
+    // ----- CORS preflight -----
+    // OPTIONS + Origin + Access-Control-Request-Method + allowed origin →
+    // answered here in Rust with a full 204 (never reaches the worker/render
+    // pipeline), BEFORE the method gate below would 405 it. Any other OPTIONS
+    // (no preflight headers, disallowed origin, or no cors config) falls
+    // through to the unchanged 405 paths — the method gate for general paths,
+    // `Method::from_http` in handle_action for paths under the action prefix.
+    if method == "OPTIONS"
+        && let Some(c) = resolved_cors()
+        && let Some(origin) = req.headers().get(http::header::ORIGIN)
+        && req
+            .headers()
+            .contains_key(http::header::ACCESS_CONTROL_REQUEST_METHOD)
+        && let Some(acao) = c.allow_origin_value(origin)
+    {
+        return Ok(c.preflight_response(acao, req.headers()));
     }
 
     // ----- method gate -----

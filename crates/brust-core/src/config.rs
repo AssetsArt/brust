@@ -24,6 +24,59 @@ use crate::routing::action::ActionRouter;
 use crate::routing::routes::RouteTable;
 use crate::server::tls::TlsConfig;
 
+/// Global CORS policy, set once at boot (via `ServeOptions.cors` in the napi
+/// binding). `None` (the default) = CORS disabled, byte-identical behavior.
+///
+/// Origin matching is an exact string match (scheme+host+port) against
+/// `origins`; a list CONTAINING `"*"` is treated as wildcard (every origin
+/// allowed, `Access-Control-Allow-Origin: *`), so `["*", "https://x.com"]`
+/// cannot dodge the credentials+wildcard validation. No wildcard-subdomain
+/// matching in v1.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CorsConfig {
+    /// Allowed origins. `["*"]` (or any list containing `"*"`) = any origin.
+    pub origins: Vec<String>,
+    /// Preflight `Access-Control-Allow-Methods`. `None` → default
+    /// `GET,POST,PUT,PATCH,DELETE,OPTIONS`.
+    pub methods: Option<Vec<String>>,
+    /// Preflight `Access-Control-Allow-Headers`. `None` → echo the request's
+    /// `Access-Control-Request-Headers`.
+    pub headers: Option<Vec<String>>,
+    /// `Access-Control-Expose-Headers` on actual responses. `None` → none.
+    pub expose_headers: Option<Vec<String>>,
+    /// Emit `Access-Control-Allow-Credentials: true`. INVALID with a wildcard
+    /// origin — [`CorsConfig::validate`] rejects the combination at boot.
+    pub credentials: bool,
+    /// Preflight `Access-Control-Max-Age` seconds. `None` → 600.
+    pub max_age_seconds: Option<u32>,
+}
+
+impl CorsConfig {
+    /// True when the configured origin list contains the literal `"*"`.
+    pub fn is_wildcard(&self) -> bool {
+        self.origins.iter().any(|o| o == "*")
+    }
+
+    /// Boot-time validation (the napi binding mirrors this on the TS side):
+    /// `origins` must be non-empty, and `credentials` may not be combined with
+    /// a wildcard origin (browsers silently reject that combination — make it
+    /// loud at boot instead).
+    pub fn validate(&self) -> Result<(), String> {
+        if self.origins.is_empty() {
+            return Err("cors.origins must be non-empty".to_string());
+        }
+        if self.credentials && self.is_wildcard() {
+            return Err(
+                "cors.credentials cannot be combined with a wildcard origin '*' \
+                 (browsers reject Access-Control-Allow-Origin: * with credentials); \
+                 list explicit origins instead"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+}
+
 /// The pure server state. Shared as `Arc<AppState>` between the napi binding,
 /// the accept loop, and every connection task.
 pub struct AppState {
@@ -90,6 +143,11 @@ pub struct AppState {
     /// binding via [`AppState::set_tls`] before `begin_serve`; the accept loop
     /// reads it via [`AppState::tls`].
     pub(crate) tls: RwLock<Option<TlsConfig>>,
+    /// Optional global CORS policy. `None` = CORS disabled (the default,
+    /// byte-identical behavior). Set ONCE at boot by the binding via
+    /// [`AppState::set_cors`] before `begin_serve`; `server::start` resolves it
+    /// into prebuilt header values before the accept loop (mirror of `tls`).
+    pub(crate) cors: RwLock<Option<CorsConfig>>,
 }
 
 impl Default for AppState {
@@ -126,6 +184,7 @@ impl AppState {
             action_prefix: RwLock::new("/_brust/action".to_string()),
             generator: RwLock::new(None),
             tls: RwLock::new(None),
+            cors: RwLock::new(None),
         }
     }
 
@@ -141,6 +200,21 @@ impl AppState {
     /// Boot-only: called once before the accept loop. Clones the (tiny) config; do not call per-connection.
     pub fn tls(&self) -> Option<TlsConfig> {
         self.tls.read().clone()
+    }
+
+    // ----- CORS -----
+
+    /// Configure the global CORS policy. Pass `None` to keep CORS disabled.
+    /// Set once at boot before `begin_serve` (mirror of [`AppState::set_tls`]).
+    pub fn set_cors(&self, cfg: Option<CorsConfig>) {
+        *self.cors.write() = cfg;
+    }
+
+    /// The configured CORS policy, if any. `None` = disabled. Boot-only: called
+    /// once by `server::start` before the accept loop (clones the tiny config);
+    /// do not call per-request.
+    pub fn cors(&self) -> Option<CorsConfig> {
+        self.cors.read().clone()
     }
 
     // ----- dev mode -----
@@ -389,5 +463,55 @@ mod tests {
         assert_eq!(s.generator(), None);
         s.set_generator("brust/1.2.3".to_string());
         assert_eq!(s.generator(), Some("brust/1.2.3".to_string()));
+    }
+
+    fn cors_cfg(origins: &[&str], credentials: bool) -> CorsConfig {
+        CorsConfig {
+            origins: origins.iter().map(|s| s.to_string()).collect(),
+            methods: None,
+            headers: None,
+            expose_headers: None,
+            credentials,
+            max_age_seconds: None,
+        }
+    }
+
+    #[test]
+    fn cors_default_none_set_get() {
+        let s = AppState::new();
+        assert_eq!(s.cors(), None);
+        let cfg = cors_cfg(&["https://a.example"], false);
+        s.set_cors(Some(cfg.clone()));
+        assert_eq!(s.cors(), Some(cfg));
+        s.set_cors(None);
+        assert_eq!(s.cors(), None);
+    }
+
+    #[test]
+    fn cors_validate_rejects_empty_origins() {
+        let err = cors_cfg(&[], false).validate().unwrap_err();
+        assert!(err.contains("non-empty"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn cors_validate_rejects_credentials_with_wildcard() {
+        let err = cors_cfg(&["*"], true).validate().unwrap_err();
+        assert!(err.contains("wildcard"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn cors_validate_rejects_credentials_with_wildcard_in_mixed_list() {
+        // A list CONTAINING '*' is wildcard — `['*', 'https://x.com']` cannot
+        // dodge the credentials check.
+        let err = cors_cfg(&["https://x.com", "*"], true)
+            .validate()
+            .unwrap_err();
+        assert!(err.contains("wildcard"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn cors_validate_accepts_explicit_origins_with_credentials_and_bare_wildcard() {
+        assert!(cors_cfg(&["https://a.example"], true).validate().is_ok());
+        assert!(cors_cfg(&["*"], false).validate().is_ok());
     }
 }
