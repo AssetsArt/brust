@@ -44,7 +44,7 @@ export default function Home({ version }: { version: string }) {
           tag: 'script',
           text: "(()=>{try{const t=localStorage.getItem('brust-docs-theme');if(t)document.documentElement.dataset.theme=t}catch{}})()",
         },
-        { tag: 'link', rel: 'icon', href: '/favicon.ico' }
+        { tag: 'link', rel: 'icon', href: '/favicon.ico' },
       ]}
     >
       {/* ── Full-viewport grainient hero (dark in both themes) ─────────── */}
