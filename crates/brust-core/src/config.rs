@@ -82,6 +82,9 @@ pub struct AppState {
     pub(crate) public_assets: RwLock<HashMap<String, PathBuf>>,
     pub(crate) action_router: RwLock<ActionRouter>,
     pub(crate) action_prefix: RwLock<String>,
+    /// `X-Powered-By` value (e.g. `brust/0.1.48-alpha`). None → header not
+    /// stamped (embedders not using the TS runtime). Set once at begin_serve.
+    pub(crate) generator: RwLock<Option<String>>,
     /// Optional in-process TLS termination config (cert + key paths). `None` =
     /// plaintext (the default, unchanged behavior). Set ONCE at boot by the
     /// binding via [`AppState::set_tls`] before `begin_serve`; the accept loop
@@ -121,6 +124,7 @@ impl AppState {
             public_assets: RwLock::new(HashMap::new()),
             action_router: RwLock::new(ActionRouter::new()),
             action_prefix: RwLock::new("/_brust/action".to_string()),
+            generator: RwLock::new(None),
             tls: RwLock::new(None),
         }
     }
@@ -265,6 +269,16 @@ impl AppState {
         f(&self.action_prefix.read())
     }
 
+    /// Set the `X-Powered-By` value, stamped on every response. Set once at boot.
+    pub fn set_generator(&self, value: String) {
+        *self.generator.write() = Some(value);
+    }
+
+    /// The configured `X-Powered-By` value, if any. `None` = header not stamped.
+    pub fn generator(&self) -> Option<String> {
+        self.generator.read().clone()
+    }
+
     /// True if `path` (caller MUST have stripped the query string already) is the
     /// action prefix itself or a path under it. Allocation-free.
     pub fn path_under_action_prefix(&self, path: &str) -> bool {
@@ -362,5 +376,18 @@ impl AppState {
     pub fn reconfigure_caches(&self, response_max: u64, page_max: u64) {
         *self.cache.write() = Arc::new(ResponseCache::with_capacity(response_max));
         *self.page_cache.write() = Arc::new(PageCache::new(page_max));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generator_default_none_set_get() {
+        let s = AppState::new();
+        assert_eq!(s.generator(), None);
+        s.set_generator("brust/1.2.3".to_string());
+        assert_eq!(s.generator(), Some("brust/1.2.3".to_string()));
     }
 }

@@ -145,6 +145,7 @@ export interface ParsedArgs {
   target: string // --target value (default 'auto')
   ssg: boolean // --ssg — prerender static routes after the build
   ssgOut: string | null // --ssg-out value (absolute); null → <outDir>/static computed later
+  generatorVersion: boolean // false ⇔ --no-generator-version (name-only generator tag)
 }
 
 /** Parse `brust build` argv. Pure (no fs access, no process.exit) so it's
@@ -155,6 +156,7 @@ export function parseArgs(args: string[]): ParsedArgs {
   let target = 'auto'
   let ssg = false
   let ssgOut: string | undefined
+  let generatorVersion = true
 
   for (let i = 0; i < args.length; i++) {
     const a = args[i]
@@ -177,6 +179,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       }
     } else if (a === '--ssg') {
       ssg = true
+    } else if (a === '--no-generator-version') {
+      generatorVersion = false
     } else if (a === '--ssg-out') {
       ssgOut = args[++i]
       if (!ssgOut) {
@@ -214,7 +218,7 @@ export function parseArgs(args: string[]): ParsedArgs {
   }
   const ssgOutPath = ssgOut ? (isAbsolute(ssgOut) ? ssgOut : resolve(cwd, ssgOut)) : null
 
-  return { entry: entryPath, outDir: outPath, target, ssg, ssgOut: ssgOutPath }
+  return { entry: entryPath, outDir: outPath, target, ssg, ssgOut: ssgOutPath, generatorVersion }
 }
 
 export async function runBuild(args: string[]): Promise<void> {
@@ -322,6 +326,22 @@ export async function runBuild(args: string[]): Promise<void> {
   // the same dual-emit the jinja mirror below does). Strict no-op without md
   // routes: no files, no dirs, byte-identical dist.
   const jinjaDir = path.join(outDir, 'jinja')
+
+  // Generator tag decision — baked at build time into BOTH jinja dirs so every
+  // runtime path (prebuilt dist reads <distDir>/jinja; dev/source reads
+  // .brust/jinja) picks up the same artifact. Runs unconditionally: even a
+  // React-only app with zero native/md routes needs the artifact so the React
+  // stream injector and X-Powered-By thread share the same decision.
+  // The .brust/jinja write is defense-in-depth: the 4.1 mirror cp below
+  // overwrites it with identical content, but this write must NOT be removed —
+  // it keeps the artifact correct even if that cp ever becomes conditional.
+  {
+    const { generatorStrings, writeGeneratorArtifact } = await import('../generator.ts')
+    const gen = generatorStrings(parsed.generatorVersion)
+    writeGeneratorArtifact(jinjaDir, gen)
+    writeGeneratorArtifact(path.join(process.cwd(), '.brust', 'jinja'), gen)
+  }
+
   let mdIslands = new Map<string, string>()
   if (existsSync(routesFile) && loadedRoutes !== undefined) {
     const { emitMdArtifacts } = await import('../md/emit.ts')

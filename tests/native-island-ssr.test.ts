@@ -113,6 +113,10 @@ beforeAll(async () => {
   // Instance-based context key (single instance → instance 0), NOT the old
   // component-named `island_Counter_html`.
   expect(jinjaSrc).toContain('island_0_html')
+  // This fixture is a FRAGMENT template (no BrustPage document) → spec
+  // exclusion: the generator meta must NOT be inserted. Document coverage
+  // lives in runtime/cli/native-routes-emit.test.ts.
+  expect(jinjaSrc).not.toContain('name="generator"')
 
   // Two-instance page (acceptance S3): ONE page, TWO <Island component={Counter}>
   // reusing the SAME Counter — instance 0 client-only, instance 1 ssr, distinct

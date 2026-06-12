@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { createRequire } from 'node:module'
 import { dirname, relative, resolve } from 'node:path'
 import { buildDevClientTag } from '../dev/client.ts'
+import { insertGeneratorMeta, resolveGenerator } from '../generator.ts'
 import { islandChunkBasename } from '../islands/chunk-id.ts'
 import { DIRECTIVES_BOOTSTRAP, ISLANDS_IMPORTMAP_AND_BOOTSTRAP } from '../islands/importmap.ts'
 
@@ -527,6 +528,12 @@ export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<vo
     nativeRoutes.length > 0 &&
     (await import('../native/build.ts')).scanDirectiveComponents(opts.entryFile).size > 0
 
+  // Generator meta: resolved INTERNALLY from the out dir's artifact (NOT a
+  // caller param) — emit re-runs from five call sites (build, dev, boot
+  // staleness, md boot re-emit, dev HMR) and a param would silently drop the
+  // tag on re-emit. Fallback (no artifact) = version-on defaults.
+  const generatorMeta = resolveGenerator(opts.outDir).meta
+
   const built: string[] = []
   for (const r of nativeRoutes) {
     const name = r.nativeTemplate!
@@ -632,8 +639,9 @@ export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<vo
     // injection, so splice the /_brust/dev WS script in here. reEmitJinja() runs
     // this on every hot reload, so the script is always present in dev.
     const withDirectives = bakeDirectivesIfUsed(compiled.template, hasDirectives)
+    const withGenerator = insertGeneratorMeta(withDirectives, generatorMeta)
     const template =
-      process.env.BRUST_DEV === '1' ? injectDevClientIntoTemplate(withDirectives) : withDirectives
+      process.env.BRUST_DEV === '1' ? injectDevClientIntoTemplate(withGenerator) : withGenerator
     writeFileSync(outPath, template)
     built.push(name)
 

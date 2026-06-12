@@ -12,6 +12,7 @@ import { injectDevClient } from './inject-dev-client.ts'
 import { injectActionPrefix, getActionPrefixSnippet } from './inject-action-prefix.ts'
 import { injectBrustStore, buildStoreScripts } from './inject-store.ts'
 import { getDevClientSnippet } from '../dev/inject.ts'
+import { getGeneratorMeta, injectGeneratorMeta } from './inject-generator.ts'
 
 export interface RenderBranchStreamingArgs {
   element: ReactNode
@@ -175,6 +176,7 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
             let body = concatBuffers(buffer, islandsUsed)
             const perRouteHrefs = args.routePath ? getCssHrefsForRoute(args.routePath) : []
             body = injectCssLink(body, [...getCssHrefs(), ...perRouteHrefs])
+            body = injectGeneratorMeta(body, getGeneratorMeta())
             body = injectDevClient(body, getDevClientSnippet())
             body = injectActionPrefix(body, getActionPrefixSnippet())
             body = injectBrustStore(body, args.storeSnapshot ?? null)
@@ -240,13 +242,15 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
             const devTag = getDevClientSnippet() ?? ''
             const prefixTag = getActionPrefixSnippet() ?? ''
             const storeTag = buildStoreScripts(args.storeSnapshot ?? null)
+            const genTag = getGeneratorMeta() ?? ''
             if (
               linkTagsStr.length > 0 ||
               devTag.length > 0 ||
               prefixTag.length > 0 ||
-              storeTag.length > 0
+              storeTag.length > 0 ||
+              genTag.length > 0
             ) {
-              const prepend = encoder.encode(linkTagsStr + prefixTag + devTag + storeTag)
+              const prepend = encoder.encode(genTag + linkTagsStr + prefixTag + devTag + storeTag)
               const out = new Uint8Array(flushed.length + prepend.length)
               out.set(flushed, 0)
               out.set(prepend, flushed.length)

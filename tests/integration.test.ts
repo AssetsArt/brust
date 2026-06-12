@@ -2046,6 +2046,43 @@ test('ssg fallback: concrete param without header renders normally', async () =>
   expect(body).not.toContain('data-brust-fallback-root')
 })
 
+// ----- Generator tag + X-Powered-By header -----
+//
+// NOTE: native-route meta coverage is NOT asserted here — the fixture runs in
+// SOURCE mode (no build) so native jinja templates are not registered. React
+// document routes (`/` and `/blog/{slug}`) exercise both the buffered-splice
+// (no <Suspense>) and the React-SSR paths; they both carry a Layout whose
+// <head> is present in the response. `/blog/hello-world` is chosen as the
+// second doc because it is already used elsewhere and has no middleware gate.
+
+test('generator: meta tag present on React documents', async () => {
+  const port = sharedPort()
+  for (const p of ['/', '/blog/hello-world']) {
+    const res = await fetch(`http://127.0.0.1:${port}${p}`)
+    const html = await res.text()
+    const hits = html.match(/<meta name="generator" content="brust [0-9A-Za-z.+-]+"\/>/g) ?? []
+    expect(hits.length).toBe(1)
+  }
+})
+
+test('generator: X-Powered-By on every response kind', async () => {
+  const expected = /^brust\/[0-9A-Za-z.+-]+$/
+  const port = sharedPort()
+  for (const p of ['/', '/_brust/islands/_bootstrap.js']) {
+    const res = await fetch(`http://127.0.0.1:${port}${p}`)
+    expect(res.headers.get('x-powered-by') ?? '').toMatch(expected)
+  }
+  // Action/JSON responses carry it too (the stamp lives at the service layer,
+  // not the HTML path).
+  const action = await fetch(`http://127.0.0.1:${port}/_brust/action/notes`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: 'header probe' }),
+  })
+  expect(action.status).toBe(200)
+  expect(action.headers.get('x-powered-by') ?? '').toMatch(expected)
+})
+
 // NOTE: native-route HTTP coverage — including the S9 notFound()/redirect()
 // status sentinels — lives in tests/native-island-ssr.test.ts, which runs a
 // `brust build` pre-flight so the fixture's jinja templates are registered.

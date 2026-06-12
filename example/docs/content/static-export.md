@@ -171,6 +171,10 @@ The export is a plain directory. For Cloudflare Pages (this site):
 | Build command | `bun install && bun run build:ssg` *(whatever runs `brust build … --ssg`)* |
 | Build output directory | `dist/static` |
 
+Prerendered files include the `<meta name="generator" content="brust …">` tag,
+but the `X-Powered-By` header exists only when the brust server serves the
+response — static hosts won't send it.
+
 The same directory works on any static host that serves `<path>/index.html`
 for `<path>` and a root `404.html` for unknown paths (Pages, Netlify, GitHub
 Pages, `nginx try_files`). Avoid catch-all `_redirects` 200 rewrites for

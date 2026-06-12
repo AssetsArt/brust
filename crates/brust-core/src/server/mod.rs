@@ -176,6 +176,26 @@ pub fn start(
 
             let sem = Arc::new(tokio::sync::Semaphore::new(accept_cap));
 
+            // X-Powered-By, stamped on EVERY response at the service layer (render,
+            // action, static, cache HIT, SAB fast-lane, streaming, WS 101 — all return
+            // through handle_request). insert-if-absent: user middleware headers win.
+            // Cached framed bytes are captured pre-stamp inside dispatch, so stamping
+            // HITs here can never duplicate.
+            // The napi validation (printable ASCII) is a strict subset of what
+            // HeaderValue accepts, so the Err arm is unreachable today — the
+            // warn keeps a relaxed future validator from silently dropping the
+            // header instead of surfacing the mistake.
+            let powered_by: Option<http::HeaderValue> =
+                state.generator().and_then(|s| {
+                    match http::HeaderValue::from_str(&s) {
+                        Ok(v) => Some(v),
+                        Err(e) => {
+                            warn!(value = %s, error = %e, "generator string rejected by HeaderValue — X-Powered-By disabled");
+                            None
+                        }
+                    }
+                });
+
             // Graceful drain wiring. `drain_sig` (watch) tells each in-flight
             // connection to finish its current request then close (refuse new
             // keep-alive requests). `conn_token` (mpsc) is a drain barrier: every
@@ -223,6 +243,7 @@ pub fn start(
                 };
 
                 let state = Arc::clone(&state);
+                let powered_by = powered_by.clone();
                 let read_buf_cap = tuning.read_buf_cap;
                 let max_req = tuning.max_request_bytes;
                 let acceptor = acceptor.clone();
@@ -231,7 +252,19 @@ pub fn start(
                 tokio::spawn(async move {
                     let _permit = permit; // released when the connection ends
                     let _conn_token = conn_token; // drain barrier — held for the conn's life
-                    let svc = service_fn(move |req| handle_request(req, Arc::clone(&state)));
+                    let svc = service_fn(move |req| {
+                        let state = Arc::clone(&state);
+                        let powered_by = powered_by.clone();
+                        async move {
+                            let mut resp = handle_request(req, state).await?;
+                            if let Some(v) = powered_by {
+                                resp.headers_mut()
+                                    .entry(http::header::HeaderName::from_static("x-powered-by"))
+                                    .or_insert(v);
+                            }
+                            Ok::<_, Infallible>(resp)
+                        }
+                    });
 
                     // The two branches produce different concrete IO types
                     // (TlsStream vs plain TcpStream), so each calls the generic

@@ -55,6 +55,10 @@ pub struct ServeOptions {
     pub tuning: Option<ServeTuning>,
     /// Optional action prefix override. Defaults to `/_brust/action`.
     pub action_prefix: Option<String>,
+    /// `X-Powered-By` header value (e.g. `brust/0.1.48-alpha`). Single-line
+    /// ASCII; omit to skip the header. The TS runtime always passes it (name
+    /// mandatory, version per the build's generator.json).
+    pub generator: Option<String>,
     /// Optional in-process TLS: PEM certificate (chain) path. When BOTH this and
     /// `tls_key_path` are present, the server terminates TLS itself (ALPN
     /// h2+http/1.1). Omit either to serve plaintext (unchanged default).
@@ -170,6 +174,16 @@ pub fn begin_serve(opts: ServeOptions) -> NapiResult<()> {
             )));
         }
         state().set_action_prefix(p.clone());
+    }
+
+    if let Some(g) = &opts.generator {
+        let g = g.trim();
+        if g.is_empty() || !g.bytes().all(|b| b.is_ascii_graphic() || b == b' ') {
+            return Err(napi::Error::from_reason(format!(
+                "generator must be non-empty single-line printable ASCII: {g:?}"
+            )));
+        }
+        state().set_generator(g.to_string());
     }
 
     // Optional minimum TLS version. Parsed up front so an invalid value is
