@@ -21,6 +21,7 @@ import SlowFresh     from './pages/SlowFresh'
 import StoreDemo     from './pages/StoreDemo'
 import { counter }   from './stores/counter'
 import NativeProfile from './pages/NativeProfile'
+import NativeSection from './pages/NativeSection'
 import NativeNestedMap from './pages/NativeNestedMap'
 import NativeDataAttr  from './pages/NativeDataAttr'
 import NativeOutletLayout from './pages/NativeOutletLayout'
@@ -292,6 +293,25 @@ export const routes = defineRoutes([
     Component: NativeInline,
     native: true,
     loader: async () => ({ label: 'Hi', strong: true, count: { start: 0, label: 'c' } }),
+  },
+
+  // R2+R3 — compiler inline relaxations E2E. One route, three features:
+  //   F1: loader-provided CSS rendered as dynamic <style> head text (the css
+  //       value carries a `</style><script>` breakout attempt that style_safe
+  //       must scrub to `<\/`),
+  //   F2: HeroSection's const-bound style object rendered on its root,
+  //   F3: SectionRenderer's SECTIONS map dispatched by the {key} param —
+  //       /hero and /banner render different branches; unknown keys render
+  //       an empty dispatch slot.
+  {
+    path: '/_test/native-section/{key}',
+    Component: NativeSection,
+    native: true,
+    loader: async ({ params }) => ({
+      sectionKey: params.key,
+      title: `Section ${params.key}`,
+      css: '.shop-token{color:#b45309}/*</style><script>boom*/',
+    }),
   },
 
   // Test-only routes — failure modes + middleware + cache.

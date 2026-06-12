@@ -169,7 +169,13 @@ A valued `x-behavior` or more than one marker is a compile error.
 Native templates bind data; they do not run arbitrary JavaScript. The positive
 space: member-path expressions, `.map()` over member paths (nested OK), inline
 conditionals in child position, template literals and a small allowlist of
-string methods inside inlined components. Notable negatives, from building
+string methods inside inlined components, local `const` bindings inside
+inlined components (`const rootStyle = {…}` — substituted at compile time;
+`let`/`var` and destructuring declarations are rejected), and component-map
+dispatch (`const Comp = SECTIONS[key]; return <Comp …/>` with the map defined
+in the same file — lowers to an if-chain inlining every mapped component; a
+key miss renders empty; if any mapped component can't be inlined the whole
+dispatch degrades to an SSR slot). Notable negatives, from building
 this docs site (see also [Rendering Modes](/docs/rendering)):
 
 - **No conditional attributes.** `aria-current={item.active ? 'page' : undefined}`
