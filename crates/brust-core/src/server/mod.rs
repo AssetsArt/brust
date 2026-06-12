@@ -181,9 +181,20 @@ pub fn start(
             // through handle_request). insert-if-absent: user middleware headers win.
             // Cached framed bytes are captured pre-stamp inside dispatch, so stamping
             // HITs here can never duplicate.
-            let powered_by: Option<http::HeaderValue> = state
-                .generator()
-                .and_then(|s| http::HeaderValue::from_str(&s).ok());
+            // The napi validation (printable ASCII) is a strict subset of what
+            // HeaderValue accepts, so the Err arm is unreachable today — the
+            // warn keeps a relaxed future validator from silently dropping the
+            // header instead of surfacing the mistake.
+            let powered_by: Option<http::HeaderValue> =
+                state.generator().and_then(|s| {
+                    match http::HeaderValue::from_str(&s) {
+                        Ok(v) => Some(v),
+                        Err(e) => {
+                            warn!(value = %s, error = %e, "generator string rejected by HeaderValue — X-Powered-By disabled");
+                            None
+                        }
+                    }
+                });
 
             // Graceful drain wiring. `drain_sig` (watch) tells each in-flight
             // connection to finish its current request then close (refuse new
@@ -241,7 +252,6 @@ pub fn start(
                 tokio::spawn(async move {
                     let _permit = permit; // released when the connection ends
                     let _conn_token = conn_token; // drain barrier — held for the conn's life
-                    let powered_by = powered_by.clone();
                     let svc = service_fn(move |req| {
                         let state = Arc::clone(&state);
                         let powered_by = powered_by.clone();
