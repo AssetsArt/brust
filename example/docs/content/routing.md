@@ -134,7 +134,33 @@ const requireAuth: Middleware = async (req, next) => {
 
 Return a `RouteResponse` (`{ status, body, headers?, contentType? }`) without
 calling `next()` to short-circuit, or call `await next()` and mutate the
-result. Two caveats:
+result.
+
+The request also carries the matched route context:
+
+- `req.params` — the matched route params, percent-decoded, the **same values
+  the loader ctx receives**. Authorize against `{id}` directly instead of
+  re-parsing the raw URL. Empty object for routes without params (and for
+  SSE/WS requests, whose envelope carries no params yet).
+- `req.locals` — a request-scoped bag (`Record<string, unknown>`) middleware
+  writes and loaders/handlers read. One object identity flows through the
+  whole chain, so locals written before `next()` are visible downstream;
+  writes after `next()` returns happen after the loader already ran.
+
+```ts
+const attachUser: Middleware = async (req, next) => {
+  if (req.params.id === 'mine' && !req.cookies.session) {
+    return { status: 403, body: 'no entry' }
+  }
+  req.locals.user = await verifySession(req.cookies.session)
+  return next() // loader reads req.locals.user — one verification path
+}
+
+// later, in the route:
+loader: async ({ req }) => ({ user: req.locals.user })
+```
+
+Two caveats:
 
 - The response **cache lookup happens before any middleware** runs.
 - On native routes, mutations made *after* `next()` (status, headers) are not
@@ -214,6 +240,30 @@ loader: async ({ params }) => {
 `Location` header with no render; the status defaults to `302` and accepts
 `301 | 302 | 303 | 307 | 308`. In a nested chain, the first verdict
 encountered top-down wins and the remaining loaders are skipped.
+
+## httpError
+
+For any *other* error status, **throw** `httpError(status, body?, opts?)` from
+a loader — React or native, same form on both:
+
+```ts
+import { httpError } from 'brustjs/routes'
+
+loader: async ({ req }) => {
+  const user = req.locals.user // written by your auth middleware
+  if (!user) throw httpError(403, 'no entry', { headers: { 'www-authenticate': 'Cookie' } })
+  return { user }
+}
+```
+
+The response short-circuits with exactly that status — like a middleware
+rejection, not an error: it never reaches the `errorBoundary` and never logs
+as a 500. A string body ships as `text/plain` (override via
+`opts.contentType`); an object body is JSON-encoded. The status must be an
+integer in **400–599** — 3xx is `redirect()`'s job, and a 404 that renders a
+page is `notFound()`'s. On a client-side navigation the non-2xx response
+triggers the navigator's full-reload fallback, so the user lands on the real
+document response.
 
 ## Next
 

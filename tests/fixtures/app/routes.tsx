@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import path from 'node:path'
 import {
   defineRoutes,
+  httpError,
   mdRoutes,
   notFound,
   redirect,
@@ -56,6 +57,9 @@ import AdminUserThrow      from './components/AdminUserThrow'
 import AdminErrorBoundary  from './components/AdminErrorBoundary'
 import SsgBlogPost        from './components/SsgBlogPost'
 import SsgFallbackPost    from './components/SsgFallbackPost'
+import LocalsDemo          from './components/LocalsDemo'
+import ForbiddenPage       from './components/ForbiddenPage'
+import MwParamsPage        from './components/MwParamsPage'
 
 // md component registry (task 2.10): the THREE-identity rule — the md tag name,
 // the mdRoutes `components` key, and these default-import idents must all match.
@@ -101,6 +105,27 @@ const ssgFallbackData: Middleware = async (req, _next) => {
     body: JSON.stringify({ title: `client:${slug}` }),
     contentType: 'application/json; charset=utf-8',
   }
+}
+
+// R6 — middleware writes request-scoped locals (from cookie + matched params);
+// the /locals-demo loader reads the SAME req object downstream.
+const attachUser: Middleware = async (req, next) => {
+  req.locals.user = req.cookies['user'] ?? 'anon'
+  req.locals.paramCount = Object.keys(req.params).length
+  return next()
+}
+
+// R6 — middleware sees the matched route params (no raw-URL re-parsing):
+// short-circuits 412 when `{id}` is the literal 'blocked'.
+const blockParam: Middleware = async (req, next) => {
+  if (req.params.id === 'blocked') {
+    return {
+      status: 412,
+      body: `blocked:${req.params.id}`,
+      contentType: 'text/plain; charset=utf-8',
+    }
+  }
+  return next()
 }
 
 const timeIt: Middleware = async (_req, next) => {
@@ -354,6 +379,46 @@ export const routes = defineRoutes([
   },
   { path: '/protected',    Component: Protected,    middleware: [authRequired] },
   { path: '/with-header',  Component: WithHeader,   middleware: [timeIt] },
+
+  // R6 — middleware params/locals. /locals-demo: middleware writes
+  // req.locals (cookie + params), loader returns it, page renders it.
+  // /mw-params/{id}: middleware authorizes against the matched param.
+  {
+    path: '/locals-demo',
+    Component: LocalsDemo,
+    middleware: [attachUser],
+    loader: async ({ req }) => ({
+      user: String(req.locals.user),
+      paramCount: Number(req.locals.paramCount),
+    }),
+  },
+  {
+    path: '/mw-params/{id}',
+    Component: MwParamsPage,
+    middleware: [blockParam],
+    loader: async () => ({}),
+  },
+
+  // R7 — loader-thrown httpError() short-circuits with an arbitrary status.
+  // React path: 403 + text body + custom header (never renders ForbiddenPage,
+  // never reaches an errorBoundary). Native path reuses NativeProfile's
+  // compiled template route shape (the way /_test/native-notfound does) —
+  // the template is never rendered.
+  {
+    path: '/forbidden',
+    Component: ForbiddenPage,
+    loader: async () => {
+      throw httpError(403, 'no entry', { headers: { 'x-reason': 'test' } })
+    },
+  },
+  {
+    path: '/_test/native-forbidden/{user}',
+    Component: NativeProfile,
+    native: true,
+    loader: async () => {
+      throw httpError(403, 'native no entry')
+    },
+  },
 
   // Test-only routes — server actions (NotePage/WhoAmIPage host the
   // islands that call the actions defined in tests/fixtures/app/actions.ts).

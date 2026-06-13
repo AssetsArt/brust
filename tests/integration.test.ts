@@ -361,6 +361,69 @@ test('errorBoundary 500 path does not pick up middleware-only headers', async ()
   expect(body).toContain('CrashBoundary')
 })
 
+// ----- R6: middleware params/locals -----
+
+test('locals: middleware-written req.locals reach the loader and render', async () => {
+  const port = sharedPort()
+  const r = await fetch(`http://127.0.0.1:${port}/locals-demo`, {
+    headers: { cookie: 'user=alice' },
+  })
+  expect(r.status).toBe(200)
+  const body = await r.text()
+  // attachUser middleware wrote req.locals.user from the cookie; the loader
+  // read it off the SAME req object and the page rendered it.
+  expect(body).toContain('locals-user:alice')
+  // /locals-demo has no params → middleware saw an empty (but present) bag.
+  expect(body).toContain('locals-params:0')
+})
+
+test('locals: fresh bag per request (no cookie → anon, no leak from prior request)', async () => {
+  const port = sharedPort()
+  const r = await fetch(`http://127.0.0.1:${port}/locals-demo`)
+  expect(r.status).toBe(200)
+  expect(await r.text()).toContain('locals-user:anon')
+})
+
+test('middleware sees matched route params: 412 short-circuit on blocked id', async () => {
+  const port = sharedPort()
+  const r = await fetch(`http://127.0.0.1:${port}/mw-params/blocked`)
+  expect(r.status).toBe(412)
+  expect(await r.text()).toBe('blocked:blocked')
+})
+
+test('middleware sees matched route params: non-blocked id renders normally', async () => {
+  const port = sharedPort()
+  const r = await fetch(`http://127.0.0.1:${port}/mw-params/ok`)
+  expect(r.status).toBe(200)
+  const body = (await r.text()).replace(/<!--\s*-->/g, '')
+  expect(body).toContain('id:ok')
+})
+
+// ----- R7: loader-thrown httpError() -----
+
+test('httpError: React loader 403 with body + content-type + custom header', async () => {
+  const port = sharedPort()
+  const r = await fetch(`http://127.0.0.1:${port}/forbidden`)
+  expect(r.status).toBe(403)
+  expect(r.headers.get('content-type')).toBe('text/plain; charset=utf-8')
+  expect(r.headers.get('x-reason')).toBe('test')
+  const body = await r.text()
+  expect(body).toBe('no entry')
+  // NOT the errorBoundary, NOT the component, NOT a 500 'internal error'.
+  expect(body).not.toContain('ForbiddenPage')
+})
+
+test('httpError: native loader 403 via the fast lane', async () => {
+  const port = sharedPort()
+  const r = await fetch(`http://127.0.0.1:${port}/_test/native-forbidden/x`)
+  expect(r.status).toBe(403)
+  expect(r.headers.get('content-type')).toBe('text/plain; charset=utf-8')
+  const body = await r.text()
+  expect(body).toBe('native no entry')
+  // The route's template (NativeProfile) must never render.
+  expect(body).not.toContain('Hello,')
+})
+
 test('invalidate by path drops a cached entry', async () => {
   const { port, stop } = await startServer({ workers: '1' })
   try {
@@ -2032,6 +2095,30 @@ test('nav: /_brust/page/<protected> without cookie returns middleware verdict (4
   // The response body should NOT contain the rendered admin dashboard.
   const body = await resp.text()
   expect(body).not.toContain('Admin Dashboard')
+})
+
+test('nav: /_brust/page/<httpError route> returns the trigger status (full-reload contract)', async () => {
+  // A loader that throws httpError() on the SPA-nav path mirrors the
+  // middleware short-circuit contract above: the trigger's response is
+  // emitted as-is (NOT a {html,title} payload, NOT a 500 JSON envelope),
+  // and the client treats any non-2xx nav response as a fallback trigger —
+  // full reload onto the document path, which serves the authoritative 403.
+  const port = sharedPort()
+  const resp = await fetch(`http://127.0.0.1:${port}/_brust/page/forbidden`)
+  expect(resp.status).toBe(403)
+  expect(resp.headers.get('content-type')).toBe('text/plain; charset=utf-8')
+  expect(resp.headers.get('x-reason')).toBe('test')
+  expect(await resp.text()).toBe('no entry')
+})
+
+test('nav: /_brust/page/<NATIVE httpError route> re-throws through renderNativeRouteToHtml', async () => {
+  // Native-route SPA nav goes renderNativeRouteToHtml → runNativeChainLoaders
+  // returns { httpError } → re-thrown → navigationBranch's catch emits the
+  // trigger response. Pins the native nav arm separately from the React one.
+  const port = sharedPort()
+  const resp = await fetch(`http://127.0.0.1:${port}/_brust/page/_test/native-forbidden/x`)
+  expect(resp.status).toBe(403)
+  expect(await resp.text()).toBe('native no entry')
 })
 
 // ----- SSG fallback-shell render (sentinel + x-brust-ssg header) -----

@@ -98,6 +98,31 @@ export interface BrustRequest {
    * unaborted shared sentinel; signal.aborted === false forever). Real
    * disconnect detection for render/action is a follow-up. */
   signal: AbortSignal
+  /** Matched route params (percent-decoded) — the SAME values the loader ctx
+   * receives. Populated by the TS dispatch layer (`prepReq`) BEFORE the
+   * middleware chain runs, so middleware can authorize against `{id}` without
+   * re-parsing the raw URL. Empty object for routes without params — and for
+   * SSE/WS requests (their envelope carries no params in v1). */
+  params: Record<string, string>
+  /** Request-scoped bag middleware writes and loaders/handlers read. The same
+   * object identity flows through the whole chain (middleware → loader →
+   * component/handler). Locals written before `next()` are visible downstream;
+   * writes AFTER `next()` returns happen after the loader already ran. Reset
+   * to a fresh `{}` per request. */
+  locals: Record<string, unknown>
+}
+
+/** Populate the TS-owned `BrustRequest` fields (`params`, `locals`) on a
+ * request that just arrived in the Rust envelope. Rust knows nothing of these
+ * fields, so every dispatch branch calls this ONCE, before composeChain /
+ * loaders run — the single population point. Mutates and returns `req`. */
+export function prepReq(
+  req: BrustRequest,
+  params: Record<string, string> | undefined,
+): BrustRequest {
+  req.params = params ?? {}
+  req.locals = {}
+  return req
 }
 
 /** Handler module shape — what `() => Promise<WsHandlers>` resolves to.
@@ -274,6 +299,76 @@ export function isNativeVerdict(x: unknown): x is NativeVerdict {
   )
 }
 
+const HTTP_ERROR: unique symbol = Symbol.for('brust.httpError')
+
+export interface HttpErrorOpts {
+  /** Override the Content-Type. Defaults: string body → `text/plain;
+   * charset=utf-8`, object body → `application/json; charset=utf-8`. */
+  contentType?: string
+  /** Extra response headers (e.g. `WWW-Authenticate`). */
+  headers?: Record<string, string>
+}
+
+/** The symbol-keyed value `httpError()` throws. Body/contentType are resolved
+ * at construction so every catch site emits the same wire shape. Mirrors the
+ * NativeVerdict / ActionError branding (Symbol.for survives the trigger being
+ * duplicated across bundles). */
+export interface HttpErrorTrigger {
+  readonly [HTTP_ERROR]: true
+  readonly status: number
+  readonly body: string
+  readonly contentType: string
+  readonly headers?: Record<string, string>
+}
+
+/** Throw from a route loader (React or native) to short-circuit the response
+ * with an arbitrary error status — the loader-side analogue of a middleware
+ * short-circuit:
+ *
+ * ```ts
+ * loader: async ({ req }) => {
+ *   if (!req.locals.user) throw httpError(403, 'no entry')
+ *   …
+ * }
+ * ```
+ *
+ * THROW-only (it never returns) — one usage form on both render paths, unlike
+ * `notFound()` which native loaders RETURN. `body`: string → text/plain (or
+ * `opts.contentType`), object → JSON, omitted → empty. Status must be an
+ * integer in 400-599: 3xx is `redirect()`'s job, a 404 that renders a page is
+ * `notFound()`'s. The response is a plain short-circuit — it never reaches the
+ * errorBoundary and never logs as a 500. */
+export function httpError(status: number, body?: string | object, opts?: HttpErrorOpts): never {
+  if (!Number.isInteger(status) || status < 400 || status > 599) {
+    throw new Error(
+      `httpError(status) must be an integer in 400-599, got ${status} — use redirect() for 3xx and notFound() for a rendered 404`,
+    )
+  }
+  let bodyStr: string
+  let contentType: string
+  if (body === undefined || typeof body === 'string') {
+    bodyStr = body ?? ''
+    contentType = opts?.contentType ?? 'text/plain; charset=utf-8'
+  } else {
+    bodyStr = JSON.stringify(body)
+    contentType = opts?.contentType ?? 'application/json; charset=utf-8'
+  }
+  const trigger: HttpErrorTrigger = {
+    [HTTP_ERROR]: true,
+    status,
+    body: bodyStr,
+    contentType,
+    headers: opts?.headers,
+  }
+  throw trigger
+}
+
+/** True when a thrown value is the `httpError()` trigger (symbol-keyed — a
+ * plain object with a `status` property is NOT mistaken for one). */
+export function isHttpErrorTrigger(x: unknown): x is HttpErrorTrigger {
+  return typeof x === 'object' && x !== null && (x as Record<symbol, unknown>)[HTTP_ERROR] === true
+}
+
 /** Framework default 404 body, served when a React `notFound()` fires but no
  * catch-all (`path: '*'`) is registered for the route's prefix — so the response
  * is still HTTP 404 with a body (never a 500, never a crash). */
@@ -320,10 +415,15 @@ export interface NativeLoaderCtx {
   req: BrustRequest
 }
 
-/** Result of running a native route's chain loaders top-down: either a merged
- * flat context object (all loader results shallow-merged, child keys win), or
- * the first verdict encountered (top-down) which short-circuits the chain. */
-export type NativeChainResult = { data: Record<string, unknown> } | { verdict: NativeVerdict }
+/** Result of running a native route's chain loaders top-down: a merged flat
+ * context object (all loader results shallow-merged, child keys win), the
+ * first verdict encountered (top-down) which short-circuits the chain, or an
+ * `httpError()` trigger THROWN by a loader (intercepted per-loader so it never
+ * reaches the caller's generic 500 catch). */
+export type NativeChainResult =
+  | { data: Record<string, unknown> }
+  | { verdict: NativeVerdict }
+  | { httpError: HttpErrorTrigger }
 
 /** Run a native route's `flat.chain` loaders top-down (parent → leaf) and merge
  * their results into ONE flat context object.
@@ -350,7 +450,16 @@ export async function runNativeChainLoaders(
     if (!node.loader) continue
     // `as never` bypasses per-route Params narrowing — NativeLoaderCtx is the
     // default-instantiated loader ctx shape ({ params, path, req }).
-    const result = await node.loader(ctx as never)
+    let result: unknown
+    try {
+      result = await node.loader(ctx as never)
+    } catch (err) {
+      // httpError() short-circuit — intercept PER-LOADER so the trigger never
+      // reaches the caller's generic loader catch (which logs + 500s). Any
+      // other throw keeps the existing 500 contract.
+      if (isHttpErrorTrigger(err)) return { httpError: err }
+      throw err
+    }
     if (isNativeVerdict(result)) {
       return { verdict: result }
     }
@@ -916,6 +1025,9 @@ export function makeRenderer(
       // have a per-conn AbortController. Middleware/loaders/components
       // can still read req.signal.aborted (always false).
       call.req.signal = NEVER_ABORTS
+      // Populate the TS-owned req fields (matched params + a fresh locals bag)
+      // BEFORE the middleware chain runs.
+      prepReq(call.req, call.params)
 
       // Run the middleware chain against a streaming-marker terminal.
       // Middleware that short-circuits (returns without calling next())
@@ -936,6 +1048,16 @@ export function makeRenderer(
       try {
         verdict = (await chain()) as StreamMarkerResponse
       } catch (err) {
+        // `throw httpError(...)` belongs in loaders, but a middleware that
+        // throws it still deserves the intended status, not a 500 + log dump.
+        if (isHttpErrorTrigger(err)) {
+          return packSingleChunkResponse(slotView, encoder, {
+            status: err.status,
+            contentType: err.contentType,
+            body: err.body,
+            headers: err.headers,
+          })
+        }
         console.error(`[brust] middleware/render uncaught:`, err)
         // FAST LANE: single-chunk error. Works for both React (big dispatch
         // reads the SAB via its fast-lane arm) and native routes (which take
@@ -1071,6 +1193,18 @@ export function makeRenderer(
             status: 500,
             contentType: 'text/html; charset=utf-8',
             body: 'internal error',
+          })
+        }
+        if ('httpError' in chainResult) {
+          // A native loader threw httpError() — short-circuit with the
+          // trigger's response (same fast-lane mechanism as a middleware
+          // short-circuit, which already carries arbitrary statuses).
+          const he = chainResult.httpError
+          return packSingleChunkResponse(slotView, encoder, {
+            status: he.status,
+            contentType: he.contentType,
+            body: he.body,
+            headers: he.headers,
           })
         }
         let renderStatus: number | undefined
@@ -1245,6 +1379,24 @@ export function makeRenderer(
         try {
           element = await buildRenderElement(call, flat, opts.getWorkerId, shellMode)
         } catch (err) {
+          if (isHttpErrorTrigger(err)) {
+            // React loader threw httpError() — short-circuit with the trigger's
+            // response. NOT the errorBoundary, NOT the 500 path below: this is
+            // a deliberate response, like a middleware short-circuit.
+            return await emitSingleChunkResponse(
+              slotView,
+              napi,
+              workerId,
+              encoder,
+              {
+                status: err.status,
+                contentType: err.contentType,
+                body: err.body,
+                headers: err.headers,
+              },
+              slot,
+            )
+          }
           if (isNotFoundTrigger(err)) {
             // React `notFound()` trigger: abandon the matched route and render
             // the NEAREST catch-all (same selection as a Rust-unmatched path)
@@ -1484,6 +1636,10 @@ async function navigationBranch(
     _brustStream: NAV_MARKER,
   })
 
+  // Populate the TS-owned req fields (matched params + a fresh locals bag)
+  // BEFORE the middleware chain runs — mirrors the render branch.
+  prepReq(call.req, call.params)
+
   // navigationBranch receives a 'navigation' call, but composeChain only
   // needs req + middleware — cast to satisfy the type.
   const navChain = composeChain(
@@ -1496,6 +1652,17 @@ async function navigationBranch(
   try {
     navVerdict = (await navChain()) as NavMarkerResponse
   } catch (err) {
+    // Same guard as the render path: an httpError thrown from middleware gets
+    // its intended status (non-2xx nav → client full-reload contract).
+    if (isHttpErrorTrigger(err)) {
+      await emitSingleChunkResponse(view, napi, workerId, encoder, {
+        status: err.status,
+        contentType: err.contentType,
+        body: err.body,
+        headers: err.headers,
+      })
+      return
+    }
     console.error('[brust] navigation middleware threw:', err)
     await emitSingleChunkResponse(
       view,
@@ -1654,6 +1821,28 @@ async function navigationBranch(
       slot,
     )
   } catch (err) {
+    if (isHttpErrorTrigger(err)) {
+      // A loader threw httpError() on the SPA-nav path (React render or the
+      // native re-throw below). Mirror the existing non-2xx middleware
+      // short-circuit semantics: emit the trigger's response as-is — the
+      // client treats any non-2xx nav response as a fallback trigger (full
+      // reload), so the user lands on the authoritative document response.
+      // No new JSON error shape.
+      await emitSingleChunkResponse(
+        view,
+        napi,
+        workerId,
+        encoder,
+        {
+          status: err.status,
+          contentType: err.contentType,
+          body: err.body,
+          headers: err.headers,
+        },
+        slot,
+      )
+      return
+    }
     console.error('[brust] navigation render failed:', err)
     await emitSingleChunkResponse(
       view,
@@ -1703,6 +1892,12 @@ async function renderNativeRouteToHtml(
     }),
   )
 
+  if ('httpError' in chainResult) {
+    // Re-throw the trigger — navigationBranch's catch emits it as the nav
+    // response (non-2xx → client full-reload, mirroring a middleware
+    // short-circuit).
+    throw chainResult.httpError
+  }
   if ('verdict' in chainResult) {
     // SPA nav can't emit a redirect/404 in-place; force the client's full-reload
     // fallback so the document path produces the authoritative status.
@@ -2070,6 +2265,10 @@ export async function dispatchAction(
     }
   }
   call.req.signal = NEVER_ABORTS
+  // Populate the TS-owned req fields (matched params + a fresh locals bag)
+  // BEFORE the middleware chain runs. ctx.req === call.req, so handler locals
+  // reads see middleware writes with zero threading.
+  prepReq(call.req, call.params)
 
   // Body decode — dispatch by content-type (JSON / urlencoded / multipart).
   let rawBody: unknown
@@ -2158,6 +2357,15 @@ export async function dispatchAction(
     } catch (err) {
       if (isActionError(err)) {
         response = actionErrorResponse(err)
+      } else if (isHttpErrorTrigger(err)) {
+        // ActionError is the idiomatic action-status tool, but an httpError
+        // escaping a shared middleware/handler still gets its intended status.
+        response = {
+          status: err.status,
+          body: err.body,
+          contentType: err.contentType,
+          headers: err.headers,
+        }
       } else {
         console.error('[brust] action middleware uncaught:', err)
         response = {
@@ -2191,6 +2399,9 @@ async function mcpBranchToResponse(
   // reading req.signal.aborted always sees false; the SSE branch is where
   // real disconnect lives.
   call.req.signal = NEVER_ABORTS
+  // No params in the MCP envelope and no middleware chain — but the
+  // BrustRequest contract declares params/locals non-optional, so populate.
+  prepReq(call.req, undefined)
   const responseJson = await mcp.handleRequest(call.body_text, call.req)
   if (responseJson === '') {
     // Notification — no response body. Return 204 No Content.
@@ -2264,6 +2475,9 @@ async function sseBranch(
   // Inject NEVER_ABORTS into req for the middleware run. handleSseStream
   // will overwrite with a per-conn AbortController.signal afterward.
   call.req.signal = NEVER_ABORTS
+  // The SSE envelope carries NO params — middleware sees empty params in v1
+  // (widening the Rust envelope is a separate change). Fresh locals bag.
+  prepReq(call.req, undefined)
 
   // Run middleware chain with a 200 placeholder terminal. The terminal
   // does NOT invoke leaf.sse — handleSseStream does that after middleware
@@ -2370,6 +2584,9 @@ async function wsBranch(
   // lifecycle is via registered onMessage/onClose callbacks rather than
   // awaiting on a request signal.
   call.req.signal = NEVER_ABORTS
+  // The WS envelope carries NO params — middleware sees empty params in v1
+  // (same contract as SSE above). Fresh locals bag.
+  prepReq(call.req, undefined)
 
   // Run middleware chain with a 101 placeholder terminal that signals
   // "ready to upgrade". The terminal does NOT call route.websocket —
