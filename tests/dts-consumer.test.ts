@@ -157,6 +157,7 @@ test('dts consumer gate: packed tarball typechecks from all 7 subpaths (strict c
     // -- pack the REAL tarball (file: to the repo dir would symlink and mask
     //    files-allowlist/exports bugs — published-install-tarball lesson)
     const packed = await $`bun pm pack --destination ${work}`.cwd(REPO).quiet().nothrow()
+    if (packed.exitCode !== 0) console.error('bun pm pack stderr:', packed.stderr.toString())
     expect(packed.exitCode).toBe(0)
     const tarball = (await readdir(work)).find((f) => f.endsWith('.tgz'))
     expect(tarball).toBeDefined()

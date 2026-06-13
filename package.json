@@ -38,7 +38,7 @@
     "@tailwindcss/oxide": "^4.3.0",
     "marked": "^18.0.5",
     "smol-toml": "^1.6.1",
-    "typescript": "6.0.3"
+    "typescript": "^6.0.3"
   },
   "optionalDependencies": {
     "brustjs-darwin-x64": "0.1.50-alpha",
