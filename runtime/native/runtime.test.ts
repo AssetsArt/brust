@@ -717,6 +717,32 @@ describe('x-if', () => {
     expect(win.document.querySelector('p')).toBeNull()
   })
 
+  test('sibling x-data AFTER a falsy-initial x-if still mounts (isConnected guard scenario)', async () => {
+    // scanAndMount snapshots [x-data] before any x-if effect prunes the DOM.
+    // The first mount's falsy x-if removes part of ITS OWN subtree; a nested
+    // x-data inside that pruned subtree must be SKIPPED (detached — observer
+    // owns its lifecycle), while a connected sibling later in the same
+    // snapshot must still mount normally.
+    const win = setupDom(
+      '<div x-data="ifg1"><div x-if="open"><div x-data="ifg2"></div></div></div>' +
+        '<div x-data="ifg3"><span x-text="label"></span></div>',
+    )
+    const { register, start } = await import(`./runtime.ts?ifg=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    let prunedMounted = 0
+    register('ifg1', () => ({ open: signal(false) }))
+    register('ifg2', () => {
+      prunedMounted++
+      return {}
+    })
+    register('ifg3', () => ({ label: signal('sibling-ok') }))
+    start(win.document)
+    // The pruned nested x-data never mounted (it left the document mid-scan)…
+    expect(prunedMounted).toBe(0)
+    // …and the connected sibling later in the same snapshot mounted fine.
+    expect(win.document.querySelector('span')?.textContent).toBe('sibling-ok')
+  })
+
   test('toggle cycle inserts a FRESH clone each time (no stale state carried)', async () => {
     const win = setupDom('<div x-data="if3"><p x-if="open" x-text="msg"></p></div>')
     const { register, start } = await import(`./runtime.ts?if3=${Math.random()}`)
