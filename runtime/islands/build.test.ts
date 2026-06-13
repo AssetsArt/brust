@@ -244,3 +244,51 @@ test('buildIslands(empty) emits the 3 runtime chunks and islandCount 0', async (
     rmSync(outDir, { recursive: true, force: true })
   }
 })
+
+// Regression: `export *` from react omits the default per spec, so the
+// importmap-targeted `_react.js` had named exports but NO default. Third-party
+// ESM that does `import React from 'react'` (e.g. @dnd-kit) then failed to
+// hydrate with "module 'react' does not provide an export named 'default'".
+test('_react.js exposes a working default export AND keeps its named exports', async () => {
+  const { buildIslands } = await import('./build.ts')
+  const outDir = mkdtempSync(resolve(tmpdir(), 'brust-react-shim-'))
+  try {
+    await buildIslands(new Map(), { outDir })
+    const mod = await import(resolve(outDir, '_react.js'))
+    // Default = the React object: carries createElement/useState as members,
+    // which is what `import React from 'react'; React.createElement(...)` needs.
+    expect(typeof mod.default).toBe('object')
+    expect(typeof mod.default.createElement).toBe('function')
+    expect(typeof mod.default.useState).toBe('function')
+    // Named exports unchanged (no regression on the hooks islands already use).
+    expect(typeof mod.createElement).toBe('function')
+    expect(typeof mod.useState).toBe('function')
+    expect(typeof mod.useSyncExternalStore).toBe('function')
+    // jsx-runtime exports (importmap maps react/jsx-runtime to the same chunk).
+    expect(typeof mod.jsx).toBe('function')
+    expect(typeof mod.jsxs).toBe('function')
+  } finally {
+    rmSync(outDir, { recursive: true, force: true })
+  }
+})
+
+// _react-dom.js has `react` external (importmap-resolved in the browser), so it
+// can't be imported standalone in Node. Assert its emitted export list
+// statically instead: createRoot + hydrateRoot (the named exports island
+// hydration and the bootstrap depend on) MUST survive, and a `default` (the
+// react-dom/client namespace) is present for `import ReactDOM from
+// 'react-dom/client'` parity.
+test('_react-dom.js export list keeps createRoot/hydrateRoot and adds a default', async () => {
+  const { buildIslands } = await import('./build.ts')
+  const outDir = mkdtempSync(resolve(tmpdir(), 'brust-reactdom-default-'))
+  try {
+    await buildIslands(new Map(), { outDir })
+    const src = await Bun.file(resolve(outDir, '_react-dom.js')).text()
+    const exportStmts = (src.match(/export\s*\{[^}]*\}/g) ?? []).join()
+    expect(exportStmts).toContain('createRoot')
+    expect(exportStmts).toContain('hydrateRoot')
+    expect(exportStmts).toContain('default')
+  } finally {
+    rmSync(outDir, { recursive: true, force: true })
+  }
+})

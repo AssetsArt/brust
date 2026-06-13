@@ -9,3 +9,11 @@
 // same object).
 export * from 'react'
 export { jsx, jsxs } from 'react/jsx-runtime'
+// `export *` omits the default per spec, so the importmap-targeted `react`
+// chunk had named exports but NO default — third-party ESM that does
+// `import React from 'react'` (e.g. @dnd-kit) then fails to hydrate with
+// "module 'react' does not provide an export named 'default'". Re-expose the
+// React namespace as the default: it carries createElement/useState/etc. as
+// members, matching what a normal `import React from 'react'` yields.
+import * as React from 'react'
+export default React
