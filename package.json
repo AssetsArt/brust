@@ -38,7 +38,7 @@
     "@tailwindcss/oxide": "^4.3.0",
     "marked": "^18.0.5",
     "smol-toml": "^1.6.1",
-    "typescript": "^6.0.3"
+    "typescript": "6.0.3"
   },
   "optionalDependencies": {
     "brustjs-darwin-x64": "0.1.50-alpha",
@@ -71,18 +71,40 @@
     "zod": "^4.4.3"
   },
   "type": "module",
-  "types": "./runtime/index.d.ts",
+  "types": "./types/index.d.ts",
   "exports": {
-    ".": "./runtime/index.ts",
-    "./routes": "./runtime/routes.ts",
-    "./client": "./runtime/client/index.ts",
-    "./create": "./runtime/create.ts",
-    "./store": "./runtime/store/index.ts",
-    "./native": "./runtime/native/index.ts",
-    "./navigation": "./runtime/navigation/index.ts"
+    ".": {
+      "types": "./types/index.d.ts",
+      "default": "./runtime/index.ts"
+    },
+    "./routes": {
+      "types": "./types/routes.d.ts",
+      "default": "./runtime/routes.ts"
+    },
+    "./client": {
+      "types": "./types/client/index.d.ts",
+      "default": "./runtime/client/index.ts"
+    },
+    "./create": {
+      "types": "./types/create.d.ts",
+      "default": "./runtime/create.ts"
+    },
+    "./store": {
+      "types": "./types/store/index.d.ts",
+      "default": "./runtime/store/index.ts"
+    },
+    "./native": {
+      "types": "./types/native/index.d.ts",
+      "default": "./runtime/native/index.ts"
+    },
+    "./navigation": {
+      "types": "./types/navigation/index.d.ts",
+      "default": "./runtime/navigation/index.ts"
+    }
   },
   "files": [
     "runtime",
+    "types",
     "!runtime/node_modules",
     "!runtime/package.json",
     "!runtime/*.node",
@@ -100,6 +122,8 @@
   "scripts": {
     "build": "cd runtime && bun run build",
     "build:debug": "cd runtime && bun run build:debug",
+    "build:dts": "tsc -p tsconfig.dts.json; bun scripts/assert-dts.ts",
+    "prepack": "bun run build:dts",
     "test": "bun test tests/integration.test.ts",
     "dev": "bun runtime/cli/index.ts dev example/pokedex/index.ts",
     "docs:dev": "cd example/docs && bun ../../runtime/cli/index.ts dev index.ts",

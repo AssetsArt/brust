@@ -14,6 +14,10 @@ brust.toml
 dist
 .antigravitycli
 
+# Declaration emit for the published package (`bun run build:dts`; regenerated
+# by prepack). Root-anchored so app-level types/ dirs are unaffected.
+/types/
+
 # Unrelated local spike — kept on disk, never tracked (swept into #20 by accident)
 tools/jsx-rust-compiler
 pokedex.bak.*
