@@ -1,6 +1,6 @@
 {
   "name": "brustjs",
-  "version": "0.1.53-alpha",
+  "version": "0.1.54-alpha",
   "description": "Bun + Rust SSR framework — React on the server, Rust everywhere else (napi cdylib + per-worker SharedArrayBuffer).",
   "license": "MIT",
   "repository": {

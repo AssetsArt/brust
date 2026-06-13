@@ -1183,6 +1183,10 @@ export type { InvalidateArgs } from './cache.ts'
 
 export { templates } from './templates.ts'
 
+// R1 (compile half) — public TSX→minijinja compile for custom sections /
+// tooling. The native fn always existed; this exposes a typed 2-arg facade.
+export { compileJsx, type CompileJsxResult } from './compile-jsx.ts'
+
 export { getRequestContext } from './request-context.ts'
 export { cookies } from './cookies.ts'
 export type { CookieOptions } from './cookies.ts'

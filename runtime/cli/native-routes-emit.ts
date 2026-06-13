@@ -596,7 +596,10 @@ export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<Na
     | null = null
   if (nativeRoutes.length > 0) {
     const native = await import('../index.js')
-    compileJsx = (native as { compileJsx?: typeof compileJsx }).compileJsx ?? null
+    // index.ts now re-exports a public 2-arg `compileJsx` facade; this emitter
+    // uses the raw 5-arg native binding, so cast through `unknown` to the local
+    // (full-arity) signature rather than the narrowed public one.
+    compileJsx = (native as unknown as { compileJsx?: typeof compileJsx }).compileJsx ?? null
     if (typeof compileJsx !== 'function') {
       throw new Error(
         'brust: the native addon does not expose compileJsx — rebuild it with ' +
