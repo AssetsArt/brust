@@ -35,9 +35,7 @@ export async function renderFragment<P extends object>(
 ): Promise<string>
 ```
 
-Implementation: move (or re-export) the internal `renderToAwaitedString` from `runtime/routes.ts` into the new module (routes.ts imports it back — single definition, no behavior change to the nav path), wrap as:
-`runInRequestScope(opts?.cookies ?? {}, () => runInRequestCache(() => runInStoreContext(() => renderToAwaitedString(createElement(Component, props)))))`
-— the exact three-layer nesting the request pipeline uses (`runInRequestContext` precedent). Export from the `brustjs` root barrel.
+Implementation: move (or re-export) the internal `renderToAwaitedString` from `runtime/routes.ts` into the new module (routes.ts imports it back — single definition, no behavior change to the nav path). Composition VERIFIED against `runInRequestContext` (routes.ts ~55): `runInRequestScope(cookies, () => runInRequestCache(() => runInStoreContext(fn)))` — scope outermost, then cache, then store. Reuse that exact helper if exportable, else mirror it. happy-dom note for R10 verified separately; for R4 the cookie-reader test should use whatever public helper loaders use to read cookies (grep `cookies` usage in fixture loaders / runtime exports — `runInRequestScope` seeds it, routes flush set-cookies via `__scope`). Export `renderFragment` from the `brustjs` root barrel.
 
 Error behavior: rejects with the component's error (no error-boundary semantics — caller handles).
 
@@ -63,7 +61,7 @@ Error behavior: rejects with the component's error (no error-boundary semantics 
 R4 (`fragment.test.ts`, real React, no server):
 - simple component + props → exact HTML string
 - Suspense component (async resource) → resolved HTML (not the fallback)
-- store isolation: component using a `defineStore` store twice in two calls → no state leakage between calls
+- store isolation **CONCURRENT**: two OVERLAPPING renderFragment calls (components that await mid-render, interleaved) using the same `defineStore` store with different seeds → each output reflects its own seed only. Sequential isolation is not sufficient evidence — AsyncLocalStorage must be shown to survive React's renderToPipeableStream scheduling (the known React/ALS escape pitfall). If the concurrent test FAILS, that is a real design problem: STOP and report BLOCKED (do not weaken to sequential).
 - cookies visible via the request-scope reader (use whatever helper loaders use — find `cookies()`/`getSession` precedent in runtime)
 - rejection propagates (component throws)
 - nav path regression: existing navigation tests still green (renderToAwaitedString move is behavior-neutral)
