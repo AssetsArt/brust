@@ -223,6 +223,80 @@ test('forceIslands: false (default) → no bootstrap when no <Island>', async ()
   expect(new TextDecoder().decode(body)).not.toContain('importmap')
 })
 
+test('shellId stamps a brust-shell meta into the buffered head', async () => {
+  const { chunks, napi } = makeMockNapi()
+  await renderBranchStreaming({
+    element: createElement(
+      'html',
+      null,
+      createElement('head', null, createElement('title', null, 'x')),
+    ),
+    view,
+    workerId: 0n,
+    napi,
+    errorBoundary: () => createElement('div', null, 'oops'),
+    shellId: 'L:AppLayout',
+  })
+  const { body } = decodeMeta(chunks[0].bytes!)
+  expect(new TextDecoder().decode(body)).toContain(
+    '<meta name="brust-shell" content="L:AppLayout">',
+  )
+})
+
+test('no shellId → no brust-shell meta (fallthrough)', async () => {
+  const { chunks, napi } = makeMockNapi()
+  await renderBranchStreaming({
+    element: createElement(
+      'html',
+      null,
+      createElement('head', null, createElement('title', null, 'x')),
+    ),
+    view,
+    workerId: 0n,
+    napi,
+    errorBoundary: () => createElement('div', null, 'oops'),
+  })
+  const { body } = decodeMeta(chunks[0].bytes!)
+  expect(new TextDecoder().decode(body)).not.toContain('brust-shell')
+})
+
+test('shellId prepends a brust-shell meta in the streaming path', async () => {
+  const { chunks, napi } = makeMockNapi()
+  let resolve: () => void = () => {}
+  const pending = new Promise<void>((r) => {
+    resolve = r
+  })
+  let done = false
+  pending.then(() => {
+    done = true
+  })
+  function Slow() {
+    if (!done) throw pending
+    return createElement('span', null, 'late')
+  }
+  const elem = createElement(
+    'html',
+    null,
+    createElement('head', null, createElement('title', null, 'x')),
+    createElement(Suspense, { fallback: createElement('span', null, '…') }, createElement(Slow)),
+  )
+  const p = renderBranchStreaming({
+    element: elem,
+    view,
+    workerId: 0n,
+    napi,
+    errorBoundary: () => createElement('div', null, 'oops'),
+    shellId: 'S:Streamed',
+  })
+  await new Promise((r) => setTimeout(r, 10))
+  resolve()
+  await p
+  // The first (header) chunk carries the prepended tags before React's body.
+  const first = chunks[0].bytes!
+  const headerStr = new TextDecoder().decode(first)
+  expect(headerStr).toContain('<meta name="brust-shell" content="S:Streamed">')
+})
+
 import { configureCssEnabled } from '../css.ts'
 import { injectCssLink } from './inject-css-link.ts'
 

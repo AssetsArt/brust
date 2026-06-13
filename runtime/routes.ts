@@ -1490,6 +1490,7 @@ export function makeRenderer(
           status: renderStatus,
           headers: flushSetCookie(verdict.headers),
           routePath: renderFlat.fullPath,
+          shellId: renderFlat.shellId,
           storeSnapshot,
           // SSG fallback shells have zero islands on the page but the
           // client-loader runtime still needs the importmap + bootstrap.
