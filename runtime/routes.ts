@@ -567,6 +567,13 @@ export interface FlatRoute {
   /** Sub-project J — Component.name when leaf had `native: true`. Captured
    * at flatten time (build-time AST identifier), so minifier-safe. */
   nativeTemplate?: string
+  /** SPA shell signature — identity of the layout-ancestor chain. All leaves
+   * under the same layout chain share an `L:` sig (→ fast in-place <main> swap);
+   * a standalone leaf gets a unique `S:` sig (→ full document load on cross-nav,
+   * so the correct shell renders). Computed in `makeFlat`. Server stamps it into
+   * the rendered document head (`<meta name="brust-shell">`) AND the nav payload;
+   * the client full-loads on mismatch. See the SPA shell-signature design. */
+  shellId: string
   /** Catch-all (`{ path: '*' }`) marker. When true this FlatRoute is a
    * "not found" fallback: it stays in the array at its natural index (route_id
    * stable) but install SKIPS the matchit insert for it — it only renders when
@@ -787,7 +794,15 @@ function makeFlat(chain: Route[], fullPath: string): FlatRoute {
     )
   }
   const nativeTemplate = leaf.native === true && leaf.Component ? leaf.Component.name : undefined
-  return { fullPath, chain, middleware, errorBoundary, cache, nativeTemplate }
+  // SPA shell signature: the layout-ancestor chain's identity. Server runs the
+  // real module so `Component.name` is stable (not minified); fall back to the
+  // route path. Layout-wrapped leaves (ancestors.length > 0) collapse to a
+  // shared `L:` sig per chain; a standalone leaf gets a unique `S:` sig.
+  const routeIdent = (r: Route): string => r.Component?.name || r.path || '?'
+  const ancestors = chain.slice(0, -1)
+  const shellId =
+    ancestors.length > 0 ? 'L:' + ancestors.map(routeIdent).join('>') : 'S:' + routeIdent(leaf)
+  return { fullPath, chain, middleware, errorBoundary, cache, nativeTemplate, shellId }
 }
 
 /** Internal React context that carries the next-deeper rendered element to
