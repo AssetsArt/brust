@@ -5,6 +5,8 @@ import { defineStore, signal } from '../store/index.ts'
 import type { Signal } from '../store/index.ts'
 import { cookies } from '../cookies.ts'
 import { dedupe } from '../loader-cache.ts'
+import { useNav } from '../navigation/react.ts'
+import { __resetNavForTest } from '../navigation/store.ts'
 
 // A test-controlled gate: a component throws `promise` (Suspense contract) until
 // the test releases it — lets two renders overlap deterministically.
@@ -134,6 +136,32 @@ describe('renderFragment', () => {
     expect(calls).toBe(1)
     await renderFragment(Loader, {})
     expect(calls).toBe(2) // fresh cache per call — no cross-call leakage
+  })
+
+  test('opts.path seeds useNav() — an island inside the fragment resolves active-nav', async () => {
+    __resetNavForTest()
+    function NavLink() {
+      const { path, search } = useNav()
+      return createElement(
+        'a',
+        { className: path === '/design' ? 'is-active' : 'idle', 'data-search': search },
+        'x',
+      )
+    }
+    const html = await renderFragment(NavLink, {}, { path: '/design', search: '?q=1' })
+    expect(html).toContain('is-active')
+    expect(html).toContain('data-search="?q=1"')
+  })
+
+  test('without opts.path, useNav() reports the idle default (context-free fragment)', async () => {
+    __resetNavForTest()
+    function NavLink() {
+      const { path } = useNav()
+      return createElement('a', { className: path === '/design' ? 'is-active' : 'idle' }, 'x')
+    }
+    const html = await renderFragment(NavLink, {})
+    expect(html).toContain('class="idle"')
+    expect(html).not.toContain('is-active')
   })
 
   test('rejects with the component error (no error-boundary semantics)', async () => {

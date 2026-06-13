@@ -101,7 +101,46 @@ export const nav: NavStore = new Proxy({} as NavStore, {
   },
 })
 
+// ─── Server-side request-scoped path (SSR seeding) ──────────────────────────
+// The `nav` singleton is shared by every concurrent request in a worker, so on
+// the server it CANNOT hold a per-request path. A server-only module
+// (navigation/server-context.ts) registers a resolver that returns the active
+// request's nav scope via AsyncLocalStorage — mirroring store/server-context.ts'
+// __setServerResolver. The resolver stays null in browser/island bundles (which
+// never import the Node module), so client behavior is byte-identical.
+export interface ServerNavScope {
+  path: string
+  search: string
+  // Per-scope memo of the built NavState: getServerSnapshot may be called more
+  // than once per render and useSyncExternalStore requires referential stability.
+  _snap?: NavState
+}
+let serverNavResolver: (() => ServerNavScope | undefined) | null = null
+export function __setServerNavResolver(fn: () => ServerNavScope | undefined): void {
+  serverNavResolver = fn
+}
+
 export function getNavState(): NavState {
+  // Server SSR: when a request-scoped nav context is active, derive path/search
+  // from it (the singleton is not per-request-safe). `phase` is always 'idle'
+  // during SSR — no navigation is in flight — and from/to/error stay null. The
+  // client then seeds the SAME path via __navInit before hydration, so
+  // getServerSnapshot (this getter) and the server HTML agree → no mismatch,
+  // active from first paint.
+  const scope = serverNavResolver?.()
+  if (scope) {
+    if (!scope._snap) {
+      scope._snap = {
+        path: canonicalPath(scope.path),
+        search: scope.search,
+        phase: 'idle',
+        error: null,
+        from: null,
+        to: null,
+      }
+    }
+    return scope._snap
+  }
   const s = store()
   // Return the memoized snapshot if no transition has happened since it was
   // built (referential stability for useSyncExternalStore).
