@@ -809,9 +809,16 @@ export default function AddToTeamButton({ data }: { data: string }) {  // → ji
 // detail page: <AddToTeamButton native data={d.addProps} />   (loader precomputes addProps = JSON.stringify(...))
 ```
 
-- **Directive set (v1, Scheme 1 — JSX-safe):** `x-data` (mount + component name),
-  `x-props` (JSON initial props), `x-text`, `x-show`, `x-bind-<attr>` (e.g.
-  `x-bind-class`/`x-bind-disabled`), `x-on-<event>` (e.g. `x-on-click`), `x-for`.
+- **Directive set (Scheme 1 — JSX-safe):** `x-data` (mount + component name),
+  `x-props` (JSON initial props), `x-text`, `x-show`, `x-if` (conditional
+  mount/unmount: comment anchor + fresh clone per truthy toggle, subtree disposers
+  on removal; nested `x-data` delegated to the MutationObserver), `x-bind-<attr>`
+  (e.g. `x-bind-class`/`x-bind-disabled`), `x-on-<event>` (e.g. `x-on-click`),
+  `x-model` (two-way form binding: checkbox→boolean `checked`, radio→value-when-
+  checked with per-radio reflect, select-single/text→string `value`; writes via a
+  signal-unwrapping `writePath`, echo-guarded reflect effect), `x-for`.
+  Deliberately absent: `x-html` (XSS) and an `x-effect` attribute (behavior-only
+  via `ctx.effect`).
   **No colon forms** (`x-on:click`/`:class`) — the native compiler rejects
   namespaced (`:`) attributes, so v1 uses hyphenated lowercase names, which pass
   through `lower_attr` as static string attrs (no compiler change for the attrs).

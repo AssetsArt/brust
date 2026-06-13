@@ -78,6 +78,10 @@ function scanAndMount(scope: ParentNode): void {
 
 function mountElement(el: HTMLElement): void {
   if (mounted.has(el)) return
+  // Removed mid-scan (e.g. an initial-falsy x-if subtree pruned while scanAndMount's
+  // snapshot loop was still iterating): mounting a detached element would leak its
+  // effects forever — the MutationObserver never saw it removed.
+  if (!el.isConnected) return
   const name = el.getAttribute('x-data') ?? ''
   const behavior = registry.get(name)
   if (!behavior) {
@@ -156,8 +160,18 @@ function loadBehavior(name: string): void {
 // Bind this element's directives, then recurse — but never descend into a nested
 // [x-data] (it owns its own subtree and is mounted independently).
 function bindTree(el: HTMLElement, instance: Instance, disposers: Array<() => void>): void {
+  // Coexistence check MUST precede the x-for early-exit, else x-for preempts and the
+  // warn never fires. Strip x-if so x-for's template clones don't carry it either.
+  if (el.hasAttribute('x-if') && el.hasAttribute('x-for')) {
+    console.warn('[brust] x-if and x-for on the same element — x-if ignored; nest it instead')
+    el.removeAttribute('x-if')
+  }
   if (el.hasAttribute('x-for')) {
     bindFor(el, instance, disposers)
+    return
+  }
+  if (el.hasAttribute('x-if')) {
+    bindIf(el, instance, disposers)
     return
   }
   bindAttrs(el, instance, disposers)
@@ -475,11 +489,162 @@ function bindForAdopt(
   installKeyedReconcile(instance, parent, expr, template, anchor, map, disposers)
 }
 
+/** `x-if="path"` — conditional MOUNT/UNMOUNT (vs x-show's display toggle). A comment
+ * anchor marks the position; the element is captured as a template BEFORE the initial
+ * evaluation. Truthy-initial ADOPTS the original in place (no re-clone — SSR markup
+ * kept); falsy removes it. Each later falsy→truthy inserts a FRESH clone bound with
+ * fresh per-clone disposers (the installKeyedReconcile pattern); truthy→falsy removes
+ * the node and runs those disposers. The per-clone disposers cover only non-x-data
+ * teardown (bindTree skips nested x-data); nested x-data dispose/mount is delegated
+ * to the MutationObserver on removal/insert — single-owner discipline. */
+function bindIf(el: HTMLElement, instance: Instance, disposers: Array<() => void>): void {
+  const path = el.getAttribute('x-if') ?? ''
+  const parent = el.parentNode
+  if (!parent) return
+  const anchor = el.ownerDocument.createComment('x-if')
+  parent.insertBefore(anchor, el)
+  el.removeAttribute('x-if')
+  const template = el.cloneNode(true) as HTMLElement // capture FIRST (before initial effect)
+  let current: HTMLElement | null = el // the original, adopted if initially truthy
+  let bound = false // original starts unbound; clones are bound at creation
+  const currentDisposers: Array<() => void> = []
+  const teardown = () => {
+    for (const d of currentDisposers.splice(0)) {
+      try {
+        d()
+      } catch {
+        // keep tearing down
+      }
+    }
+    if (current) {
+      current.remove() // nested x-data disposal delegated to the observer's disposeTree
+      current = null
+    }
+  }
+  disposers.push(
+    effect(() => {
+      const truthy = Boolean(read(instance, path))
+      if (!truthy) {
+        teardown()
+        return
+      }
+      if (current) {
+        if (!bound) {
+          // initial truthy: adopt the original in place, no re-clone
+          bindTree(current, instance, currentDisposers)
+          bound = true
+        }
+        return
+      }
+      const clone = template.cloneNode(true) as HTMLElement
+      bindTree(clone, instance, currentDisposers) // bind BEFORE insert (observer mounts nested x-data after)
+      anchor.parentNode?.insertBefore(clone, anchor.nextSibling)
+      current = clone
+      bound = true
+    }),
+  )
+  disposers.push(teardown)
+}
+
+// x-model targets that already warned "not a signal" — warn once per path, then skip.
+const warnedModelPaths = new Set<string>()
+
+/** Write `value` into the signal at `path`, unwrapping intermediate signal/computed
+ * hops like `read()` (resolveRaw does NOT unwrap intermediates and cannot be the base
+ * for multi-hop paths). The LEAF is never called: `isSignal(leaf)` → `.set(value)`,
+ * else warn once and skip. */
+export function writePath(scope: Instance, path: string, value: unknown): void {
+  const parts = path.split('.')
+  let cur: unknown = scope
+  for (let i = 0; i < parts.length - 1; i++) {
+    if (cur == null) break
+    if (isSignal(cur) || isComputed(cur)) cur = (cur as () => unknown)()
+    cur = (cur as Record<string, unknown>)[parts[i] as string]
+  }
+  let leaf: unknown
+  if (cur != null) {
+    if (isSignal(cur) || isComputed(cur)) cur = (cur as () => unknown)()
+    leaf = (cur as Record<string, unknown>)[parts[parts.length - 1] as string]
+  }
+  if (isSignal(leaf)) {
+    ;(leaf as Signal<unknown>).set(value)
+    return
+  }
+  if (!warnedModelPaths.has(path)) {
+    warnedModelPaths.add(path)
+    console.warn(`[brust] x-model target "${path}" is not a signal — write skipped`)
+  }
+}
+
+/** `x-model="path"` — two-way binding for form controls. Write side: checkbox/radio
+ * on 'change' (checkbox → boolean checked; radio → its value when checked), everything
+ * else (text/textarea/select-single/other inputs) → string value on 'input'. Read side:
+ * one reflect effect per element with an echo guard (`el.value !== v`/`el.checked !== v`)
+ * so a reflected write never loops (signal.set with an equal value is a no-op anyway).
+ * `select[multiple]` is rejected at bind time with one warn — no listener. */
+function bindModel(
+  el: HTMLElement,
+  scope: Instance,
+  path: string,
+  disposers: Array<() => void>,
+): void {
+  if (el.tagName === 'SELECT' && (el as HTMLSelectElement).multiple) {
+    console.warn('[brust] x-model on select[multiple] is not supported — binding skipped')
+    return
+  }
+  const input = el as HTMLInputElement
+  const type = el.tagName === 'INPUT' ? (input.type ?? '').toLowerCase() : ''
+  if (type === 'checkbox') {
+    const onChange = () => writePath(scope, path, input.checked)
+    el.addEventListener('change', onChange)
+    disposers.push(() => el.removeEventListener('change', onChange))
+    disposers.push(
+      effect(() => {
+        const v = Boolean(read(scope, path))
+        if (input.checked !== v) input.checked = v
+      }),
+    )
+    return
+  }
+  if (type === 'radio') {
+    const onChange = () => {
+      if (input.checked) writePath(scope, path, input.value)
+    }
+    el.addEventListener('change', onChange)
+    disposers.push(() => el.removeEventListener('change', onChange))
+    // Per-radio reflect: checked = (signalValue === el.value) — group consistency
+    // falls out naturally, no special-casing.
+    disposers.push(
+      effect(() => {
+        const on = read(scope, path) === input.value
+        if (input.checked !== on) input.checked = on
+      }),
+    )
+    return
+  }
+  // text/textarea/select(single)/other inputs → string value on 'input'
+  const valueEl = el as unknown as { value: string }
+  const onInput = () => writePath(scope, path, valueEl.value)
+  el.addEventListener('input', onInput)
+  disposers.push(() => el.removeEventListener('input', onInput))
+  disposers.push(
+    effect(() => {
+      const v = read(scope, path)
+      const s = v == null ? '' : String(v)
+      if (valueEl.value !== s) valueEl.value = s
+    }),
+  )
+}
+
 function bindAttrs(el: HTMLElement, scope: Instance, disposers: Array<() => void>): void {
   for (const attr of Array.from(el.attributes)) {
     const name = attr.name
     const value = attr.value
     if (name === 'x-data' || name === 'x-props') continue
+    if (name === 'x-model') {
+      bindModel(el, scope, value, disposers)
+      continue
+    }
     if (name === 'x-text') {
       disposers.push(
         effect(() => {
