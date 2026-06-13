@@ -1702,6 +1702,11 @@ async function navigationBranch(
     // route (notFound === false), so the status must be forced to 404 explicitly,
     // not derived from `flat.notFound`.
     let navStatus = flat.notFound === true ? 404 : 200
+    // The shellId of the route ACTUALLY rendered into `fullHtml`. Normally the
+    // matched route, but a React notFound() swap renders the catch-all instead —
+    // the payload must report the catch-all's shell, not the matched route's,
+    // or the next hop compares against the wrong currentShell.
+    let renderedShellId: string | undefined = flat.shellId
     if (flat.nativeTemplate !== undefined) {
       fullHtml = await renderNativeRouteToHtml(call, flat, view, encoder, workerId, slot)
     } else {
@@ -1744,6 +1749,7 @@ async function navigationBranch(
         if (nfFlat) {
           try {
             fullHtml = await renderFlatToHtml(nfFlat)
+            renderedShellId = nfFlat.shellId
           } catch (nfErr) {
             // The catch-all's OWN loader/render threw (notFound or a real error):
             // ship the framework default 404 body — don't recurse into another
@@ -1751,12 +1757,16 @@ async function navigationBranch(
             console.error('[brust] catch-all nav render failed:', nfErr)
             fullHtml = DEFAULT_NOT_FOUND_BODY
             store = null
+            // Default 404 body is a full <html> doc (no <main>) → client takes
+            // the full-document path; leave shell unset so it never mis-matches.
+            renderedShellId = undefined
           }
         } else {
           // No catch-all registered for this prefix → framework default 404 body
           // shipped as a nav payload (so the client swaps it in), at 404.
           fullHtml = DEFAULT_NOT_FOUND_BODY
           store = null
+          renderedShellId = undefined
         }
       }
     }
@@ -1782,7 +1792,7 @@ async function navigationBranch(
     // compares it to the current document's <meta name="brust-shell"> and does a
     // full document load on mismatch (correct shell), keeping the fast in-place
     // <main> swap when they match. `flat` is the matched destination FlatRoute.
-    const body = JSON.stringify({ html: innerHtml, title, store, shell: flat.shellId })
+    const body = JSON.stringify({ html: innerHtml, title, store, shell: renderedShellId })
     await emitSingleChunkResponse(
       view,
       napi,

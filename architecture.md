@@ -569,7 +569,11 @@ comparison is guarded both-present, so an old cached payload or a stale addon
 that omits the signature falls through to the existing swap — never an extra
 full-load. So **navigating across a layout boundary triggers a full document
 load (correct shell); same-layout sibling navigation stays a fast in-place
-swap.**
+swap.** Known limitation: `routeIdent` keys on `Component.name`, so two distinct
+layouts exporting same-named components collapse to one `L:` sig and a nav
+between them would be (incorrectly) treated as same-shell. Rare; give such
+layouts distinct component names. A future hardening can fold the chain path
+structure into the sig.
 
 ---
 
