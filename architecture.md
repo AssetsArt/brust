@@ -614,7 +614,11 @@ lib.rs      compile_full; ComponentMeta / IslandMeta collection
 Invoked two ways: the **`jsx-rustc` binary** (build CLI, no inline) and the
 **NAPI `compileJsx(source, path, componentSources?)`** (the `brust build`
 native-route path — threads component sources for inline, returns
-`warnings: string[]`). The build emits `<outDir>/jinja/<Name>.jinja` (+
+`warnings: string[]`). A typed 2-arg facade `compileJsx(source, path)` is also
+exported from the `brustjs` entry (`runtime/compile-jsx.ts`) for tooling /
+compile-on-save (e.g. ketshopweb custom sections) — same native binding, the
+common single-component form; pairs with `templates.register` (see the Dynamic
+Templates doc). The build emits `<outDir>/jinja/<Name>.jinja` (+
 `.islands.json` / `.components.json` / `.factory.ts` as needed) and a
 `_manifest.json` — INTO the build output (`dist/jinja`), alongside
 islands/css/mcp, so a dist-only deploy ships them, AND mirrors the same dir to

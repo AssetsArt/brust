@@ -54,12 +54,33 @@ When a tenant saves an edited section, `templates.register` the new source
 under the same (or a version-bumped) name — replacement is atomic, so
 concurrent renders see the old body or the new one, never a missing template.
 
-## Pairing with the compiler
+## Compile JSX on save
 
-You don't have to hand-write jinja. The NAPI `compileJsx` binding emits jinja
-source from native-style JSX — the same compiler the build uses for
-`native: true` routes. A section editor can accept JSX, compile it on save,
-and feed the resulting jinja straight into `templates.register`.
+You don't have to hand-write jinja. `compileJsx` is a public, typed export that
+emits jinja from native-style JSX — the same compiler the build uses for
+`native: true` routes. A section editor can accept JSX, compile it on save, and
+feed the result straight into `templates.register`.
+
+```ts
+import { compileJsx, templates } from 'brustjs'
+
+// `path` is only used as the prefix in compiler error messages.
+const { template, warnings } = compileJsx(
+  'export default function Section({ title }) { return <h2>{title}</h2> }',
+  `shop/${shopId}/section/${id}`,
+)
+// → template: '<h2>{{ (title) | e }}</h2>'  (interpolations auto-escaped)
+
+templates.register(`shop/${shopId}/section/${id}@v${version}`, template)
+```
+
+`compileJsx(source, path)` returns `{ template, islandsJson, componentsJson,
+warnings }` and **throws** on invalid source (catch it to surface a syntax
+error back to the editor). `template` is the only field `templates.register`
+needs; `islandsJson` / `componentsJson` are `"[]"` for a self-contained section
+with no `<Island>` / SSR component. The same authoring constraints as
+`native: true` routes apply (member-path expressions, `.map()`, inline
+conditionals — see [Rendering Modes](/docs/rendering)).
 
 ## Caveats
 
