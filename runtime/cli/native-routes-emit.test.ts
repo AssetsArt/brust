@@ -12,6 +12,7 @@ import {
   gatherChainSources,
   gatherComponentSources,
   reconcileIslandManifest,
+  resetNativeEmitMemo,
   scanImportRefs,
 } from './native-routes-emit.ts'
 
@@ -874,6 +875,107 @@ describe('emitNativeTemplates — native chain composition (T2)', () => {
     // Fully native — no SsrComponent slot in the template, no fallback artifacts.
     expect(tmpl).not.toContain('comp_')
     expect(existsSync(join(outDir, 'Leaf.components.json'))).toBe(false)
+  })
+})
+
+describe('emitNativeTemplates — incremental dev memo (R14)', () => {
+  /** Two native routes: Page (inlines Child transitively) + Other (standalone). */
+  function scaffold() {
+    const childPath = join(dir, 'Child.tsx')
+    writeFileSync(childPath, 'export default function Child() { return <span>child-v1</span>; }')
+    const pagePath = join(dir, 'Page.tsx')
+    writeFileSync(
+      pagePath,
+      `import Child from './Child'\nexport default function Page() { return <div><Child native/></div>; }`,
+    )
+    const otherPath = join(dir, 'Other.tsx')
+    writeFileSync(otherPath, 'export default function Other() { return <p>other-v1</p>; }')
+    const routesPath = join(dir, 'routes.tsx')
+    writeFileSync(routesPath, "import Page from './Page'\nimport Other from './Other'\n")
+    const outDir = join(dir, 'jinja')
+    mkdirSync(outDir, { recursive: true })
+    const opts = {
+      entryFile: routesPath,
+      flatRoutes: [{ nativeTemplate: 'Page' }, { nativeTemplate: 'Other' }],
+      outDir,
+      repoRoot: dir,
+      incremental: true,
+    }
+    return { opts, childPath, pagePath, otherPath, outDir }
+  }
+
+  beforeEach(() => {
+    resetNativeEmitMemo()
+  })
+
+  test('second emit with unchanged sources performs 0 compiles (all skipped)', async () => {
+    const { opts, outDir } = scaffold()
+
+    const first = await emitNativeTemplates(opts)
+    expect(first).toEqual({ compiled: 2, skipped: 0 })
+
+    const second = await emitNativeTemplates(opts)
+    expect(second).toEqual({ compiled: 0, skipped: 2 })
+
+    // Skipped routes still ship: outputs on disk + listed in the manifest.
+    expect(existsSync(join(outDir, 'Page.jinja'))).toBe(true)
+    expect(existsSync(join(outDir, 'Other.jinja'))).toBe(true)
+    const manifest = JSON.parse(readFileSync(join(outDir, '_manifest.json'), 'utf8'))
+    expect(manifest.templates.sort()).toEqual(['Other', 'Page'])
+  })
+
+  test('default path (no incremental flag) compiles everything on every emit', async () => {
+    const { opts } = scaffold()
+    const { incremental: _drop, ...plainOpts } = opts
+
+    expect(await emitNativeTemplates(plainOpts)).toEqual({ compiled: 2, skipped: 0 })
+    expect(await emitNativeTemplates(plainOpts)).toEqual({ compiled: 2, skipped: 0 })
+  })
+
+  test('editing the route source recompiles ONLY that route', async () => {
+    const { opts, otherPath, outDir } = scaffold()
+    await emitNativeTemplates(opts)
+
+    writeFileSync(otherPath, 'export default function Other() { return <p>other-v2</p>; }')
+    const stats = await emitNativeTemplates(opts)
+    expect(stats).toEqual({ compiled: 1, skipped: 1 })
+    expect(readFileSync(join(outDir, 'Other.jinja'), 'utf8')).toContain('other-v2')
+  })
+
+  test('editing a TRANSITIVELY imported component recompiles the importing route', async () => {
+    const { opts, childPath, outDir } = scaffold()
+    await emitNativeTemplates(opts)
+    expect(readFileSync(join(outDir, 'Page.jinja'), 'utf8')).toContain('child-v1')
+
+    writeFileSync(childPath, 'export default function Child() { return <span>child-v2</span>; }')
+    const stats = await emitNativeTemplates(opts)
+    // Page (imports Child) recompiles; Other is untouched and skips.
+    expect(stats).toEqual({ compiled: 1, skipped: 1 })
+    expect(readFileSync(join(outDir, 'Page.jinja'), 'utf8')).toContain('child-v2')
+  })
+
+  test('hash/scan failure falls back to compiling everything (correctness over speed)', async () => {
+    const { opts } = scaffold()
+    const failingOpts = {
+      ...opts,
+      hashInputsForTest: () => {
+        throw new Error('synthetic hash failure')
+      },
+    }
+
+    // Never throws out of the emit; never skips.
+    expect(await emitNativeTemplates(failingOpts)).toEqual({ compiled: 2, skipped: 0 })
+    expect(await emitNativeTemplates(failingOpts)).toEqual({ compiled: 2, skipped: 0 })
+  })
+
+  test('a deleted output forces a recompile even on a memo hit', async () => {
+    const { opts, outDir } = scaffold()
+    await emitNativeTemplates(opts)
+
+    rmSync(join(outDir, 'Page.jinja'))
+    const stats = await emitNativeTemplates(opts)
+    expect(stats).toEqual({ compiled: 1, skipped: 1 })
+    expect(existsSync(join(outDir, 'Page.jinja'))).toBe(true)
   })
 })
 

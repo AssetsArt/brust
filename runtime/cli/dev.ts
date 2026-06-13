@@ -100,6 +100,13 @@ export async function runDev(args: string[]): Promise<void> {
     }[],
     outDir: jinjaDir,
     repoRoot: REPO_ROOT,
+    // R14 — dev-loop incremental compile: per-route content-hash memo over the
+    // resolved compileJsx inputs (route source + transitive local imports +
+    // lucide/directive env); an unchanged route skips recompile on hot reload.
+    // The boot emit below is incremental too — first run always misses (memo is
+    // per-process), so it just SEEDS the memo and the very first edit benefits.
+    // `brust build` never sets this flag (full-fidelity).
+    incremental: true,
   }
   // md routes piggyback on the same emit sites (task 2.8): templates land in
   // the SAME jinja dir, the frozen manifest next to it in `.brust/` (the dist

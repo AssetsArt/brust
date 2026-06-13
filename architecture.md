@@ -910,7 +910,13 @@ are nested by routing role: `{ params?, query?, body? }`.
   client (red error overlay, single-flight). CSS edits hot-swap the `<link>`;
   TS/HTML edits broadcast `reload` but worker respawn can leave stale pool
   entries (a small `napi_clear_pool` is the unbuilt fix) — CSS workflows are solid
-  today.
+  today. Native-template recompiles are **incremental** in dev: each route's
+  resolved compile inputs (route source + every transitively imported local
+  source + the lucide/directive/component-source env) are content-hashed and
+  memoized per dev session, so an unchanged route skips `compileJsx` and its
+  sidecar rewrites on hot reload (any hashing doubt → full recompile;
+  `brust build` always compiles everything). Worker respawn remains the fixed
+  per-change cost — it is correctness-load-bearing (per-isolate caches).
 - **`brust new` (partial)** — scaffolds from `runtime/cli/templates/minimal/`
   (TS + Tailwind + one island). `resolveBrustRef` uses `file:<abspath>` from the
   source tree, else `^<version>`. End-to-end run of a scaffold is blocked on a
