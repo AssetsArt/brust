@@ -878,6 +878,106 @@ describe('emitNativeTemplates — native chain composition (T2)', () => {
   })
 })
 
+describe('emitNativeTemplates — SPA shell-signature meta (Task 3)', () => {
+  test('bakes S: shell meta into a standalone BrustPage document head', async () => {
+    const loginPath = join(dir, 'LoginPage.tsx')
+    writeFileSync(
+      loginPath,
+      `export default function LoginPage() {
+  return (
+    <BrustPage title="Login">
+      <main><h1>login</h1></main>
+    </BrustPage>
+  )
+}
+`,
+    )
+    const routesPath = join(dir, 'routes.tsx')
+    writeFileSync(routesPath, `import LoginPage from './LoginPage'\n`)
+    const outDir = join(dir, 'jinja')
+    mkdirSync(outDir, { recursive: true })
+
+    await emitNativeTemplates({
+      entryFile: routesPath,
+      flatRoutes: [{ nativeTemplate: 'LoginPage', shellId: 'S:LoginPage' }],
+      outDir,
+      repoRoot: dir,
+    })
+
+    const tmpl = readFileSync(join(outDir, 'LoginPage.jinja'), 'utf8')
+    expect(tmpl).toContain('<meta name="brust-shell" content="S:LoginPage">')
+  })
+
+  test('bakes L: shell meta into the layout BrustPage head for a native chain', async () => {
+    // AppLayout is a BrustPage document (owns the head + <main><Outlet/></main>).
+    const layoutPath = join(dir, 'AppLayout.tsx')
+    writeFileSync(
+      layoutPath,
+      `export default function AppLayout({ title }: { title: string }) {
+  return (
+    <BrustPage title={title}>
+      <header><h1>{title}</h1></header>
+      <main><Outlet/></main>
+    </BrustPage>
+  )
+}
+`,
+    )
+    const leafPath = join(dir, 'Pages.tsx')
+    writeFileSync(leafPath, 'export default function Pages() { return <p>pages</p>; }')
+    const routesPath = join(dir, 'routes.tsx')
+    writeFileSync(routesPath, "import AppLayout from './AppLayout'\nimport Pages from './Pages'\n")
+    const outDir = join(dir, 'jinja')
+    mkdirSync(outDir, { recursive: true })
+
+    await emitNativeTemplates({
+      entryFile: routesPath,
+      flatRoutes: [
+        {
+          nativeTemplate: 'Pages',
+          shellId: 'L:AppLayout',
+          chain: [{ Component: { name: 'AppLayout' } }, { Component: { name: 'Pages' } }],
+        },
+      ],
+      outDir,
+      repoRoot: dir,
+    })
+
+    const tmpl = readFileSync(join(outDir, 'Pages.jinja'), 'utf8')
+    // The signature lands in the LAYOUT's BrustPage head — which is the shell doc.
+    expect(tmpl).toContain('<meta name="brust-shell" content="L:AppLayout">')
+  })
+
+  test('no shellId on the flat route → no brust-shell meta baked', async () => {
+    const docPath = join(dir, 'DocPage.tsx')
+    writeFileSync(
+      docPath,
+      `export default function DocPage() {
+  return (
+    <BrustPage title="Doc">
+      <main><h1>doc</h1></main>
+    </BrustPage>
+  )
+}
+`,
+    )
+    const routesPath = join(dir, 'routes.tsx')
+    writeFileSync(routesPath, `import DocPage from './DocPage'\n`)
+    const outDir = join(dir, 'jinja')
+    mkdirSync(outDir, { recursive: true })
+
+    await emitNativeTemplates({
+      entryFile: routesPath,
+      flatRoutes: [{ nativeTemplate: 'DocPage' }],
+      outDir,
+      repoRoot: dir,
+    })
+
+    const tmpl = readFileSync(join(outDir, 'DocPage.jinja'), 'utf8')
+    expect(tmpl).not.toContain('brust-shell')
+  })
+})
+
 describe('emitNativeTemplates — incremental dev memo (R14)', () => {
   /** Two native routes: Page (inlines Child transitively) + Other (standalone). */
   function scaffold() {
