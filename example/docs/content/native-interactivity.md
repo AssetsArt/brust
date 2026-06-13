@@ -97,9 +97,15 @@ Scheme 1, JSX-safe — hyphenated lowercase names, **no colon forms**
 | `x-props` | `x-props={items}` | Initial props for the behavior, JSON-serialized at render time. Structured loader values are serialized automatically. |
 | `x-text` | `x-text="label"` | Sets `textContent` reactively. |
 | `x-show` | `x-show="isOpen"` | Toggles `style.display` between `''` and `'none'`. |
+| `x-if` | `x-if="isOpen"` | Conditionally **mounts/unmounts** the element (below). |
 | `x-bind-<attr>` | `x-bind-disabled="busy"` | Binds an attribute/property reactively. `class` → `className`, `value` → property, boolean props (`disabled`, `checked`, …) → property + attribute presence; `null`/`false` removes the attribute. |
 | `x-on-<event>` | `x-on-click="toggle"` | `addEventListener(event, instance.member)`; the member is called with the event. |
+| `x-model` | `x-model="query"` | Two-way binding for form controls (below). |
 | `x-for` | `x-for="item in items by item.id"` | Renders the element per list item (below). |
+
+Deliberately absent: `x-html` (XSS by construction — render HTML on the
+server instead) and an `x-effect` attribute (side-effects belong in the typed
+behavior: use `ctx.effect`).
 
 Each binding is one reactive effect; a `MutationObserver` on `document.body`
 mounts added `x-data` subtrees and disposes removed ones, so directives work
@@ -147,6 +153,74 @@ Here `items` feeds both the SSR list and (via `x-props`) the behavior, whose
 own `items` signal drives filtering after hydration. If the behavior exposes
 no matching list member, the server-rendered nodes are simply left as static
 HTML.
+
+### x-if
+
+Where `x-show` toggles `display`, `x-if` **mounts and unmounts**: the element
+is removed from the DOM while the path is falsy and re-inserted as a **fresh
+clone with fresh bindings** when it turns truthy — listeners and effects of
+the removed subtree are disposed, and no stale state survives a toggle. Use it
+for expensive or stateful branches (an accordion panel, a modal); use `x-show`
+when flipping visibility cheaply.
+
+```tsx
+// components/Accordion.tsx
+export const behavior = () => {
+  const open = signal(false)
+  return { open, toggle: () => open.set((v) => !v) }
+}
+
+export default function Accordion({ title, body }: { title: string; body: string }) {
+  return (
+    <section>
+      <button type="button" x-on-click="toggle">{title}</button>
+      <div x-if="open">{body}</div>
+    </section>
+  )
+}
+```
+
+Server-rendered markup is adopted in place when the initial value is truthy
+(no flash, no re-clone); a falsy initial value removes it on mount. The
+runtime does not emit a server-side `{% if %}` for `x-if` — if the markup must
+be conditional in the HTML itself, keep using inline conditionals in child
+position. `x-if` and `x-for` on the **same** element are rejected (warn; the
+`x-for` wins) — nest the `x-if` inside the loop item instead.
+
+### x-model
+
+Two-way binding for form controls: the element writes into the signal at the
+path on input, and signal changes reflect back to the element.
+
+```tsx
+// components/Search.tsx
+export const behavior = ({ props }: BehaviorCtx) => {
+  const query = signal('')
+  const hits = computed(() =>
+    (props as { items: string[] }).items.filter((s) => s.includes(query())),
+  )
+  return { query, hits, clear: () => query.set('') }
+}
+
+export default function Search({ items }: { items: string[] }) {
+  return (
+    <div x-props={items}>
+      <input type="search" x-model="query" placeholder="Filter…" />
+      <button type="button" x-on-click="clear">Clear</button>
+      <ul>
+        <li x-for="h in hits" x-text="h"></li>
+      </ul>
+    </div>
+  )
+}
+```
+
+Element kinds: checkboxes bind a **boolean** `checked` (on `change`); radios
+write their `value` when checked and a per-radio effect keeps the group
+consistent against the signal; single `select` and text-like inputs bind the
+string `value` (on `input`). `select[multiple]` is not supported (warns at
+bind time). The path must resolve to a **signal** — intermediate signal hops
+are unwrapped like every other directive read.
 
 ## Auto x-data injection
 

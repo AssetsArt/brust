@@ -693,6 +693,317 @@ describe('lifecycle', () => {
   })
 })
 
+describe('x-if', () => {
+  test('truthy initial: original element adopted in place (same node, no re-clone)', async () => {
+    const win = setupDom('<div x-data="if1"><p x-if="open" x-text="msg">seed</p></div>')
+    const { register, start } = await import(`./runtime.ts?if1=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const open = signal(true)
+    const msg = signal('hi')
+    register('if1', () => ({ open, msg }))
+    const before = win.document.querySelector('p')!
+    start(win.document)
+    const after = win.document.querySelector('p')!
+    expect(after).toBe(before) // SAME node object — adopted, not re-cloned
+    expect(after.textContent).toBe('hi') // subtree bindings live on the original
+  })
+
+  test('falsy initial: element removed from the DOM', async () => {
+    const win = setupDom('<div x-data="if2"><p x-if="open">hi</p></div>')
+    const { register, start } = await import(`./runtime.ts?if2=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    register('if2', () => ({ open: signal(false) }))
+    start(win.document)
+    expect(win.document.querySelector('p')).toBeNull()
+  })
+
+  test('sibling x-data AFTER a falsy-initial x-if still mounts (isConnected guard scenario)', async () => {
+    // scanAndMount snapshots [x-data] before any x-if effect prunes the DOM.
+    // The first mount's falsy x-if removes part of ITS OWN subtree; a nested
+    // x-data inside that pruned subtree must be SKIPPED (detached — observer
+    // owns its lifecycle), while a connected sibling later in the same
+    // snapshot must still mount normally.
+    const win = setupDom(
+      '<div x-data="ifg1"><div x-if="open"><div x-data="ifg2"></div></div></div>' +
+        '<div x-data="ifg3"><span x-text="label"></span></div>',
+    )
+    const { register, start } = await import(`./runtime.ts?ifg=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    let prunedMounted = 0
+    register('ifg1', () => ({ open: signal(false) }))
+    register('ifg2', () => {
+      prunedMounted++
+      return {}
+    })
+    register('ifg3', () => ({ label: signal('sibling-ok') }))
+    start(win.document)
+    // The pruned nested x-data never mounted (it left the document mid-scan)…
+    expect(prunedMounted).toBe(0)
+    // …and the connected sibling later in the same snapshot mounted fine.
+    expect(win.document.querySelector('span')?.textContent).toBe('sibling-ok')
+  })
+
+  test('toggle cycle inserts a FRESH clone each time (no stale state carried)', async () => {
+    const win = setupDom('<div x-data="if3"><p x-if="open" x-text="msg"></p></div>')
+    const { register, start } = await import(`./runtime.ts?if3=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const open = signal(false)
+    register('if3', () => ({ open, msg: signal('m') }))
+    start(win.document)
+    expect(win.document.querySelector('p')).toBeNull()
+    open.set(true)
+    const clone1 = win.document.querySelector('p')!
+    expect(clone1.textContent).toBe('m') // fresh clone is bound
+    clone1.setAttribute('data-dirty', '1') // mutate clone 1
+    open.set(false)
+    expect(win.document.querySelector('p')).toBeNull()
+    open.set(true)
+    const clone2 = win.document.querySelector('p')!
+    expect(clone2).not.toBe(clone1) // fresh clone, not the old node
+    expect(clone2.hasAttribute('data-dirty')).toBe(false) // clone 2 clean
+    expect(clone2.textContent).toBe('m')
+  })
+
+  test('inner x-text effect and x-on listener are disposed when x-if turns falsy', async () => {
+    const win = setupDom(
+      '<div x-data="if4"><p x-if="open"><span x-text="msg"></span><button x-on-click="inc">b</button></p></div>',
+    )
+    const { register, start } = await import(`./runtime.ts?if4=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const open = signal(true)
+    const msg = signal('a')
+    let calls = 0
+    register('if4', () => ({
+      open,
+      msg,
+      inc() {
+        calls++
+      },
+    }))
+    start(win.document)
+    const span = win.document.querySelector('span')!
+    const btn = win.document.querySelector('button')!
+    expect(span.textContent).toBe('a')
+    btn.dispatchEvent(new win.Event('click', { bubbles: true }))
+    expect(calls).toBe(1)
+    open.set(false) // unmount → per-clone disposers run
+    msg.set('b') // must NOT update the detached span
+    expect(span.textContent).toBe('a')
+    btn.dispatchEvent(new win.Event('click', { bubbles: true })) // listener removed
+    expect(calls).toBe(1)
+  })
+
+  test('x-if + x-for on the same element warns and skips x-if (x-for proceeds)', async () => {
+    const win = setupDom(
+      '<ul x-data="if5"><li x-for="t in items" x-if="open" x-text="t.n"></li></ul>',
+    )
+    const { register, start } = await import(`./runtime.ts?if5=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const warn = console.warn
+    const calls: unknown[][] = []
+    console.warn = (...a: unknown[]) => {
+      calls.push(a)
+    }
+    try {
+      register('if5', () => ({ items: signal([{ n: 'a' }, { n: 'b' }]), open: signal(false) }))
+      expect(() => start(win.document)).not.toThrow()
+      expect(calls.some((a) => String(a[0]).includes('x-if'))).toBe(true)
+      // x-for proceeded; x-if was skipped (open=false would have removed everything)
+      const lis = Array.from(win.document.querySelectorAll('li'))
+      expect(lis.map((l) => l.textContent)).toEqual(['a', 'b'])
+    } finally {
+      console.warn = warn
+    }
+  })
+
+  test('nested x-data inside x-if mounts via the observer on insert, disposes on removal', async () => {
+    const win = setupDom(
+      '<div x-data="ifOuter"><section x-if="open"><div x-data="ifInner"><span x-text="msg"></span></div></section></div>',
+    )
+    const { register, start } = await import(`./runtime.ts?if6=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const open = signal(false)
+    const msg = signal('I')
+    let innerInits = 0
+    register('ifOuter', () => ({ open }))
+    register('ifInner', () => ({
+      init() {
+        innerInits++
+      },
+      msg,
+    }))
+    start(win.document)
+    expect(innerInits).toBe(0) // falsy initial — nested x-data never mounted
+    open.set(true) // clone inserted → observer mounts the nested x-data
+    await Promise.resolve()
+    expect(innerInits).toBe(1)
+    const span = win.document.querySelector('span')!
+    expect(span.textContent).toBe('I')
+    open.set(false) // removal → observer disposes the nested x-data
+    await Promise.resolve()
+    msg.set('J') // must NOT update the detached nested subtree
+    expect(span.textContent).toBe('I')
+  })
+})
+
+describe('x-model', () => {
+  test('text input: two-way (input event writes signal; signal.set reflects to value)', async () => {
+    const win = setupDom('<div x-data="m1"><input x-model="q"></div>')
+    const { register, start } = await import(`./runtime.ts?m1=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const q = signal('a')
+    register('m1', () => ({ q }))
+    start(win.document)
+    const input = win.document.querySelector('input')! as any
+    expect(input.value).toBe('a') // initial reflect
+    input.value = 'ab'
+    input.dispatchEvent(new win.Event('input', { bubbles: true }))
+    expect(q()).toBe('ab') // write path
+    q.set('z')
+    expect(input.value).toBe('z') // read path
+  })
+
+  test('checkbox: change event writes boolean; signal drives checked', async () => {
+    const win = setupDom('<div x-data="m2"><input type="checkbox" x-model="on"></div>')
+    const { register, start } = await import(`./runtime.ts?m2=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const on = signal(false)
+    register('m2', () => ({ on }))
+    start(win.document)
+    const input = win.document.querySelector('input')! as any
+    expect(input.checked).toBe(false)
+    input.checked = true
+    input.dispatchEvent(new win.Event('change', { bubbles: true }))
+    expect(on()).toBe(true) // boolean, not string
+    on.set(false)
+    expect(input.checked).toBe(false)
+  })
+
+  test('radio group: signal drives checked switch; change writes the checked value', async () => {
+    const win = setupDom(
+      '<div x-data="m3">' +
+        '<input type="radio" name="g" value="a" x-model="pick">' +
+        '<input type="radio" name="g" value="b" x-model="pick">' +
+        '</div>',
+    )
+    const { register, start } = await import(`./runtime.ts?m3=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const pick = signal('a')
+    register('m3', () => ({ pick }))
+    start(win.document)
+    const radios = Array.from(win.document.querySelectorAll('input')) as any[]
+    expect(radios[0].checked).toBe(true)
+    expect(radios[1].checked).toBe(false)
+    pick.set('b') // signal drives the switch
+    expect(radios[0].checked).toBe(false)
+    expect(radios[1].checked).toBe(true)
+    radios[0].checked = true
+    radios[0].dispatchEvent(new win.Event('change', { bubbles: true }))
+    expect(pick()).toBe('a') // checked radio writes its value
+    expect(radios[1].checked).toBe(false) // reflect effect updates the sibling
+  })
+
+  test('select (single): input event writes value; signal reflects', async () => {
+    const win = setupDom(
+      '<div x-data="m4"><select x-model="sel">' +
+        '<option value="x">X</option><option value="y">Y</option>' +
+        '</select></div>',
+    )
+    const { register, start } = await import(`./runtime.ts?m4=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const sel = signal('x')
+    register('m4', () => ({ sel }))
+    start(win.document)
+    const select = win.document.querySelector('select')! as any
+    expect(select.value).toBe('x')
+    select.value = 'y'
+    select.dispatchEvent(new win.Event('input', { bubbles: true }))
+    expect(sel()).toBe('y')
+    sel.set('x')
+    expect(select.value).toBe('x')
+  })
+
+  test('select[multiple]: warns at bind time, registers no listener', async () => {
+    const win = setupDom(
+      '<div x-data="m5"><select multiple x-model="sel">' +
+        '<option value="x">X</option><option value="y">Y</option>' +
+        '</select></div>',
+    )
+    const { register, start } = await import(`./runtime.ts?m5=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const warn = console.warn
+    const calls: unknown[][] = []
+    console.warn = (...a: unknown[]) => {
+      calls.push(a)
+    }
+    try {
+      const sel = signal('x')
+      register('m5', () => ({ sel }))
+      start(win.document)
+      expect(calls.some((a) => String(a[0]).includes('multiple'))).toBe(true)
+      const select = win.document.querySelector('select')! as any
+      select.value = 'y'
+      select.dispatchEvent(new win.Event('input', { bubbles: true }))
+      expect(sel()).toBe('x') // no listener — signal untouched
+    } finally {
+      console.warn = warn
+    }
+  })
+
+  test('no echo loop: one input dispatch → exactly one signal set', async () => {
+    const win = setupDom('<div x-data="m6"><input x-model="q"></div>')
+    const { register, start } = await import(`./runtime.ts?m6=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const q = signal('a')
+    const sets: unknown[] = []
+    const origSet = q.set
+    q.set = (v: any) => {
+      sets.push(v)
+      origSet(v)
+    }
+    register('m6', () => ({ q }))
+    start(win.document)
+    expect(sets).toHaveLength(0) // initial reflect never writes the signal
+    const input = win.document.querySelector('input')! as any
+    input.value = 'ab'
+    input.dispatchEvent(new win.Event('input', { bubbles: true }))
+    expect(sets).toEqual(['ab']) // exactly one set; reflect guard breaks the echo
+  })
+
+  test('writePath: multi-hop through an intermediate signal hop reaches the leaf signal', async () => {
+    const win = setupDom('<div x-data="m7"><input x-model="item.name"></div>')
+    const { register, start } = await import(`./runtime.ts?m7=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const name = signal('a')
+    const item = signal({ name })
+    register('m7', () => ({ item }))
+    start(win.document)
+    const input = win.document.querySelector('input')! as any
+    expect(input.value).toBe('a') // read unwraps the intermediate hop
+    input.value = 'b'
+    input.dispatchEvent(new win.Event('input', { bubbles: true }))
+    expect(name()).toBe('b') // write unwraps the intermediate hop too
+  })
+
+  test('disposal: unmount removes the listener (no signal write) and the reflect effect', async () => {
+    const win = setupDom('<div id="host"><div x-data="m8"><input x-model="q"></div></div>')
+    const { register, start } = await import(`./runtime.ts?m8=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const q = signal('a')
+    register('m8', () => ({ q }))
+    start(win.document)
+    const input = win.document.querySelector('input')! as any
+    expect(input.value).toBe('a')
+    win.document.getElementById('host')!.innerHTML = '' // unmount → observer disposes
+    await Promise.resolve()
+    input.value = 'zz'
+    input.dispatchEvent(new win.Event('input', { bubbles: true }))
+    expect(q()).toBe('a') // listener removed — no write after unmount
+    q.set('y')
+    expect(input.value).toBe('zz') // reflect effect disposed too
+  })
+})
+
 describe('behavior ctx: effect + onCleanup', () => {
   test('ctx.effect runs reactively; its disposer joins the lifecycle (no run after unmount)', async () => {
     const win = setupDom('<div id="host"><div x-data="fx"></div></div>')
