@@ -19,6 +19,7 @@ import { Buffer } from 'node:buffer'
 import { runInRequestScope } from '../request-context.ts'
 import { runInRequestCache } from '../loader-cache.ts'
 import { runInStoreContext } from '../store/server-context.ts'
+import { runInNavContext } from '../navigation/server-context.ts'
 
 /** Render a React element to a single HTML string, awaiting all Suspense
  * boundaries via onAllReady. Used by navigationBranch — renderToString
@@ -59,6 +60,13 @@ export function renderToAwaitedString(element: ReactNode): Promise<string> {
 export interface RenderFragmentOpts {
   /** Request cookies visible to cookies()/session helpers inside the tree. */
   cookies?: Record<string, string>
+  /** Seed `useNav()` / `getNavState()` for islands inside the fragment. Provide
+   * when rendering for a known URL (e.g. a server-side preview of a specific
+   * route) so active-nav resolves; omit for a context-free fragment, where
+   * `useNav()` reports the idle defaults (path ''). `search` is the raw query
+   * string including the leading '?'. */
+  path?: string
+  search?: string
 }
 
 /** Render a component to an HTML string with framework contexts scoped:
@@ -76,11 +84,16 @@ export async function renderFragment<P extends object>(
   opts?: RenderFragmentOpts,
 ): Promise<string> {
   // Composition mirrors routes.ts runInRequestContext: scope outermost, then
-  // the request-scoped loader cache, then the per-call store context.
+  // the request-scoped loader cache, then the per-call store context, then —
+  // only when the caller seeds a URL — the nav scope (innermost), so useNav()
+  // inside the fragment resolves active-nav. Without opts.path, no nav scope is
+  // opened and useNav() reports idle (the context-free default).
+  const render = () =>
+    renderToAwaitedString(createElement(Component as ComponentType, props as object))
   return runInRequestScope(opts?.cookies ?? {}, () =>
     runInRequestCache(() =>
       runInStoreContext(() =>
-        renderToAwaitedString(createElement(Component as ComponentType, props as object)),
+        opts?.path !== undefined ? runInNavContext(opts.path, opts.search ?? '', render) : render(),
       ),
     ),
   )

@@ -461,6 +461,17 @@ export const brust = {
     const scanRoot = opts.scanRoot ?? path.dirname(fileURLToPath(opts.entry))
 
     const dev = opts.dev === true || process.env.BRUST_DEV === '1'
+    // Unify the `dev: true` option with the BRUST_DEV env signal. The dev
+    // coordinator/watcher (which calls worker-registry spawnAll() on hot reload)
+    // keys off this `dev` variable, but serve()'s registerInitialPool — plus
+    // every other `process.env.BRUST_DEV === '1'` gate (dev-client injection,
+    // store/css `no-store`, cookie dev warnings) — keys off the env var ALONE.
+    // The `brust dev` CLI sets BRUST_DEV=1; the programmatic `run({ dev: true })`
+    // path must too, or hot reload calls spawnAll() against a pool that
+    // registerInitialPool() never recorded ("spawnAll called before
+    // registerInitialPool"). Set it here, before serve() spawns workers, so they
+    // inherit it via baseEnv.
+    if (dev) process.env.BRUST_DEV = '1'
     let routes = opts.routes
     if (dev) {
       const { createDevWsRoute } = await import('./dev/ws-channel.ts')

@@ -4,6 +4,7 @@ import * as native from './index.js'
 import { renderBranchStreaming } from './render/stream.ts'
 import { renderToAwaitedString } from './render/fragment.ts'
 import { runInStoreContext, collectSnapshot } from './store/server-context.ts'
+import { runInNavContext } from './navigation/server-context.ts'
 import { buildStoreScripts } from './render/inject-store.ts'
 import { getCssHrefsForRoute } from './css.ts'
 import { runInRequestCache } from './loader-cache.ts'
@@ -45,8 +46,34 @@ export { slugifyHeading } from './md/slug.ts'
 // store scope (per-request store instance). `reqCookies` is the parsed incoming
 // Cookie header so a loader's `cookies.get` reads it and `cookies.set` stages
 // onto this scope (flushed onto response headers via flushSetCookie).
-function runInRequestContext<T>(reqCookies: Record<string, string>, fn: () => T): T {
-  return runInRequestScope(reqCookies, () => runInRequestCache(() => runInStoreContext(fn)))
+/** Raw query string (including the leading '?') of a `path+query` URL, or ''
+ * when there is none. Mirrors the client's `location.search` so the SSR-seeded
+ * nav.search matches what the client re-seeds via __navInit at hydration. */
+function searchStringOf(url: string | undefined): string {
+  if (!url) return ''
+  const q = url.indexOf('?')
+  if (q === -1) return ''
+  // Strip any fragment so the seeded nav.search matches location.search (which
+  // never includes '#...'). HTTP request lines don't carry fragments today, but
+  // this keeps searchStringOf correct-by-construction.
+  const h = url.indexOf('#', q)
+  return h === -1 ? url.slice(q) : url.slice(q, h)
+}
+
+// `navPath`/`navSearch` (optional, trailing) open a per-request nav scope so
+// island / React SSR sees the current request path via useNav()/getNavState()
+// — active-nav at first paint with no hydration flash. They default to '' (the
+// idle nav state), so loader-only / action scopes are unchanged. Trailing args
+// keep the callback in the conventional 2nd position at the bare call sites.
+function runInRequestContext<T>(
+  reqCookies: Record<string, string>,
+  fn: () => T,
+  navPath = '',
+  navSearch = '',
+): T {
+  return runInRequestScope(reqCookies, () =>
+    runInRequestCache(() => runInStoreContext(() => runInNavContext(navPath, navSearch, fn))),
+  )
 }
 
 // Sub-project J — island ISR cache, backed by the Rust-side store (shared across
@@ -1290,20 +1317,33 @@ export function makeRenderer(
         const compManifest = loadComponentManifest(flat.nativeTemplate)
         if ((manifest && manifest.length > 0) || (compManifest && compManifest.length > 0)) {
           const rt = JSON.parse(json) as Record<string, unknown>
-          const [islandExtra, componentExtra] = await Promise.all([
-            manifest && manifest.length > 0
-              ? resolveIslandContext(manifest, rt, islandCache)
-              : Promise.resolve({} as Record<string, string>),
-            compManifest && compManifest.length > 0
-              ? resolveComponentContext(
-                  compManifest,
-                  rt,
-                  flat.nativeTemplate,
-                  undefined,
-                  islandCache,
-                )
-              : Promise.resolve({} as Record<string, string>),
-          ])
+          // Capture the (narrowed) template name in this scope: the runInNavContext
+          // closure below would otherwise lose the `flat.nativeTemplate !== undefined`
+          // narrowing (TS doesn't carry control-flow narrowing into a nested fn).
+          const nativeTemplate = flat.nativeTemplate
+          // Seed the request path so island / SSR-component renderToString sees
+          // the active route via useNav() (active-nav at first paint). The native
+          // template itself is Rust-rendered and needs no scope. The loaders ran
+          // in their own request scope above; this island SSR is outside it.
+          const [islandExtra, componentExtra] = await runInNavContext(
+            call.path,
+            searchStringOf(call.req?.url),
+            () =>
+              Promise.all([
+                manifest && manifest.length > 0
+                  ? resolveIslandContext(manifest, rt, islandCache)
+                  : Promise.resolve({} as Record<string, string>),
+                compManifest && compManifest.length > 0
+                  ? resolveComponentContext(
+                      compManifest,
+                      rt,
+                      nativeTemplate,
+                      undefined,
+                      islandCache,
+                    )
+                  : Promise.resolve({} as Record<string, string>),
+              ]),
+          )
           const ctx = { ...rt, ...islandExtra, ...componentExtra }
           const finalBytes = encoder.encode(JSON.stringify(ctx))
           // The original size check guarded the pre-island bytes; the merged
@@ -1373,59 +1413,77 @@ export function makeRenderer(
       // or render resolves the same per-request instance. Snapshot is collected
       // after loaders (buildRenderElement resolved) — that's where Spec A stores
       // are seeded — and threaded into the render for <script> injection.
-      return await runInRequestContext(call.req?.cookies ?? {}, async () => {
-        // Computed ONCE and shared by buildRenderElement (leaf swap) and
-        // renderBranchStreaming (forceIslands) so the two can never diverge.
-        let shellMode = wantsSsgFallbackShell(flat, call)
-        let element: ReactNode = null
-        // The route actually rendered + its HTTP status. Normally the matched
-        // `flat` at the verdict status (404 when the matched route IS a
-        // catch-all). A React loader that `throw`s `notFound()` swaps both to
-        // the nearest catch-all at 404 below.
-        let renderFlat = flat
-        let renderStatus = flat.notFound === true ? 404 : verdict.status
-        try {
-          element = await buildRenderElement(call, flat, opts.getWorkerId, shellMode)
-        } catch (err) {
-          if (isHttpErrorTrigger(err)) {
-            // React loader threw httpError() — short-circuit with the trigger's
-            // response. NOT the errorBoundary, NOT the 500 path below: this is
-            // a deliberate response, like a middleware short-circuit.
-            return await emitSingleChunkResponse(
-              slotView,
-              napi,
-              workerId,
-              encoder,
-              {
-                status: err.status,
-                contentType: err.contentType,
-                body: err.body,
-                headers: err.headers,
-              },
-              slot,
-            )
-          }
-          if (isNotFoundTrigger(err)) {
-            // React `notFound()` trigger: abandon the matched route and render
-            // the NEAREST catch-all (same selection as a Rust-unmatched path)
-            // at HTTP 404 — NOT the route's own Component, NOT a 500. Reuse the
-            // existing 404-render machinery by re-running buildRenderElement
-            // against the catch-all's chain.
-            // nfId is the array index, which IS the route_id (catch-alls keep
-            // their natural slot — see FlatRoute.notFound), so byRouteId resolves
-            // the same flat route the Rust tier picks for an unmatched path.
-            const nfId = selectNotFound(routes, call.path)
-            const nfFlat = nfId !== undefined ? byRouteId.get(nfId) : undefined
-            renderStatus = 404
-            if (nfFlat) {
-              renderFlat = nfFlat
-              shellMode = wantsSsgFallbackShell(nfFlat, call)
-              try {
-                element = await buildRenderElement(call, nfFlat, opts.getWorkerId, shellMode)
-              } catch (nfErr) {
-                // The catch-all's OWN loader/render setup failed — don't loop;
-                // fall back to the framework default 404 body at 404.
-                console.error(`[brust] catch-all render setup failed:`, nfErr)
+      return await runInRequestContext(
+        call.req?.cookies ?? {},
+        async () => {
+          // Computed ONCE and shared by buildRenderElement (leaf swap) and
+          // renderBranchStreaming (forceIslands) so the two can never diverge.
+          let shellMode = wantsSsgFallbackShell(flat, call)
+          let element: ReactNode = null
+          // The route actually rendered + its HTTP status. Normally the matched
+          // `flat` at the verdict status (404 when the matched route IS a
+          // catch-all). A React loader that `throw`s `notFound()` swaps both to
+          // the nearest catch-all at 404 below.
+          let renderFlat = flat
+          let renderStatus = flat.notFound === true ? 404 : verdict.status
+          try {
+            element = await buildRenderElement(call, flat, opts.getWorkerId, shellMode)
+          } catch (err) {
+            if (isHttpErrorTrigger(err)) {
+              // React loader threw httpError() — short-circuit with the trigger's
+              // response. NOT the errorBoundary, NOT the 500 path below: this is
+              // a deliberate response, like a middleware short-circuit.
+              return await emitSingleChunkResponse(
+                slotView,
+                napi,
+                workerId,
+                encoder,
+                {
+                  status: err.status,
+                  contentType: err.contentType,
+                  body: err.body,
+                  headers: err.headers,
+                },
+                slot,
+              )
+            }
+            if (isNotFoundTrigger(err)) {
+              // React `notFound()` trigger: abandon the matched route and render
+              // the NEAREST catch-all (same selection as a Rust-unmatched path)
+              // at HTTP 404 — NOT the route's own Component, NOT a 500. Reuse the
+              // existing 404-render machinery by re-running buildRenderElement
+              // against the catch-all's chain.
+              // nfId is the array index, which IS the route_id (catch-alls keep
+              // their natural slot — see FlatRoute.notFound), so byRouteId resolves
+              // the same flat route the Rust tier picks for an unmatched path.
+              const nfId = selectNotFound(routes, call.path)
+              const nfFlat = nfId !== undefined ? byRouteId.get(nfId) : undefined
+              renderStatus = 404
+              if (nfFlat) {
+                renderFlat = nfFlat
+                shellMode = wantsSsgFallbackShell(nfFlat, call)
+                try {
+                  element = await buildRenderElement(call, nfFlat, opts.getWorkerId, shellMode)
+                } catch (nfErr) {
+                  // The catch-all's OWN loader/render setup failed — don't loop;
+                  // fall back to the framework default 404 body at 404.
+                  console.error(`[brust] catch-all render setup failed:`, nfErr)
+                  return await emitSingleChunkResponse(
+                    slotView,
+                    napi,
+                    workerId,
+                    encoder,
+                    {
+                      status: 404,
+                      contentType: 'text/html; charset=utf-8',
+                      body: DEFAULT_NOT_FOUND_BODY,
+                    },
+                    slot,
+                  )
+                }
+              } else {
+                // No catch-all registered for this prefix → framework default 404
+                // body at status 404 (don't crash, don't 500).
                 return await emitSingleChunkResponse(
                   slotView,
                   napi,
@@ -1440,65 +1498,56 @@ export function makeRenderer(
                 )
               }
             } else {
-              // No catch-all registered for this prefix → framework default 404
-              // body at status 404 (don't crash, don't 500).
+              // Setup failure BEFORE renderToPipeableStream — loader throw, params
+              // bind throw. Shape matches the legacy "internal error" path so
+              // existing integration tests stay green.
+              console.error(`[brust] render setup failed:`, err)
               return await emitSingleChunkResponse(
                 slotView,
                 napi,
                 workerId,
                 encoder,
                 {
-                  status: 404,
+                  status: 500,
                   contentType: 'text/html; charset=utf-8',
-                  body: DEFAULT_NOT_FOUND_BODY,
+                  body: 'internal error',
                 },
                 slot,
               )
             }
-          } else {
-            // Setup failure BEFORE renderToPipeableStream — loader throw, params
-            // bind throw. Shape matches the legacy "internal error" path so
-            // existing integration tests stay green.
-            console.error(`[brust] render setup failed:`, err)
-            return await emitSingleChunkResponse(
-              slotView,
-              napi,
-              workerId,
-              encoder,
-              {
-                status: 500,
-                contentType: 'text/html; charset=utf-8',
-                body: 'internal error',
-              },
-              slot,
-            )
           }
-        }
-        const errorBoundary: ComponentType<{ error: Error }> =
-          renderFlat.errorBoundary ??
-          (({ error }) => createElement('div', null, `Internal Server Error: ${error.message}`))
-        const storeSnapshot = collectSnapshot()
-        await renderBranchStreaming({
-          element,
-          view: slotView,
-          slot,
-          workerId,
-          napi,
-          errorBoundary,
-          // Catch-all (`path: '*'`) leaf rendered on an unmatched path OR a
-          // React `notFound()` swap: stamp HTTP 404 (mirrors the native path).
-          status: renderStatus,
-          headers: flushSetCookie(verdict.headers),
-          routePath: renderFlat.fullPath,
-          shellId: renderFlat.shellId,
-          storeSnapshot,
-          // SSG fallback shells have zero islands on the page but the
-          // client-loader runtime still needs the importmap + bootstrap.
-          forceIslands: shellMode,
-        })
-        // renderBranchStreaming wrote via the chunk channel.
-        return 0
-      })
+          const errorBoundary: ComponentType<{ error: Error }> =
+            renderFlat.errorBoundary ??
+            (({ error }) => createElement('div', null, `Internal Server Error: ${error.message}`))
+          const storeSnapshot = collectSnapshot()
+          await renderBranchStreaming({
+            element,
+            view: slotView,
+            slot,
+            workerId,
+            napi,
+            errorBoundary,
+            // Catch-all (`path: '*'`) leaf rendered on an unmatched path OR a
+            // React `notFound()` swap: stamp HTTP 404 (mirrors the native path).
+            status: renderStatus,
+            headers: flushSetCookie(verdict.headers),
+            routePath: renderFlat.fullPath,
+            shellId: renderFlat.shellId,
+            storeSnapshot,
+            // SSG fallback shells have zero islands on the page but the
+            // client-loader runtime still needs the importmap + bootstrap.
+            forceIslands: shellMode,
+          })
+          // renderBranchStreaming wrote via the chunk channel.
+          return 0
+        },
+        // Seed nav with the REQUEST path (call.path), not renderFlat.fullPath: on
+        // a React notFound() swap the catch-all renders, but the user is still at
+        // the unmatched URL — and the client __navInit's from location.pathname
+        // (= that URL), so both sides agree. nav = where you are, not what handled it.
+        call.path,
+        searchStringOf(call.req?.url),
+      )
     }
     if (call.kind === 'navigation') {
       await navigationBranch(call, byRouteId, routes, slotView, encoder, opts.getWorkerId, slot)
@@ -1717,23 +1766,28 @@ async function navigationBranch(
       // document that already booted the bootstrap (the navigator IS the
       // bootstrap), and the takeover runtime imports its chunk itself.
       const renderFlatToHtml = (target: FlatRoute): Promise<string> =>
-        runInRequestContext(call.req?.cookies ?? {}, async () => {
-          const element = await buildRenderElement(
-            call as any,
-            target,
-            getWorkerId,
-            wantsSsgFallbackShell(target, call as any),
-          )
-          if (!element) throw new Error('render setup failed')
-          // Use renderToPipeableStream + onAllReady so pages with <Suspense> emit
-          // their RESOLVED markup, not the fallback. renderToString would only
-          // capture the shell — navigating SPA-style to a Suspense-using route
-          // would otherwise ship "loading…" and never recover.
-          const html = await renderToAwaitedString(element)
-          store = collectSnapshot()
-          navHeaders = flushSetCookie(undefined)
-          return html
-        })
+        runInRequestContext(
+          call.req?.cookies ?? {},
+          async () => {
+            const element = await buildRenderElement(
+              call as any,
+              target,
+              getWorkerId,
+              wantsSsgFallbackShell(target, call as any),
+            )
+            if (!element) throw new Error('render setup failed')
+            // Use renderToPipeableStream + onAllReady so pages with <Suspense> emit
+            // their RESOLVED markup, not the fallback. renderToString would only
+            // capture the shell — navigating SPA-style to a Suspense-using route
+            // would otherwise ship "loading…" and never recover.
+            const html = await renderToAwaitedString(element)
+            store = collectSnapshot()
+            navHeaders = flushSetCookie(undefined)
+            return html
+          },
+          call.path,
+          searchStringOf(call.req?.url),
+        )
       try {
         fullHtml = await renderFlatToHtml(flat)
       } catch (err) {
@@ -1898,14 +1952,22 @@ async function renderNativeRouteToHtml(
   const manifest = loadIslandManifest(templateName)
   const compManifest = loadComponentManifest(templateName)
   if ((manifest && manifest.length > 0) || (compManifest && compManifest.length > 0)) {
-    const [islandExtra, componentExtra] = await Promise.all([
-      manifest && manifest.length > 0
-        ? resolveIslandContext(manifest, ctx, islandCache)
-        : Promise.resolve({} as Record<string, string>),
-      compManifest && compManifest.length > 0
-        ? resolveComponentContext(compManifest, ctx, templateName, undefined, islandCache)
-        : Promise.resolve({} as Record<string, string>),
-    ])
+    // Seed the request path so island SSR sees the active route via useNav()
+    // (same as the full-document native branch — this runs outside the loader
+    // request scope opened above).
+    const [islandExtra, componentExtra] = await runInNavContext(
+      call.path,
+      searchStringOf(call.req?.url),
+      () =>
+        Promise.all([
+          manifest && manifest.length > 0
+            ? resolveIslandContext(manifest, ctx, islandCache)
+            : Promise.resolve({} as Record<string, string>),
+          compManifest && compManifest.length > 0
+            ? resolveComponentContext(compManifest, ctx, templateName, undefined, islandCache)
+            : Promise.resolve({} as Record<string, string>),
+        ]),
+    )
     ctx = { ...ctx, ...islandExtra, ...componentExtra }
   }
 

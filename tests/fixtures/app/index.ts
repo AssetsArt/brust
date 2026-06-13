@@ -12,6 +12,12 @@ await brust.run({
   entry: import.meta.url,
   actions,
   actionPrefix: process.env.BRUST_ACTION_PREFIX || undefined,
+  // Opt-in dev mode via the OPTION (not the BRUST_DEV env) for
+  // tests/dev-reload-option.test.ts — exercises the `run({ dev: true })` path
+  // that must self-set BRUST_DEV so serve()'s worker-registry registerInitialPool
+  // fires (else hot reload's spawnAll throws). Undefined by default → the shared
+  // suites boot non-dev and stay byte-identical.
+  dev: process.env.BRUST_TEST_DEV_OPTION === '1' || undefined,
   // Opt-in CORS boot for tests/cors.integration.test.ts (own process — the
   // shared suites boot without the env and stay byte-identical, no-CORS).
   cors: process.env.BRUST_TEST_CORS
