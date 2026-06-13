@@ -48,22 +48,26 @@ gh pr merge <pr#> --squash --delete-branch   # or --merge, per repo convention
 git checkout main && git pull origin main
 ```
 
-## 5. Bump version ON MAIN
+## 5. Bump version ON MAIN — use the script (do NOT hand-edit)
 
 Last tag = current shipped version → increment (alpha line: `0.1.N-alpha` → `0.1.(N+1)-alpha`).
-**Every** reference must bump or installs pull the OLD native binary (the root
-`optionalDependencies` pin the per-platform packages):
+`scripts/release-bump.ts` bumps **all 15 version refs atomically and VERIFIES**,
+so a partial bump can't ship:
 ```bash
-OLD=0.1.8-alpha; NEW=0.1.9-alpha   # set these
-for f in package.json create-brustjs/package.json \
-         npm/darwin-x64/package.json npm/darwin-arm64/package.json \
-         npm/linux-x64-gnu/package.json npm/linux-arm64-gnu/package.json \
-         npm/linux-x64-musl/package.json npm/linux-arm64-musl/package.json; do
-  sed -i '' "s/$OLD/$NEW/g" "$f"
-done
-grep -rn "$OLD" package.json create-brustjs npm   # must print nothing
+bun scripts/release-bump.ts 0.1.9-alpha    # set the NEW version
+# → "✓ bumped 15/15 refs to 0.1.9-alpha"  (exits non-zero + writes nothing if any ref is missing)
+git commit -am "chore(release): 0.1.9-alpha"
 ```
-This covers: root `version` + 6 `optionalDependencies` pins, `create-brustjs` `version` + its `brustjs` dep pin, and the 6 `npm/*/package.json` versions. `bun.lock` has no version ref. Commit: `chore(release): <NEW>`.
+The 15 refs: root `version` + its 6 `optionalDependencies["brustjs-*"]` pins,
+`create-brustjs` `version` + its `brustjs` dep pin, and the 6 `npm/*/package.json`
+versions. The script tolerates a MIXED starting state (e.g. a prior partial bump)
+and rewrites every ref to the target. `bun.lock` has no version ref.
+
+> **Why a script, not `sed`:** 0.1.54 and 0.1.57 both botched by bumping ONLY the
+> root `version`. The 6 per-platform packages then can't publish, npm `latest`
+> never moves onto the new version, and `brustjs` optionalDeps pin the wrong
+> native build. npm versions are immutable, so each botch costs a throwaway
+> fix-forward release (0.1.55, 0.1.58). Never hand-edit the version refs.
 
 ## 6. Tag on main + push
 
@@ -72,6 +76,9 @@ git tag -a v$NEW -m "brustjs $NEW — <summary>"
 git push origin main          # the bump commit
 git push origin v$NEW         # ← triggers release.yml
 ```
+Shortcut once CI is green on main: `bun scripts/release-bump.ts $NEW --release`
+does the bump + `chore(release)` commit + tag + push in one step (refuses to run
+off `main`). Use the explicit steps above when you want to inspect the bump first.
 
 ## 7. Watch the publish
 
