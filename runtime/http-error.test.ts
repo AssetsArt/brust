@@ -137,7 +137,13 @@ test('prepReq resets locals per call (no cross-request leak)', () => {
 
 test('composeChain: locals written in middleware are read by the terminal on the SAME object', async () => {
   const req = makeReq()
+  // Capture the bag's reference BEFORE the chain runs: identity must hold
+  // from pre-chain through middleware (which receives `r`, not the closure's
+  // `req`) to the terminal — i.e. nobody cloned/replaced the object.
+  const localsRef = req.locals
+  let mwSawSameObject = false
   const mw: Middleware = async (r, next) => {
+    mwSawSameObject = r.locals === localsRef
     r.locals.user = 'alice'
     return next()
   }
@@ -145,11 +151,12 @@ test('composeChain: locals written in middleware are read by the terminal on the
   let identity = false
   const terminal = async (): Promise<RouteResponse> => {
     seen = req.locals.user
-    identity = req.locals === (req as BrustRequest).locals
+    identity = req.locals === localsRef
     return { status: 200, body: 'ok' }
   }
   const res = await composeChain(req, [mw], terminal)()
   expect(res.status).toBe(200)
+  expect(mwSawSameObject).toBe(true)
   expect(seen).toBe('alice')
   expect(identity).toBe(true)
 })

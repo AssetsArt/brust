@@ -1048,6 +1048,16 @@ export function makeRenderer(
       try {
         verdict = (await chain()) as StreamMarkerResponse
       } catch (err) {
+        // `throw httpError(...)` belongs in loaders, but a middleware that
+        // throws it still deserves the intended status, not a 500 + log dump.
+        if (isHttpErrorTrigger(err)) {
+          return packSingleChunkResponse(slotView, encoder, {
+            status: err.status,
+            contentType: err.contentType,
+            body: err.body,
+            headers: err.headers,
+          })
+        }
         console.error(`[brust] middleware/render uncaught:`, err)
         // FAST LANE: single-chunk error. Works for both React (big dispatch
         // reads the SAB via its fast-lane arm) and native routes (which take
@@ -1642,6 +1652,17 @@ async function navigationBranch(
   try {
     navVerdict = (await navChain()) as NavMarkerResponse
   } catch (err) {
+    // Same guard as the render path: an httpError thrown from middleware gets
+    // its intended status (non-2xx nav → client full-reload contract).
+    if (isHttpErrorTrigger(err)) {
+      await emitSingleChunkResponse(view, napi, workerId, encoder, {
+        status: err.status,
+        contentType: err.contentType,
+        body: err.body,
+        headers: err.headers,
+      })
+      return
+    }
     console.error('[brust] navigation middleware threw:', err)
     await emitSingleChunkResponse(
       view,
@@ -2336,6 +2357,15 @@ export async function dispatchAction(
     } catch (err) {
       if (isActionError(err)) {
         response = actionErrorResponse(err)
+      } else if (isHttpErrorTrigger(err)) {
+        // ActionError is the idiomatic action-status tool, but an httpError
+        // escaping a shared middleware/handler still gets its intended status.
+        response = {
+          status: err.status,
+          body: err.body,
+          contentType: err.contentType,
+          headers: err.headers,
+        }
       } else {
         console.error('[brust] action middleware uncaught:', err)
         response = {
@@ -2369,6 +2399,9 @@ async function mcpBranchToResponse(
   // reading req.signal.aborted always sees false; the SSE branch is where
   // real disconnect lives.
   call.req.signal = NEVER_ABORTS
+  // No params in the MCP envelope and no middleware chain — but the
+  // BrustRequest contract declares params/locals non-optional, so populate.
+  prepReq(call.req, undefined)
   const responseJson = await mcp.handleRequest(call.body_text, call.req)
   if (responseJson === '') {
     // Notification — no response body. Return 204 No Content.

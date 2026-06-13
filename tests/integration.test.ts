@@ -2087,6 +2087,16 @@ test('nav: /_brust/page/<httpError route> returns the trigger status (full-reloa
   expect(await resp.text()).toBe('no entry')
 })
 
+test('nav: /_brust/page/<NATIVE httpError route> re-throws through renderNativeRouteToHtml', async () => {
+  // Native-route SPA nav goes renderNativeRouteToHtml → runNativeChainLoaders
+  // returns { httpError } → re-thrown → navigationBranch's catch emits the
+  // trigger response. Pins the native nav arm separately from the React one.
+  const port = sharedPort()
+  const resp = await fetch(`http://127.0.0.1:${port}/_brust/page/_test/native-forbidden/x`)
+  expect(resp.status).toBe(403)
+  expect(await resp.text()).toBe('native no entry')
+})
+
 // ----- SSG fallback-shell render (sentinel + x-brust-ssg header) -----
 
 test('ssg fallback: sentinel params + x-brust-ssg header render the shell', async () => {
