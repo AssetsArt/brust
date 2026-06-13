@@ -269,3 +269,46 @@ test('GET /_brust/page/_test/outlet — SPA-nav envelope carries composed leaf +
   // Title comes from the PARENT loader (proves the merge reached the SPA path).
   expect(payload.title).toBe('Outlet Page')
 })
+
+// SPA shell signature (full-load on layout-chain change). The server stamps a
+// per-route signature into the document head AND the nav payload; the client
+// full-loads when destination ≠ current (correct shell), keeping the fast swap
+// when they match. These assert the SERVER contract end-to-end (the client
+// full-load is unit-tested in runtime/islands/bootstrap.test.ts).
+
+test('shell meta: native layout-chain document head carries L:NativeOutletLayout', async () => {
+  // /_test/outlet = [NativeOutletLayout, NativeOutletLeaf] → an L: sig keyed on
+  // the layout chain. The signature is baked at emit time (native path) into the
+  // LAYOUT's BrustPage head — the shell document.
+  const res = await fetch(`${BASE_URL}/_test/outlet`)
+  expect(res.status).toBe(200)
+  const body = await res.text()
+  expect(body).toContain('<meta name="brust-shell" content="L:NativeOutletLayout">')
+})
+
+test('shell meta: React standalone document head carries S:HelloWorld', async () => {
+  // / = standalone HelloWorld (React) → an S: sig, injected at render time.
+  const res = await fetch(`${BASE_URL}/`)
+  expect(res.status).toBe(200)
+  const body = await res.text()
+  expect(body).toContain('<meta name="brust-shell" content="S:HelloWorld">')
+})
+
+test('shell payload: nav envelopes carry shell, and the layout vs standalone sigs differ', async () => {
+  // The destination signature rides the nav payload so the client can compare
+  // it to the current document's meta WITHOUT parsing HTML.
+  const outletRes = await fetch(`${BASE_URL}/_brust/page/_test/outlet`)
+  expect(outletRes.status).toBe(200)
+  const outlet = (await outletRes.json()) as { shell?: string }
+  expect(outlet.shell).toBe('L:NativeOutletLayout')
+
+  const homeRes = await fetch(`${BASE_URL}/_brust/page/`)
+  expect(homeRes.status).toBe(200)
+  const home = (await homeRes.json()) as { shell?: string }
+  expect(home.shell).toBe('S:HelloWorld')
+
+  // Cross-shell nav (home ↔ outlet) differs → the client full-loads. A
+  // same-layout sibling would share the L: sig (→ fast swap); proven at the
+  // shellId unit level (runtime/routes.test.ts).
+  expect(outlet.shell).not.toBe(home.shell)
+})

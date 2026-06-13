@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { createRequire } from 'node:module'
 import { dirname, relative, resolve } from 'node:path'
 import { buildDevClientTag } from '../dev/client.ts'
-import { insertGeneratorMeta, resolveGenerator } from '../generator.ts'
+import { insertGeneratorMeta, insertShellMeta, resolveGenerator } from '../generator.ts'
 import { islandChunkBasename } from '../islands/chunk-id.ts'
 import { DIRECTIVES_BOOTSTRAP, ISLANDS_IMPORTMAP_AND_BOOTSTRAP } from '../islands/importmap.ts'
 
@@ -285,6 +285,11 @@ export interface NativeRouteEmitOpts {
     /** Chain nodes parent→leaf. A leaf carrying `__mdSource` is a markdown
      * page (runtime/md/routes.ts) — emitted by `emitMdTemplates`, NOT here. */
     chain?: Array<{ Component?: { name?: string }; __mdSource?: unknown }>
+    /** SPA shell signature (FlatRoute.shellId), computed in routes.ts makeFlat.
+     * Baked into the composed template's head as `<meta name="brust-shell">` so
+     * the client full-loads on a layout-chain change. Threaded here (NOT
+     * recomputed) so native + React stamp the identical signature. */
+    shellId?: string
   }[]
   /** `.brust/jinja` absolute output dir. Created if missing. */
   outDir: string
@@ -345,6 +350,7 @@ function canonicalCompileInputs(input: {
   mergedImports: Map<string, ResolvedImport>
   hasDirectives: boolean
   generatorMeta: string
+  shellId: string
   devClient: boolean
 }): string {
   return JSON.stringify({
@@ -367,6 +373,7 @@ function canonicalCompileInputs(input: {
       .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)),
     hasDirectives: input.hasDirectives,
     generatorMeta: input.generatorMeta,
+    shellId: input.shellId,
     devClient: input.devClient,
   })
 }
@@ -719,6 +726,7 @@ export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<Na
             mergedImports,
             hasDirectives,
             generatorMeta,
+            shellId: r.shellId ?? '',
             devClient: process.env.BRUST_DEV === '1',
           }),
         )
@@ -763,8 +771,13 @@ export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<Na
     // this on every hot reload, so the script is always present in dev.
     const withDirectives = bakeDirectivesIfUsed(compiled.template, hasDirectives)
     const withGenerator = insertGeneratorMeta(withDirectives, generatorMeta)
+    // SPA shell signature — baked emit-side (native routes render via
+    // napiRenderJinja, not the React stream injector). shellId is threaded from
+    // routes.ts makeFlat (never recomputed here), so native + React documents
+    // carry the identical signature. Empty/missing → no-op.
+    const withShell = insertShellMeta(withGenerator, r.shellId ?? '')
     const template =
-      process.env.BRUST_DEV === '1' ? injectDevClientIntoTemplate(withGenerator) : withGenerator
+      process.env.BRUST_DEV === '1' ? injectDevClientIntoTemplate(withShell) : withShell
     writeFileSync(outPath, template)
     built.push(name)
     stats.compiled++

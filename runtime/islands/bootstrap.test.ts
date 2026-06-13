@@ -19,6 +19,7 @@ let unmountIslandsIn: (root: ParentNode) => void
 let navigate: (url: URL, mode: 'push' | 'replace' | 'none') => Promise<void>
 let isFullDocumentPayload: (html: string) => boolean
 let prefetchUrlFor: (a: HTMLAnchorElement) => URL | null
+let __setCurrentShellForTest: (shell: string | null) => void
 
 // react-dom/client is a STATIC top-level binding in bootstrap.ts, so the mock
 // must be registered before `await import('./bootstrap')` runs (below) for it
@@ -102,6 +103,7 @@ beforeAll(async () => {
   navigate = mod.navigate
   isFullDocumentPayload = mod.isFullDocumentPayload
   prefetchUrlFor = mod.prefetchUrlFor
+  __setCurrentShellForTest = mod.__setCurrentShellForTest
 })
 
 function makeLink(
@@ -616,6 +618,89 @@ test('navigate(): a 404 with an empty/non-JSON body still full-reloads', async (
   await navigate(new URL('http://localhost/empty404'), 'push')
   expect(getNavState().phase).toBe('error')
   expect(location.href).toBe('http://localhost/empty404')
+})
+
+// --- SPA shell signature: full-load on layout-chain change (Task 4) ---
+
+test('navigate(): payload.shell ≠ currentShell → full document load, no swap', async () => {
+  __resetNavForTest()
+  restoreRealHistory()
+  __setCurrentShellForTest('L:AppLayout')
+  document.body.innerHTML = '<main><p>original</p></main>'
+  ;(globalThis as Record<string, unknown>).fetch = mock(async () => ({
+    ok: true,
+    json: async () => ({ html: '<p>login card</p>', title: 'Login', shell: 'S:LoginPage' }),
+  }))
+  await navigate(new URL('http://localhost/login'), 'push')
+  // Shell changed → authoritative full load (location.href set); <main> untouched.
+  expect(location.href).toBe('http://localhost/login')
+  expect(document.querySelector('main')!.textContent).toContain('original')
+  __setCurrentShellForTest(null)
+})
+
+test('navigate(): payload.shell === currentShell → fast in-place swap', async () => {
+  __resetNavForTest()
+  restoreRealHistory()
+  __setCurrentShellForTest('L:AppLayout')
+  document.body.innerHTML = '<main><p>original</p></main>'
+  ;(globalThis as Record<string, unknown>).fetch = mock(async () => ({
+    ok: true,
+    json: async () => ({ html: '<p>settings</p>', title: 'Settings', shell: 'L:AppLayout' }),
+  }))
+  await navigate(new URL('http://localhost/settings'), 'push')
+  // Same shell → swap, NO full load.
+  expect(document.querySelector('main')!.textContent).toContain('settings')
+  expect(getNavState().path).toBe('/settings')
+  expect(getNavState().phase).toBe('success')
+  __setCurrentShellForTest(null)
+})
+
+test('navigate(): payload without shell → fall through to existing swap (backward-safe)', async () => {
+  __resetNavForTest()
+  restoreRealHistory()
+  __setCurrentShellForTest('L:AppLayout')
+  document.body.innerHTML = '<main><p>original</p></main>'
+  ;(globalThis as Record<string, unknown>).fetch = mock(async () => ({
+    ok: true,
+    json: async () => ({ html: '<p>no-shell payload</p>', title: 'T' }),
+  }))
+  await navigate(new URL('http://localhost/legacy'), 'push')
+  // No payload.shell → never over-full-load; existing swap runs.
+  expect(document.querySelector('main')!.textContent).toContain('no-shell payload')
+  expect(getNavState().phase).toBe('success')
+  __setCurrentShellForTest(null)
+})
+
+test('navigate(): no currentShell meta → fall through to existing swap even on differing payload.shell', async () => {
+  __resetNavForTest()
+  restoreRealHistory()
+  __setCurrentShellForTest(null)
+  document.body.innerHTML = '<main><p>original</p></main>'
+  ;(globalThis as Record<string, unknown>).fetch = mock(async () => ({
+    ok: true,
+    json: async () => ({ html: '<p>swapped anyway</p>', title: 'T', shell: 'S:Whatever' }),
+  }))
+  await navigate(new URL('http://localhost/anything'), 'push')
+  // currentShell absent (stale boot doc) → both-present guard fails → swap.
+  expect(document.querySelector('main')!.textContent).toContain('swapped anyway')
+  expect(getNavState().phase).toBe('success')
+})
+
+test('navigate(): cache-hit with a differing shell → full load', async () => {
+  __resetNavForTest()
+  restoreRealHistory()
+  __setCurrentShellForTest('L:AppLayout')
+  document.body.innerHTML = '<main><p>original</p></main>'
+  // Seed the cache directly so navigate() takes the cache path (no fetch).
+  setCachedPage('/cached-cross', {
+    html: '<p>cached cross-shell</p>',
+    title: 'X',
+    shell: 'S:Other',
+  })
+  await navigate(new URL('http://localhost/cached-cross'), 'push')
+  expect(location.href).toBe('http://localhost/cached-cross')
+  expect(document.querySelector('main')!.textContent).toContain('original')
+  __setCurrentShellForTest(null)
 })
 
 test('unmountIslandsIn delegates to unmountFallbackRootsIn (navigating away disposes the client root)', async () => {

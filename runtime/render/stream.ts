@@ -13,6 +13,7 @@ import { injectActionPrefix, getActionPrefixSnippet } from './inject-action-pref
 import { injectBrustStore, buildStoreScripts } from './inject-store.ts'
 import { getDevClientSnippet } from '../dev/inject.ts'
 import { getGeneratorMeta, injectGeneratorMeta } from './inject-generator.ts'
+import { injectShellMeta, shellMetaTag } from './inject-shell-meta.ts'
 
 export interface RenderBranchStreamingArgs {
   element: ReactNode
@@ -56,6 +57,10 @@ export interface RenderBranchStreamingArgs {
    * SSG fallback shells need the bootstrap (client takeover runtime) on pages
    * that may have zero real islands. */
   forceIslands?: boolean
+  /** The matched route's SPA shell signature (FlatRoute.shellId). Stamped into
+   * the document head as `<meta name="brust-shell">` so the client can full-load
+   * on a layout-chain change. Empty/undefined → no injection (mirror generator). */
+  shellId?: string
 }
 
 const encoder = new TextEncoder()
@@ -177,6 +182,7 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
             const perRouteHrefs = args.routePath ? getCssHrefsForRoute(args.routePath) : []
             body = injectCssLink(body, [...getCssHrefs(), ...perRouteHrefs])
             body = injectGeneratorMeta(body, getGeneratorMeta())
+            body = injectShellMeta(body, args.shellId ?? '')
             body = injectDevClient(body, getDevClientSnippet())
             body = injectActionPrefix(body, getActionPrefixSnippet())
             body = injectBrustStore(body, args.storeSnapshot ?? null)
@@ -243,14 +249,18 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
             const prefixTag = getActionPrefixSnippet() ?? ''
             const storeTag = buildStoreScripts(args.storeSnapshot ?? null)
             const genTag = getGeneratorMeta() ?? ''
+            const shellTag = shellMetaTag(args.shellId ?? '')
             if (
               linkTagsStr.length > 0 ||
               devTag.length > 0 ||
               prefixTag.length > 0 ||
               storeTag.length > 0 ||
-              genTag.length > 0
+              genTag.length > 0 ||
+              shellTag.length > 0
             ) {
-              const prepend = encoder.encode(genTag + linkTagsStr + prefixTag + devTag + storeTag)
+              const prepend = encoder.encode(
+                genTag + shellTag + linkTagsStr + prefixTag + devTag + storeTag,
+              )
               const out = new Uint8Array(flushed.length + prepend.length)
               out.set(flushed, 0)
               out.set(prepend, flushed.length)

@@ -553,6 +553,28 @@ mode falls back to a full `location.href` navigation; rapid clicks abort
 in-flight fetches. No author API. Deferred: hover prefetch, View Transitions,
 `<Link>`, scroll restoration.
 
+**Shell signature — full-load on layout-chain change.** The in-place `<main>`
+swap only renders the correct chrome when source and destination share the same
+layout-ancestor chain. To detect a mismatch, each route carries a **shell
+signature** (`FlatRoute.shellId`, computed in `makeFlat`): leaves under the same
+layout chain share an `L:<Ancestors>` sig; a standalone route gets a unique
+`S:<Leaf>` sig (`routeIdent` = `Component.name || path`). The server stamps the
+signature into the rendered document head as `<meta name="brust-shell">` (baked
+at emit for native routes via `insertShellMeta`; injected at render for React
+routes via `injectShellMeta`, mirroring the generator-meta dual path) AND into
+the nav payload (`{ html, title, store, shell }`). The client reads the boot
+document's signature once and, when a nav payload's `shell` differs from it, does
+an authoritative full document load (correct shell) instead of the swap. The
+comparison is guarded both-present, so an old cached payload or a stale addon
+that omits the signature falls through to the existing swap — never an extra
+full-load. So **navigating across a layout boundary triggers a full document
+load (correct shell); same-layout sibling navigation stays a fast in-place
+swap.** Known limitation: `routeIdent` keys on `Component.name`, so two distinct
+layouts exporting same-named components collapse to one `L:` sig and a nav
+between them would be (incorrectly) treated as same-shell. Rare; give such
+layouts distinct component names. A future hardening can fold the chain path
+structure into the sig.
+
 ---
 
 ## Native routes & the JSX→minijinja compiler

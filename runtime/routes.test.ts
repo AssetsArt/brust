@@ -89,6 +89,76 @@ test('flattenRoutes: layout-only parent passes children through', () => {
   expect(out[0].chain).toHaveLength(2)
 })
 
+// SPA shell signature (shellId) — identity of the layout-ancestor chain.
+// Layout-wrapped leaves under the SAME chain share an 'L:' sig (→ fast swap);
+// standalone leaves get a distinct 'S:' sig (→ full load on cross-nav).
+function Named(name: string): any {
+  const fn = () => null
+  Object.defineProperty(fn, 'name', { value: name })
+  return fn
+}
+
+test('flattenRoutes: standalone leaf gets S: shellId from its own ident', () => {
+  const Login = Named('LoginPage')
+  const out = flattenRoutes([{ path: '/login', Component: Login }])
+  expect(out[0].shellId).toBe('S:LoginPage')
+})
+
+test('flattenRoutes: layout-wrapped leaves share an L: shellId', () => {
+  const AppLayout = Named('AppLayout')
+  const Pages = Named('PagesPage')
+  const Settings = Named('SettingsPage')
+  const out = flattenRoutes([
+    {
+      path: '',
+      Component: AppLayout,
+      children: [
+        { index: true, Component: Pages },
+        { path: '/settings', Component: Settings },
+      ],
+    },
+  ])
+  expect(out).toHaveLength(2)
+  // Both leaves under AppLayout share the same shell → fast in-place swap.
+  expect(out[0].shellId).toBe('L:AppLayout')
+  expect(out[1].shellId).toBe('L:AppLayout')
+})
+
+test('flattenRoutes: standalone routes get distinct S: shellIds', () => {
+  const Login = Named('LoginPage')
+  const Editor = Named('EditorPageShell')
+  const out = flattenRoutes([
+    { path: '/login', Component: Login },
+    { path: '/editor/{id}', Component: Editor },
+  ])
+  expect(out[0].shellId).toBe('S:LoginPage')
+  expect(out[1].shellId).toBe('S:EditorPageShell')
+  expect(out[0].shellId).not.toBe(out[1].shellId)
+})
+
+test('flattenRoutes: nested layout chain joins ancestor idents with >', () => {
+  const Outer = Named('Outer')
+  const Inner = Named('Inner')
+  const Leaf = Named('Leaf')
+  const out = flattenRoutes([
+    {
+      path: '/a',
+      Component: Outer,
+      children: [{ path: 'b', Component: Inner, children: [{ path: 'c', Component: Leaf }] }],
+    },
+  ])
+  expect(out[0].shellId).toBe('L:Outer>Inner')
+})
+
+test('flattenRoutes: shellId falls back to path when Component has no name', () => {
+  // A genuinely nameless function — JS infers a name from a `Component: () => …`
+  // property, so explicitly clear it to exercise the `r.path` fallback branch.
+  const anon: any = () => null
+  Object.defineProperty(anon, 'name', { value: '' })
+  const out = flattenRoutes([{ path: '/anon', Component: anon }])
+  expect(out[0].shellId).toBe('S:/anon')
+})
+
 test('flattenRoutes: middleware concatenated parent-first', () => {
   const mwA = async (_: any, n: any) => n()
   const mwB = async (_: any, n: any) => n()

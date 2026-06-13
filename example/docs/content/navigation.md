@@ -69,8 +69,17 @@ Clicks the navigator deliberately leaves to the browser:
 And when a client-side swap cannot be correct, it **falls back to a full
 load** instead of guessing: payload missing or non-200, payload that is a
 full document (the target owns its own shell — there is no shared `<main>`
-to swap into), or the current page has no `<main>`. Cross-shell navigations
-— like this site's docs ↔ Home — full-reload for exactly that reason.
+to swap into), or the current page has no `<main>`.
+
+**Crossing a layout boundary always full-loads.** Each route carries a shell
+signature derived from its layout-ancestor chain. Pages under the same layout
+share it (a fast in-place swap); a page under a different layout — or a
+standalone page like a `/login` screen — has a different one. When a navigation
+changes the signature the runtime does a full document load so the **correct
+shell** renders, then resumes fast swaps within that shell. So
+**navigating across a layout boundary triggers a full document load; same-layout
+sibling navigation stays a fast in-place swap.** Cross-shell navigations — like
+this site's docs ↔ Home — full-reload for exactly that reason.
 
 The swap replaces `<main>`'s children only. Anything per-page must live
 inside `<main>` (this site's prev/next pager does); anything outside it —

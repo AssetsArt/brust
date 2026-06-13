@@ -270,6 +270,34 @@ const scrollPositions = new Map<string, number>()
 // would record the leaving page's scroll under the wrong key.
 let currentPageKey = ''
 
+// SPA shell signature of the document currently in the DOM, read ONCE at boot
+// from the server-stamped <meta name="brust-shell">. navigate() compares it to a
+// nav payload's `shell`: a mismatch means the layout-ancestor chain changed, so
+// the fast in-place <main> swap would keep the WRONG shell — full-load instead.
+// NOT updated on a same-shell swap (swapMainContent only replaces <main>'s
+// children, so the head meta — and thus the signature — persists); a full load
+// re-seeds this from the fresh document at boot.
+let currentShell: string | null =
+  typeof document !== 'undefined'
+    ? (document.querySelector('meta[name="brust-shell"]')?.getAttribute('content') ?? null)
+    : null
+
+/** True when the destination's shell signature differs from the current
+ * document's — the nav must full-load to render the correct shell. The
+ * BOTH-PRESENT requirement is load-bearing: if either side is absent (an old
+ * cached payload without `shell`, a stale addon that didn't bake the meta, or
+ * the very first nav before a meta exists) we fall through to the existing swap
+ * behavior and never over-full-load. */
+function shellChanged(payloadShell: string | undefined): boolean {
+  return !!currentShell && !!payloadShell && payloadShell !== currentShell
+}
+
+/** Test-only: seed/clear the boot-read shell signature (module state, otherwise
+ * fixed at import before any test meta exists). */
+export function __setCurrentShellForTest(shell: string | null): void {
+  currentShell = shell
+}
+
 /** SPA-navigate onto a `fallback: 'client'` SSG route on a static host.
  *
  * Called from navigate() when the normal payload fetch fails: a
@@ -300,18 +328,26 @@ async function attemptClientFallback(
   if (!entry) return false
   let html: string
   let title: string | undefined
+  let shell: string | undefined
   try {
     const resp = await fetch(entry.payload, { headers: { Accept: 'application/json' } })
     if (!resp.ok) return false
-    const payload = (await resp.json()) as { html?: unknown; title?: unknown }
+    const payload = (await resp.json()) as { html?: unknown; title?: unknown; shell?: unknown }
     if (typeof payload.html !== 'string') return false
     html = payload.html
     title = typeof payload.title === 'string' ? payload.title : undefined
+    shell = typeof payload.shell === 'string' ? payload.shell : undefined
   } catch {
     return false
   }
   // Superseded while fetching → a newer navigation owns the DOM; do nothing.
   if (signal?.aborted) return false
+  // Same shell-signature guard as the normal path: a layout-chain change must
+  // full-load (correct shell), not swap into the current <main>.
+  if (shellChanged(shell)) {
+    location.href = url.href
+    return true
+  }
   // Same full-document guard as the normal path: a standalone-route shell
   // cannot be swapped into the current <main> — authoritative full load.
   if (isFullDocumentPayload(html)) {
@@ -418,6 +454,16 @@ export async function navigate(url: URL, mode: 'push' | 'replace' | 'none'): Pro
       if (ac.signal.aborted) return
     }
     const { html, title, store } = payload
+    // SPA shell signature: if the destination's layout-ancestor chain differs
+    // from the current document's, the fast <main> swap would keep the WRONG
+    // shell (studio bug: login shown without AppLayout chrome, logout keeps it).
+    // Full-load so the correct shell renders. Guarded both-present (see
+    // shellChanged) — backward/stale-addon safe. Same-shell nav falls through
+    // to the existing swap untouched.
+    if (shellChanged(payload.shell)) {
+      location.href = url.href
+      return
+    }
     // A standalone (no-<main>) route ships its FULL document here. We can't swap
     // that into the current shell's <main> without nesting a second document
     // (duplicate chrome — the classic two-topbars artifact), and the current

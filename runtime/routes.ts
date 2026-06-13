@@ -567,6 +567,13 @@ export interface FlatRoute {
   /** Sub-project J — Component.name when leaf had `native: true`. Captured
    * at flatten time (build-time AST identifier), so minifier-safe. */
   nativeTemplate?: string
+  /** SPA shell signature — identity of the layout-ancestor chain. All leaves
+   * under the same layout chain share an `L:` sig (→ fast in-place <main> swap);
+   * a standalone leaf gets a unique `S:` sig (→ full document load on cross-nav,
+   * so the correct shell renders). Computed in `makeFlat`. Server stamps it into
+   * the rendered document head (`<meta name="brust-shell">`) AND the nav payload;
+   * the client full-loads on mismatch. See the SPA shell-signature design. */
+  shellId: string
   /** Catch-all (`{ path: '*' }`) marker. When true this FlatRoute is a
    * "not found" fallback: it stays in the array at its natural index (route_id
    * stable) but install SKIPS the matchit insert for it — it only renders when
@@ -787,7 +794,15 @@ function makeFlat(chain: Route[], fullPath: string): FlatRoute {
     )
   }
   const nativeTemplate = leaf.native === true && leaf.Component ? leaf.Component.name : undefined
-  return { fullPath, chain, middleware, errorBoundary, cache, nativeTemplate }
+  // SPA shell signature: the layout-ancestor chain's identity. Server runs the
+  // real module so `Component.name` is stable (not minified); fall back to the
+  // route path. Layout-wrapped leaves (ancestors.length > 0) collapse to a
+  // shared `L:` sig per chain; a standalone leaf gets a unique `S:` sig.
+  const routeIdent = (r: Route): string => r.Component?.name || r.path || '?'
+  const ancestors = chain.slice(0, -1)
+  const shellId =
+    ancestors.length > 0 ? 'L:' + ancestors.map(routeIdent).join('>') : 'S:' + routeIdent(leaf)
+  return { fullPath, chain, middleware, errorBoundary, cache, nativeTemplate, shellId }
 }
 
 /** Internal React context that carries the next-deeper rendered element to
@@ -1475,6 +1490,7 @@ export function makeRenderer(
           status: renderStatus,
           headers: flushSetCookie(verdict.headers),
           routePath: renderFlat.fullPath,
+          shellId: renderFlat.shellId,
           storeSnapshot,
           // SSG fallback shells have zero islands on the page but the
           // client-loader runtime still needs the importmap + bootstrap.
@@ -1686,6 +1702,11 @@ async function navigationBranch(
     // route (notFound === false), so the status must be forced to 404 explicitly,
     // not derived from `flat.notFound`.
     let navStatus = flat.notFound === true ? 404 : 200
+    // The shellId of the route ACTUALLY rendered into `fullHtml`. Normally the
+    // matched route, but a React notFound() swap renders the catch-all instead —
+    // the payload must report the catch-all's shell, not the matched route's,
+    // or the next hop compares against the wrong currentShell.
+    let renderedShellId: string | undefined = flat.shellId
     if (flat.nativeTemplate !== undefined) {
       fullHtml = await renderNativeRouteToHtml(call, flat, view, encoder, workerId, slot)
     } else {
@@ -1728,6 +1749,7 @@ async function navigationBranch(
         if (nfFlat) {
           try {
             fullHtml = await renderFlatToHtml(nfFlat)
+            renderedShellId = nfFlat.shellId
           } catch (nfErr) {
             // The catch-all's OWN loader/render threw (notFound or a real error):
             // ship the framework default 404 body — don't recurse into another
@@ -1735,12 +1757,16 @@ async function navigationBranch(
             console.error('[brust] catch-all nav render failed:', nfErr)
             fullHtml = DEFAULT_NOT_FOUND_BODY
             store = null
+            // Default 404 body is a full <html> doc (no <main>) → client takes
+            // the full-document path; leave shell unset so it never mis-matches.
+            renderedShellId = undefined
           }
         } else {
           // No catch-all registered for this prefix → framework default 404 body
           // shipped as a nav payload (so the client swaps it in), at 404.
           fullHtml = DEFAULT_NOT_FOUND_BODY
           store = null
+          renderedShellId = undefined
         }
       }
     }
@@ -1762,7 +1788,11 @@ async function navigationBranch(
     const titleMatch = fullHtml.match(/<title[^>]*>([\s\S]*?)<\/title>/i)
     const title = titleMatch ? titleMatch[1].replace(/<!--.*?-->/g, '').trim() : ''
 
-    const body = JSON.stringify({ html: innerHtml, title, store })
+    // `shell` is the destination route's SPA shell signature. The client
+    // compares it to the current document's <meta name="brust-shell"> and does a
+    // full document load on mismatch (correct shell), keeping the fast in-place
+    // <main> swap when they match. `flat` is the matched destination FlatRoute.
+    const body = JSON.stringify({ html: innerHtml, title, store, shell: renderedShellId })
     await emitSingleChunkResponse(
       view,
       napi,

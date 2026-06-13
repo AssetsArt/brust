@@ -44,6 +44,22 @@ export function insertGeneratorMeta(jinja: string, metaTag: string): string {
   return jinja.slice(0, end) + metaTag + jinja.slice(end)
 }
 
+/** Insert the SPA shell-signature meta immediately after the compiler-emitted
+ * viewport meta (same anchor as the generator meta — the native bake's emit-time
+ * equivalent of inject-shell-meta.ts on the React render path). Anchor missing
+ * (a fragment child template with no own head) → no-op, never an error: the
+ * signature lands in the LAYOUT's BrustPage head, which is the shell document.
+ * Empty shellId → no-op. CALLER CONTRACT: fresh compiler output per emit (no
+ * idempotency check), same as insertGeneratorMeta. */
+export function insertShellMeta(jinja: string, shellId: string): string {
+  if (!shellId) return jinja
+  const at = jinja.indexOf(VIEWPORT_ANCHOR)
+  if (at === -1) return jinja
+  const end = at + VIEWPORT_ANCHOR.length
+  const tag = `<meta name="brust-shell" content="${shellId}">`
+  return jinja.slice(0, end) + tag + jinja.slice(end)
+}
+
 /** Write the decision artifact into `dir` (a jinja out dir), creating it. */
 export function writeGeneratorArtifact(dir: string, strings: GeneratorStrings): void {
   mkdirSync(dir, { recursive: true })
