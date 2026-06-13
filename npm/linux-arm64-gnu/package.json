@@ -1,6 +1,6 @@
 {
   "name": "brustjs-linux-arm64-gnu",
-  "version": "0.1.56-alpha",
+  "version": "0.1.58-alpha",
   "cpu": [
     "arm64"
   ],
