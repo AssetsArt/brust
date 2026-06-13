@@ -113,6 +113,15 @@ on first load, SPA-nav swaps, and dynamically inserted content. A nested
 `x-data` owns its own subtree — the outer instance's bindings stop at that
 boundary.
 
+**Shadow DOM:** the runtime also scans **open** shadow roots. Every open
+root discovered during a scan (including roots nested inside other roots, and
+roots inside later-inserted content) gets its own observer, so `x-data`
+components inside it mount on load and on later insertion, and are disposed
+when their shadow host is removed. A shadow root is its own composition
+boundary: an enclosing component's directive bindings never descend into it —
+its `x-data` components mount independently with their own instances. Closed
+shadow roots are unreachable by design and are left alone.
+
 ### x-for
 
 Grammar: `(item[, index]) in listPath [by keyPath, keyPath...]`. The list path

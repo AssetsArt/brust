@@ -1097,3 +1097,89 @@ describe('behavior ctx: effect + onCleanup', () => {
     expect(torn).toBe(1)
   })
 })
+
+describe('shadow DOM scanning (R10)', () => {
+  test('x-data inside an open shadow root mounts on start() and is reactive', async () => {
+    const win = setupDom('<div id="host"></div>')
+    const host = win.document.getElementById('host')!
+    const root = host.attachShadow({ mode: 'open' })
+    root.innerHTML = '<div x-data="sd1"><span x-text="msg"></span></div>'
+    const { register, start } = await import(`./runtime.ts?sd1=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const msg = signal('hi')
+    register('sd1', () => ({ msg }))
+    start(win.document)
+    const span = root.querySelector('span')!
+    expect(span.textContent).toBe('hi')
+    msg.set('yo')
+    expect(span.textContent).toBe('yo')
+  })
+
+  test('x-data added into an already-observed shadow root later mounts', async () => {
+    // Root is EMPTY at start() — it must still be observed (observer per root),
+    // because the body observer cannot see inside a shadow tree.
+    const win = setupDom('<div id="host"></div>')
+    const host = win.document.getElementById('host')!
+    const root = host.attachShadow({ mode: 'open' })
+    const { register, start } = await import(`./runtime.ts?sd2=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const msg = signal('late')
+    register('sd2', () => ({ msg }))
+    start(win.document)
+    const el = win.document.createElement('div')
+    el.setAttribute('x-data', 'sd2')
+    el.innerHTML = '<span x-text="msg"></span>'
+    root.appendChild(el)
+    await Promise.resolve() // let the shadow root's observer callback run
+    expect(root.querySelector('span')!.textContent).toBe('late')
+  })
+
+  test('removing the shadow HOST disposes the mounted component inside its root', async () => {
+    const win = setupDom('<div id="wrap"><div id="host"></div></div>')
+    const host = win.document.getElementById('host')!
+    const root = host.attachShadow({ mode: 'open' })
+    root.innerHTML = '<div x-data="sd3"><span x-text="msg"></span></div>'
+    const { register, start } = await import(`./runtime.ts?sd3=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const msg = signal('a')
+    register('sd3', () => ({ msg }))
+    start(win.document)
+    const span = root.querySelector('span')!
+    expect(span.textContent).toBe('a')
+    host.remove() // host removal fires the LIGHT-tree (body) observer
+    await Promise.resolve()
+    msg.set('b') // must NOT update the detached shadow span / must not throw
+    expect(span.textContent).toBe('a')
+  })
+
+  test('nested shadow root (root within root) mounts', async () => {
+    const win = setupDom('<div id="host"></div>')
+    const host = win.document.getElementById('host')!
+    const outer = host.attachShadow({ mode: 'open' })
+    outer.innerHTML = '<div id="inner"></div>'
+    const innerHost = outer.querySelector('#inner') as HTMLElement
+    const inner = innerHost.attachShadow({ mode: 'open' })
+    inner.innerHTML = '<div x-data="sd4"><span x-text="msg"></span></div>'
+    const { register, start } = await import(`./runtime.ts?sd4=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const msg = signal('deep')
+    register('sd4', () => ({ msg }))
+    start(win.document)
+    expect(inner.querySelector('span')!.textContent).toBe('deep')
+  })
+
+  test('closed shadow root is not scanned and does not throw', async () => {
+    const win = setupDom('<div id="host"></div>')
+    const host = win.document.getElementById('host')!
+    const root = host.attachShadow({ mode: 'closed' })
+    root.innerHTML = '<div x-data="sd5"></div>'
+    const { register, start } = await import(`./runtime.ts?sd5=${Math.random()}`)
+    let mounts = 0
+    register('sd5', () => {
+      mounts++
+      return {}
+    })
+    expect(() => start(win.document)).not.toThrow()
+    expect(mounts).toBe(0) // host.shadowRoot === null for a closed root — unreachable by design
+  })
+})

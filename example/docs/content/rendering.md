@@ -165,6 +165,36 @@ always present). The decision is baked at build time — flipping it requires a
 rebuild. If you hand-author your own `<meta name="generator" …>` on a buffered
 route, yours wins and brust does not add a second one.
 
+## Render fragments
+
+`renderFragment` renders a React component to an HTML **string**, server-side,
+outside the route pipeline — for HTML you assemble yourself: a per-tenant page
+builder or draft canvas rendering one section at a time, an HTML email body, a
+CMS preview endpoint.
+
+```ts
+import { renderFragment } from 'brustjs'
+
+const html = await renderFragment(ProductCard, { sku: 'p_42' })
+// '<div class="card">…</div>'
+
+// Cookies the tree should see (cookies()/session helpers inside components):
+const greeting = await renderFragment(Greeting, {}, { cookies: { user: 'dana' } })
+```
+
+Each call runs with the framework's contexts freshly scoped, exactly like a
+request: the cookie scope, the request-scoped `cachedFetch`/`dedupe` cache, and
+a per-call store context — concurrent calls never share store instances.
+Suspense is supported: the promise resolves when the whole tree is ready,
+never with fallbacks. A component throw rejects the promise — there are no
+error-boundary semantics; handle it at the call site.
+
+The output is **static HTML only**: no island hydration markers or scripts (an
+`<Island>` inside the fragment server-renders its component but ships no
+hydration), no `<head>`/CSS collection, no streaming. For the native/jinja
+equivalent — rendering a registered template to a string — use
+[`templates.render`](/docs/dynamic-templates).
+
 ## Which mode, when
 
 | Situation | Reach for |

@@ -1169,6 +1169,12 @@ export type { StoreHandle, Snapshot, Signal, Computed } from './store/index.ts'
 // exported.
 export { dedupe, cachedFetch } from './loader-cache.ts'
 
+// R4 — public fragment rendering: a React component → static HTML string with
+// the request/store/loader-cache contexts scoped per call (no island hydration;
+// native/jinja fragments are `templates.render`).
+export { renderFragment } from './render/fragment.ts'
+export type { RenderFragmentOpts } from './render/fragment.ts'
+
 export { buildIslands } from './islands/build.ts'
 export type { IslandsBuildResult, BuildIslandsOptions } from './islands/build.ts'
 
