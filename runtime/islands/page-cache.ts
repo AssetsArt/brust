@@ -10,6 +10,13 @@ export interface PagePayload {
   html: string
   title: string
   store?: Record<string, Record<string, unknown>> | null
+  /** SPA shell signature of the destination route (FlatRoute.shellId). The
+   * client compares it to the current document's `<meta name="brust-shell">`
+   * and full-loads on mismatch (correct shell), keeping the fast in-place swap
+   * when they match. Optional: old cached payloads / stale addons omit it, in
+   * which case the client falls through to the existing swap behavior. Round-
+   * trips through the cache automatically (the whole parsed object is stored). */
+  shell?: string
   /** True when this payload was delivered at HTTP 404 (a rendered catch-all
    * page, NOT a transport error). The caller swaps it in-place like any other
    * payload but must NOT cache it — a 404 is not a stable, re-servable entry,

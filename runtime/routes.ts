@@ -1778,7 +1778,11 @@ async function navigationBranch(
     const titleMatch = fullHtml.match(/<title[^>]*>([\s\S]*?)<\/title>/i)
     const title = titleMatch ? titleMatch[1].replace(/<!--.*?-->/g, '').trim() : ''
 
-    const body = JSON.stringify({ html: innerHtml, title, store })
+    // `shell` is the destination route's SPA shell signature. The client
+    // compares it to the current document's <meta name="brust-shell"> and does a
+    // full document load on mismatch (correct shell), keeping the fast in-place
+    // <main> swap when they match. `flat` is the matched destination FlatRoute.
+    const body = JSON.stringify({ html: innerHtml, title, store, shell: flat.shellId })
     await emitSingleChunkResponse(
       view,
       napi,
