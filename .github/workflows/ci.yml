@@ -113,5 +113,7 @@ jobs:
         run: bun test tests/native-island-ssr.test.ts
       - name: bun test (cli new scaffold)
         run: bun test tests/cli-new.test.ts
+      - name: bun test (dts consumer gate)
+        run: bun test tests/dts-consumer.test.ts
       - name: bun test (integration)
         run: bun test tests/integration.test.ts

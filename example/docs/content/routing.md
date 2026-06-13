@@ -64,6 +64,57 @@ way. If you previously worked around encoded params with
 `decodeURIComponent(params.x)`, remove it — double-decoding corrupts values
 containing a literal `%`.
 
+## 404 catch-all — and the 200 catch-all
+
+A route with `path: '*'` is the **not-found tier**. It never competes with
+real routes: it renders only when nothing else matched, always at HTTP
+**404**, and the catch-all nearest the unmatched path wins — one per prefix,
+always a leaf, so a global `*` and a `/docs`-styled one can coexist:
+
+```tsx
+const routes = defineRoutes([
+  { path: '/', Component: Home },
+  {
+    path: '/docs',
+    Component: DocsLayout,
+    children: [
+      { index: true, Component: DocsHome },
+      { path: '*', Component: DocsNotFound }, // /docs/nope → this, 404
+    ],
+  },
+  { path: '*', Component: NotFound }, // /nope → this, 404
+])
+```
+
+`notFound()` thrown from a React loader lands here too: the nearest catch-all
+renders at 404 in place of the route's own component (see
+[notFound and redirect](#notfound-and-redirect) for the native `return` shape).
+
+**Want a wildcard that serves 200?** That is deliberately *not* `'*'` — the
+404 stamp is the point. Use a `{*slug}` param route instead: it's a real
+route (matched by the router, HTTP 200, params in your loader), and `'*'`
+stays the honest 404 tier behind it:
+
+```tsx
+// CMS-style: any path the CMS knows is a page (200)…
+{
+  path: '/{*slug}',
+  Component: CmsPage,
+  loader: async ({ params }) => {
+    const page = await cms.find(params.slug) // /a/b → params.slug === 'a/b'
+    if (!page) throw notFound() // …anything it doesn't know falls through
+    return { page }
+  },
+},
+// …to the real 404 tier.
+{ path: '*', Component: NotFound },
+```
+
+Two tiers, two meanings: `/{*slug}` claims the URL space and answers **200**;
+`'*'` answers for what nothing claimed (or what a loader disclaimed via
+`notFound()`) and stamps **404** — search engines and uptime checks see the
+truth either way.
+
 ## Nesting, layouts, and `<Outlet/>`
 
 A parent with `children` becomes a layout. On the React path the parent
