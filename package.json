@@ -1,6 +1,6 @@
 {
   "name": "brustjs",
-  "version": "0.1.52-alpha",
+  "version": "0.1.53-alpha",
   "description": "Bun + Rust SSR framework — React on the server, Rust everywhere else (napi cdylib + per-worker SharedArrayBuffer).",
   "license": "MIT",
   "repository": {
@@ -41,12 +41,12 @@
     "typescript": "^6.0.3"
   },
   "optionalDependencies": {
-    "brustjs-darwin-x64": "0.1.52-alpha",
-    "brustjs-darwin-arm64": "0.1.52-alpha",
-    "brustjs-linux-x64-gnu": "0.1.52-alpha",
-    "brustjs-linux-arm64-gnu": "0.1.52-alpha",
-    "brustjs-linux-x64-musl": "0.1.52-alpha",
-    "brustjs-linux-arm64-musl": "0.1.52-alpha"
+    "brustjs-darwin-x64": "0.1.53-alpha",
+    "brustjs-darwin-arm64": "0.1.53-alpha",
+    "brustjs-linux-x64-gnu": "0.1.53-alpha",
+    "brustjs-linux-arm64-gnu": "0.1.53-alpha",
+    "brustjs-linux-x64-musl": "0.1.53-alpha",
+    "brustjs-linux-arm64-musl": "0.1.53-alpha"
   },
   "peerDependencies": {
     "react": "^19.2.6",
