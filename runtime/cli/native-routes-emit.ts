@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, relative, resolve } from 'node:path'
@@ -290,6 +291,89 @@ export interface NativeRouteEmitOpts {
   /** Repo root. Retained for call-site compatibility; native compilation now
    * goes through the napi addon's `compileJsx`, not a target/ binary. */
   repoRoot: string
+  /** Dev-loop incremental compile (R14). When true, each route's resolved
+   * compileJsx inputs (route source + every transitively imported local source
+   * + the lucide/directive/component-source env) are content-hashed and memoized
+   * for the lifetime of the process; an unchanged route SKIPS compileJsx and the
+   * sidecar rewrites (the previous emit's outputs are already on disk) but still
+   * appears in the returned manifest. ANY error in hashing falls back to a full
+   * compile — correctness over speed. Set only by `brust dev`'s emit calls;
+   * `brust build` stays full-fidelity (default false → no memo read OR write,
+   * and any stale memo entry for the route is dropped). */
+  incremental?: boolean
+  /** TEST SEAM — replaces the canonical-input hasher so tests can prove the
+   * hash-failure → compile-all fallback. Never set outside tests. */
+  hashInputsForTest?: (canonicalInputs: string) => string
+}
+
+/** Per-route emit outcome counts for `emitNativeTemplates` — testability seam
+ * for the dev-loop incremental memo (R14). `compiled + skipped` = routes
+ * emitted (routes dropped for a missing import count in neither). */
+export interface NativeEmitStats {
+  compiled: number
+  skipped: number
+}
+
+/** Dev-session memo for the incremental path: `outDir\0templateName` →
+ * { hash of the resolved compileJsx inputs, output files written by the last
+ * compile }. In-memory only (per dev process, by design — no persistence). */
+const nativeEmitMemo = new Map<string, { hash: string; outputs: string[] }>()
+
+/** Clear the incremental memo (test isolation). */
+export function resetNativeEmitMemo(): void {
+  nativeEmitMemo.clear()
+}
+
+/** Key-sorted shallow copy so JSON.stringify is order-independent (gather order
+ * is deterministic per content, but sorting makes the hash robust to it). */
+function sortRecord(rec: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(Object.entries(rec).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+}
+
+/** Canonicalize EVERYTHING that feeds a route's compile + post-processing:
+ * the exact compileJsx arguments (route source/path, transitive component
+ * sources, lucide icons, directive names), the resolved import refs (they shape
+ * the .islands.json/.components.json/.factory.ts sidecars), and the per-emit
+ * env that mutates the template after compile (directive force-bake, generator
+ * meta, dev-client splice). If it can change the bytes on disk, it is in here. */
+function canonicalCompileInputs(input: {
+  routeSource: string
+  routeSourcePath: string
+  sources: Record<string, string>
+  lucideIcons: Record<string, string>
+  directiveNames: Record<string, string>
+  mergedImports: Map<string, ResolvedImport>
+  hasDirectives: boolean
+  generatorMeta: string
+  devClient: boolean
+}): string {
+  return JSON.stringify({
+    routeSource: input.routeSource,
+    routeSourcePath: input.routeSourcePath,
+    sources: sortRecord(input.sources),
+    lucideIcons: sortRecord(input.lucideIcons),
+    directiveNames: sortRecord(input.directiveNames),
+    imports: [...input.mergedImports.entries()]
+      .map(
+        ([ident, ref]) =>
+          [ident, ref.spec, ref.bare, ref.kind, ref.imported ?? ''] as [
+            string,
+            string,
+            boolean,
+            string,
+            string,
+          ],
+      )
+      .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)),
+    hasDirectives: input.hasDirectives,
+    generatorMeta: input.generatorMeta,
+    devClient: input.devClient,
+  })
+}
+
+/** Default canonical-input hasher (overridable per-call via the test seam). */
+function sha256Hex(canonicalInputs: string): string {
+  return createHash('sha256').update(canonicalInputs).digest('hex')
 }
 
 /** Raw component entry from compileJsx's `componentsJson` field. camelCase keys
@@ -478,7 +562,7 @@ export function emitComponentArtifacts(
   return { islandIdsFromComponents }
 }
 
-export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<void> {
+export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<NativeEmitStats> {
   mkdirSync(opts.outDir, { recursive: true })
 
   // md-route exclusion lives HERE (not at the call sites): a chain whose LEAF
@@ -535,6 +619,7 @@ export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<vo
   const generatorMeta = resolveGenerator(opts.outDir).meta
 
   const built: string[] = []
+  const stats: NativeEmitStats = { compiled: 0, skipped: 0 }
   for (const r of nativeRoutes) {
     const name = r.nativeTemplate!
     const sourcePath = importMap.get(name)
@@ -612,6 +697,44 @@ export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<vo
       }
     }
 
+    // R14 — dev incremental memo. EVERYTHING hashed here is the resolved input
+    // set: the gather steps above re-read every transitive local source fresh on
+    // each emit, so an edit anywhere in the route's import graph changes
+    // `sources` (or lucide/directive env) and misses the memo. ANY hashing error
+    // → undefined → compile (correctness over speed). Non-incremental calls
+    // (brust build, boot staleness) never read the memo and DROP the route's
+    // entry below, so a later incremental emit can't trust outputs it didn't
+    // verify against this exact hash.
+    const memoKey = `${opts.outDir}\0${name}`
+    let inputsHash: string | undefined
+    if (opts.incremental) {
+      try {
+        inputsHash = (opts.hashInputsForTest ?? sha256Hex)(
+          canonicalCompileInputs({
+            routeSource,
+            routeSourcePath,
+            sources,
+            lucideIcons,
+            directiveNames,
+            mergedImports,
+            hasDirectives,
+            generatorMeta,
+            devClient: process.env.BRUST_DEV === '1',
+          }),
+        )
+      } catch {
+        inputsHash = undefined
+      }
+      const prev = inputsHash !== undefined ? nativeEmitMemo.get(memoKey) : undefined
+      if (prev && prev.hash === inputsHash && prev.outputs.every((p) => existsSync(p))) {
+        // Unchanged route: the previous emit's .jinja + sidecars are on disk —
+        // skip compileJsx and every rewrite, but still report the template.
+        built.push(name)
+        stats.skipped++
+        continue
+      }
+    }
+
     let compiled: { template: string; islandsJson: string; warnings?: string[] }
     try {
       compiled = compileJsx!(routeSource, routeSourcePath, sources, lucideIcons, directiveNames)
@@ -644,6 +767,8 @@ export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<vo
       process.env.BRUST_DEV === '1' ? injectDevClientIntoTemplate(withGenerator) : withGenerator
     writeFileSync(outPath, template)
     built.push(name)
+    stats.compiled++
+    const outputs = [outPath]
 
     // Islands post-processing. The compiler reports an island manifest ONLY
     // when the route uses <Island>; `"[]"` ⇒ no islands ⇒ leave the .jinja
@@ -653,6 +778,7 @@ export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<vo
     if (compiled.islandsJson && compiled.islandsJson !== '[]') {
       writeFileSync(islandsJsonPath, compiled.islandsJson)
       reconcileIslandManifest(outPath, islandsJsonPath, mergedImports, name)
+      outputs.push(islandsJsonPath)
     } else if (existsSync(islandsJsonPath)) {
       rmSync(islandsJsonPath, { force: true })
     }
@@ -661,6 +787,19 @@ export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<vo
     const compJsonStr = (compiled as any).componentsJson ?? '[]'
     if (compJsonStr !== '[]') {
       emitComponentArtifacts(outPath, compJsonStr, mergedImports, name)
+      outputs.push(
+        outPath.replace(/\.jinja$/, '.components.json'),
+        outPath.replace(/\.jinja$/, '.factory.ts'),
+      )
+    }
+
+    // R14 — memoize only what was hashed AND written by an incremental call;
+    // a non-incremental compile (build/boot) invalidates the entry instead
+    // (its writes weren't checked against any hash → never trust-skip them).
+    if (opts.incremental && inputsHash !== undefined) {
+      nativeEmitMemo.set(memoKey, { hash: inputsHash, outputs })
+    } else {
+      nativeEmitMemo.delete(memoKey)
     }
   }
 
@@ -668,6 +807,13 @@ export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<vo
     resolve(opts.outDir, '_manifest.json'),
     JSON.stringify({ templates: built, generatedAt: new Date().toISOString() }, null, 2),
   )
+
+  if (opts.incremental && nativeRoutes.length > 0) {
+    console.log(
+      `[brust] dev: native templates — ${stats.compiled} compiled, ${stats.skipped} unchanged (skipped)`,
+    )
+  }
+  return stats
 }
 
 /** A JSX SSR-component ident is always Capitalized — `<Search/>` lowers to an
