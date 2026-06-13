@@ -50,7 +50,9 @@ export function register(name: string, behavior: Behavior): void {
 /** Scan `root` (default: document) for [x-data], mount each, and (once) attach a
  * MutationObserver for dynamic mount/dispose. Idempotent. NOTE: `root` scopes the
  * INITIAL scan only; the observer always watches the global `document.body` (one
- * observer per document handles every later mount/dispose, incl. SPA-nav swaps). */
+ * observer per document handles every later mount/dispose, incl. SPA-nav swaps),
+ * plus one observer per discovered OPEN shadow root (a body observer cannot see
+ * mutations inside a shadow tree). */
 export function start(root?: ParentNode): void {
   const scope: ParentNode | undefined =
     root ?? (typeof document !== 'undefined' ? document : undefined)
@@ -59,7 +61,7 @@ export function start(root?: ParentNode): void {
     scanAndMount(scope)
     if (!started) {
       started = true
-      observe()
+      if (typeof document !== 'undefined' && document.body) observeRoot(document.body)
     }
   }
   if (typeof document !== 'undefined' && document.readyState === 'loading') {
@@ -74,6 +76,20 @@ function scanAndMount(scope: ParentNode): void {
   for (const el of Array.from(scope.querySelectorAll<HTMLElement>('[x-data]'))) {
     mountElement(el)
   }
+  // R10 — OPEN shadow roots host their own component trees: scan each the same
+  // way (the recursion covers roots nested within roots) and attach an observer
+  // per root, since neither the body observer nor an outer root's observer sees
+  // mutations inside an inner shadow tree. Closed roots expose `shadowRoot ===
+  // null` and are unreachable by design. The walk-all is per added subtree only.
+  if (scope instanceof HTMLElement && scope.shadowRoot) scanShadowRoot(scope.shadowRoot)
+  for (const el of Array.from(scope.querySelectorAll<HTMLElement>('*'))) {
+    if (el.shadowRoot) scanShadowRoot(el.shadowRoot)
+  }
+}
+
+function scanShadowRoot(root: ShadowRoot): void {
+  scanAndMount(root)
+  observeRoot(root)
 }
 
 function mountElement(el: HTMLElement): void {
@@ -158,7 +174,12 @@ function loadBehavior(name: string): void {
 }
 
 // Bind this element's directives, then recurse — but never descend into a nested
-// [x-data] (it owns its own subtree and is mounted independently).
+// [x-data] (it owns its own subtree and is mounted independently). bindTree also
+// does NOT descend into shadow roots of elements inside an x-data subtree: a
+// shadow root is its own composition boundary — its x-data components mount
+// independently via scanAndMount's shadow-root scan (R10), never inheriting the
+// enclosing instance's scope. (The `el.children` walk below naturally excludes
+// shadow content; this is by design, not an accident.)
 function bindTree(el: HTMLElement, instance: Instance, disposers: Array<() => void>): void {
   // Coexistence check MUST precede the x-for early-exit, else x-for preempts and the
   // warn never fires. Strip x-if so x-for's template clones don't carry it either.
@@ -680,9 +701,20 @@ function bindAttrs(el: HTMLElement, scope: Instance, disposers: Array<() => void
   }
 }
 
-function observe(): void {
-  if (typeof MutationObserver === 'undefined' || typeof document === 'undefined') return
-  if (!document.body) return // nothing to observe yet (called pre-<body>); start() re-runs on DOMContentLoaded
+// Roots that already have a mount/dispose observer attached (document.body +
+// every discovered open shadow root). A WeakSet so a removed shadow root stays
+// GC-collectable — its observer dies with it.
+const observedRoots = new WeakSet<Node>()
+
+/** Attach the mount/dispose MutationObserver to `root` (document.body or an
+ * open ShadowRoot), once per root. Every observer runs the same callback:
+ * dispose removed subtrees, scan added ones — and `scanAndMount`'s recursion
+ * means a subtree added INSIDE a shadow root that itself hosts more shadow
+ * roots gets those scanned and observed too. */
+function observeRoot(root: Node): void {
+  if (typeof MutationObserver === 'undefined') return
+  if (observedRoots.has(root)) return
+  observedRoots.add(root)
   const obs = new MutationObserver((records) => {
     for (const rec of records) {
       for (const node of Array.from(rec.removedNodes)) {
@@ -693,13 +725,29 @@ function observe(): void {
       }
     }
   })
-  obs.observe(document.body, { childList: true, subtree: true })
+  obs.observe(root, { childList: true, subtree: true })
 }
 
 function disposeTree(node: HTMLElement): void {
   if (mounted.has(node)) disposeElement(node)
   for (const el of Array.from(node.querySelectorAll<HTMLElement>('[x-data]'))) {
     disposeElement(el)
+  }
+  // R10 — a removed HOST's shadow contents never reach any observer: the host's
+  // removal fires on the light tree's observer, and the shadow root's own
+  // observer only sees mutations INSIDE the root. Walk shadow roots explicitly.
+  if (node.shadowRoot) disposeShadowContents(node.shadowRoot)
+  for (const el of Array.from(node.querySelectorAll<HTMLElement>('*'))) {
+    if (el.shadowRoot) disposeShadowContents(el.shadowRoot)
+  }
+}
+
+function disposeShadowContents(root: ShadowRoot): void {
+  for (const el of Array.from(root.querySelectorAll<HTMLElement>('[x-data]'))) {
+    disposeElement(el)
+  }
+  for (const el of Array.from(root.querySelectorAll<HTMLElement>('*'))) {
+    if (el.shadowRoot) disposeShadowContents(el.shadowRoot)
   }
 }
 
