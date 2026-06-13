@@ -140,6 +140,6 @@ describe('renderFragment', () => {
     function Boom(): never {
       throw new Error('fragment boom')
     }
-    expect(renderFragment(Boom, {})).rejects.toThrow('fragment boom')
+    await expect(renderFragment(Boom, {})).rejects.toThrow('fragment boom')
   })
 })

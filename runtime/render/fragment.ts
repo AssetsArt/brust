@@ -50,7 +50,7 @@ export function renderToAwaitedString(element: ReactNode): Promise<string> {
       },
       onError(err) {
         // Logged at the navigationBranch level; let onAllReady drive completion.
-        console.error('[brust] navigation render onError:', err)
+        console.error('[brust] render onError (navigation/fragment):', err)
       },
     })
   })
