@@ -87,6 +87,14 @@ Preserve these differences and invariants:
 - existing hard errors for `ref`, event handlers, namespaced attrs, and invalid
   authoring shapes remain unchanged.
 
+Default-native semantics intentionally invalidate SSR-artifact tests that use a
+pure imported component as their control: that component should now inline.
+Update only those control fixtures in
+`runtime/cli/native-routes-emit.test.ts` to be deliberately non-inlinable with a
+harmless analyzer-rejected React shape already covered by fallback tests. Keep
+their artifact assertions intact. Do not special-case production lowering to
+preserve artifacts for an otherwise pure imported component.
+
 ### 4. Regression fixture
 
 Add `tests/fixtures/app/NativeStaticEval.tsx` with one small component covering
@@ -165,6 +173,9 @@ SSR manifest entry.
 - **Stale addon:** TypeScript/E2E verification is invalid until
   `runtime/brust.darwin-arm64.node` is rebuilt from the changed Rust source.
 - **Fixture false positive:** assert manifest absence, not only warning absence.
+- **SSR artifact controls:** Existing artifact tests must exercise a deliberately
+  non-inlinable imported component. A pure imported control is no longer an SSR
+  invariant under default-native behavior.
 
 ## Gates
 
