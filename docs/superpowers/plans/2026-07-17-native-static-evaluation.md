@@ -198,6 +198,14 @@ intentionally append metadata between them. Update only that test name and
 remove the zero-gap assertion, retaining the assertions that the stylesheet is
 present and precedes `</head>`. Do not change production head ordering.
 
+A lane worktree whose `node_modules` is a symlink to the main checkout can also
+poison Bun's in-process loader state when `native-render.test.ts` precedes
+`islands/build.test.ts`, producing false `EBADF`/`EISDIR` failures while reading
+React. Do not change production or island tests for this lane-only condition.
+The implementer must record the exact red lane gate plus a green isolated
+`runtime/islands/build.test.ts`; the integrator must rerun the unchanged full
+gate from the main checkout with its real dependency directory after merging.
+
 ## Escalation contract
 
 Implementation choices inside this interface are the implementer's. Any need to
