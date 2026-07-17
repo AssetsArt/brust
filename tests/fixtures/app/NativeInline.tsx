@@ -2,6 +2,7 @@ import InlineBadge from './components/InlineBadge'
 import HookBadge from './components/HookBadge'
 import WrapCounter from './components/WrapCounter'
 import BehaviorBadge from './components/BehaviorBadge'
+import NativeStaticEval from './NativeStaticEval'
 export default function NativeInline({
   label,
   strong,
@@ -14,9 +15,10 @@ export default function NativeInline({
   return (
     <main>
       <InlineBadge native label={label} strong={strong} />
-      <HookBadge native label={label} />
+      <HookBadge label={label} />
       <WrapCounter native c={count} />
       <BehaviorBadge native label={label} />
+      <NativeStaticEval />
     </main>
   )
 }

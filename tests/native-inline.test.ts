@@ -88,6 +88,49 @@ function readIslandsJson(): string | null {
   return existsSync(p) ? readFileSync(p, 'utf8') : null
 }
 
+function readStaticEvalJinja(): string {
+  const p = resolve(JINJA_DIR, 'NativeInline.jinja')
+  if (!existsSync(p)) {
+    throw new Error('NativeInline.jinja not found at ' + p)
+  }
+  return readFileSync(p, 'utf8')
+}
+
+function readStaticEvalComponentsJson(): string | null {
+  const p = resolve(JINJA_DIR, 'NativeInline.components.json')
+  return existsSync(p) ? readFileSync(p, 'utf8') : null
+}
+
+test('expands bounded static data and private helpers through the CLI path', () => {
+  const jinja = readStaticEvalJinja()
+  for (const marker of [
+    'defaulted-helper',
+    'explicit-helper',
+    'snapshot',
+    'workflow',
+    'audit',
+    'locked',
+    'native',
+    'alpha',
+    'beta',
+    'direct-one',
+    'direct-two',
+    'stroke-width="2.25"',
+  ]) {
+    expect(jinja.includes(marker), 'Expected NativeStaticEval.jinja to contain ' + marker).toBe(
+      true,
+    )
+  }
+  expect(capturedStderr.includes('NativeStaticEval')).toBe(false)
+
+  const components = readStaticEvalComponentsJson()
+  if (components !== null) {
+    for (const component of ['NativeStaticEval', 'PrivatePanel', 'PrivateBadge']) {
+      expect(components.includes('"' + component + '"')).toBe(false)
+    }
+  }
+})
+
 // ---------------------------------------------------------------------------
 // Test 1: InlineBadge is inlined — ibadge class + Jinja conditional appear
 // ---------------------------------------------------------------------------

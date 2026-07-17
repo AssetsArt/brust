@@ -24,6 +24,10 @@ use crate::parser::ParsedSource;
 #[derive(Debug)]
 struct InlineCtx {
     subst: HashMap<String, crate::ir::Expr>,
+    /// The containing imported component's attempt mode. Private dynamic
+    /// component-map dispatch inherits it because the synthesized `<Comp/>`
+    /// tag has no independent imported identity or author marker.
+    attempt_mode: InlineAttemptMode,
 }
 
 /// Shared environment threaded through the entire native-inline recursion.
@@ -38,6 +42,17 @@ pub(crate) struct InlineEnv {
     warnings: RefCell<Vec<String>>,
     /// Stack of component idents currently being inlined; used for cycle detection.
     cycle: RefCell<Vec<String>>,
+}
+
+/// Why a capitalized component is being offered to the native inline lowerer.
+///
+/// Imported components are attempted automatically in native/Jinja compilation,
+/// while the historical `native` spelling remains an explicit mode with its
+/// stronger cycle and ISR semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InlineAttemptMode {
+    ImplicitImported,
+    ExplicitNative,
 }
 
 /// Compile-time lucide-icon registry (native static-SVG feature). Built from the
@@ -264,11 +279,9 @@ pub(crate) fn lower_with_sources(
                     lower_brust_page(element, &scope)?
                 } else if s == "Island" {
                     lower_element(element, &scope, false)?
-                } else if s.starts_with(|c: char| c.is_ascii_uppercase())
-                    && has_native_attr(element)
-                {
-                    // Document-root inline: a custom `native` component at the
-                    // route root may itself return `<BrustPage>`. Pass
+                } else if s.starts_with(|c: char| c.is_ascii_uppercase()) {
+                    // Document-root inline: every imported component is offered
+                    // to the inline lowerer, even without `native`. Pass
                     // `doc_root = true` so a nested `<BrustPage>` in its body is
                     // promoted to the document shell instead of being rejected.
                     lower_ssr_component(element, s, &scope, false, true)?
@@ -299,10 +312,9 @@ pub(crate) fn lower_with_sources(
     Ok((Component { name, props, root }, warnings))
 }
 
-/// Does this element carry a (bare or valued) `native` attribute? Shared by the
-/// route-root dispatch in `lower_with_sources` (to route a custom `native`
-/// component through `lower_ssr_component` with `doc_root = true`) and by
-/// `lower_ssr_component`'s own native-branch detection.
+/// Does this element carry a (bare or valued) `native` attribute? Used to retain
+/// the explicit mode's historical cycle and ISR semantics while all other
+/// imported components enter the implicit attempt mode.
 fn has_native_attr(el: &JSXElement) -> bool {
     el.opening.attrs.iter().any(|a| {
         if let JSXAttrOrSpread::JSXAttr(jsx_attr) = a
@@ -331,6 +343,7 @@ fn has_native_attr(el: &JSXElement) -> bool {
 ///   (F2/R3a) — folded into the rest of the body by AST substitution in
 ///   `hoist_const_bindings` before shape matching.
 /// - Other local bindings (`let`/`var`, destructuring) → `Err(InlineUntranslatable)`.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn lower_component_inline(
     parsed: &ParsedSource,
     subst: HashMap<String, crate::ir::Expr>,
@@ -339,12 +352,25 @@ pub(crate) fn lower_component_inline(
     lucide: Option<Rc<LucideEnv>>,
     directive_names: Option<Rc<HashMap<String, String>>>,
     doc_root: bool,
+    attempt_mode: InlineAttemptMode,
 ) -> Result<Vec<JsxNode>, LowerError> {
     let (_, fn_expr) = find_default_export(&parsed.module)?;
-    let body =
-        fn_expr.function.body.as_ref().ok_or_else(|| {
-            LowerError::at(fn_expr.function.span, ErrorKind::BodyMustBeSingleReturn)
-        })?;
+    let body = crate::static_eval::expand_inline_body(
+        &parsed.module,
+        fn_expr
+            .ident
+            .as_ref()
+            .map(|id| id.sym.as_ref())
+            .unwrap_or("default"),
+        &fn_expr.function,
+    )
+    .map_err(|e| {
+        LowerError::at(
+            fn_expr.function.span,
+            ErrorKind::StaticEvaluation(e.message),
+        )
+    })?;
+    let body: &BlockStmt = &body;
 
     let param_shape = lower_params(&fn_expr.function)?;
 
@@ -363,7 +389,10 @@ pub(crate) fn lower_component_inline(
         resolve_module_const_maps(&mut local_consts, &parsed.module);
     }
 
-    let inline_ctx = Rc::new(InlineCtx { subst });
+    let inline_ctx = Rc::new(InlineCtx {
+        subst,
+        attempt_mode,
+    });
     let scope = Scope {
         destructured: param_shape.destructured.clone(),
         named_param: param_shape.named.clone(),
@@ -935,8 +964,7 @@ fn lower_dispatch_component(
     let SwcExpr::Object(map) = strip_paren(&member.obj) else {
         return Err(dynamic_component());
     };
-    // Only active in native-inline mode (mirrors the `has_native && inline_env`
-    // gate in `lower_ssr_component`).
+    // Only active while lowering an imported component inline.
     let Some(env) = &scope.inline_env else {
         return Err(dynamic_component());
     };
@@ -983,6 +1011,14 @@ fn lower_dispatch_component(
     let mut has_spread = false;
     let mut subst_err = false;
     let mut has_isr = false;
+    let attempt_mode = if has_native_attr(el) {
+        InlineAttemptMode::ExplicitNative
+    } else {
+        scope
+            .inline
+            .as_ref()
+            .map_or(InlineAttemptMode::ImplicitImported, |ctx| ctx.attempt_mode)
+    };
     for attr in &el.opening.attrs {
         match attr {
             JSXAttrOrSpread::SpreadElement(_) => {
@@ -1074,6 +1110,7 @@ fn lower_dispatch_component(
             has_isr,
             span,
             false,
+            attempt_mode,
         )?;
         let Some(node) = inlined else {
             return Err(not_inlinable());
@@ -2094,10 +2131,18 @@ enum LucidePropVal {
     /// Static string literal (`"red"`, `{"red"}`). A bare valueless attribute
     /// (`<X foo/>`) also lands here as an empty string.
     Str(String),
-    /// Static integer literal (`{16}`).
-    Num(i64),
+    /// Static finite numeric literal (`{16}` or `{2.5}`).
+    Num(f64),
     /// Dynamic — lowers to a non-literal `Expr`. Triggers T3 soft-fallback.
     Dynamic,
+}
+
+fn static_numeric_attr(value: f64) -> AttrValue {
+    if value.fract() == 0.0 {
+        AttrValue::StaticNum(value as i64)
+    } else {
+        AttrValue::Static(value.to_string())
+    }
 }
 
 /// Lower one JSX attribute value into a `LucidePropVal`, distinguishing static
@@ -2115,9 +2160,16 @@ fn lucide_prop_value(
         }
         Some(JSXAttrValue::JSXExprContainer(c)) => match &c.expr {
             JSXExpr::JSXEmptyExpr(_) => Ok(LucidePropVal::Dynamic),
+            JSXExpr::Expr(e) if matches!(strip_paren(e), SwcExpr::Lit(Lit::Num(n)) if n.value.is_finite()) =>
+            {
+                let SwcExpr::Lit(Lit::Num(n)) = strip_paren(e) else {
+                    unreachable!()
+                };
+                Ok(LucidePropVal::Num(n.value))
+            }
             JSXExpr::Expr(e) => match lower_expr(e, scope)? {
                 crate::ir::Expr::StaticText(s) => Ok(LucidePropVal::Str(s)),
-                crate::ir::Expr::StaticNum(n) => Ok(LucidePropVal::Num(n)),
+                crate::ir::Expr::StaticNum(n) => Ok(LucidePropVal::Num(n as f64)),
                 _ => Ok(LucidePropVal::Dynamic),
             },
         },
@@ -2169,10 +2221,10 @@ fn build_lucide_svg(
     // Recognized prop slots. Static numerics (`size`/static `strokeWidth`) are
     // tracked separately for the absoluteStrokeWidth math; each slot also carries
     // an optional `AttrValue` override (static OR dynamic) for emission.
-    let mut size_num: Option<i64> = None;
+    let mut size_num: Option<f64> = None;
     let mut size_attr: Option<AttrValue> = None;
     let mut color_attr: Option<AttrValue> = None;
-    let mut stroke_width_num: Option<i64> = None;
+    let mut stroke_width_num: Option<f64> = None;
     let mut stroke_width_attr: Option<AttrValue> = None;
     // class: static merged literal, or a dynamic Concat(icon-class-prefix, expr).
     let mut class_name: Option<String> = None;
@@ -2211,17 +2263,17 @@ fn build_lucide_svg(
                 // A non-positive size would emit an invalid `width="-16"`/`width="0"`;
                 // defer to SSR (which runs the real lucide) instead.
                 LucidePropVal::Num(n) => {
-                    if n <= 0 {
+                    if n <= 0.0 {
                         return Ok(None);
                     }
                     size_num = Some(n);
-                    size_attr = Some(AttrValue::StaticNum(n));
+                    size_attr = Some(static_numeric_attr(n));
                 }
                 // A string size (`size="16"`) is still static — accept it numerically
                 // when it parses to a positive int, otherwise it isn't a valid width; defer.
                 LucidePropVal::Str(s) => match s.parse::<i64>() {
                     Ok(n) if n > 0 => {
-                        size_num = Some(n);
+                        size_num = Some(n as f64);
                         size_attr = Some(AttrValue::StaticNum(n));
                     }
                     _ => return Ok(None),
@@ -2233,7 +2285,7 @@ fn build_lucide_svg(
             },
             "color" => match lucide_prop_value(&jsx_attr.value, scope)? {
                 LucidePropVal::Str(s) => color_attr = Some(AttrValue::Static(s)),
-                LucidePropVal::Num(n) => color_attr = Some(AttrValue::StaticNum(n)),
+                LucidePropVal::Num(n) => color_attr = Some(static_numeric_attr(n)),
                 LucidePropVal::Dynamic => {
                     color_attr = Some(AttrValue::Expr(lower_attr_expr(jsx_attr, scope)?));
                 }
@@ -2241,11 +2293,11 @@ fn build_lucide_svg(
             "strokeWidth" => match lucide_prop_value(&jsx_attr.value, scope)? {
                 LucidePropVal::Num(n) => {
                     stroke_width_num = Some(n);
-                    stroke_width_attr = Some(AttrValue::StaticNum(n));
+                    stroke_width_attr = Some(static_numeric_attr(n));
                 }
                 LucidePropVal::Str(s) => {
                     if let Ok(n) = s.parse::<i64>() {
-                        stroke_width_num = Some(n);
+                        stroke_width_num = Some(n as f64);
                     }
                     stroke_width_attr = Some(AttrValue::Static(s));
                 }
@@ -2287,7 +2339,7 @@ fn build_lucide_svg(
                             AttrValue::Static(s)
                         }
                     }
-                    LucidePropVal::Num(n) => AttrValue::StaticNum(n),
+                    LucidePropVal::Num(n) => static_numeric_attr(n),
                     LucidePropVal::Dynamic => {
                         // Re-lower to keep the dynamic expr verbatim (static is
                         // enough for T2 but emitting it is harmless and lossless).
@@ -2320,9 +2372,9 @@ fn build_lucide_svg(
     // size != 0; otherwise soft-fall back to SSR (which runs the real lucide).
     if has_absolute_stroke_width {
         match (stroke_width_num, size_num) {
-            (Some(sw), Some(sz)) if sz != 0 => {
+            (Some(sw), Some(sz)) if sz != 0.0 => {
                 // f64 math then format; trailing-zero-free (matches `2` not `2.0`).
-                let computed = (sw as f64) * 24.0 / (sz as f64);
+                let computed = sw * 24.0 / sz;
                 // f64 Display (shortest-decimal / Ryu) never emits trailing zeros,
                 // so `9.6` formats to "9.6" and the integer case (`3.0`) is split off
                 // above to render as "3" — no trailing-zero trimming is needed.
@@ -2475,8 +2527,15 @@ fn lower_ssr_component(
         }
     }
 
-    // T6: native inline branch — only when `native` present AND env is available.
-    if has_native && let Some(env) = &scope.inline_env {
+    // Every capitalized component in native/Jinja compilation is offered to the
+    // inline lowerer. `native` selects the historical explicit semantics; its
+    // absence selects automatic imported-component semantics.
+    if let Some(env) = &scope.inline_env {
+        let attempt_mode = if has_native {
+            InlineAttemptMode::ExplicitNative
+        } else {
+            InlineAttemptMode::ImplicitImported
+        };
         // Detect isr presence and spreads; build subst map from call-site attrs.
         let mut has_isr = false;
         let mut has_spread = false;
@@ -2570,6 +2629,7 @@ fn lower_ssr_component(
             has_isr,
             el.opening.span,
             doc_root,
+            attempt_mode,
         )?;
 
         if let Some(node) = inline_result {
@@ -2794,6 +2854,7 @@ fn try_native_inline(
     has_isr: bool,
     span: Span,
     doc_root: bool,
+    attempt_mode: InlineAttemptMode,
 ) -> Result<Option<JsxNode>, LowerError> {
     use crate::analyze::{Inlinability, analyze};
 
@@ -2808,6 +2869,17 @@ fn try_native_inline(
             return Ok(None);
         }
     };
+
+    // An automatic attempt must not silently discard SSR cache semantics.
+    // Explicit `native` retains the historical try-inline + warn-on-success
+    // behavior below.
+    if attempt_mode == InlineAttemptMode::ImplicitImported && has_isr {
+        env.warnings.borrow_mut().push(format!(
+            "native component \"{}\" not inlined: isr requires SSR cache semantics",
+            component
+        ));
+        return Ok(None);
+    }
 
     // 2. Spread or subst error → warn + fallback.
     if has_spread || subst_err {
@@ -2859,10 +2931,19 @@ fn try_native_inline(
         return Ok(None);
     }
 
-    // 5. Cycle check — hard error.
+    // 5. Cycle check. Explicit `native` retains the historical hard error;
+    // automatic imported recursion warns and falls back locally to its
+    // resolvable SSR identity.
     if env.cycle.borrow().contains(&component.to_string()) {
         let path = format!("{} → {}", env.cycle.borrow().join(" → "), component);
-        return Err(LowerError::at(span, ErrorKind::CircularInline(path)));
+        if attempt_mode == InlineAttemptMode::ExplicitNative {
+            return Err(LowerError::at(span, ErrorKind::CircularInline(path)));
+        }
+        env.warnings.borrow_mut().push(format!(
+            "native component \"{}\" not inlined: circular inline ({})",
+            component, path
+        ));
+        return Ok(None);
     }
     env.cycle.borrow_mut().push(component.to_string());
 
@@ -2877,6 +2958,7 @@ fn try_native_inline(
         lucide,
         directive_names.clone(),
         doc_root,
+        attempt_mode,
     ) {
         Ok(n) => n,
         Err(e) => {
@@ -2889,17 +2971,7 @@ fn try_native_inline(
                 env.cycle.borrow_mut().pop();
                 return Err(e);
             }
-            let msg = if let ErrorKind::InlineUntranslatable(s) = &e.kind {
-                format!(
-                    "native component \"{}\" not inlined: untranslatable ({})",
-                    component, s
-                )
-            } else {
-                format!(
-                    "native component \"{}\" not inlined: unsupported prop",
-                    component
-                )
-            };
+            let msg = format!("native component \"{}\" not inlined: {}", component, e.kind);
             env.warnings.borrow_mut().push(msg);
             env.cycle.borrow_mut().pop();
             return Ok(None);
@@ -2944,7 +3016,7 @@ fn try_native_inline(
     env.cycle.borrow_mut().pop();
 
     // 11. Warn if isr was present (ignored on inlined component).
-    if has_isr {
+    if has_isr && attempt_mode == InlineAttemptMode::ExplicitNative {
         env.warnings.borrow_mut().push(format!(
             "isr ignored on inlined native component \"{}\"",
             component
@@ -3942,6 +4014,13 @@ fn lower_attr(attr: &JSXAttrOrSpread, scope: &Scope) -> Result<Option<JsxAttr>, 
                                 if_value,
                                 else_value,
                             }
+                        }
+                        JSXExpr::Expr(e) if matches!(strip_paren(e), SwcExpr::Lit(Lit::Num(n)) if n.value.is_finite() && n.value.fract() != 0.0) =>
+                        {
+                            let SwcExpr::Lit(Lit::Num(n)) = strip_paren(e) else {
+                                unreachable!()
+                            };
+                            AttrValue::Static(n.value.to_string())
                         }
                         JSXExpr::Expr(e) => match lower_expr(e, scope)? {
                             // A `Lit::Num` in attr position keeps its specialized
@@ -7371,7 +7450,16 @@ export const behavior = () => ({});"#;
         has_children: bool,
     ) -> Result<Vec<JsxNode>, LowerError> {
         let parsed = parse(src, "<test>").unwrap();
-        super::lower_component_inline(&parsed, subst, has_children, None, None, None, false)
+        super::lower_component_inline(
+            &parsed,
+            subst,
+            has_children,
+            None,
+            None,
+            None,
+            false,
+            InlineAttemptMode::ExplicitNative,
+        )
     }
 
     // ── Document-root inline (native layout shell) ────────────────────────────
@@ -7991,7 +8079,7 @@ export default function Sections({ sectionKey, title }: any) {
         assert!(
             c.warnings
                 .iter()
-                .any(|w| w.contains("not inlined: untranslatable")),
+                .any(|w| w.contains("inline lowering cannot translate `call`")),
             "non-member-path subscript must soft-fall back, got {:?}",
             c.warnings
         );
@@ -8562,6 +8650,450 @@ export default function Sections({ sectionKey, title }: any) {
             }
             _ => {}
         }
+    }
+
+    fn ssr_component_names(node: &JsxNode, names: &mut Vec<String>) {
+        match node {
+            JsxNode::SsrComponent {
+                component,
+                children,
+                ..
+            } => {
+                names.push(component.clone());
+                for child in children {
+                    ssr_component_names(child, names);
+                }
+            }
+            JsxNode::Element { children, .. }
+            | JsxNode::Fragment { children }
+            | JsxNode::Document { body: children, .. } => {
+                for child in children {
+                    ssr_component_names(child, names);
+                }
+            }
+            JsxNode::Cond {
+                consequent,
+                alternate,
+                ..
+            } => {
+                ssr_component_names(consequent, names);
+                if let Some(alternate) = alternate {
+                    ssr_component_names(alternate, names);
+                }
+            }
+            JsxNode::Map { body, .. } => ssr_component_names(body, names),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn implicit_imported_route_root_inlines_without_native_attr() {
+        let route = r#"export default function Page({ data }) {
+  return <Card title={data.title}/>;
+}"#;
+        let card = r#"export default function Card({ title }) {
+  return <h1>{title}</h1>;
+}"#;
+        let mut sources = HashMap::new();
+        sources.insert("Card".to_string(), card.to_string());
+
+        let (component, warnings) = lower_with_src(route, sources).unwrap();
+        assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+        assert_no_ssr_component(&component.root);
+        assert!(matches!(component.root, JsxNode::Element { ref tag, .. } if tag == "h1"));
+    }
+
+    #[test]
+    fn implicit_imported_child_failure_falls_back_locally() {
+        let route = r#"export default function Page() { return <Parent/>; }"#;
+        let parent = r#"export default function Parent() {
+  return <section><HookChild/></section>;
+}"#;
+        let hook = r#"export default function HookChild() {
+  const [value] = useState(0);
+  return <span>{value}</span>;
+}"#;
+        let mut sources = HashMap::new();
+        sources.insert("Parent".to_string(), parent.to_string());
+        sources.insert("HookChild".to_string(), hook.to_string());
+
+        let (component, warnings) = lower_with_src(route, sources).unwrap();
+        let mut ssr = Vec::new();
+        ssr_component_names(&component.root, &mut ssr);
+        assert_eq!(ssr, vec!["HookChild"]);
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("HookChild") && warning.contains("useState")),
+            "expected precise child warning, got {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn implicit_unresolved_source_warns_and_falls_back() {
+        let route = r#"export default function Page() { return <Missing/>; }"#;
+        let (component, warnings) = lower_with_src(route, HashMap::new()).unwrap();
+        let mut ssr = Vec::new();
+        ssr_component_names(&component.root, &mut ssr);
+        assert_eq!(ssr, vec!["Missing"]);
+        assert!(warnings.iter().any(|warning| {
+            warning.contains("Missing") && warning.contains("source unresolved")
+        }));
+    }
+
+    #[test]
+    fn implicit_spread_warns_and_preserves_ssr_spread() {
+        let route = r#"export default function Page({ data }) {
+  return <Card {...data.props}/>;
+}"#;
+        let card = r#"export default function Card({ title }) { return <h1>{title}</h1>; }"#;
+        let mut sources = HashMap::new();
+        sources.insert("Card".to_string(), card.to_string());
+
+        let (component, warnings) = lower_with_src(route, sources).unwrap();
+        let JsxNode::SsrComponent {
+            component: name,
+            props,
+            ..
+        } = component.root
+        else {
+            panic!("expected local SSR fallback");
+        };
+        assert_eq!(name, "Card");
+        assert!(matches!(props.as_slice(), [SsrProp::Spread(_)]));
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("unsupported prop"))
+        );
+    }
+
+    #[test]
+    fn implicit_isr_warns_skips_inline_and_preserves_fields() {
+        let route = r#"export default function Page({ data }) {
+  return <Card isr={{ key: data.cacheKey, tags: data.tags, revalidate: 30 }}/>;
+}"#;
+        let card = r#"export default function Card() { return <h1>cached</h1>; }"#;
+        let mut sources = HashMap::new();
+        sources.insert("Card".to_string(), card.to_string());
+
+        let (component, warnings) = lower_with_src(route, sources).unwrap();
+        let JsxNode::SsrComponent {
+            component: name,
+            key_path,
+            tags_path,
+            revalidate,
+            ..
+        } = component.root
+        else {
+            panic!("expected ISR SSR fallback");
+        };
+        assert_eq!(name, "Card");
+        assert!(key_path.is_some());
+        assert!(tags_path.is_some());
+        assert_eq!(revalidate, Some(30));
+        assert!(
+            warnings.iter().any(|warning| {
+                warning.contains("Card") && warning.contains("isr requires SSR")
+            })
+        );
+    }
+
+    #[test]
+    fn implicit_cycle_warns_and_falls_back_without_build_error() {
+        let route = r#"export default function Page() { return <A/>; }"#;
+        let a = r#"export default function A() { return <B/>; }"#;
+        let b = r#"export default function B() { return <A/>; }"#;
+        let mut sources = HashMap::new();
+        sources.insert("A".to_string(), a.to_string());
+        sources.insert("B".to_string(), b.to_string());
+
+        let (component, warnings) = lower_with_src(route, sources).unwrap();
+        let mut ssr = Vec::new();
+        ssr_component_names(&component.root, &mut ssr);
+        assert_eq!(ssr, vec!["A"]);
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| { warning.contains("A") && warning.contains("circular inline") })
+        );
+    }
+
+    #[test]
+    fn implicit_attempt_keeps_ref_and_event_handlers_hard_errors() {
+        let card = r#"export default function Card() { return <h1>card</h1>; }"#;
+        let mut sources = HashMap::new();
+        sources.insert("Card".to_string(), card.to_string());
+
+        let ref_error = lower_with_src(
+            r#"export default function Page({ data }) { return <Card ref={data.ref}/>; }"#,
+            sources.clone(),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            ref_error.kind,
+            ErrorKind::RefAttributeNotSupported
+        ));
+
+        let event_error = lower_with_src(
+            r#"export default function Page({ data }) { return <Card onClick={data.click}/>; }"#,
+            sources,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            event_error.kind,
+            ErrorKind::EventHandlerNotSupported(_)
+        ));
+    }
+
+    #[test]
+    fn unsupported_private_helper_falls_back_containing_import() {
+        let route = r#"export default function Page() { return <Outer/>; }"#;
+        let outer = r#"
+function PrivateHelper() {
+  const [value] = useState(0);
+  return <span>{value}</span>;
+}
+export default function Outer() { return <section><PrivateHelper/></section>; }
+"#;
+        let mut sources = HashMap::new();
+        sources.insert("Outer".to_string(), outer.to_string());
+
+        let (component, warnings) = lower_with_src(route, sources).unwrap();
+        let mut ssr = Vec::new();
+        ssr_component_names(&component.root, &mut ssr);
+        assert_eq!(ssr, vec!["Outer"]);
+        assert!(!ssr.iter().any(|name| name == "PrivateHelper"));
+        assert!(warnings.iter().any(|warning| {
+            warning.contains("Outer")
+                && warning.contains("static evaluation")
+                && warning.contains("PrivateHelper")
+        }));
+    }
+
+    #[test]
+    fn static_eval_binding_expression_defaults_and_fractional_attrs_matrix() {
+        let route = r#"export default function Page() { return <Matrix/>; }"#;
+        let matrix = r#"
+import { Search } from "lucide-react";
+const ROWS = [
+  { label: "one", icon: Search, enabled: true, pairs: [["alpha", 1]] },
+  { label: "two", icon: Search, pairs: [["beta", 2]] },
+  { label: "three", icon: Search, enabled: false, pairs: [["gamma", 3]] },
+];
+function Badge({ label, enabled = true }) {
+  return <span className={enabled ? "on" : "off"}>{label}</span>;
+}
+export default function Matrix() {
+  return <section
+    data-fraction={2.25}
+    data-calc={1 + 2 * 3}
+    data-choice={(false || "fallback") ?? "never"}
+    data-neg={-2}
+    data-length={ROWS.length}
+    data-compare={3 >= 2 ? "yes" : "no"}
+  >
+    {ROWS.map(({ label, icon: Icon, enabled, pairs }, index) => <div data-index={index}>
+      <Icon strokeWidth={2.5} data-weight={2.25}/>
+      <Badge label={label} enabled={enabled}/>
+      <b>{label + "-" + index}</b>
+      {enabled && <em>enabled</em>}
+      {pairs.map(([text, count]) => <i>{text + count}</i>)}
+    </div>)}
+  </section>;
+}
+"#;
+        let mut sources = HashMap::new();
+        sources.insert("Matrix".to_string(), matrix.to_string());
+        let mut lucide = HashMap::new();
+        lucide.insert(
+            "Search".to_string(),
+            r#"{"cls":"lucide lucide-search","node":[["circle",[["cx","11"],["cy","11"],["r","8"]]]]}"#
+                .to_string(),
+        );
+
+        let compiled =
+            crate::compile_full(route, "<test>", sources, lucide, HashMap::new()).unwrap();
+        assert!(
+            compiled.warnings.is_empty(),
+            "matrix should inline cleanly: {:?}",
+            compiled.warnings
+        );
+        assert!(compiled.components.is_empty(), "unexpected SSR manifest");
+        let template = &compiled.template;
+        for expected in [
+            "data-fraction=\"2.25\"",
+            "data-calc=\"7\"",
+            "data-choice=\"fallback\"",
+            "data-neg=\"-2\"",
+            "data-length=\"3\"",
+            "data-compare=\"yes\"",
+            "stroke-width=\"2.5\"",
+            "data-weight=\"2.25\"",
+            "class=\"on\">one",
+            "class=\"on\">two",
+            "class=\"off\">three",
+            "<b>one-0</b>",
+            "<b>two-1</b>",
+            "<i>alpha1</i>",
+            "<i>beta2</i>",
+            "<i>gamma3</i>",
+        ] {
+            assert!(
+                template.contains(expected),
+                "missing {expected:?} in {template}"
+            );
+        }
+        assert_eq!(
+            template.matches("<em>enabled</em>").count(),
+            1,
+            "{template}"
+        );
+    }
+
+    #[test]
+    fn unsupported_helper_default_falls_back_with_precise_stage_six_reason() {
+        let route = r#"export default function Page() { return <Outer/>; }"#;
+        let outer = r#"
+function PrivateHelper({ label = makeLabel() }) { return <span>{label}</span>; }
+export default function Outer() { return <PrivateHelper/>; }
+"#;
+        let mut sources = HashMap::new();
+        sources.insert("Outer".to_string(), outer.to_string());
+
+        let (component, warnings) = lower_with_src(route, sources).unwrap();
+        let mut ssr = Vec::new();
+        ssr_component_names(&component.root, &mut ssr);
+        assert_eq!(ssr, vec!["Outer"]);
+        assert_eq!(
+            warnings,
+            vec![
+                "native component \"Outer\" not inlined: static evaluation: dynamic helper default `label`"
+                    .to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn helper_default_applies_to_absent_and_explicit_undefined_props() {
+        let route = r#"export default function Page() { return <Outer/>; }"#;
+        let outer = r#"
+function Badge({ label, enabled = true }) {
+  return <span className={enabled ? "on" : "off"}>{label}</span>;
+}
+export default function Outer() {
+  return <><Badge label="absent"/><Badge label="undefined" enabled={undefined}/></>;
+}
+"#;
+        let mut sources = HashMap::new();
+        sources.insert("Outer".to_string(), outer.to_string());
+
+        let compiled =
+            crate::compile_full(route, "<test>", sources, HashMap::new(), HashMap::new()).unwrap();
+        assert!(compiled.warnings.is_empty(), "{:?}", compiled.warnings);
+        assert!(compiled.components.is_empty());
+        assert!(compiled.template.contains("class=\"on\">absent"));
+        assert!(compiled.template.contains("class=\"on\">undefined"));
+    }
+
+    #[test]
+    fn dynamic_helper_defaults_fail_only_when_selected_for_assign_patterns() {
+        let route = r#"export default function Page() { return <Outer/>; }"#;
+        let selected_cases = [
+            (
+                r#"
+function Badge({ label = makeLabel() }) { return <span>{label}</span>; }
+export default function Outer() { return <Badge/>; }
+"#,
+                "dynamic helper default `label`",
+            ),
+            (
+                r#"
+function Badge({ label: text = makeLabel() }) { return <span>{text}</span>; }
+export default function Outer() { return <Badge/>; }
+"#,
+                "dynamic helper default `text`",
+            ),
+        ];
+        for (outer, reason) in selected_cases {
+            let mut sources = HashMap::new();
+            sources.insert("Outer".to_string(), outer.to_string());
+            let (component, warnings) = lower_with_src(route, sources).unwrap();
+            let mut ssr = Vec::new();
+            ssr_component_names(&component.root, &mut ssr);
+            assert_eq!(ssr, vec!["Outer"]);
+            assert_eq!(
+                warnings,
+                vec![format!(
+                    "native component \"Outer\" not inlined: static evaluation: {reason}"
+                )]
+            );
+        }
+
+        let unused = r#"
+function Direct({ label = makeLabel() }) { return <span>{label}</span>; }
+function Aliased({ label: text = makeLabel() }) { return <i>{text}</i>; }
+export default function Outer() {
+  return <><Direct label="direct"/><Aliased label="aliased"/></>;
+}
+"#;
+        let mut sources = HashMap::new();
+        sources.insert("Outer".to_string(), unused.to_string());
+        let compiled =
+            crate::compile_full(route, "<test>", sources, HashMap::new(), HashMap::new()).unwrap();
+        assert!(compiled.warnings.is_empty(), "{:?}", compiled.warnings);
+        assert!(compiled.components.is_empty());
+        assert!(compiled.template.contains("<span>direct</span>"));
+        assert!(compiled.template.contains("<i>aliased</i>"));
+    }
+
+    #[test]
+    fn helper_static_eval_failures_have_precise_warning_reasons() {
+        let route = r#"export default function Page() { return <Outer/>; }"#;
+        let cases = [
+            (
+                r#"
+function PrivateHelper() { const [value] = useState(0); return <span>{value}</span>; }
+export default function Outer() { return <PrivateHelper/>; }
+"#,
+                "native component \"Outer\" not inlined: static evaluation: helper PrivateHelper: component calls React hook `useState` — cannot inline",
+            ),
+            (
+                r#"
+function A() { return <B/>; }
+function B() { return <A/>; }
+export default function Outer() { return <A/>; }
+"#,
+                "native component \"Outer\" not inlined: static evaluation: helper cycle: A -> B -> A",
+            ),
+        ];
+
+        for (outer, expected) in cases {
+            let mut sources = HashMap::new();
+            sources.insert("Outer".to_string(), outer.to_string());
+            let (component, warnings) = lower_with_src(route, sources).unwrap();
+            let mut ssr = Vec::new();
+            ssr_component_names(&component.root, &mut ssr);
+            assert_eq!(ssr, vec!["Outer"]);
+            assert_eq!(warnings, vec![expected.to_string()]);
+        }
+    }
+
+    #[test]
+    fn stage_six_warning_includes_the_actual_lower_error_kind() {
+        let route = r#"export default function Page() { return <Outer/>; }"#;
+        let outer = r#"export default function Outer() { return <div>{unknown}</div>; }"#;
+        let mut sources = HashMap::new();
+        sources.insert("Outer".to_string(), outer.to_string());
+
+        let (component, warnings) = lower_with_src(route, sources).unwrap();
+        let mut ssr = Vec::new();
+        ssr_component_names(&component.root, &mut ssr);
+        assert_eq!(ssr, vec!["Outer"]);
+        assert_eq!(
+            warnings,
+            vec!["native component \"Outer\" not inlined: unresolved identifier `unknown`"]
+        );
     }
 
     /// Recursively check that no ChildrenSlot remains in tree.
