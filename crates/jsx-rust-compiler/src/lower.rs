@@ -355,7 +355,11 @@ pub(crate) fn lower_component_inline(
     attempt_mode: InlineAttemptMode,
 ) -> Result<Vec<JsxNode>, LowerError> {
     let (_, fn_expr) = find_default_export(&parsed.module)?;
-    let body = crate::static_eval::expand_inline_body(
+    let empty_sources = HashMap::new();
+    let component_sources = env
+        .as_ref()
+        .map_or(&empty_sources, |inline_env| &inline_env.sources);
+    let body = crate::static_eval::expand_inline_body_with_sources(
         &parsed.module,
         fn_expr
             .ident
@@ -363,6 +367,7 @@ pub(crate) fn lower_component_inline(
             .map(|id| id.sym.as_ref())
             .unwrap_or("default"),
         &fn_expr.function,
+        component_sources,
     )
     .map_err(|e| {
         LowerError::at(
