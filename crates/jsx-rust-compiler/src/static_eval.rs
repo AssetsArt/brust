@@ -831,26 +831,19 @@ impl<'a> Evaluator<'a> {
                 JSXElementChild::JSXExprContainer(mut container) => {
                     if let JSXExpr::Expr(expression) = &mut container.expr {
                         self.expand_expr(expression, env, depth)?;
-                        match expression.as_ref() {
-                            Expr::JSXFragment(fragment) => {
-                                expanded.extend(fragment.children.clone());
-                                self.changed = true;
-                                continue;
-                            }
-                            Expr::JSXElement(element) => {
-                                expanded.push(JSXElementChild::JSXElement(element.clone()));
-                                self.changed = true;
-                                continue;
-                            }
-                            Expr::Lit(Lit::Null(_)) | Expr::Lit(Lit::Bool(_)) => {
-                                self.changed = true;
-                                continue;
-                            }
-                            Expr::Ident(id) if id.sym.as_ref() == "undefined" => {
-                                self.changed = true;
-                                continue;
-                            }
-                            _ => {}
+                        if matches!(
+                            strip_paren(expression),
+                            Expr::JSXFragment(_)
+                                | Expr::JSXElement(_)
+                                | Expr::Lit(Lit::Null(_))
+                                | Expr::Lit(Lit::Bool(_))
+                        ) || matches!(
+                            strip_paren(expression),
+                            Expr::Ident(id) if id.sym.as_ref() == "undefined"
+                        ) {
+                            append_expr_children((**expression).clone(), &mut expanded);
+                            self.changed = true;
+                            continue;
                         }
                     }
                     expanded.push(JSXElementChild::JSXExprContainer(container));

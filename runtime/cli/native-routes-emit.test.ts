@@ -1094,6 +1094,50 @@ describe('bakeDirectivesIfUsed', () => {
 })
 
 describe('extractLucideIcons', () => {
+  test('numeric icon names extract and emit as static SVG without SSR artifacts', async () => {
+    const iconsPath = join(dir, 'Icons.tsx')
+    writeFileSync(
+      iconsPath,
+      `import { FileCheck2, Repeat2, Printer } from 'lucide-react'
+export default function Icons() {
+  return <div><FileCheck2/><Repeat2/><Printer/></div>
+}
+`,
+    )
+
+    const extracted = await extractLucideIcons(iconsPath)
+    expect(Object.keys(extracted).sort()).toEqual(['FileCheck2', 'Printer', 'Repeat2'])
+    expect(JSON.parse(extracted.FileCheck2!).cls).toBe('lucide lucide-file-check-corner')
+    expect(JSON.parse(extracted.Repeat2!).cls).toBe('lucide lucide-repeat-2')
+    expect(JSON.parse(extracted.Printer!).cls).toBe('lucide lucide-printer')
+
+    const pagePath = join(dir, 'Page.tsx')
+    writeFileSync(
+      pagePath,
+      `import Icons from './Icons'
+export default function Page() { return <Icons/> }
+`,
+    )
+    const routesPath = join(dir, 'routes.tsx')
+    writeFileSync(routesPath, `import Page from './Page'\n`)
+    const outDir = join(dir, 'jinja')
+    mkdirSync(outDir, { recursive: true })
+
+    await emitNativeTemplates({
+      entryFile: routesPath,
+      flatRoutes: [{ nativeTemplate: 'Page' }],
+      outDir,
+      repoRoot: dir,
+    })
+
+    const template = readFileSync(join(outDir, 'Page.jinja'), 'utf8')
+    expect(template).toContain('class="lucide lucide-file-check-corner"')
+    expect(template).toContain('class="lucide lucide-repeat-2"')
+    expect(template).toContain('class="lucide lucide-printer"')
+    expect(template).not.toContain('comp_')
+    expect(existsSync(join(outDir, 'Page.components.json'))).toBe(false)
+  })
+
   test('AC9: extracts static icon node for a named lucide import, stripping `key`', async () => {
     const pagePath = join(dir, 'Page.tsx')
     writeFileSync(pagePath, `import { Search } from 'lucide-react'\n`)

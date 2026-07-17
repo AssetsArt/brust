@@ -8952,6 +8952,29 @@ export default function Matrix() {
     }
 
     #[test]
+    fn parenthesized_static_jsx_children_inline_through_compile_full() {
+        let route = r#"export default function Page() { return <Featured/>; }"#;
+        let featured = r#"
+const ITEMS = [{ featured: true }, { featured: false }];
+export default function Featured() {
+  return <div>{ITEMS.map((item) => <section>
+    {item.featured && (<span>logical</span>)}
+    {item.featured ? (<b>conditional</b>) : null}
+  </section>)}</div>;
+}
+"#;
+        let mut sources = HashMap::new();
+        sources.insert("Featured".to_string(), featured.to_string());
+
+        let compiled =
+            crate::compile_full(route, "<test>", sources, HashMap::new(), HashMap::new()).unwrap();
+        assert!(compiled.warnings.is_empty(), "{:?}", compiled.warnings);
+        assert!(compiled.components.is_empty(), "unexpected SSR manifest");
+        assert_eq!(compiled.template.matches("<span>logical</span>").count(), 1);
+        assert_eq!(compiled.template.matches("<b>conditional</b>").count(), 1);
+    }
+
+    #[test]
     fn unsupported_helper_default_falls_back_with_precise_stage_six_reason() {
         let route = r#"export default function Page() { return <Outer/>; }"#;
         let outer = r#"
