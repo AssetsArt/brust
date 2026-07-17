@@ -58,8 +58,8 @@ lowering failure. Keep the stage-2 call-site `unsupported prop` warning unchange
 
 ### 3. Regression fixture
 
-Add a native fixture route in `tests/fixtures/app` that covers the reported
-static-component shapes in one small component:
+Add `tests/fixtures/app/NativeStaticEval.tsx` with one small component covering
+the reported static-component shapes:
 
 - module object-array and tuple-array maps;
 - a direct literal-array map;
@@ -70,9 +70,12 @@ static-component shapes in one small component:
 - pure same-file helpers, including a defaulted boolean prop;
 - lucide icons with fractional `strokeWidth`.
 
-Wire the route in `tests/fixtures/app/routes.tsx`. Extend
-`tests/native-inline.test.ts` (or add one focused sibling test if isolation is
-cleaner) to run through the real CLI/NAPI path and assert:
+Import it into the existing `tests/fixtures/app/NativeInline.tsx` fixture and
+render `<NativeStaticEval native />` there. This is intentionally an imported
+inline child, because static expansion runs only in `lower_component_inline`.
+Do not add a standalone route and do not apply static evaluation to route roots.
+Extend `tests/native-inline.test.ts` (or add one focused sibling test if
+isolation is cleaner) to run through the real CLI/NAPI path and assert:
 
 - distinctive HTML from every shape exists in the emitted Jinja;
 - build stderr has no fallback warning for the fixture component;
@@ -101,6 +104,9 @@ SSR manifest entry.
 - **Repository isolation:** Source, tests, plans, and other committed artifacts
   must be self-contained and must not reference, read, import, or depend on paths
   outside this repository. Use only fixtures checked into this repository.
+- **Inline-only coverage:** The regression fixture must enter through an imported
+  `<NativeStaticEval native />` under the existing inline route. Root-wide static
+  evaluation changes production semantics and is outside this task.
 - **Semantic drift:** missing object properties must be undefined/falsy, not a
   hard error; string and numeric `+` must not be conflated.
 - **Scope capture:** callback/helper parameters and local consts may shadow outer
