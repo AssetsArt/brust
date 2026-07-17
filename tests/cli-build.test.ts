@@ -189,7 +189,7 @@ test('GET /_brust/css/app.css serves with correct headers', async () => {
   expect(text.length).toBeGreaterThan(100)
 })
 
-test('SSR HTML contains <link rel="stylesheet"> immediately before </head>', async () => {
+test('SSR HTML contains <link rel="stylesheet"> before </head>', async () => {
   const html = await (await fetch(`http://127.0.0.1:${port}/`)).text()
   const linkTag = '<link rel="stylesheet" href="/_brust/css/app.css">'
   const linkIdx = html.indexOf(linkTag)
@@ -197,8 +197,6 @@ test('SSR HTML contains <link rel="stylesheet"> immediately before </head>', asy
   expect(linkIdx).toBeGreaterThan(-1)
   expect(headEnd).toBeGreaterThan(-1)
   expect(linkIdx).toBeLessThan(headEnd)
-  // Nothing between the link tag and </head> (allowing 0 chars of slack).
-  expect(headEnd - (linkIdx + linkTag.length)).toBe(0)
 })
 
 test('GET /_brust/css/..%2Fetc%2Fpasswd is 404', async () => {

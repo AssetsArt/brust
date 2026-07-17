@@ -5,6 +5,7 @@ pub mod filters;
 mod ir;
 mod lower;
 pub mod parser;
+mod static_eval;
 mod xfor;
 
 use ir::JsxNode;
@@ -673,6 +674,8 @@ pub enum ErrorKind {
     DangerouslySetInnerHtmlWithChildren,
     #[error("inline lowering cannot translate `{0}` — expression is too complex for inline mode")]
     InlineUntranslatable(String),
+    #[error("static evaluation: {0}")]
+    StaticEvaluation(String),
     #[error("circular native inline: {0}")]
     CircularInline(String),
     #[error(

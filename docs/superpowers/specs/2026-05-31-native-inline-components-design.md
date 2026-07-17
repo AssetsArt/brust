@@ -27,19 +27,30 @@ the Rust render path with no per-component JS bridge.
   static markup.
 - **Not** a general JS→Jinja transpiler. The supported expression/control-flow
   surface is bounded (below); anything outside it falls back to SSR.
-- **No** runtime behavior change for routes that don't use `native`.
+- **No** runtime behavior change for routes that do not enter the native/Jinja
+  compiler. Imported components inside a native route are attempted natively by
+  default as described below.
 
 ## Surface API + semantics
 
 ### Annotation
-- `<Comp native />` — bare boolean attribute at the **call site** (mirrors the
-  `ssr` bare attr on `<Island>`). `native` is consumed by the lowerer and MUST
-  NOT leak as a prop.
-- Explicit **per-level** annotation. `native` does NOT cascade. A child
-  component inside an inlined `native` component that is itself **not**
-  annotated `native` becomes an ordinary SSR slot embedded in the inlined Jinja.
-- Recursion follows only `native`-annotated tags: `<Outer native>` containing
-  `<Inner native/>` inlines both, Inner nested inside Outer's expansion.
+- Imported components inside a native route are attempted automatically; the
+  ordinary call site is `<Comp />`.
+- `<Comp native />` remains supported for backward compatibility. The bare
+  attribute is consumed by the lowerer and MUST NOT leak as a prop. It selects
+  explicit mode, retaining the historical hard-cycle and `isr`-ignore semantics.
+- Automatic attempts recurse through imported child components whose source is
+  available. A failed imported-child attempt warns and falls back locally to its
+  ordinary resolvable SSR slot; it does not discard a successfully inlined
+  parent.
+- **Private same-file helper exception (2026-07-17):** while expanding an
+  imported component, an unexported top-level function declaration in that same
+  source module may be inlined without its own `native` marker. Private-helper
+  expansion is all-or-nothing under the containing imported component: an
+  unsupported private helper never becomes an SSR slot (same-file locals cannot
+  be resolved by the SSR factory import map), so the containing component
+  soft-falls back instead. Full contract:
+  `docs/superpowers/specs/2026-07-17-native-static-evaluation-design.md`.
 
 ### What inlines (ALL must hold)
 1. **Source resolves** — the component's source file is reachable via the
@@ -57,20 +68,26 @@ Triggered when ANY inline precondition fails:
 - contains an expression that cannot be translated to minijinja.
 
 The component reverts to the existing SSR path (`{{ comp_N_html | safe }}` +
-generated factory). A build warning is emitted to **stderr** during
-`brust build`, naming the component and the reason. Rationale (user decision):
-"ไม่อยาก compile error และ dev ไม่งง" — a `native` hint that can't be honored
+generated factory). Both automatic and explicit attempts emit a build warning
+to **stderr** during `brust build`, naming the component and the reason.
+Rationale (user decision):
+"ไม่อยาก compile error และ dev ไม่งง" — a native attempt that cannot be honored
 degrades gracefully rather than breaking the build.
 
 ### Hard error (NOT fallback)
-- **Circular inline**: `A native → B native → A native`. A real dev bug; emit a
-  compile error (`CircularInline`) naming the cycle, do not fall back.
+- **Explicit circular inline**: `A native → B native → A native`. Preserve the
+  historical compile error (`CircularInline`) naming the cycle.
+- An all-implicit cycle warns and falls back locally to an SSR slot instead of
+  turning previously valid recursive React composition into a build failure.
 
 ### `isr` interaction
 - `native` + `isr` that **inlines** → `isr` is meaningless (static, no
   per-request render) → **warn + ignore `isr`**.
 - `native` + `isr` that **falls back** to SSR → `isr` honored normally (Feature B
   path, unchanged).
+- An automatic attempt on `<Comp isr={...} />` warns, skips inline, and preserves
+  the existing SSR/ISR behavior. Automatic inlining must never silently discard
+  cache semantics.
 
 ## High-level architecture
 
@@ -80,7 +97,7 @@ island/component numbering passes. Pipeline (in `lib.rs::compile_full`):
 ```
 parse(route source)                       [existing]
   → lower(route)                           [existing, extended]
-      ├─ lower_element hits <Comp native>  [NEW branch in lower_ssr_component]
+      ├─ lower_element hits imported <Comp> [branch in lower_ssr_component]
       │     → resolve Comp source from component_sources map
       │     → parse(Comp source) (SWC)     [reuse parser::parse]
       │     → inlinability check           [NEW: analyze.rs]
@@ -88,7 +105,7 @@ parse(route source)                       [existing]
       │         · lower Comp's returned JSX with a substitution scope
       │           {prop ident → call-site Expr/nodes, children → call-site nodes}
       │         · splice resulting JsxNodes in place of the SsrComponent
-      │         · recurse for native-annotated descendants (cycle-guarded)
+      │         · recurse for imported descendants (cycle-guarded)
       │     → else: emit SsrComponent (existing), push warning
   → number_islands / number_ssr_components [existing — sees inlined Islands]
   → collect_islands / collect_components    [existing]
@@ -211,7 +228,7 @@ New Rust files in `crates/jsx-rust-compiler/src/`:
   AST + the route's `Expr` translator. Returns `Inlinable | Fallback(reason)`.
 - `inline.rs` — the expansion: given a parsed component, a substitution scope
   (prop ident → call-site value, `children` → nodes), and a cycle set, produce
-  `Vec<JsxNode>`. Recurses for native-annotated descendants.
+  `Vec<JsxNode>`. Recurses for imported descendants.
 
 Extended Rust files:
 - `ir.rs` — add `JsxNode::ChildrenSlot`; extend `Expr` (arithmetic, template
@@ -269,13 +286,13 @@ Run files SEPARATELY (memory `bun-mock-module-leaks-suite`,
   unchanged.
 
 **TS unit:** `compileJsx` accepts `componentSources` + returns `warnings`;
-recursive `scanImports` gathering resolves transitive `native` sources.
+recursive `scanImports` gathering resolves transitive component sources.
 
 **Integration (`tests/native-island-ssr.test.ts` harness — `brust build` +
 cwd=FIXTURE_DIR):**
-- native route with an inlinable `<Layout native>` → output contains the
+- native route with an inlinable imported `<Layout>` → output contains the
   expanded markup, NO `comp_N_html` slot, NO factory entry for it.
-- `<Comp native>` with a hook → falls back: warning on stderr + `comp_N_html`
+- imported `<Comp>` with a hook → falls back: warning on stderr + `comp_N_html`
   slot present (renders correctly).
 - inlined component containing `<Island>` → island still hydrates.
 - conditional on a dynamic prop → correct `{% if %}` output renders both
@@ -283,17 +300,18 @@ cwd=FIXTURE_DIR):**
 
 ## Acceptance criteria
 
-- `<Comp native/>` on a pure presentational component inlines to Jinja with no
+- An imported pure presentational `<Comp/>` inlines to Jinja with no
   factory entry and no request-time JS bridge; output renders identically to the
   SSR version for the same data.
 - All four fallback reasons degrade to SSR with a stderr warning, not a build
   failure.
-- Circular inline fails the build with a clear cycle message.
+- An explicit circular inline fails the build with a clear cycle message;
+  an all-implicit cycle warns and SSR-fallbacks locally.
 - Inlined `<Island>` hydrates.
 - Full baselines green (`cargo test --workspace`, `bun test runtime/`, each
   `tests/*.test.ts` separately, `cargo fmt --check`,
   `cargo clippy --workspace --all-targets --locked -D warnings`, `bun run ci`).
-- No-`native` routes byte-identical (golden fixtures unmoved).
+- Routes outside the native/Jinja compiler remain byte-identical.
 
 ## Known limitations (v1)
 
