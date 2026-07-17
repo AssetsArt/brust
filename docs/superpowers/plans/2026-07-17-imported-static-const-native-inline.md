@@ -1,12 +1,27 @@
 # Imported Static Constants in Native Inline Components
-
-owner: 0ddb11d0-954b-4710-90ce-8191a46fe3c3 (Aoki) · authority: in-loop
+<!-- conclave-plan:v1
+{
+"owner":"0ddb11d0-954b-4710-90ce-8191a46fe3c3","authority":"in-loop",
+"planPath":"docs/superpowers/plans/2026-07-17-imported-static-const-native-inline.md","baseSha":"866a7339ee073b3f73bfb93978d8bcb5dfa25fa2","escalation":"0ddb11d0-954b-4710-90ce-8191a46fe3c3",
+"readingOrder":["docs/superpowers/plans/2026-07-17-imported-static-const-native-inline.md","crates/jsx-rust-compiler/src/static_eval.rs#expand_inline_body","crates/jsx-rust-compiler/src/lower.rs#lower_component_inline","crates/jsx-rust-compiler/src/lib.rs#compile_full"],
+"boundary":["crates/jsx-rust-compiler/src/lib.rs","crates/jsx-rust-compiler/src/lower.rs","crates/jsx-rust-compiler/src/static_eval.rs"],
+"consumes":["crates/jsx-rust-compiler/src/static_eval.rs#expand_inline_body","crates/jsx-rust-compiler/src/lower.rs#lower_component_inline","crates/jsx-rust-compiler/src/lib.rs#compile_full"],
+"produces":["crates/jsx-rust-compiler/src/static_eval.rs#imported named export const regression","crates/jsx-rust-compiler/src/lib.rs#NavBar imported static const regression"],"gates":["cargo fmt --all -- --check","cargo test -p jsx-rust-compiler static_eval","cargo test -p jsx-rust-compiler","cargo clippy --workspace --all-targets -- -D warnings","cargo test --workspace"]
+} -->
 
 ## Goal
 
 Allow an implicitly native-inlined component to statically expand a local named import whose source is a bounded `export const` value. The motivating consumer shape is `NavBar.tsx` importing an array of literal link objects and rendering `NAV_LINKS.map(...)` alongside a client island.
 
 The delivered behavior must make the exact NavBar-shaped compiler fixture inline into Jinja while retaining `MobileMenu` in the island manifest. It must not turn the compiler into a general JavaScript module evaluator.
+
+## Non-goals
+
+- General or recursive ESM evaluation.
+- Executing calls, methods, getters, side effects, or package modules at compile time.
+- Resolving default imports, namespace imports, `export { X }`, re-exports, dynamic imports, or transitively imported constants.
+- Changing `Island` SSR/ISR semantics or silently accepting `isr` without `ssr`.
+- Editing or committing the external `/Users/detoro/code/ket-doc` consumer repository.
 
 ## Decisions
 
@@ -16,13 +31,6 @@ The delivered behavior must make the exact NavBar-shaped compiler fixture inline
 4. Preserve the existing `Island` ISR contract: `isr` without `ssr` remains invalid. The consumer's `<Island component={MobileMenu} isr={{...}} />` is a separate authoring error; for its client-only intent, omit `isr`. Do not silently ignore it in the compiler.
 5. Do not change source gathering in `runtime/cli/native-routes-emit.ts`: the current gatherer already supplies the `NAV_LINKS` dependency source under the local imported identifier. Prove this assumption through the compiler-facing fixture and existing gather tests; modify runtime gathering only if a failing regression demonstrates it is necessary, and challenge this plan before widening the boundary.
 
-Rejected alternatives:
-
-- Treating `.map` as a readable property on every imported symbol: this hides the missing module value and permits method semantics the evaluator does not implement.
-- Inlining dependency source text by string rewriting: this loses AST binding/alias semantics and is unsafe around shadowing.
-- Ignoring `isr` when `ssr` is absent: this converts an authoring error into inert configuration and masks caching mistakes.
-- General recursive ESM evaluation: unnecessary for the reported literal data module and expands the security/budget surface substantially.
-
 ## Implementation Boundary
 
 - `crates/jsx-rust-compiler/src/static_eval.rs`
@@ -31,7 +39,7 @@ Rejected alternatives:
 
 No consumer file is committed in this task. `/Users/detoro/code/ket-doc` is an acceptance fixture only and must not be edited by the implementation lane.
 
-## Implementation
+## Ordered edits
 
 1. Add a source-aware entry point or parameter at `expand_inline_body` so `lower_component_inline` can expose the shared `InlineEnv.sources` map to static evaluation. Keep source-free unit helpers using an empty map.
 2. Teach evaluator module scanning to recognize both plain `const` declarations and direct `export const` declarations. Preserve binding-count checks.
@@ -41,7 +49,9 @@ No consumer file is committed in this task. `/Users/detoro/code/ket-doc` is an a
 
 Implementation judgment within these constraints belongs to Dabin. Any need to change public NAPI parameters, runtime source gathering, ISR semantics, or general expression support is a design conflict and must be filed as a task challenge for Aoki to rule.
 
-## Tests (red before green)
+## Verification
+
+Write the regression red before changing production behavior:
 
 1. In `static_eval.rs`, add a focused failing test for an aliased named import resolving a direct `export const` literal array. Assert the map expands and imported/local member values appear in the expanded body.
 2. Add negative tests proving default/namespace imports and a non-static exported initializer are not executed or widened. Assert deterministic fallback/error text rather than panic.
@@ -54,7 +64,7 @@ Implementation judgment within these constraints belongs to Dabin. Any need to c
    Assert `warnings` is empty, `components` is empty, the Jinja template contains every static link, and `islands_json` contains `MobileMenu` exactly once.
 4. Add or retain a negative exact-shape test showing `isr={{ key: "[NavBar]MobileMenu" }}` without `ssr` still produces the existing island-ISR fallback warning. This guards Decision 4.
 
-## Gates
+Run the lane gates in order:
 
 Run in the lane, in order:
 
@@ -79,7 +89,7 @@ bun test runtime/
 
 Consumer acceptance is read-only/in-memory: compile the actual `NavBar.tsx` after removing only its inert `isr` attribute in memory, using the actual `NAV_LINKS` and `MobileMenu` sources. Expected: no NavBar warning, template contains `Document Flow`, and island manifest contains `MobileMenu`. Do not edit or commit the consumer repository in this task.
 
-## Risk Ledger
+## Risks
 
 - `component_sources` is keyed by local identifier rather than module path. Alias handling must use the import specifier's imported name for export lookup and local name for source-map/cache lookup.
 - A source file can contain multiple exports. Select only the requested direct `export const`; never import every top-level binding into the caller namespace.
@@ -87,6 +97,17 @@ Consumer acceptance is read-only/in-memory: compile the actual `NavBar.tsx` afte
 - Capitalized component and lucide imports are represented as symbols today. Do not reinterpret them as static consts unless their supplied source directly exports the requested const value.
 - The existing warning `property map is unsupported` is a symptom of unresolved import traversal. Do not weaken `read_property` globally as a shortcut.
 - Conclave lane worktrees may need a lane-local `node_modules` symlink for Bun gates, and full Bun suites can exhibit the known loader-poisoning trio. This task's authoritative implementation gates are Rust; main integration reruns Bun with real dependencies.
+
+## Rejected alternatives
+
+- Treating `.map` as a readable property on every imported symbol: this hides the missing module value and permits method semantics the evaluator does not implement.
+- Inlining dependency source text by string rewriting: this loses AST binding/alias semantics and is unsafe around shadowing.
+- Ignoring `isr` when `ssr` is absent: this converts an authoring error into inert configuration and masks caching mistakes.
+- General recursive ESM evaluation: unnecessary for the reported literal data module and expands the security/budget surface substantially.
+
+## Escalation
+
+Aoki owns the plan and rules all design/spec conflicts with authority in-loop. Dabin owns implementation judgment inside the recorded boundary. Any need to change public NAPI parameters, runtime source gathering, ISR semantics, general expression support, or the one-module-depth limit must be filed as a task challenge with evidence and a proposed resolution before that work begins.
 
 ## Done When
 
