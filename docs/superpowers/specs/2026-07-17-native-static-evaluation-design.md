@@ -2,17 +2,16 @@
 
 **Date:** 2026-07-17  
 **Status:** accepted  
-**Driver:** Ket Doc landing components should compile to zero-React native markup
+**Driver:** Ordinary static components should compile to zero-React native markup
 
 ## Problem
 
 `<Comp native />` currently inlines only when every JSX expression is already a
 runtime loader path or an expression supported by the inline lowerer. Ordinary
 presentational React components frequently keep display data in module-level
-literal `const` arrays and render it with `.map()`. The Ket Doc landing page is a
-representative case: seven components soft-fall back with the misleading
-diagnostic `unsupported prop` even though their call sites pass no props beyond
-the `native` marker.
+literal `const` arrays and render it with `.map()`. The reported representative
+components soft-fall back with the misleading diagnostic `unsupported prop`
+even though their call sites pass no props beyond the `native` marker.
 
 The first shared failure is not a prop. A module identifier such as
 `NAV_LINKS` reaches `lower_expr`, which only knows component props and active map
@@ -119,10 +118,10 @@ the existing `unsupported prop` wording because it is accurate there.
 
 ## Acceptance
 
-- The seven Ket Doc components inline without warnings or component-manifest
-  entries when built with the local Brust CLI/addon.
-- `HeroScene` and `DocumentSheet` also leave no SSR factory entries.
-- `Footer`, which is not marked native by the application, retains its existing
+- The in-repo representative fixture inlines without warnings or
+  component-manifest entries when built with the local Brust CLI/addon.
+- Its private same-file helpers also leave no SSR factory entries.
+- An in-repo control component that is not marked native retains its existing
   SSR entry.
 - Runtime-prop maps, hook/side-effect fallback, islands, behavior components,
   lucide SVGs, and existing native routes remain green.

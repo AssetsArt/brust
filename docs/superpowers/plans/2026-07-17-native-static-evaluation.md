@@ -6,8 +6,8 @@ owner: 0ddb11d0-954b-4710-90ce-8191a46fe3c3 · authority: in-loop
 
 Implement the accepted design in
 `docs/superpowers/specs/2026-07-17-native-static-evaluation-design.md` so the
-seven native Ket Doc landing components compile to native markup with no React
-SSR slots.
+representative ordinary static-component shapes compile to native markup with
+no React SSR slots.
 
 ## Reading order
 
@@ -17,8 +17,6 @@ SSR slots.
    `try_native_inline`, `lower_call_as_map`, expression lowering, lucide lowering
 4. `crates/jsx-rust-compiler/src/analyze.rs`
 5. `tests/native-inline.test.ts` and `tests/fixtures/app/NativeInline.tsx`
-6. The seven files under `/Users/detoro/code/ket-doc/landing/components` named in
-   the investigation plan
 
 ## Implementation
 
@@ -60,8 +58,8 @@ lowering failure. Keep the stage-2 call-site `unsupported prop` warning unchange
 
 ### 3. Regression fixture
 
-Add a native fixture route in `tests/fixtures/app` that covers the Ket Doc
-shapes in one small component:
+Add a native fixture route in `tests/fixtures/app` that covers the reported
+static-component shapes in one small component:
 
 - module object-array and tuple-array maps;
 - a direct literal-array map;
@@ -96,14 +94,13 @@ SSR manifest entry.
   arbitrary loops, or general JavaScript evaluation.
 - Auto-inlining imported components that are not marked `native`.
 - Changing runtime loader-data map output.
-- Editing the Ket Doc source components to fit compiler limitations.
+- Editing consumer applications to fit compiler limitations.
 
 ## Risk ledger
 
-- **Repository isolation:** Brust source and committed tests must never reference,
-  read, import, or depend on Ket Doc or any other external project path. Use only
-  self-contained fixtures checked into this repository. External projects are
-  acceptance-test targets invoked from the gate shell, never test dependencies.
+- **Repository isolation:** Source, tests, plans, and other committed artifacts
+  must be self-contained and must not reference, read, import, or depend on paths
+  outside this repository. Use only fixtures checked into this repository.
 - **Semantic drift:** missing object properties must be undefined/falsy, not a
   hard error; string and numeric `+` must not be conflated.
 - **Scope capture:** callback/helper parameters and local consts may shadow outer
@@ -112,28 +109,23 @@ SSR manifest entry.
   output; nested maps and recursive helpers share one counter.
 - **Partial native output:** any failure in a same-file helper or static map
   falls back the imported root as one unit.
-- **Stale addon:** TypeScript/E2E and Ket Doc verification are invalid until
+- **Stale addon:** TypeScript/E2E verification is invalid until
   `runtime/brust.darwin-arm64.node` is rebuilt from the changed Rust source.
 - **Fixture false positive:** assert manifest absence, not only warning absence.
 
 ## Gates
 
-Run from `/Users/detoro/code/brust` unless a command says otherwise:
+Run from the repository root unless a command says otherwise:
 
 1. `cargo fmt --check`
 2. `cargo test -p jsx-rust-compiler`
 3. `cargo clippy -p jsx-rust-compiler --all-targets -- -D warnings`
 4. `cd runtime && bun run build`
-5. `bun test tests/native-inline.test.ts`
+5. `bun test tests/native-inline.test.ts`; the in-repo static-eval route must
+   emit distinctive native markup without a fallback warning or native/helper
+   manifest entries, while the unmarked control remains an SSR entry.
 6. `bun run ci`
 7. `bun test`
-8. From `/Users/detoro/code/ket-doc/landing`, run
-   `bun /Users/detoro/code/brust/runtime/cli/index.ts build` and capture stderr.
-   Expected: none of the seven `native component "…" not inlined` warnings.
-9. Inspect `/Users/detoro/code/ket-doc/landing/dist/jinja/Home.components.json`.
-   Expected: none of `NavBar`, `Hero`, `DocumentTypes`, `FlowSection`,
-   `AccuracySection`, `AutomationSection`, `PricingSection`, `HeroScene`, or
-   `DocumentSheet`; the unmarked `Footer` may remain.
 
 ## Escalation contract
 
