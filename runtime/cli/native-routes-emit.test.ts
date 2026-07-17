@@ -159,7 +159,7 @@ describe('emitNativeTemplates — SSR component artifacts', () => {
     const layoutPath = join(dir, 'Layout.tsx')
     writeFileSync(
       layoutPath,
-      'export default function Layout({ title }: { title: string }) { return <h1>{title}</h1>; }',
+      "import { useState } from 'react'\nexport default function Layout({ title }: { title: string }) { useState(0); return <h1>{title}</h1>; }",
     )
 
     // Page.tsx — uses Layout as an SSR component (no Island, so no island artifacts).
@@ -282,7 +282,8 @@ describe('emitNativeTemplates — SSR component artifacts', () => {
     const layoutPath = join(dir, 'Layout.tsx')
     writeFileSync(
       layoutPath,
-      `export default function Layout({ title }: { title: string }) { return <div><h1>{title}</h1></div>; }`,
+      `import { useState } from 'react'
+export default function Layout({ title }: { title: string }) { useState(0); return <div><h1>{title}</h1></div>; }`,
     )
 
     // Page.tsx — passes an <Island> as a child of Layout (Island is inside the SsrComponent)
@@ -715,7 +716,7 @@ describe('emitComponentArtifacts — import-form regeneration (via emitNativeTem
     const layoutPath = join(dir, 'Layout.tsx')
     writeFileSync(
       layoutPath,
-      'export default function Layout({ title }: { title: string }) { return <h1>{title}</h1>; }',
+      "import { useState } from 'react'\nexport default function Layout({ title }: { title: string }) { useState(0); return <h1>{title}</h1>; }",
     )
     const pagePath = join(dir, 'Page.tsx')
     writeFileSync(
