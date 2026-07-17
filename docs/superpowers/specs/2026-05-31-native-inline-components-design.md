@@ -40,6 +40,15 @@ the Rust render path with no per-component JS bridge.
   annotated `native` becomes an ordinary SSR slot embedded in the inlined Jinja.
 - Recursion follows only `native`-annotated tags: `<Outer native>` containing
   `<Inner native/>` inlines both, Inner nested inside Outer's expansion.
+- **Private same-file helper exception (2026-07-17):** while expanding an
+  explicitly native component, an unexported top-level function declaration in
+  that same source module may be inlined without its own `native` marker. This
+  is not general cascading: imported components and exported child components
+  retain the per-level annotation rule. The exception is all-or-nothing under
+  the outer native component; an unsupported/private helper never becomes an SSR
+  slot (same-file locals cannot be resolved by the SSR factory import map), so
+  the outer component soft-falls back instead. Full contract:
+  `docs/superpowers/specs/2026-07-17-native-static-evaluation-design.md`.
 
 ### What inlines (ALL must hold)
 1. **Source resolves** — the component's source file is reachable via the
