@@ -38,9 +38,10 @@ truth. Static callback-local consts and same-file helper props are expanded by
 the new module; runtime prop maps are left unchanged for `lower_call_as_map`.
 
 Same-file helper lookup is limited to unexported top-level function declarations
-in the same parsed module. It is a narrow private-helper exception to the
-existing non-cascade rule, not permission to auto-inline imported/exported child
-components. Analyze every helper body before expansion. A hook, side-effect,
+in the same parsed module. It is a narrow private-helper rule distinct from the
+automatic imported-component dispatch: private helpers have no resolvable SSR
+identity and therefore require all-or-nothing expansion. Analyze every helper
+body before expansion. A hook, side-effect,
 unsupported helper/default/prop/lucide shape, cycle, or budget breach fails the
 outer native inline attempt with a precise soft-fallback reason; it must never
 emit an SSR factory for an unexported local helper. Function-valued const helpers
@@ -56,7 +57,37 @@ keeping existing numeric template semantics and tests.
 In `try_native_inline` stage 6, include the actual `LowerError.kind` text for any
 lowering failure. Keep the stage-2 call-site `unsupported prop` warning unchanged.
 
-### 3. Regression fixture
+### 3. Default imported-component native attempts
+
+Inside the native/Jinja compiler, attempt every capitalized imported component
+through the existing inline seam without requiring a `native` JSX attribute.
+This includes an imported component at the route root (`doc_root = true`) and
+imported children encountered recursively inside an inlined component. Do not
+apply static evaluation to the route source body itself.
+
+Model the intent explicitly inside the lowerer, for example with
+`InlineAttemptMode::{ImplicitImported, ExplicitNative}`. Both modes emit the
+existing compile warning style with component name and precise reason when an
+attempt fails, then use the ordinary SSR component path. `native` remains
+accepted and consumed for backward compatibility.
+
+Preserve these differences and invariants:
+
+- an implicit imported-child failure falls back locally to its resolvable SSR
+  slot; a successfully inlined parent remains native;
+- an unsupported private same-file helper still falls back the containing
+  imported component as one unit and never becomes an SSR slot;
+- an implicit component with `isr` warns, skips inline, and preserves ISR;
+  explicit `native` + `isr` retains the existing try-inline/warn-ignore contract;
+- an all-implicit cycle warns and falls back locally; a cycle reached only
+  through explicit `native` attempts retains the existing `CircularInline` hard
+  error;
+- spread/substitution, unresolved source, parse, analyzer, static-evaluation,
+  budget, and lowering failures warn and SSR-fallback in both modes;
+- existing hard errors for `ref`, event handlers, namespaced attrs, and invalid
+  authoring shapes remain unchanged.
+
+### 4. Regression fixture
 
 Add `tests/fixtures/app/NativeStaticEval.tsx` with one small component covering
 the reported static-component shapes:
@@ -71,8 +102,9 @@ the reported static-component shapes:
 - lucide icons with fractional `strokeWidth`.
 
 Import it into the existing `tests/fixtures/app/NativeInline.tsx` fixture and
-render `<NativeStaticEval native />` there. This is intentionally an imported
-inline child, because static expansion runs only in `lower_component_inline`.
+render `<NativeStaticEval />` there without a `native` attribute. This is
+intentionally an imported inline child, because static expansion runs only in
+`lower_component_inline`.
 Do not add a standalone route and do not apply static evaluation to route roots.
 Extend `tests/native-inline.test.ts` (or add one focused sibling test if
 isolation is cleaner) to run through the real CLI/NAPI path and assert:
@@ -83,6 +115,20 @@ isolation is cleaner) to run through the real CLI/NAPI path and assert:
   same-file helper;
 - the existing hook component still falls back with its current warning and
   manifest entry.
+
+Also cover the default-attempt contract through the compile/lower and real CLI
+paths:
+
+- an unmarked pure imported component and an unmarked route-root component
+  inline without warnings;
+- an unmarked hook component warns and creates a local SSR entry while its pure
+  imported parent remains native;
+- unresolved source and spread/substitution failures warn and SSR-fallback;
+- implicit `isr` warns and preserves ISR manifest fields, while explicit
+  `native` + `isr` retains its existing success warning;
+- an implicit cycle warns and falls back without failing the build, while the
+  existing explicit cycle test remains a hard error;
+- `native` is still consumed rather than forwarded as a prop.
 
 Add focused Rust tests at the new module interface and compile/lower interface
 for every supported binding/expression shape, runtime-map passthrough, helper
@@ -95,7 +141,7 @@ SSR manifest entry.
 
 - Calls, spread/computed static objects, getters, methods, mutation, async,
   arbitrary loops, or general JavaScript evaluation.
-- Auto-inlining imported components that are not marked `native`.
+- Auto-inlining outside the native/Jinja compiler.
 - Changing runtime loader-data map output.
 - Editing consumer applications to fit compiler limitations.
 
@@ -105,8 +151,9 @@ SSR manifest entry.
   must be self-contained and must not reference, read, import, or depend on paths
   outside this repository. Use only fixtures checked into this repository.
 - **Inline-only coverage:** The regression fixture must enter through an imported
-  `<NativeStaticEval native />` under the existing inline route. Root-wide static
-  evaluation changes production semantics and is outside this task.
+  `<NativeStaticEval />` under the existing inline route. Root-wide static
+  evaluation of the route source changes production semantics and is outside
+  this task.
 - **Semantic drift:** missing object properties must be undefined/falsy, not a
   hard error; string and numeric `+` must not be conflated.
 - **Scope capture:** callback/helper parameters and local consts may shadow outer
@@ -129,13 +176,14 @@ Run from the repository root unless a command says otherwise:
 4. `cd runtime && bun run build`
 5. `bun test tests/native-inline.test.ts`; the in-repo static-eval route must
    emit distinctive native markup without a fallback warning or native/helper
-   manifest entries, while the unmarked control remains an SSR entry.
+   manifest entries, while unsupported controls warn and remain SSR entries.
 6. `bun run ci`
 7. `bun test`
 
 ## Escalation contract
 
 Implementation choices inside this interface are the implementer's. Any need to
-execute arbitrary JavaScript, widen auto-inlining beyond same-file helpers,
-change runtime loader-map output, or weaken all-or-nothing fallback is a design
-conflict: file a task challenge to Aoki with evidence and a safe default.
+execute arbitrary JavaScript, auto-inline outside the native/Jinja compiler,
+change runtime loader-map output, silence automatic-attempt warnings, or weaken
+the private-helper all-or-nothing fallback is a design conflict: file a task
+challenge to Aoki with evidence and a safe default.

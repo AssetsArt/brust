@@ -6,25 +6,25 @@
 
 ## Problem
 
-`<Comp native />` currently inlines only when every JSX expression is already a
+An imported component inlines only when every JSX expression is already a
 runtime loader path or an expression supported by the inline lowerer. Ordinary
 presentational React components frequently keep display data in module-level
 literal `const` arrays and render it with `.map()`. The reported representative
 components soft-fall back with the misleading diagnostic `unsupported prop`
-even though their call sites pass no props beyond the `native` marker.
+even though their call sites require no dynamic props.
 
 The first shared failure is not a prop. A module identifier such as
-`NAV_LINKS` reaches `lower_expr`, which only knows component props and active map
+`ITEMS` reaches `lower_expr`, which only knows component props and active map
 bindings, and becomes `UnresolvedIdent`. After that is removed, the examples
 also exercise direct literal-array maps, tuple/object destructuring, a callback
 index, a callback-local `const`, nested maps, optional object fields, static
 decimal numbers, symbolic icon identifiers, and pure helper components declared
 in the same file.
 
-Inlining only the exported function is not sufficient. In a controlled probe,
-removing Hero's static maps let the outer component inline, but emitted React SSR
-factories for `HeroScene` and `DocumentSheet`. The feature is complete only when
-the explicitly native subtree contains no React slots for these pure helpers.
+Inlining only the exported function is not sufficient. A controlled probe that
+removed the static maps let the outer component inline, but still emitted React
+SSR factories for two private same-file helpers. The feature is complete only
+when the inlined subtree contains no React slots for these pure helpers.
 
 ## Decision
 
@@ -78,14 +78,27 @@ A `.map()` whose source is a runtime component prop is not a static-evaluation
 candidate and flows unchanged to the existing Jinja-loop lowerer. Existing
 runtime behavior and output stay byte-compatible.
 
-The existing per-level `native` annotation rule also remains the default.
-Imported or exported child components do not auto-inline. The only exception is
-an unexported top-level function declaration in the currently expanded source
-module: because it has no importable SSR identity, it is treated as a private
-implementation detail of the explicitly native root. If it cannot be expanded,
-the root falls back; the compiler must never emit a same-file helper SSR slot.
-This exception amends the original non-cascade contract in
-`2026-05-31-native-inline-components-design.md`.
+Imported components in a native route are attempted automatically, including at
+the route root and recursively inside an inlined component. A failed automatic
+attempt emits the same component-and-reason compile warning style as an explicit
+`native` attempt and falls back locally to the existing SSR slot. Imported SSR
+identities are resolvable from the merged transitive import map, so this local
+fallback is safe and preserves hybrid native/React composition.
+
+An unexported top-level function declaration in the currently expanded source
+module has no importable SSR identity and is therefore different: it is treated
+as a private implementation detail of the containing imported component. If it
+cannot be expanded, the containing component falls back; the compiler must never
+emit a same-file helper SSR slot. This remains an all-or-nothing private-helper
+rule.
+
+The explicit `<Comp native />` spelling remains supported. It preserves the
+historical hard-cycle behavior and may explicitly ignore `isr` after warning on
+a successful inline. An implicit component carrying `isr` warns, skips inline,
+and preserves SSR cache semantics. An all-implicit import cycle warns and locally
+falls back instead of failing the build. Route source bodies themselves do not
+gain root-wide static evaluation; only imported-component inline lowering uses
+this static-expansion module.
 
 If a source resolves to a declared static `const` but uses an unsupported static
 construct, expansion fails closed and the outer imported native component uses
@@ -112,16 +125,17 @@ the existing `unsupported prop` wording because it is accurate there.
 - **Evaluate source with Bun/Node at build time.** Arbitrary execution is
   non-deterministic, unsafe for source builds, and breaks the standalone native
   compiler contract.
-- **Accept React SSR slots under an explicitly native component.** That removes a
-  warning without achieving the requested native outcome and leaves same-file
-  helper factories unresolved or React-dependent.
+- **Accept React SSR slots for private same-file helpers.** Those helpers have no
+  importable factory identity, so the slots would be unresolved. Imported child
+  components are different and may safely fall back locally through the merged
+  import map.
 
 ## Acceptance
 
 - The in-repo representative fixture inlines without warnings or
   component-manifest entries when built with the local Brust CLI/addon.
 - Its private same-file helpers also leave no SSR factory entries.
-- An in-repo control component that is not marked native retains its existing
-  SSR entry.
+- An unsupported in-repo control component warns and retains its existing SSR
+  entry even without a `native` marker.
 - Runtime-prop maps, hook/side-effect fallback, islands, behavior components,
   lucide SVGs, and existing native routes remain green.
