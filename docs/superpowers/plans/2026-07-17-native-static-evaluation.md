@@ -100,6 +100,10 @@ SSR manifest entry.
 
 ## Risk ledger
 
+- **Repository isolation:** Brust source and committed tests must never reference,
+  read, import, or depend on Ket Doc or any other external project path. Use only
+  self-contained fixtures checked into this repository. External projects are
+  acceptance-test targets invoked from the gate shell, never test dependencies.
 - **Semantic drift:** missing object properties must be undefined/falsy, not a
   hard error; string and numeric `+` must not be conflated.
 - **Scope capture:** callback/helper parameters and local consts may shadow outer
