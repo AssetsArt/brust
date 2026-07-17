@@ -47,16 +47,26 @@ impl std::error::Error for StaticEvalError {}
 
 type Bindings = HashMap<String, Box<Expr>>;
 
+#[cfg(test)]
 pub(crate) fn expand_inline_body<'a>(
     module: &Module,
     root_name: &str,
     function: &'a Function,
 ) -> Result<Cow<'a, BlockStmt>, StaticEvalError> {
+    expand_inline_body_with_sources(module, root_name, function, &HashMap::new())
+}
+
+pub(crate) fn expand_inline_body_with_sources<'a>(
+    module: &Module,
+    root_name: &str,
+    function: &'a Function,
+    component_sources: &HashMap<String, String>,
+) -> Result<Cow<'a, BlockStmt>, StaticEvalError> {
     let body = function
         .body
         .as_ref()
         .ok_or_else(|| StaticEvalError::new("function has no body"))?;
-    let mut evaluator = Evaluator::new(module, root_name)?;
+    let mut evaluator = Evaluator::new(module, root_name, component_sources)?;
     let mut expanded = body.clone();
     let mut bindings = Bindings::new();
     for statement in &mut expanded.stmts {
@@ -71,7 +81,9 @@ pub(crate) fn expand_inline_body<'a>(
 
 struct Evaluator<'a> {
     module_consts: HashMap<String, &'a Expr>,
+    exported_consts: HashSet<String>,
     module_cache: HashMap<String, Value>,
+    import_errors: HashMap<String, String>,
     resolving: Vec<String>,
     imports: HashSet<String>,
     helpers: HashMap<String, &'a FnDecl>,
@@ -82,10 +94,26 @@ struct Evaluator<'a> {
     changed: bool,
 }
 
+fn evaluate_exported_const(module: &Module, name: &str) -> Result<Option<Value>, StaticEvalError> {
+    let mut evaluator = Evaluator::new(module, name, &HashMap::new())?;
+    if !evaluator.exported_consts.contains(name) {
+        return Ok(None);
+    }
+    evaluator
+        .resolve_module_const(name, &Bindings::new(), 0)
+        .map(Some)
+}
+
 impl<'a> Evaluator<'a> {
-    fn new(module: &'a Module, root_name: &str) -> Result<Self, StaticEvalError> {
+    fn new(
+        module: &'a Module,
+        root_name: &str,
+        component_sources: &HashMap<String, String>,
+    ) -> Result<Self, StaticEvalError> {
         let mut module_consts = HashMap::new();
+        let mut exported_consts = HashSet::new();
         let mut imports = HashSet::new();
+        let mut named_imports = Vec::new();
         let mut helpers = HashMap::new();
 
         for item in &module.body {
@@ -93,11 +121,39 @@ impl<'a> Evaluator<'a> {
                 ModuleItem::ModuleDecl(ModuleDecl::Import(import)) => {
                     for spec in &import.specifiers {
                         let local = match spec {
-                            ImportSpecifier::Named(spec) => &spec.local,
+                            ImportSpecifier::Named(spec) => {
+                                let imported = spec
+                                    .imported
+                                    .as_ref()
+                                    .map(|name| match name {
+                                        ModuleExportName::Ident(ident) => ident.sym.to_string(),
+                                        ModuleExportName::Str(value) => {
+                                            value.value.to_string_lossy().into_owned()
+                                        }
+                                    })
+                                    .unwrap_or_else(|| spec.local.sym.to_string());
+                                named_imports.push((spec.local.sym.to_string(), imported));
+                                &spec.local
+                            }
                             ImportSpecifier::Default(spec) => &spec.local,
                             ImportSpecifier::Namespace(spec) => &spec.local,
                         };
                         imports.insert(local.sym.to_string());
+                    }
+                }
+                ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) if matches!(&export.decl, Decl::Var(var) if var.kind == VarDeclKind::Const) =>
+                {
+                    let Decl::Var(var) = &export.decl else {
+                        unreachable!()
+                    };
+                    for decl in &var.decls {
+                        if let Pat::Ident(binding) = &decl.name
+                            && let Some(init) = &decl.init
+                        {
+                            let name = binding.id.sym.to_string();
+                            module_consts.insert(name.clone(), init.as_ref());
+                            exported_consts.insert(name);
+                        }
                     }
                 }
                 ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) if var.kind == VarDeclKind::Const => {
@@ -122,9 +178,11 @@ impl<'a> Evaluator<'a> {
             )));
         }
 
-        Ok(Self {
+        let mut evaluator = Self {
             module_consts,
+            exported_consts,
             module_cache: HashMap::new(),
+            import_errors: HashMap::new(),
             resolving: Vec::new(),
             imports,
             helpers,
@@ -133,7 +191,27 @@ impl<'a> Evaluator<'a> {
             expansions: 0,
             bindings: 0,
             changed: false,
-        })
+        };
+
+        for (local_name, imported_name) in named_imports {
+            let Some(source) = component_sources.get(&local_name) else {
+                continue;
+            };
+            let Ok(parsed) = crate::parser::parse(source, "<static-import>") else {
+                continue;
+            };
+            match evaluate_exported_const(&parsed.module, &imported_name) {
+                Ok(Some(value)) => {
+                    evaluator.module_cache.insert(local_name, value);
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    evaluator.import_errors.insert(local_name, error.message);
+                }
+            }
+        }
+
+        Ok(evaluator)
     }
 
     fn check_depth(&self, depth: usize) -> Result<(), StaticEvalError> {
@@ -222,6 +300,10 @@ impl<'a> Evaluator<'a> {
                 let name = id.sym.as_ref();
                 if let Some(bound) = env.get(name) {
                     self.eval_expr(bound, env, depth + 1)
+                } else if let Some(value) = self.module_cache.get(name) {
+                    Ok(Some(value.clone()))
+                } else if let Some(message) = self.import_errors.get(name) {
+                    Err(StaticEvalError::new(message.clone()))
                 } else if self.module_consts.contains_key(name) {
                     self.resolve_module_const(name, env, depth + 1).map(Some)
                 } else if self.imports.contains(name) {
@@ -1396,6 +1478,123 @@ mod tests {
             }
         }
         panic!("missing default function")
+    }
+
+    fn expand_with_sources(
+        source: &str,
+        sources: &HashMap<String, String>,
+    ) -> Result<BlockStmt, StaticEvalError> {
+        let parsed = parser::parse(source, "test.tsx").unwrap();
+        for item in &parsed.module.body {
+            if let ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultDecl(export)) = item
+                && let DefaultDecl::Fn(function) = &export.decl
+            {
+                return expand_inline_body_with_sources(
+                    &parsed.module,
+                    "Root",
+                    &function.function,
+                    sources,
+                )
+                .map(Cow::into_owned);
+            }
+        }
+        panic!("missing default function")
+    }
+
+    #[test]
+    fn resolves_aliased_named_imported_export_const() {
+        let sources = HashMap::from([(
+            "LINKS".to_string(),
+            "export const NAV_LINKS = [{ label: 'Docs', href: '/docs' }, { label: 'API', href: '/api' }]"
+                .to_string(),
+        )]);
+        let body = expand_with_sources(
+            r#"
+            import { NAV_LINKS as LINKS } from './links'
+            export default function Root() {
+              return <nav>{LINKS.map((link) => <a href={link.href}>{link.label}</a>)}</nav>
+            }
+            "#,
+            &sources,
+        )
+        .unwrap();
+        let text = format!("{body:?}");
+        assert!(text.contains("Docs"), "{text}");
+        assert!(text.contains("/docs"), "{text}");
+        assert!(text.contains("API"), "{text}");
+        assert!(text.contains("/api"), "{text}");
+        assert!(!text.contains("LINKS"), "{text}");
+    }
+
+    #[test]
+    fn default_and_namespace_imports_remain_unresolved() {
+        let default_sources = HashMap::from([(
+            "LINKS".to_string(),
+            "export default [{ label: 'Docs' }]".to_string(),
+        )]);
+        let default_error = expand_with_sources(
+            r#"
+            import LINKS from './links'
+            export default function Root() {
+              return <nav>{LINKS.map((link) => <a>{link.label}</a>)}</nav>
+            }
+            "#,
+            &default_sources,
+        )
+        .unwrap_err();
+        assert_eq!(default_error.message, "property map is unsupported");
+
+        let namespace_sources = HashMap::from([(
+            "links".to_string(),
+            "export const NAV_LINKS = [{ label: 'Docs' }]".to_string(),
+        )]);
+        let namespace_error = expand_with_sources(
+            r#"
+            import * as links from './links'
+            export default function Root() {
+              return <nav>{links.NAV_LINKS.map((link) => <a>{link.label}</a>)}</nav>
+            }
+            "#,
+            &namespace_sources,
+        )
+        .unwrap_err();
+        assert_eq!(namespace_error.message, "property NAV_LINKS is unsupported");
+    }
+
+    #[test]
+    fn non_static_exported_initializer_fails_closed() {
+        let sources = HashMap::from([(
+            "NAV_LINKS".to_string(),
+            "export const NAV_LINKS = loadLinks()".to_string(),
+        )]);
+        let error = expand_with_sources(
+            r#"
+            import { NAV_LINKS } from './links'
+            export default function Root() {
+              return <nav>{NAV_LINKS.map((link) => <a>{link.label}</a>)}</nav>
+            }
+            "#,
+            &sources,
+        )
+        .unwrap_err();
+        assert_eq!(error.message, "unsupported constant NAV_LINKS");
+    }
+
+    #[test]
+    fn unused_non_static_import_does_not_block_inline_expansion() {
+        let sources = HashMap::from([(
+            "NAV_LINKS".to_string(),
+            "export const NAV_LINKS = loadLinks()".to_string(),
+        )]);
+        let body = expand_with_sources(
+            r#"
+            import { NAV_LINKS } from './links'
+            export default function Root() { return <p>Static</p> }
+            "#,
+            &sources,
+        )
+        .unwrap();
+        assert!(format!("{body:?}").contains("Static"));
     }
 
     #[test]

@@ -1935,6 +1935,104 @@ mod tests {
     }
 
     #[test]
+    fn compile_full_inlines_imported_static_nav_links_and_retains_mobile_island() {
+        let route = r#"
+import NavBar from './NavBar'
+export default function Route() { return <NavBar/> }
+"#;
+        let navbar = r#"
+import { NAV_LINKS } from './nav-links'
+import MobileMenu from './MobileMenu'
+export default function NavBar() {
+  return <nav>
+    {NAV_LINKS.map((link) => <a href={link.href}>{link.label}</a>)}
+    <Island component={MobileMenu}/>
+  </nav>
+}
+"#;
+        let nav_links = r#"
+export const NAV_LINKS = [
+  { label: 'Document Flow', href: '/docs' },
+  { label: 'API Reference', href: '/api' },
+]
+"#;
+        let mobile_menu = r#"
+import { useState } from 'react'
+export default function MobileMenu() {
+  const [open, setOpen] = useState(false)
+  return <button onClick={() => setOpen(!open)}>{open ? 'Close' : 'Menu'}</button>
+}
+"#;
+        let sources = HashMap::from([
+            ("NavBar".to_string(), navbar.to_string()),
+            ("NAV_LINKS".to_string(), nav_links.to_string()),
+            ("MobileMenu".to_string(), mobile_menu.to_string()),
+        ]);
+
+        let compiled =
+            compile_full(route, "Route.tsx", sources, HashMap::new(), HashMap::new()).unwrap();
+
+        assert!(
+            compiled.warnings.is_empty(),
+            "unexpected warnings: {:?}",
+            compiled.warnings
+        );
+        assert!(compiled.components.is_empty(), "{:?}", compiled.components);
+        assert!(compiled.template.contains("Document Flow"));
+        assert!(compiled.template.contains("/docs"));
+        assert!(compiled.template.contains("API Reference"));
+        assert!(compiled.template.contains("/api"));
+        assert_eq!(
+            compiled
+                .islands
+                .iter()
+                .filter(|island| island.component == "MobileMenu")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn imported_static_nav_links_do_not_weaken_client_only_isr_validation() {
+        let route = r#"
+import NavBar from './NavBar'
+export default function Route() { return <NavBar/> }
+"#;
+        let navbar = r#"
+import { NAV_LINKS } from './nav-links'
+import MobileMenu from './MobileMenu'
+export default function NavBar() {
+  return <nav>
+    {NAV_LINKS.map((link) => <a href={link.href}>{link.label}</a>)}
+    <Island component={MobileMenu} isr={{ key: '[NavBar]MobileMenu' }}/>
+  </nav>
+}
+"#;
+        let sources = HashMap::from([
+            ("NavBar".to_string(), navbar.to_string()),
+            (
+                "NAV_LINKS".to_string(),
+                "export const NAV_LINKS = [{ label: 'Docs', href: '/docs' }]".to_string(),
+            ),
+            (
+                "MobileMenu".to_string(),
+                "export default function MobileMenu() { return <button>Menu</button> }".to_string(),
+            ),
+        ]);
+
+        let compiled =
+            compile_full(route, "Route.tsx", sources, HashMap::new(), HashMap::new()).unwrap();
+
+        assert_eq!(
+            compiled.warnings,
+            vec![
+                "native component \"NavBar\" not inlined: `isr` attribute must be `{ key: <path>, tags?: <path>, revalidate?: <number-literal> }` with `ssr`"
+                    .to_string()
+            ]
+        );
+    }
+
+    #[test]
     fn outlet_lowers_to_children_slot() {
         let route = r#"export default function Chain() { return <AppLayout native><Leaf native/></AppLayout>; }"#;
         let layout = r#"import { BrustPage } from 'brustjs'
