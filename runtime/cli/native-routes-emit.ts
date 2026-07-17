@@ -953,7 +953,10 @@ export function scanImportRefs(file: string): Map<string, ResolvedImport> {
  * (`ChevronRight` → `chevron-right`). Used to map a lucide icon's exported
  * name to its per-icon ESM module filename. */
 function toKebabCase(s: string): string {
-  return s.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase()
+  return s
+    .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+    .replace(/([A-Za-z])([0-9])/g, '$1-$2')
+    .toLowerCase()
 }
 
 const requireFromHere = createRequire(import.meta.url)
