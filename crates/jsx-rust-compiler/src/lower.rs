@@ -8871,6 +8871,231 @@ export default function Outer() { return <section><PrivateHelper/></section>; }
         }));
     }
 
+    #[test]
+    fn static_eval_binding_expression_defaults_and_fractional_attrs_matrix() {
+        let route = r#"export default function Page() { return <Matrix/>; }"#;
+        let matrix = r#"
+import { Search } from "lucide-react";
+const ROWS = [
+  { label: "one", icon: Search, enabled: true, pairs: [["alpha", 1]] },
+  { label: "two", icon: Search, pairs: [["beta", 2]] },
+  { label: "three", icon: Search, enabled: false, pairs: [["gamma", 3]] },
+];
+function Badge({ label, enabled = true }) {
+  return <span className={enabled ? "on" : "off"}>{label}</span>;
+}
+export default function Matrix() {
+  return <section
+    data-fraction={2.25}
+    data-calc={1 + 2 * 3}
+    data-choice={(false || "fallback") ?? "never"}
+    data-neg={-2}
+    data-length={ROWS.length}
+    data-compare={3 >= 2 ? "yes" : "no"}
+  >
+    {ROWS.map(({ label, icon: Icon, enabled, pairs }, index) => <div data-index={index}>
+      <Icon strokeWidth={2.5} data-weight={2.25}/>
+      <Badge label={label} enabled={enabled}/>
+      <b>{label + "-" + index}</b>
+      {enabled && <em>enabled</em>}
+      {pairs.map(([text, count]) => <i>{text + count}</i>)}
+    </div>)}
+  </section>;
+}
+"#;
+        let mut sources = HashMap::new();
+        sources.insert("Matrix".to_string(), matrix.to_string());
+        let mut lucide = HashMap::new();
+        lucide.insert(
+            "Search".to_string(),
+            r#"{"cls":"lucide lucide-search","node":[["circle",[["cx","11"],["cy","11"],["r","8"]]]]}"#
+                .to_string(),
+        );
+
+        let compiled =
+            crate::compile_full(route, "<test>", sources, lucide, HashMap::new()).unwrap();
+        assert!(
+            compiled.warnings.is_empty(),
+            "matrix should inline cleanly: {:?}",
+            compiled.warnings
+        );
+        assert!(compiled.components.is_empty(), "unexpected SSR manifest");
+        let template = &compiled.template;
+        for expected in [
+            "data-fraction=\"2.25\"",
+            "data-calc=\"7\"",
+            "data-choice=\"fallback\"",
+            "data-neg=\"-2\"",
+            "data-length=\"3\"",
+            "data-compare=\"yes\"",
+            "stroke-width=\"2.5\"",
+            "data-weight=\"2.25\"",
+            "class=\"on\">one",
+            "class=\"on\">two",
+            "class=\"off\">three",
+            "<b>one-0</b>",
+            "<b>two-1</b>",
+            "<i>alpha1</i>",
+            "<i>beta2</i>",
+            "<i>gamma3</i>",
+        ] {
+            assert!(
+                template.contains(expected),
+                "missing {expected:?} in {template}"
+            );
+        }
+        assert_eq!(
+            template.matches("<em>enabled</em>").count(),
+            1,
+            "{template}"
+        );
+    }
+
+    #[test]
+    fn unsupported_helper_default_falls_back_with_precise_stage_six_reason() {
+        let route = r#"export default function Page() { return <Outer/>; }"#;
+        let outer = r#"
+function PrivateHelper({ label = makeLabel() }) { return <span>{label}</span>; }
+export default function Outer() { return <PrivateHelper/>; }
+"#;
+        let mut sources = HashMap::new();
+        sources.insert("Outer".to_string(), outer.to_string());
+
+        let (component, warnings) = lower_with_src(route, sources).unwrap();
+        let mut ssr = Vec::new();
+        ssr_component_names(&component.root, &mut ssr);
+        assert_eq!(ssr, vec!["Outer"]);
+        assert_eq!(
+            warnings,
+            vec![
+                "native component \"Outer\" not inlined: static evaluation: dynamic helper default `label`"
+                    .to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn helper_default_applies_to_absent_and_explicit_undefined_props() {
+        let route = r#"export default function Page() { return <Outer/>; }"#;
+        let outer = r#"
+function Badge({ label, enabled = true }) {
+  return <span className={enabled ? "on" : "off"}>{label}</span>;
+}
+export default function Outer() {
+  return <><Badge label="absent"/><Badge label="undefined" enabled={undefined}/></>;
+}
+"#;
+        let mut sources = HashMap::new();
+        sources.insert("Outer".to_string(), outer.to_string());
+
+        let compiled =
+            crate::compile_full(route, "<test>", sources, HashMap::new(), HashMap::new()).unwrap();
+        assert!(compiled.warnings.is_empty(), "{:?}", compiled.warnings);
+        assert!(compiled.components.is_empty());
+        assert!(compiled.template.contains("class=\"on\">absent"));
+        assert!(compiled.template.contains("class=\"on\">undefined"));
+    }
+
+    #[test]
+    fn dynamic_helper_defaults_fail_only_when_selected_for_assign_patterns() {
+        let route = r#"export default function Page() { return <Outer/>; }"#;
+        let selected_cases = [
+            (
+                r#"
+function Badge({ label = makeLabel() }) { return <span>{label}</span>; }
+export default function Outer() { return <Badge/>; }
+"#,
+                "dynamic helper default `label`",
+            ),
+            (
+                r#"
+function Badge({ label: text = makeLabel() }) { return <span>{text}</span>; }
+export default function Outer() { return <Badge/>; }
+"#,
+                "dynamic helper default `text`",
+            ),
+        ];
+        for (outer, reason) in selected_cases {
+            let mut sources = HashMap::new();
+            sources.insert("Outer".to_string(), outer.to_string());
+            let (component, warnings) = lower_with_src(route, sources).unwrap();
+            let mut ssr = Vec::new();
+            ssr_component_names(&component.root, &mut ssr);
+            assert_eq!(ssr, vec!["Outer"]);
+            assert_eq!(
+                warnings,
+                vec![format!(
+                    "native component \"Outer\" not inlined: static evaluation: {reason}"
+                )]
+            );
+        }
+
+        let unused = r#"
+function Direct({ label = makeLabel() }) { return <span>{label}</span>; }
+function Aliased({ label: text = makeLabel() }) { return <i>{text}</i>; }
+export default function Outer() {
+  return <><Direct label="direct"/><Aliased label="aliased"/></>;
+}
+"#;
+        let mut sources = HashMap::new();
+        sources.insert("Outer".to_string(), unused.to_string());
+        let compiled =
+            crate::compile_full(route, "<test>", sources, HashMap::new(), HashMap::new()).unwrap();
+        assert!(compiled.warnings.is_empty(), "{:?}", compiled.warnings);
+        assert!(compiled.components.is_empty());
+        assert!(compiled.template.contains("<span>direct</span>"));
+        assert!(compiled.template.contains("<i>aliased</i>"));
+    }
+
+    #[test]
+    fn helper_static_eval_failures_have_precise_warning_reasons() {
+        let route = r#"export default function Page() { return <Outer/>; }"#;
+        let cases = [
+            (
+                r#"
+function PrivateHelper() { const [value] = useState(0); return <span>{value}</span>; }
+export default function Outer() { return <PrivateHelper/>; }
+"#,
+                "native component \"Outer\" not inlined: static evaluation: helper PrivateHelper: component calls React hook `useState` — cannot inline",
+            ),
+            (
+                r#"
+function A() { return <B/>; }
+function B() { return <A/>; }
+export default function Outer() { return <A/>; }
+"#,
+                "native component \"Outer\" not inlined: static evaluation: helper cycle: A -> B -> A",
+            ),
+        ];
+
+        for (outer, expected) in cases {
+            let mut sources = HashMap::new();
+            sources.insert("Outer".to_string(), outer.to_string());
+            let (component, warnings) = lower_with_src(route, sources).unwrap();
+            let mut ssr = Vec::new();
+            ssr_component_names(&component.root, &mut ssr);
+            assert_eq!(ssr, vec!["Outer"]);
+            assert_eq!(warnings, vec![expected.to_string()]);
+        }
+    }
+
+    #[test]
+    fn stage_six_warning_includes_the_actual_lower_error_kind() {
+        let route = r#"export default function Page() { return <Outer/>; }"#;
+        let outer = r#"export default function Outer() { return <div>{unknown}</div>; }"#;
+        let mut sources = HashMap::new();
+        sources.insert("Outer".to_string(), outer.to_string());
+
+        let (component, warnings) = lower_with_src(route, sources).unwrap();
+        let mut ssr = Vec::new();
+        ssr_component_names(&component.root, &mut ssr);
+        assert_eq!(ssr, vec!["Outer"]);
+        assert_eq!(
+            warnings,
+            vec!["native component \"Outer\" not inlined: unresolved identifier `unknown`"]
+        );
+    }
+
     /// Recursively check that no ChildrenSlot remains in tree.
     fn assert_no_children_slot(node: &JsxNode) {
         match node {

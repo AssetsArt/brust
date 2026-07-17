@@ -1010,9 +1010,22 @@ impl<'a> Evaluator<'a> {
                             let mut value = attributes
                                 .get(assign.key.sym.as_ref())
                                 .cloned()
-                                .or_else(|| assign.value.clone())
                                 .unwrap_or_else(|| Box::new(value_to_expr(&Value::Undefined)));
                             self.expand_expr(&mut value, env, depth + 1)?;
+                            if matches!(
+                                self.eval_expr(&value, env, depth + 1)?,
+                                Some(Value::Undefined)
+                            ) && let Some(default) = &assign.value
+                            {
+                                let evaluated =
+                                    self.eval_expr(default, env, depth + 1)?.ok_or_else(|| {
+                                        StaticEvalError::new(format!(
+                                            "dynamic helper default `{}`",
+                                            assign.key.sym
+                                        ))
+                                    })?;
+                                value = Box::new(value_to_expr(&evaluated));
+                            }
                             self.add_binding()?;
                             env.insert(assign.key.sym.to_string(), value);
                         }
@@ -1052,7 +1065,16 @@ impl<'a> Evaluator<'a> {
                     self.eval_expr(&value, env, depth + 1)?,
                     Some(Value::Undefined)
                 ) {
-                    assign.right.clone()
+                    let evaluated =
+                        self.eval_expr(&assign.right, env, depth + 1)?
+                            .ok_or_else(|| {
+                                let name = match assign.left.as_ref() {
+                                    Pat::Ident(binding) => binding.id.sym.as_ref(),
+                                    _ => "nested",
+                                };
+                                StaticEvalError::new(format!("dynamic helper default `{name}`"))
+                            })?;
+                    Box::new(value_to_expr(&evaluated))
                 } else {
                     value
                 };
@@ -1219,6 +1241,100 @@ fn value_to_expr(value: &Value) -> Expr {
     }
 }
 
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+    use crate::parser::parse;
+
+    fn expand_error(source: &str) -> String {
+        let parsed = parse(source, "<static-eval-test>").unwrap();
+        let (name, function) = parsed
+            .module
+            .body
+            .iter()
+            .find_map(|item| match item {
+                ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultDecl(export)) => {
+                    match &export.decl {
+                        DefaultDecl::Fn(function) => Some((
+                            function
+                                .ident
+                                .as_ref()
+                                .map(|ident| ident.sym.as_ref())
+                                .unwrap_or("default"),
+                            &function.function,
+                        )),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            })
+            .expect("named default function");
+        expand_inline_body(&parsed.module, name, function)
+            .unwrap_err()
+            .message
+    }
+
+    #[test]
+    fn reports_expansion_budget_at_the_static_eval_seam() {
+        let helpers = "<Helper/>".repeat(MAX_EXPANSIONS + 1);
+        let source = format!(
+            "function Helper() {{ return <i/>; }} export default function Root() {{ return <>{helpers}</>; }}"
+        );
+        assert_eq!(
+            expand_error(&source),
+            format!("expansion budget exceeded (max {MAX_EXPANSIONS})")
+        );
+    }
+
+    #[test]
+    fn reports_binding_budget_at_the_static_eval_seam() {
+        let declarations = (0..=MAX_BINDINGS)
+            .map(|index| format!("const V{index}={index};"))
+            .collect::<String>();
+        let source = format!("{declarations} export default function Root() {{ return <div/>; }}");
+        assert_eq!(
+            expand_error(&source),
+            format!("binding budget exceeded (max {MAX_BINDINGS})")
+        );
+    }
+
+    #[test]
+    fn reports_depth_budget_at_the_static_eval_seam() {
+        let nested = format!(
+            "{}0{}",
+            "[".repeat(MAX_DEPTH + 2),
+            "]".repeat(MAX_DEPTH + 2)
+        );
+        let source = format!(
+            "const ITEMS={nested}; export default function Root() {{ return <>{{ITEMS.map(item => <i>{{item}}</i>)}}</>; }}"
+        );
+        assert_eq!(
+            expand_error(&source),
+            format!("recursion depth exceeded (max {MAX_DEPTH})")
+        );
+    }
+
+    #[test]
+    fn reports_helper_hook_and_cycle_at_the_static_eval_seam() {
+        let hook = r#"
+function Helper() { const [value] = useState(0); return <i>{value}</i>; }
+export default function Root() { return <Helper/>; }
+"#;
+        let hook_error = expand_error(hook);
+        assert!(
+            hook_error.contains("helper Helper") && hook_error.contains("useState"),
+            "unexpected hook reason: {hook_error}"
+        );
+
+        let cycle = r#"
+function A() { return <B/>; }
+function B() { return <A/>; }
+export default function Root() { return <A/>; }
+"#;
+        assert_eq!(expand_error(cycle), "helper cycle: A -> B -> A");
+    }
+}
+
 fn object_expr(values: &HashMap<String, Box<Expr>>) -> Expr {
     Expr::Object(ObjectLit {
         span: DUMMY_SP,
@@ -1326,6 +1442,33 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.message.contains("constant cycle"));
+    }
+
+    #[test]
+    fn dynamic_helper_defaults_are_checked_only_when_selected() {
+        let selected = expand(
+            r#"
+            function Row({ label = makeLabel() }) { return <li>{label}</li> }
+            export default function Root() { return <Row/> }
+            "#,
+        )
+        .unwrap_err();
+        assert_eq!(selected.message, "dynamic helper default `label`");
+
+        let unused = expand(
+            r#"
+            function Direct({ label = makeLabel() }) { return <li>{label}</li> }
+            function Aliased({ label: text = makeLabel() }) { return <i>{text}</i> }
+            export default function Root() {
+              return <><Direct label="direct"/><Aliased label="aliased"/></>
+            }
+            "#,
+        )
+        .unwrap();
+        let text = format!("{unused:?}");
+        assert!(text.contains("direct"), "{text}");
+        assert!(text.contains("aliased"), "{text}");
+        assert!(!text.contains("makeLabel"), "{text}");
     }
 
     #[test]
