@@ -191,6 +191,13 @@ Run from the repository root unless a command says otherwise:
 6. `bun run ci`
 7. `bun test`
 
+The full-suite baseline currently exposes one unrelated stale assertion in
+`tests/cli-build.test.ts`: it requires the stylesheet link to be immediately
+adjacent to `</head>`, although the generator and shell metadata injectors
+intentionally append metadata between them. Update only that test name and
+remove the zero-gap assertion, retaining the assertions that the stylesheet is
+present and precedes `</head>`. Do not change production head ordering.
+
 ## Escalation contract
 
 Implementation choices inside this interface are the implementer's. Any need to
