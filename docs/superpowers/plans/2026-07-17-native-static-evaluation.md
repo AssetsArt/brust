@@ -123,7 +123,7 @@ Run from `/Users/detoro/code/brust` unless a command says otherwise:
 5. `bun test tests/native-inline.test.ts`
 6. `bun run ci`
 7. `bun test`
-8. From `/Users/detoro/code/ket-doc/landing/components`, run
+8. From `/Users/detoro/code/ket-doc/landing`, run
    `bun /Users/detoro/code/brust/runtime/cli/index.ts build` and capture stderr.
    Expected: none of the seven `native component "…" not inlined` warnings.
 9. Inspect `/Users/detoro/code/ket-doc/landing/dist/jinja/Home.components.json`.
