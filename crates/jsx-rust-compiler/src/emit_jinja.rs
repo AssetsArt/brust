@@ -224,6 +224,7 @@ fn emit_node(node: &JsxNode, out: &mut String) {
             props_path: _,
             hydrate,
             ssr,
+            fallback,
             ..
         } => {
             let _ = write!(
@@ -235,8 +236,13 @@ fn emit_node(node: &JsxNode, out: &mut String) {
                 // (`| safe` passes it through unescaped), then close the div.
                 let _ = write!(out, ">{{{{ island_{instance}_html | safe }}}}</div>");
             } else {
-                // Client-only: trailing bare `data-brust-csr`, empty body.
-                out.push_str(" data-brust-csr></div>");
+                // Client-only: keep any server placeholder inside the CSR
+                // marker until the browser has validated the real chunk.
+                out.push_str(" data-brust-csr>");
+                if let Some(fallback) = fallback {
+                    emit_node(fallback, out);
+                }
+                out.push_str("</div>");
             }
         }
     }
@@ -744,6 +750,7 @@ mod tests {
             props_path: "counter".into(),
             hydrate: "load".into(),
             ssr: true,
+            fallback: None,
             key_path: None,
             key_literal: None,
             tags_path: None,
@@ -765,6 +772,7 @@ mod tests {
             props_path: "counter".into(),
             hydrate: "load".into(),
             ssr: false,
+            fallback: None,
             key_path: None,
             key_literal: None,
             tags_path: None,
@@ -778,6 +786,31 @@ mod tests {
     }
 
     #[test]
+    fn emits_client_only_island_fallback_inside_csr_marker() {
+        let ir = JsxNode::Island {
+            component: "Menu".into(),
+            instance: 0,
+            props_path: String::new(),
+            hydrate: "load".into(),
+            ssr: false,
+            fallback: Some(Box::new(JsxNode::Element {
+                tag: "span".into(),
+                attrs: vec![],
+                children: vec![JsxNode::Text("Loading".into())],
+            })),
+            key_path: None,
+            key_literal: None,
+            tags_path: None,
+            tags_literal: None,
+            revalidate: None,
+        };
+        assert_eq!(
+            emit(&component(ir)),
+            "<div data-brust-island=\"Menu\" data-brust-props=\"{{ island_0_props }}\" data-brust-hydrate=\"load\" data-brust-csr><span>Loading</span></div>"
+        );
+    }
+
+    #[test]
     fn emits_island_interpolates_component_and_hydrate() {
         // A different component/hydrate must thread through every slot.
         let ir = JsxNode::Island {
@@ -786,6 +819,7 @@ mod tests {
             props_path: "cart".into(),
             hydrate: "visible".into(),
             ssr: true,
+            fallback: None,
             key_path: None,
             key_literal: None,
             tags_path: None,

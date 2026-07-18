@@ -155,9 +155,14 @@ pub fn compile_full(
 /// components) on the per-occurrence jinja context keys `island_<instance>_*`.
 fn number_islands(node: &mut JsxNode, counter: &mut usize) {
     match node {
-        JsxNode::Island { instance, .. } => {
+        JsxNode::Island {
+            instance, fallback, ..
+        } => {
             *instance = *counter;
             *counter += 1;
+            if let Some(fallback) = fallback {
+                number_islands(fallback, counter);
+            }
         }
         JsxNode::Element { children, .. } => {
             for c in children {
@@ -208,6 +213,7 @@ fn collect_islands(node: &JsxNode, out: &mut Vec<IslandMeta>) {
             props_path,
             hydrate,
             ssr,
+            fallback,
             key_path,
             key_literal,
             tags_path,
@@ -226,6 +232,9 @@ fn collect_islands(node: &JsxNode, out: &mut Vec<IslandMeta>) {
                 tags_literal: tags_literal.clone(),
                 revalidate: *revalidate,
             });
+            if let Some(fallback) = fallback {
+                collect_islands(fallback, out);
+            }
         }
         JsxNode::Element { children, .. } => {
             for child in children {
@@ -285,11 +294,12 @@ fn number_ssr_components(node: &mut JsxNode, counter: &mut usize) {
             }
         }
         JsxNode::Map { body, .. } => number_ssr_components(body, counter),
-        JsxNode::Empty
-        | JsxNode::Text(_)
-        | JsxNode::Expr(_)
-        | JsxNode::RawHtml(_)
-        | JsxNode::Island { .. } => {}
+        JsxNode::Island { fallback, .. } => {
+            if let Some(fallback) = fallback {
+                number_ssr_components(fallback, counter);
+            }
+        }
+        JsxNode::Empty | JsxNode::Text(_) | JsxNode::Expr(_) | JsxNode::RawHtml(_) => {}
         JsxNode::Cond {
             consequent,
             alternate,
@@ -349,11 +359,12 @@ fn collect_components(node: &JsxNode, out: &mut Vec<ComponentMeta>) {
             }
         }
         JsxNode::Map { body, .. } => collect_components(body, out),
-        JsxNode::Empty
-        | JsxNode::Text(_)
-        | JsxNode::Expr(_)
-        | JsxNode::RawHtml(_)
-        | JsxNode::Island { .. } => {}
+        JsxNode::Island { fallback, .. } => {
+            if let Some(fallback) = fallback {
+                collect_components(fallback, out);
+            }
+        }
+        JsxNode::Empty | JsxNode::Text(_) | JsxNode::Expr(_) | JsxNode::RawHtml(_) => {}
         JsxNode::Cond {
             consequent,
             alternate,
@@ -606,6 +617,8 @@ pub enum ErrorKind {
         "`isr` attribute must be `{{ key: <path>, tags?: <path>, revalidate?: <number-literal> }}` with `ssr`"
     )]
     IslandIsrUnsupported,
+    #[error("`fallback` on `<Island>` must be a JSX element or fragment")]
+    IslandFallbackMustBeJsx,
     #[error("`<Island hydrate=\"{0}\">` invalid — expect one of load/idle/visible/interaction")]
     IslandBadHydrate(String),
     #[error(
@@ -778,6 +791,31 @@ mod tests {
         );
         // template is the emitted jinja (non-empty, contains the wrapping div).
         assert!(c.template.contains("<div>"), "got: {}", c.template);
+    }
+
+    #[test]
+    fn nested_fallback_island_is_numbered_and_collected_after_parent() {
+        let src = r#"export default function Page({ data }) {
+  return <Island component={Parent} props={data.parent}
+    fallback={<div><Island component={Child} props={data.child} hydrate="visible" /></div>} />;
+}"#;
+        let compiled = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap();
+
+        assert_eq!(compiled.islands.len(), 2);
+        assert_eq!(compiled.islands[0].component, "Parent");
+        assert_eq!(compiled.islands[0].instance, 0);
+        assert_eq!(compiled.islands[1].component, "Child");
+        assert_eq!(compiled.islands[1].instance, 1);
+        assert_eq!(compiled.islands[1].hydrate, "visible");
+        assert!(compiled.template.contains("data-brust-island=\"Parent\""));
+        assert!(compiled.template.contains("data-brust-island=\"Child\""));
     }
 
     #[test]
@@ -1783,6 +1821,7 @@ mod tests {
             props_path: "data.a".to_string(),
             hydrate: "load".to_string(),
             ssr: false,
+            fallback: None,
             key_path: None,
             key_literal: None,
             tags_path: None,
@@ -1795,6 +1834,7 @@ mod tests {
             props_path: "data.b".to_string(),
             hydrate: "load".to_string(),
             ssr: false,
+            fallback: None,
             key_path: None,
             key_literal: None,
             tags_path: None,
@@ -1832,6 +1872,7 @@ mod tests {
             props_path: "data.x".to_string(),
             hydrate: "load".to_string(),
             ssr: false,
+            fallback: None,
             key_path: None,
             key_literal: None,
             tags_path: None,
@@ -1931,6 +1972,40 @@ mod tests {
             c.warnings.is_empty(),
             "expected no warnings, got: {:?}",
             c.warnings
+        );
+    }
+
+    #[test]
+    fn client_only_island_fallback_ssr_component_is_numbered_collected_and_emitted() {
+        let source = r#"export default function Page() {
+  return <><Top/><Island component={Menu} fallback={<MenuSkeleton/>}/></>;
+}"#;
+        let compiled = compile_full(
+            source,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap();
+
+        assert_eq!(compiled.components.len(), 2, "{:?}", compiled.components);
+        assert_eq!(compiled.components[0].component, "Top");
+        assert_eq!(compiled.components[0].instance, 0);
+        assert_eq!(compiled.components[1].component, "MenuSkeleton");
+        assert_eq!(compiled.components[1].instance, 1);
+        assert!(
+            compiled.components[1]
+                .factory_expr
+                .contains("h(MenuSkeleton"),
+            "{}",
+            compiled.components[1].factory_expr
+        );
+        assert!(compiled.template.starts_with("{{ comp_0_html | safe }}"));
+        assert!(
+            compiled
+                .template
+                .contains("data-brust-csr>{{ comp_1_html | safe }}</div>")
         );
     }
 

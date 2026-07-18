@@ -1,4 +1,11 @@
-import { createContext, createElement, useContext, type ComponentType, type ReactNode } from 'react'
+import {
+  createContext,
+  createElement,
+  useContext,
+  type ComponentType,
+  type ReactElement,
+  type ReactNode,
+} from 'react'
 import type { IsrConfig } from './isr-jsx.ts'
 
 /** Triggers that activate hydration of an island marker. */
@@ -24,6 +31,10 @@ export interface IslandProps<P> {
    * the loader crossing) so its markup ships in the HTML, then hydrate. Ignored
    * on the React path (the whole tree already SSRs there). Default false. */
   ssr?: boolean
+  /** Native/Jinja client-only islands only: server-rendered placeholder shown
+   * until the client chunk is ready. The React render path ignores this and
+   * renders the real component as usual. */
+  fallback?: ReactElement
   /**
    * Optional ISR (incremental static regeneration) cache for an `ssr` island on
    * a native-jinja route. When present, the island's `renderToString` runs ONCE

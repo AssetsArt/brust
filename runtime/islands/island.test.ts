@@ -14,6 +14,10 @@ function Widget() {
   return createElement('span', null, 'w')
 }
 
+function MenuSkeleton() {
+  return createElement('span', null, 'loading menu')
+}
+
 function renderWith(box: IslandUsedBox, child: ReactNode): string {
   return renderToString(createElement(IslandUsedContext.Provider, { value: box }, child))
 }
@@ -45,6 +49,17 @@ test('two boxes do not cross-contaminate (the renderSlots>1 invariant)', () => {
 test('Island without a Provider is a no-op, not a throw (standalone renderToString)', () => {
   const html = renderToString(createElement(Island, { component: Widget }))
   expect(html).toContain('data-brust-island="Widget"')
+})
+
+test('React-path Island accepts fallback but renders only the real component', () => {
+  const html = renderToString(
+    createElement(Island, {
+      component: Widget,
+      fallback: createElement(MenuSkeleton),
+    }),
+  )
+  expect(html).toContain('>w</span>')
+  expect(html).not.toContain('loading menu')
 })
 
 test('registry maps same-name components from different files to distinct marker ids', () => {
