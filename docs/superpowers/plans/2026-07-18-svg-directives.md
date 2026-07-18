@@ -25,6 +25,7 @@ The same `HTMLElement` assumption exists in `bindAdoptedNode()`, `collectSeeds()
 5. **Class binding is namespace-safe.** `setBound(el, 'class', value)` keeps `className` for `HTMLElement`; every non-HTML `Element` uses `setAttribute('class', ...)` / `removeAttribute('class')`. This covers SVG's `SVGAnimatedString` and MathML without assignment.
 6. **Property special cases are capability-sensitive.** `value` and boolean property reflection may write a property only when that property exists on the element; attribute presence/removal remains the namespace-neutral fallback. Generic attributes always use `setAttribute`/`removeAttribute`.
 7. **No build warning fallback.** SVG is supported at runtime. Silent skipping is removed rather than documented as a limitation.
+8. **Lazy behavior registration drains the elements that requested it.** `document.querySelectorAll()` cannot cross open shadow-root boundaries, so it cannot be the post-import remount mechanism. Track pending `Element` hosts by behavior name when `mountElement()` encounters an unloaded behavior, then drain that exact set from `register()` after the chunk self-registers. Clear pending strong references on success/failure. This covers document, SVG, and nested open-shadow-root hosts without maintaining a global shadow-root registry. Armin found and evidenced this missing call path in review challenge `c5b368ff`.
 
 Rejected alternatives:
 
@@ -37,6 +38,7 @@ Rejected alternatives:
 Edit `runtime/native/runtime.ts`:
 
 - Generalize `BehaviorCtx`, `Behavior`, registry storage, `mounted`, `scanAndMount`, `mountElement`, lazy-load pending queries, `bindTree`, structural directive element/bookkeeping types, keyed seed helpers, `bindAdoptedNode`, `bindIf`, `bindAttrs`, observation, disposal, and `setBound` to the settled `Element` boundary.
+- Replace the post-import `document.querySelectorAll()` remount with a behavior-name keyed pending-element set populated by `mountElement()` and drained synchronously by `register()`. Ensure an element added while the same chunk is already loading joins the set, detached elements remain protected by `mountElement()`'s `isConnected` guard, and failed loads release pending references.
 - Replace every traversal/mutation `instanceof HTMLElement` filter that currently drops SVG with `instanceof Element`.
 - Keep `bindModel()` typed `HTMLElement`; guard it at `bindAttrs()`.
 - Apply `x-show` through the element's standard inline style capability without narrowing traversal back to HTML.
@@ -50,6 +52,7 @@ Edit `runtime/native/runtime.test.ts`:
 - Add SVG `x-if` toggle coverage.
 - Add SVG keyed `x-for` seed adoption/reconcile coverage so `collectSeeds()` and clone bookkeeping cannot regress.
 - Add non-HTML `x-model` warn-and-skip coverage if the implementation adds the settled warning branch.
+- Add an initially unknown SVG `x-data` host inside an open shadow root, register its behavior after `start()`, and assert it mounts/reacts exactly once. This is the regression guard for Armin's `c5b368ff` review finding.
 - Retain all HTML tests unchanged.
 
 ## Gates
@@ -69,4 +72,3 @@ Expected: all commands exit 0; the original three SVG failures are green; no exi
 - Structural SVG clones must stay in the SVG namespace. `cloneNode()` preserves namespace; do not recreate via HTML parsing.
 - MutationObserver callbacks receive arbitrary `Node`s. Widen only after an `instanceof Element` check; text/comment nodes remain ignored.
 - A removed SVG host must dispose its own mounted instance and any descendant hosts exactly once.
-
