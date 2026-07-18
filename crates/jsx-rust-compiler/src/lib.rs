@@ -1,4 +1,5 @@
 pub mod analyze;
+mod dom_attrs;
 mod emit_factory;
 mod emit_jinja;
 pub mod filters;

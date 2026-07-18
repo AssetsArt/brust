@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url'
 import { spawnSync } from 'bun'
 import { Window } from 'happy-dom'
 import { directiveName } from '../runtime/native/build.ts'
+import { formatCompilerWarning } from '../runtime/cli/native-routes-emit.ts'
 import {
   type IslandCache,
   type NativeComponentEntry,
@@ -42,6 +43,12 @@ const FIXTURE_DIR = resolve(REPO_ROOT, 'tests/fixtures/app')
 const JINJA_DIR = resolve(FIXTURE_DIR, 'dist/jinja')
 
 let capturedStderr = ''
+
+test('ordinary compiler warnings retain the one-line brust prefix', () => {
+  expect(formatCompilerWarning('ordinary compiler warning')).toBe(
+    'brust: ordinary compiler warning',
+  )
+})
 
 beforeAll(() => {
   // Pre-flight: build jsx-rustc binary (same as sibling test).
@@ -209,16 +216,14 @@ test('hook component falls back', () => {
     ).toBe(true)
   }
 
-  // Build stderr must mention HookBadge and the hook that caused the fallback.
-  expect(
-    capturedStderr.includes('HookBadge'),
-    `Expected build stderr to mention "HookBadge".\nCaptured stderr:\n${capturedStderr}`,
-  ).toBe(true)
-
-  expect(
-    capturedStderr.includes('useState'),
-    `Expected build stderr to mention "useState" (the hook that caused fallback).\nCaptured stderr:\n${capturedStderr}`,
-  ).toBe(true)
+  const expectedWarning = [
+    'brust: warning — native component "HookBadge" was not inlined',
+    '  reason: component calls React hook `useState` — cannot inline',
+    '  impact: rendered through React SSR; React hooks and event handlers are not hydrated automatically on a native route',
+    '  interactive fix: use <Island component={HookBadge} props={...} />',
+    '  zero-JS fix: rewrite HookBadge using native-compatible JSX',
+  ].join('\n')
+  expect(capturedStderr).toContain(`${expectedWarning}\n`)
 })
 
 // ---------------------------------------------------------------------------
@@ -316,7 +321,7 @@ test('behavior SSR fallback retains its canonical mount identity', async () => {
   )
 
   expect(capturedStderr).toContain(
-    'native component "BehaviorSsrFallback" not inlined: unsupported prop',
+    'brust: warning — native component "BehaviorSsrFallback" was not inlined\n  reason: unsupported prop',
   )
   expect(componentsJson).not.toBeNull()
 
@@ -397,7 +402,7 @@ test('bounded Array.from length map inline-lowers without a fallback warning', (
   expect(first).toBeGreaterThanOrEqual(0)
   expect(second).toBeGreaterThan(first)
   expect(capturedStderr).not.toContain(
-    'native component "BehaviorSsrFallback" not inlined: inline lowering cannot translate `from`',
+    'native component "BehaviorSsrFallback" was not inlined\n  reason: inline lowering cannot translate `from`',
   )
   const componentsJson = readComponentsJson()
   expect(componentsJson ?? '').toContain('"BehaviorSsrFallback"')
