@@ -20,6 +20,23 @@ Make a behavior-bearing component remain interactive when a `native` inline atte
 - Adding wrappers around SSR components or making the directive runtime depend on React.
 - Treating documentation or a stronger warning as sufficient when the behavior can be wired correctly.
 
+## Decisions
+
+- Diagnose through the real native build and SSR-component render path before selecting a correction seam.
+- Treat inline eligibility as a performance concern; behavior mount correctness is invariant across inline and SSR fallback paths.
+- Do not mutate production code until the RED reproduction and strongest-hypothesis falsification are recorded.
+
+## Interface
+
+The diagnosis phase changes no public interface. The eventual fix must preserve `export const behavior`, `x-data`, `x-behavior`, `x-on-*`, and directive chunk naming exactly as documented.
+
+## Ordered edits
+
+1. Add the dedicated behavior fallback fixture and route usage.
+2. Add the deterministic build/SSR regression assertion and observe it fail twice.
+3. Trace and falsify the fail path, then stop at `DIAGNOSIS READY`.
+4. After Aoki amends this plan with a recorded correction seam, implement the fix, extend all three regression variants, update docs, and run every header gate.
+
 ## User-observed failure
 
 For behavior components whose template cannot be inline-lowered (`Array.from(...).map`, referenced computed const, referenced literal const), build emits the directive chunk and server HTML retains `x-on-*`, but rendered HTML lacks the auto-injected `x-data`. The directive runtime scans only `[x-data]`, so it never imports the chunk or installs listeners. The build emits only a generic inline-fallback warning.
@@ -47,6 +64,10 @@ After reproduction, file a task note with 3–5 ranked hypotheses and a disproof
 
 Stop after diagnosis and send `DIAGNOSIS READY` with the failing test SHA, breadcrumb ledger, fail path, falsification result, and the narrowest viable correction seam. Aoki will amend this canonical plan and rule the implementation before any production edit.
 
+## Implementation
+
+Implementation is intentionally gated on the Phase 4 ruling checkpoint. The amended plan will name the exact IR/runtime seam, invariants, and production edit order after the deterministic evidence selects it.
+
 ## Constraints
 
 - Correctness must not depend on inline-lowering capability.
@@ -63,12 +84,28 @@ Stop after diagnosis and send `DIAGNOSIS READY` with the failing test SHA, bread
 - Carrying directive identity through IR/factory metadata may require every component collection/emission walk to remain source-order aligned.
 - Author-written `x-data` inside an opaque SSR component must continue to win without duplication.
 
-## Authority and roles
+## Rejected alternatives
+
+- Warning-only or documentation-only closure: rejected because it preserves a silent correctness failure.
+- Failing every non-inline behavior component: reserved only if diagnosis proves no sound wiring seam exists.
+- Generic rendered-HTML string injection: rejected because fragments, wrappers, and nested behavior scopes make root ownership ambiguous.
+
+## Authority and Roles
 
 - Aoki owns diagnosis acceptance, architecture choice, plan amendments, integration, and final release recommendation.
 - Dabin owns the deterministic repro and fail-path/falsification evidence, then implementation only after Aoki's recorded ruling.
 - Armin performs read-only review after the fix is ready.
 - Authority is in-loop.
+
+## Escalation
+
+Design/spec conflicts are filed as task challenges and ruled by Aoki. Dabin owns implementation choices inside the amended plan. Genuine scope expansion, external publishing, or irreversible actions go to the human.
+
+## Verification
+
+- RED phase: run the smallest `tests/native-inline.test.ts` name pattern twice and record both failing gates.
+- Focused GREEN: `cargo test -p jsx-rust-compiler --locked`, `bun test runtime/islands/native-render.test.ts`, and `bun test tests/native-inline.test.ts`.
+- Final gates: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `bun test runtime/native/`, and `bun run ci` in addition to the focused gates.
 
 ## Done When
 
