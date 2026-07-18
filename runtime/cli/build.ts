@@ -234,6 +234,14 @@ export function parseArgs(args: string[]): ParsedArgs {
   }
 }
 
+export function buildBanner(aiEnabled: boolean): string {
+  return (
+    `process.env.BRUST_PREBUILT = '1';\n` +
+    `process.env.BRUST_DIST_DIR = import.meta.dir;\n` +
+    (aiEnabled ? `process.env.BRUST_AI ??= '1';\n` : '')
+  )
+}
+
 export async function runBuild(args: string[]): Promise<void> {
   let parsed: ParsedArgs
   try {
@@ -381,6 +389,7 @@ export async function runBuild(args: string[]): Promise<void> {
       flatRoutes: loadedRoutes,
       outDir: jinjaDir,
       withDevClient: false,
+      aiEnabled,
       manifestDirs: [outDir, path.join(process.cwd(), '.brust')],
       // Build is fatal on a deleted md file — a silent skip would ship a dist
       // with the route registered but its template missing (dev paths default
@@ -563,8 +572,7 @@ export async function runBuild(args: string[]): Promise<void> {
   // actions codegen: `defineActions(...)` actions register via the app entry's
   // `import { actions } from './actions'` → `brust.run({ actions })` path, which
   // the bundled entry already carries.
-  const banner =
-    `process.env.BRUST_PREBUILT = '1';\n` + `process.env.BRUST_DIST_DIR = import.meta.dir;\n`
+  const banner = buildBanner(aiEnabled)
 
   const result = await Bun.build({
     entrypoints: [entry],

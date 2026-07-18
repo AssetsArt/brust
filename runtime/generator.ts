@@ -20,6 +20,15 @@ export function aiScriptTag(): string {
   return '<script type="module" src="/_brust/ai.js"></script>'
 }
 
+/** Insert the AI runtime tag immediately before the first `</head>`.
+ * Document-only: fragment templates with no head are left unchanged. */
+export function injectAiScriptIntoTemplate(template: string): string {
+  const at = template.indexOf('</head>')
+  if (at === -1) return template
+  const tag = aiScriptTag()
+  return template.slice(0, at) + tag + template.slice(at)
+}
+
 /** Build the resolved strings. Version comes from the brustjs package.json
  * (readVersion never throws — "unknown" degrades to name-only, never a crash).
  * The version is sanitized to attr/header-safe bytes; semver chars only. */

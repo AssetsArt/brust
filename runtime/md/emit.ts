@@ -12,7 +12,12 @@
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { insertGeneratorMeta, resolveGenerator } from '../generator.ts'
+import {
+  aiScriptTag,
+  injectAiScriptIntoTemplate,
+  insertGeneratorMeta,
+  resolveGenerator,
+} from '../generator.ts'
 import {
   bakeDirectivesIfUsed,
   buildChainWrapperSource,
@@ -66,6 +71,9 @@ export interface MdEmitOpts {
    * BRUST_DEV injection — md pages render Rust-side and never pass through the
    * React renderer's dev-client injection). */
   withDevClient?: boolean
+  /** Bake the AI runtime tag into document-style md templates. Fragments skip
+   * the injection entirely. */
+  aiEnabled?: boolean
   /** What to do when a route's md file no longer exists on disk (deleted after
    * the route table was built). emitMdTemplates serves BOTH `brust build` and
    * the dev re-emit, and the two must diverge here:
@@ -400,6 +408,7 @@ export async function emitMdTemplates(opts: MdEmitOpts): Promise<{
     }
     final = bakeDirectivesIfUsed(final, hasDirectives)
     if (opts.withDevClient) final = injectDevClientIntoTemplate(final)
+    if (!opts.withDevClient && opts.aiEnabled) final = injectAiScriptIntoTemplate(final)
     writeFileSync(outPath, final)
   }
 

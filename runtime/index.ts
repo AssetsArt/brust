@@ -697,6 +697,7 @@ export const brust = {
                 flatRoutes: opts.routes,
                 outDir: path.resolve(process.cwd(), '.brust/jinja'),
                 withDevClient: dev,
+                aiEnabled,
                 manifestDirs: [path.resolve(process.cwd(), '.brust')],
               }))
             } catch (err) {
@@ -937,6 +938,7 @@ export const brust = {
                     flatRoutes: opts.routes,
                     outDir: pathModule.resolve(process.cwd(), '.brust/jinja'),
                     withDevClient: true,
+                    aiEnabled,
                     manifestDirs: [pathModule.resolve(process.cwd(), '.brust')],
                   }))
                 } catch (err) {
