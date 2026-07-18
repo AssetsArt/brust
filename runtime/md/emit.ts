@@ -16,6 +16,7 @@ import { insertGeneratorMeta, resolveGenerator } from '../generator.ts'
 import {
   bakeDirectivesIfUsed,
   buildChainWrapperSource,
+  cleanupComponentArtifacts,
   countMainTags,
   emitComponentArtifacts,
   extractLucideIcons,
@@ -384,6 +385,8 @@ export async function emitMdTemplates(opts: MdEmitOpts): Promise<{
     const compJsonStr = compiled.componentsJson ?? '[]'
     if (compJsonStr !== '[]') {
       emitComponentArtifacts(outPath, compJsonStr, mergedImports, name)
+    } else {
+      cleanupComponentArtifacts(outPath, name)
     }
 
     // 6. Single idempotent bake pass. Every append below is `includes()`-guarded
