@@ -244,6 +244,41 @@ describe('SVG directive traversal', () => {
     expect(text.textContent).toBe('mounted')
   })
 
+  test('late registration drains pending SVG hosts inside an open shadow root once', async () => {
+    const win = setupDom('<div id="shadow-host"></div>')
+    const shadow = win.document.getElementById('shadow-host')!.attachShadow({ mode: 'open' })
+    shadow.innerHTML = '<svg><g id="lazy-svg" x-data="lazySvg"><text x-text="msg"></text></g></svg>'
+    const { register, start } = await import(`./runtime.ts?lazySvg=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const msg = signal('ready')
+    const mounted: Element[] = []
+
+    start(win.document)
+    const addedWhileLoading = win.document.createElementNS('http://www.w3.org/2000/svg', 'g')
+    addedWhileLoading.setAttribute('x-data', 'lazySvg')
+    addedWhileLoading.innerHTML = '<text x-text="msg"></text>'
+    shadow.querySelector('svg')!.appendChild(addedWhileLoading)
+    start(addedWhileLoading)
+
+    register<SVGElement>('lazySvg', ({ el }) => {
+      mounted.push(el)
+      return { msg }
+    })
+
+    const texts = Array.from(shadow.querySelectorAll('text'))
+    expect(mounted).toHaveLength(2)
+    expect(mounted[0]).toBe(shadow.querySelector('#lazy-svg'))
+    expect(mounted[1]).toBe(addedWhileLoading)
+    expect(texts.map((text) => text.textContent)).toEqual(['ready', 'ready'])
+    msg.set('updated')
+    expect(texts.map((text) => text.textContent)).toEqual(['updated', 'updated'])
+    register<SVGElement>('lazySvg', () => {
+      mounted.push(addedWhileLoading)
+      return { msg }
+    })
+    expect(mounted).toHaveLength(2)
+  })
+
   test('x-if on an SVG element toggles fresh SVG namespace clones', async () => {
     const win = setupDom(
       '<svg x-data="svgIf"><g id="svg-if" x-if="open"><text x-text="label"></text></g></svg>',

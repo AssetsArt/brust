@@ -30,6 +30,7 @@ type RegisteredBehavior = Behavior<Element>
 const registry = new Map<string, RegisteredBehavior>()
 const mounted = new WeakMap<Element, Mounted>()
 const loading = new Map<string, Promise<unknown>>()
+const pending = new Map<string, Set<Element>>()
 let started = false
 
 /** Per-component behavior chunk URL. Each native interactive component is built to
@@ -46,6 +47,10 @@ export function register<Host extends Element = HTMLElement>(
   behavior: Behavior<Host>,
 ): void {
   registry.set(name, behavior as unknown as RegisteredBehavior)
+  const hosts = pending.get(name)
+  if (!hosts) return
+  pending.delete(name)
+  for (const el of hosts) mountElement(el)
 }
 // Expose `register` on a global so dynamically-imported behavior chunks self-register
 // into THIS runtime's registry without importing/duplicating the runtime. Symbol.for
@@ -106,6 +111,12 @@ function mountElement(el: Element): void {
   const name = el.getAttribute('x-data') ?? ''
   const behavior = registry.get(name)
   if (!behavior) {
+    let hosts = pending.get(name)
+    if (!hosts) {
+      hosts = new Set()
+      pending.set(name, hosts)
+    }
+    hosts.add(el)
     // Behavior chunk not loaded yet → fetch it on demand, then mount this name.
     loadBehavior(name)
     return
@@ -155,6 +166,7 @@ function mountElement(el: Element): void {
 function loadBehavior(name: string): void {
   if (registry.has(name) || loading.has(name)) return
   if (!/^[A-Za-z0-9_-]+$/.test(name)) {
+    pending.delete(name)
     console.warn(`[brust] unsafe x-data component name "${name}" — not loaded`)
     return
   }
@@ -164,17 +176,14 @@ function loadBehavior(name: string): void {
     .then(() => import(/* @vite-ignore */ `${CHUNK_BASE}${name}.directive.js`))
     .then(() => {
       if (!registry.has(name)) {
+        pending.delete(name)
         console.warn(`[brust] "${name}.directive.js" loaded but did not register "${name}"`)
-        return
-      }
-      // Mount every element waiting on this name (initial + swapped-in).
-      if (typeof document !== 'undefined') {
-        for (const el of Array.from(document.querySelectorAll<Element>(`[x-data="${name}"]`))) {
-          mountElement(el)
-        }
       }
     })
-    .catch((e) => console.error(`[brust] failed to load directive component "${name}":`, e))
+    .catch((e) => {
+      pending.delete(name)
+      console.error(`[brust] failed to load directive component "${name}":`, e)
+    })
   loading.set(name, p)
 }
 
