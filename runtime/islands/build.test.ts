@@ -292,3 +292,22 @@ test('_react-dom.js export list keeps createRoot/hydrateRoot and adds a default'
     rmSync(outDir, { recursive: true, force: true })
   }
 })
+
+test('buildAiRuntime bundles a present entry and skips a missing one', async () => {
+  const { buildAiRuntime } = await import('./build.ts')
+  const outDir = mkdtempSync(resolve(tmpdir(), 'brust-ai-runtime-'))
+  const entry = write('ai-entry.ts', 'export const ai = "ready"\n')
+  try {
+    const built = await buildAiRuntime({ outDir, entryFile: entry })
+    expect(built).toBe(resolve(outDir, 'ai.js'))
+    expect(await Bun.file(resolve(outDir, 'ai.js')).exists()).toBe(true)
+
+    const skipped = await buildAiRuntime({
+      outDir,
+      entryFile: resolve(dir, 'missing-ai-entry.ts'),
+    })
+    expect(skipped).toBeNull()
+  } finally {
+    rmSync(outDir, { recursive: true, force: true })
+  }
+})

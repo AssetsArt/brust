@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { isAbsolute, relative, resolve } from 'node:path'
 import type { BunPlugin } from 'bun'
@@ -23,6 +23,15 @@ export interface BuildIslandsOptions {
    * NOT apply to `Bun.build`, so an island that `import`s a `.module.css` must
    * get the resolver here or Bun emits the CSS as a separate asset and collides
    * on the output filename (X.module.css + X.tsx → both X.js). */
+  plugins?: BunPlugin[]
+}
+
+export interface BuildAiRuntimeOptions {
+  /** Override the output directory. Default: `<cwd>/.brust/islands`. */
+  outDir?: string
+  /** Override the browser entry file. Default: `runtime/ai/index.ts`. */
+  entryFile?: string
+  /** Build plugins passed straight to `Bun.build` for the AI runtime chunk. */
   plugins?: BunPlugin[]
 }
 
@@ -198,7 +207,39 @@ export async function buildIslands(
   const bootstrapSrc = resolve(import.meta.dir, 'bootstrap.ts')
   await buildOne([bootstrapSrc], outDir, '_bootstrap.js', externals)
 
+  // 5. AI browser runtime. The task-owned entry is optional in this worktree;
+  // missing source is a soft skip so island-only builds keep working.
+  if (process.env.BRUST_AI === '1' || process.env.BRUST_DEV === '1') {
+    await buildAiRuntime({ outDir, plugins })
+  }
+
   return { outDir, islandCount: count, chunks }
+}
+
+export async function buildAiRuntime(options: BuildAiRuntimeOptions = {}): Promise<string | null> {
+  const outDir = options.outDir
+    ? isAbsolute(options.outDir)
+      ? options.outDir
+      : resolve(process.cwd(), options.outDir)
+    : resolve(process.cwd(), '.brust/islands')
+  await mkdir(outDir, { recursive: true })
+  const entryFile = options.entryFile
+    ? isAbsolute(options.entryFile)
+      ? options.entryFile
+      : resolve(process.cwd(), options.entryFile)
+    : resolve(import.meta.dir, '../ai/index.ts')
+  if (!existsSync(entryFile)) {
+    console.warn(`[brust] ai runtime skipped (missing ${relative(process.cwd(), entryFile)})`)
+    return null
+  }
+  await buildOne(
+    [entryFile],
+    outDir,
+    'ai.js',
+    ['react', 'react/jsx-runtime', 'react-dom/client'],
+    options.plugins ?? [],
+  )
+  return resolve(outDir, 'ai.js')
 }
 
 export async function buildOne(

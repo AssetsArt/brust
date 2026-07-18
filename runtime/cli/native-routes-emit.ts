@@ -3,7 +3,12 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync
 import { createRequire } from 'node:module'
 import { dirname, relative, resolve } from 'node:path'
 import { buildDevClientTag } from '../dev/client.ts'
-import { insertGeneratorMeta, insertShellMeta, resolveGenerator } from '../generator.ts'
+import {
+  aiScriptTag,
+  insertGeneratorMeta,
+  insertShellMeta,
+  resolveGenerator,
+} from '../generator.ts'
 import { islandChunkBasename } from '../islands/chunk-id.ts'
 import { emitBehaviorSsrModule } from '../islands/behavior-ssr-loader.ts'
 import { DIRECTIVES_BOOTSTRAP, ISLANDS_IMPORTMAP_AND_BOOTSTRAP } from '../islands/importmap.ts'
@@ -254,15 +259,32 @@ export function countMainTags(template: string): number {
  *
  * Exported for the md emit step (runtime/md/emit.ts), which bakes the same tag
  * under its `withDevClient` option — md pages render Rust-side too, so without
- * it they never auto-reload in dev. */
+ * it they never auto-reload in dev.
+ *
+ * The AI runtime script is injected here as well when BRUST_AI=1. The tag is
+ * document-only: the compiler emits a head anchor for full documents, while
+ * fragment templates (no head) are left unchanged. */
 export function injectDevClientIntoTemplate(template: string): string {
-  const tag = buildDevClientTag()
-  if (template.includes(tag)) return template // idempotent across re-emits
-  const headClose = template.indexOf('</head>')
-  if (headClose !== -1) {
-    return template.slice(0, headClose) + tag + template.slice(headClose)
+  const devTag = buildDevClientTag()
+  let out = template
+  if (!out.includes(devTag)) {
+    const headClose = out.indexOf('</head>')
+    if (headClose !== -1) {
+      out = out.slice(0, headClose) + devTag + out.slice(headClose)
+    } else {
+      out += devTag
+    }
   }
-  return template + tag
+  if (process.env.BRUST_AI === '1') {
+    const tag = aiScriptTag()
+    if (!out.includes(tag)) {
+      const headClose = out.indexOf('</head>')
+      if (headClose !== -1) {
+        out = out.slice(0, headClose) + tag + out.slice(headClose)
+      }
+    }
+  }
+  return out
 }
 
 /** Bake the directive runtime loader into a native template iff it uses any
@@ -981,7 +1003,9 @@ export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<Na
     // carry the identical signature. Empty/missing → no-op.
     const withShell = insertShellMeta(withGenerator, r.shellId ?? '')
     const template =
-      process.env.BRUST_DEV === '1' ? injectDevClientIntoTemplate(withShell) : withShell
+      process.env.BRUST_DEV === '1' || process.env.BRUST_AI === '1'
+        ? injectDevClientIntoTemplate(withShell)
+        : withShell
     writeFileSync(outPath, template)
     built.push(name)
     stats.compiled++
