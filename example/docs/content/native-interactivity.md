@@ -113,6 +113,13 @@ on first load, SPA-nav swaps, and dynamically inserted content. A nested
 `x-data` owns its own subtree — the outer instance's bindings stop at that
 boundary.
 
+### SVG elements
+
+Directive traversal includes SVG. `x-data`, `x-on-*`, `x-show`, `x-bind-*`,
+`x-if`, and `x-for` work on SVG hosts and descendants with nothing to
+configure; dynamically inserted SVG behaviors mount and dispose like HTML
+behaviors. `x-model` remains limited to HTML form controls.
+
 **Shadow DOM:** the runtime also scans **open** shadow roots. Every open
 root discovered during a scan (including roots nested inside other roots, and
 roots inside later-inserted content) gets its own observer, so `x-data`

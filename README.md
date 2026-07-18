@@ -114,6 +114,11 @@ Click either one — both update. [See it live](https://brust.assetsart.com/) ·
   **resources** at `/_brust/mcp`; `tools/call` runs through the same validation
   and middleware as HTTP, so agents drive the app without scraping.
   → [Agents](https://brust.assetsart.com/docs/agents)
+- **Browser-native AI runtime** — `window.Brust` lets an agent inspect routes
+  and the rendered page, act through real DOM events, and navigate with
+  framework-aware settling. It is automatic in dev and opt-in for production,
+  with no client cost while disabled.
+  → [Agents](https://brust.assetsart.com/docs/agents#driving-the-ui--windowbrust)
 - Plus: nested routes + dynamic params, typed loaders, request-scoped
   middleware, SPA-style navigation, SSE & WebSockets as first-class route
   shapes, response + ISR caches, Tailwind v4 + CSS Modules, static
@@ -155,6 +160,7 @@ brustjs build <entry> --out-dir D # prebuilt ./dist/ — run from the project (b
                   --target <auto|all|TARGET[,…]> # which native binary to bundle (default: auto = host platform)
                   --ssg [--ssg-out D]   # prerender static routes (incl. markdown pages) to HTML
                                         # + per-route SPA payloads — client-side nav works statically
+                  --ai                  # include window.Brust + its route manifest in production
 brustjs new   <name>              # scaffold a project (partial — see Status)
 ```
 

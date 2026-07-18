@@ -41,6 +41,7 @@ Compile a brust app to a self-contained `dist/`.
 | `--ssg` | Prerender static routes to HTML files after the build |
 | `--ssg-out <dir>` | Output directory for prerendered HTML (default `<out-dir>/static`) |
 | `--no-generator-version` | Drop the version from the generator tag + `X-Powered-By` header (name `brust` always stays) |
+| `--ai` | Enable the `window.Brust` runtime chunk and route manifest in production builds |
 
 Markdown pages: routes mounted with `mdRoutes(<contentDir>)` compile to
 native jinja templates at build time and freeze into
@@ -55,6 +56,9 @@ Notes on the flags:
   the build. Valid values: `darwin-x64`, `darwin-arm64`, `linux-x64-gnu`,
   `linux-arm64-gnu`, `linux-x64-musl`, `linux-arm64-musl`.
 - `--ssg-out` requires `--ssg`.
+- `--ai` emits the browser runtime and AI manifest, injects the runtime script,
+  and writes `BRUST_AI=1` as the dist's default. An explicit `BRUST_AI`
+  environment value remains authoritative when the dist starts.
 - brust identifies itself with `<meta name="generator" content="brust <version>">` and an `X-Powered-By: brust/<version>` header. `--no-generator-version` keeps the name but drops the version — the decision is baked at build time, so flipping it requires a rebuild. See [Rendering](/docs/rendering) for details.
 
 ## brust dev
@@ -70,6 +74,7 @@ Run the dev server with hot reload.
 | `[entry]` | Entry file (default `./index.ts`) |
 | `--port <n>` | Port to listen on |
 | `--no-generator-version` | Drop the version from the generator tag + `X-Powered-By` header (name `brust` always stays) |
+| `--ai` | Enable the AI runtime explicitly (development already enables it) |
 
 `--port` overrides `brust.toml` and any port passed to `brust.run()` in code
 — the full precedence chain is in [Deployment](/docs/deployment).
