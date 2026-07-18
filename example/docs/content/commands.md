@@ -53,6 +53,7 @@ brust build [entry] [options]
 | `--target <t>` | Native target(s): `auto` \| `all` \| `<platform>-<arch>[-<libc>][,…]` (default `auto`) |
 | `--ssg` | Prerender static routes to HTML files after the build |
 | `--ssg-out <dir>` | Output directory for prerendered HTML (default `<out-dir>/static`) |
+| `--ai` | Bake [AI agent runtime](/docs/agents) activation into the built server (`BRUST_AI` can still override at runtime) |
 
 `--target auto` builds for the machine you are on; `all` bundles every
 supported platform; or list explicit targets, comma-separated, in

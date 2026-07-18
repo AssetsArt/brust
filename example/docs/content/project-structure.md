@@ -76,6 +76,7 @@ error at boot.
 | `serve` | `Partial<ServeOptions>` | — | Lower-level server overrides merged into the listener: `tuning` (worker/connection limits — see [Deployment](/docs/deployment)), TLS, and the `generator` / `X-Powered-By` controls (see [Rendering](/docs/rendering)). |
 | `sabBytes` | `number` | `262144` (256 KB) | SharedArrayBuffer size per render worker. |
 | `dev` | `boolean` | `false` | Dev mode — hot reload, file watcher, dev WS, TUI. Also enabled by `BRUST_DEV=1`. |
+| `ai` | `boolean` | `false` | Enable the [AI agent runtime](/docs/agents) (`window.Brust`) outside dev. Also enabled by `BRUST_AI=1` or building with `brust build --ai`; dev mode always has it on. |
 
 `address` and `port` are overridable at runtime; `brust.toml` and environment
 variables win over what you pass here (see the precedence note above).

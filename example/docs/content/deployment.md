@@ -68,6 +68,7 @@ Precedence, low → high: framework defaults < values passed to `brust.run()` <
 | `BRUST_RENDER_SLOTS` | — | `1` | Concurrent in-flight renders **per worker**. |
 | — | `[cache] max_entries` | `1000` | Response-cache capacity (entries). |
 | `BRUST_DEV` | — | off | `1` forces dev mode — never set in production. |
+| `BRUST_AI` | — | off | `1` enables the [AI agent runtime](/docs/agents) (`window.Brust`) in production. |
 
 ```toml
 # brust.toml
