@@ -183,25 +183,22 @@ Element children: lowered in order, each child is one of:
 
 ### 4.5 Attribute renames
 
-The emitter applies these table renames so emitted HTML matches what users expect from React:
-
-| JSX | HTML |
-|---|---|
-| `className` | `class` |
-| `htmlFor` | `for` |
-| `charSet` | `charset` |
-| `tabIndex` | `tabindex` |
-| `crossOrigin` | `crossorigin` |
-| `readOnly` | `readonly` |
-| `maxLength` | `maxlength` |
-| `colSpan` | `colspan` |
-| `rowSpan` | `rowspan` |
-| `srcSet` | `srcset` |
+The lowerer uses the single sorted table in `dom_attrs.rs` to map canonical JSX
+props to serialized DOM attribute names. It contains the original HTML aliases
+(`className` → `class`, `htmlFor` → `for`, and the other established aliases)
+plus the complete ReactDOM 19.2.6 camelCase SVG surface. SVG mappings include
+preserve-case names (`viewBox`, `preserveAspectRatio`, `gradientUnits`),
+hyphenated aliases (`strokeWidth` → `stroke-width`, `fillRule` → `fill-rule`),
+and namespace-qualified aliases (`xlinkHref` → `xlink:href`, `xmlSpace` →
+`xml:space`, `xmlnsXlink` → `xmlns:xlink`). Lowercase names, `data-*`, and
+`aria-*` pass through without table entries. Unknown names containing uppercase
+letters remain errors, so accepting the standard SVG surface does not weaken
+typo detection.
 
 Processing order in the emitter (v2 makes precedence explicit):
-1. If name matches `on[A-Z].*` → `EventHandlerNotSupported`.
+1. If name == `key` → drop.
 2. If name == `ref` → `RefAttributeNotSupported`.
-3. If name == `key` → drop.
+3. If name matches `on[A-Z].*` → `EventHandlerNotSupported`.
 4. If name is in rename table → emit renamed.
 5. If name has uppercase letter → `UnknownAttributeRename { name }`.
 6. Else → emit verbatim.

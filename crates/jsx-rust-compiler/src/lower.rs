@@ -3784,24 +3784,6 @@ fn is_void_element(tag: &str) -> bool {
     )
 }
 
-/// React → HTML attribute rename table. Names not listed here that contain an
-/// uppercase letter are rejected as `UnknownAttributeRename`.
-fn rename_attr(name: &str) -> Option<&'static str> {
-    Some(match name {
-        "className" => "class",
-        "htmlFor" => "for",
-        "charSet" => "charset",
-        "tabIndex" => "tabindex",
-        "crossOrigin" => "crossorigin",
-        "readOnly" => "readonly",
-        "maxLength" => "maxlength",
-        "colSpan" => "colspan",
-        "rowSpan" => "rowspan",
-        "srcSet" => "srcset",
-        _ => return None,
-    })
-}
-
 /// Lower a `<Island …/>` element into `JsxNode::Island`.
 ///
 /// Recognized attributes:
@@ -4383,9 +4365,10 @@ fn lower_attr(attr: &JSXAttrOrSpread, scope: &Scope) -> Result<Option<JsxAttr>, 
                     ErrorKind::EventHandlerNotSupported(raw_name),
                 ));
             }
-            // 4. Rename table (className → class, etc.).
+            // 4. Standard attribute table (className → class, viewBox → viewBox,
+            //    strokeWidth → stroke-width, xlinkHref → xlink:href, etc.).
             // 5. Uppercase-in-name but not in table → UnknownAttributeRename.
-            let final_name = match rename_attr(&raw_name) {
+            let final_name = match crate::dom_attrs::serialized_standard_attr(&raw_name) {
                 Some(renamed) => renamed.to_string(),
                 None => {
                     if raw_name.chars().any(|c| c.is_ascii_uppercase()) {
@@ -7358,6 +7341,63 @@ export const behavior = () => ({});"#;
     }
 
     #[test]
+    fn lowers_react_standard_svg_attributes_to_exact_serialized_names() {
+        let src = r##"export default function Icon() {
+  return <svg
+    viewBox="0 0 24 24"
+    preserveAspectRatio="xMidYMid"
+    gradientUnits="userSpaceOnUse"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    fillRule="evenodd"
+    clipPath="url(#clip)"
+    colorInterpolationFilters="sRGB"
+    xlinkHref="#shape"
+    xmlSpace="preserve"
+    xmlnsXlink="http://www.w3.org/1999/xlink"
+    attributeName="opacity"
+    baseFrequency="0.5"
+    filterUnits="userSpaceOnUse"
+    stdDeviation="2"
+  />;
+}"##;
+        let parsed = parse(src, "<test>").unwrap();
+        let c = lower(&parsed).unwrap();
+        let attrs = match &c.root {
+            JsxNode::Element { tag, attrs, .. } => {
+                assert_eq!(tag, "svg");
+                attrs
+            }
+            other => panic!("expected svg root, got {other:?}"),
+        };
+        assert_eq!(
+            attrs
+                .iter()
+                .map(|attribute| attribute.name.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "viewBox",
+                "preserveAspectRatio",
+                "gradientUnits",
+                "stroke-width",
+                "stroke-linecap",
+                "stroke-linejoin",
+                "fill-rule",
+                "clip-path",
+                "color-interpolation-filters",
+                "xlink:href",
+                "xml:space",
+                "xmlns:xlink",
+                "attributeName",
+                "baseFrequency",
+                "filterUnits",
+                "stdDeviation",
+            ]
+        );
+    }
+
+    #[test]
     fn drops_key_attribute() {
         // `key` is a React-only attribute — must be filtered before emit.
         let src = r#"export default function X() { return <li key="a"/>; }"#;
@@ -10086,6 +10126,69 @@ export default function Outer() { return <A/>; }
             }
             other => panic!("expected MemberAccess(data.x), got {other:?}"),
         }
+    }
+
+    #[test]
+    fn native_svg_component_inlines_with_exact_react_attribute_names() {
+        let route = r#"export default function Page() { return <Icon native/>; }"#;
+        let icon = r##"export default function Icon() {
+  return <svg
+    viewBox="0 0 24 24"
+    preserveAspectRatio="xMidYMid"
+    gradientUnits="userSpaceOnUse"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    fillRule="evenodd"
+    clipPath="url(#clip)"
+    colorInterpolationFilters="sRGB"
+    xlinkHref="#shape"
+    xmlSpace="preserve"
+    xmlnsXlink="http://www.w3.org/1999/xlink"
+    attributeName="opacity"
+    baseFrequency="0.5"
+    filterUnits="userSpaceOnUse"
+    stdDeviation="2"
+  />;
+}"##;
+        let (component, warnings) = lower_with_src(
+            route,
+            HashMap::from([("Icon".to_string(), icon.to_string())]),
+        )
+        .unwrap();
+        assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+        assert_no_ssr_component(&component.root);
+        let attrs = match &component.root {
+            JsxNode::Element { tag, attrs, .. } => {
+                assert_eq!(tag, "svg");
+                attrs
+            }
+            other => panic!("expected inlined svg root, got {other:?}"),
+        };
+        assert_eq!(
+            attrs
+                .iter()
+                .map(|attribute| attribute.name.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "viewBox",
+                "preserveAspectRatio",
+                "gradientUnits",
+                "stroke-width",
+                "stroke-linecap",
+                "stroke-linejoin",
+                "fill-rule",
+                "clip-path",
+                "color-interpolation-filters",
+                "xlink:href",
+                "xml:space",
+                "xmlns:xlink",
+                "attributeName",
+                "baseFrequency",
+                "filterUnits",
+                "stdDeviation",
+            ]
+        );
     }
 
     #[test]
