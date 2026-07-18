@@ -1,6 +1,6 @@
 ---
 title: Agents
-description: The built-in MCP server — defineActions endpoints as tools, route loaders as resources, schemas extracted from your types.
+description: The built-in MCP server and window.Brust browser runtime — typed tools, route resources, and a framework-aware UI surface.
 nav: { group: "Reference", order: 10 }
 ---
 
@@ -78,3 +78,137 @@ exposes zero tools — loaders still become resources.
 That is the whole surface today: tools and resources derived from code you
 already wrote, over POST. There is no separate agent SDK, CLI command, or
 configuration file.
+
+## Driving the UI — window.Brust
+
+MCP is the server-side surface. When an agent is driving a real browser,
+`window.Brust` gives its JavaScript evaluator a framework-aware view of the
+current page and actions that dispatch normal DOM events. The results are
+plain JSON, so the same calls work through Playwright, CDP, or an in-browser
+`eval` tool.
+
+The runtime is opt-in outside development:
+
+| Mode | Activation |
+|---|---|
+| `brust dev` | On automatically. |
+| Programmatic production | `run({ ai: true })` or `BRUST_AI=1`. |
+| Prebuilt production | `brust build --ai` (or build with `BRUST_AI=1`). |
+
+When it is off, the runtime chunk, manifest routes, and document script tag
+are absent. There is no client cost.
+
+### See the app
+
+`pages()` reads the app's route manifest without crawling. Each entry includes
+the route template, params, page kind, and shell id:
+
+```js
+const pages = await Brust.pages()
+// [{ path: '/notes/{id}', params: ['id'], kind: 'react', shellId: 'L:…', … }]
+```
+
+`struct()` describes the page that is currently rendered: headings, links,
+buttons, forms and fields, standalone inputs, React islands, and native
+`x-data` behaviors. Every actionable element has a short opaque ref:
+
+```js
+await (async () => {
+  const page = await Brust.struct({ maxText: 120 })
+  if ('ok' in page && page.ok === false) return page
+  return page.buttons.find((button) => button.text === 'Create note')
+})()
+// { ref: 'e7', text: 'Create note', disabled: false, kind: 'button' }
+```
+
+Scope a snapshot with either a ref or a CSS selector:
+
+```js
+await Brust.struct({ within: '#account-settings', maxText: 80 })
+```
+
+Refs remain valid while their element remains attached, but every navigation
+invalidates the whole generation. A stale ref returns `code: 'stale-ref'`;
+run `Brust.struct()` again before the next action.
+
+### Act on the page
+
+Every action target accepts a ref or a CSS selector. Actions scroll the target
+into view, perform the corresponding native or synthetic DOM action, wait for
+the page to settle, then return the resulting URL and any errors raised during
+the action.
+
+| Method | Use |
+|---|---|
+| `action.click(target)` | Pointer down/up/click sequence. |
+| `action.focus(target)`, `action.blur(target)` | Move focus. |
+| `action.fill(target, value)` | Fill input, textarea, select, or contenteditable. |
+| `action.form(nameOrRef, values, options?)` | Fill named fields and submit with `requestSubmit()`. |
+| `action.press(target, key)` | Keydown/keypress/keyup sequence. |
+| `action.select(target, valueOrLabel)` | Select an option by value or label. |
+| `action.check(target, boolean)` | Set a checkbox or radio. |
+
+The form name comes from `data-ai-name`, then `name`, then `id`:
+
+```js
+await Brust.action.form('new-note', {
+  title: 'Release notes',
+  body: 'Document the browser runtime',
+})
+```
+
+`form()` matches fields by their `name` attribute. If a controlled React input
+has no name, take its ref from `struct()` and fill it directly:
+
+```js
+await (async () => {
+  const page = await Brust.struct({ within: '#new-note' })
+  if ('ok' in page && page.ok === false) return page
+  const unnamed = page.forms[0]?.fields.find((field) => field.name === '')
+  if (!unnamed) return { ok: false, error: { code: 'not-found', message: 'field not found' } }
+  return Brust.action.fill(unnamed.ref, 'Release notes')
+})()
+```
+
+### Navigate and settle
+
+```js
+const result = await Brust.navigate('/notes', { struct: true })
+// same-shell: { ok: true, status: 'spa', url: '…', struct: { … } }
+
+await Brust.back()
+await Brust.reload()
+```
+
+`navigate()` waits for a successful SPA transition and newly mounted islands
+before resolving. `{ struct: true }` includes a fresh snapshot in the same
+round-trip. A cross-shell destination returns `status: 'full-load'` before the
+document unloads; the browser harness observes the load and evaluates again in
+the new page. External destinations report `status: 'external'`.
+
+### Errors and redaction
+
+Public methods resolve instead of throwing across the evaluator boundary. An
+error has one envelope:
+
+```js
+{
+  ok: false,
+  error: {
+    code: 'stale-ref',
+    message: 'ref e7 is no longer valid',
+    hint: 're-run Brust.struct()'
+  }
+}
+```
+
+`struct()` returns `null` instead of the value of password inputs and fields
+marked `data-ai-redact`. A subtree marked `data-ai-ignore` is omitted entirely.
+
+The browser loads the runtime from `/_brust/ai.js`; `pages()` fetches
+`/_brust/ai/manifest.json` once and caches it. These routes exist only when the
+runtime is enabled.
+
+`Brust.wait`, `Brust.state`, `Brust.nav`, `Brust.api.list`, `Brust.api.call`,
+and `Brust.errors` are declared for the next phase but currently resolve a
+`disabled` error. The P1 surface is `pages`, `struct`, actions, and navigation.
