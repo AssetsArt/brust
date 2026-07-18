@@ -70,3 +70,20 @@ test('navigate reports the destination before scheduling an unbootstrapped full 
     url: 'http://localhost/full-document',
   })
 })
+
+// Regression (integration-found): hidden/background tabs pause rAF entirely —
+// the exact environment agent-driven browsers run in. A bare rAF await made
+// every successful action settle hang forever (conclave in-app browser,
+// 2026-07-18). settle must resolve via the timer fallback when rAF never fires.
+test('settleAfterAction resolves even when requestAnimationFrame never fires', async () => {
+  const realRaf = globalThis.requestAnimationFrame
+  Object.assign(globalThis, { requestAnimationFrame: () => 0 })
+  try {
+    const { settleAfterAction } = await import('./navigate.ts')
+    const started = performance.now()
+    expect(await settleAfterAction(1_000)).toBeNull()
+    expect(performance.now() - started).toBeLessThan(500)
+  } finally {
+    Object.assign(globalThis, { requestAnimationFrame: realRaf })
+  }
+})

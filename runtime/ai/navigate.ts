@@ -23,13 +23,27 @@ function allIslandsRegistered(): boolean {
   return document.querySelector('[data-brust-island]:not([data-brust-hydrated])') === null
 }
 
+// One paint tick. requestAnimationFrame alone is NOT a safe await: hidden and
+// backgrounded tabs (exactly where agent-driven browsers run) pause rAF
+// indefinitely, so every settle would hang. Race it against a short timer —
+// whichever fires first is "the page had a chance to react".
+function nextTick(): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, 50)
+    requestAnimationFrame(() => {
+      clearTimeout(timer)
+      resolve()
+    })
+  })
+}
+
 async function waitForHydration(timeout: number): Promise<ErrorResult | null> {
   const started = performance.now()
   while (!allIslandsRegistered()) {
     if (performance.now() - started >= timeout) {
       return failure('timeout', `navigation did not hydrate within ${timeout}ms`)
     }
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    await nextTick()
   }
   return null
 }
@@ -110,7 +124,7 @@ async function browserHistoryAction(
   const before = location.href
   run()
   await Promise.resolve()
-  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+  await nextTick()
   if (location.href === before && getNavState().phase !== 'loading') {
     return finish('spa', options)
   }
@@ -133,7 +147,7 @@ export function reload(options?: NavigateOptions): Promise<NavResult | ErrorResu
 
 export async function settleAfterAction(timeout = 10_000): Promise<ErrorResult | null> {
   await Promise.resolve()
-  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+  await nextTick()
   if (getNavState().phase === 'loading') {
     const navError = await waitForTerminal(timeout)
     if (navError) return navError
