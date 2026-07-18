@@ -30,6 +30,21 @@ test('refs resolve while connected and become stale after a generation bump', ()
   })
 })
 
+test('a stale ref cannot alias an element minted in a later generation', () => {
+  const oldButton = document.createElement('button')
+  document.body.append(oldButton)
+  const oldRef = mintRef(oldButton)
+
+  bumpRefGeneration()
+  const newButton = document.createElement('button')
+  document.body.append(newButton)
+  const newRef = mintRef(newButton)
+
+  expect(newRef).not.toBe(oldRef)
+  expect(resolveTarget(newRef)).toBe(newButton)
+  expect(resolveTarget(oldRef)).toMatchObject({ ok: false, error: { code: 'stale-ref' } })
+})
+
 test('selectors return not-found, ambiguous, and bad-input envelopes', () => {
   document.body.innerHTML = '<button></button><button></button>'
   expect(resolveTarget('button')).toMatchObject({ ok: false, error: { code: 'ambiguous' } })

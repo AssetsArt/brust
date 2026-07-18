@@ -37,7 +37,6 @@ export function mintRef(element: Element): Ref {
 
 export function bumpRefGeneration(): void {
   generation += 1
-  nextRef = 1
   refElements = new Map()
 }
 
@@ -84,4 +83,5 @@ onBeforeNavigate(() => bumpRefGeneration())
 export function __resetRefsForTest(): void {
   bumpRefGeneration()
   generation = 0
+  nextRef = 1
 }
