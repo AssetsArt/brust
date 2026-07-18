@@ -131,6 +131,61 @@ describe('x-show + x-bind', () => {
   })
 })
 
+describe('SVG directive traversal', () => {
+  test('x-show beneath svg starts hidden and toggles visible', async () => {
+    const win = setupDom(
+      '<div x-data="svgShow"><svg><g id="svg-show" x-show="flag"><path></path></g></svg></div>',
+    )
+    const group = win.document.getElementById('svg-show')!
+    expect(group instanceof win.Element).toBe(true)
+    expect(group instanceof win.HTMLElement).toBe(false)
+    const { register, start } = await import(`./runtime.ts?svgShow=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const flag = signal(false)
+    register('svgShow', () => ({ flag }))
+    start(win.document)
+    expect(group.style.display).toBe('none')
+    flag.set(true)
+    expect(group.style.display).toBe('')
+  })
+
+  test('x-on-click on an SVG descendant invokes the registered method', async () => {
+    const win = setupDom(
+      '<div x-data="svgOn"><svg><path id="svg-on" x-on-click="activate"></path></svg></div>',
+    )
+    const path = win.document.getElementById('svg-on')!
+    expect(path instanceof win.Element).toBe(true)
+    expect(path instanceof win.HTMLElement).toBe(false)
+    const { register, start } = await import(`./runtime.ts?svgOn=${Math.random()}`)
+    let calls = 0
+    register('svgOn', () => ({
+      activate() {
+        calls++
+      },
+    }))
+    start(win.document)
+    path.dispatchEvent(new win.Event('click', { bubbles: true }))
+    expect(calls).toBe(1)
+  })
+
+  test('x-bind-class on an SVG descendant updates the class attribute', async () => {
+    const win = setupDom(
+      '<div x-data="svgBind"><svg><use id="svg-bind" x-bind-class="cls"></use></svg></div>',
+    )
+    const use = win.document.getElementById('svg-bind')!
+    expect(use instanceof win.Element).toBe(true)
+    expect(use instanceof win.HTMLElement).toBe(false)
+    const { register, start } = await import(`./runtime.ts?svgBind=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const cls = signal('first')
+    register('svgBind', () => ({ cls }))
+    expect(() => start(win.document)).not.toThrow()
+    expect(use.getAttribute('class')).toBe('first')
+    expect(() => cls.set('second')).not.toThrow()
+    expect(use.getAttribute('class')).toBe('second')
+  })
+})
+
 describe('x-on', () => {
   test('x-on-click calls the named method with the event', async () => {
     const win = setupDom('<div x-data="o1"><button x-on-click="inc">+</button></div>')
