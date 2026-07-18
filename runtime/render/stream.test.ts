@@ -1,6 +1,7 @@
 import { test, expect, mock, describe } from 'bun:test'
 import { createElement, Suspense } from 'react'
 import { renderBranchStreaming, makeMeta } from './stream'
+import { aiScriptTag } from '../generator.ts'
 
 function makeMockNapi() {
   const chunks: Array<{ len: number; bytes: Uint8Array | null; final: boolean }> = []
@@ -221,6 +222,72 @@ test('forceIslands: false (default) → no bootstrap when no <Island>', async ()
   })
   const { body } = decodeMeta(chunks[0].bytes!)
   expect(new TextDecoder().decode(body)).not.toContain('importmap')
+})
+
+test('AI enabled → buffered React render injects the AI script into document output', async () => {
+  const prev = process.env.BRUST_AI
+  process.env.BRUST_AI = '1'
+  try {
+    const { chunks, napi } = makeMockNapi()
+    await renderBranchStreaming({
+      element: createElement(
+        'html',
+        null,
+        createElement('head', null, createElement('title', null, 'x')),
+        createElement('body', null, createElement('div', null, 'hello')),
+      ),
+      view,
+      workerId: 0n,
+      napi,
+      errorBoundary: () => createElement('div', null, 'oops'),
+    })
+    const { body } = decodeMeta(chunks[0].bytes!)
+    expect(new TextDecoder().decode(body)).toContain(aiScriptTag())
+  } finally {
+    if (prev === undefined) delete process.env.BRUST_AI
+    else process.env.BRUST_AI = prev
+  }
+})
+
+test('AI enabled → streaming React render injects the AI script in the first chunk', async () => {
+  const prev = process.env.BRUST_AI
+  process.env.BRUST_AI = '1'
+  try {
+    const { chunks, napi } = makeMockNapi()
+    let resolve: () => void = () => {}
+    const pending = new Promise<void>((r) => {
+      resolve = r
+    })
+    let done = false
+    pending.then(() => {
+      done = true
+    })
+    function Slow() {
+      if (!done) throw pending
+      return createElement('span', null, 'late')
+    }
+    const elem = createElement(
+      'html',
+      null,
+      createElement('head', null, createElement('title', null, 'x')),
+      createElement(Suspense, { fallback: createElement('span', null, '…') }, createElement(Slow)),
+    )
+    const p = renderBranchStreaming({
+      element: elem,
+      view,
+      workerId: 0n,
+      napi,
+      errorBoundary: () => createElement('div', null, 'oops'),
+    })
+    await new Promise((r) => setTimeout(r, 10))
+    resolve()
+    await p
+    const { body } = decodeMeta(chunks[0].bytes!)
+    expect(new TextDecoder().decode(body)).toContain(aiScriptTag())
+  } finally {
+    if (prev === undefined) delete process.env.BRUST_AI
+    else process.env.BRUST_AI = prev
+  }
 })
 
 test('shellId stamps a brust-shell meta into the buffered head', async () => {

@@ -1,6 +1,12 @@
 import { test, expect } from 'bun:test'
 import { resolve } from 'node:path'
-import { selectNativeBinaries, hostTargetInfix, VALID_TARGETS, parseArgs } from './build.ts'
+import {
+  selectNativeBinaries,
+  hostTargetInfix,
+  VALID_TARGETS,
+  parseArgs,
+  buildBanner,
+} from './build.ts'
 
 const FIX = ['/x/brust.darwin-arm64.node', '/x/brust.linux-x64-gnu.node']
 
@@ -85,4 +91,9 @@ test('--no-generator-version sets generatorVersion false', () => {
 test('generatorVersion defaults to true', () => {
   const p = parseArgs([])
   expect(p.generatorVersion).toBe(true)
+})
+
+test('buildBanner: --ai appends BRUST_AI override; default banner does not', () => {
+  expect(buildBanner(true)).toContain("process.env.BRUST_AI ??= '1';")
+  expect(buildBanner(false)).not.toContain("process.env.BRUST_AI ??= '1';")
 })

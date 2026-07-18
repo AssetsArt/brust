@@ -14,6 +14,8 @@ export interface BrustConfig {
   cacheMaxEntries?: number
   /** L2 page-cache capacity (entries). Undefined → Rust default of 1000. */
   cachePageMaxEntries?: number
+  /** AI runtime toggle from BRUST_AI. Dev mode enables it separately. */
+  ai?: boolean
   /** R9 cross-process cache invalidation: redis/dragonfly URL. Absent →
    * feature disabled (current single-process behavior). */
   cacheSyncUrl?: string
@@ -89,6 +91,7 @@ export async function loadConfig(
     host,
     port,
     workers,
+    ai: process.env.BRUST_AI === '1',
     cacheMaxEntries: fromToml.cacheMaxEntries,
     cachePageMaxEntries: fromToml.cachePageMaxEntries,
     cacheSyncUrl: fromEnv.cacheSyncUrl ?? fromToml.cacheSyncUrl,

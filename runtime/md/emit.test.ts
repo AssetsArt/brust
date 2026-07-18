@@ -6,7 +6,7 @@ import { buildDevClientTag } from '../dev/client.ts'
 import { emitNativeTemplates } from '../cli/native-routes-emit.ts'
 import { islandChunkBasename } from '../islands/chunk-id.ts'
 import { DIRECTIVES_BOOTSTRAP, ISLANDS_IMPORTMAP_AND_BOOTSTRAP } from '../islands/importmap.ts'
-import { generatorStrings, writeGeneratorArtifact } from '../generator.ts'
+import { aiScriptTag, generatorStrings, writeGeneratorArtifact } from '../generator.ts'
 import { directiveName } from '../native/build.ts'
 import {
   _resetMdRoutesChangedWarnForTests,
@@ -254,6 +254,33 @@ describe('emitMdTemplates — standalone md route', () => {
     expect(countOccurrences(tmpl, buildDevClientTag())).toBe(1)
     // No islands anywhere in this page → no bootstrap bake.
     expect(tmpl).not.toContain(BAKED_BOOTSTRAP)
+  })
+
+  test('aiEnabled bakes the AI runtime tag into document templates', async () => {
+    const f = makeFixture()
+    const contentDir = join(dir, 'content/pages')
+    const aboutPath = write('content/pages/ai.md', '# AI\n')
+    const tn = mdTemplateName('ai.md')
+
+    const flatRoutes: FlatRouteLike[] = [
+      {
+        nativeTemplate: tn,
+        chain: [
+          {
+            Component: { name: tn },
+            __mdSource: mdSource({
+              absPath: aboutPath,
+              relPath: 'ai.md',
+              contentDir,
+              frontmatter: { title: 'AI Page' },
+            }),
+          },
+        ],
+      },
+    ]
+    await emitMdTemplates({ entryFile: f.entryFile, flatRoutes, outDir, aiEnabled: true })
+    const tmpl = readFileSync(join(outDir, `${tn}.jinja`), 'utf8')
+    expect(tmpl).toContain(aiScriptTag())
   })
 
   test('version-off generator.json in outDir → emitted jinja carries name-only meta', async () => {

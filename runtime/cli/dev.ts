@@ -11,12 +11,14 @@ interface ParsedArgs {
   entry: string
   port: number | undefined
   generatorVersion: boolean
+  ai: boolean
 }
 
 function parseArgs(args: string[]): ParsedArgs {
   let entry: string | undefined
   let port: number | undefined
   let generatorVersion = true
+  let ai = false
   for (let i = 0; i < args.length; i++) {
     const a = args[i]
     if (a === '--port') {
@@ -32,6 +34,8 @@ function parseArgs(args: string[]): ParsedArgs {
       }
     } else if (a === '--no-generator-version') {
       generatorVersion = false
+    } else if (a === '--ai') {
+      ai = true
     } else if (a.startsWith('--port=')) {
       port = parseInt(a.slice('--port='.length), 10)
     } else if (a.startsWith('-')) {
@@ -54,12 +58,13 @@ function parseArgs(args: string[]): ParsedArgs {
     console.error(`brust dev: no entry file at ${entryPath}; pass a path or create ./index.ts`)
     process.exit(1)
   }
-  return { entry: entryPath, port, generatorVersion }
+  return { entry: entryPath, port, generatorVersion, ai }
 }
 
 export async function runDev(args: string[]): Promise<void> {
   const { entry, port, generatorVersion } = parseArgs(args)
   process.env.BRUST_DEV = '1'
+  process.env.BRUST_AI = '1'
   if (port !== undefined) process.env.BRUST_PORT = String(port)
 
   // Bake the generator decision BEFORE the first emit — emitters and the boot
