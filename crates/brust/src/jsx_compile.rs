@@ -63,6 +63,7 @@ mod tests {
             factory_expr: "(ctx) => h(Layout, {title: ctx.greeting})".to_string(),
             referenced_components: vec!["Layout".to_string()],
             uses_island: false,
+            behavior_modules: Vec::new(),
             key_path: None,
             key_literal: None,
             tags_path: None,
@@ -72,7 +73,7 @@ mod tests {
         let json = components_to_json(&components);
         assert_eq!(
             json,
-            r#"[{"component":"Layout","instance":0,"factoryExpr":"(ctx) => h(Layout, {title: ctx.greeting})","referencedComponents":["Layout"],"usesIsland":false}]"#
+            r#"[{"component":"Layout","instance":0,"factoryExpr":"(ctx) => h(Layout, {title: ctx.greeting})","referencedComponents":["Layout"],"usesIsland":false,"behaviorModules":[]}]"#
         );
     }
 

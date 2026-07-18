@@ -413,6 +413,70 @@ describe('emitMdTemplates — chained md route', () => {
     const manifest = JSON.parse(readFileSync(join(outDir, `${tn}.islands.json`), 'utf8'))
     expect(manifest.length).toBe(2)
   })
+
+  test('re-emitting a layout without SSR components removes stale md sidecars and modules', async () => {
+    const behaviorPath = write(
+      'components/FallbackBehavior.tsx',
+      `import { useState } from 'react'
+export const behavior = () => ({ activate() {} })
+export default function FallbackBehavior() { useState(0); return <button x-on-click="activate">go</button> }
+`,
+    )
+    const layoutPath = write(
+      'DocsLayout.tsx',
+      `import FallbackBehavior from './components/FallbackBehavior'
+export default function DocsLayout({ title }: { title: string }) {
+  return <BrustPage title={title}><main><FallbackBehavior native/><Outlet/></main></BrustPage>
+}
+`,
+    )
+    const entryFile = write('routes.tsx', `import DocsLayout from './DocsLayout'\n`)
+    const contentDir = join(dir, 'content/docs')
+    const indexPath = write('content/docs/index.md', '# Cleanup\n')
+    const tn = mdTemplateName('index.md')
+    const flatRoutes: FlatRouteLike[] = [
+      {
+        nativeTemplate: tn,
+        chain: [
+          { Component: { name: 'DocsLayout' } },
+          {
+            Component: { name: tn },
+            __mdSource: mdSource({
+              absPath: indexPath,
+              relPath: 'index.md',
+              contentDir,
+              frontmatter: { title: 'Cleanup' },
+              layoutName: 'DocsLayout',
+            }),
+          },
+        ],
+      },
+    ]
+
+    await emitMdTemplates({ entryFile, flatRoutes, outDir })
+    const factoryPath = join(outDir, `${tn}.factory.ts`)
+    const componentsPath = join(outDir, `${tn}.components.json`)
+    expect(existsSync(factoryPath)).toBe(true)
+    expect(existsSync(componentsPath)).toBe(true)
+    const generatedName = /\.\/(__brust_behavior_[^"']+\.tsx)/.exec(
+      readFileSync(factoryPath, 'utf8'),
+    )?.[1]
+    expect(generatedName).toBeDefined()
+    expect(existsSync(join(outDir, generatedName!))).toBe(true)
+
+    writeFileSync(
+      layoutPath,
+      `export default function DocsLayout({ title }: { title: string }) {
+  return <BrustPage title={title}><main><Outlet/></main></BrustPage>
+}
+`,
+    )
+    await emitMdTemplates({ entryFile, flatRoutes, outDir })
+    expect(existsSync(factoryPath)).toBe(false)
+    expect(existsSync(componentsPath)).toBe(false)
+    expect(existsSync(join(outDir, generatedName!))).toBe(false)
+    expect(existsSync(behaviorPath)).toBe(true)
+  })
 })
 
 describe('emitMdArtifacts — templates + manifest in one pass (task 2.8)', () => {

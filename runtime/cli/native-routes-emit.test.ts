@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join, relative } from 'node:path'
 import { DIRECTIVES_BOOTSTRAP, ISLANDS_IMPORTMAP_AND_BOOTSTRAP } from '../islands/importmap.ts'
@@ -1077,6 +1077,97 @@ describe('emitNativeTemplates — incremental dev memo (R14)', () => {
     const stats = await emitNativeTemplates(opts)
     expect(stats).toEqual({ compiled: 1, skipped: 1 })
     expect(existsSync(join(outDir, 'Page.jinja'))).toBe(true)
+  })
+
+  test('generated behavior modules are memo outputs and build-only source is stripped', async () => {
+    const behaviorPath = join(dir, 'Behavior.tsx')
+    writeFileSync(
+      behaviorPath,
+      `import { useState } from 'react'
+export const behavior = () => ({ activate() {} })
+export default function Behavior() { useState(0); return <button x-on-click="activate">go</button> }`,
+    )
+    const pagePath = join(dir, 'Page.tsx')
+    writeFileSync(
+      pagePath,
+      `import Behavior from './Behavior'
+export default function Page() { return <Behavior native/> }`,
+    )
+    const routesPath = join(dir, 'routes.tsx')
+    writeFileSync(routesPath, `import Page from './Page'\n`)
+    const outDir = join(dir, 'jinja')
+    mkdirSync(outDir, { recursive: true })
+    const opts = {
+      entryFile: routesPath,
+      flatRoutes: [{ nativeTemplate: 'Page' }],
+      outDir,
+      repoRoot: dir,
+      incremental: true,
+    }
+
+    expect(await emitNativeTemplates(opts)).toEqual({ compiled: 1, skipped: 0 })
+    const generatedName = readdirSync(outDir).find(
+      (name) => name.startsWith('__brust_behavior_') && name.endsWith('.tsx'),
+    )
+    expect(generatedName).toBeDefined()
+    const manifest = readFileSync(join(outDir, 'Page.components.json'), 'utf8')
+    expect(manifest).not.toContain('behaviorModules')
+    expect(manifest).not.toContain('export const behavior')
+
+    rmSync(join(outDir, generatedName!))
+    expect(await emitNativeTemplates(opts)).toEqual({ compiled: 1, skipped: 0 })
+    expect(existsSync(join(outDir, generatedName!))).toBe(true)
+  })
+
+  test('dropping SSR components removes only that route’s sidecars and generated modules', async () => {
+    const behaviorPath = join(dir, 'Behavior.tsx')
+    writeFileSync(
+      behaviorPath,
+      `import { useState } from 'react'
+export const behavior = () => ({ activate() {} })
+export default function Behavior() { useState(0); return <button x-on-click="activate">go</button> }`,
+    )
+    const pagePath = join(dir, 'Page.tsx')
+    const otherPath = join(dir, 'Other.tsx')
+    writeFileSync(
+      pagePath,
+      `import Behavior from './Behavior'
+export default function Page() { return <Behavior native/> }`,
+    )
+    writeFileSync(
+      otherPath,
+      `import Behavior from './Behavior'
+export default function Other() { return <Behavior native/> }`,
+    )
+    const routesPath = join(dir, 'routes.tsx')
+    writeFileSync(routesPath, `import Page from './Page'\nimport Other from './Other'\n`)
+    const outDir = join(dir, 'jinja')
+    mkdirSync(outDir, { recursive: true })
+    const opts = {
+      entryFile: routesPath,
+      flatRoutes: [{ nativeTemplate: 'Page' }, { nativeTemplate: 'Other' }],
+      outDir,
+      repoRoot: dir,
+      incremental: true,
+    }
+
+    expect(await emitNativeTemplates(opts)).toEqual({ compiled: 2, skipped: 0 })
+    const pageFactory = readFileSync(join(outDir, 'Page.factory.ts'), 'utf8')
+    const otherFactory = readFileSync(join(outDir, 'Other.factory.ts'), 'utf8')
+    const pageGenerated = /\.\/(__brust_behavior_[^"']+\.tsx)/.exec(pageFactory)?.[1]
+    const otherGenerated = /\.\/(__brust_behavior_[^"']+\.tsx)/.exec(otherFactory)?.[1]
+    expect(pageGenerated).toBeDefined()
+    expect(otherGenerated).toBeDefined()
+    expect(pageGenerated).not.toBe(otherGenerated)
+
+    writeFileSync(pagePath, `export default function Page() { return <main>static</main> }`)
+    expect(await emitNativeTemplates(opts)).toEqual({ compiled: 1, skipped: 1 })
+    expect(existsSync(join(outDir, 'Page.components.json'))).toBe(false)
+    expect(existsSync(join(outDir, 'Page.factory.ts'))).toBe(false)
+    expect(existsSync(join(outDir, pageGenerated!))).toBe(false)
+    expect(existsSync(join(outDir, 'Other.components.json'))).toBe(true)
+    expect(existsSync(join(outDir, 'Other.factory.ts'))).toBe(true)
+    expect(existsSync(join(outDir, otherGenerated!))).toBe(true)
   })
 })
 

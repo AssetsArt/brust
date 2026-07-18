@@ -233,8 +233,8 @@ are unwrapped like every other directive read.
 
 ## Auto x-data injection
 
-You normally never write `x-data`. When a behavior component is used inline in
-a native route (`<ThemeToggle native themeLabel={label} />`), the compiler
+You normally never write `x-data`. When a behavior component is used in a
+native route (`<ThemeToggle native themeLabel={label} />`), the compiler
 injects `x-data="<name>"` automatically with a deterministic, app-unique name
 (camelCased filename + a short hash of the file path — the same name the
 `.directive.js` chunk registers under). Host resolution, in order:
@@ -247,12 +247,24 @@ injects `x-data="<name>"` automatically with a deterministic, app-unique name
 
 A valued `x-behavior` or more than one marker is a compile error.
 
+This mount contract is independent of inline eligibility. If a component must
+render through an SSR-component slot—for example because it uses hooks or an
+expression outside the native template subset—the server renders a
+compiler-transformed, server-only copy through normal React. The same host
+precedence applies, so the directive chunk still mounts and authored literal
+`x-data` still wins. Inline success changes build/runtime cost, not whether the
+behavior works.
+
 ## What does not compile
 
 Native templates bind data; they do not run arbitrary JavaScript. The positive
 space: member-path expressions, `.map()` over member paths (nested OK), inline
-conditionals in child position, template literals and a small allowlist of
-string methods inside inlined components, local `const` bindings inside
+conditionals in child position, and bounded static
+`Array.from({ length: N }).map((item, index) => …)` for integer `N` from 0
+through 1024. Dynamic, fractional, negative, oversized, spread, shadowed, or
+otherwise extended `Array.from` forms stay on the safe SSR fallback path. Also
+supported are template literals and a small allowlist of string methods inside
+inlined components, local `const` bindings inside
 inlined components (`const rootStyle = {…}` — substituted at compile time;
 `let`/`var` and destructuring declarations are rejected), and component-map
 dispatch (`const Comp = SECTIONS[key]; return <Comp …/>` with the map defined
@@ -271,12 +283,15 @@ this docs site (see also [Rendering Modes](/docs/rendering)):
   condition infers `pager.prev` as a scalar while `pager.prev.path` infers it
   as a struct. Precompute a sibling boolean in the loader
   (`pager.hasPrev`) and test that instead.
-- The two-arg `(item, index)` form of `.map()` and bare-fragment map bodies
-  are rejected.
+- The two-arg `(item, index)` form of `.map()` over a runtime member path and
+  bare-fragment map bodies are rejected.
 
 When a `native`-marked component can't be inlined (impure body, untranslatable
 expression), the build degrades it to an SSR-component slot with a warning
-rather than failing — the page still renders, via a worker `renderToString`.
+rather than failing. The page and its behavior still render via normal React
+`renderToString`; only the inline performance optimization is skipped. A
+behavior component whose return shapes do not expose one provable host fails
+the build with remediation instead of silently losing interactivity.
 
 ## Next
 

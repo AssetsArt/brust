@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, relative, resolve } from 'node:path'
 import { buildDevClientTag } from '../dev/client.ts'
 import { insertGeneratorMeta, insertShellMeta, resolveGenerator } from '../generator.ts'
 import { islandChunkBasename } from '../islands/chunk-id.ts'
+import { emitBehaviorSsrModule } from '../islands/behavior-ssr-loader.ts'
 import { DIRECTIVES_BOOTSTRAP, ISLANDS_IMPORTMAP_AND_BOOTSTRAP } from '../islands/importmap.ts'
 
 /** Gather transitive component sources starting from a page source file.
@@ -391,6 +392,7 @@ interface RawComponentEntry {
   factoryExpr: string
   referencedComponents: string[]
   usesIsland: boolean
+  behaviorModules: RawBehaviorModule[]
   /** ISR cache fields (present only on components with an `isr` attr). Declared
    * so the `{ ...entry }` / `{ ...e }` enrich spreads below are type-complete —
    * they MUST survive into the enriched `<Name>.components.json`, or runtime ISR
@@ -400,10 +402,58 @@ interface RawComponentEntry {
   revalidate?: number
 }
 
+interface RawBehaviorModule {
+  component: string
+  directiveName: string
+  source: string
+}
+
+interface EnrichedBehaviorModule extends RawBehaviorModule {
+  moduleId: string
+  sourcePath: string
+}
+
 /** Enriched component entry written to `<Name>.components.json`. */
 interface EnrichedComponentEntry extends RawComponentEntry {
   /** Absolute path to the component's source file (resolved from page imports). */
   sourcePath: string
+  behaviorModules: EnrichedBehaviorModule[]
+}
+
+function behaviorArtifactPrefix(routeName: string): string {
+  const routeScope = createHash('sha256').update(routeName).digest('hex').slice(0, 16)
+  return `__brust_behavior_${routeScope}_`
+}
+
+function behaviorModuleId(
+  routeName: string,
+  sourcePath: string,
+  directiveName: string,
+  source: string,
+): string {
+  return createHash('sha256')
+    .update(`${routeName}\0${sourcePath}\0${directiveName}\0${source}`)
+    .digest('hex')
+}
+
+function behaviorArtifactPaths(jinjaPath: string, routeName: string): string[] {
+  const jinjaDir = dirname(jinjaPath)
+  const prefix = behaviorArtifactPrefix(routeName)
+  if (!existsSync(jinjaDir)) return []
+  return readdirSync(jinjaDir)
+    .filter((name) => name.startsWith(prefix) && name.endsWith('.tsx'))
+    .map((name) => resolve(jinjaDir, name))
+}
+
+/** Remove every server-only SSR-component sidecar owned by one route. The
+ * route hash in behavior filenames prevents cleanup from touching another
+ * route's generated module, even when both render the same component. */
+export function cleanupComponentArtifacts(jinjaPath: string, routeName: string): void {
+  rmSync(jinjaPath.replace(/\.jinja$/, '.components.json'), { force: true })
+  rmSync(jinjaPath.replace(/\.jinja$/, '.factory.ts'), { force: true })
+  for (const generatedPath of behaviorArtifactPaths(jinjaPath, routeName)) {
+    rmSync(generatedPath, { force: true })
+  }
 }
 
 /** One entry in a `<Name>.islands.json` as emitted by `jsx-rustc` (camelCase,
@@ -454,9 +504,9 @@ export function emitComponentArtifacts(
   componentsJsonStr: string,
   pageImports: Map<string, ResolvedImport>,
   routeName: string,
-): { islandIdsFromComponents: string[] } {
+): { islandIdsFromComponents: string[]; generatedPaths: string[] } {
   const raw = JSON.parse(componentsJsonStr) as RawComponentEntry[]
-  if (raw.length === 0) return { islandIdsFromComponents: [] }
+  if (raw.length === 0) return { islandIdsFromComponents: [], generatedPaths: [] }
 
   const jinjaDir = dirname(jinjaPath)
   const projectRoot = process.cwd()
@@ -464,6 +514,67 @@ export function emitComponentArtifacts(
   // Enrich with the resolved import ref. For local imports `ref.spec` is an
   // ABSOLUTE path (kept absolute for the readFileSync island scan below); for
   // bare imports it's the verbatim package specifier.
+  const behaviorByComponent = new Map<string, EnrichedBehaviorModule>()
+  for (const entry of raw) {
+    for (const module of entry.behaviorModules ?? []) {
+      const ref = pageImports.get(module.component)
+      if (!ref || ref.bare) {
+        throw new Error(
+          `SSR behavior component "${module.component}" in native route "${routeName}" has no local source import`,
+        )
+      }
+      const sourcePath = relative(projectRoot, ref.spec).replaceAll('\\', '/')
+      const moduleId = behaviorModuleId(routeName, sourcePath, module.directiveName, module.source)
+      const enrichedModule: EnrichedBehaviorModule = {
+        ...module,
+        moduleId,
+        sourcePath,
+      }
+      const prior = behaviorByComponent.get(module.component)
+      if (
+        prior &&
+        (prior.moduleId !== enrichedModule.moduleId ||
+          prior.directiveName !== enrichedModule.directiveName ||
+          prior.sourcePath !== enrichedModule.sourcePath)
+      ) {
+        throw new Error(
+          `SSR behavior component "${module.component}" has conflicting transformed definitions in native route "${routeName}"`,
+        )
+      }
+      behaviorByComponent.set(module.component, enrichedModule)
+    }
+  }
+
+  // If an opaque fallback parent imports one of the transformed behavior
+  // modules, its original source would otherwise bundle that child's original
+  // (unwired) source. Add unchanged passthrough parents until the import graph
+  // reaches a fixed point; the loader rewrites their local imports to the
+  // generated child artifacts below.
+  let addedPassthrough = true
+  while (addedPassthrough) {
+    addedPassthrough = false
+    const generatedSourcePaths = new Set(
+      [...behaviorByComponent.values()].map((module) => resolve(projectRoot, module.sourcePath)),
+    )
+    for (const [component, ref] of pageImports) {
+      if (!isComponentIdent(component) || ref.bare || behaviorByComponent.has(component)) continue
+      const importsGeneratedModule = [...scanImportRefs(ref.spec).values()].some(
+        (dependency) => !dependency.bare && generatedSourcePaths.has(dependency.spec),
+      )
+      if (!importsGeneratedModule) continue
+      const source = readFileSync(ref.spec, 'utf8')
+      const sourcePath = relative(projectRoot, ref.spec).replaceAll('\\', '/')
+      behaviorByComponent.set(component, {
+        component,
+        directiveName: '',
+        source,
+        sourcePath,
+        moduleId: behaviorModuleId(routeName, sourcePath, '', source),
+      })
+      addedPassthrough = true
+    }
+  }
+
   const enriched: Array<EnrichedComponentEntry & { ref: ResolvedImport }> = raw.map((entry) => {
     const ref = pageImports.get(entry.component)
     if (!ref) {
@@ -471,7 +582,14 @@ export function emitComponentArtifacts(
         `SSR component "${entry.component}" in native route "${routeName}" has no matching import in the page source (expected \`import ${entry.component} from "..."\`)`,
       )
     }
-    return { ...entry, sourcePath: ref.spec, ref }
+    return {
+      ...entry,
+      sourcePath: ref.spec,
+      behaviorModules: (entry.behaviorModules ?? []).map(
+        (module) => behaviorByComponent.get(module.component)!,
+      ),
+      ref,
+    }
   })
 
   // Write <Name>.components.json. For LOCAL imports sourcePath is PROJECT-RELATIVE
@@ -479,11 +597,69 @@ export function emitComponentArtifacts(
   // package spec verbatim. (sourcePath is build-time metadata — the factory
   // import is what's load-bearing at runtime.)
   const compJsonPath = jinjaPath.replace(/\.jinja$/, '.components.json')
-  const compJsonEntries = enriched.map(({ ref, ...e }) => ({
+  const compJsonEntries = enriched.map(({ ref, behaviorModules: _behaviorModules, ...e }) => ({
     ...e,
     sourcePath: ref.bare ? ref.spec : relative(projectRoot, ref.spec).replaceAll('\\', '/'),
   }))
   writeFileSync(compJsonPath, JSON.stringify(compJsonEntries))
+
+  const generatedSpecByComponent = new Map<string, string>()
+  const generatedPathByComponent = new Map<string, string>()
+  const generatedPaths: string[] = []
+  const artifactPrefix = behaviorArtifactPrefix(routeName)
+  for (const module of behaviorByComponent.values()) {
+    const filename = `${artifactPrefix}${module.moduleId}.tsx`
+    const outputPath = resolve(jinjaDir, filename)
+    generatedSpecByComponent.set(module.component, `./${filename}`)
+    generatedPathByComponent.set(module.component, outputPath)
+    generatedPaths.push(outputPath)
+  }
+  const componentBySourcePath = new Map(
+    [...behaviorByComponent.values()].map((module) => [
+      resolve(projectRoot, module.sourcePath),
+      module.component,
+    ]),
+  )
+  const emittedComponents = new Set<string>()
+  const emittingComponents = new Set<string>()
+  const emitGeneratedModule = (module: EnrichedBehaviorModule): void => {
+    if (emittedComponents.has(module.component)) return
+    if (!emittingComponents.add(module.component)) {
+      throw new Error(
+        `SSR behavior modules form an import cycle at "${module.component}" in native route "${routeName}"`,
+      )
+    }
+    const sourcePath = resolve(projectRoot, module.sourcePath)
+    for (const dependency of scanImportRefs(sourcePath).values()) {
+      if (dependency.bare) continue
+      const dependencyComponent = componentBySourcePath.get(dependency.spec)
+      if (!dependencyComponent) continue
+      emitGeneratedModule(behaviorByComponent.get(dependencyComponent)!)
+    }
+    const outputPath = generatedPathByComponent.get(module.component)!
+    emitBehaviorSsrModule(
+      {
+        ...module,
+        sourcePath,
+        dependencies: [...behaviorByComponent.values()]
+          .filter((dependency) => dependency.component !== module.component)
+          .map((dependency) => ({
+            sourcePath: resolve(projectRoot, dependency.sourcePath),
+            outputPath: generatedPathByComponent.get(dependency.component)!,
+          })),
+      },
+      outputPath,
+    )
+    emittingComponents.delete(module.component)
+    emittedComponents.add(module.component)
+  }
+  for (const module of behaviorByComponent.values()) {
+    emitGeneratedModule(module)
+  }
+  const currentGeneratedPaths = new Set(generatedPaths)
+  for (const stalePath of behaviorArtifactPaths(jinjaPath, routeName)) {
+    if (!currentGeneratedPaths.has(stalePath)) rmSync(stalePath, { force: true })
+  }
 
   // Collect import lines. Deduplicate referenced components.
   const seen = new Set<string>()
@@ -506,7 +682,12 @@ export function emitComponentArtifacts(
     seen.add(compName)
     const ref = pageImports.get(compName)
     if (!ref) continue
-    const spec = ref.bare ? ref.spec : toRelativeSpecifier(jinjaDir, ref.spec)
+    const generatedSpec = generatedSpecByComponent.get(compName)
+    const spec = generatedSpec
+      ? generatedSpec
+      : ref.bare
+        ? ref.spec
+        : toRelativeSpecifier(jinjaDir, ref.spec)
     const specStr = JSON.stringify(spec)
     if (ref.kind === 'namespace') {
       importLines.push(`import * as ${compName} from ${specStr}`)
@@ -566,7 +747,7 @@ export function emitComponentArtifacts(
     }
   }
 
-  return { islandIdsFromComponents }
+  return { islandIdsFromComponents, generatedPaths }
 }
 
 export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<NativeEmitStats> {
@@ -802,11 +983,14 @@ export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<Na
     // SSR component artifacts: .components.json + .factory.ts
     const compJsonStr = (compiled as any).componentsJson ?? '[]'
     if (compJsonStr !== '[]') {
-      emitComponentArtifacts(outPath, compJsonStr, mergedImports, name)
+      const { generatedPaths } = emitComponentArtifacts(outPath, compJsonStr, mergedImports, name)
       outputs.push(
         outPath.replace(/\.jinja$/, '.components.json'),
         outPath.replace(/\.jinja$/, '.factory.ts'),
+        ...generatedPaths,
       )
+    } else {
+      cleanupComponentArtifacts(outPath, name)
     }
 
     // R14 — memoize only what was hashed AND written by an incremental call;
