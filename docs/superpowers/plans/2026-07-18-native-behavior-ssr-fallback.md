@@ -4,9 +4,9 @@
 "owner":"0ddb11d0-954b-4710-90ce-8191a46fe3c3","authority":"in-loop",
 "planPath":"docs/superpowers/plans/2026-07-18-native-behavior-ssr-fallback.md","baseSha":"68b878afe25698511b1925bb429b317b0fe03295","escalation":"0ddb11d0-954b-4710-90ce-8191a46fe3c3",
 "readingOrder":["docs/superpowers/plans/2026-07-18-native-behavior-ssr-fallback.md","docs/superpowers/specs/2026-06-03-native-interactivity-directives-design.md","example/docs/content/native-interactivity.md","crates/jsx-rust-compiler/src/lower.rs","runtime/islands/native-render.ts"],
-"boundary":["crates/jsx-rust-compiler/src/emit_factory.rs","crates/jsx-rust-compiler/src/ir.rs","crates/jsx-rust-compiler/src/lib.rs","crates/jsx-rust-compiler/src/lower.rs","docs/superpowers/plans/2026-07-18-native-behavior-ssr-fallback.md","example/docs/content/native-interactivity.md","example/docs/content/rendering.md","runtime/cli/native-routes-emit.ts","runtime/islands/native-render.test.ts","runtime/islands/native-render.ts","tests/fixtures/app/NativeInlinePage.tsx","tests/fixtures/app/components/BehaviorSsrFallback.tsx","tests/native-inline.test.ts","types/islands/isr-jsx.d.ts"],
+"boundary":["crates/jsx-rust-compiler/src/emit_factory.rs","crates/jsx-rust-compiler/src/ir.rs","crates/jsx-rust-compiler/src/lib.rs","crates/jsx-rust-compiler/src/lower.rs","docs/superpowers/plans/2026-07-18-native-behavior-ssr-fallback.md","example/docs/content/native-interactivity.md","example/docs/content/rendering.md","runtime/cli/native-routes-emit.ts","runtime/islands/native-render.test.ts","runtime/islands/native-render.ts","tests/fixtures/app/NativeInline.tsx","tests/fixtures/app/components/BehaviorSsrFallback.tsx","tests/native-inline.test.ts","types/islands/isr-jsx.d.ts"],
 "consumes":["crates/jsx-rust-compiler/src/lower.rs#try_native_inline","runtime/islands/native-render.ts#resolveComponentContext","runtime/native/runtime.ts#start"],
-"produces":["docs/superpowers/plans/2026-07-18-native-behavior-ssr-fallback.md#Done When","tests/native-inline.test.ts#behavior SSR fallback regression"],"gates":["cargo fmt --all --check","cargo clippy --workspace --all-targets --locked -- -D warnings","cargo test -p jsx-rust-compiler --locked","bun test runtime/islands/native-render.test.ts","bun test tests/native-inline.test.ts","bun test runtime/native/","bun run ci"]
+"produces":["docs/superpowers/plans/2026-07-18-native-behavior-ssr-fallback.md#Done When","tests/native-inline.test.ts#behavior SSR fallback regression"],"gates":["test -f tests/fixtures/app/NativeInline.tsx","cargo fmt --all --check","cargo clippy --workspace --all-targets --locked -- -D warnings","cargo test -p jsx-rust-compiler --locked","bun test runtime/islands/native-render.test.ts","bun test tests/native-inline.test.ts","bun test runtime/native/","bun run ci"]
 } -->
 
 ## Goal
@@ -48,7 +48,7 @@ Apply the four-step debug mantra in order. Do not edit production code before th
 ### Phase 1 — deterministic reproduction
 
 1. Add a dedicated fixture component with `export const behavior`, an author-omitted `x-data`, an `x-on-*` directive, and an `Array.from({ length: 2 }).map(...)` expression that forces the established soft SSR fallback.
-2. Use it with the `native` marker from `NativeInlinePage.tsx`.
+2. Use it with the `native` marker from `tests/fixtures/app/NativeInline.tsx`, the component registered by the fixture route table.
 3. Extend `tests/native-inline.test.ts` to prove all four facts at the built seam: the warning identifies the inline failure; the component is a `comp_N_html` SSR slot; the matching directive chunk exists; the final server/built behavior host lacks its canonical `x-data` while retaining `x-on-*`.
 4. Run the smallest deterministic test twice and record both red results as task gates/notes.
 
@@ -103,6 +103,7 @@ Design/spec conflicts are filed as task challenges and ruled by Aoki. Dabin owns
 
 ## Verification
 
+- Boundary guard credited to Dabin: `test -f tests/fixtures/app/NativeInline.tsx` prevents the stale route-component path from surviving another plan handoff.
 - RED phase: run the smallest `tests/native-inline.test.ts` name pattern twice and record both failing gates.
 - Focused GREEN: `cargo test -p jsx-rust-compiler --locked`, `bun test runtime/islands/native-render.test.ts`, and `bun test tests/native-inline.test.ts`.
 - Final gates: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `bun test runtime/native/`, and `bun run ci` in addition to the focused gates.
