@@ -279,6 +279,45 @@ describe('SVG directive traversal', () => {
     expect(mounted).toHaveLength(2)
   })
 
+  test('failed loads release pending hosts and permit a same-name retry', async () => {
+    const win = setupDom(
+      '<svg id="retry-root"><g id="failed-first" x-data="retrySvg"><text>first</text></g></svg>',
+    )
+    const { register, start } = await import(`./runtime.ts?retrySvg=${Math.random()}`)
+    const errors: unknown[][] = []
+    const error = console.error
+    console.error = (...args: unknown[]) => {
+      errors.push(args)
+    }
+    try {
+      const failedLoads = () =>
+        errors.filter((args) => String(args[0]).includes('failed to load directive component'))
+
+      start(win.document)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(failedLoads()).toHaveLength(1)
+
+      const second = win.document.createElementNS('http://www.w3.org/2000/svg', 'g')
+      second.setAttribute('x-data', 'retrySvg')
+      second.innerHTML = '<text>second</text>'
+      win.document.getElementById('retry-root')!.appendChild(second)
+      start(second)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(failedLoads()).toHaveLength(2)
+
+      let mounts = 0
+      register<SVGElement>('retrySvg', () => {
+        mounts++
+        return {}
+      })
+      expect(mounts).toBe(0)
+      expect(win.document.querySelector('#failed-first text')!.textContent).toBe('first')
+      expect(second.querySelector('text')!.textContent).toBe('second')
+    } finally {
+      console.error = error
+    }
+  })
+
   test('x-if on an SVG element toggles fresh SVG namespace clones', async () => {
     const win = setupDom(
       '<svg x-data="svgIf"><g id="svg-if" x-if="open"><text x-text="label"></text></g></svg>',

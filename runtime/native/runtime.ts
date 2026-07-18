@@ -176,11 +176,13 @@ function loadBehavior(name: string): void {
     .then(() => import(/* @vite-ignore */ `${CHUNK_BASE}${name}.directive.js`))
     .then(() => {
       if (!registry.has(name)) {
+        loading.delete(name)
         pending.delete(name)
         console.warn(`[brust] "${name}.directive.js" loaded but did not register "${name}"`)
       }
     })
     .catch((e) => {
+      loading.delete(name)
       pending.delete(name)
       console.error(`[brust] failed to load directive component "${name}":`, e)
     })
