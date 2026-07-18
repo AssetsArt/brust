@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path'
 import { spawnSync } from 'bun'
 import { directiveName } from '../runtime/native/build.ts'
 import {
+  type IslandCache,
   type NativeComponentEntry,
   resolveComponentContext,
 } from '../runtime/islands/native-render.ts'
@@ -325,11 +326,20 @@ test('behavior SSR fallback retains its canonical mount identity', async () => {
     true,
   )
 
+  const stored = new Map<string, { html: string; props: string }>()
+  const cache: IslandCache = {
+    get: (key) => stored.get(key) ?? null,
+    set: (key, _tags, _ttlMs, html, props) => {
+      stored.set(key, { html, props })
+    },
+  }
+
   const context = await resolveComponentContext(
     manifest,
     { label: 'Hi', strong: true, count: { start: 0, label: 'c' } },
     'NativeInline',
     JINJA_DIR,
+    cache,
   )
   const rendered = context[`comp_${entry?.instance}_html`] ?? ''
   expect(rendered).toContain('class="behavior-ssr-fallback"')
@@ -337,6 +347,16 @@ test('behavior SSR fallback retains its canonical mount identity', async () => {
   expect(rendered).toContain(`x-data="${expectedName}"`)
   expect(rendered).toContain('C')
   expect(rendered).toContain('source-preserved')
+  expect(stored.get('behavior-fallback')?.html).toBe(rendered)
+
+  const cached = await resolveComponentContext(
+    manifest,
+    { label: 'changed', strong: false, count: { start: 9, label: 'changed' } },
+    'NativeInline',
+    JINJA_DIR,
+    cache,
+  )
+  expect(cached[`comp_${entry?.instance}_html`]).toBe(rendered)
 })
 
 test('bounded Array.from length map inline-lowers without a fallback warning', () => {

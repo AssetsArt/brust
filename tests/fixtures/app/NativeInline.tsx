@@ -20,7 +20,7 @@ export default function NativeInline({
       <WrapCounter native c={count} />
       <BehaviorBadge native label={label} />
       <BehaviorSsrFallback native label={label} />
-      <BehaviorSsrFallback native {...count} />
+      <BehaviorSsrFallback native {...count} isr={{ key: 'behavior-fallback' }} />
       <NativeStaticEval />
     </main>
   )
