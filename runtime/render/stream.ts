@@ -263,7 +263,9 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
               genTag.length > 0 ||
               shellTag.length > 0
             ) {
-              const prepend = encoder.encode(genTag + shellTag + linkTagsStr + prefixTag + devTag + storeTag)
+              const prepend = encoder.encode(
+                genTag + shellTag + linkTagsStr + prefixTag + devTag + storeTag,
+              )
               const out = new Uint8Array(prepend.length + aiTag.length + flushed.length)
               out.set(prepend, 0)
               out.set(encoder.encode(aiTag), prepend.length)

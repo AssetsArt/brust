@@ -12,12 +12,7 @@
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import {
-  aiScriptTag,
-  injectAiScriptIntoTemplate,
-  insertGeneratorMeta,
-  resolveGenerator,
-} from '../generator.ts'
+import { injectAiScriptIntoTemplate, insertGeneratorMeta, resolveGenerator } from '../generator.ts'
 import {
   bakeDirectivesIfUsed,
   buildChainWrapperSource,
