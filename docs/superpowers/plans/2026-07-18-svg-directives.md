@@ -25,7 +25,7 @@ The same `HTMLElement` assumption exists in `bindAdoptedNode()`, `collectSeeds()
 5. **Class binding is namespace-safe.** `setBound(el, 'class', value)` keeps `className` for `HTMLElement`; every non-HTML `Element` uses `setAttribute('class', ...)` / `removeAttribute('class')`. This covers SVG's `SVGAnimatedString` and MathML without assignment.
 6. **Property special cases are capability-sensitive.** `value` and boolean property reflection may write a property only when that property exists on the element; attribute presence/removal remains the namespace-neutral fallback. Generic attributes always use `setAttribute`/`removeAttribute`.
 7. **No build warning fallback.** SVG is supported at runtime. Silent skipping is removed rather than documented as a limitation.
-8. **Lazy behavior registration drains the elements that requested it.** `document.querySelectorAll()` cannot cross open shadow-root boundaries, so it cannot be the post-import remount mechanism. Track pending `Element` hosts by behavior name when `mountElement()` encounters an unloaded behavior, then drain that exact set from `register()` after the chunk self-registers. Clear pending strong references on success/failure. This covers document, SVG, and nested open-shadow-root hosts without maintaining a global shadow-root registry. Armin found and evidenced this missing call path in review challenge `c5b368ff`.
+8. **Lazy behavior registration drains the elements that requested it.** `document.querySelectorAll()` cannot cross open shadow-root boundaries, so it cannot be the post-import remount mechanism. Track pending `Element` hosts by behavior name when `mountElement()` encounters an unloaded behavior, then drain that exact set from `register()` after the chunk self-registers. On terminal import failure or a loaded chunk that does not register, remove both the settled `loading` entry and the pending host set in the same settlement callback; a later same-name host must retry rather than become a permanently retained pending reference. Success remains registry-gated. This covers document, SVG, and nested open-shadow-root hosts without maintaining a global shadow-root registry. Armin found and evidenced the missing shadow-root call path in review challenge `c5b368ff` and the failed-retry retention path in `cca3f742`.
 
 Rejected alternatives:
 
@@ -38,7 +38,7 @@ Rejected alternatives:
 Edit `runtime/native/runtime.ts`:
 
 - Generalize `BehaviorCtx`, `Behavior`, registry storage, `mounted`, `scanAndMount`, `mountElement`, lazy-load pending queries, `bindTree`, structural directive element/bookkeeping types, keyed seed helpers, `bindAdoptedNode`, `bindIf`, `bindAttrs`, observation, disposal, and `setBound` to the settled `Element` boundary.
-- Replace the post-import `document.querySelectorAll()` remount with a behavior-name keyed pending-element set populated by `mountElement()` and drained synchronously by `register()`. Ensure an element added while the same chunk is already loading joins the set, detached elements remain protected by `mountElement()`'s `isConnected` guard, and failed loads release pending references.
+- Replace the post-import `document.querySelectorAll()` remount with a behavior-name keyed pending-element set populated by `mountElement()` and drained synchronously by `register()`. Ensure an element added while the same chunk is already loading joins the set, detached elements remain protected by `mountElement()`'s `isConnected` guard, and terminal failure/no-register callbacks synchronously clear both the `loading` entry and pending references so a later host retries cleanly.
 - Replace every traversal/mutation `instanceof HTMLElement` filter that currently drops SVG with `instanceof Element`.
 - Keep `bindModel()` typed `HTMLElement`; guard it at `bindAttrs()`.
 - Apply `x-show` through the element's standard inline style capability without narrowing traversal back to HTML.
@@ -53,6 +53,7 @@ Edit `runtime/native/runtime.test.ts`:
 - Add SVG keyed `x-for` seed adoption/reconcile coverage so `collectSeeds()` and clone bookkeeping cannot regress.
 - Add non-HTML `x-model` warn-and-skip coverage if the implementation adds the settled warning branch.
 - Add an initially unknown SVG `x-data` host inside an open shadow root, register its behavior after `start()`, and assert it mounts/reacts exactly once. This is the regression guard for Armin's `c5b368ff` review finding.
+- Add a failed-load retry regression: let one behavior-name load settle unsuccessfully, add a second same-name SVG host, observe a second load attempt, then register and prove neither failed host remained pending or mounted. This guards Armin's `cca3f742` review finding.
 - Retain all HTML tests unchanged.
 
 ## Gates
