@@ -138,12 +138,17 @@ test('GET /_test/native-island — client-only island serves inline and SSR-slot
   // The client-only mount keeps useful server HTML until bootstrap obtains a
   // valid Counter module. MenuSkeleton is native-inlined, while HookBadge uses
   // the existing SSR component slot/factory path because it calls useState.
-  expect(body).toContain('<span class="menu-skeleton">Hello islands</span>')
+  // MenuSkeleton also directly lowers a nested Counter island: its marker and
+  // chunk must exist before the parent CSR takeover disposes its lifecycle.
+  expect(body).toContain('<div class="menu-skeleton"><span>Hello islands</span>')
   expect(body).toMatch(/<span class="hbadge">Hello islands(?:<!-- -->)?0<\/span>/)
-  expect(body).not.toContain('data-brust-csr></div>')
+  expect(body.match(/data-brust-island="Counter_[a-f0-9]{8}"/g)).toHaveLength(2)
 
   const jinjaDir = resolve(FIXTURE_DIR, '.brust/jinja')
   const jinja = readFileSync(resolve(jinjaDir, 'NativeIslandPage.jinja'), 'utf8')
+  const islands = JSON.parse(
+    readFileSync(resolve(jinjaDir, 'NativeIslandPage.islands.json'), 'utf8'),
+  ) as Array<{ component: string; instance: number }>
   const components = readFileSync(resolve(jinjaDir, 'NativeIslandPage.components.json'), 'utf8')
   const factory = readFileSync(resolve(jinjaDir, 'NativeIslandPage.factory.ts'), 'utf8')
   expect(jinja).toContain('class="menu-skeleton"')
@@ -152,6 +157,8 @@ test('GET /_test/native-island — client-only island serves inline and SSR-slot
   expect(components).not.toContain('"MenuSkeleton"')
   expect(factory).toContain('import HookBadge')
   expect(factory).toContain('h(HookBadge')
+  expect(islands.map(({ instance }) => instance)).toEqual([0, 1])
+  expect(islands[0]?.component).toBe(islands[1]?.component)
 
   // Bootstrap baked by T6: the importmap + the module bootstrap script appear
   // LITERALLY (minijinja strips the {% raw %}/{% endraw %} markers, emitting the

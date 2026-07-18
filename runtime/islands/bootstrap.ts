@@ -45,55 +45,101 @@ import { withViewTransition } from './view-transition.ts'
 // out from under a live root causes React's scheduler to keep posting
 // work to a detached subtree, which manifests as a hung tab.
 const islandRoots = new WeakMap<HTMLElement, Root>()
+const islandTriggerCleanups = new WeakMap<HTMLElement, () => void>()
+const canceledIslandMarkers = new WeakSet<HTMLElement>()
 
 type Trigger = 'load' | 'idle' | 'visible' | 'interaction'
 
-function registerTrigger(el: HTMLElement, trigger: Trigger, fire: () => void): void {
+function registerTrigger(el: HTMLElement, trigger: Trigger, fire: () => void): () => void {
   switch (trigger) {
     case 'load': {
       fire()
-      return
+      return () => {}
     }
     case 'idle': {
-      const rIC = (globalThis as { requestIdleCallback?: (cb: () => void) => void })
-        .requestIdleCallback
-      if (typeof rIC === 'function') {
-        rIC(fire)
-      } else {
-        setTimeout(fire, 0)
+      const idleGlobal = globalThis as {
+        requestIdleCallback?: (cb: () => void) => number
+        cancelIdleCallback?: (handle: number) => void
       }
-      return
+      let active = true
+      const run = () => {
+        if (!active) return
+        active = false
+        islandTriggerCleanups.delete(el)
+        fire()
+      }
+      const rIC = idleGlobal.requestIdleCallback
+      if (typeof rIC === 'function') {
+        const handle = rIC(run)
+        return () => {
+          if (!active) return
+          active = false
+          idleGlobal.cancelIdleCallback?.(handle)
+        }
+      } else {
+        const handle = setTimeout(run, 0)
+        return () => {
+          if (!active) return
+          active = false
+          clearTimeout(handle)
+        }
+      }
     }
     case 'visible': {
       if (typeof IntersectionObserver === 'undefined') {
         fire()
-        return
+        return () => {}
       }
+      let active = true
       const io = new IntersectionObserver((entries, obs) => {
+        if (!active) return
         for (const e of entries) {
           if (e.isIntersecting) {
+            active = false
             obs.disconnect()
+            islandTriggerCleanups.delete(el)
             fire()
             return
           }
         }
       })
       io.observe(el)
-      return
+      return () => {
+        if (!active) return
+        active = false
+        io.disconnect()
+      }
     }
     case 'interaction': {
+      let active = true
       const onceFire = () => {
+        if (!active) return
+        active = false
         el.removeEventListener('pointerdown', onceFire)
         el.removeEventListener('keydown', onceFire)
         el.removeEventListener('focusin', onceFire)
+        islandTriggerCleanups.delete(el)
         fire()
       }
       el.addEventListener('pointerdown', onceFire, { once: false })
       el.addEventListener('keydown', onceFire, { once: false })
       el.addEventListener('focusin', onceFire, { once: false })
-      return
+      return () => {
+        if (!active) return
+        active = false
+        el.removeEventListener('pointerdown', onceFire)
+        el.removeEventListener('keydown', onceFire)
+        el.removeEventListener('focusin', onceFire)
+      }
     }
   }
+}
+
+function cleanupIslandTrigger(el: HTMLElement): void {
+  const cleanup = islandTriggerCleanups.get(el)
+  if (!cleanup) return
+  islandTriggerCleanups.delete(el)
+  cleanup()
 }
 
 // Exported for unit testing — the public entry is hydrateMarkersIn, but the
@@ -116,7 +162,10 @@ function islandChunkMap(): Promise<Record<string, string>> {
 export async function hydrateOne(
   el: HTMLElement,
   importer: (url: string) => Promise<Record<string, unknown>> = (url) => import(url),
+  chunkMapLoader: () => Promise<Record<string, string>> = islandChunkMap,
 ): Promise<void> {
+  if (canceledIslandMarkers.has(el)) return
+  cleanupIslandTrigger(el)
   const id = el.getAttribute('data-brust-island')
   if (!id) return
   const propsJson = el.getAttribute('data-brust-props') ?? '{}'
@@ -128,24 +177,34 @@ export async function hydrateOne(
     return
   }
   try {
-    const url = (await islandChunkMap())[id] ?? `/_brust/islands/${id}.js`
+    const chunkMap = await chunkMapLoader()
+    if (canceledIslandMarkers.has(el)) return
+    const url = chunkMap[id] ?? `/_brust/islands/${id}.js`
     const mod = await importer(url)
+    if (canceledIslandMarkers.has(el)) return
     const Component = (mod.default ?? mod) as React.ComponentType<Record<string, unknown>>
     if (typeof Component !== 'function') {
       console.error(`[brust] island "${id}": chunk has no default-exported component`)
       return
     }
+    if (canceledIslandMarkers.has(el)) return
     let root: Root
     if (el.hasAttribute('data-brust-csr')) {
       // Client-only island: discard any server placeholder only after the
       // component chunk is known-good, immediately before taking over with a
-      // fresh client root. hydrateRoot would mismatch against the fallback.
+      // fresh client root. Descendant islands may already be mounted or awaiting
+      // their own chunks, so cancel/unmount them before their DOM is removed.
+      // hydrateRoot would mismatch against the fallback.
+      unmountIslandsIn(el)
+      if (canceledIslandMarkers.has(el)) return
       while (el.firstChild) el.removeChild(el.firstChild)
+      if (canceledIslandMarkers.has(el)) return
       root = createRoot(el)
       root.render(createElement(Component, props))
     } else {
       // Server island (or React-path island): server markup is present in the
       // mount, so hydrate it in place to attach handlers without re-rendering.
+      if (canceledIslandMarkers.has(el)) return
       root = hydrateRoot(el, createElement(Component, props))
     }
     // createRoot and hydrateRoot both return a Root with .unmount(), so
@@ -161,22 +220,42 @@ export async function hydrateOne(
  * posting work to detached nodes and the tab hangs. Exported for unit
  * testing the createRoot/hydrateRoot unmount parity. */
 export function unmountIslandsIn(root: ParentNode): void {
-  const markers = root.querySelectorAll<HTMLElement>('[data-brust-island]')
-  for (const el of Array.from(markers)) {
+  const markers = Array.from(root.querySelectorAll<HTMLElement>('[data-brust-island]'))
+  // Cancel every marker and trigger FIRST. An unmount can run arbitrary React
+  // cleanup code, so no pending descendant may be able to resume re-entrantly.
+  for (const el of markers) {
+    canceledIslandMarkers.add(el)
+    cleanupIslandTrigger(el)
+  }
+  // A parent root may remove its descendants while unmounting. Dispose deepest
+  // roots first, and delete the tracking entry before calling user/React cleanup
+  // so a re-entrant disposal remains idempotent.
+  markers.sort((a, b) => markerDepth(b, root) - markerDepth(a, root))
+  for (const el of markers) {
     const r = islandRoots.get(el)
     if (r) {
+      islandRoots.delete(el)
       try {
         r.unmount()
       } catch (e) {
         console.warn('[brust] island unmount failed', e)
       }
-      islandRoots.delete(el)
     }
   }
   // Client-takeover roots (fallback: 'client' SSG pages) live in fallback.ts's
   // own WeakMap — delegate so navigating away from a client-rendered page
   // disposes its React root too (same detached-root hazard as islands).
   unmountFallbackRootsIn(root)
+}
+
+function markerDepth(el: HTMLElement, root: ParentNode): number {
+  let depth = 0
+  let cursor: ParentNode | null = el.parentNode
+  while (cursor && cursor !== root) {
+    depth++
+    cursor = cursor.parentNode
+  }
+  return depth
 }
 
 /** Scan `root` for un-hydrated island markers and register their hydration
@@ -189,11 +268,13 @@ export function hydrateMarkersIn(root: ParentNode = document.body): void {
     '[data-brust-island]:not([data-brust-hydrated])',
   )
   for (const el of Array.from(markers)) {
+    if (canceledIslandMarkers.has(el)) continue
     el.setAttribute('data-brust-hydrated', '1')
     const trig = (el.getAttribute('data-brust-hydrate') ?? 'load') as Trigger
-    registerTrigger(el, trig, () => {
+    const cleanup = registerTrigger(el, trig, () => {
       void hydrateOne(el)
     })
+    islandTriggerCleanups.set(el, cleanup)
   }
 }
 

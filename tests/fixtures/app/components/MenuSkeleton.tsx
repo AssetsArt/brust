@@ -1,3 +1,16 @@
-export default function MenuSkeleton({ label }: { label: string }) {
-  return <span className="menu-skeleton">{label}</span>
+import Counter from './Counter'
+
+export default function MenuSkeleton({
+  label,
+  count,
+}: {
+  label: string
+  count: { start: number }
+}) {
+  return (
+    <div className="menu-skeleton">
+      <span>{label}</span>
+      <Island component={Counter} props={count} hydrate="idle" />
+    </div>
+  )
 }

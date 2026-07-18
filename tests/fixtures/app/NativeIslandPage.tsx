@@ -17,7 +17,7 @@ export default function NativeIslandPage({
         props={count}
         fallback={
           <>
-            <MenuSkeleton label={greeting} />
+            <MenuSkeleton label={greeting} count={count} />
             <HookBadge label={greeting} />
           </>
         }
