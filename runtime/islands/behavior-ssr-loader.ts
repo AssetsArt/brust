@@ -9,10 +9,7 @@ export interface BehaviorSsrModule {
   sourcePath: string
 }
 
-export function emitBehaviorSsrModule(
-  entry: BehaviorSsrModule,
-  outputPath: string,
-): void {
+export function emitBehaviorSsrModule(entry: BehaviorSsrModule, outputPath: string): void {
   const temporaryEntry = `${entry.sourcePath}.brust-behavior-${randomUUID()}.tsx`
   writeFileSync(temporaryEntry, entry.source)
   try {
