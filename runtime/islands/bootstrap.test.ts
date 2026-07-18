@@ -14,7 +14,10 @@ let classifyClick: (
 ) => 'external' | 'hash' | 'reload' | 'navigate'
 let hydrateMarkersIn: (root?: ParentNode) => void
 let swapMainContent: (main: HTMLElement, html: string) => void
-let hydrateOne: (el: HTMLElement) => Promise<void>
+let hydrateOne: (
+  el: HTMLElement,
+  importer?: (url: string) => Promise<Record<string, unknown>>,
+) => Promise<void>
 let unmountIslandsIn: (root: ParentNode) => void
 let navigate: (url: URL, mode: 'push' | 'replace' | 'none') => Promise<void>
 let isFullDocumentPayload: (html: string) => boolean
@@ -28,7 +31,11 @@ let __setCurrentShellForTest: (shell: string | null) => void
 // one test's calls don't leak into the next ("NOT createRoot" assertions).
 const unmountSpy = mock(() => {})
 const renderSpy = mock(() => {})
-const createRootSpy = mock(() => ({ render: renderSpy, unmount: unmountSpy }))
+const childCountsAtCreateRoot: number[] = []
+const createRootSpy = mock((el: HTMLElement) => {
+  childCountsAtCreateRoot.push(el.childNodes.length)
+  return { render: renderSpy, unmount: unmountSpy }
+})
 const hydrateRootSpy = mock(() => ({ unmount: unmountSpy }))
 
 beforeEach(async () => {
@@ -36,6 +43,7 @@ beforeEach(async () => {
   renderSpy.mockClear()
   createRootSpy.mockClear()
   hydrateRootSpy.mockClear()
+  childCountsAtCreateRoot.length = 0
   // The page cache is module-level state shared across tests in this file —
   // reset so one test's cached navigations don't mask another's fetch asserts.
   __resetPageCacheForTest()
@@ -289,6 +297,26 @@ function makeMarker(id: string, csr: boolean): HTMLElement {
   return el as unknown as HTMLElement
 }
 
+test('hydrateOne: client-only placeholder remains while its component module is loading', async () => {
+  const el = makeMarker('Deferred', /* csr */ true)
+  el.innerHTML = '<span>Loading menu</span>'
+  let resolveImport!: (mod: Record<string, unknown>) => void
+  const deferredImport = new Promise<Record<string, unknown>>((resolve) => {
+    resolveImport = resolve
+  })
+  const importer = mock(() => deferredImport)
+
+  const pending = hydrateOne(el, importer)
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  expect(importer).toHaveBeenCalledTimes(1)
+  expect(el.textContent).toBe('Loading menu')
+  expect(createRootSpy).not.toHaveBeenCalled()
+
+  resolveImport({ default: () => null })
+  await pending
+})
+
 test('hydrateOne: client-only marker (data-brust-csr) uses createRoot+render, NOT hydrateRoot', async () => {
   const el = makeMarker('Counter', /* csr */ true)
   await hydrateOne(el)
@@ -298,13 +326,50 @@ test('hydrateOne: client-only marker (data-brust-csr) uses createRoot+render, NO
   expect(hydrateRootSpy).not.toHaveBeenCalled()
 })
 
+test('hydrateOne: successful client-only takeover clears placeholder immediately before createRoot', async () => {
+  const el = makeMarker('Menu', /* csr */ true)
+  el.innerHTML = '<span>Loading menu</span>'
+
+  await hydrateOne(el, async () => ({ default: () => null }))
+
+  expect(childCountsAtCreateRoot).toEqual([0])
+  expect(el.childNodes).toHaveLength(0)
+})
+
+test('hydrateOne: rejected client-only import preserves placeholder', async () => {
+  const el = makeMarker('BrokenMenu', /* csr */ true)
+  el.innerHTML = '<span>Menu unavailable</span>'
+
+  await hydrateOne(el, async () => {
+    throw new Error('chunk failed')
+  })
+
+  expect(el.textContent).toBe('Menu unavailable')
+  expect(el.childNodes).toHaveLength(1)
+  expect(createRootSpy).not.toHaveBeenCalled()
+})
+
+test('hydrateOne: invalid client-only component preserves placeholder', async () => {
+  const el = makeMarker('InvalidMenu', /* csr */ true)
+  el.innerHTML = '<span>Menu unavailable</span>'
+
+  await hydrateOne(el, async () => ({ default: { not: 'a component' } }))
+
+  expect(el.textContent).toBe('Menu unavailable')
+  expect(el.childNodes).toHaveLength(1)
+  expect(createRootSpy).not.toHaveBeenCalled()
+})
+
 test('hydrateOne: server marker (no data-brust-csr) uses hydrateRoot, NOT createRoot', async () => {
   const el = makeMarker('Server', /* csr */ false)
+  el.innerHTML = '<button>Server menu</button>'
   await hydrateOne(el)
   expect(hydrateRootSpy).toHaveBeenCalledTimes(1)
   expect(hydrateRootSpy).toHaveBeenCalledWith(el, expect.anything())
   expect(createRootSpy).not.toHaveBeenCalled()
   expect(renderSpy).not.toHaveBeenCalled()
+  expect(el.textContent).toBe('Server menu')
+  expect(el.childNodes).toHaveLength(1)
 })
 
 test('unmountIslandsIn unmounts a root created via the createRoot (CSR) path', async () => {

@@ -141,6 +141,9 @@ pub enum JsxNode {
         hydrate: String,
         /// Whether to server-render the island's initial markup (`ssr` bare attr).
         ssr: bool,
+        /// Optional server-rendered placeholder for a client-only island. The
+        /// browser keeps this subtree until the real island chunk is ready.
+        fallback: Option<Box<JsxNode>>,
         /// Optional ISR cache key path (single-segment prop path). `None` until
         /// the isr-attribute parser lands.
         key_path: Option<String>,

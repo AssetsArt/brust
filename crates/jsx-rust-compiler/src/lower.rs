@@ -1418,6 +1418,30 @@ fn subtree_contains_fragment(node: &JsxNode) -> bool {
     }
 }
 
+fn subtree_contains_island(node: &JsxNode) -> bool {
+    match node {
+        JsxNode::Island { .. } => true,
+        JsxNode::Element { children, .. }
+        | JsxNode::SsrComponent { children, .. }
+        | JsxNode::Document { body: children, .. }
+        | JsxNode::Fragment { children } => children.iter().any(subtree_contains_island),
+        JsxNode::Map { body, .. } => subtree_contains_island(body),
+        JsxNode::Cond {
+            consequent,
+            alternate,
+            ..
+        } => {
+            subtree_contains_island(consequent)
+                || alternate.as_deref().is_some_and(subtree_contains_island)
+        }
+        JsxNode::Empty
+        | JsxNode::Text(_)
+        | JsxNode::Expr(_)
+        | JsxNode::RawHtml(_)
+        | JsxNode::ChildrenSlot => false,
+    }
+}
+
 fn lower_element(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode, LowerError> {
     // Dedicated `<Island>` recognition path: peek the opening name BEFORE
     // `lower_element_name` (which would reject any capitalized custom component
@@ -3450,6 +3474,7 @@ fn lower_island(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode,
     let mut props_path: Option<String> = None;
     let mut hydrate: Option<String> = None;
     let mut ssr = false;
+    let mut fallback_attr: Option<&swc_core::ecma::ast::JSXAttr> = None;
     let mut key_path: Option<String> = None;
     let mut key_literal: Option<String> = None;
     let mut tags_path: Option<String> = None;
@@ -3513,6 +3538,9 @@ fn lower_island(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode,
                 // Bare boolean attribute — presence is what matters.
                 ssr = true;
             }
+            "fallback" => {
+                fallback_attr = Some(jsx_attr);
+            }
             // `isr={{ key: <path>, tags?: <path>, revalidate?: <number-literal> }}`.
             // `key`/`tags` accept the SAME path shape as `props={…}` (a
             // destructured ident or one-deep member); `revalidate` is a numeric
@@ -3570,12 +3598,57 @@ fn lower_island(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode,
         ));
     }
 
+    if ssr
+        && fallback_attr.is_some()
+        && let Some(inline_env) = &scope.inline_env
+    {
+        inline_env
+            .warnings
+            .borrow_mut()
+            .push(format!("fallback ignored on ssr island \"{component}\""));
+    }
+
+    let fallback = if ssr {
+        None
+    } else {
+        fallback_attr
+            .map(|attr| match &attr.value {
+                Some(JSXAttrValue::JSXExprContainer(container)) => match &container.expr {
+                    JSXExpr::Expr(expr) => match expr.as_ref() {
+                        SwcExpr::JSXElement(element) => lower_element(element, scope, false),
+                        SwcExpr::JSXFragment(fragment) => lower_fragment(fragment, scope, false),
+                        _ => Err(LowerError::at(
+                            attr.span,
+                            ErrorKind::IslandFallbackMustBeJsx,
+                        )),
+                    },
+                    JSXExpr::JSXEmptyExpr(_) => Err(LowerError::at(
+                        attr.span,
+                        ErrorKind::IslandFallbackMustBeJsx,
+                    )),
+                },
+                _ => Err(LowerError::at(
+                    attr.span,
+                    ErrorKind::IslandFallbackMustBeJsx,
+                )),
+            })
+            .transpose()?
+            .map(Box::new)
+    };
+    if fallback.as_deref().is_some_and(subtree_contains_island) {
+        return Err(LowerError::at(
+            fallback_attr.map_or(el.opening.span, |attr| attr.span),
+            ErrorKind::IslandFallbackContainsIsland,
+        ));
+    }
+
     Ok(JsxNode::Island {
         component,
         instance: 0,
         props_path,
         hydrate,
         ssr,
+        fallback,
         key_path,
         key_literal,
         tags_path,
@@ -5487,9 +5560,12 @@ fn infer_props_types(node: &JsxNode, props: &mut PropsShape) -> Result<(), Lower
             infer_props_types(body, props)
         }
         // An island's `props_path` is resolved by `lower_island` against the
-        // outer scope at lowering time; its placeholder/manifest are emitted by
-        // T2/T3. It contributes no prop-type inference here.
-        JsxNode::Island { .. } => Ok(()),
+        // outer scope at lowering time. Its fallback is ordinary native output,
+        // so infer any props read while rendering that placeholder.
+        JsxNode::Island { fallback, .. } => match fallback {
+            Some(fallback) => infer_props_types(fallback, props),
+            None => Ok(()),
+        },
         // SsrComponent is opaque — it has its own type scope and is not
         // recursed into for prop-type inference here.
         JsxNode::SsrComponent { .. } => Ok(()),
@@ -6792,6 +6868,109 @@ export const behavior = () => ({});"#;
             }
             other => panic!("expected Island, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn lowers_client_only_island_jsx_fallback() {
+        let src = r#"export default function Page() {
+  return <Island component={Menu} fallback={<div className="menu-skeleton">Loading</div>} />;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let c = lower(&parsed).unwrap();
+        match &c.root {
+            JsxNode::Island {
+                fallback: Some(fallback),
+                ssr,
+                ..
+            } => {
+                assert!(!*ssr);
+                match fallback.as_ref() {
+                    JsxNode::Element { tag, children, .. } => {
+                        assert_eq!(tag, "div");
+                        assert!(
+                            matches!(children.as_slice(), [JsxNode::Text(text)] if text == "Loading")
+                        );
+                    }
+                    other => panic!("expected fallback element, got {other:?}"),
+                }
+            }
+            other => panic!("expected Island with fallback, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn infers_props_read_by_client_only_island_fallback() {
+        let src = r#"export default function Page({ data }) {
+  return <Island component={Menu} fallback={<span>{data.menuLabel}</span>} />;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let c = lower(&parsed).unwrap();
+
+        let mut data_fields = BTreeMap::new();
+        data_fields.insert("menuLabel".to_string(), PropType::OwnedString);
+        assert_eq!(
+            c.props.types.get("data"),
+            Some(&PropType::Struct(data_fields))
+        );
+    }
+
+    #[test]
+    fn rejects_island_component_reference_fallback() {
+        let src = r#"export default function Page() {
+  return <Island component={Menu} fallback={MenuSkeleton} />;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let err = lower(&parsed).unwrap_err();
+        assert!(matches!(err.kind, ErrorKind::IslandFallbackMustBeJsx));
+    }
+
+    #[test]
+    fn rejects_nested_island_in_fallback() {
+        let src = r#"export default function Page() {
+  return <Island component={Menu} fallback={<div><Island component={Nested} /></div>} />;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let err = lower(&parsed).unwrap_err();
+        assert!(matches!(err.kind, ErrorKind::IslandFallbackContainsIsland));
+    }
+
+    #[test]
+    fn ssr_island_warns_and_ignores_fallback_while_retaining_isr() {
+        let src = r#"export default function Page() {
+  return <Island component={Menu} ssr isr={{ key: "menu", revalidate: 60 }}
+    fallback={<div>ignored</div>} />;
+}"#;
+        let (component, warnings) = lower_with_src(src, HashMap::new()).unwrap();
+        let baseline_src = r#"export default function Page() {
+  return <Island component={Menu} ssr isr={{ key: "menu", revalidate: 60 }} />;
+}"#;
+        let baseline = lower(&parse(baseline_src, "<test>").unwrap()).unwrap();
+        match &component.root {
+            JsxNode::Island {
+                component,
+                ssr,
+                fallback,
+                key_literal,
+                revalidate,
+                ..
+            } => {
+                assert_eq!(component, "Menu");
+                assert!(*ssr);
+                assert!(fallback.is_none());
+                assert_eq!(key_literal.as_deref(), Some("menu"));
+                assert_eq!(*revalidate, Some(60));
+            }
+            other => panic!("expected SSR Island, got {other:?}"),
+        }
+        assert_eq!(
+            warnings,
+            vec!["fallback ignored on ssr island \"Menu\"".to_string()]
+        );
+        assert_eq!(
+            crate::emit_jinja::emit(&component),
+            crate::emit_jinja::emit(&baseline),
+            "ignored SSR fallback must not change emitted marker bytes"
+        );
     }
 
     #[test]

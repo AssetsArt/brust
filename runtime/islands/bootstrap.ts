@@ -113,7 +113,10 @@ function islandChunkMap(): Promise<Record<string, string>> {
   return chunkMapPromise
 }
 
-export async function hydrateOne(el: HTMLElement): Promise<void> {
+export async function hydrateOne(
+  el: HTMLElement,
+  importer: (url: string) => Promise<Record<string, unknown>> = (url) => import(url),
+): Promise<void> {
   const id = el.getAttribute('data-brust-island')
   if (!id) return
   const propsJson = el.getAttribute('data-brust-props') ?? '{}'
@@ -126,7 +129,7 @@ export async function hydrateOne(el: HTMLElement): Promise<void> {
   }
   try {
     const url = (await islandChunkMap())[id] ?? `/_brust/islands/${id}.js`
-    const mod = await import(url)
+    const mod = await importer(url)
     const Component = (mod.default ?? mod) as React.ComponentType<Record<string, unknown>>
     if (typeof Component !== 'function') {
       console.error(`[brust] island "${id}": chunk has no default-exported component`)
@@ -134,9 +137,10 @@ export async function hydrateOne(el: HTMLElement): Promise<void> {
     }
     let root: Root
     if (el.hasAttribute('data-brust-csr')) {
-      // Client-only island: the native compiler emits an EMPTY mount (no
-      // server markup) tagged data-brust-csr. hydrateRoot on an empty mount
-      // is a React 19 hydration mismatch, so spin up a fresh client root.
+      // Client-only island: discard any server placeholder only after the
+      // component chunk is known-good, immediately before taking over with a
+      // fresh client root. hydrateRoot would mismatch against the fallback.
+      while (el.firstChild) el.removeChild(el.firstChild)
       root = createRoot(el)
       root.render(createElement(Component, props))
     } else {
