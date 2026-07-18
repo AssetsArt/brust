@@ -12,21 +12,23 @@ export type Instance = Record<string, unknown>
  *                    for side-effects on signal change (sync localStorage, the DOM
  *                    outside the component, timers). Returns the disposer too.
  *  - `onCleanup(fn)` — register a one-shot teardown for unmount (e.g. removeEventListener). */
-export interface BehaviorCtx {
-  el: HTMLElement
+export interface BehaviorCtx<Host extends Element = HTMLElement> {
+  el: Host
   props: unknown
   // biome-ignore lint/suspicious/noConfusingVoidType: React useEffect return shape (`void | Destructor`) — see store `effect`.
   effect: (fn: () => void | (() => void)) => () => void
   onCleanup: (fn: () => void) => void
 }
-export type Behavior = (ctx: BehaviorCtx) => Instance
+export type Behavior<Host extends Element = HTMLElement> = (ctx: BehaviorCtx<Host>) => Instance
 
 interface Mounted {
   disposers: Array<() => void>
 }
 
-const registry = new Map<string, Behavior>()
-const mounted = new WeakMap<HTMLElement, Mounted>()
+type RegisteredBehavior = Behavior<Element>
+
+const registry = new Map<string, RegisteredBehavior>()
+const mounted = new WeakMap<Element, Mounted>()
 const loading = new Map<string, Promise<unknown>>()
 let started = false
 
@@ -39,8 +41,11 @@ const CHUNK_BASE = '/_brust/islands/'
 /** Register a component behavior under `name`. Called by `<name>.directive.js` chunks
  * via the global handle below (they do NOT import this module — keeps each chunk to
  * just its behavior, with the runtime shared as the single `_directives.js` copy). */
-export function register(name: string, behavior: Behavior): void {
-  registry.set(name, behavior)
+export function register<Host extends Element = HTMLElement>(
+  name: string,
+  behavior: Behavior<Host>,
+): void {
+  registry.set(name, behavior as unknown as RegisteredBehavior)
 }
 // Expose `register` on a global so dynamically-imported behavior chunks self-register
 // into THIS runtime's registry without importing/duplicating the runtime. Symbol.for
@@ -72,8 +77,8 @@ export function start(root?: ParentNode): void {
 }
 
 function scanAndMount(scope: ParentNode): void {
-  if (scope instanceof HTMLElement && scope.hasAttribute('x-data')) mountElement(scope)
-  for (const el of Array.from(scope.querySelectorAll<HTMLElement>('[x-data]'))) {
+  if (scope instanceof Element && scope.hasAttribute('x-data')) mountElement(scope)
+  for (const el of Array.from(scope.querySelectorAll<Element>('[x-data]'))) {
     mountElement(el)
   }
   // R10 — OPEN shadow roots host their own component trees: scan each the same
@@ -81,8 +86,8 @@ function scanAndMount(scope: ParentNode): void {
   // per root, since neither the body observer nor an outer root's observer sees
   // mutations inside an inner shadow tree. Closed roots expose `shadowRoot ===
   // null` and are unreachable by design. The walk-all is per added subtree only.
-  if (scope instanceof HTMLElement && scope.shadowRoot) scanShadowRoot(scope.shadowRoot)
-  for (const el of Array.from(scope.querySelectorAll<HTMLElement>('*'))) {
+  if (scope instanceof Element && scope.shadowRoot) scanShadowRoot(scope.shadowRoot)
+  for (const el of Array.from(scope.querySelectorAll<Element>('*'))) {
     if (el.shadowRoot) scanShadowRoot(el.shadowRoot)
   }
 }
@@ -92,7 +97,7 @@ function scanShadowRoot(root: ShadowRoot): void {
   observeRoot(root)
 }
 
-function mountElement(el: HTMLElement): void {
+function mountElement(el: Element): void {
   if (mounted.has(el)) return
   // Removed mid-scan (e.g. an initial-falsy x-if subtree pruned while scanAndMount's
   // snapshot loop was still iterating): mounting a detached element would leak its
@@ -124,12 +129,12 @@ function mountElement(el: HTMLElement): void {
   mounted.set(el, m)
   // ctxEffect/onCleanup typed via BehaviorCtx so the `void | Destructor` shape is
   // declared in one place (the interface) — no inline void-union to suppress here.
-  const ctxEffect: BehaviorCtx['effect'] = (fn) => {
+  const ctxEffect: BehaviorCtx<Element>['effect'] = (fn) => {
     const dispose = effect(fn)
     m.disposers.push(dispose)
     return dispose
   }
-  const onCleanup: BehaviorCtx['onCleanup'] = (fn) => {
+  const onCleanup: BehaviorCtx<Element>['onCleanup'] = (fn) => {
     m.disposers.push(fn)
   }
   const instance = behavior({ el, props, effect: ctxEffect, onCleanup })
@@ -164,7 +169,7 @@ function loadBehavior(name: string): void {
       }
       // Mount every element waiting on this name (initial + swapped-in).
       if (typeof document !== 'undefined') {
-        for (const el of Array.from(document.querySelectorAll<HTMLElement>(`[x-data="${name}"]`))) {
+        for (const el of Array.from(document.querySelectorAll<Element>(`[x-data="${name}"]`))) {
           mountElement(el)
         }
       }
@@ -180,7 +185,7 @@ function loadBehavior(name: string): void {
 // independently via scanAndMount's shadow-root scan (R10), never inheriting the
 // enclosing instance's scope. (The `el.children` walk below naturally excludes
 // shadow content; this is by design, not an accident.)
-function bindTree(el: HTMLElement, instance: Instance, disposers: Array<() => void>): void {
+function bindTree(el: Element, instance: Instance, disposers: Array<() => void>): void {
   // Coexistence check MUST precede the x-for early-exit, else x-for preempts and the
   // warn never fires. Strip x-if so x-for's template clones don't carry it either.
   if (el.hasAttribute('x-if') && el.hasAttribute('x-for')) {
@@ -197,7 +202,7 @@ function bindTree(el: HTMLElement, instance: Instance, disposers: Array<() => vo
   }
   bindAttrs(el, instance, disposers)
   for (const child of Array.from(el.children)) {
-    if (!(child instanceof HTMLElement)) continue
+    if (!(child instanceof Element)) continue
     if (child.hasAttribute('x-data')) continue
     bindTree(child, instance, disposers)
   }
@@ -243,7 +248,7 @@ export function parseFor(raw: string): ForExpr | null {
 }
 
 interface ForEntry {
-  node: HTMLElement
+  node: Element
   itemSig: Signal<unknown>
   idxSig?: Signal<number>
   disposers: Array<() => void>
@@ -259,7 +264,7 @@ const forMountGuard = new WeakMap<Node, Set<string>>()
 // (legacy v1, now with optional plain index). With `by <keypath>...` it is an opt-in
 // keyed reconcile that reuses DOM nodes (focus/scroll survive) and is reactive
 // per-item via a per-clone `signal(item)` resolved through `read`'s unwrap-each-hop.
-function bindFor(tplEl: HTMLElement, instance: Instance, disposers: Array<() => void>): void {
+function bindFor(tplEl: Element, instance: Instance, disposers: Array<() => void>): void {
   const expr = parseFor(tplEl.getAttribute('x-for') ?? '')
   if (!expr) {
     console.warn(`[brust] malformed x-for expression: "${tplEl.getAttribute('x-for')}"`)
@@ -292,12 +297,12 @@ function bindFor(tplEl: HTMLElement, instance: Instance, disposers: Array<() => 
   const anchor = tplEl.ownerDocument.createComment(`x-for:${itemName}`)
   parent.insertBefore(anchor, tplEl)
   tplEl.removeAttribute('x-for')
-  const template = tplEl.cloneNode(true) as HTMLElement
+  const template = tplEl.cloneNode(true) as Element
   tplEl.remove()
 
   // ---- legacy (no `by`) — full re-render, with optional plain index ----
   if (!keyPaths) {
-    const rendered: HTMLElement[] = []
+    const rendered: Element[] = []
     const childDisposers: Array<() => void> = []
     const clear = () => {
       for (const d of childDisposers.splice(0)) {
@@ -315,7 +320,7 @@ function bindFor(tplEl: HTMLElement, instance: Instance, disposers: Array<() => 
         const list = read(instance, listPath)
         if (!Array.isArray(list)) return
         for (let i = 0; i < list.length; i++) {
-          const clone = template.cloneNode(true) as HTMLElement
+          const clone = template.cloneNode(true) as Element
           const childScope: Instance = Object.create(instance)
           childScope[itemName] = list[i]
           if (indexName) childScope[indexName] = i
@@ -340,7 +345,7 @@ function installKeyedReconcile(
   instance: Instance,
   parent: Node,
   expr: ForExpr,
-  template: HTMLElement,
+  template: Element,
   anchor: Comment,
   initialMap: Map<string, ForEntry>,
   disposers: Array<() => void>,
@@ -382,7 +387,7 @@ function installKeyedReconcile(
           live.delete(key)
           next.set(key, existing)
         } else {
-          const clone = template.cloneNode(true) as HTMLElement
+          const clone = template.cloneNode(true) as Element
           const itemSig = signal(item)
           const idxSig = indexName ? signal(i) : undefined
           const childScope: Instance = Object.create(instance)
@@ -409,11 +414,11 @@ function installKeyedReconcile(
  *  `data-x-key-0`). Only direct children — the key attr lives on the for-item
  *  root, never a descendant. The x-for match prevents a sibling x-for list under
  *  the same parent from having its seeds consumed by this one. */
-function collectSeeds(parent: Node, keyPaths: string[], xforRaw: string): HTMLElement[] {
+function collectSeeds(parent: Node, keyPaths: string[], xforRaw: string): Element[] {
   const sel = keyPaths.length > 1 ? '[data-x-key-0]' : '[data-x-key]'
-  const out: HTMLElement[] = []
+  const out: Element[] = []
   for (const c of Array.from((parent as Element).children ?? [])) {
-    if (c instanceof HTMLElement && c.matches(sel) && c.getAttribute('x-for') === xforRaw) {
+    if (c instanceof Element && c.matches(sel) && c.getAttribute('x-for') === xforRaw) {
       out.push(c)
     }
   }
@@ -422,14 +427,14 @@ function collectSeeds(parent: Node, keyPaths: string[], xforRaw: string): HTMLEl
 
 /** The seed's key from markup — must match the reconcile's computed key (single
  *  `data-x-key`, OR `data-x-key-*` joined with `\x00` IN JS — NUL never in HTML). */
-function seedKey(node: HTMLElement, keyPaths: string[]): string {
+function seedKey(node: Element, keyPaths: string[]): string {
   if (keyPaths.length > 1) {
     return keyPaths.map((_, i) => node.getAttribute(`data-x-key-${i}`) ?? '').join('\x00')
   }
   return node.getAttribute('data-x-key') ?? ''
 }
 
-function stripKeyAttrs(el: HTMLElement, keyPaths: string[]): void {
+function stripKeyAttrs(el: Element, keyPaths: string[]): void {
   if (keyPaths.length > 1) {
     for (let i = 0; i < keyPaths.length; i++) el.removeAttribute(`data-x-key-${i}`)
   } else {
@@ -440,10 +445,10 @@ function stripKeyAttrs(el: HTMLElement, keyPaths: string[]): void {
 /** Bind an adopted seed node as a plain subtree. The node KEEPS its x-for attr so
  *  the parent bindTree loop's later re-visit routes back to bindFor → mount guard
  *  no-ops; do NOT route the node itself through bindFor again here. */
-function bindAdoptedNode(node: HTMLElement, scope: Instance, disposers: Array<() => void>): void {
+function bindAdoptedNode(node: Element, scope: Instance, disposers: Array<() => void>): void {
   bindAttrs(node, scope, disposers)
   for (const child of Array.from(node.children)) {
-    if (!(child instanceof HTMLElement)) continue
+    if (!(child instanceof Element)) continue
     if (child.hasAttribute('x-data')) continue
     bindTree(child, scope, disposers)
   }
@@ -453,7 +458,7 @@ function bindAdoptedNode(node: HTMLElement, scope: Instance, disposers: Array<()
  *  each item-signal from the matching client item by key, wire reactivity, then
  *  hand the pre-populated map to the shared reconcile (first run = all reused). */
 function bindForAdopt(
-  seeds: HTMLElement[],
+  seeds: Element[],
   instance: Instance,
   parent: Node,
   expr: ForExpr,
@@ -469,7 +474,7 @@ function bindForAdopt(
   }
   const keys = keyPaths as string[]
   // template for future creates: stripped clone of the first seed.
-  const template = seeds[0].cloneNode(true) as HTMLElement
+  const template = seeds[0].cloneNode(true) as Element
   template.removeAttribute('x-for')
   stripKeyAttrs(template, keys)
   // anchor AFTER the last seed so future inserts keep document order.
@@ -489,7 +494,7 @@ function bindForAdopt(
   // adopt each seed in place.
   const map = new Map<string, ForEntry>()
   for (let si = 0; si < seeds.length; si++) {
-    const node = seeds[si] as HTMLElement
+    const node = seeds[si] as Element
     let key = seedKey(node, keys)
     if (map.has(key)) {
       // mirror the reconcile's dup-key handling: suffix so the entry is tracked
@@ -518,15 +523,15 @@ function bindForAdopt(
  * the node and runs those disposers. The per-clone disposers cover only non-x-data
  * teardown (bindTree skips nested x-data); nested x-data dispose/mount is delegated
  * to the MutationObserver on removal/insert — single-owner discipline. */
-function bindIf(el: HTMLElement, instance: Instance, disposers: Array<() => void>): void {
+function bindIf(el: Element, instance: Instance, disposers: Array<() => void>): void {
   const path = el.getAttribute('x-if') ?? ''
   const parent = el.parentNode
   if (!parent) return
   const anchor = el.ownerDocument.createComment('x-if')
   parent.insertBefore(anchor, el)
   el.removeAttribute('x-if')
-  const template = el.cloneNode(true) as HTMLElement // capture FIRST (before initial effect)
-  let current: HTMLElement | null = el // the original, adopted if initially truthy
+  const template = el.cloneNode(true) as Element // capture FIRST (before initial effect)
+  let current: Element | null = el // the original, adopted if initially truthy
   let bound = false // original starts unbound; clones are bound at creation
   const currentDisposers: Array<() => void> = []
   const teardown = () => {
@@ -557,7 +562,7 @@ function bindIf(el: HTMLElement, instance: Instance, disposers: Array<() => void
         }
         return
       }
-      const clone = template.cloneNode(true) as HTMLElement
+      const clone = template.cloneNode(true) as Element
       bindTree(clone, instance, currentDisposers) // bind BEFORE insert (observer mounts nested x-data after)
       anchor.parentNode?.insertBefore(clone, anchor.nextSibling)
       current = clone
@@ -657,13 +662,14 @@ function bindModel(
   )
 }
 
-function bindAttrs(el: HTMLElement, scope: Instance, disposers: Array<() => void>): void {
+function bindAttrs(el: Element, scope: Instance, disposers: Array<() => void>): void {
   for (const attr of Array.from(el.attributes)) {
     const name = attr.name
     const value = attr.value
     if (name === 'x-data' || name === 'x-props') continue
     if (name === 'x-model') {
-      bindModel(el, scope, value, disposers)
+      if (el instanceof HTMLElement) bindModel(el, scope, value, disposers)
+      else console.warn('[brust] x-model is only supported on HTML elements — binding skipped')
       continue
     }
     if (name === 'x-text') {
@@ -678,7 +684,11 @@ function bindAttrs(el: HTMLElement, scope: Instance, disposers: Array<() => void
     if (name === 'x-show') {
       disposers.push(
         effect(() => {
-          el.style.display = read(scope, value) ? '' : 'none'
+          if ('style' in el) {
+            ;(el as Element & { style: CSSStyleDeclaration }).style.display = read(scope, value)
+              ? ''
+              : 'none'
+          }
         }),
       )
       continue
@@ -718,40 +728,40 @@ function observeRoot(root: Node): void {
   const obs = new MutationObserver((records) => {
     for (const rec of records) {
       for (const node of Array.from(rec.removedNodes)) {
-        if (node instanceof HTMLElement) disposeTree(node)
+        if (node instanceof Element) disposeTree(node)
       }
       for (const node of Array.from(rec.addedNodes)) {
-        if (node instanceof HTMLElement) scanAndMount(node)
+        if (node instanceof Element) scanAndMount(node)
       }
     }
   })
   obs.observe(root, { childList: true, subtree: true })
 }
 
-function disposeTree(node: HTMLElement): void {
+function disposeTree(node: Element): void {
   if (mounted.has(node)) disposeElement(node)
-  for (const el of Array.from(node.querySelectorAll<HTMLElement>('[x-data]'))) {
+  for (const el of Array.from(node.querySelectorAll<Element>('[x-data]'))) {
     disposeElement(el)
   }
   // R10 — a removed HOST's shadow contents never reach any observer: the host's
   // removal fires on the light tree's observer, and the shadow root's own
   // observer only sees mutations INSIDE the root. Walk shadow roots explicitly.
   if (node.shadowRoot) disposeShadowContents(node.shadowRoot)
-  for (const el of Array.from(node.querySelectorAll<HTMLElement>('*'))) {
+  for (const el of Array.from(node.querySelectorAll<Element>('*'))) {
     if (el.shadowRoot) disposeShadowContents(el.shadowRoot)
   }
 }
 
 function disposeShadowContents(root: ShadowRoot): void {
-  for (const el of Array.from(root.querySelectorAll<HTMLElement>('[x-data]'))) {
+  for (const el of Array.from(root.querySelectorAll<Element>('[x-data]'))) {
     disposeElement(el)
   }
-  for (const el of Array.from(root.querySelectorAll<HTMLElement>('*'))) {
+  for (const el of Array.from(root.querySelectorAll<Element>('*'))) {
     if (el.shadowRoot) disposeShadowContents(el.shadowRoot)
   }
 }
 
-function disposeElement(el: HTMLElement): void {
+function disposeElement(el: Element): void {
   const m = mounted.get(el)
   if (!m) return
   for (const d of m.disposers.splice(0)) {
@@ -766,15 +776,19 @@ function disposeElement(el: HTMLElement): void {
 
 const BOOL_PROPS = new Set(['disabled', 'checked', 'hidden', 'readonly', 'required', 'selected'])
 
-/** Apply a bound value to a DOM attr/property. class → className; boolean props →
- * property (when present) + attribute presence; value → property; else attribute. */
-export function setBound(el: HTMLElement, attr: string, value: unknown): void {
+/** Apply a bound value to a DOM attr/property. class → HTML className or a
+ * namespace-safe attribute; boolean/value properties are used only when present. */
+export function setBound(el: Element, attr: string, value: unknown): void {
   if (attr === 'class') {
-    el.className = value == null ? '' : String(value)
+    if (el instanceof HTMLElement) el.className = value == null ? '' : String(value)
+    else if (value == null) el.removeAttribute('class')
+    else el.setAttribute('class', String(value))
     return
   }
   if (attr === 'value') {
-    ;(el as unknown as { value: unknown }).value = value == null ? '' : value
+    if ('value' in el) (el as unknown as { value: unknown }).value = value == null ? '' : value
+    else if (value == null) el.removeAttribute(attr)
+    else el.setAttribute(attr, String(value))
     return
   }
   if (BOOL_PROPS.has(attr)) {

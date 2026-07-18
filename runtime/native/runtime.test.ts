@@ -16,7 +16,11 @@ function setupDom(html: string): Window {
   // @ts-expect-error
   globalThis.MutationObserver = win.MutationObserver
   // @ts-expect-error
+  globalThis.Element = win.Element
+  // @ts-expect-error
   globalThis.HTMLElement = win.HTMLElement
+  // @ts-expect-error
+  globalThis.SVGElement = win.SVGElement
   return win
 }
 
@@ -177,12 +181,142 @@ describe('SVG directive traversal', () => {
     expect(use instanceof win.HTMLElement).toBe(false)
     const { register, start } = await import(`./runtime.ts?svgBind=${Math.random()}`)
     const { signal } = await import('../store/index.ts')
-    const cls = signal('first')
+    const cls = signal<string | null>('first')
     register('svgBind', () => ({ cls }))
     expect(() => start(win.document)).not.toThrow()
     expect(use.getAttribute('class')).toBe('first')
     expect(() => cls.set('second')).not.toThrow()
     expect(use.getAttribute('class')).toBe('second')
+    cls.set(null)
+    expect(use.getAttribute('class')).toBeNull()
+  })
+
+  test('x-bind value and boolean properties fall back to SVG attributes', async () => {
+    const win = setupDom(
+      '<svg x-data="svgProps"><use id="svg-props" x-bind-value="value" x-bind-hidden="hidden"></use></svg>',
+    )
+    const { register, start } = await import(`./runtime.ts?svgProps=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const value = signal<string | null>('one')
+    const hidden = signal(true)
+    register<SVGElement>('svgProps', () => ({ value, hidden }))
+    start(win.document)
+    const use = win.document.getElementById('svg-props')!
+    expect(use.getAttribute('value')).toBe('one')
+    expect(use.getAttribute('hidden')).toBe('')
+
+    value.set(null)
+    hidden.set(false)
+    expect(use.hasAttribute('value')).toBe(false)
+    expect(use.hasAttribute('hidden')).toBe(false)
+  })
+
+  test('dynamic SVG x-data host mounts and disposes exactly once on removal', async () => {
+    const win = setupDom('<svg id="svg-host-root"></svg>')
+    const { register, start } = await import(`./runtime.ts?svgHost=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const msg = signal('mounted')
+    let mounts = 0
+    let disposals = 0
+    register<SVGElement>('svgHost', ({ el, onCleanup }) => {
+      mounts++
+      expect(el instanceof win.SVGElement).toBe(true)
+      onCleanup(() => {
+        disposals++
+      })
+      return { msg }
+    })
+    start(win.document)
+
+    const host = win.document.createElementNS('http://www.w3.org/2000/svg', 'g')
+    host.setAttribute('x-data', 'svgHost')
+    host.innerHTML = '<text x-text="msg"></text>'
+    win.document.getElementById('svg-host-root')!.appendChild(host)
+    await Promise.resolve()
+    expect(mounts).toBe(1)
+    const text = host.querySelector('text')!
+    expect(text.textContent).toBe('mounted')
+
+    host.remove()
+    await Promise.resolve()
+    expect(disposals).toBe(1)
+    msg.set('detached')
+    expect(text.textContent).toBe('mounted')
+  })
+
+  test('x-if on an SVG element toggles fresh SVG namespace clones', async () => {
+    const win = setupDom(
+      '<svg x-data="svgIf"><g id="svg-if" x-if="open"><text x-text="label"></text></g></svg>',
+    )
+    const { register, start } = await import(`./runtime.ts?svgIf=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const open = signal(false)
+    register<SVGElement>('svgIf', () => ({ open, label: signal('visible') }))
+    start(win.document)
+    expect(win.document.getElementById('svg-if')).toBeNull()
+
+    open.set(true)
+    const first = win.document.getElementById('svg-if')!
+    expect(first.namespaceURI).toBe('http://www.w3.org/2000/svg')
+    expect(first.querySelector('text')!.textContent).toBe('visible')
+    open.set(false)
+    expect(win.document.getElementById('svg-if')).toBeNull()
+    open.set(true)
+    expect(win.document.getElementById('svg-if')).not.toBe(first)
+  })
+
+  test('keyed SVG x-for adopts seeds and reuses them during reconcile', async () => {
+    const win = setupDom(
+      '<svg id="svg-for" x-data="svgFor">' +
+        '<g x-for="item in items by item.id" data-x-key="1"><text x-text="item.label">a</text></g>' +
+        '<g x-for="item in items by item.id" data-x-key="2"><text x-text="item.label">b</text></g>' +
+        '</svg>',
+    )
+    const { register, start } = await import(`./runtime.ts?svgFor=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const items = signal([
+      { id: 1, label: 'a' },
+      { id: 2, label: 'b' },
+    ])
+    register<SVGElement>('svgFor', () => ({ items }))
+    const svg = win.document.getElementById('svg-for')!
+    const seeds = Array.from(svg.querySelectorAll('g'))
+    start(win.document)
+    const adopted = Array.from(svg.querySelectorAll('g'))
+    expect(adopted).toHaveLength(2)
+    expect(adopted[0]).toBe(seeds[0])
+    expect(adopted[1]).toBe(seeds[1])
+
+    items.set([
+      { id: 2, label: 'B' },
+      { id: 1, label: 'A' },
+    ])
+    const reconciled = Array.from(svg.querySelectorAll('g'))
+    expect(reconciled[0]).toBe(seeds[1])
+    expect(reconciled[1]).toBe(seeds[0])
+    expect(reconciled.map((el) => el.querySelector('text')!.textContent)).toEqual(['B', 'A'])
+  })
+
+  test('x-model on a non-HTML element warns once and installs no binding', async () => {
+    const win = setupDom('<svg x-data="svgModel"><g id="svg-model" x-model="value"></g></svg>')
+    const { register, start } = await import(`./runtime.ts?svgModel=${Math.random()}`)
+    const { signal } = await import('../store/index.ts')
+    const value = signal('initial')
+    const warn = console.warn
+    const calls: unknown[][] = []
+    console.warn = (...args: unknown[]) => {
+      calls.push(args)
+    }
+    try {
+      register<SVGElement>('svgModel', () => ({ value }))
+      start(win.document)
+      const group = win.document.getElementById('svg-model')!
+      group.dispatchEvent(new win.Event('input', { bubbles: true }))
+      expect(value()).toBe('initial')
+      expect(calls.filter((args) => String(args[0]).includes('x-model'))).toHaveLength(1)
+    } finally {
+      console.warn = warn
+    }
   })
 })
 
