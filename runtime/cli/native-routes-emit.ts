@@ -5,6 +5,7 @@ import { dirname, relative, resolve } from 'node:path'
 import { buildDevClientTag } from '../dev/client.ts'
 import { insertGeneratorMeta, insertShellMeta, resolveGenerator } from '../generator.ts'
 import { islandChunkBasename } from '../islands/chunk-id.ts'
+import { emitBehaviorSsrModule } from '../islands/behavior-ssr-loader.ts'
 import { DIRECTIVES_BOOTSTRAP, ISLANDS_IMPORTMAP_AND_BOOTSTRAP } from '../islands/importmap.ts'
 
 /** Gather transitive component sources starting from a page source file.
@@ -391,6 +392,7 @@ interface RawComponentEntry {
   factoryExpr: string
   referencedComponents: string[]
   usesIsland: boolean
+  behaviorModules: RawBehaviorModule[]
   /** ISR cache fields (present only on components with an `isr` attr). Declared
    * so the `{ ...entry }` / `{ ...e }` enrich spreads below are type-complete —
    * they MUST survive into the enriched `<Name>.components.json`, or runtime ISR
@@ -400,10 +402,22 @@ interface RawComponentEntry {
   revalidate?: number
 }
 
+interface RawBehaviorModule {
+  component: string
+  directiveName: string
+  source: string
+}
+
+interface EnrichedBehaviorModule extends RawBehaviorModule {
+  moduleId: string
+  sourcePath: string
+}
+
 /** Enriched component entry written to `<Name>.components.json`. */
 interface EnrichedComponentEntry extends RawComponentEntry {
   /** Absolute path to the component's source file (resolved from page imports). */
   sourcePath: string
+  behaviorModules: EnrichedBehaviorModule[]
 }
 
 /** One entry in a `<Name>.islands.json` as emitted by `jsx-rustc` (camelCase,
@@ -464,6 +478,36 @@ export function emitComponentArtifacts(
   // Enrich with the resolved import ref. For local imports `ref.spec` is an
   // ABSOLUTE path (kept absolute for the readFileSync island scan below); for
   // bare imports it's the verbatim package specifier.
+  const behaviorByComponent = new Map<string, EnrichedBehaviorModule>()
+  for (const entry of raw) {
+    for (const module of entry.behaviorModules ?? []) {
+      const ref = pageImports.get(module.component)
+      if (!ref || ref.bare) {
+        throw new Error(
+          `SSR behavior component "${module.component}" in native route "${routeName}" has no local source import`,
+        )
+      }
+      const moduleId = createHash('sha256').update(module.source).digest('hex')
+      const enrichedModule: EnrichedBehaviorModule = {
+        ...module,
+        moduleId,
+        sourcePath: relative(projectRoot, ref.spec).replaceAll('\\', '/'),
+      }
+      const prior = behaviorByComponent.get(module.component)
+      if (
+        prior &&
+        (prior.moduleId !== enrichedModule.moduleId ||
+          prior.directiveName !== enrichedModule.directiveName ||
+          prior.sourcePath !== enrichedModule.sourcePath)
+      ) {
+        throw new Error(
+          `SSR behavior component "${module.component}" has conflicting transformed definitions in native route "${routeName}"`,
+        )
+      }
+      behaviorByComponent.set(module.component, enrichedModule)
+    }
+  }
+
   const enriched: Array<EnrichedComponentEntry & { ref: ResolvedImport }> = raw.map((entry) => {
     const ref = pageImports.get(entry.component)
     if (!ref) {
@@ -471,7 +515,14 @@ export function emitComponentArtifacts(
         `SSR component "${entry.component}" in native route "${routeName}" has no matching import in the page source (expected \`import ${entry.component} from "..."\`)`,
       )
     }
-    return { ...entry, sourcePath: ref.spec, ref }
+    return {
+      ...entry,
+      sourcePath: ref.spec,
+      behaviorModules: (entry.behaviorModules ?? []).map(
+        (module) => behaviorByComponent.get(module.component)!,
+      ),
+      ref,
+    }
   })
 
   // Write <Name>.components.json. For LOCAL imports sourcePath is PROJECT-RELATIVE
@@ -484,6 +535,19 @@ export function emitComponentArtifacts(
     sourcePath: ref.bare ? ref.spec : relative(projectRoot, ref.spec).replaceAll('\\', '/'),
   }))
   writeFileSync(compJsonPath, JSON.stringify(compJsonEntries))
+
+  const generatedSpecByComponent = new Map<string, string>()
+  for (const module of behaviorByComponent.values()) {
+    const filename = `__brust_behavior_${module.moduleId}.tsx`
+    emitBehaviorSsrModule(
+      {
+        ...module,
+        sourcePath: resolve(projectRoot, module.sourcePath),
+      },
+      resolve(jinjaDir, filename),
+    )
+    generatedSpecByComponent.set(module.component, `./${filename}`)
+  }
 
   // Collect import lines. Deduplicate referenced components.
   const seen = new Set<string>()
@@ -506,7 +570,12 @@ export function emitComponentArtifacts(
     seen.add(compName)
     const ref = pageImports.get(compName)
     if (!ref) continue
-    const spec = ref.bare ? ref.spec : toRelativeSpecifier(jinjaDir, ref.spec)
+    const generatedSpec = generatedSpecByComponent.get(compName)
+    const spec = generatedSpec
+      ? generatedSpec
+      : ref.bare
+        ? ref.spec
+        : toRelativeSpecifier(jinjaDir, ref.spec)
     const specStr = JSON.stringify(spec)
     if (ref.kind === 'namespace') {
       importLines.push(`import * as ${compName} from ${specStr}`)

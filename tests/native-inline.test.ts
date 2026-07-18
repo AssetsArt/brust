@@ -3,6 +3,10 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { spawnSync } from 'bun'
 import { directiveName } from '../runtime/native/build.ts'
+import {
+  type NativeComponentEntry,
+  resolveComponentContext,
+} from '../runtime/islands/native-render.ts'
 
 /** T9 / native-inline integration — proves inline + hook-fallback + Island
  * reconciliation end-to-end through the real `brust build`.
@@ -299,4 +303,52 @@ test('behavior component auto-injects x-data whose name matches its built chunk'
       `Injected x-data="${name}" has NO matching ${name}.directive.js chunk — path normalization between scanDirectiveComponents and emitNativeTemplates disagree.`,
     ).toBe(true)
   }
+})
+test('behavior SSR fallback retains its canonical mount identity', async () => {
+  const jinja = readJinja()
+  const componentsJson = readComponentsJson()
+  const expectedName = directiveName(
+    resolve(FIXTURE_DIR, 'components/BehaviorSsrFallback.tsx'),
+    FIXTURE_DIR,
+  )
+
+  expect(capturedStderr).toContain(
+    'native component "BehaviorSsrFallback" not inlined: unsupported prop',
+  )
+  expect(componentsJson).not.toBeNull()
+
+  const manifest = JSON.parse(componentsJson ?? '[]') as NativeComponentEntry[]
+  const entry = manifest.find((candidate) => candidate.component === 'BehaviorSsrFallback')
+  expect(entry).toBeDefined()
+  expect(jinja).toContain(`comp_${entry?.instance}_html`)
+  expect(existsSync(resolve(FIXTURE_DIR, 'dist/islands', `${expectedName}.directive.js`))).toBe(
+    true,
+  )
+
+  const context = await resolveComponentContext(
+    manifest,
+    { label: 'Hi', strong: true, count: { start: 0, label: 'c' } },
+    'NativeInline',
+    JINJA_DIR,
+  )
+  const rendered = context[`comp_${entry?.instance}_html`] ?? ''
+  expect(rendered).toContain('class="behavior-ssr-fallback"')
+  expect(rendered).toContain('x-on-click="activate"')
+  expect(rendered).toContain(`x-data="${expectedName}"`)
+  expect(rendered).toContain('C')
+  expect(rendered).toContain('source-preserved')
+})
+
+test('bounded Array.from length map inline-lowers without a fallback warning', () => {
+  const jinja = readJinja()
+  expect(jinja).toContain('class="static-array-from"')
+  const first = jinja.indexOf('{{ (0) | e }}')
+  const second = jinja.indexOf('{{ (1) | e }}')
+  expect(first).toBeGreaterThanOrEqual(0)
+  expect(second).toBeGreaterThan(first)
+  expect(capturedStderr).not.toContain(
+    'native component "BehaviorSsrFallback" not inlined: inline lowering cannot translate `from`',
+  )
+  const componentsJson = readComponentsJson()
+  expect(componentsJson ?? '').toContain('"BehaviorSsrFallback"')
 })

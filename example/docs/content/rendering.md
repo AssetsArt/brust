@@ -38,14 +38,19 @@ Because the output is a data-driven template, the JSX is constrained:
 - **Expressions are member paths** — `{user}`, `{data.post.title}`. Computed
   values belong in the loader, not the template.
 - **Lists** are `.map()` over a member path, nested to any depth. The two-arg
-  `(item, index)` form is rejected.
+  `(item, index)` form is rejected for runtime member paths. A bounded static
+  `Array.from({ length: N }).map((item, index) => …)` is expanded at build time
+  for integer `N` from 0 through 1024; unsupported forms safely use an SSR slot.
 - **Conditionals** — `{cond && <X/>}` and `{cond ? <A/> : <B/>}` — lower to
   `{% if %}` blocks. They work in child (element) position, not in attribute
   position.
 - **Capitalized components** inside a native page either render as SSR
   component slots (a worker `renderToString` fills them per request) or, with
   the `native` attribute (`<Badge native label={x} />`), are inlined into the
-  template at compile time — provided the component body is pure.
+  template at compile time — provided the component body is pure. A behavior
+  component that is not eligible for inlining keeps its canonical `x-data`
+  host when rendered through the SSR slot, so eligibility affects performance,
+  not interactivity correctness.
 - **Local `const` bindings hoist** inside an inlined component:
   `const rootStyle = { padding: '8px' }` followed by `style={rootStyle}`
   compiles — the compiler substitutes the value at build time. `const` only:

@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use swc_core::common::{DUMMY_SP, Spanned};
 use swc_core::ecma::ast::*;
+use swc_core::ecma::visit::{Visit, VisitWith};
 
 use crate::analyze::{Inlinability, analyze};
 
@@ -92,6 +93,20 @@ struct Evaluator<'a> {
     expansions: usize,
     bindings: usize,
     changed: bool,
+    array_is_shadowed: bool,
+}
+
+#[derive(Default)]
+struct ArrayBindingVisitor {
+    found: bool,
+}
+
+impl Visit for ArrayBindingVisitor {
+    fn visit_binding_ident(&mut self, binding: &BindingIdent) {
+        if binding.id.sym.as_ref() == "Array" {
+            self.found = true;
+        }
+    }
 }
 
 fn evaluate_exported_const(module: &Module, name: &str) -> Result<Option<Value>, StaticEvalError> {
@@ -115,6 +130,8 @@ impl<'a> Evaluator<'a> {
         let mut imports = HashSet::new();
         let mut named_imports = Vec::new();
         let mut helpers = HashMap::new();
+        let mut array_binding_visitor = ArrayBindingVisitor::default();
+        module.visit_with(&mut array_binding_visitor);
 
         for item in &module.body {
             match item {
@@ -178,6 +195,9 @@ impl<'a> Evaluator<'a> {
             )));
         }
 
+        let array_is_shadowed = array_binding_visitor.found
+            || imports.contains("Array")
+            || helpers.contains_key("Array");
         let mut evaluator = Self {
             module_consts,
             exported_consts,
@@ -191,6 +211,7 @@ impl<'a> Evaluator<'a> {
             expansions: 0,
             bindings: 0,
             changed: false,
+            array_is_shadowed,
         };
 
         for (local_name, imported_name) in named_imports {
@@ -406,8 +427,60 @@ impl<'a> Evaluator<'a> {
                     self.eval_expr(&cond.alt, env, depth + 1)
                 }
             }
+            Expr::Call(call) => self.eval_array_from(call, env),
             _ => Ok(None),
         }
+    }
+
+    fn eval_array_from(
+        &self,
+        call: &CallExpr,
+        env: &Bindings,
+    ) -> Result<Option<Value>, StaticEvalError> {
+        if self.array_is_shadowed || env.contains_key("Array") || call.args.len() != 1 {
+            return Ok(None);
+        }
+        let Callee::Expr(callee) = &call.callee else {
+            return Ok(None);
+        };
+        let Expr::Member(member) = strip_paren(callee) else {
+            return Ok(None);
+        };
+        if !matches!(strip_paren(&member.obj), Expr::Ident(id) if id.sym.as_ref() == "Array")
+            || !matches!(&member.prop, MemberProp::Ident(id) if id.sym.as_ref() == "from")
+        {
+            return Ok(None);
+        }
+        let argument = &call.args[0];
+        if argument.spread.is_some() {
+            return Ok(None);
+        }
+        let Expr::Object(object) = strip_paren(&argument.expr) else {
+            return Ok(None);
+        };
+        let [PropOrSpread::Prop(property)] = object.props.as_slice() else {
+            return Ok(None);
+        };
+        let Prop::KeyValue(property) = property.as_ref() else {
+            return Ok(None);
+        };
+        if static_prop_name(&property.key).ok().as_deref() != Some("length") {
+            return Ok(None);
+        }
+        let Expr::Lit(Lit::Num(length)) = strip_paren(&property.value) else {
+            return Ok(None);
+        };
+        if !length.value.is_finite()
+            || length.value < 0.0
+            || length.value.fract() != 0.0
+            || length.value > MAX_EXPANSIONS as f64
+        {
+            return Ok(None);
+        }
+        Ok(Some(Value::Array(vec![
+            Value::Undefined;
+            length.value as usize
+        ])))
     }
 
     fn member_key(
@@ -1499,6 +1572,54 @@ mod tests {
             }
         }
         panic!("missing default function")
+    }
+
+    #[test]
+    fn expands_bounded_global_array_from_map() {
+        let body = expand(
+            r#"export default function Root() {
+              return <ul>{Array.from({ length: 3 }).map((_, index) => <li>{index}</li>)}</ul>
+            }"#,
+        )
+        .unwrap();
+        let text = format!("{body:?}");
+        assert_eq!(text.matches("sym: \"li\"").count(), 6, "{text}");
+        assert!(!text.contains("from"), "{text}");
+    }
+
+    #[test]
+    fn unsupported_array_from_forms_remain_unexpanded() {
+        for source in [
+            "Array.from({ length: size })",
+            "Array.from({ length: -1 })",
+            "Array.from({ length: 1.5 })",
+            "Array.from({ length: 1025 })",
+            "Array.from({ length: 2, extra: true })",
+            "Array.from([1, 2])",
+            "Array.from({ length: 2 }, String)",
+        ] {
+            let body = expand(&format!(
+                "export default function Root() {{ return <ul>{{{source}.map((x) => <li>{{x}}</li>)}}</ul> }}"
+            ))
+            .unwrap();
+            let text = format!("{body:?}");
+            assert!(
+                text.contains("from"),
+                "unexpectedly expanded {source}: {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn shadowed_array_from_remains_unexpanded() {
+        let body = expand(
+            r#"export default function Root({ Array }) {
+              return <ul>{Array.from({ length: 2 }).map((x) => <li>{x}</li>)}</ul>
+            }"#,
+        )
+        .unwrap();
+        let text = format!("{body:?}");
+        assert!(text.contains("from"), "{text}");
     }
 
     #[test]

@@ -19,6 +19,7 @@ import path from 'node:path'
 // (the streaming paths need server.node's renderToPipeableStream). See routes.ts.
 import { renderToString } from 'react-dom/server.node'
 import { createElement } from 'react'
+import type { BehaviorSsrModule } from './behavior-ssr-loader'
 
 // Sub-project J — the directory holding the compiled `<Name>.jinja` templates
 // and their `.islands.json` / `.components.json` sidecars. Configured ONCE at
@@ -272,6 +273,7 @@ export interface NativeComponentEntry {
   component: string
   instance: number
   sourcePath: string
+  behaviorModules?: BehaviorSsrModule[]
   /** Dotted path into loader data yielding the ISR cache key (string). */
   keyPath?: string
   /** Dotted path into loader data yielding the ISR cache tags (string[]). */

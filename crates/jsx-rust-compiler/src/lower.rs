@@ -6,12 +6,13 @@ use std::rc::Rc;
 use swc_core::common::{Span, Spanned};
 use swc_core::ecma::ast::{
     ArrayLit, ArrowExpr, AssignPatProp, BinaryOp, BindingIdent, BlockStmt, BlockStmtOrExpr,
-    CallExpr, Callee, DefaultDecl, ExportDefaultDecl, Expr as SwcExpr, ExprOrSpread, FnExpr,
-    Function, JSXAttrName, JSXAttrOrSpread, JSXAttrValue, JSXElement, JSXElementChild,
+    CallExpr, Callee, ClassMember, DefaultDecl, ExportDefaultDecl, Expr as SwcExpr, ExprOrSpread,
+    FnExpr, Function, JSXAttrName, JSXAttrOrSpread, JSXAttrValue, JSXElement, JSXElementChild,
     JSXElementName, JSXExpr, JSXFragment, KeyValueProp, Lit, MemberExpr, MemberProp, Module,
     ModuleDecl, ModuleItem, ObjectLit, ObjectPatProp, OptChainBase, ParenExpr, Pat, Prop, PropName,
     PropOrSpread, ReturnStmt, Stmt, UnaryOp,
 };
+use swc_core::ecma::visit::{Visit, VisitWith};
 
 use crate::ErrorKind;
 use crate::ir::*;
@@ -2732,8 +2733,15 @@ fn lower_ssr_component(
             ssr_props.push(SsrProp::Attr(JsxAttr { name, value }));
         }
 
+        let behavior_module = fallback_behavior_module(
+            &component,
+            env,
+            scope.directive_names.as_deref(),
+            el.opening.span,
+        )?;
         return Ok(JsxNode::SsrComponent {
             component,
+            behavior_module,
             instance: 0,
             props: ssr_props,
             children: call_site_children,
@@ -2830,6 +2838,7 @@ fn lower_ssr_component(
 
     Ok(JsxNode::SsrComponent {
         component,
+        behavior_module: None,
         instance: 0,
         props,
         children: call_site_children,
@@ -2839,6 +2848,298 @@ fn lower_ssr_component(
         tags_literal,
         revalidate,
     })
+}
+
+#[derive(Default)]
+struct ReturnExprCollector {
+    expressions: Vec<SwcExpr>,
+}
+
+impl Visit for ReturnExprCollector {
+    fn visit_return_stmt(&mut self, statement: &ReturnStmt) {
+        if let Some(argument) = &statement.arg {
+            self.expressions.push((**argument).clone());
+        }
+    }
+
+    // Returns inside callbacks or locally declared helpers do not describe a
+    // runtime return shape of the behavior component itself.
+    fn visit_function(&mut self, _function: &Function) {}
+    fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
+}
+
+#[derive(Default)]
+struct SourceHostScan {
+    literal_x_data: usize,
+    bare_x_behavior: Vec<Span>,
+    invalid_marker: bool,
+}
+
+struct SourceEdit {
+    start: usize,
+    end: usize,
+    replacement: String,
+}
+
+fn fallback_behavior_module(
+    component: &str,
+    env: &InlineEnv,
+    directive_names: Option<&HashMap<String, String>>,
+    span: Span,
+) -> Result<Option<BehaviorModule>, LowerError> {
+    let Some(directive_name) = directive_names.and_then(|names| names.get(component)) else {
+        return Ok(None);
+    };
+    let source = env.sources.get(component).ok_or_else(|| {
+        behavior_transform_error(component, "its source could not be resolved", span)
+    })?;
+    let transformed = transform_behavior_component_source(component, directive_name, source, span)?;
+    Ok(Some(BehaviorModule {
+        component: component.to_string(),
+        directive_name: directive_name.clone(),
+        source: transformed,
+    }))
+}
+
+fn transform_behavior_component_source(
+    component: &str,
+    directive_name: &str,
+    source: &str,
+    span: Span,
+) -> Result<String, LowerError> {
+    let parsed = crate::parser::parse(source, "<behavior-ssr>")
+        .map_err(|_| behavior_transform_error(component, "its source could not be parsed", span))?;
+    let body = behavior_default_render_body(&parsed.module).ok_or_else(|| {
+        behavior_transform_error(
+            component,
+            "its default export is neither a function nor a class with a render method",
+            span,
+        )
+    })?;
+    let mut collector = ReturnExprCollector::default();
+    body.visit_with(&mut collector);
+    if collector.expressions.is_empty() {
+        return Err(behavior_transform_error(
+            component,
+            "no reachable JSX return was found",
+            span,
+        ));
+    }
+
+    let mut leaves = Vec::new();
+    for expression in &collector.expressions {
+        collect_behavior_return_leaves(expression, &mut leaves)
+            .map_err(|reason| behavior_transform_error(component, reason, span))?;
+    }
+
+    let mut edits = Vec::new();
+    for element in leaves {
+        if !is_host_element_name(&element.opening.name) {
+            return Err(behavior_transform_error(
+                component,
+                "a return branch does not have a component-owned host element",
+                span,
+            ));
+        }
+        let mut scan = SourceHostScan::default();
+        scan_source_host_element(element, true, &mut scan);
+        if scan.invalid_marker
+            || scan.literal_x_data > 1
+            || scan.bare_x_behavior.len() > 1
+            || (scan.literal_x_data > 0 && !scan.bare_x_behavior.is_empty())
+        {
+            return Err(behavior_transform_error(
+                component,
+                "a return branch has conflicting or valued behavior host markers",
+                span,
+            ));
+        }
+        if scan.literal_x_data == 1 {
+            continue;
+        }
+        if let Some(marker) = scan.bare_x_behavior.first() {
+            let (start, end) = source_span_range(*marker, source).ok_or_else(|| {
+                behavior_transform_error(component, "a marker span is outside its source", span)
+            })?;
+            edits.push(SourceEdit {
+                start,
+                end,
+                replacement: format!("x-data=\"{directive_name}\""),
+            });
+        } else {
+            let insert = source_span_range(element.opening.name.span(), source)
+                .map(|(_, end)| end)
+                .ok_or_else(|| {
+                    behavior_transform_error(component, "a host span is outside its source", span)
+                })?;
+            edits.push(SourceEdit {
+                start: insert,
+                end: insert,
+                replacement: format!(" x-data=\"{directive_name}\""),
+            });
+        }
+    }
+
+    edits.sort_by_key(|edit| (edit.start, edit.end));
+    edits.dedup_by(|left, right| {
+        left.start == right.start && left.end == right.end && left.replacement == right.replacement
+    });
+    for pair in edits.windows(2) {
+        if pair[0].end > pair[1].start {
+            return Err(behavior_transform_error(
+                component,
+                "behavior host source edits overlap",
+                span,
+            ));
+        }
+    }
+    let mut transformed = source.to_string();
+    for edit in edits.into_iter().rev() {
+        transformed.replace_range(edit.start..edit.end, &edit.replacement);
+    }
+    Ok(transformed)
+}
+
+fn behavior_default_render_body(module: &Module) -> Option<&BlockStmt> {
+    for item in &module.body {
+        let ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultDecl(export)) = item else {
+            continue;
+        };
+        match &export.decl {
+            DefaultDecl::Fn(function) => return function.function.body.as_ref(),
+            DefaultDecl::Class(class) => {
+                for member in &class.class.body {
+                    let ClassMember::Method(method) = member else {
+                        continue;
+                    };
+                    if matches!(&method.key, PropName::Ident(name) if name.sym.as_ref() == "render")
+                    {
+                        return method.function.body.as_ref();
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn collect_behavior_return_leaves<'a>(
+    expression: &'a SwcExpr,
+    out: &mut Vec<&'a JSXElement>,
+) -> Result<(), &'static str> {
+    match expression {
+        SwcExpr::Paren(paren) => collect_behavior_return_leaves(&paren.expr, out),
+        SwcExpr::TsAs(as_expr) => collect_behavior_return_leaves(&as_expr.expr, out),
+        SwcExpr::TsSatisfies(satisfies) => collect_behavior_return_leaves(&satisfies.expr, out),
+        SwcExpr::TsNonNull(non_null) => collect_behavior_return_leaves(&non_null.expr, out),
+        SwcExpr::Cond(conditional) => {
+            collect_behavior_return_leaves(&conditional.cons, out)?;
+            collect_behavior_return_leaves(&conditional.alt, out)
+        }
+        SwcExpr::JSXElement(element) => {
+            out.push(element);
+            Ok(())
+        }
+        SwcExpr::JSXFragment(_) => Err("a return branch is a fragment"),
+        _ => Err("control flow contains a return branch without one JSX host"),
+    }
+}
+
+fn is_host_element_name(name: &JSXElementName) -> bool {
+    matches!(name, JSXElementName::Ident(ident) if ident.sym.chars().next().is_some_and(|c| c.is_ascii_lowercase()))
+}
+
+fn scan_source_host_element(element: &JSXElement, is_root: bool, scan: &mut SourceHostScan) {
+    if !is_root && !is_host_element_name(&element.opening.name) {
+        return;
+    }
+    let mut owns_x_data = false;
+    for attribute in &element.opening.attrs {
+        let JSXAttrOrSpread::JSXAttr(attribute) = attribute else {
+            continue;
+        };
+        let JSXAttrName::Ident(name) = &attribute.name else {
+            continue;
+        };
+        match name.sym.as_ref() {
+            "x-data" => {
+                if matches!(attribute.value, Some(JSXAttrValue::Str(_))) {
+                    scan.literal_x_data += 1;
+                    owns_x_data = true;
+                } else {
+                    scan.invalid_marker = true;
+                }
+            }
+            "x-behavior" => {
+                if attribute.value.is_none() {
+                    scan.bare_x_behavior.push(attribute.span);
+                } else {
+                    scan.invalid_marker = true;
+                }
+            }
+            _ => {}
+        }
+    }
+    if owns_x_data {
+        return;
+    }
+    for child in &element.children {
+        match child {
+            JSXElementChild::JSXElement(child) => scan_source_host_element(child, false, scan),
+            JSXElementChild::JSXFragment(fragment) => {
+                scan_source_host_children(&fragment.children, scan)
+            }
+            JSXElementChild::JSXExprContainer(container) => {
+                if let JSXExpr::Expr(expression) = &container.expr {
+                    scan_source_host_expression(expression, scan);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn scan_source_host_children(children: &[JSXElementChild], scan: &mut SourceHostScan) {
+    for child in children {
+        match child {
+            JSXElementChild::JSXElement(element) => scan_source_host_element(element, false, scan),
+            JSXElementChild::JSXFragment(fragment) => {
+                scan_source_host_children(&fragment.children, scan)
+            }
+            JSXElementChild::JSXExprContainer(container) => {
+                if let JSXExpr::Expr(expression) = &container.expr {
+                    scan_source_host_expression(expression, scan);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn scan_source_host_expression(expression: &SwcExpr, scan: &mut SourceHostScan) {
+    match strip_paren(expression) {
+        SwcExpr::JSXElement(element) => scan_source_host_element(element, false, scan),
+        SwcExpr::JSXFragment(fragment) => scan_source_host_children(&fragment.children, scan),
+        SwcExpr::Cond(conditional) => {
+            scan_source_host_expression(&conditional.cons, scan);
+            scan_source_host_expression(&conditional.alt, scan);
+        }
+        _ => {}
+    }
+}
+
+fn source_span_range(span: Span, source: &str) -> Option<(usize, usize)> {
+    let start = span.lo.0.checked_sub(1)? as usize;
+    let end = span.hi.0.checked_sub(1)? as usize;
+    (start <= end && end <= source.len()).then_some((start, end))
+}
+
+fn behavior_transform_error(component: &str, reason: impl Into<String>, span: Span) -> LowerError {
+    LowerError::at(
+        span,
+        ErrorKind::BehaviorSsrTransform(component.to_string(), reason.into()),
+    )
 }
 
 /// Try to native-inline a component. Returns:
@@ -5854,6 +6155,140 @@ export default function Btn({ data }) { return <button x-text="label">x</button>
             c.template
         );
         assert_eq!(c.template.matches("x-data=").count(), 1);
+    }
+
+    #[test]
+    fn ssr_fallback_behavior_carries_transformed_source() {
+        let route =
+            r#"export default function Page() { return <main><Btn native label="go"/></main>; }"#;
+        let btn = r#"export const behavior = () => ({ activate() {} });
+export default function Btn({ label }) {
+  useState(0)
+  return <button x-on-click="activate">{label}</button>
+}"#;
+        let c = crate::compile_full(
+            route,
+            "<t>",
+            HashMap::from([("Btn".to_string(), btn.to_string())]),
+            HashMap::new(),
+            HashMap::from([("Btn".to_string(), "btn_abc12345".to_string())]),
+        )
+        .unwrap();
+        assert_eq!(c.components.len(), 1);
+        let modules = &c.components[0].behavior_modules;
+        assert_eq!(modules.len(), 1);
+        assert_eq!(modules[0].component, "Btn");
+        assert_eq!(modules[0].directive_name, "btn_abc12345");
+        assert!(
+            modules[0]
+                .source
+                .contains(r#"<button x-data="btn_abc12345" x-on-click="activate">"#),
+            "{}",
+            modules[0].source
+        );
+        let json = crate::components_to_json(&c.components);
+        assert!(json.contains("\"behaviorModules\""), "{json}");
+        assert!(json.contains("btn_abc12345"), "{json}");
+    }
+
+    #[test]
+    fn ssr_fallback_behavior_replaces_bare_marker_and_preserves_authored_xdata() {
+        for (host, expected) in [
+            (
+                r#"<div><button x-behavior>{label}</button></div>"#,
+                r#"<button x-data="btn_abc12345">"#,
+            ),
+            (
+                r#"<button x-data="mine">{label}</button>"#,
+                r#"<button x-data="mine">"#,
+            ),
+        ] {
+            let route = r#"export default function Page() { return <Btn native/>; }"#;
+            let btn = format!(
+                "export const behavior = () => ({{}}); export default function Btn({{label}}) {{ useState(0); return {host}; }}"
+            );
+            let c = crate::compile_full(
+                route,
+                "<t>",
+                HashMap::from([("Btn".to_string(), btn)]),
+                HashMap::new(),
+                HashMap::from([("Btn".to_string(), "btn_abc12345".to_string())]),
+            )
+            .unwrap();
+            let source = &c.components[0].behavior_modules[0].source;
+            assert!(source.contains(expected), "{source}");
+            assert!(!source.contains("x-behavior"), "{source}");
+        }
+    }
+
+    #[test]
+    fn ssr_fallback_behavior_rejects_fragment_return() {
+        let route = r#"export default function Page() { return <Btn native/>; }"#;
+        let btn = r#"export const behavior = () => ({}); export default function Btn() { useState(0); return <><i/><i/></>; }"#;
+        let err = crate::compile_full(
+            route,
+            "<t>",
+            HashMap::from([("Btn".to_string(), btn.to_string())]),
+            HashMap::new(),
+            HashMap::from([("Btn".to_string(), "btn_abc12345".to_string())]),
+        )
+        .unwrap_err();
+        assert!(matches!(err.kind, ErrorKind::BehaviorSsrTransform(_, _)));
+        assert!(err.to_string().contains("fragment"), "{err}");
+    }
+
+    #[test]
+    fn ssr_fallback_behavior_supports_class_render_source() {
+        let route = r#"export default function Page() { return <ClassBehavior native/>; }"#;
+        let source = r#"import { Component } from 'react';
+export const behavior = () => ({});
+export default class ClassBehavior extends Component {
+  render() { return <article x-on-click="activate">class host</article> }
+}"#;
+        let c = crate::compile_full(
+            route,
+            "<t>",
+            HashMap::from([("ClassBehavior".to_string(), source.to_string())]),
+            HashMap::new(),
+            HashMap::from([(
+                "ClassBehavior".to_string(),
+                "classBehavior_abc12345".to_string(),
+            )]),
+        )
+        .unwrap();
+        assert!(
+            c.components[0].behavior_modules[0]
+                .source
+                .contains(r#"<article x-data="classBehavior_abc12345""#)
+        );
+    }
+
+    #[test]
+    fn factory_collects_nested_behavior_modules() {
+        let route =
+            r#"export default function Page() { return <Outer native><Inner native/></Outer>; }"#;
+        let outer = r#"export const behavior = () => ({}); export default function Outer({ children }) { useState(0); return <div>{children}</div>; }"#;
+        let inner = r#"export const behavior = () => ({}); export default function Inner() { useState(0); return <span>inner</span>; }"#;
+        let c = crate::compile_full(
+            route,
+            "<t>",
+            HashMap::from([
+                ("Outer".to_string(), outer.to_string()),
+                ("Inner".to_string(), inner.to_string()),
+            ]),
+            HashMap::new(),
+            HashMap::from([
+                ("Outer".to_string(), "outer_abc12345".to_string()),
+                ("Inner".to_string(), "inner_abc12345".to_string()),
+            ]),
+        )
+        .unwrap();
+        let names = c.components[0]
+            .behavior_modules
+            .iter()
+            .map(|module| module.component.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec!["Outer", "Inner"]);
     }
 
     // Build a route inlining `Btn` (registered as a behavior component) with the

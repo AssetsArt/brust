@@ -8,7 +8,7 @@ pub mod parser;
 mod static_eval;
 mod xfor;
 
-use ir::JsxNode;
+use ir::{BehaviorModule, JsxNode};
 use std::collections::HashMap;
 
 pub fn compile(source: &str) -> Result<String, CompileError> {
@@ -52,6 +52,9 @@ pub struct ComponentMeta {
     /// True if any `<Island>` node appears in this component's factory tree.
     /// When true the TS build step adds `import { Island } from 'brustjs'`.
     pub uses_island: bool,
+    /// Server-only transformed behavior component sources referenced by this
+    /// factory, including nested SSR component references.
+    pub behavior_modules: Vec<BehaviorModule>,
     /// Optional ISR cache key path (dotted loader-data path). `None` = no ISR.
     pub key_path: Option<String>,
     /// ISR key as a string LITERAL (static cache identity). Mutually exclusive with key_path.
@@ -139,6 +142,7 @@ pub fn compile_full(
         comp.factory_expr = fo.expr;
         comp.referenced_components = fo.referenced;
         comp.uses_island = fo.uses_island;
+        comp.behavior_modules = fo.behavior_modules;
     }
 
     Ok(Compiled {
@@ -341,6 +345,7 @@ fn collect_components(node: &JsxNode, out: &mut Vec<ComponentMeta>) {
                 factory_expr: String::new(),
                 referenced_components: Vec::new(),
                 uses_island: false,
+                behavior_modules: Vec::new(),
                 key_path: key_path.clone(),
                 key_literal: key_literal.clone(),
                 tags_path: tags_path.clone(),
@@ -471,6 +476,20 @@ pub fn components_to_json(components: &[ComponentMeta]) -> String {
         }
         out.push_str("],\"usesIsland\":");
         out.push_str(if c.uses_island { "true" } else { "false" });
+        out.push_str(",\"behaviorModules\":[");
+        for (j, module) in c.behavior_modules.iter().enumerate() {
+            if j > 0 {
+                out.push(',');
+            }
+            out.push_str("{\"component\":\"");
+            out.push_str(&json_escape(&module.component));
+            out.push_str("\",\"directiveName\":\"");
+            out.push_str(&json_escape(&module.directive_name));
+            out.push_str("\",\"source\":\"");
+            out.push_str(&json_escape(&module.source));
+            out.push_str("\"}");
+        }
+        out.push(']');
         if let Some(kp) = &c.key_path {
             out.push_str(",\"keyPath\":\"");
             out.push_str(&json_escape(kp));
@@ -699,6 +718,10 @@ pub enum ErrorKind {
         "native component `<{0}>` has more than one `x-behavior` marker or a valued `x-behavior` — exactly one bare `x-behavior` may mark the mount host"
     )]
     XBehaviorMisuse(String),
+    #[error(
+        "native behavior component `<{0}>` cannot be wired for SSR fallback: {1}; use one literal `x-data`, one bare `x-behavior`, or a single component-owned host element in every return branch"
+    )]
+    BehaviorSsrTransform(String, String),
 }
 
 impl CompileError {
@@ -1737,6 +1760,7 @@ mod tests {
             factory_expr: "(ctx) => h(Layout, {})".to_string(),
             referenced_components: vec!["Layout".to_string()],
             uses_island: false,
+            behavior_modules: Vec::new(),
             key_path: Some("data.cacheKey".to_string()),
             key_literal: None,
             tags_path: Some("data.cacheTags".to_string()),
@@ -1757,6 +1781,7 @@ mod tests {
             factory_expr: "(ctx) => h(Layout, {})".to_string(),
             referenced_components: vec!["Layout".to_string()],
             uses_island: false,
+            behavior_modules: Vec::new(),
             key_path: None,
             tags_path: None,
             revalidate: Some(30),
@@ -1780,6 +1805,7 @@ mod tests {
             factory_expr: "(ctx) => h(Layout, {})".to_string(),
             referenced_components: vec!["Layout".to_string()],
             uses_island: false,
+            behavior_modules: Vec::new(),
             key_path: None,
             key_literal: None,
             tags_path: None,
@@ -1904,6 +1930,7 @@ mod tests {
         // Build a Cond whose consequent is an SsrComponent.
         let comp = JsxNode::SsrComponent {
             component: "CondLayout".to_string(),
+            behavior_module: None,
             instance: 0,
             props: vec![],
             children: vec![],

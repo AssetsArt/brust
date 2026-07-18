@@ -89,6 +89,9 @@ pub enum JsxNode {
     SsrComponent {
         /// Source identifier from the tag name (e.g. `Layout`).
         component: String,
+        /// Server-only transformed source for a behavior component that could
+        /// not be native-inlined.
+        behavior_module: Option<BehaviorModule>,
         /// Source-order index among SSR components (set by `number_ssr_components`).
         instance: usize,
         /// Lowered props (named attrs + `{...spread}`), in SOURCE ORDER — order
@@ -158,6 +161,13 @@ pub enum JsxNode {
         /// isr-attribute parser lands.
         revalidate: Option<u32>,
     },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BehaviorModule {
+    pub component: String,
+    pub directive_name: String,
+    pub source: String,
 }
 
 /// A `<BrustPage>` head/shell prop value: either a compile-time string literal
