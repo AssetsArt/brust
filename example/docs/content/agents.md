@@ -134,8 +134,9 @@ run `Brust.struct()` again before the next action.
 ### Act on the page
 
 Every action target accepts a ref or a CSS selector. Actions scroll the target
-into view, dispatch bubbling and cancelable DOM events, wait for the page to
-settle, then return the resulting URL and any errors raised during the action.
+into view, perform the corresponding native or synthetic DOM action, wait for
+the page to settle, then return the resulting URL and any errors raised during
+the action.
 
 | Method | Use |
 |---|---|
