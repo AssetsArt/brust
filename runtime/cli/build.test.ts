@@ -1,6 +1,12 @@
 import { test, expect } from 'bun:test'
 import { resolve } from 'node:path'
-import { selectNativeBinaries, hostTargetInfix, VALID_TARGETS, parseArgs, buildBanner } from './build.ts'
+import {
+  selectNativeBinaries,
+  hostTargetInfix,
+  VALID_TARGETS,
+  parseArgs,
+  buildBanner,
+} from './build.ts'
 
 const FIX = ['/x/brust.darwin-arm64.node', '/x/brust.linux-x64-gnu.node']
 
