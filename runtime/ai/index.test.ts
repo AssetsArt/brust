@@ -1,5 +1,8 @@
 import { beforeAll, expect, test } from 'bun:test'
 import { Window } from 'happy-dom'
+// Version comes from the same source the runtime reads — a literal here breaks
+// on every release bump (0.1.65 did exactly that, reddening main post-tag).
+import packageJson from '../../package.json' with { type: 'json' }
 
 let createBrustRuntime: typeof import('./index.ts').createBrustRuntime
 
@@ -29,7 +32,7 @@ beforeAll(async () => {
 
 test('assembles the P1 runtime and stable P2 disabled stubs', async () => {
   const runtime = createBrustRuntime()
-  expect(runtime.version).toEqual({ api: 1, brust: '0.1.64-alpha' })
+  expect(runtime.version).toEqual({ api: 1, brust: packageJson.version })
   expect(Object.keys(runtime.action)).toEqual([
     'click',
     'focus',
