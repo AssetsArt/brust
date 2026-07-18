@@ -13,6 +13,13 @@
 
 Make a behavior-bearing component remain interactive when a `native` inline attempt soft-falls back to an SSR-component slot. Inline eligibility may affect performance, never the presence of the behavior mount host.
 
+## Non-goals
+
+- Expanding inline-lowering support for `Array.from(...)` or referenced constants.
+- Changing the public `behavior` API, directive chunk naming, or directive event semantics.
+- Adding wrappers around SSR components or making the directive runtime depend on React.
+- Treating documentation or a stronger warning as sufficient when the behavior can be wired correctly.
+
 ## User-observed failure
 
 For behavior components whose template cannot be inline-lowered (`Array.from(...).map`, referenced computed const, referenced literal const), build emits the directive chunk and server HTML retains `x-on-*`, but rendered HTML lacks the auto-injected `x-data`. The directive runtime scans only `[x-data]`, so it never imports the chunk or installs listeners. The build emits only a generic inline-fallback warning.
