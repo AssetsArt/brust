@@ -65,6 +65,10 @@ export const COMMANDS: CommandDef[] = [
         flag: '--no-generator-version',
         desc: 'Drop the version from the generator meta tag + X-Powered-By header (the name stays)',
       },
+      {
+        flag: '--ai',
+        desc: 'Enable the AI runtime chunk + manifest wiring in production builds',
+      },
     ],
     notes: [
       'Markdown pages: routes mounted with mdRoutes(<contentDir>) compile to native',
@@ -82,6 +86,10 @@ export const COMMANDS: CommandDef[] = [
       {
         flag: '--no-generator-version',
         desc: 'Drop the version from the generator meta tag + X-Powered-By header (the name stays)',
+      },
+      {
+        flag: '--ai',
+        desc: 'Enable the AI runtime wiring explicitly (dev already enables it)',
       },
     ],
   },

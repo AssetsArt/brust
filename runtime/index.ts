@@ -189,6 +189,56 @@ async function readManifestFromPath(
   return parsed as import('./mcp/manifest.ts').McpManifest
 }
 
+function createAiInternalRoutes(paths: {
+  manifestPath: string
+  runtimePath: string
+}): import('./routes.ts').FlatRoute[] {
+  const manifestHandler: import('./routes.ts').Middleware = async () => {
+    const file = Bun.file(paths.manifestPath)
+    if (!(await file.exists())) {
+      return {
+        status: 404,
+        body: 'not found',
+        contentType: 'text/plain; charset=utf-8',
+      }
+    }
+    return {
+      status: 200,
+      body: await file.text(),
+      contentType: 'application/json; charset=utf-8',
+    }
+  }
+  const runtimeHandler: import('./routes.ts').Middleware = async () => {
+    const file = Bun.file(paths.runtimePath)
+    if (!(await file.exists())) {
+      return {
+        status: 404,
+        body: 'not found',
+        contentType: 'text/plain; charset=utf-8',
+      }
+    }
+    return {
+      status: 200,
+      body: await file.text(),
+      contentType: 'text/javascript; charset=utf-8',
+    }
+  }
+  return [
+    {
+      fullPath: '/_brust/ai/manifest.json',
+      chain: [{} as any],
+      middleware: [manifestHandler],
+      shellId: 'S:ai-manifest',
+    } as import('./routes.ts').FlatRoute,
+    {
+      fullPath: '/_brust/ai.js',
+      chain: [{} as any],
+      middleware: [runtimeHandler],
+      shellId: 'S:ai-runtime',
+    } as import('./routes.ts').FlatRoute,
+  ]
+}
+
 export const brust = {
   async serve(opts: ServeOptions): Promise<void> {
     // Fail fast on a bad CORS config BEFORE touching native state (Rust
@@ -442,6 +492,8 @@ export const brust = {
     /** Optional global CORS policy — see {@link CorsOptions}. Threaded to
      * serve() like `actionPrefix`. */
     cors?: CorsOptions
+    /** AI runtime toggle. Dev mode enables it automatically. */
+    ai?: boolean
     /** Overrides merged into the underlying `serve()` call (main thread). */
     serve?: Partial<Omit<ServeOptions, 'entry' | 'actions' | 'mcp'>>
     /** Per-worker SAB size in bytes. Default 256 KB. */
@@ -461,6 +513,7 @@ export const brust = {
     const scanRoot = opts.scanRoot ?? path.dirname(fileURLToPath(opts.entry))
 
     const dev = opts.dev === true || process.env.BRUST_DEV === '1'
+    const aiEnabled = dev || opts.ai === true || process.env.BRUST_AI === '1'
     // Unify the `dev: true` option with the BRUST_DEV env signal. The dev
     // coordinator/watcher (which calls worker-registry spawnAll() on hot reload)
     // keys off this `dev` variable, but serve()'s registerInitialPool — plus
@@ -472,6 +525,16 @@ export const brust = {
     // registerInitialPool"). Set it here, before serve() spawns workers, so they
     // inherit it via baseEnv.
     if (dev) process.env.BRUST_DEV = '1'
+    if (aiEnabled) process.env.BRUST_AI = '1'
+    const aiManifestPath = prebuilt
+      ? path.join(distDir!, '.brust', 'ai-manifest.json')
+      : path.resolve(process.cwd(), '.brust', 'ai-manifest.json')
+    const aiRuntimePath = prebuilt
+      ? path.join(distDir!, 'islands', 'ai.js')
+      : path.resolve(process.cwd(), '.brust', 'islands', 'ai.js')
+    const aiInternalRoutes = aiEnabled
+      ? createAiInternalRoutes({ manifestPath: aiManifestPath, runtimePath: aiRuntimePath })
+      : []
     let routes = opts.routes
     if (dev) {
       const { createDevWsRoute } = await import('./dev/ws-channel.ts')
@@ -483,6 +546,9 @@ export const brust = {
         ...opts.routes,
       ]
       configureDevClientSnippet(buildDevClientTag())
+    }
+    if (aiInternalRoutes.length > 0) {
+      routes = [...routes, ...aiInternalRoutes]
     }
     {
       const { configureActionPrefixSnippet } = await import('./render/inject-action-prefix.ts')
@@ -544,6 +610,10 @@ export const brust = {
           (r.chain[r.chain.length - 1] as { __mdSource?: unknown } | undefined)?.__mdSource !==
           undefined,
       )
+      if (!prebuilt) {
+        const { extractAiManifest, writeManifest } = await import('./ai/manifest.ts')
+        await writeManifest(process.cwd(), extractAiManifest(opts.routes))
+      }
 
       // Component CSS pipeline. Build the manifest + capture the loader plugin
       // BEFORE buildIslands and pass it EXPLICITLY below (global Bun.plugin()
@@ -644,10 +714,12 @@ export const brust = {
           const { scanIslandChunks, buildIslands: build } = await import('./islands/build.ts')
           const islandMap = scanIslandChunks(routesPath, mdIslands)
           let islandsDir: string | undefined
-          if (islandMap.size > 0) {
+          if (islandMap.size > 0 || aiEnabled) {
             const islands = await build(islandMap, { plugins: cssBuildPlugins })
             islandsDir = islands.outDir
-            console.log(`[brust] main: built ${islands.islandCount} island chunk(s)`)
+            console.log(
+              `[brust] main: built ${islands.islandCount} island chunk(s)${aiEnabled ? ' + ai runtime' : ''}`,
+            )
           }
           // Directive runtime bundle (Spec B) — build AFTER islands (buildIslands
           // rm -rf's its outDir) into the SAME dir so a native page's _directives.js
@@ -662,6 +734,11 @@ export const brust = {
             console.log(`[brust] main: built directive runtime (${res.count} component(s))`)
           }
           if (islandsDir) this.configureIslandsDir(islandsDir)
+        } else if (aiEnabled) {
+          const { buildIslands: build } = await import('./islands/build.ts')
+          const islands = await build(new Map(), { plugins: cssBuildPlugins })
+          this.configureIslandsDir(islands.outDir)
+          console.log('[brust] main: built 0 island chunk(s) + ai runtime')
         }
       }
 
@@ -867,7 +944,7 @@ export const brust = {
                 }
               }
               const islandMap = scanIslandChunks(routesPath, mdIslands)
-              if (islandMap.size > 0) {
+              if (islandMap.size > 0 || aiEnabled) {
                 await buildIslands(islandMap)
               }
               // Spec B: rebuild the directive bundle after islands (which rm -rf's
@@ -879,6 +956,9 @@ export const brust = {
                   outDir: pathModule.join(process.cwd(), '.brust', 'islands'),
                 })
               }
+            } else if (aiEnabled) {
+              const { buildIslands } = await import('./islands/build.ts')
+              await buildIslands(new Map())
             }
           },
           buildComponentCss: async () => {
@@ -980,6 +1060,9 @@ export const brust = {
           { ...devRoute, fullPath: devRoute.path!, chain: [devRoute as any] } as any,
           ...opts.routes,
         ]
+      }
+      if (aiInternalRoutes.length > 0) {
+        workerRoutes = [...workerRoutes, ...aiInternalRoutes]
       }
       {
         const { configureActionPrefixSnippet } = await import('./render/inject-action-prefix.ts')

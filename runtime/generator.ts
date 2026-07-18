@@ -15,6 +15,11 @@ export interface GeneratorStrings {
   header: string
 }
 
+/** Full browser entry tag for the AI runtime chunk. */
+export function aiScriptTag(): string {
+  return '<script type="module" src="/_brust/ai.js"></script>'
+}
+
 /** Build the resolved strings. Version comes from the brustjs package.json
  * (readVersion never throws — "unknown" degrades to name-only, never a crash).
  * The version is sanitized to attr/header-safe bytes; semver chars only. */

@@ -4,6 +4,7 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import path, { isAbsolute, resolve } from 'node:path'
 import type { BunPlugin } from 'bun'
+import { extractAiManifest, writeManifest as writeAiManifest } from '../ai/manifest.ts'
 import { emitNativeTemplates } from './native-routes-emit.ts'
 import { nativeShimPlugin } from './native-shim-plugin.ts'
 
@@ -146,6 +147,7 @@ export interface ParsedArgs {
   ssg: boolean // --ssg — prerender static routes after the build
   ssgOut: string | null // --ssg-out value (absolute); null → <outDir>/static computed later
   generatorVersion: boolean // false ⇔ --no-generator-version (name-only generator tag)
+  ai: boolean // --ai — enable the AI runtime + document injection
 }
 
 /** Parse `brust build` argv. Pure (no fs access, no process.exit) so it's
@@ -157,6 +159,7 @@ export function parseArgs(args: string[]): ParsedArgs {
   let ssg = false
   let ssgOut: string | undefined
   let generatorVersion = true
+  let ai = false
 
   for (let i = 0; i < args.length; i++) {
     const a = args[i]
@@ -181,6 +184,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       ssg = true
     } else if (a === '--no-generator-version') {
       generatorVersion = false
+    } else if (a === '--ai') {
+      ai = true
     } else if (a === '--ssg-out') {
       ssgOut = args[++i]
       if (!ssgOut) {
@@ -218,7 +223,15 @@ export function parseArgs(args: string[]): ParsedArgs {
   }
   const ssgOutPath = ssgOut ? (isAbsolute(ssgOut) ? ssgOut : resolve(cwd, ssgOut)) : null
 
-  return { entry: entryPath, outDir: outPath, target, ssg, ssgOut: ssgOutPath, generatorVersion }
+  return {
+    entry: entryPath,
+    outDir: outPath,
+    target,
+    ssg,
+    ssgOut: ssgOutPath,
+    generatorVersion,
+    ai,
+  }
 }
 
 export async function runBuild(args: string[]): Promise<void> {
@@ -230,6 +243,8 @@ export async function runBuild(args: string[]): Promise<void> {
     process.exit(1)
   }
   const { entry, outDir, target } = parsed
+  const aiEnabled = parsed.ai || process.env.BRUST_AI === '1'
+  if (aiEnabled) process.env.BRUST_AI = '1'
 
   // Entry existence is a runBuild concern (parseArgs stays fs-free/pure).
   if (!existsSync(entry)) {
@@ -319,6 +334,22 @@ export async function runBuild(args: string[]): Promise<void> {
     loadedRoutes = routes
   }
 
+  // 2.85. AI manifest — extract the route metadata alongside the MCP manifest
+  // and persist it in both dist/ and cwd/.brust/ so dev/source and prebuilt
+  // runtime paths can read the same artifact.
+  {
+    const routes = (loadedRoutes ?? []) as Parameters<typeof extractAiManifest>[0]
+    const manifest = extractAiManifest(routes)
+    const manifestPath = path.join(outDir, '.brust', 'ai-manifest.json')
+    await writeAiManifest(outDir, manifest)
+    console.log(`[brust build] ai:      ${manifest.pages.length} page(s) → ${manifestPath}`)
+    const localManifestDir = path.join(process.cwd(), '.brust')
+    if (path.resolve(localManifestDir) !== path.resolve(outDir)) {
+      await mkdir(localManifestDir, { recursive: true })
+      await writeAiManifest(localManifestDir, manifest)
+    }
+  }
+
   // 2.9. md routes — emit `Md_*.jinja` into <outDir>/jinja BEFORE the island
   // build so islands used only from md content join the chunk scan, and write
   // the frozen `md-manifest.json` next to BOTH jinja dirs (dist root for the
@@ -376,7 +407,7 @@ export async function runBuild(args: string[]): Promise<void> {
     ((loadedRoutes ?? []) as { chain?: Array<{ ssg?: { fallback?: string } }> }[]).some(
       (r) => r.chain?.at(-1)?.ssg?.fallback === 'client',
     )
-  if (islandMap.size > 0 || needsFallbackRuntime) {
+  if (islandMap.size > 0 || needsFallbackRuntime || aiEnabled) {
     const islandsOutDir = path.join(outDir, 'islands')
     const result = await buildIslands(islandMap, {
       outDir: islandsOutDir,
