@@ -8,6 +8,22 @@ import { islandChunkBasename } from '../islands/chunk-id.ts'
 import { emitBehaviorSsrModule } from '../islands/behavior-ssr-loader.ts'
 import { DIRECTIVES_BOOTSTRAP, ISLANDS_IMPORTMAP_AND_BOOTSTRAP } from '../islands/importmap.ts'
 
+const NATIVE_INLINE_FALLBACK_WARNING = /^native component "([^"\r\n]+)" not inlined: ([\s\S]+)$/
+
+export function formatCompilerWarning(warning: string): string {
+  const match = NATIVE_INLINE_FALLBACK_WARNING.exec(warning)
+  if (!match) return `brust: ${warning}`
+
+  const [, component, reason] = match
+  return [
+    `brust: warning — native component "${component}" was not inlined`,
+    `  reason: ${reason}`,
+    '  impact: rendered through React SSR; React hooks and event handlers are not hydrated automatically on a native route',
+    `  interactive fix: use <Island component={${component}} props={...} />`,
+    `  zero-JS fix: rewrite ${component} using native-compatible JSX`,
+  ].join('\n')
+}
+
 /** Gather transitive component sources starting from a page source file.
  *
  * BFS/DFS over local imports reachable from `pageSourcePath`:
@@ -936,8 +952,12 @@ export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<Na
       )
     }
 
-    // Print non-fatal compiler warnings to stderr.
-    for (const w of compiled.warnings ?? []) process.stderr.write(`brust: ${w}\n`)
+    // Print non-fatal compiler warnings to stderr. Native-inline fallbacks get
+    // actionable multiline guidance; all other warning strings retain the
+    // existing one-line prefix.
+    for (const warning of compiled.warnings ?? []) {
+      process.stderr.write(`${formatCompilerWarning(warning)}\n`)
+    }
 
     // SPA navigation extracts the FIRST <main>…</main> block, so a native route
     // template must hold exactly one <main>. More than one (typically a leaf
