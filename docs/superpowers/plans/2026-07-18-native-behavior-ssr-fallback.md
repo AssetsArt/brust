@@ -4,7 +4,7 @@
 "owner":"0ddb11d0-954b-4710-90ce-8191a46fe3c3","authority":"in-loop",
 "planPath":"docs/superpowers/plans/2026-07-18-native-behavior-ssr-fallback.md","baseSha":"68b878afe25698511b1925bb429b317b0fe03295","escalation":"0ddb11d0-954b-4710-90ce-8191a46fe3c3",
 "readingOrder":["docs/superpowers/plans/2026-07-18-native-behavior-ssr-fallback.md","docs/superpowers/specs/2026-06-03-native-interactivity-directives-design.md","example/docs/content/native-interactivity.md","crates/jsx-rust-compiler/src/lower.rs","crates/jsx-rust-compiler/src/static_eval.rs","runtime/islands/native-render.ts"],
-"boundary":["crates/jsx-rust-compiler/src/emit_factory.rs","crates/jsx-rust-compiler/src/ir.rs","crates/jsx-rust-compiler/src/lib.rs","crates/jsx-rust-compiler/src/lower.rs","crates/jsx-rust-compiler/src/static_eval.rs","docs/superpowers/plans/2026-07-18-native-behavior-ssr-fallback.md","example/docs/content/native-interactivity.md","example/docs/content/rendering.md","runtime/cli/native-routes-emit.ts","runtime/islands/behavior-ssr-loader.test.ts","runtime/islands/behavior-ssr-loader.ts","runtime/islands/native-render.test.ts","runtime/islands/native-render.ts","tests/fixtures/app/NativeInline.tsx","tests/fixtures/app/components/BehaviorSsrFallback.tsx","tests/native-inline.test.ts","types/islands/isr-jsx.d.ts"],
+"boundary":["crates/brust/src/jsx_compile.rs","crates/jsx-rust-compiler/src/emit_factory.rs","crates/jsx-rust-compiler/src/ir.rs","crates/jsx-rust-compiler/src/lib.rs","crates/jsx-rust-compiler/src/lower.rs","crates/jsx-rust-compiler/src/static_eval.rs","docs/superpowers/plans/2026-07-18-native-behavior-ssr-fallback.md","example/docs/content/native-interactivity.md","example/docs/content/rendering.md","runtime/cli/native-routes-emit.ts","runtime/islands/behavior-ssr-loader.test.ts","runtime/islands/behavior-ssr-loader.ts","runtime/islands/native-render.test.ts","runtime/islands/native-render.ts","tests/fixtures/app/NativeInline.tsx","tests/fixtures/app/components/BehaviorSsrFallback.tsx","tests/native-inline.test.ts","types/islands/isr-jsx.d.ts"],
 "consumes":["crates/jsx-rust-compiler/src/lower.rs#try_native_inline","runtime/islands/native-render.ts#resolveComponentContext","runtime/native/runtime.ts#start"],
 "produces":["docs/superpowers/plans/2026-07-18-native-behavior-ssr-fallback.md#Done When","tests/native-inline.test.ts#behavior SSR fallback regression"],"gates":["test -f tests/fixtures/app/NativeInline.tsx","cargo fmt --all --check","cargo clippy --workspace --all-targets --locked -- -D warnings","cargo test -p jsx-rust-compiler --locked","bun test runtime/islands/behavior-ssr-loader.test.ts runtime/islands/native-render.test.ts","bun test tests/native-inline.test.ts","bun test runtime/native/","bun run ci"]
 } -->
@@ -42,7 +42,7 @@ The public interface does not change: preserve `export const behavior`, `x-data`
 3. Add the server-only virtual-module loader; have generated factories import the content-addressed transformed module, seed the loader before factory import, and render/cache through the existing React path.
 4. Add exact bounded `Array.from({ length: N })` evaluation in `static_eval.rs`, then cover safe and rejected forms.
 5. Extend integration coverage to referenced computed/literal fallback cases, authored `x-data`, bare `x-behavior`, ambiguous hosts, nested behavior ownership, hooks, listener mounting, and ISR cache output.
-6. Update docs/types and run every header gate.
+6. Update the NAPI binding's direct `ComponentMeta` test construction and golden JSON for `behaviorModules`, then update docs/types and run every header gate.
 
 ## User-observed failure
 
@@ -125,6 +125,7 @@ Design/spec conflicts are filed as task challenges and ruled by Aoki. Dabin owns
 ## Verification
 
 - Boundary guard credited to Dabin: `test -f tests/fixtures/app/NativeInline.tsx` prevents the stale route-component path from surviving another plan handoff.
+- Workspace compatibility: `crates/brust/src/jsx_compile.rs` must construct the extended `ComponentMeta` explicitly and assert the camelCase `behaviorModules` JSON contract.
 - RED phase: run the smallest `tests/native-inline.test.ts` name pattern twice and record both failing gates.
 - Focused GREEN: `cargo test -p jsx-rust-compiler --locked`, `bun test runtime/islands/behavior-ssr-loader.test.ts runtime/islands/native-render.test.ts`, and `bun test tests/native-inline.test.ts`.
 - Final gates: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `bun test runtime/native/`, and `bun run ci` in addition to the focused gates.
