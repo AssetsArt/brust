@@ -3,10 +3,10 @@
 {
 "owner":"0ddb11d0-954b-4710-90ce-8191a46fe3c3","authority":"in-loop",
 "planPath":"docs/superpowers/plans/2026-07-18-native-behavior-ssr-fallback.md","baseSha":"68b878afe25698511b1925bb429b317b0fe03295","escalation":"0ddb11d0-954b-4710-90ce-8191a46fe3c3",
-"readingOrder":["docs/superpowers/plans/2026-07-18-native-behavior-ssr-fallback.md","docs/superpowers/specs/2026-06-03-native-interactivity-directives-design.md","example/docs/content/native-interactivity.md","crates/jsx-rust-compiler/src/lower.rs","crates/jsx-rust-compiler/src/static_eval.rs","runtime/islands/native-render.ts"],
-"boundary":["crates/jsx-rust-compiler/src/emit_factory.rs","crates/jsx-rust-compiler/src/ir.rs","crates/jsx-rust-compiler/src/lib.rs","crates/jsx-rust-compiler/src/lower.rs","crates/jsx-rust-compiler/src/static_eval.rs","docs/superpowers/plans/2026-07-18-native-behavior-ssr-fallback.md","example/docs/content/native-interactivity.md","example/docs/content/rendering.md","runtime/cli/native-routes-emit.ts","runtime/islands/native-render.test.ts","runtime/islands/native-render.ts","tests/fixtures/app/NativeInline.tsx","tests/fixtures/app/components/BehaviorSsrFallback.tsx","tests/native-inline.test.ts","types/islands/isr-jsx.d.ts"],
+"readingOrder":["docs/superpowers/plans/2026-07-18-native-behavior-ssr-fallback.md","docs/superpowers/specs/2026-06-03-native-interactivity-directives-design.md","example/docs/content/native-interactivity.md","crates/jsx-rust-compiler/src/lower.rs","crates/jsx-rust-compiler/src/static_eval.rs","runtime/islands/behavior-ssr-loader.ts","runtime/islands/native-render.ts"],
+"boundary":["crates/jsx-rust-compiler/src/emit_factory.rs","crates/jsx-rust-compiler/src/ir.rs","crates/jsx-rust-compiler/src/lib.rs","crates/jsx-rust-compiler/src/lower.rs","crates/jsx-rust-compiler/src/static_eval.rs","docs/superpowers/plans/2026-07-18-native-behavior-ssr-fallback.md","example/docs/content/native-interactivity.md","example/docs/content/rendering.md","runtime/cli/native-routes-emit.ts","runtime/islands/behavior-ssr-loader.test.ts","runtime/islands/behavior-ssr-loader.ts","runtime/islands/native-render.test.ts","runtime/islands/native-render.ts","tests/fixtures/app/NativeInline.tsx","tests/fixtures/app/components/BehaviorSsrFallback.tsx","tests/native-inline.test.ts","types/islands/isr-jsx.d.ts"],
 "consumes":["crates/jsx-rust-compiler/src/lower.rs#try_native_inline","runtime/islands/native-render.ts#resolveComponentContext","runtime/native/runtime.ts#start"],
-"produces":["docs/superpowers/plans/2026-07-18-native-behavior-ssr-fallback.md#Done When","tests/native-inline.test.ts#behavior SSR fallback regression"],"gates":["test -f tests/fixtures/app/NativeInline.tsx","cargo fmt --all --check","cargo clippy --workspace --all-targets --locked -- -D warnings","cargo test -p jsx-rust-compiler --locked","bun test runtime/islands/native-render.test.ts","bun test tests/native-inline.test.ts","bun test runtime/native/","bun run ci"]
+"produces":["docs/superpowers/plans/2026-07-18-native-behavior-ssr-fallback.md#Done When","tests/native-inline.test.ts#behavior SSR fallback regression"],"gates":["test -f tests/fixtures/app/NativeInline.tsx","cargo fmt --all --check","cargo clippy --workspace --all-targets --locked -- -D warnings","cargo test -p jsx-rust-compiler --locked","bun test runtime/islands/behavior-ssr-loader.test.ts runtime/islands/native-render.test.ts","bun test tests/native-inline.test.ts","bun test runtime/native/","bun run ci"]
 } -->
 
 ## Goal
@@ -26,18 +26,23 @@ Make a behavior-bearing component remain interactive when a `native` inline atte
 - Diagnose through the real native build and SSR-component render path before selecting a correction seam.
 - Treat inline eligibility as a performance concern; behavior mount correctness is invariant across inline and SSR fallback paths.
 - Support the user-requested static form `Array.from({ length: N }).map(...)` through bounded inline lowering; unsupported forms continue through the correct SSR fallback path.
-- Do not mutate production code until the RED reproduction and strongest-hypothesis falsification are recorded.
+- Diagnosis at `b82dbccf` proved injection exists only after inline success; author-written `x-data` survives React/Jinja, so React/Jinja stripping is not the cause.
+- Carry behavior identity and a compiler-produced server-source transform through SSR IR/factory metadata. Import that transformed component through a server-only virtual module before normal React rendering; do not rewrite flattened HTML.
+- If every runtime return shape cannot be proven to expose exactly one behavior host, fail the build with the component name, reason, and remediation instead of degrading silently.
+- Architecture advisor recommended source transformation because source AST is the last representation that preserves component ownership; Aoki adopted that recommendation over a post-render scanner.
 
 ## Interface
 
-The diagnosis phase changes no public interface. The eventual fix must preserve `export const behavior`, `x-data`, `x-behavior`, `x-on-*`, and directive chunk naming exactly as documented.
+The public interface does not change: preserve `export const behavior`, `x-data`, `x-behavior`, `x-on-*`, and directive chunk naming. Internally, `SsrComponent`/`FactoryOutput`/`ComponentMeta` carry behavior-module metadata for every top-level or nested SSR factory reference. Component JSON uses camelCase `behaviorModules`, each entry containing the referenced component, canonical directive name, content-addressed module id, and transformed TSX source. These fields are server-only and must never enter browser manifests.
 
 ## Ordered edits
 
-1. Add the dedicated behavior fallback fixture and route usage.
-2. Add the deterministic build/SSR regression assertion and observe it fail twice.
-3. Trace and falsify the fail path, then stop at `DIAGNOSIS READY`.
-4. After Aoki amends this plan with a recorded correction seam, implement both the fallback correctness fix and bounded static `Array.from({ length: N })` lowering, extend all three regression variants, update docs, and run every header gate.
+1. Preserve RED commit `b82dbccf`: dedicated behavior fallback fixture, real route use, warning/slot/chunk/rendered-host assertions, and the two reproducible failing gates `72528110`/`08b9216d`.
+2. Add compiler host-source transformation and carry behavior modules through IR, factory collection, `ComponentMeta`, and component JSON without losing nested SSR references or source-order alignment.
+3. Add the server-only virtual-module loader; have generated factories import the content-addressed transformed module, seed the loader before factory import, and render/cache through the existing React path.
+4. Add exact bounded `Array.from({ length: N })` evaluation in `static_eval.rs`, then cover safe and rejected forms.
+5. Extend integration coverage to referenced computed/literal fallback cases, authored `x-data`, bare `x-behavior`, ambiguous hosts, nested behavior ownership, hooks, listener mounting, and ISR cache output.
+6. Update docs/types and run every header gate.
 
 ## User-observed failure
 
@@ -68,7 +73,17 @@ Stop after diagnosis and send `DIAGNOSIS READY` with the failing test SHA, bread
 
 ## Implementation
 
-Implementation is intentionally gated on the Phase 4 ruling checkpoint. The amended plan will name the exact IR/runtime seam, invariants, and production edit order after the deterministic evidence selects it.
+### SSR fallback behavior module
+
+When a behavior component reaches the `try_native_inline -> SsrComponent` transition, parse its original source and create non-overlapping source edits from SWC spans. For each reachable return/conditional branch, apply the existing host precedence within that component-owned JSX only: an authored literal `x-data` wins; otherwise replace exactly one bare `x-behavior`; otherwise inject on the single root host element. Stop at capitalized/nested component boundaries. Reject valued/multiple markers, fragments or control flow without one provable host, unsupported default-export shapes, and conflicting return hosts with the existing component-aware error style and an actionable remediation.
+
+Store the transformed full TSX source plus canonical directive identity on the fallback `SsrComponent`. `emit_factory` must collect behavior modules from the whole factory tree, including nested SSR components, and `compile_full` must transfer the collection into each `ComponentMeta` alongside `referencedComponents`.
+
+`emitComponentArtifacts` deduplicates behavior modules by referenced component, rejects conflicting definitions, assigns a content-addressed module id, writes the server-only metadata, and emits factory imports using a reserved virtual-module query. `behavior-ssr-loader.ts` owns one idempotently registered Bun plugin: before a factory import, `resolveComponentContext` seeds module-id/source entries from the manifest; the plugin serves TSX with resolution rooted at the original component directory so relative imports, hooks, classes, and nested dependencies execute normally. Module ids change when transformed source changes. No wrapper element and no post-render mutation are permitted. Register/seed before the factory module is dynamically imported; render and ISR cache writes remain unchanged and therefore store HTML already containing `x-data`.
+
+### Bounded `Array.from`
+
+At `static_eval.rs::eval_expr`, recognize only the unshadowed global call `Array.from({ length: N })`: one non-spread object argument, exactly one `length` key, finite non-negative integer literal, and no mapper/extra properties. Materialize `Value::Array` with `N` `Undefined` entries only when `N <= MAX_EXPANSIONS`; reuse `expand_map_expr`, `add_expansion`, `MAX_DEPTH`, and `MAX_BINDINGS`. A shadowed `Array`, dynamic/fractional/negative/oversize length, iterable, second argument, spread, or extra property remains non-evaluable and follows the ordinary SSR fallback with no partial result.
 
 ## Constraints
 
@@ -85,12 +100,16 @@ Implementation is intentionally gated on the Phase 4 ruling checkpoint. The amen
 - Injecting into arbitrary `renderToString` HTML after the fact risks fragments, multi-root output, comments, escaping, and nested behavior ownership.
 - Carrying directive identity through IR/factory metadata may require every component collection/emission walk to remain source-order aligned.
 - Author-written `x-data` inside an opaque SSR component must continue to win without duplication.
+- Bun virtual-module registration is process-global; registration must be idempotent, module ids content-addressed, and conflicting source for one id must hard-fail.
+- Full transformed sources are server artifacts only; never expose them through the islands import map or static chunk route.
 
 ## Rejected alternatives
 
 - Warning-only or documentation-only closure: rejected because it preserves a silent correctness failure.
-- Failing every non-inline behavior component: reserved only if diagnosis proves no sound wiring seam exists.
+- Failing every non-inline behavior component: rejected because a source-preserving server transform is sound for provable hosts; only ambiguous/untransformable host shapes hard-fail.
 - Generic rendered-HTML string injection: rejected because fragments, wrappers, and nested behavior scopes make root ownership ambiguous.
+- Passing `x-data` as a React component prop: rejected because opaque components need not forward unknown props.
+- Calling the component directly or cloning `h(Component)`: rejected because direct calls break hooks/classes and cloning changes only component props, not its rendered host.
 
 ## Authority and Roles
 
@@ -107,7 +126,7 @@ Design/spec conflicts are filed as task challenges and ruled by Aoki. Dabin owns
 
 - Boundary guard credited to Dabin: `test -f tests/fixtures/app/NativeInline.tsx` prevents the stale route-component path from surviving another plan handoff.
 - RED phase: run the smallest `tests/native-inline.test.ts` name pattern twice and record both failing gates.
-- Focused GREEN: `cargo test -p jsx-rust-compiler --locked`, `bun test runtime/islands/native-render.test.ts`, and `bun test tests/native-inline.test.ts`.
+- Focused GREEN: `cargo test -p jsx-rust-compiler --locked`, `bun test runtime/islands/behavior-ssr-loader.test.ts runtime/islands/native-render.test.ts`, and `bun test tests/native-inline.test.ts`.
 - Final gates: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `bun test runtime/native/`, and `bun run ci` in addition to the focused gates.
 
 ## Done When
@@ -117,6 +136,8 @@ Design/spec conflicts are filed as task challenges and ruled by Aoki. Dabin owns
 - Dynamic or unsupported `Array.from` forms retain the existing safe fallback behavior rather than being partially evaluated.
 - The rendered host retains `x-on-*`; the runtime finds it, loads the matching directive chunk, and installs the listener.
 - Inline-success behavior remains unchanged and author-supplied `x-data` still wins.
+- Hooks/classes still render through React normally; a fragment or ambiguous host fails at build time with component + reason + remediation.
+- Nested behavior modules retain separate ownership, and ISR cache hits serve the already-wired HTML.
 - A regression test exercises the real native build + SSR-component path, not only a helper.
 - Documentation describes inline limitations as performance constraints rather than interactivity correctness hazards.
 - All header gates pass at the final implementation SHA.
