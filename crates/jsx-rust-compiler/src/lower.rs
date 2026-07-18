@@ -2870,7 +2870,7 @@ impl Visit for ReturnExprCollector {
 
 #[derive(Default)]
 struct SourceHostScan {
-    literal_x_data: usize,
+    literal_x_data: Vec<String>,
     bare_x_behavior: Vec<Span>,
     invalid_marker: bool,
 }
@@ -3007,6 +3007,7 @@ fn transform_behavior_component_source(
     }
 
     let mut edits = Vec::new();
+    let mut mount_identity: Option<String> = None;
     for element in leaves {
         if !is_host_element_name(&element.opening.name) {
             return Err(behavior_transform_error(
@@ -3018,9 +3019,9 @@ fn transform_behavior_component_source(
         let mut scan = SourceHostScan::default();
         scan_source_host_element(element, true, &mut scan);
         if scan.invalid_marker
-            || scan.literal_x_data > 1
+            || scan.literal_x_data.len() > 1
             || scan.bare_x_behavior.len() > 1
-            || (scan.literal_x_data > 0 && !scan.bare_x_behavior.is_empty())
+            || (!scan.literal_x_data.is_empty() && !scan.bare_x_behavior.is_empty())
         {
             return Err(behavior_transform_error(
                 component,
@@ -3028,7 +3029,25 @@ fn transform_behavior_component_source(
                 span,
             ));
         }
-        if scan.literal_x_data == 1 {
+
+        let branch_identity = scan
+            .literal_x_data
+            .first()
+            .map(String::as_str)
+            .unwrap_or(directive_name);
+        if mount_identity
+            .as_deref()
+            .is_some_and(|identity| identity != branch_identity)
+        {
+            return Err(behavior_transform_error(
+                component,
+                "reachable return branches resolve to different behavior mount identities",
+                span,
+            ));
+        }
+        mount_identity.get_or_insert_with(|| branch_identity.to_string());
+
+        if scan.literal_x_data.len() == 1 {
             continue;
         }
         if let Some(marker) = scan.bare_x_behavior.first() {
@@ -3138,8 +3157,9 @@ fn scan_source_host_element(element: &JSXElement, is_root: bool, scan: &mut Sour
         };
         match name.sym.as_ref() {
             "x-data" => {
-                if matches!(attribute.value, Some(JSXAttrValue::Str(_))) {
-                    scan.literal_x_data += 1;
+                if let Some(JSXAttrValue::Str(value)) = &attribute.value {
+                    scan.literal_x_data
+                        .push(value.value.to_string_lossy().into_owned());
                     owns_x_data = true;
                 } else {
                     scan.invalid_marker = true;
@@ -6293,6 +6313,107 @@ export default function Btn({ label }) {
             assert!(source.contains(expected), "{source}");
             assert!(!source.contains("x-behavior"), "{source}");
         }
+    }
+
+    #[test]
+    fn ssr_fallback_behavior_rejects_mixed_authored_and_canonical_branch_identities() {
+        let route = r#"export default function Page() { return <Btn native/>; }"#;
+        let btn = r#"export const behavior = () => ({});
+export default function Btn({ ok }) {
+  useState(0);
+  return ok ? <button x-data="mine">authored</button> : <button>canonical</button>;
+}"#;
+        let err = crate::compile_full(
+            route,
+            "<t>",
+            HashMap::from([("Btn".to_string(), btn.to_string())]),
+            HashMap::new(),
+            HashMap::from([("Btn".to_string(), "btn_abc12345".to_string())]),
+        )
+        .unwrap_err();
+        assert!(matches!(err.kind, ErrorKind::BehaviorSsrTransform(_, _)));
+        assert!(
+            err.to_string()
+                .contains("different behavior mount identities"),
+            "{err}"
+        );
+        assert!(err.to_string().contains("every return branch"), "{err}");
+    }
+
+    #[test]
+    fn ssr_fallback_behavior_rejects_different_authored_branch_identities() {
+        let route = r#"export default function Page() { return <Btn native/>; }"#;
+        let btn = r#"export const behavior = () => ({});
+export default function Btn({ ok }) {
+  useState(0);
+  return ok ? <button x-data="first">first</button> : <button x-data="second">second</button>;
+}"#;
+        let err = crate::compile_full(
+            route,
+            "<t>",
+            HashMap::from([("Btn".to_string(), btn.to_string())]),
+            HashMap::new(),
+            HashMap::from([("Btn".to_string(), "btn_abc12345".to_string())]),
+        )
+        .unwrap_err();
+        assert!(matches!(err.kind, ErrorKind::BehaviorSsrTransform(_, _)));
+        assert!(
+            err.to_string()
+                .contains("different behavior mount identities"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn ssr_fallback_behavior_accepts_canonical_identity_across_branch_placements() {
+        let route = r#"export default function Page() { return <Btn native/>; }"#;
+        let btn = r#"export const behavior = () => ({});
+export default function Btn({ first, second }) {
+  useState(0);
+  return first
+    ? <button x-behavior>bare</button>
+    : second
+      ? <section>injected</section>
+      : <div x-data="btn_abc12345">authored canonical</div>;
+}"#;
+        let c = crate::compile_full(
+            route,
+            "<t>",
+            HashMap::from([("Btn".to_string(), btn.to_string())]),
+            HashMap::new(),
+            HashMap::from([("Btn".to_string(), "btn_abc12345".to_string())]),
+        )
+        .unwrap();
+        let source = &c.components[0].behavior_modules[0].source;
+        assert_eq!(
+            source.matches(r#"x-data="btn_abc12345""#).count(),
+            3,
+            "{source}"
+        );
+        assert!(!source.contains("x-behavior"), "{source}");
+    }
+
+    #[test]
+    fn ssr_fallback_behavior_accepts_same_authored_identity_across_branch_placements() {
+        let route = r#"export default function Page() { return <Btn native/>; }"#;
+        let btn = r#"export const behavior = () => ({});
+export default function Btn({ ok }) {
+  useState(0);
+  return ok
+    ? <button x-data="mine">root</button>
+    : <section><span x-data="mine">nested</span></section>;
+}"#;
+        let c = crate::compile_full(
+            route,
+            "<t>",
+            HashMap::from([("Btn".to_string(), btn.to_string())]),
+            HashMap::new(),
+            HashMap::from([("Btn".to_string(), "btn_abc12345".to_string())]),
+        )
+        .unwrap();
+        let source = &c.components[0].behavior_modules[0].source;
+        assert_eq!(source.matches(r#"x-data="mine""#).count(), 2, "{source}");
+        assert!(!source.contains(r#"x-data="btn_abc12345""#), "{source}");
     }
 
     #[test]
