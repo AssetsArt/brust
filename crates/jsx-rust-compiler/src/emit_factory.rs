@@ -44,11 +44,12 @@ fn collect_factories(node: &JsxNode, out: &mut Vec<FactoryOutput>) {
             }
         }
         JsxNode::Map { body, .. } => collect_factories(body, out),
-        JsxNode::Empty
-        | JsxNode::Text(_)
-        | JsxNode::Expr(_)
-        | JsxNode::RawHtml(_)
-        | JsxNode::Island { .. } => {}
+        JsxNode::Island { fallback, .. } => {
+            if let Some(fallback) = fallback {
+                collect_factories(fallback, out);
+            }
+        }
+        JsxNode::Empty | JsxNode::Text(_) | JsxNode::Expr(_) | JsxNode::RawHtml(_) => {}
         JsxNode::Cond {
             consequent,
             alternate,

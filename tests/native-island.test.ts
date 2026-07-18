@@ -9,20 +9,20 @@ import { directiveName } from '../runtime/native/build.ts'
  *
  *   NativeIslandPage.tsx (<Island component={Counter} props={count} />, no ssr)
  *     → jsx-rustc compile → .brust/jinja/NativeIslandPage.jinja
- *         (empty data-brust-csr mount + island_0_props placeholder — the
+ *         (fallback-filled data-brust-csr mount + island_0_props placeholder — the
  *          instance-based context key for the single, source-order-0 instance)
  *     → T6 reconcile bakes {% raw %}…{% endraw %} importmap+bootstrap onto the .jinja
  *     → brust boot reads .brust/jinja/ into minijinja (the {% raw %} block MUST
  *        compile — if it didn't, this route would 500)
  *     → T7's native branch fills island_0_props with entity-encoded props JSON
- *     → served HTML = static shell + empty client-only mount + literal bootstrap
+ *     → served HTML = static shell + client-only placeholder + literal bootstrap
  *
  * This task proves the SERVED HTML SHAPE + that the baked template compiles at boot.
  * Browser interactivity (the createRoot hydration branch) is OUT OF SCOPE here — this
  * repo has no Playwright/puppeteer infra; that branch is unit-tested in T5. A browser
  * interactivity smoke is a documented follow-up.
  *
- * Mirrors tests/jinja-route.test.ts's boot harness (cargo build jsx-rustc → brust
+ * Mirrors tests/jinja-route.test.ts's boot harness (build native addon → brust
  * build → spawn → waitForReady → SIGINT), on a different port (3802) to avoid clashes.
  */
 
@@ -48,18 +48,17 @@ async function waitForReady(url: string, timeoutMs = 10000): Promise<void> {
 }
 
 beforeAll(async () => {
-  // Pre-flight 1: build jsx-rustc binary (the build CLI invokes
-  // target/{release,debug}/jsx-rustc; without it, emitNativeTemplates throws).
-  const buildRustc = spawnSync({
-    cmd: ['cargo', 'build', '-p', 'jsx-rust-compiler', '--bin', 'jsx-rustc'],
+  // Pre-flight 1: build the NAPI addon used by emitNativeTemplates.compileJsx.
+  // Building only the legacy jsx-rustc binary would leave runtime/index.js
+  // backed by a stale .node file and would not exercise current compiler code.
+  const buildNative = spawnSync({
+    cmd: ['bun', 'run', 'build:debug'],
     cwd: REPO_ROOT,
     stdout: 'inherit',
     stderr: 'inherit',
   })
-  if (buildRustc.exitCode !== 0) {
-    throw new Error(
-      `cargo build -p jsx-rust-compiler --bin jsx-rustc failed (exit ${buildRustc.exitCode})`,
-    )
+  if (buildNative.exitCode !== 0) {
+    throw new Error(`bun run build:debug failed (exit ${buildNative.exitCode})`)
   }
 
   // Pre-flight 2: run brust build against the fixture entry. This compiles the
@@ -103,7 +102,7 @@ beforeAll(async () => {
     stderr: 'inherit',
   })
   await waitForReady(BASE_URL)
-}, 60_000)
+}, 120_000)
 
 afterAll(async () => {
   if (proc) {
@@ -116,7 +115,7 @@ afterAll(async () => {
   }
 })
 
-test('GET /_test/native-island — client-only island: static shell + empty CSR mount + bootstrap', async () => {
+test('GET /_test/native-island — client-only island serves inline and SSR-slot fallback inside CSR mount', async () => {
   const res = await fetch(`${BASE_URL}/_test/native-island`)
 
   // The bake-compile proof: if the baked {% raw %}…{% endraw %} importmap block
@@ -136,10 +135,30 @@ test('GET /_test/native-island — client-only island: static shell + empty CSR 
   expect(body).toContain('data-brust-csr')
   expect(body).toContain('data-brust-props="{&quot;start&quot;:3}"')
 
-  // The mount div is EMPTY — client-only means no server-rendered markup between
-  // the open/close tags. The compiled mount closes immediately after the CSR
-  // marker: `data-brust-csr></div>` with nothing between `>` and `</div>`.
-  expect(body).toContain('data-brust-csr></div>')
+  // The client-only mount keeps useful server HTML until bootstrap obtains a
+  // valid Counter module. MenuSkeleton is native-inlined, while HookBadge uses
+  // the existing SSR component slot/factory path because it calls useState.
+  // MenuSkeleton also directly lowers a nested Counter island: its marker and
+  // chunk must exist before the parent CSR takeover disposes its lifecycle.
+  expect(body).toContain('<div class="menu-skeleton"><span>Hello islands</span>')
+  expect(body).toMatch(/<span class="hbadge">Hello islands(?:<!-- -->)?0<\/span>/)
+  expect(body.match(/data-brust-island="Counter_[a-f0-9]{8}"/g)).toHaveLength(2)
+
+  const jinjaDir = resolve(FIXTURE_DIR, '.brust/jinja')
+  const jinja = readFileSync(resolve(jinjaDir, 'NativeIslandPage.jinja'), 'utf8')
+  const islands = JSON.parse(
+    readFileSync(resolve(jinjaDir, 'NativeIslandPage.islands.json'), 'utf8'),
+  ) as Array<{ component: string; instance: number }>
+  const components = readFileSync(resolve(jinjaDir, 'NativeIslandPage.components.json'), 'utf8')
+  const factory = readFileSync(resolve(jinjaDir, 'NativeIslandPage.factory.ts'), 'utf8')
+  expect(jinja).toContain('class="menu-skeleton"')
+  expect(jinja).toMatch(/comp_\d+_html/)
+  expect(components).toContain('"HookBadge"')
+  expect(components).not.toContain('"MenuSkeleton"')
+  expect(factory).toContain('import HookBadge')
+  expect(factory).toContain('h(HookBadge')
+  expect(islands.map(({ instance }) => instance)).toEqual([0, 1])
+  expect(islands[0]?.component).toBe(islands[1]?.component)
 
   // Bootstrap baked by T6: the importmap + the module bootstrap script appear
   // LITERALLY (minijinja strips the {% raw %}/{% endraw %} markers, emitting the

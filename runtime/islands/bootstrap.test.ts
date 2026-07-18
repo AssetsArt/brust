@@ -14,7 +14,11 @@ let classifyClick: (
 ) => 'external' | 'hash' | 'reload' | 'navigate'
 let hydrateMarkersIn: (root?: ParentNode) => void
 let swapMainContent: (main: HTMLElement, html: string) => void
-let hydrateOne: (el: HTMLElement) => Promise<void>
+let hydrateOne: (
+  el: HTMLElement,
+  importer?: (url: string) => Promise<Record<string, unknown>>,
+  chunkMapLoader?: () => Promise<Record<string, string>>,
+) => Promise<void>
 let unmountIslandsIn: (root: ParentNode) => void
 let navigate: (url: URL, mode: 'push' | 'replace' | 'none') => Promise<void>
 let isFullDocumentPayload: (html: string) => boolean
@@ -28,14 +32,36 @@ let __setCurrentShellForTest: (shell: string | null) => void
 // one test's calls don't leak into the next ("NOT createRoot" assertions).
 const unmountSpy = mock(() => {})
 const renderSpy = mock(() => {})
-const createRootSpy = mock(() => ({ render: renderSpy, unmount: unmountSpy }))
-const hydrateRootSpy = mock(() => ({ unmount: unmountSpy }))
+const childCountsAtCreateRoot: number[] = []
+const unmountOrder: string[] = []
+const lifecycleEvents: string[] = []
+function trackedRoot(el: HTMLElement) {
+  return {
+    unmount: () => {
+      const id = el.getAttribute('data-brust-island') ?? '<anonymous>'
+      unmountOrder.push(id)
+      lifecycleEvents.push(`unmount:${id}`)
+      unmountSpy()
+    },
+  }
+}
+const createRootSpy = mock((el: HTMLElement) => {
+  const id = el.getAttribute('data-brust-island') ?? '<anonymous>'
+  childCountsAtCreateRoot.push(el.childNodes.length)
+  lifecycleEvents.push(`create:${id}`)
+  return { render: renderSpy, ...trackedRoot(el) }
+})
+const hydrateRootSpy = mock((el: HTMLElement) => trackedRoot(el))
 
 beforeEach(async () => {
   unmountSpy.mockClear()
   renderSpy.mockClear()
   createRootSpy.mockClear()
   hydrateRootSpy.mockClear()
+  unmountSpy.mockImplementation(() => {})
+  childCountsAtCreateRoot.length = 0
+  unmountOrder.length = 0
+  lifecycleEvents.length = 0
   // The page cache is module-level state shared across tests in this file —
   // reset so one test's cached navigations don't mask another's fetch asserts.
   __resetPageCacheForTest()
@@ -289,6 +315,26 @@ function makeMarker(id: string, csr: boolean): HTMLElement {
   return el as unknown as HTMLElement
 }
 
+test('hydrateOne: client-only placeholder remains while its component module is loading', async () => {
+  const el = makeMarker('Deferred', /* csr */ true)
+  el.innerHTML = '<span>Loading menu</span>'
+  let resolveImport!: (mod: Record<string, unknown>) => void
+  const deferredImport = new Promise<Record<string, unknown>>((resolve) => {
+    resolveImport = resolve
+  })
+  const importer = mock(() => deferredImport)
+
+  const pending = hydrateOne(el, importer)
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  expect(importer).toHaveBeenCalledTimes(1)
+  expect(el.textContent).toBe('Loading menu')
+  expect(createRootSpy).not.toHaveBeenCalled()
+
+  resolveImport({ default: () => null })
+  await pending
+})
+
 test('hydrateOne: client-only marker (data-brust-csr) uses createRoot+render, NOT hydrateRoot', async () => {
   const el = makeMarker('Counter', /* csr */ true)
   await hydrateOne(el)
@@ -298,13 +344,50 @@ test('hydrateOne: client-only marker (data-brust-csr) uses createRoot+render, NO
   expect(hydrateRootSpy).not.toHaveBeenCalled()
 })
 
+test('hydrateOne: successful client-only takeover clears placeholder immediately before createRoot', async () => {
+  const el = makeMarker('Menu', /* csr */ true)
+  el.innerHTML = '<span>Loading menu</span>'
+
+  await hydrateOne(el, async () => ({ default: () => null }))
+
+  expect(childCountsAtCreateRoot).toEqual([0])
+  expect(el.childNodes).toHaveLength(0)
+})
+
+test('hydrateOne: rejected client-only import preserves placeholder', async () => {
+  const el = makeMarker('BrokenMenu', /* csr */ true)
+  el.innerHTML = '<span>Menu unavailable</span>'
+
+  await hydrateOne(el, async () => {
+    throw new Error('chunk failed')
+  })
+
+  expect(el.textContent).toBe('Menu unavailable')
+  expect(el.childNodes).toHaveLength(1)
+  expect(createRootSpy).not.toHaveBeenCalled()
+})
+
+test('hydrateOne: invalid client-only component preserves placeholder', async () => {
+  const el = makeMarker('InvalidMenu', /* csr */ true)
+  el.innerHTML = '<span>Menu unavailable</span>'
+
+  await hydrateOne(el, async () => ({ default: { not: 'a component' } }))
+
+  expect(el.textContent).toBe('Menu unavailable')
+  expect(el.childNodes).toHaveLength(1)
+  expect(createRootSpy).not.toHaveBeenCalled()
+})
+
 test('hydrateOne: server marker (no data-brust-csr) uses hydrateRoot, NOT createRoot', async () => {
   const el = makeMarker('Server', /* csr */ false)
+  el.innerHTML = '<button>Server menu</button>'
   await hydrateOne(el)
   expect(hydrateRootSpy).toHaveBeenCalledTimes(1)
   expect(hydrateRootSpy).toHaveBeenCalledWith(el, expect.anything())
   expect(createRootSpy).not.toHaveBeenCalled()
   expect(renderSpy).not.toHaveBeenCalled()
+  expect(el.textContent).toBe('Server menu')
+  expect(el.childNodes).toHaveLength(1)
 })
 
 test('unmountIslandsIn unmounts a root created via the createRoot (CSR) path', async () => {
@@ -329,6 +412,262 @@ test('unmountIslandsIn unmounts a root created via the createRoot (CSR) path', a
   } finally {
     document.body.removeChild(root)
   }
+})
+
+test('hydrateOne: a marker canceled before entry never resolves or imports', async () => {
+  const root = document.createElement('div')
+  const el = makeMarker('CanceledAtEntry', /* csr */ true)
+  el.innerHTML = '<span>Still useful</span>'
+  root.appendChild(el)
+  unmountIslandsIn(root)
+  const importer = mock(async () => ({ default: () => null }))
+
+  await hydrateOne(el, importer, async () => ({}))
+
+  expect(importer).not.toHaveBeenCalled()
+  expect(createRootSpy).not.toHaveBeenCalled()
+  expect(el.textContent).toBe('Still useful')
+})
+
+test('hydrateOne: parent takeover cancels a descendant pending chunk-map lookup', async () => {
+  const parent = makeMarker('MapParent', /* csr */ true)
+  const el = makeMarker('CanceledAtMap', /* csr */ true)
+  el.innerHTML = '<span>Still useful</span>'
+  parent.appendChild(el)
+  let resolveMap!: (map: Record<string, string>) => void
+  const mapPending = new Promise<Record<string, string>>((resolve) => {
+    resolveMap = resolve
+  })
+  const importer = mock(async () => ({ default: () => null }))
+
+  const pending = hydrateOne(el, importer, () => mapPending)
+  await Promise.resolve()
+  await hydrateOne(
+    parent,
+    async () => ({ default: () => null }),
+    async () => ({}),
+  )
+  resolveMap({ CanceledAtMap: '/map.js' })
+  await pending
+
+  expect(importer).not.toHaveBeenCalled()
+  expect(lifecycleEvents).toEqual(['create:MapParent'])
+  expect(parent.contains(el)).toBe(false)
+  expect(el.textContent).toBe('Still useful')
+})
+
+test('hydrateOne: parent takeover cancels a descendant pending component import', async () => {
+  const parent = makeMarker('ImportParent', /* csr */ true)
+  const el = makeMarker('CanceledAtImport', /* csr */ true)
+  el.innerHTML = '<span>Still useful</span>'
+  parent.appendChild(el)
+  let resolveImport!: (mod: Record<string, unknown>) => void
+  const importPending = new Promise<Record<string, unknown>>((resolve) => {
+    resolveImport = resolve
+  })
+  const importer = mock(() => importPending)
+
+  const pending = hydrateOne(el, importer, async () => ({}))
+  await Promise.resolve()
+  expect(importer).toHaveBeenCalledTimes(1)
+  await hydrateOne(
+    parent,
+    async () => ({ default: () => null }),
+    async () => ({}),
+  )
+  resolveImport({ default: () => null })
+  await pending
+
+  expect(lifecycleEvents).toEqual(['create:ImportParent'])
+  expect(parent.contains(el)).toBe(false)
+  expect(el.textContent).toBe('Still useful')
+})
+
+test('hydrateOne: successful parent CSR takeover disposes mounted descendants before clear/create', async () => {
+  const parent = makeMarker('Parent', /* csr */ true)
+  const child = makeMarker('Child', /* csr */ false)
+  child.innerHTML = '<span>Child server content</span>'
+  parent.appendChild(child)
+  await hydrateOne(
+    child,
+    async () => ({ default: () => null }),
+    async () => ({}),
+  )
+  lifecycleEvents.length = 0
+  childCountsAtCreateRoot.length = 0
+  createRootSpy.mockClear()
+
+  await hydrateOne(
+    parent,
+    async () => ({ default: () => null }),
+    async () => ({}),
+  )
+
+  expect(lifecycleEvents).toEqual(['unmount:Child', 'create:Parent'])
+  expect(childCountsAtCreateRoot).toEqual([0])
+})
+
+test('hydrateOne: re-entrant cancellation during descendant unmount stops before parent root creation', async () => {
+  const host = document.createElement('div')
+  const parent = makeMarker('ReentrantParent', /* csr */ true)
+  const child = makeMarker('ReentrantChild', /* csr */ false)
+  child.innerHTML = '<span>Child server content</span>'
+  parent.appendChild(child)
+  host.appendChild(parent)
+  await hydrateOne(
+    child,
+    async () => ({ default: () => null }),
+    async () => ({}),
+  )
+  createRootSpy.mockClear()
+  lifecycleEvents.length = 0
+  unmountSpy.mockImplementation(() => unmountIslandsIn(host))
+
+  await hydrateOne(
+    parent,
+    async () => ({ default: () => null }),
+    async () => ({}),
+  )
+
+  expect(lifecycleEvents).toContain('unmount:ReentrantChild')
+  expect(lifecycleEvents).not.toContain('create:ReentrantParent')
+  expect(parent.contains(child)).toBe(true)
+})
+
+test('hydrateOne: parent import failure preserves mounted fallback descendants', async () => {
+  const parent = makeMarker('FailedParent', /* csr */ true)
+  const child = makeMarker('ActiveChild', /* csr */ false)
+  child.innerHTML = '<span>Active fallback</span>'
+  parent.appendChild(child)
+  await hydrateOne(
+    child,
+    async () => ({ default: () => null }),
+    async () => ({}),
+  )
+  unmountSpy.mockClear()
+
+  await hydrateOne(
+    parent,
+    async () => {
+      throw new Error('parent chunk failed')
+    },
+    async () => ({}),
+  )
+
+  expect(unmountSpy).not.toHaveBeenCalled()
+  expect(parent.contains(child)).toBe(true)
+  expect(child.textContent).toBe('Active fallback')
+})
+
+test('unmountIslandsIn cancels triggers idempotently and unmounts roots deepest-first', async () => {
+  const root = document.createElement('div')
+  const outer = makeMarker('Outer', /* csr */ false)
+  const middle = makeMarker('Middle', /* csr */ false)
+  const inner = makeMarker('Inner', /* csr */ false)
+  middle.appendChild(inner)
+  outer.appendChild(middle)
+  root.appendChild(outer)
+  await hydrateOne(
+    outer,
+    async () => ({ default: () => null }),
+    async () => ({}),
+  )
+  await hydrateOne(
+    middle,
+    async () => ({ default: () => null }),
+    async () => ({}),
+  )
+  await hydrateOne(
+    inner,
+    async () => ({ default: () => null }),
+    async () => ({}),
+  )
+  unmountOrder.length = 0
+
+  unmountIslandsIn(root)
+  unmountIslandsIn(root)
+
+  expect(unmountOrder).toEqual(['Inner', 'Middle', 'Outer'])
+})
+
+test('unmountIslandsIn disconnects visible and cancels idle triggers exactly once', () => {
+  const disconnect = mock(() => {})
+  const observe = mock(() => {})
+  const cancelIdle = mock((_handle: number) => {})
+  const requestIdle = mock((_cb: () => void) => 73)
+  const previousIo = (globalThis as Record<string, unknown>).IntersectionObserver
+  const previousRic = (globalThis as Record<string, unknown>).requestIdleCallback
+  const previousCic = (globalThis as Record<string, unknown>).cancelIdleCallback
+  class TestIntersectionObserver {
+    observe = observe
+    disconnect = disconnect
+  }
+  Object.assign(globalThis, {
+    IntersectionObserver: TestIntersectionObserver,
+    requestIdleCallback: requestIdle,
+    cancelIdleCallback: cancelIdle,
+  })
+
+  const root = document.createElement('div')
+  const visible = makeMarker('VisiblePending', /* csr */ false)
+  visible.setAttribute('data-brust-hydrate', 'visible')
+  const idle = makeMarker('IdlePending', /* csr */ false)
+  idle.setAttribute('data-brust-hydrate', 'idle')
+  const interaction = makeMarker('InteractionPending', /* csr */ false)
+  interaction.setAttribute('data-brust-hydrate', 'interaction')
+  const removeInteractionListener = mock(() => {})
+  interaction.removeEventListener =
+    removeInteractionListener as typeof interaction.removeEventListener
+  root.append(visible, idle, interaction)
+  try {
+    hydrateMarkersIn(root)
+    unmountIslandsIn(root)
+    unmountIslandsIn(root)
+
+    expect(disconnect).toHaveBeenCalledTimes(1)
+    expect(cancelIdle).toHaveBeenCalledTimes(1)
+    expect(cancelIdle).toHaveBeenCalledWith(73)
+    expect(removeInteractionListener).toHaveBeenCalledTimes(3)
+  } finally {
+    Object.assign(globalThis, {
+      IntersectionObserver: previousIo,
+      requestIdleCallback: previousRic,
+      cancelIdleCallback: previousCic,
+    })
+  }
+})
+
+test('navigate() cancels a pending island import before removing the old DOM', async () => {
+  __resetNavForTest()
+  restoreRealHistory()
+  __setCurrentShellForTest(null)
+  document.body.innerHTML = '<main></main>'
+  const main = document.querySelector('main')!
+  const marker = makeMarker('PendingDuringSpa', /* csr */ true)
+  marker.innerHTML = '<span>Old fallback</span>'
+  main.appendChild(marker)
+  let resolveImport!: (mod: Record<string, unknown>) => void
+  const importPending = new Promise<Record<string, unknown>>((resolve) => {
+    resolveImport = resolve
+  })
+  const pending = hydrateOne(
+    marker,
+    () => importPending,
+    async () => ({}),
+  )
+  await Promise.resolve()
+  ;(globalThis as Record<string, unknown>).fetch = mock(async () => ({
+    ok: true,
+    json: async () => ({ html: '<p>New page</p>', title: 'Next' }),
+  }))
+
+  await navigate(new URL('http://localhost/next-after-pending'), 'push')
+  resolveImport({ default: () => null })
+  await pending
+
+  expect(marker.isConnected).toBe(false)
+  expect(createRootSpy).not.toHaveBeenCalled()
+  expect(document.querySelector('main')!.textContent).toBe('New page')
 })
 
 test('navigate() drives nav store loading → success and commits path', async () => {
