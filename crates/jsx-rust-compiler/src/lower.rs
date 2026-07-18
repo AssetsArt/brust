@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use swc_core::common::{Span, Spanned};
@@ -12,6 +13,7 @@ use swc_core::ecma::ast::{
     ModuleDecl, ModuleItem, ObjectLit, ObjectPatProp, OptChainBase, ParenExpr, Pat, Prop, PropName,
     PropOrSpread, ReturnStmt, Stmt, UnaryOp,
 };
+use swc_core::ecma::visit::{Visit, VisitWith};
 
 use crate::ErrorKind;
 use crate::ir::*;
@@ -1440,6 +1442,114 @@ fn subtree_contains_island(node: &JsxNode) -> bool {
         | JsxNode::RawHtml(_)
         | JsxNode::ChildrenSlot => false,
     }
+}
+
+#[derive(Default)]
+struct IslandSourceVisitor {
+    contains_island: bool,
+    component_refs: Vec<String>,
+}
+
+impl Visit for IslandSourceVisitor {
+    fn visit_jsx_element(&mut self, element: &JSXElement) {
+        if let JSXElementName::Ident(ident) = &element.opening.name {
+            let name = ident.sym.as_ref();
+            if name == "Island" {
+                self.contains_island = true;
+            } else if name.starts_with(|c: char| c.is_ascii_uppercase()) {
+                self.component_refs.push(name.to_string());
+            }
+        }
+        element.visit_children_with(self);
+    }
+}
+
+/// Inspect an SSR component's render source for an Island that cannot appear in
+/// fallback IR because native inlining stopped before lowering the component.
+/// Imported child component sources are keyed by their local JSX identifier in
+/// `InlineEnv.sources`, so following capitalized JSX references also covers the
+/// transitive opaque-component case. Cycles are harmless: a component already
+/// on this source walk cannot add a previously unseen Island on a second visit.
+fn opaque_component_source_contains_island(
+    component: &str,
+    env: &InlineEnv,
+    visited: &mut HashSet<String>,
+) -> bool {
+    if !visited.insert(component.to_string()) {
+        return false;
+    }
+    let Some(source) = env.sources.get(component) else {
+        return false;
+    };
+    let Ok(parsed) = crate::parser::parse(source, "<fallback-source>") else {
+        return false;
+    };
+    let Ok((_, function)) = find_default_export(&parsed.module) else {
+        return false;
+    };
+    let Some(body) = function.function.body.as_ref() else {
+        return false;
+    };
+
+    let mut visitor = IslandSourceVisitor::default();
+    body.visit_with(&mut visitor);
+    visitor.contains_island
+        || visitor
+            .component_refs
+            .iter()
+            .any(|child| opaque_component_source_contains_island(child, env, visited))
+}
+
+fn fallback_contains_island(node: &JsxNode, env: Option<&InlineEnv>) -> bool {
+    if subtree_contains_island(node) {
+        return true;
+    }
+    let Some(env) = env else {
+        return false;
+    };
+
+    fn visit_opaque_components(
+        node: &JsxNode,
+        env: &InlineEnv,
+        visited: &mut HashSet<String>,
+    ) -> bool {
+        match node {
+            JsxNode::SsrComponent {
+                component,
+                children,
+                ..
+            } => {
+                opaque_component_source_contains_island(component, env, visited)
+                    || children
+                        .iter()
+                        .any(|child| visit_opaque_components(child, env, visited))
+            }
+            JsxNode::Element { children, .. }
+            | JsxNode::Document { body: children, .. }
+            | JsxNode::Fragment { children } => children
+                .iter()
+                .any(|child| visit_opaque_components(child, env, visited)),
+            JsxNode::Map { body, .. } => visit_opaque_components(body, env, visited),
+            JsxNode::Cond {
+                consequent,
+                alternate,
+                ..
+            } => {
+                visit_opaque_components(consequent, env, visited)
+                    || alternate
+                        .as_deref()
+                        .is_some_and(|node| visit_opaque_components(node, env, visited))
+            }
+            JsxNode::Empty
+            | JsxNode::Text(_)
+            | JsxNode::Expr(_)
+            | JsxNode::RawHtml(_)
+            | JsxNode::Island { .. }
+            | JsxNode::ChildrenSlot => false,
+        }
+    }
+
+    visit_opaque_components(node, env, &mut HashSet::new())
 }
 
 fn lower_element(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode, LowerError> {
@@ -3635,7 +3745,10 @@ fn lower_island(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode,
             .transpose()?
             .map(Box::new)
     };
-    if fallback.as_deref().is_some_and(subtree_contains_island) {
+    if fallback
+        .as_deref()
+        .is_some_and(|fallback| fallback_contains_island(fallback, scope.inline_env.as_deref()))
+    {
         return Err(LowerError::at(
             fallback_attr.map_or(el.opening.span, |attr| attr.span),
             ErrorKind::IslandFallbackContainsIsland,
@@ -6932,6 +7045,75 @@ export const behavior = () => ({});"#;
         let parsed = parse(src, "<test>").unwrap();
         let err = lower(&parsed).unwrap_err();
         assert!(matches!(err.kind, ErrorKind::IslandFallbackContainsIsland));
+    }
+
+    #[test]
+    fn rejects_island_in_opaque_fallback_component_source() {
+        let route = r#"export default function Page() {
+  return <Island component={Menu} fallback={<MenuSkeleton />} />;
+}"#;
+        let sources = HashMap::from([(
+            "MenuSkeleton".to_string(),
+            r#"export default function MenuSkeleton() {
+  useState(false);
+  return <Island component={Nested} />;
+}"#
+            .to_string(),
+        )]);
+
+        let err = lower_with_src(route, sources).unwrap_err();
+        assert!(matches!(err.kind, ErrorKind::IslandFallbackContainsIsland));
+    }
+
+    #[test]
+    fn rejects_island_in_transitive_opaque_fallback_component_source() {
+        let route = r#"export default function Page() {
+  return <Island component={Menu} fallback={<MenuSkeleton />} />;
+}"#;
+        let sources = HashMap::from([
+            (
+                "MenuSkeleton".to_string(),
+                r#"export default function MenuSkeleton() {
+  useState(false);
+  return <SkeletonBody />;
+}"#
+                .to_string(),
+            ),
+            (
+                "SkeletonBody".to_string(),
+                r#"export default function SkeletonBody() {
+  return <div><Island component={Nested} /></div>;
+}"#
+                .to_string(),
+            ),
+        ]);
+
+        let err = lower_with_src(route, sources).unwrap_err();
+        assert!(matches!(err.kind, ErrorKind::IslandFallbackContainsIsland));
+    }
+
+    #[test]
+    fn allows_opaque_fallback_component_source_without_island() {
+        let route = r#"export default function Page() {
+  return <Island component={Menu} fallback={<MenuSkeleton />} />;
+}"#;
+        let sources = HashMap::from([(
+            "MenuSkeleton".to_string(),
+            r#"export default function MenuSkeleton() {
+  useState(false);
+  return <p>Loading</p>;
+}"#
+            .to_string(),
+        )]);
+
+        let (component, _) = lower_with_src(route, sources).unwrap();
+        assert!(matches!(
+            component.root,
+            JsxNode::Island {
+                fallback: Some(fallback),
+                ..
+            } if matches!(fallback.as_ref(), JsxNode::SsrComponent { component, .. } if component == "MenuSkeleton")
+        ));
     }
 
     #[test]
