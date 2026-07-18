@@ -11,11 +11,12 @@
 
 ## Goal
 
-Make a behavior-bearing component remain interactive when a `native` inline attempt soft-falls back to an SSR-component slot. Inline eligibility may affect performance, never the presence of the behavior mount host.
+Make a behavior-bearing component remain interactive when a `native` inline attempt soft-falls back to an SSR-component slot, and add bounded inline-lowering support for static `Array.from({ length: N })` sources. Inline eligibility may affect performance, never the presence of the behavior mount host.
 
 ## Non-goals
 
-- Expanding inline-lowering support for `Array.from(...)` or referenced constants.
+- General evaluation of arbitrary `Array.from(...)` inputs, dynamic lengths, iterables, or side-effectful callbacks.
+- Expanding referenced-constant evaluation beyond what is needed to preserve fallback correctness.
 - Changing the public `behavior` API, directive chunk naming, or directive event semantics.
 - Adding wrappers around SSR components or making the directive runtime depend on React.
 - Treating documentation or a stronger warning as sufficient when the behavior can be wired correctly.
@@ -24,6 +25,7 @@ Make a behavior-bearing component remain interactive when a `native` inline atte
 
 - Diagnose through the real native build and SSR-component render path before selecting a correction seam.
 - Treat inline eligibility as a performance concern; behavior mount correctness is invariant across inline and SSR fallback paths.
+- Support the user-requested static form `Array.from({ length: N }).map(...)` through bounded inline lowering; unsupported forms continue through the correct SSR fallback path.
 - Do not mutate production code until the RED reproduction and strongest-hypothesis falsification are recorded.
 
 ## Interface
@@ -35,7 +37,7 @@ The diagnosis phase changes no public interface. The eventual fix must preserve 
 1. Add the dedicated behavior fallback fixture and route usage.
 2. Add the deterministic build/SSR regression assertion and observe it fail twice.
 3. Trace and falsify the fail path, then stop at `DIAGNOSIS READY`.
-4. After Aoki amends this plan with a recorded correction seam, implement the fix, extend all three regression variants, update docs, and run every header gate.
+4. After Aoki amends this plan with a recorded correction seam, implement both the fallback correctness fix and bounded static `Array.from({ length: N })` lowering, extend all three regression variants, update docs, and run every header gate.
 
 ## User-observed failure
 
@@ -111,6 +113,8 @@ Design/spec conflicts are filed as task challenges and ruled by Aoki. Dabin owns
 ## Done When
 
 - Cases equivalent to `Array.from(...).map`, referenced computed const, and referenced literal const retain the canonical `x-data` when a behavior component falls back to SSR rendering.
+- A static `Array.from({ length: N }).map(...)` source inline-lowers without the former `cannot translate from` warning and produces the expected `N` items.
+- Dynamic or unsupported `Array.from` forms retain the existing safe fallback behavior rather than being partially evaluated.
 - The rendered host retains `x-on-*`; the runtime finds it, loads the matching directive chunk, and installs the listener.
 - Inline-success behavior remains unchanged and author-supplied `x-data` still wins.
 - A regression test exercises the real native build + SSR-component path, not only a helper.
