@@ -93,7 +93,7 @@ struct Evaluator<'a> {
     expansions: usize,
     bindings: usize,
     changed: bool,
-    array_is_shadowed: bool,
+    shadowed_array_calls: Vec<swc_core::common::Span>,
 }
 
 #[derive(Default)]
@@ -106,6 +106,143 @@ impl Visit for ArrayBindingVisitor {
         if binding.id.sym.as_ref() == "Array" {
             self.found = true;
         }
+    }
+}
+
+fn pattern_binds_array(pattern: &Pat) -> bool {
+    let mut visitor = ArrayBindingVisitor::default();
+    pattern.visit_with(&mut visitor);
+    visitor.found
+}
+
+fn declaration_binds_array(declaration: &Decl, include_var: bool) -> bool {
+    match declaration {
+        Decl::Var(var) => {
+            (include_var || var.kind != VarDeclKind::Var)
+                && var.decls.iter().any(|decl| pattern_binds_array(&decl.name))
+        }
+        Decl::Fn(function) => function.ident.sym.as_ref() == "Array",
+        Decl::Class(class) => class.ident.sym.as_ref() == "Array",
+        _ => false,
+    }
+}
+
+fn module_item_binds_array(item: &ModuleItem) -> bool {
+    match item {
+        ModuleItem::ModuleDecl(ModuleDecl::Import(import)) => {
+            import.specifiers.iter().any(|spec| {
+                let local = match spec {
+                    ImportSpecifier::Named(spec) => &spec.local,
+                    ImportSpecifier::Default(spec) => &spec.local,
+                    ImportSpecifier::Namespace(spec) => &spec.local,
+                };
+                local.sym.as_ref() == "Array"
+            })
+        }
+        ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => {
+            declaration_binds_array(&export.decl, true)
+        }
+        ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultDecl(export)) => match &export.decl {
+            DefaultDecl::Fn(function) => function
+                .ident
+                .as_ref()
+                .is_some_and(|ident| ident.sym.as_ref() == "Array"),
+            DefaultDecl::Class(class) => class
+                .ident
+                .as_ref()
+                .is_some_and(|ident| ident.sym.as_ref() == "Array"),
+            _ => false,
+        },
+        ModuleItem::Stmt(Stmt::Decl(declaration)) => declaration_binds_array(declaration, true),
+        _ => false,
+    }
+}
+
+#[derive(Default)]
+struct FunctionVarArrayVisitor {
+    found: bool,
+}
+
+impl Visit for FunctionVarArrayVisitor {
+    fn visit_var_decl(&mut self, declaration: &VarDecl) {
+        if declaration.kind == VarDeclKind::Var
+            && declaration
+                .decls
+                .iter()
+                .any(|decl| pattern_binds_array(&decl.name))
+        {
+            self.found = true;
+        }
+    }
+
+    fn visit_function(&mut self, _function: &Function) {}
+
+    fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
+}
+
+#[derive(Default)]
+struct ArrayCallShadowVisitor {
+    shadow_depth: usize,
+    shadowed_calls: Vec<swc_core::common::Span>,
+}
+
+impl ArrayCallShadowVisitor {
+    fn visit_in_scope(&mut self, shadowed: bool, visit: impl FnOnce(&mut Self)) {
+        if shadowed {
+            self.shadow_depth += 1;
+        }
+        visit(self);
+        if shadowed {
+            self.shadow_depth -= 1;
+        }
+    }
+}
+
+impl Visit for ArrayCallShadowVisitor {
+    fn visit_module(&mut self, module: &Module) {
+        let shadowed = module.body.iter().any(module_item_binds_array);
+        self.visit_in_scope(shadowed, |visitor| module.visit_children_with(visitor));
+    }
+
+    fn visit_function(&mut self, function: &Function) {
+        let parameter_shadow = function
+            .params
+            .iter()
+            .any(|parameter| pattern_binds_array(&parameter.pat));
+        let mut var_visitor = FunctionVarArrayVisitor::default();
+        if let Some(body) = &function.body {
+            body.visit_children_with(&mut var_visitor);
+        }
+        self.visit_in_scope(parameter_shadow || var_visitor.found, |visitor| {
+            if let Some(body) = &function.body {
+                body.visit_with(visitor);
+            }
+        });
+    }
+
+    fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
+        let parameter_shadow = arrow.params.iter().any(pattern_binds_array);
+        let mut var_visitor = FunctionVarArrayVisitor::default();
+        if let BlockStmtOrExpr::BlockStmt(body) = arrow.body.as_ref() {
+            body.visit_children_with(&mut var_visitor);
+        }
+        self.visit_in_scope(parameter_shadow || var_visitor.found, |visitor| {
+            arrow.body.visit_with(visitor);
+        });
+    }
+
+    fn visit_block_stmt(&mut self, block: &BlockStmt) {
+        let shadowed = block.stmts.iter().any(|statement| {
+            matches!(statement, Stmt::Decl(declaration) if declaration_binds_array(declaration, false))
+        });
+        self.visit_in_scope(shadowed, |visitor| block.visit_children_with(visitor));
+    }
+
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if self.shadow_depth > 0 {
+            self.shadowed_calls.push(call.span);
+        }
+        call.visit_children_with(self);
     }
 }
 
@@ -130,8 +267,8 @@ impl<'a> Evaluator<'a> {
         let mut imports = HashSet::new();
         let mut named_imports = Vec::new();
         let mut helpers = HashMap::new();
-        let mut array_binding_visitor = ArrayBindingVisitor::default();
-        module.visit_with(&mut array_binding_visitor);
+        let mut array_shadow_visitor = ArrayCallShadowVisitor::default();
+        module.visit_with(&mut array_shadow_visitor);
 
         for item in &module.body {
             match item {
@@ -195,9 +332,6 @@ impl<'a> Evaluator<'a> {
             )));
         }
 
-        let array_is_shadowed = array_binding_visitor.found
-            || imports.contains("Array")
-            || helpers.contains_key("Array");
         let mut evaluator = Self {
             module_consts,
             exported_consts,
@@ -211,7 +345,7 @@ impl<'a> Evaluator<'a> {
             expansions: 0,
             bindings: 0,
             changed: false,
-            array_is_shadowed,
+            shadowed_array_calls: array_shadow_visitor.shadowed_calls,
         };
 
         for (local_name, imported_name) in named_imports {
@@ -437,7 +571,7 @@ impl<'a> Evaluator<'a> {
         call: &CallExpr,
         env: &Bindings,
     ) -> Result<Option<Value>, StaticEvalError> {
-        if self.array_is_shadowed || env.contains_key("Array") || call.args.len() != 1 {
+        if self.array_from_is_shadowed(call, env) || call.args.len() != 1 {
             return Ok(None);
         }
         let Callee::Expr(callee) = &call.callee else {
@@ -481,6 +615,19 @@ impl<'a> Evaluator<'a> {
             Value::Undefined;
             length.value as usize
         ])))
+    }
+
+    fn array_from_is_shadowed(&self, call: &CallExpr, env: &Bindings) -> bool {
+        let Callee::Expr(callee) = &call.callee else {
+            return false;
+        };
+        let Expr::Member(member) = strip_paren(callee) else {
+            return false;
+        };
+        let is_array_from = matches!(strip_paren(&member.obj), Expr::Ident(id) if id.sym.as_ref() == "Array")
+            && matches!(&member.prop, MemberProp::Ident(id) if id.sym.as_ref() == "from");
+        is_array_from
+            && (env.contains_key("Array") || self.shadowed_array_calls.contains(&call.span))
     }
 
     fn member_key(
@@ -689,6 +836,12 @@ impl<'a> Evaluator<'a> {
         }
         if let Expr::JSXFragment(fragment) = expression {
             self.expand_jsx_children(&mut fragment.children, env, depth)?;
+            return Ok(());
+        }
+
+        if let Expr::Call(call) = expression
+            && self.array_from_is_shadowed(call, env)
+        {
             return Ok(());
         }
 
@@ -1611,15 +1764,38 @@ mod tests {
     }
 
     #[test]
-    fn shadowed_array_from_remains_unexpanded() {
+    fn visible_array_bindings_remain_unexpanded() {
+        for source in [
+            r#"const Array = custom; export default function Root() { return <ul>{Array.from({ length: 2 }).map((x) => <li>{x}</li>)}</ul> }"#,
+            r#"class Array {} export default function Root() { return <ul>{Array.from({ length: 2 }).map((x) => <li>{x}</li>)}</ul> }"#,
+            r#"function Array() {} export default function Root() { return <ul>{Array.from({ length: 2 }).map((x) => <li>{x}</li>)}</ul> }"#,
+            r#"import Array from './array'; export default function Root() { return <ul>{Array.from({ length: 2 }).map((x) => <li>{x}</li>)}</ul> }"#,
+            r#"export default function Array() { return <ul>{Array.from({ length: 2 }).map((x) => <li>{x}</li>)}</ul> }"#,
+            r#"export default function Root({ Array }) { return <ul>{Array.from({ length: 2 }).map((x) => <li>{x}</li>)}</ul> }"#,
+            r#"export default function Root() { const Array = custom; return <ul>{Array.from({ length: 2 }).map((x) => <li>{x}</li>)}</ul> }"#,
+            r#"export default function Root() { class Array {}; return <ul>{Array.from({ length: 2 }).map((x) => <li>{x}</li>)}</ul> }"#,
+            r#"export default function Root() { function Array() {}; return <ul>{Array.from({ length: 2 }).map((x) => <li>{x}</li>)}</ul> }"#,
+        ] {
+            let body = expand(source).unwrap();
+            let text = format!("{body:?}");
+            assert!(
+                text.contains("from"),
+                "unexpectedly expanded {source}: {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn unrelated_nested_array_binding_does_not_shadow_global() {
         let body = expand(
-            r#"export default function Root({ Array }) {
-              return <ul>{Array.from({ length: 2 }).map((x) => <li>{x}</li>)}</ul>
+            r#"function helper(Array) { return Array }
+            export default function Root() {
+              return <ul>{Array.from({ length: 2 }).map((_, index) => <li>{index}</li>)}</ul>
             }"#,
         )
         .unwrap();
         let text = format!("{body:?}");
-        assert!(text.contains("from"), "{text}");
+        assert!(!text.contains("from"), "{text}");
     }
 
     #[test]

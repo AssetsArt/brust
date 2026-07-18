@@ -1,7 +1,9 @@
 import { beforeAll, expect, test } from 'bun:test'
 import { existsSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { spawnSync } from 'bun'
+import { Window } from 'happy-dom'
 import { directiveName } from '../runtime/native/build.ts'
 import {
   type IslandCache,
@@ -321,10 +323,11 @@ test('behavior SSR fallback retains its canonical mount identity', async () => {
   const manifest = JSON.parse(componentsJson ?? '[]') as NativeComponentEntry[]
   const entry = manifest.find((candidate) => candidate.component === 'BehaviorSsrFallback')
   expect(entry).toBeDefined()
+  expect(componentsJson).not.toContain('"behaviorModules"')
+  expect(componentsJson).not.toContain('export const behavior')
   expect(jinja).toContain(`comp_${entry?.instance}_html`)
-  expect(existsSync(resolve(FIXTURE_DIR, 'dist/islands', `${expectedName}.directive.js`))).toBe(
-    true,
-  )
+  const chunkPath = resolve(FIXTURE_DIR, 'dist/islands', `${expectedName}.directive.js`)
+  expect(existsSync(chunkPath)).toBe(true)
 
   const stored = new Map<string, { html: string; props: string }>()
   const cache: IslandCache = {
@@ -345,9 +348,36 @@ test('behavior SSR fallback retains its canonical mount identity', async () => {
   expect(rendered).toContain('class="behavior-ssr-fallback"')
   expect(rendered).toContain('x-on-click="activate"')
   expect(rendered).toContain(`x-data="${expectedName}"`)
+  expect(rendered).toContain('class="referenced-computed"')
+  expect(rendered).toContain('class="referenced-literal"')
+  const nestedName = directiveName(
+    resolve(FIXTURE_DIR, 'components/BehaviorBadge.tsx'),
+    FIXTURE_DIR,
+  )
+  expect(rendered).toContain(`x-data="${nestedName}"`)
   expect(rendered).toContain('C')
   expect(rendered).toContain('source-preserved')
   expect(stored.get('behavior-fallback')?.html).toBe(rendered)
+
+  const win = new Window()
+  // @ts-expect-error happy-dom Window lacks SyntaxError; match runtime unit setup.
+  win.SyntaxError = SyntaxError
+  win.document.body.innerHTML = rendered
+  // @ts-expect-error install the DOM globals consumed by the runtime.
+  globalThis.document = win.document
+  // @ts-expect-error install the DOM globals consumed by the runtime.
+  globalThis.MutationObserver = win.MutationObserver
+  // @ts-expect-error install the DOM globals consumed by the runtime.
+  globalThis.HTMLElement = win.HTMLElement
+  const runtime = await import(`../runtime/native/runtime.ts?fallback=${Math.random()}`)
+  await import(`${pathToFileURL(chunkPath).href}?fallback=${Math.random()}`)
+  await import(
+    `${pathToFileURL(resolve(FIXTURE_DIR, 'dist/islands', `${nestedName}.directive.js`)).href}?fallback=${Math.random()}`
+  )
+  runtime.start(win.document)
+  const host = win.document.querySelector<HTMLElement>('.behavior-ssr-fallback')!
+  host.dispatchEvent(new win.Event('click', { bubbles: true }))
+  expect(host.dataset.activated).toBe('true')
 
   const cached = await resolveComponentContext(
     manifest,

@@ -1930,7 +1930,7 @@ mod tests {
         // Build a Cond whose consequent is an SsrComponent.
         let comp = JsxNode::SsrComponent {
             component: "CondLayout".to_string(),
-            behavior_module: None,
+            behavior_modules: Vec::new(),
             instance: 0,
             props: vec![],
             children: vec![],

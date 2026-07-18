@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use swc_core::common::{Span, Spanned};
@@ -2733,7 +2733,7 @@ fn lower_ssr_component(
             ssr_props.push(SsrProp::Attr(JsxAttr { name, value }));
         }
 
-        let behavior_module = fallback_behavior_module(
+        let behavior_modules = fallback_behavior_modules(
             &component,
             env,
             scope.directive_names.as_deref(),
@@ -2741,7 +2741,7 @@ fn lower_ssr_component(
         )?;
         return Ok(JsxNode::SsrComponent {
             component,
-            behavior_module,
+            behavior_modules,
             instance: 0,
             props: ssr_props,
             children: call_site_children,
@@ -2838,7 +2838,7 @@ fn lower_ssr_component(
 
     Ok(JsxNode::SsrComponent {
         component,
-        behavior_module: None,
+        behavior_modules: Vec::new(),
         instance: 0,
         props,
         children: call_site_children,
@@ -2881,24 +2881,98 @@ struct SourceEdit {
     replacement: String,
 }
 
-fn fallback_behavior_module(
+#[derive(Default)]
+struct BehaviorDependencyCollector {
+    components: Vec<String>,
+}
+
+impl Visit for BehaviorDependencyCollector {
+    fn visit_jsx_element(&mut self, element: &JSXElement) {
+        if let JSXElementName::Ident(name) = &element.opening.name
+            && name
+                .sym
+                .chars()
+                .next()
+                .is_some_and(|character| character.is_ascii_uppercase())
+        {
+            let component = name.sym.to_string();
+            if !self.components.contains(&component) {
+                self.components.push(component);
+            }
+        }
+        element.visit_children_with(self);
+    }
+}
+
+fn fallback_behavior_modules(
     component: &str,
     env: &InlineEnv,
     directive_names: Option<&HashMap<String, String>>,
     span: Span,
-) -> Result<Option<BehaviorModule>, LowerError> {
-    let Some(directive_name) = directive_names.and_then(|names| names.get(component)) else {
-        return Ok(None);
+) -> Result<Vec<BehaviorModule>, LowerError> {
+    let mut modules = Vec::new();
+    let mut seen = HashSet::new();
+    collect_fallback_behavior_modules(
+        component,
+        env,
+        directive_names,
+        span,
+        &mut seen,
+        &mut modules,
+    )?;
+    Ok(modules)
+}
+
+fn collect_fallback_behavior_modules(
+    component: &str,
+    env: &InlineEnv,
+    directive_names: Option<&HashMap<String, String>>,
+    span: Span,
+    seen: &mut HashSet<String>,
+    modules: &mut Vec<BehaviorModule>,
+) -> Result<(), LowerError> {
+    if !seen.insert(component.to_string()) {
+        return Ok(());
+    }
+    let Some(source) = env.sources.get(component) else {
+        if directive_names.is_some_and(|names| names.contains_key(component)) {
+            return Err(behavior_transform_error(
+                component,
+                "its source could not be resolved",
+                span,
+            ));
+        }
+        return Ok(());
     };
-    let source = env.sources.get(component).ok_or_else(|| {
-        behavior_transform_error(component, "its source could not be resolved", span)
+    let parsed = crate::parser::parse(source, "<behavior-dependencies>").map_err(|_| {
+        behavior_transform_error(
+            component,
+            "its source dependencies could not be parsed",
+            span,
+        )
     })?;
-    let transformed = transform_behavior_component_source(component, directive_name, source, span)?;
-    Ok(Some(BehaviorModule {
-        component: component.to_string(),
-        directive_name: directive_name.clone(),
-        source: transformed,
-    }))
+
+    if let Some(directive_name) = directive_names.and_then(|names| names.get(component)) {
+        let transformed =
+            transform_behavior_component_source(component, directive_name, source, span)?;
+        modules.push(BehaviorModule {
+            component: component.to_string(),
+            directive_name: directive_name.clone(),
+            source: transformed,
+        });
+    }
+
+    let mut dependencies = BehaviorDependencyCollector::default();
+    parsed.module.visit_with(&mut dependencies);
+    for dependency in dependencies.components {
+        if dependency == component
+            || !directive_names.is_some_and(|names| names.contains_key(&dependency))
+        {
+            continue;
+        }
+        collect_fallback_behavior_modules(&dependency, env, directive_names, span, seen, modules)?;
+    }
+    Ok(())
 }
 
 fn transform_behavior_component_source(
@@ -6289,6 +6363,36 @@ export default class ClassBehavior extends Component {
             .map(|module| module.component.as_str())
             .collect::<Vec<_>>();
         assert_eq!(names, vec!["Outer", "Inner"]);
+    }
+
+    #[test]
+    fn opaque_fallback_collects_source_imported_behavior_dependency() {
+        let route = r#"export default function Page() { return <Outer native/>; }"#;
+        let outer = r#"import Inner from './Inner';
+export default function Outer() { useState(0); return <section><Inner/></section>; }"#;
+        let inner = r#"export const behavior = () => ({});
+export default function Inner() { return <button x-on-click="activate">inner</button>; }"#;
+        let c = crate::compile_full(
+            route,
+            "<t>",
+            HashMap::from([
+                ("Outer".to_string(), outer.to_string()),
+                ("Inner".to_string(), inner.to_string()),
+            ]),
+            HashMap::new(),
+            HashMap::from([("Inner".to_string(), "inner_abc12345".to_string())]),
+        )
+        .unwrap();
+        let modules = &c.components[0].behavior_modules;
+        assert_eq!(modules.len(), 1);
+        assert_eq!(modules[0].component, "Inner");
+        assert!(
+            modules[0]
+                .source
+                .contains(r#"<button x-data="inner_abc12345" x-on-click="activate">"#),
+            "{}",
+            modules[0].source
+        );
     }
 
     // Build a route inlining `Btn` (registered as a behavior component) with the

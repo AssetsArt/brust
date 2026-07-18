@@ -21,14 +21,14 @@ fn collect_factories(node: &JsxNode, out: &mut Vec<FactoryOutput>) {
             component,
             props,
             children,
-            behavior_module,
+            behavior_modules,
             ..
         } => {
             let mut fo = FactoryOutput {
                 expr: String::new(),
                 referenced: Vec::new(),
                 uses_island: false,
-                behavior_modules: behavior_module.iter().cloned().collect(),
+                behavior_modules: behavior_modules.clone(),
             };
             fo.referenced.push(component.clone());
             fo.expr.push_str("(ctx) => ");
@@ -201,14 +201,12 @@ fn emit_child(node: &JsxNode, fo: &mut FactoryOutput) {
             component,
             props,
             children,
-            behavior_module,
+            behavior_modules,
             ..
         } => {
             // Nested SSR component — emit inline, not a separate factory entry
             fo.referenced.push(component.clone());
-            if let Some(module) = behavior_module {
-                fo.behavior_modules.push(module.clone());
-            }
+            fo.behavior_modules.extend(behavior_modules.iter().cloned());
             emit_h(component, props, children, fo);
         }
         JsxNode::Map {
@@ -294,7 +292,7 @@ mod tests {
         let root = JsxNode::Fragment {
             children: vec![JsxNode::SsrComponent {
                 component: "Layout".to_string(),
-                behavior_module: None,
+                behavior_modules: Vec::new(),
                 instance: 0,
                 props: vec![],
                 children: vec![],

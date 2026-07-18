@@ -91,7 +91,7 @@ pub enum JsxNode {
         component: String,
         /// Server-only transformed source for a behavior component that could
         /// not be native-inlined.
-        behavior_module: Option<BehaviorModule>,
+        behavior_modules: Vec<BehaviorModule>,
         /// Source-order index among SSR components (set by `number_ssr_components`).
         instance: usize,
         /// Lowered props (named attrs + `{...spread}`), in SOURCE ORDER — order

@@ -1,5 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import { rmSync, writeFileSync } from 'node:fs'
+import { dirname, relative, resolve } from 'node:path'
+
+export interface BehaviorSsrDependency {
+  sourcePath: string
+  outputPath: string
+}
 
 export interface BehaviorSsrModule {
   component: string
@@ -7,11 +13,39 @@ export interface BehaviorSsrModule {
   moduleId: string
   source: string
   sourcePath: string
+  dependencies?: BehaviorSsrDependency[]
+}
+
+function rewriteBehaviorImports(entry: BehaviorSsrModule): string {
+  if (!entry.dependencies || entry.dependencies.length === 0) return entry.source
+  const dependencyBySource = new Map(
+    entry.dependencies.map((dependency) => [resolve(dependency.sourcePath), dependency.outputPath]),
+  )
+  return entry.source.replace(
+    /(\bfrom\s*['"])([^'"]+)(['"])/g,
+    (statement, before: string, specifier: string, after: string) => {
+      if (!specifier.startsWith('.')) return statement
+      const importBase = resolve(dirname(entry.sourcePath), specifier)
+      const candidates = [
+        importBase,
+        `${importBase}.tsx`,
+        `${importBase}.ts`,
+        resolve(importBase, 'index.tsx'),
+        resolve(importBase, 'index.ts'),
+      ]
+      const dependencyOutput = candidates
+        .map((candidate) => dependencyBySource.get(candidate))
+        .find((candidate) => candidate !== undefined)
+      if (!dependencyOutput) return statement
+      const rewritten = relative(dirname(entry.sourcePath), dependencyOutput).replaceAll('\\', '/')
+      return `${before}${rewritten.startsWith('.') ? rewritten : `./${rewritten}`}${after}`
+    },
+  )
 }
 
 export function emitBehaviorSsrModule(entry: BehaviorSsrModule, outputPath: string): void {
   const temporaryEntry = `${entry.sourcePath}.brust-behavior-${randomUUID()}.tsx`
-  writeFileSync(temporaryEntry, entry.source)
+  writeFileSync(temporaryEntry, rewriteBehaviorImports(entry))
   try {
     const result = Bun.spawnSync({
       cmd: [
