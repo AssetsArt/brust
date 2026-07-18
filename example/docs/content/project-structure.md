@@ -97,6 +97,7 @@ uses:
 | `.brust/css/` | Extracted component CSS |
 | `.brust/md-manifest.json` | Frozen markdown-route manifest (when using `mdRoutes`) |
 | `.brust/mcp-manifest.json` | The generated MCP tool/resource manifest |
+| `.brust/ai-manifest.json` | Route map for the [AI agent runtime](/docs/agents) — served at `/_brust/ai/manifest.json` when the runtime is enabled |
 
 If a native page renders stale markup after you change the framework or move
 files around, deleting `.brust/` is the reset button.
