@@ -22,10 +22,10 @@ In the fixture-local `components/Counter.tsx`, the first `{label}: {n}` occurren
 
 The relevant build path is:
 
-- [runtime/index.ts](runtime/index.ts) at the island build call site and dev `no-store` response setup
-- [runtime/islands/build.ts](runtime/islands/build.ts) for `buildIslands()` / `buildOne()`
-- [runtime/islands/chunk-id.ts](runtime/islands/chunk-id.ts) for the content-addressed chunk basename
-- [runtime/dev/client.ts](runtime/dev/client.ts) for `reload -> location.reload()`
+- [runtime/index.ts](../../../runtime/index.ts) at the island build call site and dev `no-store` response setup
+- [runtime/islands/build.ts](../../../runtime/islands/build.ts) for `buildIslands()` / `buildOne()`
+- [runtime/islands/chunk-id.ts](../../../runtime/islands/chunk-id.ts) for the content-addressed chunk basename
+- [runtime/dev/client.ts](../../../runtime/dev/client.ts) for `reload -> location.reload()`
 
 `scanIslandChunks()` always maps `components/Counter.tsx` to `Counter_d3b36583`, because the id hashes the cwd-relative source path, not file contents.
 
