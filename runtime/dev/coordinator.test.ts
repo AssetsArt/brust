@@ -10,6 +10,7 @@ function makeDeps(over: Partial<any> = {}) {
     buildCss: mock(() => Promise.resolve()),
     buildIslands: mock(() => Promise.resolve()),
     reEmitJinja: mock(() => Promise.resolve()),
+    validateChanges: mock((_paths: string[]) => Promise.resolve()),
     clearIslandCache: mock(() => {}),
     broadcast: mock((_msg: any) => Promise.resolve()),
     tui: { appendEvent: mock((_line: string) => {}) },
@@ -58,13 +59,16 @@ describe('Coordinator', () => {
     expect(types).toEqual(['building', 'reload', 'ok'])
   })
 
-  test('reEmitJinja runs BEFORE the worker restart (fresh workers must never serve stale jinja)', async () => {
+  test('valid full reload validates before build, jinja re-emit, and worker replacement', async () => {
     // S1 regression guard: napiLoadJinjaTemplates operates on the PROCESS-GLOBAL
     // Rust minijinja env, not on the workers — so the templates must be reloaded
     // before spawnAll, or the fresh workers serve the OLD jinja for the window
     // between spawn and re-emit. The WS reload stays last (after spawnAll).
     const order: string[] = []
     const deps = makeDeps({
+      validateChanges: mock(async () => {
+        order.push('validate')
+      }),
       buildIslands: mock(async () => {
         order.push('buildIslands')
       }),
@@ -87,7 +91,14 @@ describe('Coordinator', () => {
     for (const kind of ['ts', 'html', 'islands', 'md'] as const) {
       order.length = 0
       await new Coordinator(deps).handleChange({ paths: ['/x'], kind })
-      expect(order).toEqual(['buildIslands', 'reEmitJinja', 'terminateAll', 'spawnAll', 'reload'])
+      expect(order).toEqual([
+        'validate',
+        'buildIslands',
+        'reEmitJinja',
+        'terminateAll',
+        'spawnAll',
+        'reload',
+      ])
     }
   })
 
@@ -151,6 +162,22 @@ describe('Coordinator', () => {
     ).toBeUndefined()
   })
 
+  test('validation failure broadcasts error before any live-generation mutation', async () => {
+    const deps = makeDeps({
+      validateChanges: mock(() => Promise.reject(new Error('invalid /a.tsx'))),
+    })
+    const coordinator = new Coordinator(deps)
+    await coordinator.handleChange({ paths: ['/a.tsx'], kind: 'ts' })
+
+    expect(deps.validateChanges).toHaveBeenCalledWith(['/a.tsx'])
+    expect(deps.clearIslandCache).not.toHaveBeenCalled()
+    expect(deps.buildIslands).not.toHaveBeenCalled()
+    expect(deps.reEmitJinja).not.toHaveBeenCalled()
+    expect(deps.workers.terminateAll).not.toHaveBeenCalled()
+    expect(deps.workers.spawnAll).not.toHaveBeenCalled()
+    expect(deps.broadcast.mock.calls.map((call) => call[0].type)).toEqual(['building', 'error'])
+  })
+
   test('component-css change → buildComponentCss + css-update (no reload)', async () => {
     const baseManifest: any = {
       version: 1,
@@ -198,7 +225,7 @@ describe('Coordinator', () => {
     expect(calls.find((c: any) => c.type === 'reload')).toBeDefined()
   })
 
-  test('single-flight: change-while-building is dropped', async () => {
+  test('a change arriving while building is replayed before the active drain resolves', async () => {
     let releaseTerm!: () => void
     let reachedTerm!: () => void
     // Signal the moment the first change reaches terminateAll, so the assertion
@@ -209,10 +236,13 @@ describe('Coordinator', () => {
     const deps = makeDeps({
       workers: {
         terminateAll: mock(() => {
-          reachedTerm()
-          return new Promise<void>((r) => {
-            releaseTerm = r
-          })
+          if (!releaseTerm) {
+            reachedTerm()
+            return new Promise<void>((r) => {
+              releaseTerm = r
+            })
+          }
+          return Promise.resolve()
         }),
         spawnAll: mock(() => Promise.resolve()),
       },
@@ -220,10 +250,112 @@ describe('Coordinator', () => {
     const c = new Coordinator(deps)
     const first = c.handleChange({ paths: ['/a.tsx'], kind: 'ts' })
     await atTerm // first is now blocked inside terminateAll (state === 'building')
-    await c.handleChange({ paths: ['/b.tsx'], kind: 'ts' }) // dropped by the state guard
+    const second = c.handleChange({ paths: ['/b.tsx'], kind: 'ts' })
     expect(deps.workers.terminateAll).toHaveBeenCalledTimes(1)
     releaseTerm()
-    await first
+    await Promise.all([first, second])
+    expect(deps.workers.terminateAll).toHaveBeenCalledTimes(2)
+  })
+
+  test('same-domain events arriving during a build merge into one replay', async () => {
+    let releaseFirst!: () => void
+    let firstReached!: () => void
+    const reached = new Promise<void>((resolve) => {
+      firstReached = resolve
+    })
+    let blocked = false
+    const deps = makeDeps({
+      buildIslands: mock(() => {
+        if (!blocked) {
+          blocked = true
+          firstReached()
+          return new Promise<void>((resolve) => {
+            releaseFirst = resolve
+          })
+        }
+        return Promise.resolve()
+      }),
+    })
+    const coordinator = new Coordinator(deps)
+    const first = coordinator.handleChange({ paths: ['/a.tsx'], kind: 'ts' })
+    await reached
+    const replay = [
+      coordinator.handleChange({ paths: ['/b.tsx'], kind: 'ts' }),
+      coordinator.handleChange({ paths: ['/b.tsx', '/c.html'], kind: 'html' }),
+      coordinator.handleChange({ paths: ['/c.html'], kind: 'html' }),
+    ]
+    releaseFirst()
+    await Promise.all([first, ...replay])
+
+    expect(deps.buildIslands).toHaveBeenCalledTimes(2)
+    expect(deps.workers.terminateAll).toHaveBeenCalledTimes(2)
+  })
+
+  test('a change queued during drain finalization starts a new drain', async () => {
+    let coordinator!: Coordinator
+    let replay: Promise<void> | undefined
+    let scheduled = false
+    const deps = makeDeps({
+      broadcast: mock(async (message: { type: string }) => {
+        if (message.type !== 'ok' || scheduled) return
+        scheduled = true
+        // The third hop runs after drainPending observes an empty queue but
+        // before its finally callback releases ownership of drainPromise.
+        queueMicrotask(() =>
+          queueMicrotask(() =>
+            queueMicrotask(() => {
+              replay = coordinator.handleChange({ paths: ['/b.tsx'], kind: 'ts' })
+            }),
+          ),
+        )
+      }),
+    })
+    coordinator = new Coordinator(deps)
+
+    await coordinator.handleChange({ paths: ['/a.tsx'], kind: 'ts' })
+    await replay
+
+    expect(deps.workers.terminateAll).toHaveBeenCalledTimes(2)
+  })
+
+  test('full kinds coalesce while app and component CSS drain independently in priority order', async () => {
+    const order: string[] = []
+    const deps = makeDeps({
+      buildIslands: mock(async () => order.push('full')),
+      buildCss: mock(async () => order.push('app-css')),
+      buildComponentCss: mock(async () => order.push('component-css')),
+    })
+    const coordinator = new Coordinator(deps)
+    await Promise.all([
+      coordinator.handleChange({ paths: ['/x.module.css'], kind: 'component-css' }),
+      coordinator.handleChange({ paths: ['/guide.md'], kind: 'md' }),
+      coordinator.handleChange({ paths: ['/app.css'], kind: 'css' }),
+      coordinator.handleChange({ paths: ['/a.tsx'], kind: 'ts' }),
+      coordinator.handleChange({ paths: ['/index.html'], kind: 'html' }),
+      coordinator.handleChange({ paths: ['/Island.tsx'], kind: 'islands' }),
+    ])
+
+    expect(order).toEqual(['full', 'app-css', 'component-css'])
     expect(deps.workers.terminateAll).toHaveBeenCalledTimes(1)
+  })
+
+  test('an error in the first batch does not discard a pending later domain', async () => {
+    const deps = makeDeps({
+      buildIslands: mock(() => Promise.reject(new Error('island build failed'))),
+    })
+    const coordinator = new Coordinator(deps)
+    await Promise.all([
+      coordinator.handleChange({ paths: ['/a.tsx'], kind: 'ts' }),
+      coordinator.handleChange({ paths: ['/app.css'], kind: 'css' }),
+    ])
+
+    expect(deps.buildCss).toHaveBeenCalledTimes(1)
+    expect(deps.broadcast.mock.calls.map((call) => call[0].type)).toEqual([
+      'building',
+      'error',
+      'building',
+      'css-update',
+      'ok',
+    ])
   })
 })

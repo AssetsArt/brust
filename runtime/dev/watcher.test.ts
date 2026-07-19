@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test'
-import { classifyPath, _testCoalesce, type ChangeKind } from './watcher.ts'
+import { classifyPath, _testCoalesce, _testDispatchChanges, type ChangeKind } from './watcher.ts'
 
 describe('runtime/dev/watcher classifyPath', () => {
   const cases: [string, ChangeKind | null][] = [
@@ -80,5 +80,22 @@ describe('runtime/dev/watcher coalesce', () => {
     c.add('/b.ts')
     await new Promise((r) => setTimeout(r, 80))
     expect(calls).toEqual([['/a.ts'], ['/b.ts']])
+  })
+
+  test('one debounce window emits every distinct change kind in priority order', () => {
+    const calls: Array<{ paths: string[]; kind: ChangeKind }> = []
+    const tsPath = '/proj/Page.tsx'
+    const appCssPath = '/proj/app.css'
+    const modulePath = '/proj/Page.module.css'
+    _testDispatchChanges([modulePath, tsPath, appCssPath, tsPath], {
+      root: '/proj',
+      onChange: (event) => calls.push(event),
+    })
+
+    expect(calls).toEqual([
+      { paths: [tsPath], kind: 'ts' },
+      { paths: [appCssPath], kind: 'css' },
+      { paths: [modulePath], kind: 'component-css' },
+    ])
   })
 })
