@@ -198,7 +198,7 @@ describe('Coordinator', () => {
     expect(calls.find((c: any) => c.type === 'reload')).toBeDefined()
   })
 
-  test('single-flight: change-while-building is dropped', async () => {
+  test('a change arriving while building is replayed before the active drain resolves', async () => {
     let releaseTerm!: () => void
     let reachedTerm!: () => void
     // Signal the moment the first change reaches terminateAll, so the assertion
@@ -209,10 +209,13 @@ describe('Coordinator', () => {
     const deps = makeDeps({
       workers: {
         terminateAll: mock(() => {
-          reachedTerm()
-          return new Promise<void>((r) => {
-            releaseTerm = r
-          })
+          if (!releaseTerm) {
+            reachedTerm()
+            return new Promise<void>((r) => {
+              releaseTerm = r
+            })
+          }
+          return Promise.resolve()
         }),
         spawnAll: mock(() => Promise.resolve()),
       },
@@ -220,10 +223,85 @@ describe('Coordinator', () => {
     const c = new Coordinator(deps)
     const first = c.handleChange({ paths: ['/a.tsx'], kind: 'ts' })
     await atTerm // first is now blocked inside terminateAll (state === 'building')
-    await c.handleChange({ paths: ['/b.tsx'], kind: 'ts' }) // dropped by the state guard
+    const second = c.handleChange({ paths: ['/b.tsx'], kind: 'ts' })
     expect(deps.workers.terminateAll).toHaveBeenCalledTimes(1)
     releaseTerm()
-    await first
+    await Promise.all([first, second])
+    expect(deps.workers.terminateAll).toHaveBeenCalledTimes(2)
+  })
+
+  test('same-domain events arriving during a build merge into one replay', async () => {
+    let releaseFirst!: () => void
+    let firstReached!: () => void
+    const reached = new Promise<void>((resolve) => {
+      firstReached = resolve
+    })
+    let blocked = false
+    const deps = makeDeps({
+      buildIslands: mock(() => {
+        if (!blocked) {
+          blocked = true
+          firstReached()
+          return new Promise<void>((resolve) => {
+            releaseFirst = resolve
+          })
+        }
+        return Promise.resolve()
+      }),
+    })
+    const coordinator = new Coordinator(deps)
+    const first = coordinator.handleChange({ paths: ['/a.tsx'], kind: 'ts' })
+    await reached
+    const replay = [
+      coordinator.handleChange({ paths: ['/b.tsx'], kind: 'ts' }),
+      coordinator.handleChange({ paths: ['/b.tsx', '/c.html'], kind: 'html' }),
+      coordinator.handleChange({ paths: ['/c.html'], kind: 'html' }),
+    ]
+    releaseFirst()
+    await Promise.all([first, ...replay])
+
+    expect(deps.buildIslands).toHaveBeenCalledTimes(2)
+    expect(deps.workers.terminateAll).toHaveBeenCalledTimes(2)
+  })
+
+  test('full kinds coalesce while app and component CSS drain independently in priority order', async () => {
+    const order: string[] = []
+    const deps = makeDeps({
+      buildIslands: mock(async () => order.push('full')),
+      buildCss: mock(async () => order.push('app-css')),
+      buildComponentCss: mock(async () => order.push('component-css')),
+    })
+    const coordinator = new Coordinator(deps)
+    await Promise.all([
+      coordinator.handleChange({ paths: ['/x.module.css'], kind: 'component-css' }),
+      coordinator.handleChange({ paths: ['/guide.md'], kind: 'md' }),
+      coordinator.handleChange({ paths: ['/app.css'], kind: 'css' }),
+      coordinator.handleChange({ paths: ['/a.tsx'], kind: 'ts' }),
+      coordinator.handleChange({ paths: ['/index.html'], kind: 'html' }),
+      coordinator.handleChange({ paths: ['/Island.tsx'], kind: 'islands' }),
+    ])
+
+    expect(order).toEqual(['full', 'app-css', 'component-css'])
     expect(deps.workers.terminateAll).toHaveBeenCalledTimes(1)
+  })
+
+  test('an error in the first batch does not discard a pending later domain', async () => {
+    const deps = makeDeps({
+      buildIslands: mock(() => Promise.reject(new Error('island build failed'))),
+    })
+    const coordinator = new Coordinator(deps)
+    await Promise.all([
+      coordinator.handleChange({ paths: ['/a.tsx'], kind: 'ts' }),
+      coordinator.handleChange({ paths: ['/app.css'], kind: 'css' }),
+    ])
+
+    expect(deps.buildCss).toHaveBeenCalledTimes(1)
+    expect(deps.broadcast.mock.calls.map((call) => call[0].type)).toEqual([
+      'building',
+      'error',
+      'building',
+      'css-update',
+      'ok',
+    ])
   })
 })

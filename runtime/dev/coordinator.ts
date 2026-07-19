@@ -22,16 +22,61 @@ export interface CoordinatorDeps {
   tui: { appendEvent(line: string): void }
 }
 
-type State = 'idle' | 'building'
+type BuildDomain = 'full' | 'app-css' | 'component-css'
+
+interface PendingBatch {
+  kind: ChangeKind
+  paths: Set<string>
+}
+
+const DOMAIN_PRIORITY: BuildDomain[] = ['full', 'app-css', 'component-css']
 
 export class Coordinator {
-  private state: State = 'idle'
+  private readonly pending = new Map<BuildDomain, PendingBatch>()
+  private drainPromise: Promise<void> | null = null
 
   constructor(private deps: CoordinatorDeps) {}
 
-  async handleChange(ev: { paths: string[]; kind: ChangeKind }): Promise<void> {
-    if (this.state === 'building') return
-    this.state = 'building'
+  handleChange(ev: { paths: string[]; kind: ChangeKind }): Promise<void> {
+    const domain = domainFor(ev.kind)
+    const existing = this.pending.get(domain)
+    if (existing) {
+      for (const path of ev.paths) existing.paths.add(path)
+    } else {
+      this.pending.set(domain, { kind: ev.kind, paths: new Set(ev.paths) })
+    }
+
+    if (!this.drainPromise) {
+      // Defer ownership by one microtask so the watcher's ordered callbacks for
+      // a mixed debounce window can coalesce into the three bounded domains.
+      this.drainPromise = Promise.resolve()
+        .then(() => this.drainPending())
+        .finally(() => {
+          this.drainPromise = null
+        })
+    }
+    return this.drainPromise
+  }
+
+  private async drainPending(): Promise<void> {
+    while (true) {
+      const event = this.takeNext()
+      if (!event) return
+      await this.runBatch(event)
+    }
+  }
+
+  private takeNext(): { paths: string[]; kind: ChangeKind } | null {
+    for (const domain of DOMAIN_PRIORITY) {
+      const batch = this.pending.get(domain)
+      if (!batch) continue
+      this.pending.delete(domain)
+      return { kind: batch.kind, paths: Array.from(batch.paths) }
+    }
+    return null
+  }
+
+  private async runBatch(ev: { paths: string[]; kind: ChangeKind }): Promise<void> {
     const started = performance.now()
     try {
       await this.deps.broadcast({ type: 'building' })
@@ -103,10 +148,14 @@ export class Coordinator {
         message: e.message ?? String(e),
         stack: e.stack,
       })
-    } finally {
-      this.state = 'idle'
     }
   }
+}
+
+function domainFor(kind: ChangeKind): BuildDomain {
+  if (kind === 'css') return 'app-css'
+  if (kind === 'component-css') return 'component-css'
+  return 'full'
 }
 
 function formatStart(ev: { paths: string[]; kind: ChangeKind }): string {
