@@ -102,6 +102,23 @@ export class HotReloadHarness {
     return response.text()
   }
 
+  async waitForText(pathname: string, expected: string, timeoutMs = 5000): Promise<string> {
+    const deadline = Date.now() + timeoutMs
+    let lastResult = 'no response'
+    while (Date.now() < deadline) {
+      try {
+        const response = await fetch(`${this.baseUrl}${pathname}`)
+        const body = await response.text()
+        lastResult = `HTTP ${response.status}: ${body.slice(0, 200)}`
+        if (response.ok && body.includes(expected)) return body
+      } catch (error) {
+        lastResult = String(error)
+      }
+      await sleep(50)
+    }
+    throw new Error(`GET ${pathname} did not contain ${JSON.stringify(expected)}: ${lastResult}`)
+  }
+
   async waitForTypes(expected: string[], from = 0, timeoutMs = 20000): Promise<DevFrame[]> {
     const deadline = Date.now() + timeoutMs
     while (Date.now() < deadline) {

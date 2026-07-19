@@ -8,6 +8,8 @@ export interface CoordinatorDeps {
   }
   buildCss: () => Promise<void>
   buildIslands: () => Promise<void>
+  /** Parse changed JS/TS modules before mutating the live generation. */
+  validateChanges: (paths: string[]) => Promise<void>
   /** Recompile native-route `.jinja` templates from source and reload them into
    * the minijinja env, so `native: true` routes pick up .tsx edits on reload. */
   reEmitJinja: () => Promise<void>
@@ -91,6 +93,7 @@ export class Coordinator {
         // per-isolate (islands/native-render.ts), so a re-emitted
         // .islands.json sidecar is never re-read by a live worker.
         case 'md':
+          await this.deps.validateChanges(ev.paths)
           // Stale frozen island renders must not survive a source edit.
           this.deps.clearIslandCache?.()
           // Rebuild island CLIENT chunks. The watcher classifies every `.tsx`

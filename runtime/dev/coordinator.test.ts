@@ -10,6 +10,7 @@ function makeDeps(over: Partial<any> = {}) {
     buildCss: mock(() => Promise.resolve()),
     buildIslands: mock(() => Promise.resolve()),
     reEmitJinja: mock(() => Promise.resolve()),
+    validateChanges: mock((_paths: string[]) => Promise.resolve()),
     clearIslandCache: mock(() => {}),
     broadcast: mock((_msg: any) => Promise.resolve()),
     tui: { appendEvent: mock((_line: string) => {}) },
@@ -58,13 +59,16 @@ describe('Coordinator', () => {
     expect(types).toEqual(['building', 'reload', 'ok'])
   })
 
-  test('reEmitJinja runs BEFORE the worker restart (fresh workers must never serve stale jinja)', async () => {
+  test('valid full reload validates before build, jinja re-emit, and worker replacement', async () => {
     // S1 regression guard: napiLoadJinjaTemplates operates on the PROCESS-GLOBAL
     // Rust minijinja env, not on the workers — so the templates must be reloaded
     // before spawnAll, or the fresh workers serve the OLD jinja for the window
     // between spawn and re-emit. The WS reload stays last (after spawnAll).
     const order: string[] = []
     const deps = makeDeps({
+      validateChanges: mock(async () => {
+        order.push('validate')
+      }),
       buildIslands: mock(async () => {
         order.push('buildIslands')
       }),
@@ -87,7 +91,14 @@ describe('Coordinator', () => {
     for (const kind of ['ts', 'html', 'islands', 'md'] as const) {
       order.length = 0
       await new Coordinator(deps).handleChange({ paths: ['/x'], kind })
-      expect(order).toEqual(['buildIslands', 'reEmitJinja', 'terminateAll', 'spawnAll', 'reload'])
+      expect(order).toEqual([
+        'validate',
+        'buildIslands',
+        'reEmitJinja',
+        'terminateAll',
+        'spawnAll',
+        'reload',
+      ])
     }
   })
 
@@ -149,6 +160,22 @@ describe('Coordinator', () => {
     expect(
       calls.find((c) => c.type === 'reload' || c.type === 'css-update' || c.type === 'ok'),
     ).toBeUndefined()
+  })
+
+  test('validation failure broadcasts error before any live-generation mutation', async () => {
+    const deps = makeDeps({
+      validateChanges: mock(() => Promise.reject(new Error('invalid /a.tsx'))),
+    })
+    const coordinator = new Coordinator(deps)
+    await coordinator.handleChange({ paths: ['/a.tsx'], kind: 'ts' })
+
+    expect(deps.validateChanges).toHaveBeenCalledWith(['/a.tsx'])
+    expect(deps.clearIslandCache).not.toHaveBeenCalled()
+    expect(deps.buildIslands).not.toHaveBeenCalled()
+    expect(deps.reEmitJinja).not.toHaveBeenCalled()
+    expect(deps.workers.terminateAll).not.toHaveBeenCalled()
+    expect(deps.workers.spawnAll).not.toHaveBeenCalled()
+    expect(deps.broadcast.mock.calls.map((call) => call[0].type)).toEqual(['building', 'error'])
   })
 
   test('component-css change → buildComponentCss + css-update (no reload)', async () => {

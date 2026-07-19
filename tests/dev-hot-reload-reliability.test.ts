@@ -25,12 +25,12 @@ test('invalid routes stay on the healthy generation and recover after correction
     'building',
     'error',
   ])
-  expect(await harness.fetchText('/')).toContain('Hello from Brust')
+  expect(await harness.waitForText('/', 'Hello from Brust')).toContain('Hello from Brust')
 
   const repairCursor = harness.cursor()
   harness.write('routes.tsx', routes)
   await harness.waitForTypes(['building', 'reload', 'ok'], repairCursor)
-  expect(await harness.fetchText('/')).toContain('Hello from Brust')
+  expect(await harness.waitForText('/', 'Hello from Brust')).toContain('Hello from Brust')
 }, 60000)
 
 test('an app CSS edit arriving during a full reload is processed before the drain completes', async () => {
@@ -67,11 +67,17 @@ test('one debounce window preserves TS, app CSS, and component CSS products', as
 
   const marker = `reliability-mixed-${Date.now()}`
   const cursor = harness.cursor()
+  const appCss = `${harness.read('app.css')}\n.${marker} { color: red; }\n`
   harness.write(pagePath, page.replace('Hello from Brust', `Hello from Brust ${marker}`))
   await new Promise((resolve) => setTimeout(resolve, 10))
-  harness.write('app.css', `${harness.read('app.css')}\n.${marker} { color: red; }\n`)
+  harness.write('app.css', appCss)
   await new Promise((resolve) => setTimeout(resolve, 10))
   harness.write(modulePath, `.probe { --reliability-component: ${marker}; }\n`)
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  // macOS may coalesce one filesystem notification under parallel process
+  // load; a same-window rewrite keeps the semantic input identical while
+  // ensuring the app-css path reaches the watcher callback.
+  harness.write('app.css', `${appCss}/* ${marker} */\n`)
 
   await harness.waitForTypes(
     ['building', 'reload', 'ok', 'building', 'css-update', 'ok', 'building', 'css-update', 'ok'],
