@@ -21,7 +21,7 @@ This plan is based on executable diagnosis, not code inspection alone:
 3. **The coordinator uses a bounded per-build-domain pending queue, not an unbounded event log.** Map `islands`/`ts`/`md`/`html` into one `full` domain because they execute the same branch; keep separate `app-css` and `component-css` domains. While a build is active, union paths within those three domains and drain `full`, then `app-css`, then `component-css`, until empty. This avoids both lost work and redundant full restarts while bounding memory during editor save storms.
 4. **Changed JS/TS syntax is preflighted in the main isolate.** Use `Bun.Transpiler` with the loader selected from `.ts`, `.tsx`, `.js`, or `.jsx`; validate every existing changed module before `clearIslandCache`, artifact rebuilds, native-pool reset, or worker termination. This is syntax containment, not TypeScript type-checking.
 5. **`BRUST_WORKERS=1` is mitigation only.** It reduced the observed native crash but still emitted false `reload → ok` for invalid source; it is not the fix.
-6. **Do not change island build/cache production code in this work.** One audit observed a stale chunk 2/2, but two clean-copy differentials rebuilt correct bytes and matched fresh-process controls. Add a regression seam first; only a red reproducible test authorizes a production island change.
+6. **Keep island build/cache production changes out of the core lane, but treat staleness as confirmed follow-up work.** The new clean-copy process characterization reproduced a stale emitted chunk 2/2 for Dabin and 1/1 independently for Aoki. That satisfies the evidence threshold for a separate diagnosis/fix lane; it does not justify expanding the already-active core lane across an unplanned production boundary. Retain the executable characterization as skipped with the challenge/task reference until that lane turns it green.
 7. **Reconnect catch-up, worker-ready timeout semantics, and in-page `building` UI are deferred.** They are inferred risks/UX gaps, not confirmed causes of this incident.
 
 Rejected alternatives:
@@ -77,7 +77,8 @@ Provide helpers that:
    - mutate a real route dependency, await reload, fetch the route, and assert the marker.
 5. Island characterization:
    - mutate `components/Counter.tsx`, await reload/ok, then assert both the on-disk and HTTP-served `Counter_*.js` contain the marker;
-   - this should be green on current clean HEAD. If it is red repeatedly, stop and file a task challenge before changing island production code.
+   - confirmed red on the clean-copy process fixture: stale emitted chunk 2/2 for Dabin and 1/1 independently for Aoki after `building → reload → ok`;
+   - keep the executable case as `test.skip` with the `hot-reload-island-staleness-diagnosis` task reference. The core lane must not change island production code or claim this known failure green.
 
 Commit the harness separately so later fixes can demonstrate red-to-green history.
 
@@ -209,8 +210,24 @@ Acceptance requires:
 - correcting the file recovers without restarting `brust dev`;
 - rapid and mixed-kind edits all become observable in served output;
 - React error pages contain the dev client and recover on the next valid edit;
-- island characterization is green without an island production change;
+- the confirmed island characterization remains an explicit skipped regression linked to `hot-reload-island-staleness-diagnosis`; it is not counted as a core-lane pass;
 - no disposable fixture, `[DEBUG-...]` log, or task-boundary leak remains.
+
+## Task 6 — Diagnose confirmed island staleness in a separate lane
+
+**File**
+
+- `docs/superpowers/reports/2026-07-19-hot-reload-island-staleness-root-cause.md`
+
+This task is evidence-only and must not edit production or test code. It must:
+
+- reproduce the skipped `an island edit refreshes both the emitted and served client chunk` process case at least three times from a clean-copy fixture;
+- trace the edit from watcher classification through the `runtime/index.ts` island map supplied to `buildIslands()` and through `runtime/islands/build.ts` output replacement;
+- record source bytes, discovered island-map entry, Bun build input/output identity, emitted chunk path/hash, and HTTP-served path/hash before and after the edit;
+- distinguish stale discovery/cache state from stale bundler input, output replacement, filename selection, and HTTP serving;
+- state one falsifiable root cause and the smallest exact production/test boundary for a red-green fix, including focused and process-level gate commands.
+
+After the report is reviewed, the lead creates a separate implementation task. Do not expand `hot-reload-core-fix` or apply speculative cache-busting while the mechanism remains unproven.
 
 ## Risk ledger and deferred work
 
@@ -219,5 +236,5 @@ Acceptance requires:
 - **Later-stage atomicity:** `buildIslands()` can replace its output directory and `reEmitJinja()` mutates the process-global template environment before worker replacement. This plan does not promise rollback if those later stages partially succeed and a subsequent spawn fails; establish a repro before designing atomic artifact/generation swaps.
 - **Worker readiness timeout:** `spawnAll()` currently resolves after five seconds even without `brust-worker-ready`. Add a separate repro before changing this contract.
 - **Reconnect catch-up:** a client disconnected during the one-shot reload frame may reconnect stale. First add a protocol test and decide whether a generation handshake is warranted.
-- **Island stale observation:** retained as conflicting evidence. The characterization test is the guard; no speculative cache-busting or content-hash rename in this change.
+- **Island stale output:** now confirmed at the process seam despite earlier conflicting clean-copy differentials. The core lane retains a skipped executable regression and makes no island production change. `hot-reload-island-staleness-diagnosis` must trace the actual build/cache path and define a bounded fix before any cache-busting or naming change.
 - **Build progress UI:** ignoring `building` is a UX choice, not a correctness defect; defer.
