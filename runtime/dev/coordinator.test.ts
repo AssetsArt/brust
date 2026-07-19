@@ -291,6 +291,33 @@ describe('Coordinator', () => {
     expect(deps.workers.terminateAll).toHaveBeenCalledTimes(2)
   })
 
+  test('a change queued during drain finalization starts a new drain', async () => {
+    let coordinator!: Coordinator
+    let replay: Promise<void> | undefined
+    let scheduled = false
+    const deps = makeDeps({
+      broadcast: mock(async (message: { type: string }) => {
+        if (message.type !== 'ok' || scheduled) return
+        scheduled = true
+        // The third hop runs after drainPending observes an empty queue but
+        // before its finally callback releases ownership of drainPromise.
+        queueMicrotask(() =>
+          queueMicrotask(() =>
+            queueMicrotask(() => {
+              replay = coordinator.handleChange({ paths: ['/b.tsx'], kind: 'ts' })
+            }),
+          ),
+        )
+      }),
+    })
+    coordinator = new Coordinator(deps)
+
+    await coordinator.handleChange({ paths: ['/a.tsx'], kind: 'ts' })
+    await replay
+
+    expect(deps.workers.terminateAll).toHaveBeenCalledTimes(2)
+  })
+
   test('full kinds coalesce while app and component CSS drain independently in priority order', async () => {
     const order: string[] = []
     const deps = makeDeps({

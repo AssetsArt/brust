@@ -49,15 +49,26 @@ export class Coordinator {
     }
 
     if (!this.drainPromise) {
-      // Defer ownership by one microtask so the watcher's ordered callbacks for
-      // a mixed debounce window can coalesce into the three bounded domains.
-      this.drainPromise = Promise.resolve()
-        .then(() => this.drainPending())
-        .finally(() => {
-          this.drainPromise = null
-        })
+      this.startDrain()
     }
-    return this.drainPromise
+    return this.drainPromise!
+  }
+
+  private startDrain(): Promise<void> {
+    // Defer ownership by one microtask so the watcher's ordered callbacks for
+    // a mixed debounce window can coalesce into the three bounded domains.
+    const drain = Promise.resolve().then(() => this.drainPending())
+    let tracked!: Promise<void>
+    tracked = drain.finally(() => {
+      if (this.drainPromise !== tracked) return
+      this.drainPromise = null
+      // A callback can enqueue after drainPending observes an empty queue but
+      // before this finalizer runs. Chain its replacement drain so callers of
+      // the finishing drain still wait for all accepted work.
+      if (this.pending.size > 0) return this.startDrain()
+    })
+    this.drainPromise = tracked
+    return tracked
   }
 
   private async drainPending(): Promise<void> {
