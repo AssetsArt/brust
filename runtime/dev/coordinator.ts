@@ -8,6 +8,8 @@ export interface CoordinatorDeps {
   }
   buildCss: () => Promise<void>
   buildIslands: () => Promise<void>
+  /** Parse changed JS/TS modules before mutating the live generation. */
+  validateChanges: (paths: string[]) => Promise<void>
   /** Recompile native-route `.jinja` templates from source and reload them into
    * the minijinja env, so `native: true` routes pick up .tsx edits on reload. */
   reEmitJinja: () => Promise<void>
@@ -22,16 +24,72 @@ export interface CoordinatorDeps {
   tui: { appendEvent(line: string): void }
 }
 
-type State = 'idle' | 'building'
+type BuildDomain = 'full' | 'app-css' | 'component-css'
+
+interface PendingBatch {
+  kind: ChangeKind
+  paths: Set<string>
+}
+
+const DOMAIN_PRIORITY: BuildDomain[] = ['full', 'app-css', 'component-css']
 
 export class Coordinator {
-  private state: State = 'idle'
+  private readonly pending = new Map<BuildDomain, PendingBatch>()
+  private drainPromise: Promise<void> | null = null
 
   constructor(private deps: CoordinatorDeps) {}
 
-  async handleChange(ev: { paths: string[]; kind: ChangeKind }): Promise<void> {
-    if (this.state === 'building') return
-    this.state = 'building'
+  handleChange(ev: { paths: string[]; kind: ChangeKind }): Promise<void> {
+    const domain = domainFor(ev.kind)
+    const existing = this.pending.get(domain)
+    if (existing) {
+      for (const path of ev.paths) existing.paths.add(path)
+    } else {
+      this.pending.set(domain, { kind: ev.kind, paths: new Set(ev.paths) })
+    }
+
+    if (!this.drainPromise) {
+      this.startDrain()
+    }
+    return this.drainPromise!
+  }
+
+  private startDrain(): Promise<void> {
+    // Defer ownership by one microtask so the watcher's ordered callbacks for
+    // a mixed debounce window can coalesce into the three bounded domains.
+    const drain = Promise.resolve().then(() => this.drainPending())
+    let tracked!: Promise<void>
+    tracked = drain.finally(() => {
+      if (this.drainPromise !== tracked) return
+      this.drainPromise = null
+      // A callback can enqueue after drainPending observes an empty queue but
+      // before this finalizer runs. Chain its replacement drain so callers of
+      // the finishing drain still wait for all accepted work.
+      if (this.pending.size > 0) return this.startDrain()
+    })
+    this.drainPromise = tracked
+    return tracked
+  }
+
+  private async drainPending(): Promise<void> {
+    while (true) {
+      const event = this.takeNext()
+      if (!event) return
+      await this.runBatch(event)
+    }
+  }
+
+  private takeNext(): { paths: string[]; kind: ChangeKind } | null {
+    for (const domain of DOMAIN_PRIORITY) {
+      const batch = this.pending.get(domain)
+      if (!batch) continue
+      this.pending.delete(domain)
+      return { kind: batch.kind, paths: Array.from(batch.paths) }
+    }
+    return null
+  }
+
+  private async runBatch(ev: { paths: string[]; kind: ChangeKind }): Promise<void> {
     const started = performance.now()
     try {
       await this.deps.broadcast({ type: 'building' })
@@ -46,6 +104,7 @@ export class Coordinator {
         // per-isolate (islands/native-render.ts), so a re-emitted
         // .islands.json sidecar is never re-read by a live worker.
         case 'md':
+          await this.deps.validateChanges(ev.paths)
           // Stale frozen island renders must not survive a source edit.
           this.deps.clearIslandCache?.()
           // Rebuild island CLIENT chunks. The watcher classifies every `.tsx`
@@ -103,10 +162,14 @@ export class Coordinator {
         message: e.message ?? String(e),
         stack: e.stack,
       })
-    } finally {
-      this.state = 'idle'
     }
   }
+}
+
+function domainFor(kind: ChangeKind): BuildDomain {
+  if (kind === 'css') return 'app-css'
+  if (kind === 'component-css') return 'component-css'
+  return 'full'
 }
 
 function formatStart(ev: { paths: string[]; kind: ChangeKind }): string {

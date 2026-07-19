@@ -869,6 +869,7 @@ export const brust = {
         ;(native as any).configureDevMode?.(true)
         const { createWatcher } = await import('./dev/watcher.ts')
         const { Coordinator } = await import('./dev/coordinator.ts')
+        const { validateChangedModules } = await import('./dev/validate-change.ts')
         const { broadcast } = await import('./dev/ws-channel.ts')
         const { Tui } = await import('./dev/tui.ts')
         const { terminateAll: termWorkers, spawnAll: spawnWorkers } = await import(
@@ -909,6 +910,7 @@ export const brust = {
             },
           },
           reEmitJinja,
+          validateChanges: validateChangedModules,
           // Wipe the Rust-side island ISR cache on every render-affecting reload
           // so a frozen island render never survives a `.tsx` edit in dev.
           clearIslandCache: () => {

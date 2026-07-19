@@ -6,6 +6,7 @@ export type ChangeKind = 'ts' | 'css' | 'component-css' | 'html' | 'islands' | '
 const IGNORE_DIR_SEGMENTS = new Set(['node_modules', '.git', '.brust', 'dist'])
 const TS_RE = /\.(tsx?|jsx?)$/
 const TEST_RE = /\.test\.(tsx?|jsx?)$/
+const KIND_PRIORITY: ChangeKind[] = ['islands', 'ts', 'md', 'html', 'css', 'component-css']
 
 /** Classify a changed path. Returns null when the path should be ignored.
  * `root` is used to compute the relative path for ignore-segment matching.
@@ -83,26 +84,38 @@ export interface Watcher {
   close(): void
 }
 
-/** Watch `root` recursively. Emits one `onChange` call per debounce window
- * with paths classified by the dominant kind. Mixed-kind windows pick
- * by priority: islands > ts > html > css (islands trigger a full restart
- * that subsumes the others). */
+/** Internal — exposed for deterministic callback-contract tests. */
+export function _testDispatchChanges(
+  paths: string[],
+  opts: Pick<CreateWatcherOptions, 'root' | 'hasMdRoutes' | 'onChange'>,
+): void {
+  const grouped = new Map<ChangeKind, Set<string>>()
+  for (const p of paths) {
+    const kind = classifyPath(p, opts.root, opts.hasMdRoutes ?? true)
+    if (kind === null) continue
+    let group = grouped.get(kind)
+    if (!group) {
+      group = new Set()
+      grouped.set(kind, group)
+    }
+    group.add(p)
+  }
+  for (const kind of KIND_PRIORITY) {
+    const group = grouped.get(kind)
+    if (group && group.size > 0) {
+      opts.onChange({ paths: Array.from(group), kind })
+    }
+  }
+}
+
+/** Watch `root` recursively. Emits one `onChange` call for every distinct kind
+ * retained in a debounce window. Priority orders delivery; it never discards
+ * lower-priority kinds from a mixed window. */
 export function createWatcher(opts: CreateWatcherOptions): Watcher {
   const debounceMs = opts.debounceMs ?? 50
-  const kindPriority: ChangeKind[] = ['islands', 'ts', 'md', 'html', 'css', 'component-css']
 
   const coalesce = _testCoalesce(debounceMs, (paths) => {
-    const kinds = new Set<ChangeKind>()
-    const keep: string[] = []
-    for (const p of paths) {
-      const k = classifyPath(p, opts.root, opts.hasMdRoutes ?? true)
-      if (k === null) continue
-      kinds.add(k)
-      keep.push(p)
-    }
-    if (keep.length === 0) return
-    const dominant = kindPriority.find((k) => kinds.has(k))!
-    opts.onChange({ paths: keep, kind: dominant })
+    _testDispatchChanges(paths, opts)
   })
 
   const fsWatcher: FSWatcher = watch(opts.root, { recursive: true }, (_event, filename) => {
