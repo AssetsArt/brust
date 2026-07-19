@@ -78,7 +78,7 @@ Provide helpers that:
 5. Island characterization:
    - mutate `components/Counter.tsx`, await reload/ok, then assert both the on-disk and HTTP-served `Counter_*.js` contain the marker;
    - confirmed red on the clean-copy process fixture: stale emitted chunk 2/2 for Dabin and 1/1 independently for Aoki after `building → reload → ok`;
-   - keep the executable case as `test.skip` with the `hot-reload-island-staleness-diagnosis` task reference. The core lane must not change island production code or claim this known failure green.
+   - keep the executable case as `test.skip` with the `hot-reload-island-root-cause` task reference. The core lane must not change island production code or claim this known failure green.
 
 Commit the harness separately so later fixes can demonstrate red-to-green history.
 
@@ -210,7 +210,7 @@ Acceptance requires:
 - correcting the file recovers without restarting `brust dev`;
 - rapid and mixed-kind edits all become observable in served output;
 - React error pages contain the dev client and recover on the next valid edit;
-- the confirmed island characterization remains an explicit skipped regression linked to `hot-reload-island-staleness-diagnosis`; it is not counted as a core-lane pass;
+- the confirmed island characterization remains an explicit skipped regression linked to `hot-reload-island-root-cause`; it is not counted as a core-lane pass;
 - no disposable fixture, `[DEBUG-...]` log, or task-boundary leak remains.
 
 ## Task 6 — Diagnose confirmed island staleness in a separate lane
@@ -236,5 +236,5 @@ After the report is reviewed, the lead creates a separate implementation task. D
 - **Later-stage atomicity:** `buildIslands()` can replace its output directory and `reEmitJinja()` mutates the process-global template environment before worker replacement. This plan does not promise rollback if those later stages partially succeed and a subsequent spawn fails; establish a repro before designing atomic artifact/generation swaps.
 - **Worker readiness timeout:** `spawnAll()` currently resolves after five seconds even without `brust-worker-ready`. Add a separate repro before changing this contract.
 - **Reconnect catch-up:** a client disconnected during the one-shot reload frame may reconnect stale. First add a protocol test and decide whether a generation handshake is warranted.
-- **Island stale output:** now confirmed at the process seam despite earlier conflicting clean-copy differentials. The core lane retains a skipped executable regression and makes no island production change. `hot-reload-island-staleness-diagnosis` must trace the actual build/cache path and define a bounded fix before any cache-busting or naming change.
+- **Island stale output:** now confirmed at the process seam despite earlier conflicting clean-copy differentials. The core lane retains a skipped executable regression and makes no island production change. `hot-reload-island-root-cause` must trace the actual build/cache path and define a bounded fix before any cache-busting or naming change.
 - **Build progress UI:** ignoring `building` is a UX choice, not a correctness defect; defer.
