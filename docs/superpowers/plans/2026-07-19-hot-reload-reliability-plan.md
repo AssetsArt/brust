@@ -183,9 +183,17 @@ Tests must set and reset `configureDevClientSnippet` explicitly and cover a full
 
 ## Task 5 — Integration and acceptance
 
+Task 5 is an **integrator-only post-merge gate**. Individual lanes must not name files produced by another unmerged lane:
+
+- Tasks 1–3 gate only their existing boundary files, and must assert every named test file exists before invoking Bun.
+- Task 4 gates with `test -f runtime/render/stream.test.ts && bun test runtime/render/stream.test.ts runtime/render/inject-dev-client.test.ts`.
+- After both lanes merge, the integrator asserts all newly added test files exist and then runs the commands below. This prevents Bun's missing-path behavior from producing a false green.
+
 Run from a clean checkout with no disposable fixture directories:
 
 ```sh
+test -f runtime/dev/validate-change.test.ts
+test -f tests/dev-hot-reload-reliability.test.ts
 bun test runtime/dev/watcher.test.ts runtime/dev/coordinator.test.ts runtime/dev/validate-change.test.ts runtime/render/stream.test.ts
 bun test tests/dev-hot-reload-reliability.test.ts tests/dev-reload.test.ts tests/dev-reload-option.test.ts
 bun test runtime/
