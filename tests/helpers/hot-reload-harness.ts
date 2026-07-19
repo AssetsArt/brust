@@ -145,6 +145,30 @@ export class HotReloadHarness {
     )
   }
 
+  async waitForNoTypes(forbidden: string[], from = 0, quietMs = 500): Promise<void> {
+    const deadline = Date.now() + quietMs
+    const forbiddenTypes = new Set(forbidden)
+    const assertStillQuiet = () => {
+      const frames = this.messages.slice(from)
+      const unexpected = frames.find((frame) => forbiddenTypes.has(frame.type))
+      if (unexpected) {
+        throw new Error(
+          `unexpected ${unexpected.type} during quiet window; received ${frames
+            .map((frame) => frame.type)
+            .join(' → ')}\n${this.logTail()}`,
+        )
+      }
+      if (this.proc?.exitCode !== null) {
+        throw new Error(`dev process exited during quiet window\n${this.logTail()}`)
+      }
+    }
+    while (Date.now() < deadline) {
+      assertStillQuiet()
+      await sleep(Math.min(25, deadline - Date.now()))
+    }
+    assertStillQuiet()
+  }
+
   async cleanup(): Promise<void> {
     try {
       this.ws?.close()

@@ -17,20 +17,25 @@ test('invalid routes stay on the healthy generation and recover after correction
   expect(healthyHtml).toContain('Hello from Brust')
 
   const routes = harness.read('routes.tsx')
+  const page = harness.read('pages/HelloWorld.tsx')
   const invalidCursor = harness.cursor()
   harness.write('routes.tsx', `${routes}\nexport const reliabilityBroken = @@@\n`)
 
   await harness.waitForTypes(['building', 'error'], invalidCursor)
-  expect(harness.messages.slice(invalidCursor).map((frame) => frame.type)).toEqual([
-    'building',
-    'error',
-  ])
+  await harness.waitForNoTypes(['reload', 'ok'], invalidCursor)
+  expect(await harness.fetchText('/ping')).toBeTruthy()
   expect(await harness.waitForText('/', 'Hello from Brust')).toContain('Hello from Brust')
 
+  const marker = `reliability-recovery-${Date.now()}`
   const repairCursor = harness.cursor()
   harness.write('routes.tsx', routes)
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  harness.write(
+    'pages/HelloWorld.tsx',
+    page.replace('Hello from Brust', `Hello from Brust ${marker}`),
+  )
   await harness.waitForTypes(['building', 'reload', 'ok'], repairCursor)
-  expect(await harness.waitForText('/', 'Hello from Brust')).toContain('Hello from Brust')
+  expect(await harness.waitForText('/', marker)).toContain(marker)
 }, 60000)
 
 test('an app CSS edit arriving during a full reload is processed before the drain completes', async () => {
