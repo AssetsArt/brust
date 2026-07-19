@@ -66,6 +66,7 @@ export interface RenderBranchStreamingArgs {
 }
 
 const encoder = new TextEncoder()
+const decoder = new TextDecoder()
 
 /** JSON.stringify the per-chunk meta. Defaults match the renderToString
  * path so single-chunk responses keep their existing wire shape. */
@@ -119,6 +120,18 @@ function concatBuffers(parts: Uint8Array[], withBootstrap: boolean): Uint8Array 
     out.set(p, off)
     off += p.length
   }
+  return out
+}
+
+function injectOrPrependDevClient(body: Uint8Array, snippet: string | null): Uint8Array {
+  if (!snippet) return body
+  if (decoder.decode(body).toLowerCase().includes('</head>')) {
+    return injectDevClient(body, snippet)
+  }
+  const snippetBytes = encoder.encode(snippet)
+  const out = new Uint8Array(snippetBytes.length + body.length)
+  out.set(snippetBytes, 0)
+  out.set(body, snippetBytes.length)
   return out
 }
 
@@ -304,11 +317,12 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
         onShellError(err) {
           try {
             const html = renderToString(createElement(errorBoundary, { error: err as Error }))
+            const body = injectOrPrependDevClient(encoder.encode(html), getDevClientSnippet())
             const meta = makeMeta({ status: 500, streaming: false })
             mode = 'done'
             ;(async () => {
               try {
-                const len = encodeFirstChunk(view, meta, encoder.encode(html))
+                const len = encodeFirstChunk(view, meta, body)
                 await napi.renderChunkFinal(workerId, slot, len, view)
                 finalSent = true
                 resolve()
@@ -318,6 +332,23 @@ export function renderBranchStreaming(args: RenderBranchStreamingArgs): Promise<
             })()
           } catch (e2) {
             console.error('[brust] errorBoundary threw during shell error:', e2)
+            const devSnippet = getDevClientSnippet()
+            if (devSnippet) {
+              const meta = makeMeta({ status: 500, streaming: false })
+              const html = `<!doctype html><html><head>${devSnippet}</head><body>Internal Server Error</body></html>`
+              mode = 'done'
+              ;(async () => {
+                try {
+                  const len = encodeFirstChunk(view, meta, encoder.encode(html))
+                  await napi.renderChunkFinal(workerId, slot, len, view)
+                  finalSent = true
+                  resolve()
+                } catch (e) {
+                  reject(e)
+                }
+              })()
+              return
+            }
             const meta = makeMeta({
               status: 500,
               streaming: false,

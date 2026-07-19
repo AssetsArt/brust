@@ -2,6 +2,7 @@ import { test, expect, mock, describe } from 'bun:test'
 import { createElement, Suspense } from 'react'
 import { renderBranchStreaming, makeMeta } from './stream'
 import { aiScriptTag } from '../generator.ts'
+import { configureDevClientSnippet } from '../dev/inject.ts'
 
 function makeMockNapi() {
   const chunks: Array<{ len: number; bytes: Uint8Array | null; final: boolean }> = []
@@ -82,6 +83,7 @@ test('streaming=true when Suspense pending; bootstrap always injected in streami
 })
 
 test('pre-shell crash → 500 + errorBoundary + final fires', async () => {
+  configureDevClientSnippet(null)
   const { chunks, napi } = makeMockNapi()
   function Crash(): never {
     throw new Error('boom')
@@ -101,6 +103,62 @@ test('pre-shell crash → 500 + errorBoundary + final fires', async () => {
   expect(parsed.status).toBe(500)
   expect(parsed.streaming).toBe(false)
   expect(new TextDecoder().decode(body)).toContain('caught: boom')
+})
+
+test('pre-shell crash keeps full-document error boundary on the dev channel', async () => {
+  configureDevClientSnippet('<script>devclient</script>')
+  try {
+    const { chunks, napi } = makeMockNapi()
+    function Crash(): never {
+      throw new Error('boom')
+    }
+    await renderBranchStreaming({
+      element: createElement(Crash),
+      view,
+      workerId: 0n,
+      napi,
+      errorBoundary: ({ error }: { error: Error }) =>
+        createElement(
+          'html',
+          null,
+          createElement('head', null, createElement('title', null, 'err')),
+          createElement('body', null, 'caught: ' + error.message),
+        ),
+    })
+    expect(chunks.length).toBe(1)
+    const { metaJson, body } = decodeMeta(chunks[0].bytes!)
+    expect(JSON.parse(metaJson).status).toBe(500)
+    const bodyStr = new TextDecoder().decode(body)
+    expect(bodyStr).toContain('<script>devclient</script></head>')
+    expect(bodyStr).toContain('caught: boom')
+  } finally {
+    configureDevClientSnippet(null)
+  }
+})
+
+test('pre-shell crash prepends the dev client when the error boundary returns a fragment', async () => {
+  configureDevClientSnippet('<script>devclient</script>')
+  try {
+    const { chunks, napi } = makeMockNapi()
+    function Crash(): never {
+      throw new Error('boom')
+    }
+    await renderBranchStreaming({
+      element: createElement(Crash),
+      view,
+      workerId: 0n,
+      napi,
+      errorBoundary: ({ error }: { error: Error }) =>
+        createElement('div', null, 'caught: ' + error.message),
+    })
+    const { metaJson, body } = decodeMeta(chunks[0].bytes!)
+    expect(JSON.parse(metaJson).status).toBe(500)
+    const bodyStr = new TextDecoder().decode(body)
+    expect(bodyStr).toStartWith('<script>devclient</script>')
+    expect(bodyStr).toContain('caught: boom')
+  } finally {
+    configureDevClientSnippet(null)
+  }
 })
 
 test('post-shell crash → onError logged + final still fires (no hang)', async () => {
@@ -133,6 +191,7 @@ test('post-shell crash → onError logged + final still fires (no hang)', async 
 })
 
 test('errorBoundary itself throws → plain-text fallback + final fires', async () => {
+  configureDevClientSnippet(null)
   const { chunks, napi } = makeMockNapi()
   function Crash(): never {
     throw new Error('boom')
@@ -154,6 +213,42 @@ test('errorBoundary itself throws → plain-text fallback + final fires', async 
   expect(parsed.status).toBe(500)
   expect(parsed.contentType).toContain('text/plain')
   expect(new TextDecoder().decode(body)).toBe('Internal Server Error')
+})
+
+test('errorBoundary itself throws in dev → generic HTML fallback stays on the dev channel', async () => {
+  configureDevClientSnippet('<script>devclient</script>')
+  const consoleSpy = mock(() => {})
+  const origErr = console.error
+  console.error = consoleSpy
+  try {
+    const { chunks, napi } = makeMockNapi()
+    function Crash(): never {
+      throw new Error('boom')
+    }
+    function BadBoundary(): never {
+      throw new Error('boundary-also-broken')
+    }
+    await renderBranchStreaming({
+      element: createElement(Crash),
+      view,
+      workerId: 0n,
+      napi,
+      errorBoundary: BadBoundary,
+    })
+    expect(chunks.length).toBe(1)
+    expect(chunks[0].final).toBe(true)
+    const { metaJson, body } = decodeMeta(chunks[0].bytes!)
+    const parsed = JSON.parse(metaJson)
+    expect(parsed.status).toBe(500)
+    expect(parsed.contentType).toContain('text/html')
+    const bodyStr = new TextDecoder().decode(body)
+    expect(bodyStr).toContain('Internal Server Error')
+    expect(bodyStr).toContain('<script>devclient</script>')
+    expect(bodyStr).not.toContain('boundary-also-broken')
+  } finally {
+    console.error = origErr
+    configureDevClientSnippet(null)
+  }
 })
 
 test('buffering path uses renderChunkFinal once — not renderChunk + renderChunk(0) [perf contract]', async () => {
