@@ -21,7 +21,7 @@ This plan is based on executable diagnosis, not code inspection alone:
 3. **The coordinator uses a bounded per-build-domain pending queue, not an unbounded event log.** Map `islands`/`ts`/`md`/`html` into one `full` domain because they execute the same branch; keep separate `app-css` and `component-css` domains. While a build is active, union paths within those three domains and drain `full`, then `app-css`, then `component-css`, until empty. This avoids both lost work and redundant full restarts while bounding memory during editor save storms.
 4. **Changed JS/TS syntax is preflighted in the main isolate.** Use `Bun.Transpiler` with the loader selected from `.ts`, `.tsx`, `.js`, or `.jsx`; validate every existing changed module before `clearIslandCache`, artifact rebuilds, native-pool reset, or worker termination. This is syntax containment, not TypeScript type-checking.
 5. **`BRUST_WORKERS=1` is mitigation only.** It reduced the observed native crash but still emitted false `reload → ok` for invalid source; it is not the fix.
-6. **Keep island build/cache production changes out of the core lane, but treat staleness as confirmed follow-up work.** The new clean-copy process characterization reproduced a stale emitted chunk 2/2 for Dabin and 1/1 independently for Aoki. That satisfies the evidence threshold for a separate diagnosis/fix lane; it does not justify expanding the already-active core lane across an unplanned production boundary. Retain the executable characterization as skipped with the challenge/task reference until that lane turns it green.
+6. **Do not change island build/cache production code.** Marty traced the apparent clean-copy RED to an invalid comment-only test mutation: `replace('{label}: {n}', ...)` changed the explanatory comment, which Bun correctly strips, rather than the rendered JSX node. Three comment-only runs kept emitted/served hashes identical, while a semantic JSX edit changed both hashes and carried the marker. The characterization must target rendered JSX and remain green; no island production fix is authorized.
 7. **Reconnect catch-up, worker-ready timeout semantics, and in-page `building` UI are deferred.** They are inferred risks/UX gaps, not confirmed causes of this incident.
 
 Rejected alternatives:
@@ -77,8 +77,8 @@ Provide helpers that:
    - mutate a real route dependency, await reload, fetch the route, and assert the marker.
 5. Island characterization:
    - mutate `components/Counter.tsx`, await reload/ok, then assert both the on-disk and HTTP-served `Counter_*.js` contain the marker;
-   - confirmed red on the clean-copy process fixture: stale emitted chunk 2/2 for Dabin and 1/1 independently for Aoki after `building → reload → ok`;
-   - keep the executable case as `test.skip` with the `hot-reload-island-root-cause` task reference. The core lane must not change island production code or claim this known failure green.
+   - target the rendered JSX text node with a unique semantic match; do not use a first-occurrence replacement that can hit the fixture comment header;
+   - require the semantic edit to change both emitted and HTTP-served bytes. Comment-only edits may legitimately compile to identical output.
 
 Commit the harness separately so later fixes can demonstrate red-to-green history.
 
@@ -210,7 +210,7 @@ Acceptance requires:
 - correcting the file recovers without restarting `brust dev`;
 - rapid and mixed-kind edits all become observable in served output;
 - React error pages contain the dev client and recover on the next valid edit;
-- the confirmed island characterization remains an explicit skipped regression linked to `hot-reload-island-root-cause`; it is not counted as a core-lane pass;
+- the island characterization uses a semantic JSX edit and is green without an island production change;
 - no disposable fixture, `[DEBUG-...]` log, or task-boundary leak remains.
 
 ## Task 6 — Diagnose confirmed island staleness in a separate lane
@@ -227,7 +227,7 @@ This task is evidence-only and must not edit production or test code. It must:
 - distinguish stale discovery/cache state from stale bundler input, output replacement, filename selection, and HTTP serving;
 - state one falsifiable root cause and the smallest exact production/test boundary for a red-green fix, including focused and process-level gate commands.
 
-After the report is reviewed, the lead creates a separate implementation task. Do not expand `hot-reload-core-fix` or apply speculative cache-busting while the mechanism remains unproven.
+The investigation found no production island defect: the prior RED edited a stripped comment. Repair the characterization inside `hot-reload-core-fix`; do not create an island implementation task or apply speculative cache-busting unless a future semantic edit reproduces stale emitted or served bytes.
 
 ## Risk ledger and deferred work
 
@@ -236,5 +236,5 @@ After the report is reviewed, the lead creates a separate implementation task. D
 - **Later-stage atomicity:** `buildIslands()` can replace its output directory and `reEmitJinja()` mutates the process-global template environment before worker replacement. This plan does not promise rollback if those later stages partially succeed and a subsequent spawn fails; establish a repro before designing atomic artifact/generation swaps.
 - **Worker readiness timeout:** `spawnAll()` currently resolves after five seconds even without `brust-worker-ready`. Add a separate repro before changing this contract.
 - **Reconnect catch-up:** a client disconnected during the one-shot reload frame may reconnect stale. First add a protocol test and decide whether a generation handshake is warranted.
-- **Island stale output:** now confirmed at the process seam despite earlier conflicting clean-copy differentials. The core lane retains a skipped executable regression and makes no island production change. `hot-reload-island-root-cause` must trace the actual build/cache path and define a bounded fix before any cache-busting or naming change.
+- **Island false positive:** the apparent stale output was caused by a comment-only mutation that Bun strips. `hot-reload-island-root-cause` records the source/map/build/output/HTTP hashes and credits Marty for falsifying cache, filename, replacement, and serving defects. Keep the semantic JSX characterization green; do not infer freshness from source-marker absence when the edited syntax need not survive compilation.
 - **Build progress UI:** ignoring `building` is a UX choice, not a correctness defect; defer.
