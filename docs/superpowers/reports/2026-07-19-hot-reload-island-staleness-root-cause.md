@@ -22,10 +22,10 @@ In the fixture-local `components/Counter.tsx`, the first `{label}: {n}` occurren
 
 The relevant build path is:
 
-- [runtime/index.ts](/Users/detoro/code/brust/runtime/index.ts) at the island build call site and dev `no-store` response setup
-- [runtime/islands/build.ts](/Users/detoro/code/brust/runtime/islands/build.ts) for `buildIslands()` / `buildOne()`
-- [runtime/islands/chunk-id.ts](/Users/detoro/code/brust/runtime/islands/chunk-id.ts) for the content-addressed chunk basename
-- [runtime/dev/client.ts](/Users/detoro/code/brust/runtime/dev/client.ts) for `reload -> location.reload()`
+- [runtime/index.ts](runtime/index.ts) at the island build call site and dev `no-store` response setup
+- [runtime/islands/build.ts](runtime/islands/build.ts) for `buildIslands()` / `buildOne()`
+- [runtime/islands/chunk-id.ts](runtime/islands/chunk-id.ts) for the content-addressed chunk basename
+- [runtime/dev/client.ts](runtime/dev/client.ts) for `reload -> location.reload()`
 
 `scanIslandChunks()` always maps `components/Counter.tsx` to `Counter_d3b36583`, because the id hashes the cwd-relative source path, not file contents.
 
@@ -77,14 +77,13 @@ The fix boundary is the characterization seam in `tests/dev-hot-reload-reliabili
 - keep the regression scoped to the rendered JSX line, not the comment header
 - if the test is meant to prove island rebuild freshness, mutate the JSX text node that survives the transform
 
+## Formal Challenge
+
+A formal challenge is filed on this task record: the original RED seam is invalid because `replace('{label}: {n}', ...)` matches the explanatory comment before the rendered JSX. The only valid follow-up is a test-only semantic JSX mutation; there is no production task here.
+
 ## Gate
 
 If this investigation is turned into a test repair, the gate should be:
 
-- `bun test ./.claude/worktrees/hot-reload-core-fix/tests/dev-hot-reload-reliability.test.ts`
-
-And the acceptance check should remain:
-
-- comment-only edit stays byte-identical
-- JSX edit changes both emitted and served island chunks
-
+- `test -f tests/dev-hot-reload-reliability.test.ts`
+- `bun test tests/dev-hot-reload-reliability.test.ts --test-name-pattern 'island edit refreshes'`
