@@ -109,18 +109,19 @@ test('a successful page reload serves the changed route dependency', async () =>
   expect(await harness.fetchText('/')).toContain(marker)
 }, 60000)
 
-// Known red, independently reproduced and tracked by
-// hot-reload-island-root-cause. Core Tasks 1-3 must not change island
-// production code; keep this executable characterization at the process seam.
-test.skip('an island edit refreshes both the emitted and served client chunk', async () => {
+test('an island edit refreshes both the emitted and served client chunk', async () => {
   harness = await HotReloadHarness.create()
   await harness.start(2)
 
   const marker = `reliability-island-${Date.now()}`
   const cursor = harness.cursor()
+  const counter = harness.read('components/Counter.tsx')
   harness.write(
     'components/Counter.tsx',
-    harness.read('components/Counter.tsx').replace('{label}: {n}', `{label}: {n} ${marker}`),
+    counter.replace(
+      '      {label}: {n}\n    </button>',
+      `      {label}: {n} ${marker}\n    </button>`,
+    ),
   )
 
   await harness.waitForTypes(['building', 'reload', 'ok'], cursor)
