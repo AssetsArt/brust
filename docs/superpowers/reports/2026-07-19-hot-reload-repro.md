@@ -1,8 +1,8 @@
 # Hot reload deterministic reproduction audit
 
-Date: 2026-07-19  
-Repository: `/Users/detoro/code/brust`  
-HEAD tested: `24bd9b28e458428988a0424107e04c4ff72e6a6b`  
+Date: 2026-07-19
+Repository: `/Users/detoro/code/brust`
+HEAD tested: `24bd9b28e458428988a0424107e04c4ff72e6a6b`
 Scope: investigation only; no production or test changes were retained
 
 ## Environment
