@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import path, { isAbsolute, resolve } from 'node:path'
 import type { BunPlugin } from 'bun'
 import { extractAiManifest, writeManifest as writeAiManifest } from '../ai/manifest.ts'
+import { entryHasLiteralAiOptIn } from './ai-opt-in.ts'
 import { emitNativeTemplates } from './native-routes-emit.ts'
 import { nativeShimPlugin } from './native-shim-plugin.ts'
 
@@ -251,14 +252,14 @@ export async function runBuild(args: string[]): Promise<void> {
     process.exit(1)
   }
   const { entry, outDir, target } = parsed
-  const aiEnabled = parsed.ai || process.env.BRUST_AI === '1'
-  if (aiEnabled) process.env.BRUST_AI = '1'
 
   // Entry existence is a runBuild concern (parseArgs stays fs-free/pure).
   if (!existsSync(entry)) {
     console.error(`brust build: no entry file at ${entry}; pass a path or create ./index.ts`)
     process.exit(1)
   }
+  const aiEnabled = parsed.ai || process.env.BRUST_AI === '1' || entryHasLiteralAiOptIn(entry)
+  if (aiEnabled) process.env.BRUST_AI = '1'
   const entryDir = path.dirname(entry)
 
   console.log(`[brust build] entry:  ${entry}`)

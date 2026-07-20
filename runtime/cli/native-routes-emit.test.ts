@@ -3,6 +3,8 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { isAbsolute, join, relative } from 'node:path'
 import { DIRECTIVES_BOOTSTRAP, ISLANDS_IMPORTMAP_AND_BOOTSTRAP } from '../islands/importmap.ts'
+import { aiScriptTag } from '../generator.ts'
+import { buildDevClientTag } from '../dev/client.ts'
 import {
   bakeDirectivesIfUsed,
   buildChainWrapperSource,
@@ -11,6 +13,7 @@ import {
   extractLucideIcons,
   gatherChainSources,
   gatherComponentSources,
+  injectDevClientIntoTemplate,
   reconcileIslandManifest,
   resetNativeEmitMemo,
   scanImportRefs,
@@ -771,6 +774,28 @@ describe('countMainTags', () => {
   })
   test('does not match substrings like <maintenance>', () => {
     expect(countMainTags('<maintenance>x</maintenance>')).toBe(0)
+  })
+})
+
+describe('injectDevClientIntoTemplate', () => {
+  test('remains dev-only when BRUST_AI is enabled for production', () => {
+    const previousAi = process.env.BRUST_AI
+    process.env.BRUST_AI = '1'
+    try {
+      const result = injectDevClientIntoTemplate(
+        '<html><head></head><body><main>page</main></body></html>',
+      )
+      expect(result).toContain(buildDevClientTag())
+      expect(result).not.toContain(aiScriptTag())
+    } finally {
+      if (previousAi === undefined) delete process.env.BRUST_AI
+      else process.env.BRUST_AI = previousAi
+    }
+  })
+
+  test('keeps dev fragment placement byte-compatible by appending the client', () => {
+    const fragment = '<main>fragment</main>'
+    expect(injectDevClientIntoTemplate(fragment)).toBe(fragment + buildDevClientTag())
   })
 })
 

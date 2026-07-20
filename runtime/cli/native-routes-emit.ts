@@ -4,7 +4,7 @@ import { createRequire } from 'node:module'
 import { dirname, relative, resolve } from 'node:path'
 import { buildDevClientTag } from '../dev/client.ts'
 import {
-  aiScriptTag,
+  injectAiScriptIntoTemplate,
   insertGeneratorMeta,
   insertShellMeta,
   resolveGenerator,
@@ -259,11 +259,8 @@ export function countMainTags(template: string): number {
  *
  * Exported for the md emit step (runtime/md/emit.ts), which bakes the same tag
  * under its `withDevClient` option — md pages render Rust-side too, so without
- * it they never auto-reload in dev.
- *
- * The AI runtime script is injected here as well when BRUST_AI=1. The tag is
- * document-only: the compiler emits a head anchor for full documents, while
- * fragment templates (no head) are left unchanged. */
+ * it they never auto-reload in dev. AI injection is deliberately separate —
+ * production AI must never pull in this reconnect/overlay client. */
 export function injectDevClientIntoTemplate(template: string): string {
   const devTag = buildDevClientTag()
   let out = template
@@ -273,15 +270,6 @@ export function injectDevClientIntoTemplate(template: string): string {
       out = out.slice(0, headClose) + devTag + out.slice(headClose)
     } else {
       out += devTag
-    }
-  }
-  if (process.env.BRUST_AI === '1') {
-    const tag = aiScriptTag()
-    if (!out.includes(tag)) {
-      const headClose = out.indexOf('</head>')
-      if (headClose !== -1) {
-        out = out.slice(0, headClose) + tag + out.slice(headClose)
-      }
     }
   }
   return out
@@ -1002,10 +990,10 @@ export async function emitNativeTemplates(opts: NativeRouteEmitOpts): Promise<Na
     // routes.ts makeFlat (never recomputed here), so native + React documents
     // carry the identical signature. Empty/missing → no-op.
     const withShell = insertShellMeta(withGenerator, r.shellId ?? '')
+    const withDevClient =
+      process.env.BRUST_DEV === '1' ? injectDevClientIntoTemplate(withShell) : withShell
     const template =
-      process.env.BRUST_DEV === '1' || process.env.BRUST_AI === '1'
-        ? injectDevClientIntoTemplate(withShell)
-        : withShell
+      process.env.BRUST_AI === '1' ? injectAiScriptIntoTemplate(withDevClient) : withDevClient
     writeFileSync(outPath, template)
     built.push(name)
     stats.compiled++
