@@ -52,4 +52,3 @@ producer/consumer seams, and a recommended minimal regression-test boundary.
 
 The report must contain a deterministic failing no-flag run and passing `--ai`
 control, with no retained production/test edits. Verify with `git diff --check`.
-

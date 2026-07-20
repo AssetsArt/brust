@@ -78,4 +78,3 @@ Run and watch pass:
 
 The task is READY only with the exact commands, exit codes, and commit SHA in
 its ledger.
-

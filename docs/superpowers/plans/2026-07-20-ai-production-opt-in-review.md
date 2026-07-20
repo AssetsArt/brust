@@ -34,4 +34,3 @@ resolution, followed by a ship/fix-then-ship/rework verdict. If no findings,
 state the end-to-end paths and edge cases actually verified.
 
 Gate: `git diff --check HEAD^ HEAD` on the report commit.
-
