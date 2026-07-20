@@ -1,6 +1,6 @@
 {
   "name": "create-brustjs",
-  "version": "0.1.66-alpha",
+  "version": "0.1.67-alpha",
   "description": "Scaffold a Brust app — `bun create brustjs <dir>`.",
   "license": "MIT",
   "repository": {
@@ -27,7 +27,7 @@
     "README.md"
   ],
   "dependencies": {
-    "brustjs": "0.1.66-alpha"
+    "brustjs": "0.1.67-alpha"
   },
   "publishConfig": {
     "access": "public"
