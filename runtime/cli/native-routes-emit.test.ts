@@ -351,6 +351,53 @@ describe('gatherComponentSources', () => {
     expect(mergedImports.get('B')!.spec).toBe(bPath)
   })
 
+  test('two named consts imported from the SAME file both get a sources entry', () => {
+    // consts.ts — one shared data module with TWO exported consts
+    const constsPath = join(dir, 'consts.ts')
+    writeFileSync(
+      constsPath,
+      `export const NAV_LINKS = [{ href: '/a', label: 'A' }]\nexport const POLICY_LINKS = [{ href: '/b', label: 'B' }]\n`,
+    )
+
+    // Page.tsx — imports both idents in one declaration
+    const pagePath = join(dir, 'Page.tsx')
+    writeFileSync(
+      pagePath,
+      `import { NAV_LINKS, POLICY_LINKS } from './consts'\nexport default function Page() { return <nav>{NAV_LINKS.map((l) => <a href={l.href}>{l.label}</a>)}{POLICY_LINKS.map((l) => <a href={l.href}>{l.label}</a>)}</nav>; }`,
+    )
+
+    const { sources, mergedImports } = gatherComponentSources(pagePath)
+
+    // BOTH idents must be keyed — the Rust compiler resolves each named import
+    // via componentSources[localName]; a missing key fails static evaluation.
+    expect('NAV_LINKS' in sources).toBe(true)
+    expect('POLICY_LINKS' in sources).toBe(true)
+    expect(sources.POLICY_LINKS).toContain('POLICY_LINKS')
+    expect(mergedImports.get('NAV_LINKS')!.spec).toBe(constsPath)
+    expect(mergedImports.get('POLICY_LINKS')!.spec).toBe(constsPath)
+  })
+
+  test('transitive child importing two consts from one file keys both idents', () => {
+    const constsPath = join(dir, 'consts.ts')
+    writeFileSync(constsPath, `export const A_LINKS = ['a']\nexport const B_LINKS = ['b']\n`)
+
+    const navPath = join(dir, 'Nav.tsx')
+    writeFileSync(
+      navPath,
+      `import { A_LINKS, B_LINKS } from './consts'\nexport default function Nav() { return <div>{A_LINKS.map((x) => <i>{x}</i>)}{B_LINKS.map((x) => <b>{x}</b>)}</div>; }`,
+    )
+
+    const pagePath = join(dir, 'Page.tsx')
+    writeFileSync(
+      pagePath,
+      `import Nav from './Nav'\nexport default function Page() { return <Nav/>; }`,
+    )
+
+    const { sources } = gatherComponentSources(pagePath)
+    expect('A_LINKS' in sources).toBe(true)
+    expect('B_LINKS' in sources).toBe(true)
+  })
+
   test('merges imports so a nested island reconciles (BLOCKER regression)', () => {
     // Counter.tsx — the island component, imported only by Layout
     const counterPath = join(dir, 'Counter.tsx')

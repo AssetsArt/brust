@@ -1,4 +1,5 @@
 import { Check, ShieldCheck } from 'lucide-react'
+import { SHARED_NAV, SHARED_POLICY } from './shared-consts'
 
 const CARDS = [
   {
@@ -78,6 +79,19 @@ export default function NativeStaticEval() {
           <span key={label}>{label}</span>
         ))}
       </div>
+
+      <nav data-shared-consts="yes">
+        {SHARED_NAV.map((link) => (
+          <a key={link.href} href={link.href}>
+            {link.label}
+          </a>
+        ))}
+        {SHARED_POLICY.map((link) => (
+          <a key={link.href} href={link.href}>
+            {link.label}
+          </a>
+        ))}
+      </nav>
     </section>
   )
 }

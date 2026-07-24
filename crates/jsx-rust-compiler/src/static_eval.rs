@@ -1963,7 +1963,14 @@ mod tests {
     #[test]
     fn fixture_reaches_inline_lowerer() {
         let source = include_str!("../../../tests/fixtures/app/NativeStaticEval.tsx");
-        let sources = HashMap::from([("NativeStaticEval".to_string(), source.to_string())]);
+        // Both idents key the SAME module source — mirrors gatherComponentSources,
+        // which registers every named import of a shared data file under its own ident.
+        let shared = include_str!("../../../tests/fixtures/app/shared-consts.ts");
+        let sources = HashMap::from([
+            ("NativeStaticEval".to_string(), source.to_string()),
+            ("SHARED_NAV".to_string(), shared.to_string()),
+            ("SHARED_POLICY".to_string(), shared.to_string()),
+        ]);
         let icon = r#"{"cls":"lucide","node":[]}"#.to_string();
         let icons = HashMap::from([
             ("Check".to_string(), icon.clone()),
