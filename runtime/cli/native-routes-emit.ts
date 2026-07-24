@@ -54,7 +54,17 @@ export function gatherComponentSources(pageSourcePath: string): {
   // Queue items: { ident, resolvedPath } — ident is how the PARENT imported it.
   // We start with the children of pageSourcePath (not the page itself).
   function visit(filePath: string, ident: string) {
-    if (visited.has(filePath)) return
+    if (visited.has(filePath)) {
+      // Re-entry under a NEW ident — `import { A, B } from './x'` visits x.ts
+      // once per named binding. The file's own imports are already merged, but
+      // the source must still be keyed under THIS ident too: the Rust compiler
+      // resolves each named import via componentSources[localName], so a
+      // missing key fails static evaluation ("property … is unsupported").
+      if (!(ident in sources)) {
+        sources[ident] = readFileSync(filePath, 'utf8')
+      }
+      return
+    }
     visited.add(filePath)
 
     const sourceText = readFileSync(filePath, 'utf8')

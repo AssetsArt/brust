@@ -129,6 +129,9 @@ test('expands bounded static data and private helpers through the CLI path', () 
     'beta',
     'direct-one',
     'direct-two',
+    'shared-nav-one',
+    'shared-nav-two',
+    'shared-policy-one',
     'stroke-width="2.25"',
   ]) {
     expect(jinja.includes(marker), 'Expected NativeStaticEval.jinja to contain ' + marker).toBe(
