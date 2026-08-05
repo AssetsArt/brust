@@ -8,10 +8,10 @@ use swc_core::common::{Span, Spanned};
 use swc_core::ecma::ast::{
     ArrayLit, ArrowExpr, AssignPatProp, BinaryOp, BindingIdent, BlockStmt, BlockStmtOrExpr,
     CallExpr, Callee, ClassMember, Decl, DefaultDecl, ExportDefaultDecl, Expr as SwcExpr,
-    ExprOrSpread, FnExpr, Function, JSXAttrName, JSXAttrOrSpread, JSXAttrValue, JSXElement,
-    JSXElementChild, JSXElementName, JSXExpr, JSXFragment, KeyValueProp, Lit, MemberExpr,
-    MemberProp, Module, ModuleDecl, ModuleItem, ObjectLit, ObjectPatProp, OptChainBase, Param,
-    ParenExpr, Pat, Prop, PropName, PropOrSpread, ReturnStmt, Stmt, UnaryOp, VarDeclKind,
+    ExprOrSpread, FnExpr, Function, ImportSpecifier, JSXAttrName, JSXAttrOrSpread, JSXAttrValue,
+    JSXElement, JSXElementChild, JSXElementName, JSXExpr, JSXFragment, KeyValueProp, Lit,
+    MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, ObjectLit, ObjectPatProp, OptChainBase,
+    Param, ParenExpr, Pat, Prop, PropName, PropOrSpread, ReturnStmt, Stmt, UnaryOp, VarDeclKind,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -1359,6 +1359,37 @@ fn module_binds_ident(module: &Module, name: &str) -> bool {
     })
 }
 
+/// Does this module import `name` from a RELATIVE path (`./x`, `../x`)?
+///
+/// Sibling of `module_binds_ident`, splitting imports by source rather than
+/// treating them all alike. A bare package specifier — `react`,
+/// `preact/compat`, anything from node_modules — is the real pure wrapper under
+/// some package name, and refusing those would turn working pages into React
+/// SSR fallbacks for no safety gain. A relative import of an ident called
+/// `memo`/`forwardRef`/`React` is a LOCAL higher-order component wearing a
+/// React name, and unwrapping it drops the author's wrapper silently. The
+/// asymmetry is deliberate: over-refusing costs a visible fallback,
+/// over-unwrapping costs wrong markup nobody sees.
+fn relative_import_binds_ident(module: &Module, name: &str) -> bool {
+    module.body.iter().any(|item| {
+        let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
+            return false;
+        };
+        let source = import.src.value.to_string_lossy();
+        if !(source.starts_with("./") || source.starts_with("../")) {
+            return false;
+        }
+        import.specifiers.iter().any(|specifier| {
+            let local = match specifier {
+                ImportSpecifier::Named(specifier) => &specifier.local,
+                ImportSpecifier::Default(specifier) => &specifier.local,
+                ImportSpecifier::Namespace(specifier) => &specifier.local,
+            };
+            local.sym.as_ref() == name
+        })
+    })
+}
+
 fn unwrap_component_call<'a>(call: &'a CallExpr, module: &Module) -> Option<&'a SwcExpr> {
     let Callee::Expr(callee) = &call.callee else {
         return None;
@@ -1380,15 +1411,15 @@ fn unwrap_component_call<'a>(call: &'a CallExpr, module: &Module) -> Option<&'a 
         _ => return None,
     };
     // Unwrapping is only safe because `memo`/`forwardRef` are known to be pure
-    // render wrappers. A module-local binding of that name is somebody ELSE's
-    // function — a local `const memo = (C) => () => <div/>` is a real HOC whose
-    // output would silently vanish from the page if we unwrapped through it.
-    // Recognition fails closed instead, so the component falls back to React
-    // SSR and renders what the author wrote. Imports are NOT treated as
-    // shadowing: `import { memo } from "preact/compat"` (or any react-compat
-    // package) is the same pure wrapper under a different package name.
+    // render wrappers. A binding of that name the AUTHOR owns is somebody
+    // else's function — a local `const memo = (C) => () => <div/>`, or one
+    // imported from `./my-hocs`, is a real HOC whose output would silently
+    // vanish from the page if we unwrapped through it. Recognition fails closed
+    // instead, so the component falls back to React SSR and renders what the
+    // author wrote. A BARE package specifier still unwraps: `import { memo }
+    // from "preact/compat"` is the same pure wrapper under another name.
     // Credit: Mellow's probes M4b/M5.
-    if module_binds_ident(module, root) {
+    if module_binds_ident(module, root) || relative_import_binds_ident(module, root) {
         return None;
     }
     let first = call.args.first()?;
@@ -7107,6 +7138,66 @@ export default memo(function Card() { return <p>i</p>; });"#,
     }
 
     #[test]
+    fn relatively_imported_hoc_is_not_unwrapped() {
+        // `./my-hocs` is the author's own file: an ident called `memo` coming
+        // out of it is a LOCAL higher-order component wearing a React name, and
+        // unwrapping it would drop the wrapper from the page. Bare package
+        // specifiers are the opposite case (see imported_memo_is_still_unwrapped).
+        for src in [
+            r#"import { memo } from "./my-hocs";
+export default memo(function Card() { return <p className="inner">i</p>; });"#,
+            r#"import { memo } from "../hocs/memo";
+export default memo(function Card() { return <p className="inner">i</p>; });"#,
+            // The namespace spelling of the same trap.
+            r#"import * as React from "./fake";
+export default React.memo(function Card() { return <p className="inner">i</p>; });"#,
+            r#"import memo from "./my-memo";
+export default memo(function Card() { return <p className="inner">i</p>; });"#,
+        ] {
+            let parsed = parse(src, "<test>").unwrap();
+            let err = lower(&parsed)
+                .err()
+                .unwrap_or_else(|| panic!("expected recognition to fail closed for:\n{src}"));
+            assert!(
+                matches!(err.kind, ErrorKind::UnexpectedStatement),
+                "{src}\ngot {:?}",
+                err.kind
+            );
+        }
+    }
+
+    #[test]
+    fn relatively_imported_hoc_keeps_its_wrapper_through_the_inline_path() {
+        // End-to-end: the component falls back to React SSR with the wrapper
+        // intact, instead of inlining the unwrapped inner component.
+        let route = r#"export default function P() {
+  return <div><Card native/></div>;
+}"#;
+        let card = r#"import { memo } from "./my-hocs";
+export default memo(function Card() { return <p className="inner">i</p>; });"#;
+        let mut sources = HashMap::new();
+        sources.insert("Card".to_string(), card.to_string());
+        let (comp, warnings) = lower_with_src(route, sources).unwrap();
+        let mut names = Vec::new();
+        ssr_component_names(&comp.root, &mut names);
+        assert!(
+            names.contains(&"Card".to_string()),
+            "expected Card to fall back to SSR with its wrapper intact: {names:?}"
+        );
+        assert!(
+            !format!("{:?}", comp.root).contains("inner"),
+            "the unwrapped inner component must NOT be inlined: {:?}",
+            comp.root
+        );
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("no recognizable component declaration")),
+            "expected the honest recognition warning, got: {warnings:?}"
+        );
+    }
+
+    #[test]
     fn imported_memo_is_still_unwrapped() {
         // The guard must not break the ordinary case, including react-compat
         // packages that re-export the same pure wrapper.
@@ -7115,6 +7206,8 @@ export default memo(function Card() { return <p>i</p>; });"#,
 export default memo(function Card() { return <p>i</p>; });"#,
             r#"import { memo } from "preact/compat";
 export default memo(function Card() { return <p>i</p>; });"#,
+            r#"import * as React from "react";
+export default React.memo(function Card() { return <p>i</p>; });"#,
         ] {
             let parsed = parse(src, "<test>").unwrap();
             let c = lower(&parsed).unwrap_or_else(|e| panic!("{src}\nfailed: {:?}", e.kind));
