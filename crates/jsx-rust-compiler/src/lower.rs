@@ -3311,19 +3311,15 @@ fn behavior_default_render_body(module: &Module) -> Option<Cow<'_, BlockStmt>> {
         let ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultDecl(export)) = item else {
             continue;
         };
-        match &export.decl {
-            DefaultDecl::Class(class) => {
-                for member in &class.class.body {
-                    let ClassMember::Method(method) = member else {
-                        continue;
-                    };
-                    if matches!(&method.key, PropName::Ident(name) if name.sym.as_ref() == "render")
-                    {
-                        return method.function.body.as_ref().map(Cow::Borrowed);
-                    }
+        if let DefaultDecl::Class(class) = &export.decl {
+            for member in &class.class.body {
+                let ClassMember::Method(method) = member else {
+                    continue;
+                };
+                if matches!(&method.key, PropName::Ident(name) if name.sym.as_ref() == "render") {
+                    return method.function.body.as_ref().map(Cow::Borrowed);
                 }
             }
-            _ => {}
         }
     }
     None
