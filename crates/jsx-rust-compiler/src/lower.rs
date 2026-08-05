@@ -10267,7 +10267,10 @@ export default function Layout({ children }) {
         let mut sources = HashMap::new();
         sources.insert("Layout".to_string(), layout.to_string());
         let (comp, warnings) = lower_with_src(route, sources).unwrap();
-        assert!(warnings.is_empty(), "expected no warnings, got: {warnings:?}");
+        assert!(
+            warnings.is_empty(),
+            "expected no warnings, got: {warnings:?}"
+        );
         assert_no_ssr_component(&comp.root);
         assert_no_children_slot(&comp.root);
 
