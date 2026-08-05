@@ -384,6 +384,8 @@ test('behavior SSR fallback retains its canonical mount identity', async () => {
   globalThis.MutationObserver = win.MutationObserver
   // @ts-expect-error install the DOM globals consumed by the runtime.
   globalThis.HTMLElement = win.HTMLElement
+  // @ts-expect-error install the DOM globals consumed by the runtime.
+  globalThis.Element = win.Element
   const runtime = await import(`../runtime/native/runtime.ts?fallback=${Math.random()}`)
   await import(`${pathToFileURL(chunkPath).href}?fallback=${Math.random()}`)
   await import(
