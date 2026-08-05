@@ -1,4 +1,7 @@
 import { expect, test } from 'bun:test'
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { formatCompilerWarning } from '../runtime/cli/native-routes-emit.ts'
 import {
   BATTERY,
@@ -6,6 +9,7 @@ import {
   type Row,
   classify,
   filesFor,
+  newestMtime,
   renderReport,
 } from '../scripts/react-coverage.ts'
 
@@ -144,6 +148,43 @@ test('renderReport: gaps reach the backlog, and pipes never break a table', () =
   }
   // No wall-clock anywhere — the report has to diff clean on re-runs.
   expect(report).not.toMatch(/\d{4}-\d{2}-\d{2}T/)
+})
+
+test('newestMtime: walks nested sources, ignores target/ and missing trees', () => {
+  // Backs the addon-freshness guard: a rebuild of the compiler must make the
+  // addon look stale, but writing into crates/*/target must NOT.
+  const dir = mkdtempSync(join(tmpdir(), 'newest-mtime-'))
+  try {
+    const old = new Date('2020-01-01T00:00:00Z')
+    const mid = new Date('2021-01-01T00:00:00Z')
+    const future = new Date('2030-01-01T00:00:00Z')
+
+    writeFileSync(join(dir, 'lib.rs'), '')
+    utimesSync(join(dir, 'lib.rs'), old, old)
+    mkdirSync(join(dir, 'src'))
+    writeFileSync(join(dir, 'src', 'lower.rs'), '')
+    utimesSync(join(dir, 'src', 'lower.rs'), mid, mid)
+    expect(newestMtime(dir)).toBe(mid.getTime())
+
+    // Build output and dotdirs must not count — otherwise every cargo build
+    // would make a freshly built addon look stale.
+    mkdirSync(join(dir, 'target'))
+    writeFileSync(join(dir, 'target', 'artifact'), '')
+    utimesSync(join(dir, 'target', 'artifact'), future, future)
+    mkdirSync(join(dir, '.cache'))
+    writeFileSync(join(dir, '.cache', 'x'), '')
+    utimesSync(join(dir, '.cache', 'x'), future, future)
+    expect(newestMtime(dir)).toBe(mid.getTime())
+
+    // A real source edit does move it.
+    utimesSync(join(dir, 'lib.rs'), future, future)
+    expect(newestMtime(dir)).toBe(future.getTime())
+
+    // No tree (a published install has no crates/) → nothing to be stale against.
+    expect(newestMtime(join(dir, 'does-not-exist'))).toBe(0)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test('renderReport: a route-only failure lands in its own section', () => {

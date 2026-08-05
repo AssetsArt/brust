@@ -26,7 +26,16 @@
  * TRAP: rebuild the addon first (`cd runtime && bun run build:debug`) or you are
  * measuring the coverage of whatever compiler was built last.
  */
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  type Dirent,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { gatherComponentSources } from '../runtime/cli/native-routes-emit.ts'
@@ -791,7 +800,7 @@ const CATEGORY_E: Category = {
       expected: 'gap',
       semanticGap:
         'the function is interpolated INTO the attribute (`action="{{ (submit) | e }}"`) with no warning, so the form posts to a stringified function instead of being bound',
-      note: 'A function-valued `action` is bound by React on the client; the native equivalent is `action="/path"` posting to a brust action route. Emitting it as an attribute value silently produces a broken form — this one deserves a compiler diagnostic even if it is never inlinable.',
+      note: 'A function-valued `action` is bound by React on the client; the native equivalent is `action="/path"` posting to a brust action route. The compiler already guards the neighbours — every `on*` handler is rejected, and `formAction={fn}` fails the attribute-rename check — and a function DECLARED in the component falls back loudly. Lowercase `action` fed from a PROP is the one shape that slips both guards (a legal HTML attribute name carrying a React-19 function), so it is stringified into the attribute with no warning and the form posts to garbage. Extending the handler guard to a function/prop-valued `action` closes it. Reproduced and sharpened by Mellow.',
     },
     {
       id: 'e-use-promise',
@@ -867,6 +876,12 @@ export function runEntry(
     for (const [name, source] of Object.entries(files)) writeFileSync(join(dir, name), source)
     const pagePath = join(dir, 'Page.tsx')
     const { sources } = gatherComponentSources(pagePath)
+    // The CLI passes REAL lucideIcons/directiveNames tables here (built by
+    // extractLucideIcons + directiveName in native-routes-emit.ts). Empty maps
+    // are correct only while no battery row imports `lucide-react` or exports a
+    // `behavior`: a lucide row measured with `{}` reports "unresolved
+    // identifier" for any const referencing an icon, i.e. a fabricated gap.
+    // Adding such a row means wiring the real tables in first.
     const compiled = compileJsx(files['Page.tsx']!, pagePath, sources, {}, {})
     const fallbacks = (compiled.warnings ?? [])
       .map((w) => NOT_INLINED.exec(w))
@@ -874,7 +889,9 @@ export function runEntry(
     if (fallbacks.length > 0) {
       return {
         observed: 'fallback',
-        reason: fallbacks.map((m) => `\`${m[1]}\`: ${m[2]}`).join('; '),
+        // Scrubbed like every other outcome text: no compiler reason carries a
+        // temp path today, but one that did would churn the committed report.
+        reason: scrub(fallbacks.map((m) => `\`${m[1]}\`: ${m[2]}`).join('; '), dir),
       }
     }
     if (!compiled.template.includes(entry.marker)) {
@@ -974,14 +991,18 @@ export function renderReport(rows: Row[], version: string): string {
   const out: string[] = []
   const count = (status: Status, cat?: string) =>
     rows.filter((r) => r.status === status && (cat === undefined || r.category === cat)).length
+  // EVERY row whose route run did not inline — including FALLBACK-BY-DESIGN
+  // rows. A hook component falls back gracefully from a component file but is a
+  // hard build error written in the page, and excluding those made category C
+  // read 0 when all 7 of its rows break. Credit: Mellow's review of add092c2.
   const routeBreaks = (cat?: string) =>
     rows.filter(
       (r) =>
         (cat === undefined || r.category === cat) &&
         r.route !== null &&
-        r.route.observed !== 'inlined' &&
-        r.status !== 'FALLBACK-BY-DESIGN',
+        r.route.observed !== 'inlined',
     ).length
+  const routeBuildErrors = rows.filter((r) => r.route?.observed === 'error').length
 
   out.push('# React authoring coverage — native pages')
   out.push('')
@@ -1006,6 +1027,10 @@ export function renderReport(rows: Row[], version: string): string {
   }
   out.push(
     `| **Total** | **${count('INLINE')}** | **${count('FALLBACK-BY-DESIGN')}** | **${count('GAP')}** | **${rows.length}** | **${routeBreaks()}** |`,
+  )
+  out.push('')
+  out.push(
+    `> **A route-file failure is usually a BUILD ERROR, not the graceful fallback the Status column describes.** ${routeBuildErrors} of the ${routeBreaks()} breaking rows throw at compile time — the CLI rethrows them (\`native route "…" failed to compile\`, \`native-routes-emit.ts\`) and \`brust build\` fails. Only the rest degrade to React SSR. So a FALLBACK-BY-DESIGN status means “falls back gracefully **from a component file**”: the same hook component written directly in the page does not fall back, it breaks the build.`,
   )
   out.push('')
 
@@ -1035,7 +1060,7 @@ export function renderReport(rows: Row[], version: string): string {
     '1. **component file** — the construct is the default export of `Subject.tsx`, mounted by a trivial route (`<Subject/>`). This is the position the inliner is built around, and it is what the Status column measures.',
   )
   out.push(
-    '2. **route file** — the exact same code written directly in the page component. The route function is lowered by a different path than an inlined component: its body must be a single `return <jsx>;`, and its module-level consts and same-file helpers are not resolved. The “Breaks in a route file” column reports that difference.',
+    '2. **route file** — the exact same code written directly in the page component. The route function is lowered by a different path than an inlined component: its body must be a single `return <jsx>;`, and its module-level consts and same-file helpers are not resolved. The “Breaks in a route file” column counts every row whose route run did not inline — including rows whose Status is FALLBACK-BY-DESIGN, because a component that falls back gracefully can still be a hard build error written in the page.',
   )
   out.push('')
   out.push('Status is read off the actual run:')
@@ -1142,7 +1167,61 @@ export function renderReport(rows: Row[], version: string): string {
 // Main
 // ---------------------------------------------------------------------------
 
+/** Newest mtime under `dir`, skipping `target/` build output. Returns 0 when
+ * the tree is absent (a published install has no crates/) — no crates, nothing
+ * to be stale against. */
+export function newestMtime(dir: string): number {
+  let newest = 0
+  let entries: Dirent[]
+  try {
+    entries = readdirSync(dir, { withFileTypes: true })
+  } catch {
+    return 0
+  }
+  for (const entry of entries) {
+    if (entry.name === 'target' || entry.name.startsWith('.')) continue
+    const path = join(dir, entry.name)
+    if (entry.isDirectory()) {
+      newest = Math.max(newest, newestMtime(path))
+      continue
+    }
+    try {
+      newest = Math.max(newest, statSync(path).mtimeMs)
+    } catch {
+      // A file that vanished mid-walk cannot make the addon stale.
+    }
+  }
+  return newest
+}
+
+/** The trap this script exists to avoid measuring: a STALE addon loads fine and
+ * reports the OLD compiler's coverage, and nothing in the committed report
+ * would show it (the report carries the package.json version, which does not
+ * move on a rebuild — and deliberately carries no hash or mtime, which would
+ * churn the output and break the determinism gate). So the check happens here,
+ * and it exits instead of warning. */
+function assertAddonFresh(): void {
+  const runtimeDir = resolve(REPO_ROOT, 'runtime')
+  let addon: string | undefined
+  try {
+    addon = readdirSync(runtimeDir).find((f) => /^brust\..+\.node$/.test(f))
+  } catch {
+    return // no runtime dir to check — the import below reports the real problem
+  }
+  if (addon === undefined) return
+  const addonMtime = statSync(join(runtimeDir, addon)).mtimeMs
+  const cratesMtime = newestMtime(resolve(REPO_ROOT, 'crates'))
+  if (cratesMtime === 0 || addonMtime >= cratesMtime) return
+  process.stderr.write(
+    `react-coverage: runtime/${addon} is OLDER than the compiler sources under crates/ — ` +
+      'this run would report the previous compiler’s coverage.\n' +
+      'Rebuild it first: cd runtime && bun run build:debug\n',
+  )
+  process.exit(1)
+}
+
 export async function main(): Promise<void> {
+  assertAddonFresh()
   let compileJsx: CompileJsxFn
   try {
     const native = (await import('../runtime/index.js')) as unknown as { compileJsx?: CompileJsxFn }
