@@ -1516,6 +1516,21 @@ fn lower_element(el: &JSXElement, scope: &Scope, in_map: bool) -> Result<JsxNode
             continue;
         }
         if let Some(attr) = lower_attr(a, scope)? {
+            // `<form action={…}>` is the ONE React-19 function-valued attribute
+            // whose name is also a legal lowercase HTML attribute, so it slips
+            // past both the `on*` guard and the uppercase-rename check and would
+            // stringify a server action straight into the emitted markup. The
+            // compiler has no type table here, so a dynamic URL is
+            // indistinguishable from a function — anything not provably static
+            // is rejected. Tag-scoped on purpose: a blanket `action` rejection
+            // would break custom elements that legitimately take a string.
+            if tag == "form" && attr.name == "action" && !is_static_form_action(&attr.value) {
+                let span = match a {
+                    JSXAttrOrSpread::JSXAttr(jsx_attr) => jsx_attr.span,
+                    JSXAttrOrSpread::SpreadElement(s) => s.dot3_token,
+                };
+                return Err(LowerError::at(span, ErrorKind::FormActionNotSupported));
+            }
             attrs.push(attr);
         }
     }
@@ -4325,6 +4340,31 @@ fn lower_attr_branch(expr: &SwcExpr, scope: &Scope) -> Result<Option<Box<AttrVal
         e => AttrValue::Expr(e),
     };
     Ok(Some(Box::new(value)))
+}
+
+/// True when a lowered `<form action>` value is a constant the emitter can write
+/// into the markup verbatim. `Empty` (bare `<form action>`) qualifies: it cannot
+/// carry a function. A `Cond` qualifies when every branch it can actually take
+/// is static — a `None` branch omits the attribute entirely, which is safe.
+///
+/// The `Expr(StaticText | StaticNum)` arm is belt-and-braces: `lower_attr` and
+/// `lower_attr_branch` currently normalize those into `Static`/`StaticNum`
+/// before we ever see them, but the predicate should state what "static" means
+/// rather than depend on a normalization happening elsewhere.
+fn is_static_form_action(value: &AttrValue) -> bool {
+    match value {
+        AttrValue::Empty | AttrValue::Static(_) | AttrValue::StaticNum(_) => true,
+        AttrValue::Expr(crate::ir::Expr::StaticText(_) | crate::ir::Expr::StaticNum(_)) => true,
+        AttrValue::Expr(_) => false,
+        AttrValue::Cond {
+            if_value,
+            else_value,
+            ..
+        } => {
+            if_value.as_deref().is_none_or(is_static_form_action)
+                && else_value.as_deref().is_none_or(is_static_form_action)
+        }
+    }
 }
 
 fn lower_attr(attr: &JSXAttrOrSpread, scope: &Scope) -> Result<Option<JsxAttr>, LowerError> {
@@ -7424,6 +7464,99 @@ export const behavior = () => ({});"#;
             matches!(err.kind, ErrorKind::RefAttributeNotSupported),
             "got {:?}",
             err.kind
+        );
+    }
+
+    // `<form action>` guard — the one function-valued React attribute whose
+    // name is a legal lowercase HTML attribute (docs/react-coverage.md row
+    // e-form-action-fn). Before the guard it stringified the function into the
+    // markup with no warning at all.
+
+    #[test]
+    fn static_form_action_still_emits() {
+        let src = r#"export default function X() { return <form action="/save"/>; }"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let template = crate::emit_jinja::emit(&lower(&parsed).unwrap());
+        assert!(template.contains(r#"action="/save""#), "{template}");
+    }
+
+    #[test]
+    fn rejects_prop_valued_form_action() {
+        let src = r#"export default function X({ submit }) { return <form action={submit}/>; }"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let err = lower(&parsed).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::FormActionNotSupported),
+            "got {:?}",
+            err.kind
+        );
+        // The message must name BOTH escape hatches — this text is the only
+        // thing the author sees.
+        let text = err.kind.to_string();
+        assert!(text.contains(r#"action="/path""#), "{text}");
+        assert!(text.contains("<Island>"), "{text}");
+    }
+
+    #[test]
+    fn rejects_dynamic_url_form_action() {
+        // RULED: a dynamic URL is rejected too. There is no type table at this
+        // point, so `data.url` is indistinguishable from a server action.
+        let src = r#"export default function X({ data }) { return <form action={data.url}/>; }"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let err = lower(&parsed).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::FormActionNotSupported),
+            "got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn allows_conditional_static_form_action() {
+        let src =
+            r#"export default function X({ ok }) { return <form action={ok ? "/a" : "/b"}/>; }"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let template = crate::emit_jinja::emit(&lower(&parsed).unwrap());
+        assert!(template.contains("/a"), "{template}");
+        assert!(template.contains("/b"), "{template}");
+    }
+
+    #[test]
+    fn form_action_guard_is_tag_scoped() {
+        // A non-`form` host element keeps arbitrary-attribute passthrough, and a
+        // component PROP named `action` is not a DOM attribute at all.
+        let src = r#"export default function X({ handler }) {
+  return <div><custom-el action={handler}/><Widget action={handler}/></div>;
+}"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let component = lower(&parsed).unwrap();
+        let mut ssr = Vec::new();
+        ssr_component_names(&component.root, &mut ssr);
+        assert_eq!(ssr, vec!["Widget"]);
+        // The custom element keeps its dynamic `action` — passthrough intact.
+        let template = crate::emit_jinja::emit(&component);
+        assert!(template.contains("<custom-el action="), "{template}");
+        assert!(template.contains("handler"), "{template}");
+    }
+
+    #[test]
+    fn form_action_in_inlined_component_warns_and_falls_back() {
+        let route =
+            r#"export default function Page({ submit }) { return <Form submit={submit}/>; }"#;
+        let form = r#"export default function Form({ submit }) {
+  return <form action={submit}><button>go</button></form>;
+}"#;
+        let mut sources = HashMap::new();
+        sources.insert("Form".to_string(), form.to_string());
+        let (component, warnings) = lower_with_src(route, sources).unwrap();
+        let mut ssr = Vec::new();
+        ssr_component_names(&component.root, &mut ssr);
+        assert_eq!(ssr, vec!["Form"]);
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("Form") && warning.contains("`<form action>`")),
+            "expected precise form-action warning, got {warnings:?}"
         );
     }
 

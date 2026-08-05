@@ -797,10 +797,9 @@ const CATEGORY_E: Category = {
         'export default function Subject({ submit }: { submit: () => void }) {\n  return (\n    <form className="e-form-action-fn" action={submit}>\n      <button type="submit">go</button>\n    </form>\n  )\n}\n',
       callProps: 'submit={submit}',
       pageParams: '{ submit }: { submit: () => void }',
-      expected: 'gap',
-      semanticGap:
-        'the function is interpolated INTO the attribute (`action="{{ (submit) | e }}"`) with no warning, so the form posts to a stringified function instead of being bound',
-      note: 'A function-valued `action` is bound by React on the client; the native equivalent is `action="/path"` posting to a brust action route. The compiler already guards the neighbours — every `on*` handler is rejected, and `formAction={fn}` fails the attribute-rename check — and a function DECLARED in the component falls back loudly. Lowercase `action` fed from a PROP is the one shape that slips both guards (a legal HTML attribute name carrying a React-19 function), so it is stringified into the attribute with no warning and the form posts to garbage. Extending the handler guard to a function/prop-valued `action` closes it. Reproduced and sharpened by Mellow.',
+      expected: 'fallback-by-design',
+      expectedRoute: 'broken',
+      note: 'A function-valued `action` is bound by React on the client; the native equivalent is `action="/path"` posting to a brust action route. GUARDED since form-action-guard: on tag `form`, `action` must be provably static (`"/path"`, `{"/path"}`, or a conditional whose branches are), otherwise `FormActionNotSupported` — a hard build error in a route file, a warn + SSR fallback inside an inlined component. A dynamic URL (`action={data.url}`) is rejected too, by ruling: the compiler has no type table at that point, so it cannot tell a URL from a server action. Before the guard this row was a silent semantic gap — the function was interpolated into the attribute (`action="{{ (submit) | e }}"`) with no warning and the form posted to garbage. Found and sharpened by Mellow.',
     },
     {
       id: 'e-use-promise',
