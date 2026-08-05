@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::collections::{HashMap, HashSet};
@@ -6,11 +7,11 @@ use std::rc::Rc;
 use swc_core::common::{Span, Spanned};
 use swc_core::ecma::ast::{
     ArrayLit, ArrowExpr, AssignPatProp, BinaryOp, BindingIdent, BlockStmt, BlockStmtOrExpr,
-    CallExpr, Callee, ClassMember, DefaultDecl, ExportDefaultDecl, Expr as SwcExpr, ExprOrSpread,
-    FnExpr, Function, JSXAttrName, JSXAttrOrSpread, JSXAttrValue, JSXElement, JSXElementChild,
-    JSXElementName, JSXExpr, JSXFragment, KeyValueProp, Lit, MemberExpr, MemberProp, Module,
-    ModuleDecl, ModuleItem, ObjectLit, ObjectPatProp, OptChainBase, ParenExpr, Pat, Prop, PropName,
-    PropOrSpread, ReturnStmt, Stmt, UnaryOp,
+    CallExpr, Callee, ClassMember, Decl, DefaultDecl, ExportDefaultDecl, Expr as SwcExpr,
+    ExprOrSpread, FnExpr, Function, ImportSpecifier, JSXAttrName, JSXAttrOrSpread, JSXAttrValue,
+    JSXElement, JSXElementChild, JSXElementName, JSXExpr, JSXFragment, KeyValueProp, Lit,
+    MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, ObjectLit, ObjectPatProp, OptChainBase,
+    Param, ParenExpr, Pat, Prop, PropName, PropOrSpread, ReturnStmt, Stmt, UnaryOp, VarDeclKind,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -156,12 +157,14 @@ struct ParamShape {
 
 #[allow(dead_code)] // used in crate tests; live code now goes through lower_with_sources
 pub fn lower(parsed: &ParsedSource) -> Result<Component, LowerError> {
-    let (name, function) = find_default_export(&parsed.module)?;
-    let body =
-        function.function.body.as_ref().ok_or_else(|| {
-            LowerError::at(function.function.span, ErrorKind::BodyMustBeSingleReturn)
-        })?;
-    let param_shape = lower_params(&function.function)?;
+    let decl = find_default_export(&parsed.module)?;
+    let name = decl.name.clone();
+    let function = decl.function.as_ref();
+    let body = function
+        .body
+        .as_ref()
+        .ok_or_else(|| LowerError::at(function.span, ErrorKind::BodyMustBeSingleReturn))?;
+    let param_shape = lower_params(function)?;
     let scope = Scope {
         destructured: param_shape.destructured.clone(),
         named_param: param_shape.named.clone(),
@@ -223,12 +226,14 @@ pub(crate) fn lower_with_sources(
     lucide_icons: HashMap<String, String>,
     directive_names: HashMap<String, String>,
 ) -> Result<(Component, Vec<String>), LowerError> {
-    let (name, function) = find_default_export(&parsed.module)?;
-    let body =
-        function.function.body.as_ref().ok_or_else(|| {
-            LowerError::at(function.function.span, ErrorKind::BodyMustBeSingleReturn)
-        })?;
-    let param_shape = lower_params(&function.function)?;
+    let decl = find_default_export(&parsed.module)?;
+    let name = decl.name.clone();
+    let function = decl.function.as_ref();
+    let body = function
+        .body
+        .as_ref()
+        .ok_or_else(|| LowerError::at(function.span, ErrorKind::BodyMustBeSingleReturn))?;
+    let param_shape = lower_params(function)?;
 
     let env = Rc::new(InlineEnv {
         sources,
@@ -355,30 +360,22 @@ pub(crate) fn lower_component_inline(
     doc_root: bool,
     attempt_mode: InlineAttemptMode,
 ) -> Result<Vec<JsxNode>, LowerError> {
-    let (_, fn_expr) = find_default_export(&parsed.module)?;
+    let decl = find_default_export(&parsed.module)?;
+    let function = decl.function.as_ref();
     let empty_sources = HashMap::new();
     let component_sources = env
         .as_ref()
         .map_or(&empty_sources, |inline_env| &inline_env.sources);
     let body = crate::static_eval::expand_inline_body_with_sources(
         &parsed.module,
-        fn_expr
-            .ident
-            .as_ref()
-            .map(|id| id.sym.as_ref())
-            .unwrap_or("default"),
-        &fn_expr.function,
+        &decl.name,
+        function,
         component_sources,
     )
-    .map_err(|e| {
-        LowerError::at(
-            fn_expr.function.span,
-            ErrorKind::StaticEvaluation(e.message),
-        )
-    })?;
+    .map_err(|e| LowerError::at(function.span, ErrorKind::StaticEvaluation(e.message)))?;
     let body: &BlockStmt = &body;
 
-    let param_shape = lower_params(&fn_expr.function)?;
+    let param_shape = lower_params(function)?;
 
     // F2 (R3a): fold leading `const` bindings into the rest of the body, then
     // lower the residual shape exactly as before. Borrowed (no-op) when the
@@ -1258,37 +1255,317 @@ fn extract_return_jsx_from_stmt(stmt: &Stmt) -> Result<Option<&JSXElement>, Lowe
     }
 }
 
-fn find_default_export(module: &Module) -> Result<(String, &FnExpr), LowerError> {
-    let mut found: Option<(String, &FnExpr)> = None;
+/// A component declaration, normalized to a `Function` whatever shape the
+/// author wrote it in.
+///
+/// Ordinary React spells the same thing several ways — `export default function
+/// X(){}`, `const X = () => …; export default X`, `export default memo(X)` —
+/// and the pipeline downstream of recognition only ever wants a `Function`.
+/// Borrowed when the author wrote a real function; synthesized (owned) when a
+/// body has to be built, e.g. the expression body of `() => <p/>` wrapped into
+/// `{ return <p/>; }`. Synthesized nodes are CLONES, so they keep their original
+/// spans and the span-keyed machinery (behavior host source edits, the
+/// Array-shadow call table) keeps matching.
+pub(crate) struct ComponentDecl<'a> {
+    /// Display name: the binding the author gave it, else the function's own
+    /// ident, else `Anonymous`.
+    pub(crate) name: String,
+    pub(crate) function: Cow<'a, Function>,
+}
+
+/// Depth cap for walking `export default X` → `const X = memo(Y)` → … . Also
+/// what terminates a mutually-referential pair (`const A = B; const B = A`).
+const MAX_COMPONENT_RESOLVE_DEPTH: usize = 8;
+
+/// Build a `Function` out of an arrow. An expression body becomes a synthetic
+/// single-`return` block, which is exactly the shape the rest of the lowering
+/// expects.
+pub(crate) fn function_from_arrow(arrow: &ArrowExpr) -> Function {
+    let body = match arrow.body.as_ref() {
+        BlockStmtOrExpr::BlockStmt(block) => block.clone(),
+        BlockStmtOrExpr::Expr(expr) => BlockStmt {
+            span: arrow.span,
+            stmts: vec![Stmt::Return(ReturnStmt {
+                span: arrow.span,
+                arg: Some(expr.clone()),
+            })],
+            ..Default::default()
+        },
+    };
+    Function {
+        params: arrow
+            .params
+            .iter()
+            .map(|pat| Param {
+                span: pat.span(),
+                decorators: Vec::new(),
+                pat: pat.clone(),
+            })
+            .collect(),
+        span: arrow.span,
+        body: Some(body),
+        is_async: arrow.is_async,
+        is_generator: arrow.is_generator,
+        type_params: arrow.type_params.clone(),
+        return_type: arrow.return_type.clone(),
+        ..Default::default()
+    }
+}
+
+/// The call wrappers recognition looks THROUGH: `memo(fn)`, `forwardRef(fn)`
+/// and their `React.`-qualified spellings, nested in any order.
+///
+/// `forwardRef` is unwrapped for RECOGNITION ONLY. Its semantics — the second
+/// `ref` parameter and `ref={…}` in the body — are still rejected downstream
+/// (`lower_params`, `RefAttributeNotSupported`), which is deliberate: a real
+/// forwardRef component keeps falling back, but now with a warning that names
+/// the actual problem instead of a bogus "parse error".
+/// Does this module declare `name` at module level?
+///
+/// Asks "is this name taken by the author", so it counts EVERY binding kind —
+/// `let`/`var`/`class`/destructuring included — unlike `module_local_component`,
+/// which asks the narrower "can a component be resolved through this name".
+/// Keeping them separate is deliberate: `module_local_component` only follows
+/// `const`, and reusing it here would leave `let memo = …` looking unshadowed.
+fn module_binds_ident(module: &Module, name: &str) -> bool {
+    struct BindingVisitor<'a> {
+        name: &'a str,
+        found: bool,
+    }
+    impl Visit for BindingVisitor<'_> {
+        fn visit_binding_ident(&mut self, binding: &BindingIdent) {
+            if binding.id.sym.as_ref() == self.name {
+                self.found = true;
+            }
+        }
+    }
+
+    module.body.iter().any(|item| {
+        let decl = match item {
+            ModuleItem::Stmt(Stmt::Decl(decl)) => decl,
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => &export.decl,
+            _ => return false,
+        };
+        match decl {
+            Decl::Fn(fn_decl) => fn_decl.ident.sym.as_ref() == name,
+            Decl::Class(class) => class.ident.sym.as_ref() == name,
+            Decl::Var(var) => var.decls.iter().any(|var_decl| {
+                let mut visitor = BindingVisitor { name, found: false };
+                var_decl.name.visit_with(&mut visitor);
+                visitor.found
+            }),
+            _ => false,
+        }
+    })
+}
+
+/// Does this module import `name` from a RELATIVE path (`./x`, `../x`)?
+///
+/// Sibling of `module_binds_ident`, splitting imports by source rather than
+/// treating them all alike. A bare package specifier — `react`,
+/// `preact/compat`, anything from node_modules — is the real pure wrapper under
+/// some package name, and refusing those would turn working pages into React
+/// SSR fallbacks for no safety gain. A relative import of an ident called
+/// `memo`/`forwardRef`/`React` is a LOCAL higher-order component wearing a
+/// React name, and unwrapping it drops the author's wrapper silently. The
+/// asymmetry is deliberate: over-refusing costs a visible fallback,
+/// over-unwrapping costs wrong markup nobody sees.
+fn relative_import_binds_ident(module: &Module, name: &str) -> bool {
+    module.body.iter().any(|item| {
+        let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
+            return false;
+        };
+        let source = import.src.value.to_string_lossy();
+        if !(source.starts_with("./") || source.starts_with("../")) {
+            return false;
+        }
+        import.specifiers.iter().any(|specifier| {
+            let local = match specifier {
+                ImportSpecifier::Named(specifier) => &specifier.local,
+                ImportSpecifier::Default(specifier) => &specifier.local,
+                ImportSpecifier::Namespace(specifier) => &specifier.local,
+            };
+            local.sym.as_ref() == name
+        })
+    })
+}
+
+fn unwrap_component_call<'a>(call: &'a CallExpr, module: &Module) -> Option<&'a SwcExpr> {
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    // The ROOT name the wrapper is reached through: `memo(…)` → "memo",
+    // `React.memo(…)` → "React".
+    let root = match strip_paren(callee) {
+        SwcExpr::Ident(ident) if matches!(ident.sym.as_ref(), "memo" | "forwardRef") => {
+            ident.sym.as_ref()
+        }
+        SwcExpr::Member(MemberExpr {
+            obj,
+            prop: MemberProp::Ident(prop),
+            ..
+        }) if matches!(prop.sym.as_ref(), "memo" | "forwardRef") => match strip_paren(obj) {
+            SwcExpr::Ident(namespace) if namespace.sym.as_ref() == "React" => "React",
+            _ => return None,
+        },
+        _ => return None,
+    };
+    // Unwrapping is only safe because `memo`/`forwardRef` are known to be pure
+    // render wrappers. A binding of that name the AUTHOR owns is somebody
+    // else's function — a local `const memo = (C) => () => <div/>`, or one
+    // imported from `./my-hocs`, is a real HOC whose output would silently
+    // vanish from the page if we unwrapped through it. Recognition fails closed
+    // instead, so the component falls back to React SSR and renders what the
+    // author wrote. A BARE package specifier still unwraps: `import { memo }
+    // from "preact/compat"` is the same pure wrapper under another name.
+    // Credit: Mellow's probes M4b/M5.
+    if module_binds_ident(module, root) || relative_import_binds_ident(module, root) {
+        return None;
+    }
+    let first = call.args.first()?;
+    if first.spread.is_some() {
+        return None;
+    }
+    Some(first.expr.as_ref())
+}
+
+/// A module-local binding a default export can point at.
+enum LocalComponentDecl<'a> {
+    Function(&'a Function),
+    Init(&'a SwcExpr),
+}
+
+/// Resolve `name` against MODULE-LOCAL declarations only. An `export default X`
+/// whose `X` is imported is deliberately not followed: the component's source
+/// lives in another file, which is the importing side's job.
+fn module_local_component<'a>(module: &'a Module, name: &str) -> Option<LocalComponentDecl<'a>> {
     for item in &module.body {
-        match item {
+        let decl = match item {
+            ModuleItem::Stmt(Stmt::Decl(decl)) => decl,
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => &export.decl,
+            _ => continue,
+        };
+        match decl {
+            Decl::Fn(fn_decl) if fn_decl.ident.sym.as_ref() == name => {
+                return Some(LocalComponentDecl::Function(&fn_decl.function));
+            }
+            // CONST only. A `let`/`var` binding can be reassigned after its
+            // declaration, and resolution reads the INITIALIZER — so
+            // `let X = A; X = B; export default X` would compile A while React
+            // renders B. Refusing the whole kind deletes that class outright;
+            // the component simply is not recognized and falls back honestly.
+            // Credit: Mellow's probe W2.
+            Decl::Var(var) if var.kind == VarDeclKind::Const => {
+                for var_decl in &var.decls {
+                    if let Pat::Ident(binding) = &var_decl.name
+                        && binding.id.sym.as_ref() == name
+                        && let Some(init) = &var_decl.init
+                    {
+                        return Some(LocalComponentDecl::Init(init.as_ref()));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Recognize a component out of an arbitrary default-export expression.
+///
+/// `name_hint` is the OUTERMOST name seen so far — the binding the author wrote
+/// (`export default Subject`) beats the inner function's own ident, and an
+/// anonymous shape all the way down falls back to `Anonymous`, matching what
+/// `export default function(){}` already produced.
+fn resolve_component_expr<'a>(
+    expr: &'a SwcExpr,
+    module: &'a Module,
+    name_hint: Option<String>,
+    depth: usize,
+) -> Option<ComponentDecl<'a>> {
+    if depth > MAX_COMPONENT_RESOLVE_DEPTH {
+        return None;
+    }
+    match strip_paren(expr) {
+        SwcExpr::Fn(fn_expr) => Some(component_decl_from_fn(fn_expr, name_hint)),
+        SwcExpr::Arrow(arrow) => Some(ComponentDecl {
+            name: name_hint.unwrap_or_else(|| "Anonymous".to_string()),
+            function: Cow::Owned(function_from_arrow(arrow)),
+        }),
+        SwcExpr::Ident(ident) => {
+            let hint = name_hint.or_else(|| Some(ident.sym.to_string()));
+            match module_local_component(module, ident.sym.as_ref())? {
+                LocalComponentDecl::Function(function) => Some(ComponentDecl {
+                    name: hint.unwrap_or_else(|| "Anonymous".to_string()),
+                    function: Cow::Borrowed(function),
+                }),
+                LocalComponentDecl::Init(init) => {
+                    resolve_component_expr(init, module, hint, depth + 1)
+                }
+            }
+        }
+        SwcExpr::Call(call) => resolve_component_expr(
+            unwrap_component_call(call, module)?,
+            module,
+            name_hint,
+            depth + 1,
+        ),
+        // `export default Subject as FC<Props>` and friends are the same
+        // component wearing a type assertion.
+        SwcExpr::TsAs(expr) => resolve_component_expr(&expr.expr, module, name_hint, depth + 1),
+        SwcExpr::TsSatisfies(expr) => {
+            resolve_component_expr(&expr.expr, module, name_hint, depth + 1)
+        }
+        SwcExpr::TsNonNull(expr) => {
+            resolve_component_expr(&expr.expr, module, name_hint, depth + 1)
+        }
+        _ => None,
+    }
+}
+
+fn component_decl_from_fn<'a>(fn_expr: &'a FnExpr, name_hint: Option<String>) -> ComponentDecl<'a> {
+    ComponentDecl {
+        name: name_hint
+            .or_else(|| fn_expr.ident.as_ref().map(|ident| ident.sym.to_string()))
+            .unwrap_or_else(|| "Anonymous".to_string()),
+        function: Cow::Borrowed(&fn_expr.function),
+    }
+}
+
+/// Find the component a module exports by default, in any of the shapes above.
+///
+/// Two default exports are still an error (the historical duplicate guard), and
+/// a default export that resolves to no component at all — `export default { a:
+/// 1 }` — is tolerated and ignored exactly as before, so the module simply has
+/// no component.
+pub(crate) fn find_default_export(module: &Module) -> Result<ComponentDecl<'_>, LowerError> {
+    let mut found: Option<ComponentDecl<'_>> = None;
+    for item in &module.body {
+        let (candidate, span) = match item {
             ModuleItem::ModuleDecl(ModuleDecl::Import(_)) => continue,
             ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultDecl(ExportDefaultDecl {
                 decl: DefaultDecl::Fn(fn_expr),
                 ..
-            })) => {
-                let name = fn_expr
-                    .ident
-                    .as_ref()
-                    .map(|i| i.sym.to_string())
-                    .unwrap_or_else(|| "Anonymous".to_string());
-                if found.is_some() {
-                    return Err(LowerError::at(
-                        fn_expr.function.span,
-                        ErrorKind::UnexpectedStatement,
-                    ));
-                }
-                found = Some((name, fn_expr));
-            }
+            })) => (
+                Some(component_decl_from_fn(fn_expr, None)),
+                fn_expr.function.span,
+            ),
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(export)) => (
+                resolve_component_expr(&export.expr, module, None, 0),
+                export.span,
+            ),
             // Any other top-level item — named `export const`/`export function`,
-            // bare `const`/`let`, type aliases, interfaces, a non-Fn
-            // `export default`, etc. — is tolerated and ignored. This lets a
-            // single-file native component co-locate an `export const behavior`
-            // (and similar statements) next to its `export default function`
-            // template instead of being rejected with `UnexpectedStatement`.
-            // We still only lower the default function below.
+            // bare `const`/`let`, type aliases, interfaces, a `export default`
+            // that is not a component, etc. — is tolerated and ignored. This
+            // lets a single-file native component co-locate an `export const
+            // behavior` (and similar statements) next to its default export.
             _ => continue,
+        };
+        let Some(candidate) = candidate else { continue };
+        if found.is_some() {
+            return Err(LowerError::at(span, ErrorKind::UnexpectedStatement));
         }
+        found = Some(candidate);
     }
     found.ok_or_else(|| LowerError::at(Span::default(), ErrorKind::UnexpectedStatement))
 }
@@ -3108,25 +3385,33 @@ fn transform_behavior_component_source(
     Ok(transformed)
 }
 
-fn behavior_default_render_body(module: &Module) -> Option<&BlockStmt> {
+/// The body whose JSX returns the behavior transform edits.
+///
+/// LOCKSTEP with `find_default_export`: a component the inliner recognizes but
+/// this does not would silently lose its `x-data` injection, so recognition
+/// runs through the same function and every shape it accepts (arrow, ident,
+/// `memo(…)`) gets the transform. A class default export keeps its own
+/// `render()` lookup, which recognition does not model.
+fn behavior_default_render_body(module: &Module) -> Option<Cow<'_, BlockStmt>> {
+    if let Ok(decl) = find_default_export(module) {
+        return match decl.function {
+            Cow::Borrowed(function) => function.body.as_ref().map(Cow::Borrowed),
+            Cow::Owned(function) => function.body.map(Cow::Owned),
+        };
+    }
     for item in &module.body {
         let ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultDecl(export)) = item else {
             continue;
         };
-        match &export.decl {
-            DefaultDecl::Fn(function) => return function.function.body.as_ref(),
-            DefaultDecl::Class(class) => {
-                for member in &class.class.body {
-                    let ClassMember::Method(method) = member else {
-                        continue;
-                    };
-                    if matches!(&method.key, PropName::Ident(name) if name.sym.as_ref() == "render")
-                    {
-                        return method.function.body.as_ref();
-                    }
+        if let DefaultDecl::Class(class) = &export.decl {
+            for member in &class.class.body {
+                let ClassMember::Method(method) = member else {
+                    continue;
+                };
+                if matches!(&method.key, PropName::Ident(name) if name.sym.as_ref() == "render") {
+                    return method.function.body.as_ref().map(Cow::Borrowed);
                 }
             }
-            _ => {}
         }
     }
     None
@@ -3317,22 +3602,25 @@ fn try_native_inline(
         }
     };
 
-    // 4. Analyze.
-    let (_, fn_expr) = match find_default_export(&parsed_comp.module) {
-        Ok(r) => r,
+    // 4. Analyze. Both misses below used to report "parse error", which was a
+    // lie — the file parsed fine, recognition just did not accept its shape.
+    // Step 3 above is the only true parse error.
+    let decl = match find_default_export(&parsed_comp.module) {
+        Ok(decl) => decl,
         Err(_) => {
             env.warnings.borrow_mut().push(format!(
-                "native component \"{}\" not inlined: parse error",
+                "native component \"{}\" not inlined: no recognizable component declaration \
+                 (expected a default-exported function or arrow component)",
                 component
             ));
             return Ok(None);
         }
     };
-    let body = match fn_expr.function.body.as_ref() {
+    let body = match decl.function.body.as_ref() {
         Some(b) => b,
         None => {
             env.warnings.borrow_mut().push(format!(
-                "native component \"{}\" not inlined: parse error",
+                "native component \"{}\" not inlined: component declaration has no body",
                 component
             ));
             return Ok(None);
@@ -6700,6 +6988,339 @@ export default function C() {
             "expected x-data attribute in template, got: {}",
             c.template
         );
+    }
+
+    // ── Declaration shapes (S1) ──────────────────────────────────────────
+    // Every shape below is the SAME component written the way ordinary React
+    // is written. Recognition normalizes them; nothing downstream changes.
+
+    #[test]
+    fn recognizes_default_exported_arrow_with_expression_body() {
+        let src = r#"export default ({ title }: { title: string }) => <h1>{title}</h1>"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let c = lower(&parsed).unwrap();
+        // Anonymous shapes keep the historical display name.
+        assert_eq!(c.name, "Anonymous");
+        assert_eq!(c.props.bindings, vec!["title".to_string()]);
+        assert!(
+            matches!(&c.root, JsxNode::Element { tag, .. } if tag == "h1"),
+            "expected h1 root, got {:?}",
+            c.root
+        );
+    }
+
+    #[test]
+    fn recognizes_default_exported_arrow_with_block_body() {
+        let src = r#"const Card = ({ title }: { title: string }) => {
+  return <h1>{title}</h1>;
+};
+export default Card;"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let c = lower(&parsed).unwrap();
+        // The BINDING name wins — it is what the author called the component.
+        assert_eq!(c.name, "Card");
+        assert!(matches!(&c.root, JsxNode::Element { tag, .. } if tag == "h1"));
+    }
+
+    #[test]
+    fn recognizes_declaration_then_separate_default_export() {
+        let src = r#"function Card() { return <h1>hi</h1>; }
+export default Card;"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let c = lower(&parsed).unwrap();
+        assert_eq!(c.name, "Card");
+        assert!(matches!(&c.root, JsxNode::Element { tag, .. } if tag == "h1"));
+    }
+
+    #[test]
+    fn recognizes_memo_and_react_memo_wrappers() {
+        for src in [
+            r#"import { memo } from "react";
+export default memo(function Card() { return <h1>hi</h1>; });"#,
+            r#"import React from "react";
+export default React.memo(function Card() { return <h1>hi</h1>; });"#,
+            r#"import { memo } from "react";
+export default memo(() => <h1>hi</h1>);"#,
+            // The binding-then-export spelling of the same thing.
+            r#"import { memo } from "react";
+const Card = memo(function Inner() { return <h1>hi</h1>; });
+export default Card;"#,
+        ] {
+            let parsed = parse(src, "<test>").unwrap();
+            let c = lower(&parsed).unwrap_or_else(|e| panic!("{src}\nfailed: {:?}", e.kind));
+            assert!(
+                matches!(&c.root, JsxNode::Element { tag, .. } if tag == "h1"),
+                "expected h1 root for:\n{src}\ngot {:?}",
+                c.root
+            );
+        }
+    }
+
+    #[test]
+    fn recognizes_nested_memo_forwardref_with_single_param() {
+        // forwardRef is unwrapped for RECOGNITION. This component never uses
+        // the ref, so it is an ordinary one-param component underneath.
+        let src = r#"import { forwardRef, memo } from "react";
+export default memo(forwardRef(function Card({ title }: { title: string }) {
+  return <h1>{title}</h1>;
+}));"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let c = lower(&parsed).unwrap();
+        assert_eq!(c.name, "Card");
+        assert!(matches!(&c.root, JsxNode::Element { tag, .. } if tag == "h1"));
+    }
+
+    #[test]
+    fn real_forwardref_two_param_component_is_rejected_not_recognized_as_ok() {
+        // Unwrapping does NOT grant forwardRef semantics: the second `ref`
+        // param is still unsupported. What changes is WHERE it fails — a
+        // param error naming the real problem, never a bogus "parse error".
+        let src = r#"import { forwardRef } from "react";
+export default forwardRef(function Card({ title }, ref) {
+  return <h1>{title}</h1>;
+});"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let err = lower(&parsed).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::UnsupportedParam),
+            "got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn shadowed_memo_hoc_is_not_unwrapped() {
+        // A module-local `memo` is the author's OWN higher-order component, not
+        // React's. Unwrapping through it would delete the wrapper from the page
+        // while React renders it — silent wrong output. Recognition must fail
+        // closed instead. Credit: Mellow's probe M4b.
+        let src = r#"const memo = (C) => () => <div className="wrapped"><C/></div>;
+export default memo(function Card() { return <p className="inner">i</p>; });"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let err = lower(&parsed).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::UnexpectedStatement),
+            "got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn shadowed_react_namespace_is_not_unwrapped() {
+        // Same defect through the member spelling. Credit: Mellow's probe M5.
+        let src = r#"const React = { memo: (x) => x };
+export default React.memo(function Card() { return <p className="inner">i</p>; });"#;
+        let parsed = parse(src, "<test>").unwrap();
+        assert!(matches!(
+            lower(&parsed).unwrap_err().kind,
+            ErrorKind::UnexpectedStatement
+        ));
+    }
+
+    #[test]
+    fn shadowing_by_let_and_class_also_blocks_unwrapping() {
+        // The shadow check counts every binding kind, not just the ones a
+        // component can be resolved through — `let memo` is still not React's.
+        for src in [
+            r#"let memo = (C) => C;
+export default memo(function Card() { return <p>i</p>; });"#,
+            r#"class forwardRef {}
+export default forwardRef(function Card() { return <p>i</p>; });"#,
+            r#"const { memo } = myHocs;
+export default memo(function Card() { return <p>i</p>; });"#,
+        ] {
+            let parsed = parse(src, "<test>").unwrap();
+            assert!(
+                lower(&parsed).is_err(),
+                "expected recognition to fail closed for:\n{src}"
+            );
+        }
+    }
+
+    #[test]
+    fn relatively_imported_hoc_is_not_unwrapped() {
+        // `./my-hocs` is the author's own file: an ident called `memo` coming
+        // out of it is a LOCAL higher-order component wearing a React name, and
+        // unwrapping it would drop the wrapper from the page. Bare package
+        // specifiers are the opposite case (see imported_memo_is_still_unwrapped).
+        for src in [
+            r#"import { memo } from "./my-hocs";
+export default memo(function Card() { return <p className="inner">i</p>; });"#,
+            r#"import { memo } from "../hocs/memo";
+export default memo(function Card() { return <p className="inner">i</p>; });"#,
+            // The namespace spelling of the same trap.
+            r#"import * as React from "./fake";
+export default React.memo(function Card() { return <p className="inner">i</p>; });"#,
+            r#"import memo from "./my-memo";
+export default memo(function Card() { return <p className="inner">i</p>; });"#,
+        ] {
+            let parsed = parse(src, "<test>").unwrap();
+            let err = lower(&parsed)
+                .err()
+                .unwrap_or_else(|| panic!("expected recognition to fail closed for:\n{src}"));
+            assert!(
+                matches!(err.kind, ErrorKind::UnexpectedStatement),
+                "{src}\ngot {:?}",
+                err.kind
+            );
+        }
+    }
+
+    #[test]
+    fn relatively_imported_hoc_keeps_its_wrapper_through_the_inline_path() {
+        // End-to-end: the component falls back to React SSR with the wrapper
+        // intact, instead of inlining the unwrapped inner component.
+        let route = r#"export default function P() {
+  return <div><Card native/></div>;
+}"#;
+        let card = r#"import { memo } from "./my-hocs";
+export default memo(function Card() { return <p className="inner">i</p>; });"#;
+        let mut sources = HashMap::new();
+        sources.insert("Card".to_string(), card.to_string());
+        let (comp, warnings) = lower_with_src(route, sources).unwrap();
+        let mut names = Vec::new();
+        ssr_component_names(&comp.root, &mut names);
+        assert!(
+            names.contains(&"Card".to_string()),
+            "expected Card to fall back to SSR with its wrapper intact: {names:?}"
+        );
+        assert!(
+            !format!("{:?}", comp.root).contains("inner"),
+            "the unwrapped inner component must NOT be inlined: {:?}",
+            comp.root
+        );
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("no recognizable component declaration")),
+            "expected the honest recognition warning, got: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn imported_memo_is_still_unwrapped() {
+        // The guard must not break the ordinary case, including react-compat
+        // packages that re-export the same pure wrapper.
+        for src in [
+            r#"import { memo } from "react";
+export default memo(function Card() { return <p>i</p>; });"#,
+            r#"import { memo } from "preact/compat";
+export default memo(function Card() { return <p>i</p>; });"#,
+            r#"import * as React from "react";
+export default React.memo(function Card() { return <p>i</p>; });"#,
+        ] {
+            let parsed = parse(src, "<test>").unwrap();
+            let c = lower(&parsed).unwrap_or_else(|e| panic!("{src}\nfailed: {:?}", e.kind));
+            assert!(matches!(&c.root, JsxNode::Element { tag, .. } if tag == "p"));
+        }
+    }
+
+    #[test]
+    fn let_and_var_default_exports_are_not_resolved() {
+        // Resolution reads the INITIALIZER, so a reassignable binding could
+        // compile the first value while React renders the second. Only `const`
+        // is followed. Credit: Mellow's probe W2.
+        let reassigned = r#"let X = () => <p className="first">1</p>;
+X = () => <p className="second">2</p>;
+export default X;"#;
+        let parsed = parse(reassigned, "<test>").unwrap();
+        let err = lower(&parsed).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::UnexpectedStatement),
+            "got {:?}",
+            err.kind
+        );
+
+        let var_bound = r#"var X = () => <p className="first">1</p>;
+export default X;"#;
+        let parsed = parse(var_bound, "<test>").unwrap();
+        assert!(matches!(
+            lower(&parsed).unwrap_err().kind,
+            ErrorKind::UnexpectedStatement
+        ));
+    }
+
+    #[test]
+    fn default_export_of_an_imported_ident_is_not_resolved() {
+        // `X` lives in another file; following it here would inline a component
+        // whose source this module does not have.
+        let src = r#"import Card from "./Card";
+export default Card;"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let err = lower(&parsed).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::UnexpectedStatement),
+            "got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn default_export_of_a_non_component_is_still_tolerated() {
+        // `export default { … }` is not a component; the module simply has
+        // none, exactly as before recognition was widened.
+        let src = r#"export default { a: 1 };"#;
+        let parsed = parse(src, "<test>").unwrap();
+        assert!(matches!(
+            lower(&parsed).unwrap_err().kind,
+            ErrorKind::UnexpectedStatement
+        ));
+    }
+
+    #[test]
+    fn mutually_referential_default_export_terminates() {
+        // The depth cap is what stops `const A = B; const B = A`.
+        let src = r#"const A = B;
+const B = A;
+export default A;"#;
+        let parsed = parse(src, "<test>").unwrap();
+        assert!(matches!(
+            lower(&parsed).unwrap_err().kind,
+            ErrorKind::UnexpectedStatement
+        ));
+    }
+
+    #[test]
+    fn arrow_component_still_gets_the_behavior_directive_transform() {
+        // LOCKSTEP: an arrow component with `export const behavior` must keep
+        // its x-data, or widening recognition would silently drop the
+        // directive for exactly the shape it just started accepting.
+        let src = r#"import { signal } from "brustjs";
+export const behavior = () => ({});
+export default () => <div x-data="c" />;"#;
+        let c = compile_full(
+            src,
+            "<test>",
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap();
+        assert!(
+            c.template.contains("x-data=\"c\""),
+            "expected x-data attribute in template, got: {}",
+            c.template
+        );
+    }
+
+    #[test]
+    fn arrow_component_shadowing_array_does_not_static_eval_array_from() {
+        // The Array-shadow guard is span-keyed off the ORIGINAL module, and a
+        // synthesized arrow body is a clone that keeps those spans — so a
+        // shadowed `Array.from` must still refuse to expand in an arrow
+        // component exactly as it does in a function one.
+        let src = r#"const Array = { from: () => [] };
+export default () => <ul>{Array.from({ length: 2 }, (_, i) => <li>{i}</li>)}</ul>;"#;
+        let parsed = parse(src, "<test>").unwrap();
+        // Either it refuses to lower or it lowers without unrolling; what it
+        // must NOT do is treat the shadowed local as the global Array.
+        if let Ok(c) = lower(&parsed) {
+            let rendered = format!("{:?}", c.root);
+            assert!(
+                !rendered.contains("Text(\"0\")") && !rendered.contains("Text(\"1\")"),
+                "shadowed Array.from must not be unrolled: {rendered}"
+            );
+        }
     }
 
     #[test]
@@ -10354,6 +10975,155 @@ export default function Outer() { return <A/>; }
                 .iter()
                 .any(|w| w.contains("useState") || w.contains("hook")),
             "expected hook warning, got: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn native_arrow_component_inlines() {
+        // The imported component is an arrow — the single most common shape in
+        // real React — and must inline exactly like the `function` spelling.
+        let route = r#"export default function P({ data }) {
+  return <div><Card native title={data.x}/></div>;
+}"#;
+        let card = r#"const Card = ({ title }) => <h1>{title}</h1>;
+export default Card;"#;
+        let mut sources = HashMap::new();
+        sources.insert("Card".to_string(), card.to_string());
+        let (comp, warnings) = lower_with_src(route, sources).unwrap();
+        assert!(
+            warnings.is_empty(),
+            "expected no warnings, got: {warnings:?}"
+        );
+        assert_no_ssr_component(&comp.root);
+    }
+
+    #[test]
+    fn native_memo_wrapped_component_inlines() {
+        let route = r#"export default function P({ data }) {
+  return <div><Card native title={data.x}/></div>;
+}"#;
+        let card = r#"import { memo } from "react";
+export default memo(function Card({ title }) {
+  return <h1>{title}</h1>;
+});"#;
+        let mut sources = HashMap::new();
+        sources.insert("Card".to_string(), card.to_string());
+        let (comp, warnings) = lower_with_src(route, sources).unwrap();
+        assert!(
+            warnings.is_empty(),
+            "expected no warnings, got: {warnings:?}"
+        );
+        assert_no_ssr_component(&comp.root);
+    }
+
+    #[test]
+    fn native_same_file_arrow_helper_inlines() {
+        // The inlined component's OWN same-file helper is an arrow.
+        let route = r#"export default function P() {
+  return <div><Card native/></div>;
+}"#;
+        let card = r#"const Badge = ({ label }) => <strong>{label}</strong>;
+export default function Card() {
+  return <section><Badge label="hi" /></section>;
+}"#;
+        let mut sources = HashMap::new();
+        sources.insert("Card".to_string(), card.to_string());
+        let (comp, warnings) = lower_with_src(route, sources).unwrap();
+        assert!(
+            warnings.is_empty(),
+            "expected no warnings, got: {warnings:?}"
+        );
+        assert_no_ssr_component(&comp.root);
+        assert!(
+            format!("{:?}", comp.root).contains("strong"),
+            "expected the arrow helper to be expanded: {:?}",
+            comp.root
+        );
+    }
+
+    #[test]
+    fn shadowed_hoc_falls_back_through_the_inline_path_too() {
+        // End-to-end: the guard has to hold where it matters — an imported
+        // component whose file shadows `memo` must render through React SSR
+        // (wrapper intact), not inline as the unwrapped inner component.
+        let route = r#"export default function P() {
+  return <div><Card native/></div>;
+}"#;
+        let card = r#"const memo = (C) => () => <div className="wrapped"><C/></div>;
+export default memo(function Card() { return <p className="inner">i</p>; });"#;
+        let mut sources = HashMap::new();
+        sources.insert("Card".to_string(), card.to_string());
+        let (comp, warnings) = lower_with_src(route, sources).unwrap();
+        let mut names = Vec::new();
+        ssr_component_names(&comp.root, &mut names);
+        assert!(
+            names.contains(&"Card".to_string()),
+            "expected Card to fall back to SSR with its wrapper intact: {names:?}"
+        );
+        assert!(
+            !format!("{:?}", comp.root).contains("inner"),
+            "the unwrapped inner component must NOT be inlined: {:?}",
+            comp.root
+        );
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("no recognizable component declaration")),
+            "expected the honest recognition warning, got: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn unrecognized_declaration_warns_honestly_not_parse_error() {
+        // A named-export-only component is still out of scope, but the warning
+        // must say what is actually wrong. "parse error" was a lie: the file
+        // parses fine.
+        let route = r#"export default function P() {
+  return <div><Card native/></div>;
+}"#;
+        let card = r#"export function Card() { return <h1>hi</h1>; }"#;
+        let mut sources = HashMap::new();
+        sources.insert("Card".to_string(), card.to_string());
+        let (_, warnings) = lower_with_src(route, sources).unwrap();
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("no recognizable component declaration")),
+            "expected the honest recognition warning, got: {warnings:?}"
+        );
+        assert!(
+            !warnings.iter().any(|w| w.contains("parse error")),
+            "the file parses — 'parse error' must not be reported: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn real_forwardref_component_falls_back_with_its_real_reason() {
+        // forwardRef unwraps for recognition, so this now reaches the param
+        // check and reports the actual blocker instead of "parse error".
+        let route = r#"export default function P() {
+  return <div><Card native/></div>;
+}"#;
+        let card = r#"import { forwardRef } from "react";
+export default forwardRef(function Card({ label }, ref) {
+  return <h1 ref={ref}>{label}</h1>;
+});"#;
+        let mut sources = HashMap::new();
+        sources.insert("Card".to_string(), card.to_string());
+        let (comp, warnings) = lower_with_src(route, sources).unwrap();
+        let mut names = Vec::new();
+        ssr_component_names(&comp.root, &mut names);
+        assert!(
+            names.contains(&"Card".to_string()),
+            "expected Card to fall back to SSR: {names:?}"
+        );
+        assert!(
+            !warnings.iter().any(|w| w.contains("parse error")),
+            "the file parses — 'parse error' must not be reported: {warnings:?}"
+        );
+        assert!(
+            warnings.iter().any(|w| w.contains("Card")),
+            "expected a warning naming Card, got: {warnings:?}"
         );
     }
 

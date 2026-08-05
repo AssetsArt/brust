@@ -2,6 +2,7 @@
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::rc::Rc;
 
 use swc_core::common::{DUMMY_SP, Spanned};
 use swc_core::ecma::ast::*;
@@ -80,6 +81,50 @@ pub(crate) fn expand_inline_body_with_sources<'a>(
     }
 }
 
+/// A same-file helper component, normalized away from the shape it was written
+/// in. `function Badge(){}` borrows its params and body; `const Badge = () =>
+/// …` synthesizes them (an expression-bodied arrow gains a `{ return …; }`
+/// block), so both spell the same thing to the expander. Behind an `Rc` so a
+/// lookup can be taken out of `self` before the expander re-borrows it mutably.
+struct HelperDecl<'a> {
+    params: Cow<'a, [Param]>,
+    body: Cow<'a, BlockStmt>,
+}
+
+impl<'a> HelperDecl<'a> {
+    fn from_function(function: &'a Function) -> Option<Self> {
+        Some(Self {
+            params: Cow::Borrowed(&function.params),
+            body: Cow::Borrowed(function.body.as_ref()?),
+        })
+    }
+
+    /// A CAPITALIZED module-level `const X = () => …` / `const X = function(){…}`
+    /// is the arrow spelling of `function X(){}` and must expand the same way.
+    /// Lowercase bindings stay values: `<foo/>` is an HTML tag, not a helper
+    /// call, and treating one as a helper would change what plain JSX means.
+    /// The const keeps its entry in `module_consts` too — that path resolves
+    /// VALUES, this one resolves JSX TAGS, and no expansion consults both.
+    fn from_const_init(name: &str, init: &'a Expr) -> Option<Self> {
+        if !name.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
+            return None;
+        }
+        match strip_paren(init) {
+            // Same normalization the component recognizer uses, so an arrow
+            // helper and an arrow component can never drift apart.
+            Expr::Arrow(arrow) => {
+                let function = crate::lower::function_from_arrow(arrow);
+                Some(Self {
+                    params: Cow::Owned(function.params),
+                    body: Cow::Owned(function.body?),
+                })
+            }
+            Expr::Fn(fn_expr) => Self::from_function(&fn_expr.function),
+            _ => None,
+        }
+    }
+}
+
 struct Evaluator<'a> {
     module_consts: HashMap<String, &'a Expr>,
     exported_consts: HashSet<String>,
@@ -87,7 +132,7 @@ struct Evaluator<'a> {
     import_errors: HashMap<String, String>,
     resolving: Vec<String>,
     imports: HashSet<String>,
-    helpers: HashMap<String, &'a FnDecl>,
+    helpers: HashMap<String, Rc<HelperDecl<'a>>>,
     helper_stack: Vec<String>,
     root_name: String,
     expansions: usize,
@@ -305,6 +350,9 @@ impl<'a> Evaluator<'a> {
                             && let Some(init) = &decl.init
                         {
                             let name = binding.id.sym.to_string();
+                            if let Some(helper) = HelperDecl::from_const_init(&name, init) {
+                                helpers.insert(name.clone(), Rc::new(helper));
+                            }
                             module_consts.insert(name.clone(), init.as_ref());
                             exported_consts.insert(name);
                         }
@@ -315,12 +363,18 @@ impl<'a> Evaluator<'a> {
                         if let Pat::Ident(binding) = &decl.name
                             && let Some(init) = &decl.init
                         {
-                            module_consts.insert(binding.id.sym.to_string(), init.as_ref());
+                            let name = binding.id.sym.to_string();
+                            if let Some(helper) = HelperDecl::from_const_init(&name, init) {
+                                helpers.insert(name.clone(), Rc::new(helper));
+                            }
+                            module_consts.insert(name, init.as_ref());
                         }
                     }
                 }
                 ModuleItem::Stmt(Stmt::Decl(Decl::Fn(function))) => {
-                    helpers.insert(function.ident.sym.to_string(), function);
+                    if let Some(helper) = HelperDecl::from_function(&function.function) {
+                        helpers.insert(function.ident.sym.to_string(), Rc::new(helper));
+                    }
                 }
                 _ => {}
             }
@@ -1198,7 +1252,7 @@ impl<'a> Evaluator<'a> {
             return Ok(None);
         };
         let helper_name = name.sym.as_ref();
-        let Some(helper) = self.helpers.get(helper_name).copied() else {
+        let Some(helper) = self.helpers.get(helper_name).cloned() else {
             return Ok(None);
         };
         if helper_name == self.root_name {
@@ -1212,11 +1266,7 @@ impl<'a> Evaluator<'a> {
             path.push_str(helper_name);
             return Err(StaticEvalError::new(format!("helper cycle: {path}")));
         }
-        let body = helper
-            .function
-            .body
-            .as_ref()
-            .ok_or_else(|| StaticEvalError::new(format!("helper {helper_name} has no body")))?;
+        let body = helper.body.as_ref();
         if let Inlinability::Fallback(reason) = analyze(body) {
             return Err(StaticEvalError::new(format!(
                 "helper {helper_name}: {reason}"
@@ -1225,7 +1275,7 @@ impl<'a> Evaluator<'a> {
 
         self.add_expansion()?;
         self.helper_stack.push(helper_name.to_string());
-        let result = self.expand_helper_element_inner(element, helper, env, depth);
+        let result = self.expand_helper_element_inner(element, &helper, env, depth);
         self.helper_stack.pop();
         result.map(Some)
     }
@@ -1233,7 +1283,7 @@ impl<'a> Evaluator<'a> {
     fn expand_helper_element_inner(
         &mut self,
         element: &JSXElement,
-        helper: &FnDecl,
+        helper: &HelperDecl<'a>,
         env: &Bindings,
         depth: usize,
     ) -> Result<Expr, StaticEvalError> {
@@ -1284,7 +1334,7 @@ impl<'a> Evaluator<'a> {
         }
 
         let mut helper_env = env.clone();
-        match helper.function.params.as_slice() {
+        match helper.params.as_ref() {
             [] => {}
             [parameter] => {
                 self.bind_helper_pattern(&parameter.pat, &attributes, &mut helper_env, depth + 1)?
@@ -1296,11 +1346,7 @@ impl<'a> Evaluator<'a> {
             }
         }
 
-        let mut body = helper
-            .function
-            .body
-            .clone()
-            .ok_or_else(|| StaticEvalError::new("helper has no body"))?;
+        let mut body = helper.body.clone().into_owned();
         self.expand_block(&mut body, &mut helper_env, depth + 1)?;
         if body.stmts.len() != 1 {
             return Err(StaticEvalError::new("helper has unsupported return shape"));
@@ -1582,28 +1628,10 @@ mod budget_tests {
 
     fn expand_error(source: &str) -> String {
         let parsed = parse(source, "<static-eval-test>").unwrap();
-        let (name, function) = parsed
-            .module
-            .body
-            .iter()
-            .find_map(|item| match item {
-                ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultDecl(export)) => {
-                    match &export.decl {
-                        DefaultDecl::Fn(function) => Some((
-                            function
-                                .ident
-                                .as_ref()
-                                .map(|ident| ident.sym.as_ref())
-                                .unwrap_or("default"),
-                            &function.function,
-                        )),
-                        _ => None,
-                    }
-                }
-                _ => None,
-            })
-            .expect("named default function");
-        expand_inline_body(&parsed.module, name, function)
+        // Through the shared recognizer, so these tests can drive any
+        // declaration shape the real pipeline accepts.
+        let decl = crate::lower::find_default_export(&parsed.module).expect("default component");
+        expand_inline_body(&parsed.module, &decl.name, decl.function.as_ref())
             .unwrap_err()
             .message
     }
@@ -1728,15 +1756,8 @@ mod tests {
 
     fn expand(source: &str) -> Result<BlockStmt, StaticEvalError> {
         let parsed = parser::parse(source, "test.tsx").unwrap();
-        for item in &parsed.module.body {
-            if let ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultDecl(export)) = item
-                && let DefaultDecl::Fn(function) = &export.decl
-            {
-                return expand_inline_body(&parsed.module, "Root", &function.function)
-                    .map(Cow::into_owned);
-            }
-        }
-        panic!("missing default function")
+        let decl = crate::lower::find_default_export(&parsed.module).expect("default component");
+        expand_inline_body(&parsed.module, &decl.name, decl.function.as_ref()).map(Cow::into_owned)
     }
 
     fn expand_with_sources(
@@ -1744,20 +1765,102 @@ mod tests {
         sources: &HashMap<String, String>,
     ) -> Result<BlockStmt, StaticEvalError> {
         let parsed = parser::parse(source, "test.tsx").unwrap();
-        for item in &parsed.module.body {
-            if let ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultDecl(export)) = item
-                && let DefaultDecl::Fn(function) = &export.decl
-            {
-                return expand_inline_body_with_sources(
-                    &parsed.module,
-                    "Root",
-                    &function.function,
-                    sources,
-                )
-                .map(Cow::into_owned);
-            }
-        }
-        panic!("missing default function")
+        let decl = crate::lower::find_default_export(&parsed.module).expect("default component");
+        expand_inline_body_with_sources(&parsed.module, &decl.name, decl.function.as_ref(), sources)
+            .map(Cow::into_owned)
+    }
+
+    // ── Arrow helpers (S3) ───────────────────────────────────────────────
+    // `const Badge = () => …` is the arrow spelling of `function Badge(){}`.
+    // Both must expand identically; only the syntax differs.
+
+    #[test]
+    fn expands_same_file_arrow_helper_with_props() {
+        let body = expand(
+            r#"const Badge = ({ label }: { label: string }) => <strong className="b">{label}</strong>;
+            export default function Root() {
+              return <div><Badge label="hi" /></div>
+            }"#,
+        )
+        .unwrap();
+        let text = format!("{body:?}");
+        assert!(text.contains("sym: \"strong\""), "{text}");
+        assert!(text.contains("hi"), "{text}");
+        // The helper call itself is gone — it was expanded, not left as a tag.
+        assert!(!text.contains("sym: \"Badge\""), "{text}");
+    }
+
+    #[test]
+    fn expands_arrow_helper_with_block_body_and_children() {
+        let body = expand(
+            r#"const Card = ({ children }: { children?: unknown }) => {
+              return <article className="c">{children}</article>;
+            };
+            export default function Root() {
+              return <div><Card><em>x</em></Card></div>
+            }"#,
+        )
+        .unwrap();
+        let text = format!("{body:?}");
+        assert!(text.contains("sym: \"article\""), "{text}");
+        assert!(text.contains("sym: \"em\""), "{text}");
+        assert!(!text.contains("sym: \"Card\""), "{text}");
+    }
+
+    #[test]
+    fn expands_exported_const_arrow_helper() {
+        // `export const Badge = () => …` used by the same file's default export
+        // is still a local helper — the export keyword changes nothing here.
+        let body = expand(
+            r#"export const Badge = () => <strong className="b">hi</strong>;
+            export default function Root() {
+              return <div><Badge /></div>
+            }"#,
+        )
+        .unwrap();
+        let text = format!("{body:?}");
+        assert!(text.contains("sym: \"strong\""), "{text}");
+        assert!(!text.contains("sym: \"Badge\""), "{text}");
+    }
+
+    #[test]
+    fn lowercase_const_arrow_is_not_a_helper() {
+        // `<badge/>` is an HTML tag. If a lowercase const arrow registered as a
+        // helper, plain JSX would silently change meaning.
+        let body = expand(
+            r#"const badge = () => <strong>hi</strong>;
+            export default function Root() {
+              return <div><badge /></div>
+            }"#,
+        )
+        .unwrap();
+        let text = format!("{body:?}");
+        assert!(text.contains("sym: \"badge\""), "{text}");
+        assert!(!text.contains("sym: \"strong\""), "{text}");
+    }
+
+    #[test]
+    fn arrow_helper_cycle_is_reported_not_looped() {
+        // Same budget/cycle accounting as function helpers.
+        let error = expand(
+            r#"const A = () => <div><B /></div>;
+            const B = () => <div><A /></div>;
+            export default function Root() { return <div><A /></div> }"#,
+        )
+        .unwrap_err()
+        .message;
+        assert!(error.contains("helper cycle"), "{error}");
+    }
+
+    #[test]
+    fn arrow_helper_hook_falls_back_like_a_function_helper() {
+        let error = expand(
+            r#"const Badge = () => { const [n] = useState(0); return <strong>{n}</strong>; };
+            export default function Root() { return <div><Badge /></div> }"#,
+        )
+        .unwrap_err()
+        .message;
+        assert!(error.contains("useState"), "{error}");
     }
 
     #[test]
