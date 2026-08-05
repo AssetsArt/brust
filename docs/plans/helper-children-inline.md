@@ -114,6 +114,9 @@ TS integration:
 ## Gates (all must be green before review)
 
 1. `cargo test -p jsx-rust-compiler`
+1b. `cargo fmt --all --check` — plan originally omitted this; CI's rustfmt job
+   caught it on PR #106 (fixed in bb994ce). Local gates must mirror ci.yml's
+   EXACT job list, not a subset.
 2. Rebuild the napi addon BEFORE running TS tests — stale gitignored
    `runtime/*.node` silently masks Rust changes (known trap). Use the repo's
    build script (check `package.json` scripts; typically `bun run build:rust`
