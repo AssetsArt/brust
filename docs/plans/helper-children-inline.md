@@ -135,3 +135,74 @@ chase it.
   (anchored `{{ island_` renumbering is load-bearing elsewhere in the compiler).
 - Don't touch the cross-file inline path (`lower.rs` ChildrenSlot machinery) —
   it already works and has its own tests; the fix lives in static_eval.
+
+## Amendment 1 (post-review, ruled by Detoro — ruling `eae27bf1`, challenge `88254ffa`)
+
+The plan above named TWO edits and **missed a third site**. It is recorded here
+because the miss was the plan's, not the implementation's: both the implementer
+and the plan review walked past it, and only an order-dependence repro (credit:
+Mellow) turned the suspicion into a mechanism.
+
+### The miss
+
+`bind_helper_pattern`'s `ObjectPatProp::Assign` arm re-expanded every attribute
+value a SECOND time, against the **partially built `helper_env`**:
+
+```rust
+self.expand_expr(&mut value, env, depth + 1)?;   // DELETED
+```
+
+Shorthand props bind in source order, so a prop declared BEFORE `children` is
+already in `helper_env` on that second pass and shadows the caller binding the
+children were captured from — undoing plan step 1 exactly. The result was worse
+than the bug being fixed: **wrong markup with an empty warning list**, where
+`main` had failed closed.
+
+```tsx
+function Card({ title, children }) { return <section data-t={title}>{children}</section> }
+export default function Outer({ title }) { return <Card title="static"><h3>{title}</h3></Card> }
+```
+
+| build | output |
+| --- | --- |
+| main `9d9ae9a` | fallback + warning `unresolved identifier children` |
+| lane `9119aad` | `<section data-t="static"><h3>static</h3></section>`, `warnings=[]` |
+| correct | `<section data-t="static"><h3>{{ (title) \| e }}</h3></section>` |
+
+Swapping the pattern to `{ children, title }` emits the correct dynamic — the
+order-dependence is the proof. The alias form `{ children: kids }` was always
+correct, because the `KeyValue` arm never re-expanded.
+
+### The guard rule (binds all future work in this file)
+
+> **Any expansion of user expressions happens in exactly ONE env — the caller's,
+> at capture. Binding installs values; it never re-expands.**
+
+`expand_helper_element_inner` expands every attribute value, children included,
+in the caller's env before it builds `helper_env`. Nothing downstream of that
+may call `expand_expr` on an attribute value again.
+
+### Disposition applied on this lane
+
+1. Deleted the redundant `expand_expr` in the `Assign` arm; the `eval_expr`
+   `Undefined`/default logic around it is untouched.
+2. `lower::tests::same_file_helper_children_keep_caller_scope_when_an_earlier_prop_shadows_it`
+   — the repro above, colliding prop declared FIRST (load-bearing; declared
+   second, the bug hides). Verified red with the deleted line restored.
+3. `lower::tests::islands_in_cloned_helper_children_number_in_document_order` —
+   permanent guard on the risk-ledger island item: two cloned `{children}` sites
+   each holding an `<Island>`, plus a sibling island after the helper, must
+   number `0, 1, 2` in document order.
+4. The `Ident`→JSX arm firing for ANY env-bound JSX (not just `children`) is
+   **ruled in scope and kept** — narrowing it to the name `children` would break
+   the alias form and the machinery is identical. Pinned by
+   `static_eval::tests::jsx_valued_helper_props_inline_like_children`.
+5. `add_expansion()` is now charged BEFORE the clone in the `Ident`→JSX arm, so a
+   budget-exceeded run does not pay for a subtree it discards.
+
+### Fail-closed audit (Mellow, on the reworked behaviour)
+
+Every non-child position probed falls back with a warning and emits no markup:
+`{children && x}`, `{children ? a : b}`, `` title={`t-${children}`} ``,
+`title={children}`, `props.children`, `<div {...children}>`, and
+`const items = [children]`. No silent-wrong-output path remains.

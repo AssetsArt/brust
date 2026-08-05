@@ -858,9 +858,10 @@ impl<'a> Evaluator<'a> {
                 Expr::JSXElement(_) | Expr::JSXFragment(_)
             )
         {
-            let replacement = strip_paren(bound).clone();
+            // Charge the budget BEFORE the clone, so a run that blows the
+            // budget does not pay for a subtree it is about to discard.
             self.add_expansion()?;
-            *expression = replacement;
+            *expression = strip_paren(bound).clone();
             self.changed = true;
             return Ok(());
         }
@@ -1332,11 +1333,19 @@ impl<'a> Evaluator<'a> {
                 for property in &object.props {
                     match property {
                         ObjectPatProp::Assign(assign) => {
+                            // NO re-expansion here. Every attribute value —
+                            // children included — was already expanded in the
+                            // CALLER's env by `expand_helper_element_inner`.
+                            // Expanding again against `env` would resolve it
+                            // against the half-built helper env, so a prop bound
+                            // earlier in source order would shadow the caller
+                            // binding it came from. Binding installs values; it
+                            // never re-expands. (The KeyValue arm below has
+                            // always worked this way.)
                             let mut value = attributes
                                 .get(assign.key.sym.as_ref())
                                 .cloned()
                                 .unwrap_or_else(|| Box::new(value_to_expr(&Value::Undefined)));
-                            self.expand_expr(&mut value, env, depth + 1)?;
                             if matches!(
                                 self.eval_expr(&value, env, depth + 1)?,
                                 Some(Value::Undefined)
@@ -2092,6 +2101,25 @@ mod tests {
         assert!(text.contains("two"), "{text}");
         assert!(text.contains("helper"), "{text}");
         assert!(!text.contains("sym: \"children\""), "{text}");
+    }
+
+    #[test]
+    fn jsx_valued_helper_props_inline_like_children() {
+        // The Ident→JSX arm deliberately fires for ANY env-bound JSX, not only
+        // `children` — narrowing it to that one name would break the alias form
+        // (`{ children: kids }`) and buys nothing, since the machinery is
+        // identical. This pins the wider behaviour.
+        let body = expand(
+            r#"
+            function Card({ content }) { return <div>{content}</div> }
+            export default function Root() { return <Card content={<p>boxed</p>}/> }
+            "#,
+        )
+        .unwrap();
+        let text = format!("{body:?}");
+        assert!(text.contains("boxed"), "{text}");
+        assert!(text.contains("sym: \"p\""), "{text}");
+        assert!(!text.contains("sym: \"content\""), "{text}");
     }
 
     #[test]
