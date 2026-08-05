@@ -10249,6 +10249,96 @@ export default function Outer() { return <A/>; }
     }
 
     #[test]
+    fn same_file_helper_children_do_not_capture_the_outer_children() {
+        // REGRESSION: a same-file helper that renders `{children}` used INSIDE a
+        // component that itself destructures `children`. Before the static-eval
+        // ident substitution landed, the helper's `{children}` survived as a bare
+        // ident and the `ChildrenSlot` gate handed it the OUTER component's
+        // call-site children — silently wrong output, not a fallback.
+        let route = r#"export default function P() {
+  return <Layout native><i>outer</i></Layout>;
+}"#;
+        let layout = r#"
+function Card({ children }) { return <article>{children}</article>; }
+export default function Layout({ children }) {
+  return <section><Card><b>inner</b></Card>{children}</section>;
+}
+"#;
+        let mut sources = HashMap::new();
+        sources.insert("Layout".to_string(), layout.to_string());
+        let (comp, warnings) = lower_with_src(route, sources).unwrap();
+        assert!(warnings.is_empty(), "expected no warnings, got: {warnings:?}");
+        assert_no_ssr_component(&comp.root);
+        assert_no_children_slot(&comp.root);
+
+        let section_children = match &comp.root {
+            JsxNode::Element { tag, children, .. } => {
+                assert_eq!(tag, "section");
+                children
+            }
+            other => panic!("expected section, got {other:?}"),
+        };
+        assert_eq!(section_children.len(), 2, "{section_children:?}");
+        // <article> keeps its OWN call-site children (<b>inner</b>).
+        match &section_children[0] {
+            JsxNode::Element { tag, children, .. } => {
+                assert_eq!(tag, "article");
+                assert_eq!(children.len(), 1, "{children:?}");
+                match &children[0] {
+                    JsxNode::Element { tag, .. } => assert_eq!(tag, "b"),
+                    other => panic!("expected b, got {other:?}"),
+                }
+            }
+            other => panic!("expected article, got {other:?}"),
+        }
+        // The layout's own `{children}` still receives the route's children.
+        match &section_children[1] {
+            JsxNode::Element { tag, .. } => assert_eq!(tag, "i"),
+            other => panic!("expected i, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn same_file_helper_children_repeated_in_the_body_are_cloned_per_site() {
+        let route = r#"export default function Page() { return <Outer/>; }"#;
+        let outer = r#"
+function Twice({ children }) {
+  return <div><p>{children}</p><footer>{children}</footer></div>;
+}
+export default function Outer() { return <Twice><b>dup</b></Twice>; }
+"#;
+        let mut sources = HashMap::new();
+        sources.insert("Outer".to_string(), outer.to_string());
+        let compiled =
+            crate::compile_full(route, "<test>", sources, HashMap::new(), HashMap::new()).unwrap();
+        assert!(compiled.warnings.is_empty(), "{:?}", compiled.warnings);
+        assert!(compiled.components.is_empty(), "unexpected SSR manifest");
+        assert_eq!(compiled.template.matches("<b>dup</b>").count(), 2);
+    }
+
+    #[test]
+    fn same_file_helper_children_outside_child_position_fail_closed() {
+        // Ruled out of scope: `children` used as an attribute value need not fold.
+        // It must FALL BACK with a precise warning — never emit wrong markup.
+        let route = r#"export default function Page() { return <Outer/>; }"#;
+        let outer = r#"
+function Card({ children }) { return <p title={children}>body</p>; }
+export default function Outer() { return <Card><b>rich</b></Card>; }
+"#;
+        let mut sources = HashMap::new();
+        sources.insert("Outer".to_string(), outer.to_string());
+        let (component, warnings) = lower_with_src(route, sources).unwrap();
+        let mut ssr = Vec::new();
+        ssr_component_names(&component.root, &mut ssr);
+        assert_eq!(ssr, vec!["Outer"]);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(
+            warnings[0].starts_with("native component \"Outer\" not inlined: "),
+            "{warnings:?}"
+        );
+    }
+
+    #[test]
     fn native_children_splice() {
         // Route: <Box native><span/></Box>
         // Box: function Box({children}){return <section>{children}</section>}

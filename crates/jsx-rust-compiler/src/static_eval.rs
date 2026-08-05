@@ -845,6 +845,26 @@ impl<'a> Evaluator<'a> {
             return Ok(());
         }
 
+        // JSX-valued bindings (a helper's `children`, or any prop holding an
+        // element/fragment) have no `Value` representation, so `eval_expr` below
+        // gives up on them and the bare ident survives into the lowerer. Splice
+        // the bound tree in directly. It was already expanded in the scope it was
+        // captured from, so do NOT recurse — re-expanding it here would resolve
+        // its idents against the wrong env.
+        if let Expr::Ident(ident) = &*expression
+            && let Some(bound) = env.get(ident.sym.as_ref())
+            && matches!(
+                strip_paren(bound),
+                Expr::JSXElement(_) | Expr::JSXFragment(_)
+            )
+        {
+            let replacement = strip_paren(bound).clone();
+            self.add_expansion()?;
+            *expression = replacement;
+            self.changed = true;
+            return Ok(());
+        }
+
         if let Some(value) = self.eval_expr(expression, env, depth + 1)? {
             let replacement = value_to_expr(&value);
             if !same_simple_expr(expression, &replacement) {
@@ -1247,15 +1267,19 @@ impl<'a> Evaluator<'a> {
             attributes.insert(key, Box::new(value));
         }
         if !element.children.is_empty() {
-            attributes.insert(
-                "children".to_string(),
-                Box::new(Expr::JSXFragment(JSXFragment {
-                    span: element.span,
-                    opening: JSXOpeningFragment { span: element.span },
-                    children: element.children.clone(),
-                    closing: JSXClosingFragment { span: element.span },
-                })),
-            );
+            // JSX children are just another prop, so they get the same treatment
+            // as the attributes above: expanded in the CALLER's env before they
+            // enter the helper. Expanding them later (inside `helper_env`) would
+            // resolve idents against the helper's params, so a helper prop
+            // sharing a name with a caller binding would capture the children.
+            let mut children = Expr::JSXFragment(JSXFragment {
+                span: element.span,
+                opening: JSXOpeningFragment { span: element.span },
+                children: element.children.clone(),
+                closing: JSXClosingFragment { span: element.span },
+            });
+            self.expand_expr(&mut children, env, depth + 1)?;
+            attributes.insert("children".to_string(), Box::new(children));
         }
 
         let mut helper_env = env.clone();
@@ -1990,5 +2014,98 @@ mod tests {
             compiled.warnings
         );
         assert!(compiled.components.is_empty());
+    }
+
+    #[test]
+    fn expands_helper_element_children() {
+        let body = expand(
+            r#"
+            function FeatureCard({ title, children }) {
+              return <div><h3>{title}</h3><p>{children}</p></div>
+            }
+            export default function Root() {
+              return <FeatureCard title="Files">Some <strong>rich</strong> text</FeatureCard>
+            }
+            "#,
+        )
+        .unwrap();
+        let text = format!("{body:?}");
+        assert!(text.contains("Files"), "{text}");
+        assert!(text.contains("rich"), "{text}");
+        assert!(text.contains("sym: \"strong\""), "{text}");
+        assert!(!text.contains("sym: \"children\""), "{text}");
+    }
+
+    #[test]
+    fn expands_helper_fragment_children() {
+        let body = expand(
+            r#"
+            function Card({ children }) { return <div>{children}</div> }
+            export default function Root() {
+              return <Card><><span>alpha</span><span>beta</span></></Card>
+            }
+            "#,
+        )
+        .unwrap();
+        let text = format!("{body:?}");
+        assert!(text.contains("alpha"), "{text}");
+        assert!(text.contains("beta"), "{text}");
+        assert_eq!(text.matches("sym: \"span\"").count(), 4, "{text}");
+        assert!(!text.contains("sym: \"children\""), "{text}");
+    }
+
+    #[test]
+    fn expands_nested_helper_inside_helper_children() {
+        let body = expand(
+            r#"
+            function Badge({ label }) { return <em>{label}</em> }
+            function Card({ children }) { return <div>{children}</div> }
+            export default function Root() {
+              return <Card><Badge label="nested"/></Card>
+            }
+            "#,
+        )
+        .unwrap();
+        let text = format!("{body:?}");
+        assert!(text.contains("nested"), "{text}");
+        assert!(text.contains("sym: \"em\""), "{text}");
+        assert!(!text.contains("Badge"), "{text}");
+        assert!(!text.contains("sym: \"children\""), "{text}");
+    }
+
+    #[test]
+    fn helper_children_resolve_in_the_caller_scope() {
+        // `label` is bound in the CALLER's map callback, not in the helper —
+        // capturing children without expanding them there would leave it
+        // unresolved (or, worse, bind it to a same-named helper prop).
+        let body = expand(
+            r#"
+            function Card({ label, children }) { return <div data-l={label}>{children}</div> }
+            export default function Root() {
+              return <ul>{['one', 'two'].map((label) => <Card label="helper"><i>{label}</i></Card>)}</ul>
+            }
+            "#,
+        )
+        .unwrap();
+        let text = format!("{body:?}");
+        assert!(text.contains("one"), "{text}");
+        assert!(text.contains("two"), "{text}");
+        assert!(text.contains("helper"), "{text}");
+        assert!(!text.contains("sym: \"children\""), "{text}");
+    }
+
+    #[test]
+    fn absent_helper_children_stay_dropped() {
+        let body = expand(
+            r#"
+            function Card({ children }) { return <div data-card="yes">{children}</div> }
+            export default function Root() { return <Card/> }
+            "#,
+        )
+        .unwrap();
+        let text = format!("{body:?}");
+        assert!(text.contains("data-card"), "{text}");
+        assert!(!text.contains("sym: \"children\""), "{text}");
+        assert!(!text.contains("sym: \"undefined\""), "{text}");
     }
 }
