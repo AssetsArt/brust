@@ -579,6 +579,10 @@ pub enum ErrorKind {
     NamespacedAttrNotSupported,
     #[error("event handler `{0}` not supported (handled by islands in Phase A3)")]
     EventHandlerNotSupported(String),
+    #[error(
+        "`<form action>` must be a static URL — use `action=\"/path\"` pointing at a brust action route, or move the form into an `<Island>`"
+    )]
+    FormActionNotSupported,
     #[error("`ref` attribute not supported")]
     RefAttributeNotSupported,
     #[error("JSX in attribute position not supported")]
