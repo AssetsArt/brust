@@ -11,7 +11,7 @@ use swc_core::ecma::ast::{
     ExprOrSpread, FnExpr, Function, JSXAttrName, JSXAttrOrSpread, JSXAttrValue, JSXElement,
     JSXElementChild, JSXElementName, JSXExpr, JSXFragment, KeyValueProp, Lit, MemberExpr,
     MemberProp, Module, ModuleDecl, ModuleItem, ObjectLit, ObjectPatProp, OptChainBase, Param,
-    ParenExpr, Pat, Prop, PropName, PropOrSpread, ReturnStmt, Stmt, UnaryOp,
+    ParenExpr, Pat, Prop, PropName, PropOrSpread, ReturnStmt, Stmt, UnaryOp, VarDeclKind,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -1320,23 +1320,75 @@ pub(crate) fn function_from_arrow(arrow: &ArrowExpr) -> Function {
 /// (`lower_params`, `RefAttributeNotSupported`), which is deliberate: a real
 /// forwardRef component keeps falling back, but now with a warning that names
 /// the actual problem instead of a bogus "parse error".
-fn unwrap_component_call(call: &CallExpr) -> Option<&SwcExpr> {
+/// Does this module declare `name` at module level?
+///
+/// Asks "is this name taken by the author", so it counts EVERY binding kind —
+/// `let`/`var`/`class`/destructuring included — unlike `module_local_component`,
+/// which asks the narrower "can a component be resolved through this name".
+/// Keeping them separate is deliberate: `module_local_component` only follows
+/// `const`, and reusing it here would leave `let memo = …` looking unshadowed.
+fn module_binds_ident(module: &Module, name: &str) -> bool {
+    struct BindingVisitor<'a> {
+        name: &'a str,
+        found: bool,
+    }
+    impl Visit for BindingVisitor<'_> {
+        fn visit_binding_ident(&mut self, binding: &BindingIdent) {
+            if binding.id.sym.as_ref() == self.name {
+                self.found = true;
+            }
+        }
+    }
+
+    module.body.iter().any(|item| {
+        let decl = match item {
+            ModuleItem::Stmt(Stmt::Decl(decl)) => decl,
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => &export.decl,
+            _ => return false,
+        };
+        match decl {
+            Decl::Fn(fn_decl) => fn_decl.ident.sym.as_ref() == name,
+            Decl::Class(class) => class.ident.sym.as_ref() == name,
+            Decl::Var(var) => var.decls.iter().any(|var_decl| {
+                let mut visitor = BindingVisitor { name, found: false };
+                var_decl.name.visit_with(&mut visitor);
+                visitor.found
+            }),
+            _ => false,
+        }
+    })
+}
+
+fn unwrap_component_call<'a>(call: &'a CallExpr, module: &Module) -> Option<&'a SwcExpr> {
     let Callee::Expr(callee) = &call.callee else {
         return None;
     };
-    let recognized = match strip_paren(callee) {
-        SwcExpr::Ident(ident) => matches!(ident.sym.as_ref(), "memo" | "forwardRef"),
+    // The ROOT name the wrapper is reached through: `memo(…)` → "memo",
+    // `React.memo(…)` → "React".
+    let root = match strip_paren(callee) {
+        SwcExpr::Ident(ident) if matches!(ident.sym.as_ref(), "memo" | "forwardRef") => {
+            ident.sym.as_ref()
+        }
         SwcExpr::Member(MemberExpr {
             obj,
             prop: MemberProp::Ident(prop),
             ..
-        }) => {
-            matches!(strip_paren(obj), SwcExpr::Ident(ns) if ns.sym.as_ref() == "React")
-                && matches!(prop.sym.as_ref(), "memo" | "forwardRef")
-        }
-        _ => false,
+        }) if matches!(prop.sym.as_ref(), "memo" | "forwardRef") => match strip_paren(obj) {
+            SwcExpr::Ident(namespace) if namespace.sym.as_ref() == "React" => "React",
+            _ => return None,
+        },
+        _ => return None,
     };
-    if !recognized {
+    // Unwrapping is only safe because `memo`/`forwardRef` are known to be pure
+    // render wrappers. A module-local binding of that name is somebody ELSE's
+    // function — a local `const memo = (C) => () => <div/>` is a real HOC whose
+    // output would silently vanish from the page if we unwrapped through it.
+    // Recognition fails closed instead, so the component falls back to React
+    // SSR and renders what the author wrote. Imports are NOT treated as
+    // shadowing: `import { memo } from "preact/compat"` (or any react-compat
+    // package) is the same pure wrapper under a different package name.
+    // Credit: Mellow's probes M4b/M5.
+    if module_binds_ident(module, root) {
         return None;
     }
     let first = call.args.first()?;
@@ -1366,7 +1418,13 @@ fn module_local_component<'a>(module: &'a Module, name: &str) -> Option<LocalCom
             Decl::Fn(fn_decl) if fn_decl.ident.sym.as_ref() == name => {
                 return Some(LocalComponentDecl::Function(&fn_decl.function));
             }
-            Decl::Var(var) => {
+            // CONST only. A `let`/`var` binding can be reassigned after its
+            // declaration, and resolution reads the INITIALIZER — so
+            // `let X = A; X = B; export default X` would compile A while React
+            // renders B. Refusing the whole kind deletes that class outright;
+            // the component simply is not recognized and falls back honestly.
+            // Credit: Mellow's probe W2.
+            Decl::Var(var) if var.kind == VarDeclKind::Const => {
                 for var_decl in &var.decls {
                     if let Pat::Ident(binding) = &var_decl.name
                         && binding.id.sym.as_ref() == name
@@ -1415,9 +1473,12 @@ fn resolve_component_expr<'a>(
                 }
             }
         }
-        SwcExpr::Call(call) => {
-            resolve_component_expr(unwrap_component_call(call)?, module, name_hint, depth + 1)
-        }
+        SwcExpr::Call(call) => resolve_component_expr(
+            unwrap_component_call(call, module)?,
+            module,
+            name_hint,
+            depth + 1,
+        ),
         // `export default Subject as FC<Props>` and friends are the same
         // component wearing a type assertion.
         SwcExpr::TsAs(expr) => resolve_component_expr(&expr.expr, module, name_hint, depth + 1),
@@ -6997,6 +7058,96 @@ export default forwardRef(function Card({ title }, ref) {
     }
 
     #[test]
+    fn shadowed_memo_hoc_is_not_unwrapped() {
+        // A module-local `memo` is the author's OWN higher-order component, not
+        // React's. Unwrapping through it would delete the wrapper from the page
+        // while React renders it — silent wrong output. Recognition must fail
+        // closed instead. Credit: Mellow's probe M4b.
+        let src = r#"const memo = (C) => () => <div className="wrapped"><C/></div>;
+export default memo(function Card() { return <p className="inner">i</p>; });"#;
+        let parsed = parse(src, "<test>").unwrap();
+        let err = lower(&parsed).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::UnexpectedStatement),
+            "got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn shadowed_react_namespace_is_not_unwrapped() {
+        // Same defect through the member spelling. Credit: Mellow's probe M5.
+        let src = r#"const React = { memo: (x) => x };
+export default React.memo(function Card() { return <p className="inner">i</p>; });"#;
+        let parsed = parse(src, "<test>").unwrap();
+        assert!(matches!(
+            lower(&parsed).unwrap_err().kind,
+            ErrorKind::UnexpectedStatement
+        ));
+    }
+
+    #[test]
+    fn shadowing_by_let_and_class_also_blocks_unwrapping() {
+        // The shadow check counts every binding kind, not just the ones a
+        // component can be resolved through — `let memo` is still not React's.
+        for src in [
+            r#"let memo = (C) => C;
+export default memo(function Card() { return <p>i</p>; });"#,
+            r#"class forwardRef {}
+export default forwardRef(function Card() { return <p>i</p>; });"#,
+            r#"const { memo } = myHocs;
+export default memo(function Card() { return <p>i</p>; });"#,
+        ] {
+            let parsed = parse(src, "<test>").unwrap();
+            assert!(
+                lower(&parsed).is_err(),
+                "expected recognition to fail closed for:\n{src}"
+            );
+        }
+    }
+
+    #[test]
+    fn imported_memo_is_still_unwrapped() {
+        // The guard must not break the ordinary case, including react-compat
+        // packages that re-export the same pure wrapper.
+        for src in [
+            r#"import { memo } from "react";
+export default memo(function Card() { return <p>i</p>; });"#,
+            r#"import { memo } from "preact/compat";
+export default memo(function Card() { return <p>i</p>; });"#,
+        ] {
+            let parsed = parse(src, "<test>").unwrap();
+            let c = lower(&parsed).unwrap_or_else(|e| panic!("{src}\nfailed: {:?}", e.kind));
+            assert!(matches!(&c.root, JsxNode::Element { tag, .. } if tag == "p"));
+        }
+    }
+
+    #[test]
+    fn let_and_var_default_exports_are_not_resolved() {
+        // Resolution reads the INITIALIZER, so a reassignable binding could
+        // compile the first value while React renders the second. Only `const`
+        // is followed. Credit: Mellow's probe W2.
+        let reassigned = r#"let X = () => <p className="first">1</p>;
+X = () => <p className="second">2</p>;
+export default X;"#;
+        let parsed = parse(reassigned, "<test>").unwrap();
+        let err = lower(&parsed).unwrap_err();
+        assert!(
+            matches!(err.kind, ErrorKind::UnexpectedStatement),
+            "got {:?}",
+            err.kind
+        );
+
+        let var_bound = r#"var X = () => <p className="first">1</p>;
+export default X;"#;
+        let parsed = parse(var_bound, "<test>").unwrap();
+        assert!(matches!(
+            lower(&parsed).unwrap_err().kind,
+            ErrorKind::UnexpectedStatement
+        ));
+    }
+
+    #[test]
     fn default_export_of_an_imported_ident_is_not_resolved() {
         // `X` lives in another file; following it here would inline a component
         // whose source this module does not have.
@@ -10794,6 +10945,38 @@ export default function Card() {
             format!("{:?}", comp.root).contains("strong"),
             "expected the arrow helper to be expanded: {:?}",
             comp.root
+        );
+    }
+
+    #[test]
+    fn shadowed_hoc_falls_back_through_the_inline_path_too() {
+        // End-to-end: the guard has to hold where it matters — an imported
+        // component whose file shadows `memo` must render through React SSR
+        // (wrapper intact), not inline as the unwrapped inner component.
+        let route = r#"export default function P() {
+  return <div><Card native/></div>;
+}"#;
+        let card = r#"const memo = (C) => () => <div className="wrapped"><C/></div>;
+export default memo(function Card() { return <p className="inner">i</p>; });"#;
+        let mut sources = HashMap::new();
+        sources.insert("Card".to_string(), card.to_string());
+        let (comp, warnings) = lower_with_src(route, sources).unwrap();
+        let mut names = Vec::new();
+        ssr_component_names(&comp.root, &mut names);
+        assert!(
+            names.contains(&"Card".to_string()),
+            "expected Card to fall back to SSR with its wrapper intact: {names:?}"
+        );
+        assert!(
+            !format!("{:?}", comp.root).contains("inner"),
+            "the unwrapped inner component must NOT be inlined: {:?}",
+            comp.root
+        );
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("no recognizable component declaration")),
+            "expected the honest recognition warning, got: {warnings:?}"
         );
     }
 
