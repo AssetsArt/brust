@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { Check, ShieldCheck } from 'lucide-react'
 import { SHARED_NAV, SHARED_POLICY } from './shared-consts'
 
@@ -39,10 +40,24 @@ function PrivatePanel() {
   )
 }
 
+function PrivateCard({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <article data-helper="private-card">
+      <h3>{title}</h3>
+      <p>{children}</p>
+    </article>
+  )
+}
+
 export default function NativeStaticEval() {
   return (
     <section data-static-eval="root">
       <PrivatePanel />
+
+      <PrivateCard title="card-title">
+        card-plain <strong>card-rich</strong>
+        <PrivateBadge label="card-nested" />
+      </PrivateCard>
 
       <ul data-object-map="yes">
         {CARDS.map((card, index) => {

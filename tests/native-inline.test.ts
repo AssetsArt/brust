@@ -133,6 +133,13 @@ test('expands bounded static data and private helpers through the CLI path', () 
     'shared-nav-two',
     'shared-policy-one',
     'stroke-width="2.25"',
+    // JSX children passed to a same-file helper inline too — plain text, a rich
+    // element child, and a nested helper call inside those children.
+    'private-card',
+    'card-title',
+    'card-plain',
+    'card-rich',
+    'card-nested',
   ]) {
     expect(jinja.includes(marker), 'Expected NativeStaticEval.jinja to contain ' + marker).toBe(
       true,
@@ -142,7 +149,7 @@ test('expands bounded static data and private helpers through the CLI path', () 
 
   const components = readStaticEvalComponentsJson()
   if (components !== null) {
-    for (const component of ['NativeStaticEval', 'PrivatePanel', 'PrivateBadge']) {
+    for (const component of ['NativeStaticEval', 'PrivatePanel', 'PrivateBadge', 'PrivateCard']) {
       expect(components.includes('"' + component + '"')).toBe(false)
     }
   }
