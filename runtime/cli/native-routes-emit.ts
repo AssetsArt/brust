@@ -210,8 +210,11 @@ export function gatherChainSources(
  *   export default function Leaf__chain() { return <AppLayout native><Leaf native/></AppLayout>; }
  *
  * Load-bearing details:
- * - `export default function` is required — the Rust compiler's
- *   `find_default_export` only matches that exact form.
+ * - `export default function` is what we emit. The Rust compiler's
+ *   `find_default_export` also accepts arrow components, `function X(){};
+ *   export default X`, and `memo(…)`/`forwardRef(…)` wrappers, but a generator
+ *   has no reason to pick a subtler shape — this one needs no recognition
+ *   rules at all.
  * - `native` on every tag — without it a nested component lowers to an
  *   SsrComponent (React render) instead of being inlined into the chain.
  * - The leaf tag is self-closing; each ancestor wraps the next via `<Outlet/>`

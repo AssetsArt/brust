@@ -8,11 +8,11 @@
 //! # Input type
 //!
 //! [`analyze`] takes `&swc_core::ecma::ast::BlockStmt` — the *function body
-//! block* reached via `FnExpr.function.body` (the same field that `lower` uses).
-//! The default export found by the parser/lower pipeline is always a `FnExpr`
-//! (never a bare arrow at the top level), so `BlockStmt` is the canonical body
-//! type.  Arrow-body components (`BlockStmtOrExpr`) that are not the top-level
-//! default export are out of scope for this gate.
+//! block* reached through `find_default_export` (the same recognizer `lower`
+//! uses).  That recognizer normalizes every accepted declaration shape to a
+//! `Function`, synthesizing a `{ return …; }` block for an expression-bodied
+//! arrow, so `BlockStmt` stays the canonical body type here no matter how the
+//! component was written.
 //!
 //! # Visitor approach
 //!
@@ -185,22 +185,18 @@ mod tests {
     use super::*;
     use crate::parser;
 
-    /// Parse `src`, find the default-exported function, and return its body block.
-    /// Panics if the parse fails or the export is not a plain function.
+    /// Parse `src`, recognize the default-exported component in WHATEVER shape
+    /// it was written, and return its body block. Goes through the same
+    /// recognizer as the real pipeline so a shape the pipeline accepts can
+    /// never be untestable here.
     fn parse_and_get_body(src: &str) -> swc_core::ecma::ast::BlockStmt {
-        use swc_core::ecma::ast::{DefaultDecl, ExportDefaultDecl, ModuleDecl, ModuleItem};
-
         let parsed = parser::parse(src, "test.tsx").expect("parse failed");
-        for item in &parsed.module.body {
-            if let ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultDecl(ExportDefaultDecl {
-                decl: DefaultDecl::Fn(fn_expr),
-                ..
-            })) = item
-            {
-                return fn_expr.function.body.clone().expect("function has no body");
-            }
-        }
-        panic!("no default-exported function found in source");
+        let decl = crate::lower::find_default_export(&parsed.module)
+            .expect("no default-exported component found in source");
+        decl.function
+            .body
+            .clone()
+            .expect("component declaration has no body")
     }
 
     #[test]
