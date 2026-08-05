@@ -402,9 +402,8 @@ const CATEGORY_B: Category = {
         'const Subject = ({ label }: { label: string }) => <span className="b-arrow-component">{label}</span>\nexport default Subject\n',
       callProps: 'label={label}',
       pageParams: '{ label }: { label: string }',
-      expected: 'gap',
-      expectedRoute: 'broken',
-      note: 'Arrow components are half of all React code in the wild. The inliner only recognises `export default function Name(…)`, so every arrow component falls back to React SSR — and the warning says “parse error”, which is misleading: the file parses fine.',
+      expected: 'inline',
+      note: 'Arrow components are half of all React code in the wild. Recognition normalizes them to the same shape as `export default function Name(…)` — an expression body gains a synthetic `{ return … }` — so the two spellings compile identically, in a route file as well as a component.',
     },
     {
       id: 'b-declaration-then-default-export',
@@ -415,9 +414,8 @@ const CATEGORY_B: Category = {
         'function Subject({ label }: { label: string }) {\n  return <span className="b-declaration-then-default-export">{label}</span>\n}\nexport default Subject\n',
       callProps: 'label={label}',
       pageParams: '{ label }: { label: string }',
-      expected: 'gap',
-      expectedRoute: 'broken',
-      note: 'The same function, exported on its own line instead of inline, stops inlining. Nothing about the component changed — only where the `export default` keyword sits.',
+      expected: 'inline',
+      note: 'The same function exported on its own line used to stop inlining. The default-export ident now resolves against MODULE-LOCAL declarations (never through an import, whose source lives in another file).',
     },
     {
       id: 'b-named-export-component',
@@ -431,7 +429,7 @@ const CATEGORY_B: Category = {
       pageParams: '{ label }: { label: string }',
       expected: 'gap',
       expectedRoute: 'broken',
-      note: 'A file exporting several components by name (the usual shape for a UI kit) cannot inline any of them — only the default export is looked at.',
+      note: 'A file exporting several components by name (the usual shape for a UI kit) still cannot inline any of them — only the default export is looked at. The warning now says so instead of claiming a parse error; closing it needs the import specifier plumbed through to the compiler, because `import { Subject as Card }` renames the component on the way in.',
     },
     {
       id: 'b-same-file-arrow-helper',
@@ -440,9 +438,9 @@ const CATEGORY_B: Category = {
       marker: 'class="b-same-file-arrow-helper"',
       subject:
         'const Badge = ({ label }: { label: string }) => (\n  <strong className="b-same-file-arrow-helper">{label}</strong>\n)\nexport default function Subject() {\n  return (\n    <div>\n      <Badge label="badge-label" />\n    </div>\n  )\n}\n',
-      expected: 'gap',
+      expected: 'inline',
       expectedRoute: 'broken',
-      note: 'The `function` form of the identical helper inlines (see b-same-file-helper); the arrow form is not found at all.',
+      note: 'A capitalized `const X = () => …` now registers as a helper beside `function X(){}`. Lowercase bindings deliberately stay values — `<foo/>` is an HTML tag. The route position still fails for the same reason every same-file helper does there (see b-same-file-helper), not because of the arrow.',
     },
     {
       id: 'b-component-as-prop',
@@ -635,9 +633,8 @@ const CATEGORY_D: Category = {
         'import { memo } from \'react\'\nexport default memo(function Subject({ label }: { label: string }) {\n  return <span className="d-memo">{label}</span>\n})\n',
       callProps: 'label={label}',
       pageParams: '{ label }: { label: string }',
-      expected: 'gap',
-      expectedRoute: 'broken',
-      note: '`memo` is a pure render wrapper around ordinary static JSX — it could be unwrapped and inlined. Today every memoised component in a design system falls back to React SSR.',
+      expected: 'inline',
+      note: '`memo` is a pure render wrapper around ordinary static JSX, so recognition looks through it (as it does through `React.memo`, `forwardRef`, and nested combinations of them) and inlines what is underneath. Memoised components in a design system no longer drag a page onto React SSR.',
     },
     {
       id: 'd-forwardref',
@@ -650,7 +647,7 @@ const CATEGORY_D: Category = {
       pageParams: '{ label }: { label: string }',
       expected: 'gap',
       expectedRoute: 'broken',
-      note: 'The ref is client-only, but the markup is static: a forwardRef component whose ref is unused on a native route could inline with the ref dropped. Nearly every third-party component library ships forwardRef wrappers.',
+      note: 'The `forwardRef(…)` wrapper is now looked through, so a wrapped component that never uses its ref inlines. A REAL forwardRef component — the `(props, ref)` second parameter, `ref={ref}` in the body — still falls back, because a ref is a handle to a live DOM node that a static template does not have. What changed is the honesty: the warning names the parameter, not a phantom parse error. Supporting it properly means deciding what a dropped ref should mean.',
     },
     {
       id: 'd-ref-as-prop',
