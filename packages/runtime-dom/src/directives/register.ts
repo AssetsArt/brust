@@ -1,1 +1,4 @@
-// binders are registered here by Tasks 3–6
+import './text'
+import './show'
+import './bind'
+import './on'
