@@ -1,0 +1,8 @@
+import './text'
+import './show'
+import './bind'
+import './on'
+import './if'
+import './model'
+import './for'
+import './ref'
