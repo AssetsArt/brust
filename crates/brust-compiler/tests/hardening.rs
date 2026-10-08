@@ -1,5 +1,6 @@
 //! m1a-followups F1/F2: input that parses must never abort the process, and the
 //! AST accessor must not hand out borrows that outlive `Parsed`.
+use brust_compiler::analyze::component::analyze_component;
 use brust_compiler::analyze::hir::analyze_hir;
 use brust_compiler::parse::{parse_tsx, run_on_compiler_thread};
 
@@ -48,6 +49,18 @@ fn six_thousand_term_sum_does_not_abort() {
     match analyze("sum.tsx", long_sum(6000)) {
         Ok(name) => assert_eq!(name, "Sum"),
         Err(msg) => assert!(!msg.is_empty()),
+    }
+}
+
+/// The brust readers recurse over the same trees; they must hold too.
+#[test]
+fn six_thousand_deep_inputs_read_into_ir() {
+    for (path, src) in [("deep.tsx", deep_jsx(6000)), ("sum.tsx", long_sum(6000))] {
+        let ir = run_on_compiler_thread(move || {
+            let parsed = parse_tsx(path, src).unwrap();
+            analyze_component(&parsed).unwrap()
+        });
+        assert!(ir.diagnostics.is_empty(), "{path}: {:?}", ir.diagnostics);
     }
 }
 
