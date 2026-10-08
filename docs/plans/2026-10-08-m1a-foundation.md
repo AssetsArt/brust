@@ -86,7 +86,7 @@ impl Parsed {
 #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
 pub struct HirSummary { pub function: String, pub params: usize, pub scopes: Vec<ScopeInfo>, pub identifiers: usize }
 #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
-pub struct ScopeInfo { pub id: u32, pub deps: Vec<DepInfo>, pub decls: Vec<String> }
+pub struct ScopeInfo { pub id: u32, pub pruned: bool, pub deps: Vec<DepInfo>, pub decls: Vec<String> }
 #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
 pub struct DepInfo { pub name: String, pub reactive: bool }
 
@@ -1018,7 +1018,10 @@ fn theme_toggle_scopes() {
     // From the spike: the effect scope depends reactively on `mode`; the JSX scope on
     // `themeLabel` and `label`; the handler scope has no deps.
     let by_deps: Vec<Vec<String>> = s.scopes.iter().map(|sc| sc.deps.iter().map(|d| d.name.clone()).collect()).collect();
+    assert_eq!(s.scopes.len(), 3, "only live scopes (effect, handler, jsx): {by_deps:?}");
+    assert!(s.scopes.iter().all(|sc| !sc.pruned), "{:?}", s.scopes);
     assert!(by_deps.contains(&vec!["mode".to_string()]), "{by_deps:?}");
+    assert!(by_deps.contains(&Vec::<String>::new()), "handler scope has no deps: {by_deps:?}");
     assert!(by_deps.iter().any(|d| d.contains(&"themeLabel".to_string()) && d.contains(&"label".to_string())), "{by_deps:?}");
     assert!(s.scopes.iter().all(|sc| sc.deps.iter().all(|d| d.reactive)), "all deps here are reactive");
 }
@@ -1154,10 +1157,40 @@ pub fn analyze_hir(parsed: &Parsed) -> Result<HirSummary, HirError> {
             })
             .unwrap_or_else(|| format!("#{}", id.0))
     };
-    let mut scopes: Vec<ScopeInfo> = env.scopes.iter().map(|s| ScopeInfo {
-        id: s.id.0,
-        deps: s.dependencies.iter().map(|d| DepInfo { name: name_of(&d.identifier), reactive: d.reactive }).collect(),
-        decls: s.declarations.iter().map(|(id, _)| name_of(id)).collect(),
+    // Only LIVE scopes: the ones that appear in the reactive body. `env.scopes` also keeps
+    // scopes the passes pruned or merged away (ruling on challenge 40314014).
+    use bun_react_compiler::hir::reactive::{ReactiveBlock, ReactiveStatement, ReactiveTerminal};
+    use bun_react_compiler::hir::ScopeId;
+    fn walk(block: &ReactiveBlock, out: &mut Vec<(ScopeId, bool)>) {
+        for stmt in block {
+            match stmt {
+                ReactiveStatement::Instruction(_) => {}
+                ReactiveStatement::Scope(b) => { out.push((b.scope, false)); walk(&b.instructions, out); }
+                ReactiveStatement::PrunedScope(b) => { out.push((b.scope, true)); walk(&b.instructions, out); }
+                ReactiveStatement::Terminal(t) => walk_terminal(&t.terminal, out),
+            }
+        }
+    }
+    // Exhaustive on purpose: a new ReactiveTerminal variant must fail to compile here.
+    // Write one arm per variant of `ReactiveTerminal` (vendor/bun_react_compiler/hir/reactive.rs:145)
+    // and call `walk` on every field of type `ReactiveBlock` (e.g. If { consequent, alternate, .. },
+    // For { init, test, update, loop, .. }); variants with no block fields are `=> {}`.
+    fn walk_terminal(t: &ReactiveTerminal, out: &mut Vec<(ScopeId, bool)>) {
+        match t {
+            // … one arm per variant, no `_ =>` …
+        }
+    }
+    let mut live: Vec<(ScopeId, bool)> = Vec::new();
+    walk(&reactive_fn.body, &mut live);
+    let mut seen = std::collections::HashSet::new();
+    let mut scopes: Vec<ScopeInfo> = live.into_iter().filter(|(id, _)| seen.insert(*id)).filter_map(|(id, pruned)| {
+        let s = env.scopes.iter().find(|s| s.id == id)?;
+        Some(ScopeInfo {
+            id: id.0,
+            pruned,
+            deps: s.dependencies.iter().map(|d| DepInfo { name: name_of(&d.identifier), reactive: d.reactive }).collect(),
+            decls: s.declarations.iter().map(|(id, _)| name_of(id)).collect(),
+        })
     }).collect();
     scopes.sort_by_key(|s| s.id);
 
@@ -1396,6 +1429,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 - **Spec coverage (M1a slice):** §4.1 → Task 2; §4.2(a) → Task 5; §9 layout → Tasks 1–4; §10.1–10.4 → Tasks 1, 3, 8; §11 golden-fixture convention → Task 6; CI gates (fmt, clippy, test, `bun check`) → Task 7. §4.2(b), §5–§8 and runtime-dom are M1b–M1e by design and not in this plan.
 - **Type consistency:** `Parsed`, `ParseError`, `HirSummary`, `ScopeInfo`, `DepInfo`, `HirError`, `analyze_hir`, `parse_tsx` are named identically in Tasks 2, 4, 5, 6 and in the Interfaces block.
+- **Amendment 2026-10-08 (challenge 40314014, ruled upheld):** `HirSummary.scopes` lists only scopes present in `reactive_fn.body` (with `pruned: bool`), not `env.scopes`; Task 5 Step 5, the Interfaces block and the theme-toggle test were changed accordingly.
 - **Known soft spot:** Task 2 Step 5 names two `Msg` fields from memory (`m.kind`, `m.data.location`); the step says to read them off the checkout. The contract is the test, not the field names.
 - **Review Focus → tests:** 1 → Task 2 `reports_syntax_error_with_position` + Task 4 `parse_error_exits_1_with_position`; 2 → Task 5 `arrow_default_export_is_reported_not_panicked`; 3 → Task 5 `static_component_has_no_reactive_scopes_but_succeeds`; 4 → Task 2 `two_parses_in_one_thread_do_not_interfere`; 5 → Task 7 cold CI run.
 
