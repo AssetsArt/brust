@@ -265,6 +265,16 @@ impl Parsed {
         self.ast.symbols.len()
     }
 
+    /// The path the module was parsed under.
+    pub fn path(&self) -> String {
+        String::from_utf8_lossy(&self._path).into_owned()
+    }
+
+    /// The module's source text.
+    pub fn text(&self) -> &[u8] {
+        &self._text
+    }
+
     pub fn import_paths(&self) -> Vec<String> {
         self.import_paths.clone()
     }

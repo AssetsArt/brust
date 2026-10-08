@@ -16,7 +16,7 @@ use std::collections::HashSet;
 /// sources, diagnostics, and inline event handlers waiting to be named (`_hN`).
 pub struct Reader<'r, 'a> {
     pub names: &'r mut NameTable<'a>,
-    print: &'r dyn Fn(&js_ast::Expr) -> String,
+    print: &'r dyn Fn(Js<'_>) -> String,
     pub diagnostics: Vec<Diagnostic>,
     /// Inline handlers in encounter order; index `i` is `<pending:i>` and becomes `_h{i+1}`.
     pub pending_handlers: Vec<HandlerDecl>,
@@ -25,7 +25,7 @@ pub struct Reader<'r, 'a> {
 }
 
 impl<'r, 'a> Reader<'r, 'a> {
-    pub fn new(names: &'r mut NameTable<'a>, print: &'r dyn Fn(&js_ast::Expr) -> String) -> Self {
+    pub fn new(names: &'r mut NameTable<'a>, print: &'r dyn Fn(Js<'_>) -> String) -> Self {
         Reader {
             names,
             print,
@@ -36,7 +36,11 @@ impl<'r, 'a> Reader<'r, 'a> {
     }
 
     pub fn print(&self, e: &js_ast::Expr) -> String {
-        (self.print)(e)
+        (self.print)(Js::Expr(e))
+    }
+
+    pub fn print_stmt(&self, s: &js_ast::Stmt) -> String {
+        (self.print)(Js::Stmt(s))
     }
 
     pub fn opaque(&self, e: &js_ast::Expr, why: &str) -> RawExpr {
@@ -224,14 +228,22 @@ impl<'r, 'a> Reader<'r, 'a> {
     /// Identifiers the arrow reads that it does not declare itself, first
     /// occurrence order, deduplicated by symbol.
     fn captures(&self, a: &js_ast::E::Arrow) -> Vec<(String, IdentKind)> {
+        self.captures_of(a.args.slice(), a.body.stmts.slice())
+    }
+
+    fn captures_of(
+        &self,
+        args: &[js_ast::G::Arg],
+        body: &[js_ast::Stmt],
+    ) -> Vec<(String, IdentKind)> {
         let mut w = Walk::default();
-        for arg in a.args.slice() {
+        for arg in args {
             w.declare_binding(&arg.binding);
             if let Some(d) = &arg.default {
                 w.expr(d);
             }
         }
-        w.stmts(a.body.stmts.slice());
+        w.stmts(body);
         let declared: Vec<js_ast::Ref> = w.declared;
         let mut seen: Vec<js_ast::Ref> = Vec::new();
         let mut out = Vec::new();
@@ -245,6 +257,40 @@ impl<'r, 'a> Reader<'r, 'a> {
             out.push(self.names.kind_of(r));
         }
         out
+    }
+
+    /// A `function name(…) {…}` declaration in the component body, read as the
+    /// arrow it is equivalent to for the IR (body kept as printed source).
+    pub fn function_decl(&self, stmt: &js_ast::Stmt, f: &js_ast::G::Fn) -> RawExpr {
+        let loc = stmt.loc.start.max(0) as u32;
+        let mut params = Vec::new();
+        for arg in f.args.slice() {
+            match arg.binding.data {
+                B::BIdentifier(id) if arg.default.is_none() => {
+                    params.push(self.names.name(id.r#ref))
+                }
+                _ => {
+                    return RawExpr {
+                        loc,
+                        kind: RawKind::Opaque {
+                            source: self.print_stmt(stmt),
+                            why: "function parameter pattern".into(),
+                        },
+                    };
+                }
+            }
+        }
+        RawExpr {
+            loc,
+            kind: RawKind::Arrow {
+                params,
+                body: ArrowBody::Block {
+                    source: self.print_stmt(stmt),
+                    captures_only: false,
+                },
+                captures: self.captures_of(f.args.slice(), f.body.stmts.slice()),
+            },
+        }
     }
 
     /// JSX in expression position (a ternary arm, a `.map` body outside a child).
@@ -262,7 +308,7 @@ impl<'r, 'a> Reader<'r, 'a> {
 pub fn read_expr(
     e: &js_ast::Expr,
     names: &mut NameTable<'_>,
-    printer: &dyn Fn(&js_ast::Expr) -> String,
+    printer: &dyn Fn(Js<'_>) -> String,
 ) -> RawExpr {
     Reader::new(names, printer).expr(e)
 }
@@ -571,6 +617,21 @@ pub fn declared_in(stmts: &[js_ast::Stmt]) -> HashSet<u32> {
     w.declared.iter().map(|r| r.inner_index()).collect()
 }
 
+/// What a [`Reader`]'s printer can print.
+#[derive(Clone, Copy)]
+pub enum Js<'x> {
+    Expr(&'x js_ast::Expr),
+    Stmt(&'x js_ast::Stmt),
+}
+
+/// Prints `js` as JavaScript; see [`print_expr_js`].
+pub fn print_js(parsed: &Parsed, ast: &js_ast::Ast<'_>, js: Js<'_>) -> String {
+    match js {
+        Js::Expr(e) => print_expr_js(parsed, ast, e),
+        Js::Stmt(s) => print_with(parsed, ast, || *s),
+    }
+}
+
 /// Prints one expression as JavaScript with `bun_js_printer`. There is no public
 /// single-expression entry (`print_json` uses an empty symbol table and JSON
 /// mode), so this prints a one-statement module `return <e>;` through
@@ -578,12 +639,26 @@ pub fn declared_in(stmts: &[js_ast::Stmt]) -> HashSet<u32> {
 /// strips the `return ` / `;` around it. Import records are left out on
 /// purpose: the printer then prints every import binding by its local name.
 pub fn print_expr_js(parsed: &Parsed, ast: &js_ast::Ast<'_>, e: &js_ast::Expr) -> String {
+    let text = print_with(parsed, ast, || {
+        js_ast::Stmt::alloc(js_ast::S::Return { value: Some(*e) }, e.loc)
+    });
+    let text = text.strip_suffix(';').unwrap_or(&text);
+    let text = text.strip_prefix("return").unwrap_or(text);
+    text.trim().to_string()
+}
+
+/// Prints the one statement `make` builds (inside an allocation scope over the
+/// module's arena) as a module of its own.
+fn print_with(
+    parsed: &Parsed,
+    ast: &js_ast::Ast<'_>,
+    make: impl FnOnce() -> js_ast::Stmt,
+) -> String {
     let arena = parsed.arena();
     let mut ast_alloc = js_ast::ASTMemoryAllocator::borrowing(arena);
     let _scope = ast_alloc.enter();
 
-    let stmt = js_ast::Stmt::alloc(js_ast::S::Return { value: Some(*e) }, e.loc);
-    let stmts = arena.alloc_slice_copy(&[stmt]);
+    let stmts = arena.alloc_slice_copy(&[make()]);
     let mut tree = js_ast::Ast::empty_in(arena);
     tree.parts.push(js_ast::Part {
         stmts: js_ast::StoreSlice::new_mut(stmts),
@@ -614,9 +689,7 @@ pub fn print_expr_js(parsed: &Parsed, ast: &js_ast::Ast<'_>, e: &js_ast::Expr) -
     if printed.is_err() {
         return String::from("/* unprintable */");
     }
-    let text = String::from_utf8_lossy(out.ctx.get_written()).into_owned();
-    let text = text.trim_end();
-    let text = text.strip_suffix(';').unwrap_or(text);
-    let text = text.strip_prefix("return").unwrap_or(text);
-    text.trim().to_string()
+    String::from_utf8_lossy(out.ctx.get_written())
+        .trim_end()
+        .to_string()
 }

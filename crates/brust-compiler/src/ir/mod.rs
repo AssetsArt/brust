@@ -122,6 +122,8 @@ pub struct ComponentIR {
     pub effects: Vec<EffectDecl>,
     pub handlers: Vec<HandlerDecl>,
     pub refs: Vec<RefDecl>,
+    /// Locals bound to `useId()` (server generates, client reads from the DOM).
+    pub id_bindings: Vec<String>,
     pub template: Node,
     pub jobs: Vec<JobDecl>,
     pub child_links: Vec<ChildLink>,
@@ -144,6 +146,7 @@ impl ComponentIR {
             effects: vec![],
             handlers: vec![],
             refs: vec![],
+            id_bindings: vec![],
             template: Node::Fragment(vec![]),
             jobs: vec![],
             child_links: vec![],
