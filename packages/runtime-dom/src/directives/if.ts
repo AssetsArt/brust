@@ -1,5 +1,6 @@
 import { BINDERS, bindElement, walkChildren } from './index'
 import { parsed, read } from './common'
+import { hooks } from '../instance'
 BINDERS.push({
   match: (a) => a === 'x-if',
   bind: ({ inst, el, attr, raw, scope }) => {
@@ -16,6 +17,7 @@ BINDERS.push({
         current = template.cloneNode(true) as Element
         anchor.after(current)
         bindElement(inst, current, scope); walkChildren(inst, current, scope)
+        hooks.mountTree(current)
       } else if (!want && current) {
         current.remove(); current = null   // the observer disposes nested hosts
       }

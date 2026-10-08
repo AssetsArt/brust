@@ -2,6 +2,7 @@ import { BINDERS, bindElement, walkChildren } from './index'
 import { parsed, read, member } from './common'
 import { warnOnce } from '../warn'
 import { computed, signal, type Signal } from '../signal'
+import { hooks } from '../instance'
 
 type RowScope = Record<string, unknown> & { __own: Signal<number> }
 
@@ -38,6 +39,7 @@ BINDERS.push({
       const list = Array.isArray(r.value) ? (r.value as unknown[]) : []
       const keyFn = member(inst, keyP, attr)
       if (typeof keyFn !== 'function') return
+      const created: Element[] = []
       const next = new Map<unknown, Element[]>(); const nextOrder: Element[] = []
       const seen = new Set<unknown>()
       list.forEach((item, i) => {
@@ -57,6 +59,7 @@ BINDERS.push({
         if (!node) {
           const adopted = firstRun ? adopt.shift() : undefined
           node = adopted ?? (template.cloneNode(true) as Element)
+          if (!adopted) created.push(node)
           adopted?.removeAttribute('x-for')
           const own = signal(0)
           const outer = scope.__tick as (() => number) | undefined
@@ -75,6 +78,7 @@ BINDERS.push({
       let ref: Node = anchor
       for (const node of nextOrder) { if (ref.nextSibling !== node) parent.insertBefore(node, ref.nextSibling); ref = node }
       rows = next; order = nextOrder
+      for (const n of created) hooks.mountTree(n)   // nested hosts in new rows mount now, not on the observer's next tick
     })
     inst.onCleanup(() => { for (const n of order) n.remove() })
   },

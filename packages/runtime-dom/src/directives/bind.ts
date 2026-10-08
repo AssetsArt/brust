@@ -1,10 +1,16 @@
 import { BINDERS } from './index'
 import { parsed, read } from './common'
+import { warnOnce } from '../warn'
+
+// Attributes that execute or load code from a string; a bound value must never reach them as-is.
+const URL_ATTRS = new Set(['href', 'src', 'action', 'formaction', 'xlink:href'])
+const UNSAFE_URL = /^\s*(?:javascript|vbscript|data:text\/html)/i
 const BOOLEAN = new Set(['disabled', 'checked', 'selected', 'readonly', 'required', 'hidden', 'open', 'multiple'])
 BINDERS.push({
   match: (a) => a.startsWith('x-bind-'),
   bind: ({ inst, el, attr, raw, scope }) => {
     const name = attr.slice('x-bind-'.length)
+    if (name.startsWith('on') || name === 'srcdoc') { warnOnce(`bind:unsafe:${inst.name}:${name}`, `${attr} on x-data="${inst.name}" is refused: event-handler and srcdoc attributes cannot be bound (use x-on-*)`); return }
     const p = parsed(inst, attr, raw); if (!p) return
     inst.effect(() => {
       const r = read(inst, p, scope, attr); if (!r.ok) return
@@ -17,7 +23,9 @@ BINDERS.push({
         if (on) el.setAttribute(name, '') ; else el.removeAttribute(name)
         return
       }
-      if (v == null || v === false) el.removeAttribute(name); else el.setAttribute(name, String(v))
+      if (v == null || v === false) { el.removeAttribute(name); return }
+      if (URL_ATTRS.has(name) && UNSAFE_URL.test(String(v))) { warnOnce(`bind:url:${inst.name}:${name}`, `${attr} on x-data="${inst.name}": refusing an unsafe URL scheme`); return }
+      el.setAttribute(name, String(v))
     })
   },
 })

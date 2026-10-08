@@ -75,3 +75,17 @@ test('x-text initial mismatch is corrected and reported once (compiler-bug tripw
   expect(warns.some((w) => w.includes('mismatch'))).toBe(true)
   console.warn = orig
 })
+
+test('x-bind- refuses on* / srcdoc attributes and javascript: URLs', () => {
+  const warns: string[] = []; const orig = console.warn; console.warn = (m: string) => { warns.push(String(m)) }
+  const evil = signal('alert(1)'); const url = signal('/ok')
+  defineBehavior('t8', () => ({ evil, url }))
+  document.body.innerHTML = `<div x-data="t8"><a id="a" x-bind-onclick="evil" x-bind-href="url" href="/ok">x</a></div>`
+  mount()
+  const a = document.getElementById('a')!
+  expect(a.hasAttribute('onclick')).toBe(false)
+  url.set('javascript:alert(1)'); expect(a.getAttribute('href')).toBe('/ok')
+  url.set('/next'); expect(a.getAttribute('href')).toBe('/next')
+  console.warn = orig
+  expect(warns.length).toBe(2)
+})

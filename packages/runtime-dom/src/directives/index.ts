@@ -14,8 +14,8 @@ export function bindHost(inst: Instance, el: Element, scope: Scope): void {
 export function walkChildren(inst: Instance, el: Element, scope: Scope): void {
   for (const child of Array.from(el.children)) {
     if ('__scope' in child) continue                          // x-for row: already bound with its own scope
+    if (child.hasAttribute('x-for')) { bindElement(inst, child, scope); continue } // x-for owns the element (even when it is also a host)
     if (child.hasAttribute(HOST_ATTR)) continue               // nested host: its own instance binds it
-    if (child.hasAttribute('x-for')) { bindElement(inst, child, scope); continue } // x-for owns its subtree
     bindElement(inst, child, scope)
     if (!child.hasAttribute('x-if')) walkChildren(inst, child, scope)   // x-if owns its subtree
   }

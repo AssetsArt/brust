@@ -43,3 +43,14 @@ export class Instance {
     for (const c of this.cleanups.splice(0)) { try { c() } catch (e) { console.error('[brust] cleanup threw', e) } }
   }
 }
+
+export const instances = new WeakMap<Element, Instance>()
+export function instanceOf(el: Element): Instance | undefined { return instances.get(el) }
+export function nearestInstance(el: Element): Instance | null {
+  let p = el.parentElement
+  while (p) { const i = instances.get(p); if (i) return i; p = p.parentElement }
+  return null
+}
+
+/** Late-bound by mount.ts so binders (x-if, x-for) can mount nested hosts synchronously without an import cycle. */
+export const hooks: { mountTree: (root: ParentNode) => void } = { mountTree: () => {} }

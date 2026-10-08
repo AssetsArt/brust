@@ -1,18 +1,12 @@
-import { Instance } from './instance'
+import { Instance, hooks, instances, nearestInstance } from './instance'
+import { untracked } from './signal'
 import { whenBehavior } from './registry'
 import { bindHost } from './directives/index'
 import { warnOnce } from './warn'
+import { bindPropsFromParent } from './props-bind'
 import './directives/register'   // Tasks 3–6 add binders here (file created in Task 3; create it empty now)
 
-const instances = new WeakMap<Element, Instance>()
 let observer: MutationObserver | null = null
-
-export function instanceOf(el: Element): Instance | undefined { return instances.get(el) }
-export function nearestInstance(el: Element): Instance | null {
-  let p = el.parentElement
-  while (p) { const i = instances.get(p); if (i) return i; p = p.parentElement }
-  return null
-}
 
 function readProps(host: HTMLElement): Record<string, unknown> {
   const raw = host.getAttribute('x-props')
@@ -32,12 +26,14 @@ function mountHost(host: HTMLElement): void {
     try { inst.init(factory) } catch (e) { console.error(`[brust] behavior "${name}" threw during init`, e); inst.dispose(); instances.delete(host); return }
     bindHost(inst, host, {})
     inst.booted = true
-    bindPropsFromParent(inst)   // Task 6 fills this in; no-op until then
+    bindPropsFromParent(inst)
+    // Children that mounted before this instance existed (parent chunk arrived late) link up now.
+    host.querySelectorAll<HTMLElement>('[x-data][x-props-bind]').forEach((h) => {
+      const child = instances.get(h)
+      if (child && !child.parent) { child.parent = inst; inst.children.add(child); bindPropsFromParent(child) }
+    })
   })
 }
-
-export let bindPropsFromParent: (inst: Instance) => void = () => {}
-export function _setBindPropsFromParent(f: (inst: Instance) => void): void { bindPropsFromParent = f }
 
 function mountTree(root: ParentNode): void {
   const hosts: HTMLElement[] = []
@@ -46,6 +42,8 @@ function mountTree(root: ParentNode): void {
   // document order = parents before children, so nearestInstance finds a mounted parent
   for (const h of hosts) mountHost(h)
 }
+hooks.mountTree = (root) => untracked(() => mountTree(root))
+
 function disposeTree(root: Node): void {
   if (!(root instanceof Element)) return
   const hosts: Element[] = root.hasAttribute('x-data') ? [root] : []
