@@ -1,0 +1,61 @@
+{
+  "function": "Search",
+  "params": 1,
+  "scopes": [
+    {
+      "id": 1,
+      "pruned": false,
+      "deps": [],
+      "decls": [
+        "t1"
+      ]
+    },
+    {
+      "id": 2,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "q",
+          "reactive": true
+        },
+        {
+          "name": "placeholder",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t2"
+      ]
+    },
+    {
+      "id": 3,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "q",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t3"
+      ]
+    },
+    {
+      "id": 4,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "t2",
+          "reactive": true
+        },
+        {
+          "name": "t3",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t4"
+      ]
+    }
+  ]
+}

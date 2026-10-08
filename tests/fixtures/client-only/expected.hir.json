@@ -1,0 +1,14 @@
+{
+  "function": "Viewport",
+  "params": 0,
+  "scopes": [
+    {
+      "id": 0,
+      "pruned": false,
+      "deps": [],
+      "decls": [
+        "t0"
+      ]
+    }
+  ]
+}

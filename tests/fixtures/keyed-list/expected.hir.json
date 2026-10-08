@@ -1,0 +1,49 @@
+{
+  "function": "TodoList",
+  "params": 1,
+  "scopes": [
+    {
+      "id": 4,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "selected",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t2"
+      ]
+    },
+    {
+      "id": 5,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "selected",
+          "reactive": true
+        },
+        {
+          "name": "todos",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t1"
+      ]
+    },
+    {
+      "id": 6,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "t1",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t2"
+      ]
+    }
+  ]
+}

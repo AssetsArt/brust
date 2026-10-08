@@ -67,6 +67,36 @@ impl Diagnostic {
     }
 }
 
+impl DiagClass {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DiagClass::Fallback => "fallback",
+            DiagClass::Error => "error",
+            DiagClass::Warning => "warning",
+        }
+    }
+}
+
+impl Diagnostic {
+    /// One line: `<class> <rule> <file>:<line>:<col> <message> — <remediation>`.
+    pub fn render(&self, file: &str) -> String {
+        format!(
+            "{} {} {file}:{}:{} {} — {}",
+            self.class.as_str(),
+            self.rule,
+            self.line,
+            self.col,
+            self.message,
+            self.remediation
+        )
+    }
+}
+
+/// `diagnostics` rendered one per line, each line newline-terminated.
+pub fn render_diagnostics(diagnostics: &[Diagnostic], file: &str) -> String {
+    diagnostics.iter().map(|d| d.render(file) + "\n").collect()
+}
+
 /// 1-based line and column (in bytes) of byte offset `loc`.
 pub fn line_col(source: &[u8], loc: u32) -> (u32, u32) {
     let (mut line, mut col) = (1u32, 1u32);

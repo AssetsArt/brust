@@ -1,0 +1,360 @@
+{
+  "id": "input_6af673af",
+  "source": "tests/fixtures/product-card/input.tsx",
+  "tier": "Pending",
+  "props": [
+    {
+      "name": "item",
+      "ts_type": null
+    }
+  ],
+  "state": [
+    {
+      "name": "qty",
+      "setter": "setQty",
+      "init": {
+        "Raw": {
+          "loc": 196,
+          "kind": {
+            "Lit": {
+              "Num": 1.0
+            }
+          }
+        }
+      }
+    }
+  ],
+  "derived": [
+    {
+      "name": "unit",
+      "expr": {
+        "Raw": {
+          "loc": 214,
+          "kind": {
+            "Call": {
+              "callee": {
+                "loc": 214,
+                "kind": {
+                  "Ident": {
+                    "name": "formatPrice",
+                    "kind": {
+                      "Import": {
+                        "source": "./money",
+                        "imported": "formatPrice"
+                      }
+                    }
+                  }
+                }
+              },
+              "args": [
+                {
+                  "loc": 226,
+                  "kind": {
+                    "Member": {
+                      "target": {
+                        "loc": 226,
+                        "kind": {
+                          "Ident": {
+                            "name": "item",
+                            "kind": "Prop"
+                          }
+                        }
+                      },
+                      "name": "price",
+                      "optional": false
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "total",
+      "expr": {
+        "Raw": {
+          "loc": 254,
+          "kind": {
+            "Call": {
+              "callee": {
+                "loc": 254,
+                "kind": {
+                  "Ident": {
+                    "name": "formatPrice",
+                    "kind": {
+                      "Import": {
+                        "source": "./money",
+                        "imported": "formatPrice"
+                      }
+                    }
+                  }
+                }
+              },
+              "args": [
+                {
+                  "loc": 266,
+                  "kind": {
+                    "Binary": {
+                      "op": "Mul",
+                      "left": {
+                        "loc": 266,
+                        "kind": {
+                          "Member": {
+                            "target": {
+                              "loc": 266,
+                              "kind": {
+                                "Ident": {
+                                  "name": "item",
+                                  "kind": "Prop"
+                                }
+                              }
+                            },
+                            "name": "price",
+                            "optional": false
+                          }
+                        }
+                      },
+                      "right": {
+                        "loc": 279,
+                        "kind": {
+                          "Ident": {
+                            "name": "qty",
+                            "kind": "State"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  ],
+  "effects": [],
+  "handlers": [
+    {
+      "name": "_h1",
+      "body": {
+        "loc": 428,
+        "kind": {
+          "Arrow": {
+            "params": [],
+            "body": {
+              "Expr": {
+                "loc": 434,
+                "kind": {
+                  "Call": {
+                    "callee": {
+                      "loc": 434,
+                      "kind": {
+                        "Ident": {
+                          "name": "setQty",
+                          "kind": "Setter"
+                        }
+                      }
+                    },
+                    "args": [
+                      {
+                        "loc": 441,
+                        "kind": {
+                          "Binary": {
+                            "op": "Add",
+                            "left": {
+                              "loc": 441,
+                              "kind": {
+                                "Ident": {
+                                  "name": "qty",
+                                  "kind": "State"
+                                }
+                              }
+                            },
+                            "right": {
+                              "loc": 447,
+                              "kind": {
+                                "Lit": {
+                                  "Num": 1.0
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "captures": [
+              [
+                "setQty",
+                "Setter"
+              ],
+              [
+                "qty",
+                "State"
+              ]
+            ]
+          }
+        }
+      },
+      "item_scoped": []
+    }
+  ],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 300,
+      "tag": "article",
+      "attrs": [
+        {
+          "Static": {
+            "name": "className",
+            "value": "card"
+          }
+        }
+      ],
+      "children": [
+        {
+          "Element": {
+            "loc": 333,
+            "tag": "h2",
+            "attrs": [],
+            "children": [
+              {
+                "Slot": {
+                  "Raw": {
+                    "loc": 338,
+                    "kind": {
+                      "Member": {
+                        "target": {
+                          "loc": 338,
+                          "kind": {
+                            "Ident": {
+                              "name": "item",
+                              "kind": "Prop"
+                            }
+                          }
+                        },
+                        "name": "name",
+                        "optional": false
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 360,
+            "tag": "p",
+            "attrs": [
+              {
+                "Static": {
+                  "name": "className",
+                  "value": "unit"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Slot": {
+                  "Raw": {
+                    "loc": 381,
+                    "kind": {
+                      "Ident": {
+                        "name": "unit",
+                        "kind": "Local"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 397,
+            "tag": "button",
+            "attrs": [
+              {
+                "Static": {
+                  "name": "type",
+                  "value": "button"
+                }
+              },
+              {
+                "Event": {
+                  "event": "click",
+                  "handler": "_h1"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Text": "Add one"
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 490,
+            "tag": "p",
+            "attrs": [
+              {
+                "Static": {
+                  "name": "className",
+                  "value": "total"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Text": "Total: "
+              },
+              {
+                "Slot": {
+                  "Raw": {
+                    "loc": 519,
+                    "kind": {
+                      "Ident": {
+                        "name": "total",
+                        "kind": "Local"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "needs_worker": false,
+  "cache": null,
+  "diagnostics": []
+}

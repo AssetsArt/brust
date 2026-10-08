@@ -1,0 +1,106 @@
+{
+  "id": "input_fffbbb03",
+  "source": "tests/fixtures/client-only/input.tsx",
+  "tier": "Pending",
+  "props": [],
+  "state": [],
+  "derived": [
+    {
+      "name": "wide",
+      "expr": {
+        "Raw": {
+          "loc": 52,
+          "kind": {
+            "Binary": {
+              "op": "Gt",
+              "left": {
+                "loc": 52,
+                "kind": {
+                  "Member": {
+                    "target": {
+                      "loc": 52,
+                      "kind": {
+                        "Ident": {
+                          "name": "window",
+                          "kind": "Global"
+                        }
+                      }
+                    },
+                    "name": "innerWidth",
+                    "optional": false
+                  }
+                }
+              },
+              "right": {
+                "loc": 72,
+                "kind": {
+                  "Lit": {
+                    "Num": 800.0
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "effects": [],
+  "handlers": [],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 85,
+      "tag": "p",
+      "attrs": [],
+      "children": [
+        {
+          "Slot": {
+            "Raw": {
+              "loc": 89,
+              "kind": {
+                "Cond": {
+                  "test": {
+                    "loc": 89,
+                    "kind": {
+                      "Ident": {
+                        "name": "wide",
+                        "kind": "Local"
+                      }
+                    }
+                  },
+                  "yes": {
+                    "loc": 96,
+                    "kind": {
+                      "Lit": {
+                        "Str": "wide"
+                      }
+                    }
+                  },
+                  "no": {
+                    "loc": 105,
+                    "kind": {
+                      "Lit": {
+                        "Str": "narrow"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "needs_worker": false,
+  "cache": null,
+  "diagnostics": []
+}

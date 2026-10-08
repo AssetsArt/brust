@@ -1,0 +1,1 @@
+error list-key tests/fixtures/missing-key/input.tsx:5:9 list items need a `key` — add key={item.id} (a stable id) to the element returned by .map

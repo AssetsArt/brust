@@ -1,0 +1,23 @@
+{
+  "function": "Themed",
+  "params": 1,
+  "scopes": [
+    {
+      "id": 1,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "theme",
+          "reactive": true
+        },
+        {
+          "name": "label",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t1"
+      ]
+    }
+  ]
+}

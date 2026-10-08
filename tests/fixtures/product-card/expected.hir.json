@@ -1,0 +1,109 @@
+{
+  "function": "ProductCard",
+  "params": 1,
+  "scopes": [
+    {
+      "id": 1,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "item",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t1"
+      ]
+    },
+    {
+      "id": 2,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "t2",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t3"
+      ]
+    },
+    {
+      "id": 3,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "item",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t4"
+      ]
+    },
+    {
+      "id": 4,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "unit",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t5"
+      ]
+    },
+    {
+      "id": 5,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "qty",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t6"
+      ]
+    },
+    {
+      "id": 7,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "total",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t7"
+      ]
+    },
+    {
+      "id": 8,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "t4",
+          "reactive": true
+        },
+        {
+          "name": "t5",
+          "reactive": true
+        },
+        {
+          "name": "t6",
+          "reactive": true
+        },
+        {
+          "name": "t7",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t8"
+      ]
+    }
+  ]
+}

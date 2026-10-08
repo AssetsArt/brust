@@ -1,7 +1,7 @@
-//! brustc — the v2 compiler CLI. M1a: `--emit parse|hir`.
+//! brustc — the v2 compiler CLI: `--emit parse|hir|ir|diag`.
 use std::process::ExitCode;
 
-const USAGE: &str = "usage: brustc <file.tsx> --emit parse|hir";
+const USAGE: &str = "usage: brustc <file.tsx> --emit parse|hir|ir|diag";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -9,7 +9,7 @@ fn main() -> ExitCode {
         eprintln!("{USAGE}");
         return ExitCode::from(2);
     };
-    if emit != "parse" && emit != "hir" {
+    if !["parse", "hir", "ir", "diag"].contains(&emit.as_str()) {
         eprintln!("error: unknown --emit {emit}\n{USAGE}");
         return ExitCode::from(2);
     }
@@ -41,6 +41,9 @@ fn run(file: &str, emit: &str, source: Vec<u8>) -> ExitCode {
         println!("{}", serde_json::to_string_pretty(&v).unwrap());
         return ExitCode::SUCCESS;
     }
+    if emit == "ir" || emit == "diag" {
+        return emit_ir(file, emit, &parsed);
+    }
     match brust_compiler::analyze::hir::analyze_hir(&parsed) {
         Ok(summary) => {
             println!("{}", serde_json::to_string_pretty(&summary).unwrap());
@@ -50,6 +53,29 @@ fn run(file: &str, emit: &str, source: Vec<u8>) -> ExitCode {
             eprintln!("error: {e} ({file})");
             ExitCode::from(1)
         }
+    }
+}
+
+/// `ir`: the ComponentIR as pretty JSON. `diag`: one line per diagnostic; exit 1
+/// when any is an `Error` (or the module has no default export).
+fn emit_ir(file: &str, emit: &str, parsed: &brust_compiler::parse::Parsed) -> ExitCode {
+    use brust_compiler::ir::{DiagClass, render_diagnostics};
+    let ir = match brust_compiler::analyze::component::analyze_component(parsed) {
+        Ok(ir) => ir,
+        Err(d) => {
+            eprint!("{}", render_diagnostics(&[d], file));
+            return ExitCode::from(1);
+        }
+    };
+    if emit == "ir" {
+        println!("{}", serde_json::to_string_pretty(&ir).unwrap());
+        return ExitCode::SUCCESS;
+    }
+    print!("{}", render_diagnostics(&ir.diagnostics, file));
+    if ir.diagnostics.iter().any(|d| d.class == DiagClass::Error) {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
     }
 }
 

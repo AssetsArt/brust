@@ -1,0 +1,1 @@
+warning fragment-root tests/fixtures/fragment-root/input.tsx:3:5 the component does not return a single element; it is wrapped in <brust-host> — return one element
