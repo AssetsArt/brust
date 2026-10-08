@@ -218,4 +218,16 @@ impl Parsed {
     pub fn default_export_function_name(&self) -> Option<String> {
         self.default_export_fn.clone()
     }
+
+    pub(crate) fn ast(&self) -> &js_ast::Ast<'static> {
+        &self.ast
+    }
+
+    pub(crate) fn source(&self) -> &js_ast::Source {
+        &self.source
+    }
+
+    pub(crate) fn arena(&self) -> &bun_alloc::Arena {
+        &self.arena
+    }
 }
