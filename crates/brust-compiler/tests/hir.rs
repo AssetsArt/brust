@@ -14,13 +14,14 @@ fn theme_toggle_scopes() {
     let s = analyze_hir(&parsed("theme-toggle")).unwrap();
     assert_eq!(s.function, "ThemeToggle");
     assert_eq!(s.params, 1);
-    // From the spike: the effect scope depends reactively on `mode`; the JSX scope on
-    // `themeLabel` and `label`; the handler scope has no deps.
+    // Only the live scopes (spike: 3, 5, 6): the effect depends reactively on `mode`,
+    // the handler has no deps, the JSX depends on `themeLabel` and `label`.
     let by_deps: Vec<Vec<String>> = s
         .scopes
         .iter()
         .map(|sc| sc.deps.iter().map(|d| d.name.clone()).collect())
         .collect();
+    assert_eq!(s.scopes.len(), 3, "{by_deps:?}");
     assert!(by_deps.contains(&vec!["mode".to_string()]), "{by_deps:?}");
     assert!(
         by_deps
@@ -28,6 +29,8 @@ fn theme_toggle_scopes() {
             .any(|d| d.contains(&"themeLabel".to_string()) && d.contains(&"label".to_string())),
         "{by_deps:?}"
     );
+    assert!(by_deps.iter().any(|d| d.is_empty()), "{by_deps:?}");
+    assert!(s.scopes.iter().all(|sc| !sc.pruned), "{:?}", s.scopes);
     assert!(
         s.scopes.iter().all(|sc| sc.deps.iter().all(|d| d.reactive)),
         "all deps here are reactive"

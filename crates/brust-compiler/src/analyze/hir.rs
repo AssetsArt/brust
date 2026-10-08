@@ -3,6 +3,8 @@
 use crate::parse::Parsed;
 use crate::summary::{DepInfo, HirSummary, ScopeInfo};
 use bun_ast as js_ast;
+use bun_react_compiler::hir::ScopeId;
+use bun_react_compiler::hir::reactive::{ReactiveBlock, ReactiveStatement, ReactiveTerminal};
 use bun_react_compiler::{Host, JsxImportKind};
 
 #[derive(Debug, thiserror::Error)]
@@ -99,6 +101,58 @@ impl Host for AstHost<'_> {
     }
 }
 
+/// Every scope block reachable from `block`, in encounter order, with whether it
+/// was pruned. The terminal match is exhaustive on purpose: a new upstream
+/// variant must fail to compile here rather than hide its scopes.
+fn collect_scopes(block: &ReactiveBlock, out: &mut Vec<(ScopeId, bool)>) {
+    for stmt in block {
+        match stmt {
+            ReactiveStatement::Instruction(_) => {}
+            ReactiveStatement::Scope(b) => {
+                out.push((b.scope, false));
+                collect_scopes(&b.instructions, out);
+            }
+            ReactiveStatement::PrunedScope(b) => {
+                out.push((b.scope, true));
+                collect_scopes(&b.instructions, out);
+            }
+            ReactiveStatement::Terminal(t) => match &t.terminal {
+                ReactiveTerminal::Break { .. }
+                | ReactiveTerminal::Continue { .. }
+                | ReactiveTerminal::Return { .. }
+                | ReactiveTerminal::Throw { .. } => {}
+                ReactiveTerminal::Switch { cases, .. } => {
+                    for case in cases {
+                        if let Some(b) = &case.block {
+                            collect_scopes(b, out);
+                        }
+                    }
+                }
+                ReactiveTerminal::DoWhile { loop_block, .. }
+                | ReactiveTerminal::While { loop_block, .. }
+                | ReactiveTerminal::For { loop_block, .. }
+                | ReactiveTerminal::ForOf { loop_block, .. }
+                | ReactiveTerminal::ForIn { loop_block, .. } => collect_scopes(loop_block, out),
+                ReactiveTerminal::If {
+                    consequent,
+                    alternate,
+                    ..
+                } => {
+                    collect_scopes(consequent, out);
+                    if let Some(b) = alternate {
+                        collect_scopes(b, out);
+                    }
+                }
+                ReactiveTerminal::Label { block, .. } => collect_scopes(block, out),
+                ReactiveTerminal::Try { block, handler, .. } => {
+                    collect_scopes(block, out);
+                    collect_scopes(handler, out);
+                }
+            },
+        }
+    }
+}
+
 pub fn analyze_hir(parsed: &Parsed) -> Result<HirSummary, HirError> {
     let ast = parsed.ast();
     let mut stmts: Vec<js_ast::Stmt> = Vec::new();
@@ -158,11 +212,24 @@ pub fn analyze_hir(parsed: &Parsed) -> Result<HirSummary, HirError> {
             })
             .unwrap_or_else(|| format!("#{}", id.0))
     };
-    let mut scopes: Vec<ScopeInfo> = env
-        .scopes
-        .iter()
-        .map(|s| ScopeInfo {
-            id: s.id.0,
+    // `env.scopes` keeps every scope ever created, including ones later merged or
+    // dropped; only the scopes still present in the reactive body are real.
+    let mut live = Vec::new();
+    collect_scopes(&reactive_fn.body, &mut live);
+    let mut scopes: Vec<ScopeInfo> = Vec::with_capacity(live.len());
+    for (id, pruned) in live {
+        if scopes.iter().any(|s| s.id == id.0) {
+            continue;
+        }
+        let Some(s) = env.scopes.iter().find(|s| s.id == id) else {
+            return Err(HirError::Unsupported(format!(
+                "scope {} missing from environment",
+                id.0
+            )));
+        };
+        scopes.push(ScopeInfo {
+            id: id.0,
+            pruned,
             deps: s
                 .dependencies
                 .iter()
@@ -172,8 +239,8 @@ pub fn analyze_hir(parsed: &Parsed) -> Result<HirSummary, HirError> {
                 })
                 .collect(),
             decls: s.declarations.iter().map(|(id, _)| name_of(id)).collect(),
-        })
-        .collect();
+        });
+    }
     scopes.sort_by_key(|s| s.id);
 
     Ok(HirSummary {

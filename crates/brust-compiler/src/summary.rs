@@ -12,6 +12,9 @@ pub struct HirSummary {
 #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
 pub struct ScopeInfo {
     pub id: u32,
+    /// The scope survives in the reactive body but will not be memoised
+    /// (e.g. it contains a hook call).
+    pub pruned: bool,
     pub deps: Vec<DepInfo>,
     pub decls: Vec<String>,
 }
