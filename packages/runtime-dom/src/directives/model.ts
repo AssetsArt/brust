@@ -20,7 +20,7 @@ BINDERS.push({
       const h = () => { if (input.checked) s.set(input.value) }; el.addEventListener('change', h); inst.onCleanup(() => el.removeEventListener('change', h))
       inst.effect(() => { input.checked = s() === input.value })
     } else if (el instanceof HTMLSelectElement) {
-      if (el.multiple) { warnOnce(`model:multi:${inst.name}`, `select[multiple] unsupported`); return }
+      if (el.multiple) { warnOnce(`mm:${inst.name}`, `select[multiple] unsupported`); return }
       const h = () => s.set(el.value); el.addEventListener('change', h); inst.onCleanup(() => el.removeEventListener('change', h))
       const apply = () => { const v = s(); if (el.value !== String(v)) el.value = String(v ?? '') }
       inst.effect(apply)

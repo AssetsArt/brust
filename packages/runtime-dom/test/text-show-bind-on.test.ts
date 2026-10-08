@@ -85,6 +85,7 @@ test('x-bind- refuses on* / srcdoc attributes and javascript: URLs', () => {
   const a = document.getElementById('a')!
   expect(a.hasAttribute('onclick')).toBe(false)
   url.set('javascript:alert(1)'); expect(a.getAttribute('href')).toBe('/ok')
+  url.set('java\tscript:alert(1)'); expect(a.getAttribute('href')).toBe('/ok')
   url.set('/next'); expect(a.getAttribute('href')).toBe('/next')
   console.warn = orig
   expect(warns.length).toBe(2)

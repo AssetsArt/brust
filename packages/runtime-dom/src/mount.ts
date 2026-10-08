@@ -12,7 +12,7 @@ function readProps(host: HTMLElement): Record<string, unknown> {
   const raw = host.getAttribute('x-props')
   if (!raw) return {}
   try { const v = JSON.parse(raw); return v && typeof v === 'object' ? v : {} }
-  catch { warnOnce(`props:${host.outerHTML.slice(0, 80)}`, `bad x-props JSON in ${host.getAttribute('x-data')}`); return {} }
+  catch { warnOnce(`j:${host.outerHTML.slice(0, 80)}`, `bad x-props JSON in ${host.getAttribute('x-data')}`); return {} }
 }
 
 function mountHost(host: HTMLElement): void {

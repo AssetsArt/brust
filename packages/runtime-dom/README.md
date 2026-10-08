@@ -43,7 +43,7 @@ Anything else (`x + 1`, `fn()`) is not parsed: a warning is logged once and the 
 - **`x-if="value"`**: the element is replaced by a `<!--x-if-->` comment anchor; a clone is inserted after it while truthy and removed otherwise.
   Nested `x-data` hosts in the clone mount/dispose with it. Server HTML omits the element when false.
 - **`x-bind-<attr>="value"`**: `class` → `className`; `value` → `.value`; `disabled checked selected readonly required hidden open multiple` → property + attribute (present/absent);
-  anything else: `null`/`undefined`/`false` removes the attribute, otherwise `setAttribute`. **Refused** (warn once): `on*` and `srcdoc` attributes, and `javascript:`/`data:text/html` URLs in `href src action formaction`.
+  anything else: `null`/`undefined`/`false` removes the attribute, otherwise `setAttribute`. **Refused** (warn once): `on*` and `srcdoc` attributes, and, in `href src action formaction poster data`, any URL whose parsed scheme is not `http(s):`/`mailto:`/`tel:` (relative URLs are fine; `java\tscript:` is caught because the URL is parsed, not pattern-matched).
 - **`x-on-<event>="member[:binding]"`**: calls the member with the bound scope values first, then the event: `pick(item, index, event)`.
 - **`x-model="member"`**: the member must be a writable signal (else warns). text-like: `input` event ↔ `.value`; checkbox: `change` ↔ boolean `.checked`;
   radio: `change` writes `.value` when checked, signal sets `.checked`; single `select`: `change` ↔ `.value`, re-applied whenever its options change. `select[multiple]` is unsupported (warns).
