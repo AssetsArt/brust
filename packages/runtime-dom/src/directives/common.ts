@@ -18,5 +18,6 @@ export function member(inst: Instance, p: ParsedValue, attr: string): unknown {
   return m
 }
 export function mismatch(inst: Instance, attr: string, el: Element, server: unknown, client: unknown): void {
+  if (inst.booted) return   // element created after mount (new x-for row / x-if clone): nothing was server-rendered
   warnOnce(`mismatch:${inst.name}:${attr}`, `first-paint mismatch on <${el.tagName.toLowerCase()} ${attr}> in x-data="${inst.name}": server=${JSON.stringify(server)} client=${JSON.stringify(client)} (compiler bug: §6.3)`)
 }

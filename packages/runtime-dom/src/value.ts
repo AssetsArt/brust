@@ -16,6 +16,9 @@ export type Scope = Record<string, unknown>
 
 /** Resolve a parsed directive value against instance members. Reads signals (tracked). */
 export function resolve(members: Record<string, unknown>, v: ParsedValue, scope: Scope): { ok: true; value: unknown } | { ok: false } {
+  // x-for rows expose a tick that changes when the row's item/index is refreshed; reading it subscribes.
+  const tick = scope.__tick
+  if (typeof tick === 'function') tick()
   let cur: unknown = members
   for (const key of v.path) {
     if (isSignal(cur)) cur = cur()

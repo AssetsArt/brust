@@ -48,10 +48,10 @@ test('x-model checkbox is boolean; radio group writes value', () => {
   color.set('red'); expect((document.getElementById('r1') as HTMLInputElement).checked).toBe(true)
 })
 
-test.todo('x-model select re-applies the value after options change', async () => {
+test('x-model select re-applies the value after options change', async () => {
   const sel = signal('b'); const opts = signal(['a'])
-  defineBehavior('m3', () => ({ sel, opts, key: (o: string) => o }))
-  document.body.innerHTML = `<div x-data="m3"><select id="s" x-model="sel"><option x-for="o in opts by key" x-bind-value="o" x-text="o">a</option></select></div>`
+  defineBehavior('m3', () => ({ sel, opts, key: (o: string) => o, val: (o: string) => o }))
+  document.body.innerHTML = `<div x-data="m3"><select id="s" x-model="sel"><option x-for="o in opts by key" x-bind-value="val:o" x-text="val:o">a</option></select></div>`
   mount(); await flush()
   opts.set(['a', 'b']); await flush()
   expect((document.getElementById('s') as HTMLSelectElement).value).toBe('b')

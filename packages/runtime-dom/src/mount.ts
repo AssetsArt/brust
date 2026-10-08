@@ -31,6 +31,7 @@ function mountHost(host: HTMLElement): void {
     instances.set(host, inst)
     try { inst.init(factory) } catch (e) { console.error(`[brust] behavior "${name}" threw during init`, e); inst.dispose(); instances.delete(host); return }
     bindHost(inst, host, {})
+    inst.booted = true
     bindPropsFromParent(inst)   // Task 6 fills this in; no-op until then
   })
 }

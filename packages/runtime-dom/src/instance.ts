@@ -9,6 +9,8 @@ export class Instance {
   private disposers: Dispose[] = []
   private cleanups: Array<() => void> = []
   disposed = false
+  /** false until the initial bind pass finishes; the first-paint tripwire only applies before then. */
+  booted = false
 
   constructor(public host: HTMLElement, public name: string, public parent: Instance | null, initialProps: Record<string, unknown>) {
     this.props = signal(initialProps)
