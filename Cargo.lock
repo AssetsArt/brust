@@ -469,7 +469,6 @@ dependencies = [
 [[package]]
 name = "bun_react_compiler"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
 dependencies = [
  "bun_alloc",
  "bun_ast",

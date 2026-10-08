@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/brust-compiler", "crates/brust-compiler-cli"] # , "vendor/bun_react_compiler"]
+members = ["crates/brust-compiler", "crates/brust-compiler-cli", "vendor/bun_react_compiler"]
 
 [workspace.package]
 version = "0.0.0"
@@ -34,8 +34,8 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)', 'cfg(bun_debug
 [workspace.lints.clippy]
 
 # Our patched copy replaces the git crate everywhere, including inside bun_js_parser.
-# [patch."https://github.com/oven-sh/bun"]
-# bun_react_compiler = { path = "vendor/bun_react_compiler" }
+[patch."https://github.com/oven-sh/bun"]
+bun_react_compiler = { path = "vendor/bun_react_compiler" }
 
 [profile.dev]
 opt-level = 1          # Bun's parser is unusably slow at opt-level 0 and the build is dominated by it anyway
