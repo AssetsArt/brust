@@ -1339,16 +1339,20 @@ jobs:
           restore-keys: cargo-${{ runner.os }}-
       - run: cargo fmt --all -- --check
       - run: cargo build --workspace
-      - run: cargo tree -p brust-compiler -i bun_react_compiler | tee tree.txt && grep -q "vendor/bun_react_compiler" tree.txt && ! grep -q "github.com/oven-sh/bun?rev" tree.txt
+      # Invariant: the vendored path crate shadows the git one. Only the ROOT line is checked —
+      # bun_js_parser (a git crate) legitimately appears below it as a dependent.
+      - run: cargo tree -p brust-compiler -i bun_react_compiler | tee tree.txt && grep -q "^bun_react_compiler .*vendor/bun_react_compiler" tree.txt && ! grep -q "^bun_react_compiler .*github.com" tree.txt
       # --no-deps: the vendored Bun crate is not held to our lints (261 findings otherwise).
       - run: cargo clippy -p brust-compiler -p brust-compiler-cli --no-deps -- -D warnings
       # --exclude: the vendored crate's own lib-test cannot link (its native stubs live in brust-compiler).
       - run: cargo test --workspace --exclude bun_react_compiler
       - run: bun install --frozen-lockfile || true
-      - run: bun check scripts/bun-codegen.ts
+      # `bun check` (TS7-equivalent type checker) ships in Bun 1.4.3; on 1.4.2 `bun check` runs the
+      # package.json "check" script instead. Until setup-bun pins >= 1.4.3 this is a syntax-only gate.
+      - run: bun build --no-bundle scripts/bun-codegen.ts > /dev/null
 ```
 
-Note the `cargo tree` step: it fails the build if the vendored crate stopped shadowing the git one (Task 3 Step 6 invariant). The clippy step uses `--no-deps` so only our two crates are linted — without it clippy also lints the vendored path crate (261 findings). `cargo test` excludes `bun_react_compiler`: its own lib-test target cannot link because the native stubs (`mi_heap_*`, `__bun_crash_handler_out_of_memory`, …) live in `brust-compiler` (amendment after READY 754f06ae on m1a-foundation-core).
+Note the `cargo tree` step: it fails the build if the vendored crate stopped shadowing the git one (Task 3 Step 6 invariant); both greps are anchored to the root line because `bun_js_parser` (git) is a legitimate dependent and would otherwise match. **Linux link:** the first clean-runner build failed with undefined `Bun__linux_trace_{init,close,emit}` (`bun_core::perf` probes tracefs on Linux; macOS never references them) — Task 7 therefore also adds three `#[cfg(target_os = "linux")]` stubs returning 0 to `crates/brust-compiler/src/parse/stubs/extra.rs`, which is why the lane's boundary includes `crates/`. The rev-bump checklist step 7 must link on BOTH macOS and Linux (CI) before a bump is green. The clippy step uses `--no-deps` so only our two crates are linted — without it clippy also lints the vendored path crate (261 findings). `cargo test` excludes `bun_react_compiler`: its own lib-test target cannot link because the native stubs (`mi_heap_*`, `__bun_crash_handler_out_of_memory`, …) live in `brust-compiler` (amendment after READY 754f06ae on m1a-foundation-core).
 
 - [ ] **Step 2: Make `cargo fmt --check` and clippy pass locally first**
 
@@ -1433,6 +1437,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - **Type consistency:** `Parsed`, `ParseError`, `HirSummary`, `ScopeInfo`, `DepInfo`, `HirError`, `analyze_hir`, `parse_tsx` are named identically in Tasks 2, 4, 5, 6 and in the Interfaces block.
 - **Amendment 2026-10-08 (challenge 40314014, ruled upheld):** `HirSummary.scopes` lists only scopes present in `reactive_fn.body` (with `pruned: bool`), not `env.scopes`; Task 5 Step 5, the Interfaces block and the theme-toggle test were changed accordingly.
 - **Amendment 2026-10-08 (READY 754f06ae unsure a):** Task 7 CI uses `cargo clippy … --no-deps` and `cargo test --workspace --exclude bun_react_compiler`; dispatch-table gate commands updated to match.
+- **Amendment 2026-10-08 (READY 87387114 on m1a-ci):** tree greps anchored to the root line; Linux-only `Bun__linux_trace_*` stubs added by the CI lane (clean-runner gap, Review Focus 5 worked as intended); `bun check` replaced by `bun build --no-bundle` until Bun >= 1.4.3 is pinned (ruling on m1a-ci: `bun check` is a 1.4.3 feature; 1.4.2 resolves it to the package.json `check` script).
 - **Known soft spot:** Task 2 Step 5 names two `Msg` fields from memory (`m.kind`, `m.data.location`); the step says to read them off the checkout. The contract is the test, not the field names.
 - **Review Focus → tests:** 1 → Task 2 `reports_syntax_error_with_position` + Task 4 `parse_error_exits_1_with_position`; 2 → Task 5 `arrow_default_export_is_reported_not_panicked`; 3 → Task 5 `static_component_has_no_reactive_scopes_but_succeeds`; 4 → Task 2 `two_parses_in_one_thread_do_not_interfere`; 5 → Task 7 cold CI run.
 

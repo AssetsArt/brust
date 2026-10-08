@@ -22,3 +22,10 @@ vendor diff is exactly `BRUST-PATCH.md` items 1–7.
 | F5 | `crates/brust-compiler/tests/fixtures.rs:41` | `BRUSTC_UPDATE=1` never deletes a stale `expected.hir.json` when a case flips to error (or the reverse), leaving two expectation files. | On update, remove the other-kind expectation file for that case. | M1b (when the runner grows `ir`/`template` emits) |
 | F6 | `tests/fixtures/*/expected.hir.json` | `"identifiers": 109` is a brittle count that churns on every Bun rev bump. | Accept update-diff noise (bun-rev-bump step 8 says to inspect golden diffs), or drop the field from `HirSummary` in M1b if it carries no decision. | M1b |
 | F7 | `docs/design/bun-rev-bump.md:7` | `sed -i ''` is macOS-only. | Note it, or switch to `perl -pi -e` when a Linux dev machine appears. | docs, any time |
+
+## From the CI lane (`m1a-ci`, READY 87387114)
+
+| # | Where | Finding | Proposed fix | Owner plan |
+|---|---|---|---|---|
+| F8 | `.github/workflows/ci.yml` last step | `bun check` does not exist on Bun 1.4.2 (it is a 1.4.3 feature; 1.4.2 runs the package.json `check` script). CI uses `bun build --no-bundle` (syntax only) for now. | When 1.4.3 is stable: bump `setup-bun` to it and switch the step to `bun check scripts/bun-codegen.ts`; add `bun check` for `packages/runtime-dom` in M1d. | M1d / whoever bumps Bun |
+| F9 | `crates/brust-compiler/src/parse/stubs/extra.rs` | Linux needs `Bun__linux_trace_{init,close,emit}` stubs that macOS never links; more may appear when `ubuntu-latest` moves to Ubuntu 26 (2026-10-19). | Keep the stubs file platform-aware; rev-bump checklist step 7 links on both OSes. | bump checklist |
