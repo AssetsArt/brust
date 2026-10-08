@@ -1340,19 +1340,21 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo build --workspace
       - run: cargo tree -p brust-compiler -i bun_react_compiler | tee tree.txt && grep -q "vendor/bun_react_compiler" tree.txt && ! grep -q "github.com/oven-sh/bun?rev" tree.txt
-      - run: cargo clippy -p brust-compiler -p brust-compiler-cli -- -D warnings
-      - run: cargo test --workspace
+      # --no-deps: the vendored Bun crate is not held to our lints (261 findings otherwise).
+      - run: cargo clippy -p brust-compiler -p brust-compiler-cli --no-deps -- -D warnings
+      # --exclude: the vendored crate's own lib-test cannot link (its native stubs live in brust-compiler).
+      - run: cargo test --workspace --exclude bun_react_compiler
       - run: bun install --frozen-lockfile || true
       - run: bun check scripts/bun-codegen.ts
 ```
 
-Note the `cargo tree` step: it fails the build if the vendored crate stopped shadowing the git one (Task 3 Step 6 invariant). The clippy step scopes to our crates only — Bun's vendored crate is not held to our lint settings.
+Note the `cargo tree` step: it fails the build if the vendored crate stopped shadowing the git one (Task 3 Step 6 invariant). The clippy step uses `--no-deps` so only our two crates are linted — without it clippy also lints the vendored path crate (261 findings). `cargo test` excludes `bun_react_compiler`: its own lib-test target cannot link because the native stubs (`mi_heap_*`, `__bun_crash_handler_out_of_memory`, …) live in `brust-compiler` (amendment after READY 754f06ae on m1a-foundation-core).
 
 - [ ] **Step 2: Make `cargo fmt --check` and clippy pass locally first**
 
 ```bash
 cargo fmt --all
-cargo clippy -p brust-compiler -p brust-compiler-cli -- -D warnings 2>&1 | tail -5
+cargo clippy -p brust-compiler -p brust-compiler-cli --no-deps -- -D warnings 2>&1 | tail -5
 ```
 
 Fix every clippy finding in our two crates (do not add `#[allow]` on the stubs module beyond what Step 4 of Task 2 already lists).
@@ -1430,6 +1432,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - **Spec coverage (M1a slice):** §4.1 → Task 2; §4.2(a) → Task 5; §9 layout → Tasks 1–4; §10.1–10.4 → Tasks 1, 3, 8; §11 golden-fixture convention → Task 6; CI gates (fmt, clippy, test, `bun check`) → Task 7. §4.2(b), §5–§8 and runtime-dom are M1b–M1e by design and not in this plan.
 - **Type consistency:** `Parsed`, `ParseError`, `HirSummary`, `ScopeInfo`, `DepInfo`, `HirError`, `analyze_hir`, `parse_tsx` are named identically in Tasks 2, 4, 5, 6 and in the Interfaces block.
 - **Amendment 2026-10-08 (challenge 40314014, ruled upheld):** `HirSummary.scopes` lists only scopes present in `reactive_fn.body` (with `pruned: bool`), not `env.scopes`; Task 5 Step 5, the Interfaces block and the theme-toggle test were changed accordingly.
+- **Amendment 2026-10-08 (READY 754f06ae unsure a):** Task 7 CI uses `cargo clippy … --no-deps` and `cargo test --workspace --exclude bun_react_compiler`; dispatch-table gate commands updated to match.
 - **Known soft spot:** Task 2 Step 5 names two `Msg` fields from memory (`m.kind`, `m.data.location`); the step says to read them off the checkout. The contract is the test, not the field names.
 - **Review Focus → tests:** 1 → Task 2 `reports_syntax_error_with_position` + Task 4 `parse_error_exits_1_with_position`; 2 → Task 5 `arrow_default_export_is_reported_not_panicked`; 3 → Task 5 `static_component_has_no_reactive_scopes_but_succeeds`; 4 → Task 2 `two_parses_in_one_thread_do_not_interfere`; 5 → Task 7 cold CI run.
 
@@ -1445,9 +1448,10 @@ creates each worktree from `v2` and merges each lane back into `v2`.
 |---|---|---|---|---|---|---|
 | `m1a-foundation-core` | 1, 2, 3, 4, 5 | complex | Implementer (Complex) | — | complex | `cargo build --workspace` green; `cargo tree -p brust-compiler -i bun_react_compiler` shows `vendor/bun_react_compiler` and no git copy; `cargo test -p brust-compiler --test parse --test hir` and `cargo test -p brust-compiler-cli --test cli` all pass; `cargo run -q -p brust-compiler-cli -- tests/fixtures/theme-toggle/input.tsx --emit hir` prints a scope with deps `[{"name":"mode","reactive":true}]`. Paste the three command outputs (tails) in the READY note. |
 | `m1a-fixtures-docs` | 6, 8 | standard | Implementer (Standard) | `m1a-foundation-core` merged | standard | `cargo test -p brust-compiler --test fixtures` passes without `BRUSTC_UPDATE`; `expected.hir.json` for theme-toggle and static-text plus `expected.error.txt` for arrow-default committed; `docs/design/bun-rev-bump.md` and `README.md` present. |
-| `m1a-ci` | 7 | standard | Implementer (Standard) | `m1a-fixtures-docs` merged | standard | `cargo fmt --all -- --check` and `cargo clippy -p brust-compiler -p brust-compiler-cli -- -D warnings` clean locally; `.github/workflows/ci.yml` pushed on the lane and the `ci` run green on GitHub (paste the run URL). |
+| `m1a-ci` | 7 | standard | Implementer (Standard) | `m1a-fixtures-docs` merged | standard | `cargo fmt --all -- --check` and `cargo clippy -p brust-compiler -p brust-compiler-cli --no-deps -- -D warnings` clean locally; `.github/workflows/ci.yml` pushed on the lane and the `ci` run green on GitHub (paste the run URL). |
 
 Gate commands any lane may ask the Runner to execute: `cargo fmt --all -- --check`,
-`cargo clippy -p brust-compiler -p brust-compiler-cli -- -D warnings`, `cargo test --workspace`.
+`cargo clippy -p brust-compiler -p brust-compiler-cli --no-deps -- -D warnings`,
+`cargo test --workspace --exclude bun_react_compiler`.
 Escalations: design/spec conflicts → `task challenge` to the owner (lead); implementation
 judgment inside the plan's intent → a `task note`, no escalation.
