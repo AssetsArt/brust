@@ -8,7 +8,7 @@ BINDERS.push({
     const p = parsed(inst, attr, raw); if (!p) return
     const sig = member(inst, p, attr)
     if (!isSignal(sig) || typeof (sig as Signal<unknown>).set !== 'function') {
-      warnOnce(`model:${inst.name}:${raw}`, `x-model="${raw}" on x-data="${inst.name}" must name a writable signal`); return
+      warnOnce(`model:${inst.name}:${raw}`, `x-model="${raw}" in ${inst.name} needs a signal`); return
     }
     const s = sig as Signal<unknown>
     const input = el as HTMLInputElement
@@ -20,7 +20,7 @@ BINDERS.push({
       const h = () => { if (input.checked) s.set(input.value) }; el.addEventListener('change', h); inst.onCleanup(() => el.removeEventListener('change', h))
       inst.effect(() => { input.checked = s() === input.value })
     } else if (el instanceof HTMLSelectElement) {
-      if (el.multiple) { warnOnce(`model:multi:${inst.name}`, `x-model on select[multiple] is not supported`); return }
+      if (el.multiple) { warnOnce(`model:multi:${inst.name}`, `select[multiple] unsupported`); return }
       const h = () => s.set(el.value); el.addEventListener('change', h); inst.onCleanup(() => el.removeEventListener('change', h))
       const apply = () => { const v = s(); if (el.value !== String(v)) el.value = String(v ?? '') }
       inst.effect(apply)

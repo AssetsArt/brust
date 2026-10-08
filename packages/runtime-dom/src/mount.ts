@@ -12,7 +12,7 @@ function readProps(host: HTMLElement): Record<string, unknown> {
   const raw = host.getAttribute('x-props')
   if (!raw) return {}
   try { const v = JSON.parse(raw); return v && typeof v === 'object' ? v : {} }
-  catch { warnOnce(`props:${host.outerHTML.slice(0, 80)}`, `x-props is not valid JSON on <${host.tagName.toLowerCase()} x-data="${host.getAttribute('x-data')}">`); return {} }
+  catch { warnOnce(`props:${host.outerHTML.slice(0, 80)}`, `bad x-props JSON in ${host.getAttribute('x-data')}`); return {} }
 }
 
 function mountHost(host: HTMLElement): void {
@@ -23,7 +23,7 @@ function mountHost(host: HTMLElement): void {
     const parent = nearestInstance(host)
     const inst = new Instance(host, name, parent, readProps(host))
     instances.set(host, inst)
-    try { inst.init(factory) } catch (e) { console.error(`[brust] behavior "${name}" threw during init`, e); inst.dispose(); instances.delete(host); return }
+    try { inst.init(factory) } catch (e) { console.error(`[brust] init threw: ${name}`, e); inst.dispose(); instances.delete(host); return }
     bindHost(inst, host, {})
     inst.booted = true
     bindPropsFromParent(inst)

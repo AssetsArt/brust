@@ -31,7 +31,7 @@ export function whenBehavior(name: string, cb: (f: BehaviorFactory) => void): vo
   const list = waiters.get(name) ?? []; list.push(cb); waiters.set(name, list)
   if (loader && !requested.has(name)) {
     requested.add(name)
-    loader(name).catch((e) => console.error(`[brust] failed to load behavior chunk "${name}"`, e))
+    loader(name).catch((e) => console.error(`[brust] chunk load failed: ${name}`, e))
   }
 }
 /** Test helper: forget everything. */

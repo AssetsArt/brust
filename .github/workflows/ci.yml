@@ -29,3 +29,13 @@ jobs:
       - run: cargo test --workspace --exclude bun_react_compiler
       - run: bun install --frozen-lockfile || true
       - run: bun build --no-bundle scripts/bun-codegen.ts > /dev/null
+  runtime-dom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: "1.4.2" }
+      - run: bun install --frozen-lockfile
+      - run: bunx tsc --noEmit -p packages/runtime-dom
+      - run: cd packages/runtime-dom && bun test
+      - run: cd packages/runtime-dom && bun scripts/build.ts

@@ -5,6 +5,7 @@ as a small react-free chunk, React only where the compiler proves it is needed.
 
 - Design: `docs/design/2026-10-08-react-compiler-design.md`
 - Plans: `docs/plans/`
+- Browser runtime: `packages/runtime-dom` (directive contract in its README; `cd packages/runtime-dom && bun test`)
 - Build: Rust `nightly-2026-09-15` (see `rust-toolchain.toml`) + Bun 1.4.x. `cargo test --workspace --exclude bun_react_compiler`.
 - CLI: `cargo run -p brust-compiler-cli -- <file.tsx> --emit parse|hir`
 

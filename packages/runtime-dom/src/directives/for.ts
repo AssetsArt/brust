@@ -14,7 +14,7 @@ BINDERS.push({
   bind: ({ inst, el, attr, raw, scope }) => {
     if (done.has(el)) return
     const m = SYNTAX.exec(raw)
-    if (!m) { warnOnce(`for:${inst.name}:${raw}`, `x-for="${raw}" on x-data="${inst.name}": expected "item[, index] in source by keyFn"`); return }
+    if (!m) { warnOnce(`for:${inst.name}:${raw}`, `x-for="${raw}" in ${inst.name}: expected "item in src by key"`); return }
     const [, itemName, indexName, sourcePath, keyPath] = m as unknown as [string, string, string | undefined, string, string]
     const src = parsed(inst, attr, sourcePath)!; const keyP = parsed(inst, attr, keyPath)!
 
@@ -44,7 +44,7 @@ BINDERS.push({
       const seen = new Set<unknown>()
       list.forEach((item, i) => {
         let key = (keyFn as (x: unknown) => unknown)(item)
-        if (seen.has(key)) { warnOnce(`for:dupkey:${inst.name}:${raw}`, `x-for on x-data="${inst.name}": duplicate key ${JSON.stringify(key)}; falling back to index identity`); key = `__dup_${i}` }
+        if (seen.has(key)) { warnOnce(`for:dupkey:${inst.name}:${raw}`, `x-for in ${inst.name}: duplicate key ${JSON.stringify(key)}; using index`); key = `__dup_${i}` }
         seen.add(key)
         const pool = rows.get(key)
         let node = pool?.shift()
