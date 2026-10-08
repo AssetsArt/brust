@@ -247,9 +247,13 @@ impl<'r, 'a> Reader<'r, 'a> {
         out
     }
 
-    /// JSX in expression position. Task 4 reads it structurally.
+    /// JSX in expression position (a ternary arm, a `.map` body outside a child).
     fn jsx_expr(&mut self, e: &js_ast::Expr) -> RawExpr {
-        self.opaque(e, "jsx")
+        let node = crate::analyze::jsx::read_jsx(self, e);
+        RawExpr {
+            loc: loc_of(e),
+            kind: RawKind::Jsx(Box::new(node)),
+        }
     }
 }
 

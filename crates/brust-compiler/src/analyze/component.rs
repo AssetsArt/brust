@@ -2,7 +2,7 @@
 use crate::analyze::expr::{Reader, print_expr_js};
 use crate::analyze::hooks::mark_state_bindings;
 use crate::analyze::names::NameTable;
-use crate::ir::RawExpr;
+use crate::ir::{Diagnostic, Node, RawExpr};
 use crate::parse::Parsed;
 use bun_ast as js_ast;
 use js_ast::expr::Data as E;
@@ -62,4 +62,47 @@ pub fn debug_first_slot(parsed: &Parsed) -> Option<RawExpr> {
         let mut reader = Reader::new(&mut names, &print);
         Some(reader.expr(&slot))
     })
+}
+
+/// Test hook: the template of the returned JSX with the root host rule applied
+/// (no fragment wrapping), plus the reader's diagnostics.
+#[doc(hidden)]
+pub fn debug_template(parsed: &Parsed) -> (Node, Vec<Diagnostic>) {
+    parsed.with_ast(|ast| {
+        let Some(func) = default_export_fn(ast) else {
+            return (Node::Fragment(vec![]), vec![]);
+        };
+        let mut names = NameTable::new(ast, func);
+        mark_state_bindings(func, &mut names);
+        let print = |e: &js_ast::Expr| print_expr_js(parsed, ast, e);
+        let mut reader = Reader::new(&mut names, &print);
+        let node = match first_return(func) {
+            Some(ret) => crate::analyze::jsx::read_jsx(&mut reader, &ret),
+            None => Node::Fragment(vec![]),
+        };
+        let node = mark_host(node);
+        (node, reader.diagnostics)
+    })
+}
+
+/// Spec §5.2: a single returned element is the mount host.
+fn mark_host(node: Node) -> Node {
+    match node {
+        Node::Element {
+            loc,
+            tag,
+            attrs,
+            children,
+            ref_name,
+            ..
+        } => Node::Element {
+            loc,
+            tag,
+            attrs,
+            children,
+            host: true,
+            ref_name,
+        },
+        other => other,
+    }
 }

@@ -23,31 +23,33 @@ pub struct NameTable<'a> {
 impl<'a> NameTable<'a> {
     pub fn new(ast: &'a js_ast::Ast<'_>, component: &js_ast::G::Fn) -> Self {
         let records = ast.import_records.as_slice();
+        let path_of = |i: u32| {
+            records
+                .get(i as usize)
+                .map(|r| String::from_utf8_lossy(r.path.text).into_owned())
+        };
+        // `import` statements are the source of truth: `ast.named_imports` is a
+        // bundler table and leaves out default and namespace imports.
         let mut imports = HashMap::new();
-        for (r, ni) in ast
-            .named_imports
-            .keys()
-            .iter()
-            .zip(ast.named_imports.values())
-        {
-            let Some(record) = records.get(ni.import_record_index as usize) else {
-                continue;
-            };
-            let imported = if ni.alias_is_star {
-                "*".to_string()
-            } else {
-                ni.alias
-                    .as_ref()
-                    .map(|a| String::from_utf8_lossy(a.slice()).into_owned())
-                    .unwrap_or_else(|| "default".to_string())
-            };
-            imports.insert(
-                r.inner_index(),
-                (
-                    String::from_utf8_lossy(record.path.text).into_owned(),
-                    imported,
-                ),
-            );
+        for part in ast.parts.iter() {
+            for stmt in part.stmts.slice() {
+                let js_ast::stmt::Data::SImport(imp) = &stmt.data else {
+                    continue;
+                };
+                let Some(path) = path_of(imp.import_record_index) else {
+                    continue;
+                };
+                if let Some(d) = &imp.default_name {
+                    imports.insert(d.ref_.inner_index(), (path.clone(), "default".into()));
+                }
+                for item in imp.items.slice() {
+                    let imported = String::from_utf8_lossy(item.alias.slice()).into_owned();
+                    imports.insert(item.name.ref_.inner_index(), (path.clone(), imported));
+                }
+                if imp.star_name_loc.start >= 0 {
+                    imports.insert(imp.namespace_ref.inner_index(), (path, "*".into()));
+                }
+            }
         }
         let mut table = NameTable {
             symbols: ast.symbols.as_slice(),
@@ -157,6 +159,18 @@ impl<'a> NameTable<'a> {
     pub fn unmark_loop_binding(&mut self, r: js_ast::Ref) {
         let k = self.key(r);
         self.loop_bindings.remove(&k);
+    }
+
+    /// `r` names the JSX `Fragment`: the parser's generated runtime binding, or
+    /// `Fragment` imported from `react` by the author.
+    pub fn is_fragment(&self, r: js_ast::Ref) -> bool {
+        if let Some((source, imported)) = self.import_of(r) {
+            return imported == "Fragment" && source.starts_with("react");
+        }
+        self.symbols.get(self.key(r) as usize).is_some_and(|s| {
+            s.kind == js_ast::symbol::Kind::Other
+                && s.original_name.slice().starts_with(b"Fragment")
+        })
     }
 
     /// Same symbol, links followed.
