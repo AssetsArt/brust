@@ -14,3 +14,11 @@ Verified-good properties the reviewer confirmed (do not regress): `Parsed` is `!
 (thread-local AST state cannot cross threads); `set_stack_size` stores an absolute limit so
 first-call depth does not matter; `collect_scopes` is exhaustive over `ReactiveTerminal`;
 vendor diff is exactly `BRUST-PATCH.md` items 1–7.
+
+## From Afrojack's REVIEW-PASS on `m1a-fixtures-docs` @ef68d4a (note e6624dd1)
+
+| # | Where | Finding | Proposed fix | Owner plan |
+|---|---|---|---|---|
+| F5 | `crates/brust-compiler/tests/fixtures.rs:41` | `BRUSTC_UPDATE=1` never deletes a stale `expected.hir.json` when a case flips to error (or the reverse), leaving two expectation files. | On update, remove the other-kind expectation file for that case. | M1b (when the runner grows `ir`/`template` emits) |
+| F6 | `tests/fixtures/*/expected.hir.json` | `"identifiers": 109` is a brittle count that churns on every Bun rev bump. | Accept update-diff noise (bun-rev-bump step 8 says to inspect golden diffs), or drop the field from `HirSummary` in M1b if it carries no decision. | M1b |
+| F7 | `docs/design/bun-rev-bump.md:7` | `sed -i ''` is macOS-only. | Note it, or switch to `perl -pi -e` when a Linux dev machine appears. | docs, any time |
