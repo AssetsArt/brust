@@ -53,8 +53,11 @@ function disposeTree(root: Node): void {
 }
 
 export function mount(root: ParentNode = document.body): void {
+  // Observe first: binders (x-if, x-for) insert nested hosts during the initial pass.
+  if (!observer) startObserver(root)
   mountTree(root)
-  if (observer) return
+}
+function startObserver(root: ParentNode): void {
   observer = new MutationObserver((records) => {
     for (const r of records) {
       r.removedNodes.forEach((n) => { if (!n.isConnected) disposeTree(n) })
