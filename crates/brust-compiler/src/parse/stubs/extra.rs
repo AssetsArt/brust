@@ -17,7 +17,10 @@ unsafe extern "C" fn simdutf__convert_utf8_to_utf16le_with_errors(
     // SAFETY: caller passes a readable (p, len) range and an output buffer sized for it.
     let bytes = unsafe { core::slice::from_raw_parts(p, len) };
     let Ok(s) = core::str::from_utf8(bytes) else {
-        return SimdutfResult { status: 1, count: 0 };
+        return SimdutfResult {
+            status: 1,
+            count: 0,
+        };
     };
     let mut n = 0usize;
     for u in s.encode_utf16() {
@@ -25,7 +28,10 @@ unsafe extern "C" fn simdutf__convert_utf8_to_utf16le_with_errors(
         unsafe { out.add(n).write(u) };
         n += 1;
     }
-    SimdutfResult { status: 0, count: n }
+    SimdutfResult {
+        status: 0,
+        count: n,
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -39,7 +45,11 @@ unsafe extern "C" fn JSC__jsToNumber(ptr: *const u8, len: usize) -> f64 {
     let s = core::str::from_utf8(unsafe { core::slice::from_raw_parts(ptr, len) })
         .unwrap_or("")
         .trim();
-    if s.is_empty() { 0.0 } else { s.parse::<f64>().unwrap_or(f64::NAN) }
+    if s.is_empty() {
+        0.0
+    } else {
+        s.parse::<f64>().unwrap_or(f64::NAN)
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -50,6 +60,8 @@ extern "C" fn URL__getFileURLString(_input: &bun_core::string::String) -> bun_co
     bun_core::string::String::EMPTY
 }
 
+// The signature is fixed by the extern declaration in bun_js_parser.
+#[allow(clippy::too_many_arguments)]
 #[unsafe(no_mangle)]
 pub extern "Rust" fn __bun_macro_context_call(
     _ctx: &mut bun_js_parser::Macro::MacroContext,

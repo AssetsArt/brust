@@ -42,7 +42,9 @@ impl Host for AstHost<'_> {
             let start = r.source_index() as usize;
             &self.source.contents()[start..start + r.inner_index() as usize]
         } else {
-            self.ast.symbols.as_slice()[r.inner_index() as usize].original_name.slice()
+            self.ast.symbols.as_slice()[r.inner_index() as usize]
+                .original_name
+                .slice()
         }
     }
     fn scope_for_loc(&self, _loc: js_ast::Loc) -> Option<&js_ast::Scope> {
@@ -77,14 +79,23 @@ impl Host for AstHost<'_> {
         unreachable!("classic jsx runtime is never configured")
     }
     fn new_generated(&mut self, name: &[u8]) -> js_ast::Ref {
-        panic!("Host::new_generated({}) during analysis", String::from_utf8_lossy(name))
+        panic!(
+            "Host::new_generated({}) during analysis",
+            String::from_utf8_lossy(name)
+        )
     }
     fn new_local(&mut self, name: &[u8]) -> js_ast::Ref {
-        panic!("Host::new_local({}) during analysis", String::from_utf8_lossy(name))
+        panic!(
+            "Host::new_local({}) during analysis",
+            String::from_utf8_lossy(name)
+        )
     }
     fn record_usage(&mut self, _r: js_ast::Ref) {}
     fn add_import_record(&mut self, path: &[u8], _kind: js_ast::ImportKind) -> (u32, js_ast::Ref) {
-        panic!("Host::add_import_record({}) during analysis", String::from_utf8_lossy(path))
+        panic!(
+            "Host::add_import_record({}) during analysis",
+            String::from_utf8_lossy(path)
+        )
     }
 }
 
@@ -94,7 +105,7 @@ pub fn analyze_hir(parsed: &Parsed) -> Result<HirSummary, HirError> {
     let mut func: Option<&js_ast::G::Fn> = None;
     for part in ast.parts.iter() {
         for stmt in part.stmts.slice() {
-            stmts.push(stmt.clone());
+            stmts.push(*stmt);
             if let js_ast::stmt::Data::SExportDefault(ed) = &stmt.data
                 && let js_ast::StmtOrExpr::Stmt(inner) = &ed.value
                 && let js_ast::stmt::Data::SFunction(sf) = &inner.data
@@ -111,7 +122,11 @@ pub fn analyze_hir(parsed: &Parsed) -> Result<HirSummary, HirError> {
     let mut ast_alloc = js_ast::ASTMemoryAllocator::borrowing(parsed.arena());
     let _scope = ast_alloc.enter();
 
-    let mut host = AstHost { ast, source: parsed.source(), arena: parsed.arena() };
+    let mut host = AstHost {
+        ast,
+        source: parsed.source(),
+        arena: parsed.arena(),
+    };
     let bindings =
         bun_react_compiler::collect_import_bindings(&stmts, host.import_records(), host.symbols());
     let opts = bun_react_compiler::ReactCompilerOptions::default();
@@ -151,7 +166,10 @@ pub fn analyze_hir(parsed: &Parsed) -> Result<HirSummary, HirError> {
             deps: s
                 .dependencies
                 .iter()
-                .map(|d| DepInfo { name: name_of(&d.identifier), reactive: d.reactive })
+                .map(|d| DepInfo {
+                    name: name_of(&d.identifier),
+                    reactive: d.reactive,
+                })
                 .collect(),
             decls: s.declarations.iter().map(|(id, _)| name_of(id)).collect(),
         })

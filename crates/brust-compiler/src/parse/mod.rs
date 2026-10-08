@@ -83,9 +83,22 @@ fn stack_bottom() -> Option<usize> {
     }
 }
 
-#[cfg(all(feature = "bun-stubs", not(any(target_os = "macos", target_os = "linux"))))]
+#[cfg(all(
+    feature = "bun-stubs",
+    not(any(target_os = "macos", target_os = "linux"))
+))]
 fn stack_bottom() -> Option<usize> {
     None
+}
+
+/// Lifetime-erased view of a boxed value, for the self-referential `Parsed`.
+///
+/// # Safety
+/// The box must outlive every use of the returned reference and must not be
+/// mutated or dropped while it is alive.
+unsafe fn boxed<T: ?Sized>(b: &T) -> &'static T {
+    // SAFETY: forwarded to the caller.
+    unsafe { &*core::ptr::from_ref::<T>(b) }
 }
 
 pub fn parse_tsx(path: &str, source: Vec<u8>) -> Result<Parsed, ParseError> {
@@ -95,16 +108,15 @@ pub fn parse_tsx(path: &str, source: Vec<u8>) -> Result<Parsed, ParseError> {
     let text: Box<[u8]> = source.into_boxed_slice();
     let path_box: Box<[u8]> = path.as_bytes().into();
     let arena = Box::new(bun_alloc::Arena::new());
-    // SAFETY (for every `&*(&raw const *box)` below): each box is moved into
-    // `Parsed` and never mutated or reallocated, so its heap address is stable,
-    // and `Parsed`'s field order drops every borrower before the box it borrows.
-    let (text_ref, path_ref, arena_ref): (&'static [u8], &'static [u8], &'static bun_alloc::Arena) =
-        unsafe { (&*(&raw const *text), &*(&raw const *path_box), &*(&raw const *arena)) };
+    // SAFETY (every `boxed` call below): each box is moved into `Parsed` and never
+    // mutated or reallocated, so its heap address is stable, and `Parsed`'s field
+    // order drops every borrower before the box it borrows.
+    let (text_ref, path_ref, arena_ref) =
+        unsafe { (boxed(&*text), boxed(&*path_box), boxed(&*arena)) };
     let mut ast_alloc = Box::new(js_ast::ASTMemoryAllocator::borrowing(arena_ref));
     let src = Box::new(js_ast::Source::init_path_string(path_ref, text_ref));
     let define = Box::new(bun_js_parser::Define::default());
-    let (src_ref, define_ref): (&'static js_ast::Source, &'static bun_js_parser::Define) =
-        unsafe { (&*(&raw const *src), &*(&raw const *define)) };
+    let (src_ref, define_ref) = unsafe { (boxed(&*src), boxed(&*define)) };
 
     let (result, log) = {
         // The scope routes the parser's node and `AstVec` allocations into
@@ -115,10 +127,11 @@ pub fn parse_tsx(path: &str, source: Vec<u8>) -> Result<Parsed, ParseError> {
         opts.features.no_macros = true;
         opts.features.react_compiler = js_ast::runtime::ReactCompilerMode::Disabled;
         let mut log = js_ast::Log::init();
-        let result = match bun_js_parser::Parser::init(opts, &mut log, src_ref, define_ref, arena_ref) {
-            Ok(parser) => parser.parse(),
-            Err(e) => Err(e),
-        };
+        let result =
+            match bun_js_parser::Parser::init(opts, &mut log, src_ref, define_ref, arena_ref) {
+                Ok(parser) => parser.parse(),
+                Err(e) => Err(e),
+            };
         (result, log)
     };
     if log.errors > 0 {
@@ -152,7 +165,11 @@ pub fn parse_tsx(path: &str, source: Vec<u8>) -> Result<Parsed, ParseError> {
 }
 
 fn plain_error(message: &str) -> ParseError {
-    ParseError { message: message.to_string(), line: 0, column: 0 }
+    ParseError {
+        message: message.to_string(),
+        line: 0,
+        column: 0,
+    }
 }
 
 /// The first error in `log`. Bun's `Location` line and column are both 1-based
@@ -171,7 +188,11 @@ fn first_error(log: &js_ast::Log, text: &[u8]) -> ParseError {
         Some(l) => offset_to_line_col(text, l.offset),
         None => (0, 0),
     };
-    ParseError { message: String::from_utf8_lossy(&m.data.text).into_owned(), line, column }
+    ParseError {
+        message: String::from_utf8_lossy(&m.data.text).into_owned(),
+        line,
+        column,
+    }
 }
 
 fn offset_to_line_col(text: &[u8], offset: usize) -> (u32, u32) {

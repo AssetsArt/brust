@@ -2,7 +2,10 @@ use brust_compiler::analyze::hir::{HirError, analyze_hir};
 use brust_compiler::parse::parse_tsx;
 
 fn parsed(name: &str) -> brust_compiler::parse::Parsed {
-    let path = format!("{}/../../tests/fixtures/{name}/input.tsx", env!("CARGO_MANIFEST_DIR"));
+    let path = format!(
+        "{}/../../tests/fixtures/{name}/input.tsx",
+        env!("CARGO_MANIFEST_DIR")
+    );
     parse_tsx(&path, std::fs::read(&path).unwrap()).unwrap()
 }
 
@@ -36,7 +39,9 @@ fn static_component_has_no_reactive_scopes_but_succeeds() {
     let s = analyze_hir(&parsed("static-text")).unwrap();
     assert_eq!(s.function, "Hello");
     assert!(
-        s.scopes.iter().all(|sc| sc.deps.iter().all(|d| d.name == "name")),
+        s.scopes
+            .iter()
+            .all(|sc| sc.deps.iter().all(|d| d.name == "name")),
         "{:?}",
         s.scopes
     );
