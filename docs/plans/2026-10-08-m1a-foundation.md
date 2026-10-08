@@ -1398,3 +1398,22 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - **Type consistency:** `Parsed`, `ParseError`, `HirSummary`, `ScopeInfo`, `DepInfo`, `HirError`, `analyze_hir`, `parse_tsx` are named identically in Tasks 2, 4, 5, 6 and in the Interfaces block.
 - **Known soft spot:** Task 2 Step 5 names two `Msg` fields from memory (`m.kind`, `m.data.location`); the step says to read them off the checkout. The contract is the test, not the field names.
 - **Review Focus → tests:** 1 → Task 2 `reports_syntax_error_with_position` + Task 4 `parse_error_exits_1_with_position`; 2 → Task 5 `arrow_default_export_is_reported_not_panicked`; 3 → Task 5 `static_component_has_no_reactive_scopes_but_succeeds`; 4 → Task 2 `two_parses_in_one_thread_do_not_interfere`; 5 → Task 7 cold CI run.
+
+---
+
+## Dispatch table (for the Coordinator)
+
+Branch: `v2` (orphan). Lanes branch from `v2`, never from `main`. Worktrees live under
+`/Users/detoro/code/brust/.claude/worktrees/<slug>` on branch `lane/<slug>`; the lead
+creates each worktree from `v2` and merges each lane back into `v2`.
+
+| slug | plan tasks | tier | role | deps | review | acceptance (READY evidence) |
+|---|---|---|---|---|---|---|
+| `m1a-foundation-core` | 1, 2, 3, 4, 5 | complex | Implementer (Complex) | — | complex | `cargo build --workspace` green; `cargo tree -p brust-compiler -i bun_react_compiler` shows `vendor/bun_react_compiler` and no git copy; `cargo test -p brust-compiler --test parse --test hir` and `cargo test -p brust-compiler-cli --test cli` all pass; `cargo run -q -p brust-compiler-cli -- tests/fixtures/theme-toggle/input.tsx --emit hir` prints a scope with deps `[{"name":"mode","reactive":true}]`. Paste the three command outputs (tails) in the READY note. |
+| `m1a-fixtures-docs` | 6, 8 | standard | Implementer (Standard) | `m1a-foundation-core` merged | standard | `cargo test -p brust-compiler --test fixtures` passes without `BRUSTC_UPDATE`; `expected.hir.json` for theme-toggle and static-text plus `expected.error.txt` for arrow-default committed; `docs/design/bun-rev-bump.md` and `README.md` present. |
+| `m1a-ci` | 7 | standard | Implementer (Standard) | `m1a-fixtures-docs` merged | standard | `cargo fmt --all -- --check` and `cargo clippy -p brust-compiler -p brust-compiler-cli -- -D warnings` clean locally; `.github/workflows/ci.yml` pushed on the lane and the `ci` run green on GitHub (paste the run URL). |
+
+Gate commands any lane may ask the Runner to execute: `cargo fmt --all -- --check`,
+`cargo clippy -p brust-compiler -p brust-compiler-cli -- -D warnings`, `cargo test --workspace`.
+Escalations: design/spec conflicts → `task challenge` to the owner (lead); implementation
+judgment inside the plan's intent → a `task note`, no escalation.
