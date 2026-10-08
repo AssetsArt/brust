@@ -29,3 +29,12 @@ vendor diff is exactly `BRUST-PATCH.md` items 1–7.
 |---|---|---|---|---|
 | F8 | `.github/workflows/ci.yml` last step | `bun check` does not exist on Bun 1.4.2 (it is a 1.4.3 feature; 1.4.2 runs the package.json `check` script). CI uses `bun build --no-bundle` (syntax only) for now. | When 1.4.3 is stable: bump `setup-bun` to it and switch the step to `bun check scripts/bun-codegen.ts`; add `bun check` for `packages/runtime-dom` in M1d. | M1d / whoever bumps Bun |
 | F9 | `crates/brust-compiler/src/parse/stubs/extra.rs` | Linux needs `Bun__linux_trace_{init,close,emit}` stubs that macOS never links; more may appear when `ubuntu-latest` moves to Ubuntu 26 (2026-10-19). | Keep the stubs file platform-aware; rev-bump checklist step 7 links on both OSes. | bump checklist |
+
+## From Mellow's REVIEW-PASS on `m1d-runtime-dom` @a0ecdf3 (PR #112)
+
+| # | Where | Finding | Proposed fix | Owner plan |
+|---|---|---|---|---|
+| F10 | `packages/runtime-dom/src/mount.ts:56,71` | Multi-root: `mount(A); mount(B); unmount(A)` disconnects the single observer, so hosts inserted into B later never mount. Single-root `mount(document.body)` (the M1 path) is unaffected. | Keep a `Set` of roots; `unmount(root)` removes it, disconnects, re-observes the remaining roots; add the P10 test. | M2 (server/SPA spec) |
+| F11 | `packages/runtime-dom/src/directives/bind.ts:8` | The new URL-scheme allowlist (added by the lane as hardening) refuses `data:image/*` and `blob:` on `img/video src/poster`; file-input previews and canvas blobs are legitimate. | Allow `blob:` everywhere and `data:image/(png\|jpeg\|gif\|webp\|avif)` (not svg) on `src`/`poster`; document the refusal in the README meanwhile. | M2 |
+| F12 | `packages/runtime-dom/src/props-bind.ts:17-20` | If the nearest ancestor host's factory throws, its `x-props-bind` children wait forever with no warning. | On init failure, `warnOnce` for each waiting direct child. | M2 |
+| F13 | `packages/runtime-dom/src/mount.ts:31` | Late-link scan visits every `[x-data]` descendant on every host mount — quadratic for deep host chains; fine at M1 sizes. | Index children by nearest host during the scan. | M2 |
