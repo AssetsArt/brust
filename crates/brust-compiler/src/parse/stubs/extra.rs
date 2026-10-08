@@ -83,3 +83,23 @@ bun_ast::link_impl_TranspilerCacheImpl! {
         is_disabled() => { let _ = this; true },
     }
 }
+
+// Linux-only: bun_core::perf probes tracefs through these. "Unavailable" is the correct answer here.
+#[cfg(target_os = "linux")]
+#[unsafe(no_mangle)]
+extern "C" fn Bun__linux_trace_init() -> c_int {
+    0
+}
+
+#[cfg(target_os = "linux")]
+#[unsafe(no_mangle)]
+extern "C" fn Bun__linux_trace_close() {}
+
+#[cfg(target_os = "linux")]
+#[unsafe(no_mangle)]
+unsafe extern "C" fn Bun__linux_trace_emit(
+    _event_name: *const core::ffi::c_char,
+    _duration_ns: i64,
+) -> c_int {
+    0
+}
