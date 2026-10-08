@@ -1,0 +1,45 @@
+[workspace]
+resolver = "3"
+members = ["crates/brust-compiler", "crates/brust-compiler-cli", "vendor/bun_react_compiler"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+
+# Bun crates. One rev for all of them; bump via docs/design/bun-rev-bump.md.
+[workspace.dependencies]
+bun_js_parser      = { git = "https://github.com/oven-sh/bun", rev = "620b50f6abea3413a30235c5885bfe8cbffd592d" }
+bun_ast            = { git = "https://github.com/oven-sh/bun", rev = "620b50f6abea3413a30235c5885bfe8cbffd592d" }
+bun_js_printer     = { git = "https://github.com/oven-sh/bun", rev = "620b50f6abea3413a30235c5885bfe8cbffd592d" }
+bun_react_compiler = { git = "https://github.com/oven-sh/bun", rev = "620b50f6abea3413a30235c5885bfe8cbffd592d" }
+bun_alloc          = { git = "https://github.com/oven-sh/bun", rev = "620b50f6abea3413a30235c5885bfe8cbffd592d" }
+bun_core           = { git = "https://github.com/oven-sh/bun", rev = "620b50f6abea3413a30235c5885bfe8cbffd592d" }
+bun_collections    = { git = "https://github.com/oven-sh/bun", rev = "620b50f6abea3413a30235c5885bfe8cbffd592d" }
+bun_threading      = { git = "https://github.com/oven-sh/bun", rev = "620b50f6abea3413a30235c5885bfe8cbffd592d" }
+# Third-party versions the vendored Bun crate inherits (copied from Bun's workspace at the rev).
+enumset  = "1"
+smallvec = "1"
+bstr     = { version = "1", default-features = false, features = ["alloc"] }
+thiserror = "2"
+libc     = "0.2"
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Minimal lint tables so the vendored crate's `[lints] workspace = true` resolves.
+# Copied from Bun's `[workspace.lints.rust]` entry that silences its cfg names.
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)', 'cfg(bun_debug)', 'cfg(socket_fault_injection)', 'cfg(bun_sema_mimalloc)'] }
+
+[workspace.lints.clippy]
+
+# Our patched copy replaces the git crate everywhere, including inside bun_js_parser.
+[patch."https://github.com/oven-sh/bun"]
+bun_react_compiler = { path = "vendor/bun_react_compiler" }
+
+[profile.dev]
+opt-level = 1          # Bun's parser is unusably slow at opt-level 0 and the build is dominated by it anyway
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

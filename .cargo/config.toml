@@ -1,0 +1,3 @@
+[env]
+# bun_core / bun_parsers include!() generated files from here (spec §10.2).
+BUN_CODEGEN_DIR = { value = "bun-codegen", relative = true }

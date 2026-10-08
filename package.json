@@ -1,0 +1,9 @@
+{
+  "name": "brust-v2",
+  "private": true,
+  "type": "module",
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "bun-codegen": "bun scripts/bun-codegen.ts"
+  }
+}
