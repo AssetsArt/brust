@@ -3,7 +3,7 @@ import { parsed, read } from './common'
 import { warnOnce } from '../warn'
 
 // Attributes that execute or load code from a string; a bound value must never reach them as-is.
-const URL_ATTRS = new Set(['href', 'src', 'action', 'formaction', 'poster', 'data'])
+const URL_ATTRS = new Set(['href', 'src', 'action', 'formaction', 'poster', 'data', 'xlink:href', 'ping'])
 // Scheme allowlist on the parsed URL (relative URLs resolve to http): new URL() applies the browser's tab/newline/control-char stripping.
 const safeUrl = (v: string): boolean => { try { return ['http:', 'https:', 'mailto:', 'tel:'].includes(new URL(v, 'http://x').protocol) } catch { return false } }
 const BOOLEAN = new Set(['disabled', 'checked', 'selected', 'readonly', 'required', 'hidden', 'open', 'multiple'])
