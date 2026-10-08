@@ -45,7 +45,7 @@ implementers. Change requests go through a `task challenge` to the lead.
 |---|---|---|
 | D1 | `v2` is an **orphan branch**; clean monorepo from day 1. | The 0.1.x compiler (19k lines of hand-rolled lowering) and runtime are not the base. |
 | D2 | Authoring = **real React**: hooks are imported from `react`, JSX is React JSX, TypeScript types are React's. | A component that is valid React always has a working fallback (React SSR + hydrate) and migrates without edits. |
-| D3 | **Native is the default tier.** A component that cannot be native **falls back** (to React) with a diagnostic; it never fails the build. Users may pin a tier with a `'use react'` directive at the top of the file. | Default-on only works when the fallback is safe. |
+| D3 | **Native is the default tier.** A component that cannot be native **falls back** (to React) with a diagnostic; it never fails the build. **No source-level directives** (`'use react'`, `'use client'`, …): the compiler alone decides the tier. If a project ever needs to force a tier, that is an app-config knob for a later spec, never text in the component file. | Default-on only works when the fallback is safe; directives would reintroduce the `native: true` flag under another name. |
 | D4 | **Server render target = Rust, minijinja templates.** First paint never runs JS. | brust's identity and its cache-hit / no-worker fast path. The price is an expression subset for anything the server has to paint (§6). |
 | D5 | **Compiler = Rust, built on Bun's own crates** (`bun_js_parser`, `bun_ast`, `bun_js_printer`, `bun_react_compiler`) linked as git dependencies at a pinned rev, on Bun's pinned nightly. Not swc. | Verified by spike 2026-10-08 (§10): Bun's parse is the one Bun runs; `bun_react_compiler` is Meta's React Compiler ported, and its HIR / reactive scopes are exactly the state–handler–JSX dependency analysis this design needs. |
 | D6 | **Bundling = `bun build`**, **type gate = `bun check` / `Bun.build({ check: true })`.** No rspack, no biome as the primary gate. | Both are built into the Bun the user already runs. |
@@ -63,7 +63,7 @@ component is classified by the compiler into exactly one tier:
 |---|---|---|---|
 | `static` | No hooks, no handlers, no refs; every painted expression is in the server subset (§6). | Rust renders the template. | Nothing ships. |
 | `native` | Only the supported hook set (§4.3) and handlers; every painted expression is in the subset; state initializers are in the subset; no server-only capture (§8.2). | Rust renders the template with initial state seeded. | A react-free **directive chunk** (signals + generated members) bound to the HTML by `x-*` attributes. |
-| `react` | Everything else: `useContext`/`use`, `Suspense`, custom hooks, `useReducer`, refs used for layout reads in render, class components, a painted expression outside the subset, a child receiving reactive state as a prop (§3.2). Also any file pinned with `'use react'`. | React SSR in a worker (streaming when it is a page). | React hydrates that subtree (an island when embedded in a native page; the whole page when the page itself is `react`). |
+| `react` | Everything else: `useContext`/`use`, `Suspense`, custom hooks, `useReducer`, refs used for layout reads in render, class components, a painted expression outside the subset, a child receiving reactive state as a prop (§3.2). | React SSR in a worker (streaming when it is a page). | React hydrates that subtree (an island when embedded in a native page; the whole page when the page itself is `react`). |
 
 Tier is decided **per component**, bottom-up. A `react` child inside a `native`
 parent is an SSR island at the child's boundary; the parent stays native. A `react`
@@ -365,16 +365,16 @@ category.
 
 An import is server-only when any of: it resolves to a Node/Bun builtin (`node:*`,
 `bun:*`, `fs`, `path`, …); its package.json has `"browser": false` for the resolved
-file; it is under a path listed in the app config `serverOnly: [...]`; or the module
-itself has `'use server'`. The check is on the import path, not on usage shape, so it
-is cheap and conservative. (`'use client'` is accepted and means "pin to `react`",
-same as `'use react'`, for people arriving from Next.)
+file; or it is under a path listed in the app config `serverOnly: [...]`. The check
+is on the import path, not on usage shape, so it is cheap and conservative.
 
-### 8.3 Pinning
+### 8.3 No directives
 
-`'use react'` as the first statement pins the file to the `react` tier (no analysis).
-`'use native'` pins to native-or-error: any `Fallback` becomes an `Error`, for
-authors who want the guarantee.
+There is no `'use react'`, `'use native'`, `'use client'` or `'use server'` (D3).
+A `'use client'` / `'use server'` string left over from a Next.js codebase is ignored
+with a `Warning` so migrated files do not silently change meaning. Forcing a tier or
+treating a Fallback as an Error (for authors who want the native guarantee) is an
+app-config concern for the build spec, keyed by file path, never by source text.
 
 ---
 
@@ -533,6 +533,5 @@ HTML + chunk that work in a browser against a hand-written static HTML harness.
 | Reactive props to children (§3.2 rule 4) are a common React pattern. | Explicit M2 item: a child native component receiving a parent signal becomes a nested scope sharing the parent's chunk. |
 
 Open: (a) whether `useId` needs server-side support in M1 or can be deferred;
-(b) naming of the host custom element for fragment roots; (c) whether `'use client'`
-should mean "pin react" or be rejected to avoid Next confusion. Lead rules on these
-when the first fixture hits them.
+(b) naming of the host custom element for fragment roots. Lead rules on these when
+the first fixture hits them.
