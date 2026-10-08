@@ -1,0 +1,16 @@
+[package]
+name = "brust-compiler-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "brustc"
+path = "src/main.rs"
+
+[dependencies]
+brust-compiler = { path = "../brust-compiler" }
+serde_json.workspace = true
+
+[lints]
+workspace = true

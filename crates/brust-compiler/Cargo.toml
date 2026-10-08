@@ -1,0 +1,28 @@
+[package]
+name = "brust-compiler"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["bun-stubs"]
+# Provides the native symbols Bun's C/C++ normally supplies. Disable only when linking
+# into a host that already provides them.
+bun-stubs = []
+
+[dependencies]
+bun_js_parser.workspace = true
+bun_ast.workspace = true
+bun_js_printer.workspace = true
+bun_react_compiler.workspace = true
+bun_alloc.workspace = true
+bun_core.workspace = true
+bun_threading.workspace = true
+bstr.workspace = true
+libc.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
