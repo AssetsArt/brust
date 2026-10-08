@@ -1,0 +1,20 @@
+{
+  "function": "Hello",
+  "params": 1,
+  "scopes": [
+    {
+      "id": 0,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "name",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t1"
+      ]
+    }
+  ],
+  "identifiers": 18
+}

@@ -1,0 +1,46 @@
+{
+  "function": "ThemeToggle",
+  "params": 1,
+  "scopes": [
+    {
+      "id": 3,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "mode",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t1",
+        "t2"
+      ]
+    },
+    {
+      "id": 5,
+      "pruned": false,
+      "deps": [],
+      "decls": [
+        "t3"
+      ]
+    },
+    {
+      "id": 6,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "themeLabel",
+          "reactive": true
+        },
+        {
+          "name": "label",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t4"
+      ]
+    }
+  ],
+  "identifiers": 109
+}
