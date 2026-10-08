@@ -155,8 +155,8 @@ fn plain_error(message: &str) -> ParseError {
     ParseError { message: message.to_string(), line: 0, column: 0 }
 }
 
-/// The first error in `log`, positioned 1-based (Bun's `Location::column` is a
-/// 0-based byte column).
+/// The first error in `log`. Bun's `Location` line and column are both 1-based
+/// (the column counts UTF-16 units).
 fn first_error(log: &js_ast::Log, text: &[u8]) -> ParseError {
     let msg = log
         .msgs
@@ -167,7 +167,7 @@ fn first_error(log: &js_ast::Log, text: &[u8]) -> ParseError {
         return plain_error("parse failed");
     };
     let (line, column) = match &m.data.location {
-        Some(l) if l.line > 0 => (l.line as u32, l.column.max(0) as u32 + 1),
+        Some(l) if l.line > 0 => (l.line as u32, l.column.max(1) as u32),
         Some(l) => offset_to_line_col(text, l.offset),
         None => (0, 0),
     };
