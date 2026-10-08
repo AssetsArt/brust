@@ -46,10 +46,10 @@ export class Instance {
 
 export const instances = new WeakMap<Element, Instance>()
 export function instanceOf(el: Element): Instance | undefined { return instances.get(el) }
+/** Instance of the nearest ancestor HOST. A host that has not mounted yet (chunk loading) yields null: wait, never skip to a farther ancestor. */
 export function nearestInstance(el: Element): Instance | null {
-  let p = el.parentElement
-  while (p) { const i = instances.get(p); if (i) return i; p = p.parentElement }
-  return null
+  const h = el.parentElement?.closest('[x-data]')
+  return (h && instances.get(h)) || null
 }
 
 /** Late-bound by mount.ts so binders (x-if, x-for) can mount nested hosts synchronously without an import cycle. */

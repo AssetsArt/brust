@@ -2,7 +2,7 @@
 
 React-free browser runtime that binds a compiled client chunk (`defineBehavior`) to server-rendered HTML
 through `x-*` attributes. **This README is the output format the M1c client backend prints against**; every
-behaviour below is pinned by a test in `test/`. Zero dependencies, eval-free, bundle < 12 KB minified
+behaviour below is pinned by a test in `test/`. Zero dependencies, eval-free, bundle < 13 KB minified
 (`bun scripts/build.ts`).
 
 ## Public surface

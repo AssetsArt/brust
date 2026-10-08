@@ -28,9 +28,9 @@ function mountHost(host: HTMLElement): void {
     inst.booted = true
     bindPropsFromParent(inst)
     // Children that mounted before this instance existed (parent chunk arrived late) link up now.
-    host.querySelectorAll<HTMLElement>('[x-data][x-props-bind]').forEach((h) => {
+    host.querySelectorAll<HTMLElement>('[x-data]').forEach((h) => {
       const child = instances.get(h)
-      if (child && !child.parent) { child.parent = inst; inst.children.add(child); bindPropsFromParent(child) }
+      if (child && !child.parent && h.parentElement?.closest('[x-data]') === host) { child.parent = inst; inst.children.add(child); bindPropsFromParent(child) }
     })
   })
 }
@@ -53,10 +53,12 @@ function disposeTree(root: Node): void {
 
 export function mount(root: ParentNode = document.body): void {
   // Observe first: binders (x-if, x-for) insert nested hosts during the initial pass.
-  if (!observer) startObserver(root)
+  if (!observer) startObserver(root); else if (root !== observedRoot) observer.observe(root, { childList: true, subtree: true })
   mountTree(root)
 }
+let observedRoot: ParentNode | null = null
 function startObserver(root: ParentNode): void {
+  observedRoot = root
   observer = new MutationObserver((records) => {
     for (const r of records) {
       r.removedNodes.forEach((n) => { if (!n.isConnected) disposeTree(n) })
@@ -66,6 +68,6 @@ function startObserver(root: ParentNode): void {
   observer.observe(root, { childList: true, subtree: true })
 }
 export function unmount(root: ParentNode = document.body): void {
-  observer?.disconnect(); observer = null
+  if (root === observedRoot) { observer?.disconnect(); observer = null; observedRoot = null }
   disposeTree(root as Node)
 }

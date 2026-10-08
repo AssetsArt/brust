@@ -1,5 +1,5 @@
 import { expect, test, beforeEach } from 'bun:test'
-import { defineBehavior, mount, unmount } from '../src'
+import { defineBehavior, mount, setChunkLoader, unmount } from '../src'
 import { signal, computed } from '../src/signal'
 beforeEach(() => { unmount(); document.body.innerHTML = '' })
 const flush = () => new Promise((r) => setTimeout(r, 0))
@@ -53,4 +53,47 @@ test('x-props-bind with no ancestor instance warns and keeps the JSON seed', () 
   expect(document.getElementById('s')!.textContent).toBe('7')
   expect(warns.some((w) => w.includes('x-props-bind'))).toBe(true)
   console.warn = orig
+})
+
+// Review round 1: the link must target the nearest ancestor HOST, mounted or not.
+for (const order of [['gp', 'mid'], ['mid', 'gp']] as const) {
+  test(`three levels, chunks arrive ${order.join(' then ')}: leaf binds to mid, never gp`, async () => {
+    const factories: Record<string, () => Record<string, unknown>> = {
+      gp: () => ({ _p: computed(() => ({ v: 'OUTER' })) }),
+      mid: () => ({ _p: computed(() => ({ v: 'MID' })) }),
+    }
+    const tag = order.join('')
+    defineBehavior(`leaf_${tag}`, ({ props }) => ({ _c: computed(() => props().v) }))
+    const pending = new Map<string, () => void>()
+    setChunkLoader(async (name) => { const k = name.split('_')[0]!; pending.set(k, () => defineBehavior(name, factories[k]!)) })
+    document.body.innerHTML = `<div x-data="gp_${tag}"><div x-data="mid_${tag}"><i id="l" x-data="leaf_${tag}" x-props='{"v":"seed"}' x-props-bind="_p" x-text="_c">seed</i></div></div>`
+    mount(); await flush()
+    for (const k of order) { pending.get(k)!(); await flush() }
+    expect(document.getElementById('l')!.textContent).toBe('MID')
+  })
+}
+
+test('x-props-bind to a non-object warns and keeps the previous props', () => {
+  const warns: string[] = []; const orig = console.warn; console.warn = (m: string) => { warns.push(String(m)) }
+  const v = signal<unknown>({ n: 1 })
+  defineBehavior('par_np', () => ({ _p: computed(() => v()) }))
+  defineBehavior('kid_np', ({ props }) => ({ _c: computed(() => props().n) }))
+  document.body.innerHTML = `<div x-data="par_np"><b id="b" x-data="kid_np" x-props-bind="_p" x-text="_c">1</b></div>`
+  mount()
+  v.set(null)
+  console.warn = orig
+  expect(document.getElementById('b')!.textContent).toBe('1')
+  expect(warns.some((w) => w.includes('not an object'))).toBe(true)
+})
+
+test('unmount(subtree) leaves the observer running for the rest of the page', async () => {
+  defineBehavior('u_one', () => ({}))
+  const seen: string[] = []
+  defineBehavior('u_two', ({ el }) => { seen.push(el.id); return {} })
+  document.body.innerHTML = `<div id="one"><i x-data="u_one"></i></div><div id="two"></div>`
+  mount()
+  unmount(document.getElementById('one')!)
+  document.getElementById('two')!.innerHTML = `<i id="late" x-data="u_two"></i>`
+  await flush()
+  expect(seen).toEqual(['late'])
 })
