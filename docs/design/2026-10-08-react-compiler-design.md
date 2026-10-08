@@ -252,9 +252,11 @@ Backends consume only the IR. They never see `bun_ast`.
 - **server backend** → `<name>.server.ts`: the precompute job as an exported function
   of its declared inputs, printed with `bun_js_printer` from the original expressions
   (so it keeps the user's imports and helper calls verbatim).
-- **client backend** → builds a `bun_ast` module for the chunk and prints it with
-  `bun_js_printer` (§7). The chunk imports only `brust/runtime-dom` and the user's
-  client-safe imports; it must contain no `react` import (asserted by a test).
+- **client backend** → prints the chunk as JavaScript text from the IR (`RawExpr`
+  JS printer plus the captured source of opaque function bodies) — *amended 2026-10-08:
+  it does not build a `bun_ast` module, because `lower/` may not see Bun types (§9 rule)*.
+  The chunk imports only `brust/runtime-dom` and the user's client-safe imports; it must
+  contain no `react` import (asserted by a test).
 - **react backend** → the original module untouched plus an `ssr` job descriptor
   (component id, props schema, client-only flag).
 
