@@ -1,2 +1,5 @@
 export { signal, computed, effect, batch, untracked } from './signal'
 export type { Signal, Computed, Dispose } from './signal'
+export { defineBehavior, setChunkLoader } from './registry'
+export type { BehaviorCtx, BehaviorFactory, BehaviorInstance } from './registry'
+export { mount, unmount } from './mount'
