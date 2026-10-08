@@ -20,7 +20,11 @@ fn main() -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    let parsed = match brust_compiler::parse::parse_tsx(&file, source) {
+    brust_compiler::parse::run_on_compiler_thread(|| run(&file, &emit, source))
+}
+
+fn run(file: &str, emit: &str, source: Vec<u8>) -> ExitCode {
+    let parsed = match brust_compiler::parse::parse_tsx(file, source) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("error: {} ({file}:{}:{})", e.message, e.line, e.column);

@@ -34,6 +34,12 @@ fn golden_hir() {
     cases.sort();
     assert!(!cases.is_empty());
     for case in cases {
+        brust_compiler::parse::run_on_compiler_thread(|| run_case(&case));
+    }
+}
+
+fn run_case(case: &Path) {
+    {
         let input = case.join("input.tsx");
         let parsed = brust_compiler::parse::parse_tsx(
             input.to_str().unwrap(),

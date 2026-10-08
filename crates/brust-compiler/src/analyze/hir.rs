@@ -18,7 +18,7 @@ pub enum HirError {
 /// Read-only view of a parsed module. Analysis never creates symbols or imports;
 /// the mutating `Host` methods panic so a pass that starts needing them is loud.
 struct AstHost<'a> {
-    ast: &'a js_ast::Ast<'static>,
+    ast: &'a js_ast::Ast<'a>,
     source: &'a js_ast::Source,
     arena: &'a bun_alloc::Arena,
 }
@@ -153,8 +153,14 @@ fn collect_scopes(block: &ReactiveBlock, out: &mut Vec<(ScopeId, bool)>) {
     }
 }
 
+/// Runs the React Compiler's analysis on the default-export function. Call it
+/// inside [`crate::parse::run_on_compiler_thread`]: the vendored compiler
+/// recurses without a stack guard.
 pub fn analyze_hir(parsed: &Parsed) -> Result<HirSummary, HirError> {
-    let ast = parsed.ast();
+    parsed.with_ast(|ast| analyze_ast(parsed, ast))
+}
+
+fn analyze_ast(parsed: &Parsed, ast: &js_ast::Ast<'_>) -> Result<HirSummary, HirError> {
     let mut stmts: Vec<js_ast::Stmt> = Vec::new();
     let mut func: Option<&js_ast::G::Fn> = None;
     for part in ast.parts.iter() {
@@ -247,6 +253,5 @@ pub fn analyze_hir(parsed: &Parsed) -> Result<HirSummary, HirError> {
         function: fn_name,
         params: reactive_fn.params.len(),
         scopes,
-        identifiers: env.identifiers.len(),
     })
 }
