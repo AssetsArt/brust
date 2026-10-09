@@ -7,12 +7,12 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 
 | Category | Rows | static | native | react | error | compile error | ⚠ |
 |---|---|---|---|---|---|---|---|
-| A JSX basics | 17 | 12 | 3 | 2 | 0 | 0 | 0 |
+| A JSX basics | 18 | 13 | 3 | 2 | 0 | 0 | 0 |
 | B Composition | 11 | 4 | 2 | 5 | 0 | 0 | 0 |
 | C Hooks | 14 | 0 | 7 | 7 | 0 | 0 | 0 |
-| D API surface | 5 | 1 | 0 | 3 | 0 | 1 | 0 |
+| D API surface | 5 | 1 | 0 | 4 | 0 | 0 | 0 |
 | E v2 specifics | 13 | 3 | 4 | 1 | 4 | 1 | 0 |
-| **Total** | 60 | 20 | 16 | 18 | 4 | 2 | 0 |
+| **Total** | 61 | 21 | 16 | 19 | 4 | 1 | 0 |
 
 ## A. JSX basics
 
@@ -29,7 +29,8 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | a-list-keys | keyed list from a prop | static | static | 0 | — |  |
 | a-nested-list | nested keyed lists | static | static | 0 | — | table rows; known gap: F32: `<brust-row>` wrappers inside <table> are foster-parented by the HTML parser (M2) |
 | a-cond-attribute | conditional attribute via ternary | static | static | 0 | — |  |
-| a-array-from | Array.from range list | react | react | ssr | fallback:jsx-expression, warning:key-outside-list | F40: the design recognises .map lists only; Array.from(…, fn → JSX) falls back (jsx-expression) |
+| a-array-from | Array.from range list | react | react | ssr | fallback:jsx-expression, warning:key-outside-list | F40: the Array.from(xs, fn) callback form is not recognised; only Array.from({ length: N }).map(…) is (spec §6.2) — falls back (jsx-expression) |
+| a-array-from-length | Array.from({ length: N }).map range list | static | static | 0 | — | spec §6.2: N literal ≤ 1024 |
 | a-state-text | state text with a click handler | native | native | 0 | — |  |
 | a-state-cond | state-driven conditional | native | native | 0 | — |  |
 | a-state-list | state list with append | native | native | 0 | — |  |
@@ -57,11 +58,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Pattern | Authoring | Expected | Observed tier | Jobs | Diagnostics | Note |
 |---|---|---|---|---|---|---|
 | c-usestate | useState | native | native | 0 | — |  |
-| c-useeffect-cleanup | useEffect with cleanup | native | native | 0 | — | warning: deps are ignored |
+| c-useeffect-cleanup | useEffect with cleanup | native | native | 0 | — | no effect-deps warning in M1 (ledger F41) |
 | c-usememo | useMemo derived from state | native | native | 0 | — |  |
 | c-usecallback | useCallback handler | native | native | 0 | — |  |
 | c-useref | useRef bound with ref= | native | native | 0 | — |  |
-| c-useid | useId read in render | native | react | ssr | fallback:use-id-in-render | §4.3 says server generates, client reads it from the DOM; known gap: F39: M1 decision (finding 5): a useId value read in render falls back (use-id-in-render); server-generated ids need the M2 server |
+| c-useid | useId read in render | native | react | ssr | fallback:use-id-in-render | §4.3 says server generates, client reads it from the DOM; known gap: F39: M1 decision (finding 5): a useId value read in render falls back (use-id-in-render); server-generated ids need the M2 server (spec §13 (a); docs/plans/2026-10-08-m1b2-placement-tier.md:206) |
 | c-uselayouteffect | useLayoutEffect | native | native | 0 | — |  |
 | c-usereducer | useReducer | react | react | ssr | fallback:hook-unsupported |  |
 | c-usecontext | useContext | react | react | ssr | fallback:hook-unsupported |  |
@@ -76,7 +77,7 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Pattern | Authoring | Expected | Observed tier | Jobs | Diagnostics | Note |
 |---|---|---|---|---|---|---|
 | d-cache | cache() around a server helper | static | static | precompute | — |  |
-| d-lazy-suspense | lazy + Suspense | react | compile-error | 0 | — | compile error: compiler panic: assertion failed: self.import_records.len() > import_record_index as usize; known gap: F38: a dynamic import() in a component makes the Bun printer panic (import_records assertion) instead of falling back |
+| d-lazy-suspense | lazy + Suspense | react | react | ssr | fallback:dynamic-import, fallback:external-component, fallback:island-children, fallback:jsx-expression, fallback:local-component, warning:fragment-root | F38 fixed: a dynamic import() is a dynamic-import fallback, not a printer panic |
 | d-createcontext | createContext provider | react | react | ssr | fallback:member-tag, warning:fragment-root |  |
 | d-clone-element | cloneElement | react | react | ssr | fallback:hook-unsupported |  |
 | d-children-map | Children.map | react | react | ssr | fallback:jsx-expression |  |
@@ -94,7 +95,7 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | e-browser-global | browser global read during render | react | react | ssr | fallback:browser-global | client-only React island |
 | e-request-prop | request state read in render | error | error | precompute | error:request-state-in-render |  |
 | e-missing-key | list without key | error | error | 0 | error:list-key |  |
-| e-use-client | 'use client' leftover | static | static | 0 | — | warning: ignored |
+| e-use-client | 'use client' leftover | static | static | 0 | — | no use-client-leftover warning in M1 (ledger F41) |
 | e-fragment-root | fragment root with state | native | native | 0 | warning:fragment-root | warning fragment-root |
 | e-if-in-table | state-driven row inside a table | native | native | 0 | — | known gap: F32: the `<brust-if>` wrapper inside <tbody> is foster-parented by the HTML parser (M2) |
 | e-parse-error | snippet that does not parse | compile-error | compile-error | 0 | — | compile error: Syntax Error (input.tsx:1:43); reported as a row, never aborts the battery |
