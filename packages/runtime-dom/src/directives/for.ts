@@ -6,7 +6,7 @@ import { hooks } from '../instance'
 
 type RowScope = Record<string, unknown> & { __own: Signal<number> }
 
-const SYNTAX = /^\s*([A-Za-z_$][\w$]*)\s*(?:,\s*([A-Za-z_$][\w$]*))?\s+in\s+([A-Za-z_$][\w$.]*)\s+by\s+([A-Za-z_$][\w$.]*)\s*$/
+const SYNTAX = /^\s*([A-Za-z_$][\w$]*)\s*(?:,\s*([A-Za-z_$][\w$]*))?\s+in\s+([A-Za-z_$][\w$.]*(?::[A-Za-z_$][\w$]*(?:\s*,\s*[A-Za-z_$][\w$]*)*)?)\s+by\s+([A-Za-z_$][\w$.]*)\s*$/
 const done = new WeakSet<Element>()
 
 BINDERS.push({

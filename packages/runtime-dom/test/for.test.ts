@@ -70,3 +70,28 @@ test('a moved row refreshes its index binding without being recreated', () => {
   expect(texts()).toEqual(['0:y', '1:x'])
   expect(document.querySelectorAll('li')[1]).toBe(x)
 })
+
+test('x-for source accepts path:bindings so a nested list reads the outer row', () => {
+  const warns: string[] = []; const orig = console.warn; console.warn = (m: string) => { warns.push(String(m)) }
+  type Row = { id: number; cells: number[] }
+  const rows = signal<Row[]>([{ id: 1, cells: [1, 2] }, { id: 2, cells: [3] }])
+  defineBehavior('f-nested', () => ({ rows, _l2: (row: Row) => row.cells, _k2: (c: number) => c, show: (c: number) => String(c), _k1: (r: Row) => r.id }))
+  document.body.innerHTML = `<table x-data="f-nested"><tbody>`
+    + `<tr x-for="row in rows by _k1"><td x-for="c in _l2:row by _k2" x-text="show:c">1</td><td x-for="c in _l2:row by _k2" x-text="show:c">2</td></tr>`
+    + `<tr x-for="row in rows by _k1"><td x-for="c in _l2:row by _k2" x-text="show:c">3</td></tr></tbody></table>`
+  const before = document.body.innerHTML
+  mount()
+  console.warn = orig
+  expect(warns).toEqual([])
+  expect(Array.from(document.querySelectorAll('tr')).map((r) => r.textContent)).toEqual(['12', '3'])
+  expect(document.body.innerHTML.replace(/<!--x-for-->/g, '')).toBe(before.replace(/ x-for="[^"]*"/g, ''))   // rows adopted in place, only x-for consumed
+  rows.set([...rows(), { id: 3, cells: [9] }])
+  const trs = Array.from(document.querySelectorAll('tr'))
+  expect(trs.map((r) => r.textContent)).toEqual(['12', '3', '9'])
+  expect(trs[2]!.querySelectorAll('td').length).toBe(1)
+  const row2td = trs[1]!.querySelector('td')!
+  rows.set([{ id: 1, cells: [7, 8, 9] }, ...rows().slice(1)])
+  const after = Array.from(document.querySelectorAll('tr'))
+  expect(after.map((r) => r.textContent)).toEqual(['789', '3', '9'])
+  expect(after[1]!.querySelector('td')).toBe(row2td)
+})

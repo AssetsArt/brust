@@ -47,7 +47,7 @@ Anything else (`x + 1`, `fn()`) is not parsed: a warning is logged once and the 
 - **`x-on-<event>="member[:binding]"`**: calls the member with the bound scope values first, then the event: `pick(item, index, event)`.
 - **`x-model="member"`**: the member must be a writable signal (else warns). text-like: `input` event ↔ `.value`; checkbox: `change` ↔ boolean `.checked`;
   radio: `change` writes `.value` when checked, signal sets `.checked`; single `select`: `change` ↔ `.value`, re-applied whenever its options change. `select[multiple]` is unsupported (warns).
-- **`x-for="item[, index] in source by keyFn"`**: `source` is a member path to an array (or signal/computed of one); `keyFn` is a member function of the item.
+- **`x-for="item[, index] in source by keyFn"`**: `source := path (":" bindings)?` is a member path to an array (or signal/computed of one); with bindings the member is a function called with the outer loop names, so a nested list reads the outer row, e.g. `<tr x-for="row in rows by k1"><td x-for="c in cells:row by k2">`; `keyFn` is a member function of the item.
   Server-rendered sibling rows carrying the same `x-for` are **adopted in order** on first run; with zero rows the server emits a `<!--x-for-->` comment followed by one `hidden` template element
   (carrying `x-for`) which is cloned. Rows are reconciled by key (moves keep DOM identity); a reused row whose item/index changed has its binders re-run. Duplicate keys warn once and fall back to index identity.
   Elements with `x-for` are owned by the directive: their other `x-*` attributes are bound on the rows, with scope `{ item, index }`.

@@ -7,7 +7,7 @@ BINDERS.push({
     const p = parsed(inst, attr, raw); if (!p) return
     const anchor = document.createComment('x-if')
     const template = el.cloneNode(true) as Element
-    template.removeAttribute('x-if')
+    template.removeAttribute('x-if'); template.removeAttribute('hidden')
     el.replaceWith(anchor)                 // the server-rendered element becomes the first clone below
     let current: Element | null = null
     inst.effect(() => {

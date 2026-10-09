@@ -65,3 +65,19 @@ test('x-model on a non-signal member warns and does nothing', () => {
   expect(warns.some((w) => w.includes('x-model') && w.includes('signal'))).toBe(true)
   console.warn = orig
 })
+
+test('x-if template strips the server-paint hidden attribute', () => {
+  const open = signal(false)
+  defineBehavior('i-hidden', () => ({ open }))
+  document.body.innerHTML = `<div x-data="i-hidden"><!--x-if--><p x-if="open" hidden>hi</p></div>`
+  mount()
+  expect(document.querySelectorAll('p').length).toBe(0)
+  open.set(true)
+  expect(document.querySelectorAll('p').length).toBe(1)
+  expect(document.querySelector('p')!.hasAttribute('hidden')).toBe(false)
+  open.set(false)
+  expect(document.querySelectorAll('p').length).toBe(0)
+  open.set(true)
+  expect(document.querySelectorAll('p').length).toBe(1)
+  expect(document.querySelector('p')!.hasAttribute('hidden')).toBe(false)
+})
