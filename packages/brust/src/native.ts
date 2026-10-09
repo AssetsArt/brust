@@ -22,6 +22,8 @@ export interface StartOptions {
   workers: number
   claimTimeoutMs?: number
   callTimeoutMs?: number
+  /** tokio I/O threads; absent = one per core. */
+  workerThreads?: number
   l1Capacity?: number
   jobCacheCapacity?: number
   generator?: string

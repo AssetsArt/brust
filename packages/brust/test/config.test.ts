@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { loadConfig } from '../src/config'
 
-const ENV = ['BRUST_ADDR', 'BRUST_PORT', 'BRUST_WORKERS', 'BRUST_RENDER_SLOTS', 'BRUST_DRAIN_TIMEOUT_MS', 'BRUST_BOOT_TIMEOUT_MS', 'BRUST_CALL_TIMEOUT_MS'] as const
+const ENV = ['BRUST_WORKER_THREADS', 'BRUST_ADDR', 'BRUST_PORT', 'BRUST_WORKERS', 'BRUST_RENDER_SLOTS', 'BRUST_DRAIN_TIMEOUT_MS', 'BRUST_BOOT_TIMEOUT_MS', 'BRUST_CALL_TIMEOUT_MS'] as const
 const saved = Object.fromEntries(ENV.map((k) => [k, process.env[k]]))
 const dirs: string[] = []
 function tmpApp(toml?: string): string {
@@ -115,4 +115,18 @@ test('renderSlots is 1..64 from every source (a huge value is a config error, no
   delete process.env.BRUST_RENDER_SLOTS
   await expect(loadConfig(tmpApp(), { renderSlots: 65 })).rejects.toThrow('renderSlots must be an integer in 1..64 (got 65)')
   await expect(loadConfig(tmpApp(), { renderSlots: 100000 })).rejects.toMatchObject({ name: 'BrustConfigError' })
+})
+
+test('BRUST_WORKER_THREADS: absent = server default (one per core), env > CLI, bounds 1..256', async () => {
+  for (const k of ENV) delete process.env[k]
+  expect((await loadConfig(tmpApp())).ioThreads).toBeUndefined()
+  expect((await loadConfig(tmpApp(), { ioThreads: 6 })).ioThreads).toBe(6)
+  process.env.BRUST_WORKER_THREADS = '12'
+  expect((await loadConfig(tmpApp(), { ioThreads: 6 })).ioThreads).toBe(12)
+  for (const bad of ['0', 'abc', '257']) {
+    process.env.BRUST_WORKER_THREADS = bad
+    await expect(loadConfig(tmpApp())).rejects.toThrow('BRUST_WORKER_THREADS must be an integer in 1..256')
+  }
+  delete process.env.BRUST_WORKER_THREADS
+  await expect(loadConfig(tmpApp(), { ioThreads: 0 })).rejects.toThrow('ioThreads must be an integer in 1..256')
 })

@@ -20,6 +20,8 @@ export interface BrustConfig {
   bootTimeoutMs: number
   /** A claimed loader/job call that has not settled after this long answers 504. */
   callTimeoutMs: number
+  /** tokio threads of the HTTP runtime (renders every page); absent = one per core (server default). */
+  ioThreads?: number
 }
 
 export class BrustConfigError extends Error {
@@ -38,6 +40,8 @@ const DEFAULTS = { host: 'localhost', port: 1337, renderSlots: 1, drainTimeoutMs
  * workers is a misconfiguration, not a deployment, and each render slot is a 256 KiB shared
  * response buffer per worker (more than 64 would only exhaust memory). */
 export const MAX_MS = 0xffff_ffff
+/** tokio I/O threads (BRUST_WORKER_THREADS); more than this is a misconfiguration. */
+export const MAX_IO_THREADS = 256
 export const MAX_WORKERS = 1024
 export const MAX_RENDER_SLOTS = 64
 
@@ -65,6 +69,7 @@ export async function loadConfig(cwd: string = process.cwd(), cli: Partial<Brust
     drainTimeoutMs: env.drainTimeoutMs ?? cli.drainTimeoutMs ?? DEFAULTS.drainTimeoutMs,
     bootTimeoutMs: env.bootTimeoutMs ?? cli.bootTimeoutMs ?? DEFAULTS.bootTimeoutMs,
     callTimeoutMs: env.callTimeoutMs ?? cli.callTimeoutMs ?? DEFAULTS.callTimeoutMs,
+    ioThreads: env.ioThreads ?? cli.ioThreads,
   }
 }
 
@@ -80,6 +85,7 @@ function checkCli(cli: Partial<BrustConfig>): void {
   check('drainTimeoutMs', cli.drainTimeoutMs, 0, MAX_MS)
   check('bootTimeoutMs', cli.bootTimeoutMs, 1, MAX_MS)
   check('callTimeoutMs', cli.callTimeoutMs, 1, MAX_MS)
+  check('ioThreads', cli.ioThreads, 1, MAX_IO_THREADS)
 }
 
 function table(v: unknown, what: string, file: string): Record<string, unknown> {
@@ -137,5 +143,6 @@ function fromEnv(): Partial<BrustConfig> {
   out.drainTimeoutMs = envInt('BRUST_DRAIN_TIMEOUT_MS', 0, MAX_MS, `an integer in 0..${MAX_MS}`)
   out.bootTimeoutMs = envInt('BRUST_BOOT_TIMEOUT_MS', 1, MAX_MS, `an integer in 1..${MAX_MS}`)
   out.callTimeoutMs = envInt('BRUST_CALL_TIMEOUT_MS', 1, MAX_MS, `an integer in 1..${MAX_MS}`)
+  out.ioThreads = envInt('BRUST_WORKER_THREADS', 1, MAX_IO_THREADS, `an integer in 1..${MAX_IO_THREADS}`)
   return out
 }
