@@ -118,10 +118,13 @@ name = "brust-napi"
 version = "0.0.0"
 dependencies = [
  "brust-compiler",
+ "brust-server",
  "napi",
  "napi-build",
  "napi-derive",
+ "parking_lot",
  "serde_json",
+ "tokio",
  "tracing",
  "tracing-subscriber",
 ]

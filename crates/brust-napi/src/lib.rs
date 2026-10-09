@@ -1,9 +1,12 @@
-//! napi-rs binding of `brust-compiler` (and, from Task 2, `brust-server`) for Bun.
+//! napi-rs binding of `brust-server` and `brust-compiler` for Bun.
 #![deny(clippy::all)]
 
 mod compile;
+mod dispatch;
+mod server;
 
 pub use compile::*;
+pub use server::*;
 
 use std::sync::Once;
 use tracing_subscriber::EnvFilter;

@@ -10,9 +10,12 @@ crate-type = ["cdylib"]
 
 [dependencies]
 brust-compiler = { path = "../brust-compiler" }
+brust-server = { path = "../brust-server" }
 napi = { version = "3", default-features = false, features = ["napi6", "async"] }
 napi-derive = "3"
+parking_lot = "0.12"
 serde_json.workspace = true
+tokio = { version = "1", features = ["time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
