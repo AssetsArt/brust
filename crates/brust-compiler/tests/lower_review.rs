@@ -153,7 +153,7 @@ fn job_slots_in_branches_are_guarded() {
     .server_ts
     .unwrap();
     assert!(
-        job.contains("_s1: ((user) ? fmt(user.balance) : undefined)"),
+        job.contains("_s1: ((user) ? fmt(user.balance) : null)"),
         "{job}"
     );
 }

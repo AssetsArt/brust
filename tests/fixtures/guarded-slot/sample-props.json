@@ -1,0 +1,1 @@
+{ "show": false, "n": 5, "items": [{ "id": "x", "sale": false, "price": 1 }, { "id": "y", "sale": true, "price": 2 }], "a": true, "b": false }
