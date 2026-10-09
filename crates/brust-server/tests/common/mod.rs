@@ -11,7 +11,8 @@ use std::sync::Arc;
 use brust_server::{Config, Server, Tuning, start};
 use serde_json::{Value, json};
 
-pub use fake_bun::{FakeBun, FakeBunHandle};
+#[allow(unused_imports)]
+pub use fake_bun::{FakeBun, FakeBunHandle, Gate};
 
 pub fn fx() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/dist")
@@ -91,6 +92,15 @@ pub fn config(dist_dir: &Path) -> Config {
 /// Boot on port 0 from the fixture `dist/` and register `fake` as the one worker.
 pub fn boot(fake: Arc<FakeBun>) -> Arc<Server> {
     boot_in(fake, &fx())
+}
+
+/// Like [`boot`] with `tweak` applied to the [`Tuning`] first.
+pub fn boot_with(fake: Arc<FakeBun>, tweak: impl FnOnce(&mut Tuning)) -> Arc<Server> {
+    let mut cfg = config(&fx());
+    tweak(&mut cfg.tuning);
+    let s = start(cfg).expect("start");
+    s.register_worker(Box::new(FakeBunHandle(fake)));
+    s
 }
 
 /// Like [`boot`] with another `dist/` (see [`temp_dist`]).

@@ -30,7 +30,7 @@ async fn fake_bun_round_trips_loader_and_jobs_through_call_worker() {
     pool.register(Box::new(FakeBunHandle(Arc::clone(&fake))));
     let t = Duration::from_millis(200);
 
-    let r: LoaderResponse = call_worker(&pool, t, CallKind::Loader, &json!({"routeId": "r2"}))
+    let r: LoaderResponse = call_worker(&pool, t, t, CallKind::Loader, &json!({"routeId": "r2"}))
         .await
         .unwrap();
     let LoaderResponse::Ok { data, .. } = r else {
@@ -48,7 +48,9 @@ async fn fake_bun_round_trips_loader_and_jobs_through_call_worker() {
             row: None,
         }],
     };
-    let r: JobsResponse = call_worker(&pool, t, CallKind::Jobs, &req).await.unwrap();
+    let r: JobsResponse = call_worker(&pool, t, t, CallKind::Jobs, &req)
+        .await
+        .unwrap();
     assert_eq!(r.results.len(), 1);
     assert_eq!(r.results[0].id, "detailPage_c3/j0");
 
@@ -68,14 +70,21 @@ async fn never_complete_fake_holds_the_claim_so_the_next_call_times_out() {
 
     let p = Arc::clone(&pool);
     let stuck = tokio::spawn(async move {
-        let _ =
-            call_worker::<_, Value>(&p, Duration::from_secs(5), CallKind::Loader, &json!({})).await;
+        let _ = call_worker::<_, Value>(
+            &p,
+            Duration::from_secs(5),
+            Duration::from_secs(5),
+            CallKind::Loader,
+            &json!({}),
+        )
+        .await;
     });
     tokio::time::sleep(Duration::from_millis(20)).await;
 
     let r = call_worker::<_, Value>(
         &pool,
         Duration::from_millis(50),
+        Duration::from_secs(5),
         CallKind::Loader,
         &json!({}),
     )

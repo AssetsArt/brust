@@ -54,6 +54,9 @@ pub struct Tuning {
     /// 503 (see `claim_or_wait`). Bounds the AllBusy→queue wait so a wedged
     /// worker pool can't park a connection forever. Default 10_000 ms.
     pub claim_timeout_ms: u64,
+    /// Max time a CLAIMED worker call may take to settle before the client
+    /// gets 504. The slot stays claimed until JS settles. Default 30_000 ms.
+    pub call_timeout_ms: u64,
     /// tokio I/O runtime worker-thread count. Default `min(available_parallelism, 4)`
     /// (see struct docs).
     pub worker_threads: usize,
@@ -70,6 +73,7 @@ impl Default for Tuning {
             conn_queue_cap: 1024,
             read_buf_cap: 4096,
             claim_timeout_ms: 10_000,
+            call_timeout_ms: 30_000,
             header_read_timeout_ms: 10_000,
             worker_threads: std::thread::available_parallelism()
                 .map(|n| n.get().min(4))
@@ -103,6 +107,7 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
         dist_dir: cfg.dist_dir.clone(),
         loader_calls: AtomicU64::new(0),
         job_calls: AtomicU64::new(0),
+        timed_out_calls: AtomicU64::new(0),
         ready: Arc::new(Notify::new()),
         expected_workers: AtomicU32::new(cfg.expected_workers),
         drain_start: Arc::new(Notify::new()),
@@ -114,6 +119,7 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
         cors: cfg.cors,
         generator: cfg.generator,
         claim_timeout: Duration::from_millis(tuning.claim_timeout_ms),
+        call_timeout: Duration::from_millis(tuning.call_timeout_ms),
     });
 
     // The accept-concurrency ceiling (0.1.x also folded `conn_workers` in; v2

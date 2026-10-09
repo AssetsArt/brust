@@ -248,6 +248,9 @@ pub(crate) fn error_500() -> Response<ResponseBody> {
 pub(crate) fn error_503(msg: &str) -> Response<ResponseBody> {
     resp(503, "text/plain", &[], msg.as_bytes().to_vec())
 }
+pub(crate) fn error_504(msg: &str) -> Response<ResponseBody> {
+    resp(504, "text/plain", &[], msg.as_bytes().to_vec())
+}
 
 #[cfg(test)]
 mod tests {

@@ -139,6 +139,8 @@ pub struct Stats {
     pub job: CacheStats,
     pub loader_calls: u64,
     pub job_calls: u64,
+    /// Worker calls answered 504 by the call deadline.
+    pub timed_out_calls: u64,
 }
 
 /// Shared server state (the stripped 0.1.x `AppState`), one per `start`.
@@ -152,6 +154,7 @@ pub struct Server {
     pub(crate) dist_dir: PathBuf,
     pub(crate) loader_calls: AtomicU64,
     pub(crate) job_calls: AtomicU64,
+    pub(crate) timed_out_calls: AtomicU64,
     /// Worker-registration barrier: the accept loop waits on it.
     pub(crate) ready: Arc<Notify>,
     pub(crate) expected_workers: AtomicU32,
@@ -168,6 +171,7 @@ pub struct Server {
     pub(crate) cors_resolved: Option<ResolvedCors>,
     pub(crate) generator: Option<String>,
     pub(crate) claim_timeout: Duration,
+    pub(crate) call_timeout: Duration,
 }
 
 impl Server {
@@ -223,6 +227,7 @@ impl Server {
             job: self.jobs.stats(),
             loader_calls: self.loader_calls.load(Ordering::Relaxed),
             job_calls: self.job_calls.load(Ordering::Relaxed),
+            timed_out_calls: self.timed_out_calls.load(Ordering::Relaxed),
         }
     }
 
