@@ -8,5 +8,6 @@ pub mod inputs;
 pub mod manifest;
 pub mod pool;
 pub mod protocol;
+pub mod render;
 pub mod routing;
 pub mod server;

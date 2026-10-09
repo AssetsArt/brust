@@ -17,7 +17,8 @@ Source: github.com/AssetsArt/brust `main` @ d04718f, `crates/brust-core/src/`. C
 | dispatch.rs | render/dispatch.rs + server/mod.rs:1262-1371 | adapt: CallKind, JSON response, claim_or_wait(timeout), `call_worker` (framed decode :1373-1404 and `process::exit` on last worker not carried); module doc :1-21 verbatim | 3 → 7 (+`call_worker_round_trips_json`, `call_worker_returns_bad_response_on_len_over_capacity`, `claim_or_wait_times_out_when_all_busy`, `claim_or_wait_wakes_when_claim_released`) |
 | protocol.rs | — (spec §1 S1 call table) | new: Loader/Jobs request+response structs | 0 → 9 |
 | tests/common/fake_bun.rs | render/dispatch.rs:107-165 (`MockDispatch` pattern) | new: `FakeBun` + `FakeBunHandle` test double (records last request per kind) | proven by tests/fake_bun.rs (2) |
-| (filled by Tasks 6–8: render, config, server/mod) |
+| render.rs | template/jinja.rs | adapt: owned env from manifest, no globals, no dynamic tier | 4 → 1 (+9 integration) |
+| (filled by Tasks 7–8: config, server/mod) |
 Not carried (spec S2): cache/island_cache.rs, render/stream.rs, realtime/*, routing/action.rs, `/_brust/islands`, `/_brust/page`, MCP, SSE/WS, AI, `handle_action`, `dispatch_streaming`, `spawn_chunk_pump`.
 
 ## routes.rs: dropped tests (16)
