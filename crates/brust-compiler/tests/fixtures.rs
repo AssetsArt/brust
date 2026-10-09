@@ -134,3 +134,71 @@ fn golden_ir_and_diag() {
         });
     }
 }
+
+/// M1c: the three lowered artifacts of every case, and of every child module it
+/// compiled (`expected.<Stem>.<ext>`); an artifact that is not produced must
+/// have no expectation file.
+#[test]
+fn golden_lowered() {
+    use brust_compiler::lower::DEFAULT_RUNTIME_IMPORT;
+    use brust_compiler::pipeline::compile_tree;
+    for case in cases() {
+        run_on_compiler_thread(|| {
+            let file = display_path(&case);
+            let opts = AnalyzeOptions {
+                root: fixtures_dir().join("../.."),
+                ..Default::default()
+            };
+            let Ok(tree) = compile_tree(&file, None, &opts, DEFAULT_RUNTIME_IMPORT) else {
+                for ext in ["jinja", "server.ts", "client.js"] {
+                    absent(&case.join(format!("expected.{ext}")));
+                }
+                return;
+            };
+            for (i, l) in tree.iter().enumerate() {
+                let stem = if i == 0 {
+                    String::new()
+                } else {
+                    let src = l.ir.source.rsplit('/').next().unwrap_or(&l.ir.source);
+                    let stem = src.split('.').next().unwrap_or(src);
+                    // A component local to a module: `<stem>-<Name>`.
+                    match l.ir.id.split_once('_') {
+                        Some((lead, _))
+                            if !l.ir.source.ends_with(&format!("{stem}.tsx"))
+                                || lead != lower_first(stem) =>
+                        {
+                            format!("{stem}-{}.", upper_first(lead))
+                        }
+                        _ => format!("{stem}."),
+                    }
+                };
+                let a = &l.artifacts;
+                for (ext, text) in [
+                    ("jinja", Some(&a.jinja)),
+                    ("server.ts", a.server_ts.as_ref()),
+                    ("client.js", a.client_js.as_ref()),
+                ] {
+                    let path = case.join(format!("expected.{stem}{ext}"));
+                    match text {
+                        Some(t) => check(&path, t),
+                        None => absent(&path),
+                    }
+                }
+            }
+        });
+    }
+}
+
+fn lower_first(s: &str) -> String {
+    let mut c = s.chars();
+    c.next()
+        .map(|f| f.to_ascii_lowercase().to_string() + c.as_str())
+        .unwrap_or_default()
+}
+
+fn upper_first(s: &str) -> String {
+    let mut c = s.chars();
+    c.next()
+        .map(|f| f.to_ascii_uppercase().to_string() + c.as_str())
+        .unwrap_or_default()
+}

@@ -1,0 +1,4 @@
+{# brust v2 · input_7a17a8db · do not edit #}
+{% set mode = "dark" %}
+{% set _d1 = ("Light" if (mode == "dark") else "Dark") %}
+<button x-data="input_7a17a8db" x-props='{{ {"themeLabel": themeLabel} | json_attr }}' type="button"{% if themeLabel | present %} aria-label="{{ themeLabel | attr_str | e }}"{% endif %} x-bind-aria-label="_c1" x-on-click="_h1" x-text="_c2">{{ _d1 | e }}</button>

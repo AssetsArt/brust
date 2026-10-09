@@ -4,4 +4,5 @@ pub mod analyze;
 pub mod ir;
 pub mod lower;
 pub mod parse;
+pub mod pipeline;
 pub mod summary;
