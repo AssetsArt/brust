@@ -1,0 +1,369 @@
+{
+  "version": 1,
+  "routes": [
+    {
+      "id": "r1",
+      "pattern": "/",
+      "chain": [
+        "appLayout_069dfa24",
+        "homePage_76d6b8d1"
+      ],
+      "loaders": [
+        "r1"
+      ],
+      "cache": null,
+      "catch_all": false
+    },
+    {
+      "id": "r2",
+      "pattern": "/pokedex",
+      "chain": [
+        "appLayout_069dfa24",
+        "browsePage_3ce65d03"
+      ],
+      "loaders": [
+        "r2"
+      ],
+      "cache": null,
+      "catch_all": false
+    },
+    {
+      "id": "r3",
+      "pattern": "/pokemon/{name}",
+      "chain": [
+        "appLayout_069dfa24",
+        "detailPage_c04a77c1"
+      ],
+      "loaders": [
+        "r3"
+      ],
+      "cache": {
+        "ttl_seconds": 60,
+        "prefix": null,
+        "bypass": "query(nocache)",
+        "tags": [
+          "pokemon"
+        ]
+      },
+      "catch_all": false
+    },
+    {
+      "id": "r4",
+      "pattern": "/type-chart",
+      "chain": [
+        "appLayout_069dfa24",
+        "typeChart_474a2cb5"
+      ],
+      "loaders": [
+        "r4"
+      ],
+      "cache": {
+        "ttl_seconds": 3600,
+        "prefix": null,
+        "bypass": null,
+        "tags": [
+          "types"
+        ]
+      },
+      "catch_all": false
+    },
+    {
+      "id": "r5",
+      "pattern": "*",
+      "chain": [
+        "notFoundPage_6b4d290c"
+      ],
+      "loaders": [],
+      "cache": null,
+      "catch_all": true
+    }
+  ],
+  "components": {
+    "appLayout_069dfa24": {
+      "tier": "native",
+      "template": "jinja/appLayout_069dfa24.jinja",
+      "jobs": [
+        {
+          "id": "j0",
+          "kind": "ssr",
+          "inputs": [
+            "teamInitial"
+          ],
+          "outputs": [
+            "_ssr_teamBuilder_a0fc3155"
+          ],
+          "target": "teamBuilder_a0fc3155",
+          "per_instance": null,
+          "cache": {
+            "key": null,
+            "tags": [],
+            "ttl_seconds": null
+          },
+          "props": {
+            "teamInitial": "teamInitial"
+          }
+        }
+      ],
+      "children": [
+        {
+          "id": "navLink_43f6c55a",
+          "instances": "per-row:nav",
+          "props": {
+            "active": "nav[idx].active",
+            "href": "nav[idx].href",
+            "label": "nav[idx].label"
+          }
+        },
+        {
+          "id": "themeToggle_0f56d553",
+          "instances": "static",
+          "props": {
+            "mode": "mode"
+          }
+        }
+      ],
+      "client": "client/appLayout_069dfa24-088531c975.js",
+      "needs_worker": true,
+      "use_id_slots": 0
+    },
+    "breadcrumb_aa0dbc2d": {
+      "tier": "static",
+      "template": "jinja/breadcrumb_aa0dbc2d.jinja",
+      "jobs": [],
+      "children": [],
+      "client": null,
+      "needs_worker": false,
+      "use_id_slots": 0
+    },
+    "browsePage_3ce65d03": {
+      "tier": "static",
+      "template": "jinja/browsePage_3ce65d03.jinja",
+      "jobs": [],
+      "children": [
+        {
+          "id": "dexFilter_492c3c26",
+          "instances": "static",
+          "props": {
+            "items": "items"
+          }
+        }
+      ],
+      "client": null,
+      "needs_worker": false,
+      "use_id_slots": 0
+    },
+    "detailPage_c04a77c1": {
+      "tier": "native",
+      "template": "jinja/detailPage_c04a77c1.jinja",
+      "jobs": [
+        {
+          "id": "j0",
+          "kind": "precompute",
+          "inputs": [
+            "height",
+            "weight"
+          ],
+          "outputs": [
+            "_s1",
+            "_s2"
+          ],
+          "per_instance": null,
+          "cache": {
+            "key": null,
+            "tags": [],
+            "ttl_seconds": null
+          }
+        }
+      ],
+      "children": [
+        {
+          "id": "typeBadge_5f5390d7",
+          "instances": "per-row:typeNames",
+          "props": {
+            "type": "typeNames[idx]"
+          }
+        }
+      ],
+      "client": "client/detailPage_c04a77c1-9feec2fb6d.js",
+      "needs_worker": true,
+      "use_id_slots": 0
+    },
+    "dexCard_091f6e93": {
+      "tier": "static",
+      "template": "jinja/dexCard_091f6e93.jinja",
+      "jobs": [],
+      "children": [],
+      "client": "client/dexCard_091f6e93-1cb954dbb4.js",
+      "needs_worker": false,
+      "use_id_slots": 0
+    },
+    "dexFilter_492c3c26": {
+      "tier": "native",
+      "template": "jinja/dexFilter_492c3c26.jinja",
+      "jobs": [
+        {
+          "id": "j0",
+          "kind": "precompute",
+          "inputs": [
+            "items"
+          ],
+          "outputs": [
+            "_s1"
+          ],
+          "per_instance": null,
+          "cache": {
+            "key": null,
+            "tags": [],
+            "ttl_seconds": null
+          }
+        }
+      ],
+      "children": [],
+      "client": "client/dexFilter_492c3c26-bba509164f.js",
+      "needs_worker": true,
+      "use_id_slots": 0
+    },
+    "heroSearch_56f6fbd9": {
+      "tier": "native",
+      "template": "jinja/heroSearch_56f6fbd9.jinja",
+      "jobs": [],
+      "children": [],
+      "client": "client/heroSearch_56f6fbd9-a226ab252b.js",
+      "needs_worker": false,
+      "use_id_slots": 1
+    },
+    "homePage_76d6b8d1": {
+      "tier": "native",
+      "template": "jinja/homePage_76d6b8d1.jinja",
+      "jobs": [],
+      "children": [
+        {
+          "id": "heroSearch_56f6fbd9",
+          "instances": "static",
+          "props": {}
+        },
+        {
+          "id": "typeBadge_5f5390d7",
+          "instances": "per-row:types",
+          "props": {
+            "type": "types[idx]"
+          }
+        }
+      ],
+      "client": "client/homePage_76d6b8d1-0150e0ae20.js",
+      "needs_worker": false,
+      "use_id_slots": 0
+    },
+    "navLink_43f6c55a": {
+      "tier": "static",
+      "template": "jinja/navLink_43f6c55a.jinja",
+      "jobs": [
+        {
+          "id": "j0",
+          "kind": "precompute",
+          "inputs": [
+            "active"
+          ],
+          "outputs": [
+            "_s1"
+          ],
+          "per_instance": null,
+          "cache": {
+            "key": null,
+            "tags": [],
+            "ttl_seconds": null
+          }
+        }
+      ],
+      "children": [],
+      "client": "client/navLink_43f6c55a-7e5a8a1e76.js",
+      "needs_worker": true,
+      "use_id_slots": 0
+    },
+    "notFoundPage_6b4d290c": {
+      "tier": "static",
+      "template": "jinja/notFoundPage_6b4d290c.jinja",
+      "jobs": [],
+      "children": [],
+      "client": null,
+      "needs_worker": false,
+      "use_id_slots": 0
+    },
+    "teamBuilder_a0fc3155": {
+      "tier": "react",
+      "template": "jinja/teamBuilder_a0fc3155.jinja",
+      "jobs": [
+        {
+          "id": "j0",
+          "kind": "ssr",
+          "inputs": [
+            "*"
+          ],
+          "outputs": [
+            "_ssr_teamBuilder_a0fc3155"
+          ],
+          "target": "teamBuilder_a0fc3155",
+          "per_instance": null,
+          "cache": {
+            "key": null,
+            "tags": [],
+            "ttl_seconds": null
+          }
+        }
+      ],
+      "children": [],
+      "client": "client/react-teamBuilder_a0fc3155-302ab8f1d8.js",
+      "needs_worker": true,
+      "use_id_slots": 0
+    },
+    "themeToggle_0f56d553": {
+      "tier": "native",
+      "template": "jinja/themeToggle_0f56d553.jinja",
+      "jobs": [],
+      "children": [],
+      "client": "client/themeToggle_0f56d553-d1309be209.js",
+      "needs_worker": false,
+      "use_id_slots": 1
+    },
+    "typeBadge_5f5390d7": {
+      "tier": "static",
+      "template": "jinja/typeBadge_5f5390d7.jinja",
+      "jobs": [
+        {
+          "id": "j0",
+          "kind": "precompute",
+          "inputs": [
+            "type"
+          ],
+          "outputs": [
+            "_s1",
+            "_s2"
+          ],
+          "per_instance": null,
+          "cache": {
+            "key": null,
+            "tags": [],
+            "ttl_seconds": null
+          }
+        }
+      ],
+      "children": [],
+      "client": "client/typeBadge_5f5390d7-57889b80ee.js",
+      "needs_worker": true,
+      "use_id_slots": 0
+    },
+    "typeChart_474a2cb5": {
+      "tier": "static",
+      "template": "jinja/typeChart_474a2cb5.jinja",
+      "jobs": [],
+      "children": [],
+      "client": null,
+      "needs_worker": false,
+      "use_id_slots": 0
+    }
+  },
+  "assets": {
+    "runtime": "client/runtime-279eab9ff2.js"
+  },
+  "jobs_module": "jobs.js"
+}

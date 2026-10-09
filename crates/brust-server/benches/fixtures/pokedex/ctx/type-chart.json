@@ -1,0 +1,2694 @@
+{
+  "__children": {
+    "appLayout_069dfa24": {
+      "__navLink_43f6c55a_1": [
+        {
+          "_s1": "inline-flex items-center rounded-lg px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+        },
+        {
+          "_s1": "inline-flex items-center rounded-lg px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+        },
+        {
+          "_s1": "inline-flex items-center rounded-lg px-3 py-1.5 text-sm font-semibold text-brand-600 bg-brand-50 dark:text-brand-50 dark:bg-brand-600/20"
+        }
+      ],
+      "__themeToggle_0f56d553_1": {
+        "_id0": "brust-r4-appLayout_069dfa24.themeToggle_0f56d553_1-1"
+      }
+    }
+  },
+  "__own": {
+    "appLayout_069dfa24": {
+      "_ssr_teamBuilder_a0fc3155": "<div class=\"fixed bottom-5 right-5 z-[200]\"><button type=\"button\" class=\"inline-flex items-center gap-1.5 rounded-full bg-brand-500 px-5 py-2.5 text-sm font-semibold text-white shadow-lg\">My team <span data-testid=\"team-count\" class=\"rounded-full bg-white/25 px-2 py-0.5 text-xs font-extrabold\">2</span></button></div>"
+    }
+  },
+  "crumb": "Type chart",
+  "mode": "dark",
+  "nav": [
+    {
+      "active": false,
+      "href": "/",
+      "label": "Home"
+    },
+    {
+      "active": false,
+      "href": "/pokedex",
+      "label": "Pokédex"
+    },
+    {
+      "active": true,
+      "href": "/type-chart",
+      "label": "Type chart"
+    }
+  ],
+  "params": {},
+  "path": "/type-chart",
+  "rows": [
+    {
+      "cells": [
+        {
+          "bg": "#334155",
+          "className": "flex items-center justify-center text-[10px] font-bold uppercase tracking-tight text-white aspect-square sticky left-0 top-0 z-20 text-[9px]",
+          "content": "ATK／DEF",
+          "id": "0-0",
+          "title": "Attacking ／ Defending"
+        },
+        {
+          "bg": "#9099a1",
+          "className": "flex items-center justify-center text-[10px] font-bold uppercase tracking-tight text-white aspect-square sticky top-0 z-10",
+          "content": "NOR",
+          "id": "0-1",
+          "title": "Normal"
+        },
+        {
+          "bg": "#ef7444",
+          "className": "flex items-center justify-center text-[10px] font-bold uppercase tracking-tight text-white aspect-square sticky top-0 z-10",
+          "content": "FIR",
+          "id": "0-2",
+          "title": "Fire"
+        },
+        {
+          "bg": "#4d90d5",
+          "className": "flex items-center justify-center text-[10px] font-bold uppercase tracking-tight text-white aspect-square sticky top-0 z-10",
+          "content": "WAT",
+          "id": "0-3",
+          "title": "Water"
+        },
+        {
+          "bg": "#f5c84b",
+          "className": "flex items-center justify-center text-[10px] font-bold uppercase tracking-tight text-white aspect-square sticky top-0 z-10",
+          "content": "ELE",
+          "id": "0-4",
+          "title": "Electric"
+        },
+        {
+          "bg": "#63bb5b",
+          "className": "flex items-center justify-center text-[10px] font-bold uppercase tracking-tight text-white aspect-square sticky top-0 z-10",
+          "content": "GRA",
+          "id": "0-5",
+          "title": "Grass"
+        },
+        {
+          "bg": "#74cec0",
+          "className": "flex items-center justify-center text-[10px] font-bold uppercase tracking-tight text-white aspect-square sticky top-0 z-10",
+          "content": "ICE",
+          "id": "0-6",
+          "title": "Ice"
+        },
+        {
+          "bg": "#ce4069",
+          "className": "flex items-center justify-center text-[10px] font-bold uppercase tracking-tight text-white aspect-square sticky top-0 z-10",
+          "content": "FIG",
+          "id": "0-7",
+          "title": "Fighting"
+        },
+        {
+          "bg": "#ab6ac8",
+          "className": "flex items-center justify-center text-[10px] font-bold uppercase tracking-tight text-white aspect-square sticky top-0 z-10",
+          "content": "POI",
+          "id": "0-8",
+          "title": "Poison"
+        },
+        {
+          "bg": "#d97746",
+          "className": "flex items-center justify-center text-[10px] font-bold uppercase tracking-tight text-white aspect-square sticky top-0 z-10",
+          "content": "GRO",
+          "id": "0-9",
+          "title": "Ground"
+        },
+        {
+          "bg": "#8fa8dd",
+          "className": "flex items-center justify-center text-[10px] font-bold uppercase tracking-tight text-white aspect-square sticky top-0 z-10",
+          "content": "FLY",
+          "id": "0-10",
+          "title": "Flying"
+        },
+        {
+          "bg": "#f06fa0",
+          "className": "flex items-center justify-center text-[10px] font-bold uppercase tracking-tight text-white aspect-square sticky top-0 z-10",
+          "content": "PSY",
+          "id": "0-11",
+          "title": "Psychic"
+        },
+        {
+          "bg": "#90c12c",
+          "className": "flex items-center justify-center text-[10px] font-bold uppercase tracking-tight text-white aspect-square sticky top-0 z-10",
+          "content": "BUG",
+          "id": "0-12",
+          "title": "Bug"
+        },
+        {
+          "bg": "#c7b78b",
+          "className": "flex items-center justify-center text-[10px] font-bold uppercase tracking-tight text-white aspect-square sticky top-0 z-10",
+          "content": "ROC",
+          "id": "0-13",
+          "title": "Rock"
+        },
+        {
+          "bg": "#5269ac",
+          "className": "flex items-center justify-center text-[10px] font-bold uppercase tracking-tight text-white aspect-square sticky top-0 z-10",
+          "content": "GHO",
+          "id": "0-14",
+          "title": "Ghost"
+        },
+        {
+          "bg": "#0a6dc4",
+          "className": "flex items-center justify-center text-[10px] font-bold uppercase tracking-tight text-white aspect-square sticky top-0 z-10",
+          "content": "DRA",
+          "id": "0-15",
+          "title": "Dragon"
+        },
+        {
+          "bg": "#5a5366",
+          "className": "flex items-center justify-center text-[10px] font-bold uppercase tracking-tight text-white aspect-square sticky top-0 z-10",
+          "content": "DAR",
+          "id": "0-16",
+          "title": "Dark"
+        },
+        {
+          "bg": "#5a8ea1",
+          "className": "flex items-center justify-center text-[10px] font-bold uppercase tracking-tight text-white aspect-square sticky top-0 z-10",
+          "content": "STE",
+          "id": "0-17",
+          "title": "Steel"
+        },
+        {
+          "bg": "#ec8fe6",
+          "className": "flex items-center justify-center text-[10px] font-bold uppercase tracking-tight text-white aspect-square sticky top-0 z-10",
+          "content": "FAI",
+          "id": "0-18",
+          "title": "Fairy"
+        }
+      ],
+      "id": "0"
+    },
+    {
+      "cells": [
+        {
+          "bg": "#9099a1",
+          "className": "flex items-center justify-center text-[10px] font-bold uppercase tracking-tight text-white aspect-square sticky left-0 z-10",
+          "content": "NOR",
+          "id": "1-0",
+          "title": "Normal"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "1-1",
+          "title": "Normal → Normal: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "1-2",
+          "title": "Normal → Fire: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "1-3",
+          "title": "Normal → Water: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "1-4",
+          "title": "Normal → Electric: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "1-5",
+          "title": "Normal → Grass: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "1-6",
+          "title": "Normal → Ice: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "1-7",
+          "title": "Normal → Fighting: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "1-8",
+          "title": "Normal → Poison: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "1-9",
+          "title": "Normal → Ground: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "1-10",
+          "title": "Normal → Flying: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "1-11",
+          "title": "Normal → Psychic: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "1-12",
+          "title": "Normal → Bug: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "1-13",
+          "title": "Normal → Rock: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-800 text-slate-100 dark:bg-slate-950 dark:text-slate-400",
+          "content": "0",
+          "id": "1-14",
+          "title": "Normal → Ghost: 0× (no effect)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "1-15",
+          "title": "Normal → Dragon: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "1-16",
+          "title": "Normal → Dark: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "1-17",
+          "title": "Normal → Steel: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "1-18",
+          "title": "Normal → Fairy: 1×"
+        }
+      ],
+      "id": "1"
+    },
+    {
+      "cells": [
+        {
+          "bg": "#ef7444",
+          "className": "flex items-center justify-center text-[10px] font-bold uppercase tracking-tight text-white aspect-square sticky left-0 z-10",
+          "content": "FIR",
+          "id": "2-0",
+          "title": "Fire"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "2-1",
+          "title": "Fire → Normal: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "2-2",
+          "title": "Fire → Fire: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "2-3",
+          "title": "Fire → Water: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "2-4",
+          "title": "Fire → Electric: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "2-5",
+          "title": "Fire → Grass: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "2-6",
+          "title": "Fire → Ice: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "2-7",
+          "title": "Fire → Fighting: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "2-8",
+          "title": "Fire → Poison: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "2-9",
+          "title": "Fire → Ground: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "2-10",
+          "title": "Fire → Flying: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "2-11",
+          "title": "Fire → Psychic: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "2-12",
+          "title": "Fire → Bug: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "2-13",
+          "title": "Fire → Rock: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "2-14",
+          "title": "Fire → Ghost: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "2-15",
+          "title": "Fire → Dragon: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "2-16",
+          "title": "Fire → Dark: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "2-17",
+          "title": "Fire → Steel: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "2-18",
+          "title": "Fire → Fairy: 1×"
+        }
+      ],
+      "id": "2"
+    },
+    {
+      "cells": [
+        {
+          "bg": "#4d90d5",
+          "className": "flex items-center justify-center text-[10px] font-bold uppercase tracking-tight text-white aspect-square sticky left-0 z-10",
+          "content": "WAT",
+          "id": "3-0",
+          "title": "Water"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "3-1",
+          "title": "Water → Normal: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "3-2",
+          "title": "Water → Fire: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "3-3",
+          "title": "Water → Water: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "3-4",
+          "title": "Water → Electric: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "3-5",
+          "title": "Water → Grass: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "3-6",
+          "title": "Water → Ice: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "3-7",
+          "title": "Water → Fighting: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "3-8",
+          "title": "Water → Poison: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "3-9",
+          "title": "Water → Ground: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "3-10",
+          "title": "Water → Flying: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "3-11",
+          "title": "Water → Psychic: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "3-12",
+          "title": "Water → Bug: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "3-13",
+          "title": "Water → Rock: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "3-14",
+          "title": "Water → Ghost: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "3-15",
+          "title": "Water → Dragon: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "3-16",
+          "title": "Water → Dark: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "3-17",
+          "title": "Water → Steel: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "3-18",
+          "title": "Water → Fairy: 1×"
+        }
+      ],
+      "id": "3"
+    },
+    {
+      "cells": [
+        {
+          "bg": "#f5c84b",
+          "className": "flex items-center justify-center text-[10px] font-bold uppercase tracking-tight text-white aspect-square sticky left-0 z-10",
+          "content": "ELE",
+          "id": "4-0",
+          "title": "Electric"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "4-1",
+          "title": "Electric → Normal: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "4-2",
+          "title": "Electric → Fire: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "4-3",
+          "title": "Electric → Water: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "4-4",
+          "title": "Electric → Electric: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "4-5",
+          "title": "Electric → Grass: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "4-6",
+          "title": "Electric → Ice: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "4-7",
+          "title": "Electric → Fighting: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "4-8",
+          "title": "Electric → Poison: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-800 text-slate-100 dark:bg-slate-950 dark:text-slate-400",
+          "content": "0",
+          "id": "4-9",
+          "title": "Electric → Ground: 0× (no effect)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "4-10",
+          "title": "Electric → Flying: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "4-11",
+          "title": "Electric → Psychic: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "4-12",
+          "title": "Electric → Bug: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "4-13",
+          "title": "Electric → Rock: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "4-14",
+          "title": "Electric → Ghost: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "4-15",
+          "title": "Electric → Dragon: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "4-16",
+          "title": "Electric → Dark: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "4-17",
+          "title": "Electric → Steel: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "4-18",
+          "title": "Electric → Fairy: 1×"
+        }
+      ],
+      "id": "4"
+    },
+    {
+      "cells": [
+        {
+          "bg": "#63bb5b",
+          "className": "flex items-center justify-center text-[10px] font-bold uppercase tracking-tight text-white aspect-square sticky left-0 z-10",
+          "content": "GRA",
+          "id": "5-0",
+          "title": "Grass"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "5-1",
+          "title": "Grass → Normal: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "5-2",
+          "title": "Grass → Fire: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "5-3",
+          "title": "Grass → Water: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "5-4",
+          "title": "Grass → Electric: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "5-5",
+          "title": "Grass → Grass: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "5-6",
+          "title": "Grass → Ice: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "5-7",
+          "title": "Grass → Fighting: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "5-8",
+          "title": "Grass → Poison: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "5-9",
+          "title": "Grass → Ground: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "5-10",
+          "title": "Grass → Flying: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "5-11",
+          "title": "Grass → Psychic: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "5-12",
+          "title": "Grass → Bug: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "5-13",
+          "title": "Grass → Rock: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "5-14",
+          "title": "Grass → Ghost: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "5-15",
+          "title": "Grass → Dragon: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "5-16",
+          "title": "Grass → Dark: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "5-17",
+          "title": "Grass → Steel: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "5-18",
+          "title": "Grass → Fairy: 1×"
+        }
+      ],
+      "id": "5"
+    },
+    {
+      "cells": [
+        {
+          "bg": "#74cec0",
+          "className": "flex items-center justify-center text-[10px] font-bold uppercase tracking-tight text-white aspect-square sticky left-0 z-10",
+          "content": "ICE",
+          "id": "6-0",
+          "title": "Ice"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "6-1",
+          "title": "Ice → Normal: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "6-2",
+          "title": "Ice → Fire: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "6-3",
+          "title": "Ice → Water: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "6-4",
+          "title": "Ice → Electric: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "6-5",
+          "title": "Ice → Grass: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "6-6",
+          "title": "Ice → Ice: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "6-7",
+          "title": "Ice → Fighting: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "6-8",
+          "title": "Ice → Poison: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "6-9",
+          "title": "Ice → Ground: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "6-10",
+          "title": "Ice → Flying: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "6-11",
+          "title": "Ice → Psychic: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "6-12",
+          "title": "Ice → Bug: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "6-13",
+          "title": "Ice → Rock: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "6-14",
+          "title": "Ice → Ghost: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "6-15",
+          "title": "Ice → Dragon: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "6-16",
+          "title": "Ice → Dark: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "6-17",
+          "title": "Ice → Steel: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "6-18",
+          "title": "Ice → Fairy: 1×"
+        }
+      ],
+      "id": "6"
+    },
+    {
+      "cells": [
+        {
+          "bg": "#ce4069",
+          "className": "flex items-center justify-center text-[10px] font-bold uppercase tracking-tight text-white aspect-square sticky left-0 z-10",
+          "content": "FIG",
+          "id": "7-0",
+          "title": "Fighting"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "7-1",
+          "title": "Fighting → Normal: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "7-2",
+          "title": "Fighting → Fire: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "7-3",
+          "title": "Fighting → Water: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "7-4",
+          "title": "Fighting → Electric: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "7-5",
+          "title": "Fighting → Grass: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "7-6",
+          "title": "Fighting → Ice: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "7-7",
+          "title": "Fighting → Fighting: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "7-8",
+          "title": "Fighting → Poison: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "7-9",
+          "title": "Fighting → Ground: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "7-10",
+          "title": "Fighting → Flying: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "7-11",
+          "title": "Fighting → Psychic: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "7-12",
+          "title": "Fighting → Bug: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "7-13",
+          "title": "Fighting → Rock: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-800 text-slate-100 dark:bg-slate-950 dark:text-slate-400",
+          "content": "0",
+          "id": "7-14",
+          "title": "Fighting → Ghost: 0× (no effect)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "7-15",
+          "title": "Fighting → Dragon: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "7-16",
+          "title": "Fighting → Dark: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "7-17",
+          "title": "Fighting → Steel: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "7-18",
+          "title": "Fighting → Fairy: ½× (not very effective)"
+        }
+      ],
+      "id": "7"
+    },
+    {
+      "cells": [
+        {
+          "bg": "#ab6ac8",
+          "className": "flex items-center justify-center text-[10px] font-bold uppercase tracking-tight text-white aspect-square sticky left-0 z-10",
+          "content": "POI",
+          "id": "8-0",
+          "title": "Poison"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "8-1",
+          "title": "Poison → Normal: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "8-2",
+          "title": "Poison → Fire: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "8-3",
+          "title": "Poison → Water: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "8-4",
+          "title": "Poison → Electric: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "8-5",
+          "title": "Poison → Grass: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "8-6",
+          "title": "Poison → Ice: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "8-7",
+          "title": "Poison → Fighting: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "8-8",
+          "title": "Poison → Poison: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "8-9",
+          "title": "Poison → Ground: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "8-10",
+          "title": "Poison → Flying: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "8-11",
+          "title": "Poison → Psychic: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "8-12",
+          "title": "Poison → Bug: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "8-13",
+          "title": "Poison → Rock: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "8-14",
+          "title": "Poison → Ghost: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "8-15",
+          "title": "Poison → Dragon: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "8-16",
+          "title": "Poison → Dark: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-800 text-slate-100 dark:bg-slate-950 dark:text-slate-400",
+          "content": "0",
+          "id": "8-17",
+          "title": "Poison → Steel: 0× (no effect)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "8-18",
+          "title": "Poison → Fairy: 2× (super effective)"
+        }
+      ],
+      "id": "8"
+    },
+    {
+      "cells": [
+        {
+          "bg": "#d97746",
+          "className": "flex items-center justify-center text-[10px] font-bold uppercase tracking-tight text-white aspect-square sticky left-0 z-10",
+          "content": "GRO",
+          "id": "9-0",
+          "title": "Ground"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "9-1",
+          "title": "Ground → Normal: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "9-2",
+          "title": "Ground → Fire: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "9-3",
+          "title": "Ground → Water: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "9-4",
+          "title": "Ground → Electric: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "9-5",
+          "title": "Ground → Grass: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "9-6",
+          "title": "Ground → Ice: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "9-7",
+          "title": "Ground → Fighting: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "9-8",
+          "title": "Ground → Poison: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "9-9",
+          "title": "Ground → Ground: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-800 text-slate-100 dark:bg-slate-950 dark:text-slate-400",
+          "content": "0",
+          "id": "9-10",
+          "title": "Ground → Flying: 0× (no effect)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "9-11",
+          "title": "Ground → Psychic: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "9-12",
+          "title": "Ground → Bug: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "9-13",
+          "title": "Ground → Rock: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "9-14",
+          "title": "Ground → Ghost: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "9-15",
+          "title": "Ground → Dragon: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "9-16",
+          "title": "Ground → Dark: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "9-17",
+          "title": "Ground → Steel: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "9-18",
+          "title": "Ground → Fairy: 1×"
+        }
+      ],
+      "id": "9"
+    },
+    {
+      "cells": [
+        {
+          "bg": "#8fa8dd",
+          "className": "flex items-center justify-center text-[10px] font-bold uppercase tracking-tight text-white aspect-square sticky left-0 z-10",
+          "content": "FLY",
+          "id": "10-0",
+          "title": "Flying"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "10-1",
+          "title": "Flying → Normal: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "10-2",
+          "title": "Flying → Fire: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "10-3",
+          "title": "Flying → Water: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "10-4",
+          "title": "Flying → Electric: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "10-5",
+          "title": "Flying → Grass: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "10-6",
+          "title": "Flying → Ice: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "10-7",
+          "title": "Flying → Fighting: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "10-8",
+          "title": "Flying → Poison: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "10-9",
+          "title": "Flying → Ground: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "10-10",
+          "title": "Flying → Flying: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "10-11",
+          "title": "Flying → Psychic: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "10-12",
+          "title": "Flying → Bug: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "10-13",
+          "title": "Flying → Rock: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "10-14",
+          "title": "Flying → Ghost: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "10-15",
+          "title": "Flying → Dragon: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "10-16",
+          "title": "Flying → Dark: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "10-17",
+          "title": "Flying → Steel: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "10-18",
+          "title": "Flying → Fairy: 1×"
+        }
+      ],
+      "id": "10"
+    },
+    {
+      "cells": [
+        {
+          "bg": "#f06fa0",
+          "className": "flex items-center justify-center text-[10px] font-bold uppercase tracking-tight text-white aspect-square sticky left-0 z-10",
+          "content": "PSY",
+          "id": "11-0",
+          "title": "Psychic"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "11-1",
+          "title": "Psychic → Normal: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "11-2",
+          "title": "Psychic → Fire: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "11-3",
+          "title": "Psychic → Water: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "11-4",
+          "title": "Psychic → Electric: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "11-5",
+          "title": "Psychic → Grass: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "11-6",
+          "title": "Psychic → Ice: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "11-7",
+          "title": "Psychic → Fighting: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "11-8",
+          "title": "Psychic → Poison: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "11-9",
+          "title": "Psychic → Ground: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "11-10",
+          "title": "Psychic → Flying: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "11-11",
+          "title": "Psychic → Psychic: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "11-12",
+          "title": "Psychic → Bug: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "11-13",
+          "title": "Psychic → Rock: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "11-14",
+          "title": "Psychic → Ghost: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "11-15",
+          "title": "Psychic → Dragon: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-800 text-slate-100 dark:bg-slate-950 dark:text-slate-400",
+          "content": "0",
+          "id": "11-16",
+          "title": "Psychic → Dark: 0× (no effect)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "11-17",
+          "title": "Psychic → Steel: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "11-18",
+          "title": "Psychic → Fairy: 1×"
+        }
+      ],
+      "id": "11"
+    },
+    {
+      "cells": [
+        {
+          "bg": "#90c12c",
+          "className": "flex items-center justify-center text-[10px] font-bold uppercase tracking-tight text-white aspect-square sticky left-0 z-10",
+          "content": "BUG",
+          "id": "12-0",
+          "title": "Bug"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "12-1",
+          "title": "Bug → Normal: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "12-2",
+          "title": "Bug → Fire: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "12-3",
+          "title": "Bug → Water: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "12-4",
+          "title": "Bug → Electric: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "12-5",
+          "title": "Bug → Grass: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "12-6",
+          "title": "Bug → Ice: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "12-7",
+          "title": "Bug → Fighting: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "12-8",
+          "title": "Bug → Poison: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "12-9",
+          "title": "Bug → Ground: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "12-10",
+          "title": "Bug → Flying: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "12-11",
+          "title": "Bug → Psychic: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "12-12",
+          "title": "Bug → Bug: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "12-13",
+          "title": "Bug → Rock: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "12-14",
+          "title": "Bug → Ghost: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "12-15",
+          "title": "Bug → Dragon: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "12-16",
+          "title": "Bug → Dark: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "12-17",
+          "title": "Bug → Steel: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "12-18",
+          "title": "Bug → Fairy: ½× (not very effective)"
+        }
+      ],
+      "id": "12"
+    },
+    {
+      "cells": [
+        {
+          "bg": "#c7b78b",
+          "className": "flex items-center justify-center text-[10px] font-bold uppercase tracking-tight text-white aspect-square sticky left-0 z-10",
+          "content": "ROC",
+          "id": "13-0",
+          "title": "Rock"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "13-1",
+          "title": "Rock → Normal: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "13-2",
+          "title": "Rock → Fire: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "13-3",
+          "title": "Rock → Water: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "13-4",
+          "title": "Rock → Electric: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "13-5",
+          "title": "Rock → Grass: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "13-6",
+          "title": "Rock → Ice: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "13-7",
+          "title": "Rock → Fighting: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "13-8",
+          "title": "Rock → Poison: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "13-9",
+          "title": "Rock → Ground: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "13-10",
+          "title": "Rock → Flying: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "13-11",
+          "title": "Rock → Psychic: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "13-12",
+          "title": "Rock → Bug: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "13-13",
+          "title": "Rock → Rock: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "13-14",
+          "title": "Rock → Ghost: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "13-15",
+          "title": "Rock → Dragon: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "13-16",
+          "title": "Rock → Dark: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "13-17",
+          "title": "Rock → Steel: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "13-18",
+          "title": "Rock → Fairy: 1×"
+        }
+      ],
+      "id": "13"
+    },
+    {
+      "cells": [
+        {
+          "bg": "#5269ac",
+          "className": "flex items-center justify-center text-[10px] font-bold uppercase tracking-tight text-white aspect-square sticky left-0 z-10",
+          "content": "GHO",
+          "id": "14-0",
+          "title": "Ghost"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-800 text-slate-100 dark:bg-slate-950 dark:text-slate-400",
+          "content": "0",
+          "id": "14-1",
+          "title": "Ghost → Normal: 0× (no effect)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "14-2",
+          "title": "Ghost → Fire: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "14-3",
+          "title": "Ghost → Water: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "14-4",
+          "title": "Ghost → Electric: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "14-5",
+          "title": "Ghost → Grass: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "14-6",
+          "title": "Ghost → Ice: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "14-7",
+          "title": "Ghost → Fighting: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "14-8",
+          "title": "Ghost → Poison: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "14-9",
+          "title": "Ghost → Ground: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "14-10",
+          "title": "Ghost → Flying: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "14-11",
+          "title": "Ghost → Psychic: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "14-12",
+          "title": "Ghost → Bug: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "14-13",
+          "title": "Ghost → Rock: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "14-14",
+          "title": "Ghost → Ghost: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "14-15",
+          "title": "Ghost → Dragon: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "14-16",
+          "title": "Ghost → Dark: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "14-17",
+          "title": "Ghost → Steel: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "14-18",
+          "title": "Ghost → Fairy: 1×"
+        }
+      ],
+      "id": "14"
+    },
+    {
+      "cells": [
+        {
+          "bg": "#0a6dc4",
+          "className": "flex items-center justify-center text-[10px] font-bold uppercase tracking-tight text-white aspect-square sticky left-0 z-10",
+          "content": "DRA",
+          "id": "15-0",
+          "title": "Dragon"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "15-1",
+          "title": "Dragon → Normal: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "15-2",
+          "title": "Dragon → Fire: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "15-3",
+          "title": "Dragon → Water: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "15-4",
+          "title": "Dragon → Electric: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "15-5",
+          "title": "Dragon → Grass: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "15-6",
+          "title": "Dragon → Ice: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "15-7",
+          "title": "Dragon → Fighting: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "15-8",
+          "title": "Dragon → Poison: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "15-9",
+          "title": "Dragon → Ground: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "15-10",
+          "title": "Dragon → Flying: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "15-11",
+          "title": "Dragon → Psychic: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "15-12",
+          "title": "Dragon → Bug: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "15-13",
+          "title": "Dragon → Rock: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "15-14",
+          "title": "Dragon → Ghost: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "15-15",
+          "title": "Dragon → Dragon: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "15-16",
+          "title": "Dragon → Dark: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "15-17",
+          "title": "Dragon → Steel: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-800 text-slate-100 dark:bg-slate-950 dark:text-slate-400",
+          "content": "0",
+          "id": "15-18",
+          "title": "Dragon → Fairy: 0× (no effect)"
+        }
+      ],
+      "id": "15"
+    },
+    {
+      "cells": [
+        {
+          "bg": "#5a5366",
+          "className": "flex items-center justify-center text-[10px] font-bold uppercase tracking-tight text-white aspect-square sticky left-0 z-10",
+          "content": "DAR",
+          "id": "16-0",
+          "title": "Dark"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "16-1",
+          "title": "Dark → Normal: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "16-2",
+          "title": "Dark → Fire: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "16-3",
+          "title": "Dark → Water: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "16-4",
+          "title": "Dark → Electric: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "16-5",
+          "title": "Dark → Grass: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "16-6",
+          "title": "Dark → Ice: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "16-7",
+          "title": "Dark → Fighting: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "16-8",
+          "title": "Dark → Poison: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "16-9",
+          "title": "Dark → Ground: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "16-10",
+          "title": "Dark → Flying: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "16-11",
+          "title": "Dark → Psychic: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "16-12",
+          "title": "Dark → Bug: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "16-13",
+          "title": "Dark → Rock: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "16-14",
+          "title": "Dark → Ghost: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "16-15",
+          "title": "Dark → Dragon: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "16-16",
+          "title": "Dark → Dark: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "16-17",
+          "title": "Dark → Steel: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "16-18",
+          "title": "Dark → Fairy: ½× (not very effective)"
+        }
+      ],
+      "id": "16"
+    },
+    {
+      "cells": [
+        {
+          "bg": "#5a8ea1",
+          "className": "flex items-center justify-center text-[10px] font-bold uppercase tracking-tight text-white aspect-square sticky left-0 z-10",
+          "content": "STE",
+          "id": "17-0",
+          "title": "Steel"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "17-1",
+          "title": "Steel → Normal: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "17-2",
+          "title": "Steel → Fire: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "17-3",
+          "title": "Steel → Water: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "17-4",
+          "title": "Steel → Electric: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "17-5",
+          "title": "Steel → Grass: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "17-6",
+          "title": "Steel → Ice: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "17-7",
+          "title": "Steel → Fighting: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "17-8",
+          "title": "Steel → Poison: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "17-9",
+          "title": "Steel → Ground: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "17-10",
+          "title": "Steel → Flying: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "17-11",
+          "title": "Steel → Psychic: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "17-12",
+          "title": "Steel → Bug: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "17-13",
+          "title": "Steel → Rock: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "17-14",
+          "title": "Steel → Ghost: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "17-15",
+          "title": "Steel → Dragon: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "17-16",
+          "title": "Steel → Dark: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "17-17",
+          "title": "Steel → Steel: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "17-18",
+          "title": "Steel → Fairy: 2× (super effective)"
+        }
+      ],
+      "id": "17"
+    },
+    {
+      "cells": [
+        {
+          "bg": "#ec8fe6",
+          "className": "flex items-center justify-center text-[10px] font-bold uppercase tracking-tight text-white aspect-square sticky left-0 z-10",
+          "content": "FAI",
+          "id": "18-0",
+          "title": "Fairy"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "18-1",
+          "title": "Fairy → Normal: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "18-2",
+          "title": "Fairy → Fire: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "18-3",
+          "title": "Fairy → Water: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "18-4",
+          "title": "Fairy → Electric: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "18-5",
+          "title": "Fairy → Grass: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "18-6",
+          "title": "Fairy → Ice: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "18-7",
+          "title": "Fairy → Fighting: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "18-8",
+          "title": "Fairy → Poison: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "18-9",
+          "title": "Fairy → Ground: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "18-10",
+          "title": "Fairy → Flying: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "18-11",
+          "title": "Fairy → Psychic: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "18-12",
+          "title": "Fairy → Bug: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "18-13",
+          "title": "Fairy → Rock: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "18-14",
+          "title": "Fairy → Ghost: 1×"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "18-15",
+          "title": "Fairy → Dragon: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-emerald-500 text-white",
+          "content": "2",
+          "id": "18-16",
+          "title": "Fairy → Dark: 2× (super effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-rose-400 text-white dark:bg-rose-500",
+          "content": "½",
+          "id": "18-17",
+          "title": "Fairy → Steel: ½× (not very effective)"
+        },
+        {
+          "bg": "",
+          "className": "flex items-center justify-center text-xs font-bold tabular-nums aspect-square transition-colors hover:relative hover:z-10 hover:ring-2 hover:ring-inset hover:ring-brand-500 bg-slate-50 text-slate-300 dark:bg-slate-800 dark:text-slate-600",
+          "content": "",
+          "id": "18-18",
+          "title": "Fairy → Fairy: 1×"
+        }
+      ],
+      "id": "18"
+    }
+  ],
+  "teamInitial": [
+    {
+      "artwork": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/1.png",
+      "displayName": "Bulbasaur",
+      "id": 1,
+      "name": "bulbasaur",
+      "num": "#0001",
+      "types": [
+        "grass",
+        "poison"
+      ]
+    },
+    {
+      "artwork": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/4.png",
+      "displayName": "Charmander",
+      "id": 4,
+      "name": "charmander",
+      "num": "#0004",
+      "types": [
+        "fire"
+      ]
+    }
+  ],
+  "title": "PokéDex · type chart"
+}

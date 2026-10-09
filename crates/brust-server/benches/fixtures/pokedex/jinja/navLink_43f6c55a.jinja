@@ -1,0 +1,2 @@
+{# brust v2 · navLink_43f6c55a · do not edit #}
+<a x-data="navLink_43f6c55a" x-props='{{ {"active": active, "href": href, "label": label} | json_attr }}'{% if (href | present) and (href | url_ok) %} href="{{ href | attr_str | e }}"{% endif %} x-bind-href="_c1"{% if ("1" if (active | truthy) else "0") | present %} data-active="{{ ("1" if (active | truthy) else "0") | attr_str | e }}"{% endif %} x-bind-data-active="_c2"{% if _s1 | present %} class="{{ _s1 | attr_str | e }}"{% endif %} x-text="_c3">{{ label | e }}</a>

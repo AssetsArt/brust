@@ -22,7 +22,7 @@ use crate::dispatch::{CallError, CallKind, call_worker};
 use crate::inputs::{self, Path};
 use crate::manifest::{ALL_PROPS, Instances, JobKind, JobRecord, Manifest, RouteRecord};
 use crate::protocol::{JobCall, JobsRequest, JobsResponse, LoaderRequest, LoaderResponse, Verdict};
-use crate::render::{RenderError, inject_assets, use_ids};
+use crate::render::{RenderError, Renderer, inject_assets, use_ids};
 use crate::routing::{MatchResult, RouteEnvelope};
 use crate::server::body::{self, ResponseBody, empty_body};
 use crate::server::header_str;
@@ -577,29 +577,7 @@ fn finish(
     accept_enc: Option<&str>,
     cache_hdr: Option<&str>,
 ) -> Result<Response<ResponseBody>, RenderError> {
-    let children = ctx.get(CHILDREN_KEY);
-    let own_all = ctx.get(OWN_KEY);
-    // `_props` (the island host's `x-props`): the merged loader context — params,
-    // path, loader data — without the server's per-component maps. Built once,
-    // shared by every chain component (minijinja `Value`s are `Arc`-backed).
-    let props = brust_jinja::value_of(all_props(ctx));
-    let overlay = |id: &str| {
-        let slots = s.manifest.components.get(id).map_or(0, |c| c.use_id_slots);
-        let mut out: Vec<(String, minijinja::Value)> = use_ids(&route.id, id, slots)
-            .into_iter()
-            .map(|(k, v)| (k, minijinja::Value::from(v)))
-            .collect();
-        for map in [children, own_all] {
-            if let Some(Value::Object(own)) = map.and_then(|c| c.get(id)) {
-                for (k, v) in own {
-                    out.push((k.clone(), brust_jinja::value_of(v)));
-                }
-            }
-        }
-        out.push((PROPS_KEY.into(), props.clone()));
-        out
-    };
-    let html = s.renderer.render_chain(&route.chain, ctx, &overlay)?;
+    let html = render_chain_html(&s.manifest, &s.renderer, &route.id, &route.chain, ctx)?;
     let mut bytes = inject_assets(html, &route.chain, &s.manifest).into_bytes();
     if let Some(h) = cache_hdr {
         headers.push(("x-brust-cache".into(), h.into()));
@@ -618,6 +596,43 @@ fn finish(
         &headers,
         bytes,
     ))
+}
+
+/// The leaf-first render of `chain` for `ctx`, each component under its
+/// overlay (its `_idN`, its own child-instance slots from
+/// `ctx["__children"][<id>]`, its own job results from `ctx["__own"][<id>]`,
+/// and `_props`) — `finish` minus asset tags, headers and gzip. `pub` (via
+/// `brust_server::bench`) only so the criterion micro-bench can time it.
+pub fn render_chain_html(
+    manifest: &Manifest,
+    renderer: &Renderer,
+    route_id: &str,
+    chain: &[String],
+    ctx: &Value,
+) -> Result<String, RenderError> {
+    let children = ctx.get(CHILDREN_KEY);
+    let own_all = ctx.get(OWN_KEY);
+    // `_props` (the island host's `x-props`): the merged loader context — params,
+    // path, loader data — without the server's per-component maps. Built once,
+    // shared by every chain component (minijinja `Value`s are `Arc`-backed).
+    let props = brust_jinja::value_of(all_props(ctx));
+    let overlay = |id: &str| {
+        let slots = manifest.components.get(id).map_or(0, |c| c.use_id_slots);
+        let mut out: Vec<(String, minijinja::Value)> = use_ids(route_id, id, slots)
+            .into_iter()
+            .map(|(k, v)| (k, minijinja::Value::from(v)))
+            .collect();
+        for map in [children, own_all] {
+            if let Some(Value::Object(own)) = map.and_then(|c| c.get(id)) {
+                for (k, v) in own {
+                    out.push((k.clone(), brust_jinja::value_of(v)));
+                }
+            }
+        }
+        out.push((PROPS_KEY.into(), props.clone()));
+        out
+    };
+    renderer.render_chain(chain, ctx, &overlay)
 }
 
 /// Reserved ctx key holding child-instance slots per parent component:
