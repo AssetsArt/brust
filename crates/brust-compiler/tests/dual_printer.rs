@@ -108,7 +108,7 @@ const ROWS: &[(&str, &str, &str)] = &[
 const SAMPLE_JS: &str = r#"const a = "Hi", b = 2, xs = ["x", "y"], o = { k: 1 }, s = " Pad ", u = undefined, n = 3, ea = [], eo = {};"#;
 
 fn sample_ctx() -> minijinja::Value {
-    minijinja::Value::from_serialize(serde_json::json!({
+    brust_jinja::value_of(serde_json::json!({
         "a": "Hi", "b": 2, "xs": ["x", "y"], "o": { "k": 1 }, "s": " Pad ", "n": 3, "ea": [], "eo": {}
     }))
 }

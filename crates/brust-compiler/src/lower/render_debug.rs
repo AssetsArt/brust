@@ -23,6 +23,6 @@ pub fn render(
     }
     let mut env = minijinja::Environment::new();
     brust_jinja::register(&mut env);
-    env.render_str(jinja, minijinja::Value::from_serialize(&ctx))
+    env.render_str(jinja, brust_jinja::value_of(&ctx))
         .map_err(|e| format!("{e:#}"))
 }

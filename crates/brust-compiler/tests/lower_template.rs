@@ -33,8 +33,7 @@ fn lower(src: &str) -> (String, String) {
 fn render(jinja: &str, ctx: serde_json::Value) -> String {
     let mut env = minijinja::Environment::new();
     brust_jinja::register(&mut env);
-    env.render_str(jinja, minijinja::Value::from_serialize(ctx))
-        .unwrap()
+    env.render_str(jinja, brust_jinja::value_of(ctx)).unwrap()
 }
 
 const STATE: &str = "import { useState } from 'react'\n";

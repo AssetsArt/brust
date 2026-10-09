@@ -199,7 +199,7 @@ fn server_paint_equals_client_initial_values() {
             let mut env = minijinja::Environment::new();
             brust_jinja::register(&mut env);
             let html = env
-                .render_str(&jinja, minijinja::Value::from_serialize(&ctx))
+                .render_str(&jinja, brust_jinja::value_of(&ctx))
                 .unwrap_or_else(|e| panic!("{name}: template does not render: {e:#}\n{jinja}"));
             let page = dir.join(format!(
                 "{}.html",

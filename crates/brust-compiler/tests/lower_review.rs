@@ -37,8 +37,7 @@ fn tree_in(name: &str, files: &[(&str, &str)]) -> Vec<(String, String, Option<St
 fn render(jinja: &str, ctx: serde_json::Value) -> String {
     let mut env = minijinja::Environment::new();
     brust_jinja::register(&mut env);
-    env.render_str(jinja, minijinja::Value::from_serialize(ctx))
-        .unwrap()
+    env.render_str(jinja, brust_jinja::value_of(ctx)).unwrap()
 }
 
 const STATE: &str = "import { useState, useEffect } from 'react'\n";

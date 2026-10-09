@@ -12,6 +12,12 @@ use minijinja::value::{Kwargs, Value, ValueKind};
 use minijinja::{Environment, Error, ErrorKind};
 
 /// Registers every brust filter on `env` (and the builtins they build on).
+/// The one way brust converts serde data into a template value (minijinja 3:
+/// `value::Serde`). Takes the data by value; pass a reference to borrow.
+pub fn value_of<T: serde::Serialize>(v: T) -> Value {
+    Value::from(minijinja::value::Serde(v))
+}
+
 pub fn register(env: &mut Environment<'_>) {
     env.set_auto_escape_callback(|_| minijinja::AutoEscape::None);
     // `a.b` on a missing value is undefined (paints empty), never an error.
@@ -579,7 +585,7 @@ mod tests {
         let v = serde_json::json!({ "name": "a\"b</script>", "n": 1, "q": "it's" });
         let html = render(
             "<i x-props='{{ p | json_attr }}'></i>",
-            minijinja::context! { p => Value::from_serialize(&v) },
+            minijinja::context! { p => value_of(&v) },
         );
         let inner = html
             .strip_prefix("<i x-props='")
@@ -699,7 +705,7 @@ mod tests {
     fn truthiness_is_javascripts() {
         for (v, want) in [
             (Value::from(Vec::<i32>::new()), true),
-            (Value::from_serialize(serde_json::json!({})), true),
+            (value_of(serde_json::json!({})), true),
             (Value::from(""), false),
             (Value::from(0), false),
             (Value::from(f64::NAN), false),
