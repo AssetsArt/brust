@@ -244,3 +244,39 @@ fn undefined_style_omits_the_attribute() {
     let on = render(&j, serde_json::json!({ "c": true }));
     assert!(on.contains("style=\"color:red"), "{on}");
 }
+
+/// Lowers the root of fixture `name` (`tests/fixtures/<name>/input.tsx`); returns its jinja.
+fn lowered_jinja(name: &str) -> String {
+    let file = format!("tests/fixtures/{name}/input.tsx");
+    run_on_compiler_thread(move || {
+        let tree = compile_tree(
+            &file,
+            None,
+            &AnalyzeOptions {
+                root: repo(),
+                ..Default::default()
+            },
+            DEFAULT_RUNTIME_IMPORT,
+        )
+        .unwrap();
+        tree[0].artifacts.jinja.clone()
+    })
+}
+
+/// S9: the document is ordinary JSX; the title is an escaped text binding and the host is the root.
+#[test]
+fn document_root_is_a_plain_host_with_escaped_title() {
+    let jinja = lowered_jinja("document-root");
+    assert!(
+        jinja.contains("\n<html x-data=\"input_"),
+        "root element is the host: {jinja}"
+    );
+    assert!(
+        jinja.contains("<title x-text=\"") && jinja.contains(" | e }}</title>"),
+        "title is an escaped text binding: {jinja}"
+    );
+    assert!(
+        !jinja.contains("<script"),
+        "the compiler never injects scripts (S9): {jinja}"
+    );
+}
