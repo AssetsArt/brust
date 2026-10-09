@@ -30,7 +30,9 @@ test('the committed report equals a fresh run (CI diffs it too)', () => {
 
 test('classifyBuild: ok, refused by an Error diagnostic, and failed (no diagnostic, panic)', () => {
   expect(classifyBuild(0, '', false)).toBe('ok')
-  expect(classifyBuild(1, 'error[...]', true)).toBe('refused')
+  expect(classifyBuild(1, 'error list-key input.tsx:1:82 list items need a `key`', true)).toBe('refused')
+  expect(classifyBuild(1, '', true)).toBe('failed')
+  expect(classifyBuild(1, 'thread main panicked at x', true)).toBe('failed')
   expect(classifyBuild(1, 'something broke', false)).toBe('failed')
   expect(classifyBuild(101, "thread 'main' panicked at src/x.rs:1:1", true)).toBe('failed')
   expect(classifyBuild(1, "thread 'main' panicked at src/x.rs:1:1", true)).toBe('failed')

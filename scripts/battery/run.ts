@@ -43,7 +43,8 @@ type IR = { tier: string | { React: unknown }; jobs: { kind: string | Record<str
 /** Pure: classifies the `--emit all` spawn. An `Error` diagnostic makes `brustc` exit 1 by design (`compile_tree` returns the error). */
 export function classifyBuild(status: number | null, stderr: string, hasErrorDiag: boolean): Build {
   if (status === 0) return 'ok'
-  if (status === 1 && hasErrorDiag && !/panicked at/.test(stderr)) return 'refused'
+  // F49: a refusal names its rule on stderr (`error <rule> file:line:col …`); a bare exit 1 is not one.
+  if (status === 1 && hasErrorDiag && /^error [a-z-]+ /m.test(stderr) && !/panicked at/.test(stderr)) return 'refused'
   return 'failed'
 }
 
