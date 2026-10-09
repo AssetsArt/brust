@@ -1061,8 +1061,8 @@ mod tests {
         .unwrap();
         assert_eq!(
             ctx["__children"]["detailPage_c3"]["__moveCard_d4_1"],
-            json!([{"_id1": "brust-r2-detailPage_c3.moveCard_d4_1-0-1"},
-                   {"_id1": "brust-r2-detailPage_c3.moveCard_d4_1-1-1"}])
+            json!([{"_id0": "brust-r2-detailPage_c3.moveCard_d4_1-0-1"},
+                   {"_id0": "brust-r2-detailPage_c3.moveCard_d4_1-1-1"}])
         );
         assert!(ctx.get("__moveCard_d4_1").is_none(), "never top-level");
         // A job value merges into the seeded cell without losing its id.
@@ -1073,7 +1073,7 @@ mod tests {
         merge_result(map, &plans[2], &json!({"_s1": "MOVE growl"}));
         assert_eq!(
             ctx["__children"]["detailPage_c3"]["__moveCard_d4_1"][1],
-            json!({"_id1": "brust-r2-detailPage_c3.moveCard_d4_1-1-1", "_s1": "MOVE growl"})
+            json!({"_id0": "brust-r2-detailPage_c3.moveCard_d4_1-1-1", "_s1": "MOVE growl"})
         );
     }
 

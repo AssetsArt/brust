@@ -151,7 +151,8 @@ pub fn inject_assets(mut html: String, chain: &[String], m: &Manifest) -> String
     html
 }
 
-/// S7 step 6 / F39: `brust-<routeId>-<instance>-<n>` for n in 1..=slots;
+/// S7 step 6 / F39: context keys `_id0`..`_id{slots-1}` (0-based, lead ruling
+/// on challenge a76cefb2) carry `brust-<routeId>-<instance>-<n>` for n in 1..=slots;
 /// instance = component id for chain entries, `<parentId>.<childId>_<k>` for
 /// static child instances, `<parentId>.<childId>_<k>-<row>` for per-row
 /// instances. Ids are opaque: stable and unique per route is the contract.
@@ -159,7 +160,7 @@ pub fn use_ids(route_id: &str, instance: &str, slots: u32) -> Vec<(String, Strin
     (1..=slots)
         .map(|n| {
             (
-                format!("_id{n}"),
+                format!("_id{}", n - 1),
                 format!("brust-{route_id}-{instance}-{n}"),
             )
         })

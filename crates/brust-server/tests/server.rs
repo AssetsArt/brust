@@ -489,7 +489,7 @@ fn twin_dist() -> tempfile::TempDir {
     });
     let j = dist.path().join("jinja");
     let cell = |k: u32| {
-        format!(r#"{{{{ __moveCard_d4_{k}["_s1"] | e }}}}@{{{{ __moveCard_d4_{k}["_id1"] | e }}}}"#)
+        format!(r#"{{{{ __moveCard_d4_{k}["_s1"] | e }}}}@{{{{ __moveCard_d4_{k}["_id0"] | e }}}}"#)
     };
     std::fs::write(
         j.join("twinPage_t1.jinja"),

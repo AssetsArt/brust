@@ -144,8 +144,8 @@ fn inject_assets_without_body_appends() {
 #[test]
 fn use_ids_are_stable_and_distinct() {
     let want = vec![
-        ("_id1".to_string(), "brust-r6-idsPage_i9-1".to_string()),
-        ("_id2".to_string(), "brust-r6-idsPage_i9-2".to_string()),
+        ("_id0".to_string(), "brust-r6-idsPage_i9-1".to_string()),
+        ("_id1".to_string(), "brust-r6-idsPage_i9-2".to_string()),
     ];
     assert_eq!(use_ids("r6", "idsPage_i9", 2), want);
     assert_eq!(use_ids("r6", "idsPage_i9", 2), want);
