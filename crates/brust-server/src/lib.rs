@@ -16,7 +16,7 @@ pub mod server;
 /// Internals timed by `benches/render.rs`; not an API.
 #[doc(hidden)]
 pub mod bench {
-    pub use crate::pipeline::{cached_body, render_chain_html};
+    pub use crate::pipeline::{cached_body, props_view, render_chain_html};
 }
 
 pub use config::{Config, CorsConfig, InvalidateArgs, InvalidateResult, Server, Stats};

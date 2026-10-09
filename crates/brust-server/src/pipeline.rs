@@ -653,10 +653,12 @@ pub fn render_chain_html(
 ) -> Result<String, RenderError> {
     let children = ctx.get(CHILDREN_KEY);
     let own_all = ctx.get(OWN_KEY);
+    // The merged context, converted once for the whole chain.
+    let base = brust_jinja::value_of(ctx);
     // `_props` (the island host's `x-props`): the merged loader context — params,
-    // path, loader data — without the server's per-component maps. Built once,
-    // shared by every chain component (minijinja `Value`s are `Arc`-backed).
-    let props = brust_jinja::value_of(all_props(ctx));
+    // path, loader data — without the server's per-component maps. A view over
+    // `base` (no copy), shared by every chain component.
+    let props = props_view(&base);
     let overlay = |id: &str| {
         let slots = manifest.components.get(id).map_or(0, |c| c.use_id_slots);
         let mut out: Vec<(String, minijinja::Value)> = use_ids(route_id, id, slots)
@@ -673,7 +675,49 @@ pub fn render_chain_html(
         out.push((PROPS_KEY.into(), props.clone()));
         out
     };
-    renderer.render_chain(chain, ctx, &overlay)
+    renderer.render_chain_value(chain, &base, &overlay)
+}
+
+/// `_props` as a `minijinja::Value`: the converted merged context minus the
+/// server's per-component maps (`__children`, `__own`) — what
+/// `value_of(all_props(ctx))` is, as an O(1) view instead of a deep clone and
+/// a second conversion. A non-map context is itself (as `all_props`). `pub`
+/// (via `brust_server::bench`) only so the micro-bench can time it.
+pub fn props_view(base: &minijinja::Value) -> minijinja::Value {
+    if base.kind() == minijinja::value::ValueKind::Map {
+        minijinja::Value::from_object(PropsView(base.clone()))
+    } else {
+        base.clone()
+    }
+}
+
+fn is_props_hidden(k: &minijinja::Value) -> bool {
+    matches!(k.as_str(), Some(CHILDREN_KEY | OWN_KEY))
+}
+
+#[derive(Debug)]
+struct PropsView(minijinja::Value);
+
+impl minijinja::value::Object for PropsView {
+    fn repr(self: &Arc<Self>) -> minijinja::value::ObjectRepr {
+        minijinja::value::ObjectRepr::Map
+    }
+
+    fn get_value(self: &Arc<Self>, key: &minijinja::Value) -> Option<minijinja::Value> {
+        if is_props_hidden(key) {
+            return None;
+        }
+        self.0.as_object()?.get_value(key)
+    }
+
+    fn enumerate(self: &Arc<Self>) -> minijinja::value::Enumerator {
+        let keys = self
+            .0
+            .try_iter()
+            .map(|it| it.filter(|k| !is_props_hidden(k)).collect())
+            .unwrap_or_default();
+        minijinja::value::Enumerator::Values(keys)
+    }
 }
 
 /// Reserved ctx key holding child-instance slots per parent component:
@@ -1358,6 +1402,38 @@ mod tests {
             headers: HeaderMap::new(),
             html: Bytes::from("<p>lorem ipsum</p>".repeat(len / 18 + 1)),
             gzip: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// `props_view` paints exactly what the deep-cloned `_props` painted:
+    /// `json_attr`, member access, hidden maps, length, iteration, truthiness.
+    #[test]
+    fn props_view_paints_like_the_cloned_props() {
+        let r = Renderer::from_templates(&BTreeMap::from([(
+            "T".to_string(),
+            "{{ _props | json_attr }}|{{ _props.name | e }}|{{ _props.__own is defined }}|\
+             {{ _props['__children'] is defined }}|{{ _props | length }}|\
+             {% for k in _props %}{{ k }},{% endfor %}|{{ _props.n.deep }}|{% if _props %}t{% endif %}|\
+             {{ _props.list[1] }}|{{ 'name' in _props }}|{{ '__own' in _props }}"
+                .to_string(),
+        )]))
+        .unwrap();
+        let ctxs = [
+            json!({"name": "<a'b>", "n": {"deep": 1.5}, "list": [1, null, "x"], "z": false,
+                   "__own": {"p": {"_s1": "x"}}, "__children": {"p": {}}, "_id0": "i"}),
+            json!({"__own": {}}),
+            json!({}),
+        ];
+        for ctx in &ctxs {
+            let paint = |props: minijinja::Value| {
+                r.render_chain_value(&["T".into()], &brust_jinja::value_of(ctx), &|_| {
+                    vec![(PROPS_KEY.into(), props.clone())]
+                })
+                .unwrap()
+            };
+            let cloned = paint(brust_jinja::value_of(all_props(ctx)));
+            let view = paint(props_view(&brust_jinja::value_of(ctx)));
+            assert_eq!(view, cloned, "ctx {ctx}");
         }
     }
 

@@ -18,8 +18,8 @@
 //! (MISS, BYPASS and — today — HIT alike):
 //! - `ctx_to_value`: `serde_json::Value` → `minijinja::Value` of the merged ctx
 //!   (`render_chain` does it once per request);
-//! - `props_to_value`: `_props` = ctx minus `__children`/`__own`, cloned and
-//!   converted (once per request, in `render_chain_html`);
+//! - `props_to_value`: `_props` = ctx minus `__children`/`__own`, as a view
+//!   over the converted ctx (once per request, in `render_chain_html`);
 //! - `render_page` / `render_layout` / `render_chain`: the leaf alone, the
 //!   layout alone (no `__outlet`), and the whole chain with every overlay;
 //! - `inject_assets` on the rendered document;
@@ -39,7 +39,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-use brust_server::bench::{cached_body, render_chain_html};
+use brust_server::bench::{cached_body, props_view, render_chain_html};
 use brust_server::cache::l1::{L1Cache, RenderedBody, build_cache_key};
 use brust_server::manifest::Manifest;
 use brust_server::render::{Renderer, inject_assets};
@@ -84,19 +84,6 @@ fn gzip(bytes: &[u8], level: u32) -> Vec<u8> {
     );
     enc.write_all(bytes).unwrap();
     enc.finish().unwrap()
-}
-
-/// Mirror of `pipeline::all_props` (private): ctx minus the server's maps.
-fn all_props(ctx: &Value) -> Value {
-    match ctx {
-        Value::Object(o) => Value::Object(
-            o.iter()
-                .filter(|(k, _)| k.as_str() != "__children" && k.as_str() != "__own")
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect(),
-        ),
-        v => v.clone(),
-    }
 }
 
 fn bench_route(
@@ -146,8 +133,12 @@ fn bench_route(
     g.bench_function("ctx_to_value", |b| {
         b.iter(|| brust_jinja::value_of(black_box(&ctx)))
     });
+    // `_props` given the converted ctx: an O(1) view since m2p Task 4 (it was
+    // a deep clone of ctx minus `__children`/`__own` + a second conversion:
+    // A 190 µs, B 11.0 µs on the Task 1 host).
+    let base = brust_jinja::value_of(&ctx);
     g.bench_function("props_to_value", |b| {
-        b.iter(|| brust_jinja::value_of(all_props(black_box(&ctx))))
+        b.iter(|| props_view(black_box(&base)))
     });
     g.bench_function("render_page", |b| {
         b.iter(|| {

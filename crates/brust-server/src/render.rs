@@ -74,7 +74,18 @@ impl Renderer {
         ctx: &Value,
         overlay: &dyn Fn(&str) -> Vec<(String, minijinja::Value)>,
     ) -> Result<String, RenderError> {
-        let base = brust_jinja::value_of(ctx);
+        self.render_chain_value(chain, &brust_jinja::value_of(ctx), overlay)
+    }
+
+    /// [`Self::render_chain`] over an already-converted base context, so a
+    /// caller that also needs the `minijinja::Value` (to build overlays from
+    /// it) converts the merged context once per request.
+    pub fn render_chain_value(
+        &self,
+        chain: &[String],
+        base: &minijinja::Value,
+        overlay: &dyn Fn(&str) -> Vec<(String, minijinja::Value)>,
+    ) -> Result<String, RenderError> {
         let mut outlet: Option<String> = None;
         for id in chain.iter().rev() {
             let mut overlay = overlay(id);
