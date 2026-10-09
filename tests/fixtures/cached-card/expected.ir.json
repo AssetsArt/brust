@@ -1,0 +1,224 @@
+{
+  "id": "input_f5cee24e",
+  "source": "tests/fixtures/cached-card/input.tsx",
+  "tier": "Pending",
+  "props": [
+    {
+      "name": "item",
+      "local": "item",
+      "ts_type": null,
+      "default": null
+    }
+  ],
+  "state": [],
+  "derived": [],
+  "effects": [],
+  "handlers": [],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 172,
+      "tag": "article",
+      "attrs": [],
+      "children": [
+        {
+          "Element": {
+            "loc": 188,
+            "tag": "h2",
+            "attrs": [],
+            "children": [
+              {
+                "Slot": {
+                  "Raw": {
+                    "loc": 193,
+                    "kind": {
+                      "Member": {
+                        "target": {
+                          "loc": 193,
+                          "kind": {
+                            "Ident": {
+                              "name": "item",
+                              "kind": "Prop"
+                            }
+                          }
+                        },
+                        "name": "name",
+                        "optional": false
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 215,
+            "tag": "p",
+            "attrs": [],
+            "children": [
+              {
+                "Slot": {
+                  "Raw": {
+                    "loc": 219,
+                    "kind": {
+                      "Call": {
+                        "callee": {
+                          "loc": 219,
+                          "kind": {
+                            "Ident": {
+                              "name": "formatPrice",
+                              "kind": {
+                                "Import": {
+                                  "source": "./money",
+                                  "imported": "formatPrice"
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "args": [
+                          {
+                            "loc": 231,
+                            "kind": {
+                              "Member": {
+                                "target": {
+                                  "loc": 231,
+                                  "kind": {
+                                    "Ident": {
+                                      "name": "item",
+                                      "kind": "Prop"
+                                    }
+                                  }
+                                },
+                                "name": "price",
+                                "optional": false
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "needs_worker": false,
+  "cache": {
+    "key": {
+      "loc": 313,
+      "kind": {
+        "Arrow": {
+          "params": [
+            "p"
+          ],
+          "body": {
+            "Expr": {
+              "loc": 320,
+              "kind": {
+                "Member": {
+                  "target": {
+                    "loc": 320,
+                    "kind": {
+                      "Member": {
+                        "target": {
+                          "loc": 320,
+                          "kind": {
+                            "Ident": {
+                              "name": "p",
+                              "kind": "Local"
+                            }
+                          }
+                        },
+                        "name": "item",
+                        "optional": false
+                      }
+                    }
+                  },
+                  "name": "id",
+                  "optional": false
+                }
+              }
+            }
+          },
+          "captures": []
+        }
+      }
+    },
+    "tags": {
+      "loc": 339,
+      "kind": {
+        "Arrow": {
+          "params": [
+            "p"
+          ],
+          "body": {
+            "Expr": {
+              "loc": 346,
+              "kind": {
+                "Array": [
+                  {
+                    "loc": 347,
+                    "kind": {
+                      "Lit": {
+                        "Str": "product"
+                      }
+                    }
+                  },
+                  {
+                    "loc": 358,
+                    "kind": {
+                      "Member": {
+                        "target": {
+                          "loc": 358,
+                          "kind": {
+                            "Member": {
+                              "target": {
+                                "loc": 358,
+                                "kind": {
+                                  "Ident": {
+                                    "name": "p",
+                                    "kind": "Local"
+                                  }
+                                }
+                              },
+                              "name": "item",
+                              "optional": false
+                            }
+                          }
+                        },
+                        "name": "id",
+                        "optional": false
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "captures": []
+        }
+      }
+    },
+    "revalidate": 60.0
+  },
+  "children": [],
+  "diagnostics": []
+}

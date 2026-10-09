@@ -38,6 +38,9 @@ pub fn analyze_component(parsed: &Parsed) -> Result<ComponentIR, Diagnostic> {
     let mut ir = ComponentIR::new(component_id(&path), path);
     parsed.with_ast(|ast| {
         let Some(func) = default_export_fn(ast) else {
+            if let Some(done) = read_cache_export(parsed, ast, &mut ir) {
+                return done;
+            }
             if has_default_export(ast) {
                 ir.diagnostics.push(Diagnostic::fallback(
                     "default-export-shape",
@@ -119,6 +122,129 @@ pub(crate) fn finish_diagnostics(ir: &mut ComponentIR, text: &[u8]) {
     }
     ir.diagnostics
         .sort_by_key(|d| (d.class.severity_rank(), d.line, d.col));
+}
+
+/// The expression of `export default <expr>`.
+fn default_export_expr<'x>(ast: &'x js_ast::Ast<'_>) -> Option<&'x js_ast::Expr> {
+    ast.parts.iter().find_map(|part| {
+        part.stmts.slice().iter().find_map(|s| match &s.data {
+            S::SExportDefault(ed) => match &ed.value {
+                js_ast::StmtOrExpr::Expr(e) => Some(e),
+                js_ast::StmtOrExpr::Stmt(_) => None,
+            },
+            _ => None,
+        })
+    })
+}
+
+/// Spec §3.4: `export default cache(Comp, { key, tags, revalidate })` with
+/// `cache` imported from `brust`. Reads `Comp` (a function declared in this
+/// module) as the component and the options into `ir.cache`. `None` when the
+/// default export is not such a call.
+fn read_cache_export(
+    parsed: &Parsed,
+    ast: &js_ast::Ast<'_>,
+    ir: &mut ComponentIR,
+) -> Option<Result<(), Diagnostic>> {
+    let e = default_export_expr(ast)?;
+    let E::ECall(call) = &e.data else {
+        return None;
+    };
+    let callee = match &call.target.data {
+        E::EImportIdentifier(id) => id.ref_,
+        E::EIdentifier(id) => id.ref_,
+        _ => return None,
+    };
+    let loc = e.loc.start.max(0) as u32;
+    let shape = |message: &str| {
+        Diagnostic::error(
+            "cache-shape",
+            message.to_string(),
+            loc,
+            "write `export default cache(Component, { key: (p) => …, tags: (p) => […], revalidate: 60 })`",
+        )
+    };
+    // The callee must be `cache` from `brust`; the table is built for the
+    // wrapped component, so first find it.
+    let comp = call.args.first()?;
+    let comp_name = match &comp.data {
+        E::EIdentifier(id) => ast
+            .symbols
+            .as_slice()
+            .get(id.ref_.inner_index() as usize)
+            .map(|s| String::from_utf8_lossy(s.original_name.slice()).into_owned())?,
+        E::EImportIdentifier(_) => {
+            // Only checked once we know the callee is brust's cache().
+            String::new()
+        }
+        _ => return None,
+    };
+    let func = module_fn(ast, &comp_name);
+    let probe = func.or_else(|| default_export_fn(ast));
+    let is_cache = |names: &NameTable<'_>| names.import_of(callee) == Some(("brust", "cache"));
+    match (func, probe) {
+        (Some(func), _) => {
+            let mut names = NameTable::new(ast, func);
+            if !is_cache(&names) {
+                return None;
+            }
+            mark_state_bindings(func, &mut names);
+            read_function(parsed, ast, func, ir);
+            let print = |js: Js<'_>| print_js(parsed, ast, js);
+            let mut reader = Reader::new(&mut names, &print);
+            let mut decl = crate::ir::CacheDecl {
+                key: None,
+                tags: None,
+                revalidate: None,
+            };
+            match call.args.get(1).map(|a| &a.data) {
+                None => {}
+                Some(E::EObject(obj)) => {
+                    for p in obj.properties.iter() {
+                        let (Some(k), Some(v)) = (&p.key, &p.value) else {
+                            ir.diagnostics
+                                .push(shape("cache() options must be plain properties"));
+                            continue;
+                        };
+                        let key = match &k.data {
+                            E::EString(s) => crate::analyze::expr::estring(s),
+                            _ => String::new(),
+                        };
+                        match (key.as_str(), &v.data) {
+                            ("key", _) => decl.key = Some(reader.expr(v)),
+                            ("tags", _) => decl.tags = Some(reader.expr(v)),
+                            ("revalidate", E::ENumber(n)) => decl.revalidate = Some(n.value()),
+                            ("revalidate", _) => ir
+                                .diagnostics
+                                .push(shape("cache() revalidate must be a number literal")),
+                            _ => ir.diagnostics.push(shape(&format!(
+                                "unknown cache() option `{key}` (key, tags, revalidate)"
+                            ))),
+                        }
+                    }
+                }
+                Some(_) => ir.diagnostics.push(shape(
+                    "the second argument of cache() must be an object literal",
+                )),
+            }
+            ir.cache = Some(decl);
+            Some(Ok(()))
+        }
+        (None, Some(other)) => {
+            let names = NameTable::new(ast, other);
+            if !is_cache(&names) {
+                return None;
+            }
+            ir.diagnostics.push(Diagnostic::fallback(
+                "default-export-shape",
+                "cache() wraps a component that is not a function declared in this module",
+                loc,
+                "declare the component in this module: `function Card(props) { … }`",
+            ));
+            Some(Ok(()))
+        }
+        (None, None) => None,
+    }
 }
 
 /// Reads one component function into `ir` (structural).
