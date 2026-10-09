@@ -90,8 +90,10 @@ pub fn start_server(opts: StartOptions) -> napi::Result<()> {
     Ok(())
 }
 
-/// Register the calling worker with the current server. `buf` is the worker's
-/// SharedArrayBuffer view (kept rooted by the worker); it is split into
+/// Register the calling worker with the current server. `buf` is a view of
+/// the worker's SharedArrayBuffer, which must outlive the process's use of
+/// this worker (`brust start` allocates it on the main thread and keeps it for
+/// the process lifetime: `dispatch.rs` BufPtr); it is split into
 /// `slots` disjoint sub-regions of `floor(buf.byteLength / slots)` bytes.
 /// `f(kind, requestJson, slot)` writes the response JSON at offset
 /// `slot * sub` and resolves with its byte length (> 0, ≤ sub). Returns the
@@ -103,8 +105,9 @@ pub fn register_worker(
     f: Function<FnArgs<(String, String, u32)>, Promise<u32>>,
 ) -> napi::Result<u32> {
     let s = current()?;
-    // SAFETY: the SAB backing store outlives every call (the worker keeps it
-    // rooted in module scope); Rust only reads it after a call's Promise resolved.
+    // SAFETY: the SAB backing store outlives every call (owned by the main
+    // thread for the process lifetime — see `BufPtr`); Rust only reads it after
+    // a call's Promise resolved.
     let (buf_ptr, buf_len) = unsafe {
         let sl = buf.as_mut();
         (BufPtr(sl.as_mut_ptr()), sl.len())

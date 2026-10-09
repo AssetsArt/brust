@@ -1,6 +1,10 @@
 import { expect, test } from 'bun:test'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { setNative } from '../src/native'
 import { defineRoutes, flattenRoutes, httpError, notFound, redirect } from '../src/routes'
-import { jobIdOf, literalsIndex, makeDispatch, makeHandlers, writeSlot } from '../src/worker'
+import { jobIdOf, literalsIndex, makeDispatch, makeHandlers, SLOT_BYTES, startWorker, writeSlot } from '../src/worker'
 
 const C = () => null
 const ctx = (routeId: string) => ({
@@ -167,4 +171,50 @@ test('worker.ts auto-starts inside a Bun Worker when BRUST_WORKER_ID is set', as
   })
   w.terminate()
   expect(msg).toContain('BRUST_APP_ENTRY is not set')
+})
+
+test('loader: notFound under a layout keeps the parent data (verdict data wins on conflicts)', async () => {
+  const h = makeHandlers({
+    leaves: leaves({ parent: async () => ({ user: 'ann', title: 'parent' }), child: async () => notFound({ title: 'gone', why: 'x' }) }),
+    jobs: {},
+  })
+  expect(await h.loader(ctx('r1'))).toEqual({ verdict: 'notFound', data: { user: 'ann', title: 'gone', why: 'x' } })
+  const bare = makeHandlers({ leaves: leaves({ parent: async () => ({ user: 'ann' }), child: async () => notFound() }), jobs: {} })
+  expect(await bare.loader(ctx('r1'))).toEqual({ verdict: 'notFound', data: { user: 'ann' } })
+})
+
+// A minimal built app on disk for startWorker: empty manifest + jobs module, no routes.
+function tinyApp(): string {
+  const d = mkdtempSync(join(tmpdir(), 'brust-worker-'))
+  writeFileSync(join(d, 'manifest.json'), '{"components":{}}')
+  writeFileSync(join(d, 'jobs.js'), 'export default {}\n')
+  writeFileSync(join(d, 'routes.js'), 'export const routes = []\n')
+  return d
+}
+
+test('startWorker registers the SharedArrayBuffer it is given (main-thread owned), else allocates one', async () => {
+  const d = tinyApp()
+  const keys = ['BRUST_DIST_DIR', 'BRUST_APP_ENTRY', 'BRUST_RENDER_SLOTS'] as const
+  const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]))
+  const seen: { buf: Uint8Array; slots: number }[] = []
+  // biome-ignore lint/suspicious/noExplicitAny: only registerWorker is exercised
+  const fake: any = { registerWorker: (buf: Uint8Array, slots: number) => seen.push({ buf, slots }) - 1 }
+  const prev = setNative(fake)
+  try {
+    Object.assign(process.env, { BRUST_DIST_DIR: d, BRUST_APP_ENTRY: join(d, 'routes.js'), BRUST_RENDER_SLOTS: '2' })
+    const sab = new SharedArrayBuffer(SLOT_BYTES * 2)
+    expect(await startWorker({ sab })).toBe(0)
+    expect(seen[0]!.buf.buffer).toBe(sab) // the very buffer run.ts allocated, not a copy
+    expect(seen[0]!.buf.byteLength).toBe(SLOT_BYTES * 2)
+    expect(seen[0]!.slots).toBe(2)
+    expect(await startWorker()).toBe(1) // tests / no workerData: allocate locally
+    expect(seen[1]!.buf.buffer).toBeInstanceOf(SharedArrayBuffer)
+    expect(seen[1]!.buf.buffer).not.toBe(sab)
+    expect(seen[1]!.buf.byteLength).toBe(SLOT_BYTES * 2)
+  } finally {
+    setNative(prev)
+    for (const k of keys) if (saved[k] === undefined) delete process.env[k]
+    else process.env[k] = saved[k]
+    rmSync(d, { recursive: true, force: true })
+  }
 })

@@ -41,11 +41,30 @@ pub fn kind_str(k: CallKind) -> &'static str {
 /// Raw pointer to the worker's SharedArrayBuffer backing store. Send+Sync
 /// because the backing store lives outside the GC heap and Rust reads it only
 /// AFTER the worker's Promise resolved (the tsfn await is the happens-before).
+///
+/// Lifetime invariant: the pointer stays valid for as long as the pool may
+/// hold this dispatcher, i.e. the process lifetime. `brust start`
+/// (`packages/brust/src/run.ts`) allocates every worker's SAB on the MAIN
+/// thread, keeps it in a module-level array until the process exits and hands
+/// it to the worker (`workerData.sab`); a SAB's backing store is shared and
+/// ref-counted across threads, so the worker's isolate going away does not
+/// free it. A worker exit makes the process drain and exit (run.ts, no
+/// respawn in M2); until then a call to the dead worker fails at the tsfn
+/// enqueue (`EnqueueFailed`) and never reads the buffer.
+///
+/// Not a napi reference: `napi_ref`s belong to the env that created them (the
+/// worker's), are invalidated when that env is torn down and may only be
+/// released on its thread, so a ref held here would neither keep the store
+/// alive past the worker nor be droppable from the server's threads.
+/// Main-thread ownership is the guarantee. (A buffer allocated inside the
+/// worker, `startWorker()` without `sab`, is only for tests: it lives as long
+/// as that worker.)
 #[derive(Copy, Clone)]
 pub struct BufPtr(pub *mut u8);
 
-// SAFETY: see BufPtr docstring. The Bun Worker keeps the SAB rooted in its
-// module scope, so the backing store lives for the worker's whole lifetime.
+// SAFETY: see BufPtr docstring — the backing store outlives every dispatcher
+// that can read it (main-thread owned for the process lifetime), and reads are
+// ordered after the worker's write by the resolved Promise.
 unsafe impl Send for BufPtr {}
 unsafe impl Sync for BufPtr {}
 

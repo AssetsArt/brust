@@ -2,6 +2,7 @@
 // JSON, responses go into this worker's SharedArrayBuffer slot (SAB rule, `dispatch.rs`). A
 // handler NEVER rejects across the tsfn: every failure becomes `{error}` / `{id, error}`.
 import { join, resolve } from 'node:path'
+import { workerData } from 'node:worker_threads'
 import { registerWorker } from './native'
 import { type FlatRoute, flattenRoutes, isHttpErrorTrigger, isVerdict, type LoaderReq, type Route, type Verdict } from './routes'
 
@@ -95,8 +96,13 @@ export function jobIdOf(call: Pick<JobCall, 'id' | 'componentId'>): string | und
 
 // ---- handlers ----
 
-function verdictJson(v: Verdict): LoaderResponse {
-  if (v.status === 404) return { verdict: 'notFound', data: v.data ?? {} }
+/** `parent`: the data the chain merged before the verdict. A notFound renders the route's
+ * template (layouts included), so the layouts' data stays under the verdict's own keys. */
+function verdictJson(v: Verdict, parent: Record<string, unknown>): LoaderResponse {
+  if (v.status === 404) {
+    const own = v.data ?? {}
+    return { verdict: 'notFound', data: typeof own === 'object' && !Array.isArray(own) ? { ...parent, ...own } : own }
+  }
   return { verdict: 'redirect', location: v.headers?.Location ?? '/', status: v.status }
 }
 
@@ -130,7 +136,8 @@ export function makeHandlers(opts: { leaves: FlatRoute[]; jobs: JobsModule; mani
   }
 
   return {
-    // 0.1.x `runNativeChainLoaders`: root → leaf, flat merge (later keys win), first verdict stops.
+    // 0.1.x `runNativeChainLoaders`: root → leaf, flat merge (later keys win), first verdict stops
+    // (a notFound keeps what the chain merged so far: verdictJson).
     async loader(req) {
       const leaf = byId.get(req.routeId)
       if (!leaf) return { error: `unknown routeId ${req.routeId}` }
@@ -145,7 +152,7 @@ export function makeHandlers(opts: { leaves: FlatRoute[]; jobs: JobsModule; mani
             if (isHttpErrorTrigger(e)) return { verdict: 'httpError', status: e.status, body: e.body }
             throw e
           }
-          if (isVerdict(r)) return verdictJson(r)
+          if (isVerdict(r)) return verdictJson(r, merged)
           if (r && typeof r === 'object') merged = { ...merged, ...(r as Record<string, unknown>) }
         }
         return { ok: true, data: merged }
@@ -187,6 +194,15 @@ export function makeDispatch(h: Handlers, view: Uint8Array, slots: number) {
 
 export const SLOT_BYTES = 256 * 1024
 
+export interface StartWorkerOptions {
+  /** The response buffer to register (`SLOT_BYTES * slots` bytes). `run()` allocates it on the
+   * MAIN thread and keeps it for the process lifetime, passing it as `workerData.sab`: the Rust
+   * dispatcher holds a raw pointer into it until the process exits, so its backing store must not
+   * die with this worker (`crates/brust-napi/src/dispatch.rs` BufPtr). Absent (tests, a worker
+   * started by hand) → allocated here and rooted in module scope. */
+  sab?: SharedArrayBuffer
+}
+
 // Rooted for the worker's lifetime: the server reads responses out of this buffer.
 let sab: SharedArrayBuffer | null = null
 let view: Uint8Array | null = null
@@ -194,7 +210,7 @@ let view: Uint8Array | null = null
 /** Boots one Bun worker: env `BRUST_WORKER_ID`, `BRUST_RENDER_SLOTS` (default 1),
  * `BRUST_DIST_DIR` (reads `manifest.json` + its `jobs_module`), `BRUST_APP_ENTRY` (the routes
  * module: `export const routes` or default export). Returns the worker index. */
-export async function startWorker(): Promise<number> {
+export async function startWorker(opts: StartWorkerOptions = {}): Promise<number> {
   const env = process.env
   const slots = Math.max(1, Number.parseInt(env.BRUST_RENDER_SLOTS ?? '1', 10) || 1)
   const dist = resolve(env.BRUST_DIST_DIR ?? 'dist')
@@ -206,7 +222,7 @@ export async function startWorker(): Promise<number> {
   if (!Array.isArray(routes)) throw new Error(`${entry} exports no routes (export const routes or default)`)
   const jobsMod = await import(join(dist, manifest.jobs_module ?? 'jobs.js'))
   const jobs = (jobsMod.default ?? jobsMod) as JobsModule
-  sab = new SharedArrayBuffer(SLOT_BYTES * slots)
+  sab = opts.sab ?? new SharedArrayBuffer(SLOT_BYTES * slots)
   view = new Uint8Array(sab)
   const handlers = makeHandlers({ leaves: flattenRoutes(routes).leaves, jobs, manifest })
   return registerWorker(view, slots, makeDispatch(handlers, view, slots))
@@ -214,4 +230,5 @@ export async function startWorker(): Promise<number> {
 
 // Auto-start only inside a Bun `Worker` spawned by `run()` (BRUST_WORKER_ID set). Not
 // `import.meta.main`: Bun runs a Worker entry with `import.meta.main === false`.
-if (process.env.BRUST_WORKER_ID !== undefined && !Bun.isMainThread) await startWorker()
+if (process.env.BRUST_WORKER_ID !== undefined && !Bun.isMainThread)
+  await startWorker({ sab: (workerData as { sab?: SharedArrayBuffer } | null)?.sab })

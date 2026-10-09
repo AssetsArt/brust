@@ -1,12 +1,16 @@
 // `brust start` / `bun dist/index.js`: boot the Rust server, spawn N Bun workers that answer
 // `loader`/`jobs` (worker.ts), wait for them to register, then live until a signal.
 // SIGINT/SIGTERM → graceful drain (bounded by drainTimeoutMs) → exit 0; a second signal exits at
-// once (130 / 143). Nothing here returns on its own: a started server keeps the process alive and
-// a drained one does not end it, so every exit is an explicit `process.exit`.
+// once (130 / 143); a signal before every worker registered exits 0 at once (nothing is being
+// served yet, and the server's drain only starts once it accepts). A worker that dies (error,
+// process.exit, OOM) → drain → exit 1: M2 does not respawn, the supervisor restarts the process.
+// Nothing here returns on its own: a started server keeps the process alive and a drained one
+// does not end it, so every exit is an explicit `process.exit`.
 import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { type BrustConfig, loadConfig } from './config'
 import { beginDrain, startServer, untilReady } from './native'
+import { SLOT_BYTES } from './worker'
 
 export interface RunOptions {
   distDir?: string
@@ -15,6 +19,9 @@ export interface RunOptions {
   /** Overrides below env (CLI flags): see config.ts (incl. `bootTimeoutMs`, default 30000). */
   config?: Partial<BrustConfig>
 }
+
+/** Every worker's response buffer, kept reachable until the process exits (see run()). */
+const workerBuffers: SharedArrayBuffer[] = []
 
 function fail(msg: string): never {
   console.error(`[brust] ${msg}`)
@@ -43,28 +50,61 @@ export async function run(opts: RunOptions = {}): Promise<void> {
     fail((e as Error).message)
   }
 
+  // React (external in jobs.js) picks its production build from NODE_ENV at import time; an
+  // explicitly set NODE_ENV is kept.
+  process.env.NODE_ENV ??= 'production'
   // Bun workers share the process env; each gets its id + the boot inputs (worker.ts startWorker).
   const env = {
     ...process.env,
+    NODE_ENV: process.env.NODE_ENV,
     BRUST_RENDER_SLOTS: String(cfg.renderSlots),
     BRUST_DIST_DIR: distDir,
     BRUST_APP_ENTRY: entry,
   }
-  const url = new URL('./worker.ts', import.meta.url)
-  for (let i = 0; i < cfg.workers; i++) {
-    const w = new Worker(url, { env: { ...env, BRUST_WORKER_ID: String(i) } })
-    // No respawn in M2: a worker that fails to boot (or dies later) takes the process down loudly
-    // instead of leaving the server waiting on a slot nobody answers.
-    w.addEventListener('error', (e) => fail(`worker ${i}: ${(e as ErrorEvent).message}`))
-  }
 
+  let ready = false
   let draining = false
-  const onSignal = (code: number) => {
-    if (draining) process.exit(code)
+  let failed = false
+  let exiting = false
+  const exit = (code: number): never => {
+    exiting = true
+    process.exit(code)
+  }
+  /** Drain (only once accepting: before that the server's drain never completes), then exit —
+   * non-zero if a worker died meanwhile. */
+  const drainThenExit = (code: number) => {
     draining = true
+    if (!ready) exit(code)
     beginDrain(cfg.drainTimeoutMs)
       .catch((e) => console.error(`[brust] drain: ${String(e)}`))
-      .finally(() => process.exit(0))
+      .finally(() => exit(failed ? 1 : code))
+  }
+
+  const url = new URL('./worker.ts', import.meta.url)
+  for (let i = 0; i < cfg.workers; i++) {
+    // The response buffer is owned HERE, for the process lifetime: the Rust dispatcher keeps a raw
+    // pointer into it, so it must not be freed with the worker (crates/brust-napi dispatch.rs).
+    const sab = new SharedArrayBuffer(SLOT_BYTES * cfg.renderSlots)
+    workerBuffers.push(sab)
+    const w = new Worker(url, { env: { ...env, BRUST_WORKER_ID: String(i) }, workerData: { sab } } as WorkerOptions)
+    // No respawn in M2: a worker that fails to boot or dies later takes the process down loudly
+    // instead of leaving the server answering 503 for every loader/job route.
+    w.addEventListener('error', (e) => {
+      if (exiting) return
+      console.error(`[brust] worker ${i}: ${(e as ErrorEvent).message}`)
+      exit(1)
+    })
+    w.addEventListener('close', (e) => {
+      if (exiting) return
+      console.error(`[brust] worker ${i} exited (code ${(e as CloseEvent).code}) — shutting down`)
+      failed = true
+      if (!draining) drainThenExit(1)
+    })
+  }
+
+  const onSignal = (code: number) => {
+    if (draining) exit(code)
+    drainThenExit(0)
   }
   process.on('SIGINT', () => onSignal(130))
   process.on('SIGTERM', () => onSignal(143))
@@ -74,6 +114,7 @@ export async function run(opts: RunOptions = {}): Promise<void> {
   } catch (e) {
     fail(`workers not ready: ${String((e as Error).message ?? e)} (BRUST_BOOT_TIMEOUT_MS=${cfg.bootTimeoutMs})`)
   }
+  ready = true
   console.log(`[brust] ready (${cfg.workers} worker${cfg.workers === 1 ? '' : 's'})`)
   await new Promise<never>(() => {})
 }
