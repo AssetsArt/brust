@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { join, resolve } from 'node:path'
 import { EXIT_REPORT, REPORT, renderReport, runBattery } from './run.ts'
-import { BROWSER_CASES, renderExitReport } from './exit.ts'
+import { BROWSER_CASES, COMPILE_ERROR_ROWS, ERROR_ROWS, KNOWN_GAP_ROWS, renderExitReport } from './exit.ts'
 
 const repo = resolve(import.meta.dir, '../..')
 const results = runBattery()
@@ -14,26 +14,28 @@ test('the committed reports equal a fresh run', () => {
   expect(readFileSync(EXIT_REPORT, 'utf8')).toBe(renderExitReport(results))
 })
 
-test('no row disagrees with the spec unless it is a documented known gap', () => {
+test('no row disagrees with the spec unless it is a pinned known gap', () => {
   const bad = results.filter((r) => r.warn).map((r) => `${r.row.id}: expected ${r.row.expect}, observed ${r.observed}`)
   expect(bad).toEqual([])
-  for (const r of results.filter((x) => x.row.knownGap)) expect(r.row.knownGap!.length).toBeGreaterThan(10)
-})
-
-test('every row expected native/static compiles so, with the expected job count', () => {
-  for (const r of results.filter((x) => (x.row.expect === 'native' || x.row.expect === 'static') && !x.row.knownGap)) {
-    expect([r.row.id, r.observed]).toEqual([r.row.id, r.row.expect])
-    if (r.row.jobs !== undefined) expect([r.row.id, r.jobs.length]).toEqual([r.row.id, r.row.jobs])
+  // The exemption set is pinned: adding, removing or silently fixing a gap changes this test.
+  expect(results.filter((r) => r.row.knownGap).map((r) => r.row.id).sort()).toEqual(Object.keys(KNOWN_GAP_ROWS).sort())
+  for (const [id, gap] of Object.entries(KNOWN_GAP_ROWS)) {
+    const r = results.find((x) => x.row.id === id)!
+    expect([id, r.observed]).toEqual([id, gap.observed])
+    expect([id, r.row.knownGap!.includes(gap.ledger)]).toEqual([id, true])
   }
 })
 
-test('every react row has a fallback diagnostic and no error; every error row has an Error', () => {
+test('error rows are pinned and refuse to build; compile-error rows are pinned', () => {
+  expect(results.filter((r) => r.row.expect === 'error').map((r) => r.row.id).sort()).toEqual([...ERROR_ROWS].sort())
+  for (const r of results.filter((x) => x.row.expect === 'error')) expect([r.row.id, r.build]).toEqual([r.row.id, 'refused'])
+  expect(results.filter((r) => r.row.expect === 'compile-error').map((r) => r.row.id).sort()).toEqual([...COMPILE_ERROR_ROWS].sort())
+})
+
+test('every react row has a fallback diagnostic and no error', () => {
   for (const r of results.filter((x) => x.observed === 'react')) {
     expect([r.row.id, r.diagnostics.some((d) => d.startsWith('fallback:'))]).toEqual([r.row.id, true])
     expect([r.row.id, r.diagnostics.some((d) => d.startsWith('error:'))]).toEqual([r.row.id, false])
-  }
-  for (const r of results.filter((x) => x.observed === 'error')) {
-    expect([r.row.id, r.diagnostics.some((d) => d.startsWith('error:'))]).toEqual([r.row.id, true])
   }
 })
 

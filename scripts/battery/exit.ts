@@ -1,8 +1,19 @@
 // The M1 exit report (spec §12): counts from the battery plus the declared and
 // battery-found gaps. Deterministic: derived from the same results as the
 // coverage report, no timestamps.
-import { CATEGORIES } from './rows.ts'
+import { CATEGORIES, type Expect } from './rows.ts'
 import type { Result } from './run.ts'
+
+/** Rows whose observed tier is accepted to differ from (or whose checks are relaxed against) the spec, by ledger id. Set-equal to the rows carrying `knownGap`. */
+export const KNOWN_GAP_ROWS: Record<string, { ledger: string; observed: Expect }> = {
+  'a-nested-list': { ledger: 'F32', observed: 'static' },
+  'e-if-in-table': { ledger: 'F32', observed: 'native' },
+  'b-memo': { ledger: 'F37', observed: 'react' },
+  'c-useid': { ledger: 'F39', observed: 'react' },
+}
+/** Rows that must produce an `Error` diagnostic and refuse to build. */
+export const ERROR_ROWS = ['e-function-prop-react-child', 'e-server-only-handler', 'e-request-prop', 'e-missing-key'] as const
+export const COMPILE_ERROR_ROWS = ['e-parse-error'] as const
 
 /** Gaps declared by the plans (ledger ids in docs/plans/m1a-followups.md). */
 export const DECLARED_GAPS: { id: string; what: string; owner: string }[] = [

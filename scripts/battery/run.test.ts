@@ -17,7 +17,7 @@ test('report rows are fixed strings built from the row name, not machine paths o
   const report = renderReport([pick('a-static-text'), pick('c-usereducer')])
   const lines = report.split('\n').filter((l) => l.startsWith('| a-static-text') || l.startsWith('| c-usereducer'))
   expect(lines).toEqual([
-    '| a-static-text | static text | static | static | 0 | ok | — |  |',
+    '| a-static-text | static text | static | static | 0 | ok | — | spec §3.1 static tier |',
     '| c-usereducer | useReducer | react | react | ssr | ok | fallback:hook-unsupported |  |',
   ])
   const full = renderReport(results)
