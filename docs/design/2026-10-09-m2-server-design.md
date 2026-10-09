@@ -183,6 +183,14 @@ and never asks Bun what a route is:
 - An `ssr` job record also carries `"target": "<react component id>"` (the component to render;
   for a react child that is the child's id while the job sits in the parent's `jobs[]`). The server
   passes it through unchanged as `JobCall.target`; the worker calls `jobs[target].ssr(inputs)`.
+- An `ssr` job record for a react CHILD also carries `"props": { "<childProp>": "<parent context path, [idx] for the row>" }`
+  (compiler IR `JobDecl.props`, lane `m2a2-ssr-props`); the server evaluates it against the parent's
+  overlay (rows: per `per_instance` element) to build the child's props object, which is BOTH the
+  job's input (`JobCall.inputs`) and the key material. A react PAGE's own job has no `props`
+  (`inputs: ["*"]` = the loader context). A `null` path in the map is a build error (m2c).
+- Import specifiers: user code imports `cache` from `@brust/brust` and `Outlet`/`defineRoutes`
+  from `@brust/brust/routes`; the compiler also accepts the bare `brust` specifier for `cache`
+  (M1 fixtures).
 - `"*"` in `inputs` means ALL of the component's props: for a chain entry the loader context,
   for a child instance its `child_props`. The job key hashes that whole object.
 - Every component's precompute/ssr results and `_props` (= the component's props object) live in
