@@ -635,6 +635,8 @@ fn array_from_over_an_iterable_or_a_shadowed_array_is_not_a_list() {
     for src in [
         "export default function L(props: any) { return <ul>{Array.from(new Set(props.xs), (x: any) => <li key={x}>{x}</li>)}</ul> }",
         "const Array = { from: (a: any, f: any) => [f(a[0], 0)] }\nexport default function L(props: any) { return <ul>{Array.from(props.xs, (x: any) => <li key={x}>{x}</li>)}</ul> }",
+        "import { useState } from 'react'\nexport default function L(props: any) { const [s] = useState(() => new Set(props.xs)); return <ul>{Array.from(s, (x: any) => <li key={x}>{x}</li>)}</ul> }",
+        "export default function L(props: any) { const s = new Set(props.xs); return <ul>{Array.from(s, (x: any) => <li key={x}>{x}</li>)}</ul> }",
         "export default function L(props: any) { const Array = { from: (a: any, f: any) => [f(a[0], 0)] }; return <ul>{Array.from(props.xs, (x: any) => <li key={x}>{x}</li>)}</ul> }",
     ] {
         let ir = analyze(src);

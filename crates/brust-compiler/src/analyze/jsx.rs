@@ -344,11 +344,14 @@ fn read_child(r: &mut Reader<'_, '_>, e: &js_ast::Expr, out: &mut Vec<Node>) {
     }
 }
 
-/// A name, a member chain of names, or an object literal (the `{ length: n }` range).
-fn array_source_ok(e: &js_ast::Expr) -> bool {
+/// A path rooted at a props binding (JSON props are arrays or plain values) or an object literal
+/// (the `{ length: n }` range). A state, derived, local or module root may hold a Set or Map.
+fn array_source_ok(r: &Reader<'_, '_>, e: &js_ast::Expr) -> bool {
     match &e.data {
-        E::EIdentifier(_) | E::EImportIdentifier(_) | E::EObject(_) => true,
-        E::EDot(d) => d.optional_chain.is_none() && array_source_ok(&d.target),
+        E::EIdentifier(id) => matches!(r.names.kind_of(id.ref_).1, IdentKind::Prop),
+        E::EImportIdentifier(id) => matches!(r.names.kind_of(id.ref_).1, IdentKind::Prop),
+        E::EObject(_) => true,
+        E::EDot(d) => d.optional_chain.is_none() && array_source_ok(r, &d.target),
         _ => false,
     }
 }
@@ -403,7 +406,7 @@ fn read_list(r: &mut Reader<'_, '_>, call: &js_ast::E::Call) -> Option<Node> {
 
     // `Array.from` iterates any iterable (Set, string, generator); only a props/local path or a
     // `{ length: n }` range is known to be an array the template can iterate.
-    if from_callee.is_some() && !array_source_ok(src_expr) {
+    if from_callee.is_some() && !array_source_ok(r, src_expr) {
         return None;
     }
     let first = r.expr(src_expr);

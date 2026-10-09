@@ -162,7 +162,14 @@ and never asks Bun what a route is:
 - `children[]` records carry `"props": { "<childProp>": "<parent context path>" }` where the
   literal `[idx]` stands for the current row of `per_instance` (`"move": "pokemon.moves[idx]"`);
   it must cover the root of every input of the child's jobs (boot rule `UncoveredInput`).
-  `children[].instances` is therefore `{ "k": <1-based ordinal of that child id in template order>, "per_instance": <list path> | null }`.
+  `children[].instances` stays the STRING form of the example above: `"static"` or
+  `"per-row:<list context path>"` (e.g. `"per-row:pokemon.moves"`). `k` is NOT on the wire: both
+  sides derive it as the 1-based ordinal of that child id within `children` in template order, and
+  the build lane writes `children` in the compiler's instance order. (Lead ruling on Dew's
+  challenge 22411f50, 2026-10-09: one wire form; the object form in an earlier amendment is withdrawn.)
+- M2 supports ONE level of per-row child instances: a child that has a job or `useId` and sits
+  inside nested loops (or is passed as slot content into a receiver's loop) is a compile `Error`
+  `nested-instance` (ledger row for M3: n-dimensional instance arrays).
 - The `loader` response may carry `headers` (e.g. `Set-Cookie`); a response with `Set-Cookie`
   is never stored in L1.
 - `/public/<rel>` is served from `dist/public`; hashed file names (`-<hex6+>` suffix) get
@@ -197,7 +204,8 @@ Bun. `use_id_slots` is the number of `useId()` calls in the component (F39).
    merged into the context as slots: `_sN` for precompute, `_ssr_<id>` for ssr,
    `__<childId>_<k>` arrays for per-instance child jobs (ledger F34's name).
 6. `useId` (F39): Rust allocates `brust-<routeId>-<instance>-<k>` for each `use_id_slots`
-   per instance, stable across requests, and seeds them as `_idN` context values that the
+   per instance, stable across requests, and seeds them as `_idN` context values, **0-based:
+   `_id0` is the first `useId()` of the component** (the id VALUE may keep a 1-based suffix), that the
    template writes into `x-props` (compiler change in M2: `useId()` reads `_idN` instead of
    falling back).
 7. Render: **nested routes compose at the server**: render the chain leaf-first, each
@@ -209,8 +217,9 @@ Bun. `use_id_slots` is the number of `useId()` calls in the component (F39).
 **S8 — `Outlet` is a compiler intrinsic.** `import { Outlet } from '@brust/brust/routes'`;
 `<Outlet/>` in a route component lowers to `{{ __outlet | safe }}` in the template and is a
 no-op in the client chunk. A component that renders `<Outlet/>` but is not a route with
-children is an `Error` (`outlet-outside-layout`) raised by the build lane (the compiler cannot
-know the route tree; it records `uses_outlet` in the IR). The server renders the child first and
+children is a build `Error` (`outlet-outside-layout`, raised by the build lane from `uses_outlet`); a
+react-tier component that renders `<Outlet/>` is a compile `Error` (`outlet-in-react`): its template
+is the island host and has no `__outlet` slot. The server renders the child first and
 passes its HTML as `__outlet`. (Compiler change, small: one recognised import, like `cache()`.)
 
 **S9 — Asset injection is a server concern.** Templates contain no `<script>` tags for the
