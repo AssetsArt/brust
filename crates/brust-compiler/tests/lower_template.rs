@@ -339,10 +339,13 @@ fn use_id_is_seeded_in_the_template_and_the_client_props() {
     let (jinja, client) = lower(
         "import { useId, useState } from 'react'\nexport default function Field(props: { label: string }) { const id = useId(); const [v, setV] = useState(''); return <div><label htmlFor={id}>{props.label}</label><input id={id} value={v} onChange={e => setV(e.target.value)} /></div> }",
     );
-    assert!(jinja.contains("{% set id = _id0 %}"), "{jinja}");
     assert!(
-        jinja.contains("for=\"{{ id | attr_str | e }}\"")
-            || jinja.contains("for=\"{{ (id) | attr_str | e }}\""),
+        !jinja.contains("{% set id"),
+        "no shadowing variable: {jinja}"
+    );
+    assert!(
+        jinja.contains("for=\"{{ _id0 | attr_str | e }}\"")
+            || jinja.contains("for=\"{{ (_id0) | attr_str | e }}\""),
         "{jinja}"
     );
     assert!(
@@ -365,10 +368,7 @@ fn use_id_is_seeded_in_the_template_and_the_client_props() {
 #[test]
 fn use_id_in_a_keyed_row_is_indexed_by_the_loop_path() {
     let jinja = lowered_jinja("use-id-row");
-    assert!(
-        jinja.contains("{% set id_") && jinja.contains("[_i1][\"_id0\"]"),
-        "{jinja}"
-    );
+    assert!(jinja.contains("[_i1][\"_id0\"]"), "{jinja}");
     let html = render(
         &jinja,
         serde_json::json!({

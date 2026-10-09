@@ -148,13 +148,6 @@ impl<'a, 'c> Printer<'a, 'c> {
     fn preamble(&mut self) {
         let ir = self.f.ir;
         let mut decls: Vec<(u32, String)> = Vec::new();
-        // `useId` values: seeded by the server (`_id{k}`), before anything that reads them.
-        for (k, name) in ir.id_bindings.iter().enumerate() {
-            decls.push((
-                0,
-                format!("{{% set {name}{} = {} %}}", self.suffix(), self.id_ref(k)),
-            ));
-        }
         for (i, s) in ir.state.iter().enumerate() {
             let loc = self.f.structural.state[i]
                 .init
@@ -236,8 +229,9 @@ impl<'a, 'c> Printer<'a, 'c> {
             }
             IdentKind::Local => Some(if self.f.derived.contains_key(name) {
                 self.derived_var(name)
-            } else if self.f.ir.id_bindings.iter().any(|i| i == name) {
-                format!("{name}{}", self.suffix())
+            } else if let Some(k) = self.f.ir.id_bindings.iter().position(|i| i == name) {
+                // Read the server-seeded value directly: no template variable to shadow a prop.
+                self.id_ref(k)
             } else {
                 UNDEFINED.into()
             }),
@@ -1045,6 +1039,23 @@ impl<'a, 'c> Printer<'a, 'c> {
             ));
             return;
         };
+        if self.inline.is_some()
+            && (child_ir.use_id_slots > 0
+                || child_ir
+                    .jobs
+                    .iter()
+                    .any(|j| matches!(j.kind, JobKind::Precompute)))
+        {
+            // The slot key is built from this printer's own counters and frames, which restart
+            // inside an inlined child: instances of such a grandchild would collide.
+            self.diagnostics.push(Diagnostic::error(
+                "nested-instance",
+                format!("<{name}> has a job or useId and is used inside another inlined component"),
+                0,
+                "use it directly in the route component (ledger F53)",
+            ));
+            return;
+        }
         let k = {
             let k = self.instances.entry(id.clone()).or_insert(0);
             *k += 1;

@@ -571,7 +571,7 @@ fn dynamic_child_of_script_or_style_falls_back() {
         rules(&a)
     );
     let b = analyze(
-        "export default function B() { return <div><style>{`.a{color:red}`}</style></div> }",
+        "export default function B() { return <div><style>{`.a color red`}</style></div> }",
     );
     assert!(
         !rules(&b).iter().any(|(_, r)| r == "raw-text-child"),
@@ -579,11 +579,52 @@ fn dynamic_child_of_script_or_style_falls_back() {
         rules(&b)
     );
     let c = analyze(
-        "export default function C() { return <div><style>{'.a{color:red}'}</style><script>var x = 1</script></div> }",
+        "export default function C() { return <div><style>{'.a color red'}</style><script>var x = 1</script></div> }",
     );
     assert!(
         !rules(&c).iter().any(|(_, r)| r == "raw-text-child"),
         "{:?}",
         rules(&c)
+    );
+}
+
+/// Pre-READY review: a useId local named like a prop must not shadow it.
+#[test]
+fn use_id_named_like_a_prop_does_not_shadow_it() {
+    let ir = analyze(
+        "import { useId } from 'react'\nexport default function F(props: { id: string }) { const id = useId(); return <label htmlFor={id}>{props.id}</label> }",
+    );
+    assert!(
+        !rules(&ir).iter().any(|(_, r)| r == "use-id-in-render"),
+        "{:?}",
+        rules(&ir)
+    );
+}
+
+#[test]
+fn escapable_static_text_in_script_or_style_falls_back() {
+    for src in [
+        "export default function A() { return <div><script>{\"gtag('js')\"}</script></div> }",
+        "export default function A() { return <div><style>{'a > b{}'}</style></div> }",
+        "export default function A() { return <div><script>{'a && b'}</script></div> }",
+    ] {
+        let ir = analyze(src);
+        assert!(
+            rules(&ir).contains(&(DiagClass::Fallback, "raw-text-child".into())),
+            "{src}: {:?}",
+            rules(&ir)
+        );
+    }
+}
+
+#[test]
+fn outlet_inside_a_condition_falls_back() {
+    let ir = analyze(
+        "import { Outlet } from '@brust/brust/routes'\nimport { useState } from 'react'\nexport default function L() { const [o, setO] = useState(false); return <div onClick={() => setO(!o)}>{o && <aside><Outlet/></aside>}</div> }",
+    );
+    assert!(
+        rules(&ir).contains(&(DiagClass::Fallback, "outlet-in-branch".into())),
+        "{:?}",
+        rules(&ir)
     );
 }

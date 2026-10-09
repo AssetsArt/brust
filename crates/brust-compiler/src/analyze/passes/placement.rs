@@ -297,13 +297,19 @@ fn direct_locals(e: &RawExpr, out: &mut BTreeSet<String>) {
     }
 }
 
+/// Text the template would entity-escape, which browsers do not decode inside raw text.
+fn needs_raw_escape(t: &str) -> bool {
+    t.contains(['&', '<', '>', '"', '\'', '{'])
+}
+
 /// A child that is not literal text (`F35`): an expression, a condition, a list or a component.
 fn dynamic_child(n: &Node) -> bool {
     match n {
-        Node::Text(_) => false,
+        Node::Text(t) => needs_raw_escape(t),
         Node::Slot(Expr::Raw(r)) => match &r.kind {
+            RawKind::Lit(crate::ir::Literal::Str(s)) => needs_raw_escape(s),
             RawKind::Lit(_) => false,
-            RawKind::Template { parts, .. } => !parts.is_empty(),
+            RawKind::Template { head, parts } => !parts.is_empty() || needs_raw_escape(head),
             _ => true,
         },
         _ => true,
@@ -588,7 +594,17 @@ impl Placer<'_> {
                 }
                 children.iter_mut().for_each(|c| self.node(c));
             }
-            Node::Text(_) | Node::Outlet => {}
+            Node::Outlet => {
+                if !self.guards.is_empty() || !self.lists.is_empty() {
+                    self.diagnostics.push(Diagnostic::fallback(
+                        "outlet-in-branch",
+                        "<Outlet/> inside a condition or a list would be duplicated in the hidden copy",
+                        0,
+                        "render <Outlet/> unconditionally in the layout",
+                    ));
+                }
+            }
+            Node::Text(_) => {}
             Node::Slot(e) => self.expr(e),
             Node::If { cond, then, else_ } => {
                 let guard = match &*cond {
