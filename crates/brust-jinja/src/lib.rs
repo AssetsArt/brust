@@ -374,7 +374,18 @@ pub fn css_value(prop: &str, v: &Value) -> String {
                 format!("{}px", js_number(n))
             }
         }
-        _ => paint(v),
+        _ => {
+            // A string must not end the declaration or open another construct
+            // (CSS injection into the server-rendered style attribute; React
+            // sets each property on its own, so nothing like it exists there).
+            let s = paint(v);
+            let lower = s.to_ascii_lowercase();
+            let breaks = s.contains([';', '{', '}', '\\', '\n', '\r'])
+                || lower.contains("/*")
+                || lower.contains("expression(")
+                || lower.contains("@import");
+            if breaks { String::new() } else { s }
+        }
     }
 }
 
