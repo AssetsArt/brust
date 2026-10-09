@@ -24,9 +24,9 @@ Measured 2026-10-09 on darwin/arm64, Bun 1.4.2, `oha -c 120 -z 10s`. **Bar (v2 n
 
 | Probe | Path | v2 rps | 0.1.x rps | Δ | v2 gzip rps | 0.1.x gzip rps |
 |---|---|---:|---:|---:|---:|---:|
-| A-static-hit | `/type-chart` | 3,040 | 4,822 | -37% | 2,483 | 4,674 |
-| B-native-miss | `/pokemon/{name}` | 23,771 | 43,871 | -45.8% | 12,597 | 47,285 |
-| C-react-child | `/` | 17,907 | 47,296 | -62.1% | 10,612 | 45,969 |
+| A-static-hit | `/type-chart` | 46,865 | 5,113 | 816.6% | 110,206 | 4,969 |
+| B-native-miss | `/pokemon/{name}` | 41,086 | 53,087 | -22.6% | 40,948 | 52,489 |
+| C-react-child | `/` | 33,737 | 51,449 | -34.4% | 27,934 | 51,369 |
 
 **M2 is not complete:** the bar is not met; ledger F68 (lane `m2p-render-perf`) must close with the bar met.
 
