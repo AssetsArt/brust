@@ -37,8 +37,11 @@ export async function runBuild(opts: { appRoot: string; entry: string; outDir: s
   for (const c of compiled.values()) writeFileSync(join(dist, 'jinja', `${c.id}.jinja`), c.jinja)
 
   const sourceDirOf = new Map<string, string>()
-  const chunks = new Map([...(await buildClientChunks(dist, compiled, sourceDirOf)), ...(await buildReactChunks(dist, compiled))])
-  await buildJobs(dist, compiled, sourceDirOf)
+  const chunks = new Map([
+    ...(await buildClientChunks(dist, compiled, sourceDirOf, appRoot)),
+    ...(await buildReactChunks(dist, compiled, sourceDirOf, appRoot)),
+  ])
+  await buildJobs(dist, compiled, sourceDirOf, appRoot)
 
   const manifest = writeManifest({ leaves, routeComponent, compiled, runtime, chunks })
   writeFileSync(join(dist, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`)

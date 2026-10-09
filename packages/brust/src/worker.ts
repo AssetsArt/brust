@@ -212,4 +212,6 @@ export async function startWorker(): Promise<number> {
   return registerWorker(view, slots, makeDispatch(handlers, view, slots))
 }
 
-if (process.env.BRUST_WORKER_ID !== undefined && import.meta.main) await startWorker()
+// Auto-start only inside a Bun `Worker` spawned by `run()` (BRUST_WORKER_ID set). Not
+// `import.meta.main`: Bun runs a Worker entry with `import.meta.main === false`.
+if (process.env.BRUST_WORKER_ID !== undefined && !Bun.isMainThread) await startWorker()

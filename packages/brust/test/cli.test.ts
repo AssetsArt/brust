@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -37,3 +37,19 @@ test('usage: --help exits 0, an unknown command exits 2', () => {
   expect(u.code).toBe(2)
   expect(u.err).toContain('unknown command frobnicate')
 })
+
+test('brust build --out-dir outside the app resolves bare imports from the app root', () => {
+  const out = mkdtempSync(join(tmpdir(), 'brust-out-'))
+  try {
+    const r = run(['build', 'routes.tsx', '--out-dir', out], join(import.meta.dir, 'fixtures/app'))
+    expect(r.err).not.toContain('Could not resolve')
+    expect(r.code).toBe(0)
+    const m = JSON.parse(readFileSync(join(out, 'manifest.json'), 'utf8'))
+    const files = [m.assets.runtime, ...Object.values(m.components as Record<string, { client?: string }>).map((c) => c.client)]
+    expect(files.filter((f) => f?.startsWith('client/react-')).length).toBe(1)
+    for (const f of files) if (f) expect(existsSync(join(out, f))).toBe(true)
+    expect(existsSync(join(out, m.jobs_module ?? 'jobs.js'))).toBe(true)
+  } finally {
+    rmSync(out, { recursive: true, force: true })
+  }
+}, 60_000)

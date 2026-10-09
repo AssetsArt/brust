@@ -15,14 +15,25 @@ const REACT_EXTERNALS = ['react', 'react/*', 'react-dom', 'react-dom/*']
 /** Production React (and the production JSX transform: `react/jsx-runtime`, never `jsxDEV`). */
 const PRODUCTION = { 'process.env.NODE_ENV': JSON.stringify('production') }
 
-/** `importer` (a staged artifact's absolute path) → the source dir its relative imports mean. */
-export function sourceDirPlugin(sourceDirOf: Map<string, string>): BunPlugin {
+const matchesExternal = (spec: string, external: string[]) =>
+  external.some((p) => (p.endsWith('/*') ? spec.startsWith(p.slice(0, -1)) : spec === p))
+
+/** Resolution for staged artifacts (`importer` = a staged file's absolute or real path, registered
+ * in `sourceDirOf`): relative imports mean the component's SOURCE directory; bare imports
+ * (`react`, `react-dom/client`, npm packages) resolve from `appRoot`, never from wherever `dist/`
+ * sits (an `--out-dir` outside the app has no `node_modules` above it). `external` specifiers are
+ * left to Bun so they stay external. */
+export function sourceDirPlugin(sourceDirOf: Map<string, string>, appRoot: string, external: string[] = []): BunPlugin {
   return {
     name: 'brust-source-dir',
     setup(b) {
       b.onResolve({ filter: /^\.\.?\// }, (a) => {
         const dir = sourceDirOf.get(a.importer)
         return dir === undefined ? undefined : { path: Bun.resolveSync(a.path, dir) }
+      })
+      b.onResolve({ filter: /^[^./]/ }, (a) => {
+        if (!sourceDirOf.has(a.importer) || matchesExternal(a.path, external)) return undefined
+        return { path: Bun.resolveSync(a.path, appRoot) }
       })
     },
   }
@@ -96,6 +107,7 @@ export async function buildClientChunks(
   dist: string,
   compiled: Map<string, Compiled>,
   sourceDirOf: Map<string, string>,
+  appRoot: string,
 ): Promise<Map<string, string>> {
   const entrypoints: string[] = []
   for (const c of compiled.values()) {
@@ -106,7 +118,7 @@ export async function buildClientChunks(
     entrypoints.push(file)
   }
   if (entrypoints.length === 0) return new Map()
-  return browserBuild(dist, 'client chunks', { entrypoints, external: ['/_brust/*'], plugins: [sourceDirPlugin(sourceDirOf)] })
+  return browserBuild(dist, 'client chunks', { entrypoints, external: ['/_brust/*'], plugins: [sourceDirPlugin(sourceDirOf, appRoot)] })
 }
 
 /** Registers a written artifact (by its path and its real path: the importer Bun reports). */
@@ -119,7 +131,12 @@ const isReact = (c: Compiled) => typeof c.ir.tier === 'object' && c.ir.tier !== 
 
 /** One island chunk per react-tier component (`react-<id>-<hex>.js`, contract 3), React split
  * into a shared chunk the island chunks import relatively. */
-export async function buildReactChunks(dist: string, compiled: Map<string, Compiled>): Promise<Map<string, string>> {
+export async function buildReactChunks(
+  dist: string,
+  compiled: Map<string, Compiled>,
+  sourceDirOf: Map<string, string>,
+  appRoot: string,
+): Promise<Map<string, string>> {
   const entrypoints: string[] = []
   for (const c of compiled.values()) {
     if (!isReact(c)) continue
@@ -130,16 +147,22 @@ export async function buildReactChunks(dist: string, compiled: Map<string, Compi
         `;((globalThis as any).__brustIslands ||= []).push([${JSON.stringify(c.id)}, (host: Element, props: any) => { hydrateRoot(host, createElement(Comp, props)) }])\n` +
         `;(globalThis as any).__brustIslandReady?.()\n`,
     )
+    stage(sourceDirOf, file, c)
     entrypoints.push(file)
   }
   if (entrypoints.length === 0) return new Map()
-  const out = await browserBuild(dist, 'react islands', { entrypoints, splitting: true })
+  const out = await browserBuild(dist, 'react islands', { entrypoints, splitting: true, plugins: [sourceDirPlugin(sourceDirOf, appRoot)] })
   return new Map([...out].map(([stem, path]) => [stem.slice('react-'.length), path]))
 }
 
 /** `dist/jobs.js` (`target: 'bun'`, React external — one React at runtime): default export
  * `{ [componentId]: { precompute?, ssr? } }`; `ssr` only for react-tier, non-client_only components. */
-export async function buildJobs(dist: string, compiled: Map<string, Compiled>, sourceDirOf: Map<string, string>): Promise<void> {
+export async function buildJobs(
+  dist: string,
+  compiled: Map<string, Compiled>,
+  sourceDirOf: Map<string, string>,
+  appRoot: string,
+): Promise<void> {
   const imports: string[] = ["import { createElement } from 'react'", "import { renderToString } from 'react-dom/server'"]
   const entries: string[] = []
   let n = 0
@@ -161,7 +184,14 @@ export async function buildJobs(dist: string, compiled: Map<string, Compiled>, s
   }
   const entry = join(dist, '.stage', 'jobs.ts')
   write(entry, `${imports.join('\n')}\nexport default {\n${entries.join('\n')}\n}\n`)
-  const res = await Bun.build({ entrypoints: [entry], target: 'bun', format: 'esm', define: PRODUCTION, external: REACT_EXTERNALS, plugins: [sourceDirPlugin(sourceDirOf)] })
+  const res = await Bun.build({
+    entrypoints: [entry],
+    target: 'bun',
+    format: 'esm',
+    define: PRODUCTION,
+    external: REACT_EXTERNALS,
+    plugins: [sourceDirPlugin(sourceDirOf, appRoot, REACT_EXTERNALS)],
+  })
   if (!res.success) throw new BuildError('bundle', `jobs: ${res.logs.map(String).join('\n')}`)
   write(join(dist, 'jobs.js'), await res.outputs[0]!.text())
 }

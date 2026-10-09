@@ -23,13 +23,6 @@ function fail(msg: string): never {
   process.exit(1)
 }
 
-/** A worker's entry module: Bun runs a `Worker` entry with `import.meta.main === false`, so
- * worker.ts's own auto-start guard never fires there — import it and start explicitly. */
-function workerEntryUrl(): string {
-  const src = `import { startWorker } from ${JSON.stringify(new URL('./worker.ts', import.meta.url).href)}\nawait startWorker()\n`
-  return URL.createObjectURL(new Blob([src], { type: 'application/typescript' }))
-}
-
 export async function run(opts: RunOptions = {}): Promise<void> {
   const distDir = resolve(opts.distDir ?? process.env.BRUST_DIST_DIR ?? 'dist')
   const manifest = join(distDir, 'manifest.json')
@@ -58,7 +51,7 @@ export async function run(opts: RunOptions = {}): Promise<void> {
     BRUST_DIST_DIR: distDir,
     BRUST_APP_ENTRY: entry,
   }
-  const url = workerEntryUrl()
+  const url = new URL('./worker.ts', import.meta.url)
   for (let i = 0; i < cfg.workers; i++) {
     const w = new Worker(url, { env: { ...env, BRUST_WORKER_ID: String(i) } })
     // No respawn in M2: a worker that fails to boot (or dies later) takes the process down loudly

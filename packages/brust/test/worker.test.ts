@@ -155,3 +155,16 @@ test('dispatch never rejects', async () => {
   const k = await makeDispatch(throwing as any, view, 1)('jobs', '{"jobs":[]}', 0)
   expect(JSON.parse(new TextDecoder().decode(view.subarray(0, k)))).toEqual({ error: 'Error: y' })
 })
+
+test('worker.ts auto-starts inside a Bun Worker when BRUST_WORKER_ID is set', async () => {
+  // No BRUST_APP_ENTRY: startWorker() throws its own message, which proves the guard fired.
+  const w = new Worker(new URL('../src/worker.ts', import.meta.url), {
+    env: { ...process.env, BRUST_WORKER_ID: '0', BRUST_APP_ENTRY: '' },
+  })
+  const msg = await new Promise<string>((res) => {
+    w.addEventListener('error', (e) => res((e as ErrorEvent).message))
+    setTimeout(() => res('no error: worker.ts did not auto-start'), 3000)
+  })
+  w.terminate()
+  expect(msg).toContain('BRUST_APP_ENTRY is not set')
+})
