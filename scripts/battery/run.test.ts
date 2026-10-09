@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
-import { REPORT, renderReport, runBattery, type Result } from './run.ts'
+import { REPORT, classifyBuild, renderReport, runBattery, type Result } from './run.ts'
 import { rows } from './rows.ts'
 
 const results = runBattery()   // one cargo build + 60 brustc runs, shared by the tests below
@@ -17,8 +17,8 @@ test('report rows are fixed strings built from the row name, not machine paths o
   const report = renderReport([pick('a-static-text'), pick('c-usereducer')])
   const lines = report.split('\n').filter((l) => l.startsWith('| a-static-text') || l.startsWith('| c-usereducer'))
   expect(lines).toEqual([
-    '| a-static-text | static text | static | static | 0 | — |  |',
-    '| c-usereducer | useReducer | react | react | ssr | fallback:hook-unsupported |  |',
+    '| a-static-text | static text | static | static | 0 | ok | — |  |',
+    '| c-usereducer | useReducer | react | react | ssr | ok | fallback:hook-unsupported |  |',
   ])
   const full = renderReport(results)
   expect(full).not.toMatch(/\/Users\/|\/tmp\/|\/var\/|input_[0-9a-f]{8}|battery-/)
@@ -26,4 +26,19 @@ test('report rows are fixed strings built from the row name, not machine paths o
 
 test('the committed report equals a fresh run (CI diffs it too)', () => {
   expect(readFileSync(REPORT, 'utf8')).toBe(renderReport(results))
+})
+
+test('classifyBuild: ok, refused by an Error diagnostic, and failed (no diagnostic, panic)', () => {
+  expect(classifyBuild(0, '', false)).toBe('ok')
+  expect(classifyBuild(1, 'error[...]', true)).toBe('refused')
+  expect(classifyBuild(1, 'something broke', false)).toBe('failed')
+  expect(classifyBuild(101, "thread 'main' panicked at src/x.rs:1:1", true)).toBe('failed')
+  expect(classifyBuild(1, "thread 'main' panicked at src/x.rs:1:1", true)).toBe('failed')
+  expect(classifyBuild(null, '', true)).toBe('failed')
+})
+
+test('every row lowers: non-error rows build ok, error rows are refused, nothing failed', () => {
+  expect(results.filter((r) => r.built && r.build === 'failed').map((r) => r.row.id)).toEqual([])
+  expect(results.filter((r) => r.built && r.build === 'refused').map((r) => r.row.id).sort()).toEqual(
+    results.filter((r) => r.observed === 'error').map((r) => r.row.id).sort())
 })
