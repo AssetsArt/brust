@@ -78,7 +78,7 @@ test('brust build writes the S6 manifest (pinned) and every file it names', asyn
   expect(readFileSync(join(dist, m.assets.runtime), 'utf8')).toContain('document.documentElement')
   const jobs = (await import(join(dist, 'jobs.js'))).default
   expect(jobs[item.children[0].id].precompute({ item: { price: 2.25 }, unit: '€' })).toEqual({ _s1: '2.3€' })
-  expect(jobs[item.jobs[1].target].ssr({ team: ['ann'] })).toContain('<span>ann</span>')
+  expect(jobs[item.jobs[1].target].ssr({ team: ['ann'], title: 't' })).toContain('<span>ann</span>')
 })
 
 test('the generated dist passes Manifest::load and renders through the real handlers (slot names line up)', async () => {
@@ -99,6 +99,8 @@ test('the generated dist passes Manifest::load and renders through the real hand
   // React child ssr job on the parent (D6 outputs/target/props).
   expect(html).toContain('<brust-island data-id="team_db295766"')
   expect(html).toMatch(/<span>ann<\/span><span>bob<\/span>/)
+  // m2a3 literals: the constant prop reaches the child's ssr through the manifest + worker merge.
+  expect(html).toContain('<h3>crew</h3>')
   expect(html).toContain('/_brust/client/runtime-')
   expect(html).toContain('/_brust/client/react-team_db295766-')
   const chunk = /\/_brust\/(client\/itemPage_[^"]+\.js)/.exec(html)![1]!

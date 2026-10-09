@@ -19,7 +19,7 @@ export default function ItemPage(props: {
           <PriceRow key={r.id} item={r} unit={props.unit} />
         ))}
       </ul>
-      <Team team={props.team} />
+      <Team team={props.team} title="crew" />
     </article>
   )
 }

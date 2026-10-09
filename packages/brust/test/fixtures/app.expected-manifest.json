@@ -91,6 +91,9 @@
           },
           "props": {
             "team": "team"
+          },
+          "literals": {
+            "title": "crew"
           }
         }
       ],
