@@ -136,6 +136,7 @@ dependencies = [
 name = "brust-jinja"
 version = "0.0.0"
 dependencies = [
+ "criterion",
  "minijinja",
  "serde",
  "serde_json",

@@ -221,17 +221,155 @@ pub fn escape_attr(s: &str) -> String {
     escape_text(s)
 }
 
+/// `JSON.stringify(v)` escaped for an attribute, written in one pass: the JSON
+/// text goes straight into the output with the attribute escape applied as
+/// it is written. Byte-identical to escaping `serde_json::to_string` of
+/// [`to_json`] (kept as the test reference): object keys are sorted and a
+/// repeated key keeps its last value (`serde_json::Map` without
+/// `preserve_order`), an undefined member is left out, an undefined item is
+/// `null`, and every other leaf is written exactly as serde_json prints it.
+///
+/// A leaf serde_json refuses, or a map whose keys repeat as strings, bails
+/// out to the three-pass [`json_attr_slow`], which then decides the exact
+/// error (the first in iteration order) or which member wins.
 fn json_attr(v: Value) -> Result<String, Error> {
-    let json = serde_json::to_string(&to_json(&v)?)
-        .map_err(|e| Error::new(ErrorKind::InvalidOperation, format!("json_attr: {e}")))?;
+    let mut out = String::new();
+    match write_json_attr(&mut out, &v) {
+        Ok(()) => Ok(out),
+        Err(Bail) => json_attr_slow(v),
+    }
+}
+
+/// The one-pass writer met a case it leaves to [`json_attr_slow`].
+struct Bail;
+
+fn json_attr_err(e: serde_json::Error) -> Error {
+    Error::new(ErrorKind::InvalidOperation, format!("json_attr: {e}"))
+}
+
+fn write_json_attr(out: &mut String, v: &Value) -> Result<(), Bail> {
+    match v.kind() {
+        ValueKind::Undefined | ValueKind::None => out.push_str("null"),
+        ValueKind::Bool => out.push_str(if v.is_true() { "true" } else { "false" }),
+        ValueKind::String => write_json_attr_str(out, v.as_str().unwrap_or_default()),
+        ValueKind::Map => {
+            let mut members: Vec<(Value, Value)> = Vec::new();
+            if let Ok(keys) = v.try_iter() {
+                for k in keys {
+                    let item = v.get_item(&k).unwrap_or(Value::UNDEFINED);
+                    if !item.is_undefined() {
+                        members.push((k, item));
+                    }
+                }
+            }
+            // serde_json's map is ordered by the key string (minijinja's
+            // own map usually iterates in that order already).
+            let sorted =
+                |m: &[(Value, Value)]| m.windows(2).all(|w| *key_str(&w[0].0) < *key_str(&w[1].0));
+            if !sorted(&members) {
+                members.sort_by(|a, b| key_str(&a.0).cmp(&key_str(&b.0)));
+                if !sorted(&members) {
+                    return Err(Bail); // a key string repeats
+                }
+            }
+            out.push('{');
+            for (i, (k, item)) in members.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                write_json_attr_str(out, &key_str(k));
+                out.push(':');
+                write_json_attr(out, item)?;
+            }
+            out.push('}');
+        }
+        ValueKind::Seq | ValueKind::Iterable => {
+            out.push('[');
+            if let Ok(items) = v.try_iter() {
+                for (i, x) in items.enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    write_json_attr(out, &x)?;
+                }
+            }
+            out.push(']');
+        }
+        ValueKind::Number => {
+            // A number (or `null` for a non-finite float) never holds an
+            // attribute special: print serde_json's own text, no copy.
+            use std::fmt::Write as _;
+            let n = serde_json::to_value(v).map_err(|_| Bail)?;
+            let _ = write!(out, "{n}");
+        }
+        _ => {
+            let json = serde_json::to_value(v)
+                .and_then(|j| serde_json::to_string(&j))
+                .map_err(|_| Bail)?;
+            out.push_str(&escape_attr(&json));
+        }
+    }
+    Ok(())
+}
+
+/// A map key as serde_json names it (`Value`'s `Display`).
+fn key_str(k: &Value) -> std::borrow::Cow<'_, str> {
+    match k.as_str() {
+        Some(s) => std::borrow::Cow::Borrowed(s),
+        None => std::borrow::Cow::Owned(k.to_string()),
+    }
+}
+
+/// A JSON string literal (serde_json's escapes) with the attribute escape
+/// applied on top, in one byte scan; unescaped runs are copied whole.
+fn write_json_attr_str(out: &mut String, s: &str) {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    out.reserve(s.len() + 12);
+    out.push_str("&quot;");
+    let mut last = 0;
+    for (i, b) in s.bytes().enumerate() {
+        let rep: &str = match b {
+            b'"' => "\\&quot;",
+            b'\\' => "\\\\",
+            b'&' => "&amp;",
+            b'<' => "&lt;",
+            b'>' => "&gt;",
+            b'\'' => "&#39;",
+            0x08 => "\\b",
+            0x09 => "\\t",
+            0x0A => "\\n",
+            0x0C => "\\f",
+            0x0D => "\\r",
+            0x00..=0x1F => {
+                out.push_str(&s[last..i]);
+                out.push_str("\\u00");
+                out.push(HEX[(b >> 4) as usize] as char);
+                out.push(HEX[(b & 0xF) as usize] as char);
+                last = i + 1;
+                continue;
+            }
+            _ => continue,
+        };
+        out.push_str(&s[last..i]);
+        out.push_str(rep);
+        last = i + 1;
+    }
+    out.push_str(&s[last..]);
+    out.push_str("&quot;");
+}
+
+/// The pre-one-pass `json_attr` (three passes: `Value` → `serde_json::Value`
+/// → JSON text → attribute escape): the bail-out path, and the reference the
+/// one-pass writer is pinned against in the tests.
+fn json_attr_slow(v: Value) -> Result<String, Error> {
+    let json = serde_json::to_string(&to_json(&v)?).map_err(json_attr_err)?;
     Ok(escape_attr(&json))
 }
 
 /// `JSON.stringify` semantics: an undefined object member is left out (so a
 /// destructuring default still applies on the client); in a list it is `null`.
 fn to_json(v: &Value) -> Result<serde_json::Value, Error> {
-    let err =
-        |e: serde_json::Error| Error::new(ErrorKind::InvalidOperation, format!("json_attr: {e}"));
+    let err = json_attr_err;
     Ok(match v.kind() {
         ValueKind::Undefined | ValueKind::None => serde_json::Value::Null,
         ValueKind::Map => {
@@ -707,6 +845,193 @@ mod tests {
             ),
             "{&quot;a&quot;:1}"
         );
+    }
+
+    /// A map object that enumerates its keys in the given order (unsorted,
+    /// repeating key strings) — what a minijinja map never does.
+    #[derive(Debug)]
+    struct Pairs(Vec<(Value, Value)>);
+    impl minijinja::value::Object for Pairs {
+        fn get_value(self: &std::sync::Arc<Self>, key: &Value) -> Option<Value> {
+            self.0
+                .iter()
+                .rev()
+                .find(|(k, _)| k == key)
+                .map(|(_, v)| v.clone())
+        }
+        fn enumerate(self: &std::sync::Arc<Self>) -> minijinja::value::Enumerator {
+            let keys: Vec<Value> = self.0.iter().map(|(k, _)| k.clone()).collect();
+            minijinja::value::Enumerator::Iter(Box::new(keys.into_iter()))
+        }
+    }
+    #[derive(Debug)]
+    struct Opaque;
+    impl minijinja::value::Object for Opaque {
+        fn repr(self: &std::sync::Arc<Self>) -> minijinja::value::ObjectRepr {
+            minijinja::value::ObjectRepr::Plain
+        }
+    }
+
+    /// xorshift64*: a deterministic generator for the equivalence sweep.
+    struct Rng(u64);
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 >> 12;
+            self.0 ^= self.0 << 25;
+            self.0 ^= self.0 >> 27;
+            self.0.wrapping_mul(0x2545_F491_4F6C_DD1D)
+        }
+        fn below(&mut self, n: u64) -> u64 {
+            self.next() % n
+        }
+    }
+
+    fn gen_string(r: &mut Rng) -> String {
+        const PIECES: &[&str] = &[
+            "a",
+            "Z",
+            "0",
+            " ",
+            "&",
+            "<",
+            ">",
+            "\"",
+            "'",
+            "\\",
+            "/",
+            "\u{7f}",
+            "é",
+            "ไทย",
+            "😀",
+            "\u{2028}",
+            "\u{feff}",
+            "&amp;",
+            "</script>",
+            "{}",
+            "[],:",
+            "plain text",
+        ];
+        let mut s = String::new();
+        for _ in 0..r.below(12) {
+            if r.below(4) == 0 {
+                // Every C0 control: the short escapes and the \u00XX ones.
+                s.push(char::from(r.below(0x20) as u8));
+            } else {
+                s.push_str(PIECES[r.below(PIECES.len() as u64) as usize]);
+            }
+        }
+        s
+    }
+
+    fn gen_number(r: &mut Rng) -> Value {
+        const FLOATS: &[f64] = &[
+            0.0,
+            -0.0,
+            1.0,
+            -1.5,
+            0.1,
+            0.30000000000000004,
+            1e21,
+            1e-7,
+            123456789012.0,
+            f64::MAX,
+            f64::MIN_POSITIVE,
+            5e-324,
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+        ];
+        match r.below(8) {
+            0 => Value::from(FLOATS[r.below(FLOATS.len() as u64) as usize]),
+            1 => Value::from(f64::from_bits(r.next())),
+            2 => Value::from(r.next() as i64),
+            3 => Value::from(r.next()),
+            4 => Value::from([i64::MIN, i64::MAX, 0, -1][r.below(4) as usize]),
+            5 => Value::from(i128::from(r.next() as i64) * i128::from(r.next())), // may overflow JSON
+            6 => Value::from(u128::from(r.below(1000))),
+            _ => Value::from(r.below(1000) as f64 / 8.0),
+        }
+    }
+
+    fn gen_value(r: &mut Rng, depth: u32) -> Value {
+        let leaf = depth == 0 || r.below(3) == 0;
+        match if leaf { r.below(8) } else { 8 + r.below(5) } {
+            0 => Value::UNDEFINED,
+            1 => Value::from(()),
+            2 => Value::from(r.below(2) == 0),
+            3 | 4 => gen_number(r),
+            5 => Value::from(gen_string(r)),
+            6 => Value::from_safe_string(gen_string(r)),
+            7 => match r.below(3) {
+                0 => Value::from_bytes(gen_string(r).into_bytes()),
+                1 => Value::from_object(Opaque),
+                _ => Value::from(gen_string(r)),
+            },
+            8 => Value::from(
+                (0..r.below(5))
+                    .map(|_| gen_value(r, depth - 1))
+                    .collect::<Vec<_>>(),
+            ),
+            9 => {
+                let items: Vec<Value> = (0..r.below(4)).map(|_| gen_value(r, depth - 1)).collect();
+                Value::make_iterable(move || items.clone().into_iter())
+            }
+            10 | 11 => (0..r.below(6))
+                .map(|_| (gen_string(r), gen_value(r, depth - 1)))
+                .collect::<Value>(),
+            _ => {
+                let n = r.below(5);
+                let pairs = (0..n)
+                    .map(|_| {
+                        let k = match r.below(4) {
+                            0 => Value::from(r.below(3) as i64),
+                            1 => Value::from(r.below(3).to_string()),
+                            2 => Value::from(r.below(2) == 0),
+                            _ => Value::from(gen_string(r)),
+                        };
+                        (k, gen_value(r, depth - 1))
+                    })
+                    .collect();
+                Value::from_object(Pairs(pairs))
+            }
+        }
+    }
+
+    #[test]
+    fn json_attr_one_pass_matches_the_three_pass_reference() {
+        let err = |r: Result<String, Error>| r.map_err(|e| e.to_string());
+        let mut r = Rng(0x9E37_79B9_7F4A_7C15);
+        let (mut fast, mut bails) = (0, 0);
+        for i in 0..20_000 {
+            let v = gen_value(&mut r, 4);
+            // The writer alone (no bail-out) where it does not bail.
+            let mut out = String::new();
+            if write_json_attr(&mut out, &v).is_ok() {
+                fast += 1;
+                assert_eq!(Ok(out), err(json_attr_slow(v.clone())), "#{i}: {v:?}");
+            } else {
+                bails += 1;
+            }
+            assert_eq!(
+                err(json_attr(v.clone())),
+                err(json_attr_slow(v.clone())),
+                "#{i}: {v:?}"
+            );
+        }
+        // Bail-outs are the rare shapes (refused numbers, repeated keys).
+        assert!(fast > bails * 2, "fast {fast}, bails {bails}");
+        // Every C0 control, the JSON and the attribute specials, together.
+        let all: String = (0u8..0x80).map(char::from).collect::<String>() + "é😀\u{2028}";
+        let v = Value::from(all.clone());
+        let mut out = String::new();
+        assert!(write_json_attr(&mut out, &v).is_ok());
+        assert_eq!(Ok(out), err(json_attr_slow(v)));
+        // serde_json orders a map by key string: an unsorted map is sorted.
+        let v = Value::from_object(Pairs(vec![
+            (Value::from("b"), Value::from(1)),
+            (Value::from("a"), Value::from(2)),
+        ]));
+        assert_eq!(json_attr(v).unwrap(), "{&quot;a&quot;:2,&quot;b&quot;:1}");
     }
 
     #[test]
