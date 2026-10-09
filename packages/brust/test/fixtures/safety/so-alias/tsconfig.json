@@ -1,0 +1,1 @@
+{ "compilerOptions": { "baseUrl": ".", "paths": { "@db": ["lib/server/db.ts"], "@sec": ["lib/secret.server.ts"], "@ok": ["lib/ok.ts"] } } }

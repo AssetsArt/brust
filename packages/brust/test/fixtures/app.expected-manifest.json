@@ -1,0 +1,173 @@
+{
+  "version": 1,
+  "routes": [
+    {
+      "id": "r1",
+      "pattern": "/",
+      "chain": [
+        "appLayout_d491b982",
+        "homePage_010405bc"
+      ],
+      "loaders": [],
+      "cache": null,
+      "catch_all": false
+    },
+    {
+      "id": "r2",
+      "pattern": "/items/{id}",
+      "chain": [
+        "appLayout_d491b982",
+        "itemPage_b7278c7c"
+      ],
+      "loaders": [
+        "r2"
+      ],
+      "cache": {
+        "ttl_seconds": 60,
+        "prefix": null,
+        "bypass": null,
+        "tags": [
+          "items"
+        ]
+      },
+      "catch_all": false
+    }
+  ],
+  "components": {
+    "appLayout_d491b982": {
+      "tier": "native",
+      "template": "jinja/appLayout_d491b982.jinja",
+      "jobs": [],
+      "children": [],
+      "client": "client/appLayout_d491b982-<hash>.js",
+      "needs_worker": false,
+      "use_id_slots": 0
+    },
+    "homePage_010405bc": {
+      "tier": "static",
+      "template": "jinja/homePage_010405bc.jinja",
+      "jobs": [],
+      "children": [],
+      "client": null,
+      "needs_worker": false,
+      "use_id_slots": 0
+    },
+    "itemPage_b7278c7c": {
+      "tier": "native",
+      "template": "jinja/itemPage_b7278c7c.jinja",
+      "jobs": [
+        {
+          "id": "j0",
+          "kind": "precompute",
+          "inputs": [
+            "item.price",
+            "unit"
+          ],
+          "outputs": [
+            "_s1"
+          ],
+          "per_instance": null,
+          "cache": {
+            "key": null,
+            "tags": [],
+            "ttl_seconds": null
+          }
+        },
+        {
+          "id": "j1",
+          "kind": "ssr",
+          "inputs": [
+            "team"
+          ],
+          "outputs": [
+            "_ssr_team_db295766"
+          ],
+          "target": "team_db295766",
+          "per_instance": null,
+          "cache": {
+            "key": null,
+            "tags": [],
+            "ttl_seconds": null
+          },
+          "props": {
+            "team": "team"
+          },
+          "literals": {
+            "title": "crew"
+          }
+        }
+      ],
+      "children": [
+        {
+          "id": "priceRow_042dcbca",
+          "instances": "per-row:item.rows",
+          "props": {
+            "item": "item.rows[idx]",
+            "unit": "unit"
+          }
+        }
+      ],
+      "client": "client/itemPage_b7278c7c-<hash>.js",
+      "needs_worker": true,
+      "use_id_slots": 1
+    },
+    "priceRow_042dcbca": {
+      "tier": "static",
+      "template": "jinja/priceRow_042dcbca.jinja",
+      "jobs": [
+        {
+          "id": "j0",
+          "kind": "precompute",
+          "inputs": [
+            "item.price",
+            "unit"
+          ],
+          "outputs": [
+            "_s1"
+          ],
+          "per_instance": null,
+          "cache": {
+            "key": null,
+            "tags": [],
+            "ttl_seconds": null
+          }
+        }
+      ],
+      "children": [],
+      "client": "client/priceRow_042dcbca-<hash>.js",
+      "needs_worker": true,
+      "use_id_slots": 0
+    },
+    "team_db295766": {
+      "tier": "react",
+      "template": "jinja/team_db295766.jinja",
+      "jobs": [
+        {
+          "id": "j0",
+          "kind": "ssr",
+          "inputs": [
+            "*"
+          ],
+          "outputs": [
+            "_ssr_team_db295766"
+          ],
+          "target": "team_db295766",
+          "per_instance": null,
+          "cache": {
+            "key": null,
+            "tags": [],
+            "ttl_seconds": null
+          }
+        }
+      ],
+      "children": [],
+      "client": "client/react-team_db295766-<hash>.js",
+      "needs_worker": true,
+      "use_id_slots": 0
+    }
+  },
+  "assets": {
+    "runtime": "client/runtime-<hash>.js"
+  },
+  "jobs_module": "jobs.js"
+}
