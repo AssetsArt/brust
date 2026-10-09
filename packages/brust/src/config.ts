@@ -1,9 +1,9 @@
 // Runtime configuration (spec §8). Precedence, high → low:
 //   env (BRUST_ADDR / BRUST_PORT / BRUST_WORKERS / BRUST_RENDER_SLOTS / BRUST_DRAIN_TIMEOUT_MS /
-//        BRUST_BOOT_TIMEOUT_MS)
+//        BRUST_BOOT_TIMEOUT_MS / BRUST_CALL_TIMEOUT_MS)
 //   > CLI flags (`brust start --port/--workers`)
 //   > brust.toml ([server] address / port, [workers] count)
-//   > defaults (localhost, 1337, availableParallelism(), 1, 10000, 30000).
+//   > defaults (localhost, 1337, availableParallelism(), 1, 10000, 30000, 30000).
 // `brust start`'s BRUST_DIST_DIR / BRUST_APP_ENTRY follow the same env > flag rule (run.ts).
 // A missing brust.toml is fine; a present one with the wrong shape is an error. Messages follow
 // 0.1.x `runtime/config.ts`.
@@ -18,6 +18,8 @@ export interface BrustConfig {
   drainTimeoutMs: number
   /** How long `brust start` waits for every worker to register. */
   bootTimeoutMs: number
+  /** A claimed loader/job call that has not settled after this long answers 504. */
+  callTimeoutMs: number
 }
 
 export class BrustConfigError extends Error {
@@ -30,7 +32,7 @@ export class BrustConfigError extends Error {
   }
 }
 
-const DEFAULTS = { host: 'localhost', port: 1337, renderSlots: 1, drainTimeoutMs: 10_000, bootTimeoutMs: 30_000 }
+const DEFAULTS = { host: 'localhost', port: 1337, renderSlots: 1, drainTimeoutMs: 10_000, bootTimeoutMs: 30_000, callTimeoutMs: 30_000 }
 
 /** Ceilings: ms values cross napi as `u32` (a larger number would wrap), more than 1024 Bun
  * workers is a misconfiguration, not a deployment, and each render slot is a 256 KiB shared
@@ -62,6 +64,7 @@ export async function loadConfig(cwd: string = process.cwd(), cli: Partial<Brust
     renderSlots: env.renderSlots ?? cli.renderSlots ?? DEFAULTS.renderSlots,
     drainTimeoutMs: env.drainTimeoutMs ?? cli.drainTimeoutMs ?? DEFAULTS.drainTimeoutMs,
     bootTimeoutMs: env.bootTimeoutMs ?? cli.bootTimeoutMs ?? DEFAULTS.bootTimeoutMs,
+    callTimeoutMs: env.callTimeoutMs ?? cli.callTimeoutMs ?? DEFAULTS.callTimeoutMs,
   }
 }
 
@@ -76,6 +79,7 @@ function checkCli(cli: Partial<BrustConfig>): void {
   check('renderSlots', cli.renderSlots, 1, MAX_RENDER_SLOTS)
   check('drainTimeoutMs', cli.drainTimeoutMs, 0, MAX_MS)
   check('bootTimeoutMs', cli.bootTimeoutMs, 1, MAX_MS)
+  check('callTimeoutMs', cli.callTimeoutMs, 1, MAX_MS)
 }
 
 function table(v: unknown, what: string, file: string): Record<string, unknown> {
@@ -132,5 +136,6 @@ function fromEnv(): Partial<BrustConfig> {
   out.renderSlots = envInt('BRUST_RENDER_SLOTS', 1, MAX_RENDER_SLOTS, `an integer in 1..${MAX_RENDER_SLOTS}`)
   out.drainTimeoutMs = envInt('BRUST_DRAIN_TIMEOUT_MS', 0, MAX_MS, `an integer in 0..${MAX_MS}`)
   out.bootTimeoutMs = envInt('BRUST_BOOT_TIMEOUT_MS', 1, MAX_MS, `an integer in 1..${MAX_MS}`)
+  out.callTimeoutMs = envInt('BRUST_CALL_TIMEOUT_MS', 1, MAX_MS, `an integer in 1..${MAX_MS}`)
   return out
 }

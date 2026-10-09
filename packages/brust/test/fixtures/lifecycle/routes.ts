@@ -10,6 +10,7 @@ const item = (name: string) => ({ item: { id: 'x', name, price: 1, rows: [] }, u
 
 async function loader({ params }: { params: { id: string } }) {
   if (params.id === 'die') process.exit(3)
+  if (params.id === 'park') await new Promise(() => {}) // a loader that never settles
   if (params.id === 'env') {
     const prod = Object.keys(require.cache).some((k) => /react-dom-server[^/]*\.production\./.test(k))
     return item(`NODE_ENV=${process.env.NODE_ENV} react-dom-server.production=${prod}`)
