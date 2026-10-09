@@ -188,6 +188,11 @@ and never asks Bun what a route is:
   overlay (rows: per `per_instance` element) to build the child's props object, which is BOTH the
   job's input (`JobCall.inputs`) and the key material. A react PAGE's own job has no `props`
   (`inputs: ["*"]` = the loader context). A `null` path in the map is a build error (m2c).
+- `client_only` react components (IR `JobKind::Ssr { client_only: true }`) get NO ssr job record in the
+  manifest: the build lane drops them, the island host paints empty, the server never asks Bun to
+  render a window-reading component. (Ruled on Dew's challenge eea156b0.) Absent a `props` map the
+  server may fall back to the parent-scope `inputs` plus a row index, but the compiler always emits
+  `props` for child ssr jobs from `m2a2-ssr-props` on.
 - Import specifiers: user code imports `cache` from `@brust/brust` and `Outlet`/`defineRoutes`
   from `@brust/brust/routes`; the compiler also accepts the bare `brust` specifier for `cache`
   (M1 fixtures).
