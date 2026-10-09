@@ -29,7 +29,7 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | a-list-keys | keyed list from a prop | static | static | 0 | — |  |
 | a-nested-list | nested keyed lists | static | static | 0 | — | table rows; known gap: F32: `<brust-row>` wrappers inside <table> are foster-parented by the HTML parser (M2) |
 | a-cond-attribute | conditional attribute via ternary | static | static | 0 | — |  |
-| a-array-from | Array.from range list | react | react | ssr | fallback:jsx-expression, warning:key-outside-list | the design recognises .map lists only; Array.from(…, fn → JSX) falls back (jsx-expression) |
+| a-array-from | Array.from range list | react | react | ssr | fallback:jsx-expression, warning:key-outside-list | F40: the design recognises .map lists only; Array.from(…, fn → JSX) falls back (jsx-expression) |
 | a-state-text | state text with a click handler | native | native | 0 | — |  |
 | a-state-cond | state-driven conditional | native | native | 0 | — |  |
 | a-state-list | state list with append | native | native | 0 | — |  |
@@ -47,7 +47,7 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | b-function-prop | function prop to a native child | native | native | 0 | — |  |
 | b-react-child-island | react child inside a native parent (island) | static | static | ssr | — | the parent stays static; its one job is the child island SSR render |
 | b-component-map | component map dispatch | react | react | ssr | fallback:local-component, warning:fragment-root |  |
-| b-memo | memo() wrapper around a plain component | native | react | ssr | fallback:default-export-shape | known gap: M1 does not unwrap memo(): default-export-shape falls back to react (new, F37) |
+| b-memo | memo() wrapper around a plain component | native | react | ssr | fallback:default-export-shape | known gap: M1 does not unwrap memo(): default-export-shape falls back to react (F37) |
 | b-forwardref | forwardRef component | react | react | ssr | fallback:default-export-shape |  |
 | b-hoc | higher-order component | react | react | ssr | fallback:default-export-shape |  |
 | b-spread-child | spread props onto a component (F31) | react | react | ssr | fallback:spread-props, warning:fragment-root |  |
@@ -61,7 +61,7 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | c-usememo | useMemo derived from state | native | native | 0 | — |  |
 | c-usecallback | useCallback handler | native | native | 0 | — |  |
 | c-useref | useRef bound with ref= | native | native | 0 | — |  |
-| c-useid | useId read in render | native | react | ssr | fallback:use-id-in-render | §4.3 says server generates, client reads it from the DOM; known gap: M1 decision (finding 5): a useId value read in render falls back (use-id-in-render); server-generated ids need the M2 server |
+| c-useid | useId read in render | native | react | ssr | fallback:use-id-in-render | §4.3 says server generates, client reads it from the DOM; known gap: F39: M1 decision (finding 5): a useId value read in render falls back (use-id-in-render); server-generated ids need the M2 server |
 | c-uselayouteffect | useLayoutEffect | native | native | 0 | — |  |
 | c-usereducer | useReducer | react | react | ssr | fallback:hook-unsupported |  |
 | c-usecontext | useContext | react | react | ssr | fallback:hook-unsupported |  |

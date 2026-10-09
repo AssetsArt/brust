@@ -40,7 +40,7 @@ Each case asserts first-paint equality (no runtime warning, no visible DOM chang
 | F33 | a truthiness guard on a prop (`user && …`) contributes only its member reads to the job inputs, so `null` and `{}` share a cache key | M2 |
 | F34 | an inlined child with its own precompute job needs per-instance child jobs, which need the M2 server | M2 |
 | F35 | dynamic `<script>` / `<style>` children are HTML-escaped inside raw text (safe, but the value changes silently) | M2 |
-| F37 (proposed) | `memo(Inner)` default exports are not unwrapped: tier `react` (`default-export-shape`) where the plan expected `native` | to triage |
-| M1 decision | a `useId` value read in render falls back (`use-id-in-render`); the spec §4.3 row `useId` needs server-generated ids from the M2 server | to triage |
-| F38 (proposed) | a dynamic `import()` in a component panics the Bun printer (`import_records` assertion) instead of falling back, so `lazy(() => import(…))` is a compile crash | to triage |
-| note | `Array.from(…, fn → JSX)` is not a recognised list form (only `.map` is): tier `react` (`jsx-expression`) | to triage |
+| F37 | `memo(Inner)` default exports are not unwrapped: tier `react` (`default-export-shape`) where the plan expected `native` | ledger |
+| F39 | a `useId` value read in render falls back (`use-id-in-render`); the spec §4.3 row `useId` needs server-generated ids from the M2 server | ledger |
+| F38 | a dynamic `import()` in a component panics the Bun printer (`import_records` assertion) instead of falling back, so `lazy(() => import(…))` is a compile crash | ledger |
+| F40 | `Array.from(…, fn → JSX)` is not a recognised list form (only `.map` is): tier `react` (`jsx-expression`) | ledger |

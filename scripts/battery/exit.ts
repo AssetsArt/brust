@@ -12,12 +12,12 @@ export const DECLARED_GAPS: { id: string; what: string; owner: string }[] = [
   { id: 'F35', what: 'dynamic `<script>` / `<style>` children are HTML-escaped inside raw text (safe, but the value changes silently)', owner: 'M2' },
 ]
 
-/** Gaps the battery itself found (proposed ledger ids, to be added by the owner). */
+/** Gaps the battery itself found (ledger ids F37-F40). */
 export const BATTERY_GAPS: { id: string; what: string }[] = [
-  { id: 'F37 (proposed)', what: '`memo(Inner)` default exports are not unwrapped: tier `react` (`default-export-shape`) where the plan expected `native`' },
-  { id: 'M1 decision', what: 'a `useId` value read in render falls back (`use-id-in-render`); the spec §4.3 row `useId` needs server-generated ids from the M2 server' },
-  { id: 'F38 (proposed)', what: 'a dynamic `import()` in a component panics the Bun printer (`import_records` assertion) instead of falling back, so `lazy(() => import(…))` is a compile crash' },
-  { id: 'note', what: '`Array.from(…, fn → JSX)` is not a recognised list form (only `.map` is): tier `react` (`jsx-expression`)' },
+  { id: 'F37', what: '`memo(Inner)` default exports are not unwrapped: tier `react` (`default-export-shape`) where the plan expected `native`' },
+  { id: 'F39', what: 'a `useId` value read in render falls back (`use-id-in-render`); the spec §4.3 row `useId` needs server-generated ids from the M2 server' },
+  { id: 'F38', what: 'a dynamic `import()` in a component panics the Bun printer (`import_records` assertion) instead of falling back, so `lazy(() => import(…))` is a compile crash' },
+  { id: 'F40', what: '`Array.from(…, fn → JSX)` is not a recognised list form (only `.map` is): tier `react` (`jsx-expression`)' },
 ]
 
 export const BROWSER_CASES = ['theme-toggle', 'product-card', 'parent-counter', 'keyed-list', 'controlled-input', 'nested-list', 'truthiness']
@@ -41,7 +41,7 @@ export function renderExitReport(results: Result[]): string {
   L.push('', 'Each case asserts first-paint equality (no runtime warning, no visible DOM change on mount) and its interactions.', '')
   L.push('## Known gaps', '', '| Id | Gap | Owner |', '|---|---|---|')
   for (const g of DECLARED_GAPS) L.push(`| ${g.id} | ${g.what} | ${g.owner} |`)
-  for (const g of BATTERY_GAPS) L.push(`| ${g.id} | ${g.what} | to triage |`)
+  for (const g of BATTERY_GAPS) L.push(`| ${g.id} | ${g.what} | ledger |`)
   L.push('')
   return L.join('\n')
 }
