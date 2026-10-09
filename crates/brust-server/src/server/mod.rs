@@ -40,11 +40,11 @@ const IO_NAME: &str = "hyper(tokio)";
 ///   worker pool triggers TCP backpressure (accept stalls) instead of unbounded
 ///   memory growth.
 /// - `read_buf_cap` (4096): hyper read-buffer initial sizing hint.
-/// - `worker_threads` (`min(available_parallelism, 4)`, fallback 2): tokio
-///   worker-thread count for the I/O runtime. This runs INSIDE Bun (which has
-///   its own threads + N render workers), so we do NOT default to
-///   one-thread-per-core; we cap at 4 (enough for TLS + accept + render
-///   tasks) so small VMs aren't overprovisioned. Override via tuning.
+/// - `worker_threads` (`available_parallelism`, fallback 2): tokio worker-thread
+///   count for the I/O runtime. 0.1.x capped this at 4 because pages rendered on
+///   the Bun worker threads; in v2 every page renders HERE (minijinja on tokio),
+///   so the cap capped render throughput (m2p profile: 4 threads at ~88% CPU,
+///   Bun workers at ~14%). Override via tuning.
 #[derive(Clone, Copy, Debug)]
 pub struct Tuning {
     pub max_request_bytes: usize,
@@ -57,7 +57,7 @@ pub struct Tuning {
     /// Max time a CLAIMED worker call may take to settle before the client
     /// gets 504. The slot stays claimed until JS settles. Default 30_000 ms.
     pub call_timeout_ms: u64,
-    /// tokio I/O runtime worker-thread count. Default `min(available_parallelism, 4)`
+    /// tokio I/O runtime worker-thread count. Default `available_parallelism`
     /// (see struct docs).
     pub worker_threads: usize,
     /// HTTP/1 header-read timeout: a connection that has not delivered a
@@ -76,7 +76,7 @@ impl Default for Tuning {
             call_timeout_ms: 30_000,
             header_read_timeout_ms: 10_000,
             worker_threads: std::thread::available_parallelism()
-                .map(|n| n.get().min(4))
+                .map(|n| n.get())
                 .unwrap_or(2),
         }
     }
@@ -465,5 +465,14 @@ mod tests {
             msg.contains("bind failed"),
             "unexpected error message: {msg}"
         );
+    }
+
+    #[test]
+    fn io_runtime_defaults_to_one_thread_per_core() {
+        // v2 renders on this runtime, so the 0.1.x cap of 4 would cap render throughput (m2p).
+        let cores = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(2);
+        assert_eq!(super::Tuning::default().worker_threads, cores);
     }
 }
