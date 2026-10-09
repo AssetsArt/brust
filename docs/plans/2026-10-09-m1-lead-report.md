@@ -42,3 +42,16 @@ A blocker is "output that is silently wrong with no diagnostic". Fail-closed `Fa
 
 - F38 hotfix lane `m1-hotfix-dynamic-import` (knock2) also applies the spot-check wording fixes.
 - M2 scope proposal: server integration (run jobs, per-component cache, minijinja render in brust-core), F32 (wrappers in table/select), F33/F34 cache + child jobs, F37/F39/F40/F41, runtime F10–F13, `bun check` when Bun 1.4.3 is stable (F8), publish workflow for `@brust/*` using `BRUST_NPM_TOKEN`.
+
+## Scrutiny 2026-10-09
+
+A scrutiny of the M1 exit claim found the gates proved less than `docs/plans/m1-exit-report.md` said. Six findings:
+
+1. The battery ran `brustc --emit ir` only (analysis, no lowering), so spec §12 "no build error" was never tested.
+2. A free-text `knownGap` string exempted a row and nothing pinned which rows were gaps.
+3. Dual eval returned early (pass) without `bun`, skipped fixtures without samples silently, and matched `x-for` rows by position only.
+4. No fixture put a native child with `x-props-bind` inside an `x-for` row ("keyed list with child props" was untested).
+5. The browser harness captured only `console.warn`, only during mount; `console.error`, interactions and observer-driven mounts were invisible, and `warnOnce` never reset between cases.
+6. The exit report's §12 paragraph was hard-coded prose.
+
+The lead's manual `--emit all` sweep of all 61 rows on `v2` @720e6d7 found no hidden defect: 57 ok / 4 refused / 0 failed. The gate now records the same split mechanically: 56 rows build ok, 4 error rows are refused, and the parse-error row never reaches lowering. Closed by `m1-gate-hardening` @<sha> (fill at PR time); the gaps it deliberately leaves are ledger F43-F47.
