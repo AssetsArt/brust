@@ -264,8 +264,8 @@ fn helper(name: &str) -> &'static str {
         // x-bind-style of a style object: brust-jinja's style_obj_to_css rule.
         "__css" => concat!(
             "const __unitless = new Set([\"zIndex\", \"opacity\", \"flex\", \"flexGrow\", \"flexShrink\", \"fontWeight\", \"lineHeight\", \"order\", \"zoom\"])\n",
-            "const __css = (o) => Object.entries(o ?? {})\n",
-            "  .filter(([, v]) => v != null && v !== false)\n",
+            "const __css = (o) => Object.entries(o !== null && typeof o === \"object\" ? o : {})\n",
+            "  .filter(([k, v]) => v != null && v !== false && /^(--[A-Za-z0-9_-]+|[A-Za-z][A-Za-z0-9_-]*)$/.test(k))\n",
             "  .map(([k, v]) => [k, typeof v === \"number\" ? (v === 0 || __unitless.has(k) || k.startsWith(\"--\") ? String(v) : v + \"px\") : typeof v === \"boolean\" ? \"\" : String(v)])\n",
             "  .filter(([, v]) => v !== \"\" && !/[;{}\\\\\\n\\r]|\\/\\*|expression\\(|@import/i.test(v))\n",
             "  .map(([k, v]) => (k.startsWith(\"--\") ? k : k.replace(/[A-Z]/g, (c) => \"-\" + c.toLowerCase())) + \":\" + v)\n",

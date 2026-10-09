@@ -9,7 +9,7 @@ use brust_compiler::parse::{parse_tsx, run_on_compiler_thread};
 
 fn slot(body: &str) -> RawExpr {
     let src = format!(
-        "import {{ useState }} from 'react'\nexport default function C({{ a, b, xs, o, s, u }}: any) {{ const [n, setN] = useState(3); return <p>{{{body}}}</p> }}\n"
+        "import {{ useState }} from 'react'\nexport default function C({{ a, b, xs, o, s, u, ea, eo }}: any) {{ const [n, setN] = useState(3); return <p>{{{body}}}</p> }}\n"
     );
     run_on_compiler_thread(move || {
         let parsed = parse_tsx("C.tsx", src.into_bytes()).unwrap();
@@ -33,10 +33,10 @@ const ROWS: &[(&str, &str, &str)] = &[
     ),
     ("undefined", "__undefined", "undefined"),
     ("xs[1]", "xs[1]", "xs[1]"),
-    ("!a", "(not a)", "!a"),
+    ("!a", "(not (a | truthy))", "!a"),
     ("-b", "(-b)", "-b"),
-    ("a && b", "(a and b)", "a && b"),
-    ("u || b", "(u or b)", "u || b"),
+    ("a && b", "(b if (a | truthy) else a)", "a && b"),
+    ("u || b", "(u if (u | truthy) else b)", "u || b"),
     (
         "u ?? b",
         "(u if u is defined and u is not none else b)",
@@ -46,7 +46,7 @@ const ROWS: &[(&str, &str, &str)] = &[
     ("b !== n", "(b != n)", "b !== n"),
     (
         "b < n && n >= 3",
-        "((b < n) and (n >= 3))",
+        "((n >= 3) if ((b < n) | truthy) else (b < n))",
         "b < n && n >= 3",
     ),
     ("b + n * 2", "(b + (n * 2))", "b + n * 2"),
@@ -56,7 +56,7 @@ const ROWS: &[(&str, &str, &str)] = &[
     ("a + '!'", r#"((a | js_string) ~ "!")"#, r#"a + "!""#),
     (
         "b > 1 ? 'big' : 'small'",
-        r#"("big" if (b > 1) else "small")"#,
+        r#"("big" if ((b > 1) | truthy) else "small")"#,
         r#"b > 1 ? "big" : "small""#,
     ),
     (
@@ -64,6 +64,19 @@ const ROWS: &[(&str, &str, &str)] = &[
         r#"("" ~ (a | js_string) ~ "-" ~ (n | js_string) ~ "")"#,
         "`${a}-${n}`",
     ),
+    // JS truthiness: an empty list or object is true (review B2).
+    (
+        "ea && 'y'",
+        r#"("y" if (ea | truthy) else ea)"#,
+        r#"ea && "y""#,
+    ),
+    ("!eo", "(not (eo | truthy))", "!eo"),
+    (
+        "ea || 'f'",
+        r#"(ea if (ea | truthy) else "f")"#,
+        r#"ea || "f""#,
+    ),
+    ("eo ? 1 : 2", "(1 if (eo | truthy) else 2)", "eo ? 1 : 2"),
     ("xs.length", "(xs | length)", "xs.length"),
     ("a.toUpperCase()", "(a | upper)", "a.toUpperCase()"),
     ("a.toLowerCase()", "(a | lower)", "a.toLowerCase()"),
@@ -92,12 +105,11 @@ const ROWS: &[(&str, &str, &str)] = &[
     ),
 ];
 
-const SAMPLE_JS: &str =
-    r#"const a = "Hi", b = 2, xs = ["x", "y"], o = { k: 1 }, s = " Pad ", u = undefined, n = 3;"#;
+const SAMPLE_JS: &str = r#"const a = "Hi", b = 2, xs = ["x", "y"], o = { k: 1 }, s = " Pad ", u = undefined, n = 3, ea = [], eo = {};"#;
 
 fn sample_ctx() -> minijinja::Value {
     minijinja::Value::from_serialize(serde_json::json!({
-        "a": "Hi", "b": 2, "xs": ["x", "y"], "o": { "k": 1 }, "s": " Pad ", "n": 3
+        "a": "Hi", "b": 2, "xs": ["x", "y"], "o": { "k": 1 }, "s": " Pad ", "n": 3, "ea": [], "eo": {}
     }))
 }
 

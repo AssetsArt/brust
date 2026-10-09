@@ -213,3 +213,66 @@ fn svg_names_range_inputs_and_reserved_names() {
 
 #[allow(dead_code)]
 fn _unused(_: PathBuf) {}
+
+/// Round-1 review B1 (probe r2): an inlined child's loop variable never
+/// captures a parent expression substituted for one of its props.
+#[test]
+fn inlined_loop_variables_do_not_capture_parent_expressions() {
+    let t = tree_in(
+        "shadow",
+        &[(
+            "P.tsx",
+            "function Row({ label, cells }: { label: string; cells: string[] }) {\n  return <ul>{cells.map(item => <li key={item}>{label}:{item}</li>)}</ul>\n}\nexport default function P({ item, cells }: { item: { title: string }; cells: string[] }) {\n  return <section><Row label={item.title} cells={cells} /></section>\n}",
+        )],
+    );
+    let html = render(
+        &t[0].1,
+        serde_json::json!({ "item": { "title": "PARENT" }, "cells": ["a", "b"] }),
+    );
+    assert!(
+        html.contains("<li>PARENT:a</li><li>PARENT:b</li>"),
+        "{html}\n{}",
+        t[0].1
+    );
+}
+
+/// Round-1 review B2 (probes r3, r4): JS truthiness — an empty list or object
+/// is true.
+#[test]
+fn template_conditions_use_javascript_truthiness() {
+    let r3 = lower(
+        "export default function T({ list, obj }: any) { return <div>{list && <p>has-list</p>}{!obj ? 'no-obj' : 'obj'}<i>{list || 'fallback'}</i></div> }",
+    );
+    let html = render(&r3.jinja, serde_json::json!({ "list": [], "obj": {} }));
+    assert!(html.contains("<p>has-list</p>"), "{html}");
+    assert!(html.contains("obj") && !html.contains("no-obj"), "{html}");
+    assert!(html.contains("<i></i>"), "{html}");
+    let r4 = lower(
+        "import { useState } from 'react'\nexport default function T() { const [list, setList] = useState<string[]>([]); return <div onClick={() => setList(['a'])}>{list && <p>has-list</p>}</div> }",
+    );
+    let html = render(&r4.jinja, serde_json::json!({}));
+    assert!(
+        html.contains(">has-list</p>") && !html.contains("hidden>has-list"),
+        "{html}"
+    );
+}
+
+/// Round-1 review B3 (probe r5): a style object held in a prop renders as CSS;
+/// keys that are not CSS identifiers are dropped.
+#[test]
+fn style_objects_from_props_render_as_css() {
+    let a = lower("export default function X({ st }: any) { return <p style={st}>s</p> }");
+    let ok = render(
+        &a.jinja,
+        serde_json::json!({ "st": { "color": "red", "fontSize": 12 } }),
+    );
+    assert!(ok.contains("style=\"color:red;font-size:12px\""), "{ok}");
+    let bad = render(
+        &a.jinja,
+        serde_json::json!({ "st": { "color:red;background:url(//e)": "x", "color": "red\" onmouseover=\"a" } }),
+    );
+    assert!(
+        !bad.contains("background") && !bad.contains("onmouseover=\""),
+        "{bad}"
+    );
+}

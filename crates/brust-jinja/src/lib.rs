@@ -21,6 +21,7 @@ pub fn register(env: &mut Environment<'_>) {
     env.add_filter("js_string", |v: Value| js_string(&v));
     env.add_filter("attr_str", |v: Value| attr_string(&v));
     env.add_filter("present", |v: Value| present(&v));
+    env.add_filter("truthy", |v: Value| truthy(&v));
     env.add_filter("url_ok", |v: Value| safe_url(&attr_string(&v)));
     env.add_filter("json_attr", json_attr);
     env.add_filter("str_slice", str_slice);
@@ -36,6 +37,10 @@ pub fn register(env: &mut Environment<'_>) {
     env.add_filter("entries", entries);
     env.add_filter("css_val", |v: Value, prop: String| css_value(&prop, &v));
     env.add_filter("style_css", |v: Value| {
+        // Only a style object has declarations (React throws on a string).
+        if v.kind() != ValueKind::Map {
+            return String::new();
+        }
         let pairs: Vec<(String, Value)> = v
             .try_iter()
             .map(|it| {
@@ -93,6 +98,18 @@ pub fn attr_string(v: &Value) -> String {
         ValueKind::Number => number_of(v).map(js_number).unwrap_or_default(),
         ValueKind::Undefined | ValueKind::None => String::new(),
         _ => v.to_string(),
+    }
+}
+
+/// JS `ToBoolean`: false only for undefined, null, false, 0, NaN and "";
+/// an empty list or object is true (unlike jinja's own truthiness).
+pub fn truthy(v: &Value) -> bool {
+    match v.kind() {
+        ValueKind::Undefined | ValueKind::None => false,
+        ValueKind::Bool => v.is_true(),
+        ValueKind::Number => number_of(v).is_some_and(|n| n != 0.0 && !n.is_nan()),
+        ValueKind::String => v.as_str().is_some_and(|s| !s.is_empty()),
+        _ => true,
     }
 }
 
@@ -444,6 +461,19 @@ const UNITLESS: &[&str] = &[
     "zoom",
 ];
 
+/// A style key that is a CSS identifier (`fontSize`, `--gap`): anything else
+/// could inject declarations.
+pub fn css_key(k: &str) -> bool {
+    let word = |s: &str| {
+        s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    };
+    match k.strip_prefix("--") {
+        Some(custom) => !custom.is_empty() && word(custom),
+        None => k.starts_with(|c: char| c.is_ascii_alphabetic()) && word(k),
+    }
+}
+
 /// `backgroundColor` → `background-color`; `--custom` stays.
 pub fn css_property(name: &str) -> String {
     if name.starts_with("--") {
@@ -493,7 +523,7 @@ pub fn css_value(prop: &str, v: &Value) -> String {
 pub fn style_obj_to_css(pairs: &[(String, Value)]) -> String {
     pairs
         .iter()
-        .filter(|(_, v)| present(v))
+        .filter(|(k, v)| present(v) && css_key(k))
         .filter_map(|(k, v)| {
             let val = css_value(k, v);
             (!val.is_empty()).then(|| format!("{}:{val}", css_property(k)))
@@ -663,6 +693,37 @@ mod tests {
         assert!(
             is_refused_attr("onclick") && is_refused_attr("srcdoc") && !is_refused_attr("title")
         );
+    }
+
+    #[test]
+    fn truthiness_is_javascripts() {
+        for (v, want) in [
+            (Value::from(Vec::<i32>::new()), true),
+            (Value::from_serialize(serde_json::json!({})), true),
+            (Value::from(""), false),
+            (Value::from(0), false),
+            (Value::from(f64::NAN), false),
+            (Value::from(()), false),
+            (Value::UNDEFINED, false),
+            (Value::from("0"), true),
+        ] {
+            assert_eq!(truthy(&v), want, "{v:?}");
+        }
+        assert_eq!(
+            render(
+                "{{ s | style_css }}",
+                minijinja::context! { s => minijinja::context!{ color => "red", fontSize => 12 } }
+            ),
+            "color:red;font-size:12px"
+        );
+        assert_eq!(
+            render(
+                "[{{ s | style_css }}]",
+                minijinja::context! { s => "color:red" }
+            ),
+            "[]"
+        );
+        assert!(css_key("fontSize") && css_key("--gap") && !css_key("a;b") && !css_key("x:y"));
     }
 
     /// HTML attribute names are case-insensitive: so are the guards.

@@ -115,7 +115,8 @@ fn raw(e: &RawExpr, ctx: &JinjaCtx<'_>) -> String {
         }
         RawKind::Index { target, index } => format!("{}[{}]", raw(target, ctx), raw(index, ctx)),
         RawKind::Unary { op, value } => match op {
-            UnOp::Not => format!("(not {})", raw(value, ctx)),
+            // JS truthiness (an empty list or object is true): brust-jinja's `truthy`.
+            UnOp::Not => format!("(not ({} | truthy))", raw(value, ctx)),
             UnOp::Neg => format!("(-{})", raw(value, ctx)),
             UnOp::Pos => format!("({} | float)", raw(value, ctx)),
             UnOp::Typeof => "none".into(),
@@ -129,6 +130,9 @@ fn raw(e: &RawExpr, ctx: &JinjaCtx<'_>) -> String {
                 BinOp::Nullish => {
                     format!("({l} if {l} is defined and {l} is not none else {r})")
                 }
+                // `&&` / `||` return an operand, chosen by JS truthiness.
+                BinOp::And => format!("({r} if ({l} | truthy) else {l})"),
+                BinOp::Or => format!("({l} if ({l} | truthy) else {r})"),
                 _ => {
                     let o = match op {
                         BinOp::Add => "+",
@@ -142,16 +146,14 @@ fn raw(e: &RawExpr, ctx: &JinjaCtx<'_>) -> String {
                         BinOp::Le => "<=",
                         BinOp::Gt => ">",
                         BinOp::Ge => ">=",
-                        BinOp::And => "and",
-                        BinOp::Or => "or",
-                        BinOp::Nullish => unreachable!(),
+                        BinOp::And | BinOp::Or | BinOp::Nullish => unreachable!(),
                     };
                     format!("({l} {o} {r})")
                 }
             }
         }
         RawKind::Cond { test, yes, no } => format!(
-            "({} if {} else {})",
+            "({} if ({} | truthy) else {})",
             raw(yes, ctx),
             raw(test, ctx),
             raw(no, ctx)

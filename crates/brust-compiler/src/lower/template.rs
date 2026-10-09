@@ -213,6 +213,12 @@ impl<'a, 'c> Printer<'a, 'c> {
                 })
             }
             IdentKind::State => Some(format!("{name}{}", self.suffix())),
+            // An inlined child's loop variables carry the instance suffix in
+            // the template, so a parent expression substituted for a prop
+            // (`item.title`) is never captured by the child's own `item`.
+            IdentKind::LoopBinding if self.inline.is_some() => {
+                Some(format!("{name}{}", self.suffix()))
+            }
             IdentKind::Local => Some(if self.f.derived.contains_key(name) {
                 self.derived_var(name)
             } else {
@@ -613,8 +619,11 @@ impl<'a, 'c> Printer<'a, 'c> {
                         " style=\"{{{{ {{{}}} | style_css | e }}}}\"",
                         dict.join(", ")
                     ));
+                } else if html == "style" {
+                    // A style object held in a variable or prop: the same CSS rule.
+                    open.push_str(&format!(" style=\"{{{{ ({v}) | style_css | e }}}}\""));
                 } else if is_boolean_attr(&html) {
-                    open.push_str(&format!("{{% if {v} %}} {html}{{% endif %}}"));
+                    open.push_str(&format!("{{% if ({v}) | truthy %}} {html}{{% endif %}}"));
                 } else if is_url_attr(&html) {
                     // Server side of the runtime's URL rule: an unsafe scheme
                     // is not rendered (XSS through a `javascript:` prop).
@@ -630,7 +639,7 @@ impl<'a, 'c> Printer<'a, 'c> {
                     return;
                 }
                 if let Some(b) = self.reactive(raw, value) {
-                    let paint = if style_obj.is_some() {
+                    let paint = if html == "style" {
                         Paint::Style
                     } else if is_boolean_attr(&html) {
                         Paint::Raw
@@ -696,7 +705,7 @@ impl<'a, 'c> Printer<'a, 'c> {
         let c = self.value(cond);
         match self.reactive(raw, cond) {
             None => {
-                self.out.push_str(&format!("{{% if {c} %}}"));
+                self.out.push_str(&format!("{{% if ({c}) | truthy %}}"));
                 self.nodes(then, st);
                 if !else_.is_empty() {
                     self.out.push_str("{% else %}");
@@ -721,7 +730,7 @@ impl<'a, 'c> Printer<'a, 'c> {
                     self.twice(|p, hidden| p.branch(else_, se, &no_d, hidden))
                 };
                 self.out.push_str(&format!(
-                    "{{% if {c} %}}{then_on}{else_off}{{% else %}}{then_off}{else_on}{{% endif %}}"
+                    "{{% if ({c}) | truthy %}}{then_on}{else_off}{{% else %}}{then_off}{else_on}{{% endif %}}"
                 ));
             }
         }
@@ -872,7 +881,7 @@ impl<'a, 'c> Printer<'a, 'c> {
         });
         let mut sets = format!("{{% set {var} = loop.index0 %}}");
         if let Some(i) = index {
-            sets.push_str(&format!("{{% set {i} = loop.index0 %}}"));
+            sets.push_str(&format!("{{% set {i}{} = loop.index0 %}}", self.suffix()));
         }
         let (row, empty) = if x_for.is_empty() {
             (self.row(body, sb, &x_for, false), String::new())
@@ -888,7 +897,8 @@ impl<'a, 'c> Printer<'a, 'c> {
         };
         self.frames.pop();
         self.out.push_str(&format!(
-            "{{% for {item} in {src} %}}{sets}{row}{empty}{{% endfor %}}"
+            "{{% for {item}{} in {src} %}}{sets}{row}{empty}{{% endfor %}}",
+            self.suffix()
         ));
     }
 

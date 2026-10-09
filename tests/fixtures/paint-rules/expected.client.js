@@ -2,8 +2,8 @@
 import { signal, computed, untracked, defineBehavior } from "brust/runtime-dom"
 const __attr = (v) => (v === false ? null : v)
 const __unitless = new Set(["zIndex", "opacity", "flex", "flexGrow", "flexShrink", "fontWeight", "lineHeight", "order", "zoom"])
-const __css = (o) => Object.entries(o ?? {})
-  .filter(([, v]) => v != null && v !== false)
+const __css = (o) => Object.entries(o !== null && typeof o === "object" ? o : {})
+  .filter(([k, v]) => v != null && v !== false && /^(--[A-Za-z0-9_-]+|[A-Za-z][A-Za-z0-9_-]*)$/.test(k))
   .map(([k, v]) => [k, typeof v === "number" ? (v === 0 || __unitless.has(k) || k.startsWith("--") ? String(v) : v + "px") : typeof v === "boolean" ? "" : String(v)])
   .filter(([, v]) => v !== "" && !/[;{}\\\n\r]|\/\*|expression\(|@import/i.test(v))
   .map(([k, v]) => (k.startsWith("--") ? k : k.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase())) + ":" + v)

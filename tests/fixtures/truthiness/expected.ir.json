@@ -1,0 +1,392 @@
+{
+  "id": "input_38302085",
+  "source": "tests/fixtures/truthiness/input.tsx",
+  "tier": "Native",
+  "props": [],
+  "state": [
+    {
+      "name": "open",
+      "setter": "setOpen",
+      "init": {
+        "Server": {
+          "loc": 247,
+          "kind": {
+            "Lit": {
+              "Bool": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "n",
+      "setter": "setN",
+      "init": {
+        "Server": {
+          "loc": 283,
+          "kind": {
+            "Lit": {
+              "Num": 5.0
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "list",
+      "setter": "setList",
+      "init": {
+        "Server": {
+          "loc": 331,
+          "kind": {
+            "Array": []
+          }
+        }
+      }
+    }
+  ],
+  "derived": [],
+  "effects": [],
+  "handlers": [
+    {
+      "name": "_h1",
+      "body": {
+        "loc": 379,
+        "kind": {
+          "Arrow": {
+            "params": [],
+            "body": {
+              "Expr": {
+                "loc": 385,
+                "kind": {
+                  "Call": {
+                    "callee": {
+                      "loc": 385,
+                      "kind": {
+                        "Ident": {
+                          "name": "setOpen",
+                          "kind": "Setter"
+                        }
+                      }
+                    },
+                    "args": [
+                      {
+                        "loc": 393,
+                        "kind": {
+                          "Unary": {
+                            "op": "Not",
+                            "value": {
+                              "loc": 394,
+                              "kind": {
+                                "Ident": {
+                                  "name": "open",
+                                  "kind": "State"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "captures": [
+              [
+                "setOpen",
+                "Setter"
+              ],
+              [
+                "open",
+                "State"
+              ]
+            ]
+          }
+        }
+      },
+      "item_scoped": []
+    }
+  ],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 350,
+      "tag": "div",
+      "attrs": [],
+      "children": [
+        {
+          "Element": {
+            "loc": 362,
+            "tag": "button",
+            "attrs": [
+              {
+                "Event": {
+                  "event": "click",
+                  "handler": "_h1"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Text": "t"
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "If": {
+            "cond": {
+              "Server": {
+                "loc": 419,
+                "kind": {
+                  "Ident": {
+                    "name": "open",
+                    "kind": "State"
+                  }
+                }
+              }
+            },
+            "then": [
+              {
+                "Fragment": [
+                  {
+                    "Text": "a"
+                  },
+                  {
+                    "Element": {
+                      "loc": 430,
+                      "tag": "b",
+                      "attrs": [],
+                      "children": [
+                        {
+                          "Text": "bold"
+                        }
+                      ],
+                      "host": false,
+                      "ref_name": null
+                    }
+                  }
+                ]
+              }
+            ],
+            "else_": []
+          }
+        },
+        {
+          "Slot": {
+            "Server": {
+              "loc": 453,
+              "kind": {
+                "Binary": {
+                  "op": "And",
+                  "left": {
+                    "loc": 453,
+                    "kind": {
+                      "Ident": {
+                        "name": "open",
+                        "kind": "State"
+                      }
+                    }
+                  },
+                  "right": {
+                    "loc": 461,
+                    "kind": {
+                      "Lit": {
+                        "Str": "text-branch"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "If": {
+            "cond": {
+              "Server": {
+                "loc": 483,
+                "kind": {
+                  "Ident": {
+                    "name": "list",
+                    "kind": "State"
+                  }
+                }
+              }
+            },
+            "then": [
+              {
+                "Element": {
+                  "loc": 491,
+                  "tag": "p",
+                  "attrs": [],
+                  "children": [
+                    {
+                      "Text": "has-list"
+                    }
+                  ],
+                  "host": false,
+                  "ref_name": null
+                }
+              }
+            ],
+            "else_": []
+          }
+        },
+        {
+          "Component": {
+            "loc": 514,
+            "name": "Counter",
+            "source": null,
+            "imported": null,
+            "props": [
+              [
+                "start",
+                {
+                  "Server": {
+                    "loc": 530,
+                    "kind": {
+                      "Ident": {
+                        "name": "n",
+                        "kind": "State"
+                      }
+                    }
+                  }
+                }
+              ]
+            ],
+            "children": [],
+            "link": 1,
+            "tier": "Native"
+          }
+        },
+        {
+          "Component": {
+            "loc": 542,
+            "name": "Counter",
+            "source": null,
+            "imported": null,
+            "props": [
+              [
+                "start",
+                {
+                  "Server": {
+                    "loc": 558,
+                    "kind": {
+                      "Binary": {
+                        "op": "Mul",
+                        "left": {
+                          "loc": 558,
+                          "kind": {
+                            "Ident": {
+                              "name": "n",
+                              "kind": "State"
+                            }
+                          }
+                        },
+                        "right": {
+                          "loc": 562,
+                          "kind": {
+                            "Lit": {
+                              "Num": 2.0
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            ],
+            "children": [],
+            "link": 2,
+            "tier": "Native"
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [],
+  "child_links": [
+    {
+      "id": 1,
+      "child": "counter_b740f5a1",
+      "props_member": "_p1",
+      "item_scoped": [],
+      "props": [
+        [
+          "start",
+          {
+            "Server": {
+              "loc": 530,
+              "kind": {
+                "Ident": {
+                  "name": "n",
+                  "kind": "State"
+                }
+              }
+            }
+          }
+        ]
+      ]
+    },
+    {
+      "id": 2,
+      "child": "counter_b740f5a1",
+      "props_member": "_p2",
+      "item_scoped": [],
+      "props": [
+        [
+          "start",
+          {
+            "Server": {
+              "loc": 558,
+              "kind": {
+                "Binary": {
+                  "op": "Mul",
+                  "left": {
+                    "loc": 558,
+                    "kind": {
+                      "Ident": {
+                        "name": "n",
+                        "kind": "State"
+                      }
+                    }
+                  },
+                  "right": {
+                    "loc": 562,
+                    "kind": {
+                      "Lit": {
+                        "Num": 2.0
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      ]
+    }
+  ],
+  "client_props": [],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": false,
+  "cache": null,
+  "children": [
+    {
+      "name": "Counter",
+      "id": "counter_b740f5a1",
+      "path": "tests/fixtures/truthiness/input.tsx",
+      "tier": "Native"
+    }
+  ],
+  "diagnostics": []
+}
