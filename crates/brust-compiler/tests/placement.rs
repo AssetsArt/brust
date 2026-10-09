@@ -73,6 +73,7 @@ fn product_card_places_server_and_precomputed() {
             kind: JobKind::Precompute,
             inputs: vec!["item.price".into()],
             outputs: vec!["_s1".into(), "_s2".into()],
+            per_item: None,
         }]
     );
 }

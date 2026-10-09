@@ -209,6 +209,14 @@ fn read_attr(
         ));
     }
     if let Some(event) = event_name(name) {
+        if name.ends_with("Capture") {
+            r.diagnostics.push(Diagnostic::fallback(
+                "event-capture",
+                format!("`{name}` listens in the capture phase, which directives do not support"),
+                loc_of(value),
+                "use the bubbling handler, or move this component to React",
+            ));
+        }
         return Some(Attr::Event {
             event,
             handler: hoist_handler(r, value),
@@ -230,11 +238,26 @@ fn read_attr(
     })
 }
 
-/// `onClick` → `click`; `onchange`, `on` and `once` are not events.
+/// The DOM event a React `on*` prop listens to (F16): mostly the lowercased
+/// name, except where React's synthetic event differs. `onchange`, `on` and
+/// `once` are not events. `onChange` stays `change`; the template backend makes
+/// it `input` on text-like fields, as React does.
 fn event_name(attr: &str) -> Option<String> {
     let rest = attr.strip_prefix("on")?;
-    rest.starts_with(|c: char| c.is_ascii_uppercase())
-        .then(|| rest.to_ascii_lowercase())
+    if !rest.starts_with(|c: char| c.is_ascii_uppercase()) {
+        return None;
+    }
+    let base = rest.strip_suffix("Capture").unwrap_or(rest);
+    Some(
+        match base {
+            "DoubleClick" => "dblclick",
+            // React's focus events bubble: they are focusin / focusout.
+            "Focus" => "focusin",
+            "Blur" => "focusout",
+            other => return Some(other.to_ascii_lowercase()),
+        }
+        .to_string(),
+    )
 }
 
 /// A handler bound to a local name (a `useCallback` or a local function) keeps

@@ -85,6 +85,7 @@ pub fn tier(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
             // The whole props object (§3.3: "the component's props (JSON)").
             inputs: vec!["*".to_string()],
             outputs: vec![format!("_ssr_{}", ir.id)],
+            per_item: None,
         }];
     }
     ir.needs_worker = !ir.jobs.is_empty();

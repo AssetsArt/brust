@@ -209,6 +209,34 @@ pub struct ComponentIR {
     /// passes to follow helpers; not part of the serialized IR.
     #[serde(skip)]
     pub module_scope: Vec<(String, Vec<(String, IdentKind)>)>,
+    /// Module-level declarations as printed source, in source order (the
+    /// chunk and the job re-emit the ones they reach); not serialized.
+    #[serde(skip)]
+    pub module_decls: Vec<ModuleDecl>,
+    /// The structural IR (every value still `Raw`) as the passes received it.
+    /// Placement only rewrites expressions, so lowering walks this in lockstep
+    /// with the placed template to print client code from the original
+    /// expressions; not serialized.
+    #[serde(skip)]
+    pub structural: Option<Box<Structural>>,
+}
+
+/// One module-level declaration statement.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModuleDecl {
+    /// The names it declares.
+    pub names: Vec<String>,
+    /// The printed statement without a leading `export`.
+    pub source: String,
+}
+
+/// The structural parts of a `ComponentIR` before placement.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Structural {
+    pub template: Node,
+    pub state: Vec<StateDecl>,
+    pub derived: Vec<DerivedDecl>,
+    pub refs: Vec<RefDecl>,
 }
 
 impl ComponentIR {
@@ -235,6 +263,8 @@ impl ComponentIR {
             children: vec![],
             diagnostics: vec![],
             module_scope: vec![],
+            module_decls: vec![],
+            structural: None,
         }
     }
 }

@@ -320,3 +320,24 @@ fn user_names_spelled_like_the_jsx_runtime_are_captures() {
     );
     assert_eq!(ir.client_module_locals, ["jsxLabel"]);
 }
+
+/// M1c input 1: module declarations keep their printed source (no `export`).
+#[test]
+fn module_declarations_keep_their_source() {
+    let ir = analyze(
+        "import { useState } from 'react'\nconst TAX = 2, RATE = 3\nexport function double(x: number) { return x * TAX }\nexport default function R() { const [n, setN] = useState(0); return <b onClick={() => setN(double(n))}>{n}</b> }",
+    );
+    let decls: Vec<_> = ir
+        .module_decls
+        .iter()
+        .map(|d| (d.names.clone(), d.source.starts_with("export")))
+        .collect();
+    assert_eq!(
+        decls[0],
+        (vec!["TAX".to_string(), "RATE".to_string()], false)
+    );
+    assert_eq!(decls[1], (vec!["double".to_string()], false));
+    assert!(ir.module_decls[1].source.starts_with("function double"));
+    assert_eq!(ir.client_module_locals, ["TAX", "double"]);
+    assert!(ir.structural.is_some());
+}

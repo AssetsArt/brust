@@ -312,8 +312,20 @@ impl<'r, 'a> Reader<'r, 'a> {
 
     /// Module-level declarations and their captures: `function f` and each
     /// identifier-bound `const`/`let`/`var` (exported or not).
-    pub fn module_scope(&self, ast: &js_ast::Ast<'_>) -> Vec<(String, Vec<(String, IdentKind)>)> {
+    #[allow(clippy::type_complexity)]
+    pub fn module_scope(
+        &self,
+        ast: &js_ast::Ast<'_>,
+    ) -> (
+        Vec<(String, Vec<(String, IdentKind)>)>,
+        Vec<crate::ir::ModuleDecl>,
+    ) {
         let mut out = Vec::new();
+        let mut decls = Vec::new();
+        let source = |stmt: &js_ast::Stmt| {
+            let s = self.print_stmt(stmt);
+            s.strip_prefix("export ").map(str::to_string).unwrap_or(s)
+        };
         for part in ast.parts.iter() {
             for stmt in part.stmts.slice() {
                 match &stmt.data {
@@ -321,24 +333,38 @@ impl<'r, 'a> Reader<'r, 'a> {
                         if let Some(n) = &f.func.name {
                             let (captures, _) =
                                 self.captures_of(f.func.args.slice(), f.func.body.stmts.slice());
-                            out.push((self.names.name(n.ref_), captures));
+                            let name = self.names.name(n.ref_);
+                            out.push((name.clone(), captures));
+                            decls.push(crate::ir::ModuleDecl {
+                                names: vec![name],
+                                source: source(stmt),
+                            });
                         }
                     }
                     S::SLocal(l) => {
+                        let mut names = Vec::new();
                         for d in l.decls.iter() {
                             if let (B::BIdentifier(id), Some(v)) = (d.binding.data, &d.value) {
                                 let mut w = Walk::default();
                                 w.expr(v);
                                 let (captures, _) = self.captured(w);
-                                out.push((self.names.name(id.r#ref), captures));
+                                let name = self.names.name(id.r#ref);
+                                names.push(name.clone());
+                                out.push((name, captures));
                             }
+                        }
+                        if !names.is_empty() {
+                            decls.push(crate::ir::ModuleDecl {
+                                names,
+                                source: source(stmt),
+                            });
                         }
                     }
                     _ => {}
                 }
             }
         }
-        out
+        (out, decls)
     }
 
     /// A `function name(…) {…}` declaration in the component body, read as the

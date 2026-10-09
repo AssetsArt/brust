@@ -23,6 +23,7 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
         diagnostics: Vec::new(),
         loop_scope: Vec::new(),
         lists: Vec::new(),
+        items: Vec::new(),
         ssr_outputs: HashMap::new(),
     };
     let mut template = std::mem::replace(&mut ir.template, Node::Fragment(vec![]));
@@ -45,6 +46,8 @@ struct Walker<'s, 'c> {
     /// Prop paths of the enclosing `For` sources, and whether the source
     /// reads state.
     lists: Vec<(Vec<String>, bool)>,
+    /// Item bindings of the enclosing `For`s, innermost last.
+    items: Vec<String>,
     ssr_outputs: HashMap<String, u32>,
 }
 
@@ -87,7 +90,9 @@ impl Walker<'_, '_> {
                 self.loop_scope.push(item.clone());
                 self.loop_scope.extend(index.iter().cloned());
                 self.lists.push(src);
+                self.items.push(item.clone());
                 body.iter_mut().for_each(|c| self.node(c));
+                self.items.pop();
                 self.lists.pop();
                 self.loop_scope.truncate(n);
             }
@@ -341,6 +346,7 @@ impl Walker<'_, '_> {
                         },
                         inputs: minimal_paths(inputs),
                         outputs: vec![output],
+                        per_item: self.items.last().cloned(),
                     });
                 }
             }

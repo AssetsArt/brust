@@ -237,3 +237,31 @@ fn keyed_map_body_outside_children_does_not_warn() {
     let (_, d) = tpl("export default function T() { return <ul><li key=\"a\"/></ul> }");
     assert!(d.iter().any(|d| d.rule == "key-outside-list"), "{d:?}");
 }
+
+/// F16: React's synthetic events that differ from the DOM name.
+#[test]
+fn react_event_names_map_to_dom_events() {
+    let (n, d) = tpl(
+        "export default function T({ f }: any) { return <div onDoubleClick={f} onFocus={f} onBlur={f} onMouseEnter={f} onChange={f} /> }",
+    );
+    assert!(d.is_empty(), "{d:?}");
+    let Node::Element { attrs, .. } = n else {
+        panic!()
+    };
+    let events: Vec<_> = attrs
+        .iter()
+        .filter_map(|a| match a {
+            Attr::Event { event, .. } => Some(event.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        events,
+        ["dblclick", "focusin", "focusout", "mouseenter", "change"]
+    );
+    let (_, d) = tpl("export default function T({ f }: any) { return <div onClickCapture={f} /> }");
+    assert!(
+        d.iter()
+            .any(|d| d.rule == "event-capture" && d.class == DiagClass::Fallback)
+    );
+}

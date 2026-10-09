@@ -61,6 +61,7 @@ fn fixture_tiers() {
             kind: JobKind::Ssr { client_only: true },
             inputs: vec!["*".into()],
             outputs: vec![format!("_ssr_{}", ir.id)],
+            per_item: None,
         }]
     );
 

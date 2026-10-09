@@ -75,6 +75,12 @@ impl PassState {
 
 /// Runs every pass on `ir` (a structural IR from `analyze_component`).
 pub fn run_passes(ir: &mut ComponentIR, ctx: &PassCtx<'_>) -> PassState {
+    ir.structural = Some(Box::new(crate::ir::Structural {
+        template: ir.template.clone(),
+        state: ir.state.clone(),
+        derived: ir.derived.clone(),
+        refs: ir.refs.clone(),
+    }));
     let mut st = PassState::new(ir);
     placement::place(ir, &mut st);
     // Children before captures: linked props are client reads of the parent.

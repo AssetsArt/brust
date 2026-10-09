@@ -65,6 +65,9 @@ pub struct JobDecl {
     pub kind: JobKind,
     pub inputs: Vec<String>,
     pub outputs: Vec<String>,
+    /// An `Ssr` job for an island inside a list renders once per item: the
+    /// innermost loop binding; the output is an array aligned with the list.
+    pub per_item: Option<String>,
 }
 
 /// Filled by M1b-2.
