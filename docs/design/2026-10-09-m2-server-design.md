@@ -153,6 +153,21 @@ and never asks Bun what a route is:
 }
 ```
 
+**S6 amendments (2026-10-09, ruled by the lead on the m2b/m2a plans):**
+- `jobs[].inputs` are paths relative to the component's props (`"item.price"`, as the M1 IR
+  emits); a leading `props.` is accepted and stripped by the server.
+- `jobs[].per_instance` is the **loader-context path of the list** the job runs per row of
+  (`"todos"`, `"pokemon.moves"`), never the client member name (`_l1`). The build lane
+  translates the IR's loop member to its source path.
+- `children[]` records carry `"props": { "<childProp>": "<parent context path>" }` where the
+  literal `[idx]` stands for the current row of `per_instance` (`"move": "pokemon.moves[idx]"`);
+  it must cover the root of every input of the child's jobs (boot rule `UncoveredInput`).
+  `children[].instances` is therefore `{ "k": <1-based ordinal of that child id in template order>, "per_instance": <list path> | null }`.
+- The `loader` response may carry `headers` (e.g. `Set-Cookie`); a response with `Set-Cookie`
+  is never stored in L1.
+- `/public/<rel>` is served from `dist/public`; hashed file names (`-<hex6+>` suffix) get
+  `Cache-Control: public, max-age=31536000, immutable`.
+
 `inputs` are the template-subset expressions the job reads (spec §4.4 capture analysis); Rust
 evaluates them against the loader context with the same evaluator minijinja uses (a
 `brust_jinja::eval_path` helper over the context `Value`), so the cache key is computed without
