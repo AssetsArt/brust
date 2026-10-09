@@ -14,7 +14,7 @@
 //! enclosing lists).
 use super::common::{Facts, raw_of};
 use super::server_expr::{JinjaCtx, UNDEFINED, jinja_string, to_jinja};
-use super::{LowerCtx, Member, MemberDef};
+use super::{LowerCtx, Member, MemberDef, Paint};
 use crate::ir::{
     Attr, ComponentIR, Diagnostic, Expr, IdentKind, JobKind, Node, RawExpr, RawKind, ServerExpr,
     Tier,
@@ -101,7 +101,7 @@ impl<'a, 'c> Printer<'a, 'c> {
         Some(Printer {
             ctx,
             f: Facts::new(ir, structural),
-            native: !matches!(ir.tier, Tier::Static),
+            native: !matches!(ir.tier, Tier::Static) || (ctx.linked)(&ir.id),
             inline,
             loop_var,
             out: String::new(),
@@ -193,14 +193,25 @@ impl<'a, 'c> Printer<'a, 'c> {
 
     fn names(&self) -> impl Fn(&str, &IdentKind) -> Option<String> + '_ {
         move |name: &str, kind: &IdentKind| match kind {
-            IdentKind::Prop => Some(match &self.inline {
-                None if name == "*" => "_props".into(),
-                None => name.to_string(),
-                Some(i) => match i.props.get(name) {
-                    Some(PropBinding::Expr(e)) => format!("({e})"),
-                    _ => UNDEFINED.into(),
-                },
-            }),
+            IdentKind::Prop => {
+                let base = match &self.inline {
+                    None if name == "*" => "_props".into(),
+                    None => name.to_string(),
+                    Some(i) => match i.props.get(name) {
+                        Some(PropBinding::Expr(e)) => format!("({e})"),
+                        _ => UNDEFINED.into(),
+                    },
+                };
+                // A destructuring default applies when the prop is undefined.
+                Some(match self.f.prop_defaults.get(name) {
+                    Some(d) => {
+                        let plain = JinjaCtx::plain();
+                        let dj = to_jinja(&ServerExpr(d.clone()), &plain);
+                        format!("({base} if {base} is defined else {dj})")
+                    }
+                    None => base,
+                })
+            }
             IdentKind::State => Some(format!("{name}{}", self.suffix())),
             IdentKind::Local => Some(if self.f.derived.contains_key(name) {
                 self.derived_var(name)
@@ -263,6 +274,11 @@ impl<'a, 'c> Printer<'a, 'c> {
     /// and the loop bindings it reads.
     fn reactive(&self, raw: Option<&RawExpr>, placed: &Expr) -> Option<Vec<String>> {
         let raw = raw?;
+        // `{children}` is markup the parent printed; it has no client value.
+        if matches!(&raw.kind, RawKind::Ident { name, kind: IdentKind::Prop } if name == "children")
+        {
+            return None;
+        }
         let deps = self.f.deps(raw, &self.scope());
         let in_row = self.frames.iter().any(|f| f.directive);
         let sd = !deps.state.is_empty()
@@ -273,14 +289,15 @@ impl<'a, 'c> Printer<'a, 'c> {
                     ..
                 }
             );
-        let loop_read = in_row && !deps.loop_bindings.is_empty();
+        // Only a Server (template-subset) value is client-computable: a
+        // props-only precomputed slot never appears in the chunk (§7.1).
+        let client_ok = matches!(placed, Expr::Server(_)) && !self.reaches_props_only_slot(raw);
+        let loop_read = in_row && !deps.loop_bindings.is_empty() && client_ok;
         // Props are a signal in the chunk (a linked child's change after
-        // first paint): in a native component a prop read is reactive too.
-        // Only a Server (template-subset) value: a props-only precomputed slot
-        // never appears in the chunk (§7.1).
-        let prop_read = !deps.props.is_empty()
-            && matches!(placed, Expr::Server(_))
-            && !self.reaches_props_only_slot(raw);
+        // first paint): in a native component a prop read is reactive too —
+        // unless it also reads a loop binding outside an x-for row (no scope).
+        let prop_read =
+            !deps.props.is_empty() && client_ok && (deps.loop_bindings.is_empty() || in_row);
         if !(self.native && (sd || loop_read || prop_read)) {
             return None;
         }
@@ -326,19 +343,27 @@ impl<'a, 'c> Printer<'a, 'c> {
     }
 
     /// Registers a value member; returns the directive value.
-    fn value_member(&mut self, raw: &RawExpr, bindings: Vec<String>, negate: bool) -> String {
+    fn value_member(&mut self, raw: &RawExpr, bindings: Vec<String>, paint: Paint) -> String {
         let name = self.next("_c");
-        self.push_member(&name, raw, bindings.clone(), negate);
+        self.push_member(&name, raw, bindings.clone(), false, paint);
         directive(&name, &bindings)
     }
 
-    fn push_member(&mut self, name: &str, raw: &RawExpr, bindings: Vec<String>, negate: bool) {
+    fn push_member(
+        &mut self,
+        name: &str,
+        raw: &RawExpr,
+        bindings: Vec<String>,
+        negate: bool,
+        paint: Paint,
+    ) {
         self.members.push(Member {
             name: name.to_string(),
             def: MemberDef::Value {
                 raw: raw.clone(),
                 bindings,
                 negate,
+                paint,
             },
         });
     }
@@ -395,7 +420,7 @@ impl<'a, 'c> Printer<'a, 'c> {
         let paint = format!("{{{{ {} | e }}}}", self.value(e));
         match self.reactive(raw, e) {
             Some(b) => {
-                let d = self.value_member(raw.unwrap(), b, false);
+                let d = self.value_member(raw.unwrap(), b, Paint::Text);
                 if lone {
                     self.out.push_str(&paint);
                     Some(d)
@@ -580,18 +605,14 @@ impl<'a, 'c> Printer<'a, 'c> {
                     _ => None,
                 };
                 if let Some(props) = style_obj {
-                    let css: Vec<String> = props
+                    let dict: Vec<String> = props
                         .iter()
-                        .map(|(k, pv)| {
-                            format!(
-                                "{}:{{{{ ({}) | css_val({}) | e }}}}",
-                                brust_jinja::css_property(k),
-                                self.jinja(pv),
-                                jinja_string(k)
-                            )
-                        })
+                        .map(|(k, pv)| format!("{}: {}", jinja_string(k), self.jinja(pv)))
                         .collect();
-                    open.push_str(&format!(" style=\"{}\"", css.join(";")));
+                    open.push_str(&format!(
+                        " style=\"{{{{ {{{}}} | style_css | e }}}}\"",
+                        dict.join(", ")
+                    ));
                 } else if is_boolean_attr(&html) {
                     open.push_str(&format!("{{% if {v} %}} {html}{{% endif %}}"));
                 } else if is_url_attr(&html) {
@@ -609,7 +630,14 @@ impl<'a, 'c> Printer<'a, 'c> {
                     return;
                 }
                 if let Some(b) = self.reactive(raw, value) {
-                    let d = self.value_member(raw.unwrap(), b, false);
+                    let paint = if style_obj.is_some() {
+                        Paint::Style
+                    } else if is_boolean_attr(&html) {
+                        Paint::Raw
+                    } else {
+                        Paint::Attr
+                    };
+                    let d = self.value_member(raw.unwrap(), b, paint);
                     open.push_str(&format!(" x-bind-{html}=\"{d}\""));
                 }
             }
@@ -678,10 +706,10 @@ impl<'a, 'c> Printer<'a, 'c> {
             }
             Some(b) => {
                 let yes = self.next("_c");
-                self.push_member(&yes, raw.unwrap(), b.clone(), false);
+                self.push_member(&yes, raw.unwrap(), b.clone(), false, Paint::Raw);
                 let no = format!("{yes}_not");
                 if !else_.is_empty() {
-                    self.push_member(&no, raw.unwrap(), b.clone(), true);
+                    self.push_member(&no, raw.unwrap(), b.clone(), true, Paint::Raw);
                 }
                 let yes_d = directive(&yes, &b);
                 let no_d = directive(&no, &b);
@@ -702,13 +730,22 @@ impl<'a, 'c> Printer<'a, 'c> {
     /// Prints the visible copy, then the hidden copy of the same nodes with the
     /// same member numbers (the hidden copy defines no new members).
     fn twice(&mut self, mut f: impl FnMut(&mut Self, bool) -> String) -> (String, String) {
-        let counts = self.counts.clone();
+        let before = (
+            self.counts.clone(),
+            self.ssr.clone(),
+            self.instances.clone(),
+        );
         let visible = f(self, false);
-        let (after_counts, after_len) = (self.counts.clone(), self.members.len());
-        self.counts = counts;
+        let after = (
+            self.counts.clone(),
+            self.ssr.clone(),
+            self.instances.clone(),
+            self.members.len(),
+        );
+        (self.counts, self.ssr, self.instances) = before;
         let hidden = f(self, true);
-        self.members.truncate(after_len);
-        self.counts = after_counts;
+        self.members.truncate(after.3);
+        (self.counts, self.ssr, self.instances) = (after.0, after.1, after.2);
         (visible, hidden)
     }
 
@@ -789,10 +826,35 @@ impl<'a, 'c> Printer<'a, 'c> {
                 },
             });
             let l = directive(&l, &outer);
+            // The runtime calls the key function with the item only: a key that
+            // reads the index or an outer row falls back to the item's identity.
+            let mut kscope = self.scope();
+            kscope.push(item.clone());
+            kscope.extend(index.iter().cloned());
+            let kdeps = self.f.deps(kr, &kscope);
+            let key_raw = if kdeps.loop_bindings.iter().any(|b| b != item) {
+                self.diagnostics.push(Diagnostic::warning(
+                    "key-not-item",
+                    format!(
+                        "the key of the list over `{item}` reads more than the item; rows are keyed by item identity on the client"
+                    ),
+                    kr.loc,
+                    "key rows by a field of the item (key={item.id})",
+                ));
+                RawExpr {
+                    loc: kr.loc,
+                    kind: RawKind::Ident {
+                        name: item.clone(),
+                        kind: IdentKind::LoopBinding,
+                    },
+                }
+            } else {
+                kr.clone()
+            };
             self.members.push(Member {
                 name: k.clone(),
                 def: MemberDef::Key {
-                    raw: kr.clone(),
+                    raw: key_raw,
                     item: item.clone(),
                 },
             });
@@ -1075,10 +1137,8 @@ fn dom_event(event: &str, tag: &str, attrs: &[Attr]) -> String {
     });
     let text_like = match tag {
         "textarea" => true,
-        "input" => !matches!(
-            ty,
-            Some("checkbox" | "radio" | "file" | "range" | "color" | "date")
-        ),
+        // React's onChange is the input event everywhere but on these.
+        "input" => !matches!(ty, Some("checkbox" | "radio" | "file")),
         _ => false,
     };
     if text_like { "input" } else { "change" }.to_string()

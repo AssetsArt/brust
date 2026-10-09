@@ -98,7 +98,13 @@ fn raw(e: &RawExpr, ctx: &JinjaCtx<'_>) -> String {
         } => {
             let t = raw(target, ctx);
             if name == "length" {
-                return format!("({t} | length)");
+                return if *optional {
+                    format!(
+                        "(({t} | length) if {t} is defined and {t} is not none else {UNDEFINED})"
+                    )
+                } else {
+                    format!("({t} | length)")
+                };
             }
             let access = format!("{t}[{}]", jinja_string(name));
             if *optional {

@@ -17,6 +17,9 @@ pub struct LowerCtx<'a> {
     pub resolve: &'a dyn Fn(&str) -> Option<&'a ComponentIR>,
     /// Module specifier the chunk imports the runtime from.
     pub runtime_import: &'a str,
+    /// Whether some parent links the component with this id (`x-props-bind`):
+    /// a static component then still gets directives and a chunk.
+    pub linked: &'a dyn Fn(&str) -> bool,
 }
 
 pub const DEFAULT_RUNTIME_IMPORT: &str = "brust/runtime-dom";
@@ -30,6 +33,20 @@ pub struct Artifacts {
     pub members: Vec<String>,
     /// Warnings found while lowering (refused attributes).
     pub diagnostics: Vec<Diagnostic>,
+}
+
+/// How a member's value is written, so the chunk normalises it the way the
+/// server painted it (the runtime writes `String(v)`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Paint {
+    /// `x-text`: booleans paint as empty, arrays concatenate (React).
+    Text,
+    /// `x-bind-<attr>`: `false` removes the attribute, like `null`.
+    Attr,
+    /// `x-bind-style` of a style object: the CSS text (`__css`).
+    Style,
+    /// Conditions, boolean attributes: the value as is.
+    Raw,
 }
 
 /// A client member a directive names, defined by the template walk.
@@ -46,6 +63,7 @@ pub enum MemberDef {
         raw: RawExpr,
         bindings: Vec<String>,
         negate: bool,
+        paint: Paint,
     },
     /// `_lN`: a list source; with `bindings` a function of the outer loop
     /// bindings it reads (a nested list).
@@ -104,7 +122,7 @@ pub fn lower(ir: &ComponentIR, ctx: &LowerCtx<'_>) -> Result<Artifacts, Diagnost
         return Err(d.clone());
     }
     let server_ts = server::job(ir);
-    let (client_js, members) = if matches!(ir.tier, Tier::Static) {
+    let (client_js, members) = if matches!(ir.tier, Tier::Static) && !(ctx.linked)(&ir.id) {
         (None, Vec::new())
     } else {
         let (js, members) = client::chunk(ir, &out.members, ctx.runtime_import);

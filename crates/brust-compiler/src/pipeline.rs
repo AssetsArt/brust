@@ -31,9 +31,15 @@ pub fn compile_tree(
         .map(|(_, ir)| (ir.id.clone(), ir.clone()))
         .collect();
     let resolve = |id: &str| by_id.get(id).map(|rc| rc.as_ref());
+    let linked_ids: std::collections::HashSet<String> = done
+        .iter()
+        .flat_map(|(_, ir)| ir.child_links.iter().map(|l| l.child.clone()))
+        .collect();
+    let linked = |id: &str| linked_ids.contains(id);
     let ctx = LowerCtx {
         resolve: &resolve,
         runtime_import,
+        linked: &linked,
     };
     let root_rc = by_id
         .get(&root.id)

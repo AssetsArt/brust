@@ -38,6 +38,8 @@ pub struct Facts<'a> {
     /// Prop name → local binding (`title` → `heading`; `*` → the parameter).
     pub prop_locals: HashMap<String, String>,
     pub states: BTreeSet<String>,
+    /// Destructuring defaults by prop name (`size = 3`).
+    pub prop_defaults: HashMap<String, RawExpr>,
 }
 
 const FUNCTION_WHYS: &[&str] = &[
@@ -101,6 +103,11 @@ impl<'a> Facts<'a> {
             setters,
             prop_locals,
             states: ir.state.iter().map(|s| s.name.clone()).collect(),
+            prop_defaults: ir
+                .props
+                .iter()
+                .filter_map(|p| p.default.clone().map(|d| (p.name.clone(), d)))
+                .collect(),
         }
     }
 
@@ -329,6 +336,10 @@ pub fn client_fn(r: &RawExpr, f: &Facts<'_>) -> String {
 
 fn client_ident(name: &str, kind: &IdentKind, f: &Facts<'_>) -> Option<String> {
     match kind {
+        IdentKind::Prop => f
+            .prop_defaults
+            .get(name)
+            .map(|d| prop_with_default(name, d, f)),
         IdentKind::Local => match f.derived.get(name) {
             Some((_, DerivedShape::Value)) => Some(format!("{name}()")),
             _ => None,
@@ -336,6 +347,12 @@ fn client_ident(name: &str, kind: &IdentKind, f: &Facts<'_>) -> Option<String> {
         IdentKind::Setter => f.setters.get(name).map(|s| format!("{s}.set")),
         _ => None,
     }
+}
+
+/// `props().n`, or its destructuring default when it is undefined.
+fn prop_with_default(name: &str, d: &RawExpr, f: &Facts<'_>) -> String {
+    let read = format!("props()[{}]", crate::ir::expr::js_string(name));
+    format!("({read} === undefined ? {} : {read})", client_js(d, f))
 }
 
 /// Prints `r` for the precompute job: props destructured by local name,
@@ -372,8 +389,10 @@ fn wrap_source(
                 let local = f.prop_locals.get(name).cloned().unwrap_or(name.clone());
                 let arg = if name == "*" {
                     "props()".to_string()
+                } else if let Some(d) = f.prop_defaults.get(name) {
+                    prop_with_default(name, d, f)
                 } else {
-                    format!("props().{name}")
+                    format!("props()[{}]", crate::ir::expr::js_string(name))
                 };
                 (local, arg)
             }

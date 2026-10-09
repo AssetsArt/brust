@@ -35,6 +35,19 @@ pub fn register(env: &mut Environment<'_>) {
     env.add_filter("keys", keys);
     env.add_filter("entries", entries);
     env.add_filter("css_val", |v: Value, prop: String| css_value(&prop, &v));
+    env.add_filter("style_css", |v: Value| {
+        let pairs: Vec<(String, Value)> = v
+            .try_iter()
+            .map(|it| {
+                it.map(|k| {
+                    let val = v.get_item(&k).unwrap_or(Value::UNDEFINED);
+                    (k.to_string(), val)
+                })
+                .collect()
+            })
+            .unwrap_or_default();
+        style_obj_to_css(&pairs)
+    });
 }
 
 /// Text of a painted value: what React (and `x-text`) shows.
@@ -138,9 +151,38 @@ pub fn escape_attr(s: &str) -> String {
 }
 
 fn json_attr(v: Value) -> Result<String, Error> {
-    let json = serde_json::to_string(&v)
+    let json = serde_json::to_string(&to_json(&v)?)
         .map_err(|e| Error::new(ErrorKind::InvalidOperation, format!("json_attr: {e}")))?;
     Ok(escape_attr(&json))
+}
+
+/// `JSON.stringify` semantics: an undefined object member is left out (so a
+/// destructuring default still applies on the client); in a list it is `null`.
+fn to_json(v: &Value) -> Result<serde_json::Value, Error> {
+    let err =
+        |e: serde_json::Error| Error::new(ErrorKind::InvalidOperation, format!("json_attr: {e}"));
+    Ok(match v.kind() {
+        ValueKind::Undefined | ValueKind::None => serde_json::Value::Null,
+        ValueKind::Map => {
+            let mut m = serde_json::Map::new();
+            if let Ok(keys) = v.try_iter() {
+                for k in keys {
+                    let item = v.get_item(&k).unwrap_or(Value::UNDEFINED);
+                    if item.is_undefined() {
+                        continue;
+                    }
+                    m.insert(k.to_string(), to_json(&item)?);
+                }
+            }
+            serde_json::Value::Object(m)
+        }
+        ValueKind::Seq | ValueKind::Iterable => serde_json::Value::Array(
+            v.try_iter()
+                .map(|it| it.map(|x| to_json(&x)).collect::<Result<Vec<_>, _>>())
+                .unwrap_or(Ok(Vec::new()))?,
+        ),
+        _ => serde_json::to_value(v).map_err(err)?,
+    })
 }
 
 /// JS `String.prototype.slice` over characters (negative indices count from the end).
@@ -254,8 +296,13 @@ pub fn attr_name(react_name: &str) -> String {
         "rowSpan" => "rowspan",
         "defaultValue" => "value",
         "defaultChecked" => "checked",
-        n if n.starts_with("data-") || n.starts_with("aria-") => return n.to_string(),
-        n => return n.to_ascii_lowercase(),
+        "xlinkHref" => "xlink:href",
+        "xmlLang" => "xml:lang",
+        // SVG presentation attributes React writes in kebab case.
+        n if SVG_KEBAB.contains(&n) => return css_property(n),
+        // Anything else keeps its case: HTML attributes are case-insensitive,
+        // SVG ones (`viewBox`, `preserveAspectRatio`) are not.
+        n => return n.to_string(),
     };
     mapped.to_string()
 }
@@ -309,6 +356,54 @@ pub fn safe_url(v: &str) -> bool {
     }
     true
 }
+
+/// SVG attributes React maps from camelCase to kebab-case.
+const SVG_KEBAB: &[&str] = &[
+    "alignmentBaseline",
+    "baselineShift",
+    "clipPath",
+    "clipRule",
+    "colorInterpolation",
+    "colorInterpolationFilters",
+    "dominantBaseline",
+    "enableBackground",
+    "fillOpacity",
+    "fillRule",
+    "floodColor",
+    "floodOpacity",
+    "fontFamily",
+    "fontSize",
+    "fontSizeAdjust",
+    "fontStretch",
+    "fontStyle",
+    "fontVariant",
+    "fontWeight",
+    "imageRendering",
+    "letterSpacing",
+    "lightingColor",
+    "markerEnd",
+    "markerMid",
+    "markerStart",
+    "paintOrder",
+    "pointerEvents",
+    "shapeRendering",
+    "stopColor",
+    "stopOpacity",
+    "strokeDasharray",
+    "strokeDashoffset",
+    "strokeLinecap",
+    "strokeLinejoin",
+    "strokeMiterlimit",
+    "strokeOpacity",
+    "strokeWidth",
+    "textAnchor",
+    "textDecoration",
+    "textRendering",
+    "unicodeBidi",
+    "vectorEffect",
+    "wordSpacing",
+    "writingMode",
+];
 
 /// HTML boolean attributes: rendered present/absent, never `="false"`.
 pub const BOOLEAN_ATTRS: &[&str] = &[
@@ -390,11 +485,17 @@ pub fn css_value(prop: &str, v: &Value) -> String {
 }
 
 /// A literal style object as CSS text (`color:red;font-size:12px`).
+/// The same rule as the chunk's `__css` helper (`lower/client.rs`): a
+/// property is dropped when its value is null, undefined, false, or a string
+/// that is empty or could end the declaration.
 pub fn style_obj_to_css(pairs: &[(String, Value)]) -> String {
     pairs
         .iter()
-        .filter(|(_, v)| present(v) && !(v.kind() == ValueKind::String && paint(v).is_empty()))
-        .map(|(k, v)| format!("{}:{}", css_property(k), css_value(k, v)))
+        .filter(|(_, v)| present(v))
+        .filter_map(|(k, v)| {
+            let val = css_value(k, v);
+            (!val.is_empty()).then(|| format!("{}:{val}", css_property(k)))
+        })
         .collect::<Vec<_>>()
         .join(";")
 }
@@ -455,6 +556,14 @@ mod tests {
         assert!(!inner.contains('\'') && !inner.contains('<'));
         let back: serde_json::Value = serde_json::from_str(&unescape(inner)).unwrap();
         assert_eq!(back, v);
+        // Undefined members are left out, like JSON.stringify.
+        assert_eq!(
+            render(
+                "{{ {\"a\": 1, \"b\": missing} | json_attr }}",
+                minijinja::context! {}
+            ),
+            "{&quot;a&quot;:1}"
+        );
     }
 
     #[test]
@@ -513,7 +622,10 @@ mod tests {
             ("httpEquiv", "http-equiv"),
             ("data-testId", "data-testId"),
             ("aria-label", "aria-label"),
-            ("onClick", "onclick"),
+            ("onClick", "onClick"),
+            ("viewBox", "viewBox"),
+            ("strokeWidth", "stroke-width"),
+            ("xlinkHref", "xlink:href"),
             ("title", "title"),
         ] {
             assert_eq!(attr_name(react), html);

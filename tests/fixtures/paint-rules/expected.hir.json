@@ -1,0 +1,168 @@
+{
+  "function": "PaintRules",
+  "params": 1,
+  "scopes": [
+    {
+      "id": 4,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "on",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t2",
+        "t3"
+      ]
+    },
+    {
+      "id": 6,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "t5",
+          "reactive": true
+        },
+        {
+          "name": "size",
+          "reactive": true
+        },
+        {
+          "name": "t6",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t7"
+      ]
+    },
+    {
+      "id": 7,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "on",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t8"
+      ]
+    },
+    {
+      "id": 8,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "t9",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t10"
+      ]
+    },
+    {
+      "id": 9,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "t11",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t12"
+      ]
+    },
+    {
+      "id": 10,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "label",
+          "reactive": true
+        },
+        {
+          "name": "t13",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t14"
+      ]
+    },
+    {
+      "id": 11,
+      "pruned": false,
+      "deps": [],
+      "decls": [
+        "t15"
+      ]
+    },
+    {
+      "id": 14,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "rows",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t16"
+      ]
+    },
+    {
+      "id": 15,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "t16",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t17"
+      ]
+    },
+    {
+      "id": 16,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "t4",
+          "reactive": true
+        },
+        {
+          "name": "t7",
+          "reactive": true
+        },
+        {
+          "name": "t8",
+          "reactive": true
+        },
+        {
+          "name": "t10",
+          "reactive": true
+        },
+        {
+          "name": "t12",
+          "reactive": true
+        },
+        {
+          "name": "t14",
+          "reactive": true
+        },
+        {
+          "name": "t17",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t18"
+      ]
+    }
+  ]
+}

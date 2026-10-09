@@ -14,7 +14,7 @@ fn block_sources_bind_their_captures() {
     .client_js
     .unwrap();
     assert!(c.contains("((n, heading, setN) => ("), "{c}");
-    assert!(c.contains("))(n(), props().title, n.set))(...a)"), "{c}");
+    assert!(c.contains("))(n(), props()[\"title\"], n.set))(...a)"), "{c}");
 }
 
 #[test]
@@ -24,12 +24,12 @@ fn effects_refs_and_use_callback() {
     ))
     .client_js
     .unwrap();
-    assert!(c.contains("  const r = ref(\"r\")\n"), "{c}");
+    assert!(c.contains("  const r = __ref(\"r\")\n"), "{c}");
     assert!(
         c.contains("const inc = (...a) => (() => n.set(n() + 1))(...a)"),
         "{c}"
     );
-    assert!(c.contains("effect(() => ("), "{c}");
+    assert!(c.contains("__effect(() => { void [inc]; return untracked(() =>"), "{c}");
     assert!(c.contains("return { n, inc, _c1 }"), "{c}");
 }
 

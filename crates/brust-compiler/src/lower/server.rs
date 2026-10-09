@@ -12,6 +12,18 @@ struct Slot {
     name: String,
     raw: RawExpr,
     lists: Vec<(RawExpr, String, Option<String>)>,
+    /// Enclosing conditions (list depth, condition, negated): React never
+    /// evaluates a branch it does not render, so neither does the job.
+    guards: Vec<Guard>,
+}
+
+type Guard = (usize, RawExpr, bool);
+
+/// Walk state: the enclosing lists and conditions.
+#[derive(Default)]
+struct Ctx {
+    lists: Vec<(RawExpr, String, Option<String>)>,
+    guards: Vec<Guard>,
 }
 
 pub fn job(ir: &ComponentIR) -> Option<String> {
@@ -23,8 +35,12 @@ pub fn job(ir: &ComponentIR) -> Option<String> {
     let f = Facts::new(ir, structural);
 
     let mut slots: Vec<Slot> = Vec::new();
-    let mut lists = Vec::new();
-    collect(&ir.template, &structural.template, &mut lists, &mut slots);
+    collect(
+        &ir.template,
+        &structural.template,
+        &mut Ctx::default(),
+        &mut slots,
+    );
     // Seeds and derived values that are slots read their own const.
     let mut slot_of_const: Vec<(String, String)> = Vec::new();
     for (s, ss) in ir.state.iter().zip(&structural.state) {
@@ -43,6 +59,7 @@ pub fn job(ir: &ComponentIR) -> Option<String> {
     let mut roots: Vec<&RawExpr> = slots.iter().map(|s| &s.raw).collect();
     for s in &slots {
         roots.extend(s.lists.iter().map(|l| &l.0));
+        roots.extend(s.guards.iter().map(|g| &g.1));
     }
     roots.extend(inits.iter().flatten());
     let mut reached = f.reach(&roots);
@@ -94,9 +111,14 @@ pub fn job(ir: &ComponentIR) -> Option<String> {
         if p == "*" {
             continue;
         }
+        let default = f
+            .prop_defaults
+            .get(p)
+            .map(|d| format!(" = {}", server_js(d, &f)))
+            .unwrap_or_default();
         match f.prop_locals.get(p) {
-            Some(local) if local != p => fields.push(format!("{p}: {local}")),
-            _ => fields.push(p.clone()),
+            Some(local) if local != p => fields.push(format!("{p}: {local}{default}")),
+            _ => fields.push(format!("{p}{default}")),
         }
     }
     if props.contains("*")
@@ -124,13 +146,36 @@ pub fn job(ir: &ComponentIR) -> Option<String> {
     }
     let mut entries: Vec<(u32, String)> = Vec::new();
     for s in &slots {
-        let mut js = server_js(&s.raw, &f);
-        for (src, item, index) in s.lists.iter().rev() {
+        let guard = |js: String, level: usize| -> String {
+            let conds: Vec<String> = s
+                .guards
+                .iter()
+                .filter(|g| g.0 == level)
+                .map(|(_, c, neg)| {
+                    let c = server_js(c, &f);
+                    if *neg {
+                        format!("!({c})")
+                    } else {
+                        format!("({c})")
+                    }
+                })
+                .collect();
+            if conds.is_empty() {
+                js
+            } else {
+                format!("({} ? {js} : undefined)", conds.join(" && "))
+            }
+        };
+        let mut js = guard(server_js(&s.raw, &f), s.lists.len());
+        for (level, (src, item, index)) in s.lists.iter().enumerate().rev() {
             let params = match index {
                 Some(i) => format!("{item}, {i}"),
                 None => item.clone(),
             };
-            js = format!("({}).map(({params}) => {js})", server_js(src, &f));
+            js = guard(
+                format!("({}).map(({params}) => {js})", server_js(src, &f)),
+                level,
+            );
         }
         entries.push((slot_num(&s.name), format!("{}: {js}", s.name)));
     }
@@ -153,22 +198,23 @@ fn slot_num(s: &str) -> u32 {
     s.trim_start_matches("_s").parse().unwrap_or(0)
 }
 
-fn collect(
-    n: &Node,
-    s: &Node,
-    lists: &mut Vec<(RawExpr, String, Option<String>)>,
-    out: &mut Vec<Slot>,
-) {
-    let mut expr = |e: &Expr, se: &Expr, lists: &Vec<(RawExpr, String, Option<String>)>| {
+fn collect(n: &Node, s: &Node, cx: &mut Ctx, out: &mut Vec<Slot>) {
+    let expr = |e: &Expr, se: &Expr, cx: &Ctx, out: &mut Vec<Slot>| {
         if let (Expr::Precomputed { slot, per_item, .. }, Expr::Raw(r)) = (e, se) {
+            let (lists, guards) = if per_item.is_some() {
+                (cx.lists.clone(), cx.guards.clone())
+            } else {
+                // A slot outside its lists is evaluated at the top level.
+                (
+                    Vec::new(),
+                    cx.guards.iter().filter(|g| g.0 == 0).cloned().collect(),
+                )
+            };
             out.push(Slot {
                 name: slot.clone(),
                 raw: r.clone(),
-                lists: if per_item.is_some() {
-                    lists.clone()
-                } else {
-                    Vec::new()
-                },
+                lists,
+                guards,
             });
         }
     };
@@ -189,14 +235,14 @@ fn collect(
                     Attr::Dynamic { value: sv, .. } | Attr::Spread(sv),
                 ) = (a, b)
                 {
-                    expr(value, sv, lists);
+                    expr(value, sv, cx, out);
                 }
             }
             for (c, d) in children.iter().zip(sc) {
-                collect(c, d, lists, out);
+                collect(c, d, cx, out);
             }
         }
-        (Node::Slot(e), Node::Slot(se)) => expr(e, se, lists),
+        (Node::Slot(e), Node::Slot(se)) => expr(e, se, cx, out),
         (
             Node::If { cond, then, else_ },
             Node::If {
@@ -205,9 +251,22 @@ fn collect(
                 else_: se,
             },
         ) => {
-            expr(cond, sc, lists);
-            for (c, d) in then.iter().zip(st).chain(else_.iter().zip(se)) {
-                collect(c, d, lists, out);
+            expr(cond, sc, cx, out);
+            let level = cx.lists.len();
+            let cond_raw = match sc {
+                Expr::Raw(r) => Some(r.clone()),
+                _ => None,
+            };
+            for (branch, sbranch, negate) in [(then, st, false), (else_, se, true)] {
+                if let Some(c) = &cond_raw {
+                    cx.guards.push((level, c.clone(), negate));
+                }
+                for (c, d) in branch.iter().zip(sbranch) {
+                    collect(c, d, cx, out);
+                }
+                if cond_raw.is_some() {
+                    cx.guards.pop();
+                }
             }
         }
         (
@@ -225,14 +284,14 @@ fn collect(
                 ..
             },
         ) => {
-            expr(source, ss, lists);
+            expr(source, ss, cx, out);
             if let Expr::Raw(sr) = ss {
-                lists.push((sr.clone(), item.clone(), index.clone()));
-                expr(key, sk, lists);
+                cx.lists.push((sr.clone(), item.clone(), index.clone()));
+                expr(key, sk, cx, out);
                 for (c, d) in body.iter().zip(sb) {
-                    collect(c, d, lists, out);
+                    collect(c, d, cx, out);
                 }
-                lists.pop();
+                cx.lists.pop();
             }
         }
         (
@@ -246,15 +305,15 @@ fn collect(
             },
         ) => {
             for ((_, v), (_, sv)) in props.iter().zip(sp) {
-                expr(v, sv, lists);
+                expr(v, sv, cx, out);
             }
             for (c, d) in children.iter().zip(sc) {
-                collect(c, d, lists, out);
+                collect(c, d, cx, out);
             }
         }
         (Node::Fragment(cs), Node::Fragment(ss)) => {
             for (c, d) in cs.iter().zip(ss) {
-                collect(c, d, lists, out);
+                collect(c, d, cx, out);
             }
         }
         _ => {}

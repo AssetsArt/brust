@@ -82,8 +82,9 @@ function resolveDirective(members: Members, raw: string, scope: Record<string, u
   if (binds) return (m as (...x: unknown[]) => unknown)(...binds.split(',').map((n) => scope[n.trim()]))
   return value(m)
 }
-const paint = (v: unknown): string =>
-  v == null || typeof v === 'boolean' ? '' : Array.isArray(v) ? v.map(paint).join('') : String(v)
+// Exactly what the runtime binders write (directives/text.ts, bind.ts): the
+// compiler, not the harness, must make the client agree with the paint.
+const textOf = (v: unknown): string => (v == null ? '' : String(v))
 
 for (const host of Array.from(doc.querySelectorAll('[x-data]')) as Element[]) {
   const parentHost = hostOf(host.parentElement)
@@ -118,15 +119,18 @@ for (const host of Array.from(doc.querySelectorAll('[x-data]')) as Element[]) {
       const where = `${name} <${el.tagName.toLowerCase()} ${at.name}="${at.value}">`
       if (at.name === 'x-text') {
         checked++
-        const want = paint(resolveDirective(members, at.value, scope))
+        const want = textOf(resolveDirective(members, at.value, scope))
         if (el.textContent !== want) mismatches.push(`${where}: painted ${JSON.stringify(el.textContent)}, client ${JSON.stringify(want)}`)
       } else if (at.name.startsWith('x-bind-')) {
         checked++
         const attr = at.name.slice(7)
         const v = resolveDirective(members, at.value, scope)
         const got = el.getAttribute(attr)
-        const want = BOOLEAN.has(attr) ? (v ? '' : null) : v == null || v === false ? null : String(v)
-        const gotNorm = BOOLEAN.has(attr) ? (got == null ? null : '') : got
+        // class → className = String(v) (an absent class reads as '').
+        const want = attr === 'class' ? textOf(v)
+          : BOOLEAN.has(attr) ? (v ? '' : null)
+          : v == null || v === false ? null : String(v)
+        const gotNorm = attr === 'class' ? (got ?? '') : BOOLEAN.has(attr) ? (got == null ? null : '') : got
         if (gotNorm !== want) mismatches.push(`${where}: painted ${JSON.stringify(got)}, client ${JSON.stringify(want)}`)
       } else if (at.name === 'x-if') {
         checked++
