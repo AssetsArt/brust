@@ -61,3 +61,18 @@ in which case it corrects it and warns once (`first-paint mismatch …`): a mism
 ## Gates
 
 `bun test` · `bunx tsc --noEmit -p .` (`bun check` needs Bun ≥ 1.4.3) · `bun scripts/build.ts` (fails if the bundle imports React).
+
+## React islands
+
+The server paints a react-tier component as
+`<brust-island data-id="<componentId>" x-props='<json>'>…server HTML…</brust-island>`.
+The island's chunk registers its hydrate function without importing the runtime:
+
+    ;(globalThis.__brustIslands ||= []).push(['<componentId>', (host, props) => hydrateRoot(host, <Comp {...props}/>)])
+    globalThis.__brustIslandReady?.()
+
+The runtime hydrates every host once, when the browser is idle (`requestIdleCallback`, else
+`setTimeout(…, 1)`), and sets `data-hydrated="1"` on success. Load order between the runtime
+script and island chunks does not matter. Bad `x-props` JSON hydrates with `{}` and warns once;
+a hydrate that throws is reported on `console.error` and the server HTML stays. This is the only
+strategy in M2 (spec S12).
