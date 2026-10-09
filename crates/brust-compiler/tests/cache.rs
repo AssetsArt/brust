@@ -73,3 +73,23 @@ fn plain_function_export_has_no_cache() {
     let ir = analyze("export default function X() { return <p/> }");
     assert!(ir.cache.is_none());
 }
+
+#[test]
+fn cache_from_the_brust_package_is_recognised_and_others_are_not() {
+    for (spec, ok) in [
+        ("brust", true),
+        ("@brust/brust", true),
+        ("./cache", false),
+        ("react", false),
+    ] {
+        let ir = analyze(&format!(
+            "import {{ cache }} from '{spec}'\nfunction C(props: {{ id: string }}) {{ return <b>{{props.id}}</b> }}\nexport default cache(C, {{ tags: () => ['x'] }})"
+        ));
+        assert_eq!(
+            ir.cache.is_some(),
+            ok,
+            "specifier {spec}: {:?}",
+            ir.diagnostics
+        );
+    }
+}

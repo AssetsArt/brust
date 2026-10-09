@@ -188,7 +188,12 @@ fn read_cache_export(
     };
     let func = module_fn(ast, &comp_name);
     let probe = func.or_else(|| default_export_fn(ast));
-    let is_cache = |names: &NameTable<'_>| names.import_of(callee) == Some(("brust", "cache"));
+    let is_cache = |names: &NameTable<'_>| {
+        matches!(
+            names.import_of(callee),
+            Some(("brust" | "@brust/brust", "cache"))
+        )
+    };
     match (func, probe) {
         (Some(func), _) => {
             let mut names = NameTable::new(ast, func);
