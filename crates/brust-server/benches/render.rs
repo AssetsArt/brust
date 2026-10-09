@@ -281,6 +281,24 @@ fn bench_plan(c: &mut Criterion, m: &Manifest, label: &str, pattern: &str, ctx_f
         b.iter(|| planner.plan(&route.chain, black_box(&loader)).unwrap())
     });
     g.bench_function("lookups", |b| b.iter(|| plans.lookup(black_box(&cache))));
+    // The same lookups from 8 threads at once on the one shared cache (the
+    // per-iteration time is wall time / iterations per thread: 1x = no
+    // contention). The c=120 probe saw lookups cost ~5x their c=1 time.
+    g.bench_function("lookups_x8", |b| {
+        b.iter_custom(|iters| {
+            let t = std::time::Instant::now();
+            std::thread::scope(|sc| {
+                for _ in 0..8 {
+                    sc.spawn(|| {
+                        for _ in 0..iters {
+                            black_box(plans.lookup(&cache));
+                        }
+                    });
+                }
+            });
+            t.elapsed()
+        })
+    });
     g.bench_function("seed", |b| {
         b.iter_batched(
             || loader.clone(),
