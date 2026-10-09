@@ -957,9 +957,8 @@ impl<'a, 'c> Printer<'a, 'c> {
         if let Tier::React { client_only, .. } = tier {
             if *client_only {
                 let dict = self.props_dict(props, sprops);
-                self.out.push_str(&format!(
-                    "<brust-island data-brust-island=\"{id}\" data-props='{{{{ {dict} | json_attr }}}}'></brust-island>"
-                ));
+                self.out
+                    .push_str(&crate::lower::island_host(&id, &dict, ""));
                 return;
             }
             let k = self.ssr.entry(id.clone()).or_insert(0);
@@ -975,7 +974,12 @@ impl<'a, 'c> Printer<'a, 'c> {
                     && j.per_item.is_some()
             });
             let idx = if per_item { loops.as_str() } else { "" };
-            self.out.push_str(&format!("{{{{ {out}{idx} | safe }}}}"));
+            let dict = self.props_dict(props, sprops);
+            self.out.push_str(&crate::lower::island_host(
+                &id,
+                &dict,
+                &format!("{{{{ {out}{idx} | safe }}}}"),
+            ));
             return;
         }
         // Native / static child: inline its template.

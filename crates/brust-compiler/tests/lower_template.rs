@@ -289,3 +289,46 @@ fn outlet_lowers_to_the_outlet_slot() {
         "{jinja}"
     );
 }
+
+/// S12: a react child is wrapped in the island host the runtime hydrates; SSR HTML goes inside it.
+#[test]
+fn react_child_gets_the_island_host() {
+    let jinja = lowered_jinja("react-child");
+    assert!(
+        jinja.contains("<brust-island data-id=\"reviews_"),
+        "{jinja}"
+    );
+    assert!(
+        jinja.contains("x-props='{{ {"),
+        "props JSON on the host: {jinja}"
+    );
+    assert!(
+        jinja.contains("| json_attr }}'>{{ _ssr_reviews_"),
+        "ssr slot inside the host: {jinja}"
+    );
+    assert!(jinja.contains("| safe }}</brust-island>"), "{jinja}");
+    assert!(
+        !jinja.contains("data-brust-island"),
+        "old attribute name must be gone: {jinja}"
+    );
+}
+
+#[test]
+fn client_only_page_gets_an_empty_island_host() {
+    let jinja = lowered_jinja("client-only");
+    assert!(
+        jinja.contains("<brust-island data-id=\"input_")
+            && jinja.contains("x-props='{{ _props | json_attr }}'></brust-island>"),
+        "empty host: {jinja}"
+    );
+}
+
+#[test]
+fn react_page_gets_the_island_host_around_its_ssr_slot() {
+    let jinja = lowered_jinja("react-hook");
+    assert!(
+        jinja.contains("x-props='{{ _props | json_attr }}'>{{ _ssr_input_")
+            && jinja.ends_with("| safe }}</brust-island>"),
+        "{jinja}"
+    );
+}
