@@ -28,6 +28,7 @@ fn ping_and_stats_shape() {
         "/job/misses",
         "/loader_calls",
         "/job_calls",
+        "/timed_out_calls",
     ] {
         assert!(v.pointer(p).is_some(), "stats missing {p}: {v}");
     }

@@ -103,6 +103,26 @@ test('SIGTERM while the workers are still booting exits promptly', async () => {
   expect(code).toBe(0)
 }, 60_000)
 
+test('a parked loader answers 504 after BRUST_CALL_TIMEOUT_MS and is counted in stats', async () => {
+  const s = start('routes.ts', { BRUST_CALL_TIMEOUT_MS: '300' })
+  try {
+    const base = await untilReady(s)
+    const r = await fetch(`${base}/items/park`)
+    expect([r.status, await r.text()]).toEqual([504, 'call deadline exceeded'])
+    const stats = (await (await fetch(`${base}/_brust/cache/stats`)).json()) as { timed_out_calls: number }
+    expect(stats.timed_out_calls).toBe(1)
+  } finally {
+    s.proc.kill('SIGKILL')
+    await exitWithin(s, 5000)
+  }
+}, 60_000)
+
+test('BRUST_CALL_TIMEOUT_MS=0 is a config error at start', async () => {
+  const s = start('routes.ts', { BRUST_CALL_TIMEOUT_MS: '0' })
+  expect(await exitWithin(s, 15_000)).toBe(1)
+  expect(s.err()).toContain('BRUST_CALL_TIMEOUT_MS must be an integer in 1..4294967295')
+}, 60_000)
+
 test('workers run with NODE_ENV=production by default (React production build)', async () => {
   const s = start('routes.ts')
   try {

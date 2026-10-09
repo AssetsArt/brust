@@ -26,6 +26,9 @@ pub struct FakeBun {
     pub last_jobs: Mutex<Option<Value>>,
     /// When set, every call is counted and recorded but its future never resolves.
     pub never_complete: bool,
+    /// When set, a call parks until [`Gate::settle_all`], then writes its reply
+    /// into the slot and resolves (a late settle).
+    gate: Option<tokio::sync::watch::Receiver<bool>>,
     ptr: *mut u8,
     len: usize,
 }
@@ -61,9 +64,22 @@ impl FakeBun {
             last_loader: Mutex::new(None),
             last_jobs: Mutex::new(None),
             never_complete,
+            gate: None,
             ptr,
             len,
         })
+    }
+
+    /// Like [`FakeBun::new`], but every call parks until the returned [`Gate`]
+    /// settles it, then replies normally.
+    pub fn gated(
+        loader: impl Fn(Value) -> Value + Send + Sync + 'static,
+        jobs: impl Fn(Value) -> Value + Send + Sync + 'static,
+    ) -> (Arc<Self>, Gate) {
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        let mut b = Arc::into_inner(Self::with(loader, jobs, false)).expect("fresh Arc");
+        b.gate = Some(rx);
+        (Arc::new(b), Gate(tx))
     }
 
     /// `(loader_calls, job_calls)`.
@@ -107,10 +123,24 @@ impl RenderDispatch for FakeBun {
             "FakeBun: response {} > slot cap {cap}",
             bytes.len()
         );
-        // SAFETY: `dst` is the in-bounds sub-region for `slot` (cap checked above)
-        // and the caller holds that slot's claim, so nothing else writes it.
-        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), dst, bytes.len()) };
+        // `dst` is the in-bounds sub-region for `slot` (cap checked above) and
+        // the caller holds that slot's claim, so nothing else writes it.
         let len = bytes.len() as u32;
+        if let Some(mut gate) = self.gate.clone() {
+            // Parked: the reply is written only when the gate opens, as a real
+            // worker settling late would.
+            let (dst, bytes) = (dst as usize, bytes);
+            return Box::pin(async move {
+                let _ = gate.wait_for(|open| *open).await;
+                // SAFETY: as above; the claim is held until this future settles.
+                unsafe {
+                    std::ptr::copy_nonoverlapping(bytes.as_ptr(), dst as *mut u8, bytes.len())
+                };
+                Ok(len)
+            });
+        }
+        // SAFETY: `dst` is in bounds and the claim is held (see above).
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), dst, bytes.len()) };
         Box::pin(async move { Ok(len) })
     }
 
@@ -140,5 +170,14 @@ impl RenderDispatch for FakeBunHandle {
 
     fn buf(&self) -> (*mut u8, usize) {
         self.0.buf()
+    }
+}
+
+/// Opens every parked call of a [`FakeBun::gated`] double.
+pub struct Gate(tokio::sync::watch::Sender<bool>);
+
+impl Gate {
+    pub fn settle_all(&self) {
+        let _ = self.0.send(true);
     }
 }

@@ -21,6 +21,7 @@ export interface StartOptions {
   distDir: string
   workers: number
   claimTimeoutMs?: number
+  callTimeoutMs?: number
   l1Capacity?: number
   jobCacheCapacity?: number
   generator?: string

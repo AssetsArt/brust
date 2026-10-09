@@ -140,6 +140,10 @@ pub enum CallError {
     /// The worker's Promise rejected; the worker is still alive.
     #[error("worker rejected: {0}")]
     Rejected(String),
+    /// A claimed call did not settle within the call deadline — 504. The
+    /// spawned task still holds the claim until the JS promise settles.
+    #[error("call deadline exceeded")]
+    Deadline,
     /// Request serialisation, an out-of-bounds length, or unparsable JSON.
     #[error("bad response: {0}")]
     BadResponse(String),
@@ -183,6 +187,7 @@ pub async fn claim_or_wait(
 pub async fn call_worker<Req: Serialize, Resp: DeserializeOwned + Send + 'static>(
     pool: &Arc<WorkerPool>,
     timeout: Duration,
+    call_timeout: Duration,
     kind: CallKind,
     req: &Req,
 ) -> Result<Resp, CallError> {
@@ -217,8 +222,15 @@ pub async fn call_worker<Req: Serialize, Resp: DeserializeOwned + Send + 'static
         drop(claim);
         parsed
     });
-    task.await
-        .map_err(|e| CallError::BadResponse(format!("worker call task: {e}")))?
+    match tokio::time::timeout(call_timeout, task).await {
+        Ok(joined) => {
+            joined.map_err(|e| CallError::BadResponse(format!("worker call task: {e}")))?
+        }
+        // The task keeps running and keeps the claim until JS settles (the
+        // `RenderClaim` drop rule in `pool.rs`); its late result is dropped
+        // with the JoinHandle, so nothing from this call reaches a cache.
+        Err(_elapsed) => Err(CallError::Deadline),
+    }
 }
 
 /// In-process mock for pool/dispatch unit tests: a leaked 256 KiB buffer (no
@@ -392,6 +404,7 @@ mod tests {
         let v: serde_json::Value = call_worker(
             &pool,
             Duration::from_millis(100),
+            Duration::from_secs(5),
             CallKind::Loader,
             &serde_json::json!({"routeId": "r1"}),
         )
@@ -411,6 +424,7 @@ mod tests {
         let r = call_worker::<_, serde_json::Value>(
             &pool,
             Duration::from_millis(100),
+            Duration::from_secs(5),
             CallKind::Jobs,
             &serde_json::json!({"jobs": []}),
         )
@@ -473,7 +487,7 @@ mod tests {
     /// written into the slot up front.
     struct GatedDispatch {
         inner: MockDispatch,
-        gate: parking_lot::Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+        gate: parking_lot::Mutex<Option<tokio::sync::oneshot::Receiver<Result<(), DispatchError>>>>,
     }
 
     impl RenderDispatch for GatedDispatch {
@@ -486,7 +500,9 @@ mod tests {
             let reply = self.inner.call(kind, request_json, slot);
             let gate = self.gate.lock().take().expect("one call");
             Box::pin(async move {
-                let _ = gate.await;
+                if let Ok(Err(e)) = gate.await {
+                    return Err(e);
+                }
                 reply.await
             })
         }
@@ -509,6 +525,7 @@ mod tests {
             call_worker::<_, serde_json::Value>(
                 &pool,
                 Duration::from_millis(100),
+                Duration::from_secs(5),
                 CallKind::Loader,
                 &serde_json::json!({}),
             ),
@@ -520,7 +537,7 @@ mod tests {
             pool.try_claim_render_lockfree(),
             ClaimResult::AllBusy
         ));
-        tx.send(()).unwrap();
+        tx.send(Ok(())).unwrap();
         // Once the worker settles, the spawned task releases the slot.
         let t0 = std::time::Instant::now();
         loop {
@@ -530,5 +547,79 @@ mod tests {
             assert!(t0.elapsed() < Duration::from_secs(2), "slot never released");
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
+    }
+
+    fn gated_pool() -> (
+        Arc<WorkerPool>,
+        tokio::sync::oneshot::Sender<Result<(), DispatchError>>,
+    ) {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let pool = Arc::new(WorkerPool::new());
+        pool.register(Box::new(GatedDispatch {
+            inner: MockDispatch::replying(br#"{"ok":true}"#),
+            gate: parking_lot::Mutex::new(Some(rx)),
+        }));
+        (pool, tx)
+    }
+
+    async fn call_with(
+        pool: &Arc<WorkerPool>,
+        claim_ms: u64,
+        call_ms: u64,
+        kind: CallKind,
+    ) -> Result<serde_json::Value, CallError> {
+        call_worker(
+            pool,
+            Duration::from_millis(claim_ms),
+            Duration::from_millis(call_ms),
+            kind,
+            &serde_json::json!({}),
+        )
+        .await
+    }
+
+    async fn wait_claimable(pool: &WorkerPool) {
+        let t0 = std::time::Instant::now();
+        loop {
+            if let ClaimResult::Claimed(_) = pool.try_claim_render_lockfree() {
+                return;
+            }
+            assert!(t0.elapsed() < Duration::from_secs(2), "slot never released");
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn deadline_returns_504_error_and_keeps_the_claim_until_js_settles() {
+        let (pool, release) = gated_pool();
+        let r = call_with(&pool, 100, 50, CallKind::Loader).await;
+        assert!(matches!(r, Err(CallError::Deadline)), "{r:?}");
+        assert!(
+            matches!(pool.try_claim_render_lockfree(), ClaimResult::AllBusy),
+            "slot must still be claimed after the deadline"
+        );
+        release.send(Ok(())).unwrap(); // late settle
+        wait_claimable(&pool).await; // released once JS settled
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn late_rejection_after_deadline_releases_the_claim_quietly() {
+        let (pool, release) = gated_pool();
+        let r = call_with(&pool, 100, 50, CallKind::Jobs).await;
+        assert!(matches!(r, Err(CallError::Deadline)));
+        release
+            .send(Err(DispatchError::PromiseRejected("boom".into())))
+            .unwrap();
+        wait_claimable(&pool).await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_timed_out_call_still_occupies_its_slot_so_the_next_caller_gets_timeout_not_deadline()
+    {
+        let (pool, _release) = gated_pool(); // never settled during the test
+        let first = call_with(&pool, 100, 30, CallKind::Loader).await;
+        assert!(matches!(first, Err(CallError::Deadline)));
+        let second = call_with(&pool, 60, 30, CallKind::Loader).await;
+        assert!(matches!(second, Err(CallError::Timeout)), "{second:?}");
     }
 }

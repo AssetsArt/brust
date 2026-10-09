@@ -51,3 +51,38 @@ fn no_workers_is_503_immediately() {
     assert_eq!((status, body.as_str()), (503, "no workers"));
     assert!(elapsed < Duration::from_millis(50), "{elapsed:?}");
 }
+
+#[test]
+fn parked_loader_is_504_and_static_routes_still_answer() {
+    let (fake, _gate) = FakeBun::gated(default_loader, default_jobs);
+    let s = boot_with(fake, |t| {
+        t.call_timeout_ms = 200;
+        t.claim_timeout_ms = 150;
+    });
+    let (status, _, body) = get(&s, "/pokemon/a", &[]);
+    assert_eq!((status, body.as_str()), (504, "call deadline exceeded"));
+    assert_eq!(get(&s, "/", &[]).0, 200, "static route unaffected");
+    let (status, _, body) = get(&s, "/pokemon/b", &[]);
+    assert_eq!(
+        (status, body.as_str()),
+        (503, "all workers busy"),
+        "the slot is still held"
+    );
+    let st = stats(&s);
+    assert_eq!(st["timed_out_calls"], 1);
+    assert_eq!(st["loader_calls"], 1);
+}
+
+#[test]
+fn late_result_after_504_is_not_cached() {
+    let (fake, gate) = FakeBun::gated(default_loader, default_jobs);
+    let s = boot_with(fake, |t| t.call_timeout_ms = 100);
+    assert_eq!(get(&s, "/pokemon/a", &[]).0, 504);
+    gate.settle_all(); // the parked loader now returns its data
+    std::thread::sleep(Duration::from_millis(100));
+    let st = stats(&s);
+    assert_eq!(st["l1"]["len"], 0, "nothing stored from a timed-out call");
+    let (status, h, body) = get(&s, "/pokemon/a", &[]);
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(cache_hdr(&h), Some("MISS"));
+}

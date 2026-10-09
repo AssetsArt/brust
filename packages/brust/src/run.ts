@@ -45,7 +45,7 @@ export async function run(opts: RunOptions = {}): Promise<void> {
 
   const version: string = (await Bun.file(join(import.meta.dir, '../package.json')).json()).version
   try {
-    startServer({ host: cfg.host, port: cfg.port, distDir, workers: cfg.workers, generator: `brust/${version}` })
+    startServer({ host: cfg.host, port: cfg.port, distDir, workers: cfg.workers, callTimeoutMs: cfg.callTimeoutMs, generator: `brust/${version}` })
   } catch (e) {
     fail((e as Error).message)
   }

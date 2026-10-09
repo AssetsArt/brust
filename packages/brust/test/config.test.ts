@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { loadConfig } from '../src/config'
 
-const ENV = ['BRUST_ADDR', 'BRUST_PORT', 'BRUST_WORKERS', 'BRUST_RENDER_SLOTS', 'BRUST_DRAIN_TIMEOUT_MS', 'BRUST_BOOT_TIMEOUT_MS'] as const
+const ENV = ['BRUST_ADDR', 'BRUST_PORT', 'BRUST_WORKERS', 'BRUST_RENDER_SLOTS', 'BRUST_DRAIN_TIMEOUT_MS', 'BRUST_BOOT_TIMEOUT_MS', 'BRUST_CALL_TIMEOUT_MS'] as const
 const saved = Object.fromEntries(ENV.map((k) => [k, process.env[k]]))
 const dirs: string[] = []
 function tmpApp(toml?: string): string {
@@ -51,6 +51,18 @@ test('BRUST_BOOT_TIMEOUT_MS: default 30000, env > CLI, validated', async () => {
   await expect(loadConfig(tmpApp())).rejects.toThrow('BRUST_BOOT_TIMEOUT_MS must be an integer in 1..4294967295')
   process.env.BRUST_BOOT_TIMEOUT_MS = '0'
   await expect(loadConfig(tmpApp())).rejects.toThrow('BRUST_BOOT_TIMEOUT_MS must be an integer in 1..4294967295')
+})
+
+test('BRUST_CALL_TIMEOUT_MS: default 30000, env > CLI, 0 and junk rejected', async () => {
+  for (const k of ENV) delete process.env[k]
+  expect((await loadConfig(tmpApp())).callTimeoutMs).toBe(30000)
+  expect((await loadConfig(tmpApp(), { callTimeoutMs: 1000 })).callTimeoutMs).toBe(1000)
+  process.env.BRUST_CALL_TIMEOUT_MS = '60000'
+  expect((await loadConfig(tmpApp(), { callTimeoutMs: 1000 })).callTimeoutMs).toBe(60000)
+  for (const bad of ['0', 'abc', '4294967296']) {
+    process.env.BRUST_CALL_TIMEOUT_MS = bad
+    await expect(loadConfig(tmpApp())).rejects.toThrow('BRUST_CALL_TIMEOUT_MS must be an integer in 1..4294967295')
+  }
 })
 
 test('validation: messages name the source and the rule', async () => {

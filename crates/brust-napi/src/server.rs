@@ -57,6 +57,9 @@ pub struct StartOptions {
     /// Workers to wait for before accepting; `0` = serve at once.
     pub workers: u32,
     pub claim_timeout_ms: Option<u32>,
+    /// A claimed worker call that has not settled after this long answers
+    /// 504 (the slot stays claimed until JS settles). Absent = 30 000.
+    pub call_timeout_ms: Option<u32>,
     pub l1_capacity: Option<u32>,
     pub job_cache_capacity: Option<u32>,
     /// `X-Powered-By` value; absent = header not stamped.
@@ -71,6 +74,9 @@ pub fn start_server(opts: StartOptions) -> napi::Result<()> {
     let mut tuning = Tuning::default();
     if let Some(ms) = opts.claim_timeout_ms {
         tuning.claim_timeout_ms = u64::from(ms.max(1));
+    }
+    if let Some(ms) = opts.call_timeout_ms {
+        tuning.call_timeout_ms = u64::from(ms.max(1));
     }
     let cfg = Config {
         addr: resolve_bind_addr(opts.host.trim(), opts.port).map_err(napi::Error::from_reason)?,

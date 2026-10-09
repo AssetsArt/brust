@@ -322,8 +322,14 @@ async fn page(
             path: path_only,
             req: envelope.req,
         };
-        let r = call_worker::<_, LoaderResponse>(&s.pool, s.claim_timeout, CallKind::Loader, &req)
-            .await;
+        let r = call_worker::<_, LoaderResponse>(
+            &s.pool,
+            s.claim_timeout,
+            s.call_timeout,
+            CallKind::Loader,
+            &req,
+        )
+        .await;
         if !matches!(r, Err(CallError::NoWorkers | CallError::Timeout)) {
             s.loader_calls.fetch_add(1, Ordering::Relaxed);
             meta.bun_calls += 1;
@@ -385,6 +391,10 @@ async fn page(
             Err(e @ (CallError::NoWorkers | CallError::Timeout)) => {
                 return body::error_503(&e.to_string());
             }
+            Err(CallError::Deadline) => {
+                s.timed_out_calls.fetch_add(1, Ordering::Relaxed);
+                return body::error_504("call deadline exceeded");
+            }
             Err(e) => {
                 tracing::error!(route = %route.id, error = %e, "loader call failed");
                 return body::error_500();
@@ -433,8 +443,14 @@ async fn page(
                 })
                 .collect(),
         };
-        let r =
-            call_worker::<_, JobsResponse>(&s.pool, s.claim_timeout, CallKind::Jobs, &req).await;
+        let r = call_worker::<_, JobsResponse>(
+            &s.pool,
+            s.claim_timeout,
+            s.call_timeout,
+            CallKind::Jobs,
+            &req,
+        )
+        .await;
         if !matches!(r, Err(CallError::NoWorkers | CallError::Timeout)) {
             s.job_calls.fetch_add(1, Ordering::Relaxed);
             meta.bun_calls += 1;
@@ -443,6 +459,10 @@ async fn page(
             Ok(r) => r,
             Err(e @ (CallError::NoWorkers | CallError::Timeout)) => {
                 return body::error_503(&e.to_string());
+            }
+            Err(CallError::Deadline) => {
+                s.timed_out_calls.fetch_add(1, Ordering::Relaxed);
+                return body::error_504("call deadline exceeded");
             }
             Err(e) => {
                 tracing::error!(route = %route.id, error = %e, "jobs call failed");
