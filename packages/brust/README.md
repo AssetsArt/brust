@@ -67,7 +67,7 @@ SIGINT/SIGTERM drains gracefully (`BRUST_DRAIN_TIMEOUT_MS`); a second signal exi
 Config precedence: env (`BRUST_ADDR`, `BRUST_PORT`, `BRUST_WORKERS`, `BRUST_RENDER_SLOTS`,
 `BRUST_DRAIN_TIMEOUT_MS`, `BRUST_BOOT_TIMEOUT_MS`, `BRUST_CALL_TIMEOUT_MS`, `BRUST_DIST_DIR`, `BRUST_APP_ENTRY`) > flags
 (`--port`, `--workers`, `--dist-dir`, `--entry`) > `brust.toml` (`[server] address/port`,
-`[workers] count`) > defaults (`localhost:1337`, one worker per CPU, 1 slot, 10 s drain, 30 s
+`[workers] count`) > defaults (`localhost:1337`, one worker per CPU, `min(cores, 16)` slots per worker (each slot is a 256 KiB shared response buffer, so 10 slots = 2.5 MiB per worker), 10 s drain, 30 s
 worker boot timeout, 30 s call timeout).
 A loader or job call that has not settled within `BRUST_CALL_TIMEOUT_MS` answers **504**; its worker
 slot stays claimed until the call settles (the late result is discarded), so a stuck call costs one

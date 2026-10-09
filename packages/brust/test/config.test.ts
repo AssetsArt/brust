@@ -1,3 +1,4 @@
+import { availableParallelism } from 'node:os'
 import { afterEach, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -25,7 +26,7 @@ test('precedence: env > CLI flags > brust.toml > defaults', async () => {
   expect(bare.host).toBe('localhost')
   expect(bare.port).toBe(1337)
   expect(bare.workers).toBeGreaterThanOrEqual(1)
-  expect([bare.renderSlots, bare.drainTimeoutMs]).toEqual([1, 10000])
+  expect([bare.renderSlots, bare.drainTimeoutMs]).toEqual([Math.min(availableParallelism(), 16), 10000])
 
   const dir = tmpApp('[server]\naddress = "0.0.0.0"\nport = 4000\n[workers]\ncount = 3\n')
   const toml = await loadConfig(dir)

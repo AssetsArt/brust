@@ -34,7 +34,7 @@ export class BrustConfigError extends Error {
   }
 }
 
-const DEFAULTS = { host: 'localhost', port: 1337, renderSlots: 1, drainTimeoutMs: 10_000, bootTimeoutMs: 30_000, callTimeoutMs: 30_000 }
+const DEFAULTS = { host: 'localhost', port: 1337, drainTimeoutMs: 10_000, bootTimeoutMs: 30_000, callTimeoutMs: 30_000 }
 
 /** Ceilings: ms values cross napi as `u32` (a larger number would wrap), more than 1024 Bun
  * workers is a misconfiguration, not a deployment, and each render slot is a 256 KiB shared
@@ -65,7 +65,8 @@ export async function loadConfig(cwd: string = process.cwd(), cli: Partial<Brust
     host: env.host ?? cli.host ?? fromToml.host ?? DEFAULTS.host,
     port: env.port ?? cli.port ?? fromToml.port ?? DEFAULTS.port,
     workers: env.workers ?? cli.workers ?? fromToml.workers ?? Math.min(availableParallelism(), MAX_WORKERS),
-    renderSlots: env.renderSlots ?? cli.renderSlots ?? DEFAULTS.renderSlots,
+    // min(cores, 16) slots per worker, like 0.1.x (ruling 7ffa9b19): 1 slot left 6 calls in flight for 6 workers.
+    renderSlots: env.renderSlots ?? cli.renderSlots ?? Math.min(availableParallelism(), 16),
     drainTimeoutMs: env.drainTimeoutMs ?? cli.drainTimeoutMs ?? DEFAULTS.drainTimeoutMs,
     bootTimeoutMs: env.bootTimeoutMs ?? cli.bootTimeoutMs ?? DEFAULTS.bootTimeoutMs,
     callTimeoutMs: env.callTimeoutMs ?? cli.callTimeoutMs ?? DEFAULTS.callTimeoutMs,
