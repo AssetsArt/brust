@@ -33,6 +33,22 @@ fn render_err(name: &str, e: &minijinja::Error) -> RenderError {
     }
 }
 
+/// minijinja's builtin `safe` (`Value::from_safe_string(v.to_string())`,
+/// the argument taken as a `String`), except that an already-safe string
+/// (`__outlet`) is returned as-is instead of copied twice — the value is the
+/// same. With `AutoEscape::None` the safe mark never changes a painted byte.
+fn safe_filter(
+    state: &minijinja::State,
+    v: minijinja::Value,
+) -> Result<minijinja::Value, minijinja::Error> {
+    use minijinja::value::ArgType;
+    if v.is_safe() {
+        return Ok(v);
+    }
+    let (s, _) = String::from_state_and_value(Some(state), Some(&v))?;
+    Ok(minijinja::Value::from_safe_string(s))
+}
+
 pub struct Renderer {
     env: Environment<'static>,
 }
@@ -47,6 +63,7 @@ impl Renderer {
         // off so a template never re-parses (the M3 dev server owns reload).
         env.set_auto_reload(false);
         brust_jinja::register(&mut env);
+        env.add_filter("safe", safe_filter);
         for (id, src) in templates {
             env.add_template_owned(id.clone(), src.clone())
                 .map_err(|e| render_err(id, &e))?;
@@ -90,7 +107,7 @@ impl Renderer {
         for id in chain.iter().rev() {
             let mut overlay = overlay(id);
             if let Some(o) = outlet.take() {
-                overlay.push(("__outlet".into(), minijinja::Value::from(o)));
+                overlay.push(("__outlet".into(), minijinja::Value::from_safe_string(o)));
             }
             // `context!{ ..a, ..b }` builds a MergeDict: the first spread wins
             // per key, a key missing from both is undefined (Chainable).
@@ -196,6 +213,39 @@ mod tests {
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect()
+    }
+
+    /// The `safe` override paints what minijinja's builtin does, for every
+    /// kind of operand, and passes an already-safe `__outlet` through.
+    #[test]
+    fn safe_filter_paints_like_the_builtin() {
+        let src = "{{ s | safe }}|{{ n | safe }}|{{ f | safe }}|{{ z | safe }}|{{ b | safe }}|\
+                   {{ missing | safe }}|{{ missing.deep | safe }}|{{ l | safe }}|{{ m | safe }}|\
+                   {{ (s | safe) | length }}|{{ __outlet | safe }}|{{ (__outlet | safe) | e }}";
+        let ctx = json!({"s": "<b>&", "n": 7, "f": 1.5, "z": null, "b": true,
+                         "l": [1, "<a>"], "m": {"k": "v"}});
+        let ours = Renderer::from_templates(&templates(&[("T", src)])).unwrap();
+        let mut builtin = Environment::new();
+        brust_jinja::register(&mut builtin);
+        builtin.add_template("T", src).unwrap();
+        let want = builtin
+            .get_template("T")
+            .unwrap()
+            .render(minijinja::context! {
+                __outlet => minijinja::Value::from("<i>x</i>"),
+                ..brust_jinja::value_of(&ctx)
+            })
+            .unwrap();
+        let got = ours
+            .render_chain(&["T".into()], &ctx, &|_| {
+                vec![(
+                    "__outlet".into(),
+                    minijinja::Value::from_safe_string("<i>x</i>".into()),
+                )]
+            })
+            .unwrap();
+        assert_eq!(got, want);
+        assert!(got.contains("<b>&|7|1.5|None|True|||"), "{got}");
     }
 
     // Adapted from template/jinja.rs `jinja_round_trip` (:243): owned env built
