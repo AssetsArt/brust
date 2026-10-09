@@ -38,7 +38,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with: { bun-version: "1.4.2" }
       - run: bun install --frozen-lockfile
-      - run: bunx tsc --noEmit -p packages/runtime-dom
+      - run: cd packages/runtime-dom && bun run typecheck
       - run: cd packages/runtime-dom && bun test
       - run: cd packages/runtime-dom && bun scripts/build.ts
   # The battery and the browser harness drive the real `brustc` (built in the job).
