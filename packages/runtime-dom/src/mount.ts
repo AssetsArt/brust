@@ -4,6 +4,7 @@ import { whenBehavior } from './registry'
 import { bindHost } from './directives/index'
 import { warnOnce } from './warn'
 import { bindPropsFromParent } from './props-bind'
+import { scheduleIslands, cancelIslands } from './island'
 import './directives/register'   // Tasks 3–6 add binders here (file created in Task 3; create it empty now)
 
 let observer: MutationObserver | null = null
@@ -41,11 +42,13 @@ function mountTree(root: ParentNode): void {
   root.querySelectorAll<HTMLElement>('[x-data]').forEach((h) => hosts.push(h))
   // document order = parents before children, so nearestInstance finds a mounted parent
   for (const h of hosts) mountHost(h)
+  scheduleIslands(root)
 }
 hooks.mountTree = (root) => untracked(() => mountTree(root))
 
 function disposeTree(root: Node): void {
   if (!(root instanceof Element)) return
+  cancelIslands(root)
   const hosts: Element[] = root.hasAttribute('x-data') ? [root] : []
   root.querySelectorAll('[x-data]').forEach((h) => hosts.push(h))
   for (const h of hosts) { const i = instances.get(h); if (i) { i.dispose(); instances.delete(h) } }
