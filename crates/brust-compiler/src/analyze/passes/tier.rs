@@ -95,6 +95,7 @@ pub fn tier(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
             inputs: vec!["*".to_string()],
             outputs: vec![format!("_ssr_{}", ir.id)],
             per_item: None,
+            props: None,
         }];
     }
     ir.needs_worker = !ir.jobs.is_empty();

@@ -62,6 +62,7 @@ fn fixture_tiers() {
             inputs: vec!["*".into()],
             outputs: vec![format!("_ssr_{}", ir.id)],
             per_item: None,
+            props: None,
         }]
     );
 

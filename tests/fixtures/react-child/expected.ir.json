@@ -102,7 +102,10 @@
       "outputs": [
         "_ssr_reviews_ec5de4c5"
       ],
-      "per_item": null
+      "per_item": null,
+      "props": {
+        "productId": "productId"
+      }
     }
   ],
   "child_links": [],

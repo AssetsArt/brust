@@ -68,6 +68,10 @@ pub struct JobDecl {
     /// An `Ssr` job for an island inside a list renders once per item: the
     /// innermost loop binding; the output is an array aligned with the list.
     pub per_item: Option<String>,
+    /// `Ssr` job for a react child: child prop name -> parent props path (`[idx]` for the
+    /// enclosing row), `None` when the value is not a plain path. Absent on other jobs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub props: Option<std::collections::BTreeMap<String, Option<String>>>,
 }
 
 /// Filled by M1b-2.
