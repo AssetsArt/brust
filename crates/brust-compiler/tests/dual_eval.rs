@@ -4,6 +4,11 @@
 //! `tests/harness/eval.ts` instantiate every behavior on the rendered HTML
 //! and compare each directive's initial client value with what the server
 //! painted. Any disagreement is a compiler bug.
+//!
+//! This gate fails closed: missing `bun` is a failure, a fixture without
+//! sample props must be pinned in `NO_SAMPLES`, a sampled fixture that checks
+//! nothing must be pinned in `NO_DIRECTIVES`. The only skip is
+//! `BRUST_DUAL_EVAL_SKIP=1` (local use only, never set in CI).
 mod lower_common;
 use brust_compiler::analyze::component::AnalyzeOptions;
 use brust_compiler::ir::JobKind;
@@ -17,16 +22,39 @@ fn harness() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/harness")
 }
 
-/// (case dir, sample props files)
-fn cases() -> Vec<(PathBuf, Vec<PathBuf>)> {
-    let mut out = Vec::new();
+/// Fixtures that intentionally carry no `sample-props*.json`: a new fixture
+/// without samples must be added here deliberately.
+const NO_SAMPLES: &[&str] = &[
+    "arrow-default",
+    "client-only",
+    "fragment-root",
+    "import-cycle",
+    "jsx-shapes",
+    "lazy-import",
+    "missing-key",
+    "react-child",
+    "react-hook",
+    "server-leak",
+];
+
+/// Sampled fixtures with no client directives to compare (every other sampled
+/// fixture must contribute at least one check).
+const NO_DIRECTIVES: &[&str] = &["static-text", "cached-card"];
+
+fn fixture_dirs() -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = std::fs::read_dir(repo().join("tests/fixtures"))
         .unwrap()
         .map(|e| e.unwrap().path())
         .filter(|p| p.join("input.tsx").exists())
         .collect();
     dirs.sort();
-    for d in dirs {
+    dirs
+}
+
+/// (case dir, sample props files)
+fn cases() -> Vec<(PathBuf, Vec<PathBuf>)> {
+    let mut out = Vec::new();
+    for d in fixture_dirs() {
         let mut samples: Vec<PathBuf> = std::fs::read_dir(&d)
             .unwrap()
             .map(|e| e.unwrap().path())
@@ -112,14 +140,33 @@ fn build(case: &Path, dir: &Path) -> (String, Option<PathBuf>, Vec<String>) {
 #[test]
 fn server_paint_equals_client_initial_values() {
     let Some(bun) = bun() else {
-        eprintln!("warning: bun not on PATH; skipping dual evaluation");
-        return;
+        if std::env::var("BRUST_DUAL_EVAL_SKIP").as_deref() == Ok("1") {
+            eprintln!("warning: bun not on PATH; BRUST_DUAL_EVAL_SKIP=1, skipping dual evaluation");
+            return;
+        }
+        panic!(
+            "bun not on PATH; dual evaluation cannot run (set BRUST_DUAL_EVAL_SKIP=1 to skip locally)"
+        );
     };
     let eval = harness().join("eval.ts");
     let base = std::env::temp_dir().join(format!("brustc-dual-{}", std::process::id()));
     let mut total = 0;
     let mut cases_run = Vec::new();
-    for (case, samples) in cases() {
+    let mut per_fixture: std::collections::BTreeMap<String, u64> = Default::default();
+    let all = cases();
+    let mut skipped: Vec<String> = fixture_dirs()
+        .iter()
+        .filter(|d| !all.iter().any(|(c, _)| c == *d))
+        .map(|d| d.file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+    skipped.sort();
+    let mut pinned: Vec<String> = NO_SAMPLES.iter().map(|s| s.to_string()).collect();
+    pinned.sort();
+    assert_eq!(
+        skipped, pinned,
+        "fixtures without sample-props*.json must be pinned in NO_SAMPLES (and only those)"
+    );
+    for (case, samples) in all {
         let name = case.file_name().unwrap().to_string_lossy().into_owned();
         let dir = base.join(&name);
         let (jinja, job, ssr) = build(&case, &dir);
@@ -172,10 +219,30 @@ fn server_paint_equals_client_initial_values() {
             );
             let checked = report["checked"].as_u64().unwrap();
             total += checked;
+            *per_fixture.entry(name.clone()).or_default() += checked;
             cases_run.push(format!("{name}:{checked}"));
         }
     }
     eprintln!("dual evaluation: {}", cases_run.join(" "));
+    for (name, n) in &per_fixture {
+        if NO_DIRECTIVES.contains(&name.as_str()) {
+            assert_eq!(
+                *n, 0,
+                "{name} is pinned in NO_DIRECTIVES but now has {n} checks: unpin it"
+            );
+        } else {
+            assert!(
+                *n >= 1,
+                "{name} contributed no checks: fix the fixture or pin it in NO_DIRECTIVES"
+            );
+        }
+    }
+    for name in NO_DIRECTIVES {
+        assert!(
+            per_fixture.contains_key(*name),
+            "NO_DIRECTIVES names a fixture that was not run: {name}"
+        );
+    }
     // Every stateful fixture contributes checks.
     assert!(
         total >= 15,
