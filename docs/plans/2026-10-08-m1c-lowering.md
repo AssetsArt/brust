@@ -208,6 +208,16 @@ Commit `feat(brustc): --emit template|server|client|all and the dual-evaluation 
 
 ---
 
+## Inputs carried over from the M1b-2 review (lead, 2026-10-09)
+
+Binding for this plan; each item names the task that owns it.
+
+1. **Module-level locals.** `ComponentIR.client_module_locals: Vec<String>` (added by M1b-2 ruling B2) lists module-scope `function`/`const` declarations that a handler, effect, state init or client-placed value reaches, transitively. The client chunk (Task 6) prints those declarations, in source order, before the behavior factory; the precompute job (Task 5) prints the ones its slots reach. Their imports are already in `client_imports`.
+2. **Precomputed slots that call body-local derived functions** (`_s1 = f(a)` where `f` is a derived arrow placed `ClientOnly` or `Server`): the job prints every derived local a slot's `js` reaches (walk `deps_of` on the slot, collect `Ident{Local}`), as `const f = <to_js>` lines before the slot. Task 5 pins it with one test.
+3. **React islands inside a props-only list** (`items.map(i => <Island data={i}/>)`): the single `Ssr` job renders once per item; its output is an array aligned with the list, and the template indexes it with the loop index (`{{ _ssr_<id>[loop.index0] }}`). `JobDecl.per_item` (added in M1b-2 Task 3 for precompute slots) carries the loop binding for `Ssr` jobs too; Task 4 (islands) consumes it.
+4. **Nested lists** produce nested arrays in precompute job output (`per_item` = innermost loop binding; outer index first). The jinja side indexes with `loop.index0` per level; the dual-evaluation harness (Task 6) adds one nested-list case.
+5. **`ClientOnly` / `Block` / `Opaque` sources keep source-local names** (ledger F23): the chunk binds every prop by `PropDecl.local` and every state/derived by its declared name before any printed source runs.
+
 ## Self-review notes
 
 - **Spec coverage:** §6.1 template shape incl. seeds, `| e`, `json_attr`, child inlining with per-instance renaming, island slot/placeholder → Tasks 3–4; §6.2 jinja printer → Task 2; §6.3 → Task 7; §6.4 → Task 5; §7.1 chunk shape, setter/state/props rewrites, `x-model` pair, per-item handlers → Tasks 4, 6; §7.2 attribute set → Task 4 (printed exactly per M1d README); §7.4 `_pN` computeds + `x-props-bind` → Tasks 4, 6; §11 dual-evaluation, react-freedom, job purity → Tasks 5–7; §4.4 amended (client backend prints text) — recorded in the spec by the lead before dispatch.

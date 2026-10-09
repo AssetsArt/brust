@@ -56,3 +56,9 @@ Owner plan `M1b-2` means the item lands in the `m1b2-placement-tier` lane becaus
 | F22 | `analyze/component.rs` | `export { C as default }` returns `Err(no-default-export)` instead of the default-export-shape fallback. | Resolve the export clause to the local declaration. | M2 |
 | F23 | `ir/decls.rs` `PropDecl.local` | A renamed prop reads as `Ident{name: title, kind: Prop}` in structured exprs, but printed `Block`/`Opaque` sources keep the local name `heading`. | M1c's chunk printer must bind `PropDecl.local` (e.g. `const heading = props.title`) before the sources run. | M1c |
 | F24 | `analyze/hooks.rs` hook walk | A method named `useX` (e.g. `obj.useThing()`) is treated as a hook → `hook-unsupported` (fail-closed). | Only bare identifiers and `React.useX` count; member calls on non-React objects are not hooks. | M2 |
+
+## From Mellow's review of `m1b2-placement-tier` @7418cf7 (PR #114)
+
+| # | Where | Finding | Proposed fix | Owner plan |
+|---|---|---|---|---|
+| F25 | `analyze/passes/tier.rs` | A local child that renders itself (recursive `Tree`) is a Fallback `import-cycle`, so the parent becomes React. Matches the plan text; a recursive native component is a plausible later ask. | Allow self-recursion for native children by emitting the child template as a named jinja macro and calling it recursively. | M2 |
