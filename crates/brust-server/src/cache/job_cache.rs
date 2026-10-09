@@ -6,17 +6,20 @@
 //! `expires_at`, hit/miss counters, the generation-guarded tag index shared
 //! with L1 (see `l1.rs` module docs), a user-key index (`cache({key})` value →
 //! its namespaced entries, same generation guard) for `invalidate({key})`, and
-//! the insert/invalidate gate (see `L1Cache::insert`).
+//! the insert/invalidate gate (see `L1Cache::insert`). Reads are served by a
+//! sharded read front, moka kept as the lifetime policy (see [`JobCache`]).
 //!
 //! Bounded by ENTRY COUNT (moka `max_capacity`), not bytes: a few very large
 //! job values can hold more memory than the count suggests.
 use std::collections::HashMap;
+use std::collections::hash_map::RandomState;
+use std::hash::BuildHasher;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
 use moka::sync::Cache;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use serde_json::Value;
 
 use super::l1::{CacheStats, TagIndex, index_tags, prune_tags, take_tagged};
@@ -25,13 +28,14 @@ use super::l1::{CacheStats, TagIndex, index_tags, prune_tags, take_tagged};
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct JobKey(pub String);
 
+/// What moka tracks per key: the policy side only (ttl, index names,
+/// generation). The payload lives in the read front (see [`JobCache`]).
 #[derive(Clone)]
 struct CachedJob {
-    value: Arc<Value>,
     /// `None` = never expires (until invalidated or capacity-evicted).
     ttl: Option<Duration>,
     /// Tags this entry was stored under — carried so the eviction listener can
-    /// prune `tag_index` when moka drops the entry. `Arc`: cloned on every get.
+    /// prune `tag_index` when moka drops the entry.
     tags: Arc<[String]>,
     /// The `cache({key})` value this entry is indexed under in `key_index`
     /// (pruned by the eviction listener like `tags`). A one-element slice so
@@ -66,18 +70,100 @@ impl moka::Expiry<JobKey, CachedJob> for JobExpiry {
     }
 }
 
+/// A read-front entry: the payload, its own expiry deadline (checked on every
+/// read, so a ttl is exact without moka on the read path) and the generation
+/// tying it to the moka entry that owns its lifetime.
+struct FrontEntry {
+    value: Arc<Value>,
+    expires_at: Option<Instant>,
+    generation: u64,
+    /// Millis since `JobCache::epoch` of the last read forwarded to moka.
+    touched: AtomicU64,
+}
+
+/// One front shard, padded to its own cache lines so hot shards don't
+/// false-share their lock words.
+#[repr(align(128))]
+struct Shard(RwLock<HashMap<JobKey, FrontEntry>>);
+
+const SHARDS: usize = 64;
+
+/// A hit/miss counter striped by thread: one shared `AtomicU64` bumped on
+/// every read from 8 threads cost as much as the reads themselves
+/// (`plan_C/lookups_x8`). Each thread bumps its own padded slot; `get` sums.
+struct StripedCounter([PaddedU64; COUNTER_STRIPES]);
+
+#[repr(align(128))]
+#[derive(Default)]
+struct PaddedU64(AtomicU64);
+
+const COUNTER_STRIPES: usize = 16;
+
+impl StripedCounter {
+    fn new() -> Self {
+        Self(std::array::from_fn(|_| PaddedU64::default()))
+    }
+
+    fn incr(&self) {
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        thread_local! {
+            static SLOT: usize = NEXT.fetch_add(1, Ordering::Relaxed) % COUNTER_STRIPES;
+        }
+        let slot = SLOT.with(|s| *s);
+        self.0[slot].0.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn get(&self) -> u64 {
+        self.0.iter().map(|c| c.0.load(Ordering::Relaxed)).sum()
+    }
+}
+/// A front hit forwards at most one read per key per this interval to moka,
+/// so its LRU order and TinyLFU frequencies still see hot keys.
+const TOUCH_EVERY_MS: u64 = 100;
+
+/// Remove `key` from `front` if it still holds the entry stamped `generation`.
+fn remove_front(front: &[Shard], shard: usize, key: &JobKey, generation: u64) {
+    let mut m = front[shard].0.write();
+    if m.get(key).is_some_and(|e| e.generation == generation) {
+        m.remove(key);
+    }
+}
+
+/// Job cache = a read-mostly front + moka as the policy.
+///
+/// Reads hit only the front (`SHARDS` `RwLock<HashMap>`s): a read lock, the
+/// entry's own `expires_at` check and one `Arc` clone. moka records every read
+/// it serves (read buffer, frequency sketch, access time), so 8 threads reading
+/// the same hot keys contended inside moka (bench `plan_C/lookups_x8`). moka
+/// still owns every entry's lifetime — capacity eviction, admission, ttl
+/// reaping — and its eviction listener drops the front entry of the same
+/// generation (plus the index slots). A front hit forwards a read to moka at
+/// most once per key per `TOUCH_EVERY_MS`; a front miss always does, as moka's
+/// TinyLFU counts misses toward admission.
+///
+/// Invariant: a front entry of generation G exists only while moka holds G (or
+/// G's insert is in flight). Writers of one key (`insert`, `invalidate_*`)
+/// serialize on that key's `stripes` mutex so the front and moka see a key's
+/// writes in the same order (and an insert stamps and indexes its generation
+/// under it); the listener takes no stripe and removes only a matching
+/// generation, so it cannot drop a newer entry. Lock order: gate → stripe →
+/// index / front (each alone).
 pub struct JobCache {
     cache: Cache<JobKey, CachedJob>,
+    front: Arc<[Shard]>,
+    stripes: Box<[Mutex<()>]>,
+    hasher: RandomState,
+    epoch: Instant,
     tag_index: Arc<TagIndex<JobKey>>,
     /// user key → (JobKey → generation): every component's entry stored under
     /// that `cache({key})` value.
     key_index: Arc<TagIndex<JobKey>>,
     /// Insert/invalidate gate, as `L1Cache::gate`: shared across "index, then
     /// moka insert"; exclusive for index-driven invalidation and `clear`.
-    gate: parking_lot::RwLock<()>,
+    gate: RwLock<()>,
     next_generation: AtomicU64,
-    hits: AtomicU64,
-    misses: AtomicU64,
+    hits: StripedCounter,
+    misses: StripedCounter,
     capacity: u64,
     #[cfg(test)]
     pub(crate) mid_insert: super::l1::MidInsertHook,
@@ -87,31 +173,41 @@ impl JobCache {
     pub fn new(max_capacity: u64) -> Self {
         let capacity = max_capacity.max(1);
         let tag_index: Arc<TagIndex<JobKey>> = Arc::new(Mutex::new(HashMap::new()));
-        // Prune the index on every moka removal (eviction/expiry/invalidate/
-        // replace), mirroring L1. Job keys are content/developer-computed, so
-        // growth is slower than L1's request-derived keys, but the same
-        // unbounded-index shape applies (e.g. per-row keys under a static tag).
-        // No caller holds the tag_index lock across a moka call, so the
-        // listener can't deadlock.
         let key_index: Arc<TagIndex<JobKey>> = Arc::new(Mutex::new(HashMap::new()));
+        let front: Arc<[Shard]> = (0..SHARDS)
+            .map(|_| Shard(RwLock::new(HashMap::new())))
+            .collect();
+        let hasher = RandomState::new();
+        // Prune the indexes and the front on every moka removal (eviction/
+        // expiry/admission reject/invalidate/replace), generation-guarded. The
+        // listener takes each lock alone (never nested), and no caller holds
+        // an index or front lock across a moka call, so it can't deadlock.
         let listener_index = Arc::clone(&tag_index);
         let listener_keys = Arc::clone(&key_index);
+        let listener_front = Arc::clone(&front);
+        let listener_hasher = hasher.clone();
         let cache = Cache::builder()
             .max_capacity(capacity)
             .expire_after(JobExpiry)
             .eviction_listener(move |key: Arc<JobKey>, value: CachedJob, _cause| {
                 prune_tags(&listener_index, &*key, &value.tags, value.generation);
                 prune_tags(&listener_keys, &*key, &value.user_key, value.generation);
+                let shard = shard_of(&listener_hasher, &key);
+                remove_front(&listener_front, shard, &key, value.generation);
             })
             .build();
         Self {
             cache,
+            front,
+            stripes: (0..SHARDS).map(|_| Mutex::new(())).collect(),
+            hasher,
+            epoch: Instant::now(),
             tag_index,
             key_index,
-            gate: parking_lot::RwLock::new(()),
+            gate: RwLock::new(()),
             next_generation: AtomicU64::new(0),
-            hits: AtomicU64::new(0),
-            misses: AtomicU64::new(0),
+            hits: StripedCounter::new(),
+            misses: StripedCounter::new(),
             capacity,
             #[cfg(test)]
             mid_insert: Mutex::new(None),
@@ -119,17 +215,36 @@ impl JobCache {
     }
 
     pub fn get(&self, k: &JobKey) -> Option<Arc<Value>> {
-        // moka enforces per-entry expiry on read; an entry returned here is live.
-        match self.cache.get(k) {
-            Some(job) => {
-                self.hits.fetch_add(1, Ordering::Relaxed);
-                Some(job.value)
+        let shard = shard_of(&self.hasher, k);
+        let now = Instant::now();
+        let (hit, touch) = {
+            let m = self.front[shard].0.read();
+            match m.get(k) {
+                Some(e) if e.expires_at.is_none_or(|t| now < t) => {
+                    let ms = now.saturating_duration_since(self.epoch).as_millis() as u64;
+                    let last = e.touched.load(Ordering::Relaxed);
+                    let touch = ms.saturating_sub(last) >= TOUCH_EVERY_MS
+                        && e.touched
+                            .compare_exchange(last, ms, Ordering::Relaxed, Ordering::Relaxed)
+                            .is_ok();
+                    (Some(Arc::clone(&e.value)), touch)
+                }
+                // Missing, or past its ttl (moka reaps it; the listener then
+                // drops this front entry).
+                _ => (None, true),
             }
-            None => {
-                self.misses.fetch_add(1, Ordering::Relaxed);
-                None
-            }
+        };
+        if touch {
+            // Feed moka's access order / frequency sketch (see type docs).
+            let _ = self.cache.get(k);
         }
+        let counter = if hit.is_some() {
+            &self.hits
+        } else {
+            &self.misses
+        };
+        counter.incr();
+        hit
     }
 
     /// `user_key`: the evaluated `cache({key})` value, indexed so
@@ -145,9 +260,17 @@ impl JobCache {
         // Index BEFORE the moka insert, under the shared gate (see
         // `L1Cache::insert`: without the gate an invalidation landing between
         // the two steps loses the entry from the index forever). The eviction
-        // listener prunes both indexes when moka drops the entry.
+        // listener prunes both indexes (and the front) when moka drops the
+        // entry.
         let user_key: Arc<[String]> = user_key.map(String::from).into_iter().collect();
         let _gate = self.gate.read();
+        // The key's stripe covers generation, index and both stores, so
+        // same-key inserts index and land in generation order. (Without it, a
+        // racing pair could index as 6-then-5 but reach moka as 5-then-6: the
+        // Replaced notification for 5 then pruned the slot, leaving the live
+        // generation 6 un-indexed and immune to tag invalidation.)
+        let shard = shard_of(&self.hasher, &k);
+        let _stripe = self.stripes[shard].lock();
         let generation = self.next_generation.fetch_add(1, Ordering::Relaxed);
         index_tags(&self.tag_index, &k, tags, generation);
         index_tags(&self.key_index, &k, &user_key, generation);
@@ -155,10 +278,25 @@ impl JobCache {
         if let Some(h) = &*self.mid_insert.lock() {
             h();
         }
+        let now = Instant::now();
+        // Front first, then moka (whose Replaced notification for the older
+        // generation then leaves this entry alone). The front lock is released
+        // before the moka call: the listener may run inside it.
+        self.front[shard].0.write().insert(
+            k.clone(),
+            FrontEntry {
+                value,
+                // A ttl past `Instant`'s range never expires.
+                expires_at: ttl.and_then(|t| now.checked_add(t)),
+                generation,
+                touched: AtomicU64::new(
+                    now.saturating_duration_since(self.epoch).as_millis() as u64
+                ),
+            },
+        );
         self.cache.insert(
             k,
             CachedJob {
-                value,
                 ttl,
                 tags: tags.into(),
                 user_key,
@@ -167,9 +305,18 @@ impl JobCache {
         );
     }
 
+    /// Remove `k` from moka and the front, in that key's write order.
+    fn remove(&self, k: &JobKey) -> bool {
+        let shard = shard_of(&self.hasher, k);
+        let _stripe = self.stripes[shard].lock();
+        let held = self.cache.remove(k).is_some();
+        self.front[shard].0.write().remove(k);
+        held
+    }
+
     /// Remove one entry; `true` when moka held it (live or not yet reaped).
     pub fn invalidate_key(&self, k: &JobKey) -> bool {
-        self.cache.remove(k).is_some()
+        self.remove(k)
     }
 
     /// Remove every entry carrying any of `tags`; returns the number of
@@ -189,24 +336,25 @@ impl JobCache {
         let keys = take_tagged(index, names);
         let n = keys.len();
         for k in keys {
-            self.cache.invalidate(&k);
+            self.remove(&k);
         }
         n
     }
 
     pub fn clear(&self) {
-        // Wipe moka + the tag index atomically from the index's perspective
-        // (a concurrent tagged insert also locks tag_index, so it can't slip an
-        // entry in between the two wipes). run_pending_tasks runs AFTER the lock
-        // is dropped — holding the Mutex across moka's eviction callbacks risks
-        // re-entrant deadlock if a callback ever calls back into the cache.
+        // Wipe moka, the front and the indexes atomically from the index's
+        // perspective: the exclusive gate keeps every insert out (an insert
+        // holds it shared from its index write to its moka insert).
+        // run_pending_tasks runs AFTER the locks are dropped — holding the
+        // index Mutex across moka's eviction callbacks would deadlock.
         {
             let _gate = self.gate.write();
-            let mut idx = self.tag_index.lock();
-            let mut keys = self.key_index.lock();
             self.cache.invalidate_all();
-            idx.clear();
-            keys.clear();
+            for s in self.front.iter() {
+                s.0.write().clear();
+            }
+            self.tag_index.lock().clear();
+            self.key_index.lock().clear();
         }
         self.cache.run_pending_tasks();
     }
@@ -215,8 +363,8 @@ impl JobCache {
         // entry_count is eventually consistent; drive maintenance first (as L1).
         self.cache.run_pending_tasks();
         CacheStats {
-            hits: self.hits.load(Ordering::Relaxed),
-            misses: self.misses.load(Ordering::Relaxed),
+            hits: self.hits.get(),
+            misses: self.misses.get(),
             len: self.cache.entry_count() as usize,
             capacity: self.capacity as usize,
         }
@@ -234,6 +382,16 @@ impl JobCache {
     pub(crate) fn key_index_size(&self) -> usize {
         self.key_index.lock().values().map(|s| s.len()).sum()
     }
+
+    /// Entries in the read front (test hook: it must track moka's).
+    #[cfg(test)]
+    pub(crate) fn front_len(&self) -> usize {
+        self.front.iter().map(|s| s.0.read().len()).sum()
+    }
+}
+
+fn shard_of(hasher: &RandomState, k: &JobKey) -> usize {
+    (hasher.hash_one(k) as usize) % SHARDS
 }
 
 #[cfg(test)]
@@ -445,6 +603,62 @@ mod tests {
         s.insert(k("k:c/j0/7"), Arc::new(json!(5)), None, &[], Some("7"));
         s.clear();
         assert_eq!(s.key_index_size(), 0);
+    }
+
+    #[test]
+    fn front_follows_moka_evictions_and_expiry() {
+        // The read front holds an entry only while moka does: capacity
+        // evictions/admission rejects drop it via the listener.
+        let s = JobCache::new(10);
+        for i in 0..200 {
+            s.insert(k(&format!("e{i}")), Arc::new(json!(i)), None, &[], None);
+        }
+        let len = s.stats().len;
+        assert!(len <= 10, "moka bounded: {len}");
+        assert_eq!(s.front_len(), len, "front tracks moka's entry set");
+        // An expired entry may linger in the front until moka's timer wheel
+        // reaps it (coarse, as moka's own entry_count), but never reads.
+        let s = store();
+        s.insert(
+            k("t"),
+            Arc::new(json!(1)),
+            Some(Duration::from_millis(1)),
+            &[],
+            None,
+        );
+        std::thread::sleep(Duration::from_millis(5));
+        assert!(s.get(&k("t")).is_none());
+        assert!(s.front_len() <= 1);
+    }
+
+    #[test]
+    fn concurrent_reinserts_leave_front_and_moka_agreeing() {
+        // Same-key writers serialize on their stripe, so the front and moka
+        // end on the same generation and invalidation reaches the survivor.
+        let c = Arc::new(store());
+        std::thread::scope(|sc| {
+            for t in 0..8 {
+                let c = &c;
+                sc.spawn(move || {
+                    for i in 0..200 {
+                        c.insert(
+                            k("r"),
+                            Arc::new(json!(t * 1000 + i)),
+                            None,
+                            &["t".into()],
+                            None,
+                        );
+                        let _ = c.get(&k("r"));
+                    }
+                });
+            }
+        });
+        sync(&c);
+        assert_eq!(c.front_len(), 1);
+        assert_eq!(c.invalidate_tags(&["t".into()]), 1);
+        sync(&c);
+        assert!(c.get(&k("r")).is_none());
+        assert_eq!(c.front_len(), 0);
     }
 
     #[test]

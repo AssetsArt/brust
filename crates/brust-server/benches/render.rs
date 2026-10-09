@@ -222,6 +222,23 @@ fn bench_route(
         cached_body(&hit.body, gz)
     };
     g.bench_function("l1_hit_identity", |b| b.iter(|| hit(false)));
+    // `L1Cache::get` of the one hot key from 8 threads at once (wall time /
+    // iterations per thread; 1x = no contention), as `lookups_x8`.
+    g.bench_function("l1_get_x8", |b| {
+        b.iter_custom(|iters| {
+            let t = std::time::Instant::now();
+            std::thread::scope(|sc| {
+                for _ in 0..8 {
+                    sc.spawn(|| {
+                        for _ in 0..iters {
+                            black_box(l1.get(&key));
+                        }
+                    });
+                }
+            });
+            t.elapsed()
+        })
+    });
     g.bench_function("l1_hit_gzip", |b| b.iter(|| hit(true)));
     g.finish();
 }
