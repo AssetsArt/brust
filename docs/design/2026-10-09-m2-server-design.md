@@ -297,6 +297,17 @@ Cross-process sync (`publishCacheSync`, redis) is M3.
 job's `inputs` as the root itself, so `null` and `{}` hash differently. The integration test
 "job cache separates null from {}" pins it end to end.
 
+**S10 amendment (2026-10-09, ruling on knock2's bench challenge 7ad720e5):** an L1 entry MAY carry,
+beside the JSON context, the rendered document for that context (HTML bytes and, lazily, their gzip)
+produced by the first render; a HIT serves those bytes without re-rendering. This is equivalent
+because the render is a pure function of (templates, context, manifest) — `useId` allocation and
+asset injection are deterministic — and templates are parsed once at boot. Invalidation is
+unchanged (the body lives and dies with its entry). Dynamic (uncached) responses are gzipped at
+level 1 only above 16 KiB when the client accepts it. The bench bar (S14) is measured with
+`Accept-Encoding: identity` on both sides (0.1.x never compresses dynamic responses); gzip numbers
+are reported as an extra column. Perf work lives in lane `m2p-render-perf` (ledger F68), which M2
+must close before the milestone is declared complete.
+
 **S11 — L2 is deferred.** `cache.key(ctx)`/`key_ttl_seconds` (0.1.x L2, native-only) is rejected
 at build time with the M3 message. Reason: spec §5 lines 173-174 leave what L2 stores open, and
 M2's L1-on-JSON already covers the "personalised prefix" case through `key_expr`.
