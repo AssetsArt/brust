@@ -1,39 +1,55 @@
 {
-  "function": "ThemeToggle",
+  "function": "Search",
   "params": 1,
   "scopes": [
+    {
+      "id": 1,
+      "pruned": false,
+      "deps": [],
+      "decls": [
+        "t1"
+      ]
+    },
+    {
+      "id": 2,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "q",
+          "reactive": true
+        },
+        {
+          "name": "placeholder",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t2"
+      ]
+    },
     {
       "id": 3,
       "pruned": false,
       "deps": [
         {
-          "name": "mode",
+          "name": "q",
           "reactive": true
         }
       ],
-      "decls": [
-        "t1",
-        "t2"
-      ]
-    },
-    {
-      "id": 5,
-      "pruned": false,
-      "deps": [],
       "decls": [
         "t3"
       ]
     },
     {
-      "id": 6,
+      "id": 4,
       "pruned": false,
       "deps": [
         {
-          "name": "themeLabel",
+          "name": "t2",
           "reactive": true
         },
         {
-          "name": "label",
+          "name": "t3",
           "reactive": true
         }
       ],

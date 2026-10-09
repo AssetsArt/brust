@@ -1,27 +1,35 @@
 {
-  "function": "ThemeToggle",
+  "function": "TodoList",
   "params": 1,
   "scopes": [
     {
-      "id": 3,
+      "id": 4,
       "pruned": false,
       "deps": [
         {
-          "name": "mode",
+          "name": "selected",
           "reactive": true
         }
       ],
       "decls": [
-        "t1",
         "t2"
       ]
     },
     {
       "id": 5,
       "pruned": false,
-      "deps": [],
+      "deps": [
+        {
+          "name": "selected",
+          "reactive": true
+        },
+        {
+          "name": "todos",
+          "reactive": true
+        }
+      ],
       "decls": [
-        "t3"
+        "t1"
       ]
     },
     {
@@ -29,16 +37,12 @@
       "pruned": false,
       "deps": [
         {
-          "name": "themeLabel",
-          "reactive": true
-        },
-        {
-          "name": "label",
+          "name": "t1",
           "reactive": true
         }
       ],
       "decls": [
-        "t4"
+        "t2"
       ]
     }
   ]

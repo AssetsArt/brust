@@ -50,3 +50,52 @@ fn bad_usage_exits_2() {
     let out = brustc().output().unwrap();
     assert_eq!(out.status.code(), Some(2));
 }
+
+#[test]
+fn emit_ir_prints_component_ir() {
+    let out = brustc()
+        .arg(fixture("theme-toggle"))
+        .args(["--emit", "ir"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["tier"], "Pending");
+    assert_eq!(v["state"][0]["name"], "mode");
+    assert_eq!(v["template"]["Element"]["tag"], "button");
+}
+
+#[test]
+fn emit_diag_exits_1_on_error_and_0_otherwise() {
+    let out = brustc()
+        .arg(fixture("missing-key"))
+        .args(["--emit", "diag"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.starts_with("error list-key "), "{text}");
+    assert!(text.contains("input.tsx:5:9 "), "{text}");
+
+    let out = brustc()
+        .arg(fixture("fragment-root"))
+        .args(["--emit", "diag"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&out.stdout).starts_with("warning fragment-root "));
+}
+
+#[test]
+fn unknown_emit_exits_2() {
+    let out = brustc()
+        .arg(fixture("theme-toggle"))
+        .args(["--emit", "template"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+}

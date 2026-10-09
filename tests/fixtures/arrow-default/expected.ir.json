@@ -1,0 +1,32 @@
+{
+  "id": "input_92ff5102",
+  "source": "tests/fixtures/arrow-default/input.tsx",
+  "tier": "Pending",
+  "props": [],
+  "state": [],
+  "derived": [],
+  "effects": [],
+  "handlers": [],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Fragment": []
+  },
+  "jobs": [],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "needs_worker": false,
+  "cache": null,
+  "diagnostics": [
+    {
+      "class": "Fallback",
+      "rule": "default-export-shape",
+      "message": "the default export is not a function declaration",
+      "loc": 0,
+      "line": 1,
+      "col": 1,
+      "remediation": "write `export default function Name(props) { … }`"
+    }
+  ]
+}

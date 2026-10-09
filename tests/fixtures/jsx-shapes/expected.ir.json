@@ -1,0 +1,324 @@
+{
+  "id": "input_24dc85ef",
+  "source": "tests/fixtures/jsx-shapes/input.tsx",
+  "tier": "Pending",
+  "props": [
+    {
+      "name": "title",
+      "local": "title",
+      "ts_type": null,
+      "default": null
+    },
+    {
+      "name": "count",
+      "local": "count",
+      "ts_type": null,
+      "default": null
+    },
+    {
+      "name": "rest",
+      "local": "rest",
+      "ts_type": null,
+      "default": null
+    },
+    {
+      "name": "show",
+      "local": "show",
+      "ts_type": null,
+      "default": null
+    }
+  ],
+  "state": [],
+  "derived": [],
+  "effects": [],
+  "handlers": [],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 145,
+      "tag": "div",
+      "attrs": [
+        {
+          "Dynamic": {
+            "name": "className",
+            "value": {
+              "Raw": {
+                "loc": 161,
+                "kind": {
+                  "Template": {
+                    "head": "shapes ",
+                    "parts": [
+                      [
+                        {
+                          "loc": 171,
+                          "kind": {
+                            "Cond": {
+                              "test": {
+                                "loc": 171,
+                                "kind": {
+                                  "Ident": {
+                                    "name": "show",
+                                    "kind": "Prop"
+                                  }
+                                }
+                              },
+                              "yes": {
+                                "loc": 178,
+                                "kind": {
+                                  "Lit": {
+                                    "Str": "on"
+                                  }
+                                }
+                              },
+                              "no": {
+                                "loc": 185,
+                                "kind": {
+                                  "Lit": {
+                                    "Str": "off"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        },
+                        ""
+                      ]
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "Dynamic": {
+            "name": "data-count",
+            "value": {
+              "Raw": {
+                "loc": 206,
+                "kind": {
+                  "Ident": {
+                    "name": "count",
+                    "kind": "Prop"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "Spread": {
+            "Raw": {
+              "loc": 217,
+              "kind": {
+                "Opaque": {
+                  "source": "rest",
+                  "why": "spread props"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "children": [
+        {
+          "Element": {
+            "loc": 230,
+            "tag": "h1",
+            "attrs": [],
+            "children": [
+              {
+                "Slot": {
+                  "Raw": {
+                    "loc": 244,
+                    "kind": {
+                      "Ident": {
+                        "name": "title",
+                        "kind": "Prop"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "Text": " —"
+              },
+              {
+                "Text": " "
+              },
+              {
+                "Text": "multi-line text"
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "If": {
+            "cond": {
+              "Raw": {
+                "loc": 320,
+                "kind": {
+                  "Ident": {
+                    "name": "show",
+                    "kind": "Prop"
+                  }
+                }
+              }
+            },
+            "then": [
+              {
+                "Component": {
+                  "loc": 328,
+                  "name": "Badge",
+                  "source": "./Badge",
+                  "props": [
+                    [
+                      "tone",
+                      {
+                        "Raw": {
+                          "loc": 340,
+                          "kind": {
+                            "Lit": {
+                              "Str": "info"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  ],
+                  "children": [
+                    {
+                      "Slot": {
+                        "Raw": {
+                          "loc": 348,
+                          "kind": {
+                            "Ident": {
+                              "name": "count",
+                              "kind": "Prop"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ],
+                  "link": null
+                }
+              }
+            ],
+            "else_": []
+          }
+        },
+        {
+          "If": {
+            "cond": {
+              "Raw": {
+                "loc": 371,
+                "kind": {
+                  "Binary": {
+                    "op": "Gt",
+                    "left": {
+                      "loc": 371,
+                      "kind": {
+                        "Ident": {
+                          "name": "count",
+                          "kind": "Prop"
+                        }
+                      }
+                    },
+                    "right": {
+                      "loc": 379,
+                      "kind": {
+                        "Lit": {
+                          "Num": 1.0
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "then": [
+              {
+                "Element": {
+                  "loc": 383,
+                  "tag": "b",
+                  "attrs": [],
+                  "children": [
+                    {
+                      "Text": "many"
+                    }
+                  ],
+                  "host": false,
+                  "ref_name": null
+                }
+              }
+            ],
+            "else_": [
+              {
+                "Text": "one"
+              }
+            ]
+          }
+        },
+        {
+          "Component": {
+            "loc": 410,
+            "name": "<member>",
+            "source": null,
+            "props": [],
+            "children": [],
+            "link": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 431,
+            "tag": "input",
+            "attrs": [
+              {
+                "Static": {
+                  "name": "disabled",
+                  "value": ""
+                }
+              }
+            ],
+            "children": [],
+            "host": false,
+            "ref_name": null
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "needs_worker": false,
+  "cache": null,
+  "diagnostics": [
+    {
+      "class": "Warning",
+      "rule": "spread-props",
+      "message": "spread props are passed through as an opaque value",
+      "loc": 217,
+      "line": 6,
+      "col": 77,
+      "remediation": "list the props explicitly"
+    },
+    {
+      "class": "Fallback",
+      "rule": "member-tag",
+      "message": "member-expression component tags (`<Ctx.Provider>`) are not supported natively",
+      "loc": 410,
+      "line": 14,
+      "col": 7,
+      "remediation": "import the component under its own name"
+    }
+  ]
+}

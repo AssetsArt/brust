@@ -1,44 +1,48 @@
 {
-  "function": "ThemeToggle",
+  "function": "Pair",
   "params": 1,
   "scopes": [
     {
-      "id": 3,
+      "id": 0,
       "pruned": false,
       "deps": [
         {
-          "name": "mode",
+          "name": "a",
           "reactive": true
         }
       ],
       "decls": [
-        "t1",
+        "t1"
+      ]
+    },
+    {
+      "id": 1,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "b",
+          "reactive": true
+        }
+      ],
+      "decls": [
         "t2"
       ]
     },
     {
-      "id": 5,
-      "pruned": false,
-      "deps": [],
-      "decls": [
-        "t3"
-      ]
-    },
-    {
-      "id": 6,
+      "id": 2,
       "pruned": false,
       "deps": [
         {
-          "name": "themeLabel",
+          "name": "t1",
           "reactive": true
         },
         {
-          "name": "label",
+          "name": "t2",
           "reactive": true
         }
       ],
       "decls": [
-        "t4"
+        "t3"
       ]
     }
   ]

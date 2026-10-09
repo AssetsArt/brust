@@ -1,13 +1,17 @@
 {
-  "function": "Hello",
+  "function": "Themed",
   "params": 1,
   "scopes": [
     {
-      "id": 0,
+      "id": 1,
       "pruned": false,
       "deps": [
         {
-          "name": "name",
+          "name": "theme",
+          "reactive": true
+        },
+        {
+          "name": "label",
           "reactive": true
         }
       ],

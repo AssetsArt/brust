@@ -1,0 +1,63 @@
+{
+  "id": "input_ff775111",
+  "source": "tests/fixtures/static-text/input.tsx",
+  "tier": "Pending",
+  "props": [
+    {
+      "name": "name",
+      "local": "name",
+      "ts_type": null,
+      "default": null
+    }
+  ],
+  "state": [],
+  "derived": [],
+  "effects": [],
+  "handlers": [],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 69,
+      "tag": "p",
+      "attrs": [
+        {
+          "Static": {
+            "name": "className",
+            "value": "greet"
+          }
+        }
+      ],
+      "children": [
+        {
+          "Text": "Hello, "
+        },
+        {
+          "Slot": {
+            "Raw": {
+              "loc": 98,
+              "kind": {
+                "Ident": {
+                  "name": "name",
+                  "kind": "Prop"
+                }
+              }
+            }
+          }
+        },
+        {
+          "Text": "!"
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "needs_worker": false,
+  "cache": null,
+  "diagnostics": []
+}

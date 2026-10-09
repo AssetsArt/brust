@@ -1,0 +1,98 @@
+{
+  "id": "input_302a1f92",
+  "source": "tests/fixtures/missing-key/input.tsx",
+  "tier": "Pending",
+  "props": [
+    {
+      "name": "names",
+      "local": "names",
+      "ts_type": null,
+      "default": null
+    }
+  ],
+  "state": [],
+  "derived": [],
+  "effects": [],
+  "handlers": [],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 79,
+      "tag": "ol",
+      "attrs": [],
+      "children": [
+        {
+          "For": {
+            "source": {
+              "Raw": {
+                "loc": 91,
+                "kind": {
+                  "Ident": {
+                    "name": "names",
+                    "kind": "Prop"
+                  }
+                }
+              }
+            },
+            "item": "name",
+            "index": null,
+            "key": {
+              "Raw": {
+                "loc": 121,
+                "kind": {
+                  "Lit": "Undefined"
+                }
+              }
+            },
+            "body": [
+              {
+                "Element": {
+                  "loc": 121,
+                  "tag": "li",
+                  "attrs": [],
+                  "children": [
+                    {
+                      "Slot": {
+                        "Raw": {
+                          "loc": 126,
+                          "kind": {
+                            "Ident": {
+                              "name": "name",
+                              "kind": "LoopBinding"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ],
+                  "host": false,
+                  "ref_name": null
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "needs_worker": false,
+  "cache": null,
+  "diagnostics": [
+    {
+      "class": "Error",
+      "rule": "list-key",
+      "message": "list items need a `key`",
+      "loc": 121,
+      "line": 5,
+      "col": 9,
+      "remediation": "add key={item.id} (a stable id) to the element returned by .map"
+    }
+  ]
+}

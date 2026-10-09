@@ -1,0 +1,1 @@
+fallback default-export-shape tests/fixtures/arrow-default/input.tsx:1:1 the default export is not a function declaration — write `export default function Name(props) { … }`

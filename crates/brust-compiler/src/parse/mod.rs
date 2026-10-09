@@ -101,6 +101,37 @@ unsafe fn boxed<T: ?Sized>(b: &T) -> &'static T {
     unsafe { &*core::ptr::from_ref::<T>(b) }
 }
 
+/// Stack size of the compiler thread. Bun's parser guards its recursion against
+/// the per-thread limit `ensure_stack_limit` sets, but the vendored React Compiler
+/// and our own readers recurse without a guard (m1a-followups F1); 256 MiB keeps
+/// a 6000-deep JSX tree or a 6000-term expression well inside the stack.
+const COMPILER_STACK: usize = 256 << 20;
+
+/// Runs `f` on a dedicated thread with a 256 MiB stack and returns its result.
+///
+/// Every compiler entry point (`parse_tsx`, `analyze_hir`, `analyze_component`)
+/// must be called inside this: on an ordinary 2–8 MiB thread, valid input that
+/// parses can still overflow the stack later and abort the process. `Parsed` is
+/// `!Send`, so parse and analysis of one module happen inside the same call.
+/// The thread is scoped, so `f` may borrow from the caller. A panic in `f` is
+/// re-raised on the calling thread.
+pub fn run_on_compiler_thread<T: Send>(f: impl FnOnce() -> T + Send) -> T {
+    std::thread::scope(|s| {
+        std::thread::Builder::new()
+            .name("brust-compiler".into())
+            .stack_size(COMPILER_STACK)
+            .spawn_scoped(s, || {
+                #[cfg(feature = "bun-stubs")]
+                ensure_stack_limit();
+                f()
+            })
+            .expect("spawn the compiler thread")
+            .join()
+            .unwrap_or_else(|e| std::panic::resume_unwind(e))
+    })
+}
+
+/// Parses one `.tsx` module. Call it inside [`run_on_compiler_thread`].
 pub fn parse_tsx(path: &str, source: Vec<u8>) -> Result<Parsed, ParseError> {
     #[cfg(feature = "bun-stubs")]
     ensure_stack_limit();
@@ -126,6 +157,8 @@ pub fn parse_tsx(path: &str, source: Vec<u8>) -> Result<Parsed, ParseError> {
         let mut opts = bun_js_parser::ParserOptions::init(Default::default(), js_ast::Loader::Tsx);
         opts.features.no_macros = true;
         opts.features.react_compiler = js_ast::runtime::ReactCompilerMode::Disabled;
+        // Lower JSX to `jsx`/`jsxs(tag, props[, key])`, never the 6-arg `jsxDEV`.
+        opts.jsx.development = false;
         let mut log = js_ast::Log::init();
         let result =
             match bun_js_parser::Parser::init(opts, &mut log, src_ref, define_ref, arena_ref) {
@@ -232,6 +265,16 @@ impl Parsed {
         self.ast.symbols.len()
     }
 
+    /// The path the module was parsed under.
+    pub fn path(&self) -> String {
+        String::from_utf8_lossy(&self._path).into_owned()
+    }
+
+    /// The module's source text.
+    pub fn text(&self) -> &[u8] {
+        &self._text
+    }
+
     pub fn import_paths(&self) -> Vec<String> {
         self.import_paths.clone()
     }
@@ -240,8 +283,10 @@ impl Parsed {
         self.default_export_fn.clone()
     }
 
-    pub(crate) fn ast(&self) -> &js_ast::Ast<'static> {
-        &self.ast
+    /// Lends the AST for the duration of `f`. The borrow cannot escape the
+    /// closure, so nothing read from it can outlive `Parsed` (m1a-followups F2).
+    pub fn with_ast<R>(&self, f: impl FnOnce(&js_ast::Ast<'_>) -> R) -> R {
+        f(&self.ast)
     }
 
     pub(crate) fn source(&self) -> &js_ast::Source {

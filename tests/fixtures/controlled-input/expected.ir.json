@@ -1,0 +1,239 @@
+{
+  "id": "input_2b13db9f",
+  "source": "tests/fixtures/controlled-input/input.tsx",
+  "tier": "Pending",
+  "props": [
+    {
+      "name": "placeholder",
+      "local": "placeholder",
+      "ts_type": null,
+      "default": null
+    }
+  ],
+  "state": [
+    {
+      "name": "q",
+      "setter": "setQ",
+      "init": {
+        "Raw": {
+          "loc": 138,
+          "kind": {
+            "Lit": {
+              "Str": ""
+            }
+          }
+        }
+      }
+    }
+  ],
+  "derived": [],
+  "effects": [],
+  "handlers": [
+    {
+      "name": "_h1",
+      "body": {
+        "loc": 224,
+        "kind": {
+          "Arrow": {
+            "params": [
+              "e"
+            ],
+            "body": {
+              "Expr": {
+                "loc": 231,
+                "kind": {
+                  "Call": {
+                    "callee": {
+                      "loc": 231,
+                      "kind": {
+                        "Ident": {
+                          "name": "setQ",
+                          "kind": "Setter"
+                        }
+                      }
+                    },
+                    "args": [
+                      {
+                        "loc": 236,
+                        "kind": {
+                          "Member": {
+                            "target": {
+                              "loc": 236,
+                              "kind": {
+                                "Member": {
+                                  "target": {
+                                    "loc": 236,
+                                    "kind": {
+                                      "Ident": {
+                                        "name": "e",
+                                        "kind": "Local"
+                                      }
+                                    }
+                                  },
+                                  "name": "target",
+                                  "optional": false
+                                }
+                              }
+                            },
+                            "name": "value",
+                            "optional": false
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "captures": [
+              [
+                "setQ",
+                "Setter"
+              ]
+            ]
+          }
+        }
+      },
+      "item_scoped": []
+    }
+  ],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 157,
+      "tag": "label",
+      "attrs": [],
+      "children": [
+        {
+          "Element": {
+            "loc": 171,
+            "tag": "input",
+            "attrs": [
+              {
+                "Dynamic": {
+                  "name": "value",
+                  "value": {
+                    "Raw": {
+                      "loc": 185,
+                      "kind": {
+                        "Ident": {
+                          "name": "q",
+                          "kind": "State"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "Dynamic": {
+                  "name": "placeholder",
+                  "value": {
+                    "Raw": {
+                      "loc": 201,
+                      "kind": {
+                        "Ident": {
+                          "name": "placeholder",
+                          "kind": "Prop"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "Event": {
+                  "event": "change",
+                  "handler": "_h1"
+                }
+              }
+            ],
+            "children": [],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "If": {
+            "cond": {
+              "Raw": {
+                "loc": 263,
+                "kind": {
+                  "Binary": {
+                    "op": "Gt",
+                    "left": {
+                      "loc": 263,
+                      "kind": {
+                        "Member": {
+                          "target": {
+                            "loc": 263,
+                            "kind": {
+                              "Ident": {
+                                "name": "q",
+                                "kind": "State"
+                              }
+                            }
+                          },
+                          "name": "length",
+                          "optional": false
+                        }
+                      }
+                    },
+                    "right": {
+                      "loc": 274,
+                      "kind": {
+                        "Lit": {
+                          "Num": 0.0
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "then": [
+              {
+                "Element": {
+                  "loc": 278,
+                  "tag": "small",
+                  "attrs": [],
+                  "children": [
+                    {
+                      "Text": "Searching for "
+                    },
+                    {
+                      "Slot": {
+                        "Raw": {
+                          "loc": 300,
+                          "kind": {
+                            "Ident": {
+                              "name": "q",
+                              "kind": "State"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ],
+                  "host": false,
+                  "ref_name": null
+                }
+              }
+            ],
+            "else_": []
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "needs_worker": false,
+  "cache": null,
+  "diagnostics": []
+}

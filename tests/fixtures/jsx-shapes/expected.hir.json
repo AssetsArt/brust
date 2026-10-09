@@ -1,0 +1,91 @@
+{
+  "function": "Shapes",
+  "params": 1,
+  "scopes": [
+    {
+      "id": 0,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "title",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t2"
+      ]
+    },
+    {
+      "id": 1,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "show",
+          "reactive": true
+        },
+        {
+          "name": "count",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t3"
+      ]
+    },
+    {
+      "id": 2,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "count",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t4"
+      ]
+    },
+    {
+      "id": 3,
+      "pruned": false,
+      "deps": [],
+      "decls": [
+        "t5",
+        "t6"
+      ]
+    },
+    {
+      "id": 5,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "t1",
+          "reactive": true
+        },
+        {
+          "name": "count",
+          "reactive": true
+        },
+        {
+          "name": "rest",
+          "reactive": true
+        },
+        {
+          "name": "t2",
+          "reactive": true
+        },
+        {
+          "name": "t3",
+          "reactive": true
+        },
+        {
+          "name": "t4",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t7"
+      ]
+    }
+  ]
+}

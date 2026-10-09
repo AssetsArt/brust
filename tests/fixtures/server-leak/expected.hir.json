@@ -1,44 +1,48 @@
 {
-  "function": "ThemeToggle",
+  "function": "Leak",
   "params": 1,
   "scopes": [
     {
-      "id": 3,
+      "id": 2,
       "pruned": false,
       "deps": [
         {
-          "name": "mode",
+          "name": "path",
           "reactive": true
         }
       ],
       "decls": [
-        "t1",
+        "t1"
+      ]
+    },
+    {
+      "id": 4,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "text",
+          "reactive": true
+        }
+      ],
+      "decls": [
         "t2"
       ]
     },
     {
       "id": 5,
       "pruned": false,
-      "deps": [],
-      "decls": [
-        "t3"
-      ]
-    },
-    {
-      "id": 6,
-      "pruned": false,
       "deps": [
         {
-          "name": "themeLabel",
+          "name": "t1",
           "reactive": true
         },
         {
-          "name": "label",
+          "name": "t2",
           "reactive": true
         }
       ],
       "decls": [
-        "t4"
+        "t3"
       ]
     }
   ]

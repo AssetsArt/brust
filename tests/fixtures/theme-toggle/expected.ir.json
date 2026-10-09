@@ -1,0 +1,287 @@
+{
+  "id": "input_7a17a8db",
+  "source": "tests/fixtures/theme-toggle/input.tsx",
+  "tier": "Pending",
+  "props": [
+    {
+      "name": "themeLabel",
+      "local": "themeLabel",
+      "ts_type": null,
+      "default": null
+    }
+  ],
+  "state": [
+    {
+      "name": "mode",
+      "setter": "setMode",
+      "init": {
+        "Raw": {
+          "loc": 158,
+          "kind": {
+            "Lit": {
+              "Str": "dark"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "derived": [
+    {
+      "name": "label",
+      "expr": {
+        "Raw": {
+          "loc": 182,
+          "kind": {
+            "Cond": {
+              "test": {
+                "loc": 182,
+                "kind": {
+                  "Binary": {
+                    "op": "StrictEq",
+                    "left": {
+                      "loc": 182,
+                      "kind": {
+                        "Ident": {
+                          "name": "mode",
+                          "kind": "State"
+                        }
+                      }
+                    },
+                    "right": {
+                      "loc": 191,
+                      "kind": {
+                        "Lit": {
+                          "Str": "dark"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "yes": {
+                "loc": 200,
+                "kind": {
+                  "Lit": {
+                    "Str": "Light"
+                  }
+                }
+              },
+              "no": {
+                "loc": 210,
+                "kind": {
+                  "Lit": {
+                    "Str": "Dark"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "effects": [
+    {
+      "body": {
+        "loc": 230,
+        "kind": {
+          "Arrow": {
+            "params": [],
+            "body": {
+              "Block": {
+                "source": "() => {\n  document.documentElement.dataset.mode = mode;\n}",
+                "captures_only": false
+              }
+            },
+            "captures": [
+              [
+                "document",
+                "Global"
+              ],
+              [
+                "mode",
+                "State"
+              ]
+            ]
+          }
+        }
+      },
+      "deps": [
+        {
+          "loc": 293,
+          "kind": {
+            "Ident": {
+              "name": "mode",
+              "kind": "State"
+            }
+          }
+        }
+      ],
+      "layout": false
+    }
+  ],
+  "handlers": [
+    {
+      "name": "_h1",
+      "body": {
+        "loc": 371,
+        "kind": {
+          "Arrow": {
+            "params": [],
+            "body": {
+              "Expr": {
+                "loc": 377,
+                "kind": {
+                  "Call": {
+                    "callee": {
+                      "loc": 377,
+                      "kind": {
+                        "Ident": {
+                          "name": "setMode",
+                          "kind": "Setter"
+                        }
+                      }
+                    },
+                    "args": [
+                      {
+                        "loc": 385,
+                        "kind": {
+                          "Arrow": {
+                            "params": [
+                              "m"
+                            ],
+                            "body": {
+                              "Expr": {
+                                "loc": 393,
+                                "kind": {
+                                  "Cond": {
+                                    "test": {
+                                      "loc": 393,
+                                      "kind": {
+                                        "Binary": {
+                                          "op": "StrictEq",
+                                          "left": {
+                                            "loc": 393,
+                                            "kind": {
+                                              "Ident": {
+                                                "name": "m",
+                                                "kind": "Local"
+                                              }
+                                            }
+                                          },
+                                          "right": {
+                                            "loc": 399,
+                                            "kind": {
+                                              "Lit": {
+                                                "Str": "dark"
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    },
+                                    "yes": {
+                                      "loc": 408,
+                                      "kind": {
+                                        "Lit": {
+                                          "Str": "light"
+                                        }
+                                      }
+                                    },
+                                    "no": {
+                                      "loc": 418,
+                                      "kind": {
+                                        "Lit": {
+                                          "Str": "dark"
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            },
+                            "captures": []
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "captures": [
+              [
+                "setMode",
+                "Setter"
+              ]
+            ]
+          }
+        }
+      },
+      "item_scoped": []
+    }
+  ],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 316,
+      "tag": "button",
+      "attrs": [
+        {
+          "Static": {
+            "name": "type",
+            "value": "button"
+          }
+        },
+        {
+          "Dynamic": {
+            "name": "aria-label",
+            "value": {
+              "Raw": {
+                "loc": 350,
+                "kind": {
+                  "Ident": {
+                    "name": "themeLabel",
+                    "kind": "Prop"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "Event": {
+            "event": "click",
+            "handler": "_h1"
+          }
+        }
+      ],
+      "children": [
+        {
+          "Slot": {
+            "Raw": {
+              "loc": 436,
+              "kind": {
+                "Ident": {
+                  "name": "label",
+                  "kind": "Local"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "needs_worker": false,
+  "cache": null,
+  "diagnostics": []
+}

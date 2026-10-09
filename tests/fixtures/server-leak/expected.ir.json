@@ -1,0 +1,195 @@
+{
+  "id": "input_8803b8a9",
+  "source": "tests/fixtures/server-leak/input.tsx",
+  "tier": "Pending",
+  "props": [
+    {
+      "name": "path",
+      "local": "path",
+      "ts_type": null,
+      "default": null
+    }
+  ],
+  "state": [
+    {
+      "name": "text",
+      "setter": "setText",
+      "init": {
+        "Raw": {
+          "loc": 167,
+          "kind": {
+            "Lit": {
+              "Str": ""
+            }
+          }
+        }
+      }
+    }
+  ],
+  "derived": [],
+  "effects": [],
+  "handlers": [
+    {
+      "name": "_h1",
+      "body": {
+        "loc": 229,
+        "kind": {
+          "Arrow": {
+            "params": [],
+            "body": {
+              "Expr": {
+                "loc": 235,
+                "kind": {
+                  "Call": {
+                    "callee": {
+                      "loc": 235,
+                      "kind": {
+                        "Ident": {
+                          "name": "setText",
+                          "kind": "Setter"
+                        }
+                      }
+                    },
+                    "args": [
+                      {
+                        "loc": 243,
+                        "kind": {
+                          "Call": {
+                            "callee": {
+                              "loc": 243,
+                              "kind": {
+                                "Ident": {
+                                  "name": "readFileSync",
+                                  "kind": {
+                                    "Import": {
+                                      "source": "node:fs",
+                                      "imported": "readFileSync"
+                                    }
+                                  }
+                                }
+                              }
+                            },
+                            "args": [
+                              {
+                                "loc": 256,
+                                "kind": {
+                                  "Ident": {
+                                    "name": "path",
+                                    "kind": "Prop"
+                                  }
+                                }
+                              },
+                              {
+                                "loc": 262,
+                                "kind": {
+                                  "Lit": {
+                                    "Str": "utf8"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "captures": [
+              [
+                "setText",
+                "Setter"
+              ],
+              [
+                "readFileSync",
+                {
+                  "Import": {
+                    "source": "node:fs",
+                    "imported": "readFileSync"
+                  }
+                }
+              ],
+              [
+                "path",
+                "Prop"
+              ]
+            ]
+          }
+        }
+      },
+      "item_scoped": []
+    }
+  ],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 186,
+      "tag": "div",
+      "attrs": [],
+      "children": [
+        {
+          "Element": {
+            "loc": 198,
+            "tag": "button",
+            "attrs": [
+              {
+                "Static": {
+                  "name": "type",
+                  "value": "button"
+                }
+              },
+              {
+                "Event": {
+                  "event": "click",
+                  "handler": "_h1"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Text": "Load"
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 308,
+            "tag": "pre",
+            "attrs": [],
+            "children": [
+              {
+                "Slot": {
+                  "Raw": {
+                    "loc": 314,
+                    "kind": {
+                      "Ident": {
+                        "name": "text",
+                        "kind": "State"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "needs_worker": false,
+  "cache": null,
+  "diagnostics": []
+}

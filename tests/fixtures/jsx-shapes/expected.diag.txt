@@ -1,0 +1,2 @@
+warning spread-props tests/fixtures/jsx-shapes/input.tsx:6:77 spread props are passed through as an opaque value — list the props explicitly
+fallback member-tag tests/fixtures/jsx-shapes/input.tsx:14:7 member-expression component tags (`<Ctx.Provider>`) are not supported natively — import the component under its own name

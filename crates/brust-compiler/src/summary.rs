@@ -6,7 +6,6 @@ pub struct HirSummary {
     pub function: String,
     pub params: usize,
     pub scopes: Vec<ScopeInfo>,
-    pub identifiers: usize,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]

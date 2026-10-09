@@ -1,0 +1,345 @@
+{
+  "id": "input_d4c7015a",
+  "source": "tests/fixtures/keyed-list/input.tsx",
+  "tier": "Pending",
+  "props": [
+    {
+      "name": "todos",
+      "local": "todos",
+      "ts_type": null,
+      "default": null
+    }
+  ],
+  "state": [
+    {
+      "name": "selected",
+      "setter": "setSelected",
+      "init": {
+        "Raw": {
+          "loc": 215,
+          "kind": {
+            "Lit": "Null"
+          }
+        }
+      }
+    }
+  ],
+  "derived": [],
+  "effects": [],
+  "handlers": [
+    {
+      "name": "_h1",
+      "body": {
+        "loc": 377,
+        "kind": {
+          "Arrow": {
+            "params": [],
+            "body": {
+              "Expr": {
+                "loc": 383,
+                "kind": {
+                  "Call": {
+                    "callee": {
+                      "loc": 383,
+                      "kind": {
+                        "Ident": {
+                          "name": "setSelected",
+                          "kind": "Setter"
+                        }
+                      }
+                    },
+                    "args": [
+                      {
+                        "loc": 395,
+                        "kind": {
+                          "Member": {
+                            "target": {
+                              "loc": 395,
+                              "kind": {
+                                "Ident": {
+                                  "name": "todo",
+                                  "kind": "LoopBinding"
+                                }
+                              }
+                            },
+                            "name": "id",
+                            "optional": false
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "captures": [
+              [
+                "setSelected",
+                "Setter"
+              ],
+              [
+                "todo",
+                "LoopBinding"
+              ]
+            ]
+          }
+        }
+      },
+      "item_scoped": [
+        "todo",
+        "i"
+      ]
+    }
+  ],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 236,
+      "tag": "ul",
+      "attrs": [
+        {
+          "Static": {
+            "name": "className",
+            "value": "todos"
+          }
+        }
+      ],
+      "children": [
+        {
+          "For": {
+            "source": {
+              "Raw": {
+                "loc": 266,
+                "kind": {
+                  "Ident": {
+                    "name": "todos",
+                    "kind": "Prop"
+                  }
+                }
+              }
+            },
+            "item": "todo",
+            "index": "i",
+            "key": {
+              "Raw": {
+                "loc": 308,
+                "kind": {
+                  "Member": {
+                    "target": {
+                      "loc": 308,
+                      "kind": {
+                        "Ident": {
+                          "name": "todo",
+                          "kind": "LoopBinding"
+                        }
+                      }
+                    },
+                    "name": "id",
+                    "optional": false
+                  }
+                }
+              }
+            },
+            "body": [
+              {
+                "Element": {
+                  "loc": 299,
+                  "tag": "li",
+                  "attrs": [
+                    {
+                      "Dynamic": {
+                        "name": "className",
+                        "value": {
+                          "Raw": {
+                            "loc": 328,
+                            "kind": {
+                              "Cond": {
+                                "test": {
+                                  "loc": 328,
+                                  "kind": {
+                                    "Binary": {
+                                      "op": "StrictEq",
+                                      "left": {
+                                        "loc": 328,
+                                        "kind": {
+                                          "Member": {
+                                            "target": {
+                                              "loc": 328,
+                                              "kind": {
+                                                "Ident": {
+                                                  "name": "todo",
+                                                  "kind": "LoopBinding"
+                                                }
+                                              }
+                                            },
+                                            "name": "id",
+                                            "optional": false
+                                          }
+                                        }
+                                      },
+                                      "right": {
+                                        "loc": 340,
+                                        "kind": {
+                                          "Ident": {
+                                            "name": "selected",
+                                            "kind": "State"
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                },
+                                "yes": {
+                                  "loc": 351,
+                                  "kind": {
+                                    "Lit": {
+                                      "Str": "selected"
+                                    }
+                                  }
+                                },
+                                "no": {
+                                  "loc": 364,
+                                  "kind": {
+                                    "Lit": {
+                                      "Str": ""
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "Event": {
+                        "event": "click",
+                        "handler": "_h1"
+                      }
+                    }
+                  ],
+                  "children": [
+                    {
+                      "Slot": {
+                        "Raw": {
+                          "loc": 417,
+                          "kind": {
+                            "Binary": {
+                              "op": "Add",
+                              "left": {
+                                "loc": 417,
+                                "kind": {
+                                  "Ident": {
+                                    "name": "i",
+                                    "kind": "LoopBinding"
+                                  }
+                                }
+                              },
+                              "right": {
+                                "loc": 421,
+                                "kind": {
+                                  "Lit": {
+                                    "Num": 1.0
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "Text": ". "
+                    },
+                    {
+                      "Slot": {
+                        "Raw": {
+                          "loc": 426,
+                          "kind": {
+                            "Member": {
+                              "target": {
+                                "loc": 426,
+                                "kind": {
+                                  "Ident": {
+                                    "name": "todo",
+                                    "kind": "LoopBinding"
+                                  }
+                                }
+                              },
+                              "name": "title",
+                              "optional": false
+                            }
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "If": {
+                        "cond": {
+                          "Raw": {
+                            "loc": 449,
+                            "kind": {
+                              "Member": {
+                                "target": {
+                                  "loc": 449,
+                                  "kind": {
+                                    "Ident": {
+                                      "name": "todo",
+                                      "kind": "LoopBinding"
+                                    }
+                                  }
+                                },
+                                "name": "done",
+                                "optional": false
+                              }
+                            }
+                          }
+                        },
+                        "then": [
+                          {
+                            "Element": {
+                              "loc": 462,
+                              "tag": "span",
+                              "attrs": [
+                                {
+                                  "Static": {
+                                    "name": "className",
+                                    "value": "done"
+                                  }
+                                }
+                              ],
+                              "children": [
+                                {
+                                  "Text": "done"
+                                }
+                              ],
+                              "host": false,
+                              "ref_name": null
+                            }
+                          }
+                        ],
+                        "else_": []
+                      }
+                    }
+                  ],
+                  "host": false,
+                  "ref_name": null
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "needs_worker": false,
+  "cache": null,
+  "diagnostics": []
+}
