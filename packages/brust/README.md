@@ -1,4 +1,4 @@
-# @brust/brust
+# @brust/core
 
 Rust serves the pages; N Bun workers answer only `loader` and `jobs` calls. One napi addon
 (`crates/brust-napi`, loader generated into `native/` by `napi build`) binds `brust-server` and
@@ -7,7 +7,7 @@ Rust serves the pages; N Bun workers answer only `loader` and `jobs` calls. One 
 ## Routes (`routes.tsx`)
 
 ```tsx
-import { defineRoutes, notFound } from '@brust/brust/routes'
+import { defineRoutes, notFound } from '@brust/core/routes'
 export const routes = defineRoutes([
   { Component: AppLayout, children: [                     // layout renders <Outlet />
     { path: '/', Component: HomePage },                   // static: never calls Bun
@@ -41,7 +41,7 @@ patterns the router cannot hold together, e.g. `/a` and `/a/`).
 
 Server-only code never reaches a browser bundle (`error server-only-in-client <importer> imports
 <spec>`, at any import depth, react islands included): `node:*` / `bun:*` / bare Node builtins
-(unless an npm package of that name is installed), `@brust/brust/server|native`, any
+(unless an npm package of that name is installed), `@brust/core/server|native`, any
 `*.server.*` file, and the paths/prefixes listed in `brust.toml`:
 
 ```toml
@@ -49,7 +49,7 @@ Server-only code never reaches a browser bundle (`error server-only-in-client <i
 server_only = ["lib/server", "@acme/db"]   # import prefixes, or paths relative to the app root
 ```
 
-Loaders and precompute jobs may use all of it (they run in Bun). In the browser `@brust/brust`
+Loaders and precompute jobs may use all of it (they run in Bun). In the browser `@brust/core`
 resolves to a side-effect-free entry (`cache`, route helpers, verdicts; `cache.invalidate` throws).
 
 The out dir is rebuilt in a sibling temp dir and swapped in only on success (a failed build leaves
@@ -57,7 +57,7 @@ the previous one untouched); an out dir that is the filesystem root, the home di
 an ancestor of it, or that holds the entry / a route Component / `public/`, is refused
 (`out-dir-unsafe`). Relative imports of
 generated files resolve against the component's source dir, bare imports against the app root, so
-`--out-dir` may point anywhere; at run time `dist/` must still resolve `react` and `@brust/brust`
+`--out-dir` may point anywhere; at run time `dist/` must still resolve `react` and `@brust/core`
 (keep it inside the app, or next to a `node_modules` that has them).
 
 ## `brust start [--port N] [--workers N] [--dist-dir dist] [--entry routes.tsx]`

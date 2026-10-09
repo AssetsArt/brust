@@ -82,7 +82,7 @@ jobs:
           restore-keys: cargo-${{ runner.os }}-
       - run: bun install --frozen-lockfile
       - run: bun run browser-test
-  # @brust/brust: the napi addon (built with `napi build` on this runner), the package's unit
+  # @brust/core: the napi addon (built with `napi build` on this runner), the package's unit
   # tests and the end-to-end run of the real CLI (build the fixture app, start it, assert from the
   # outside). A cold addon build compiles the Bun crates (~10+ min): the cargo cache is shared.
   server:

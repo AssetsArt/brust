@@ -6,7 +6,7 @@
       "name": "brust-v2",
     },
     "packages/brust": {
-      "name": "@brust/brust",
+      "name": "@brust/core",
       "version": "0.0.0",
       "bin": {
         "brust": "./bin/brust",
@@ -39,7 +39,7 @@
     },
   },
   "packages": {
-    "@brust/brust": ["@brust/brust@workspace:packages/brust"],
+    "@brust/core": ["@brust/core@workspace:packages/brust"],
 
     "@brust/runtime-dom": ["@brust/runtime-dom@workspace:packages/runtime-dom"],
 

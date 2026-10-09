@@ -166,7 +166,7 @@ async function buildInto(
       "process.env.BRUST_PREBUILT = '1'",
       'process.env.BRUST_DIST_DIR = import.meta.dir',
       `process.env.BRUST_APP_ENTRY = join(import.meta.dir, ${JSON.stringify(entryRel)})`,
-      "const { run } = await import('@brust/brust')",
+      "const { run } = await import('@brust/core')",
       'await run()',
       '',
     ].join('\n'),

@@ -137,7 +137,7 @@ export function checkCatchAlls(leaves: FlatRoute[]): void {
 }
 
 /** Placeholder for the child route slot inside a layout. The compiler replaces `<Outlet/>`
- * imported from `@brust/brust/routes`; rendered by React directly it is empty. */
+ * imported from `@brust/core/routes`; rendered by React directly it is empty. */
 export function Outlet(): null {
   return null
 }

@@ -1,5 +1,5 @@
 // The side-effect-free half of `cache()` (no addon import): shared by `./cache` (server) and
-// `./browser` (the `browser` export condition of `@brust/brust`).
+// `./browser` (the `browser` export condition of `@brust/core`).
 
 export interface ComponentCacheOptions {
   key?: (props: any) => unknown

@@ -71,7 +71,7 @@ test('published name and exports agree', () => {
 ## Verification (READY evidence, paste in the task note)
 
 ```
-grep -rn "@brust/brust" packages crates tests .github package.json | grep -v node_modules | wc -l   # 0
+grep -rn "@brust/brust" packages crates tests .github package.json | grep -v node_modules | grep -v "crates/brust-compiler/tests/" | wc -l   # 0 (the two negative tests in crates/brust-compiler/tests/{cache,review_edges}.rs deliberately name the old specifier — lead amendment after GATES-RED 552372dc)
 cargo test -p brust-compiler && cd packages/brust && bun test
 bun run battery && bun run battery && git status --short docs/ && bun run browser-test
 ```

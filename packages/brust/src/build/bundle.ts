@@ -3,7 +3,7 @@
 // component (shared React split out), and the server-side jobs module. Every staged artifact's
 // relative imports resolve against its component's SOURCE directory through `sourceDirPlugin`;
 // nothing is copied next to generated files. Every browser build refuses server-only code
-// (`serverOnlyPlugin`) and resolves `@brust/brust` to its browser-safe entry. Browser outputs are
+// (`serverOnlyPlugin`) and resolves `@brust/core` to its browser-safe entry. Browser outputs are
 // renamed to `<stem>-<sha256 hex10>.js` so the server serves them `immutable` (`pipeline.rs`
 // `is_hashed` wants lowercase hex; Bun's `[hash]` is base36).
 import { createHash } from 'node:crypto'
@@ -116,7 +116,7 @@ function isServerOnly(spec: string, importer: string, ctx: BrowserCtx): boolean 
 }
 
 /** Fails a browser build that would include server-only code at any depth (a client chunk, an
- * island, or any module either reaches), and points `@brust/brust` at its browser-safe entry. An
+ * island, or any module either reaches), and points `@brust/core` at its browser-safe entry. An
  * offending import is stubbed so the bundler gets as far as it can; `browserBuild` then throws
  * `server-only-in-client` naming every `<importer> imports <spec>`. */
 function serverOnlyPlugin(ctx: BrowserCtx, violations: string[]): BunPlugin {
@@ -125,7 +125,7 @@ function serverOnlyPlugin(ctx: BrowserCtx, violations: string[]): BunPlugin {
     setup(b) {
       b.onResolve({ filter: /.*/ }, (a) => {
         if (!a.importer || a.path.startsWith('/_brust/')) return undefined
-        if (a.path === '@brust/brust') return { path: BROWSER_ENTRY }
+        if (a.path === '@brust/core') return { path: BROWSER_ENTRY }
         if (!isServerOnly(a.path, a.importer, ctx)) return undefined
         const msg = `${relative(ctx.appRoot, ctx.sourceOf.get(a.importer) ?? a.importer)} imports ${a.path}`
         if (!violations.includes(msg)) violations.push(msg)
@@ -275,12 +275,12 @@ export async function buildReactChunks(dist: string, compiled: Map<string, Compi
   return new Map([...out].map(([stem, path]) => [stem.slice('react-'.length), path]))
 }
 
-/** Left to the worker at runtime by `dist/jobs.js`: one React, and the worker's own `@brust/brust`
+/** Left to the worker at runtime by `dist/jobs.js`: one React, and the worker's own `@brust/core`
  * (bundling the server package would load a second copy whose worker auto-start runs inside the
  * worker and exits it). */
-const JOBS_EXTERNALS = [...REACT_EXTERNALS, '@brust/brust', '@brust/brust/*']
+const JOBS_EXTERNALS = [...REACT_EXTERNALS, '@brust/core', '@brust/core/*']
 
-/** `dist/jobs.js` (`target: 'bun'`, React and `@brust/brust` external): default export
+/** `dist/jobs.js` (`target: 'bun'`, React and `@brust/core` external): default export
  * `{ [componentId]: { precompute?, ssr? } }`; `ssr` only for react-tier, non-client_only components. */
 export async function buildJobs(dist: string, compiled: Map<string, Compiled>, sourceOf: SourceOf, appRoot: string): Promise<void> {
   const imports: string[] = ["import { createElement } from 'react'", "import { renderToString } from 'react-dom/server'"]
