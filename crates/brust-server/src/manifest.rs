@@ -85,7 +85,27 @@ pub struct JobRecord {
     pub per_instance: Option<String>,
     #[serde(default)]
     pub cache: JobCache,
+    /// The context names the job's result fills, copied from the IR
+    /// (`_s1`… for precompute, `_ssr_<childId>[_<k>]` for ssr). Empty = an
+    /// older manifest: a precompute result object is spread into the overlay
+    /// and an ssr result lands at `_ssr_<componentId>`.
+    #[serde(default)]
+    pub outputs: Vec<String>,
+    /// `ssr` only: the react component the worker renders
+    /// (`jobs[target].ssr(inputs)`); a react child's id while the job sits in
+    /// its parent's `jobs[]`. Passed through as `JobCall.target`.
+    #[serde(default)]
+    pub target: Option<String>,
+    /// v2 extension (not in the ruling; see the port doc): the `target`'s
+    /// props as `{ childProp: parent context path }`, `[idx]` = the current
+    /// row of `per_instance`. When set, the worker receives this object as
+    /// `inputs` (what `jobs[target].ssr` needs) and the job key hashes it.
+    #[serde(default)]
+    pub props: Option<BTreeMap<String, String>>,
 }
+
+/// The `inputs` entry meaning "all of the component's props" (S6 amendment).
+pub const ALL_PROPS: &str = "*";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -190,6 +210,12 @@ pub enum ManifestError {
         job: String,
         root: String,
     },
+    #[error("component {component}: job {job}: {reason}")]
+    BadJob {
+        component: String,
+        job: String,
+        reason: String,
+    },
     #[error("component {component}: bad path {path:?} in {field}: {reason}")]
     BadPath {
         component: String,
@@ -216,8 +242,41 @@ fn check_paths(id: &str, c: &ComponentRecord) -> Result<(), ManifestError> {
             .iter()
             .any(|s| matches!(s, crate::inputs::Seg::Idx))
     };
+    let bad_job = |job: &str, reason: String| ManifestError::BadJob {
+        component: id.into(),
+        job: job.into(),
+        reason,
+    };
     for j in &c.jobs {
-        for i in &j.inputs {
+        for o in &j.outputs {
+            if !is_ident(o) {
+                return Err(bad_job(&j.id, format!("output {o:?} is not an identifier")));
+            }
+        }
+        if j.per_instance.is_some() && j.outputs.len() != 1 {
+            return Err(bad_job(
+                &j.id,
+                format!(
+                    "a per_instance job needs exactly one output (got {})",
+                    j.outputs.len()
+                ),
+            ));
+        }
+        if j.kind == JobKind::Ssr && j.outputs.len() > 1 {
+            return Err(bad_job(
+                &j.id,
+                format!("an ssr job fills one output (got {})", j.outputs.len()),
+            ));
+        }
+        if let Some(props) = &j.props {
+            for (prop, src) in props {
+                let field = format!("job {} props.{prop}", j.id);
+                if has_idx(&parse(field.clone(), src)?) && j.per_instance.is_none() {
+                    return Err(bad(field, src, "[idx] needs per_instance".into()));
+                }
+            }
+        }
+        for i in j.inputs.iter().filter(|i| i.as_str() != ALL_PROPS) {
             if has_idx(&parse(format!("job {} inputs", j.id), i)?) {
                 return Err(bad(
                     format!("job {} inputs", j.id),
@@ -249,6 +308,13 @@ fn check_paths(id: &str, c: &ComponentRecord) -> Result<(), ManifestError> {
         }
     }
     Ok(())
+}
+
+/// `[A-Za-z_][A-Za-z0-9_]*`: a name a template can read.
+fn is_ident(s: &str) -> bool {
+    let mut b = s.bytes();
+    matches!(b.next(), Some(c) if c.is_ascii_alphabetic() || c == b'_')
+        && b.all(|c| c.is_ascii_alphanumeric() || c == b'_')
 }
 
 /// Root segment of a job input path: text before the first `.` or `[`, with a
@@ -299,6 +365,17 @@ impl Manifest {
         let mut templates = BTreeMap::new();
         for (id, c) in &manifest.components {
             check_paths(id, c)?;
+            for j in &c.jobs {
+                if let Some(t) = &j.target
+                    && !manifest.components.contains_key(t)
+                {
+                    return Err(ManifestError::BadJob {
+                        component: id.clone(),
+                        job: j.id.clone(),
+                        reason: format!("target {t:?} is not a known component"),
+                    });
+                }
+            }
             let tp = must_exist(id, &c.template)?;
             let src = std::fs::read_to_string(&tp)
                 .map_err(|source| ManifestError::Read { path: tp, source })?;
@@ -314,7 +391,8 @@ impl Manifest {
                     });
                 };
                 for j in &child.jobs {
-                    for i in &j.inputs {
+                    // `*` is the child's whole props object: covered by definition.
+                    for i in j.inputs.iter().filter(|i| i.as_str() != ALL_PROPS) {
                         let root = input_root(i);
                         if !ch.props.contains_key(root) {
                             return Err(ManifestError::UncoveredInput {

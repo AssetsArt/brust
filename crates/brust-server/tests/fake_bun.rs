@@ -44,6 +44,8 @@ async fn fake_bun_round_trips_loader_and_jobs_through_call_worker() {
             component_id: "detailPage_c3".into(),
             kind: serde_json::from_value(json!("precompute")).unwrap(),
             inputs: json!({}),
+            target: None,
+            row: None,
         }],
     };
     let r: JobsResponse = call_worker(&pool, t, CallKind::Jobs, &req).await.unwrap();

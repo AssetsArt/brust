@@ -50,7 +50,11 @@ pub fn default_job(call: &Value) -> Value {
             "MOVE {}",
             call["inputs"]["move"]["name"].as_str().unwrap_or("?")
         )}),
-        ("teamBuilder_h8", Some("ssr")) => json!("<ul><li>a</li></ul>"),
+        ("teamPage_g7", Some("j0")) | ("teamBuilder_h8", Some("ssr"))
+            if call["target"] == "teamBuilder_h8" =>
+        {
+            json!("<ul><li>a</li></ul>")
+        }
         _ => panic!("default jobs fake: unexpected job id {id}"),
     };
     json!({"id": id, "value": value})

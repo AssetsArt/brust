@@ -80,6 +80,13 @@ pub struct JobCall {
     pub component_id: String,
     pub kind: JobKind,
     pub inputs: Value,
+    /// `ssr`: the react component to render (`jobs[target].ssr(inputs)`),
+    /// copied from the manifest job record; absent when the record has none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    /// `per_instance` jobs: the 0-based row of the list this call renders.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub row: Option<usize>,
 }
 
 /// `jobs` call response: `{ results: [{ id, value | error }] }`.
@@ -210,11 +217,27 @@ mod tests {
                 component_id: "moveCard_d4".into(),
                 kind: JobKind::Precompute,
                 inputs: json!({"move": {"name": "growl"}}),
+                target: None,
+                row: None,
             }],
         };
         assert_eq!(
             serde_json::to_value(&r).unwrap(),
             json!({"jobs": [{"id": "moveCard_d4/j0/1", "componentId": "moveCard_d4", "kind": "precompute", "inputs": {"move": {"name": "growl"}}}]})
+        );
+        let r = JobsRequest {
+            jobs: vec![JobCall {
+                id: "rowReact_6/j0/1".into(),
+                component_id: "rowReact_6".into(),
+                kind: JobKind::Ssr,
+                inputs: json!({"productId": "p2"}),
+                target: Some("reviews_7".into()),
+                row: Some(1),
+            }],
+        };
+        assert_eq!(
+            serde_json::to_value(&r).unwrap(),
+            json!({"jobs": [{"id": "rowReact_6/j0/1", "componentId": "rowReact_6", "kind": "ssr", "inputs": {"productId": "p2"}, "target": "reviews_7", "row": 1}]})
         );
     }
 

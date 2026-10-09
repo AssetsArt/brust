@@ -115,11 +115,88 @@ fn malformed_paths_fail_at_boot() {
     assert!(matches!(&e, ManifestError::BadPath { .. }), "{e}");
     // `[idx]` in a static child's props has no row to stand for.
     let e = load_patched(|m| {
-        m["components"]["teamPage_g7"]["children"][0]["props"]["team"] = "team[idx]".into()
+        m["components"]["detailPage_c3"]["children"][0]["instances"] = "static".into()
+    });
+    assert!(
+        matches!(&e, ManifestError::BadPath { component, .. } if component == "detailPage_c3"),
+        "{e}"
+    );
+    // Same for a job `props` map without `per_instance`.
+    let e = load_patched(|m| {
+        m["components"]["teamPage_g7"]["jobs"][0]["props"] =
+            serde_json::json!({"team": "team[idx]"})
     });
     assert!(
         matches!(&e, ManifestError::BadPath { component, .. } if component == "teamPage_g7"),
         "{e}"
+    );
+}
+
+fn load_patched_ok(patch: impl FnOnce(&mut serde_json::Value)) -> Result<(), ManifestError> {
+    let tmp = tempfile::tempdir().unwrap();
+    copy_dir(&fx(), tmp.path());
+    let mpath = tmp.path().join("manifest.json");
+    let mut m: serde_json::Value = serde_json::from_slice(&std::fs::read(&mpath).unwrap()).unwrap();
+    patch(&mut m);
+    std::fs::write(&mpath, serde_json::to_vec(&m).unwrap()).unwrap();
+    Manifest::load(tmp.path()).map(|_| ())
+}
+
+/// Ruling cb881050: `outputs` / `target` / `"*"` boot checks.
+#[test]
+fn job_outputs_target_and_star_are_checked_at_boot() {
+    let l = Manifest::load(&fx()).unwrap();
+    let j = &l.manifest.components["teamPage_g7"].jobs[0];
+    assert_eq!(j.outputs, ["_ssr_teamBuilder_h8"]);
+    assert_eq!(j.target.as_deref(), Some("teamBuilder_h8"));
+    // `*` is not a path: the react page's own record boots (fixture), and a
+    // child record whose child job reads `*` is covered by definition.
+    assert_eq!(
+        l.manifest.components["teamBuilder_h8"].jobs[0].inputs,
+        ["*"]
+    );
+    load_patched_ok(|m| {
+        m["components"]["moveCard_d4"]["jobs"][0]["inputs"] = serde_json::json!(["*"]);
+        m["components"]["detailPage_c3"]["children"][0]["props"] = serde_json::json!({});
+    })
+    .unwrap();
+    let job_err = |patch: fn(&mut serde_json::Value), want: &str| {
+        let e = load_patched(patch);
+        assert!(
+            matches!(&e, ManifestError::BadJob { reason, .. } if reason.contains(want)),
+            "{want}: {e}"
+        );
+    };
+    job_err(
+        |m| m["components"]["teamPage_g7"]["jobs"][0]["outputs"] = serde_json::json!([""]),
+        "not an identifier",
+    );
+    job_err(
+        |m| m["components"]["teamPage_g7"]["jobs"][0]["outputs"] = serde_json::json!(["a-b"]),
+        "not an identifier",
+    );
+    job_err(
+        |m| m["components"]["teamPage_g7"]["jobs"][0]["outputs"] = serde_json::json!(["1a"]),
+        "not an identifier",
+    );
+    job_err(
+        |m| {
+            let j = &mut m["components"]["teamPage_g7"]["jobs"][0];
+            j["per_instance"] = "team".into();
+            j["outputs"] = serde_json::json!([]);
+        },
+        "exactly one output",
+    );
+    job_err(
+        |m| {
+            m["components"]["teamPage_g7"]["jobs"][0]["outputs"] =
+                serde_json::json!(["_ssr_a", "_ssr_b"])
+        },
+        "one output",
+    );
+    job_err(
+        |m| m["components"]["teamPage_g7"]["jobs"][0]["target"] = "nope_z9".into(),
+        "not a known component",
     );
 }
 

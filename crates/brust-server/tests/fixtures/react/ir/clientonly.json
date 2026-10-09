@@ -1,0 +1,26 @@
+{
+ "id": "clientonly_bcdcff03",
+ "tier": {
+  "React": {
+   "reason": "render reads `window` (line 3) \u2014 component renders with React on the client",
+   "client_only": true
+  }
+ },
+ "jobs": [
+  {
+   "kind": {
+    "Ssr": {
+     "client_only": true
+    }
+   },
+   "inputs": [
+    "*"
+   ],
+   "outputs": [
+    "_ssr_clientonly_bcdcff03"
+   ],
+   "per_item": null
+  }
+ ],
+ "children": []
+}

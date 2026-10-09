@@ -96,8 +96,8 @@ impl Renderer {
 }
 
 /// S9: `<script type="module" src="/_brust/<p>">` for runtime, each `client` of
-/// the chain + inlined children (dedup, chain order), then `react` + each react
-/// child chunk. No tags when every component in the chain (and its children) is
+/// the chain + job targets + inlined children (dedup, chain order), then
+/// `react` + each react chunk. No tags when every component in the chain (and its children) is
 /// `static`. Inserted before the last `</body>`, else appended.
 pub fn inject_assets(mut html: String, chain: &[String], m: &Manifest) -> String {
     let mut chunks: Vec<&str> = Vec::new();
@@ -123,6 +123,11 @@ pub fn inject_assets(mut html: String, chain: &[String], m: &Manifest) -> String
     for id in chain {
         visit(id);
         if let Some(c) = m.components.get(id) {
+            // React children are not child records: their ssr jobs sit in
+            // this component's `jobs[]` and name them as `target`.
+            for t in c.jobs.iter().filter_map(|j| j.target.as_deref()) {
+                visit(t);
+            }
             for ch in &c.children {
                 visit(&ch.id);
             }

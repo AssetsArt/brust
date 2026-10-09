@@ -1,0 +1,45 @@
+{
+ "id": "twiceReact_42d42134",
+ "tier": "Static",
+ "jobs": [
+  {
+   "kind": {
+    "Ssr": {
+     "client_only": false
+    }
+   },
+   "inputs": [
+    "a"
+   ],
+   "outputs": [
+    "_ssr_reviews_71ee8d8c"
+   ],
+   "per_item": null
+  },
+  {
+   "kind": {
+    "Ssr": {
+     "client_only": false
+    }
+   },
+   "inputs": [
+    "b"
+   ],
+   "outputs": [
+    "_ssr_reviews_71ee8d8c_2"
+   ],
+   "per_item": null
+  }
+ ],
+ "children": [
+  {
+   "id": "reviews_71ee8d8c",
+   "tier": {
+    "React": {
+     "reason": "hook useContext is not supported",
+     "client_only": false
+    }
+   }
+  }
+ ]
+}

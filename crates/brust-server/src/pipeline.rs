@@ -20,7 +20,7 @@ use crate::cache::l1::{CacheKey, build_cache_key};
 use crate::config::Server;
 use crate::dispatch::{CallError, CallKind, call_worker};
 use crate::inputs::{self, Path};
-use crate::manifest::{Instances, JobKind, JobRecord, Manifest, RouteRecord};
+use crate::manifest::{ALL_PROPS, Instances, JobKind, JobRecord, Manifest, RouteRecord};
 use crate::protocol::{JobCall, JobsRequest, JobsResponse, LoaderRequest, LoaderResponse, Verdict};
 use crate::render::{RenderError, inject_assets, use_ids};
 use crate::routing::{MatchResult, RouteEnvelope};
@@ -352,12 +352,12 @@ async fn page(
                 cacheable = false;
             }
             Ok(LoaderResponse::Verdict(Verdict::Redirect { location, status })) => {
-                // A Location `resp` would silently drop (CR/LF, non-visible
-                // ASCII) must not become a redirect without a target.
-                if http::HeaderValue::from_str(&location).is_err() {
+                // A Location `resp` would silently drop (control characters)
+                // must not become a redirect without a target.
+                let Some(location) = location_header(&location) else {
                     tracing::error!(route = %route.id, ?location, "redirect location is not a valid header value");
                     return body::error_500();
-                }
+                };
                 let status = if (300..=308).contains(&status) {
                     status
                 } else {
@@ -428,6 +428,8 @@ async fn page(
                     component_id: plans[i].component_id.clone(),
                     kind: plans[i].kind,
                     inputs: plans[i].inputs.clone(),
+                    target: plans[i].target.clone(),
+                    row: plans[i].instance_row(),
                 })
                 .collect(),
         };
@@ -475,6 +477,10 @@ async fn page(
                 tracing::error!(route = %route.id, component_id = %plans[i].component_id, job_id = %plans[i].job_id, "jobs response has no result for {}", plans[i].call_id);
                 return body::error_500();
             };
+            if let Err(e) = check_value(&plans[i], &v) {
+                tracing::error!(route = %route.id, component_id = %plans[i].component_id, job_id = %plans[i].job_id, call_id = %plans[i].call_id, error = %e, "job result does not fit its outputs");
+                return body::error_500();
+            }
             fresh.push((i, Arc::new(v)));
         }
         for (i, v) in fresh {
@@ -555,15 +561,7 @@ fn finish(
     // `_props` (the island host's `x-props`): the merged loader context — params,
     // path, loader data — without the server's per-component maps. Built once,
     // shared by every chain component (minijinja `Value`s are `Arc`-backed).
-    let props = minijinja::Value::from_serialize(
-        ctx.as_object()
-            .map(|o| {
-                o.iter()
-                    .filter(|(k, _)| k.as_str() != CHILDREN_KEY && k.as_str() != OWN_KEY)
-                    .collect::<BTreeMap<_, _>>()
-            })
-            .unwrap_or_default(),
-    );
+    let props = minijinja::Value::from_serialize(all_props(ctx));
     let overlay = |id: &str| {
         let slots = s.manifest.components.get(id).map_or(0, |c| c.use_id_slots);
         let mut out: Vec<(String, minijinja::Value)> = use_ids(&route.id, id, slots)
@@ -619,11 +617,41 @@ const OWN_KEY: &str = "__own";
 const PROPS_KEY: &str = "_props";
 
 /// Context names the server owns: templates print them with `| safe`
-/// (`__outlet`, `_ssr_*`) or read per-component maps through them
-/// (`__children`, `__own`, `_props`). Any other name, `__typename` included,
-/// is the loader's.
+/// (`__outlet`, `_ssr_*`), read per-component maps through them
+/// (`__children`, `__own`, `_props`), or read job/useId slots (`_s<digits>`,
+/// `_id<digits>`, exactly). Any other name — `_id`, `_session`,
+/// `__typename` — is the loader's. Overlays already beat the base context;
+/// this is defence in depth.
 fn is_server_slot(k: &str) -> bool {
-    matches!(k, "__outlet" | CHILDREN_KEY | OWN_KEY | PROPS_KEY) || k.starts_with("_ssr_")
+    let numbered = |p: &str| {
+        k.strip_prefix(p)
+            .is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()))
+    };
+    matches!(k, "__outlet" | CHILDREN_KEY | OWN_KEY | PROPS_KEY)
+        || k.starts_with("_ssr_")
+        || numbered("_s")
+        || numbered("_id")
+}
+
+/// A redirect target as a `Location` value: non-ASCII characters are
+/// percent-encoded as UTF-8 (`/café` → `/caf%C3%A9`); any control character
+/// (CR, LF, NUL, DEL, …) is `None`, never a header.
+fn location_header(location: &str) -> Option<String> {
+    if location.chars().any(char::is_control) {
+        return None;
+    }
+    let mut out = String::with_capacity(location.len());
+    for c in location.chars() {
+        if c.is_ascii() {
+            out.push(c);
+        } else {
+            let mut buf = [0u8; 4];
+            for b in c.encode_utf8(&mut buf).bytes() {
+                out.push_str(&format!("%{b:02X}"));
+            }
+        }
+    }
+    http::HeaderValue::from_str(&out).ok().map(|_| out)
 }
 
 /// Merge loader `data` keys over `ctx` (data wins), dropping server slots.
@@ -776,11 +804,16 @@ fn l1_decision(
 // (5) job planning and merge
 // ----------------------------------------------------------------------------
 
+/// Where a job's value lands (S7 step 5).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Target {
+pub(crate) enum Dest {
+    /// The chain component's own overlay `ctx["__own"][<component>]`. `row`:
+    /// a `per_instance` job's row; its value lands at `outputs[0][row]`.
     Chain {
         component: String,
+        row: Option<usize>,
     },
+    /// An inlined child instance's cell in its parent's map.
     Child {
         /// The chain component whose template inlines the child.
         parent: String,
@@ -803,15 +836,60 @@ pub(crate) struct JobPlan {
     /// The evaluated `cache({key})` value (string raw, else canonical JSON):
     /// what `invalidate({key})` addresses.
     pub user_key: Option<String>,
-    pub target: Target,
+    pub dest: Dest,
+    /// The manifest record's `outputs` (empty = legacy merge, see `merge_result`).
+    pub outputs: Vec<String>,
+    /// The manifest record's `target`, passed through as `JobCall.target`.
+    pub target: Option<String>,
+}
+
+impl JobPlan {
+    /// The `per_instance` row this call renders (`JobCall.row`).
+    fn instance_row(&self) -> Option<usize> {
+        match self.dest {
+            Dest::Chain { row, .. } => row,
+            Dest::Child { .. } => None,
+        }
+    }
+}
+
+/// `"*"` (all props): the props object without the server's per-component
+/// maps — for a chain entry the merged loader context, i.e. exactly `_props`.
+fn all_props(props: &Value) -> Value {
+    match props {
+        Value::Object(o) => Value::Object(
+            o.iter()
+                .filter(|(k, _)| k.as_str() != CHILDREN_KEY && k.as_str() != OWN_KEY)
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+        ),
+        v => v.clone(),
+    }
+}
+
+/// What the worker receives as `inputs` (and the hashed key hashes): the
+/// record's `props` map evaluated at `row` when set (the react target's own
+/// props), else every props value when `inputs` holds `"*"`, else the
+/// projection of `inputs`.
+fn job_inputs(j: &JobRecord, props: &Value, row: Option<usize>) -> Result<Value, String> {
+    if let Some(map) = &j.props {
+        return inputs::child_props(props, map, row);
+    }
+    if j.inputs.iter().any(|i| i == ALL_PROPS) {
+        return Ok(all_props(props));
+    }
+    inputs::project(props, &j.inputs, None)
 }
 
 /// Job cache key: `cache.key` evaluated against the props when set → the user
 /// key (a string raw, any other non-null value canonical JSON), namespaced as
-/// `"k:<componentId>/<jobId>/<user key>"` so two components keyed on one value
-/// never share an entry; unset or `null` → the hashed inputs key.
+/// `"k:<componentId>/<keyJob>/<user key>"` so two components keyed on one value
+/// never share an entry; unset or `null` → the hashed inputs key. `key_job`
+/// is the job id, plus `#<row>` for a `per_instance` row whose inputs do not
+/// identify the row on their own.
 fn plan_key(
     cid: &str,
+    key_job: &str,
     j: &JobRecord,
     props: &Value,
     projected: &Value,
@@ -823,27 +901,38 @@ fn plan_key(
             v => Some(String::from_utf8(inputs::canonical(v)).expect("JSON is UTF-8")),
         };
         if let Some(u) = user {
-            return Ok((JobKey(format!("k:{cid}/{}/{u}", j.id)), Some(u)));
+            return Ok((JobKey(format!("k:{cid}/{key_job}/{u}")), Some(u)));
         }
     }
-    Ok((JobKey(inputs::job_key(cid, &j.id, projected)), None))
+    Ok((JobKey(inputs::job_key(cid, key_job, projected)), None))
 }
 
 /// `call_id` = `<instance>/<jobId>[/<row>]`, where `instance` is the
 /// component id for a chain job and `<parentId>/<childId>_<k>` for a child
 /// instance — unique per request even when one child id is inlined more than
-/// once (by one parent, or by several).
+/// once (by one parent, or by several), and per row of a `per_instance` job.
 fn plan_one(
     out: &mut Vec<JobPlan>,
     cid: &str,
     instance: &str,
     j: &JobRecord,
     props: &Value,
-    target: Target,
+    dest: Dest,
     row: Option<usize>,
 ) -> Result<(), String> {
-    let projected = inputs::project(props, &j.inputs, None)?;
-    let (key, user_key) = plan_key(cid, j, props, &projected)?;
+    let per_instance = match dest {
+        Dest::Chain { row, .. } => row,
+        Dest::Child { .. } => None,
+    };
+    let projected = job_inputs(j, props, per_instance)?;
+    // With a `props` map each row's inputs are that row's props (content-keyed:
+    // equal rows share an entry); otherwise every row projects the same
+    // parent-scope inputs, so the row is part of the key.
+    let key_job = match per_instance {
+        Some(r) if j.props.is_none() || j.cache.key.is_some() => format!("{}#{r}", j.id),
+        _ => j.id.clone(),
+    };
+    let (key, user_key) = plan_key(cid, &key_job, j, props, &projected)?;
     let call_id = match row {
         Some(r) => format!("{instance}/{}/{r}", j.id),
         None => format!("{instance}/{}", j.id),
@@ -858,7 +947,9 @@ fn plan_one(
         ttl: j.cache.ttl_seconds.map(Duration::from_secs),
         tags: j.cache.tags.clone(),
         user_key,
-        target,
+        dest,
+        outputs: j.outputs.clone(),
+        target: j.target.clone(),
     });
     Ok(())
 }
@@ -871,8 +962,9 @@ fn row_count(list: &str, ctx: &Value) -> Result<usize, String> {
         .map_or(0, |a| a.len()))
 }
 
-/// Every job of the chain in template order: each chain component's own jobs,
-/// then its children's (static: one instance; per-row: one per list row).
+/// Every job of the chain in template order: each chain component's own jobs
+/// (a `per_instance` job once per row of its list), then its children's
+/// (static: one instance; per-row: one per list row).
 pub(crate) fn collect_jobs(
     m: &Manifest,
     chain: &[String],
@@ -882,17 +974,18 @@ pub(crate) fn collect_jobs(
     for id in chain {
         let c = &m.components[id];
         for j in &c.jobs {
-            plan_one(
-                &mut out,
-                id,
-                id,
-                j,
-                ctx,
-                Target::Chain {
-                    component: id.clone(),
-                },
-                None,
-            )?;
+            let dest = |row| Dest::Chain {
+                component: id.clone(),
+                row,
+            };
+            match &j.per_instance {
+                None => plan_one(&mut out, id, id, j, ctx, dest(None), None)?,
+                Some(list) => {
+                    for r in 0..row_count(list, ctx)? {
+                        plan_one(&mut out, id, id, j, ctx, dest(Some(r)), Some(r))?;
+                    }
+                }
+            }
         }
         let mut ordinal: BTreeMap<&str, u32> = BTreeMap::new();
         for ch in &c.children {
@@ -903,7 +996,7 @@ pub(crate) fn collect_jobs(
             };
             let child = &m.components[&ch.id];
             let instance = format!("{id}/{}_{k}", ch.id);
-            let target = |row| Target::Child {
+            let target = |row| Dest::Child {
                 parent: id.clone(),
                 component: ch.id.clone(),
                 k,
@@ -1013,12 +1106,116 @@ pub(crate) fn seed_child_slots(
     Ok(())
 }
 
-/// Writes one job's value into the context slot its target names (S7 step 5).
-/// Chain values land in the component's own map (`ctx["__own"][<id>]`); child
-/// values land in the parent's map (`ctx["__children"][<parent>]`); a
-/// static child's ssr HTML is also written to that map's `_ssr_<id>`, which
-/// the parent template's island host prints (overlaid while rendering it).
+/// The cell of one child instance (`ctx["__children"][<parent>]["__<id>_<k>"]`,
+/// or its `row` entry), created on demand.
+fn child_cell<'a>(
+    ctx: &'a mut Map<String, Value>,
+    parent: &str,
+    component: &str,
+    k: u32,
+    row: Option<usize>,
+) -> Option<&'a mut Map<String, Value>> {
+    let slot = parent_slots(ctx, parent)
+        .entry(format!("__{component}_{k}"))
+        .or_insert_with(|| {
+            if row.is_some() {
+                Value::Array(vec![])
+            } else {
+                Value::Object(Map::new())
+            }
+        });
+    let cell = match row {
+        Some(r) => {
+            let a = slot.as_array_mut()?;
+            while a.len() <= r {
+                a.push(Value::Object(Map::new()));
+            }
+            &mut a[r]
+        }
+        None => slot,
+    };
+    cell.as_object_mut()
+}
+
+/// A value has the shape its `outputs` need: a precompute result is an object
+/// holding every output name (`{ _s1: … }`, the generated `precompute`
+/// returns it keyed by slot); an ssr result is an HTML string. Legacy plans
+/// (no `outputs`) are not checked.
+fn check_value(p: &JobPlan, v: &Value) -> Result<(), String> {
+    if p.outputs.is_empty() {
+        return Ok(());
+    }
+    match p.kind {
+        JobKind::Precompute => {
+            let o = v.as_object().ok_or("precompute result is not an object")?;
+            match p.outputs.iter().find(|n| !o.contains_key(n.as_str())) {
+                Some(n) => Err(format!("precompute result has no {n:?}")),
+                None => Ok(()),
+            }
+        }
+        JobKind::Ssr if v.is_string() => Ok(()),
+        JobKind::Ssr => Err("ssr result is not a string".into()),
+    }
+}
+
+/// Writes one job's value into the overlay its `dest` names (S7 step 5):
+/// a chain component's `ctx["__own"][<id>]`, or a child instance's cell in
+/// `ctx["__children"][<parent>]`. Output `k` gets result `k`: a precompute
+/// result object's `outputs[k]` key, an ssr job's HTML at `outputs[0]`; for a
+/// `per_instance` job, `outputs[0]` is an array indexed by row (the template
+/// reads `{{ _ssr_<id>[_i1] | safe }}`). Without `outputs` (older manifests)
+/// see [`merge_legacy`].
 pub(crate) fn merge_result(ctx: &mut Map<String, Value>, plan: &JobPlan, value: &Value) {
+    if plan.outputs.is_empty() {
+        return merge_legacy(ctx, plan, value);
+    }
+    let row = plan.instance_row();
+    let obj = match &plan.dest {
+        Dest::Chain { component, .. } => component_map(ctx, OWN_KEY, component),
+        Dest::Child {
+            parent,
+            component,
+            k,
+            row,
+        } => match child_cell(ctx, parent, component, *k, *row) {
+            Some(o) => o,
+            None => return,
+        },
+    };
+    for (i, name) in plan.outputs.iter().enumerate() {
+        let v = match plan.kind {
+            JobKind::Precompute => value.get(name).cloned().unwrap_or(Value::Null),
+            JobKind::Ssr if i == 0 => value.clone(),
+            JobKind::Ssr => continue,
+        };
+        match row {
+            None => {
+                obj.insert(name.clone(), v);
+            }
+            Some(r) => {
+                let slot = obj
+                    .entry(name.clone())
+                    .or_insert_with(|| Value::Array(vec![]));
+                if !slot.is_array() {
+                    *slot = Value::Array(vec![]);
+                }
+                let Value::Array(a) = slot else {
+                    unreachable!()
+                };
+                while a.len() <= r {
+                    a.push(Value::Null);
+                }
+                a[r] = v;
+            }
+        }
+    }
+}
+
+/// Manifests without `outputs`: a precompute result object is spread into the
+/// overlay; a chain ssr result lands at `_ssr_<componentId>`; a child's ssr
+/// result in its cell and (static instance) at `_ssr_<childId>` in the
+/// parent's map.
+fn merge_legacy(ctx: &mut Map<String, Value>, plan: &JobPlan, value: &Value) {
     fn spread(obj: &mut Map<String, Value>, value: &Value) {
         if let Some(o) = value.as_object() {
             for (k, v) in o {
@@ -1026,8 +1223,8 @@ pub(crate) fn merge_result(ctx: &mut Map<String, Value>, plan: &JobPlan, value: 
             }
         }
     }
-    match &plan.target {
-        Target::Chain { component } => {
+    match &plan.dest {
+        Dest::Chain { component, .. } => {
             let own = component_map(ctx, OWN_KEY, component);
             match plan.kind {
                 JobKind::Precompute => spread(own, value),
@@ -1036,34 +1233,16 @@ pub(crate) fn merge_result(ctx: &mut Map<String, Value>, plan: &JobPlan, value: 
                 }
             }
         }
-        Target::Child {
+        Dest::Child {
             parent,
             component,
             k,
             row,
         } => {
-            let own = parent_slots(ctx, parent);
             if plan.kind == JobKind::Ssr && row.is_none() {
-                own.insert(format!("_ssr_{component}"), value.clone());
+                parent_slots(ctx, parent).insert(format!("_ssr_{component}"), value.clone());
             }
-            let slot = own.entry(format!("__{component}_{k}")).or_insert_with(|| {
-                if row.is_some() {
-                    Value::Array(vec![])
-                } else {
-                    Value::Object(Map::new())
-                }
-            });
-            let cell = match row {
-                Some(r) => {
-                    let Some(a) = slot.as_array_mut() else { return };
-                    while a.len() <= *r {
-                        a.push(Value::Object(Map::new()));
-                    }
-                    &mut a[*r]
-                }
-                None => slot,
-            };
-            let Some(obj) = cell.as_object_mut() else {
+            let Some(obj) = child_cell(ctx, parent, component, *k, *row) else {
                 return;
             };
             match plan.kind {
@@ -1111,15 +1290,16 @@ mod tests {
         );
         assert_eq!(plans[0].inputs, json!({"pokemon": {"stats": {"hp": 35}}}));
         assert_eq!(
-            plans[0].target,
-            Target::Chain {
-                component: "detailPage_c3".into()
+            plans[0].dest,
+            Dest::Chain {
+                component: "detailPage_c3".into(),
+                row: None
             }
         );
         assert_eq!(plans[2].inputs, json!({"move": {"name": "growl"}}));
         assert_eq!(
-            plans[2].target,
-            Target::Child {
+            plans[2].dest,
+            Dest::Child {
                 parent: "detailPage_c3".into(),
                 component: "moveCard_d4".into(),
                 k: 1,
@@ -1209,42 +1389,124 @@ mod tests {
     }
 
     #[test]
-    fn static_child_ssr_fills_parent_slot_and_cell() {
+    fn react_child_ssr_job_fills_parent_overlay_output() {
         let m = manifest();
         let ctx = json!({"team": ["a"]});
         let plans = collect_jobs(&m, &chain(&["teamPage_g7"]), &ctx).unwrap();
         assert_eq!(plans.len(), 1);
-        assert_eq!(plans[0].call_id, "teamPage_g7/teamBuilder_h8_1/ssr");
+        assert_eq!(plans[0].call_id, "teamPage_g7/j0");
+        assert_eq!(plans[0].target.as_deref(), Some("teamBuilder_h8"));
+        assert_eq!(plans[0].inputs, json!({"team": ["a"]}));
         let mut map = Map::new();
         merge_result(&mut map, &plans[0], &json!("<ul></ul>"));
-        let own = &map["__children"]["teamPage_g7"];
-        assert_eq!(own["_ssr_teamBuilder_h8"], "<ul></ul>");
         assert_eq!(
-            own["__teamBuilder_h8_1"]["_ssr_teamBuilder_h8"],
-            "<ul></ul>"
+            map["__own"]["teamPage_g7"],
+            json!({"_ssr_teamBuilder_h8": "<ul></ul>"})
         );
         assert!(
             map.get("_ssr_teamBuilder_h8").is_none(),
             "scoped, not global"
         );
+        assert!(map.get("__children").is_none());
+    }
+
+    #[test]
+    fn per_instance_job_fills_an_array_by_row() {
+        let mut m = manifest();
+        {
+            let j = &mut m.components.get_mut("detailPage_c3").unwrap().jobs[0];
+            j.kind = JobKind::Ssr;
+            j.per_instance = Some("pokemon.moves".into());
+            j.inputs = vec!["pokemon.moves".into()];
+            j.outputs = vec!["_ssr_x".into()];
+            j.target = Some("teamBuilder_h8".into());
+        }
+        let plans = collect_jobs(&m, &chain(&["detailPage_c3"]), &pikachu()).unwrap();
+        let ids: Vec<&str> = plans.iter().take(2).map(|p| p.call_id.as_str()).collect();
+        assert_eq!(ids, ["detailPage_c3/j0/0", "detailPage_c3/j0/1"]);
+        // Same parent-scope inputs, so the row is part of the key.
+        assert_eq!(plans[0].inputs, plans[1].inputs);
+        assert_ne!(plans[0].key, plans[1].key);
+        assert_eq!(plans[1].instance_row(), Some(1));
+        let mut map = Map::new();
+        merge_result(&mut map, &plans[1], &json!("B"));
+        merge_result(&mut map, &plans[0], &json!("A"));
+        assert_eq!(map["__own"]["detailPage_c3"]["_ssr_x"], json!(["A", "B"]));
+
+        // With a `props` map each row sends its own props, content-keyed.
+        m.components.get_mut("detailPage_c3").unwrap().jobs[0].props =
+            Some([("mv".to_string(), "pokemon.moves[idx].name".to_string())].into());
+        let plans = collect_jobs(&m, &chain(&["detailPage_c3"]), &pikachu()).unwrap();
+        assert_eq!(plans[0].inputs, json!({"mv": "tackle"}));
+        assert_eq!(plans[1].inputs, json!({"mv": "growl"}));
+        assert_eq!(
+            plans[0].key.0,
+            inputs::job_key("detailPage_c3", "j0", &json!({"mv": "tackle"}))
+        );
+    }
+
+    #[test]
+    fn star_input_is_every_prop() {
+        let mut m = manifest();
+        m.components.get_mut("detailPage_c3").unwrap().jobs[0].inputs = vec!["*".into()];
+        let mut ctx = pikachu();
+        ctx["__own"] = json!({"x": 1});
+        let plans = collect_jobs(&m, &chain(&["detailPage_c3"]), &ctx).unwrap();
+        assert_eq!(plans[0].inputs, pikachu());
+    }
+
+    #[test]
+    fn precompute_outputs_pick_keys_and_legacy_spreads() {
+        let m = manifest();
+        let plans = collect_jobs(&m, &chain(&["detailPage_c3"]), &pikachu()).unwrap();
+        let mut map = Map::new();
+        merge_result(&mut map, &plans[0], &json!({"_s1": "HP", "_s9": "extra"}));
+        assert_eq!(map["__own"]["detailPage_c3"], json!({"_s1": "HP"}));
+        assert!(check_value(&plans[0], &json!({"_s2": "x"})).is_err());
+        assert!(check_value(&plans[0], &json!("x")).is_err());
+        let mut legacy = plans[0].clone();
+        legacy.outputs.clear();
+        let mut map = Map::new();
+        merge_result(&mut map, &legacy, &json!({"_s1": "HP", "_s9": "extra"}));
+        assert_eq!(
+            map["__own"]["detailPage_c3"],
+            json!({"_s1": "HP", "_s9": "extra"})
+        );
+        assert!(check_value(&legacy, &json!("x")).is_ok());
     }
 
     #[test]
     fn loader_data_cannot_fill_server_slots() {
-        // Only server-owned names drop; any other `__*` (a GraphQL
-        // `__typename`, `__a_1`) is loader data. Child slots live under
-        // `__children` and win over a same-named top-level key in the overlay.
+        // Server-owned names drop: `__outlet`, `__children`, `__own`, `_props`,
+        // `_ssr_*`, and exactly `_s<digits>` / `_id<digits>`. Any other name
+        // (`_id`, `_session`, `_s`, `__typename`, `__a_1`) is loader data.
+        // Child slots live under `__children` and win over a same-named
+        // top-level key in the overlay.
         let mut ctx = Map::new();
         merge_loader_data(
             &mut ctx,
             json!({"__outlet": "x", "_ssr_a": "x", "__a_1": {}, "__children": {}, "__own": {},
-                   "_props": {}, "__typename": "Pokemon", "_id": 7, "_s1": "kept", "who": "w"}),
+                   "_props": {}, "__typename": "Pokemon", "_id": 7, "_s1": "x", "_s12": "x",
+                   "_id0": "x", "_id3": "x", "_session": "s", "_s": 1, "_s1a": 2, "_idx": 3,
+                   "who": "w"}),
             "r1",
         );
         assert_eq!(
             Value::Object(ctx),
-            json!({"__a_1": {}, "__typename": "Pokemon", "_id": 7, "_s1": "kept", "who": "w"})
+            json!({"__a_1": {}, "__typename": "Pokemon", "_id": 7, "_session": "s", "_s": 1,
+                   "_s1a": 2, "_idx": 3, "who": "w"})
         );
+    }
+
+    #[test]
+    fn location_percent_encodes_non_ascii_and_rejects_controls() {
+        assert_eq!(location_header("/café").as_deref(), Some("/caf%C3%A9"));
+        assert_eq!(location_header("/a?b=c d").as_deref(), Some("/a?b=c d"));
+        for bad in [
+            "/x\r\ny", "/x\ny", "/x\u{0}", "/x\u{7f}", "/x\ty", "/x\u{85}",
+        ] {
+            assert_eq!(location_header(bad), None, "{bad:?}");
+        }
     }
 
     #[test]

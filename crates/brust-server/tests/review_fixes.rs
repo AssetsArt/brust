@@ -190,6 +190,8 @@ fn verdict_status_and_location_are_validated() {
             Some("crlf") => {
                 json!({"verdict": "redirect", "location": "/x\r\nSet-Cookie: pwn=1"})
             }
+            Some("cafe") => json!({"verdict": "redirect", "location": "/café"}),
+            Some("nul") => json!({"verdict": "redirect", "location": "/x\u{0}y"}),
             Some("e204") => json!({"verdict": "httpError", "status": 204, "body": "hi"}),
             Some("e0") => json!({"verdict": "httpError", "status": 0, "body": "hi"}),
             Some("e600") => json!({"verdict": "httpError", "status": 600, "body": "hi"}),
@@ -208,6 +210,13 @@ fn verdict_status_and_location_are_validated() {
     assert_eq!(st, 500);
     assert!(h.get("location").is_none());
     assert!(h.get("set-cookie").is_none());
+    // Non-ASCII is percent-encoded (UTF-8); other control characters stay a 500.
+    let (st, h, _) = get(&s, "/pokemon/cafe", &[]);
+    assert_eq!(st, 302);
+    assert_eq!(h.get("location").unwrap(), "/caf%C3%A9");
+    let (st, h, _) = get(&s, "/pokemon/nul", &[]);
+    assert_eq!(st, 500);
+    assert!(h.get("location").is_none());
     for name in ["e204", "e0", "e600"] {
         let (st, _, b) = get(&s, &format!("/pokemon/{name}"), &[]);
         assert_eq!(

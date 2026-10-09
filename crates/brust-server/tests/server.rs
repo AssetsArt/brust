@@ -299,7 +299,7 @@ fn react_child_island_ssr_and_assets() {
     let (st, _, body) = get(&s, "/team", &[]);
     assert_eq!(st, 200, "{body}");
     assert!(
-        body.contains(r#"<brust-island data-brust-island="teamBuilder_h8" x-props='{&quot;team&quot;:[&quot;a&quot;]}'><ul><li>a</li></ul></brust-island>"#),
+        body.contains(r#"<brust-island data-id="teamBuilder_h8" x-props='{&quot;team&quot;:[&quot;a&quot;]}'><ul><li>a</li></ul></brust-island>"#),
         "{body}"
     );
     let order = [
@@ -314,7 +314,7 @@ fn react_child_island_ssr_and_assets() {
         .collect();
     assert!(pos.windows(2).all(|w| w[0] < w[1]), "{body}");
     assert!(body.ends_with("</script></body></html>"), "{body}");
-    assert_eq!(job_ids(&f), ["teamPage_g7/teamBuilder_h8_1/ssr"]);
+    assert_eq!(job_ids(&f), ["teamPage_g7/j0"]);
 }
 
 fn injecting_loader() -> std::sync::Arc<FakeBun> {
@@ -349,7 +349,7 @@ fn loader_cannot_inject_server_slots() {
     // A client-only react child (no ssr job) renders an EMPTY host, and a leaf
     // that prints `__outlet` (no child route) prints nothing.
     let dist = temp_dist(|m| {
-        m["components"]["teamBuilder_h8"]["jobs"] = json!([]);
+        m["components"]["teamPage_g7"]["jobs"] = json!([]);
     });
     let tp = dist.path().join("jinja/teamPage_g7.jinja");
     let src = std::fs::read_to_string(&tp).unwrap();
