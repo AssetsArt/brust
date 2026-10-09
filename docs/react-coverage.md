@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 18 | 13 | 3 | 2 | 0 | 0 | 0 | 0 |
-| B Composition | 11 | 4 | 2 | 5 | 0 | 0 | 0 | 0 |
+| B Composition | 11 | 4 | 3 | 4 | 0 | 0 | 0 | 0 |
 | C Hooks | 14 | 1 | 7 | 6 | 0 | 0 | 0 | 0 |
 | D API surface | 5 | 1 | 0 | 4 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 13 | 3 | 4 | 1 | 4 | 1 | 0 | 0 |
-| **Total** | 61 | 22 | 16 | 18 | 4 | 1 | 0 | 0 |
+| **Total** | 61 | 22 | 17 | 17 | 4 | 1 | 0 | 0 |
 
 ## A. JSX basics
 
@@ -48,7 +48,7 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | b-function-prop | function prop to a native child | native | native | 0 | ok | — | spec §7.4 function prop between native components |
 | b-react-child-island | react child inside a native parent (island) | static | static | ssr | ok | — | the parent stays static; its one job is the child island SSR render |
 | b-component-map | component map dispatch | react | react | ssr | ok | fallback:local-component, warning:fragment-root |  |
-| b-memo | memo() wrapper around a plain component | native | react | ssr | ok | fallback:default-export-shape | spec §3 memo(); known gap: M1 does not unwrap memo(): default-export-shape falls back to react (F37) |
+| b-memo | memo() wrapper around a plain component | native | native | 0 | ok | — | spec §3 memo() |
 | b-forwardref | forwardRef component | react | react | ssr | ok | fallback:default-export-shape |  |
 | b-hoc | higher-order component | react | react | ssr | ok | fallback:default-export-shape |  |
 | b-spread-child | spread props onto a component (F31) | react | react | ssr | ok | fallback:spread-props, warning:fragment-root |  |

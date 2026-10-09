@@ -119,7 +119,6 @@ export const rows: Row[] = [
     snippet: `import A from './A'\nimport B from './B'\nconst map: any = { a: A, b: B }\nexport default function C({ kind }: any) { const X = map[kind]; return <X /> }`,
     files: { 'A.tsx': child(`return <i>a</i>`), 'B.tsx': child(`return <i>b</i>`) } },
   { id: 'b-memo', category: 'B', authoring: 'memo() wrapper around a plain component', expect: 'native', jobs: 0,
-    knownGap: 'M1 does not unwrap memo(): default-export-shape falls back to react (F37)',
     snippet: `import { memo, useState } from 'react'\nfunction Inner() { const [n, setN] = useState(0); return <button onClick={() => setN(n + 1)}>{n}</button> }\nexport default memo(Inner)`,
     note: 'spec §3 memo()' },
   { id: 'b-forwardref', category: 'B', authoring: 'forwardRef component', expect: 'react',

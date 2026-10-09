@@ -439,3 +439,43 @@ fn outlet_from_elsewhere_is_a_normal_component() {
         rules(&ir)
     );
 }
+
+/// F37: a plain memo() wrapper is unwrapped (spec §3).
+#[test]
+fn memo_default_export_is_unwrapped() {
+    let ir = analyze(
+        "import { memo, useState } from 'react'\nfunction Inner(props: { n: number }) { const [c, setC] = useState(props.n); return <button onClick={() => setC(c + 1)}>{c}</button> }\nexport default memo(Inner)",
+    );
+    assert!(
+        matches!(ir.tier, Tier::Native { .. }),
+        "{:?} {:?}",
+        ir.tier,
+        rules(&ir)
+    );
+}
+
+#[test]
+fn memo_with_comparator_is_unwrapped_and_forward_ref_is_not() {
+    let a = analyze(
+        "import { memo } from 'react'\nfunction I() { return <b/> }\nexport default memo(I, (x: any, y: any) => x.n === y.n)",
+    );
+    assert!(
+        matches!(a.tier, Tier::Static | Tier::Native { .. }),
+        "{:?}",
+        rules(&a)
+    );
+    let b = analyze(
+        "import { memo, forwardRef } from 'react'\nconst I = forwardRef((p: any, r: any) => <b ref={r}/>)\nexport default memo(I)",
+    );
+    assert!(
+        rules(&b).contains(&(DiagClass::Fallback, "default-export-shape".into())),
+        "{:?}",
+        rules(&b)
+    );
+    let d = b
+        .diagnostics
+        .iter()
+        .find(|d| d.rule == "default-export-shape")
+        .unwrap();
+    assert!(d.message.contains("memo() wraps"), "{}", d.message);
+}
