@@ -193,6 +193,11 @@ and never asks Bun what a route is:
   render a window-reading component. (Ruled on Dew's challenge eea156b0.) Absent a `props` map the
   server may fall back to the parent-scope `inputs` plus a row index, but the compiler always emits
   `props` for child ssr jobs from `m2a2-ssr-props` on.
+- Every react-tier component the build compiles (pages AND children, client_only included) gets its
+  own `components` record with `client` = its react chunk. For a `client_only` child the parent's
+  `children[]` additionally carries `{ "id": <childId>, "instances": "static", "props": {} }` so
+  the server's asset injection links the chunk (the child has no jobs, so the entry drives nothing
+  else). Ruled on Mellow's challenge 01d6722a; no server change.
 - Import specifiers: user code imports `cache` from `@brust/brust` and `Outlet`/`defineRoutes`
   from `@brust/brust/routes`; the compiler also accepts the bare `brust` specifier for `cache`
   (M1 fixtures).
