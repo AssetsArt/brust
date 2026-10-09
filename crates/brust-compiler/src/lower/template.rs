@@ -19,7 +19,9 @@ use crate::ir::{
     Attr, ComponentIR, Diagnostic, Expr, IdentKind, JobKind, Node, RawExpr, RawKind, ServerExpr,
     Tier,
 };
-use brust_jinja::{attr_name, escape_attr, is_boolean_attr};
+use brust_jinja::{
+    attr_name, escape_attr, is_boolean_attr, is_refused_attr, is_url_attr, safe_url,
+};
 use std::cell::Cell;
 use std::collections::{BTreeSet, HashMap};
 
@@ -274,7 +276,9 @@ impl<'a, 'c> Printer<'a, 'c> {
         }
         // Seeded through x-props so the chunk starts from the painted value.
         // (Interior mutability: `reactive` is called on `&self`.)
-        self.seen_props(&deps.prop_roots());
+        // Exact paths: a painted `user.name` seeds `{user: {name}}`, never
+        // the whole `user` object.
+        self.seen_props(&deps.props);
         // Bindings in loop order.
         let mut b = Vec::new();
         for f in &self.frames {
@@ -463,8 +467,11 @@ impl<'a, 'c> Printer<'a, 'c> {
         if !self.native {
             return String::new();
         }
+        // Roots the chunk reads as a whole (client_props), plus the exact
+        // paths painted values read.
         let mut seed: BTreeSet<String> = ir.client_props.iter().cloned().collect();
         seed.extend(self.prop_seen.borrow().iter().cloned());
+        let seed = brust_minimal(seed);
         self.prop_reads = seed.clone();
         let value_of = |p: &String| -> String {
             match &self.inline {
@@ -485,8 +492,12 @@ impl<'a, 'c> Printer<'a, 'c> {
         let dict: Vec<String> = if seed.contains("*") {
             vec![]
         } else {
-            seed.iter()
-                .map(|p| format!("{}: {}", jinja_string(p), value_of(p)))
+            seed_tree(&seed)
+                .into_iter()
+                .map(|(root, node)| {
+                    let base = value_of(&root);
+                    format!("{}: {}", jinja_string(&root), node.jinja(&base))
+                })
                 .collect()
         };
         if seed.contains("*") {
@@ -530,6 +541,10 @@ impl<'a, 'c> Printer<'a, 'c> {
         match a {
             Attr::Static { name, value } => {
                 let html = attr_name(name);
+                if is_refused_attr(&html) || (is_url_attr(&html) && !safe_url(value)) {
+                    self.refuse(&html, tag);
+                    return;
+                }
                 if value.is_empty() && is_boolean_attr(&html) {
                     open.push_str(&format!(" {html}"));
                 } else {
@@ -538,6 +553,10 @@ impl<'a, 'c> Printer<'a, 'c> {
             }
             Attr::Dynamic { name, value } => {
                 let html = attr_name(name);
+                if is_refused_attr(&html) {
+                    self.refuse(&html, tag);
+                    return;
+                }
                 let raw = match sa {
                     Attr::Dynamic { value: sv, .. } => raw_of(value, Some(sv)),
                     _ => None,
@@ -565,6 +584,12 @@ impl<'a, 'c> Printer<'a, 'c> {
                     open.push_str(&format!(" style=\"{}\"", css.join(";")));
                 } else if is_boolean_attr(&html) {
                     open.push_str(&format!("{{% if {v} %}} {html}{{% endif %}}"));
+                } else if is_url_attr(&html) {
+                    // Server side of the runtime's URL rule: an unsafe scheme
+                    // is not rendered (XSS through a `javascript:` prop).
+                    open.push_str(&format!(
+                        "{{% if ({v} | present) and ({v} | url_ok) %}} {html}=\"{{{{ {v} | attr_str | e }}}}\"{{% endif %}}"
+                    ));
                 } else {
                     open.push_str(&format!(
                         "{{% if {v} | present %}} {html}=\"{{{{ {v} | attr_str | e }}}}\"{{% endif %}}"
@@ -603,6 +628,15 @@ impl<'a, 'c> Printer<'a, 'c> {
             }
             Attr::Spread(_) => {}
         }
+    }
+
+    fn refuse(&mut self, html: &str, tag: &str) {
+        self.diagnostics.push(Diagnostic::warning(
+            "unsafe-attr",
+            format!("`{html}` on <{tag}> is not rendered (inline handlers, srcdoc and unsafe URLs are refused)"),
+            0,
+            "use an event prop (onClick) and http(s)/relative URLs",
+        ));
     }
 
     fn if_node(&mut self, n: &Node, s: &Node) {
@@ -918,6 +952,65 @@ impl<'a, 'c> Printer<'a, 'c> {
             .collect();
         format!("{{{}}}", items.join(", "))
     }
+}
+
+/// Sorted paths with any path covered by a shorter one removed.
+fn brust_minimal(paths: BTreeSet<String>) -> BTreeSet<String> {
+    crate::analyze::passes::deps::minimal_paths(paths)
+        .into_iter()
+        .collect()
+}
+
+/// Prop paths as a tree: a root read whole, or the members read below it.
+enum SeedNode {
+    Whole,
+    Fields(std::collections::BTreeMap<String, SeedNode>),
+}
+
+impl SeedNode {
+    fn jinja(&self, base: &str) -> String {
+        match self {
+            SeedNode::Whole => base.to_string(),
+            SeedNode::Fields(f) => format!(
+                "{{{}}}",
+                f.iter()
+                    .map(|(k, n)| {
+                        let at = format!("({base})[{}]", jinja_string(k));
+                        format!("{}: {}", jinja_string(k), n.jinja(&at))
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        }
+    }
+}
+
+fn seed_tree(paths: &BTreeSet<String>) -> std::collections::BTreeMap<String, SeedNode> {
+    let mut roots = std::collections::BTreeMap::new();
+    for p in paths {
+        let mut parts = p.split('.');
+        let Some(root) = parts.next() else { continue };
+        let mut node = roots
+            .entry(root.to_string())
+            .or_insert_with(|| SeedNode::Fields(Default::default()));
+        let rest: Vec<&str> = parts.collect();
+        if rest.is_empty() {
+            *node = SeedNode::Whole;
+            continue;
+        }
+        for (i, part) in rest.iter().enumerate() {
+            let SeedNode::Fields(f) = node else { break };
+            let last = i + 1 == rest.len();
+            node = f.entry(part.to_string()).or_insert_with(|| {
+                if last {
+                    SeedNode::Whole
+                } else {
+                    SeedNode::Fields(Default::default())
+                }
+            });
+        }
+    }
+    roots
 }
 
 /// `x-*` value: `member` or `member:b1,b2`.

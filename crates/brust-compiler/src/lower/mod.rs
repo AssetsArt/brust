@@ -28,6 +28,8 @@ pub struct Artifacts {
     pub client_js: Option<String>,
     /// Every member the chunk exports, in order.
     pub members: Vec<String>,
+    /// Warnings found while lowering (refused attributes).
+    pub diagnostics: Vec<Diagnostic>,
 }
 
 /// A client member a directive names, defined by the template walk.
@@ -57,6 +59,15 @@ pub enum MemberDef {
 }
 
 pub fn lower(ir: &ComponentIR, ctx: &LowerCtx<'_>) -> Result<Artifacts, Diagnostic> {
+    // An IR with an Error (server-only code reached from the chunk, request
+    // state in render, …) never becomes artifacts.
+    if let Some(d) = ir
+        .diagnostics
+        .iter()
+        .find(|d| d.class == crate::ir::DiagClass::Error)
+    {
+        return Err(d.clone());
+    }
     if let Tier::React { client_only, .. } = &ir.tier {
         // The react backend (later spec) renders it; the template holds its slot.
         let jinja = if *client_only {
@@ -86,10 +97,10 @@ pub fn lower(ir: &ComponentIR, ctx: &LowerCtx<'_>) -> Result<Artifacts, Diagnost
     let out = printer.print();
     if let Some(d) = out
         .diagnostics
-        .into_iter()
+        .iter()
         .find(|d| d.class == crate::ir::DiagClass::Error)
     {
-        return Err(d);
+        return Err(d.clone());
     }
     let server_ts = server::job(ir);
     let (client_js, members) = if matches!(ir.tier, Tier::Static) {
@@ -103,5 +114,6 @@ pub fn lower(ir: &ComponentIR, ctx: &LowerCtx<'_>) -> Result<Artifacts, Diagnost
         server_ts,
         client_js,
         members,
+        diagnostics: out.diagnostics,
     })
 }

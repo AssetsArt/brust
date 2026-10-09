@@ -171,3 +171,47 @@ fn lower_sources_do_not_name_bun() {
         assert!(!text.contains("bun_"), "{} names a Bun crate", p.display());
     }
 }
+
+/// Security review: a `javascript:` URL never renders, inline handler and
+/// srcdoc attributes are dropped, and x-props seeds only the paths painted.
+#[test]
+fn urls_handlers_and_seeds_are_guarded() {
+    let (j, _) = lower(&format!(
+        "{STATE}export default function T({{ url, user }}: any) {{ const [n, setN] = useState(0); return <a href={{url}} onclick=\"alert(1)\" srcDoc=\"x\" title={{user.name}} onClick={{() => setN(n + 1)}}>{{n}}<img src=\"javascript:alert(1)\" /></a> }}"
+    ));
+    assert!(
+        !j.contains("onclick=") && !j.contains("srcdoc") && !j.contains("javascript"),
+        "{j}"
+    );
+    let html = render(
+        &j,
+        serde_json::json!({ "url": "java\tscript:alert(1)", "user": { "name": "Ada", "secret": "s3" } }),
+    );
+    assert!(!html.contains(" href=\""), "{html}");
+    assert!(
+        !html.contains("s3"),
+        "x-props leaked an unread field: {html}"
+    );
+    assert!(html.contains("&quot;name&quot;:&quot;Ada&quot;"), "{html}");
+    let html = render(
+        &j,
+        serde_json::json!({ "url": "/docs?a=1", "user": { "name": "Ada" } }),
+    );
+    assert!(html.contains("href=\"/docs?a=1\""), "{html}");
+}
+
+/// Security review: an IR with an Error is never lowered.
+#[test]
+fn an_ir_with_errors_is_not_lowered() {
+    let s = "import { useState } from 'react'\nimport { readFileSync } from 'node:fs'\nexport default function L() { const [t, setT] = useState(''); return <b onClick={() => setT(readFileSync('/x', 'utf8'))}>{t}</b> }".to_string();
+    let r = brust_compiler::parse::run_on_compiler_thread(move || {
+        brust_compiler::pipeline::compile_tree(
+            "T.tsx",
+            Some(s.into_bytes()),
+            &AnalyzeOptions::default(),
+            DEFAULT_RUNTIME_IMPORT,
+        )
+        .map(|_| ())
+    });
+    assert_eq!(r.unwrap_err().rule, "server-only-in-client");
+}

@@ -21,6 +21,7 @@ pub fn register(env: &mut Environment<'_>) {
     env.add_filter("js_string", |v: Value| js_string(&v));
     env.add_filter("attr_str", |v: Value| attr_string(&v));
     env.add_filter("present", |v: Value| present(&v));
+    env.add_filter("url_ok", |v: Value| safe_url(&attr_string(&v)));
     env.add_filter("json_attr", json_attr);
     env.add_filter("str_slice", str_slice);
     env.add_filter("includes", includes);
@@ -259,6 +260,56 @@ pub fn attr_name(react_name: &str) -> String {
     mapped.to_string()
 }
 
+/// Attributes that load or execute a URL (`packages/runtime-dom` bind.ts).
+pub const URL_ATTRS: &[&str] = &[
+    "href",
+    "src",
+    "action",
+    "formaction",
+    "poster",
+    "data",
+    "xlink:href",
+    "ping",
+];
+
+pub fn is_url_attr(html_name: &str) -> bool {
+    URL_ATTRS.contains(&html_name)
+}
+
+/// Attributes never rendered from component code: inline event handlers and
+/// `srcdoc` (the runtime refuses to bind them too).
+pub fn is_refused_attr(html_name: &str) -> bool {
+    html_name.starts_with("on") || html_name == "srcdoc"
+}
+
+/// The runtime's URL rule: the scheme of `new URL(v, base)` is http(s),
+/// mailto or tel; a relative URL is fine. Like the URL parser, leading and
+/// trailing C0 controls / spaces are trimmed and tabs and newlines removed
+/// before the scheme is read (`java\tscript:` is caught).
+pub fn safe_url(v: &str) -> bool {
+    let cleaned: String = v
+        .trim_matches(|c: char| c <= ' ')
+        .chars()
+        .filter(|c| !matches!(c, '\t' | '\n' | '\r'))
+        .collect();
+    let mut scheme = String::new();
+    for c in cleaned.chars() {
+        match c {
+            ':' => {
+                let s = scheme.to_ascii_lowercase();
+                return matches!(s.as_str(), "http" | "https" | "mailto" | "tel");
+            }
+            c if c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.') => scheme.push(c),
+            // `/`, `?`, `#` or anything else before a `:`: a relative URL.
+            _ => return true,
+        }
+        if !scheme.starts_with(|c: char| c.is_ascii_alphabetic()) {
+            return true;
+        }
+    }
+    true
+}
+
 /// HTML boolean attributes: rendered present/absent, never `="false"`.
 pub const BOOLEAN_ATTRS: &[&str] = &[
     "disabled",
@@ -457,6 +508,36 @@ mod tests {
             assert_eq!(attr_name(react), html);
         }
         assert!(is_boolean_attr("disabled") && !is_boolean_attr("value"));
+    }
+
+    #[test]
+    fn urls_follow_the_runtime_rule() {
+        for ok in [
+            "/a",
+            "a/b:c",
+            "https://x.y",
+            "HTTP://x",
+            "mailto:a@b",
+            "tel:1",
+            "?q=1",
+            "#x",
+            "",
+        ] {
+            assert!(safe_url(ok), "{ok}");
+        }
+        for bad in [
+            "javascript:alert(1)",
+            " JavaScript:x",
+            "java\tscript:x",
+            "java\nscript:x",
+            "data:text/html,x",
+            "vbscript:x",
+        ] {
+            assert!(!safe_url(bad), "{bad}");
+        }
+        assert!(
+            is_refused_attr("onclick") && is_refused_attr("srcdoc") && !is_refused_attr("title")
+        );
     }
 
     #[test]
