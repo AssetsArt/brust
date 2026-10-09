@@ -253,5 +253,40 @@ export function writeManifest(opts: {
       catch_all: l.catchAll,
     }
   })
+  linkNativeChunks(routes, compiled, components)
   return { version: 1, routes, components, assets: { runtime: opts.runtime }, jobs_module: 'jobs.js' }
+}
+
+/** S6 amendment (F66): the server's asset injection walks only each chain component's direct
+ * `children[]`, and an inlined native child with a client chunk but no job and no `useId` has no
+ * `instances[]` record. So every chain component gets one static entry `{ id, instances:
+ * "static", props: {} }` per chunk-bearing non-react descendant reached through the IR's
+ * `children[]` (transitively; react children render their own subtree), in depth-first IR order,
+ * once, and only when that id has no record there yet. Other records are left as they are. */
+function linkNativeChunks(routes: RouteRecord[], compiled: Map<string, Compiled>, components: Record<string, ComponentRecord>) {
+  const chainIds = new Set(routes.flatMap((r) => r.chain))
+  for (const root of chainIds) {
+    const rec = components[root]!
+    const linked = new Set(rec.children.map((ch) => ch.id))
+    const seen = new Set([root])
+    const walk = (id: string) => {
+      for (const ref of compiled.get(id)?.ir.children ?? []) {
+        const cid: string | null = ref.id
+        if (!cid || seen.has(cid) || !compiled.has(cid)) continue
+        seen.add(cid)
+        const child = components[cid]!
+        if (child.tier === 'react') continue
+        if (child.client !== null && !linked.has(cid)) {
+          // The compiler rejects a job/useId child below the first level, and a direct one has
+          // an instances[] record: a static entry with no props must never drive a job or slot.
+          if (child.jobs.length > 0 || child.use_id_slots > 0)
+            throw new BuildError('child-chunk-link', `${root}: ${cid} has a job or useId but no instances[] record`)
+          linked.add(cid)
+          rec.children.push({ id: cid, instances: 'static', props: {} })
+        }
+        walk(cid)
+      }
+    }
+    walk(root)
+  }
 }

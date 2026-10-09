@@ -10,11 +10,12 @@ const app = join(import.meta.dir, 'fixtures/app')
 const dist = join(app, 'dist')
 const pinFile = join(import.meta.dir, 'fixtures/app.expected-manifest.json')
 const shapes = join(import.meta.dir, 'fixtures/shapes')
+const childChunks = join(import.meta.dir, 'fixtures/child-chunks')
 
 // Generated `dist/jobs/*.server.ts` keep the compiler's relative imports (resolved against the
 // SOURCE dir only at bundle time): left under `test/`, they would fail `tsc`. Not kept.
 afterAll(() => {
-  for (const d of [dist, join(shapes, 'dist')]) rmSync(d, { recursive: true, force: true })
+  for (const d of [dist, join(shapes, 'dist'), join(childChunks, 'dist')]) rmSync(d, { recursive: true, force: true })
 })
 
 /** Content hashes depend on the bundler, React and runtime-dom bytes, not on the contract: the
@@ -143,4 +144,25 @@ test('cache(), a per-row react child and a client_only child map to S6 (and pass
   expect(html).toContain(`<brust-island data-id="${clock}" x-props='{}'></brust-island>`)
   expect(html).toContain(`/_brust/${m.components[clock].client}`)
   await beginDrain(1000)
+})
+
+test('every chunk-bearing native descendant of a chain component is linked once via a static children[] entry (F66)', async () => {
+  await runBuild({ appRoot: childChunks, entry: 'routes.tsx', outDir: 'dist', log: () => {} })
+  const m = JSON.parse(readFileSync(join(childChunks, 'dist/manifest.json'), 'utf8'))
+  const idOf = (p: string) => Object.keys(m.components).find((id) => id.startsWith(p))!
+  const [page, toggle, deep, counted, stat, allStatic] = ['page_', 'toggle_', 'deep_', 'counted_', 'static_', 'allStatic_'].map(idOf) as string[]
+  expect(m.routes.map((r: any) => r.chain)).toEqual([[page], [allStatic]])
+  for (const id of [toggle, deep, counted]) expect(clone(m.components[id!])).toMatchObject({ tier: 'native', client: expect.stringMatching(/^client\//) })
+  expect(m.components[stat!].client).toBeNull()
+  // Counted keeps its instances[] record (useId); Toggle (×2) and Deep (via Toggle AND Counted)
+  // get one static entry each, in IR child order; Static (no chunk) gets none.
+  expect(m.components[page!].children).toEqual([
+    { id: counted, instances: 'static', props: {} },
+    { id: toggle, instances: 'static', props: {} },
+    { id: deep, instances: 'static', props: {} },
+  ])
+  // Non-chain records keep only their instances-derived children (the server walks chain children).
+  for (const id of [toggle, deep, counted, stat]) expect(m.components[id!].children).toEqual([])
+  // An all-static chain links nothing.
+  expect(m.components[allStatic!].children).toEqual([])
 })
