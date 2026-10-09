@@ -152,6 +152,7 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
             props: props_out,
             children,
             link: None,
+            tier: crate::ir::Tier::Pending,
         },
         Tag::Member => Node::Component {
             loc,
@@ -160,6 +161,7 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
             props: props_out,
             children,
             link: None,
+            tier: crate::ir::Tier::Pending,
         },
     }
 }
@@ -258,7 +260,13 @@ fn read_children(r: &mut Reader<'_, '_>, value: &js_ast::Expr, many: bool) -> Ve
     out
 }
 
-fn is_jsx(e: &js_ast::Expr) -> bool {
+/// Reads the JSX body of a `.map` callback in any position (not only as a
+/// direct child), where a `key` belongs.
+pub fn read_list_body(r: &mut Reader<'_, '_>, e: &js_ast::Expr) -> Node {
+    read_element(r, e, true)
+}
+
+pub fn is_jsx(e: &js_ast::Expr) -> bool {
     jsx_call(e).is_some()
 }
 

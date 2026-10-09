@@ -15,7 +15,8 @@ pub struct PropDecl {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct StateDecl {
-    /// Empty when the value slot is elided (`const [, setB] = useState(1)`).
+    /// `_stN` (N = 1-based position among the state decls) when the value slot
+    /// is elided (`const [, setB] = useState(1)`).
     pub name: String,
     pub setter: Option<String>,
     pub init: Expr,
@@ -70,9 +71,24 @@ pub struct JobDecl {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ChildLink {
     pub id: u32,
+    /// The child's component id.
     pub child: String,
+    /// `_pN`: the parent member holding the props object.
     pub props_member: String,
     pub item_scoped: Vec<String>,
+    /// Every prop the parent passes, as `Server` or `ClientOnly`.
+    pub props: Vec<(String, Expr)>,
+}
+
+/// One child component used by the template (deduplicated by name).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct ChildRef {
+    pub name: String,
+    /// Component id, `None` when the child could not be compiled.
+    pub id: Option<String>,
+    /// Source path of the child module, `None` for a package import.
+    pub path: Option<String>,
+    pub tier: crate::ir::Tier,
 }
 
 /// Filled by M1b-2.

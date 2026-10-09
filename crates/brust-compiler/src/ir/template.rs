@@ -35,6 +35,8 @@ pub enum Node {
         props: Vec<(String, Expr)>,
         children: Vec<Node>,
         link: Option<u32>,
+        /// The child's tier (M1b-2 children pass); `Pending` until resolved.
+        tier: crate::ir::Tier,
     },
     Fragment(Vec<Node>),
 }

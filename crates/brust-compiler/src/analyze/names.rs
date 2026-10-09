@@ -118,6 +118,10 @@ impl<'a> NameTable<'a> {
         if let Some(prop) = self.props.get(&k) {
             return (prop.clone(), IdentKind::Prop);
         }
+        // The whole (non-destructured) props object: the root `*` (F20).
+        if self.props_ident == Some(k) {
+            return ("*".into(), IdentKind::Prop);
+        }
         let name = self.name(r);
         let kind = if self.state.contains(&k) {
             IdentKind::State
@@ -181,6 +185,19 @@ impl<'a> NameTable<'a> {
         self.symbols.get(self.key(r) as usize).is_some_and(|s| {
             s.kind == js_ast::symbol::Kind::Other
                 && s.original_name.slice().starts_with(b"Fragment")
+        })
+    }
+
+    /// `r` is a binding the parser generated for the JSX runtime (`jsx_*`,
+    /// `jsxs_*`, `Fragment_*`): never a capture or a dependency.
+    pub fn is_jsx_runtime(&self, r: js_ast::Ref) -> bool {
+        if self.imports.contains_key(&self.key(r)) {
+            return false;
+        }
+        self.symbols.get(self.key(r) as usize).is_some_and(|s| {
+            let n = s.original_name.slice();
+            s.kind == js_ast::symbol::Kind::Other
+                && (n.starts_with(b"jsx") || n.starts_with(b"Fragment"))
         })
     }
 

@@ -51,7 +51,7 @@ fn state_destructuring_variants() {
     ));
     assert_eq!(a.state.len(), 2);
     assert_eq!(a.state[0].setter, None);
-    assert_eq!(a.state[1].name, "");
+    assert_eq!(a.state[1].name, "_st2");
     assert_eq!(a.state[1].setter.as_deref(), Some("setM"));
     assert!(a.diagnostics.is_empty(), "{:?}", a.diagnostics);
     let b = ir(&format!(

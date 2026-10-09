@@ -114,7 +114,13 @@
               "kind": {
                 "Opaque": {
                   "source": "rest",
-                  "why": "spread props"
+                  "why": "spread props",
+                  "captures": [
+                    [
+                      "rest",
+                      "Prop"
+                    ]
+                  ]
                 }
               }
             }
@@ -204,7 +210,8 @@
                       }
                     }
                   ],
-                  "link": null
+                  "link": null,
+                  "tier": "Pending"
                 }
               }
             ],
@@ -270,7 +277,8 @@
             "source": null,
             "props": [],
             "children": [],
-            "link": null
+            "link": null,
+            "tier": "Pending"
           }
         },
         {
@@ -301,6 +309,7 @@
   "client_imports": [],
   "needs_worker": false,
   "cache": null,
+  "children": [],
   "diagnostics": [
     {
       "class": "Warning",

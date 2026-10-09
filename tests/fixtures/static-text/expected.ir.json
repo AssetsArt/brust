@@ -59,5 +59,6 @@
   "client_imports": [],
   "needs_worker": false,
   "cache": null,
+  "children": [],
   "diagnostics": []
 }

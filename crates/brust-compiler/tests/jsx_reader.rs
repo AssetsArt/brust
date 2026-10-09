@@ -219,3 +219,21 @@ fn imported_fragment_and_boolean_attr() {
         matches!(&kids[0], Node::Element { attrs, .. } if matches!(&attrs[0], Attr::Static { name, value } if name == "disabled" && value.is_empty()))
     );
 }
+
+/// F15: a keyed `.map` body is a list body in any position, not only as a
+/// direct child.
+#[test]
+fn keyed_map_body_outside_children_does_not_warn() {
+    for src in [
+        "export default function T({ xs }: any) { return <ul>{wrap(xs.map((x: any) => <li key={x}>{x}</li>))}</ul> }",
+        "export default function T({ xs }: any) { return <C items={xs.map((x: any) => <li key={x}/>)} /> }",
+    ] {
+        let (_, d) = tpl(src);
+        assert!(
+            d.iter().all(|d| d.rule != "key-outside-list"),
+            "{src}: {d:?}"
+        );
+    }
+    let (_, d) = tpl("export default function T() { return <ul><li key=\"a\"/></ul> }");
+    assert!(d.iter().any(|d| d.rule == "key-outside-list"), "{d:?}");
+}

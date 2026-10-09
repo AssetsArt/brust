@@ -110,10 +110,14 @@ pub enum RawKind {
     },
     /// JSX in expression position (map bodies, ternary arms).
     Jsx(Box<crate::ir::template::Node>),
-    /// Anything else; `source` is the printed JS.
+    /// Anything else; `source` is the printed JS. `captures` are the
+    /// identifiers it reads that it does not declare (like `Arrow`), so deps and
+    /// job inputs stay exact. `why == "contains-jsx"` marks JSX built outside the
+    /// template (a handler or effect body).
     Opaque {
         source: String,
         why: String,
+        captures: Vec<(String, IdentKind)>,
     },
 }
 
@@ -128,10 +132,16 @@ pub enum ArrowBody {
 pub enum Expr {
     Raw(RawExpr),
     Server(ServerExpr),
+    /// A first-paint value the precompute job computes in Bun. `inputs` are
+    /// sorted dotted prop paths. `state_dependent`: the job evaluates it with the
+    /// state seeds and the client recomputes `js`. `per_item`: the loop binding
+    /// when it sits in a `For` body (the job returns an array aligned with the list).
     Precomputed {
         slot: String,
         js: String,
         inputs: Vec<String>,
+        state_dependent: bool,
+        per_item: Option<String>,
     },
     ClientOnly {
         js: String,
