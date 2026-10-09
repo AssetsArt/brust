@@ -41,3 +41,44 @@ jobs:
       - run: bunx tsc --noEmit -p packages/runtime-dom
       - run: cd packages/runtime-dom && bun test
       - run: cd packages/runtime-dom && bun scripts/build.ts
+  # The battery and the browser harness drive the real `brustc` (built in the job).
+  battery:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with: { toolchain: nightly-2026-09-15, components: "rust-src" }
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: "1.4.2" }
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/registry
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: cargo-${{ runner.os }}-
+      - run: bun install --frozen-lockfile
+      - run: bun run battery
+      # The reports are generated: a diff means the committed ones are stale.
+      - run: git diff --exit-code docs/react-coverage.md docs/plans/m1-exit-report.md
+      # Exit criteria checked by code (also re-runs dual evaluation and the browser cases).
+      - run: bun test scripts/battery
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with: { toolchain: nightly-2026-09-15, components: "rust-src" }
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: "1.4.2" }
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/registry
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: cargo-${{ runner.os }}-
+      - run: bun install --frozen-lockfile
+      - run: bun run browser-test
