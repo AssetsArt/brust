@@ -22,7 +22,7 @@ owner: 22499151-e133-4508-b358-d7fa4d2851c3 (Detoro) · authority: in-loop · ba
 
 ## Review Focus
 
-1. **Grandchild chunk** (parent → native child → native grandchild with a handler): the grandchild's chunk is linked on the page — Task 1's fixture has three levels.
+1. **Grandchild chunk** (parent → native child → native grandchild with a handler): the grandchild's entry lands on the CHAIN component's `children[]` (the only level the server walks) and its chunk is linked — Task 1's fixture has three levels.
 2. **Static child** (no handlers, no state → no client chunk): NO entry is written (nothing to link) — Task 1 pins it.
 3. **A child that already has an `instances[]` record** (job or useId): exactly one entry, not two — Task 1 pins it.
 4. **A react child**: untouched by this lane (its link comes from the ssr job `target` / the client_only entry) — Task 1 pins that the manifest for `react-child`-style fixtures is unchanged.
@@ -33,7 +33,7 @@ owner: 22499151-e133-4508-b358-d7fa4d2851c3 (Detoro) · authority: in-loop · ba
 ### Task 1: Static entries for chunk-bearing native children
 
 **Files:**
-- Modify: `packages/brust/src/build/manifest.ts` (where `children[]` is written from IR `instances[]` and the client_only rule; add: for every `ir.children[]` entry with a non-react tier whose compiled record has `client != null` and which has no `instances[]` record, push `{ id, instances: 'static', props: {} }`; recurse through that child's own `children[]`), `packages/brust/README.md` (one line under the manifest section)
+- Modify: `packages/brust/src/build/manifest.ts` (where `children[]` is written from IR `instances[]` and the client_only rule; add: for every `ir.children[]` entry with a non-react tier whose compiled record has `client != null` and which has no `instances[]` record, push `{ id, instances: 'static', props: {} }` ON THE CHAIN COMPONENT'S record for every chunk-bearing native DESCENDANT reachable through inlining — child, grandchild, descendants of instance children — deduped and skipped when that id already has a record there; child component records keep only their own instances-derived `children[]` (lead ruling on Dew's challenge 5f0dafd5: `inject_assets` walks only a chain component's direct `children[]`, render.rs:126-135)), `packages/brust/README.md` (one line under the manifest section)
 - Create: `packages/brust/test/fixtures/child-chunks/{routes.tsx,Page.tsx,Toggle.tsx,Deep.tsx,Static.tsx}` (Page renders `<Toggle/>` (useState button) and `<Static/>` (plain markup); Toggle renders `<Deep/>` (another useState button))
 - Test: `packages/brust/test/build-manifest.test.ts` (append) and `packages/brust/test/e2e.test.ts` (append one case: the page HTML contains exactly one `<script type="module" src="/_brust/client/toggle_…">` and one for `deep_…`, none for `static_…`)
 
@@ -46,7 +46,7 @@ test('native children with a client chunk are linked via a static children[] ent
   expect(ids.some((i) => i.startsWith('toggle_'))).toBe(true)
   expect(ids.some((i) => i.startsWith('static_'))).toBe(false)            // no chunk → no entry
   const toggle = m.components[ids.find((i) => i.startsWith('toggle_'))!]
-  expect(toggle.children.some((c) => c.id.startsWith('deep_'))).toBe(true) // grandchild linked from its parent
+  expect(ids.some((i) => i.startsWith('deep_'))).toBe(true)                 // grandchild flattened onto the PAGE (chain) record
   for (const c of page.children) expect(page.children.filter((x) => x.id === c.id).length).toBe(1)
 })
 test('react-child style manifests are unchanged', async () => { /* buildFixture('app') snapshot of components[...].children equals the committed expected JSON */ })

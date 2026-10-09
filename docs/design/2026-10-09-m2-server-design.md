@@ -207,8 +207,8 @@ and never asks Bun what a route is:
   `nested-instance`, like every other nested instance (spot-check 05c677eb).
 - Every inlined NATIVE child whose component has a client chunk and no `instances[]` record of its
   own (no job, no `useId` — e.g. a `useState` toggle) is ALSO linked through a static `children[]`
-  entry `{ id, instances: "static", props: {} }` written by the build, transitively; the server's asset
-  injection already follows `children[]`. (Ruled 2026-10-09 on Mellow's m2e review, ledger F66,
+  entry `{ id, instances: "static", props: {} }` written by the build ON THE CHAIN COMPONENT'S record
+  for every such descendant (flattened: the server walks only a chain component's direct `children[]`). (Ruled 2026-10-09 on Mellow's m2e review, ledger F66,
   lane `m2c3-child-chunks`.)
 - A precompute job returns EVERY declared output slot; a slot under a false guard is `null`, and the
   server treats a missing slot as undefined with one warning (ledger F67, lane `m2a4-guarded-slots`).
