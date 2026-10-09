@@ -5,6 +5,44 @@
     "": {
       "name": "brust-v2",
     },
+    "examples/pokedex": {
+      "name": "@brust/example-pokedex",
+      "version": "0.0.0",
+      "dependencies": {
+        "@brust/core": "workspace:*",
+        "react": "^19.2.0",
+        "react-dom": "^19.2.0",
+      },
+      "devDependencies": {
+        "@types/bun": "^1.4.0",
+        "@types/react": "^19.2.0",
+        "typescript": "^5.9.0",
+      },
+    },
+    "npm/darwin-arm64": {
+      "name": "@brust/native-darwin-arm64",
+      "version": "0.0.0",
+    },
+    "npm/darwin-x64": {
+      "name": "@brust/native-darwin-x64",
+      "version": "0.0.0",
+    },
+    "npm/linux-arm64-gnu": {
+      "name": "@brust/native-linux-arm64-gnu",
+      "version": "0.0.0",
+    },
+    "npm/linux-arm64-musl": {
+      "name": "@brust/native-linux-arm64-musl",
+      "version": "0.0.0",
+    },
+    "npm/linux-x64-gnu": {
+      "name": "@brust/native-linux-x64-gnu",
+      "version": "0.0.0",
+    },
+    "npm/linux-x64-musl": {
+      "name": "@brust/native-linux-x64-musl",
+      "version": "0.0.0",
+    },
     "packages/brust": {
       "name": "@brust/core",
       "version": "0.0.0",
@@ -22,6 +60,14 @@
         "react-dom": "^19.2.0",
         "typescript": "^5.9.0",
       },
+      "optionalDependencies": {
+        "@brust/native-darwin-arm64": "workspace:*",
+        "@brust/native-darwin-x64": "workspace:*",
+        "@brust/native-linux-arm64-gnu": "workspace:*",
+        "@brust/native-linux-arm64-musl": "workspace:*",
+        "@brust/native-linux-x64-gnu": "workspace:*",
+        "@brust/native-linux-x64-musl": "workspace:*",
+      },
       "peerDependencies": {
         "react": "^19.0.0",
         "react-dom": "^19.0.0",
@@ -37,11 +83,34 @@
         "typescript": "^5.9.0",
       },
     },
+    "tests/server": {
+      "name": "@brust/server-tests",
+      "version": "0.0.0",
+      "devDependencies": {
+        "playwright": "1.64.0",
+      },
+    },
   },
   "packages": {
     "@brust/core": ["@brust/core@workspace:packages/brust"],
 
+    "@brust/example-pokedex": ["@brust/example-pokedex@workspace:examples/pokedex"],
+
+    "@brust/native-darwin-arm64": ["@brust/native-darwin-arm64@workspace:npm/darwin-arm64"],
+
+    "@brust/native-darwin-x64": ["@brust/native-darwin-x64@workspace:npm/darwin-x64"],
+
+    "@brust/native-linux-arm64-gnu": ["@brust/native-linux-arm64-gnu@workspace:npm/linux-arm64-gnu"],
+
+    "@brust/native-linux-arm64-musl": ["@brust/native-linux-arm64-musl@workspace:npm/linux-arm64-musl"],
+
+    "@brust/native-linux-x64-gnu": ["@brust/native-linux-x64-gnu@workspace:npm/linux-x64-gnu"],
+
+    "@brust/native-linux-x64-musl": ["@brust/native-linux-x64-musl@workspace:npm/linux-x64-musl"],
+
     "@brust/runtime-dom": ["@brust/runtime-dom@workspace:packages/runtime-dom"],
+
+    "@brust/server-tests": ["@brust/server-tests@workspace:tests/server"],
 
     "@emnapi/core": ["@emnapi/core@1.9.2", "", { "dependencies": { "@emnapi/wasi-threads": "1.2.1", "tslib": "^2.4.0" } }, "sha512-UC+ZhH3XtczQYfOlu3lNEkdW/p4dsJ1r/bP7H8+rhao3TTTMO1ATq/4DdIi23XuGoFY+Cz0JmCbdVl0hz9jZcA=="],
 
@@ -268,6 +337,10 @@
     "mute-stream": ["mute-stream@3.0.0", "", {}, "sha512-dkEJPVvun4FryqBmZ5KhDo0K9iDXAwn08tMLDinNdRBNPcYEDiWYysLcc6k3mjTMlbP9KyylvRpd4wFtwrT9rw=="],
 
     "obug": ["obug@3.0.0", "", {}, "sha512-5vvB5+W7ePv+p3uqxi+RcW1XAzLW0/hxt3/4X4Lc4qHudzOhmBiBwOY6DRob4WnanAEGvNcLjF+KNOufrUoEQw=="],
+
+    "playwright": ["playwright@1.64.0", "", { "dependencies": { "playwright-core": "1.64.0" }, "bin": { "playwright": "cli.js" } }, "sha512-kVzTnYFYEyQ9RGzBjNCd2+yEqWmVbxl3AHPynv3qQ6JTjv4a+kwRcnqQwIpuP3NnrnIrE/Q6wWAIAvMfIE2/Yg=="],
+
+    "playwright-core": ["playwright-core@1.64.0", "", { "bin": { "playwright-core": "cli.js" } }, "sha512-T9r+MZkTECl2+oUcZ26YgZzTrYidTsIhYYkJix+6iDOymOb1FB2RLLSOxRGnZGv5DStt+aduIVbt+E8WygXYpg=="],
 
     "react": ["react@19.3.0", "", {}, "sha512-E8LUcbtBWt20bbl2YoHfx4ZDBdxVTfOKtCZn9cDSJ4l6/nuoApcpIBcj47t2wZoVX8g2ZHuMHbiShgCR1T5Sog=="],
 

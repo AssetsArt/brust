@@ -2,10 +2,18 @@
   "name": "brust-v2",
   "private": true,
   "type": "module",
-  "workspaces": ["packages/*"],
+  "workspaces": [
+    "packages/*",
+    "examples/*",
+    "npm/*",
+    "tests/server"
+  ],
   "scripts": {
     "bun-codegen": "bun scripts/bun-codegen.ts",
     "battery": "bun scripts/battery/run.ts",
-    "browser-test": "echo '[browser] dom engine: happy-dom (Playwright is not a dependency)' && cargo build -q -p brust-compiler-cli && bun test --timeout 120000 tests/browser"
+    "browser-test": "echo '[browser] dom engine: happy-dom (Playwright is not a dependency)' && cargo build -q -p brust-compiler-cli && bun test --timeout 120000 tests/browser",
+    "server-test": "bun test --timeout 120000 tests/server/pokedex.test.ts && bun test --timeout 120000 tests/server/hydrate.chromium.test.ts",
+    "bench": "bun bench/run.ts",
+    "m2-exit": "bun scripts/m2-exit/run.ts"
   }
 }

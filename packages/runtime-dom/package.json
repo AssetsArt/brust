@@ -1,9 +1,13 @@
 {
   "name": "@brust/runtime-dom",
   "version": "0.0.0",
-  "private": true,
   "type": "module",
-  "exports": { ".": { "types": "./src/index.ts", "default": "./src/index.ts" } },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
   "scripts": {
     "test": "bun test",
     "typecheck": "bunx tsc --noEmit -p .",
@@ -15,5 +19,11 @@
     "@types/bun": "^1.4.0",
     "happy-dom": "^20.0.0",
     "typescript": "^5.9.0"
+  },
+  "files": [
+    "src"
+  ],
+  "publishConfig": {
+    "access": "public"
   }
 }

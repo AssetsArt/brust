@@ -1,0 +1,7 @@
+{
+  "name": "@brust/server-tests",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "devDependencies": { "playwright": "1.64.0" }
+}

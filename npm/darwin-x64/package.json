@@ -1,0 +1,23 @@
+{
+  "name": "@brust/native-darwin-x64",
+  "version": "0.0.0",
+  "cpu": [
+    "x64"
+  ],
+  "main": "brust.darwin-x64.node",
+  "files": [
+    "brust.darwin-x64.node"
+  ],
+  "description": "brust v2 — React components compiled to Rust-rendered templates",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AssetsArt/brust.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "os": [
+    "darwin"
+  ]
+}
