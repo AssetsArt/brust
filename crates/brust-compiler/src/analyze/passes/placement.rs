@@ -118,7 +118,7 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState) {
 
     for s in &mut ir.state {
         if let Expr::Raw(r) = &s.init {
-            let r = lazy_init(&p, r);
+            let r = lazy_init(&p, r, &ir.module_decls);
             s.init = p.painted(&r);
         }
     }
@@ -175,8 +175,8 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState) {
 
 /// `useState(init)` seeds with `init()` when `init` is a function (React's
 /// lazy initializer): a param-less expression arrow is its body; any other
-/// function is called (`(…)()`), so the job and the chunk compute the value.
-fn lazy_init(p: &Placer<'_>, r: &RawExpr) -> RawExpr {
+/// function (including a module-level `function` declaration) is called (`(…)()`), so the job and the chunk compute the value.
+fn lazy_init(p: &Placer<'_>, r: &RawExpr, module_decls: &[crate::ir::ModuleDecl]) -> RawExpr {
     if let RawKind::Arrow {
         params,
         body: crate::ir::ArrowBody::Expr(body),
@@ -186,7 +186,13 @@ fn lazy_init(p: &Placer<'_>, r: &RawExpr) -> RawExpr {
     {
         return (**body).clone();
     }
-    if p.is_function(r, 0) {
+    // F26: a module-level `function load() {…}` named as the initializer.
+    let module_fn = matches!(&r.kind, RawKind::Ident { name, kind: IdentKind::Local }
+    if module_decls.iter().any(|d| {
+        d.names == [name.as_str()]
+            && (d.source.starts_with("function ") || d.source.starts_with("async function "))
+    }));
+    if module_fn || p.is_function(r, 0) {
         return RawExpr {
             loc: r.loc,
             kind: RawKind::Call {

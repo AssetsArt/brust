@@ -620,8 +620,11 @@ impl<'a, 'c> Printer<'a, 'c> {
                         dict.join(", ")
                     ));
                 } else if html == "style" {
-                    // A style object held in a variable or prop: the same CSS rule.
-                    open.push_str(&format!(" style=\"{{{{ ({v}) | style_css | e }}}}\""));
+                    // A style object held in a variable or prop: the same CSS
+                    // rule; an undefined/null style omits the attribute (F36).
+                    open.push_str(&format!(
+                        "{{% if ({v}) | present %}} style=\"{{{{ ({v}) | style_css | e }}}}\"{{% endif %}}"
+                    ));
                 } else if is_boolean_attr(&html) {
                     open.push_str(&format!("{{% if ({v}) | truthy %}} {html}{{% endif %}}"));
                 } else if is_url_attr(&html) {

@@ -341,3 +341,36 @@ fn module_declarations_keep_their_source() {
     assert_eq!(ir.client_module_locals, ["TAX", "double"]);
     assert!(ir.structural.is_some());
 }
+
+/// F26: `useState(load)` with a module-level `function` seeds the call.
+#[test]
+fn use_state_with_a_module_function_seeds_its_call() {
+    let ir = analyze(
+        "import { useState } from 'react'\nfunction load() { return 41 + 1 }\nexport default function R() {\n  const [n, setN] = useState(load)\n  return <button onClick={() => setN(n + 1)}>{n}</button>\n}",
+    );
+    let init = match &ir.state[0].init {
+        Expr::Precomputed { js, .. } | Expr::ClientOnly { js } => js.clone(),
+        other => panic!("{other:?}"),
+    };
+    assert!(
+        init.contains("load()"),
+        "seeds the call, not the function: {init}"
+    );
+}
+
+/// F31: a spread of props cannot be expanded by the template backend.
+#[test]
+fn spread_props_make_the_component_react() {
+    for src in [
+        "export default function R(props) { return <div {...props}>x</div> }",
+        "import Child from './Child'\nexport default function R(props) { return <Child {...props} /> }",
+    ] {
+        let ir = analyze(src);
+        assert!(
+            rules(&ir).contains(&(DiagClass::Fallback, "spread-props".into())),
+            "{:?}",
+            ir.diagnostics
+        );
+        assert!(matches!(ir.tier, Tier::React { .. }), "{:?}", ir.tier);
+    }
+}
