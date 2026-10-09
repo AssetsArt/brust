@@ -5,6 +5,21 @@
     "": {
       "name": "brust-v2",
     },
+    "examples/pokedex": {
+      "name": "@brust/example-pokedex",
+      "version": "0.0.0",
+      "dependencies": {
+        "@brust/core": "workspace:*",
+        "react": "^19.2.0",
+        "react-dom": "^19.2.0",
+      },
+      "devDependencies": {
+        "@types/bun": "^1.4.0",
+        "@types/react": "^19.2.0",
+        "playwright": "1.64.0",
+        "typescript": "^5.9.0",
+      },
+    },
     "packages/brust": {
       "name": "@brust/core",
       "version": "0.0.0",
@@ -40,6 +55,8 @@
   },
   "packages": {
     "@brust/core": ["@brust/core@workspace:packages/brust"],
+
+    "@brust/example-pokedex": ["@brust/example-pokedex@workspace:examples/pokedex"],
 
     "@brust/runtime-dom": ["@brust/runtime-dom@workspace:packages/runtime-dom"],
 
@@ -268,6 +285,10 @@
     "mute-stream": ["mute-stream@3.0.0", "", {}, "sha512-dkEJPVvun4FryqBmZ5KhDo0K9iDXAwn08tMLDinNdRBNPcYEDiWYysLcc6k3mjTMlbP9KyylvRpd4wFtwrT9rw=="],
 
     "obug": ["obug@3.0.0", "", {}, "sha512-5vvB5+W7ePv+p3uqxi+RcW1XAzLW0/hxt3/4X4Lc4qHudzOhmBiBwOY6DRob4WnanAEGvNcLjF+KNOufrUoEQw=="],
+
+    "playwright": ["playwright@1.64.0", "", { "dependencies": { "playwright-core": "1.64.0" }, "bin": { "playwright": "cli.js" } }, "sha512-kVzTnYFYEyQ9RGzBjNCd2+yEqWmVbxl3AHPynv3qQ6JTjv4a+kwRcnqQwIpuP3NnrnIrE/Q6wWAIAvMfIE2/Yg=="],
+
+    "playwright-core": ["playwright-core@1.64.0", "", { "bin": { "playwright-core": "cli.js" } }, "sha512-T9r+MZkTECl2+oUcZ26YgZzTrYidTsIhYYkJix+6iDOymOb1FB2RLLSOxRGnZGv5DStt+aduIVbt+E8WygXYpg=="],
 
     "react": ["react@19.3.0", "", {}, "sha512-E8LUcbtBWt20bbl2YoHfx4ZDBdxVTfOKtCZn9cDSJ4l6/nuoApcpIBcj47t2wZoVX8g2ZHuMHbiShgCR1T5Sog=="],
 
