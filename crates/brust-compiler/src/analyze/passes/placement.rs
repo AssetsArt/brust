@@ -168,6 +168,7 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState) {
             kind: JobKind::Precompute,
             inputs: minimal_paths(inputs),
             outputs,
+            per_item: None,
         });
     }
 }

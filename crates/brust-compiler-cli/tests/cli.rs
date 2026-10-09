@@ -123,7 +123,56 @@ fn server_leak_diag_exits_1_and_children_resolve() {
 fn unknown_emit_exits_2() {
     let out = brustc()
         .arg(fixture("theme-toggle"))
-        .args(["--emit", "template"])
+        .args(["--emit", "jinja"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+}
+
+/// M1c Task 7: `--emit all --out` writes every compiled component's artifacts
+/// and lists them; single emits print one artifact.
+#[test]
+fn emit_all_writes_the_artifacts() {
+    let out_dir = std::env::temp_dir().join(format!("brustc-all-{}", std::process::id()));
+    let out = brustc()
+        .arg(fixture("parent-counter"))
+        .args(["--emit", "all", "--out"])
+        .arg(&out_dir)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let list = String::from_utf8_lossy(&out.stdout);
+    let files: Vec<&str> = list.lines().collect();
+    assert_eq!(files.len(), 4, "{list}");
+    assert!(
+        files
+            .iter()
+            .any(|f| f.ends_with(".jinja") && f.contains("counter_"))
+    );
+    assert!(
+        files
+            .iter()
+            .any(|f| f.ends_with(".client.js") && f.contains("counter_"))
+    );
+    for f in &files {
+        assert!(std::path::Path::new(f).is_file(), "{f}");
+    }
+
+    let out = brustc()
+        .arg(fixture("product-card"))
+        .args(["--emit", "client", "--runtime-import", "/rt/index.ts"])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("from \"/rt/index.ts\""), "{text}");
+
+    let out = brustc()
+        .arg(fixture("product-card"))
+        .args(["--emit", "all"])
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(2));

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/brust-compiler", "crates/brust-compiler-cli", "vendor/bun_react_compiler"]
+members = ["crates/brust-compiler", "crates/brust-compiler-cli", "crates/brust-jinja", "vendor/bun_react_compiler"]
 
 [workspace.package]
 version = "0.0.0"
@@ -25,6 +25,8 @@ thiserror = "2"
 libc     = "0.2"
 serde      = { version = "1", features = ["derive"] }
 serde_json = "1"
+minijinja  = { version = "2.21", default-features = false, features = ["builtins", "macros", "multi_template", "serde"] }
+brust-jinja = { path = "crates/brust-jinja" }
 
 # Minimal lint tables so the vendored crate's `[lints] workspace = true` resolves.
 # Copied from Bun's `[workspace.lints.rust]` entry that silences its cfg names.

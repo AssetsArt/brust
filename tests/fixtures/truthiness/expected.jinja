@@ -1,0 +1,7 @@
+{# brust v2 · input_38302085 · do not edit #}
+{% set open = false %}
+{% set n = 5 %}
+{% set list = [] %}
+<div x-data="input_38302085"><button x-on-click="_h1">t</button>{% if (open) | truthy %}<brust-if style="display:contents" x-if="_c1">a<b>bold</b></brust-if>{% else %}<!--x-if--><brust-if style="display:contents" x-if="_c1" hidden>a<b>bold</b></brust-if>{% endif %}<span x-text="_c2">{{ ("text-branch" if (open | truthy) else open) | e }}</span>{% if (list) | truthy %}<p x-if="_c3">has-list</p>{% else %}<!--x-if--><p x-if="_c3" hidden>has-list</p>{% endif %}{% set c_b7401 = 0 %}
+<button x-data="counter_b740f5a1" x-props='{{ {"start": n} | json_attr }}' x-props-bind="_p1" x-on-click="_h1" x-text="_c1">{{ ((n) + c_b7401) | e }}</button>{% set c_b7402 = 0 %}
+<button x-data="counter_b740f5a1" x-props='{{ {"start": (n * 2)} | json_attr }}' x-props-bind="_p2" x-on-click="_h1" x-text="_c1">{{ (((n * 2)) + c_b7402) | e }}</button></div>

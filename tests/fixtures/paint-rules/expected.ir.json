@@ -1,0 +1,611 @@
+{
+  "id": "input_403bf43c",
+  "source": "tests/fixtures/paint-rules/input.tsx",
+  "tier": "Native",
+  "props": [
+    {
+      "name": "size",
+      "local": "size",
+      "ts_type": null,
+      "default": {
+        "loc": 97,
+        "kind": {
+          "Lit": {
+            "Num": 3.0
+          }
+        }
+      }
+    },
+    {
+      "name": "label",
+      "local": "label",
+      "ts_type": null,
+      "default": null
+    },
+    {
+      "name": "rows",
+      "local": "rows",
+      "ts_type": null,
+      "default": null
+    }
+  ],
+  "state": [
+    {
+      "name": "on",
+      "setter": "setOn",
+      "init": {
+        "Server": {
+          "loc": 199,
+          "kind": {
+            "Lit": {
+              "Bool": false
+            }
+          }
+        }
+      }
+    }
+  ],
+  "derived": [],
+  "effects": [
+    {
+      "body": {
+        "loc": 245,
+        "kind": {
+          "Arrow": {
+            "params": [],
+            "body": {
+              "Block": {
+                "source": "() => {\n  document.title = String(on);\n}",
+                "captures_only": false
+              }
+            },
+            "captures": [
+              [
+                "document",
+                "Global"
+              ],
+              [
+                "String",
+                "Global"
+              ],
+              [
+                "on",
+                "State"
+              ]
+            ]
+          }
+        }
+      },
+      "deps": [
+        {
+          "loc": 291,
+          "kind": {
+            "Ident": {
+              "name": "on",
+              "kind": "State"
+            }
+          }
+        }
+      ],
+      "layout": false
+    }
+  ],
+  "handlers": [
+    {
+      "name": "_h1",
+      "body": {
+        "loc": 436,
+        "kind": {
+          "Arrow": {
+            "params": [],
+            "body": {
+              "Expr": {
+                "loc": 442,
+                "kind": {
+                  "Call": {
+                    "callee": {
+                      "loc": 442,
+                      "kind": {
+                        "Ident": {
+                          "name": "setOn",
+                          "kind": "Setter"
+                        }
+                      }
+                    },
+                    "args": [
+                      {
+                        "loc": 448,
+                        "kind": {
+                          "Unary": {
+                            "op": "Not",
+                            "value": {
+                              "loc": 449,
+                              "kind": {
+                                "Ident": {
+                                  "name": "on",
+                                  "kind": "State"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "captures": [
+              [
+                "setOn",
+                "Setter"
+              ],
+              [
+                "on",
+                "State"
+              ]
+            ]
+          }
+        }
+      },
+      "item_scoped": []
+    }
+  ],
+  "refs": [
+    {
+      "name": "ref",
+      "init": {
+        "ClientOnly": {
+          "js": "null"
+        }
+      }
+    }
+  ],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 311,
+      "tag": "div",
+      "attrs": [
+        {
+          "Ref": {
+            "name": "ref"
+          }
+        },
+        {
+          "Dynamic": {
+            "name": "className",
+            "value": {
+              "Server": {
+                "loc": 337,
+                "kind": {
+                  "Binary": {
+                    "op": "And",
+                    "left": {
+                      "loc": 337,
+                      "kind": {
+                        "Ident": {
+                          "name": "on",
+                          "kind": "State"
+                        }
+                      }
+                    },
+                    "right": {
+                      "loc": 343,
+                      "kind": {
+                        "Lit": {
+                          "Str": "on"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "Dynamic": {
+            "name": "style",
+            "value": {
+              "Server": {
+                "loc": 356,
+                "kind": {
+                  "Object": [
+                    [
+                      "color",
+                      {
+                        "loc": 365,
+                        "kind": {
+                          "Cond": {
+                            "test": {
+                              "loc": 365,
+                              "kind": {
+                                "Ident": {
+                                  "name": "on",
+                                  "kind": "State"
+                                }
+                              }
+                            },
+                            "yes": {
+                              "loc": 370,
+                              "kind": {
+                                "Lit": {
+                                  "Str": "red"
+                                }
+                              }
+                            },
+                            "no": {
+                              "loc": 378,
+                              "kind": {
+                                "Lit": {
+                                  "Str": "blue"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ],
+                    [
+                      "fontSize",
+                      {
+                        "loc": 396,
+                        "kind": {
+                          "Ident": {
+                            "name": "size",
+                            "kind": "Prop"
+                          }
+                        }
+                      }
+                    ],
+                    [
+                      "opacity",
+                      {
+                        "loc": 411,
+                        "kind": {
+                          "Cond": {
+                            "test": {
+                              "loc": 411,
+                              "kind": {
+                                "Ident": {
+                                  "name": "on",
+                                  "kind": "State"
+                                }
+                              }
+                            },
+                            "yes": {
+                              "loc": 416,
+                              "kind": {
+                                "Lit": {
+                                  "Num": 1.0
+                                }
+                              }
+                            },
+                            "no": {
+                              "loc": 420,
+                              "kind": {
+                                "Lit": {
+                                  "Num": 0.5
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "Event": {
+            "event": "click",
+            "handler": "_h1"
+          }
+        }
+      ],
+      "children": [
+        {
+          "Element": {
+            "loc": 461,
+            "tag": "span",
+            "attrs": [],
+            "children": [
+              {
+                "Slot": {
+                  "Server": {
+                    "loc": 468,
+                    "kind": {
+                      "Binary": {
+                        "op": "And",
+                        "left": {
+                          "loc": 468,
+                          "kind": {
+                            "Ident": {
+                              "name": "on",
+                              "kind": "State"
+                            }
+                          }
+                        },
+                        "right": {
+                          "loc": 474,
+                          "kind": {
+                            "Lit": {
+                              "Str": "Loading"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 498,
+            "tag": "b",
+            "attrs": [],
+            "children": [
+              {
+                "Slot": {
+                  "Server": {
+                    "loc": 502,
+                    "kind": {
+                      "Binary": {
+                        "op": "Mul",
+                        "left": {
+                          "loc": 502,
+                          "kind": {
+                            "Ident": {
+                              "name": "size",
+                              "kind": "Prop"
+                            }
+                          }
+                        },
+                        "right": {
+                          "loc": 509,
+                          "kind": {
+                            "Lit": {
+                              "Num": 2.0
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 522,
+            "tag": "i",
+            "attrs": [
+              {
+                "Dynamic": {
+                  "name": "title",
+                  "value": {
+                    "Server": {
+                      "loc": 532,
+                      "kind": {
+                        "Ident": {
+                          "name": "label",
+                          "kind": "Prop"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "children": [
+              {
+                "Slot": {
+                  "Server": {
+                    "loc": 540,
+                    "kind": {
+                      "Binary": {
+                        "op": "Nullish",
+                        "left": {
+                          "loc": 540,
+                          "kind": {
+                            "Ident": {
+                              "name": "label",
+                              "kind": "Prop"
+                            }
+                          }
+                        },
+                        "right": {
+                          "loc": 549,
+                          "kind": {
+                            "Lit": {
+                              "Str": "none"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 567,
+            "tag": "svg",
+            "attrs": [
+              {
+                "Static": {
+                  "name": "viewBox",
+                  "value": "0 0 10 10"
+                }
+              },
+              {
+                "Dynamic": {
+                  "name": "strokeWidth",
+                  "value": {
+                    "Server": {
+                      "loc": 605,
+                      "kind": {
+                        "Lit": {
+                          "Num": 2.0
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "children": [
+              {
+                "Element": {
+                  "loc": 608,
+                  "tag": "path",
+                  "attrs": [
+                    {
+                      "Static": {
+                        "name": "d",
+                        "value": "M0 0"
+                      }
+                    }
+                  ],
+                  "children": [],
+                  "host": false,
+                  "ref_name": null
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 638,
+            "tag": "ul",
+            "attrs": [],
+            "children": [
+              {
+                "For": {
+                  "source": {
+                    "Server": {
+                      "loc": 643,
+                      "kind": {
+                        "Ident": {
+                          "name": "rows",
+                          "kind": "Prop"
+                        }
+                      }
+                    }
+                  },
+                  "item": "r",
+                  "index": null,
+                  "key": {
+                    "Server": {
+                      "loc": 668,
+                      "kind": {
+                        "Ident": {
+                          "name": "r",
+                          "kind": "LoopBinding"
+                        }
+                      }
+                    }
+                  },
+                  "body": [
+                    {
+                      "Element": {
+                        "loc": 659,
+                        "tag": "li",
+                        "attrs": [],
+                        "children": [
+                          {
+                            "Slot": {
+                              "Server": {
+                                "loc": 672,
+                                "kind": {
+                                  "Binary": {
+                                    "op": "And",
+                                    "left": {
+                                      "loc": 672,
+                                      "kind": {
+                                        "Binary": {
+                                          "op": "Gt",
+                                          "left": {
+                                            "loc": 672,
+                                            "kind": {
+                                              "Ident": {
+                                                "name": "r",
+                                                "kind": "LoopBinding"
+                                              }
+                                            }
+                                          },
+                                          "right": {
+                                            "loc": 676,
+                                            "kind": {
+                                              "Lit": {
+                                                "Num": 1.0
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    },
+                                    "right": {
+                                      "loc": 681,
+                                      "kind": {
+                                        "Lit": {
+                                          "Str": "big"
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        ],
+                        "host": false,
+                        "ref_name": null
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": "ref"
+    }
+  },
+  "jobs": [],
+  "child_links": [],
+  "client_props": [
+    "size"
+  ],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": false,
+  "cache": null,
+  "children": [],
+  "diagnostics": []
+}

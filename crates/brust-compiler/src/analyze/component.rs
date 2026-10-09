@@ -259,7 +259,7 @@ fn read_function(
     let print = |js: Js<'_>| print_js(parsed, ast, js);
     let mut reader = Reader::new(&mut names, &print);
     let body = read_body(func, &mut reader);
-    ir.module_scope = reader.module_scope(ast);
+    (ir.module_scope, ir.module_decls) = reader.module_scope(ast);
     ir.props = body.props;
     ir.state = body.state;
     ir.derived = body.derived;

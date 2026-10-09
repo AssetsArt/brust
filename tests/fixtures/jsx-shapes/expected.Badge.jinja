@@ -1,0 +1,2 @@
+{# brust v2 · badge_120eac48 · do not edit #}
+<span{% if ("badge " ~ (tone | js_string) ~ "") | present %} class="{{ ("badge " ~ (tone | js_string) ~ "") | attr_str | e }}"{% endif %}>{{ children | e }}</span>

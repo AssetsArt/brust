@@ -113,6 +113,7 @@ fn react_child_is_an_island_with_an_ssr_job() {
             kind: JobKind::Ssr { client_only: false },
             inputs: vec!["productId".into()],
             outputs: vec![format!("_ssr_{id}")],
+            per_item: None,
         }]
     );
     assert_eq!(ir.tier, Tier::Static);

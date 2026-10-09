@@ -172,11 +172,21 @@ impl RawExpr {
     /// JS for `ctx`. `Block` arrow bodies and `Opaque` sources are printed
     /// verbatim (their identifiers keep their source names).
     pub fn to_js_in(&self, ctx: JsCtx) -> String {
+        self.to_js_with(ctx, &|_, _| None)
+    }
+
+    /// [`Self::to_js_in`] with an identifier override: `names(name, kind)`
+    /// returning `Some(js)` prints that instead (a derived computed `total()`,
+    /// a renamed seed). Applies to structured expressions only.
+    pub fn to_js_with(&self, ctx: JsCtx, names: JsNames<'_>) -> String {
         let mut out = String::new();
-        print(self, ctx, 0, &mut out);
+        print(self, ctx, names, &mut out);
         out
     }
 }
+
+/// Identifier override for [`RawExpr::to_js_with`].
+pub type JsNames<'a> = &'a dyn Fn(&str, &IdentKind) -> Option<String>;
 
 const P_SEQ: u8 = 1;
 const P_ASSIGN: u8 = 2;
@@ -235,13 +245,13 @@ fn prec(e: &RawExpr) -> u8 {
     }
 }
 
-fn wrapped(e: &RawExpr, ctx: JsCtx, required: u8, out: &mut String) {
+fn wrapped(e: &RawExpr, ctx: JsCtx, names: JsNames<'_>, required: u8, out: &mut String) {
     if prec(e) < required {
         out.push('(');
-        print(e, ctx, 0, out);
+        print(e, ctx, names, out);
         out.push(')');
     } else {
-        print(e, ctx, required, out);
+        print(e, ctx, names, out);
     }
 }
 
@@ -280,7 +290,7 @@ fn template_chunk(s: &str, out: &mut String) {
     }
 }
 
-fn print(e: &RawExpr, ctx: JsCtx, _required: u8, out: &mut String) {
+fn print(e: &RawExpr, ctx: JsCtx, names: JsNames<'_>, out: &mut String) {
     match &e.kind {
         RawKind::Lit(l) => out.push_str(&match l {
             Literal::Str(s) => js_string(s),
@@ -289,6 +299,9 @@ fn print(e: &RawExpr, ctx: JsCtx, _required: u8, out: &mut String) {
             Literal::Null => "null".into(),
             Literal::Undefined => "undefined".into(),
         }),
+        RawKind::Ident { name, kind } if names(name, kind).is_some() => {
+            out.push_str(&names(name, kind).unwrap_or_default())
+        }
         RawKind::Ident { name, kind } => match (kind, ctx) {
             (IdentKind::Prop, JsCtx::Server) if name == "*" => out.push_str("props"),
             (IdentKind::Prop, JsCtx::Client) if name == "*" => out.push_str("props()"),
@@ -317,33 +330,33 @@ fn print(e: &RawExpr, ctx: JsCtx, _required: u8, out: &mut String) {
             let num = matches!(target.kind, RawKind::Lit(Literal::Num(_)));
             if num {
                 out.push('(');
-                print(target, ctx, 0, out);
+                print(target, ctx, names, out);
                 out.push(')');
             } else {
-                wrapped(target, ctx, P_CALL, out);
+                wrapped(target, ctx, names, P_CALL, out);
             }
             out.push_str(if *optional { "?." } else { "." });
             out.push_str(name);
         }
         RawKind::Index { target, index } => {
-            wrapped(target, ctx, P_CALL, out);
+            wrapped(target, ctx, names, P_CALL, out);
             out.push('[');
-            print(index, ctx, 0, out);
+            print(index, ctx, names, out);
             out.push(']');
         }
         RawKind::Call { callee, args } => {
-            wrapped(callee, ctx, P_CALL, out);
+            wrapped(callee, ctx, names, P_CALL, out);
             out.push('(');
-            list(args, ctx, out);
+            list(args, ctx, names, out);
             out.push(')');
         }
         RawKind::Binary { op, left, right } => {
             let p = bin_prec(*op);
-            bin_side(*op, left, ctx, p, out);
+            bin_side(*op, left, ctx, names, p, out);
             out.push(' ');
             out.push_str(bin_str(*op));
             out.push(' ');
-            bin_side(*op, right, ctx, p + 1, out);
+            bin_side(*op, right, ctx, names, p + 1, out);
         }
         RawKind::Unary { op, value } => {
             out.push_str(match op {
@@ -357,25 +370,25 @@ fn print(e: &RawExpr, ctx: JsCtx, _required: u8, out: &mut String) {
                 || matches!(value.kind, RawKind::Lit(Literal::Num(n)) if n < 0.0);
             if nested {
                 out.push('(');
-                print(value, ctx, 0, out);
+                print(value, ctx, names, out);
                 out.push(')');
             } else {
-                wrapped(value, ctx, P_UNARY, out);
+                wrapped(value, ctx, names, P_UNARY, out);
             }
         }
         RawKind::Cond { test, yes, no } => {
-            wrapped(test, ctx, P_COND + 1, out);
+            wrapped(test, ctx, names, P_COND + 1, out);
             out.push_str(" ? ");
-            wrapped(yes, ctx, P_ASSIGN, out);
+            wrapped(yes, ctx, names, P_ASSIGN, out);
             out.push_str(" : ");
-            wrapped(no, ctx, P_ASSIGN, out);
+            wrapped(no, ctx, names, P_ASSIGN, out);
         }
         RawKind::Template { head, parts } => {
             out.push('`');
             template_chunk(head, out);
             for (p, tail) in parts {
                 out.push_str("${");
-                print(p, ctx, 0, out);
+                print(p, ctx, names, out);
                 out.push('}');
                 template_chunk(tail, out);
             }
@@ -383,7 +396,7 @@ fn print(e: &RawExpr, ctx: JsCtx, _required: u8, out: &mut String) {
         }
         RawKind::Array(items) => {
             out.push('[');
-            list(items, ctx, out);
+            list(items, ctx, names, out);
             out.push(']');
         }
         RawKind::Object(props) => {
@@ -396,7 +409,7 @@ fn print(e: &RawExpr, ctx: JsCtx, _required: u8, out: &mut String) {
                     out.push_str(&js_string(k));
                 }
                 out.push_str(": ");
-                wrapped(v, ctx, P_ASSIGN, out);
+                wrapped(v, ctx, names, P_ASSIGN, out);
             }
             out.push_str(if props.is_empty() { "}" } else { " }" });
         }
@@ -407,10 +420,10 @@ fn print(e: &RawExpr, ctx: JsCtx, _required: u8, out: &mut String) {
                 out.push_str(") => ");
                 if matches!(b.kind, RawKind::Object(_)) {
                     out.push('(');
-                    print(b, ctx, 0, out);
+                    print(b, ctx, names, out);
                     out.push(')');
                 } else {
-                    wrapped(b, ctx, P_ASSIGN, out);
+                    wrapped(b, ctx, names, P_ASSIGN, out);
                 }
             }
             ArrowBody::Block { source, .. } => out.push_str(source),
@@ -422,7 +435,14 @@ fn print(e: &RawExpr, ctx: JsCtx, _required: u8, out: &mut String) {
     }
 }
 
-fn bin_side(op: BinOp, side: &RawExpr, ctx: JsCtx, required: u8, out: &mut String) {
+fn bin_side(
+    op: BinOp,
+    side: &RawExpr,
+    ctx: JsCtx,
+    names: JsNames<'_>,
+    required: u8,
+    out: &mut String,
+) {
     // `??` cannot mix with `&&` / `||` without parentheses.
     let mixes = |o: BinOp| matches!(o, BinOp::And | BinOp::Or | BinOp::Nullish);
     if let RawKind::Binary { op: inner, .. } = &side.kind
@@ -431,18 +451,18 @@ fn bin_side(op: BinOp, side: &RawExpr, ctx: JsCtx, required: u8, out: &mut Strin
         && ((op == BinOp::Nullish) != (*inner == BinOp::Nullish))
     {
         out.push('(');
-        print(side, ctx, 0, out);
+        print(side, ctx, names, out);
         out.push(')');
         return;
     }
-    wrapped(side, ctx, required, out);
+    wrapped(side, ctx, names, required, out);
 }
 
-fn list(items: &[RawExpr], ctx: JsCtx, out: &mut String) {
+fn list(items: &[RawExpr], ctx: JsCtx, names: JsNames<'_>, out: &mut String) {
     for (i, a) in items.iter().enumerate() {
         if i > 0 {
             out.push_str(", ");
         }
-        wrapped(a, ctx, P_ASSIGN, out);
+        wrapped(a, ctx, names, P_ASSIGN, out);
     }
 }

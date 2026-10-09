@@ -282,7 +282,8 @@
       "outputs": [
         "_s1",
         "_s2"
-      ]
+      ],
+      "per_item": null
     }
   ],
   "child_links": [],

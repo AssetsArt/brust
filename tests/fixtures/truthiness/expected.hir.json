@@ -1,0 +1,100 @@
+{
+  "function": "T",
+  "params": 0,
+  "scopes": [
+    {
+      "id": 2,
+      "pruned": false,
+      "deps": [],
+      "decls": [
+        "t0"
+      ]
+    },
+    {
+      "id": 4,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "open",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t1",
+        "t2"
+      ]
+    },
+    {
+      "id": 8,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "list",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t4"
+      ]
+    },
+    {
+      "id": 9,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "n",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t5"
+      ]
+    },
+    {
+      "id": 10,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "t6",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t7"
+      ]
+    },
+    {
+      "id": 11,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "t1",
+          "reactive": true
+        },
+        {
+          "name": "t2",
+          "reactive": true
+        },
+        {
+          "name": "t3",
+          "reactive": true
+        },
+        {
+          "name": "t4",
+          "reactive": true
+        },
+        {
+          "name": "t5",
+          "reactive": true
+        },
+        {
+          "name": "t7",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t8"
+      ]
+    }
+  ]
+}
