@@ -180,6 +180,9 @@ and never asks Bun what a route is:
   `children[]` records exist only for inlined native/static children with their own jobs
   (IR `instances`). A react-tier component's OWN record (tier `react`, island-host template,
   own `ssr` job with `inputs: ["*"]`) is used only when it is a route chain entry (a react page).
+- An `ssr` job record also carries `"target": "<react component id>"` (the component to render;
+  for a react child that is the child's id while the job sits in the parent's `jobs[]`). The server
+  passes it through unchanged as `JobCall.target`; the worker calls `jobs[target].ssr(inputs)`.
 - `"*"` in `inputs` means ALL of the component's props: for a chain entry the loader context,
   for a child instance its `child_props`. The job key hashes that whole object.
 - Every component's precompute/ssr results and `_props` (= the component's props object) live in
