@@ -461,8 +461,8 @@ Lead ruling 2026-10-09 (recorded in spec S6 amendments): the four contract notes
   }
   /// S9: `<script type="module" src="/_brust/<p>">` for runtime, each `client` of the chain + inlined children (dedup, chain order), then `react` + each react child chunk. No tags when every component in the chain (and its children) is `static`. Inserted before the last `</body>`, else appended.
   pub fn inject_assets(html: String, chain: &[String], m: &Manifest) -> String;
-  /// S7 step 6 / F39: `brust-<routeId>-<instance>-<n>` for n in 1..=use_id_slots; instance = component id for chain entries, `<childId>_<k>` for static child instances, `<childId>_<k>-<row>` for per-row instances.
-  pub fn use_ids(route_id: &str, instance: &str, slots: u32) -> Vec<(String, String)>;   // [("_id1","brust-r6-idsPage_i9-1"), ...]
+  /// S7 step 6 / F39: `brust-<routeId>-<instance>-<n>` for n in 0..use_id_slots (context keys `_id0`..`_id{slots-1}`, 0-based — lead ruling on Mellow's challenge a76cefb2; the id VALUE suffix may stay 1-based); instance = component id for chain entries, `<childId>_<k>` for static child instances, `<childId>_<k>-<row>` for per-row instances.
+  pub fn use_ids(route_id: &str, instance: &str, slots: u32) -> Vec<(String, String)>;   // [("_id0","brust-r6-idsPage_i9-1"), ...]
   ```
 - [ ] Tests first (`tests/render.rs`), using `Manifest::load(fx())` + `Renderer::from_templates(&l.templates)`:
   `outlet_composes_leaf_first` → `render_chain(["appLayout_a1","homePage_b2"], json!({}))` equals `<!doctype html><html><head><title>fx</title></head><body><nav>fx</nav><main><h1>Home</h1></main></body></html>`;
@@ -472,7 +472,7 @@ Lead ruling 2026-10-09 (recorded in spec S6 amendments): the four contract notes
   `inject_assets_native_chain_adds_runtime_then_chunk_before_body_close` → `["appLayout_a1","detailPage_c3"]` ends with `<script type="module" src="/_brust/client/runtime-8b1c.js"></script><script type="module" src="/_brust/client/detailPage_c3-1a2b3c.js"></script></body></html>` and contains no `react-19.2.0`;
   `inject_assets_react_child_adds_react_bundle_and_island_chunk` → `["appLayout_a1","teamPage_g7"]` contains, in order, runtime, `teamPage_g7-4d5e6f.js`, `react-19.2.0.js`, `react-teamBuilder_h8.js`;
   `inject_assets_without_body_appends` → `inject_assets("<p>x</p>".into(), …native…)` ends with `</script>`;
-  `use_ids_are_stable_and_distinct` → `use_ids("r6","idsPage_i9",2) == [("_id1","brust-r6-idsPage_i9-1"),("_id2","brust-r6-idsPage_i9-2")]` on two calls;
+  `use_ids_are_stable_and_distinct` → `use_ids("r6","idsPage_i9",2) == [("_id0","brust-r6-idsPage_i9-1"),("_id1","brust-r6-idsPage_i9-2")]` on two calls;
   `render_error_names_template_and_line` → a tmp template `{{ 1 +* }}`: `Err(Render{name,msg})` with `msg.contains("line")`.
 - [ ] Implement `render_chain` and `inject_assets`; `render` returns `RenderError::Render{ msg: format!("{e:#}") }` so minijinja's line number reaches the server log (spec §7):
   ```rust
