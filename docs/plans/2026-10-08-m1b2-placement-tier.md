@@ -187,6 +187,16 @@ Rules (spec §3):
 
 ---
 
+## Rulings carried over from the M1b-1 handoff (lead, 2026-10-09)
+
+Dew's READY note on `m1b1-ir-readers` listed five open points. Rulings, binding for this plan:
+
+1. **JSX inside `Opaque` / `ArrowBody::Block` sources** (handler, effect or block-arrow bodies that build JSX) is not a native pattern. Task 7 adds the check: the expr reader's `Opaque`/`Block` printer already knows the lowered jsx runtime symbol (NameTable); when the printed subtree contains a call to it, set `why = "contains-jsx"` on the `Opaque` (or `captures_only = false` plus a `why`-style marker is NOT enough — the marker must be on the `Opaque`). Tier decision: any `Opaque { why: "contains-jsx" }` reachable from handlers/effects/state inits → `Tier::React` with `Diagnostic::info("jsx-outside-render", "<handler|effect> at line N builds JSX; the component renders as a React island", loc, "return data and render it in the component body")`. M1c therefore never prints a chunk containing generated `jsx_*` calls; it may `debug_assert!` on that.
+2. **`component_id` from the file stem** (`input_<hash>`) is as specified in §5; fixtures keep it. No change.
+3. **Handlers named `_hN` directly by the JSX reader** and `read_expr` taking a printer callback are accepted implementation details; this plan's `deps_of`/`to_js_in` consume the IR as merged, not the plan's earlier sketch.
+4. **Imports read from `SImport` statements** (not `ast.named_imports`) is the correct source; Task 4's `client_imports` uses the NameTable, never `named_imports`.
+5. **`window` / `node:fs` fixtures carry no diagnostic after M1b-1** — expected; Task 4 (server-only-in-client) and Task 7 (browser-global → client-only island) add them and their goldens change in this lane.
+
 ## Self-review notes
 
 - **Spec coverage:** §3.2 rules 1 (browser → client-only; request-state → Error), 2 (server-only in client → Error), 3 (`client_props`), 4 (links / island-prop Error), 5 (list-key from M1b-1) → Tasks 1, 4, 5; §3.3 jobs with exact inputs → Task 3/5; §3.4 `cache()` → Task 6; §3.5 `needs_worker` → Task 7; §6.2 → Task 2; §6.4 per-item slots and seed order → Task 3; §7.4 link shape → Task 5; §8.1 classes and ordering → Task 7.
