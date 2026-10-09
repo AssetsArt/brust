@@ -94,6 +94,11 @@ pub struct CacheStats {
 /// tag → (key → generation of the insert that indexed it).
 pub(crate) type TagIndex<K> = Mutex<HashMap<String, HashMap<K, u64>>>;
 
+/// Test-only hook run between an insert's index write and its moka insert,
+/// to drive the insert/invalidate interleaving deterministically.
+#[cfg(test)]
+pub(crate) type MidInsertHook = Mutex<Option<Box<dyn Fn() + Send + Sync>>>;
+
 /// Index `key` under `tags` at `generation` (overwrites an older generation).
 pub(crate) fn index_tags<K: Clone + Eq + std::hash::Hash>(
     index: &TagIndex<K>,
@@ -161,10 +166,16 @@ pub struct L1Cache {
     /// or rejected insert), bounding the index by the live entry set. Shared
     /// `Arc` because the listener closure needs its own handle.
     tag_index: Arc<TagIndex<CacheKey>>,
+    /// Insert/invalidate gate (see `insert`): inserts hold it shared across
+    /// "index tags, then moka insert"; tag invalidation and `clear` hold it
+    /// exclusively. Never held by the eviction listener.
+    gate: parking_lot::RwLock<()>,
     next_generation: AtomicU64,
     hits: AtomicU64,
     misses: AtomicU64,
     capacity: u64,
+    #[cfg(test)]
+    pub(crate) mid_insert: MidInsertHook,
 }
 
 impl L1Cache {
@@ -197,10 +208,13 @@ impl L1Cache {
         Self {
             inner,
             tag_index,
+            gate: parking_lot::RwLock::new(()),
             next_generation: AtomicU64::new(0),
             hits: AtomicU64::new(0),
             misses: AtomicU64::new(0),
             capacity,
+            #[cfg(test)]
+            mid_insert: Mutex::new(None),
         }
     }
 
@@ -226,13 +240,23 @@ impl L1Cache {
         ttl: Duration,
         tags: &[String],
     ) {
-        // Ordering is load-bearing: index the tags BEFORE the moka insert. The
-        // reverse (insert then index) could leave a live, un-indexed entry if a
-        // panic hit between the two. With this order the worst case is a benign
-        // lost-invalidation (a concurrent invalidate_tags racing the insert just
-        // misses the not-yet-present key — the entry then lazy-expires via TTL).
+        // Ordering is load-bearing: index the tags BEFORE the moka insert (the
+        // reverse could leave a live, un-indexed entry if a panic hit between
+        // the two). Index-then-insert alone still raced `invalidate_tags`: an
+        // invalidation that took the index between the two steps found the
+        // key but removed nothing, then the insert landed live and un-indexed
+        // (immune to every later tag invalidation until ttl/capacity). The
+        // shared `gate` makes the two steps atomic w.r.t. tag invalidation
+        // (which holds it exclusively), at no cost between inserts. The
+        // eviction listener never takes the gate, so moka running it inline
+        // here cannot deadlock.
+        let _gate = self.gate.read();
         let generation = self.next_generation.fetch_add(1, Ordering::Relaxed);
         index_tags(&self.tag_index, &key, tags, generation);
+        #[cfg(test)]
+        if let Some(h) = &*self.mid_insert.lock() {
+            h();
+        }
         self.inner.insert(
             key,
             Slot {
@@ -292,11 +316,15 @@ impl L1Cache {
     /// Mutex across a large tag group would block every concurrent tagged
     /// `insert`. moka invalidation is eventual, so we drive `run_pending_tasks`.
     pub fn invalidate_tags(&self, tags: &[String]) -> usize {
-        let keys = take_tagged(&self.tag_index, tags);
-        let n = keys.len();
-        for k in keys {
-            self.inner.invalidate(&k);
-        }
+        let n = {
+            let _gate = self.gate.write(); // no insert is mid-way (see `insert`)
+            let keys = take_tagged(&self.tag_index, tags);
+            let n = keys.len();
+            for k in keys {
+                self.inner.invalidate(&k);
+            }
+            n
+        };
         self.inner.run_pending_tasks();
         n
     }
@@ -312,9 +340,10 @@ impl L1Cache {
         // the wipe self-heals: its entry is either wiped by invalidate_all (and
         // the listener prunes its index entry) or lands fresh after.
         {
+            let _gate = self.gate.write();
             self.tag_index.lock().clear();
+            self.inner.invalidate_all();
         }
-        self.inner.invalidate_all();
         self.inner.run_pending_tasks();
         n
     }
@@ -665,6 +694,38 @@ mod tests {
             c.get(&k).map(|e| e.ctx).is_none(),
             "tag invalidation reaches the new entry"
         );
+        assert_eq!(c.tag_index_size(), 0);
+    }
+
+    #[test]
+    fn invalidate_between_index_and_insert_is_not_lost() {
+        // Deterministic interleaving: the insert thread pauses after writing the
+        // tag index and before the moka insert; the invalidation starts in that
+        // window. Ungated it ran there (taking the index, removing nothing) and
+        // the insert then landed live and un-indexed; gated it waits for the
+        // insert and removes the entry.
+        let c = Arc::new(L1Cache::new());
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        *c.mid_insert.lock() = Some(Box::new(move || {
+            tx.send(()).unwrap();
+            std::thread::sleep(Duration::from_millis(50));
+        }));
+        let k = key("GET", "/race", "");
+        let (c2, k2) = (Arc::clone(&c), k.clone());
+        let ins = std::thread::spawn(move || {
+            c2.insert(
+                k2,
+                Arc::new(json!(1)),
+                Arc::from([]),
+                Duration::from_secs(60),
+                &["t".to_string()],
+            )
+        });
+        rx.recv().unwrap();
+        c.invalidate_tags(&["t".to_string()]);
+        ins.join().unwrap();
+        assert!(c.get(&k).is_none(), "invalidated entry must not survive");
+        c.run_pending();
         assert_eq!(c.tag_index_size(), 0);
     }
 }

@@ -213,8 +213,14 @@ pub(crate) fn error_400() -> Response<ResponseBody> {
 pub(crate) fn error_404() -> Response<ResponseBody> {
     resp(404, "text/plain", &[], b"not found".to_vec())
 }
+/// RFC 9110 §15.5.6: a 405 lists the methods the target supports.
 pub(crate) fn error_405() -> Response<ResponseBody> {
-    resp(405, "text/plain", &[], b"method not allowed".to_vec())
+    resp(
+        405,
+        "text/plain",
+        &[("Allow".into(), "GET, HEAD".into())],
+        b"method not allowed".to_vec(),
+    )
 }
 // kept for parity with body.rs @ d04718f
 #[allow(dead_code)]

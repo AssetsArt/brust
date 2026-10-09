@@ -15,7 +15,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
-use crate::cache::job_cache::{JobCache, JobKey};
+use crate::cache::job_cache::JobCache;
 pub use crate::cache::l1::CacheStats;
 use crate::cache::l1::L1Cache;
 use crate::dispatch::RenderDispatch;
@@ -186,14 +186,15 @@ impl Server {
         *self.local_addr.get().expect("local_addr is set by start")
     }
 
-    /// `key` → the job entry `"k:"+key`; `tags` → both caches; `path` (+
+    /// `key` → every job entry stored under that `cache({key})` value, in any
+    /// component (entries are namespaced `k:<componentId>/<jobId>/<key>`, found
+    /// through the job cache's user-key index); `tags` → both caches; `path` (+
     /// `method`, default `GET`) → L1 entries for that path, any query/prefix.
+    /// L1 pages built from an invalidated job value are NOT evicted by `key`.
     pub fn invalidate(&self, args: InvalidateArgs) -> InvalidateResult {
         let mut r = InvalidateResult::default();
-        if let Some(k) = &args.key
-            && self.jobs.invalidate_key(&JobKey(format!("k:{k}")))
-        {
-            r.job_removed += 1;
+        if let Some(k) = &args.key {
+            r.job_removed += self.jobs.invalidate_user_key(k);
         }
         if !args.tags.is_empty() {
             r.l1_removed += self.l1.invalidate_tags(&args.tags);

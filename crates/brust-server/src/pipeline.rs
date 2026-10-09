@@ -133,7 +133,13 @@ pub(crate) async fn handle(req: Request<Incoming>, s: Arc<Server>) -> Response<R
         "request"
     );
     if head {
-        let (p, _) = resp.into_parts();
+        // RFC 9110 §9.3.2: a HEAD carries the GET's Content-Length. Page bodies
+        // are fully buffered, so the size hint is exact.
+        let len = http_body::Body::size_hint(resp.body()).exact();
+        let (mut p, _) = resp.into_parts();
+        if let Some(n) = len {
+            p.headers.insert(http::header::CONTENT_LENGTH, n.into());
+        }
         return Response::from_parts(p, empty_body());
     }
     resp
@@ -174,15 +180,34 @@ fn safe_rel(rel: &str, root: StaticRoot) -> Option<&str> {
     Some(rel)
 }
 
-/// `<stem>` ends in `-<hex6+>` (lowercase): a content-hashed file name.
+/// `<stem>` ends in `-<hex6+>` (lowercase) holding at least one digit: a
+/// content-hashed file name. The digit rule keeps English words spelt in hex
+/// letters (`brand-facade.css`, `-decade`) from being marked immutable.
 fn is_hashed(file: &std::path::Path) -> bool {
     let Some(stem) = file.file_stem().and_then(|s| s.to_str()) else {
         return false;
     };
     match stem.rsplit_once('-') {
-        Some((_, h)) => h.len() >= 6 && h.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')),
+        Some((_, h)) => {
+            h.len() >= 6
+                && h.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+                && h.bytes().any(|b| b.is_ascii_digit())
+        }
         None => false,
     }
+}
+
+/// `file` resolved through every symlink still lies under `root` (resolved
+/// too: `dist/` itself may sit behind a symlink). A symlink under `dist/` that
+/// points outside the served directory, or a missing file, is `false`.
+async fn inside_root(root: &std::path::Path, file: &std::path::Path) -> bool {
+    let (Ok(root), Ok(file)) = (
+        tokio::fs::canonicalize(root).await,
+        tokio::fs::canonicalize(file).await,
+    ) else {
+        return false;
+    };
+    file.starts_with(&root) && file != root
 }
 
 async fn static_file(
@@ -196,10 +221,19 @@ async fn static_file(
     let Some(rel) = safe_rel(&decoded, root) else {
         return body::error_404();
     };
+    // `/_brust/` only serves `client/<file>` (see `safe_rel`), so its root is
+    // `dist/client`.
+    let served = match root {
+        StaticRoot::Brust => s.dist_dir.join("client"),
+        StaticRoot::Public => s.dist_dir.join("public"),
+    };
     let file = match root {
         StaticRoot::Brust => s.dist_dir.join(rel),
-        StaticRoot::Public => s.dist_dir.join("public").join(rel),
+        StaticRoot::Public => served.join(rel),
     };
+    if !inside_root(&served, &file).await {
+        return body::error_404();
+    }
     let Ok(bytes) = tokio::fs::read(&file).await else {
         return body::error_404();
     };
@@ -218,6 +252,10 @@ async fn static_file(
             http::HeaderValue::from_static(IMMUTABLE),
         );
     }
+    resp.headers_mut().insert(
+        http::header::X_CONTENT_TYPE_OPTIONS,
+        http::HeaderValue::from_static("nosniff"),
+    );
     resp
 }
 
@@ -314,6 +352,18 @@ async fn page(
                 cacheable = false;
             }
             Ok(LoaderResponse::Verdict(Verdict::Redirect { location, status })) => {
+                // A Location `resp` would silently drop (CR/LF, non-visible
+                // ASCII) must not become a redirect without a target.
+                if http::HeaderValue::from_str(&location).is_err() {
+                    tracing::error!(route = %route.id, ?location, "redirect location is not a valid header value");
+                    return body::error_500();
+                }
+                let status = if (300..=308).contains(&status) {
+                    status
+                } else {
+                    tracing::warn!(route = %route.id, status, "redirect status outside 300-308; using 302");
+                    302
+                };
                 return body::resp(
                     status,
                     "text/plain",
@@ -322,6 +372,10 @@ async fn page(
                 );
             }
             Ok(LoaderResponse::Verdict(Verdict::HttpError { status, body })) => {
+                if !(400..=599).contains(&status) {
+                    tracing::error!(route = %route.id, status, "httpError status outside 400-599");
+                    return body::error_500();
+                }
                 return body::resp(status, "text/plain", &[], body.into_bytes());
             }
             Ok(LoaderResponse::Error { error }) => {
@@ -348,7 +402,23 @@ async fn page(
         }
     };
     let mut values: Vec<Option<Arc<Value>>> = plans.iter().map(|p| s.jobs.get(&p.key)).collect();
-    let misses: Vec<usize> = (0..plans.len()).filter(|&i| values[i].is_none()).collect();
+    // Plans sharing a JobKey (e.g. two identical rows) are one computation:
+    // `owner[i]` is the first missing plan with plan i's key; only owners are
+    // sent to the worker, and each value is fanned out to every plan sharing it.
+    let mut owner: Vec<usize> = (0..plans.len()).collect();
+    let mut misses: Vec<usize> = Vec::new();
+    {
+        let mut first: HashMap<&JobKey, usize> = HashMap::new();
+        for i in (0..plans.len()).filter(|&i| values[i].is_none()) {
+            match first.get(&plans[i].key) {
+                Some(&o) => owner[i] = o,
+                None => {
+                    first.insert(&plans[i].key, i);
+                    misses.push(i);
+                }
+            }
+        }
+    }
     if !misses.is_empty() {
         let req = JobsRequest {
             jobs: misses
@@ -409,8 +479,19 @@ async fn page(
         }
         for (i, v) in fresh {
             let p = &plans[i];
-            s.jobs.insert(p.key.clone(), Arc::clone(&v), p.ttl, &p.tags);
+            s.jobs.insert(
+                p.key.clone(),
+                Arc::clone(&v),
+                p.ttl,
+                &p.tags,
+                p.user_key.as_deref(),
+            );
             values[i] = Some(v);
+        }
+        for i in 0..plans.len() {
+            if values[i].is_none() {
+                values[i] = values[owner[i]].clone();
+            }
         }
     }
 
@@ -455,8 +536,9 @@ fn render_failed(route: &RouteRecord, e: &RenderError) -> Response<ResponseBody>
     body::error_500()
 }
 
-/// Leaf-first render with each chain component's overlay (its `_idN` and its
-/// own child-instance slots from `ctx["__children"][<id>]`), asset tags,
+/// Leaf-first render with each chain component's overlay (its `_idN`, its
+/// own child-instance slots from `ctx["__children"][<id>]`, its own job
+/// results from `ctx["__own"][<id>]`, and `_props`), asset tags,
 /// optional gzip. Shared by the HIT and MISS paths so a HIT renders
 /// byte-identically.
 fn finish(
@@ -469,17 +551,33 @@ fn finish(
     cache_hdr: Option<&str>,
 ) -> Result<Response<ResponseBody>, RenderError> {
     let children = ctx.get(CHILDREN_KEY);
+    let own_all = ctx.get(OWN_KEY);
+    // `_props` (the island host's `x-props`): the merged loader context — params,
+    // path, loader data — without the server's per-component maps. Built once,
+    // shared by every chain component (minijinja `Value`s are `Arc`-backed).
+    let props = minijinja::Value::from_serialize(
+        ctx.as_object()
+            .map(|o| {
+                o.iter()
+                    .filter(|(k, _)| k.as_str() != CHILDREN_KEY && k.as_str() != OWN_KEY)
+                    .collect::<BTreeMap<_, _>>()
+            })
+            .unwrap_or_default(),
+    );
     let overlay = |id: &str| {
         let slots = s.manifest.components.get(id).map_or(0, |c| c.use_id_slots);
         let mut out: Vec<(String, minijinja::Value)> = use_ids(&route.id, id, slots)
             .into_iter()
             .map(|(k, v)| (k, minijinja::Value::from(v)))
             .collect();
-        if let Some(Value::Object(own)) = children.and_then(|c| c.get(id)) {
-            for (k, v) in own {
-                out.push((k.clone(), minijinja::Value::from_serialize(v)));
+        for map in [children, own_all] {
+            if let Some(Value::Object(own)) = map.and_then(|c| c.get(id)) {
+                for (k, v) in own {
+                    out.push((k.clone(), minijinja::Value::from_serialize(v)));
+                }
             }
         }
+        out.push((PROPS_KEY.into(), props.clone()));
         out
     };
     let html = s.renderer.render_chain(&route.chain, ctx, &overlay)?;
@@ -510,11 +608,22 @@ fn finish(
 /// parent's map only while rendering that parent.
 const CHILDREN_KEY: &str = "__children";
 
-/// Context slots the server owns: templates print them with `| safe`
-/// (`__outlet`, `_ssr_*`) or index child results through them (`__<id>_<k>`,
-/// `__children`).
+/// Reserved ctx key holding each chain component's own job results:
+/// `ctx["__own"][<componentId>]` = its precompute keys (`_s1`, …, numbered per
+/// component, so a layout's `_s1` and its page's `_s1` differ) and its ssr
+/// HTML at `_ssr_<componentId>`. Overlaid only while rendering that component.
+const OWN_KEY: &str = "__own";
+
+/// Overlay key: the merged loader context, printed by island hosts as
+/// `x-props='{{ _props | json_attr }}'`.
+const PROPS_KEY: &str = "_props";
+
+/// Context names the server owns: templates print them with `| safe`
+/// (`__outlet`, `_ssr_*`) or read per-component maps through them
+/// (`__children`, `__own`, `_props`). Any other name, `__typename` included,
+/// is the loader's.
 fn is_server_slot(k: &str) -> bool {
-    k.starts_with("__") || k.starts_with("_ssr_")
+    matches!(k, "__outlet" | CHILDREN_KEY | OWN_KEY | PROPS_KEY) || k.starts_with("_ssr_")
 }
 
 /// Merge loader `data` keys over `ctx` (data wins), dropping server slots.
@@ -558,10 +667,10 @@ fn ci_collision(pairs: &[(&str, &str)]) -> bool {
 
 /// Carried from `server/mod.rs:710-808`: assemble the borrowed request data,
 /// evaluate `bypass` then `prefix`, build the L1 key. v2 additions (the key
-/// must see what the loader sees): header/cookie/query lists collapse to the
-/// last value per name; a case-insensitive name collision, or a query name
-/// repeated after decoding (`sort_query` would merge orders the loader reads
-/// differently), bypasses L1.
+/// must see what the loader sees): header/cookie lists collapse to the last
+/// value per name; query names/values are the decoded `req.search`; a
+/// case-insensitive name collision, or a query name repeated after decoding
+/// (`sort_query` would merge orders the loader reads differently), bypasses L1.
 fn l1_decision(
     s: &Server,
     route_id: u32,
@@ -610,21 +719,18 @@ fn l1_decision(
         }
         header_pairs.push((n, v));
     }
-    // Query pairs (undecoded key=value; mirrors the L1 sorted_query).
-    let raw_query = full.split_once('?').map(|(_, q)| q).unwrap_or("");
-    let mut query_pairs: Vec<(&str, &str)> = Vec::new();
-    for pair in raw_query.split('&') {
-        if pair.is_empty() {
-            continue;
-        }
-        match pair.split_once('=') {
-            Some((k, v)) => query_pairs.push((k, v)),
-            None => query_pairs.push((pair, "")),
-        }
-    }
+    // Query pairs DECODED, exactly the loader's `req.search` (the envelope's
+    // list): `?pre%76iew=1` is `preview`, `mode=dr%61ft` is `draft`. Names are
+    // unique here (a repeat bypassed above). The CacheKey keeps the raw sorted
+    // query: distinct raw spellings only split entries, never merge them.
+    let query_pairs: Vec<(&str, &str)> = envelope
+        .req
+        .search
+        .iter()
+        .map(|(k, v)| (k.as_ref(), v.as_ref()))
+        .collect();
     let header_pairs = last_wins(&header_pairs);
     let cookie_pairs = last_wins(&cookie_pairs);
-    let query_pairs = last_wins(&query_pairs);
     if ci_collision(&header_pairs) || ci_collision(&cookie_pairs) || ci_collision(&query_pairs) {
         return (None, CacheOutcome::Bypass);
     }
@@ -694,24 +800,33 @@ pub(crate) struct JobPlan {
     pub inputs: Value,
     pub ttl: Option<Duration>,
     pub tags: Vec<String>,
+    /// The evaluated `cache({key})` value (string raw, else canonical JSON):
+    /// what `invalidate({key})` addresses.
+    pub user_key: Option<String>,
     pub target: Target,
 }
 
-/// Job cache key: `cache.key` evaluated against the props when set (a string
-/// → `"k:"+raw`, any other non-null value → `"k:"+canonical JSON`); unset or
-/// `null` → the hashed inputs key.
-fn plan_key(cid: &str, j: &JobRecord, props: &Value, projected: &Value) -> Result<JobKey, String> {
+/// Job cache key: `cache.key` evaluated against the props when set → the user
+/// key (a string raw, any other non-null value canonical JSON), namespaced as
+/// `"k:<componentId>/<jobId>/<user key>"` so two components keyed on one value
+/// never share an entry; unset or `null` → the hashed inputs key.
+fn plan_key(
+    cid: &str,
+    j: &JobRecord,
+    props: &Value,
+    projected: &Value,
+) -> Result<(JobKey, Option<String>), String> {
     if let Some(expr) = &j.cache.key {
-        match Path::parse(expr)?.get(props, None) {
-            Value::Null => {}
-            Value::String(s) => return Ok(JobKey(format!("k:{s}"))),
-            v => {
-                let canon = String::from_utf8(inputs::canonical(v)).expect("JSON is UTF-8");
-                return Ok(JobKey(format!("k:{canon}")));
-            }
+        let user = match Path::parse(expr)?.get(props, None) {
+            Value::Null => None,
+            Value::String(s) => Some(s.clone()),
+            v => Some(String::from_utf8(inputs::canonical(v)).expect("JSON is UTF-8")),
+        };
+        if let Some(u) = user {
+            return Ok((JobKey(format!("k:{cid}/{}/{u}", j.id)), Some(u)));
         }
     }
-    Ok(JobKey(inputs::job_key(cid, &j.id, projected)))
+    Ok((JobKey(inputs::job_key(cid, &j.id, projected)), None))
 }
 
 /// `call_id` = `<instance>/<jobId>[/<row>]`, where `instance` is the
@@ -728,7 +843,7 @@ fn plan_one(
     row: Option<usize>,
 ) -> Result<(), String> {
     let projected = inputs::project(props, &j.inputs, None)?;
-    let key = plan_key(cid, j, props, &projected)?;
+    let (key, user_key) = plan_key(cid, j, props, &projected)?;
     let call_id = match row {
         Some(r) => format!("{instance}/{}/{r}", j.id),
         None => format!("{instance}/{}", j.id),
@@ -742,6 +857,7 @@ fn plan_one(
         inputs: projected,
         ttl: j.cache.ttl_seconds.map(Duration::from_secs),
         tags: j.cache.tags.clone(),
+        user_key,
         target,
     });
     Ok(())
@@ -824,18 +940,23 @@ pub(crate) fn collect_jobs(
 
 /// The parent's child-slot map `ctx["__children"][<parent>]`, created on demand.
 fn parent_slots<'a>(ctx: &'a mut Map<String, Value>, parent: &str) -> &'a mut Map<String, Value> {
-    let all = ctx
-        .entry(CHILDREN_KEY)
-        .or_insert_with(|| Value::Object(Map::new()));
+    component_map(ctx, CHILDREN_KEY, parent)
+}
+
+/// `ctx[root][<id>]` as an object, created (or reset from a non-object) on demand.
+fn component_map<'a>(
+    ctx: &'a mut Map<String, Value>,
+    root: &str,
+    id: &str,
+) -> &'a mut Map<String, Value> {
+    let all = ctx.entry(root).or_insert_with(|| Value::Object(Map::new()));
     if !all.is_object() {
         *all = Value::Object(Map::new());
     }
     let Value::Object(all) = all else {
         unreachable!()
     };
-    let own = all
-        .entry(parent)
-        .or_insert_with(|| Value::Object(Map::new()));
+    let own = all.entry(id).or_insert_with(|| Value::Object(Map::new()));
     if !own.is_object() {
         *own = Value::Object(Map::new());
     }
@@ -893,7 +1014,8 @@ pub(crate) fn seed_child_slots(
 }
 
 /// Writes one job's value into the context slot its target names (S7 step 5).
-/// Child values land in the parent's map (`ctx["__children"][<parent>]`); a
+/// Chain values land in the component's own map (`ctx["__own"][<id>]`); child
+/// values land in the parent's map (`ctx["__children"][<parent>]`); a
 /// static child's ssr HTML is also written to that map's `_ssr_<id>`, which
 /// the parent template's island host prints (overlaid while rendering it).
 pub(crate) fn merge_result(ctx: &mut Map<String, Value>, plan: &JobPlan, value: &Value) {
@@ -905,12 +1027,15 @@ pub(crate) fn merge_result(ctx: &mut Map<String, Value>, plan: &JobPlan, value: 
         }
     }
     match &plan.target {
-        Target::Chain { component } => match plan.kind {
-            JobKind::Precompute => spread(ctx, value),
-            JobKind::Ssr => {
-                ctx.insert(format!("_ssr_{component}"), value.clone());
+        Target::Chain { component } => {
+            let own = component_map(ctx, OWN_KEY, component);
+            match plan.kind {
+                JobKind::Precompute => spread(own, value),
+                JobKind::Ssr => {
+                    own.insert(format!("_ssr_{component}"), value.clone());
+                }
             }
-        },
+        }
         Target::Child {
             parent,
             component,
@@ -1029,12 +1154,18 @@ mod tests {
         };
         // A string value: raw.
         set(&mut m, Some("move.name"));
-        assert_eq!(key_of(&m), ["k:tackle", "k:growl"]);
+        assert_eq!(
+            key_of(&m),
+            ["k:moveCard_d4/j0/tackle", "k:moveCard_d4/j0/growl"]
+        );
         // Any other non-null value: canonical JSON.
         set(&mut m, Some("props.move"));
         assert_eq!(
             key_of(&m),
-            [r#"k:{"name":"tackle"}"#, r#"k:{"name":"growl"}"#]
+            [
+                r#"k:moveCard_d4/j0/{"name":"tackle"}"#,
+                r#"k:moveCard_d4/j0/{"name":"growl"}"#
+            ]
         );
         // Null / absent: the hashed inputs key.
         set(&mut m, Some("move.nothing"));
@@ -1100,16 +1231,30 @@ mod tests {
 
     #[test]
     fn loader_data_cannot_fill_server_slots() {
+        // Only server-owned names drop; any other `__*` (a GraphQL
+        // `__typename`, `__a_1`) is loader data. Child slots live under
+        // `__children` and win over a same-named top-level key in the overlay.
         let mut ctx = Map::new();
         merge_loader_data(
             &mut ctx,
-            json!({"__outlet": "x", "_ssr_a": "x", "__a_1": {}, "__children": {}, "_id": 7, "_s1": "kept", "who": "w"}),
+            json!({"__outlet": "x", "_ssr_a": "x", "__a_1": {}, "__children": {}, "__own": {},
+                   "_props": {}, "__typename": "Pokemon", "_id": 7, "_s1": "kept", "who": "w"}),
             "r1",
         );
         assert_eq!(
             Value::Object(ctx),
-            json!({"_id": 7, "_s1": "kept", "who": "w"})
+            json!({"__a_1": {}, "__typename": "Pokemon", "_id": 7, "_s1": "kept", "who": "w"})
         );
+    }
+
+    #[test]
+    fn chain_results_land_in_the_components_own_map() {
+        let m = manifest();
+        let plans = collect_jobs(&m, &chain(&["detailPage_c3"]), &pikachu()).unwrap();
+        let mut map = Map::new();
+        merge_result(&mut map, &plans[0], &json!({"_s1": "HP 35"}));
+        assert_eq!(map["__own"]["detailPage_c3"], json!({"_s1": "HP 35"}));
+        assert!(map.get("_s1").is_none(), "never top-level");
     }
 
     #[test]
@@ -1127,6 +1272,10 @@ mod tests {
         assert!(!is_hashed(P::new("client/runtime-8b1c.js")));
         assert!(!is_hashed(P::new("client/x-1A2B3C.js")));
         assert!(!is_hashed(P::new("client/react-19.2.0.js")));
+        // Hex-letter words are not hashes: the suffix needs a digit.
+        assert!(!is_hashed(P::new("public/brand-facade.css")));
+        assert!(!is_hashed(P::new("public/decade-abcdef.css")));
+        assert!(is_hashed(P::new("public/logo-abcde1.svg")));
     }
 
     #[test]

@@ -9,7 +9,7 @@ use std::time::Duration;
 use http::{Request, Response};
 use hyper::body::Incoming;
 use hyper::service::service_fn;
-use hyper_util::rt::{TokioExecutor, TokioIo};
+use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use hyper_util::server::conn::auto;
 use tokio::sync::Notify;
 use tracing::{debug, error, info, warn};
@@ -57,6 +57,10 @@ pub struct Tuning {
     /// tokio I/O runtime worker-thread count. Default `min(available_parallelism, 4)`
     /// (see struct docs).
     pub worker_threads: usize,
+    /// HTTP/1 header-read timeout: a connection that has not delivered a
+    /// complete request head within this long is closed (slowloris guard).
+    /// Default 10_000 ms.
+    pub header_read_timeout_ms: u64,
 }
 
 impl Default for Tuning {
@@ -66,6 +70,7 @@ impl Default for Tuning {
             conn_queue_cap: 1024,
             read_buf_cap: 4096,
             claim_timeout_ms: 10_000,
+            header_read_timeout_ms: 10_000,
             worker_threads: std::thread::available_parallelism()
                 .map(|n| n.get().min(4))
                 .unwrap_or(2),
@@ -250,6 +255,7 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
                 let powered_by = powered_by.clone();
                 let read_buf_cap = tuning.read_buf_cap;
                 let max_req = tuning.max_request_bytes;
+                let header_timeout = Duration::from_millis(tuning.header_read_timeout_ms.max(1));
                 let acceptor = acceptor.clone();
                 let conn_drain = drain_sig_rx.clone();
                 let conn_token = conn_token_tx.clone();
@@ -315,12 +321,20 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
                                 svc,
                                 max_req,
                                 read_buf_cap,
+                                header_timeout,
                                 conn_drain,
                             )
                             .await;
                         }
                         None => {
-                            serve_io(TokioIo::new(tcp), svc, max_req, read_buf_cap, conn_drain)
+                            serve_io(
+                                TokioIo::new(tcp),
+                                svc,
+                                max_req,
+                                read_buf_cap,
+                                header_timeout,
+                                conn_drain,
+                            )
                                 .await;
                         }
                     }
@@ -366,6 +380,7 @@ async fn serve_io<I, S, B>(
     svc: S,
     max_req: usize,
     read_buf_cap: usize,
+    header_timeout: Duration,
     mut drain: tokio::sync::watch::Receiver<bool>,
 ) where
     I: hyper::rt::Read + hyper::rt::Write + Unpin + Send + 'static,
@@ -381,7 +396,9 @@ async fn serve_io<I, S, B>(
     // Mirror the old header-byte cap and read-buffer sizing.
     builder
         .http1()
-        .max_buf_size(max_req.max(read_buf_cap).max(8192));
+        .max_buf_size(max_req.max(read_buf_cap).max(8192))
+        .timer(TokioTimer::new())
+        .header_read_timeout(header_timeout);
     // Pin the connection so it can be both polled to completion AND, on drain,
     // told to `graceful_shutdown()` (finish the in-flight request, then close).
     let conn = builder.serve_connection_with_upgrades(io, svc);
