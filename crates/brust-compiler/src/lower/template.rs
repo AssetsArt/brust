@@ -378,6 +378,7 @@ impl<'a, 'c> Printer<'a, 'c> {
         match (n, s) {
             (Node::Element { .. }, Node::Element { .. }) => self.element(n, s, root, None),
             (Node::Text(t), _) => self.out.push_str(&text(t)),
+            (Node::Outlet, Node::Outlet) => self.out.push_str("{{ __outlet | safe }}"),
             (Node::Slot(e), Node::Slot(_)) => {
                 self.slot(e, Some(s), false);
             }
@@ -1249,7 +1250,7 @@ fn needs_directives(n: &Node, f: &Facts<'_>) -> bool {
             link.is_some() || children.iter().any(|c| needs_directives(c, f))
         }
         Node::Fragment(cs) => cs.iter().any(|c| needs_directives(c, f)),
-        Node::Text(_) => false,
+        Node::Text(_) | Node::Outlet => false,
     }
 }
 

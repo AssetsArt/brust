@@ -280,3 +280,12 @@ fn document_root_is_a_plain_host_with_escaped_title() {
         "the compiler never injects scripts (S9): {jinja}"
     );
 }
+
+#[test]
+fn outlet_lowers_to_the_outlet_slot() {
+    let jinja = lowered_jinja("outlet-layout");
+    assert!(
+        jinja.contains("<main>{{ __outlet | safe }}</main>"),
+        "{jinja}"
+    );
+}

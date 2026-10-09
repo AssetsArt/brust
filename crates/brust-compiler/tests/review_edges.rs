@@ -403,3 +403,33 @@ fn dynamic_import_falls_back_instead_of_panicking() {
     );
     assert!(matches!(ir.tier, Tier::React { .. }), "{:?}", ir.tier);
 }
+
+/// S8: <Outlet/> imported from @brust/brust/routes is an intrinsic node, not a child component.
+#[test]
+fn outlet_from_brust_routes_is_an_intrinsic() {
+    let ir = analyze(
+        "import { Outlet } from '@brust/brust/routes'\nexport default function Layout() { return <div><Outlet/></div> }",
+    );
+    assert!(ir.uses_outlet);
+    assert!(
+        ir.children.is_empty(),
+        "Outlet must not be recorded as a child: {:?}",
+        ir.children
+    );
+    let json = serde_json::to_value(&ir).unwrap();
+    assert_eq!(json["uses_outlet"], true);
+}
+
+/// An Outlet that is not the brust one is an ordinary (unresolvable) child → external-component fallback.
+#[test]
+fn outlet_from_elsewhere_is_a_normal_component() {
+    let ir = analyze(
+        "import { Outlet } from 'react-router'\nexport default function Layout() { return <div><Outlet/></div> }",
+    );
+    assert!(!ir.uses_outlet);
+    assert!(
+        rules(&ir).iter().any(|(_, r)| r == "external-component"),
+        "{:?}",
+        rules(&ir)
+    );
+}

@@ -139,7 +139,7 @@ fn visit_exprs(n: &Node, f: &mut impl FnMut(&Expr)) {
             children.iter().for_each(|c| visit_exprs(c, f));
         }
         Node::Fragment(cs) => cs.iter().for_each(|c| visit_exprs(c, f)),
-        Node::Text(_) => {}
+        Node::Text(_) | Node::Outlet => {}
     }
 }
 
@@ -171,7 +171,7 @@ fn check_refs(ir: &mut ComponentIR) {
             Node::Component { children, .. } | Node::Fragment(children) => {
                 children.iter().for_each(|c| walk(c, refs, bad))
             }
-            Node::Text(_) | Node::Slot(_) => {}
+            Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
         }
     }
     walk(&ir.template, &refs, &mut bad);

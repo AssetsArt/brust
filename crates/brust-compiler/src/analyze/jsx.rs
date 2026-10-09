@@ -30,6 +30,8 @@ enum Tag {
         imported: Option<String>,
     },
     Member,
+    /// `Outlet` imported from `@brust/brust/routes` (S8).
+    Outlet,
 }
 
 fn tag_of(r: &Reader<'_, '_>, tag: &js_ast::Expr) -> Tag {
@@ -39,6 +41,9 @@ fn tag_of(r: &Reader<'_, '_>, tag: &js_ast::Expr) -> Tag {
         | E::EImportIdentifier(js_ast::E::ImportIdentifier { ref_ }) => {
             if r.names.is_fragment(*ref_) {
                 return Tag::Fragment;
+            }
+            if r.names.import_of(*ref_) == Some(("@brust/brust/routes", "Outlet")) {
+                return Tag::Outlet;
             }
             let (name, kind) = r.names.kind_of(*ref_);
             let (source, imported) = match kind {
@@ -78,6 +83,9 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
         ));
     }
     let tag = tag_of(r, tag);
+    if matches!(tag, Tag::Outlet) {
+        return Node::Outlet;
+    }
     if matches!(tag, Tag::Member) {
         r.diagnostics.push(Diagnostic::fallback(
             "member-tag",
@@ -150,6 +158,7 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
             ref_name,
         },
         Tag::Fragment => Node::Fragment(children),
+        Tag::Outlet => Node::Outlet,
         Tag::Component {
             name,
             source,

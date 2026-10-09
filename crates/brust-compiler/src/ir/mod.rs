@@ -192,6 +192,9 @@ pub struct ComponentIR {
     /// Locals bound to `useId()` (server generates, client reads from the DOM).
     pub id_bindings: Vec<String>,
     pub template: Node,
+    /// The template contains an `<Outlet />` (S8); the build lane checks the route tree.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub uses_outlet: bool,
     pub jobs: Vec<JobDecl>,
     pub child_links: Vec<ChildLink>,
     pub client_props: Vec<String>,
@@ -253,6 +256,7 @@ impl ComponentIR {
             refs: vec![],
             id_bindings: vec![],
             template: Node::Fragment(vec![]),
+            uses_outlet: false,
             jobs: vec![],
             child_links: vec![],
             client_props: vec![],

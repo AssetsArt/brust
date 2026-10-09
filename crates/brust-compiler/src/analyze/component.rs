@@ -292,6 +292,19 @@ fn read_function(
         .map(root_node)
         .unwrap_or(Node::Fragment(vec![]));
     ir.template = host_root(root, root_loc, &mut ir.diagnostics);
+    ir.uses_outlet = has_outlet(&ir.template);
+}
+
+fn has_outlet(n: &Node) -> bool {
+    match n {
+        Node::Outlet => true,
+        Node::Element { children, .. }
+        | Node::Component { children, .. }
+        | Node::Fragment(children) => children.iter().any(has_outlet),
+        Node::If { then, else_, .. } => then.iter().chain(else_).any(has_outlet),
+        Node::For { body, .. } => body.iter().any(has_outlet),
+        Node::Text(_) | Node::Slot(_) => false,
+    }
 }
 
 /// The module-level `function <name>` (exported or not).

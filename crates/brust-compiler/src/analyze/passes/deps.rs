@@ -413,7 +413,7 @@ impl Walker<'_> {
                 }
                 self.nodes(children, out);
             }
-            Node::Text(_) => {}
+            Node::Text(_) | Node::Outlet => {}
             Node::Slot(e) => self.expr(e, out),
             Node::If { cond, then, else_ } => {
                 self.expr(cond, out);

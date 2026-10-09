@@ -1,0 +1,137 @@
+{
+  "id": "input_a0366a49",
+  "source": "tests/fixtures/outlet-layout/input.tsx",
+  "tier": "Static",
+  "props": [
+    {
+      "name": "props",
+      "local": "props",
+      "ts_type": null,
+      "default": null
+    }
+  ],
+  "state": [],
+  "derived": [],
+  "effects": [],
+  "handlers": [],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 122,
+      "tag": "html",
+      "attrs": [
+        {
+          "Static": {
+            "name": "lang",
+            "value": "en"
+          }
+        }
+      ],
+      "children": [
+        {
+          "Element": {
+            "loc": 145,
+            "tag": "head",
+            "attrs": [],
+            "children": [
+              {
+                "Element": {
+                  "loc": 151,
+                  "tag": "title",
+                  "attrs": [],
+                  "children": [
+                    {
+                      "Slot": {
+                        "Server": {
+                          "loc": 159,
+                          "kind": {
+                            "Ident": {
+                              "name": "title",
+                              "kind": "Prop"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ],
+                  "host": false,
+                  "ref_name": null
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 193,
+            "tag": "body",
+            "attrs": [],
+            "children": [
+              {
+                "Element": {
+                  "loc": 199,
+                  "tag": "nav",
+                  "attrs": [],
+                  "children": [
+                    {
+                      "Element": {
+                        "loc": 204,
+                        "tag": "a",
+                        "attrs": [
+                          {
+                            "Static": {
+                              "name": "href",
+                              "value": "/"
+                            }
+                          }
+                        ],
+                        "children": [
+                          {
+                            "Text": "home"
+                          }
+                        ],
+                        "host": false,
+                        "ref_name": null
+                      }
+                    }
+                  ],
+                  "host": false,
+                  "ref_name": null
+                }
+              },
+              {
+                "Element": {
+                  "loc": 230,
+                  "tag": "main",
+                  "attrs": [],
+                  "children": [
+                    "Outlet"
+                  ],
+                  "host": false,
+                  "ref_name": null
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "uses_outlet": true,
+  "jobs": [],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": false,
+  "cache": null,
+  "children": [],
+  "diagnostics": []
+}

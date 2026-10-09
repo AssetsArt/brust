@@ -311,7 +311,7 @@ fn event_handlers(n: &Node) -> Vec<String> {
             Node::Component { children, .. } | Node::Fragment(children) => {
                 children.iter().for_each(|c| walk(c, out))
             }
-            Node::Text(_) | Node::Slot(_) => {}
+            Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
         }
     }
     walk(n, &mut out);

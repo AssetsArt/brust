@@ -248,7 +248,7 @@ fn collect_slots(ir: &ComponentIR, f: &mut impl FnMut(&str, &[String], bool)) {
                 children.iter().for_each(|c| node(c, f));
             }
             Node::Fragment(cs) => cs.iter().for_each(|c| node(c, f)),
-            Node::Text(_) => {}
+            Node::Text(_) | Node::Outlet => {}
         }
     }
     node(&ir.template, f);
@@ -531,7 +531,7 @@ impl Placer<'_> {
                 }
                 children.iter_mut().for_each(|c| self.node(c));
             }
-            Node::Text(_) => {}
+            Node::Text(_) | Node::Outlet => {}
             Node::Slot(e) => self.expr(e),
             Node::If { cond, then, else_ } => {
                 self.expr(cond);

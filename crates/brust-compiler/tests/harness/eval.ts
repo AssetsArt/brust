@@ -32,7 +32,9 @@ const BOOLEAN = new Set(['disabled', 'checked', 'selected', 'readonly', 'require
 for (const f of readdirSync(a!).sort()) if (f.endsWith('.client.js')) await import(join(resolve(a!), f))
 const win = new Window()
 const doc = win.document
-doc.body.innerHTML = await Bun.file(b!).text()
+// A document root (`<html>` host, S9) survives only a whole-document parse; a fragment parse would drop it.
+doc.write(await Bun.file(b!).text())
+doc.close()
 
 const instances = new Map<unknown, Members>()
 const listsChecked = new WeakMap<Element, Set<string>>()

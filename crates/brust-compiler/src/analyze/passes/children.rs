@@ -97,7 +97,7 @@ impl Walker<'_, '_> {
                 self.loop_scope.truncate(n);
             }
             Node::Component { .. } => self.component(n),
-            Node::Text(_) | Node::Slot(_) => {}
+            Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
         }
     }
 
