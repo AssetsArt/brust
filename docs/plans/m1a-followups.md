@@ -83,3 +83,12 @@ Owner plan `M1b-2` means the item lands in the `m1b2-placement-tier` lane becaus
 | F34 | server (M2) | An inlined child instance with its own precompute job reads `__<childId>_<k>[parent loop idx]`; no server runs per-instance child jobs into that key yet and no fixture exercises it. | M2 server spec: run child jobs per instance and merge under that key; add a fixture. | M2 |
 | F35 | `lower/template` raw-text elements | `<script>{x}</script>` / `<style>{x}</style>` children are HTML-escaped inside raw text: safe, but the value changes silently. | Fallback `raw-text-child` → tier `react` for dynamic children of script/style. | M2 |
 | F36 | `lower/template` style attribute | `style={c ? {...} : undefined}` paints `style=""` where React omits the attribute. | Guard the attribute with `{% if v is not none %}` (same as the presence rule for boolean attrs) when the value can be undefined. | M1e lane (small) |
+
+## From the M1 battery (`m1e-battery-harness` @7c67ee2, PR #117) — rows the lead triaged
+
+| # | Where | Finding | Proposed fix | Owner plan |
+|---|---|---|---|---|
+| F37 | `analyze/component.rs` default-export shape | `export default memo(Inner)` is not unwrapped: tier `react` (`default-export-shape`) where spec §3 expects `native` for a plain `memo()` wrapper. | Unwrap `memo(X)` / `memo(X, cmp)` when `X` is a local function declaration and `memo` is the `react` import; keep `forwardRef` as react. | M2 (spec §3 row stays; M1 exit report lists it as a known gap) |
+| F38 | `analyze/expr.rs` printer | A dynamic `import()` inside a component makes the Bun printer panic (`import_records` assertion) — `lazy(() => import(…))` is a compile CRASH, not a fallback. | Detect `EImportCall` in the structural walk before printing any Opaque/Block source and emit Fallback `dynamic-import` (tier `react`) without printing; the whole compile must never panic on valid TSX. | **M1 hotfix** (task `m1-hotfix-dynamic-import`, right after m1e merges) |
+| F39 | `analyze/hooks.rs` + server | A `useId()` value read in render falls back (`use-id-in-render`); spec §4.3 expects stable ids, which need server-generated ids from the M2 server. | M2 server: allocate ids per instance at render, seed them to the client via `x-props`. | M2 (M1 decision recorded in the exit report) |
+| F40 | `analyze/jsx.rs` list forms | `Array.from(xs, fn → JSX)` is not a recognised list form (only `.map` is): tier `react` (`jsx-expression`). | Recognise `Array.from(src, fn)` and `Array.from({length:n}, fn)` as list forms with the same keyed-row rules. | M2 |
