@@ -1,0 +1,31 @@
+{
+ "id": "rowReact_631ddf5f",
+ "tier": "Static",
+ "jobs": [
+  {
+   "kind": {
+    "Ssr": {
+     "client_only": false
+    }
+   },
+   "inputs": [
+    "items"
+   ],
+   "outputs": [
+    "_ssr_reviews_71ee8d8c"
+   ],
+   "per_item": "it"
+  }
+ ],
+ "children": [
+  {
+   "id": "reviews_71ee8d8c",
+   "tier": {
+    "React": {
+     "reason": "hook useContext is not supported",
+     "client_only": false
+    }
+   }
+  }
+ ]
+}

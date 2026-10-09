@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/brust-compiler", "crates/brust-compiler-cli", "crates/brust-jinja", "vendor/bun_react_compiler"]
+members = ["crates/brust-compiler", "crates/brust-compiler-cli", "crates/brust-jinja", "crates/brust-server", "vendor/bun_react_compiler"]
 
 [workspace.package]
 version = "0.0.0"

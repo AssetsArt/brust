@@ -1,0 +1,1 @@
+<main x-data="detailPage_c3" x-props='{{ {"pokemon": pokemon} | json_attr }}'><h1>{{ pokemon["name"] | e }}</h1><p>{{ _s1 | e }}</p><ul>{% for m in pokemon["moves"] %}{% set _i1 = loop.index0 %}<li>{{ m["name"] | e }}: {{ __moveCard_d4_1[_i1]["_s1"] | e }}</li>{% endfor %}</ul></main>

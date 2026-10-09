@@ -1,0 +1,2 @@
+# The root .gitignore drops every `dist/`; this one is the M2 manifest fixture.
+!dist/
