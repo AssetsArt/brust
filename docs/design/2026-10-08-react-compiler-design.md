@@ -292,6 +292,8 @@ struct ComponentIR {
 }
 ```
 
+JS arithmetic that minijinja 3 evaluates with Jinja2 semantics (`%` with a negative operand, `%` and `/` by zero) is printed through the `js_mod` / `js_div` filters, so the server paint stays JS-faithful (`-7 % 3` → `-1`, `1 / 0` → `Infinity`). Booleans in `+ - *` already agree with JS on 3.0 and print bare; `Math.*` calls never reach the server printer (`server_expr` rejects them). The dual printer test pins every case against Bun.
+
 ### 5.1 Expressions have three placements
 
 ```rust

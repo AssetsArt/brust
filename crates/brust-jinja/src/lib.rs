@@ -30,6 +30,12 @@ pub fn register(env: &mut Environment<'_>) {
     env.add_filter("truthy", |v: Value| truthy(&v));
     env.add_filter("url_ok", |v: Value| safe_url(&attr_string(&v)));
     env.add_filter("json_attr", json_attr);
+    env.add_filter("js_mod", |a: Value, b: Value| {
+        js_arith(&a, &b, |x, y| x % y)
+    });
+    env.add_filter("js_div", |a: Value, b: Value| {
+        js_arith(&a, &b, |x, y| x / y)
+    });
     env.add_filter("str_slice", str_slice);
     env.add_filter("includes", includes);
     env.add_filter("starts_with", |s: Value, x: Value| {
@@ -59,6 +65,39 @@ pub fn register(env: &mut Environment<'_>) {
             .unwrap_or_default();
         style_obj_to_css(&pairs)
     });
+}
+
+/// JS `ToNumber` for the operands of `%` and `/`.
+fn js_to_number(v: &Value) -> f64 {
+    match v.kind() {
+        ValueKind::Bool => f64::from(u8::from(v.is_true())),
+        ValueKind::None => 0.0,
+        ValueKind::Number => number_of(v).unwrap_or(f64::NAN),
+        ValueKind::String => {
+            let t = v.to_string();
+            let t = t.trim();
+            if t.is_empty() {
+                0.0
+            } else {
+                t.parse().unwrap_or(f64::NAN)
+            }
+        }
+        _ => f64::NAN,
+    }
+}
+
+/// `%` and `/` with JS semantics (minijinja 3 follows Jinja2: floored
+/// modulo, an error on a zero divisor). Rust's f64 `%` and `/` are the
+/// IEEE ones JS uses: the remainder takes the dividend's sign, `x / 0` is
+/// `±Infinity`, `0 / 0` and `x % 0` are `NaN`. A finite whole result stays
+/// an integer so it still indexes, compares and paints like one.
+fn js_arith(a: &Value, b: &Value, op: fn(f64, f64) -> f64) -> Value {
+    let r = op(js_to_number(a), js_to_number(b));
+    if r.is_finite() && r.fract() == 0.0 && r.abs() < 9e15 {
+        Value::from(r as i64)
+    } else {
+        Value::from(r)
+    }
 }
 
 /// Text of a painted value: what React (and `x-text`) shows.
@@ -546,6 +585,38 @@ mod tests {
         let mut env = Environment::new();
         register(&mut env);
         env.render_str(src, ctx).unwrap()
+    }
+
+    #[test]
+    fn js_mod_and_js_div_follow_javascript() {
+        let ctx = || Value::from(());
+        for (expr, want) in [
+            ("-7 | js_mod(3)", "-1"),
+            ("7 | js_mod(-3)", "1"),
+            ("6 | js_mod(3)", "0"),
+            ("5.5 | js_mod(2)", "1.5"),
+            ("3 | js_mod(0)", "NaN"),
+            ("7 | js_div(2)", "3.5"),
+            ("6 | js_div(3)", "2"),
+            ("1 | js_div(0)", "Infinity"),
+            ("-1 | js_div(0)", "-Infinity"),
+            ("0 | js_div(0)", "NaN"),
+            ("true | js_div(2)", "0.5"),
+            ("none | js_mod(2)", "0"),
+            ("'8' | js_div(2)", "4"),
+            ("'x' | js_div(2)", "NaN"),
+        ] {
+            assert_eq!(
+                render(&format!("{{{{ ({expr}) | js_string }}}}"), ctx()),
+                want,
+                "{expr}"
+            );
+        }
+        // A whole result stays an integer: it still indexes a list.
+        assert_eq!(
+            render("{{ ['a','b','c'][7 | js_mod(2)] }}", Value::from(())),
+            "b"
+        );
     }
 
     /// The 5-line attribute unquote a browser would apply.

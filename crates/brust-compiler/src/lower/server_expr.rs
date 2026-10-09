@@ -133,20 +133,23 @@ fn raw(e: &RawExpr, ctx: &JinjaCtx<'_>) -> String {
                 // `&&` / `||` return an operand, chosen by JS truthiness.
                 BinOp::And => format!("({r} if ({l} | truthy) else {l})"),
                 BinOp::Or => format!("({l} if ({l} | truthy) else {r})"),
+                // minijinja 3 floors `%` and errors on a zero divisor; JS does neither.
+                BinOp::Div => format!("({l} | js_div({r}))"),
+                BinOp::Rem => format!("({l} | js_mod({r}))"),
                 _ => {
                     let o = match op {
                         BinOp::Add => "+",
                         BinOp::Sub => "-",
                         BinOp::Mul => "*",
-                        BinOp::Div => "/",
-                        BinOp::Rem => "%",
                         BinOp::Eq | BinOp::StrictEq => "==",
                         BinOp::Ne | BinOp::StrictNe => "!=",
                         BinOp::Lt => "<",
                         BinOp::Le => "<=",
                         BinOp::Gt => ">",
                         BinOp::Ge => ">=",
-                        BinOp::And | BinOp::Or | BinOp::Nullish => unreachable!(),
+                        BinOp::Div | BinOp::Rem | BinOp::And | BinOp::Or | BinOp::Nullish => {
+                            unreachable!()
+                        }
                     };
                     format!("({l} {o} {r})")
                 }
