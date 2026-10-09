@@ -162,7 +162,11 @@ and never asks Bun what a route is:
 - `children[]` records carry `"props": { "<childProp>": "<parent context path>" }` where the
   literal `[idx]` stands for the current row of `per_instance` (`"move": "pokemon.moves[idx]"`);
   it must cover the root of every input of the child's jobs (boot rule `UncoveredInput`).
-  `children[].instances` is therefore `{ "k": <1-based ordinal of that child id in template order>, "per_instance": <list path> | null }`.
+  `children[].instances` stays the STRING form of the example above: `"static"` or
+  `"per-row:<list context path>"` (e.g. `"per-row:pokemon.moves"`). `k` is NOT on the wire: both
+  sides derive it as the 1-based ordinal of that child id within `children` in template order, and
+  the build lane writes `children` in the compiler's instance order. (Lead ruling on Dew's
+  challenge 22411f50, 2026-10-09: one wire form; the object form in an earlier amendment is withdrawn.)
 - The `loader` response may carry `headers` (e.g. `Set-Cookie`); a response with `Set-Cookie`
   is never stored in L1.
 - `/public/<rel>` is served from `dist/public`; hashed file names (`-<hex6+>` suffix) get
