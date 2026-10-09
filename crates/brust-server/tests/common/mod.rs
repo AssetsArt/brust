@@ -34,14 +34,24 @@ pub fn default_loader(req: Value) -> Value {
 /// One `jobs` result for one job call (the default fake's rules).
 pub fn default_job(call: &Value) -> Value {
     let id = call["id"].as_str().unwrap_or_default();
-    let value = if id.ends_with("detailPage_c3/j0") {
-        json!({"_s1": "HP 35"})
-    } else if id.starts_with("moveCard_d4/j0/") {
-        json!({"_s1": format!("MOVE {}", call["inputs"]["move"]["name"].as_str().unwrap_or("?"))})
-    } else if id == "teamBuilder_h8/ssr" {
-        json!("<ul><li>a</li></ul>")
+    // Ids are `<componentId>/<jobId>` (chain) or
+    // `<parentId>/<childId>_<k>/<jobId>[/<row>]` (child instance); key on
+    // `componentId` + the job id so both shapes resolve.
+    let component = call["componentId"].as_str().unwrap_or_default();
+    let segs: Vec<&str> = id.split('/').collect();
+    let job = if segs.first() == Some(&component) {
+        segs.get(1).copied()
     } else {
-        panic!("default jobs fake: unexpected job id {id}")
+        segs.get(2).copied()
+    };
+    let value = match (component, job) {
+        ("detailPage_c3", Some("j0")) => json!({"_s1": "HP 35"}),
+        ("moveCard_d4", Some("j0")) => json!({"_s1": format!(
+            "MOVE {}",
+            call["inputs"]["move"]["name"].as_str().unwrap_or("?")
+        )}),
+        ("teamBuilder_h8", Some("ssr")) => json!("<ul><li>a</li></ul>"),
+        _ => panic!("default jobs fake: unexpected job id {id}"),
     };
     json!({"id": id, "value": value})
 }

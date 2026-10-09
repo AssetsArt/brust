@@ -63,7 +63,11 @@ fn miss_makes_exactly_one_loader_and_one_jobs_call() {
     assert_eq!(f.counts(), (1, 1));
     assert_eq!(
         job_ids(&f),
-        ["detailPage_c3/j0", "moveCard_d4/j0/0", "moveCard_d4/j0/1"]
+        [
+            "detailPage_c3/j0",
+            "detailPage_c3/moveCard_d4_1/j0/0",
+            "detailPage_c3/moveCard_d4_1/j0/1"
+        ]
     );
     // The loader is addressed by the manifest's route id, not the table index.
     let l = f.last_loader().unwrap();
@@ -183,7 +187,13 @@ fn invalidate_by_tag_forces_miss() {
     assert_eq!(cache_hdr(&h), Some("MISS"));
     assert!(body.contains("MOVE growl"), "{body}");
     assert_eq!(f.counts(), (3, 2));
-    assert_eq!(job_ids(&f), ["moveCard_d4/j0/0", "moveCard_d4/j0/1"]);
+    assert_eq!(
+        job_ids(&f),
+        [
+            "detailPage_c3/moveCard_d4_1/j0/0",
+            "detailPage_c3/moveCard_d4_1/j0/1"
+        ]
+    );
 }
 
 #[test]
@@ -304,7 +314,7 @@ fn react_child_island_ssr_and_assets() {
         .collect();
     assert!(pos.windows(2).all(|w| w[0] < w[1]), "{body}");
     assert!(body.ends_with("</script></body></html>"), "{body}");
-    assert_eq!(job_ids(&f), ["teamBuilder_h8/ssr"]);
+    assert_eq!(job_ids(&f), ["teamPage_g7/teamBuilder_h8_1/ssr"]);
 }
 
 fn injecting_loader() -> std::sync::Arc<FakeBun> {
@@ -315,7 +325,8 @@ fn injecting_loader() -> std::sync::Arc<FakeBun> {
                 "_id": "kept",
                 "_ssr_teamBuilder_h8": "<script>x</script>",
                 "__outlet": "<script>y</script>",
-                "__teamBuilder_h8_1": {"_ssr_teamBuilder_h8": "<script>z</script>"}
+                "__teamBuilder_h8_1": {"_ssr_teamBuilder_h8": "<script>z</script>"},
+                "__children": {"teamPage_g7": {"_ssr_teamBuilder_h8": "<script>w</script>"}}
             }})
         },
         default_jobs,
@@ -332,6 +343,7 @@ fn loader_cannot_inject_server_slots() {
     assert!(!body.contains("<script>x"), "{body}");
     assert!(!body.contains("<script>y"), "{body}");
     assert!(!body.contains("<script>z"), "{body}");
+    assert!(!body.contains("<script>w"), "{body}");
     assert!(body.contains("<ul><li>a</li></ul>"), "{body}");
 
     // A client-only react child (no ssr job) renders an EMPTY host, and a leaf
@@ -448,4 +460,162 @@ fn set_cookie_from_loader_is_not_cached() {
     }
     assert_eq!(f.counts().0, 2);
     assert_eq!(stats(&s)["l1"]["len"], 0);
+}
+
+/// A dist with a jobbed child (`moveCard_d4`, `use_id_slots: 1`) inlined
+/// statically: twice by one page (`/twin`, k=1 and k=2), and once each by a
+/// layout and its page (`/nested`, both k=1). The loader feeds props `a`/`b`.
+fn twin_dist() -> tempfile::TempDir {
+    let dist = temp_dist(|m| {
+        let routes = m["routes"].as_array_mut().unwrap();
+        routes.push(
+            json!({"id": "r7", "pattern": "/twin", "chain": ["appLayout_a1", "twinPage_t1"],
+            "loaders": ["r7"], "cache": null, "catch_all": false}),
+        );
+        routes.push(json!({"id": "r8", "pattern": "/nested", "chain": ["twinLayout_l1", "twinLeaf_p1"],
+            "loaders": ["r8"], "cache": {"ttl_seconds": 60, "prefix": null, "bypass": null, "tags": []},
+            "catch_all": false}));
+        let c = &mut m["components"];
+        c["moveCard_d4"]["use_id_slots"] = json!(1);
+        let child = |prop: &str| json!({"id": "moveCard_d4", "instances": "static", "props": {"move": prop}});
+        let comp = |name: &str, children: Value| {
+            json!({"tier": "static",
+            "template": format!("jinja/{name}.jinja"), "jobs": [], "children": children,
+            "client": null, "needs_worker": true, "use_id_slots": 0})
+        };
+        c["twinPage_t1"] = comp("twinPage_t1", json!([child("a"), child("b")]));
+        c["twinLayout_l1"] = comp("twinLayout_l1", json!([child("a")]));
+        c["twinLeaf_p1"] = comp("twinLeaf_p1", json!([child("b")]));
+    });
+    let j = dist.path().join("jinja");
+    let cell = |k: u32| {
+        format!(r#"{{{{ __moveCard_d4_{k}["_s1"] | e }}}}@{{{{ __moveCard_d4_{k}["_id1"] | e }}}}"#)
+    };
+    std::fs::write(
+        j.join("twinPage_t1.jinja"),
+        format!("<main>[{}][{}]</main>", cell(1), cell(2)),
+    )
+    .unwrap();
+    std::fs::write(
+        j.join("twinLayout_l1.jinja"),
+        format!("<div>L[{}]{{{{ __outlet | safe }}}}</div>", cell(1)),
+    )
+    .unwrap();
+    std::fs::write(
+        j.join("twinLeaf_p1.jinja"),
+        format!("<p>P[{}]</p>", cell(1)),
+    )
+    .unwrap();
+    dist
+}
+
+fn twin_fake() -> std::sync::Arc<FakeBun> {
+    FakeBun::new(
+        |_| json!({"ok": true, "data": {"a": {"name": "x"}, "b": {"name": "y"}}}),
+        default_jobs,
+    )
+}
+
+/// Fix 1: a child inlined twice by one parent gets two distinct call ids
+/// (`<parent>/<child>_<k>/<job>`), so neither result is lost on a cold cache.
+#[test]
+fn same_child_twice_in_one_page_gets_distinct_job_ids() {
+    let dist = twin_dist();
+    let f = twin_fake();
+    let s = boot_in(f.clone(), dist.path());
+    let (st, _, body) = get(&s, "/twin", &[]);
+    assert_eq!(st, 200, "{body}");
+    assert!(
+        body.contains(
+            "<main>[MOVE x@brust-r7-twinPage_t1.moveCard_d4_1-1][MOVE y@brust-r7-twinPage_t1.moveCard_d4_2-1]</main>"
+        ),
+        "{body}"
+    );
+    assert_eq!(
+        job_ids(&f),
+        [
+            "twinPage_t1/moveCard_d4_1/j0",
+            "twinPage_t1/moveCard_d4_2/j0"
+        ]
+    );
+}
+
+/// Fix 2: a layout and its page that both inline the same child (each k=1)
+/// keep separate slots and ids, on the MISS and on the L1 HIT.
+#[test]
+fn layout_and_page_inlining_same_child_keep_their_own_slots() {
+    let dist = twin_dist();
+    let f = twin_fake();
+    let s = boot_in(f.clone(), dist.path());
+    let (st, h1, b1) = get(&s, "/nested", &[]);
+    assert_eq!(st, 200, "{b1}");
+    assert_eq!(
+        b1,
+        "<div>L[MOVE x@brust-r8-twinLayout_l1.moveCard_d4_1-1]<p>P[MOVE y@brust-r8-twinLeaf_p1.moveCard_d4_1-1]</p></div>"
+    );
+    assert_eq!(
+        job_ids(&f),
+        [
+            "twinLayout_l1/moveCard_d4_1/j0",
+            "twinLeaf_p1/moveCard_d4_1/j0"
+        ]
+    );
+    let (_, h2, b2) = get(&s, "/nested", &[]);
+    assert_eq!(cache_hdr(&h1), Some("MISS"));
+    assert_eq!(cache_hdr(&h2), Some("HIT"));
+    assert_eq!(b1, b2);
+    assert_eq!(f.counts(), (1, 1));
+}
+
+/// Fix 3: the loader's (non-Set-Cookie) headers are stored with the L1 entry
+/// and replayed on a HIT.
+#[test]
+fn loader_headers_survive_l1_hit() {
+    let f = FakeBun::new(
+        |req| {
+            let mut v = default_loader(req);
+            v["headers"] = json!({"x-robots-tag": "noindex"});
+            v
+        },
+        default_jobs,
+    );
+    let s = boot(f.clone());
+    for want in ["MISS", "HIT"] {
+        let (st, h, _) = get(&s, "/pokemon/pikachu", &[]);
+        assert_eq!(st, 200);
+        assert_eq!(cache_hdr(&h), Some(want));
+        assert_eq!(
+            h.get("x-robots-tag").map(|v| v.to_str().unwrap()),
+            Some("noindex"),
+            "{want}"
+        );
+    }
+    assert_eq!(f.counts().0, 1);
+}
+
+/// Fix 4: a job result with neither `value` nor `error` fails the request
+/// like a job error; nothing is cached.
+#[test]
+fn job_result_without_value_is_500_and_not_cached() {
+    let f = FakeBun::new(default_loader, |req: Value| {
+        let results: Vec<Value> = req["jobs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| {
+                if c["id"] == "detailPage_c3/j0" {
+                    json!({"id": "detailPage_c3/j0"})
+                } else {
+                    default_job(c)
+                }
+            })
+            .collect();
+        json!({ "results": results })
+    });
+    let s = boot(f.clone());
+    let (st, _, body) = get(&s, "/pokemon/pikachu", &[]);
+    assert_eq!((st, body.as_str()), (500, "500 Internal Server Error"));
+    let v = stats(&s);
+    assert_eq!(v["job"]["len"], 0, "{v}");
+    assert_eq!(v["l1"]["len"], 0, "{v}");
 }

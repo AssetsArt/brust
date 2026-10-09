@@ -246,11 +246,19 @@ async fn page(
     let (cache_key, outcome) = l1_decision(s, route_id, route, full, headers, &envelope);
     meta.cache = outcome;
     if let Some(k) = &cache_key
-        && let Some(ctx) = s.l1.get(k)
+        && let Some(hit) = s.l1.get(k)
     {
         meta.cache = CacheOutcome::Hit;
-        return finish(s, route, &ctx, 200, Vec::new(), accept_enc, Some("HIT"))
-            .unwrap_or_else(|e| render_failed(route, &e));
+        return finish(
+            s,
+            route,
+            &hit.ctx,
+            200,
+            hit.headers.to_vec(),
+            accept_enc,
+            Some("HIT"),
+        )
+        .unwrap_or_else(|e| render_failed(route, &e));
     }
 
     // ----- (4) loader -----
@@ -370,16 +378,26 @@ async fn page(
             }
         };
         // Validate every result before inserting any: one bad job fails the
-        // request and nothing is cached.
+        // request and nothing is cached. Log fields come from the plan the id
+        // names (ids are opaque `<…>/<jobId>[/<row>]` strings, never parsed).
+        let plan_of: HashMap<&str, &JobPlan> = misses
+            .iter()
+            .map(|&i| (plans[i].call_id.as_str(), &plans[i]))
+            .collect();
         let mut by_id: HashMap<String, Value> = HashMap::new();
         for res in resp.results {
+            let (component_id, job_id) = plan_of
+                .get(res.id.as_str())
+                .map_or(("?", "?"), |p| (p.component_id.as_str(), p.job_id.as_str()));
             if let Some(error) = res.error {
-                let (component_id, job_id) = res.id.split_once('/').unwrap_or((&res.id, ""));
-                let job_id = job_id.split('/').next().unwrap_or(job_id);
-                tracing::error!(route = %route.id, component_id, job_id, %error, "job threw");
+                tracing::error!(route = %route.id, component_id, job_id, call_id = %res.id, %error, "job threw");
                 return body::error_500();
             }
-            by_id.insert(res.id, res.value.unwrap_or(Value::Null));
+            let Some(value) = res.value else {
+                tracing::error!(route = %route.id, component_id, job_id, call_id = %res.id, "job result has neither value nor error");
+                return body::error_500();
+            };
+            by_id.insert(res.id, value);
         }
         let mut fresh = Vec::with_capacity(misses.len());
         for &i in &misses {
@@ -416,7 +434,8 @@ async fn page(
         CacheOutcome::Bypass => Some("BYPASS"),
         _ => None,
     };
-    let resp = match finish(s, route, &ctx, status, extra, accept_enc, hdr) {
+    let headers: Arc<[(String, String)]> = extra.into();
+    let resp = match finish(s, route, &ctx, status, headers.to_vec(), accept_enc, hdr) {
         Ok(r) => r,
         Err(e) => return render_failed(route, &e),
     };
@@ -425,7 +444,8 @@ async fn page(
         && cacheable
         && let Some(c) = &route.cache
     {
-        s.l1.insert(k, ctx, Duration::from_secs(c.ttl_seconds), &c.tags);
+        // The loader's headers ride with the ctx so a HIT replays them.
+        s.l1.insert(k, ctx, headers, Duration::from_secs(c.ttl_seconds), &c.tags);
     }
     resp
 }
@@ -435,8 +455,10 @@ fn render_failed(route: &RouteRecord, e: &RenderError) -> Response<ResponseBody>
     body::error_500()
 }
 
-/// Leaf-first render with the chain's `useId` overlay, asset tags, optional
-/// gzip. Shared by the HIT and MISS paths so a HIT renders byte-identically.
+/// Leaf-first render with each chain component's overlay (its `_idN` and its
+/// own child-instance slots from `ctx["__children"][<id>]`), asset tags,
+/// optional gzip. Shared by the HIT and MISS paths so a HIT renders
+/// byte-identically.
 fn finish(
     s: &Server,
     route: &RouteRecord,
@@ -446,11 +468,21 @@ fn finish(
     accept_enc: Option<&str>,
     cache_hdr: Option<&str>,
 ) -> Result<Response<ResponseBody>, RenderError> {
-    let ids = |id: &str| {
+    let children = ctx.get(CHILDREN_KEY);
+    let overlay = |id: &str| {
         let slots = s.manifest.components.get(id).map_or(0, |c| c.use_id_slots);
-        use_ids(&route.id, id, slots)
+        let mut out: Vec<(String, minijinja::Value)> = use_ids(&route.id, id, slots)
+            .into_iter()
+            .map(|(k, v)| (k, minijinja::Value::from(v)))
+            .collect();
+        if let Some(Value::Object(own)) = children.and_then(|c| c.get(id)) {
+            for (k, v) in own {
+                out.push((k.clone(), minijinja::Value::from_serialize(v)));
+            }
+        }
+        out
     };
-    let html = s.renderer.render_chain(&route.chain, ctx, &ids)?;
+    let html = s.renderer.render_chain(&route.chain, ctx, &overlay)?;
     let mut bytes = inject_assets(html, &route.chain, &s.manifest).into_bytes();
     if let Some(h) = cache_hdr {
         headers.push(("x-brust-cache".into(), h.into()));
@@ -471,8 +503,16 @@ fn finish(
     ))
 }
 
+/// Reserved ctx key holding child-instance slots per parent component:
+/// `ctx["__children"][<parentId>]` = `{ "__<childId>_<k>": cell(s),
+/// "_ssr_<childId>": html }`. `k` is per parent template, so two parents
+/// inlining the same child never share a slot; `render_chain` overlays a
+/// parent's map only while rendering that parent.
+const CHILDREN_KEY: &str = "__children";
+
 /// Context slots the server owns: templates print them with `| safe`
-/// (`__outlet`, `_ssr_*`) or index child results through them (`__<id>_<k>`).
+/// (`__outlet`, `_ssr_*`) or index child results through them (`__<id>_<k>`,
+/// `__children`).
 fn is_server_slot(k: &str) -> bool {
     k.starts_with("__") || k.starts_with("_ssr_")
 }
@@ -636,6 +676,8 @@ pub(crate) enum Target {
         component: String,
     },
     Child {
+        /// The chain component whose template inlines the child.
+        parent: String,
         component: String,
         k: u32,
         row: Option<usize>,
@@ -672,9 +714,14 @@ fn plan_key(cid: &str, j: &JobRecord, props: &Value, projected: &Value) -> Resul
     Ok(JobKey(inputs::job_key(cid, &j.id, projected)))
 }
 
+/// `call_id` = `<instance>/<jobId>[/<row>]`, where `instance` is the
+/// component id for a chain job and `<parentId>/<childId>_<k>` for a child
+/// instance — unique per request even when one child id is inlined more than
+/// once (by one parent, or by several).
 fn plan_one(
     out: &mut Vec<JobPlan>,
     cid: &str,
+    instance: &str,
     j: &JobRecord,
     props: &Value,
     target: Target,
@@ -683,8 +730,8 @@ fn plan_one(
     let projected = inputs::project(props, &j.inputs, None)?;
     let key = plan_key(cid, j, props, &projected)?;
     let call_id = match row {
-        Some(r) => format!("{cid}/{}/{r}", j.id),
-        None => format!("{cid}/{}", j.id),
+        Some(r) => format!("{instance}/{}/{r}", j.id),
+        None => format!("{instance}/{}", j.id),
     };
     out.push(JobPlan {
         key,
@@ -722,6 +769,7 @@ pub(crate) fn collect_jobs(
             plan_one(
                 &mut out,
                 id,
+                id,
                 j,
                 ctx,
                 Target::Chain {
@@ -738,28 +786,33 @@ pub(crate) fn collect_jobs(
                 *e
             };
             let child = &m.components[&ch.id];
+            let instance = format!("{id}/{}_{k}", ch.id);
+            let target = |row| Target::Child {
+                parent: id.clone(),
+                component: ch.id.clone(),
+                k,
+                row,
+            };
             match &ch.instances {
                 Instances::Static => {
                     let props = inputs::child_props(ctx, &ch.props, None)?;
                     for j in &child.jobs {
-                        let t = Target::Child {
-                            component: ch.id.clone(),
-                            k,
-                            row: None,
-                        };
-                        plan_one(&mut out, &ch.id, j, &props, t, None)?;
+                        plan_one(&mut out, &ch.id, &instance, j, &props, target(None), None)?;
                     }
                 }
                 Instances::PerRow(list) => {
                     for r in 0..row_count(list, ctx)? {
                         let props = inputs::child_props(ctx, &ch.props, Some(r))?;
                         for j in &child.jobs {
-                            let t = Target::Child {
-                                component: ch.id.clone(),
-                                k,
-                                row: Some(r),
-                            };
-                            plan_one(&mut out, &ch.id, j, &props, t, Some(r))?;
+                            plan_one(
+                                &mut out,
+                                &ch.id,
+                                &instance,
+                                j,
+                                &props,
+                                target(Some(r)),
+                                Some(r),
+                            )?;
                         }
                     }
                 }
@@ -769,9 +822,33 @@ pub(crate) fn collect_jobs(
     Ok(out)
 }
 
-/// S7 step 6 for children: `ctx["__<id>_<k>"]` = `{}` (static) or one `{}`
-/// per row (per-row, so a row whose child has no jobs still indexes), each
-/// carrying its instance's `_idN`. Runs before the L1 store, so a HIT
+/// The parent's child-slot map `ctx["__children"][<parent>]`, created on demand.
+fn parent_slots<'a>(ctx: &'a mut Map<String, Value>, parent: &str) -> &'a mut Map<String, Value> {
+    let all = ctx
+        .entry(CHILDREN_KEY)
+        .or_insert_with(|| Value::Object(Map::new()));
+    if !all.is_object() {
+        *all = Value::Object(Map::new());
+    }
+    let Value::Object(all) = all else {
+        unreachable!()
+    };
+    let own = all
+        .entry(parent)
+        .or_insert_with(|| Value::Object(Map::new()));
+    if !own.is_object() {
+        *own = Value::Object(Map::new());
+    }
+    let Value::Object(own) = own else {
+        unreachable!()
+    };
+    own
+}
+
+/// S7 step 6 for children: `ctx["__children"][<parent>]["__<id>_<k>"]` = `{}`
+/// (static) or one `{}` per row (per-row, so a row whose child has no jobs
+/// still indexes), each carrying its instance's `_idN` (instance
+/// `<parent>.<id>_<k>[-<row>]`). Runs before the L1 store, so a HIT
 /// re-renders identical ids.
 pub(crate) fn seed_child_slots(
     m: &Manifest,
@@ -786,7 +863,7 @@ pub(crate) fn seed_child_slots(
         }
         Value::Object(o)
     };
-    let mut seeds: Vec<(String, Value)> = Vec::new();
+    let mut seeds: Vec<(&str, String, Value)> = Vec::new();
     for id in chain {
         let mut ordinal: BTreeMap<&str, u32> = BTreeMap::new();
         for ch in &m.components[id].children {
@@ -797,25 +874,28 @@ pub(crate) fn seed_child_slots(
             };
             let slots = m.components[&ch.id].use_id_slots;
             let slot = match &ch.instances {
-                Instances::Static => cell(&format!("{}_{k}", ch.id), slots),
+                Instances::Static => cell(&format!("{id}.{}_{k}", ch.id), slots),
                 Instances::PerRow(list) => Value::Array(
                     (0..row_count(list, ctx)?)
-                        .map(|r| cell(&format!("{}_{k}-{r}", ch.id), slots))
+                        .map(|r| cell(&format!("{id}.{}_{k}-{r}", ch.id), slots))
                         .collect(),
                 ),
             };
-            seeds.push((format!("__{}_{k}", ch.id), slot));
+            seeds.push((id, format!("__{}_{k}", ch.id), slot));
         }
     }
     if let Value::Object(map) = ctx {
-        map.extend(seeds);
+        for (parent, key, slot) in seeds {
+            parent_slots(map, parent).insert(key, slot);
+        }
     }
     Ok(())
 }
 
 /// Writes one job's value into the context slot its target names (S7 step 5).
-/// A static child's ssr HTML is also written to the top-level `_ssr_<id>` the
-/// parent template's island host prints.
+/// Child values land in the parent's map (`ctx["__children"][<parent>]`); a
+/// static child's ssr HTML is also written to that map's `_ssr_<id>`, which
+/// the parent template's island host prints (overlaid while rendering it).
 pub(crate) fn merge_result(ctx: &mut Map<String, Value>, plan: &JobPlan, value: &Value) {
     fn spread(obj: &mut Map<String, Value>, value: &Value) {
         if let Some(o) = value.as_object() {
@@ -831,11 +911,17 @@ pub(crate) fn merge_result(ctx: &mut Map<String, Value>, plan: &JobPlan, value: 
                 ctx.insert(format!("_ssr_{component}"), value.clone());
             }
         },
-        Target::Child { component, k, row } => {
+        Target::Child {
+            parent,
+            component,
+            k,
+            row,
+        } => {
+            let own = parent_slots(ctx, parent);
             if plan.kind == JobKind::Ssr && row.is_none() {
-                ctx.insert(format!("_ssr_{component}"), value.clone());
+                own.insert(format!("_ssr_{component}"), value.clone());
             }
-            let slot = ctx.entry(format!("__{component}_{k}")).or_insert_with(|| {
+            let slot = own.entry(format!("__{component}_{k}")).or_insert_with(|| {
                 if row.is_some() {
                     Value::Array(vec![])
                 } else {
@@ -892,7 +978,11 @@ mod tests {
         let ids: Vec<&str> = plans.iter().map(|p| p.call_id.as_str()).collect();
         assert_eq!(
             ids,
-            ["detailPage_c3/j0", "moveCard_d4/j0/0", "moveCard_d4/j0/1"]
+            [
+                "detailPage_c3/j0",
+                "detailPage_c3/moveCard_d4_1/j0/0",
+                "detailPage_c3/moveCard_d4_1/j0/1"
+            ]
         );
         assert_eq!(plans[0].inputs, json!({"pokemon": {"stats": {"hp": 35}}}));
         assert_eq!(
@@ -905,6 +995,7 @@ mod tests {
         assert_eq!(
             plans[2].target,
             Target::Child {
+                parent: "detailPage_c3".into(),
                 component: "moveCard_d4".into(),
                 k: 1,
                 row: Some(1)
@@ -969,9 +1060,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            ctx["__moveCard_d4_1"],
-            json!([{"_id1": "brust-r2-moveCard_d4_1-0-1"}, {"_id1": "brust-r2-moveCard_d4_1-1-1"}])
+            ctx["__children"]["detailPage_c3"]["__moveCard_d4_1"],
+            json!([{"_id1": "brust-r2-detailPage_c3.moveCard_d4_1-0-1"},
+                   {"_id1": "brust-r2-detailPage_c3.moveCard_d4_1-1-1"}])
         );
+        assert!(ctx.get("__moveCard_d4_1").is_none(), "never top-level");
         // A job value merges into the seeded cell without losing its id.
         let plans = collect_jobs(&m, &chain(&["detailPage_c3"]), &ctx).unwrap();
         let Value::Object(map) = &mut ctx else {
@@ -979,24 +1072,29 @@ mod tests {
         };
         merge_result(map, &plans[2], &json!({"_s1": "MOVE growl"}));
         assert_eq!(
-            ctx["__moveCard_d4_1"][1],
-            json!({"_id1": "brust-r2-moveCard_d4_1-1-1", "_s1": "MOVE growl"})
+            ctx["__children"]["detailPage_c3"]["__moveCard_d4_1"][1],
+            json!({"_id1": "brust-r2-detailPage_c3.moveCard_d4_1-1-1", "_s1": "MOVE growl"})
         );
     }
 
     #[test]
-    fn static_child_ssr_fills_top_level_slot_and_cell() {
+    fn static_child_ssr_fills_parent_slot_and_cell() {
         let m = manifest();
         let ctx = json!({"team": ["a"]});
         let plans = collect_jobs(&m, &chain(&["teamPage_g7"]), &ctx).unwrap();
         assert_eq!(plans.len(), 1);
-        assert_eq!(plans[0].call_id, "teamBuilder_h8/ssr");
+        assert_eq!(plans[0].call_id, "teamPage_g7/teamBuilder_h8_1/ssr");
         let mut map = Map::new();
         merge_result(&mut map, &plans[0], &json!("<ul></ul>"));
-        assert_eq!(map["_ssr_teamBuilder_h8"], "<ul></ul>");
+        let own = &map["__children"]["teamPage_g7"];
+        assert_eq!(own["_ssr_teamBuilder_h8"], "<ul></ul>");
         assert_eq!(
-            map["__teamBuilder_h8_1"]["_ssr_teamBuilder_h8"],
+            own["__teamBuilder_h8_1"]["_ssr_teamBuilder_h8"],
             "<ul></ul>"
+        );
+        assert!(
+            map.get("_ssr_teamBuilder_h8").is_none(),
+            "scoped, not global"
         );
     }
 
@@ -1005,7 +1103,7 @@ mod tests {
         let mut ctx = Map::new();
         merge_loader_data(
             &mut ctx,
-            json!({"__outlet": "x", "_ssr_a": "x", "__a_1": {}, "_id": 7, "_s1": "kept", "who": "w"}),
+            json!({"__outlet": "x", "_ssr_a": "x", "__a_1": {}, "__children": {}, "_id": 7, "_s1": "kept", "who": "w"}),
             "r1",
         );
         assert_eq!(

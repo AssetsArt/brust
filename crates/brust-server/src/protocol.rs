@@ -73,7 +73,9 @@ pub struct JobsRequest {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JobCall {
-    /// `"<componentId>/<jobId>[/<row>]"`.
+    /// Chain job `"<componentId>/<jobId>"`; child instance job
+    /// `"<parentId>/<childId>_<k>/<jobId>[/<row>]"`. Unique per request; the
+    /// worker treats it as opaque and echoes it in its result.
     pub id: String,
     pub component_id: String,
     pub kind: JobKind,

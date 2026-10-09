@@ -61,23 +61,20 @@ impl Renderer {
     }
 
     /// S7 step 7 / S8: leaf-first; each result becomes the parent's `__outlet`.
-    /// `ctx` is the merged context; per-component overlays carry that
-    /// component's `_idN`. The overlay wins over `ctx`; `ctx` is converted once
-    /// for the whole chain and shared (minijinja `Value`s are `Arc`-backed), never
-    /// cloned per step.
+    /// `ctx` is the merged context; `overlay(id)` returns the keys only that
+    /// component sees (its `_idN`, its own child-instance slots). The overlay
+    /// wins over `ctx`; `ctx` is converted once for the whole chain and shared
+    /// (minijinja `Value`s are `Arc`-backed), never cloned per step.
     pub fn render_chain(
         &self,
         chain: &[String],
         ctx: &Value,
-        ids: &dyn Fn(&str) -> Vec<(String, String)>,
+        overlay: &dyn Fn(&str) -> Vec<(String, minijinja::Value)>,
     ) -> Result<String, RenderError> {
         let base = minijinja::Value::from_serialize(ctx);
         let mut outlet: Option<String> = None;
         for id in chain.iter().rev() {
-            let mut overlay: Vec<(String, minijinja::Value)> = ids(id)
-                .into_iter()
-                .map(|(k, v)| (k, minijinja::Value::from(v)))
-                .collect();
+            let mut overlay = overlay(id);
             if let Some(o) = outlet.take() {
                 overlay.push(("__outlet".into(), minijinja::Value::from(o)));
             }
@@ -155,8 +152,9 @@ pub fn inject_assets(mut html: String, chain: &[String], m: &Manifest) -> String
 }
 
 /// S7 step 6 / F39: `brust-<routeId>-<instance>-<n>` for n in 1..=slots;
-/// instance = component id for chain entries, `<childId>_<k>` for static child
-/// instances, `<childId>_<k>-<row>` for per-row instances.
+/// instance = component id for chain entries, `<parentId>.<childId>_<k>` for
+/// static child instances, `<parentId>.<childId>_<k>-<row>` for per-row
+/// instances. Ids are opaque: stable and unique per route is the contract.
 pub fn use_ids(route_id: &str, instance: &str, slots: u32) -> Vec<(String, String)> {
     (1..=slots)
         .map(|n| {
@@ -224,8 +222,8 @@ mod tests {
         // a key missing everywhere is undefined and chains (UndefinedBehavior::Chainable).
         let ctx = json!({"name": "<n>", "_id1": "base"});
         let ids = |id: &str| match id {
-            "Layout" => vec![("_id1".to_string(), "L1".to_string())],
-            "Leaf" => vec![("_id1".to_string(), "F1".to_string())],
+            "Layout" => vec![("_id1".to_string(), minijinja::Value::from("L1"))],
+            "Leaf" => vec![("_id1".to_string(), minijinja::Value::from("F1"))],
             _ => Vec::new(),
         };
         let out = r

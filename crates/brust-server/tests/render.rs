@@ -19,7 +19,7 @@ fn chain(ids: &[&str]) -> Vec<String> {
     ids.iter().map(|s| s.to_string()).collect()
 }
 
-fn no_ids(_: &str) -> Vec<(String, String)> {
+fn no_ids(_: &str) -> Vec<(String, minijinja::Value)> {
     Vec::new()
 }
 

@@ -32,6 +32,9 @@ pub struct CacheKey {
 #[derive(Clone)]
 pub struct CachedEntry {
     pub ctx: Arc<Value>,
+    /// The loader's response headers (never `Set-Cookie`: such a response is
+    /// not cached), replayed on a HIT. `Arc`: cloned on every `get`.
+    pub headers: Arc<[(String, String)]>,
     pub ttl: Duration,
     /// Invalidation tags this entry was inserted under. Carried on the entry so
     /// the eviction listener can prune `tag_index` when moka removes the entry
@@ -201,12 +204,12 @@ impl L1Cache {
         }
     }
 
-    pub fn get(&self, key: &CacheKey) -> Option<Arc<Value>> {
+    pub fn get(&self, key: &CacheKey) -> Option<CachedEntry> {
         // moka enforces TTL expiry internally; an entry returned here is live.
         match self.inner.get(key) {
             Some(slot) => {
                 self.hits.fetch_add(1, Ordering::Relaxed);
-                Some(slot.entry.ctx)
+                Some(slot.entry)
             }
             None => {
                 self.misses.fetch_add(1, Ordering::Relaxed);
@@ -215,7 +218,14 @@ impl L1Cache {
         }
     }
 
-    pub fn insert(&self, key: CacheKey, ctx: Arc<Value>, ttl: Duration, tags: &[String]) {
+    pub fn insert(
+        &self,
+        key: CacheKey,
+        ctx: Arc<Value>,
+        headers: Arc<[(String, String)]>,
+        ttl: Duration,
+        tags: &[String],
+    ) {
         // Ordering is load-bearing: index the tags BEFORE the moka insert. The
         // reverse (insert then index) could leave a live, un-indexed entry if a
         // panic hit between the two. With this order the worst case is a benign
@@ -228,6 +238,7 @@ impl L1Cache {
             Slot {
                 entry: CachedEntry {
                     ctx,
+                    headers,
                     ttl,
                     tags: tags.into(),
                 },
@@ -392,6 +403,7 @@ mod tests {
         c.insert(
             key("GET", "/t", ""),
             Arc::new(json!("t")),
+            Arc::from([]),
             Duration::from_secs(60),
             &["a".to_string(), "b".to_string()],
         );
@@ -412,12 +424,14 @@ mod tests {
         c.insert(
             key("GET", "/p", "x=1"),
             Arc::new(json!("1")),
+            Arc::from([]),
             Duration::from_secs(60),
             &["grp".to_string()],
         );
         c.insert(
             key("GET", "/p", "x=2"),
             Arc::new(json!("2")),
+            Arc::from([]),
             Duration::from_secs(60),
             &["grp".to_string()],
         );
@@ -438,6 +452,7 @@ mod tests {
         c.insert(
             key("GET", "/w", ""),
             Arc::new(json!("w")),
+            Arc::from([]),
             Duration::from_secs(60),
             &["t".to_string()],
         );
@@ -453,18 +468,21 @@ mod tests {
         c.insert(
             key("GET", "/a", ""),
             Arc::new(json!("a")),
+            Arc::from([]),
             Duration::from_secs(60),
             &[],
         );
         c.insert(
             key("GET", "/a", "x=1"),
             Arc::new(json!("a-x")),
+            Arc::from([]),
             Duration::from_secs(60),
             &[],
         );
         c.insert(
             key("GET", "/b", ""),
             Arc::new(json!("b")),
+            Arc::from([]),
             Duration::from_secs(60),
             &[],
         );
@@ -473,9 +491,12 @@ mod tests {
         let removed = c.invalidate_path("GET", "/a");
         c.run_pending();
         assert_eq!(removed, 2);
-        assert!(c.get(&key("GET", "/a", "")).is_none());
-        assert!(c.get(&key("GET", "/a", "x=1")).is_none());
-        assert_eq!(c.get(&key("GET", "/b", "")), Some(Arc::new(json!("b"))));
+        assert!(c.get(&key("GET", "/a", "")).map(|e| e.ctx).is_none());
+        assert!(c.get(&key("GET", "/a", "x=1")).map(|e| e.ctx).is_none());
+        assert_eq!(
+            c.get(&key("GET", "/b", "")).map(|e| e.ctx),
+            Some(Arc::new(json!("b")))
+        );
     }
 
     #[test]
@@ -484,6 +505,7 @@ mod tests {
         c.insert(
             key("GET", "/a", ""),
             Arc::new(json!("a")),
+            Arc::from([]),
             Duration::from_secs(60),
             &[],
         );
@@ -500,18 +522,21 @@ mod tests {
         c.insert(
             key("GET", "/a", ""),
             Arc::new(json!("a")),
+            Arc::from([]),
             Duration::from_secs(60),
             &["grp".to_string()],
         );
         c.insert(
             key("GET", "/a", "x=1"),
             Arc::new(json!("a-x")),
+            Arc::from([]),
             Duration::from_secs(60),
             &["grp".to_string()],
         );
         c.insert(
             key("GET", "/b", ""),
             Arc::new(json!("b")),
+            Arc::from([]),
             Duration::from_secs(60),
             &["other".to_string()],
         );
@@ -519,10 +544,10 @@ mod tests {
 
         c.invalidate_tags(&["grp".to_string()]);
         c.run_pending();
-        assert!(c.get(&key("GET", "/a", "")).is_none());
-        assert!(c.get(&key("GET", "/a", "x=1")).is_none());
+        assert!(c.get(&key("GET", "/a", "")).map(|e| e.ctx).is_none());
+        assert!(c.get(&key("GET", "/a", "x=1")).map(|e| e.ctx).is_none());
         assert_eq!(
-            c.get(&key("GET", "/b", "")),
+            c.get(&key("GET", "/b", "")).map(|e| e.ctx),
             Some(Arc::new(json!("b"))),
             "untagged group survives"
         );
@@ -534,13 +559,17 @@ mod tests {
         c.insert(
             key("GET", "/a", ""),
             Arc::new(json!("a")),
+            Arc::from([]),
             Duration::from_secs(60),
             &["grp".to_string()],
         );
         c.run_pending();
         c.invalidate_tags(&["missing".to_string()]);
         c.run_pending();
-        assert_eq!(c.get(&key("GET", "/a", "")), Some(Arc::new(json!("a"))));
+        assert_eq!(
+            c.get(&key("GET", "/a", "")).map(|e| e.ctx),
+            Some(Arc::new(json!("a")))
+        );
     }
 
     #[test]
@@ -549,18 +578,21 @@ mod tests {
         c.insert(
             key("GET", "/a", ""),
             Arc::new(json!("a")),
+            Arc::from([]),
             Duration::from_secs(60),
             &[],
         );
         c.insert(
             key("GET", "/b", ""),
             Arc::new(json!("b")),
+            Arc::from([]),
             Duration::from_secs(60),
             &[],
         );
         c.insert(
             key("GET", "/c", ""),
             Arc::new(json!("c")),
+            Arc::from([]),
             Duration::from_secs(60),
             &[],
         );
@@ -577,12 +609,13 @@ mod tests {
         c.insert(
             key("GET", "/a", ""),
             Arc::new(json!("a")),
+            Arc::from([]),
             Duration::from_secs(60),
             &[],
         );
         c.run_pending();
-        let _ = c.get(&key("GET", "/a", "")); // hit
-        let _ = c.get(&key("GET", "/missing", "")); // miss
+        let _ = c.get(&key("GET", "/a", "")).map(|e| e.ctx); // hit
+        let _ = c.get(&key("GET", "/missing", "")).map(|e| e.ctx); // miss
         assert_eq!(c.stats().hits, 1);
         assert_eq!(c.stats().misses, 1);
 
@@ -613,6 +646,7 @@ mod tests {
         c.insert(
             k.clone(),
             Arc::new(json!(1)),
+            Arc::from([]),
             Duration::from_millis(1),
             &["t".to_string()],
         );
@@ -620,6 +654,7 @@ mod tests {
         c.insert(
             k.clone(),
             Arc::new(json!(2)),
+            Arc::from([]),
             Duration::from_secs(60),
             &["t".to_string()],
         );
@@ -627,7 +662,7 @@ mod tests {
         assert_eq!(c.tag_index_size(), 1, "new entry stays indexed");
         assert_eq!(c.invalidate_tags(&["t".to_string()]), 1);
         assert!(
-            c.get(&k).is_none(),
+            c.get(&k).map(|e| e.ctx).is_none(),
             "tag invalidation reaches the new entry"
         );
         assert_eq!(c.tag_index_size(), 0);
