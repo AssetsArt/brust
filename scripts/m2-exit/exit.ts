@@ -1,8 +1,8 @@
 // scripts/m2-exit/exit.ts — the M2 exit report (spec §10): pinned sets + computed prose, no hand-written claims.
 export interface ManifestLike { routes: { id: string; pattern: string; chain: string[]; cache: unknown }[]; components: Record<string, { tier: string; jobs: { kind: string }[]; children: unknown[]; client: string | null; use_id_slots: number }> }
-export interface BenchLike { date: string; host: string; bun: string; conn: number; dur: string; bar: string; probes: { id: string; path: string; v2: { rps: number; p99: number }; x01: { rps: number; p99: number } | null; deltaRpsPct: number | null }[] }
+export interface BenchLike { date: string; host: string; bun: string; conn: number; dur: string; bar: string; probes: { id: string; path: string; v2: { rps: number; p99: number }; x01: { rps: number; p99: number } | null; v2Gzip: { rps: number }; x01Gzip: { rps: number } | null; deltaRpsPct: number | null }[] }
 export interface LedgerRow { id: string; where: string; finding: string; owner: string; state: 'closed' | 'open' }
-export interface ExitInputs { manifest: ManifestLike; bench: BenchLike; ledger: LedgerRow[]; runtimeDomPublishable: boolean }
+export interface ExitInputs { manifest: ManifestLike; bench: BenchLike; ledger: LedgerRow[]; ledger68: LedgerRow; runtimeDomPublishable: boolean }
 
 export const ROUTES = [
   { pattern: '/', leafTier: 'native', why: 'HeroSearch (useState + useId); per-row TypeBadge jobs; TeamBuilder island from the layout' },
@@ -44,8 +44,9 @@ export function renderExitReport(i: ExitInputs): string {
     L.push(`| \`${r.pattern}\` | ${i.manifest.components[m.chain[m.chain.length - 1]!]!.tier} | ${m.chain.join(' → ')} | ${m.cache ? JSON.stringify(m.cache) : '—'} | ${r.why} |`)
   }
   L.push('', '## Integration (`tests/server/pokedex.test.ts`, `hydrate.chromium.test.ts`)', '', 'Every route 200 with expected text; `notFound` → 404 never cached; L1 HIT with `loader_calls` unchanged; `?nocache=1` bypass; job-cache HIT across `/` → `/pokemon/pikachu` (`job.hits` ≥ 2, `job.misses` = 1); per-row child values in row order; `useId` identical across requests; the catch-all makes 0 Bun calls and ships no script; the react child hydrates in Chromium with no console error and is interactive.', '')
-  L.push('## Bench (`bench/RESULTS.json`)', '', `Measured ${i.bench.date} on ${i.bench.host}, Bun ${i.bench.bun}, \`oha -c ${i.bench.conn} -z ${i.bench.dur}\`. **Bar (v2 not slower on any probe): ${i.bench.bar}.**`, '', '| Probe | Path | v2 rps | 0.1.x rps | Δ |', '|---|---|---:|---:|---:|')
-  for (const p of i.bench.probes) L.push(`| ${p.id} | \`${p.path}\` | ${Math.round(p.v2.rps).toLocaleString()} | ${p.x01 ? Math.round(p.x01.rps).toLocaleString() : '—'} | ${p.deltaRpsPct === null ? 'not measured' : `${p.deltaRpsPct}%`} |`)
+  L.push('## Bench (`bench/RESULTS.json`)', '', `Measured ${i.bench.date} on ${i.bench.host}, Bun ${i.bench.bun}, \`oha -c ${i.bench.conn} -z ${i.bench.dur}\`. **Bar (v2 not slower on any probe, \`Accept-Encoding: identity\` on both sides): ${i.bench.bar}.** The gzip columns are an extra.`, '', '| Probe | Path | v2 rps | 0.1.x rps | Δ | v2 gzip rps | 0.1.x gzip rps |', '|---|---|---:|---:|---:|---:|---:|')
+  for (const p of i.bench.probes) L.push(`| ${p.id} | \`${p.path}\` | ${Math.round(p.v2.rps).toLocaleString()} | ${p.x01 ? Math.round(p.x01.rps).toLocaleString() : '—'} | ${p.deltaRpsPct === null ? 'not measured' : `${p.deltaRpsPct}%`} | ${Math.round(p.v2Gzip.rps).toLocaleString()} | ${p.x01Gzip ? Math.round(p.x01Gzip.rps).toLocaleString() : '—'} |`)
+  if (i.bench.bar !== 'met') L.push('', `**M2 is not complete:** the bar is ${i.bench.bar}; ledger F68 (lane \`m2p-render-perf\`) must close with the bar met.`)
   L.push('', '## Ledger F32–F49', '', `${i.ledger.filter((r) => r.state === 'closed').length} closed, ${i.ledger.filter((r) => r.state === 'open').length} re-filed (owner column of \`docs/plans/m1a-followups.md\`).`, '', '| Id | State | Owner / reason |', '|---|---|---|')
   for (const r of i.ledger) L.push(`| ${r.id} | ${r.state} | ${r.owner} |`)
   L.push('', '## Publish', '', `\`release.yml\` builds six targets and dry-runs \`bun publish\` for \`@brust/core\`, ${i.runtimeDomPublishable ? '`@brust/runtime-dom`' : '(`@brust/runtime-dom` still private: dry run skipped)'} and six \`@brust/native-<plat>\` on \`workflow_dispatch\`; publishing stays tag-gated and human.`, '')

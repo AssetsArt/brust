@@ -20,13 +20,15 @@ Every route 200 with expected text; `notFound` → 404 never cached; L1 HIT with
 
 ## Bench (`bench/RESULTS.json`)
 
-Measured 2026-10-09 on darwin/arm64, Bun 1.4.2, `oha -c 120 -z 10s`. **Bar (v2 not slower on any probe): not met.**
+Measured 2026-10-09 on darwin/arm64, Bun 1.4.2, `oha -c 120 -z 10s`. **Bar (v2 not slower on any probe, `Accept-Encoding: identity` on both sides): not met.** The gzip columns are an extra.
 
-| Probe | Path | v2 rps | 0.1.x rps | Δ |
-|---|---|---:|---:|---:|
-| A-static-hit | `/type-chart` | 2,487 | 4,865 | -48.9% |
-| B-native-miss | `/pokemon/{name}` | 12,720 | 44,942 | -71.7% |
-| C-react-child | `/` | 10,431 | 47,326 | -78% |
+| Probe | Path | v2 rps | 0.1.x rps | Δ | v2 gzip rps | 0.1.x gzip rps |
+|---|---|---:|---:|---:|---:|---:|
+| A-static-hit | `/type-chart` | 3,040 | 4,822 | -37% | 2,483 | 4,674 |
+| B-native-miss | `/pokemon/{name}` | 23,771 | 43,871 | -45.8% | 12,597 | 47,285 |
+| C-react-child | `/` | 17,907 | 47,296 | -62.1% | 10,612 | 45,969 |
+
+**M2 is not complete:** the bar is not met; ledger F68 (lane `m2p-render-perf`) must close with the bar met.
 
 ## Ledger F32–F49
 

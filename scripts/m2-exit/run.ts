@@ -14,6 +14,7 @@ export async function gatherInputs(): Promise<ExitInputs> {
     manifest,
     bench: JSON.parse(readFileSync(join(ROOT, 'bench/RESULTS.json'), 'utf8')),
     ledger: parseLedger(readFileSync(join(ROOT, 'docs/plans/m1a-followups.md'), 'utf8'), LEDGER_RANGE),
+    ledger68: parseLedger(readFileSync(join(ROOT, 'docs/plans/m1a-followups.md'), 'utf8'), [68])[0]!,
     runtimeDomPublishable: JSON.parse(readFileSync(join(ROOT, 'packages/runtime-dom/package.json'), 'utf8')).private !== true,
   }
 }
