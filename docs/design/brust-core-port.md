@@ -13,7 +13,11 @@ Source: github.com/AssetsArt/brust `main` @ d04718f, `crates/brust-core/src/`. C
 | routing/routes.rs | routing/routes.rs:1-631 | adapt: RouteConfig from manifest (`RouteTable::from_manifest`, `route_index`), `cache` typed as `manifest::RouteCache`, envelopes reduced to one `RouteEnvelope` (no `kind`/`nativeTemplate`/`bypassed`) whose `req` is the loader's | 45 → 30 (16 dropped with action/mcp/sse/ws/native-template/rewrite, 1 added) |
 | cache/l1.rs | cache/response_cache.rs + server/mod.rs:1787-1798,1817-1824 (`build_cache_key`, `sort_query`) | adapt: value = JSON ctx; `invalidate_tags` returns count; tag index generation-guarded (a replace/evict of an old value no longer un-indexes the newer one) | 10 → 12 (+`build_cache_key_sorts_query_and_applies_prefix` moved from server/mod.rs:1888-1894, +`reinsert_keeps_newer_entry_tag_indexed`) |
 | cache/job_cache.rs | cache/page_cache.rs | adapt: typed key, Expiry, stats; JSON value; generation-guarded tag index shared with l1 | 9 → 12 (+`ttl_none_survives_until_invalidated`, `stats_count_hits_and_misses`, `reinsert_keeps_newer_entry_tag_indexed`) |
-| (filled by Tasks 5–8: pool, dispatch, render, config, server/mod) |
+| pool.rs | render/pool.rs | carry verbatim (`use` path → `crate::dispatch`; + `WorkerEntry::id()`) | 14 → 14 |
+| dispatch.rs | render/dispatch.rs + server/mod.rs:1262-1371 | adapt: CallKind, JSON response, claim_or_wait(timeout), `call_worker` (framed decode :1373-1404 and `process::exit` on last worker not carried); module doc :1-21 verbatim | 3 → 7 (+`call_worker_round_trips_json`, `call_worker_returns_bad_response_on_len_over_capacity`, `claim_or_wait_times_out_when_all_busy`, `claim_or_wait_wakes_when_claim_released`) |
+| protocol.rs | — (spec §1 S1 call table) | new: Loader/Jobs request+response structs | 0 → 9 |
+| tests/common/fake_bun.rs | render/dispatch.rs:107-165 (`MockDispatch` pattern) | new: `FakeBun` + `FakeBunHandle` test double (records last request per kind) | proven by tests/fake_bun.rs (2) |
+| (filled by Tasks 6–8: render, config, server/mod) |
 Not carried (spec S2): cache/island_cache.rs, render/stream.rs, realtime/*, routing/action.rs, `/_brust/islands`, `/_brust/page`, MCP, SSE/WS, AI, `handle_action`, `dispatch_streaming`, `spawn_chunk_pump`.
 
 ## routes.rs: dropped tests (16)
