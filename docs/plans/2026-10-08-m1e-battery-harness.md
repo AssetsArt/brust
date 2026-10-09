@@ -68,6 +68,19 @@ Commit `ci: battery and browser jobs; M1 exit report`.
 
 ---
 
+## Reality check against merged v2 (lead, 2026-10-09, after m1b1/m1b2/m1c/m1d-runtime-fixes merged)
+
+The tasks above were written before M1c landed. These bindings override the task text where they differ:
+
+- **`brustc` surface (merged):** `brustc <file.tsx> --emit parse|hir|ir|diag|template|server|client|all [--out <dir>] [--runtime-import <spec>]`. `--emit all --out <dir>` writes `<component_id>.jinja`, `<component_id>.server.ts`, `<component_id>.client.js` (e.g. `input_6af673af.*`; the id comes from the file stem + path hash, so run it on a copy named after the row or map ids back by reading `--emit ir`'s `id`). `--emit diag` exits 1 when any Error is present — the battery must treat exit 1 + stdout as a result, not a crash; a parse failure is the `compile error` row (Review Focus 1).
+- **Harness location:** the dual-evaluation harness is `crates/brust-compiler/tests/harness/eval.ts` (`bun eval.ts slots <job.server.ts> <props.json>` → job output JSON; `bun eval.ts check <dir> <page.html>` → directive/paint comparison) with `rt.ts` capturing factories, driven by `crates/brust-compiler/tests/dual_eval.rs` under `cargo test`. There is no `tests/harness/eval.ts` at the repo root; Task 2's `--render` takes `<props.json> <slots.json>` where slots come from the `slots` command above. Task 3 reuses `eval.ts slots`, never re-implements the job runner.
+- **Fixtures with sample props** (`tests/fixtures/<case>/sample-props*.json`) are the browser cases: `theme-toggle`, `product-card`, `parent-counter`, `keyed-list`, `controlled-input`, plus **`nested-list`** (exercises the `x-for` `path:bindings` source landed in F29) and **`truthiness`** (reactive `x-if` on `[]`, F30 / B2). Add the last two to Task 3's case list.
+- **Runtime import:** generated chunks import the runtime from `--runtime-import`; the harness passes the absolute path of `packages/runtime-dom/src/index.ts` (happy-dom) and `packages/runtime-dom/dist/index.js` (Playwright, if present). `packages/runtime-dom` has `bun test` (44 tests), `bun run build`, happy-dom as a devDependency; root `package.json` is a Bun workspace (`packages/*`) with only a `bun-codegen` script — add `battery` and `browser-test` there.
+- **CI:** `.github/workflows/ci.yml` has jobs `rust` and `runtime-dom`; Task 4 adds `battery` (builds `brustc`, runs the battery, `git diff --exit-code docs/react-coverage.md`) and `browser` (`bun run browser-test`).
+- **Ledger items owned by this lane** (`docs/plans/m1a-followups.md`), each a small change in `crates/brust-compiler` with one test: **F26** (`useState(load)` with a module-level function seeds the call, not the function), **F31** (`Attr::Spread` → Fallback `spread-props`, tier `react`), **F36** (`style={c ? {...} : undefined}` must omit the attribute, not paint `style=""`). Do them as Task 0 before the battery so the report reflects them; the battery rows for spread props and conditional style pin them.
+- **Declared known gaps for the exit report** (not fixed in M1): F32 (`<brust-if>`/`<brust-row>` inside `<table>`/`<select>` are foster-parented — the battery marks such rows `known-gap`), F33 (truthiness-guard cache inputs), F34 (per-instance child jobs need the M2 server), F35 (dynamic `<script>`/`<style>` children). List them in `docs/plans/m1-exit-report.md` with the ledger ids.
+- **Gates for READY:** `cargo fmt --all -- --check`; `cargo clippy -p brust-compiler -p brust-compiler-cli -p brust-jinja --no-deps -- -D warnings`; `cargo test --workspace --exclude bun_react_compiler` (156 tests today + yours); `bun run battery` twice with no diff; `bun test scripts/battery/exit.test.ts`; `bun run browser-test`; PR → v2 with all CI jobs green.
+
 ## Self-review notes
 
 - **Spec coverage:** §11 battery/runtime tests → Tasks 1, 3; §12 exit criteria → Task 4; `docs/react-coverage.md` deliverable → Task 1.
