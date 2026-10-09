@@ -265,3 +265,53 @@ fn react_event_names_map_to_dom_events() {
             .any(|d| d.rule == "event-capture" && d.class == DiagClass::Fallback)
     );
 }
+
+/// F40: `Array.from(src, fn)` is a keyed list like `.map`.
+#[test]
+fn array_from_with_callback_is_a_keyed_list() {
+    let (n, d) = tpl(
+        "export default function L(props: { xs: {id: string}[] }) { return <ul>{Array.from(props.xs, (x, i) => <li key={x.id}>{i}</li>)}</ul> }",
+    );
+    assert!(d.is_empty(), "{d:?}");
+    let Node::Element { children, .. } = n else {
+        panic!("{n:?}")
+    };
+    let [Node::For { item, index, .. }] = children.as_slice() else {
+        panic!("a For node is expected: {children:?}")
+    };
+    assert_eq!((item.as_str(), index.as_deref()), ("x", Some("i")));
+}
+
+#[test]
+fn array_from_length_range_with_callback_is_a_list_over_the_range() {
+    let (n, d) = tpl(
+        "export default function L({ n }: any) { return <ul>{Array.from({ length: n }, (_, i) => <li key={i}>{i}</li>)}</ul> }",
+    );
+    assert!(d.is_empty(), "{d:?}");
+    let Node::Element { children, .. } = n else {
+        panic!("{n:?}")
+    };
+    let [Node::For { source, .. }] = children.as_slice() else {
+        panic!("{children:?}")
+    };
+    let Expr::Raw(RawExpr {
+        kind: RawKind::Call { args, .. },
+        ..
+    }) = source
+    else {
+        panic!("{source:?}")
+    };
+    assert!(matches!(args[0].kind, RawKind::Object(_)));
+}
+
+#[test]
+fn array_from_without_key_is_the_list_key_error() {
+    let (_, d) = tpl(
+        "export default function L(props: { xs: {id: string}[] }) { return <ul>{Array.from(props.xs, (x) => <li>{x.id}</li>)}</ul> }",
+    );
+    assert!(
+        d.iter()
+            .any(|x| x.class == DiagClass::Error && x.rule == "list-key"),
+        "{d:?}"
+    );
+}

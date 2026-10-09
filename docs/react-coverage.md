@@ -7,12 +7,12 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
-| A JSX basics | 18 | 13 | 3 | 2 | 0 | 0 | 0 | 0 |
+| A JSX basics | 18 | 14 | 3 | 1 | 0 | 0 | 0 | 0 |
 | B Composition | 11 | 4 | 3 | 4 | 0 | 0 | 0 | 0 |
 | C Hooks | 14 | 1 | 7 | 6 | 0 | 0 | 0 | 0 |
 | D API surface | 5 | 1 | 0 | 4 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 13 | 3 | 4 | 1 | 4 | 1 | 0 | 0 |
-| **Total** | 61 | 22 | 17 | 17 | 4 | 1 | 0 | 0 |
+| **Total** | 61 | 23 | 17 | 16 | 4 | 1 | 0 | 0 |
 
 ## A. JSX basics
 
@@ -29,7 +29,7 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | a-list-keys | keyed list from a prop | static | static | 0 | ok | — | spec §6.2 keyed list |
 | a-nested-list | nested keyed lists | static | static | 0 | ok | — | table rows; known gap: F32: `<brust-row>` wrappers inside <table> are foster-parented by the HTML parser (M2) |
 | a-cond-attribute | conditional attribute via ternary | static | static | 0 | ok | — | spec §6.2 conditional attribute |
-| a-array-from | Array.from range list | react | react | ssr | ok | fallback:jsx-expression, warning:key-outside-list | F40: the Array.from(xs, fn) callback form is not recognised; only Array.from({ length: N }).map(…) is (spec §6.2) — falls back (jsx-expression) |
+| a-array-from | Array.from range list | static | static | precompute | ok | — | spec §6.2: the Array.from(xs, fn) callback form is a keyed list like .map (F40) |
 | a-array-from-length | Array.from({ length: N }).map range list | static | static | 0 | ok | — | spec §6.2: N literal ≤ 1024 |
 | a-state-text | state text with a click handler | native | native | 0 | ok | — | spec §4.3 useState |
 | a-state-cond | state-driven conditional | native | native | 0 | ok | — | spec §4.3 useState; §7.1 x-if |

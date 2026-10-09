@@ -344,16 +344,32 @@ fn read_child(r: &mut Reader<'_, '_>, e: &js_ast::Expr, out: &mut Vec<Node>) {
     }
 }
 
-/// `source.map((item, index?) => <jsx key={…}/>)` → `For`. `None` when the call
-/// is not that shape (it is then read as a plain slot).
+/// `source.map((item, index?) => <jsx key={…}/>)` and `Array.from(source, (item, index?) => <jsx key={…}/>)`
+/// → `For`. `None` when the call is not that shape (it is then read as a plain slot).
 fn read_list(r: &mut Reader<'_, '_>, call: &js_ast::E::Call) -> Option<Node> {
     let E::EDot(dot) = &call.target.data else {
         return None;
     };
-    if dot.name.slice() != b"map" || call.args.len() != 1 || dot.optional_chain.is_some() {
+    if dot.optional_chain.is_some() {
         return None;
     }
-    let E::EArrow(arrow) = &call.args[0].data else {
+    // (the source expression, `Array.from` callee when that form, the callback)
+    let (src_expr, from_callee, arrow) = if dot.name.slice() == b"map" && call.args.len() == 1 {
+        let E::EArrow(arrow) = &call.args[0].data else {
+            return None;
+        };
+        (&dot.target, None, arrow)
+    } else if dot.name.slice() == b"from"
+        && call.args.len() == 2
+        && matches!(&dot.target.data, E::EIdentifier(id) if r.names.name(id.ref_) == "Array")
+    {
+        // F40: `Array.from(xs, fn)` is the same list as `xs.map(fn)`; the `{ length: n }`
+        // range keeps the `Array.from({ length: n })` source the template subset knows.
+        let E::EArrow(arrow) = &call.args[1].data else {
+            return None;
+        };
+        (&call.args[0], Some(&call.target), arrow)
+    } else {
         return None;
     };
     let params = arrow.args.slice();
@@ -376,7 +392,17 @@ fn read_list(r: &mut Reader<'_, '_>, call: &js_ast::E::Call) -> Option<Node> {
     let body_expr = ret.value?;
     let body_call = jsx_call(&body_expr)?;
 
-    let source = Expr::Raw(r.expr(&dot.target));
+    let first = r.expr(src_expr);
+    let source = Expr::Raw(match (from_callee, &first.kind) {
+        (Some(callee), RawKind::Object(_)) => RawExpr {
+            loc: first.loc,
+            kind: RawKind::Call {
+                callee: Box::new(r.expr(callee)),
+                args: vec![first],
+            },
+        },
+        _ => first,
+    });
     let item = r.names.name(bindings[0]);
     let index = bindings.get(1).map(|b| r.names.name(*b));
     for b in &bindings {
