@@ -47,10 +47,5 @@ What each gate checks (the pinned sets are compared by set equality, so changing
 
 | Id | Gap | Owner |
 |---|---|---|
-| F32 | `<brust-if>` / `<brust-row>` wrappers inside `<table>` / `<select>` / `<ul>` are foster-parented by the HTML parser, so the DOM differs from the jinja text | M2 |
-| F33 | a truthiness guard on a prop (`user && …`) contributes only its member reads to the job inputs, so `null` and `{}` share a cache key | M2 |
-| F34 | an inlined child with its own precompute job needs per-instance child jobs, which need the M2 server | M2 |
-| F35 | dynamic `<script>` / `<style>` children are HTML-escaped inside raw text (safe, but the value changes silently) | M2 |
-| F37 | `memo(Inner)` default exports are not unwrapped: tier `react` (`default-export-shape`) where the plan expected `native` | ledger |
-| F39 | a `useId` value read in render falls back (`use-id-in-render`); the spec §4.3 row `useId` needs server-generated ids from the M2 server (spec §13 (a); `docs/plans/2026-10-08-m1b2-placement-tier.md:206`) | ledger |
-| F40 | the `Array.from(xs, fn)` callback form is not recognised (only `Array.from({ length: N }).map(…)` is, spec §6.2): tier `react` (`jsx-expression`) | ledger |
+| F32-b | an `x-if` branch that is one inlined component keeps its `<brust-if>` wrapper (the runtime skips a host before `x-if`, ledger F52), and multi-root rows/branches keep theirs: foster-parented inside `<table>` / `<select>` | m2d / M3 |
+| F34 | per-instance child jobs: the compiler half is done (`instances[]` in the IR); running them per row needs the M2 server | m2b |

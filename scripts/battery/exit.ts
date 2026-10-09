@@ -10,20 +10,14 @@ export const KNOWN_GAP_ROWS: Record<string, { ledger: string; observed: Expect }
 export const ERROR_ROWS = ['e-function-prop-react-child', 'e-server-only-handler', 'e-request-prop', 'e-missing-key'] as const
 export const COMPILE_ERROR_ROWS = ['e-parse-error'] as const
 
-/** Gaps declared by the plans (ledger ids in docs/plans/m1a-followups.md). */
+/** Gaps still open after `m2a-compiler` (ledger ids in docs/plans/m1a-followups.md). F33, F35, F37, F39, F40 and F32 (single-root) are closed. */
 export const DECLARED_GAPS: { id: string; what: string; owner: string }[] = [
-  { id: 'F32', what: '`<brust-if>` / `<brust-row>` wrappers inside `<table>` / `<select>` / `<ul>` are foster-parented by the HTML parser, so the DOM differs from the jinja text', owner: 'M2' },
-  { id: 'F33', what: 'a truthiness guard on a prop (`user && …`) contributes only its member reads to the job inputs, so `null` and `{}` share a cache key', owner: 'M2' },
-  { id: 'F34', what: 'an inlined child with its own precompute job needs per-instance child jobs, which need the M2 server', owner: 'M2' },
-  { id: 'F35', what: 'dynamic `<script>` / `<style>` children are HTML-escaped inside raw text (safe, but the value changes silently)', owner: 'M2' },
+  { id: 'F32-b', what: 'an `x-if` branch that is one inlined component keeps its `<brust-if>` wrapper (the runtime skips a host before `x-if`, ledger F52), and multi-root rows/branches keep theirs: foster-parented inside `<table>` / `<select>`', owner: 'm2d / M3' },
+  { id: 'F34', what: 'per-instance child jobs: the compiler half is done (`instances[]` in the IR); running them per row needs the M2 server', owner: 'm2b' },
 ]
 
-/** Gaps the battery itself found (ledger ids F37, F39, F40; F38 was fixed by `m1-hotfix-dynamic-import`). */
-export const BATTERY_GAPS: { id: string; what: string }[] = [
-  { id: 'F37', what: '`memo(Inner)` default exports are not unwrapped: tier `react` (`default-export-shape`) where the plan expected `native`' },
-  { id: 'F39', what: 'a `useId` value read in render falls back (`use-id-in-render`); the spec §4.3 row `useId` needs server-generated ids from the M2 server (spec §13 (a); `docs/plans/2026-10-08-m1b2-placement-tier.md:206`)' },
-  { id: 'F40', what: 'the `Array.from(xs, fn)` callback form is not recognised (only `Array.from({ length: N }).map(…)` is, spec §6.2): tier `react` (`jsx-expression`)' },
-]
+/** Gaps the battery itself found: none open (F37, F39, F40 closed by `m2a-compiler`; F38 by `m1-hotfix-dynamic-import`). */
+export const BATTERY_GAPS: { id: string; what: string }[] = []
 
 export const BROWSER_CASES = ['theme-toggle', 'product-card', 'parent-counter', 'keyed-list', 'keyed-list-child', 'controlled-input', 'nested-list', 'truthiness', 'table-rows']
 
