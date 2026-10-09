@@ -7,7 +7,7 @@ as a small react-free chunk, React only where the compiler proves it is needed.
 - Plans: `docs/plans/`
 - Browser runtime: `packages/runtime-dom` (directive contract in its README; `cd packages/runtime-dom && bun test`)
 - Build: Rust `nightly-2026-09-15` (see `rust-toolchain.toml`) + Bun 1.4.x. `cargo test --workspace --exclude bun_react_compiler`.
-- Coverage battery: `bun run battery` regenerates `docs/react-coverage.md` and `docs/plans/m1-exit-report.md` (60 rows through the real `brustc`; CI fails on a diff). Exit criteria as tests: `bun test scripts/battery`.
+- Coverage battery: `bun run battery` regenerates `docs/react-coverage.md` and `docs/plans/m1-exit-report.md` (61 rows through the real `brustc`; CI fails on a diff). Exit criteria as tests: `bun test scripts/battery`.
 - Browser harness: `bun run browser-test` mounts the generated chunks over `brustc --render` HTML (happy-dom). `--render` is a debug command, never a production path.
 - CLI: `cargo run -p brust-compiler-cli -- <file.tsx> --emit parse|hir`
 
