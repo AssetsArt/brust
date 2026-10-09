@@ -297,6 +297,19 @@ fn direct_locals(e: &RawExpr, out: &mut BTreeSet<String>) {
     }
 }
 
+/// A child that is not literal text (`F35`): an expression, a condition, a list or a component.
+fn dynamic_child(n: &Node) -> bool {
+    match n {
+        Node::Text(_) => false,
+        Node::Slot(Expr::Raw(r)) => match &r.kind {
+            RawKind::Lit(_) => false,
+            RawKind::Template { parts, .. } => !parts.is_empty(),
+            _ => true,
+        },
+        _ => true,
+    }
+}
+
 /// JSX inside a value that is printed as code (not a template node).
 pub fn contains_jsx(e: &RawExpr) -> bool {
     match &e.kind {
@@ -548,8 +561,24 @@ impl Placer<'_> {
     fn node(&mut self, n: &mut Node) {
         match n {
             Node::Element {
-                attrs, children, ..
+                tag,
+                loc,
+                attrs,
+                children,
+                ..
             } => {
+                // F35: raw-text elements are not HTML-escaped by browsers, but the template
+                // escapes every value, so a dynamic child would change silently.
+                if (tag.eq_ignore_ascii_case("script") || tag.eq_ignore_ascii_case("style"))
+                    && children.iter().any(dynamic_child)
+                {
+                    self.diagnostics.push(Diagnostic::fallback(
+                        "raw-text-child",
+                        format!("a dynamic child of <{tag}> would be HTML-escaped inside raw text"),
+                        *loc,
+                        "move the value into a data attribute or a JSON `<script type=\"application/json\">` rendered by a job",
+                    ));
+                }
                 for a in attrs.iter_mut() {
                     match a {
                         Attr::Dynamic { value, .. } | Attr::Spread(value) => self.expr(value),

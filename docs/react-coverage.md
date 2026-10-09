@@ -11,8 +11,8 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | B Composition | 11 | 4 | 3 | 4 | 0 | 0 | 0 | 0 |
 | C Hooks | 15 | 1 | 8 | 6 | 0 | 0 | 0 | 0 |
 | D API surface | 5 | 1 | 0 | 4 | 0 | 0 | 0 | 0 |
-| E v2 specifics | 13 | 3 | 4 | 1 | 4 | 1 | 0 | 0 |
-| **Total** | 62 | 23 | 18 | 16 | 4 | 1 | 0 | 0 |
+| E v2 specifics | 14 | 3 | 4 | 2 | 4 | 1 | 0 | 0 |
+| **Total** | 63 | 23 | 18 | 17 | 4 | 1 | 0 | 0 |
 
 ## A. JSX basics
 
@@ -99,4 +99,5 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | e-use-client | 'use client' leftover | static | static | 0 | ok | warning:use-client-leftover | spec §8.1 use-client-leftover (F41) |
 | e-fragment-root | fragment root with state | native | native | 0 | ok | warning:fragment-root | warning fragment-root |
 | e-if-in-table | state-driven row inside a table | native | native | 0 | ok | — | spec §7.1 x-if |
+| e-raw-text-child | dynamic child of <script> | react | react | ssr | ok | fallback:raw-text-child | raw-text-child: the template would HTML-escape a dynamic value inside raw text (F35) |
 | e-parse-error | snippet that does not parse | compile-error | compile-error | 0 | — | — | compile error: Syntax Error (input.tsx:1:43); reported as a row, never aborts the battery |

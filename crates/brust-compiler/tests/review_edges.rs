@@ -558,3 +558,32 @@ fn dynamic_import_in_a_class_expression_and_field_initialiser_falls_back() {
         rules(&ir)
     );
 }
+
+/// F35: a dynamic child of <script>/<style> falls back; literal text stays native.
+#[test]
+fn dynamic_child_of_script_or_style_falls_back() {
+    let a = analyze(
+        "export default function A(props: { js: string }) { return <div><script>{props.js}</script></div> }",
+    );
+    assert!(
+        rules(&a).contains(&(DiagClass::Fallback, "raw-text-child".into())),
+        "{:?}",
+        rules(&a)
+    );
+    let b = analyze(
+        "export default function B() { return <div><style>{`.a{color:red}`}</style></div> }",
+    );
+    assert!(
+        !rules(&b).iter().any(|(_, r)| r == "raw-text-child"),
+        "static text is fine: {:?}",
+        rules(&b)
+    );
+    let c = analyze(
+        "export default function C() { return <div><style>{'.a{color:red}'}</style><script>var x = 1</script></div> }",
+    );
+    assert!(
+        !rules(&c).iter().any(|(_, r)| r == "raw-text-child"),
+        "{:?}",
+        rules(&c)
+    );
+}
