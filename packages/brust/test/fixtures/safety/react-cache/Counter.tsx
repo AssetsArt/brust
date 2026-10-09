@@ -1,5 +1,5 @@
 // A react island that imports `cache` from the package root (browser-safe entry).
-import { cache } from '@brust/brust'
+import { cache } from '@brust/core'
 import { useReducer } from 'react'
 
 function Counter(props: { label: string }) {

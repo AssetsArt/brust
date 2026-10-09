@@ -1,5 +1,5 @@
-// A react island importing `{ cache }` from `@brust/brust` builds AND serves (m2c review round 3):
-// `dist/jobs.js` keeps `@brust/brust` external (the worker provides it) instead of bundling the
+// A react island importing `{ cache }` from `@brust/core` builds AND serves (m2c review round 3):
+// `dist/jobs.js` keeps `@brust/core` external (the worker provides it) instead of bundling the
 // server package — whose worker auto-start would run inside the worker and exit it (code 13).
 // Run on its own: `bun test --timeout 120000 test/react-cache-start.test.ts`.
 import { afterAll, expect, test } from 'bun:test'
@@ -8,12 +8,12 @@ import { join } from 'node:path'
 
 const app = join(import.meta.dir, 'fixtures/safety/react-cache')
 const bin = join(import.meta.dir, '../bin/brust')
-// Inside the package (gitignored `dist/`): the external `@brust/brust` resolves from the dist.
+// Inside the package (gitignored `dist/`): the external `@brust/core` resolves from the dist.
 const dist = join(app, 'dist')
 
 afterAll(() => rmSync(dist, { recursive: true, force: true }))
 
-test('brust start serves a react island that imports { cache } from @brust/brust (200, worker stays up)', async () => {
+test('brust start serves a react island that imports { cache } from @brust/core (200, worker stays up)', async () => {
   rmSync(dist, { recursive: true, force: true })
   const b = Bun.spawnSync([bin, 'build', 'routes.tsx'], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
   expect(b.stderr.toString()).toBe('')
