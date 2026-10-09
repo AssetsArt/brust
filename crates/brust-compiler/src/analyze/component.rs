@@ -319,6 +319,21 @@ fn read_function(
     mark_state_bindings(func, &mut names);
     let print = |js: Js<'_>| print_js(parsed, ast, js);
     let mut reader = Reader::new(&mut names, &print);
+    // F41 (§8.1): a leftover `'use client'` directive means nothing in brust.
+    for part in ast.parts.iter() {
+        for stmt in part.stmts.slice() {
+            if let S::SDirective(d) = &stmt.data
+                && d.value.slice() == b"use client"
+            {
+                ir.diagnostics.push(Diagnostic::warning(
+                    "use-client-leftover",
+                    "'use client' has no effect: brust decides what runs on the client",
+                    stmt.loc.start.max(0) as u32,
+                    "remove the directive",
+                ));
+            }
+        }
+    }
     // F38: any dynamic `import()` in the module (`lazy(() => import(…))`) makes
     // the component a React island.
     let mut w = crate::analyze::expr::Walk::default();

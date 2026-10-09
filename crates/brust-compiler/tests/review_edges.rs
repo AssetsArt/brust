@@ -479,3 +479,57 @@ fn memo_with_comparator_is_unwrapped_and_forward_ref_is_not() {
         .unwrap();
     assert!(d.message.contains("memo() wraps"), "{}", d.message);
 }
+
+/// F41 (§8.1): a leftover directive and an incomplete effect dependency array are warnings.
+#[test]
+fn use_client_directive_is_a_warning() {
+    let ir = analyze("'use client'\nexport default function A() { return <b/> }");
+    assert!(
+        rules(&ir).contains(&(DiagClass::Warning, "use-client-leftover".into())),
+        "{:?}",
+        rules(&ir)
+    );
+    assert!(
+        matches!(ir.tier, Tier::Static),
+        "warning only: {:?}",
+        ir.tier
+    );
+}
+
+#[test]
+fn effect_missing_dep_is_a_warning_with_the_name() {
+    let ir = analyze(
+        "import { useState, useEffect } from 'react'\nexport default function A(props: { n: number }) { const [c] = useState(0); useEffect(() => { document.title = String(props.n + c) }, [c]); return <b/> }",
+    );
+    let d = ir
+        .diagnostics
+        .iter()
+        .find(|d| d.rule == "effect-deps")
+        .expect("effect-deps");
+    assert_eq!(d.class, DiagClass::Warning);
+    assert!(
+        d.message.contains("`props`") && !d.message.contains("`c`"),
+        "{}",
+        d.message
+    );
+}
+
+#[test]
+fn effect_without_deps_array_or_with_all_deps_does_not_warn() {
+    let none = analyze(
+        "import { useEffect } from 'react'\nexport default function A(props: { n: number }) { useEffect(() => { document.title = String(props.n) }); return <b/> }",
+    );
+    assert!(
+        !rules(&none).iter().any(|(_, r)| r == "effect-deps"),
+        "{:?}",
+        rules(&none)
+    );
+    let all = analyze(
+        "import { useState, useEffect } from 'react'\nexport default function A(props: { n: number }) { const [c] = useState(0); useEffect(() => { document.title = String(props.n + c) }, [props.n, c]); return <b/> }",
+    );
+    assert!(
+        !rules(&all).iter().any(|(_, r)| r == "effect-deps"),
+        "{:?}",
+        rules(&all)
+    );
+}
