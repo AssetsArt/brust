@@ -4,19 +4,21 @@
 //! Order: method gate → `/ping`, `/_brust/cache/stats`, static files → route
 //! match → L1 decision (carried from `server/mod.rs:710-808`) → loader call →
 //! job keys / job cache / one batched `jobs` call → child slots + `useId` →
-//! leaf-first render → asset tags → L1 store of the JSON context.
+//! leaf-first render → asset tags → L1 store of the JSON context and the
+//! rendered body (a HIT serves the body; S10 amendment).
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+use bytes::Bytes;
 use http::{HeaderMap, Request, Response};
 use hyper::body::Incoming;
 use serde_json::{Map, Value};
 
 use crate::cache::job_cache::JobKey;
 use crate::cache::key_expr::EvalCtx;
-use crate::cache::l1::{CacheKey, build_cache_key};
+use crate::cache::l1::{CacheKey, RenderedBody, build_cache_key};
 use crate::config::Server;
 use crate::dispatch::{CallError, CallKind, call_worker};
 use crate::inputs::{self, Path};
@@ -287,16 +289,10 @@ async fn page(
         && let Some(hit) = s.l1.get(k)
     {
         meta.cache = CacheOutcome::Hit;
-        return finish(
-            s,
-            route,
-            &hit.ctx,
-            200,
-            hit.headers.to_vec(),
-            accept_enc,
-            Some("HIT"),
-        )
-        .unwrap_or_else(|e| render_failed(route, &e));
+        // S10 amendment: the body the MISS rendered, no re-render.
+        let gz = crate::http::compress::accepts_gzip(accept_enc);
+        let (bytes, encoded) = cached_body(&hit.body, gz);
+        return page_response(&hit.body, bytes, encoded, Some("HIT"));
     }
 
     // ----- (4) loader -----
@@ -543,17 +539,33 @@ async fn page(
         _ => None,
     };
     let headers: Arc<[(String, String)]> = extra.into();
-    let resp = match finish(s, route, &ctx, status, headers.to_vec(), accept_enc, hdr) {
-        Ok(r) => r,
+    let html = match render_document(s, route, &ctx) {
+        Ok(h) => h,
         Err(e) => return render_failed(route, &e),
     };
+    let body = Arc::new(RenderedBody {
+        status,
+        headers: body::header_map(HTML, &headers),
+        html,
+        gzip: std::sync::OnceLock::new(),
+    });
+    let (bytes, encoded) = cached_body(&body, crate::http::compress::accepts_gzip(accept_enc));
+    let resp = page_response(&body, bytes, encoded, hdr);
     if let Some(k) = cache_key
         && status == 200
         && cacheable
         && let Some(c) = &route.cache
     {
-        // The loader's headers ride with the ctx so a HIT replays them.
-        s.l1.insert(k, ctx, headers, Duration::from_secs(c.ttl_seconds), &c.tags);
+        // The loader's headers ride with the ctx (and the rendered body, with
+        // its gzip if this request made it) so a HIT replays them.
+        s.l1.insert(
+            k,
+            ctx,
+            body,
+            headers,
+            Duration::from_secs(c.ttl_seconds),
+            &c.tags,
+        );
     }
     resp
 }
@@ -563,45 +575,70 @@ fn render_failed(route: &RouteRecord, e: &RenderError) -> Response<ResponseBody>
     body::error_500()
 }
 
-/// Leaf-first render with each chain component's overlay (its `_idN`, its
-/// own child-instance slots from `ctx["__children"][<id>]`, its own job
-/// results from `ctx["__own"][<id>]`, and `_props`), asset tags,
-/// optional gzip. Shared by the HIT and MISS paths so a HIT renders
-/// byte-identically.
-fn finish(
-    s: &Server,
-    route: &RouteRecord,
-    ctx: &Value,
-    status: u16,
-    mut headers: Vec<(String, String)>,
-    accept_enc: Option<&str>,
-    cache_hdr: Option<&str>,
-) -> Result<Response<ResponseBody>, RenderError> {
+const HTML: &str = "text/html; charset=utf-8";
+
+/// Page gzip policy: a document at least this long is gzip-eligible (it
+/// carries `Vary: Accept-Encoding`, and is gzipped for a client accepting it).
+const PAGE_GZIP_MIN: usize = 1024;
+
+/// Leaf-first render of the route's chain (each component under its overlay)
+/// plus asset tags: the identity document. Shared by every path that renders,
+/// so the body a HIT serves is the bytes a fresh render produces.
+fn render_document(s: &Server, route: &RouteRecord, ctx: &Value) -> Result<Bytes, RenderError> {
     let html = render_chain_html(&s.manifest, &s.renderer, &route.id, &route.chain, ctx)?;
-    let mut bytes = inject_assets(html, &route.chain, &s.manifest).into_bytes();
-    if let Some(h) = cache_hdr {
-        headers.push(("x-brust-cache".into(), h.into()));
-    }
-    if bytes.len() >= 1024
-        && crate::http::compress::accepts_gzip(accept_enc)
-        && let Some(gz) = crate::http::compress::gzip(&bytes)
-    {
-        bytes = gz;
-        headers.push(("Content-Encoding".into(), "gzip".into()));
-        headers.push(("Vary".into(), "Accept-Encoding".into()));
-    }
-    Ok(body::resp(
-        status,
-        "text/html; charset=utf-8",
-        &headers,
-        bytes,
+    Ok(Bytes::from(
+        inject_assets(html, &route.chain, &s.manifest).into_bytes(),
     ))
+}
+
+/// The bytes to send for `body` and whether they are gzip: the identity
+/// document, or — for a gzip-accepting client and an eligible document — its
+/// gzip, made once per body (`OnceLock`) and shared by every later request.
+/// `pub` (via `brust_server::bench`) so the micro-bench times the real HIT.
+pub fn cached_body(body: &RenderedBody, accepts_gzip: bool) -> (Bytes, bool) {
+    if accepts_gzip && body.html.len() >= PAGE_GZIP_MIN {
+        let gz = body
+            .gzip
+            .get_or_init(|| crate::http::compress::gzip(&body.html).map(Bytes::from));
+        if let Some(gz) = gz {
+            return (gz.clone(), true);
+        }
+    }
+    (body.html.clone(), false)
+}
+
+/// The page response: the body's stored headers, then `x-brust-cache`,
+/// `Content-Encoding` and `Vary` (on every gzip-eligible document, identity
+/// or not, so a shared cache keys on `Accept-Encoding`).
+fn page_response(
+    body: &RenderedBody,
+    bytes: Bytes,
+    gzipped: bool,
+    cache_hdr: Option<&'static str>,
+) -> Response<ResponseBody> {
+    let mut h = body.headers.clone();
+    if let Some(v) = cache_hdr {
+        h.append("x-brust-cache", http::HeaderValue::from_static(v));
+    }
+    if gzipped {
+        h.append(
+            http::header::CONTENT_ENCODING,
+            http::HeaderValue::from_static("gzip"),
+        );
+    }
+    if body.html.len() >= PAGE_GZIP_MIN {
+        h.append(
+            http::header::VARY,
+            http::HeaderValue::from_static("Accept-Encoding"),
+        );
+    }
+    body::resp_with(body.status, h, bytes)
 }
 
 /// The leaf-first render of `chain` for `ctx`, each component under its
 /// overlay (its `_idN`, its own child-instance slots from
 /// `ctx["__children"][<id>]`, its own job results from `ctx["__own"][<id>]`,
-/// and `_props`) — `finish` minus asset tags, headers and gzip. `pub` (via
+/// and `_props`) — `render_document` minus asset tags. `pub` (via
 /// `brust_server::bench`) only so the criterion micro-bench can time it.
 pub fn render_chain_html(
     manifest: &Manifest,
@@ -1310,6 +1347,31 @@ fn merge_legacy(ctx: &mut Map<String, Value>, plan: &JobPlan, value: &Value) {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn rendered(len: usize) -> RenderedBody {
+        RenderedBody {
+            status: 200,
+            headers: HeaderMap::new(),
+            html: Bytes::from("<p>lorem ipsum</p>".repeat(len / 18 + 1)),
+            gzip: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// S10 amendment: an identity request leaves the gzip unmade; the first
+    /// gzip-accepting one makes it, every later one shares those bytes.
+    #[test]
+    fn cached_body_gzip_is_lazy_and_made_once() {
+        let b = rendered(64 * 1024);
+        let (id, gz) = cached_body(&b, false);
+        assert!(!gz);
+        assert_eq!(id, b.html);
+        assert!(b.gzip.get().is_none(), "identity must not make the gzip");
+        let (g1, gz1) = cached_body(&b, true);
+        let (g2, gz2) = cached_body(&b, true);
+        assert!(gz1 && gz2);
+        assert_eq!(g1.as_ptr(), g2.as_ptr(), "one gzip, shared");
+        assert!(g1.len() < b.html.len());
+    }
 
     fn manifest() -> Manifest {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/dist");

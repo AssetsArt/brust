@@ -1,7 +1,9 @@
 //! L1: the per-route response cache, carried from brust-core
 //! `cache/response_cache.rs` @ d04718f with the value re-typed — an entry is
-//! the merged JSON render context (after loader + jobs), never HTML or framed
-//! bytes; Rust re-renders on every hit. API otherwise as 0.1.x, plus
+//! the merged JSON render context (after loader + jobs) plus, per the S10
+//! amendment of 2026-10-09, the document rendered from it on the MISS (and,
+//! lazily, its gzip); a HIT serves those bytes without re-rendering. The body
+//! lives and dies with its entry. API otherwise as 0.1.x, plus
 //! `invalidate_tags` returning the removed-key count and `build_cache_key`
 //! (moved here from `server/mod.rs`).
 //!
@@ -13,10 +15,11 @@
 //! maintenance pass evicting the old entry right after the new insert indexed
 //! itself would un-index the NEWER entry, making it immune to tag invalidation.
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
+use bytes::Bytes;
 use parking_lot::Mutex;
 use serde::Serialize;
 use serde_json::Value;
@@ -29,9 +32,26 @@ pub struct CacheKey {
     pub sorted_query: String,
 }
 
+/// The document a MISS rendered for an entry's ctx (S10 amendment): a HIT
+/// serves these bytes. The render is a pure function of (templates, ctx,
+/// manifest) — `useId`s and asset tags included — so they equal a fresh
+/// render of `ctx`.
+pub struct RenderedBody {
+    pub status: u16,
+    /// `Content-Type` + the loader's headers, validated once (no
+    /// `x-brust-cache` / `Content-Encoding` / `Vary`: those are per request).
+    pub headers: http::HeaderMap,
+    /// The identity document.
+    pub html: Bytes,
+    /// Its gzip, made by the first gzip-accepting request (or seeded by a
+    /// gzip-accepting MISS). `None` inside: gzip did not shrink it.
+    pub gzip: OnceLock<Option<Bytes>>,
+}
+
 #[derive(Clone)]
 pub struct CachedEntry {
     pub ctx: Arc<Value>,
+    pub body: Arc<RenderedBody>,
     /// The loader's response headers (never `Set-Cookie`: such a response is
     /// not cached), replayed on a HIT. `Arc`: cloned on every `get`.
     pub headers: Arc<[(String, String)]>,
@@ -236,6 +256,7 @@ impl L1Cache {
         &self,
         key: CacheKey,
         ctx: Arc<Value>,
+        body: Arc<RenderedBody>,
         headers: Arc<[(String, String)]>,
         ttl: Duration,
         tags: &[String],
@@ -262,6 +283,7 @@ impl L1Cache {
             Slot {
                 entry: CachedEntry {
                     ctx,
+                    body,
                     headers,
                     ttl,
                     tags: tags.into(),
@@ -396,6 +418,15 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    fn rb() -> Arc<RenderedBody> {
+        Arc::new(RenderedBody {
+            status: 200,
+            headers: http::HeaderMap::new(),
+            html: Bytes::from_static(b"<p>x</p>"),
+            gzip: OnceLock::new(),
+        })
+    }
+
     fn key(method: &str, path: &str, query: &str) -> CacheKey {
         CacheKey {
             prefix: String::new(),
@@ -432,6 +463,7 @@ mod tests {
         c.insert(
             key("GET", "/t", ""),
             Arc::new(json!("t")),
+            rb(),
             Arc::from([]),
             Duration::from_secs(60),
             &["a".to_string(), "b".to_string()],
@@ -453,6 +485,7 @@ mod tests {
         c.insert(
             key("GET", "/p", "x=1"),
             Arc::new(json!("1")),
+            rb(),
             Arc::from([]),
             Duration::from_secs(60),
             &["grp".to_string()],
@@ -460,6 +493,7 @@ mod tests {
         c.insert(
             key("GET", "/p", "x=2"),
             Arc::new(json!("2")),
+            rb(),
             Arc::from([]),
             Duration::from_secs(60),
             &["grp".to_string()],
@@ -481,6 +515,7 @@ mod tests {
         c.insert(
             key("GET", "/w", ""),
             Arc::new(json!("w")),
+            rb(),
             Arc::from([]),
             Duration::from_secs(60),
             &["t".to_string()],
@@ -497,6 +532,7 @@ mod tests {
         c.insert(
             key("GET", "/a", ""),
             Arc::new(json!("a")),
+            rb(),
             Arc::from([]),
             Duration::from_secs(60),
             &[],
@@ -504,6 +540,7 @@ mod tests {
         c.insert(
             key("GET", "/a", "x=1"),
             Arc::new(json!("a-x")),
+            rb(),
             Arc::from([]),
             Duration::from_secs(60),
             &[],
@@ -511,6 +548,7 @@ mod tests {
         c.insert(
             key("GET", "/b", ""),
             Arc::new(json!("b")),
+            rb(),
             Arc::from([]),
             Duration::from_secs(60),
             &[],
@@ -534,6 +572,7 @@ mod tests {
         c.insert(
             key("GET", "/a", ""),
             Arc::new(json!("a")),
+            rb(),
             Arc::from([]),
             Duration::from_secs(60),
             &[],
@@ -551,6 +590,7 @@ mod tests {
         c.insert(
             key("GET", "/a", ""),
             Arc::new(json!("a")),
+            rb(),
             Arc::from([]),
             Duration::from_secs(60),
             &["grp".to_string()],
@@ -558,6 +598,7 @@ mod tests {
         c.insert(
             key("GET", "/a", "x=1"),
             Arc::new(json!("a-x")),
+            rb(),
             Arc::from([]),
             Duration::from_secs(60),
             &["grp".to_string()],
@@ -565,6 +606,7 @@ mod tests {
         c.insert(
             key("GET", "/b", ""),
             Arc::new(json!("b")),
+            rb(),
             Arc::from([]),
             Duration::from_secs(60),
             &["other".to_string()],
@@ -588,6 +630,7 @@ mod tests {
         c.insert(
             key("GET", "/a", ""),
             Arc::new(json!("a")),
+            rb(),
             Arc::from([]),
             Duration::from_secs(60),
             &["grp".to_string()],
@@ -607,6 +650,7 @@ mod tests {
         c.insert(
             key("GET", "/a", ""),
             Arc::new(json!("a")),
+            rb(),
             Arc::from([]),
             Duration::from_secs(60),
             &[],
@@ -614,6 +658,7 @@ mod tests {
         c.insert(
             key("GET", "/b", ""),
             Arc::new(json!("b")),
+            rb(),
             Arc::from([]),
             Duration::from_secs(60),
             &[],
@@ -621,6 +666,7 @@ mod tests {
         c.insert(
             key("GET", "/c", ""),
             Arc::new(json!("c")),
+            rb(),
             Arc::from([]),
             Duration::from_secs(60),
             &[],
@@ -638,6 +684,7 @@ mod tests {
         c.insert(
             key("GET", "/a", ""),
             Arc::new(json!("a")),
+            rb(),
             Arc::from([]),
             Duration::from_secs(60),
             &[],
@@ -675,6 +722,7 @@ mod tests {
         c.insert(
             k.clone(),
             Arc::new(json!(1)),
+            rb(),
             Arc::from([]),
             Duration::from_millis(1),
             &["t".to_string()],
@@ -683,6 +731,7 @@ mod tests {
         c.insert(
             k.clone(),
             Arc::new(json!(2)),
+            rb(),
             Arc::from([]),
             Duration::from_secs(60),
             &["t".to_string()],
@@ -716,6 +765,7 @@ mod tests {
             c2.insert(
                 k2,
                 Arc::new(json!(1)),
+                rb(),
                 Arc::from([]),
                 Duration::from_secs(60),
                 &["t".to_string()],

@@ -26,17 +26,19 @@
 //! - `gzip_l1` / `gzip_l6` of the injected document (today: level 6);
 //! - `finish_identity` / `finish_gzip`: render + inject (+ gzip L6), i.e. the
 //!   body `finish` builds;
-//! - `l1_hit_gzip`: today's HIT = `L1Cache::get` + header clone + the full
-//!   `finish_gzip` re-render.
+//! - `l1_hit_identity` / `l1_hit_gzip`: a HIT = `L1Cache::get` + the stored
+//!   rendered body (identity, or its once-made gzip) + its header map. Before
+//!   the S10 amendment (m2p Task 2) a HIT re-rendered: `l1_hit_gzip` was
+//!   `finish_gzip` + the get (A 1.413 ms, B 205.4 µs on the Task 1 host).
 use std::collections::BTreeMap;
 use std::hint::black_box;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-use brust_server::bench::render_chain_html;
-use brust_server::cache::l1::{L1Cache, build_cache_key};
+use brust_server::bench::{cached_body, render_chain_html};
+use brust_server::cache::l1::{L1Cache, RenderedBody, build_cache_key};
 use brust_server::manifest::Manifest;
 use brust_server::render::{Renderer, inject_assets};
 use criterion::{Criterion, criterion_group, criterion_main};
@@ -192,21 +194,33 @@ fn bench_route(
     let l1 = L1Cache::new();
     let key = build_cache_key("GET", path, String::new());
     let headers: Arc<[(String, String)]> = Vec::new().into();
+    let mut base = http::HeaderMap::new();
+    base.insert(
+        http::header::CONTENT_TYPE,
+        http::HeaderValue::from_static("text/html; charset=utf-8"),
+    );
     l1.insert(
         key.clone(),
         Arc::new(ctx.clone()),
+        Arc::new(RenderedBody {
+            status: 200,
+            headers: base,
+            html: bytes::Bytes::from(doc.clone().into_bytes()),
+            gzip: OnceLock::new(),
+        }),
         headers,
         Duration::from_secs(3600),
         &[],
     );
-    g.bench_function("l1_hit_gzip", |b| {
-        b.iter(|| {
-            let hit = l1.get(black_box(&key)).expect("hit");
-            let _h = hit.headers.to_vec();
-            let html = render_chain_html(m, r, &route.id, chain, &hit.ctx).unwrap();
-            gzip(inject_assets(html, chain, m).as_bytes(), 6)
-        })
-    });
+    // A HIT (S10 amendment): `L1Cache::get` + the stored body (its gzip made
+    // by the first gzip-accepting HIT, here the warm-up) + the header map.
+    let hit = |gz: bool| {
+        let hit = l1.get(black_box(&key)).expect("hit");
+        let _h = hit.body.headers.clone();
+        cached_body(&hit.body, gz)
+    };
+    g.bench_function("l1_hit_identity", |b| b.iter(|| hit(false)));
+    g.bench_function("l1_hit_gzip", |b| b.iter(|| hit(true)));
     g.finish();
 }
 
