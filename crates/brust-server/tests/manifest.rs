@@ -82,3 +82,63 @@ fn uncovered_child_input_is_rejected() {
         e => panic!("{e}"),
     }
 }
+
+fn load_patched(patch: impl FnOnce(&mut serde_json::Value)) -> ManifestError {
+    let tmp = tempfile::tempdir().unwrap();
+    copy_dir(&fx(), tmp.path());
+    let mpath = tmp.path().join("manifest.json");
+    let mut m: serde_json::Value = serde_json::from_slice(&std::fs::read(&mpath).unwrap()).unwrap();
+    patch(&mut m);
+    std::fs::write(&mpath, serde_json::to_vec(&m).unwrap()).unwrap();
+    Manifest::load(tmp.path()).unwrap_err()
+}
+
+#[test]
+fn malformed_paths_fail_at_boot() {
+    let e = load_patched(|m| {
+        m["components"]["moveCard_d4"]["jobs"][0]["inputs"][0] = "move..name".into()
+    });
+    assert!(
+        matches!(&e, ManifestError::BadPath { component, .. } if component == "moveCard_d4"),
+        "{e}"
+    );
+    let e = load_patched(|m| {
+        m["components"]["detailPage_c3"]["children"][0]["props"]["move"] = "pokemon.moves[".into()
+    });
+    assert!(
+        matches!(&e, ManifestError::BadPath { component, .. } if component == "detailPage_c3"),
+        "{e}"
+    );
+    let e = load_patched(|m| {
+        m["components"]["detailPage_c3"]["children"][0]["instances"] = "per-row:a..b".into()
+    });
+    assert!(matches!(&e, ManifestError::BadPath { .. }), "{e}");
+    // `[idx]` in a static child's props has no row to stand for.
+    let e = load_patched(|m| {
+        m["components"]["teamPage_g7"]["children"][0]["props"]["team"] = "team[idx]".into()
+    });
+    assert!(
+        matches!(&e, ManifestError::BadPath { component, .. } if component == "teamPage_g7"),
+        "{e}"
+    );
+}
+
+#[test]
+fn object_form_instances_is_rejected() {
+    // Ruling 24e8bf17: one wire form, the string form; the object form must not parse.
+    let e = load_patched(|m| {
+        m["components"]["detailPage_c3"]["children"][0]["instances"] =
+            serde_json::json!({"k": 1, "per_instance": "pokemon.moves"})
+    });
+    match e {
+        ManifestError::Parse { source, .. } => {
+            assert!(
+                source
+                    .to_string()
+                    .contains("want \"static\" or \"per-row:<list path>\""),
+                "{source}"
+            )
+        }
+        e => panic!("{e}"),
+    }
+}

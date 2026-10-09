@@ -125,7 +125,13 @@ pub enum Instances {
 
 impl<'de> Deserialize<'de> for Instances {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let s = String::deserialize(d)?;
+        // Ruling 24e8bf17: the string form is the only wire form; anything
+        // else (e.g. the withdrawn `{k, per_instance}` object) gets the same message.
+        let s = String::deserialize(d).map_err(|e| {
+            serde::de::Error::custom(format!(
+                "instances: want \"static\" or \"per-row:<list path>\" ({e})"
+            ))
+        })?;
         match s.as_str() {
             "static" => Ok(Instances::Static),
             _ => s
@@ -184,6 +190,65 @@ pub enum ManifestError {
         job: String,
         root: String,
     },
+    #[error("component {component}: bad path {path:?} in {field}: {reason}")]
+    BadPath {
+        component: String,
+        field: String,
+        path: String,
+        reason: String,
+    },
+}
+
+/// Boot-time parse of every path the request pipeline evaluates, so a
+/// malformed one fails `load` instead of 500-ing every request.
+fn check_paths(id: &str, c: &ComponentRecord) -> Result<(), ManifestError> {
+    let bad = |field: String, path: &str, reason: String| ManifestError::BadPath {
+        component: id.into(),
+        field,
+        path: path.into(),
+        reason,
+    };
+    let parse = |field: String, path: &str| {
+        crate::inputs::Path::parse(path).map_err(|reason| bad(field, path, reason))
+    };
+    let has_idx = |p: &crate::inputs::Path| {
+        p.segs()
+            .iter()
+            .any(|s| matches!(s, crate::inputs::Seg::Idx))
+    };
+    for j in &c.jobs {
+        for i in &j.inputs {
+            if has_idx(&parse(format!("job {} inputs", j.id), i)?) {
+                return Err(bad(
+                    format!("job {} inputs", j.id),
+                    i,
+                    "[idx] is only valid in a per-row child's props".into(),
+                ));
+            }
+        }
+        if let Some(k) = &j.cache.key {
+            parse(format!("job {} cache.key", j.id), k)?;
+        }
+        if let Some(p) = &j.per_instance {
+            parse(format!("job {} per_instance", j.id), p)?;
+        }
+    }
+    for ch in &c.children {
+        let per_row = match &ch.instances {
+            Instances::Static => false,
+            Instances::PerRow(list) => {
+                parse(format!("child {} instances", ch.id), list)?;
+                true
+            }
+        };
+        for (prop, src) in &ch.props {
+            let field = format!("child {} props.{prop}", ch.id);
+            if has_idx(&parse(field.clone(), src)?) && !per_row {
+                return Err(bad(field, src, "[idx] needs a per-row instance".into()));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Root segment of a job input path: text before the first `.` or `[`, with a
@@ -233,6 +298,7 @@ impl Manifest {
         }
         let mut templates = BTreeMap::new();
         for (id, c) in &manifest.components {
+            check_paths(id, c)?;
             let tp = must_exist(id, &c.template)?;
             let src = std::fs::read_to_string(&tp)
                 .map_err(|source| ManifestError::Read { path: tp, source })?;
