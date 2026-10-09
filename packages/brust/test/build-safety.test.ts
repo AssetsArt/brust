@@ -205,6 +205,16 @@ test('a non-empty out dir that is not a previous brust dist is refused unless --
   }
   expect(readFileSync(join(dir, 'lib', 'helper.ts'), 'utf8')).toBe('export const x = 1\n')
   expect(readFileSync(join(dir, '.git', 'HEAD'), 'utf8')).toBe('ref: refs/heads/main\n')
+  // Round 4 (r3src repro): an unrelated manifest.json is NOT a previous brust build — only the
+  // `.brust` marker unlocks the wipe, so util.ts next to it survives.
+  mkdirSync(join(dir, 'r3src'))
+  writeFileSync(join(dir, 'r3src', 'manifest.json'), '{}\n')
+  writeFileSync(join(dir, 'r3src', 'util.ts'), 'export const x=1\n')
+  const r3 = cli(['build', 'routes.tsx', '--out-dir', 'r3src'], dir)
+  expect(r3.code).toBe(1)
+  expect(r3.err).toContain('error out-dir-unsafe')
+  expect(readFileSync(join(dir, 'r3src', 'util.ts'), 'utf8')).toBe('export const x=1\n')
+  expect(readFileSync(join(dir, 'r3src', 'manifest.json'), 'utf8')).toBe('{}\n')
   // A nonexistent dir builds and gets the marker; a previous (marked) dist is replaced.
   expect(cli(['build', 'routes.tsx', '--out-dir', 'out'], dir).code).toBe(0)
   expect(existsSync(join(dir, 'out', '.brust'))).toBe(true)
@@ -226,6 +236,7 @@ test('a failing build leaves the previous dist untouched', async () => {
   const out = tmpOut()
   mkdirSync(join(out, 'client'), { recursive: true })
   writeFileSync(join(out, 'manifest.json'), '{"old":true}')
+  writeFileSync(join(out, '.brust'), '')
   writeFileSync(join(out, 'client', 'keep-0123456789.js'), '1')
   await expect(build(join(safety, 'routes-invalid'), out, 'ttl.tsx')).rejects.toMatchObject({ rule: 'route-config' })
   await expect(build(join(safety, 'so-native'), out)).rejects.toMatchObject({ rule: 'server-only-in-client' })

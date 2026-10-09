@@ -58,11 +58,13 @@ export function assertReplaceable(dist: string, force = false): void {
   if (force || !existsSync(dist)) return
   if (statSync(dist).isDirectory()) {
     const names = readdirSync(dist)
-    if (names.length === 0 || names.includes('manifest.json') || names.includes(MARKER)) return
+    // Only brust's own marker proves a previous build: an unrelated manifest.json (web app,
+    // extension) next to user files must not unlock the wipe (review round 3, r3src repro).
+    if (names.length === 0 || names.includes(MARKER)) return
   }
   throw new BuildError(
     'out-dir-unsafe',
-    `refusing to replace ${dist}: it is not empty and not a previous brust build (no manifest.json or ${MARKER} marker); pass --force to replace it`,
+    `refusing to replace ${dist}: it is not empty and not a previous brust build (no ${MARKER} marker); pass --force to replace it`,
   )
 }
 
