@@ -159,8 +159,10 @@
       ],
       "per_item": "it",
       "props": {
-        "item": "items[idx]",
-        "limit": null
+        "item": "items[idx]"
+      },
+      "literals": {
+        "limit": 3
       }
     }
   ],

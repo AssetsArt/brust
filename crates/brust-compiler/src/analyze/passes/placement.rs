@@ -172,6 +172,7 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState) {
             outputs,
             per_item: None,
             props: None,
+            literals: Default::default(),
         });
     }
 }

@@ -164,6 +164,39 @@ pub enum JsCtx {
 }
 
 impl RawExpr {
+    /// The JSON value of a pure literal expression (string, number, boolean, `null`, a
+    /// template without substitutions, or an array/object of literals); `None` for anything
+    /// else, including `undefined` and non-finite numbers.
+    pub fn json_literal(&self) -> Option<serde_json::Value> {
+        use serde_json::Value;
+        match &self.kind {
+            RawKind::Lit(Literal::Str(s)) => Some(Value::String(s.clone())),
+            RawKind::Lit(Literal::Num(n)) => {
+                if n.fract() == 0.0 && n.abs() < 9e15 {
+                    Some(Value::from(*n as i64))
+                } else {
+                    serde_json::Number::from_f64(*n).map(Value::Number)
+                }
+            }
+            RawKind::Lit(Literal::Bool(b)) => Some(Value::Bool(*b)),
+            RawKind::Lit(Literal::Null) => Some(Value::Null),
+            RawKind::Template { head, parts } if parts.is_empty() => {
+                Some(Value::String(head.clone()))
+            }
+            RawKind::Array(items) => items
+                .iter()
+                .map(RawExpr::json_literal)
+                .collect::<Option<Vec<_>>>()
+                .map(Value::Array),
+            RawKind::Object(fields) => fields
+                .iter()
+                .map(|(k, v)| v.json_literal().map(|v| (k.clone(), v)))
+                .collect::<Option<serde_json::Map<_, _>>>()
+                .map(Value::Object),
+            _ => None,
+        }
+    }
+
     /// JS for the precompute job ([`JsCtx::Server`]).
     pub fn to_js(&self) -> String {
         self.to_js_in(JsCtx::Server)

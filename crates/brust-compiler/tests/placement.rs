@@ -75,6 +75,7 @@ fn product_card_places_server_and_precomputed() {
             outputs: vec!["_s1".into(), "_s2".into()],
             per_item: None,
             props: None,
+            literals: Default::default(),
         }]
     );
 }
