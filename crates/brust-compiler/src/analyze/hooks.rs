@@ -1,7 +1,7 @@
 //! Hook calls and the component body (spec §4.3). Reads the component's
 //! top-level statements in order; anything React-only is recorded as a
 //! `Fallback` diagnostic (the tier itself is decided in M1b-2).
-use crate::analyze::expr::{Reader, loc_of};
+use crate::analyze::expr::{Reader, Walk, loc_of};
 use crate::analyze::names::NameTable;
 use crate::ir::{
     DerivedDecl, Diagnostic, EffectDecl, Expr, HandlerDecl, Literal, PropDecl, RawExpr, RawKind,
@@ -11,6 +11,7 @@ use bun_ast as js_ast;
 use js_ast::b::B;
 use js_ast::expr::Data as E;
 use js_ast::stmt::Data as S;
+use std::collections::HashSet;
 
 #[derive(Debug, Default)]
 pub struct BodyDecls {
@@ -27,6 +28,8 @@ pub struct BodyDecls {
     pub diagnostics: Vec<Diagnostic>,
     /// The first reason this component needs React, if any.
     pub react_reason: Option<String>,
+    /// Hook calls already classified as top-level statements, by address.
+    classified_hooks: HashSet<usize>,
 }
 
 impl BodyDecls {
@@ -43,7 +46,11 @@ impl BodyDecls {
 /// (named, or a member of the default / namespace import). Decided by symbol,
 /// so a local `const useState = …` is not a React hook.
 pub fn react_hook_name(call: &js_ast::E::Call, names: &NameTable<'_>) -> Option<String> {
-    match &call.target.data {
+    react_hook_target(&call.target, names)
+}
+
+fn react_hook_target(target: &js_ast::Expr, names: &NameTable<'_>) -> Option<String> {
+    match &target.data {
         E::EImportIdentifier(id) => match names.import_of(id.ref_) {
             Some(("react", imported)) if imported != "default" && imported != "*" => {
                 Some(imported.to_string())
@@ -77,10 +84,16 @@ fn hook_call<'c>(
     let E::ECall(call) = &e.data else {
         return None;
     };
-    if let Some(name) = react_hook_name(call, names) {
-        return Some((name, call, true));
+    let (name, from_react) = hook_target(&call.target, names)?;
+    Some((name, call, from_react))
+}
+
+/// The hook a callee names, and whether it is React's own.
+fn hook_target(target: &js_ast::Expr, names: &NameTable<'_>) -> Option<(String, bool)> {
+    if let Some(name) = react_hook_target(target, names) {
+        return Some((name, true));
     }
-    let name = match &call.target.data {
+    let name = match &target.data {
         E::EIdentifier(id) => names.name(id.ref_),
         E::EImportIdentifier(id) => names.name(id.ref_),
         E::EDot(d) => String::from_utf8_lossy(d.name.slice()).into_owned(),
@@ -88,7 +101,11 @@ fn hook_call<'c>(
     };
     let rest = name.strip_prefix("use")?;
     (rest.is_empty() || rest.starts_with(|c: char| c.is_ascii_uppercase() || c.is_ascii_digit()))
-        .then_some((name, call, false))
+        .then_some((name, false))
+}
+
+fn call_addr(call: &js_ast::E::Call) -> usize {
+    call as *const js_ast::E::Call as usize
 }
 
 /// Marks `const [a, setA] = useState(…)` bindings in `names` before any
@@ -120,28 +137,60 @@ pub fn mark_state_bindings(func: &js_ast::G::Fn, names: &mut NameTable<'_>) {
 }
 
 /// The component's props: one per destructured property, or `props` for a
-/// plain parameter. TS type text is not recovered in M1b-1.
-pub fn read_props(func: &js_ast::G::Fn, names: &NameTable<'_>) -> Vec<PropDecl> {
+/// plain parameter. TS type text is not recovered in M1b-1. Renames and
+/// defaults are read; nested patterns, `...rest`, computed keys and a default
+/// for the whole parameter are a `prop-pattern` fallback.
+fn read_props(func: &js_ast::G::Fn, r: &mut Reader<'_, '_>, out: &mut BodyDecls) {
     let Some(arg) = func.args.slice().first() else {
-        return Vec::new();
+        return;
     };
+    let pattern = |out: &mut BodyDecls, loc: u32, what: &str| {
+        out.fallback(
+            "prop-pattern",
+            format!("{what} in the props pattern"),
+            loc,
+            "destructure props one level deep as { name } or { name = default }",
+        )
+    };
+    let loc = arg.binding.loc.start.max(0) as u32;
+    if arg.default.is_some() {
+        pattern(out, loc, "a default for the whole props object");
+    }
     match arg.binding.data {
-        B::BIdentifier(id) => vec![PropDecl {
-            name: names.name(id.r#ref),
-            ts_type: None,
-        }],
-        B::BObject(obj) => obj
-            .properties()
-            .iter()
-            .filter_map(|p| match &p.key.data {
-                E::EString(s) => Some(PropDecl {
-                    name: crate::analyze::expr::estring(s),
-                    ts_type: None,
-                }),
-                _ => None,
+        B::BIdentifier(id) => {
+            let name = r.names.name(id.r#ref);
+            out.props.push(PropDecl {
+                local: name.clone(),
+                name,
+                ts_type: None,
+                default: None,
             })
-            .collect(),
-        B::BArray(_) | B::BMissing(_) => Vec::new(),
+        }
+        B::BObject(obj) => {
+            for p in obj.properties() {
+                let ploc = loc_of(&p.key);
+                if p.flags.contains(js_ast::flags::Property::IsSpread) {
+                    pattern(out, ploc, "...rest");
+                    continue;
+                }
+                let E::EString(key) = &p.key.data else {
+                    pattern(out, ploc, "a computed key");
+                    continue;
+                };
+                let B::BIdentifier(id) = p.value.data else {
+                    pattern(out, ploc, "a nested pattern");
+                    continue;
+                };
+                let default = p.default_value.as_ref().map(|d| r.expr(d));
+                out.props.push(PropDecl {
+                    name: crate::analyze::expr::estring(key),
+                    local: r.names.name(id.r#ref),
+                    ts_type: None,
+                    default,
+                });
+            }
+        }
+        B::BArray(_) | B::BMissing(_) => pattern(out, loc, "an array pattern"),
     }
 }
 
@@ -154,12 +203,31 @@ fn undefined_at(loc: u32) -> RawExpr {
 
 /// Reads the component body. `mark_state_bindings` must have run on `r.names`.
 pub fn read_body(func: &js_ast::G::Fn, r: &mut Reader<'_, '_>) -> BodyDecls {
-    let mut out = BodyDecls {
-        props: read_props(func, r.names),
-        ..Default::default()
-    };
+    let mut out = BodyDecls::default();
+    read_props(func, r, &mut out);
+    let mut returned = false;
     for stmt in func.body.stmts.slice() {
         let loc = stmt.loc.start.max(0) as u32;
+        // After the return only hoisted function declarations still mean
+        // something; anything else is dead code we will not reason about.
+        if returned
+            && !matches!(
+                &stmt.data,
+                S::SFunction(_)
+                    | S::STypeScript(_)
+                    | S::SEmpty(_)
+                    | S::SDirective(_)
+                    | S::SComment(_)
+            )
+        {
+            out.fallback(
+                "stmt-after-return",
+                "statement after the return".into(),
+                loc,
+                "remove unreachable code; only function declarations may follow the return",
+            );
+            continue;
+        }
         match &stmt.data {
             S::SLocal(local) => {
                 if !matches!(local.kind, js_ast::S::Kind::KConst) {
@@ -191,7 +259,7 @@ pub fn read_body(func: &js_ast::G::Fn, r: &mut Reader<'_, '_>) -> BodyDecls {
             }
             S::SReturn(ret) => {
                 out.return_expr = ret.value.map(|v| Expr::Raw(r.expr(&v)));
-                break;
+                returned = true;
             }
             S::SIf(_)
             | S::SFor(_)
@@ -221,6 +289,7 @@ pub fn read_body(func: &js_ast::G::Fn, r: &mut Reader<'_, '_>) -> BodyDecls {
             ),
         }
     }
+    nested_hooks(func, r.names, &mut out);
     if out.return_expr.is_none() && out.react_reason.is_none() {
         out.fallback(
             "body-shape",
@@ -232,6 +301,36 @@ pub fn read_body(func: &js_ast::G::Fn, r: &mut Reader<'_, '_>) -> BodyDecls {
     out.handlers.append(&mut r.pending_handlers);
     out.diagnostics.append(&mut r.diagnostics);
     out
+}
+
+/// Hook calls anywhere but as a classified top-level statement: inside an
+/// expression, a JSX attribute, a prop default or a nested function (spec
+/// §4.3: such a component is React-only).
+fn nested_hooks(func: &js_ast::G::Fn, names: &NameTable<'_>, out: &mut BodyDecls) {
+    let mut w = Walk::default();
+    for arg in func.args.slice() {
+        w.declare_binding(&arg.binding);
+        if let Some(d) = &arg.default {
+            w.expr(d);
+        }
+    }
+    w.stmts(func.body.stmts.slice());
+    for e in &w.calls {
+        let E::ECall(call) = &e.data else {
+            continue;
+        };
+        if out.classified_hooks.contains(&call_addr(call)) {
+            continue;
+        }
+        if let Some((hook, _)) = hook_target(&call.target, names) {
+            out.fallback(
+                "hook-unsupported",
+                format!("hook {hook} is called inside an expression"),
+                loc_of(e),
+                "call hooks only as `const x = useHook(...)` at the top of the component",
+            );
+        }
+    }
 }
 
 fn read_decl(r: &mut Reader<'_, '_>, out: &mut BodyDecls, decl: &js_ast::G::Decl, loc: u32) {
@@ -250,6 +349,7 @@ fn read_decl(r: &mut Reader<'_, '_>, out: &mut BodyDecls, decl: &js_ast::G::Decl
         _ => None,
     };
     if let Some((hook, call, from_react)) = hook_call(value, r.names) {
+        out.classified_hooks.insert(call_addr(call));
         let args: Vec<js_ast::Expr> = call.args.to_vec();
         match (from_react, hook.as_str()) {
             (true, "useState") => {
@@ -394,7 +494,11 @@ fn expr_body(a: &js_ast::E::Arrow) -> Option<js_ast::Expr> {
 
 fn read_expr_stmt(r: &mut Reader<'_, '_>, out: &mut BodyDecls, value: &js_ast::Expr) {
     let vloc = loc_of(value);
-    match hook_call(value, r.names) {
+    let hook = hook_call(value, r.names);
+    if let Some((_, call, _)) = &hook {
+        out.classified_hooks.insert(call_addr(call));
+    }
+    match hook {
         Some((hook, call, true)) if hook == "useEffect" || hook == "useLayoutEffect" => {
             let args: Vec<js_ast::Expr> = call.args.to_vec();
             let Some(f) = args.first() else {

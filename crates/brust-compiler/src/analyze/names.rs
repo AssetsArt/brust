@@ -12,7 +12,8 @@ pub struct NameTable<'a> {
     /// Local import binding → (module path, imported name; `default` or `*` for
     /// default and namespace imports).
     imports: HashMap<u32, (String, String)>,
-    props: HashSet<u32>,
+    /// Local binding → the prop it reads (`heading` → `title`).
+    props: HashMap<u32, String>,
     /// The component's parameter when it is not destructured (`props`).
     props_ident: Option<u32>,
     state: HashSet<u32>,
@@ -54,7 +55,7 @@ impl<'a> NameTable<'a> {
         let mut table = NameTable {
             symbols: ast.symbols.as_slice(),
             imports,
-            props: HashSet::new(),
+            props: HashMap::new(),
             props_ident: None,
             state: HashSet::new(),
             setters: HashSet::new(),
@@ -63,12 +64,21 @@ impl<'a> NameTable<'a> {
         if let Some(arg) = component.args.slice().first() {
             match arg.binding.data {
                 B::BIdentifier(id) => table.props_ident = Some(table.key(id.r#ref)),
-                B::BObject(_) => {
-                    let mut refs = Vec::new();
-                    binding_refs(&arg.binding, &mut refs);
-                    for r in refs {
-                        let k = table.key(r);
-                        table.props.insert(k);
+                // Only plain `key` / `key: local` / `key = default` bind a prop;
+                // nested patterns and `...rest` are a `prop-pattern` fallback
+                // (read_props) and their bindings stay Local.
+                B::BObject(obj) => {
+                    for p in obj.properties() {
+                        let (B::BIdentifier(id), js_ast::expr::Data::EString(key)) =
+                            (p.value.data, &p.key.data)
+                        else {
+                            continue;
+                        };
+                        if p.flags.contains(js_ast::flags::Property::IsSpread) {
+                            continue;
+                        }
+                        let k = table.key(id.r#ref);
+                        table.props.insert(k, crate::analyze::expr::estring(key));
                     }
                 }
                 B::BArray(_) | B::BMissing(_) => {}
@@ -104,11 +114,12 @@ impl<'a> NameTable<'a> {
     }
 
     pub fn kind_of(&self, r: js_ast::Ref) -> (String, IdentKind) {
-        let name = self.name(r);
         let k = self.key(r);
-        let kind = if self.props.contains(&k) {
-            IdentKind::Prop
-        } else if self.state.contains(&k) {
+        if let Some(prop) = self.props.get(&k) {
+            return (prop.clone(), IdentKind::Prop);
+        }
+        let name = self.name(r);
+        let kind = if self.state.contains(&k) {
             IdentKind::State
         } else if self.setters.contains(&k) {
             IdentKind::Setter

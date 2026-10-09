@@ -5,7 +5,12 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct PropDecl {
     pub name: String,
+    /// The local binding (`heading` in `{ title: heading }`); equals `name`
+    /// when not renamed. Reads of it are `Ident { name, kind: Prop }`.
+    pub local: String,
     pub ts_type: Option<String>,
+    /// `size = 3` in the destructuring pattern.
+    pub default: Option<RawExpr>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

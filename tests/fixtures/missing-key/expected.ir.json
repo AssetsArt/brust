@@ -5,7 +5,9 @@
   "props": [
     {
       "name": "names",
-      "ts_type": null
+      "local": "names",
+      "ts_type": null,
+      "default": null
     }
   ],
   "state": [],

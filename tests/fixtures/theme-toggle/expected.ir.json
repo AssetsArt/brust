@@ -5,7 +5,9 @@
   "props": [
     {
       "name": "themeLabel",
-      "ts_type": null
+      "local": "themeLabel",
+      "ts_type": null,
+      "default": null
     }
   ],
   "state": [

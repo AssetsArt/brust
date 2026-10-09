@@ -5,7 +5,9 @@
   "props": [
     {
       "name": "label",
-      "ts_type": null
+      "local": "label",
+      "ts_type": null,
+      "default": null
     }
   ],
   "state": [],

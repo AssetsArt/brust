@@ -5,11 +5,15 @@
   "props": [
     {
       "name": "a",
-      "ts_type": null
+      "local": "a",
+      "ts_type": null,
+      "default": null
     },
     {
       "name": "b",
-      "ts_type": null
+      "local": "b",
+      "ts_type": null,
+      "default": null
     }
   ],
   "state": [],

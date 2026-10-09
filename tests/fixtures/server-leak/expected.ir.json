@@ -5,7 +5,9 @@
   "props": [
     {
       "name": "path",
-      "ts_type": null
+      "local": "path",
+      "ts_type": null,
+      "default": null
     }
   ],
   "state": [

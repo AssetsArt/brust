@@ -5,7 +5,9 @@
   "props": [
     {
       "name": "placeholder",
-      "ts_type": null
+      "local": "placeholder",
+      "ts_type": null,
+      "default": null
     }
   ],
   "state": [

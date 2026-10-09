@@ -407,6 +407,8 @@ fn data_name(d: &E) -> &'static str {
 pub struct Walk {
     pub declared: Vec<js_ast::Ref>,
     pub used: Vec<js_ast::Ref>,
+    /// Every call expression reached, outermost first.
+    pub calls: Vec<js_ast::Expr>,
 }
 
 impl Walk {
@@ -554,6 +556,7 @@ impl Walk {
                 n.args.iter().for_each(|x| self.expr(x));
             }
             E::ECall(c) => {
+                self.calls.push(*e);
                 self.expr(&c.target);
                 c.args.iter().for_each(|x| self.expr(x));
             }

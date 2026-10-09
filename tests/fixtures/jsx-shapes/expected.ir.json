@@ -5,19 +5,27 @@
   "props": [
     {
       "name": "title",
-      "ts_type": null
+      "local": "title",
+      "ts_type": null,
+      "default": null
     },
     {
       "name": "count",
-      "ts_type": null
+      "local": "count",
+      "ts_type": null,
+      "default": null
     },
     {
       "name": "rest",
-      "ts_type": null
+      "local": "rest",
+      "ts_type": null,
+      "default": null
     },
     {
       "name": "show",
-      "ts_type": null
+      "local": "show",
+      "ts_type": null,
+      "default": null
     }
   ],
   "state": [],

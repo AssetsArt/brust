@@ -198,3 +198,102 @@ fn arrow_default_export_is_a_fallback() {
     });
     assert_eq!(err.rule, "no-default-export");
 }
+
+/// Review B1 (probe p1): renames and defaults are read structurally; nested
+/// patterns and `...rest` fail closed.
+#[test]
+fn destructured_props_keep_rename_and_default() {
+    let ok = ir(
+        "export default function P({ title: heading, size = 3 }: any) { return <p data-s={size}>{heading}</p> }",
+    );
+    assert_eq!(ok.props.len(), 2);
+    assert_eq!(
+        (ok.props[0].name.as_str(), ok.props[0].local.as_str()),
+        ("title", "heading")
+    );
+    assert!(ok.props[0].default.is_none());
+    assert_eq!(
+        (ok.props[1].name.as_str(), ok.props[1].local.as_str()),
+        ("size", "size")
+    );
+    assert!(matches!(
+        ok.props[1].default,
+        Some(RawExpr { kind: RawKind::Lit(Literal::Num(n)), .. }) if n == 3.0
+    ));
+    // Reads of the local name the prop.
+    let t = serde_json::to_string(&ok.template).unwrap();
+    assert!(t.contains(r#""name":"title","kind":"Prop""#), "{t}");
+    assert!(!t.contains("heading"), "{t}");
+    assert!(ok.diagnostics.is_empty(), "{:?}", ok.diagnostics);
+
+    let bad = ir(
+        "export default function P({ title: heading, size = 3, user: { name }, ...rest }: any) { return <p data-s={size}>{heading}{name}{rest.x}</p> }",
+    );
+    let pattern: Vec<_> = bad
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule == "prop-pattern")
+        .collect();
+    assert_eq!(pattern.len(), 2, "{:?}", bad.diagnostics);
+    assert!(pattern.iter().all(|d| d.class == DiagClass::Fallback));
+    assert_eq!(
+        bad.props
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect::<Vec<_>>(),
+        ["title", "size"]
+    );
+}
+
+/// Review B2 (probe p3): a function declared after the return is hoisted and
+/// read; any other statement there fails closed.
+#[test]
+fn function_after_return_is_read() {
+    let ok = ir(
+        "export default function P() { return <button onClick={handle}>x</button>\n function handle() { console.log(1) } }",
+    );
+    assert_eq!(
+        ok.derived
+            .iter()
+            .map(|d| d.name.as_str())
+            .collect::<Vec<_>>(),
+        ["handle"]
+    );
+    assert!(ok.diagnostics.is_empty(), "{:?}", ok.diagnostics);
+
+    let bad = ir("export default function P() { return <p/>\n const x = 1 }");
+    assert!(
+        bad.diagnostics
+            .iter()
+            .any(|d| d.rule == "stmt-after-return" && d.class == DiagClass::Fallback),
+        "{:?}",
+        bad.diagnostics
+    );
+}
+
+/// Review B3 (probe p4): a hook nested in an expression, in JSX or in a prop
+/// default is React-only; top-level hooks are not reported twice.
+#[test]
+fn nested_hook_calls_fall_back() {
+    for src in [
+        "import { useContext } from 'react'\nimport { Ctx } from './ctx'\nexport default function P() { const v = String(useContext(Ctx)); return <p>{v}</p> }",
+        "import { useThing } from './thing'\nexport default function P() { return <p>{useThing()}</p> }",
+        "export default function P({ a = useA() }: any) { return <p>{a}</p> }",
+        "import { useState } from 'react'\nexport default function P() { const [n, setN] = useState(0); return <b onClick={() => { const [m] = useState(1); setN(m) }}>{n}</b> }",
+    ] {
+        let ir = ir(src);
+        assert_eq!(
+            ir.diagnostics
+                .iter()
+                .filter(|d| d.rule == "hook-unsupported" && d.class == DiagClass::Fallback)
+                .count(),
+            1,
+            "{src}: {:?}",
+            ir.diagnostics
+        );
+    }
+    let top = ir(&format!(
+        "{PRE}export default function T() {{ const [n] = useState(0); const r = useRef(null); return <p ref={{r}}>{{n}}</p> }}"
+    ));
+    assert!(top.diagnostics.is_empty(), "{:?}", top.diagnostics);
+}
