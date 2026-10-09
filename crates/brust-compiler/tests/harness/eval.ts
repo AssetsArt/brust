@@ -35,6 +35,7 @@ const doc = win.document
 doc.body.innerHTML = await Bun.file(b!).text()
 
 const instances = new Map<unknown, Members>()
+const listsChecked = new WeakMap<Element, Set<string>>()
 const mismatches: string[] = []
 let checked = 0
 
@@ -53,6 +54,9 @@ function hidden(el: Element, stop: Element | null): boolean {
 const value = (v: unknown, args: unknown[] = []) =>
   typeof v === 'function' ? (v as (...x: unknown[]) => unknown)(...args) : v
 
+// Verbatim from packages/runtime-dom/src/directives/for.ts:9 (`SYNTAX`); keep in sync.
+const FOR_SYNTAX = /^\s*([A-Za-z_$][\w$]*)\s*(?:,\s*([A-Za-z_$][\w$]*))?\s+in\s+([A-Za-z_$][\w$.]*(?::[A-Za-z_$][\w$]*(?:\s*,\s*[A-Za-z_$][\w$]*)*)?)\s+by\s+([A-Za-z_$][\w$.]*)\s*$/
+
 function scopeOf(el: Element, host: Element | null, members: Members): Record<string, unknown> {
   // Rows from the outermost in: an inner source may read an outer binding.
   const rows: Element[] = []
@@ -62,7 +66,7 @@ function scopeOf(el: Element, host: Element | null, members: Members): Record<st
   const scope: Record<string, unknown> = {}
   for (const e of rows) {
     const raw = e.getAttribute('x-for')!
-    const m = /^\s*(\w+)\s*(?:,\s*(\w+))?\s+in\s+([\w.]+(?::[\w,]+)?)\s+by\s+([\w.]+)\s*$/.exec(raw); if (!m) continue
+    const m = FOR_SYNTAX.exec(raw); if (!m) throw new Error(`x-for not parseable: ${raw}`)
     const same = Array.from(e.parentElement!.children).filter((c) => c.getAttribute('x-for') === raw && !c.hasAttribute('hidden'))
     const list = resolveDirective(members, m[3]!, scope) as unknown[]
     const k = same.indexOf(e)
@@ -104,6 +108,18 @@ for (const host of Array.from(doc.querySelectorAll('[x-data]')) as Element[]) {
   instances.set(host, members)
   for (const el of [host, ...(Array.from(host.querySelectorAll('*')) as Element[])]) {
     if (hostOf(el) !== host) continue
+    // One check per x-for source: the server-painted rows (not the hidden template) must number what the client list holds.
+    const forRaw = el.getAttribute('x-for')
+    const parent = el.parentElement
+    if (forRaw && parent && !hidden(parent, host) && !listsChecked.get(parent)?.has(forRaw)) {
+      listsChecked.set(parent, (listsChecked.get(parent) ?? new Set()).add(forRaw))
+      const fm = FOR_SYNTAX.exec(forRaw); if (!fm) throw new Error(`x-for not parseable: ${forRaw}`)
+      const painted = Array.from(parent.children).filter((c) => c.getAttribute('x-for') === forRaw && !c.hasAttribute('hidden')).length
+      const list = resolveDirective(members, fm[3]!, scopeOf(parent, host, members))
+      checked++
+      if (!Array.isArray(list)) mismatches.push(`${name} <${el.tagName.toLowerCase()} x-for="${forRaw}">: client source is not a list`)
+      else if (list.length !== painted) mismatches.push(`${name} <${el.tagName.toLowerCase()} x-for="${forRaw}">: server painted ${painted} rows, client list has ${list.length}`)
+    }
     if (hidden(el, host)) {
       // The template of an x-if the server rendered false: the client agrees.
       const raw = el.getAttribute('x-if')

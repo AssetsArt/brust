@@ -21,6 +21,10 @@ The lowered artifacts (M1c) are compared the same way: `expected.jinja`,
 gets `expected.<Stem>.<ext>` (`parent-counter/expected.Counter.client.js`). A case whose
 IR carries an Error is never lowered, so it has none of them.
 
+`keyed-list-child/` is the spec §12 "keyed list with per-item handlers and child props": a native child
+(`Row.tsx`) inside an `x-for` row, so each row's child gets its props through `x-props-bind` with row scope
+(browser case `tests/browser/cases/keyed-list-child.test.ts`).
+
 `sample-props*.json` feed the dual-evaluation harness (`crates/brust-compiler/tests/dual_eval.rs`):
 the job runs under bun, the template renders with minijinja from the sample props plus the
 job's slots, and every directive's initial client value must equal what was painted. Module

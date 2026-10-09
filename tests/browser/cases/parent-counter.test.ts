@@ -14,4 +14,5 @@ test('parent-counter: reactive prop reaches the child and the function prop rese
   plus!.click()
   expect(child!.textContent).toBe('1')
   expect($('section').getAttribute('x-data')).not.toBe($$('button')[0]!.getAttribute('x-data'))
+  expect(m.warnings).toEqual([])                                    // the interactions raised nothing either
 })

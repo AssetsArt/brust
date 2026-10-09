@@ -1,9 +1,11 @@
 // The React coverage battery: ordinary React authoring, each row compiled by the
 // real `brustc`. `expect` comes from the spec (§3 tier table, §4.3 hook table,
 // §8.1 diagnostic classes), never from what the compiler happens to do.
+// Rule: every native/static row cites its spec row in `note` (e.g. 'spec §3 memo()');
+// documentation discipline only — the pinned sets in exit.ts are the test.
 export type Expect = 'static' | 'native' | 'react' | 'error' | 'compile-error'
 
-export interface Row {
+interface RowBase {
   id: string
   category: 'A' | 'B' | 'C' | 'D' | 'E'
   /** What the snippet exercises, one line (the report's Pattern column). */
@@ -11,13 +13,13 @@ export interface Row {
   snippet: string
   /** Sibling modules the snippet imports, by file name. */
   files?: Record<string, string>
-  expect: Expect
-  /** Expected number of jobs (precompute or ssr); omitted = not asserted. */
-  jobs?: number
   note?: string
   /** A documented gap: an observed/expected disagreement that is accepted. */
   knownGap?: string
 }
+
+/** Native/static rows must pin their job count (precompute or ssr); the other tiers cannot. */
+export type Row = RowBase & ({ expect: 'native' | 'static'; jobs: number } | { expect: 'react' | 'error' | 'compile-error'; jobs?: never })
 
 const R = `import { useState } from 'react'\n`
 const child = (body: string) => `export default function Child(props: any) { ${body} }`
@@ -33,30 +35,39 @@ export const CATEGORIES: Record<Row['category'], string> = {
 export const rows: Row[] = [
   // ---- A. JSX basics --------------------------------------------------------
   { id: 'a-static-text', category: 'A', authoring: 'static text', expect: 'static', jobs: 0,
-    snippet: `export default function C() { return <p>hello</p> }` },
+    snippet: `export default function C() { return <p>hello</p> }`,
+    note: 'spec §3.1 static tier' },
   { id: 'a-interpolation', category: 'A', authoring: 'prop interpolation', expect: 'static', jobs: 0,
-    snippet: `export default function C({ name }: any) { return <p>hi {name}</p> }` },
+    snippet: `export default function C({ name }: any) { return <p>hi {name}</p> }`,
+    note: 'spec §3.1 static tier; §6.2 prop read' },
   { id: 'a-attributes', category: 'A', authoring: 'static and dynamic attributes', expect: 'static', jobs: 0,
-    snippet: `export default function C({ url, label }: any) { return <a href={url} title={label} id="x">go</a> }` },
+    snippet: `export default function C({ url, label }: any) { return <a href={url} title={label} id="x">go</a> }`,
+    note: 'spec §3.1 static tier; §6.2 attributes' },
   { id: 'a-classname-template', category: 'A', authoring: 'className template literal', expect: 'static', jobs: 0,
-    snippet: 'export default function C({ on }: any) { return <p className={`box ${on ? "on" : "off"}`}>x</p> }' },
+    snippet: 'export default function C({ on }: any) { return <p className={`box ${on ? "on" : "off"}`}>x</p> }',
+    note: 'spec §6.2 template literal' },
   { id: 'a-style-object', category: 'A', authoring: 'style object from props', expect: 'static', jobs: 0,
-    snippet: `export default function C({ color }: any) { return <p style={{ color, fontSize: 12 }}>x</p> }` },
+    snippet: `export default function C({ color }: any) { return <p style={{ color, fontSize: 12 }}>x</p> }`,
+    note: 'spec §6.2 style object' },
   { id: 'a-and-guard', category: 'A', authoring: '&& guard on a prop', expect: 'static', jobs: 0,
-    snippet: `export default function C({ ok }: any) { return <div>{ok && <b>yes</b>}</div> }` },
+    snippet: `export default function C({ ok }: any) { return <div>{ok && <b>yes</b>}</div> }`,
+    note: 'spec §6.2 && guard' },
   { id: 'a-ternary', category: 'A', authoring: 'ternary on a prop', expect: 'static', jobs: 0,
-    snippet: `export default function C({ ok }: any) { return <div>{ok ? <b>yes</b> : <i>no</i>}</div> }` },
+    snippet: `export default function C({ ok }: any) { return <div>{ok ? <b>yes</b> : <i>no</i>}</div> }`,
+    note: 'spec §6.2 ternary' },
   { id: 'a-fragment', category: 'A', authoring: 'fragment root', expect: 'static', jobs: 0,
     snippet: `export default function C() { return <><p>a</p><p>b</p></> }`,
     note: 'warning fragment-root: wrapped in <brust-host>' },
   { id: 'a-list-keys', category: 'A', authoring: 'keyed list from a prop', expect: 'static', jobs: 0,
-    snippet: `export default function C({ items }: any) { return <ul>{items.map((i: any) => <li key={i.id}>{i.name}</li>)}</ul> }` },
+    snippet: `export default function C({ items }: any) { return <ul>{items.map((i: any) => <li key={i.id}>{i.name}</li>)}</ul> }`,
+    note: 'spec §6.2 keyed list' },
   { id: 'a-nested-list', category: 'A', authoring: 'nested keyed lists', expect: 'static', jobs: 0,
     snippet: `export default function C({ rows }: any) { return <table><tbody>{rows.map((r: any) => <tr key={r.id}>{r.cells.map((c: any) => <td key={c}>{c}</td>)}</tr>)}</tbody></table> }`,
     knownGap: 'F32: `<brust-row>` wrappers inside <table> are foster-parented by the HTML parser (M2)',
     note: 'table rows' },
   { id: 'a-cond-attribute', category: 'A', authoring: 'conditional attribute via ternary', expect: 'static', jobs: 0,
-    snippet: `export default function C({ on }: any) { return <button disabled={on ? true : false} className={on ? 'a' : undefined}>x</button> }` },
+    snippet: `export default function C({ on }: any) { return <button disabled={on ? true : false} className={on ? 'a' : undefined}>x</button> }`,
+    note: 'spec §6.2 conditional attribute' },
   { id: 'a-array-from', category: 'A', authoring: 'Array.from range list', expect: 'react',
     snippet: `export default function C({ n }: any) { return <ul>{Array.from({ length: n }, (_, i) => <li key={i}>{i}</li>)}</ul> }`,
     note: 'F40: the Array.from(xs, fn) callback form is not recognised; only Array.from({ length: N }).map(…) is (spec §6.2) — falls back (jsx-expression)' },
@@ -64,11 +75,14 @@ export const rows: Row[] = [
     snippet: `export default function C() { return <ul>{Array.from({ length: 3 }).map((_, i) => <li key={i}>{i}</li>)}</ul> }`,
     note: 'spec §6.2: N literal ≤ 1024' },
   { id: 'a-state-text', category: 'A', authoring: 'state text with a click handler', expect: 'native', jobs: 0,
-    snippet: `${R}export default function C() { const [n, setN] = useState(0); return <button onClick={() => setN(n + 1)}>{n}</button> }` },
+    snippet: `${R}export default function C() { const [n, setN] = useState(0); return <button onClick={() => setN(n + 1)}>{n}</button> }`,
+    note: 'spec §4.3 useState' },
   { id: 'a-state-cond', category: 'A', authoring: 'state-driven conditional', expect: 'native', jobs: 0,
-    snippet: `${R}export default function C() { const [open, setOpen] = useState(false); return <div><button onClick={() => setOpen(!open)}>t</button>{open && <p>body</p>}</div> }` },
+    snippet: `${R}export default function C() { const [open, setOpen] = useState(false); return <div><button onClick={() => setOpen(!open)}>t</button>{open && <p>body</p>}</div> }`,
+    note: 'spec §4.3 useState; §7.1 x-if' },
   { id: 'a-state-list', category: 'A', authoring: 'state list with append', expect: 'native', jobs: 0,
-    snippet: `${R}export default function C() { const [xs, setXs] = useState([1, 2]); return <div><button onClick={() => setXs([...xs, xs.length + 1])}>add</button><ul>{xs.map((x) => <li key={x}>{x}</li>)}</ul></div> }` },
+    snippet: `${R}export default function C() { const [xs, setXs] = useState([1, 2]); return <div><button onClick={() => setXs([...xs, xs.length + 1])}>add</button><ul>{xs.map((x) => <li key={x}>{x}</li>)}</ul></div> }`,
+    note: 'spec §4.3 useState; §7.1 x-for' },
   { id: 'a-style-undefined', category: 'A', authoring: 'style={c ? {…} : undefined} (F36)', expect: 'static', jobs: 0,
     snippet: `export default function C({ c }: any) { return <p style={c ? { color: 'red' } : undefined}>x</p> }`,
     note: 'the attribute is omitted when undefined, as React does' },
@@ -79,19 +93,24 @@ export const rows: Row[] = [
   // ---- B. Composition -------------------------------------------------------
   { id: 'b-child-static', category: 'B', authoring: 'static child component', expect: 'static', jobs: 0,
     snippet: `import Child from './Child'\nexport default function C() { return <div><Child /></div> }`,
-    files: { 'Child.tsx': child(`return <b>c</b>`) } },
+    files: { 'Child.tsx': child(`return <b>c</b>`) },
+    note: 'spec §3.1 inlined child' },
   { id: 'b-child-props', category: 'B', authoring: 'child with props', expect: 'static', jobs: 0,
     snippet: `import Child from './Child'\nexport default function C({ n }: any) { return <div><Child label={n} /></div> }`,
-    files: { 'Child.tsx': child(`return <b>{props.label}</b>`) } },
+    files: { 'Child.tsx': child(`return <b>{props.label}</b>`) },
+    note: 'spec §3.1 inlined child with props' },
   { id: 'b-children-slot', category: 'B', authoring: 'children passed through a slot', expect: 'static', jobs: 0,
     snippet: `import Child from './Child'\nexport default function C() { return <Child><i>inner</i></Child> }`,
-    files: { 'Child.tsx': child(`return <section>{props.children}</section>`) } },
+    files: { 'Child.tsx': child(`return <section>{props.children}</section>`) },
+    note: 'spec §3.1 children slot' },
   { id: 'b-reactive-props', category: 'B', authoring: 'state flows into a native child as a reactive prop', expect: 'native', jobs: 0,
     snippet: `${R}import Child from './Child'\nexport default function C() { const [n, setN] = useState(0); return <div><button onClick={() => setN(n + 1)}>+</button><Child n={n} /></div> }`,
-    files: { 'Child.tsx': child(`return <b>{props.n}</b>`) } },
+    files: { 'Child.tsx': child(`return <b>{props.n}</b>`) },
+    note: 'spec §7.4 reactive props (D8)' },
   { id: 'b-function-prop', category: 'B', authoring: 'function prop to a native child', expect: 'native', jobs: 0,
     snippet: `${R}import Child from './Child'\nexport default function C() { const [n, setN] = useState(0); return <div><span>{n}</span><Child onReset={() => setN(0)} /></div> }`,
-    files: { 'Child.tsx': child(`return <button onClick={props.onReset}>reset</button>`) } },
+    files: { 'Child.tsx': child(`return <button onClick={props.onReset}>reset</button>`) },
+    note: 'spec §7.4 function prop between native components' },
   { id: 'b-react-child-island', category: 'B', authoring: 'react child inside a native parent (island)', expect: 'static', jobs: 1,
     snippet: `import Child from './Child'\nexport default function C({ id }: any) { return <main><Child id={id} /></main> }`,
     files: { 'Child.tsx': `import { useContext, createContext } from 'react'\nconst X = createContext(1)\nexport default function Child(props: any) { const v = useContext(X); return <i>{v}{props.id}</i> }` },
@@ -99,9 +118,10 @@ export const rows: Row[] = [
   { id: 'b-component-map', category: 'B', authoring: 'component map dispatch', expect: 'react',
     snippet: `import A from './A'\nimport B from './B'\nconst map: any = { a: A, b: B }\nexport default function C({ kind }: any) { const X = map[kind]; return <X /> }`,
     files: { 'A.tsx': child(`return <i>a</i>`), 'B.tsx': child(`return <i>b</i>`) } },
-  { id: 'b-memo', category: 'B', authoring: 'memo() wrapper around a plain component', expect: 'native',
+  { id: 'b-memo', category: 'B', authoring: 'memo() wrapper around a plain component', expect: 'native', jobs: 0,
     knownGap: 'M1 does not unwrap memo(): default-export-shape falls back to react (F37)',
-    snippet: `import { memo, useState } from 'react'\nfunction Inner() { const [n, setN] = useState(0); return <button onClick={() => setN(n + 1)}>{n}</button> }\nexport default memo(Inner)` },
+    snippet: `import { memo, useState } from 'react'\nfunction Inner() { const [n, setN] = useState(0); return <button onClick={() => setN(n + 1)}>{n}</button> }\nexport default memo(Inner)`,
+    note: 'spec §3 memo()' },
   { id: 'b-forwardref', category: 'B', authoring: 'forwardRef component', expect: 'react',
     snippet: `import { forwardRef } from 'react'\nexport default forwardRef<HTMLInputElement, any>(function F(props, ref) { return <input ref={ref} /> })` },
   { id: 'b-hoc', category: 'B', authoring: 'higher-order component', expect: 'react',
@@ -112,22 +132,27 @@ export const rows: Row[] = [
 
   // ---- C. Hooks -------------------------------------------------------------
   { id: 'c-usestate', category: 'C', authoring: 'useState', expect: 'native', jobs: 0,
-    snippet: `${R}export default function C() { const [on, setOn] = useState(false); return <button onClick={() => setOn(!on)}>{on ? 'on' : 'off'}</button> }` },
+    snippet: `${R}export default function C() { const [on, setOn] = useState(false); return <button onClick={() => setOn(!on)}>{on ? 'on' : 'off'}</button> }`,
+    note: 'spec §4.3 useState' },
   { id: 'c-useeffect-cleanup', category: 'C', authoring: 'useEffect with cleanup', expect: 'native', jobs: 0,
     snippet: `import { useState, useEffect } from 'react'\nexport default function C() { const [n, setN] = useState(0); useEffect(() => { const t = setInterval(() => setN((x) => x + 1), 1000); return () => clearInterval(t) }, []); return <p>{n}</p> }`,
     note: 'no effect-deps warning in M1 (ledger F41)' },
   { id: 'c-usememo', category: 'C', authoring: 'useMemo derived from state', expect: 'native', jobs: 0,
-    snippet: `import { useState, useMemo } from 'react'\nexport default function C() { const [n, setN] = useState(2); const sq = useMemo(() => n * n, [n]); return <button onClick={() => setN(n + 1)}>{sq}</button> }` },
+    snippet: `import { useState, useMemo } from 'react'\nexport default function C() { const [n, setN] = useState(2); const sq = useMemo(() => n * n, [n]); return <button onClick={() => setN(n + 1)}>{sq}</button> }`,
+    note: 'spec §4.3 useMemo' },
   { id: 'c-usecallback', category: 'C', authoring: 'useCallback handler', expect: 'native', jobs: 0,
-    snippet: `import { useState, useCallback } from 'react'\nexport default function C() { const [n, setN] = useState(0); const inc = useCallback(() => setN((x) => x + 1), []); return <button onClick={inc}>{n}</button> }` },
+    snippet: `import { useState, useCallback } from 'react'\nexport default function C() { const [n, setN] = useState(0); const inc = useCallback(() => setN((x) => x + 1), []); return <button onClick={inc}>{n}</button> }`,
+    note: 'spec §4.3 useCallback' },
   { id: 'c-useref', category: 'C', authoring: 'useRef bound with ref=', expect: 'native', jobs: 0,
-    snippet: `import { useRef } from 'react'\nexport default function C() { const r = useRef<HTMLInputElement>(null); return <div><input ref={r} /><button onClick={() => r.current?.focus()}>f</button></div> }` },
-  { id: 'c-useid', category: 'C', authoring: 'useId read in render', expect: 'native',
+    snippet: `import { useRef } from 'react'\nexport default function C() { const r = useRef<HTMLInputElement>(null); return <div><input ref={r} /><button onClick={() => r.current?.focus()}>f</button></div> }`,
+    note: 'spec §4.3 useRef' },
+  { id: 'c-useid', category: 'C', authoring: 'useId read in render', expect: 'native', jobs: 0,
     knownGap: 'F39: M1 decision (finding 5): a useId value read in render falls back (use-id-in-render); server-generated ids need the M2 server (spec §13 (a); docs/plans/2026-10-08-m1b2-placement-tier.md:206)',
     snippet: `import { useId } from 'react'\nexport default function C() { const id = useId(); return <div><label htmlFor={id}>n</label><input id={id} /></div> }`,
     note: '§4.3 says server generates, client reads it from the DOM' },
   { id: 'c-uselayouteffect', category: 'C', authoring: 'useLayoutEffect', expect: 'native', jobs: 0,
-    snippet: `import { useState, useLayoutEffect } from 'react'\nexport default function C() { const [n, setN] = useState(0); useLayoutEffect(() => { document.title = String(n) }, [n]); return <button onClick={() => setN(n + 1)}>{n}</button> }` },
+    snippet: `import { useState, useLayoutEffect } from 'react'\nexport default function C() { const [n, setN] = useState(0); useLayoutEffect(() => { document.title = String(n) }, [n]); return <button onClick={() => setN(n + 1)}>{n}</button> }`,
+    note: 'spec §4.3 useLayoutEffect' },
   { id: 'c-usereducer', category: 'C', authoring: 'useReducer', expect: 'react',
     snippet: `import { useReducer } from 'react'\nexport default function C() { const [n, d] = useReducer((s: number, a: number) => s + a, 0); return <button onClick={() => d(1)}>{n}</button> }` },
   { id: 'c-usecontext', category: 'C', authoring: 'useContext', expect: 'react',
@@ -140,14 +165,15 @@ export const rows: Row[] = [
     snippet: `import { useSyncExternalStore } from 'react'\nexport default function C() { const v = useSyncExternalStore(() => () => {}, () => 1, () => 1); return <p>{v}</p> }` },
   { id: 'c-use-hook', category: 'C', authoring: 'use(promise)', expect: 'react',
     snippet: `import { use } from 'react'\nexport default function C({ p }: any) { const v = use(p); return <p>{v}</p> }` },
-  { id: 'c-usestate-load', category: 'C', authoring: 'useState(load) with a module function (F26)', expect: 'native',
+  { id: 'c-usestate-load', category: 'C', authoring: 'useState(load) with a module function (F26)', expect: 'native', jobs: 1,
     snippet: `import { useState } from 'react'\nfunction load() { return 41 + 1 }\nexport default function C() { const [n, setN] = useState(load); return <button onClick={() => setN(n + 1)}>{n}</button> }`,
     note: 'seeds the call, not the function' },
 
   // ---- D. API surface -------------------------------------------------------
-  { id: 'd-cache', category: 'D', authoring: 'cache() around a server helper', expect: 'static',
+  { id: 'd-cache', category: 'D', authoring: 'cache() around a server helper', expect: 'static', jobs: 1,
     snippet: `import { cache } from 'react'\nimport { price } from './price'\nconst cached = cache(price)\nexport default function C({ id }: any) { return <p>{cached(id)}</p> }`,
-    files: { 'price.ts': `export const price = (id: string) => id.length * 2` } },
+    files: { 'price.ts': `export const price = (id: string) => id.length * 2` },
+    note: 'spec §3.4 cache()' },
   { id: 'd-lazy-suspense', category: 'D', authoring: 'lazy + Suspense', expect: 'react',
     note: 'F38 fixed: a dynamic import() is a dynamic-import fallback, not a printer panic',
     snippet: `import { lazy, Suspense } from 'react'\nconst L = lazy(() => import('./L'))\nexport default function C() { return <Suspense fallback={<i>…</i>}><L /></Suspense> }` },
@@ -161,16 +187,20 @@ export const rows: Row[] = [
   // ---- E. v2 specifics ------------------------------------------------------
   { id: 'e-precompute-props', category: 'E', authoring: 'props-only value outside the template subset', expect: 'static', jobs: 1,
     snippet: `import { fmt } from './fmt'\nexport default function C({ price }: any) { return <p>{fmt(price)}</p> }`,
-    files: { 'fmt.ts': `export const fmt = (n: number) => n.toFixed(2)` } },
+    files: { 'fmt.ts': `export const fmt = (n: number) => n.toFixed(2)` },
+    note: 'spec §6.4 precompute' },
   { id: 'e-precompute-state', category: 'E', authoring: 'state-dependent value from a module helper', expect: 'native', jobs: 1,
     snippet: `${R}import { fmt } from './fmt'\nexport default function C({ price }: any) { const [q, setQ] = useState(1); return <button onClick={() => setQ(q + 1)}>{fmt(price * q)}</button> }`,
-    files: { 'fmt.ts': `export const fmt = (n: number) => n.toFixed(2)` } },
+    files: { 'fmt.ts': `export const fmt = (n: number) => n.toFixed(2)` },
+    note: 'spec §6.4 precompute' },
   { id: 'e-precompute-per-item', category: 'E', authoring: 'per-item precompute in a list', expect: 'static', jobs: 1,
     snippet: `import { fmt } from './fmt'\nexport default function C({ items }: any) { return <ul>{items.map((i: any) => <li key={i.id}>{fmt(i.price)}</li>)}</ul> }`,
-    files: { 'fmt.ts': `export const fmt = (n: number) => n.toFixed(2)` } },
+    files: { 'fmt.ts': `export const fmt = (n: number) => n.toFixed(2)` },
+    note: 'spec §6.4 precompute' },
   { id: 'e-reactive-props-child', category: 'E', authoring: 'derived reactive value passed to a child', expect: 'native', jobs: 0,
     snippet: `${R}import Child from './Child'\nexport default function C() { const [n, setN] = useState(1); const dbl = n * 2; return <div><button onClick={() => setN(n + 1)}>+</button><Child v={dbl} /></div> }`,
-    files: { 'Child.tsx': child(`return <b>{props.v}</b>`) } },
+    files: { 'Child.tsx': child(`return <b>{props.v}</b>`) },
+    note: 'spec §7.4 reactive props (D8)' },
   { id: 'e-function-prop-react-child', category: 'E', authoring: 'function prop to a react child', expect: 'error',
     snippet: `${R}import Child from './Child'\nexport default function C() { const [n, setN] = useState(0); return <div><span>{n}</span><Child onReset={() => setN(0)} /></div> }`,
     files: { 'Child.tsx': `import { useContext, createContext } from 'react'\nconst X = createContext(1)\nexport default function Child(props: any) { const v = useContext(X); return <button onClick={props.onReset}>{v}</button> }` } },
@@ -191,7 +221,8 @@ export const rows: Row[] = [
     note: 'warning fragment-root' },
   { id: 'e-if-in-table', category: 'E', authoring: 'state-driven row inside a table', expect: 'native', jobs: 0,
     snippet: `${R}export default function C() { const [open, setOpen] = useState(true); return <table><tbody><tr><td><button onClick={() => setOpen(!open)}>t</button></td></tr>{open && <tr><td>row</td></tr>}</tbody></table> }`,
-    knownGap: 'F32: the `<brust-if>` wrapper inside <tbody> is foster-parented by the HTML parser (M2)' },
+    knownGap: 'F32: the `<brust-if>` wrapper inside <tbody> is foster-parented by the HTML parser (M2)',
+    note: 'spec §7.1 x-if' },
   { id: 'e-parse-error', category: 'E', authoring: 'snippet that does not parse', expect: 'compile-error',
     snippet: `export default function C() { return <div> }`,
     note: 'reported as a row, never aborts the battery' },

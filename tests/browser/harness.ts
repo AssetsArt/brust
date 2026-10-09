@@ -3,10 +3,13 @@
 // into a DOM, imports the generated chunks and mounts packages/runtime-dom.
 // The only logic here is plumbing; cases assert behaviour.
 //
-// DOM: happy-dom (Playwright is not a dependency of this repo; the cases would
-// run unchanged in Chromium against the same artifacts).
+// DOM: happy-dom (Playwright is not a dependency of this repo). The cases do NOT
+// run unchanged in Chromium: the chunks are emitted with `--runtime-import`
+// pointing at a `.ts` path and fixtures import `./money` without an extension,
+// so a browser run would first need a bundling step (e.g. `Bun.build`) over the
+// chunks and the fixture modules.
 import { spawnSync } from 'node:child_process'
-import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -19,8 +22,24 @@ if (!(globalThis as { document?: unknown }).document) GlobalRegistrator.register
 
 const runtime = await import(runtimeSrc)
 const { instanceOf } = await import(join(repo, 'packages/runtime-dom/src/instance.ts'))
-export const { mount, unmount } = runtime as { mount: () => void; unmount: () => void }
+const { __resetWarnOnce } = await import(join(repo, 'packages/runtime-dom/src/warn.ts'))
+const runtimeUnmount = (runtime as { unmount: () => void }).unmount
+export const { mount } = runtime as { mount: () => void }
 export { instanceOf }
+
+// console capture lives from before the chunk import until `unmount()`, so warnings
+// raised by interactions and observer-driven mounts are seen too.
+const consoleWarn = console.warn
+const consoleError = console.error
+let capture: string[] | null = null
+/** Restores the console, forgets `warnOnce` keys and unmounts the runtime. */
+export function unmount(): void {
+  console.warn = consoleWarn
+  console.error = consoleError
+  capture = null
+  __resetWarnOnce()
+  runtimeUnmount()
+}
 
 export const DOM_ENGINE = 'happy-dom'
 
@@ -54,8 +73,8 @@ export function build(name: string, sample = 'sample-props.json'): Built {
   const props = join(repo, 'tests/fixtures', name, sample)
   const job = join(dir, `${rootId}.server.ts`)
   const slotsFile = join(dir, 'slots.json')
-  let hasJob = false
-  try { readFileSync(job); hasJob = true } catch { /* no precompute job */ }
+  // The compiler decides: the root has a job iff it emitted `<root>.server.ts`.
+  const hasJob = readdirSync(dir).includes(`${rootId}.server.ts`)
   writeFileSync(slotsFile, hasJob ? sh('bun', [evalTs, 'slots', job, props]) : '{}')
   const html = sh(brustc, [input, '--render', props, '--slots', slotsFile])
   const chunks = readdirSync(dir).filter((f) => f.endsWith('.client.js')).map((f) => join(dir, f))
@@ -81,18 +100,20 @@ export function visible(root: ParentNode = document.body): string {
 
 export interface Mounted extends Built { warnings: string[]; before: string; after: string }
 
-/** Loads `html` into the page, imports the chunks and mounts; collects runtime warnings. */
+/** Loads `html` into the page, imports the chunks and mounts. `warnings` is live: it keeps collecting `console.warn` / `console.error` until `unmount()`. */
 export async function load(b: Built): Promise<Mounted> {
   unmount()
   document.body.innerHTML = b.html
   const before = visible()
   const warnings: string[] = []
-  const warn = console.warn
-  console.warn = (...a: unknown[]) => { warnings.push(a.map(String).join(' ')) }
-  try {
-    for (const c of b.chunks) await import(`${c}?v=${Math.random()}`)   // fresh module per case: defineBehavior re-registers
-    mount()
-  } finally { console.warn = warn }
+  capture = warnings
+  console.warn = (...a: unknown[]) => { capture?.push('warn: ' + a.map(String).join(' ')) }
+  console.error = (...a: unknown[]) => { capture?.push('error: ' + a.map(String).join(' ')) }
+  for (const c of b.chunks) await import(`${c}?v=${Math.random()}`)   // fresh module per case: defineBehavior re-registers
+  mount()
+  // happy-dom queues MutationObserver callbacks with queueMicrotask: let observer-driven mounts run.
+  await new Promise<void>((r) => queueMicrotask(r))
+  await new Promise<void>((r) => queueMicrotask(r))
   return { ...b, warnings, before, after: visible() }
 }
 
