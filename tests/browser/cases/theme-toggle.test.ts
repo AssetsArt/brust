@@ -14,4 +14,5 @@ test('theme-toggle: first paint is stable and a click flips the label and the ef
   b.click()
   expect(b.textContent).toBe('Light')
   expect(document.documentElement.dataset.mode).toBe('dark')
+  expect(m.warnings).toEqual([])                                    // the interactions raised nothing either
 })

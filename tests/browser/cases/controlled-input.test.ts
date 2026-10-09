@@ -17,4 +17,5 @@ test('controlled-input: typing writes state, state writes the input', async () =
   members($('label')).q.set('zz')                                 // state -> input
   expect(input.value).toBe('zz')
   expect($('small:not([hidden])')?.textContent).toBe('Searching for zz')
+  expect(m.warnings).toEqual([])                                    // the interactions raised nothing either
 })

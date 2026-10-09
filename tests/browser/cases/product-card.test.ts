@@ -13,4 +13,5 @@ test('product-card: precompute seeds the paint; + updates the total through fmt'
   $('button').click()
   expect($('.total').textContent).toBe('Total: $37.50')
   expect($('.unit').textContent).toBe('$12.50')              // props-only value does not move
+  expect(m.warnings).toEqual([])                                    // the interactions raised nothing either
 })

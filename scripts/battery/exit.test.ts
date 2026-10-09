@@ -48,7 +48,8 @@ test('every example harness passes in the browser harness', () => {
   const p = spawnSync('bun', ['test', '--timeout', '120000', 'tests/browser'], { cwd: repo, encoding: 'utf8' })
   const out = p.stdout + p.stderr
   expect(p.status, out).toBe(0)
-  // One file per example; a passing run does not name its files when piped.
-  expect(out).toMatch(new RegExp(`across ${BROWSER_CASES.length} files`))
+  // One file per example, plus tests/browser/cases/harness-self-test.test.ts (the harness's negative control,
+  // not a spec example, so it is not in BROWSER_CASES); a passing run does not name its files when piped.
+  expect(out).toMatch(new RegExp(`across ${BROWSER_CASES.length + 1} files`))
   expect(out).toMatch(/ 0 fail/)
 }, 600_000)

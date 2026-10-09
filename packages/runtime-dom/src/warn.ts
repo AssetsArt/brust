@@ -4,3 +4,6 @@ export function warnOnce(key: string, message: string): void {
   seen.add(key)
   console.warn(`[brust] ${message}`)
 }
+
+/** test-only; the browser harness calls it between cases */
+export function __resetWarnOnce(): void { seen.clear() }

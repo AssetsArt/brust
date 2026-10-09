@@ -12,4 +12,5 @@ test('nested-list: inner x-for reads the outer row (F29) and state re-renders th
   $('table').click()                                                // scale 3
   expect(tds()).toEqual(['3.0kg #0', '6.0kg #0', '9.0kg #1'])
   expect($$('tr')[1]!.querySelector('td')).toBe(rowTwoCell)         // same node, new text
+  expect(m.warnings).toEqual([])                                    // the interactions raised nothing either
 })

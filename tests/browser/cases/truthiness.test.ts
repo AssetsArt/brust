@@ -23,4 +23,5 @@ test('truthiness: x-if on a reactive flag toggles (F30), [] is truthy, children 
   expect([c1!.textContent, c2!.textContent]).toEqual(['7', '10'])   // each child owns its state
   c2!.click()
   expect([c1!.textContent, c2!.textContent]).toEqual(['7', '11'])
+  expect(m.warnings).toEqual([])                                    // the interactions raised nothing either
 })
