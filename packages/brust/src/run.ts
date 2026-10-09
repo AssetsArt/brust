@@ -91,8 +91,9 @@ export async function run(opts: RunOptions = {}): Promise<void> {
     // instead of leaving the server answering 503 for every loader/job route.
     w.addEventListener('error', (e) => {
       if (exiting) return
-      console.error(`[brust] worker ${i}: ${(e as ErrorEvent).message}`)
-      exit(1)
+      console.error(`[brust] worker ${i}: ${(e as ErrorEvent).message} — shutting down`)
+      failed = true
+      if (!draining) drainThenExit(1)
     })
     w.addEventListener('close', (e) => {
       if (exiting) return
@@ -106,6 +107,16 @@ export async function run(opts: RunOptions = {}): Promise<void> {
     if (draining) exit(code)
     drainThenExit(0)
   }
+  // Ruling 2bf3775a (R3): an app error that escapes to the main thread is fatal — log, drain,
+  // exit non-zero; no respawn in M2 (the supervisor restarts the process).
+  const onFatal = (kind: string) => (err: unknown) => {
+    if (exiting) return
+    console.error(`[brust] ${kind}: ${err instanceof Error ? (err.stack ?? err.message) : String(err)} — shutting down`)
+    failed = true
+    if (!draining) drainThenExit(1)
+  }
+  process.on('uncaughtException', onFatal('uncaught exception'))
+  process.on('unhandledRejection', onFatal('unhandled rejection'))
   process.on('SIGINT', () => onSignal(130))
   process.on('SIGTERM', () => onSignal(143))
 

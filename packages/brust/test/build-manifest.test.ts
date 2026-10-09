@@ -79,6 +79,11 @@ test('brust build writes the S6 manifest (pinned) and every file it names', asyn
   const jobs = (await import(join(dist, 'jobs.js'))).default
   expect(jobs[item.children[0].id].precompute({ item: { price: 2.25 }, unit: '€' })).toEqual({ _s1: '2.3€' })
   expect(jobs[item.jobs[1].target].ssr({ team: ['ann'], title: 't' })).toContain('<span>ann</span>')
+  // Ruling 2bf3775a (R1): useId is prefixed by the island's component id on BOTH sides.
+  const target = item.jobs[1].target
+  const prefixed = new RegExp(`identifierPrefix:\\s*"${target}"`)
+  expect(readFileSync(join(dist, 'jobs.js'), 'utf8')).toMatch(prefixed)
+  expect(readFileSync(join(dist, m.components[target].client), 'utf8')).toMatch(prefixed)
 })
 
 test('the generated dist passes Manifest::load and renders through the real handlers (slot names line up)', async () => {

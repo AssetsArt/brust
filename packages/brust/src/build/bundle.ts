@@ -227,8 +227,8 @@ const isReact = (c: Compiled) => typeof c.ir.tier === 'object' && c.ir.tier !== 
 export function islandShim(c: Compiled): string {
   const clientOnly = c.ir.tier?.React?.client_only === true
   const [api, mount] = clientOnly
-    ? ['createRoot', 'createRoot(host).render(createElement(Comp, props))']
-    : ['hydrateRoot', 'hydrateRoot(host, createElement(Comp, props))']
+    ? ['createRoot', `createRoot(host, { identifierPrefix: ${JSON.stringify(c.id)} }).render(createElement(Comp, props))`]
+    : ['hydrateRoot', `hydrateRoot(host, createElement(Comp, props), { identifierPrefix: ${JSON.stringify(c.id)} })`]
   return (
     `import { ${api} } from 'react-dom/client'\nimport { createElement } from 'react'\nimport Comp from ${JSON.stringify(c.file)}\n` +
     `;((globalThis as any).__brustIslands ||= []).push([${JSON.stringify(c.id)}, (host: Element, props: any) => { ${mount} }])\n` +
@@ -273,7 +273,9 @@ export async function buildJobs(dist: string, compiled: Map<string, Compiled>, s
     }
     if (isReact(c) && !c.ir.tier.React.client_only) {
       imports.push(`import C${n} from ${JSON.stringify(c.file)}`)
-      fns.push(`ssr: (props: any) => renderToString(createElement(C${n}, props))`)
+      // Ruling 2bf3775a (R1): the island's component id prefixes React's useId on BOTH sides
+      // (the shim's hydrateRoot passes the same prefix), so ids differ across islands.
+      fns.push(`ssr: (props: any) => renderToString(createElement(C${n}, props), { identifierPrefix: ${JSON.stringify(c.id)} })`)
     }
     if (fns.length > 0) entries.push(`  ${JSON.stringify(c.id)}: { ${fns.join(', ')} },`)
     n++
