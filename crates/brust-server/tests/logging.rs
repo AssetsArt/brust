@@ -1,4 +1,4 @@
-//! The per-request `brust::request` log line (spec §7). Own binary: the global
+//! The per-request `brust::request` log line (spec §7, DEBUG level). Own binary: the global
 //! tracing subscriber installed here is private to this process.
 mod common;
 
@@ -31,7 +31,9 @@ fn one_request_line_per_page_with_route_status_cache_calls_duration() {
     tracing_subscriber::fmt()
         .with_writer(|| MockWriter)
         .with_ansi(false)
-        .with_max_level(tracing::Level::INFO)
+        // The request line is DEBUG (2026-10-10: INFO flooded the terminal under load); the
+        // default filter `brust=info` hides it, `RUST_LOG=brust=debug` shows it.
+        .with_max_level(tracing::Level::DEBUG)
         .init();
 
     let s = boot(fake());
