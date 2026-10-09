@@ -232,3 +232,15 @@ fn attribute_guards_ignore_case() {
     let html = render(&j, serde_json::json!({ "u": "javascript:alert(1)" }));
     assert!(!html.to_ascii_lowercase().contains(" href="), "{html}");
 }
+
+/// F36: a style that may be undefined omits the attribute, as React does.
+#[test]
+fn undefined_style_omits_the_attribute() {
+    let (j, _) = lower(
+        "export default function T({ c }: any) { return <p style={c ? { color: 'red' } : undefined}>x</p> }",
+    );
+    let off = render(&j, serde_json::json!({ "c": false }));
+    assert!(!off.contains("style"), "{off}");
+    let on = render(&j, serde_json::json!({ "c": true }));
+    assert!(on.contains("style=\"color:red"), "{on}");
+}

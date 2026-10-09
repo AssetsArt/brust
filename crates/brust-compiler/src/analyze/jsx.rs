@@ -97,9 +97,9 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
     for p in obj.properties.iter() {
         let Some(value) = &p.value else { continue };
         if matches!(p.kind, js_ast::G::PropertyKind::Spread) {
-            r.diagnostics.push(Diagnostic::warning(
+            r.diagnostics.push(Diagnostic::fallback(
                 "spread-props",
-                "spread props are passed through as an opaque value",
+                "spread props cannot be expanded by the template backend",
                 loc_of(value),
                 "list the props explicitly",
             ));

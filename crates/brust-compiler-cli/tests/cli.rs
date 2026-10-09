@@ -177,3 +177,38 @@ fn emit_all_writes_the_artifacts() {
         .unwrap();
     assert_eq!(out.status.code(), Some(2));
 }
+
+/// M1e Task 2: `--render` renders the template from props (+ slots).
+#[test]
+fn render_paints_the_template_from_props_and_slots() {
+    let dir = std::env::temp_dir().join(format!("brustc-render-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let props = dir.join("props.json");
+    std::fs::write(&props, r#"{"item":{"name":"Mug","price":4,"qty":2}}"#).unwrap();
+    // Without --slots the precompute values are missing, but the template renders.
+    let run = |extra: &[&str]| {
+        let out = brustc()
+            .arg(fixture("product-card"))
+            .args(extra)
+            .output()
+            .unwrap();
+        (
+            out.status.code(),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    let (code, html, err) = run(&["--render", props.to_str().unwrap()]);
+    assert_eq!(code, Some(0), "{err}");
+    assert!(html.contains("Mug"), "{html}");
+
+    let (code, _, err) = run(&["--render", dir.join("missing.json").to_str().unwrap()]);
+    assert_eq!(code, Some(1));
+    assert!(err.contains("cannot read"), "{err}");
+
+    // --render and --emit are exclusive; --slots needs --render.
+    let (code, _, _) = run(&["--render", props.to_str().unwrap(), "--emit", "ir"]);
+    assert_eq!(code, Some(2));
+    let (code, _, _) = run(&["--emit", "ir", "--slots", props.to_str().unwrap()]);
+    assert_eq!(code, Some(2));
+}
