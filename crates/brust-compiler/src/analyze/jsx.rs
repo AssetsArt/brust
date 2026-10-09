@@ -30,7 +30,7 @@ enum Tag {
         imported: Option<String>,
     },
     Member,
-    /// `Outlet` imported from `@brust/brust/routes` (S8).
+    /// `Outlet` imported from `@brust/core/routes` (S8).
     Outlet,
 }
 
@@ -42,7 +42,7 @@ fn tag_of(r: &Reader<'_, '_>, tag: &js_ast::Expr) -> Tag {
             if r.names.is_fragment(*ref_) {
                 return Tag::Fragment;
             }
-            if r.names.import_of(*ref_) == Some(("@brust/brust/routes", "Outlet")) {
+            if r.names.import_of(*ref_) == Some(("@brust/core/routes", "Outlet")) {
                 return Tag::Outlet;
             }
             let (name, kind) = r.names.kind_of(*ref_);

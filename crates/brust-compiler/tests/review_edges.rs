@@ -410,11 +410,11 @@ fn dynamic_import_falls_back_instead_of_panicking() {
     assert!(matches!(ir.tier, Tier::React { .. }), "{:?}", ir.tier);
 }
 
-/// S8: <Outlet/> imported from @brust/brust/routes is an intrinsic node, not a child component.
+/// S8: <Outlet/> imported from @brust/core/routes is an intrinsic node, not a child component.
 #[test]
 fn outlet_from_brust_routes_is_an_intrinsic() {
     let ir = analyze(
-        "import { Outlet } from '@brust/brust/routes'\nexport default function Layout() { return <div><Outlet/></div> }",
+        "import { Outlet } from '@brust/core/routes'\nexport default function Layout() { return <div><Outlet/></div> }",
     );
     assert!(ir.uses_outlet);
     assert!(
@@ -424,6 +424,17 @@ fn outlet_from_brust_routes_is_an_intrinsic() {
     );
     let json = serde_json::to_value(&ir).unwrap();
     assert_eq!(json["uses_outlet"], true);
+}
+
+/// Only the `/routes` subpath is the intrinsic; the bare package and the old name are not.
+#[test]
+fn outlet_only_from_core_routes_subpath() {
+    for spec in ["@brust/core", "@brust/brust/routes"] {
+        let ir = analyze(&format!(
+            "import {{ Outlet }} from '{spec}'\nexport default function Layout() {{ return <div><Outlet/></div> }}"
+        ));
+        assert!(!ir.uses_outlet, "{spec} must not be the intrinsic");
+    }
 }
 
 /// An Outlet that is not the brust one is an ordinary (unresolvable) child → external-component fallback.
@@ -619,7 +630,7 @@ fn only_a_closing_tag_in_static_script_text_falls_back() {
 #[test]
 fn outlet_inside_a_condition_falls_back() {
     let ir = analyze(
-        "import { Outlet } from '@brust/brust/routes'\nimport { useState } from 'react'\nexport default function L() { const [o, setO] = useState(false); return <div onClick={() => setO(!o)}>{o && <aside><Outlet/></aside>}</div> }",
+        "import { Outlet } from '@brust/core/routes'\nimport { useState } from 'react'\nexport default function L() { const [o, setO] = useState(false); return <div onClick={() => setO(!o)}>{o && <aside><Outlet/></aside>}</div> }",
     );
     assert!(
         rules(&ir).contains(&(DiagClass::Fallback, "outlet-in-branch".into())),
@@ -681,7 +692,7 @@ fn job_inputs_name_the_list_not_its_length() {
 #[test]
 fn outlet_in_a_react_tier_component_is_an_error() {
     let ir = analyze(
-        "import { Outlet } from '@brust/brust/routes'\nimport { useReducer } from 'react'\nexport default function L() { const [s] = useReducer((a: number) => a, 0); return <div>{s}<Outlet/></div> }",
+        "import { Outlet } from '@brust/core/routes'\nimport { useReducer } from 'react'\nexport default function L() { const [s] = useReducer((a: number) => a, 0); return <div>{s}<Outlet/></div> }",
     );
     assert!(
         rules(&ir).contains(&(DiagClass::Error, "outlet-in-react".into())),

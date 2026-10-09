@@ -18,7 +18,7 @@
   "id_bindings": [],
   "template": {
     "Element": {
-      "loc": 122,
+      "loc": 121,
       "tag": "html",
       "attrs": [
         {
@@ -31,20 +31,20 @@
       "children": [
         {
           "Element": {
-            "loc": 145,
+            "loc": 144,
             "tag": "head",
             "attrs": [],
             "children": [
               {
                 "Element": {
-                  "loc": 151,
+                  "loc": 150,
                   "tag": "title",
                   "attrs": [],
                   "children": [
                     {
                       "Slot": {
                         "Server": {
-                          "loc": 159,
+                          "loc": 158,
                           "kind": {
                             "Ident": {
                               "name": "title",
@@ -66,19 +66,19 @@
         },
         {
           "Element": {
-            "loc": 193,
+            "loc": 192,
             "tag": "body",
             "attrs": [],
             "children": [
               {
                 "Element": {
-                  "loc": 199,
+                  "loc": 198,
                   "tag": "nav",
                   "attrs": [],
                   "children": [
                     {
                       "Element": {
-                        "loc": 204,
+                        "loc": 203,
                         "tag": "a",
                         "attrs": [
                           {
@@ -104,7 +104,7 @@
               },
               {
                 "Element": {
-                  "loc": 230,
+                  "loc": 229,
                   "tag": "main",
                   "attrs": [],
                   "children": [
