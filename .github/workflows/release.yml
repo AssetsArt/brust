@@ -67,6 +67,7 @@ jobs:
           cd packages/brust && bun pm pack --destination /tmp/pack && tar -xOf /tmp/pack/*.tgz package/package.json > /tmp/packed.json
           ! grep -q 'workspace:' /tmp/packed.json || { echo 'packed @brust/core still contains workspace: deps'; exit 1; }
           grep -c '"@brust/native-' /tmp/packed.json | grep -qx 6
+        env: { NPM_CONFIG_TOKEN: dry-run-no-auth, NODE_AUTH_TOKEN: dry-run-no-auth }   # bun publish --dry-run still demands a token; nothing is sent
   publish:
     name: publish to npm (tag only — a human action)
     needs: build
