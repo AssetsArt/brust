@@ -16,7 +16,6 @@
       "devDependencies": {
         "@types/bun": "^1.4.0",
         "@types/react": "^19.2.0",
-        "playwright": "1.64.0",
         "typescript": "^5.9.0",
       },
     },
@@ -52,6 +51,13 @@
         "typescript": "^5.9.0",
       },
     },
+    "tests/server": {
+      "name": "@brust/server-tests",
+      "version": "0.0.0",
+      "devDependencies": {
+        "playwright": "1.64.0",
+      },
+    },
   },
   "packages": {
     "@brust/core": ["@brust/core@workspace:packages/brust"],
@@ -59,6 +65,8 @@
     "@brust/example-pokedex": ["@brust/example-pokedex@workspace:examples/pokedex"],
 
     "@brust/runtime-dom": ["@brust/runtime-dom@workspace:packages/runtime-dom"],
+
+    "@brust/server-tests": ["@brust/server-tests@workspace:tests/server"],
 
     "@emnapi/core": ["@emnapi/core@1.9.2", "", { "dependencies": { "@emnapi/wasi-threads": "1.2.1", "tslib": "^2.4.0" } }, "sha512-UC+ZhH3XtczQYfOlu3lNEkdW/p4dsJ1r/bP7H8+rhao3TTTMO1ATq/4DdIi23XuGoFY+Cz0JmCbdVl0hz9jZcA=="],
 

@@ -22,6 +22,10 @@ export default function DetailPage({
   abilities,
   evolution,
 }: DetailData) {
+  // Computed outside the notFound branch so the build job is unguarded: a guarded slot makes the job
+  // return `undefined` for the 404 payload and the server rejects it (ledger F66).
+  const heightLabel = fmtHeight(height)
+  const weightLabel = fmtWeight(weight)
   return (
     <section className="py-2">
       <div className="mx-auto flex max-w-6xl items-center gap-1.5 px-4 pb-2 text-xs text-slate-400">
@@ -78,7 +82,7 @@ export default function DetailPage({
                 <div className="mt-5 grid grid-cols-3 gap-3">
                   <div className="rounded-2xl bg-slate-50 px-3 py-3 text-center dark:bg-slate-800/60">
                     <div className="text-lg font-extrabold text-slate-900 dark:text-white">
-                      {fmtHeight(height)}
+                      {heightLabel}
                     </div>
                     <div className="flex items-center justify-center gap-1 text-xs font-medium uppercase tracking-wide text-slate-400">
                       Height
@@ -86,7 +90,7 @@ export default function DetailPage({
                   </div>
                   <div className="rounded-2xl bg-slate-50 px-3 py-3 text-center dark:bg-slate-800/60">
                     <div className="text-lg font-extrabold text-slate-900 dark:text-white">
-                      {fmtWeight(weight)}
+                      {weightLabel}
                     </div>
                     <div className="flex items-center justify-center gap-1 text-xs font-medium uppercase tracking-wide text-slate-400">
                       Weight
