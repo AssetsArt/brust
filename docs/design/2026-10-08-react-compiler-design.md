@@ -145,7 +145,7 @@ automatically:
 | `<Island component={Counter} props={…}/>` | `<Counter …/>`; the compiler knows `Counter` is `react`. |
 | `ssr` (default off) | **Default on**: the `ssr` job renders HTML in Bun. A component whose render reads browser globals becomes a **client-only island**: the server emits a placeholder, the browser renders it. Decided by the compiler. |
 | `hydrate="load/idle/visible/interaction"` | Default `idle`; overridable per component path in build config (later spec), never in source. |
-| `isr={{ key, tags, revalidate }}` | `export default cache(ProductCard, { key: p => p.id, tags: p => [...], revalidate: 60 })` from `brust`. Identity function under real React. Overrides the automatic job key / adds tags and TTL. Works for every tier (for `native`/`static` it caches the precompute output; for `react` the SSR HTML). |
+| `isr={{ key, tags, revalidate }}` | `export default cache(ProductCard, { key: p => p.id, tags: p => [...], revalidate: 60 })` from `@brust/brust` (the bare `brust` specifier is accepted for the M1 fixtures). Identity function under real React. Overrides the automatic job key / adds tags and TTL. Works for every tier (for `native`/`static` it caches the precompute output; for `react` the SSR HTML). |
 
 `cache.invalidate({ tags | key | path })` keeps its 0.1.x meaning.
 

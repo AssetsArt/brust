@@ -39,7 +39,12 @@ const NO_SAMPLES: &[&str] = &[
 
 /// Sampled fixtures with no client directives to compare (every other sampled
 /// fixture must contribute at least one check).
-const NO_DIRECTIVES: &[&str] = &["static-text", "cached-card", "outlet-layout"];
+const NO_DIRECTIVES: &[&str] = &[
+    "static-text",
+    "cached-card",
+    "outlet-layout",
+    "react-child-row",
+];
 
 fn fixture_dirs() -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = std::fs::read_dir(repo().join("tests/fixtures"))

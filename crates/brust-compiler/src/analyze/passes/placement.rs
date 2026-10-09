@@ -171,6 +171,7 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState) {
             inputs: minimal_paths(inputs),
             outputs,
             per_item: None,
+            props: None,
         });
     }
 }

@@ -114,6 +114,7 @@ fn react_child_is_an_island_with_an_ssr_job() {
             inputs: vec!["productId".into()],
             outputs: vec![format!("_ssr_{id}")],
             per_item: None,
+            props: Some([("productId".to_string(), Some("productId".to_string()))].into()),
         }]
     );
     assert_eq!(ir.tier, Tier::Static);
@@ -178,4 +179,98 @@ fn local_and_external_components() {
     );
     assert_eq!(only_external.tier, Tier::Static);
     assert!(only_external.needs_worker);
+}
+
+/// S6: a react child's ssr job (on the parent) maps child prop names to parent paths.
+#[test]
+fn react_child_ssr_job_carries_the_prop_map() {
+    let ir = fixture("react-child");
+    let job = ir
+        .jobs
+        .iter()
+        .find(|j| matches!(j.kind, JobKind::Ssr { .. }))
+        .expect("ssr job");
+    let props = job.props.as_ref().expect("props map");
+    assert_eq!(
+        props.get("productId"),
+        Some(&Some("productId".to_string())),
+        "{props:?}"
+    );
+}
+
+#[test]
+fn react_child_in_a_row_maps_with_idx_and_literals_are_null() {
+    let ir = fixture("react-child-row");
+    let jobs: Vec<_> = ir
+        .jobs
+        .iter()
+        .filter(|j| matches!(j.kind, JobKind::Ssr { .. }))
+        .collect();
+    assert_eq!(jobs.len(), 1, "{:?}", ir.jobs);
+    let props = jobs[0].props.as_ref().unwrap();
+    assert_eq!(
+        props.get("item"),
+        Some(&Some("items[idx]".to_string())),
+        "{props:?}"
+    );
+    assert_eq!(
+        props.get("limit"),
+        Some(&None),
+        "a literal prop is null: {props:?}"
+    );
+    assert_eq!(jobs[0].per_item.as_deref(), Some("it"));
+}
+
+#[test]
+fn same_react_child_twice_gives_two_jobs_with_own_maps() {
+    let ir = analyze_in(
+        "react-child",
+        r#"
+import Reviews from './Reviews'
+export default function P(props: { a: string; b: string }) { return <div><Reviews productId={props.a}/><Reviews productId={props.b}/></div> }
+"#,
+    );
+    let jobs: Vec<_> = ir
+        .jobs
+        .iter()
+        .filter(|j| matches!(j.kind, JobKind::Ssr { .. }))
+        .collect();
+    assert_eq!(jobs.len(), 2);
+    assert_eq!(
+        jobs[0].props.as_ref().unwrap().get("productId"),
+        Some(&Some("a".into()))
+    );
+    assert_eq!(
+        jobs[1].props.as_ref().unwrap().get("productId"),
+        Some(&Some("b".into()))
+    );
+    assert!(jobs[1].outputs[0].ends_with("_2"), "{:?}", jobs[1].outputs);
+}
+
+#[test]
+fn react_page_self_job_has_no_prop_map() {
+    let ir = fixture("react-hook");
+    let job = ir
+        .jobs
+        .iter()
+        .find(|j| matches!(j.kind, JobKind::Ssr { .. }))
+        .expect("self ssr job");
+    assert_eq!(job.inputs, vec!["*".to_string()]);
+    assert!(job.props.is_none());
+}
+
+fn analyze_in(dir: &str, src: &str) -> ComponentIR {
+    let s = src.to_string();
+    let path = format!("tests/fixtures/{dir}/Mem.tsx");
+    run_on_compiler_thread(move || {
+        analyze_source(
+            &path,
+            s.into_bytes(),
+            &AnalyzeOptions {
+                root: root(),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+    })
 }
