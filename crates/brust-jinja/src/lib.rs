@@ -22,7 +22,11 @@ pub fn register(env: &mut Environment<'_>) {
     env.set_auto_escape_callback(|_| minijinja::AutoEscape::None);
     // `a.b` on a missing value is undefined (paints empty), never an error.
     env.set_undefined_behavior(minijinja::UndefinedBehavior::Chainable);
-    env.add_filter("e", |v: Value| escape_text(&paint(&v)));
+    env.add_filter("e", |v: Value| match v.kind() {
+        // A string paints as itself: escape it in place, no painted copy.
+        ValueKind::String => escape_text(v.as_str().unwrap_or_default()),
+        _ => escape_text(&paint(&v)),
+    });
     env.add_filter("js_str", |v: Value| paint(&v));
     env.add_filter("js_string", |v: Value| js_string(&v));
     env.add_filter("attr_str", |v: Value| attr_string(&v));
@@ -638,6 +642,15 @@ mod tests {
         assert_eq!(
             escape_text("a\"b</script>&'"),
             "a&quot;b&lt;/script&gt;&amp;&#39;"
+        );
+        // `e` on a string escapes it directly (short inline and long heap
+        // strings, a safe-marked one too) — same as escaping its paint.
+        assert_eq!(
+            render(
+                "{{ a | e }}|{{ b | e }}|{{ a | safe | e }}",
+                minijinja::context! { a => "<a>", b => "x".repeat(40) + "&" }
+            ),
+            format!("&lt;a&gt;|{}&amp;|&lt;a&gt;", "x".repeat(40))
         );
         // Byte scan == the char-by-char table: multi-byte text, runs at both
         // ends, adjacent specials, empty.
