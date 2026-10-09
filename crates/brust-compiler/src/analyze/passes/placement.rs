@@ -363,6 +363,11 @@ impl Placer<'_> {
             _ => false,
         };
         if is_fn {
+            self.st.client_uses.push(super::ClientUse {
+                loc: r.loc,
+                deps: self.st.cx.deps(r, &self.loop_scope),
+                what: "a function passed to a child",
+            });
             Expr::ClientOnly { js: r.to_js() }
         } else {
             self.painted(r)

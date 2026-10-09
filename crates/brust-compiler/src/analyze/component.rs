@@ -99,7 +99,7 @@ pub struct AnalyzeOptions {
 pub fn analyze_source(
     path: &str,
     source: Vec<u8>,
-    _opts: &AnalyzeOptions,
+    opts: &AnalyzeOptions,
 ) -> Result<ComponentIR, Diagnostic> {
     let parsed = crate::parse::parse_tsx(path, source).map_err(|e| {
         Diagnostic::error(
@@ -110,7 +110,11 @@ pub fn analyze_source(
         )
     })?;
     let mut ir = analyze_component(&parsed)?;
-    crate::analyze::passes::run_passes(&mut ir);
+    let ctx = crate::analyze::passes::PassCtx {
+        text: parsed.text(),
+        opts,
+    };
+    crate::analyze::passes::run_passes(&mut ir, &ctx);
     finish_diagnostics(&mut ir, parsed.text());
     Ok(ir)
 }
