@@ -33,6 +33,7 @@ const NO_SAMPLES: &[&str] = &[
     "lazy-import",
     "missing-key",
     "react-child",
+    "react-child-nested",
     "react-hook",
     "server-leak",
 ];

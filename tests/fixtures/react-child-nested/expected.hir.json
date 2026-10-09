@@ -1,0 +1,32 @@
+{
+  "function": "Groups",
+  "params": 1,
+  "scopes": [
+    {
+      "id": 5,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "props",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t0"
+      ]
+    },
+    {
+      "id": 6,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "t0",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t1"
+      ]
+    }
+  ]
+}

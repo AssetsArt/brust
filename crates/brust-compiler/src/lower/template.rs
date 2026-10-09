@@ -1059,6 +1059,20 @@ impl<'a, 'c> Printer<'a, 'c> {
                     && j.outputs.contains(&out)
                     && j.per_item.is_some()
             });
+            if self.inline.is_some() || (per_item && self.frames.len() > 1) {
+                // S6 hands the server one array per ssr job, indexed by ONE list of the route
+                // component; deeper loops need a 2-D slot, and inside an inlined child the slot counters
+                // restart, so its react children would collide (same reason as fed grandchildren).
+                self.diagnostics.push(Diagnostic::error(
+                    "nested-instance",
+                    format!(
+                        "<{name}> has a job or useId and sits inside nested lists or an inlined component"
+                    ),
+                    0,
+                    "flatten the lists or render the child per row in its own component (ledger F53)",
+                ));
+                return;
+            }
             let idx = if per_item { loops.as_str() } else { "" };
             let dict = self.props_dict(props, sprops);
             self.out.push_str(&crate::lower::island_host(

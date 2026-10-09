@@ -1,0 +1,213 @@
+{
+  "id": "input_22f43551",
+  "source": "tests/fixtures/react-child-nested/input.tsx",
+  "tier": "Static",
+  "props": [
+    {
+      "name": "props",
+      "local": "props",
+      "ts_type": null,
+      "default": null
+    }
+  ],
+  "state": [],
+  "derived": [],
+  "effects": [],
+  "handlers": [],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 151,
+      "tag": "div",
+      "attrs": [],
+      "children": [
+        {
+          "For": {
+            "source": {
+              "Server": {
+                "loc": 157,
+                "kind": {
+                  "Ident": {
+                    "name": "groups",
+                    "kind": "Prop"
+                  }
+                }
+              }
+            },
+            "item": "g",
+            "index": null,
+            "key": {
+              "Server": {
+                "loc": 195,
+                "kind": {
+                  "Member": {
+                    "target": {
+                      "loc": 195,
+                      "kind": {
+                        "Ident": {
+                          "name": "g",
+                          "kind": "LoopBinding"
+                        }
+                      }
+                    },
+                    "name": "id",
+                    "optional": false
+                  }
+                }
+              }
+            },
+            "body": [
+              {
+                "Element": {
+                  "loc": 181,
+                  "tag": "section",
+                  "attrs": [],
+                  "children": [
+                    {
+                      "For": {
+                        "source": {
+                          "Server": {
+                            "loc": 202,
+                            "kind": {
+                              "Member": {
+                                "target": {
+                                  "loc": 202,
+                                  "kind": {
+                                    "Ident": {
+                                      "name": "g",
+                                      "kind": "LoopBinding"
+                                    }
+                                  }
+                                },
+                                "name": "items",
+                                "optional": false
+                              }
+                            }
+                          }
+                        },
+                        "item": "it",
+                        "index": null,
+                        "key": {
+                          "Server": {
+                            "loc": 236,
+                            "kind": {
+                              "Member": {
+                                "target": {
+                                  "loc": 236,
+                                  "kind": {
+                                    "Ident": {
+                                      "name": "it",
+                                      "kind": "LoopBinding"
+                                    }
+                                  }
+                                },
+                                "name": "id",
+                                "optional": false
+                              }
+                            }
+                          }
+                        },
+                        "body": [
+                          {
+                            "Component": {
+                              "loc": 222,
+                              "name": "Reviews",
+                              "source": "./Reviews",
+                              "imported": "default",
+                              "props": [
+                                [
+                                  "item",
+                                  {
+                                    "Server": {
+                                      "loc": 249,
+                                      "kind": {
+                                        "Ident": {
+                                          "name": "it",
+                                          "kind": "LoopBinding"
+                                        }
+                                      }
+                                    }
+                                  }
+                                ],
+                                [
+                                  "limit",
+                                  {
+                                    "Server": {
+                                      "loc": 260,
+                                      "kind": {
+                                        "Lit": {
+                                          "Num": 3.0
+                                        }
+                                      }
+                                    }
+                                  }
+                                ]
+                              ],
+                              "children": [],
+                              "link": null,
+                              "tier": {
+                                "React": {
+                                  "reason": "hook useContext is not supported",
+                                  "client_only": false
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ],
+                  "host": false,
+                  "ref_name": null
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [
+    {
+      "kind": {
+        "Ssr": {
+          "client_only": false
+        }
+      },
+      "inputs": [
+        "groups"
+      ],
+      "outputs": [
+        "_ssr_reviews_37b0da66"
+      ],
+      "per_item": "it",
+      "props": {
+        "item": "groups[idx].items[idx]",
+        "limit": null
+      }
+    }
+  ],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": true,
+  "cache": null,
+  "children": [
+    {
+      "name": "Reviews",
+      "id": "reviews_37b0da66",
+      "path": "tests/fixtures/react-child-nested/Reviews.tsx",
+      "tier": {
+        "React": {
+          "reason": "hook useContext is not supported",
+          "client_only": false
+        }
+      }
+    }
+  ],
+  "diagnostics": []
+}

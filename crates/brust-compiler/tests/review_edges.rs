@@ -689,3 +689,38 @@ fn outlet_in_a_react_tier_component_is_an_error() {
         rules(&ir)
     );
 }
+
+/// M2a3: a react child inside an inlined native child that is itself per-row is `nested-instance`.
+#[test]
+fn react_grandchild_under_an_inlined_row_is_a_nested_instance_error() {
+    let dir = root(
+        "react-grandchild",
+        &[
+            (
+                "input.tsx",
+                "import Row from './Row'\nexport default function List(props: { items: { id: string; name: string }[] }) { return <ul>{props.items.map((it) => <Row key={it.id} item={it} />)}</ul> }",
+            ),
+            (
+                "Row.tsx",
+                "import Reviews from './Reviews'\nexport default function Row(props: { item: { id: string; name: string } }) { return <li>{props.item.name}<Reviews item={props.item} /></li> }",
+            ),
+            (
+                "Reviews.tsx",
+                "import { useContext } from 'react'\nimport { ThemeContext } from './theme'\nexport default function Reviews({ item }: { item: { id: string } }) { const t = useContext(ThemeContext); return <b className={t}>{item.id}</b> }",
+            ),
+        ],
+    );
+    let err = run_on_compiler_thread(move || {
+        brust_compiler::pipeline::compile_tree(
+            "input.tsx",
+            None,
+            &AnalyzeOptions {
+                root: dir,
+                ..Default::default()
+            },
+            brust_compiler::lower::DEFAULT_RUNTIME_IMPORT,
+        )
+        .err()
+    });
+    assert_eq!(err.expect("lowering must fail").rule, "nested-instance");
+}

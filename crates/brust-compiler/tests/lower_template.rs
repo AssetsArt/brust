@@ -484,3 +484,30 @@ fn list_length_seeds_the_count_and_not_the_items() {
         "{html}"
     );
 }
+
+/// Compiles fixture `name` and returns the lowering error, if any.
+fn lower_err(name: &str) -> Option<brust_compiler::ir::Diagnostic> {
+    let file = format!("tests/fixtures/{name}/input.tsx");
+    run_on_compiler_thread(move || {
+        compile_tree(
+            &file,
+            None,
+            &AnalyzeOptions {
+                root: repo(),
+                ..Default::default()
+            },
+            DEFAULT_RUNTIME_IMPORT,
+        )
+        .err()
+    })
+}
+
+/// Spot-check 05c677eb: a react child under two loops cannot be served (one-level rule) -> Error, not a 2-D slot.
+#[test]
+fn react_child_in_nested_lists_is_a_nested_instance_error() {
+    let err = lower_err("react-child-nested").expect("lowering must fail");
+    assert_eq!(err.rule, "nested-instance", "{err:?}");
+    // and one level still works
+    let jinja = lowered_jinja("react-child-row");
+    assert!(jinja.contains("_ssr_reviews_"), "{jinja}");
+}
