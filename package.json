@@ -6,6 +6,6 @@
   "scripts": {
     "bun-codegen": "bun scripts/bun-codegen.ts",
     "battery": "bun scripts/battery/run.ts",
-    "browser-test": "echo '[browser] dom engine: happy-dom (Playwright is not a dependency)' && bun test tests/browser"
+    "browser-test": "echo '[browser] dom engine: happy-dom (Playwright is not a dependency)' && cargo build -q -p brust-compiler-cli && bun test --timeout 120000 tests/browser"
   }
 }

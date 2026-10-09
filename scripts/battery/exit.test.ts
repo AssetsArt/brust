@@ -40,13 +40,13 @@ test('every react row has a fallback diagnostic and no error; every error row ha
 test('dual evaluation: server paint equals client initial values for every fixture', () => {
   const p = spawnSync('cargo', ['test', '-q', '-p', 'brust-compiler', '--test', 'dual_eval'], { cwd: repo, encoding: 'utf8' })
   expect(p.status, p.stdout + p.stderr).toBe(0)
-})
+}, 900_000)   // a cold CI cache compiles the test binaries first
 
 test('every example harness passes in the browser harness', () => {
-  const p = spawnSync('bun', ['test', 'tests/browser'], { cwd: repo, encoding: 'utf8' })
+  const p = spawnSync('bun', ['test', '--timeout', '120000', 'tests/browser'], { cwd: repo, encoding: 'utf8' })
   const out = p.stdout + p.stderr
   expect(p.status, out).toBe(0)
   // One file per example; a passing run does not name its files when piped.
   expect(out).toMatch(new RegExp(`across ${BROWSER_CASES.length} files`))
   expect(out).toMatch(/ 0 fail/)
-})
+}, 600_000)
