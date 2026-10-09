@@ -34,6 +34,8 @@ dist/client/*-<hex>.js    runtime, native chunks, react-<id> island chunks (serv
 dist/public/              copied from ./public          dist/index.js   `bun dist/index.js` = start
 ```
 
+Every route component's `children[]` also gets one static entry per native descendant (at any depth) that has a client chunk, so its `<script>` is linked once per page.
+
 A diagnostic (`nested-instance`, `outlet-in-react`, `outlet-outside-layout`, unsupported route
 field, unresolvable Component) prints `error <rule> <message>` and exits 1. The route tree is
 validated whether or not the entry used `defineRoutes` (`route-config`, `duplicate-route` for two
