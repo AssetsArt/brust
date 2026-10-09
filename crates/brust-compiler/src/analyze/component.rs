@@ -85,6 +85,45 @@ pub fn analyze_component(parsed: &Parsed) -> Result<ComponentIR, Diagnostic> {
     Ok(ir)
 }
 
+/// Options for the full analysis (structural read + M1b-2 passes).
+#[derive(Debug, Clone, Default)]
+pub struct AnalyzeOptions {
+    /// Import path prefixes that are server-only (app config `serverOnly`).
+    pub server_only: Vec<String>,
+    /// Directory module paths are relative to.
+    pub root: std::path::PathBuf,
+}
+
+/// Parses `source` as the module at `path` and runs the full analysis. Call it
+/// inside [`crate::parse::run_on_compiler_thread`].
+pub fn analyze_source(
+    path: &str,
+    source: Vec<u8>,
+    _opts: &AnalyzeOptions,
+) -> Result<ComponentIR, Diagnostic> {
+    let parsed = crate::parse::parse_tsx(path, source).map_err(|e| {
+        Diagnostic::error(
+            "parse",
+            format!("{} at {}:{}", e.message, e.line, e.column),
+            0,
+            "fix the syntax error",
+        )
+    })?;
+    let mut ir = analyze_component(&parsed)?;
+    crate::analyze::passes::run_passes(&mut ir);
+    finish_diagnostics(&mut ir, parsed.text());
+    Ok(ir)
+}
+
+/// Fills line/col and sorts by (class severity, line, col).
+fn finish_diagnostics(ir: &mut ComponentIR, text: &[u8]) {
+    for d in &mut ir.diagnostics {
+        (d.line, d.col) = line_col(text, d.loc);
+    }
+    ir.diagnostics
+        .sort_by_key(|d| (d.class.severity_rank(), d.line, d.col));
+}
+
 fn has_default_export(ast: &js_ast::Ast<'_>) -> bool {
     ast.parts.iter().any(|part| {
         part.stmts
