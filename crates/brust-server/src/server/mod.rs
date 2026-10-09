@@ -93,6 +93,8 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
     let routes = RouteTable::from_manifest(&loaded.manifest).map_err(|e| format!("routes: {e}"))?;
     let renderer =
         Renderer::from_templates(&loaded.templates).map_err(|e| format!("render: {e}"))?;
+    let plans =
+        crate::pipeline::PlanIndex::new(&loaded.manifest).map_err(|e| format!("manifest: {e}"))?;
     if let Some(c) = &cfg.cors {
         c.validate().map_err(|e| format!("cors: {e}"))?;
     }
@@ -101,6 +103,7 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
         pool: Arc::new(WorkerPool::new()),
         routes,
         manifest: loaded.manifest,
+        plans,
         renderer,
         l1: L1Cache::with_capacity(cfg.l1_capacity),
         jobs: JobCache::new(cfg.job_cache_capacity),

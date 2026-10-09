@@ -120,43 +120,74 @@ fn proj_key(seg: &Seg) -> String {
 /// redundant — the result is independent of input order. An `[idx]` input
 /// with `idx == None` is an `Err`.
 pub fn project(ctx: &Value, inputs: &[String], idx: Option<usize>) -> Result<Value, String> {
-    let paths = inputs
-        .iter()
-        .map(|s| Path::parse(s))
-        .collect::<Result<Vec<_>, _>>()?;
-    for (p, s) in paths.iter().zip(inputs) {
-        if idx.is_none() && p.has_idx() {
+    Projection::new(inputs)?.eval(ctx, idx)
+}
+
+/// A job's `inputs` prepared once (at boot): parsed, the redundant ones
+/// (covered by a shorter or an equal earlier input) dropped, each kept path's
+/// projection keys built. [`Projection::eval`] is [`project`] without the parsing.
+#[derive(Debug, Clone)]
+pub struct Projection {
+    /// `(path, its projection keys)` of every input not covered by another.
+    kept: Vec<(Path, Vec<String>)>,
+    /// The first `[idx]` input, for the "outside a per-row instance" error.
+    first_idx: Option<String>,
+}
+
+impl Projection {
+    pub fn new(inputs: &[String]) -> Result<Projection, String> {
+        let paths = inputs
+            .iter()
+            .map(|s| Path::parse(s))
+            .collect::<Result<Vec<_>, _>>()?;
+        let first_idx = paths
+            .iter()
+            .zip(inputs)
+            .find(|(p, _)| p.has_idx())
+            .map(|(_, s)| s.clone());
+        let mut kept = Vec::new();
+        for (i, p) in paths.iter().enumerate() {
+            let covered = paths.iter().enumerate().any(|(j, q)| {
+                j != i
+                    && q.0.len() <= p.0.len()
+                    && p.0.starts_with(&q.0)
+                    && (q.0.len() < p.0.len() || j < i)
+            });
+            if !covered {
+                kept.push((p.clone(), p.0.iter().map(proj_key).collect()));
+            }
+        }
+        Ok(Projection { kept, first_idx })
+    }
+
+    /// The projection of `ctx` (`idx` = the current row).
+    pub fn eval(&self, ctx: &Value, idx: Option<usize>) -> Result<Value, String> {
+        if idx.is_none()
+            && let Some(s) = &self.first_idx
+        {
             return Err(format!(
                 "input path {s:?}: [idx] outside a per-row instance"
             ));
         }
-    }
-    let mut out = Map::new();
-    for (i, p) in paths.iter().enumerate() {
-        let covered = paths.iter().enumerate().any(|(j, q)| {
-            j != i
-                && q.0.len() <= p.0.len()
-                && p.0.starts_with(&q.0)
-                && (q.0.len() < p.0.len() || j < i)
-        });
-        if covered {
-            continue;
+        let mut out = Map::new();
+        for (p, keys) in &self.kept {
+            let (last, prefix) = keys.split_last().expect("parsed path is non-empty");
+            let mut node = &mut out;
+            for k in prefix {
+                // Only intermediate objects we created live at prefix positions:
+                // a leaf here would mean a shorter input covers `p`, dropped in `new`.
+                if !node.contains_key(k) {
+                    node.insert(k.clone(), Value::Object(Map::new()));
+                }
+                node = node
+                    .get_mut(k)
+                    .and_then(Value::as_object_mut)
+                    .expect("projection prefix is an object");
+            }
+            node.insert(last.clone(), p.get(ctx, idx).clone());
         }
-        let (last, prefix) = p.0.split_last().expect("parsed path is non-empty");
-        let mut node = &mut out;
-        for seg in prefix {
-            let slot = node
-                .entry(proj_key(seg))
-                .or_insert_with(|| Value::Object(Map::new()));
-            // Only intermediate objects we created live at prefix positions:
-            // a leaf here would mean a shorter input covers `p`, skipped above.
-            node = slot
-                .as_object_mut()
-                .expect("projection prefix is an object");
-        }
-        node.insert(proj_key(last), p.get(ctx, idx).clone());
+        Ok(Value::Object(out))
     }
-    Ok(Value::Object(out))
 }
 
 /// Child props object from the parent's context through `ChildRecord.props` (`[idx]` = row).
@@ -168,17 +199,35 @@ pub fn child_props(
     props: &BTreeMap<String, String>,
     idx: Option<usize>,
 ) -> Result<Value, String> {
-    let mut out = Map::new();
-    for (name, src) in props {
-        let p = Path::parse(src)?;
-        if idx.is_none() && p.has_idx() {
-            return Err(format!(
-                "child prop {name:?} = {src:?}: [idx] outside a per-row instance"
-            ));
-        }
-        out.insert(name.clone(), p.get(parent_ctx, idx).clone());
+    PropsMap::new(props)?.eval(parent_ctx, idx)
+}
+
+/// A `props` map (`{ childProp: parent path }`) parsed once (at boot);
+/// [`PropsMap::eval`] is [`child_props`] without the parsing.
+#[derive(Debug, Clone)]
+pub struct PropsMap(Vec<(String, Path, String)>);
+
+impl PropsMap {
+    pub fn new(props: &BTreeMap<String, String>) -> Result<PropsMap, String> {
+        props
+            .iter()
+            .map(|(name, src)| Ok((name.clone(), Path::parse(src)?, src.clone())))
+            .collect::<Result<_, String>>()
+            .map(PropsMap)
     }
-    Ok(Value::Object(out))
+
+    pub fn eval(&self, parent_ctx: &Value, idx: Option<usize>) -> Result<Value, String> {
+        let mut out = Map::new();
+        for (name, p, src) in &self.0 {
+            if idx.is_none() && p.has_idx() {
+                return Err(format!(
+                    "child prop {name:?} = {src:?}: [idx] outside a per-row instance"
+                ));
+            }
+            out.insert(name.clone(), p.get(parent_ctx, idx).clone());
+        }
+        Ok(Value::Object(out))
+    }
 }
 
 /// Canonical bytes: serde_json with BTreeMap maps (sorted keys), no whitespace.

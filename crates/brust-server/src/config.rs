@@ -151,6 +151,8 @@ pub struct Server {
     pub(crate) pool: Arc<WorkerPool>,
     pub(crate) routes: RouteTable,
     pub(crate) manifest: Manifest,
+    /// Boot-time job-planning templates of `manifest`.
+    pub(crate) plans: crate::pipeline::PlanIndex,
     pub(crate) renderer: Renderer,
     pub(crate) l1: L1Cache,
     pub(crate) jobs: JobCache,
