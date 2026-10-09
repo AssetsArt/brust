@@ -620,3 +620,27 @@ fn job_result_without_value_is_500_and_not_cached() {
     assert_eq!(v["job"]["len"], 0, "{v}");
     assert_eq!(v["l1"]["len"], 0, "{v}");
 }
+
+/// F67 belt: a job result missing a declared slot renders (200) and is counted once.
+#[test]
+fn a_job_result_missing_a_declared_slot_renders_200_and_warns_once() {
+    let fake = FakeBun::new(default_loader, |req| {
+        let mut r = default_jobs(req);
+        for res in r["results"].as_array_mut().unwrap() {
+            if res["value"].is_object() {
+                res["value"] = json!({});
+            }
+        }
+        r
+    });
+    let s = boot(fake);
+    assert_eq!(get(&s, "/pokemon/a", &[]).0, 200);
+    let after_first = stats(&s)["missing_slots"].clone();
+    assert!(after_first.as_u64().unwrap() >= 1, "{after_first}");
+    assert_eq!(get(&s, "/pokemon/b", &[]).0, 200);
+    assert_eq!(
+        stats(&s)["missing_slots"],
+        after_first,
+        "once per (component, slot), not per request"
+    );
+}

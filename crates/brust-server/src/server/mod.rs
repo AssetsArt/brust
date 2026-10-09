@@ -108,6 +108,7 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
         loader_calls: AtomicU64::new(0),
         job_calls: AtomicU64::new(0),
         timed_out_calls: AtomicU64::new(0),
+        missing_slots: Default::default(),
         ready: Arc::new(Notify::new()),
         expected_workers: AtomicU32::new(cfg.expected_workers),
         drain_start: Arc::new(Notify::new()),

@@ -501,6 +501,7 @@ async fn page(
                 tracing::error!(route = %route.id, component_id = %plans[i].component_id, job_id = %plans[i].job_id, call_id = %plans[i].call_id, error = %e, "job result does not fit its outputs");
                 return body::error_500();
             }
+            note_missing_slots(s, &plans[i], &v);
             fresh.push((i, Arc::new(v)));
         }
         for (i, v) in fresh {
@@ -1157,21 +1158,36 @@ fn child_cell<'a>(
     cell.as_object_mut()
 }
 
+/// A precompute result that lacks a declared output (a `dist/jobs.js` built before the
+/// generated `precompute` returned every slot) renders that slot empty; warn once per
+/// (component, slot) per process and count it in the stats.
+fn note_missing_slots(s: &Server, p: &JobPlan, v: &Value) {
+    if !matches!(p.kind, JobKind::Precompute) {
+        return;
+    }
+    let Some(o) = v.as_object() else { return };
+    for n in p.outputs.iter().filter(|n| !o.contains_key(n.as_str())) {
+        let first = s
+            .missing_slots
+            .lock()
+            .is_ok_and(|mut m| m.insert((p.component_id.to_string(), n.clone())));
+        if first {
+            tracing::warn!(component_id = %p.component_id, slot = %n, "precompute result has no slot; rendering it empty (rebuild dist/jobs.js)");
+        }
+    }
+}
+
 /// A value has the shape its `outputs` need: a precompute result is an object
-/// holding every output name (`{ _s1: … }`, the generated `precompute`
-/// returns it keyed by slot); an ssr result is an HTML string. Legacy plans
-/// (no `outputs`) are not checked.
+/// (a declared output it lacks renders empty, see [`note_missing_slots`]); an ssr
+/// result is an HTML string. Legacy plans (no `outputs`) are not checked.
 fn check_value(p: &JobPlan, v: &Value) -> Result<(), String> {
     if p.outputs.is_empty() {
         return Ok(());
     }
     match p.kind {
         JobKind::Precompute => {
-            let o = v.as_object().ok_or("precompute result is not an object")?;
-            match p.outputs.iter().find(|n| !o.contains_key(n.as_str())) {
-                Some(n) => Err(format!("precompute result has no {n:?}")),
-                None => Ok(()),
-            }
+            v.as_object().ok_or("precompute result is not an object")?;
+            Ok(())
         }
         JobKind::Ssr if v.is_string() => Ok(()),
         JobKind::Ssr => Err("ssr result is not a string".into()),
@@ -1482,7 +1498,10 @@ mod tests {
         let mut map = Map::new();
         merge_result(&mut map, &plans[0], &json!({"_s1": "HP", "_s9": "extra"}));
         assert_eq!(map["__own"]["detailPage_c3"], json!({"_s1": "HP"}));
-        assert!(check_value(&plans[0], &json!({"_s2": "x"})).is_err());
+        assert!(
+            check_value(&plans[0], &json!({"_s2": "x"})).is_ok(),
+            "a missing slot is tolerated"
+        );
         assert!(check_value(&plans[0], &json!("x")).is_err());
         let mut legacy = plans[0].clone();
         legacy.outputs.clear();
