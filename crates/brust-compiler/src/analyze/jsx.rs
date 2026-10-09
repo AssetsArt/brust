@@ -344,6 +344,15 @@ fn read_child(r: &mut Reader<'_, '_>, e: &js_ast::Expr, out: &mut Vec<Node>) {
     }
 }
 
+/// A name, a member chain of names, or an object literal (the `{ length: n }` range).
+fn array_source_ok(e: &js_ast::Expr) -> bool {
+    match &e.data {
+        E::EIdentifier(_) | E::EImportIdentifier(_) | E::EObject(_) => true,
+        E::EDot(d) => d.optional_chain.is_none() && array_source_ok(&d.target),
+        _ => false,
+    }
+}
+
 /// `source.map((item, index?) => <jsx key={…}/>)` and `Array.from(source, (item, index?) => <jsx key={…}/>)`
 /// → `For`. `None` when the call is not that shape (it is then read as a plain slot).
 fn read_list(r: &mut Reader<'_, '_>, call: &js_ast::E::Call) -> Option<Node> {
@@ -361,7 +370,7 @@ fn read_list(r: &mut Reader<'_, '_>, call: &js_ast::E::Call) -> Option<Node> {
         (&dot.target, None, arrow)
     } else if dot.name.slice() == b"from"
         && call.args.len() == 2
-        && matches!(&dot.target.data, E::EIdentifier(id) if r.names.name(id.ref_) == "Array")
+        && matches!(&dot.target.data, E::EIdentifier(id) if r.names.name(id.ref_) == "Array" && matches!(r.names.kind_of(id.ref_).1, IdentKind::Global))
     {
         // F40: `Array.from(xs, fn)` is the same list as `xs.map(fn)`; the `{ length: n }`
         // range keeps the `Array.from({ length: n })` source the template subset knows.
@@ -392,6 +401,11 @@ fn read_list(r: &mut Reader<'_, '_>, call: &js_ast::E::Call) -> Option<Node> {
     let body_expr = ret.value?;
     let body_call = jsx_call(&body_expr)?;
 
+    // `Array.from` iterates any iterable (Set, string, generator); only a props/local path or a
+    // `{ length: n }` range is known to be an array the template can iterate.
+    if from_callee.is_some() && !array_source_ok(src_expr) {
+        return None;
+    }
     let first = r.expr(src_expr);
     let source = Expr::Raw(match (from_callee, &first.kind) {
         (Some(callee), RawKind::Object(_)) => RawExpr {

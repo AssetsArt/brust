@@ -425,15 +425,31 @@ fn single_root_row_and_branch_carry_the_directive_without_a_wrapper() {
     );
 }
 
-/// F32: an inlined child whose template is one element carries the row's `x-for` itself.
+/// A row whose root is an inlined host keeps its `<brust-row>` wrapper: a host carrying `x-for`
+/// is bound by the child's own instance when its chunk registers before the parent's.
 #[test]
-fn single_component_row_carries_x_for_on_the_child_root() {
+fn a_host_row_keeps_the_wrapper() {
     let jinja = lowered_jinja("keyed-list-child");
+    assert!(jinja.contains("<brust-row"), "{jinja}");
     assert!(
-        jinja.contains("<li x-data=\"row_") && jinja.contains(" x-for=\"t in _l1 by _k1\""),
+        !jinja.contains("<li x-data=\"row_8f35bb06\" x-props")
+            || jinja.contains("<brust-row style=\"display:contents\" x-for"),
         "{jinja}"
     );
-    assert!(!jinja.contains("<brust-row"), "{jinja}");
+}
+
+/// Static text in <style>/<script> is printed verbatim (browsers do not decode entities there).
+#[test]
+fn static_raw_text_is_not_entity_escaped() {
+    let (j, _) = lower(
+        "export default function T() { return <div><style>{`.a > b{color:red}`}</style><script>{\"if (a && b) { go('x') }\"}</script></div> }",
+    );
+    let html = render(&j, serde_json::json!({}));
+    assert!(html.contains("<style>.a > b{color:red}</style>"), "{html}");
+    assert!(
+        html.contains("<script>if (a && b) { go('x') }</script>"),
+        "{html}"
+    );
 }
 
 /// A prop read only as `list.length` seeds the count, not the list (its items stay on the server).

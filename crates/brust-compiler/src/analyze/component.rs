@@ -235,6 +235,7 @@ fn read_cache_export(
                 )),
             }
             ir.cache = Some(decl);
+            check_printer_panic(ir);
             Some(Ok(()))
         }
         (None, Some(other)) => {
@@ -315,6 +316,7 @@ fn read_function(
     func: &js_ast::G::Fn,
     ir: &mut ComponentIR,
 ) {
+    crate::analyze::expr::take_printer_panic(); // a flag left by an earlier component is not ours
     let mut names = NameTable::new(ast, func);
     mark_state_bindings(func, &mut names);
     let print = |js: Js<'_>| print_js(parsed, ast, js);
@@ -350,18 +352,8 @@ fn read_function(
         ));
     }
     let body = read_body(func, &mut reader);
-    if crate::analyze::expr::take_printer_panic() {
-        ir.diagnostics.push(Diagnostic::fallback(
-            "printer-panic",
-            format!(
-                "the JavaScript printer failed on code in component {}; it renders as a React island",
-                ir.id
-            ),
-            0,
-            "report this compiler bug; simplify the component meanwhile",
-        ));
-    }
     (ir.module_scope, ir.module_decls) = reader.module_scope(ast);
+    check_printer_panic(ir);
     ir.props = body.props;
     ir.state = body.state;
     ir.derived = body.derived;
@@ -381,6 +373,22 @@ fn read_function(
         .unwrap_or(Node::Fragment(vec![]));
     ir.template = host_root(root, root_loc, &mut ir.diagnostics);
     ir.uses_outlet = has_outlet(&ir.template);
+    check_printer_panic(ir);
+}
+
+/// F42 backstop: raise `printer-panic` when `print_js` caught a printer panic since the last check.
+fn check_printer_panic(ir: &mut ComponentIR) {
+    if crate::analyze::expr::take_printer_panic() {
+        ir.diagnostics.push(Diagnostic::fallback(
+            "printer-panic",
+            format!(
+                "the JavaScript printer failed on code in component {}; it renders as a React island",
+                ir.id
+            ),
+            0,
+            "report this compiler bug; simplify the component meanwhile",
+        ));
+    }
 }
 
 fn has_outlet(n: &Node) -> bool {

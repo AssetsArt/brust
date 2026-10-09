@@ -88,6 +88,8 @@ pub struct Printer<'a, 'c> {
     /// Printing the zero-row `x-for` template: it is cloned and re-bound by
     /// the runtime, so no value is evaluated (there is no item).
     blank: bool,
+    /// Printing the children of `<script>` / `<style>`: static text goes out verbatim.
+    raw_text: bool,
 }
 
 impl<'a, 'c> Printer<'a, 'c> {
@@ -115,6 +117,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             instances: HashMap::new(),
             ssr: HashMap::new(),
             blank: false,
+            raw_text: false,
         })
     }
 
@@ -388,6 +391,7 @@ impl<'a, 'c> Printer<'a, 'c> {
     fn node(&mut self, n: &Node, s: &Node, root: bool) {
         match (n, s) {
             (Node::Element { .. }, Node::Element { .. }) => self.element(n, s, root, None),
+            (Node::Text(t), _) if self.raw_text => self.out.push_str(&raw_text(t)),
             (Node::Text(t), _) => self.out.push_str(&text(t)),
             (Node::Outlet, Node::Outlet) => self.out.push_str("{{ __outlet | safe }}"),
             (Node::Slot(e), Node::Slot(_)) => {
@@ -418,6 +422,13 @@ impl<'a, 'c> Printer<'a, 'c> {
             Some(Node::Slot(s)) => raw_of(e, Some(s)),
             _ => None,
         };
+        // Static text in <script>/<style>: browsers do not decode entities there.
+        if self.raw_text
+            && let Some(s) = static_text(e)
+        {
+            self.out.push_str(&raw_text(&s));
+            return None;
+        }
         // An inlined child's `{children}`: the parent's markup.
         if let (
             Some(i),
@@ -490,6 +501,8 @@ impl<'a, 'c> Printer<'a, 'c> {
         let mut body = String::new();
         std::mem::swap(&mut body, &mut self.out);
         let mut text_directive = None;
+        let raw_before = self.raw_text;
+        self.raw_text = tag.eq_ignore_ascii_case("script") || tag.eq_ignore_ascii_case("style");
         if lone {
             if let (Node::Slot(e), Some(se)) = (&children[0], schildren.first()) {
                 text_directive = self.slot(e, Some(se), true);
@@ -497,6 +510,7 @@ impl<'a, 'c> Printer<'a, 'c> {
         } else {
             self.nodes(children, schildren);
         }
+        self.raw_text = raw_before;
         std::mem::swap(&mut body, &mut self.out);
         if let Some(d) = text_directive {
             open.push_str(&format!(" x-text=\"{d}\""));
@@ -962,10 +976,16 @@ impl<'a, 'c> Printer<'a, 'c> {
     /// An inlined (native/static) component whose compiled template is a single element:
     /// that element can carry a row directive itself, so no wrapper is needed.
     fn inline_root_is_element(&self, n: &Node) -> bool {
-        let Node::Component { name, tier, .. } = n else {
+        let Node::Component {
+            name, tier, link, ..
+        } = n
+        else {
             return false;
         };
-        if matches!(tier, Tier::React { .. }) {
+        // Only a static, unlinked child (no `x-data` host): a host root that carries `x-for`
+        // breaks when the child's chunk registers before the parent's (its own instance would
+        // bind the row directive), so a host row keeps the `<brust-row>` wrapper.
+        if !matches!(tier, Tier::Static) || link.is_some() {
             return false;
         }
         let Some(child) = self.f.ir.children.iter().find(|c| &c.name == name) else {
@@ -973,6 +993,25 @@ impl<'a, 'c> Printer<'a, 'c> {
         };
         let id = child.id.clone().unwrap_or_else(|| name.clone());
         (self.ctx.resolve)(&id).is_some_and(|c| matches!(c.template, Node::Element { .. }))
+    }
+
+    /// Whether `n` (or anything below it) is an inlined component with a job or `useId` values.
+    fn has_fed(&self, n: &Node) -> bool {
+        if let Node::Component { name, .. } = n
+            && let Some(c) = self.f.ir.children.iter().find(|c| &c.name == name)
+            && let Some(ir) = (self.ctx.resolve)(&c.id.clone().unwrap_or_else(|| name.clone()))
+            && is_fed(ir)
+        {
+            return true;
+        }
+        match n {
+            Node::Element { children, .. }
+            | Node::Component { children, .. }
+            | Node::Fragment(children) => children.iter().any(|c| self.has_fed(c)),
+            Node::If { then, else_, .. } => then.iter().chain(else_).any(|c| self.has_fed(c)),
+            Node::For { body, .. } => body.iter().any(|c| self.has_fed(c)),
+            Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
+        }
     }
 
     /// `extra`: attributes for the child's root element (a list-row directive).
@@ -1039,13 +1078,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             ));
             return;
         };
-        if self.inline.is_some()
-            && (child_ir.use_id_slots > 0
-                || child_ir
-                    .jobs
-                    .iter()
-                    .any(|j| matches!(j.kind, JobKind::Precompute)))
-        {
+        if self.inline.is_some() && is_fed(child_ir) {
             // The slot key is built from this printer's own counters and frames, which restart
             // inside an inlined child: instances of such a grandchild would collide.
             self.diagnostics.push(Diagnostic::error(
@@ -1053,6 +1086,29 @@ impl<'a, 'c> Printer<'a, 'c> {
                 format!("<{name}> has a job or useId and is used inside another inlined component"),
                 0,
                 "use it directly in the route component (ledger F53)",
+            ));
+            return;
+        }
+        if self.frames.len() > 1 && is_fed(child_ir) {
+            // S6 hands the server one array per instance, indexed by ONE list.
+            self.diagnostics.push(Diagnostic::error(
+                "nested-instance",
+                format!("<{name}> has a job or useId and sits inside nested lists"),
+                0,
+                "flatten the lists or render the child per row in its own component (ledger F53)",
+            ));
+            return;
+        }
+        if !children.is_empty()
+            && contains_node(&child_ir.template, &|n| matches!(n, Node::For { .. }))
+            && children.iter().any(|c| self.has_fed(c))
+        {
+            // Slot content is printed once and pasted per row: its ids/jobs would repeat.
+            self.diagnostics.push(Diagnostic::error(
+                "nested-instance",
+                format!("children with a job or useId are passed to <{name}>, which repeats them in a list"),
+                0,
+                "render the child inside the repeating component (ledger F53)",
             ));
             return;
         }
@@ -1351,5 +1407,46 @@ impl Expr {
             Expr::Raw(r) | Expr::Server(ServerExpr(r)) => Some(r.loc),
             _ => None,
         }
+    }
+}
+
+/// A component whose instances the server must feed (a precompute job or `useId` values).
+fn is_fed(ir: &ComponentIR) -> bool {
+    ir.use_id_slots > 0
+        || ir
+            .jobs
+            .iter()
+            .any(|j| matches!(j.kind, JobKind::Precompute))
+}
+
+/// Whether `f` holds for `n` or any node below it.
+fn contains_node(n: &Node, f: &dyn Fn(&Node) -> bool) -> bool {
+    if f(n) {
+        return true;
+    }
+    match n {
+        Node::Element { children, .. }
+        | Node::Component { children, .. }
+        | Node::Fragment(children) => children.iter().any(|c| contains_node(c, f)),
+        Node::If { then, else_, .. } => then.iter().chain(else_).any(|c| contains_node(c, f)),
+        Node::For { body, .. } => body.iter().any(|c| contains_node(c, f)),
+        Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
+    }
+}
+
+/// Text for a raw-text element (`<script>`, `<style>`): printed as a jinja string, unescaped.
+fn raw_text(s: &str) -> String {
+    format!("{{{{ {} | safe }}}}", jinja_string(s))
+}
+
+/// The text of a literal string or substitution-free template.
+fn static_text(e: &Expr) -> Option<String> {
+    match e {
+        Expr::Raw(r) => match &r.kind {
+            RawKind::Lit(crate::ir::Literal::Str(s)) => Some(s.clone()),
+            RawKind::Template { head, parts } if parts.is_empty() => Some(head.clone()),
+            _ => None,
+        },
+        _ => None,
     }
 }

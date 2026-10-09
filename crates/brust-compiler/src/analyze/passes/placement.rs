@@ -297,9 +297,10 @@ fn direct_locals(e: &RawExpr, out: &mut BTreeSet<String>) {
     }
 }
 
-/// Text the template would entity-escape, which browsers do not decode inside raw text.
+/// Text that would end or confuse a raw-text element (`</script`, `</style`, `<!--`); anything else is printed verbatim.
 fn needs_raw_escape(t: &str) -> bool {
-    t.contains(['&', '<', '>', '"', '\'', '{'])
+    let t = t.to_ascii_lowercase();
+    t.contains("</script") || t.contains("</style") || t.contains("<!--")
 }
 
 /// A child that is not literal text (`F35`): an expression, a condition, a list or a component.

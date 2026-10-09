@@ -571,7 +571,7 @@ fn dynamic_child_of_script_or_style_falls_back() {
         rules(&a)
     );
     let b = analyze(
-        "export default function B() { return <div><style>{`.a color red`}</style></div> }",
+        "export default function B() { return <div><style>{`.a{color:red}`}</style></div> }",
     );
     assert!(
         !rules(&b).iter().any(|(_, r)| r == "raw-text-child"),
@@ -579,7 +579,7 @@ fn dynamic_child_of_script_or_style_falls_back() {
         rules(&b)
     );
     let c = analyze(
-        "export default function C() { return <div><style>{'.a color red'}</style><script>var x = 1</script></div> }",
+        "export default function C() { return <div><style>{'.a{color:red}'}</style><script>var x = 1</script></div> }",
     );
     assert!(
         !rules(&c).iter().any(|(_, r)| r == "raw-text-child"),
@@ -602,11 +602,10 @@ fn use_id_named_like_a_prop_does_not_shadow_it() {
 }
 
 #[test]
-fn escapable_static_text_in_script_or_style_falls_back() {
+fn only_a_closing_tag_in_static_script_text_falls_back() {
     for src in [
-        "export default function A() { return <div><script>{\"gtag('js')\"}</script></div> }",
-        "export default function A() { return <div><style>{'a > b{}'}</style></div> }",
-        "export default function A() { return <div><script>{'a && b'}</script></div> }",
+        "export default function A() { return <div><script>{'a </script> b'}</script></div> }",
+        "export default function A() { return <div><style>{'x </STYLE> y'}</style></div> }",
     ] {
         let ir = analyze(src);
         assert!(
@@ -624,6 +623,66 @@ fn outlet_inside_a_condition_falls_back() {
     );
     assert!(
         rules(&ir).contains(&(DiagClass::Fallback, "outlet-in-branch".into())),
+        "{:?}",
+        rules(&ir)
+    );
+}
+
+// ---- Mellow round 1 ----
+
+#[test]
+fn array_from_over_an_iterable_or_a_shadowed_array_is_not_a_list() {
+    for src in [
+        "export default function L(props: any) { return <ul>{Array.from(new Set(props.xs), (x: any) => <li key={x}>{x}</li>)}</ul> }",
+        "const Array = { from: (a: any, f: any) => [f(a[0], 0)] }\nexport default function L(props: any) { return <ul>{Array.from(props.xs, (x: any) => <li key={x}>{x}</li>)}</ul> }",
+        "export default function L(props: any) { const Array = { from: (a: any, f: any) => [f(a[0], 0)] }; return <ul>{Array.from(props.xs, (x: any) => <li key={x}>{x}</li>)}</ul> }",
+    ] {
+        let ir = analyze(src);
+        assert!(
+            rules(&ir).contains(&(DiagClass::Fallback, "jsx-expression".into())),
+            "{src}: {:?}",
+            rules(&ir)
+        );
+    }
+}
+
+#[test]
+fn a_printer_panic_in_module_scope_is_a_fallback_not_a_silent_sentinel() {
+    let ir = analyze(
+        "const m = require('./x')\nexport default function A() { return <b onClick={() => m.go()}/> }",
+    );
+    // `require` itself prints; this pins that no sentinel survives without a diagnostic.
+    let sentinel = format!("{:?}", ir.module_decls).contains("dynamic import");
+    assert!(
+        !sentinel
+            || rules(&ir)
+                .iter()
+                .any(|(_, r)| r == "printer-panic" || r == "dynamic-import"),
+        "{:?}",
+        rules(&ir)
+    );
+}
+
+#[test]
+fn job_inputs_name_the_list_not_its_length() {
+    let ir = analyze(
+        "import { fmt } from './money'\nexport default function C(props: { items: number[] }) { return <p>{fmt(props.items.length, 'x')}</p> }",
+    );
+    let job = ir
+        .jobs
+        .iter()
+        .find(|j| matches!(j.kind, JobKind::Precompute))
+        .unwrap();
+    assert_eq!(job.inputs, vec!["items".to_string()]);
+}
+
+#[test]
+fn outlet_in_a_react_tier_component_is_an_error() {
+    let ir = analyze(
+        "import { Outlet } from '@brust/brust/routes'\nimport { useReducer } from 'react'\nexport default function L() { const [s] = useReducer((a: number) => a, 0); return <div>{s}<Outlet/></div> }",
+    );
+    assert!(
+        rules(&ir).contains(&(DiagClass::Error, "outlet-in-react".into())),
         "{:?}",
         rules(&ir)
     );

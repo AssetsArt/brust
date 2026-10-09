@@ -77,6 +77,15 @@ pub fn tier(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
     }
     // §3.3: a React component's one job is its SSR render over its props;
     // precompute slots and child islands are React's business then.
+    if matches!(ir.tier, Tier::React { .. }) && ir.uses_outlet {
+        // A React-tier page renders as one island: its template has no `__outlet` slot.
+        ir.diagnostics.push(crate::ir::Diagnostic::error(
+            "outlet-in-react",
+            "<Outlet/> is used in a component that renders as a React island",
+            0,
+            "keep layouts native: remove the construct that forces the React tier",
+        ));
+    }
     if let Tier::React { client_only, .. } = &ir.tier {
         ir.jobs = vec![crate::ir::JobDecl {
             kind: crate::ir::JobKind::Ssr {
