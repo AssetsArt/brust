@@ -47,12 +47,12 @@ Measured 2026-10-09 on darwin/arm64, Bun 1.4.2, `oha -c 120 -z 10s`. **Bar (v2 n
 | F40 | closed | DONE — `m2a-compiler` @15b50b5 |
 | F41 | closed | DONE — `m2a-compiler` @0fb965b |
 | F42 | closed | DONE — `m2a-compiler` @2855973 |
-| F43 | open | M2 |
-| F44 | open | M2 |
+| F43 | open | M3 (rolled over at M2 board close, lead report 2026-10-10; was: M2) |
+| F44 | open | M3 (rolled over at M2 board close, lead report 2026-10-10; was: M2) |
 | F45 | closed | DONE — m2e tests/server/hydrate.chromium.test.ts (Playwright Chromium) |
-| F46 | open | M2 |
-| F47 | open | M2 |
-| F48 | open | M2 (Mellow review of m1-gate-hardening, non-blocking) |
+| F46 | open | M3 (rolled over at M2 board close, lead report 2026-10-10; was: M2) |
+| F47 | open | M3 (rolled over at M2 board close, lead report 2026-10-10; was: M2) |
+| F48 | open | M3 (rolled over at M2 board close, lead report 2026-10-10; was: M2 (Mellow review of m1-gate-hardening, non-blocking)) |
 | F49 | closed | DONE — `m2a-compiler` @2159b49 |
 
 ## Publish
