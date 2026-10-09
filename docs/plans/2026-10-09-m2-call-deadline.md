@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-owner: 22499151-e133-4508-b358-d7fa4d2851c3 (Detoro) · authority: in-loop · base: `v2` after `m2x-minijinja-3` merges (the lead fills the sha in the dispatch note)
+owner: 22499151-e133-4508-b358-d7fa4d2851c3 (Detoro) · authority: in-loop · base: `v2` @ca4d98c (m2x merged)
 
 **Goal:** A loader or job call that does not settle within `BRUST_CALL_TIMEOUT_MS` (default 30000) answers the client with **504** at once, while the slot claim stays held by the detached task until the JS promise settles (the late result is discarded and the claim released), so one parked call can never freeze a worker's slots forever and `/_brust/cache/stats` counts such calls (`timed_out_calls`). Found by Mellow's m2c probe (one worker + one parked loader → every later request 503 after `claim_timeout_ms`).
 
