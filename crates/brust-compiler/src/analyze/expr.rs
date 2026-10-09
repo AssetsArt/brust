@@ -528,6 +528,9 @@ pub struct Walk {
     pub used: Vec<js_ast::Ref>,
     /// Every call expression reached, outermost first.
     pub calls: Vec<js_ast::Expr>,
+    /// Location of the first dynamic `import()` reached (F38): the printer
+    /// cannot print one (no import record), so such code is never printed.
+    pub dynamic_import: Option<u32>,
 }
 
 impl Walk {
@@ -716,6 +719,10 @@ impl Walk {
                     self.expr(&p.value);
                 }
             }
+            E::EImport(i) => {
+                self.dynamic_import.get_or_insert(loc_of(e));
+                self.expr(&i.expr);
+            }
             E::EAwait(a) => self.expr(&a.value),
             E::EYield(y) => {
                 if let Some(v) = &y.value {
@@ -739,6 +746,9 @@ pub fn declared_in(stmts: &[js_ast::Stmt]) -> HashSet<u32> {
     w.declared.iter().map(|r| r.inner_index()).collect()
 }
 
+/// The source recorded for code that contains a dynamic `import()`.
+pub const DYNAMIC_IMPORT_SOURCE: &str = "/* dynamic import */";
+
 /// What a [`Reader`]'s printer can print.
 #[derive(Clone, Copy)]
 pub enum Js<'x> {
@@ -748,6 +758,16 @@ pub enum Js<'x> {
 
 /// Prints `js` as JavaScript; see [`print_expr_js`].
 pub fn print_js(parsed: &Parsed, ast: &js_ast::Ast<'_>, js: Js<'_>) -> String {
+    // A dynamic `import()` makes the printer assert (no import record for it):
+    // never print one; the component falls back with a `dynamic-import` diagnostic.
+    let mut w = Walk::default();
+    match js {
+        Js::Expr(e) => w.expr(e),
+        Js::Stmt(s) => w.stmt(s),
+    }
+    if w.dynamic_import.is_some() {
+        return DYNAMIC_IMPORT_SOURCE.to_string();
+    }
     match js {
         Js::Expr(e) => print_expr_js(parsed, ast, e),
         Js::Stmt(s) => print_with(parsed, ast, || *s),

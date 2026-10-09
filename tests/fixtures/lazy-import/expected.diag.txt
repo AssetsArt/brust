@@ -1,0 +1,6 @@
+fallback dynamic-import tests/fixtures/lazy-import/input.tsx:2:33 dynamic import() is not supported natively; the component renders as a React island — import the module statically or keep the lazy component in a React-tier parent
+fallback external-component tests/fixtures/lazy-import/input.tsx:4:10 <Suspense> comes from the package react; it renders as a React island — use a component from this project to keep it native
+fallback island-children tests/fixtures/lazy-import/input.tsx:4:10 JSX children passed to the React island <Suspense> — render the children inside the island component
+fallback jsx-expression tests/fixtures/lazy-import/input.tsx:4:30 JSX inside an expression that is not a list, a condition or a child — use a ternary, && or .map directly in the JSX children
+fallback local-component tests/fixtures/lazy-import/input.tsx:4:51 <Panel> is not a function declaration in this module — declare it as `function Name(props) { … }`
+warning fragment-root tests/fixtures/lazy-import/input.tsx:4:10 the component does not return a single element; it is wrapped in <brust-host> — return one element

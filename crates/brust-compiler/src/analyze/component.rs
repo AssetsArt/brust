@@ -258,6 +258,21 @@ fn read_function(
     mark_state_bindings(func, &mut names);
     let print = |js: Js<'_>| print_js(parsed, ast, js);
     let mut reader = Reader::new(&mut names, &print);
+    // F38: any dynamic `import()` in the module (`lazy(() => import(…))`) makes
+    // the component a React island.
+    let mut w = crate::analyze::expr::Walk::default();
+    for part in ast.parts.iter() {
+        w.stmts(part.stmts.slice());
+    }
+    w.stmts(func.body.stmts.slice());
+    if let Some(loc) = w.dynamic_import {
+        ir.diagnostics.push(Diagnostic::fallback(
+            "dynamic-import",
+            "dynamic import() is not supported natively; the component renders as a React island",
+            loc,
+            "import the module statically or keep the lazy component in a React-tier parent",
+        ));
+    }
     let body = read_body(func, &mut reader);
     (ir.module_scope, ir.module_decls) = reader.module_scope(ast);
     ir.props = body.props;

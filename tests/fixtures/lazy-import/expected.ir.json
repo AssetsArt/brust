@@ -1,0 +1,222 @@
+{
+  "id": "input_5f98393c",
+  "source": "tests/fixtures/lazy-import/input.tsx",
+  "tier": {
+    "React": {
+      "reason": "dynamic import() is not supported natively; the component renders as a React island",
+      "client_only": false
+    }
+  },
+  "props": [
+    {
+      "name": "open",
+      "local": "open",
+      "ts_type": null,
+      "default": null
+    }
+  ],
+  "state": [],
+  "derived": [],
+  "effects": [],
+  "handlers": [],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 151,
+      "tag": "brust-host",
+      "attrs": [
+        {
+          "Static": {
+            "name": "style",
+            "value": "display:contents"
+          }
+        }
+      ],
+      "children": [
+        {
+          "Component": {
+            "loc": 151,
+            "name": "Suspense",
+            "source": "react",
+            "imported": "Suspense",
+            "props": [
+              [
+                "fallback",
+                {
+                  "Raw": {
+                    "loc": 171,
+                    "kind": {
+                      "Jsx": {
+                        "Element": {
+                          "loc": 171,
+                          "tag": "p",
+                          "attrs": [],
+                          "children": [
+                            {
+                              "Text": "…"
+                            }
+                          ],
+                          "host": false,
+                          "ref_name": null
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            ],
+            "children": [
+              {
+                "If": {
+                  "cond": {
+                    "Server": {
+                      "loc": 184,
+                      "kind": {
+                        "Ident": {
+                          "name": "open",
+                          "kind": "Prop"
+                        }
+                      }
+                    }
+                  },
+                  "then": [
+                    {
+                      "Component": {
+                        "loc": 192,
+                        "name": "Panel",
+                        "source": null,
+                        "imported": null,
+                        "props": [],
+                        "children": [],
+                        "link": null,
+                        "tier": {
+                          "React": {
+                            "reason": "local component",
+                            "client_only": false
+                          }
+                        }
+                      }
+                    }
+                  ],
+                  "else_": []
+                }
+              }
+            ],
+            "link": null,
+            "tier": {
+              "React": {
+                "reason": "external component",
+                "client_only": false
+              }
+            }
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [
+    {
+      "kind": {
+        "Ssr": {
+          "client_only": false
+        }
+      },
+      "inputs": [
+        "*"
+      ],
+      "outputs": [
+        "_ssr_input_5f98393c"
+      ],
+      "per_item": null
+    }
+  ],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": true,
+  "cache": null,
+  "children": [
+    {
+      "name": "Suspense",
+      "id": null,
+      "path": null,
+      "tier": {
+        "React": {
+          "reason": "external component",
+          "client_only": false
+        }
+      }
+    },
+    {
+      "name": "Panel",
+      "id": null,
+      "path": "tests/fixtures/lazy-import/input.tsx",
+      "tier": {
+        "React": {
+          "reason": "local component",
+          "client_only": false
+        }
+      }
+    }
+  ],
+  "diagnostics": [
+    {
+      "class": "Fallback",
+      "rule": "dynamic-import",
+      "message": "dynamic import() is not supported natively; the component renders as a React island",
+      "loc": 71,
+      "line": 2,
+      "col": 33,
+      "remediation": "import the module statically or keep the lazy component in a React-tier parent"
+    },
+    {
+      "class": "Fallback",
+      "rule": "external-component",
+      "message": "<Suspense> comes from the package react; it renders as a React island",
+      "loc": 151,
+      "line": 4,
+      "col": 10,
+      "remediation": "use a component from this project to keep it native"
+    },
+    {
+      "class": "Fallback",
+      "rule": "island-children",
+      "message": "JSX children passed to the React island <Suspense>",
+      "loc": 151,
+      "line": 4,
+      "col": 10,
+      "remediation": "render the children inside the island component"
+    },
+    {
+      "class": "Fallback",
+      "rule": "jsx-expression",
+      "message": "JSX inside an expression that is not a list, a condition or a child",
+      "loc": 171,
+      "line": 4,
+      "col": 30,
+      "remediation": "use a ternary, && or .map directly in the JSX children"
+    },
+    {
+      "class": "Fallback",
+      "rule": "local-component",
+      "message": "<Panel> is not a function declaration in this module",
+      "loc": 192,
+      "line": 4,
+      "col": 51,
+      "remediation": "declare it as `function Name(props) { … }`"
+    },
+    {
+      "class": "Warning",
+      "rule": "fragment-root",
+      "message": "the component does not return a single element; it is wrapped in <brust-host>",
+      "loc": 151,
+      "line": 4,
+      "col": 10,
+      "remediation": "return one element"
+    }
+  ]
+}
