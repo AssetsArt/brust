@@ -54,4 +54,4 @@ A scrutiny of the M1 exit claim found the gates proved less than `docs/plans/m1-
 5. The browser harness captured only `console.warn`, only during mount; `console.error`, interactions and observer-driven mounts were invisible, and `warnOnce` never reset between cases.
 6. The exit report's §12 paragraph was hard-coded prose.
 
-The lead's manual `--emit all` sweep of all 61 rows on `v2` @720e6d7 found no hidden defect: 57 ok / 4 refused / 0 failed. The gate now records the same split mechanically: 56 rows build ok, 4 error rows are refused, and the parse-error row never reaches lowering. Closed by `m1-gate-hardening` @<sha> (fill at PR time); the gaps it deliberately leaves are ledger F43-F47.
+The lead's manual `--emit all` sweep of all 61 rows on `v2` @720e6d7 found no hidden defect: 56 ok / 4 refused / 0 failed (the lead's first count said 57; it included the parse-error row). The gate now records the same split mechanically: 56 rows build ok, 4 error rows are refused, and the parse-error row never reaches lowering. Closed by `m1-gate-hardening` PR #119 (lane @98f4f24, merged into `v2` as b7e3869); the gaps it deliberately leaves are ledger F43-F47.
