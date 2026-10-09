@@ -1,7 +1,7 @@
 {
   "id": "input_3c18dc49",
   "source": "tests/fixtures/react-child/input.tsx",
-  "tier": "Pending",
+  "tier": "Static",
   "props": [
     {
       "name": "productId",
@@ -36,7 +36,7 @@
             "children": [
               {
                 "Slot": {
-                  "Raw": {
+                  "Server": {
                     "loc": 164,
                     "kind": {
                       "Ident": {
@@ -62,7 +62,7 @@
               [
                 "productId",
                 {
-                  "Raw": {
+                  "Server": {
                     "loc": 202,
                     "kind": {
                       "Ident": {
@@ -76,7 +76,12 @@
             ],
             "children": [],
             "link": null,
-            "tier": "Pending"
+            "tier": {
+              "React": {
+                "reason": "hook useContext is not supported",
+                "client_only": false
+              }
+            }
           }
         }
       ],
@@ -84,12 +89,38 @@
       "ref_name": null
     }
   },
-  "jobs": [],
+  "jobs": [
+    {
+      "kind": {
+        "Ssr": {
+          "client_only": false
+        }
+      },
+      "inputs": [
+        "productId"
+      ],
+      "outputs": [
+        "_ssr_reviews_ec5de4c5"
+      ]
+    }
+  ],
   "child_links": [],
   "client_props": [],
   "client_imports": [],
-  "needs_worker": false,
+  "needs_worker": true,
   "cache": null,
-  "children": [],
+  "children": [
+    {
+      "name": "Reviews",
+      "id": "reviews_ec5de4c5",
+      "path": "tests/fixtures/react-child/Reviews.tsx",
+      "tier": {
+        "React": {
+          "reason": "hook useContext is not supported",
+          "client_only": false
+        }
+      }
+    }
+  ],
   "diagnostics": []
 }

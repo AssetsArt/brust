@@ -42,7 +42,7 @@ fn run(file: &str, emit: &str, source: Vec<u8>) -> ExitCode {
         return ExitCode::SUCCESS;
     }
     if emit == "ir" || emit == "diag" {
-        return emit_ir(file, emit, &parsed);
+        return emit_ir(file, emit);
     }
     match brust_compiler::analyze::hir::analyze_hir(&parsed) {
         Ok(summary) => {
@@ -57,10 +57,12 @@ fn run(file: &str, emit: &str, source: Vec<u8>) -> ExitCode {
 }
 
 /// `ir`: the ComponentIR as pretty JSON. `diag`: one line per diagnostic; exit 1
-/// when any is an `Error` (or the module has no default export).
-fn emit_ir(file: &str, emit: &str, parsed: &brust_compiler::parse::Parsed) -> ExitCode {
+/// when any is an `Error` (or the module has no default export). Child
+/// components are resolved relative to the current directory.
+fn emit_ir(file: &str, emit: &str) -> ExitCode {
+    use brust_compiler::analyze::component::{AnalyzeOptions, analyze_file};
     use brust_compiler::ir::{DiagClass, render_diagnostics};
-    let ir = match brust_compiler::analyze::component::analyze_component(parsed) {
+    let ir = match analyze_file(file, &AnalyzeOptions::default()) {
         Ok(ir) => ir,
         Err(d) => {
             eprint!("{}", render_diagnostics(&[d], file));

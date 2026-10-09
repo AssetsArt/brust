@@ -1,46 +1,20 @@
 {
   "id": "input_fffbbb03",
   "source": "tests/fixtures/client-only/input.tsx",
-  "tier": "Pending",
+  "tier": {
+    "React": {
+      "reason": "render reads `window` (line 3) — component renders with React on the client",
+      "client_only": true
+    }
+  },
   "props": [],
   "state": [],
   "derived": [
     {
       "name": "wide",
       "expr": {
-        "Raw": {
-          "loc": 52,
-          "kind": {
-            "Binary": {
-              "op": "Gt",
-              "left": {
-                "loc": 52,
-                "kind": {
-                  "Member": {
-                    "target": {
-                      "loc": 52,
-                      "kind": {
-                        "Ident": {
-                          "name": "window",
-                          "kind": "Global"
-                        }
-                      }
-                    },
-                    "name": "innerWidth",
-                    "optional": false
-                  }
-                }
-              },
-              "right": {
-                "loc": 72,
-                "kind": {
-                  "Lit": {
-                    "Num": 800.0
-                  }
-                }
-              }
-            }
-          }
+        "ClientOnly": {
+          "js": "window.innerWidth > 800"
         }
       }
     }
@@ -96,12 +70,36 @@
       "ref_name": null
     }
   },
-  "jobs": [],
+  "jobs": [
+    {
+      "kind": {
+        "Ssr": {
+          "client_only": true
+        }
+      },
+      "inputs": [
+        "*"
+      ],
+      "outputs": [
+        "_ssr_input_fffbbb03"
+      ]
+    }
+  ],
   "child_links": [],
   "client_props": [],
   "client_imports": [],
-  "needs_worker": false,
+  "needs_worker": true,
   "cache": null,
   "children": [],
-  "diagnostics": []
+  "diagnostics": [
+    {
+      "class": "Fallback",
+      "rule": "browser-global",
+      "message": "render reads `window` (line 3) — component renders with React on the client",
+      "loc": 89,
+      "line": 3,
+      "col": 14,
+      "remediation": "read browser globals in useEffect or an event handler"
+    }
+  ]
 }

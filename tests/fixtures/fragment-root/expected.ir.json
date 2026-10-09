@@ -1,7 +1,7 @@
 {
   "id": "input_3559d090",
   "source": "tests/fixtures/fragment-root/input.tsx",
-  "tier": "Pending",
+  "tier": "Static",
   "props": [
     {
       "name": "a",
@@ -43,7 +43,7 @@
             "children": [
               {
                 "Slot": {
-                  "Raw": {
+                  "Server": {
                     "loc": 96,
                     "kind": {
                       "Ident": {
@@ -67,7 +67,7 @@
             "children": [
               {
                 "Slot": {
-                  "Raw": {
+                  "Server": {
                     "loc": 115,
                     "kind": {
                       "Ident": {

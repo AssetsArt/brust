@@ -24,8 +24,8 @@ pub struct PassState {
     pub painted: Vec<Painted>,
     /// Precomputed slots with the expression they came from.
     pub slots: HashMap<String, SlotInfo>,
-    /// Locations where render reads a browser global.
-    pub browser_locs: Vec<u32>,
+    /// Where render reads a browser global, and which.
+    pub browser_locs: Vec<(u32, String)>,
     pub handler_names: BTreeSet<String>,
     /// Values the client chunk evaluates, beyond handlers/effects/state inits.
     pub client_uses: Vec<ClientUse>,

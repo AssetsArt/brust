@@ -1,7 +1,12 @@
 {
   "id": "input_d2ab59e4",
   "source": "tests/fixtures/react-hook/input.tsx",
-  "tier": "Pending",
+  "tier": {
+    "React": {
+      "reason": "hook useContext is not supported",
+      "client_only": false
+    }
+  },
   "props": [
     {
       "name": "label",
@@ -25,14 +30,12 @@
           "Dynamic": {
             "name": "className",
             "value": {
-              "Raw": {
-                "loc": 205,
-                "kind": {
-                  "Ident": {
-                    "name": "theme",
-                    "kind": "Local"
-                  }
-                }
+              "Precomputed": {
+                "slot": "_s1",
+                "js": "theme",
+                "inputs": [],
+                "state_dependent": false,
+                "per_item": null
               }
             }
           }
@@ -41,7 +44,7 @@
       "children": [
         {
           "Slot": {
-            "Raw": {
+            "Server": {
               "loc": 213,
               "kind": {
                 "Ident": {
@@ -57,11 +60,25 @@
       "ref_name": null
     }
   },
-  "jobs": [],
+  "jobs": [
+    {
+      "kind": {
+        "Ssr": {
+          "client_only": false
+        }
+      },
+      "inputs": [
+        "*"
+      ],
+      "outputs": [
+        "_ssr_input_d2ab59e4"
+      ]
+    }
+  ],
   "child_links": [],
   "client_props": [],
   "client_imports": [],
-  "needs_worker": false,
+  "needs_worker": true,
   "cache": null,
   "children": [],
   "diagnostics": [

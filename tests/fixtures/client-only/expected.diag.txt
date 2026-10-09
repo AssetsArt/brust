@@ -1,0 +1,1 @@
+fallback browser-global tests/fixtures/client-only/input.tsx:3:14 render reads `window` (line 3) — component renders with React on the client — read browser globals in useEffect or an event handler

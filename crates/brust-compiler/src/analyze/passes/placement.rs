@@ -330,7 +330,13 @@ impl Placer<'_> {
             deps: deps.clone(),
         });
         if deps.browser {
-            self.st.browser_locs.push(r.loc);
+            let global = deps
+                .globals
+                .iter()
+                .find(|g| super::deps::BROWSER_GLOBALS.contains(&g.as_str()))
+                .cloned()
+                .unwrap_or_default();
+            self.st.browser_locs.push((r.loc, global));
             return Expr::Raw(r.clone());
         }
         if contains_jsx(r) {

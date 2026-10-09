@@ -1,14 +1,14 @@
 {
   "id": "input_517275ac",
   "source": "tests/fixtures/parent-counter/input.tsx",
-  "tier": "Pending",
+  "tier": "Native",
   "props": [],
   "state": [
     {
       "name": "count",
       "setter": "setCount",
       "init": {
-        "Raw": {
+        "Server": {
           "loc": 138,
           "kind": {
             "Lit": {
@@ -108,7 +108,7 @@
               [
                 "n",
                 {
-                  "Raw": {
+                  "Server": {
                     "loc": 184,
                     "kind": {
                       "Ident": {
@@ -122,54 +122,15 @@
               [
                 "onReset",
                 {
-                  "Raw": {
-                    "loc": 200,
-                    "kind": {
-                      "Arrow": {
-                        "params": [],
-                        "body": {
-                          "Expr": {
-                            "loc": 206,
-                            "kind": {
-                              "Call": {
-                                "callee": {
-                                  "loc": 206,
-                                  "kind": {
-                                    "Ident": {
-                                      "name": "setCount",
-                                      "kind": "Setter"
-                                    }
-                                  }
-                                },
-                                "args": [
-                                  {
-                                    "loc": 215,
-                                    "kind": {
-                                      "Lit": {
-                                        "Num": 0.0
-                                      }
-                                    }
-                                  }
-                                ]
-                              }
-                            }
-                          }
-                        },
-                        "captures": [
-                          [
-                            "setCount",
-                            "Setter"
-                          ]
-                        ]
-                      }
-                    }
+                  "ClientOnly": {
+                    "js": "() => setCount(0)"
                   }
                 }
               ]
             ],
             "children": [],
-            "link": null,
-            "tier": "Pending"
+            "link": 1,
+            "tier": "Native"
           }
         },
         {
@@ -205,11 +166,49 @@
     }
   },
   "jobs": [],
-  "child_links": [],
+  "child_links": [
+    {
+      "id": 1,
+      "child": "counter_1f1ff519",
+      "props_member": "_p1",
+      "item_scoped": [],
+      "props": [
+        [
+          "n",
+          {
+            "Server": {
+              "loc": 184,
+              "kind": {
+                "Ident": {
+                  "name": "count",
+                  "kind": "State"
+                }
+              }
+            }
+          }
+        ],
+        [
+          "onReset",
+          {
+            "ClientOnly": {
+              "js": "() => setCount(0)"
+            }
+          }
+        ]
+      ]
+    }
+  ],
   "client_props": [],
   "client_imports": [],
   "needs_worker": false,
   "cache": null,
-  "children": [],
+  "children": [
+    {
+      "name": "Counter",
+      "id": "counter_1f1ff519",
+      "path": "tests/fixtures/parent-counter/Counter.tsx",
+      "tier": "Native"
+    }
+  ],
   "diagnostics": []
 }

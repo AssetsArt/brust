@@ -64,7 +64,8 @@ fn emit_ir_prints_component_ir() {
         String::from_utf8_lossy(&out.stderr)
     );
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(v["tier"], "Pending");
+    assert_eq!(v["tier"], "Native");
+    assert_eq!(v["needs_worker"], false);
     assert_eq!(v["state"][0]["name"], "mode");
     assert_eq!(v["template"]["Element"]["tag"], "button");
 }
@@ -88,6 +89,34 @@ fn emit_diag_exits_1_on_error_and_0_otherwise() {
         .unwrap();
     assert_eq!(out.status.code(), Some(0));
     assert!(String::from_utf8_lossy(&out.stdout).starts_with("warning fragment-root "));
+}
+
+/// M1b-2 acceptance: a server-only import reached from a handler fails the build,
+/// and a child component resolves relative to the input file.
+#[test]
+fn server_leak_diag_exits_1_and_children_resolve() {
+    let out = brustc()
+        .arg(fixture("server-leak"))
+        .args(["--emit", "diag"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.starts_with("error server-only-in-client "), "{text}");
+
+    let out = brustc()
+        .arg(fixture("parent-counter"))
+        .args(["--emit", "ir"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["children"][0]["tier"], "Native");
+    assert_eq!(v["child_links"][0]["props_member"], "_p1");
 }
 
 #[test]

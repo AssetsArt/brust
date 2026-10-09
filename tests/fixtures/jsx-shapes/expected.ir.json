@@ -1,7 +1,12 @@
 {
   "id": "input_24dc85ef",
   "source": "tests/fixtures/jsx-shapes/input.tsx",
-  "tier": "Pending",
+  "tier": {
+    "React": {
+      "reason": "member-expression component tags (`<Ctx.Provider>`) are not supported natively",
+      "client_only": false
+    }
+  },
   "props": [
     {
       "name": "title",
@@ -43,7 +48,7 @@
           "Dynamic": {
             "name": "className",
             "value": {
-              "Raw": {
+              "Server": {
                 "loc": 161,
                 "kind": {
                   "Template": {
@@ -95,7 +100,7 @@
           "Dynamic": {
             "name": "data-count",
             "value": {
-              "Raw": {
+              "Server": {
                 "loc": 206,
                 "kind": {
                   "Ident": {
@@ -109,20 +114,14 @@
         },
         {
           "Spread": {
-            "Raw": {
-              "loc": 217,
-              "kind": {
-                "Opaque": {
-                  "source": "rest",
-                  "why": "spread props",
-                  "captures": [
-                    [
-                      "rest",
-                      "Prop"
-                    ]
-                  ]
-                }
-              }
+            "Precomputed": {
+              "slot": "_s1",
+              "js": "rest",
+              "inputs": [
+                "rest"
+              ],
+              "state_dependent": false,
+              "per_item": null
             }
           }
         }
@@ -136,7 +135,7 @@
             "children": [
               {
                 "Slot": {
-                  "Raw": {
+                  "Server": {
                     "loc": 244,
                     "kind": {
                       "Ident": {
@@ -164,7 +163,7 @@
         {
           "If": {
             "cond": {
-              "Raw": {
+              "Server": {
                 "loc": 320,
                 "kind": {
                   "Ident": {
@@ -185,7 +184,7 @@
                     [
                       "tone",
                       {
-                        "Raw": {
+                        "Server": {
                           "loc": 340,
                           "kind": {
                             "Lit": {
@@ -199,7 +198,7 @@
                   "children": [
                     {
                       "Slot": {
-                        "Raw": {
+                        "Server": {
                           "loc": 348,
                           "kind": {
                             "Ident": {
@@ -212,7 +211,7 @@
                     }
                   ],
                   "link": null,
-                  "tier": "Pending"
+                  "tier": "Static"
                 }
               }
             ],
@@ -222,7 +221,7 @@
         {
           "If": {
             "cond": {
-              "Raw": {
+              "Server": {
                 "loc": 371,
                 "kind": {
                   "Binary": {
@@ -305,23 +304,35 @@
       "ref_name": null
     }
   },
-  "jobs": [],
+  "jobs": [
+    {
+      "kind": {
+        "Ssr": {
+          "client_only": false
+        }
+      },
+      "inputs": [
+        "*"
+      ],
+      "outputs": [
+        "_ssr_input_24dc85ef"
+      ]
+    }
+  ],
   "child_links": [],
   "client_props": [],
   "client_imports": [],
-  "needs_worker": false,
+  "needs_worker": true,
   "cache": null,
-  "children": [],
-  "diagnostics": [
+  "children": [
     {
-      "class": "Warning",
-      "rule": "spread-props",
-      "message": "spread props are passed through as an opaque value",
-      "loc": 217,
-      "line": 6,
-      "col": 77,
-      "remediation": "list the props explicitly"
-    },
+      "name": "Badge",
+      "id": "badge_120eac48",
+      "path": "tests/fixtures/jsx-shapes/Badge.tsx",
+      "tier": "Static"
+    }
+  ],
+  "diagnostics": [
     {
       "class": "Fallback",
       "rule": "member-tag",
@@ -330,6 +341,15 @@
       "line": 14,
       "col": 7,
       "remediation": "import the component under its own name"
+    },
+    {
+      "class": "Warning",
+      "rule": "spread-props",
+      "message": "spread props are passed through as an opaque value",
+      "loc": 217,
+      "line": 6,
+      "col": 77,
+      "remediation": "list the props explicitly"
     }
   ]
 }

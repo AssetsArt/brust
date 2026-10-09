@@ -1,7 +1,7 @@
 {
   "id": "input_f5cee24e",
   "source": "tests/fixtures/cached-card/input.tsx",
-  "tier": "Pending",
+  "tier": "Static",
   "props": [
     {
       "name": "item",
@@ -30,7 +30,7 @@
             "children": [
               {
                 "Slot": {
-                  "Raw": {
+                  "Server": {
                     "loc": 193,
                     "kind": {
                       "Member": {
@@ -63,46 +63,14 @@
             "children": [
               {
                 "Slot": {
-                  "Raw": {
-                    "loc": 219,
-                    "kind": {
-                      "Call": {
-                        "callee": {
-                          "loc": 219,
-                          "kind": {
-                            "Ident": {
-                              "name": "formatPrice",
-                              "kind": {
-                                "Import": {
-                                  "source": "./money",
-                                  "imported": "formatPrice"
-                                }
-                              }
-                            }
-                          }
-                        },
-                        "args": [
-                          {
-                            "loc": 231,
-                            "kind": {
-                              "Member": {
-                                "target": {
-                                  "loc": 231,
-                                  "kind": {
-                                    "Ident": {
-                                      "name": "item",
-                                      "kind": "Prop"
-                                    }
-                                  }
-                                },
-                                "name": "price",
-                                "optional": false
-                              }
-                            }
-                          }
-                        ]
-                      }
-                    }
+                  "Precomputed": {
+                    "slot": "_s1",
+                    "js": "formatPrice(item.price)",
+                    "inputs": [
+                      "item.price"
+                    ],
+                    "state_dependent": false,
+                    "per_item": null
                   }
                 }
               }
@@ -116,11 +84,21 @@
       "ref_name": null
     }
   },
-  "jobs": [],
+  "jobs": [
+    {
+      "kind": "Precompute",
+      "inputs": [
+        "item.price"
+      ],
+      "outputs": [
+        "_s1"
+      ]
+    }
+  ],
   "child_links": [],
   "client_props": [],
   "client_imports": [],
-  "needs_worker": false,
+  "needs_worker": true,
   "cache": {
     "key": {
       "loc": 313,

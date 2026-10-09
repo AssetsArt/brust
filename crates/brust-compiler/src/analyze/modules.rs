@@ -160,7 +160,11 @@ pub fn resolve(parent: &str, rel: &str, opts: &AnalyzeOptions) -> Option<String>
         Some(i) => &parent[..i],
         None => "",
     };
-    let joined = normalize(&format!("{dir}/{rel}"));
+    let joined = normalize(&if dir.is_empty() && !parent.starts_with('/') {
+        rel.to_string()
+    } else {
+        format!("{dir}/{rel}")
+    });
     let mut candidates = Vec::new();
     if joined.ends_with(".tsx") || joined.ends_with(".ts") {
         candidates.push(joined.clone());
@@ -171,8 +175,10 @@ pub fn resolve(parent: &str, rel: &str, opts: &AnalyzeOptions) -> Option<String>
     candidates.into_iter().find(|c| opts.root.join(c).is_file())
 }
 
-/// Resolves `.` and `..` segments of a `/`-separated relative path.
+/// Resolves `.` and `..` segments of a `/`-separated path; an absolute path
+/// stays absolute.
 fn normalize(p: &str) -> String {
+    let absolute = p.starts_with('/');
     let mut out: Vec<&str> = Vec::new();
     for seg in p.split('/') {
         match seg {
@@ -187,7 +193,12 @@ fn normalize(p: &str) -> String {
             s => out.push(s),
         }
     }
-    out.join("/")
+    let joined = out.join("/");
+    if absolute {
+        format!("/{joined}")
+    } else {
+        joined
+    }
 }
 
 #[cfg(test)]
@@ -198,7 +209,8 @@ mod tests {
     fn normalizes_relative_segments() {
         assert_eq!(normalize("a/b/./c"), "a/b/c");
         assert_eq!(normalize("a/b/../c"), "a/c");
-        assert_eq!(normalize("/./C"), "C");
+        assert_eq!(normalize("./C"), "C");
+        assert_eq!(normalize("/abs/dir/./C"), "/abs/dir/C");
         assert_eq!(normalize("../x"), "../x");
     }
 }

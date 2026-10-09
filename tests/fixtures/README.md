@@ -9,9 +9,13 @@ is compared byte-for-byte with `expected.<emit>.<ext>`:
 | `hir` | `expected.hir.json` | `expected.error.txt` |
 | `ir` | `expected.ir.json` + `expected.diag.txt` (empty when there are no diagnostics) | `expected.diag.txt` only |
 
-Later plans add `jinja`, `server.ts`, `client.js`. Only `input.tsx` is compiled; sibling
-files (`parent-counter/Counter.tsx`) are there for the cases that M1b-2 resolves
-across modules.
+`ir` is the full analysis (structural read plus the M1b-2 passes: placement, jobs,
+captures, children, `cache()`, tier). Child components are compiled from sibling files,
+resolved from the repo root: `parent-counter/Counter.tsx` (a linked native child),
+`react-child/Reviews.tsx` (a React island with an `ssr` job), `import-cycle/A.tsx`
+(imports the case back), `jsx-shapes/Badge.tsx`. Only `input.tsx` gets expectation
+files; a child's IR is checked through its parent (`children`, `child_links`, `jobs`).
+Later plans add `jinja`, `server.ts`, `client.js`.
 
 After an intentional change: `BRUSTC_UPDATE=1 cargo test -p brust-compiler --test fixtures`,
 then review the diff in git before committing. An update also deletes the expectation

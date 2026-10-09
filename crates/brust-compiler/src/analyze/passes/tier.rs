@@ -35,9 +35,9 @@ pub fn tier(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
         ));
     }
 
-    if let Some(&loc) = st.browser_locs.iter().min() {
+    if let Some((loc, global)) = st.browser_locs.iter().min().cloned() {
         let message = format!(
-            "render reads a browser global (line {}) — component renders with React on the client",
+            "render reads `{global}` (line {}) — component renders with React on the client",
             ctx.line(loc)
         );
         ir.diagnostics.push(Diagnostic::fallback(
@@ -75,7 +75,19 @@ pub fn tier(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
     } else {
         ir.tier = Tier::Native;
     }
-    ir.needs_worker = !ir.jobs.is_empty() || matches!(ir.tier, Tier::React { .. });
+    // §3.3: a React component's one job is its SSR render over its props;
+    // precompute slots and child islands are React's business then.
+    if let Tier::React { client_only, .. } = &ir.tier {
+        ir.jobs = vec![crate::ir::JobDecl {
+            kind: crate::ir::JobKind::Ssr {
+                client_only: *client_only,
+            },
+            // The whole props object (§3.3: "the component's props (JSON)").
+            inputs: vec!["*".to_string()],
+            outputs: vec![format!("_ssr_{}", ir.id)],
+        }];
+    }
+    ir.needs_worker = !ir.jobs.is_empty();
 }
 
 fn has_state_dependent(ir: &ComponentIR) -> bool {

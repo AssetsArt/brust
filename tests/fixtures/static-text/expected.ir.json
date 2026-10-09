@@ -1,7 +1,7 @@
 {
   "id": "input_ff775111",
   "source": "tests/fixtures/static-text/input.tsx",
-  "tier": "Pending",
+  "tier": "Static",
   "props": [
     {
       "name": "name",
@@ -34,7 +34,7 @@
         },
         {
           "Slot": {
-            "Raw": {
+            "Server": {
               "loc": 98,
               "kind": {
                 "Ident": {

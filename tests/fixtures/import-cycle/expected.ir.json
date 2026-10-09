@@ -1,7 +1,7 @@
 {
   "id": "input_16a44eef",
   "source": "tests/fixtures/import-cycle/input.tsx",
-  "tier": "Pending",
+  "tier": "Static",
   "props": [
     {
       "name": "depth",
@@ -32,7 +32,7 @@
               [
                 "depth",
                 {
-                  "Raw": {
+                  "Server": {
                     "loc": 129,
                     "kind": {
                       "Ident": {
@@ -46,7 +46,12 @@
             ],
             "children": [],
             "link": null,
-            "tier": "Pending"
+            "tier": {
+              "React": {
+                "reason": "<Tree> is part of an import cycle with this component",
+                "client_only": false
+              }
+            }
           }
         }
       ],
@@ -54,12 +59,38 @@
       "ref_name": null
     }
   },
-  "jobs": [],
+  "jobs": [
+    {
+      "kind": {
+        "Ssr": {
+          "client_only": false
+        }
+      },
+      "inputs": [
+        "depth"
+      ],
+      "outputs": [
+        "_ssr_a_09cb79e4"
+      ]
+    }
+  ],
   "child_links": [],
   "client_props": [],
   "client_imports": [],
-  "needs_worker": false,
+  "needs_worker": true,
   "cache": null,
-  "children": [],
+  "children": [
+    {
+      "name": "Branch",
+      "id": "a_09cb79e4",
+      "path": "tests/fixtures/import-cycle/A.tsx",
+      "tier": {
+        "React": {
+          "reason": "<Tree> is part of an import cycle with this component",
+          "client_only": false
+        }
+      }
+    }
+  ],
   "diagnostics": []
 }
