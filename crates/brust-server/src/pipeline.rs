@@ -561,7 +561,7 @@ fn finish(
     // `_props` (the island host's `x-props`): the merged loader context — params,
     // path, loader data — without the server's per-component maps. Built once,
     // shared by every chain component (minijinja `Value`s are `Arc`-backed).
-    let props = minijinja::Value::from_serialize(all_props(ctx));
+    let props = brust_jinja::value_of(all_props(ctx));
     let overlay = |id: &str| {
         let slots = s.manifest.components.get(id).map_or(0, |c| c.use_id_slots);
         let mut out: Vec<(String, minijinja::Value)> = use_ids(&route.id, id, slots)
@@ -571,7 +571,7 @@ fn finish(
         for map in [children, own_all] {
             if let Some(Value::Object(own)) = map.and_then(|c| c.get(id)) {
                 for (k, v) in own {
-                    out.push((k.clone(), minijinja::Value::from_serialize(v)));
+                    out.push((k.clone(), brust_jinja::value_of(v)));
                 }
             }
         }

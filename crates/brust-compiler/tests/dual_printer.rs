@@ -9,7 +9,7 @@ use brust_compiler::parse::{parse_tsx, run_on_compiler_thread};
 
 fn slot(body: &str) -> RawExpr {
     let src = format!(
-        "import {{ useState }} from 'react'\nexport default function C({{ a, b, xs, o, s, u, ea, eo }}: any) {{ const [n, setN] = useState(3); return <p>{{{body}}}</p> }}\n"
+        "import {{ useState }} from 'react'\nexport default function C({{ a, b, xs, o, s, u, ea, eo, neg, z, t, pt, one }}: any) {{ const [n, setN] = useState(3); return <p>{{{body}}}</p> }}\n"
     );
     run_on_compiler_thread(move || {
         let parsed = parse_tsx("C.tsx", src.into_bytes()).unwrap();
@@ -50,8 +50,8 @@ const ROWS: &[(&str, &str, &str)] = &[
         "b < n && n >= 3",
     ),
     ("b + n * 2", "(b + (n * 2))", "b + n * 2"),
-    ("(b + n) % 2", "((b + n) % 2)", "(b + n) % 2"),
-    ("n / 2", "(n / 2)", "n / 2"),
+    ("(b + n) % 2", "((b + n) | js_mod(2))", "(b + n) % 2"),
+    ("n / 2", "(n | js_div(2))", "n / 2"),
     ("'x' + b", r#"("x" ~ (b | js_string))"#, r#""x" + b"#),
     ("a + '!'", r#"((a | js_string) ~ "!")"#, r#"a + "!""#),
     (
@@ -105,11 +105,11 @@ const ROWS: &[(&str, &str, &str)] = &[
     ),
 ];
 
-const SAMPLE_JS: &str = r#"const a = "Hi", b = 2, xs = ["x", "y"], o = { k: 1 }, s = " Pad ", u = undefined, n = 3, ea = [], eo = {};"#;
+const SAMPLE_JS: &str = r#"const a = "Hi", b = 2, xs = ["x", "y"], o = { k: 1 }, s = " Pad ", u = undefined, n = 3, ea = [], eo = {}, neg = -7, z = 0, t = true, pt = { x: 5 }, one = 1;"#;
 
 fn sample_ctx() -> minijinja::Value {
-    minijinja::Value::from_serialize(serde_json::json!({
-        "a": "Hi", "b": 2, "xs": ["x", "y"], "o": { "k": 1 }, "s": " Pad ", "n": 3, "ea": [], "eo": {}
+    brust_jinja::value_of(serde_json::json!({
+        "a": "Hi", "b": 2, "xs": ["x", "y"], "o": { "k": 1 }, "s": " Pad ", "n": 3, "ea": [], "eo": {}, "neg": -7, "z": 0, "t": true, "pt": { "x": 5 }, "one": 1
     }))
 }
 
@@ -177,4 +177,50 @@ fn which_bun() -> Result<String, ()> {
         .filter(|o| o.status.success())
         .map(|_| "bun".to_string())
         .ok_or(())
+}
+
+/// minijinja 3 semantic probe: JS arithmetic whose Jinja evaluation differs.
+const PROBE: &[&str] = &[
+    "neg % 3", "7 % -3", "n % 0", "n % 2.5", "-6 % 3", "7 / 2", "6 / 3", "neg / 2", "one / z",
+    "z / z", "-one / z", "t + 1", "n + t", "n * t", "-pt.x", "z && one", "z || one",
+];
+// `Math.round`/`Math.floor` never reach minijinja: server_expr rejects `Math.*`
+// calls (tests/server_expr.rs pins `Math.max` as `Err("call")`), so the slot
+// falls back to the client.
+
+#[test]
+fn probe_minijinja3_semantics() {
+    let Ok(bun) = which_bun() else { return };
+    let mut script = String::from(SAMPLE_JS);
+    script.push_str("\nconsole.log(JSON.stringify([");
+    let mut jinjas = Vec::new();
+    for src in PROBE {
+        let e = slot(src);
+        script.push_str(&format!("String({}),", e.to_js()));
+        jinjas.push(to_jinja(&ServerExpr(e), &JinjaCtx::plain()));
+    }
+    script.push_str("]))\n");
+    let out = std::process::Command::new(bun)
+        .args(["-e", &script])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let js_values: Vec<String> = serde_json::from_slice(&out.stdout).unwrap();
+    let mut env = minijinja::Environment::new();
+    brust_jinja::register(&mut env);
+    let mut bad = Vec::new();
+    for ((src, jinja), want) in PROBE.iter().zip(&jinjas).zip(&js_values) {
+        let got = env
+            .render_str(&format!("{{{{ ({jinja}) | js_string }}}}"), sample_ctx())
+            .unwrap_or_else(|e| format!("<error {e}>"));
+        eprintln!("{src:<18} jinja={jinja:<40} paints={got:<28} js={want}");
+        if &got != want {
+            bad.push(format!("{src}: jinja paints {got:?}, js {want:?}"));
+        }
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
 }

@@ -43,6 +43,9 @@ impl Renderer {
     /// here (boot), naming the template and line.
     pub fn from_templates(templates: &BTreeMap<String, String>) -> Result<Self, RenderError> {
         let mut env = Environment::new();
+        // One parse at boot: no loader is installed, and auto-reload stays
+        // off so a template never re-parses (the M3 dev server owns reload).
+        env.set_auto_reload(false);
         brust_jinja::register(&mut env);
         for (id, src) in templates {
             env.add_template_owned(id.clone(), src.clone())
@@ -56,7 +59,7 @@ impl Renderer {
             .env
             .get_template(name)
             .map_err(|_| RenderError::Unknown(name.to_string()))?;
-        tmpl.render(minijinja::Value::from_serialize(ctx))
+        tmpl.render(brust_jinja::value_of(ctx))
             .map_err(|e| render_err(name, &e))
     }
 
@@ -71,7 +74,7 @@ impl Renderer {
         ctx: &Value,
         overlay: &dyn Fn(&str) -> Vec<(String, minijinja::Value)>,
     ) -> Result<String, RenderError> {
-        let base = minijinja::Value::from_serialize(ctx);
+        let base = brust_jinja::value_of(ctx);
         let mut outlet: Option<String> = None;
         for id in chain.iter().rev() {
             let mut overlay = overlay(id);
@@ -83,7 +86,7 @@ impl Renderer {
             let scope = if overlay.is_empty() {
                 base.clone()
             } else {
-                minijinja::context! { ..minijinja::Value::from_iter(overlay), ..base.clone() }
+                minijinja::context! { ..minijinja::Value::from_pairs(overlay), ..base.clone() }
             };
             let tmpl = self
                 .env
