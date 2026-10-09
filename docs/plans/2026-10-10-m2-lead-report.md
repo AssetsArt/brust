@@ -4,7 +4,7 @@ Outcome report for the human from the lead (Detoro). Every ruling below is also 
 
 ## Headline
 
-**M2 = the server end to end, shipped on `v2`.** Branch `v2` is at `5e24bf5` (133 commits since the M1 base `720e6d7`; 13 lane merges, PRs #119–#131). `brust build && brust start` serves the trimmed `examples/pokedex` from `dist/manifest.json`:
+**M2 = the server end to end, shipped on `v2`.** Branch `v2` is at `3ed8bc4` (14 lane merges, PRs #119–#132; the M1 base was `720e6d7`). `brust build && brust start` serves the trimmed `examples/pokedex` from `dist/manifest.json`:
 
 | Route | Leaf tier | Chain | Cache |
 |---|---|---|---|
@@ -30,7 +30,7 @@ Measured causes of the remaining B/C gap (ledger F68 as re-filed on the m2p lane
 
 **M2 closes with that documented gap by the lead's ruling.** Ledger F68 (perf lane): "m2p-render-perf → re-filed for M3 with this gap by lead ruling fa75bfe8 (3); M2 closes with the documented gap in the lead report". The ruling's step 2 (attribute CPU per stage before any further change) and step 3 (re-file with a measured cause if the bar is still not met) are cited by the implementer's task notes and commit `e8765f2`; the ruling text itself is not an event on the task record (it was a tell) (not verified beyond those citations). This supersedes the earlier ruling on challenge 7ad720e5 ("M2 is not complete until F68 closes with the bar met"), which the m2e exit report still prints verbatim; the generated report's bench paragraph on PR #132 still reads "M2 is not complete: the bar is not met", because `scripts/m2-exit` prints that line whenever the bar is not met — the ledger row is the authoritative state.
 
-## What shipped (branch `v2`, HEAD `5e24bf5`; PR #132 open)
+## What shipped (branch `v2`, HEAD `3ed8bc4`)
 
 | Lane | PR | Implementer | Review (reviewer, rounds) | Merge | What |
 |---|---|---|---|---|---|
@@ -47,7 +47,7 @@ Measured causes of the remaining B/C gap (ledger F68 as re-filed on the m2p lane
 | m2e-pokedex-exit | #129 | knock2 | Mellow, 2 | `5adf780` | Trimmed pokedex (offline snapshot), server e2e + Chromium, bench vs 0.1.x, generated exit report, `release.yml` dry run, `release-bump.ts` |
 | m2a4-guarded-slots | #130 | Tiësto | Afrojack, 1 | `5a14e2f` | Precompute returns every slot (`null` under a false guard); the server treats a missing slot as undefined with one warning (F67) |
 | m2c3-child-chunks | #131 | Dew | Afrojack, 1 | `ba10a0f` | Every chunk-bearing native child gets a static `children[]` entry on the chain component, so its chunk is linked (F66) |
-| m2p-render-perf | #132 (open) | Dew | Mellow dispatched @`36d856f`, no verdict yet; CI 5/5 green | — | Cached rendered body + lazy gzip on L1 HIT, gzip level 1 above 16 KiB, `_props` view, outlet without copies, tokio I/O threads = cores, `BRUST_WORKER_THREADS`, renderSlots `min(cores,16)`, byte-scan `e` filter, one-pass `json_attr`, boot-built job plan templates, sharded job-cache read front; criterion micro-bench; F68 re-filed |
+| m2p-render-perf | #132 | Dew | Mellow, 1 (her bench: A +874 %, B −31.6 %, C −33.1 %; output byte-identical) | `3ed8bc4` | Cached rendered body + lazy gzip on L1 HIT, gzip level 1 above 16 KiB, `_props` view, outlet without copies, tokio I/O threads = cores, `BRUST_WORKER_THREADS`, renderSlots `min(cores,16)`, byte-scan `e` filter, one-pass `json_attr`, boot-built job plan templates, sharded job-cache read front; criterion micro-bench; F68 re-filed |
 
 Implementers: Dew (Implementer, Complex), knock2 (Standard), Tiësto (Routine). Reviewers: Mellow (Complex), Afrojack (Standard). Gates: Illenium. Coordinator: Aitthi.
 
@@ -127,12 +127,12 @@ A blocker is "silently wrong output with no diagnostic"; negative controls are R
 | F51 | DONE (m2a) | `rows.length` seeded as the count |
 | F52 | open, owner m2d / F32-b | `x-if` on a host element skipped by the parent's walk |
 | F53 | open, owner M2 (fail-closed) | nested instances (grandchild in a row) are `nested-instance` Errors; n-dimensional arrays |
-| F54 | owner m2c — verified at board close | mixed-text `<title>`/`<textarea>` emits `<span x-text>` |
+| F54 | M3 (rolled over) | mixed-text `<title>`/`<textarea>` emits `<span x-text>` |
 | F55 | open, owner M2 | `<Outlet>` with attrs/children dropped silently; loc 0 |
 | F56 | open, owner M2 | instance ordinal `k` counted in two places |
 | F57 | open, owner M2 | effect-deps capture misses; F37 message wrong for an imported memo |
 | F58 | open, owner M2 | state guard folded into a job; static inner list in a dynamic row; user `hidden` |
-| F59 | owner m2c — verified at board close | IR deviations noted for m2b/m2c |
+| F59 | DONE (m2c) | IR deviations noted for m2b/m2c |
 | F60 | M3 | computed react-child props (`n={a + 1}`) → build error `ssr-prop-not-a-path` |
 | F61 | M3 | minijinja auto-reload off; dev server hot template swap |
 | F62 | M3 | JS `%`/`/` through brust filters (minijinja 3 floors `%`) |
@@ -143,7 +143,7 @@ A blocker is "silently wrong output with no diagnostic"; negative controls are R
 | F67 | DONE (m2a4, PR #130) | guarded slots return `null`; server tolerates a missing slot |
 | F68 | re-filed for M3 (PR #132, ruling fa75bfe8) | B −22.6 % / C −34.4 % with per-stage causes above |
 
-**Lead decision (2026-10-10):** rows F43, F44, F46, F47, F48, F52, F53, F55, F56, F57, F58 roll over to M3. None of them is on the M2 exit path (test-infrastructure fidelity, diagnostics polish, fail-closed edge cases); each keeps its row and gets owner `M3` in the ledger in the commit that closes the M2 board. F54 and F59 are verified against the merged tree in that same commit (both were addressed by m2c's bootstrap/manifest work; the ledger cell is updated to what the code shows).
+**Lead decision (2026-10-10):** rows F43, F44, F46, F47, F48, F52, F53, F55, F56, F57, F58 roll over to M3. None of them is on the M2 exit path (test-infrastructure fidelity, diagnostics polish, fail-closed edge cases); each keeps its row and gets owner `M3` in the ledger in the commit that closes the M2 board. Verified at board close: F59 is DONE (the runtime bundle entry mounts `document.documentElement`, `packages/brust/src/build/bundle.ts:196`); F54 (mixed-text `<title>`) is NOT fixed and rolls to M3 with the others.
 
 **What M3 inherits (named):** F63 per-instance `useId` prefix; F53 nested instances (n-dimensional instance arrays); Chromium coverage beyond the single F45 test; F68 B/C perf with the per-stage causes (minijinja render on tokio threads, loader round trip, L1 read contention) and the protocol-level lever (batch the loader and jobs calls — an M3 spec item); F65 drop the bare `brust` specifier; F60 computed child props; F61 dev-server template reload; F62 arithmetic filters; the open M2-owned rows above.
 
@@ -152,7 +152,7 @@ A blocker is "silently wrong output with no diagnostic"; negative controls are R
 1. **Create the GitHub environment `npm-publish`** on `AssetsArt/brust` with required reviewers, and **move `BRUST_NPM_TOKEN` into it as an environment secret** (remove the repo-level copy). `release.yml` already references `environment: npm-publish` (line 77) and reads `secrets.BRUST_NPM_TOKEN` (line 117); until the environment exists with protection rules, the publish job cannot run — intended. Mellow's warning: referencing a non-existent environment makes GitHub auto-create it with NO protection rules, and a repo-level token stays readable from it — so create it before the first `v*` tag.
 2. **Decide whether to tag/publish a first `@brust/*` prerelease.** Publishing is the human's call (spec §0, map wave-3 decision, memory `npm-org-brust`). The dry run succeeded (run 37937111429: `@brust/core`, `@brust/runtime-dom`, six `@brust/native-<plat>`); `scripts/release-bump.ts --release` refuses off `v2` and only tags; the publish job guards tag == `v<version>` and HEAD on `origin/v2`.
 3. **Review the bench gap decision**: M2 closes with B −22.6 % and C −34.4 % documented under F68 (ruling fa75bfe8). The alternative — holding M2 open for a string-keyed render map, a direct loader-response parse and loader/jobs batching — needs an M3 protocol spec, which is why it was re-filed rather than attempted in-lane.
-4. PR #132 (m2p-render-perf) is in Mellow's review with CI 5/5 green; its merge closes the M2 board.
+4. (done) PR #132 merged at `3ed8bc4`; the M2 board is closed.
 
 ## Where the records live
 
