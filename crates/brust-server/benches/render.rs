@@ -222,7 +222,35 @@ fn bench_route(
     g.finish();
 }
 
+/// The loader response the worker writes for route B (per-stage attribution, m2p ruling 7d164bb6):
+/// `{"ok":true,"data":<B ctx minus the server's params/path/__own/__children>}` (~2.4 KB, the
+/// size the server reads per request). Times the SAB-read parse `call_worker` does — into the
+/// `#[serde(untagged)]` `LoaderResponse` — against a plain `serde_json::Value` parse of the same
+/// bytes (the untagged enum buffers into serde's `Content` and re-walks it per variant).
+fn bench_loader_parse(c: &mut Criterion) {
+    let mut data = ctx("pokemon-pikachu.json");
+    if let Value::Object(o) = &mut data {
+        for k in ["params", "path", "__own", "__children"] {
+            o.remove(k);
+        }
+    }
+    let bytes = serde_json::to_vec(&serde_json::json!({ "ok": true, "data": data })).unwrap();
+    eprintln!("[loader_parse] B loader response {} B", bytes.len());
+    let mut g = c.benchmark_group("loader_parse");
+    g.bench_function("untagged_LoaderResponse", |b| {
+        b.iter(|| {
+            serde_json::from_slice::<brust_server::protocol::LoaderResponse>(black_box(&bytes))
+                .unwrap()
+        })
+    });
+    g.bench_function("plain_Value", |b| {
+        b.iter(|| serde_json::from_slice::<Value>(black_box(&bytes)).unwrap())
+    });
+    g.finish();
+}
+
 fn benches(c: &mut Criterion) {
+    bench_loader_parse(c);
     let (m, r) = load();
     bench_route(
         c,
