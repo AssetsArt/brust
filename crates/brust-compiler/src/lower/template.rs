@@ -85,6 +85,9 @@ pub struct Printer<'a, 'c> {
     /// SSR outputs used so far, by child id.
     ssr: HashMap<String, u32>,
     native: bool,
+    /// Printing the zero-row `x-for` template: it is cloned and re-bound by
+    /// the runtime, so no value is evaluated (there is no item).
+    blank: bool,
 }
 
 impl<'a, 'c> Printer<'a, 'c> {
@@ -111,6 +114,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             inline_host: None,
             instances: HashMap::new(),
             ssr: HashMap::new(),
+            blank: false,
         })
     }
 
@@ -208,6 +212,9 @@ impl<'a, 'c> Printer<'a, 'c> {
     }
 
     fn jinja(&self, e: &RawExpr) -> String {
+        if self.blank {
+            return UNDEFINED.into();
+        }
         let names = self.names();
         to_jinja(
             &ServerExpr(e.clone()),
@@ -221,6 +228,9 @@ impl<'a, 'c> Printer<'a, 'c> {
 
     /// A placed value as a jinja expression.
     fn value(&self, e: &Expr) -> String {
+        if self.blank {
+            return UNDEFINED.into();
+        }
         match e {
             Expr::Server(ServerExpr(r)) => self.jinja(r),
             Expr::Precomputed { slot, per_item, .. } => self.slot_ref(slot, per_item.is_some()),
@@ -764,10 +774,21 @@ impl<'a, 'c> Printer<'a, 'c> {
         if directive_row && let (Some(sr), Expr::Raw(kr)) = (&src_raw, sk) {
             let l = self.next("_l");
             let k = self.next("_k");
+            // An inner list reading an outer row's binding is a function of it.
+            let deps = self.f.deps(sr, &self.scope());
+            let outer: Vec<String> = self
+                .scope()
+                .into_iter()
+                .filter(|b| deps.loop_bindings.contains(b))
+                .collect();
             self.members.push(Member {
                 name: l.clone(),
-                def: MemberDef::List { raw: sr.clone() },
+                def: MemberDef::List {
+                    raw: sr.clone(),
+                    bindings: outer.clone(),
+                },
             });
+            let l = directive(&l, &outer);
             self.members.push(Member {
                 name: k.clone(),
                 def: MemberDef::Key {
@@ -794,7 +815,13 @@ impl<'a, 'c> Printer<'a, 'c> {
         let (row, empty) = if x_for.is_empty() {
             (self.row(body, sb, &x_for, false), String::new())
         } else {
-            let (row, hidden) = self.twice(|p, hidden| p.row(body, sb, &x_for, hidden));
+            let (row, hidden) = self.twice(|p, hidden| {
+                let blank = p.blank;
+                p.blank |= hidden;
+                let r = p.row(body, sb, &x_for, hidden);
+                p.blank = blank;
+                r
+            });
             (row, format!("{{% else %}}<!--x-for-->{hidden}"))
         };
         self.frames.pop();

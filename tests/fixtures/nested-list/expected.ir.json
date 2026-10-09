@@ -1,0 +1,286 @@
+{
+  "id": "input_a93faba9",
+  "source": "tests/fixtures/nested-list/input.tsx",
+  "tier": "Native",
+  "props": [
+    {
+      "name": "rows",
+      "local": "rows",
+      "ts_type": null,
+      "default": null
+    },
+    {
+      "name": "unit",
+      "local": "unit",
+      "ts_type": null,
+      "default": null
+    }
+  ],
+  "state": [
+    {
+      "name": "scale",
+      "setter": "setScale",
+      "init": {
+        "Server": {
+          "loc": 223,
+          "kind": {
+            "Lit": {
+              "Num": 2.0
+            }
+          }
+        }
+      }
+    }
+  ],
+  "derived": [],
+  "effects": [],
+  "handlers": [
+    {
+      "name": "_h1",
+      "body": {
+        "loc": 257,
+        "kind": {
+          "Arrow": {
+            "params": [],
+            "body": {
+              "Expr": {
+                "loc": 263,
+                "kind": {
+                  "Call": {
+                    "callee": {
+                      "loc": 263,
+                      "kind": {
+                        "Ident": {
+                          "name": "setScale",
+                          "kind": "Setter"
+                        }
+                      }
+                    },
+                    "args": [
+                      {
+                        "loc": 272,
+                        "kind": {
+                          "Binary": {
+                            "op": "Add",
+                            "left": {
+                              "loc": 272,
+                              "kind": {
+                                "Ident": {
+                                  "name": "scale",
+                                  "kind": "State"
+                                }
+                              }
+                            },
+                            "right": {
+                              "loc": 280,
+                              "kind": {
+                                "Lit": {
+                                  "Num": 1.0
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "captures": [
+              [
+                "setScale",
+                "Setter"
+              ],
+              [
+                "scale",
+                "State"
+              ]
+            ]
+          }
+        }
+      },
+      "item_scoped": []
+    }
+  ],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 241,
+      "tag": "table",
+      "attrs": [
+        {
+          "Event": {
+            "event": "click",
+            "handler": "_h1"
+          }
+        }
+      ],
+      "children": [
+        {
+          "For": {
+            "source": {
+              "Server": {
+                "loc": 292,
+                "kind": {
+                  "Ident": {
+                    "name": "rows",
+                    "kind": "Prop"
+                  }
+                }
+              }
+            },
+            "item": "row",
+            "index": "ri",
+            "key": {
+              "Server": {
+                "loc": 333,
+                "kind": {
+                  "Member": {
+                    "target": {
+                      "loc": 333,
+                      "kind": {
+                        "Ident": {
+                          "name": "row",
+                          "kind": "LoopBinding"
+                        }
+                      }
+                    },
+                    "name": "id",
+                    "optional": false
+                  }
+                }
+              }
+            },
+            "body": [
+              {
+                "Element": {
+                  "loc": 324,
+                  "tag": "tr",
+                  "attrs": [],
+                  "children": [
+                    {
+                      "For": {
+                        "source": {
+                          "Server": {
+                            "loc": 353,
+                            "kind": {
+                              "Member": {
+                                "target": {
+                                  "loc": 353,
+                                  "kind": {
+                                    "Ident": {
+                                      "name": "row",
+                                      "kind": "LoopBinding"
+                                    }
+                                  }
+                                },
+                                "name": "cells",
+                                "optional": false
+                              }
+                            }
+                          }
+                        },
+                        "item": "c",
+                        "index": null,
+                        "key": {
+                          "Server": {
+                            "loc": 397,
+                            "kind": {
+                              "Ident": {
+                                "name": "c",
+                                "kind": "LoopBinding"
+                              }
+                            }
+                          }
+                        },
+                        "body": [
+                          {
+                            "Element": {
+                              "loc": 388,
+                              "tag": "td",
+                              "attrs": [],
+                              "children": [
+                                {
+                                  "Slot": {
+                                    "Precomputed": {
+                                      "slot": "_s1",
+                                      "js": "fmt(c * scale, unit)",
+                                      "client_js": "fmt(c * scale(), props().unit)",
+                                      "inputs": [
+                                        "rows",
+                                        "unit"
+                                      ],
+                                      "state_dependent": true,
+                                      "per_item": "c"
+                                    }
+                                  }
+                                },
+                                {
+                                  "Text": " #"
+                                },
+                                {
+                                  "Slot": {
+                                    "Server": {
+                                      "loc": 425,
+                                      "kind": {
+                                        "Ident": {
+                                          "name": "ri",
+                                          "kind": "LoopBinding"
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              ],
+                              "host": false,
+                              "ref_name": null
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ],
+                  "host": false,
+                  "ref_name": null
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [
+    {
+      "kind": "Precompute",
+      "inputs": [
+        "rows",
+        "unit"
+      ],
+      "outputs": [
+        "_s1"
+      ],
+      "per_item": null
+    }
+  ],
+  "child_links": [],
+  "client_props": [
+    "rows",
+    "unit"
+  ],
+  "client_imports": [
+    [
+      "./money",
+      "fmt"
+    ]
+  ],
+  "client_module_locals": [],
+  "needs_worker": true,
+  "cache": null,
+  "children": [],
+  "diagnostics": []
+}

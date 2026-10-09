@@ -47,8 +47,9 @@ pub enum MemberDef {
         bindings: Vec<String>,
         negate: bool,
     },
-    /// `_lN`: a list source.
-    List { raw: RawExpr },
+    /// `_lN`: a list source; with `bindings` a function of the outer loop
+    /// bindings it reads (a nested list).
+    List { raw: RawExpr, bindings: Vec<String> },
     /// `_kN`: the key function of a list.
     Key { raw: RawExpr, item: String },
     /// `_pN`: the props object of a linked child.

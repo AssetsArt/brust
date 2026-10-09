@@ -24,9 +24,9 @@ pub fn chunk(ir: &ComponentIR, members: &[Member], runtime_import: &str) -> (Str
     roots.extend(ir.effects.iter().map(|e| &e.body));
     for m in members {
         match &m.def {
-            MemberDef::Value { raw, .. } | MemberDef::List { raw } | MemberDef::Key { raw, .. } => {
-                roots.push(raw)
-            }
+            MemberDef::Value { raw, .. }
+            | MemberDef::List { raw, .. }
+            | MemberDef::Key { raw, .. } => roots.push(raw),
             MemberDef::Link { props, .. } => roots.extend(props.iter().map(|(_, r)| r)),
         }
     }
@@ -130,10 +130,16 @@ pub fn chunk(ir: &ComponentIR, members: &[Member], runtime_import: &str) -> (Str
                     format!("const {} = ({}) => {js}", m.name, bindings.join(", "))
                 }
             }
-            MemberDef::List { raw } => {
+            MemberDef::List { raw, bindings } if bindings.is_empty() => {
                 uses_computed = true;
                 format!("const {} = computed(() => {})", m.name, client_js(raw, &f))
             }
+            MemberDef::List { raw, bindings } => format!(
+                "const {} = ({}) => {}",
+                m.name,
+                bindings.join(", "),
+                client_js(raw, &f)
+            ),
             MemberDef::Key { raw, item } => {
                 format!("const {} = ({item}) => {}", m.name, client_js(raw, &f))
             }

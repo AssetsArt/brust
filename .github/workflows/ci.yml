@@ -24,10 +24,12 @@ jobs:
       # Invariant: the vendored path crate shadows the git one (only root lines are checked; bun_js_parser legitimately depends on it).
       - run: cargo tree -p brust-compiler -i bun_react_compiler | tee tree.txt && grep -q "^bun_react_compiler .*vendor/bun_react_compiler" tree.txt && ! grep -q "^bun_react_compiler .*github.com" tree.txt
       # --no-deps: the vendored Bun crate is not held to our lints (261 findings otherwise).
-      - run: cargo clippy -p brust-compiler -p brust-compiler-cli --no-deps -- -D warnings
+      - run: cargo clippy -p brust-compiler -p brust-compiler-cli -p brust-jinja --no-deps -- -D warnings
+      # The dual-evaluation harness (tests/dual_eval.rs) runs generated jobs and
+      # chunks under bun against packages/runtime-dom and happy-dom.
+      - run: bun install --frozen-lockfile
       # --exclude: the vendored crate's own lib-test cannot link (its native stubs live in brust-compiler).
       - run: cargo test --workspace --exclude bun_react_compiler
-      - run: bun install --frozen-lockfile || true
       - run: bun build --no-bundle scripts/bun-codegen.ts > /dev/null
   runtime-dom:
     runs-on: ubuntu-latest
