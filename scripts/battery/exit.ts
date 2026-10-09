@@ -12,12 +12,11 @@ export const DECLARED_GAPS: { id: string; what: string; owner: string }[] = [
   { id: 'F35', what: 'dynamic `<script>` / `<style>` children are HTML-escaped inside raw text (safe, but the value changes silently)', owner: 'M2' },
 ]
 
-/** Gaps the battery itself found (ledger ids F37-F40). */
+/** Gaps the battery itself found (ledger ids F37, F39, F40; F38 was fixed by `m1-hotfix-dynamic-import`). */
 export const BATTERY_GAPS: { id: string; what: string }[] = [
   { id: 'F37', what: '`memo(Inner)` default exports are not unwrapped: tier `react` (`default-export-shape`) where the plan expected `native`' },
-  { id: 'F39', what: 'a `useId` value read in render falls back (`use-id-in-render`); the spec §4.3 row `useId` needs server-generated ids from the M2 server' },
-  { id: 'F38', what: 'a dynamic `import()` in a component panics the Bun printer (`import_records` assertion) instead of falling back, so `lazy(() => import(…))` is a compile crash' },
-  { id: 'F40', what: '`Array.from(…, fn → JSX)` is not a recognised list form (only `.map` is): tier `react` (`jsx-expression`)' },
+  { id: 'F39', what: 'a `useId` value read in render falls back (`use-id-in-render`); the spec §4.3 row `useId` needs server-generated ids from the M2 server (spec §13 (a); `docs/plans/2026-10-08-m1b2-placement-tier.md:206`)' },
+  { id: 'F40', what: 'the `Array.from(xs, fn)` callback form is not recognised (only `Array.from({ length: N }).map(…)` is, spec §6.2): tier `react` (`jsx-expression`)' },
 ]
 
 export const BROWSER_CASES = ['theme-toggle', 'product-card', 'parent-counter', 'keyed-list', 'controlled-input', 'nested-list', 'truthiness']
@@ -34,7 +33,8 @@ export function renderExitReport(results: Result[]): string {
     const rs = results.filter((r) => r.row.category === cat)
     L.push(`- ${cat} ${title}: ${rs.length} rows (${rs.filter((r) => r.observed === 'static' || r.observed === 'native').length} compile native/static, ${rs.filter((r) => r.observed === 'react').length} react, ${rs.filter((r) => r.observed === 'error' || r.observed === 'compile-error').length} error)`)
   }
-  L.push('', 'Every `react` row carries at least one fallback diagnostic and no build error; every `error` row carries an `Error` diagnostic. See `docs/react-coverage.md` for the rows.', '')
+  const gaps = results.filter((r) => r.row.knownGap).map((r) => r.row.id).join(', ')
+  L.push('', `§12 reading: every row this design says is native/static compiles so, **except the known-gap rows** (${gaps}; ledger F32, F37, F39); every other non-native row is \`react\` with a fallback diagnostic and no build error, **except the deliberate rows** that exercise errors (\`error\`: Error diagnostics by design) and the unparseable snippet (\`compile error\`, which never aborts the battery). F38 (a dynamic \`import()\` crashed the printer) is fixed. \`Error\` rows carry an \`Error\` diagnostic. See \`docs/react-coverage.md\` for the rows.`, '')
   L.push('## Dual evaluation', '', '`cargo test -p brust-compiler --test dual_eval`: for every fixture with sample props, the server paint equals the client initial values.', '')
   L.push('## Browser harness', '', 'The example components of the design doc, built by `brustc --emit all`, painted by `brustc --render`, mounted with `packages/runtime-dom` (`bun run browser-test`):', '')
   for (const c of BROWSER_CASES) L.push(`- ${c}`)

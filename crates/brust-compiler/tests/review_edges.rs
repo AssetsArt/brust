@@ -374,3 +374,32 @@ fn spread_props_make_the_component_react() {
         assert!(matches!(ir.tier, Tier::React { .. }), "{:?}", ir.tier);
     }
 }
+
+/// F38: a dynamic `import()` is a Fallback (tier react), never a printer panic —
+/// at module level (`lazy(() => import(…))`) and inside a handler.
+#[test]
+fn dynamic_import_falls_back_instead_of_panicking() {
+    let ir = analyze(
+        &std::fs::read_to_string(format!(
+            "{}/../../tests/fixtures/lazy-import/input.tsx",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap(),
+    );
+    assert!(
+        rules(&ir).contains(&(DiagClass::Fallback, "dynamic-import".into())),
+        "{:?}",
+        ir.diagnostics
+    );
+    assert!(matches!(ir.tier, Tier::React { .. }), "{:?}", ir.tier);
+
+    let ir = analyze(
+        "import { useState } from 'react'\nexport default function C() {\n  const [m, setM] = useState(null)\n  return <button onClick={() => import('./x').then((v) => setM(v.default))}>{String(m)}</button>\n}",
+    );
+    assert!(
+        rules(&ir).contains(&(DiagClass::Fallback, "dynamic-import".into())),
+        "{:?}",
+        ir.diagnostics
+    );
+    assert!(matches!(ir.tier, Tier::React { .. }), "{:?}", ir.tier);
+}
