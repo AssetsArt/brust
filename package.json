@@ -4,6 +4,7 @@
   "type": "module",
   "workspaces": ["packages/*"],
   "scripts": {
-    "bun-codegen": "bun scripts/bun-codegen.ts"
+    "bun-codegen": "bun scripts/bun-codegen.ts",
+    "battery": "bun scripts/battery/run.ts"
   }
 }
