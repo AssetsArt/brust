@@ -1,14 +1,17 @@
 //! brustc — the v2 compiler CLI:
-//! `--emit parse|hir|ir|diag|template|server|client|all [--out <dir>] [--runtime-import <spec>]`.
+//! `--emit parse|hir|ir|diag|template|server|client|all [--out <dir>] [--runtime-import <spec>]`
+//! or the debug command `--render <props.json> [--slots <slots.json>]`.
 use std::process::ExitCode;
 
-const USAGE: &str = "usage: brustc <file.tsx> --emit parse|hir|ir|diag|template|server|client|all [--out <dir>] [--runtime-import <spec>]";
+const USAGE: &str = "usage: brustc <file.tsx> --emit parse|hir|ir|diag|template|server|client|all [--out <dir>] [--runtime-import <spec>]\n       brustc <file.tsx> --render <props.json> [--slots <slots.json>]   (DEBUG: jinja + props + slots -> html; not for production paths)";
 
 struct Args {
     file: String,
     emit: String,
     out: Option<String>,
     runtime_import: String,
+    render: Option<String>,
+    slots: Option<String>,
 }
 
 fn main() -> ExitCode {
@@ -19,7 +22,7 @@ fn main() -> ExitCode {
     };
     let (file, emit) = (args.file.clone(), args.emit.clone());
     if ![
-        "parse", "hir", "ir", "diag", "template", "server", "client", "all",
+        "parse", "hir", "ir", "diag", "template", "server", "client", "all", "render",
     ]
     .contains(&emit.as_str())
     {
@@ -33,10 +36,69 @@ fn main() -> ExitCode {
             return ExitCode::from(1);
         }
     };
+    if emit == "render" {
+        return brust_compiler::parse::run_on_compiler_thread(|| render_cmd(&args, source));
+    }
     if ["template", "server", "client", "all"].contains(&emit.as_str()) {
         return brust_compiler::parse::run_on_compiler_thread(|| emit_lowered(&args, source));
     }
     brust_compiler::parse::run_on_compiler_thread(|| run(&file, &emit, source))
+}
+
+/// `--render <props.json> [--slots <slots.json>]`: the root template rendered
+/// with the sample props and the precompute job output; prints the HTML.
+fn render_cmd(args: &Args, source: Vec<u8>) -> ExitCode {
+    use brust_compiler::analyze::component::AnalyzeOptions;
+    use brust_compiler::ir::{JobKind, render_diagnostics};
+    let read_json = |path: &str| -> Result<serde_json::Value, String> {
+        let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {path}: {e}"))?;
+        serde_json::from_str(&text).map_err(|e| format!("{path}: {e}"))
+    };
+    let props = match read_json(args.render.as_deref().unwrap_or_default()) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::from(1);
+        }
+    };
+    let slots = match args.slots.as_deref().map(read_json) {
+        Some(Ok(v)) => v,
+        Some(Err(e)) => {
+            eprintln!("error: {e}");
+            return ExitCode::from(1);
+        }
+        None => serde_json::json!({}),
+    };
+    let tree = match brust_compiler::pipeline::compile_tree(
+        &args.file,
+        Some(source),
+        &AnalyzeOptions::default(),
+        &args.runtime_import,
+    ) {
+        Ok(t) => t,
+        Err(d) => {
+            eprint!("{}", render_diagnostics(&[d], &args.file));
+            return ExitCode::from(1);
+        }
+    };
+    let root = &tree[0];
+    let ssr: Vec<String> = root
+        .ir
+        .jobs
+        .iter()
+        .filter(|j| matches!(j.kind, JobKind::Ssr { .. }))
+        .flat_map(|j| j.outputs.clone())
+        .collect();
+    match brust_compiler::lower::render_debug::render(&root.artifacts.jinja, &props, &slots, &ssr) {
+        Ok(html) => {
+            print!("{html}");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("error: template does not render: {e}");
+            ExitCode::from(1)
+        }
+    }
 }
 
 /// `template|server|client` print one artifact of the input component;
@@ -156,6 +218,8 @@ fn parse_args(args: &[String]) -> Option<Args> {
     let mut emit = None;
     let mut out = None;
     let mut runtime_import = brust_compiler::lower::DEFAULT_RUNTIME_IMPORT.to_string();
+    let mut render = None;
+    let mut slots = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -165,6 +229,14 @@ fn parse_args(args: &[String]) -> Option<Args> {
             }
             "--out" => {
                 out = Some(args.get(i + 1)?.clone());
+                i += 2;
+            }
+            "--render" => {
+                render = Some(args.get(i + 1)?.clone());
+                i += 2;
+            }
+            "--slots" => {
+                slots = Some(args.get(i + 1)?.clone());
                 i += 2;
             }
             "--runtime-import" => {
@@ -180,10 +252,20 @@ fn parse_args(args: &[String]) -> Option<Args> {
             }
         }
     }
+    if render.is_some() {
+        if emit.is_some() {
+            return None;
+        }
+        emit = Some("render".to_string());
+    } else if slots.is_some() {
+        return None;
+    }
     Some(Args {
         file: file?,
         emit: emit?,
         out,
         runtime_import,
+        render,
+        slots,
     })
 }

@@ -23,10 +23,10 @@ libc.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 brust-jinja.workspace = true
+minijinja.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-minijinja.workspace = true
 brust-jinja.workspace = true
 
 [lints]
