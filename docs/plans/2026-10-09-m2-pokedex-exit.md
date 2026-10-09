@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-owner: 22499151-e133-4508-b358-d7fa4d2851c3 (Detoro) · authority: in-loop · base: `v2` after `m2c-napi-package` (PR in review, lane `/Users/detoro/code/brust-lane-m2c-napi-package` @2022434) and `m2x-minijinja-3` merge
+owner: 22499151-e133-4508-b358-d7fa4d2851c3 (Detoro) · authority: in-loop · base: `v2` @b69f01b (every other M2 lane merged: m2c, m2x, m2c2 rename, m2b2)
 
 **Goal:** `examples/pokedex` is the M2 dogfood (spec S13): five routes served by `brust build && brust start` from a committed offline dataset, every component an ordinary React function with hooks; `tests/server/` proves spec §10 from the outside (fetch) plus ONE real-Chromium hydration test; `bench/` measures the three probes on v2 and on the 0.1.x pokedex and writes the comparison; `release.yml` builds the six-target addon and dry-runs the npm publish; `docs/plans/m2-exit-report.md` is generated from pinned sets and diffed in CI.
 
