@@ -1,0 +1,27 @@
+{ "version": 1,
+  "routes": [
+    { "id": "r1", "pattern": "/",               "chain": ["appLayout_a1", "homePage_b2"],     "loaders": [],     "cache": null, "catch_all": false },
+    { "id": "r2", "pattern": "/pokemon/{name}", "chain": ["appLayout_a1", "detailPage_c3"],   "loaders": ["r2"], "cache": { "ttl_seconds": 60, "prefix": null, "bypass": null, "tags": ["pokemon"] }, "catch_all": false },
+    { "id": "r3", "pattern": "/tenant",         "chain": ["appLayout_a1", "tenantPage_e5"],   "loaders": ["r3"], "cache": { "ttl_seconds": 60, "prefix": "header(x-tenant)", "bypass": "cookie(session)", "tags": [] }, "catch_all": false },
+    { "id": "r4", "pattern": "*",               "chain": ["appLayout_a1", "notFoundPage_f6"], "loaders": [],     "cache": null, "catch_all": true },
+    { "id": "r5", "pattern": "/team",           "chain": ["appLayout_a1", "teamPage_g7"],     "loaders": ["r5"], "cache": null, "catch_all": false },
+    { "id": "r6", "pattern": "/ids",            "chain": ["appLayout_a1", "idsPage_i9"],      "loaders": [],     "cache": null, "catch_all": false }
+  ],
+  "components": {
+    "appLayout_a1":    { "tier": "static", "template": "jinja/appLayout_a1.jinja", "jobs": [], "children": [], "client": null, "needs_worker": false, "use_id_slots": 0 },
+    "homePage_b2":     { "tier": "static", "template": "jinja/homePage_b2.jinja", "jobs": [], "children": [], "client": null, "needs_worker": false, "use_id_slots": 0 },
+    "detailPage_c3":   { "tier": "native", "template": "jinja/detailPage_c3.jinja",
+                         "jobs": [ { "id": "j0", "kind": "precompute", "inputs": ["pokemon.stats"], "per_instance": null, "cache": { "key": null, "tags": [], "ttl_seconds": null } } ],
+                         "children": [ { "id": "moveCard_d4", "instances": "per-row:pokemon.moves", "props": { "move": "pokemon.moves[idx]" } } ],
+                         "client": "client/detailPage_c3-1a2b3c.js", "needs_worker": true, "use_id_slots": 0 },
+    "moveCard_d4":     { "tier": "static", "template": "jinja/moveCard_d4.jinja",
+                         "jobs": [ { "id": "j0", "kind": "precompute", "inputs": ["move.name"], "per_instance": null, "cache": { "key": null, "tags": ["moves"], "ttl_seconds": 30 } } ],
+                         "children": [], "client": null, "needs_worker": true, "use_id_slots": 0 },
+    "tenantPage_e5":   { "tier": "static", "template": "jinja/tenantPage_e5.jinja", "jobs": [], "children": [], "client": null, "needs_worker": false, "use_id_slots": 0 },
+    "notFoundPage_f6": { "tier": "static", "template": "jinja/notFoundPage_f6.jinja", "jobs": [], "children": [], "client": null, "needs_worker": false, "use_id_slots": 0 },
+    "teamPage_g7":     { "tier": "native", "template": "jinja/teamPage_g7.jinja", "jobs": [], "children": [ { "id": "teamBuilder_h8", "instances": "static", "props": { "team": "team" } } ], "client": "client/teamPage_g7-4d5e6f.js", "needs_worker": true, "use_id_slots": 0 },
+    "teamBuilder_h8":  { "tier": "react",  "template": "jinja/teamBuilder_h8.jinja", "jobs": [ { "id": "ssr", "kind": "ssr", "inputs": ["team"], "per_instance": null, "cache": { "key": null, "tags": [], "ttl_seconds": null } } ], "children": [], "client": "client/react-teamBuilder_h8.js", "needs_worker": true, "use_id_slots": 0 },
+    "idsPage_i9":      { "tier": "native", "template": "jinja/idsPage_i9.jinja", "jobs": [], "children": [], "client": "client/idsPage_i9-7a8b9c.js", "needs_worker": false, "use_id_slots": 2 }
+  },
+  "assets": { "runtime": "client/runtime-8b1c.js", "react": "client/react-19.2.0.js" },
+  "jobs_module": "jobs.js" }

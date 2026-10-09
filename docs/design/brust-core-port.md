@@ -10,5 +10,17 @@ Source: github.com/AssetsArt/brust `main` @ d04718f, `crates/brust-core/src/`. C
 | http/compress.rs | http/compress.rs | carry verbatim | 5 → 5 |
 | cache/key_expr.rs | cache/key_expr.rs | carry verbatim | 22 → 22 |
 | config.rs CorsConfig | config.rs:27-78 | carry verbatim | 0 |
-| (filled by Tasks 2–8: routes, l1, job_cache, pool, dispatch, render, config, server/mod) |
+| routing/routes.rs | routing/routes.rs:1-631 | adapt: RouteConfig from manifest (`RouteTable::from_manifest`, `route_index`), `cache` typed as `manifest::RouteCache`, envelopes reduced to one `RouteEnvelope` (no `kind`/`nativeTemplate`/`bypassed`) whose `req` is the loader's | 45 → 30 (16 dropped with action/mcp/sse/ws/native-template/rewrite, 1 added) |
+| (filled by Tasks 3–8: l1, job_cache, pool, dispatch, render, config, server/mod) |
 Not carried (spec S2): cache/island_cache.rs, render/stream.rs, realtime/*, routing/action.rs, `/_brust/islands`, `/_brust/page`, MCP, SSE/WS, AI, `handle_action`, `dispatch_streaming`, `spawn_chunk_pump`.
+
+## routes.rs: dropped tests (16)
+Removed with their subjects (`ActionEnvelope`/`McpEnvelope`/`SseEnvelope`/`WsEnvelope` + `build_*`, `native_template_for`, `rewrite_envelope_kind`):
+`action_envelope_json_path`, `action_envelope_form_urlencoded_path`, `action_envelope_multipart_path`, `action_envelope_quoting_preserved`, `mcp_envelope_serialises_kind_mcp`, `mcp_envelope_preserves_inner_quotes`, `sse_envelope_serialises_kind_sse_and_conn_id`, `sse_envelope_preserves_query_string`, `ws_envelope_serialises_kind_ws_and_conn_id`, `ws_envelope_empty_subprotocols`, `swap_render_to_navigation`, `replaces_only_first_occurrence`, `missing_kind_returns_input_unchanged`, `route_table_natives_indexed_by_route_id`, `envelope_includes_native_template_when_set`, `envelope_omits_native_template_when_unset`.
+Adapted: `render_envelope_has_kind_discriminant` → `route_envelope_serializes_route_id_and_path` (asserts `route_id` + `path`, and no `kind`); `install_not_found_config_from_json` loses its `nativeTemplate` assertions (asserts the catch-all envelope's `route_id` and empty `params` instead). Added: `from_manifest_installs_catch_all_outside_matchit`.
+
+## manifest notes (contract for m2a, accepted by the lead 2026-10-09; spec S6 amendments)
+1. `jobs[].per_instance` is the **context path of the list** (`"pokemon.moves"`), not the client loop member (`_l1`).
+2. `children[].props` maps each child prop name → a parent-context path, with the literal `[idx]` standing for the current row of the `per-row` list (`"move": "pokemon.moves[idx]"`). It must cover the root segment of every `inputs` entry of the child's jobs; boot fails with `ManifestError::UncoveredInput` otherwise.
+3. `jobs[].inputs` are relative to the component's props (`"item.price"`, as the M1 IR emits); a leading `props.` segment (spec §3 example) is accepted and stripped.
+4. `k` in `__<childId>_<k>` is the 1-based ordinal of that child id within `children` (template order).
