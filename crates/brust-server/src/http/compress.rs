@@ -1,6 +1,6 @@
-//! gzip compression for STATIC asset responses (islands / css / public).
-//! Scope is static assets only — dynamic SSR / SAB / action / SSE paths are
-//! untouched. See docs/superpowers/specs/2026-06-03-static-compression-design.md.
+//! gzip compression. Static assets (islands / css / public) negotiate through
+//! `maybe_compress` at level 6 (docs/superpowers/specs/2026-06-03-static-compression-design.md);
+//! pages call `gzip` with their own policy (pipeline: level 1, >= 16 KiB).
 use std::io::Write;
 use std::sync::Arc;
 
@@ -11,6 +11,9 @@ use once_cell::sync::Lazy;
 
 /// Below this size the header + CPU overhead outweighs the saving.
 const MIN_SIZE: usize = 1024;
+
+/// Static assets: compressed once per path in prod, so the better ratio wins.
+const STATIC_LEVEL: u32 = 6;
 
 /// Process-global cache of gzipped bodies keyed by absolute asset path. Used in
 /// PROD only — assets are immutable for the process lifetime, so a path key needs
@@ -55,11 +58,12 @@ pub fn is_compressible(content_type: &str) -> bool {
         )
 }
 
-/// gzip `bytes` (level 6). `None` if the output is not smaller (incompressible).
-pub fn gzip(bytes: &[u8]) -> Option<Vec<u8>> {
+/// gzip `bytes` at `level` (0-9). `None` if the output is not smaller
+/// (incompressible).
+pub fn gzip(bytes: &[u8], level: u32) -> Option<Vec<u8>> {
     let mut enc = GzEncoder::new(
         Vec::with_capacity(bytes.len() / 2 + 32),
-        Compression::new(6),
+        Compression::new(level),
     );
     enc.write_all(bytes).ok()?;
     let out = enc.finish().ok()?;
@@ -69,12 +73,12 @@ pub fn gzip(bytes: &[u8]) -> Option<Vec<u8>> {
 /// Prod: memoize per path. Dev: compress fresh (no cache → never stale on reload).
 fn gzip_cached(path: &str, bytes: &[u8], dev: bool) -> Option<Vec<u8>> {
     if dev {
-        return gzip(bytes);
+        return gzip(bytes, STATIC_LEVEL);
     }
     if let Some(hit) = GZIP_CACHE.get(path) {
         return Some((*hit).clone());
     }
-    let out = gzip(bytes)?;
+    let out = gzip(bytes, STATIC_LEVEL)?;
     GZIP_CACHE.insert(path.to_string(), Arc::new(out.clone()));
     Some(out)
 }
@@ -133,7 +137,7 @@ mod tests {
     #[test]
     fn gzip_round_trips() {
         let raw = b"console.log('hello');".repeat(200); // > MIN_SIZE, compressible
-        let gz = gzip(&raw).expect("compressible input gzips smaller");
+        let gz = gzip(&raw, 6).expect("compressible input gzips smaller");
         assert!(gz.len() < raw.len());
         let mut dec = GzDecoder::new(&gz[..]);
         let mut back = Vec::new();
@@ -145,7 +149,7 @@ mod tests {
     fn gzip_none_when_not_smaller() {
         // 16 random-ish bytes don't compress below their own size.
         let raw: Vec<u8> = (0u8..16).collect();
-        assert!(gzip(&raw).is_none());
+        assert!(gzip(&raw, 6).is_none());
     }
 
     #[test]

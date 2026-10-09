@@ -12,3 +12,10 @@ serde_json.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "json_attr"
+harness = false

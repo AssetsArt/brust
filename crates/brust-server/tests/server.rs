@@ -644,3 +644,63 @@ fn a_job_result_missing_a_declared_slot_renders_200_and_warns_once() {
         "once per (component, slot), not per request"
     );
 }
+
+/// gzip `bytes` the way the page policy must: flate2 at level 1.
+fn gzip_l1(bytes: &[u8]) -> Vec<u8> {
+    use std::io::Write;
+    let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::new(1));
+    enc.write_all(bytes).unwrap();
+    enc.finish().unwrap()
+}
+
+/// Plan m2p Task 3 / S10 amendment: a dynamic page is gzipped only when the
+/// client accepts gzip AND the document is >= 16 KiB, at level 1. The cached
+/// body's lazy gzip follows the same policy.
+#[test]
+fn page_gzip_only_at_16k_and_above_at_level_1() {
+    // 10 KiB: never gzipped, uncached or cached, MISS or HIT.
+    let small = sized_dist(10 * 1024);
+    let s = boot_in(fake(), small.path());
+    for path in ["/sized-nc", "/sized", "/sized"] {
+        let (st, h, body) = request_raw(&s, "GET", path, &[("accept-encoding", "gzip")]);
+        assert_eq!(st, 200);
+        assert_eq!(
+            hdr(&h, "content-encoding"),
+            None,
+            "{path} {:?}",
+            cache_hdr(&h)
+        );
+        assert!(
+            body.len() > 10 * 1024 && body.len() < 16 * 1024,
+            "{}",
+            body.len()
+        );
+        assert_eq!(hdr(&h, "vary"), None, "{path}: not gzip-eligible");
+        assert!(
+            String::from_utf8(body)
+                .unwrap()
+                .starts_with("<!doctype html>")
+        );
+    }
+
+    // 20 KiB: gzipped at level 1 when accepted, identity otherwise.
+    let big = sized_dist(20 * 1024);
+    let s = boot_in(fake(), big.path());
+    for path in ["/sized-nc", "/sized", "/sized"] {
+        let (_, h, identity) = request_raw(&s, "GET", path, &[("accept-encoding", "identity")]);
+        assert_eq!(hdr(&h, "content-encoding"), None, "{path}");
+        assert_eq!(hdr(&h, "vary"), Some("Accept-Encoding"), "{path}");
+        let (_, h, none) = request_raw(&s, "GET", path, &[]);
+        assert_eq!(
+            hdr(&h, "content-encoding"),
+            None,
+            "{path}: no Accept-Encoding"
+        );
+        assert_eq!(none, identity);
+        let (_, h, gz) = request_raw(&s, "GET", path, &[("accept-encoding", "gzip, br")]);
+        assert_eq!(hdr(&h, "content-encoding"), Some("gzip"), "{path}");
+        assert_eq!(hdr(&h, "vary"), Some("Accept-Encoding"), "{path}");
+        assert_eq!(gunzip(&gz), identity, "{path}");
+        assert_eq!(gz, gzip_l1(&identity), "{path}: level 1");
+    }
+}

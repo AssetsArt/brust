@@ -120,43 +120,74 @@ fn proj_key(seg: &Seg) -> String {
 /// redundant — the result is independent of input order. An `[idx]` input
 /// with `idx == None` is an `Err`.
 pub fn project(ctx: &Value, inputs: &[String], idx: Option<usize>) -> Result<Value, String> {
-    let paths = inputs
-        .iter()
-        .map(|s| Path::parse(s))
-        .collect::<Result<Vec<_>, _>>()?;
-    for (p, s) in paths.iter().zip(inputs) {
-        if idx.is_none() && p.has_idx() {
+    Projection::new(inputs)?.eval(ctx, idx)
+}
+
+/// A job's `inputs` prepared once (at boot): parsed, the redundant ones
+/// (covered by a shorter or an equal earlier input) dropped, each kept path's
+/// projection keys built. [`Projection::eval`] is [`project`] without the parsing.
+#[derive(Debug, Clone)]
+pub struct Projection {
+    /// `(path, its projection keys)` of every input not covered by another.
+    kept: Vec<(Path, Vec<String>)>,
+    /// The first `[idx]` input, for the "outside a per-row instance" error.
+    first_idx: Option<String>,
+}
+
+impl Projection {
+    pub fn new(inputs: &[String]) -> Result<Projection, String> {
+        let paths = inputs
+            .iter()
+            .map(|s| Path::parse(s))
+            .collect::<Result<Vec<_>, _>>()?;
+        let first_idx = paths
+            .iter()
+            .zip(inputs)
+            .find(|(p, _)| p.has_idx())
+            .map(|(_, s)| s.clone());
+        let mut kept = Vec::new();
+        for (i, p) in paths.iter().enumerate() {
+            let covered = paths.iter().enumerate().any(|(j, q)| {
+                j != i
+                    && q.0.len() <= p.0.len()
+                    && p.0.starts_with(&q.0)
+                    && (q.0.len() < p.0.len() || j < i)
+            });
+            if !covered {
+                kept.push((p.clone(), p.0.iter().map(proj_key).collect()));
+            }
+        }
+        Ok(Projection { kept, first_idx })
+    }
+
+    /// The projection of `ctx` (`idx` = the current row).
+    pub fn eval(&self, ctx: &Value, idx: Option<usize>) -> Result<Value, String> {
+        if idx.is_none()
+            && let Some(s) = &self.first_idx
+        {
             return Err(format!(
                 "input path {s:?}: [idx] outside a per-row instance"
             ));
         }
-    }
-    let mut out = Map::new();
-    for (i, p) in paths.iter().enumerate() {
-        let covered = paths.iter().enumerate().any(|(j, q)| {
-            j != i
-                && q.0.len() <= p.0.len()
-                && p.0.starts_with(&q.0)
-                && (q.0.len() < p.0.len() || j < i)
-        });
-        if covered {
-            continue;
+        let mut out = Map::new();
+        for (p, keys) in &self.kept {
+            let (last, prefix) = keys.split_last().expect("parsed path is non-empty");
+            let mut node = &mut out;
+            for k in prefix {
+                // Only intermediate objects we created live at prefix positions:
+                // a leaf here would mean a shorter input covers `p`, dropped in `new`.
+                if !node.contains_key(k) {
+                    node.insert(k.clone(), Value::Object(Map::new()));
+                }
+                node = node
+                    .get_mut(k)
+                    .and_then(Value::as_object_mut)
+                    .expect("projection prefix is an object");
+            }
+            node.insert(last.clone(), p.get(ctx, idx).clone());
         }
-        let (last, prefix) = p.0.split_last().expect("parsed path is non-empty");
-        let mut node = &mut out;
-        for seg in prefix {
-            let slot = node
-                .entry(proj_key(seg))
-                .or_insert_with(|| Value::Object(Map::new()));
-            // Only intermediate objects we created live at prefix positions:
-            // a leaf here would mean a shorter input covers `p`, skipped above.
-            node = slot
-                .as_object_mut()
-                .expect("projection prefix is an object");
-        }
-        node.insert(proj_key(last), p.get(ctx, idx).clone());
+        Ok(Value::Object(out))
     }
-    Ok(Value::Object(out))
 }
 
 /// Child props object from the parent's context through `ChildRecord.props` (`[idx]` = row).
@@ -168,17 +199,35 @@ pub fn child_props(
     props: &BTreeMap<String, String>,
     idx: Option<usize>,
 ) -> Result<Value, String> {
-    let mut out = Map::new();
-    for (name, src) in props {
-        let p = Path::parse(src)?;
-        if idx.is_none() && p.has_idx() {
-            return Err(format!(
-                "child prop {name:?} = {src:?}: [idx] outside a per-row instance"
-            ));
-        }
-        out.insert(name.clone(), p.get(parent_ctx, idx).clone());
+    PropsMap::new(props)?.eval(parent_ctx, idx)
+}
+
+/// A `props` map (`{ childProp: parent path }`) parsed once (at boot);
+/// [`PropsMap::eval`] is [`child_props`] without the parsing.
+#[derive(Debug, Clone)]
+pub struct PropsMap(Vec<(String, Path, String)>);
+
+impl PropsMap {
+    pub fn new(props: &BTreeMap<String, String>) -> Result<PropsMap, String> {
+        props
+            .iter()
+            .map(|(name, src)| Ok((name.clone(), Path::parse(src)?, src.clone())))
+            .collect::<Result<_, String>>()
+            .map(PropsMap)
     }
-    Ok(Value::Object(out))
+
+    pub fn eval(&self, parent_ctx: &Value, idx: Option<usize>) -> Result<Value, String> {
+        let mut out = Map::new();
+        for (name, p, src) in &self.0 {
+            if idx.is_none() && p.has_idx() {
+                return Err(format!(
+                    "child prop {name:?} = {src:?}: [idx] outside a per-row instance"
+                ));
+            }
+            out.insert(name.clone(), p.get(parent_ctx, idx).clone());
+        }
+        Ok(Value::Object(out))
+    }
 }
 
 /// Canonical bytes: serde_json with BTreeMap maps (sorted keys), no whitespace.
@@ -187,23 +236,66 @@ pub fn canonical(v: &Value) -> Vec<u8> {
 }
 
 /// blake3 hex of canonical(inputs_value); `component_id`/`job_id` are mixed in as length-prefixed fields so (a,bc) != (ab,c).
+///
+/// The hashed bytes are `len(cid) cid len(jid) jid len(json) json` (each
+/// length a `u32` LE), laid out in one reused per-thread buffer and hashed in
+/// one call: a streaming `Hasher::update` per field (or per serde write)
+/// costs more than the copy.
 pub fn job_key(component_id: &str, job_id: &str, inputs_value: &Value) -> String {
-    let mut h = blake3::Hasher::new();
-    for field in [
-        component_id.as_bytes(),
-        job_id.as_bytes(),
-        &canonical(inputs_value),
-    ] {
-        h.update(&(field.len() as u32).to_le_bytes());
-        h.update(field);
+    thread_local! {
+        static BUF: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
     }
-    h.finalize().to_hex().to_string()
+    BUF.with_borrow_mut(|buf| {
+        buf.clear();
+        for field in [component_id.as_bytes(), job_id.as_bytes()] {
+            buf.extend_from_slice(&(field.len() as u32).to_le_bytes());
+            buf.extend_from_slice(field);
+        }
+        let at = buf.len();
+        buf.extend_from_slice(&[0; 4]);
+        serde_json::to_writer(&mut *buf, inputs_value).expect("Value serialises");
+        let n = (buf.len() - at - 4) as u32;
+        buf[at..at + 4].copy_from_slice(&n.to_le_bytes());
+        let key = blake3::hash(buf).to_hex().to_string();
+        if buf.capacity() > 64 * 1024 {
+            *buf = Vec::new();
+        }
+        key
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// The one-buffer `job_key` hashes exactly the length-prefixed fields.
+    #[test]
+    fn job_key_hashes_length_prefixed_fields() {
+        let reference = |cid: &str, jid: &str, v: &Value| {
+            let mut h = blake3::Hasher::new();
+            for field in [cid.as_bytes(), jid.as_bytes(), &canonical(v)] {
+                h.update(&(field.len() as u32).to_le_bytes());
+                h.update(field);
+            }
+            h.finalize().to_hex().to_string()
+        };
+        let big = json!({"s": "x".repeat(100_000)});
+        for (c, j, v) in [
+            ("typeBadge_5f5390d7", "j0", json!({"type": "fire"})),
+            ("a", "bc", json!(null)),
+            ("ab", "c", json!(null)),
+            ("", "", json!({})),
+            ("c", "j0#3", big.clone()),
+            ("c", "j0", json!([1, "é", {"z": 1, "a": [true]}])),
+        ] {
+            assert_eq!(job_key(c, j, &v), reference(c, j, &v), "{c} {j}");
+        }
+        assert_ne!(
+            job_key("a", "bc", &json!(null)),
+            job_key("ab", "c", &json!(null))
+        );
+    }
 
     #[test]
     fn parse_rejects_empty_and_malformed_paths() {

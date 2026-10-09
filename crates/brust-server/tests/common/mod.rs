@@ -195,3 +195,91 @@ pub fn stats(s: &Server) -> Value {
 pub fn cache_hdr(h: &http::HeaderMap) -> Option<&str> {
     h.get("x-brust-cache").and_then(|v| v.to_str().ok())
 }
+
+/// Like [`request`], with the body as raw bytes (gzip bodies are not UTF-8).
+pub fn request_raw(
+    s: &Server,
+    method: &str,
+    path: &str,
+    headers: &[(&str, &str)],
+) -> (u16, http::HeaderMap, Vec<u8>) {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        let tcp = tokio::net::TcpStream::connect(s.local_addr())
+            .await
+            .unwrap();
+        let (mut sender, conn) =
+            hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(tcp))
+                .await
+                .unwrap();
+        tokio::spawn(conn);
+        let mut b = http::Request::builder()
+            .method(method)
+            .uri(path)
+            .header("host", "fx");
+        for (k, v) in headers {
+            b = b.header(*k, *v);
+        }
+        let resp = sender
+            .send_request(
+                b.body(http_body_util::Empty::<bytes::Bytes>::new())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let (parts, body) = resp.into_parts();
+        let bytes = http_body_util::BodyExt::collect(body)
+            .await
+            .unwrap()
+            .to_bytes();
+        (parts.status.as_u16(), parts.headers, bytes.to_vec())
+    })
+}
+
+/// gunzip `bytes` (panics on a malformed stream).
+pub fn gunzip(bytes: &[u8]) -> Vec<u8> {
+    use std::io::Read;
+    let mut out = Vec::new();
+    flate2::read::GzDecoder::new(bytes)
+        .read_to_end(&mut out)
+        .expect("valid gzip");
+    out
+}
+
+/// A header's value as `&str`, if present.
+pub fn hdr<'a>(h: &'a http::HeaderMap, name: &str) -> Option<&'a str> {
+    h.get(name).and_then(|v| v.to_str().ok())
+}
+
+/// A copy of the fixture `dist/` with two routes rendering one page whose
+/// document is padded to about `pad` bytes of compressible text: `/sized`
+/// (L1-cached, tag `sized`) and `/sized-nc` (no cache). The page prints the
+/// loader's `who` and one `useId`, so a stale or mis-rendered body shows.
+pub fn sized_dist(pad: usize) -> tempfile::TempDir {
+    let dist = temp_dist(|m| {
+        let routes = m["routes"].as_array_mut().unwrap();
+        routes.push(json!({"id": "r9", "pattern": "/sized", "chain": ["appLayout_a1", "sizedPage_z1"],
+            "loaders": ["r9"], "cache": {"ttl_seconds": 60, "prefix": null, "bypass": null, "tags": ["sized"]},
+            "catch_all": false}));
+        routes.push(
+            json!({"id": "r10", "pattern": "/sized-nc", "chain": ["appLayout_a1", "sizedPage_z1"],
+            "loaders": ["r10"], "cache": null, "catch_all": false}),
+        );
+        m["components"]["sizedPage_z1"] = json!({"tier": "static",
+            "template": "jinja/sizedPage_z1.jinja", "jobs": [], "children": [],
+            "client": null, "needs_worker": true, "use_id_slots": 1});
+    });
+    let words = "lorem ipsum dolor sit amet consectetur ";
+    let filler: String = words.chars().cycle().take(pad).collect();
+    std::fs::write(
+        dist.path().join("jinja/sizedPage_z1.jinja"),
+        format!(
+            r#"<main id="{{{{ _id0 | attr_str | e }}}}"><h1>{{{{ who | e }}}}</h1><p>{filler}</p></main>"#
+        ),
+    )
+    .unwrap();
+    dist
+}

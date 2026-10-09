@@ -17,7 +17,7 @@ use std::convert::Infallible;
 use std::io;
 
 use bytes::Bytes;
-use http::{HeaderName, HeaderValue, Response, StatusCode};
+use http::{HeaderMap, HeaderName, HeaderValue, Response, StatusCode};
 use http_body::Frame;
 use http_body_util::{BodyExt, Full, StreamBody, combinators::BoxBody};
 use tokio_stream::StreamExt;
@@ -82,11 +82,20 @@ pub(crate) fn resp(
     extra_headers: &[(String, String)],
     body: Vec<u8>,
 ) -> Response<ResponseBody> {
-    let status = StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-    let mut builder = Response::builder().status(status);
-    if let Some(hm) = builder.headers_mut()
-        && let Ok(ct) = HeaderValue::from_str(content_type)
-    {
+    resp_with(
+        status,
+        header_map(content_type, extra_headers),
+        Bytes::from(body),
+    )
+}
+
+/// The header half of [`resp`]: `Content-Type`, then each extra header in
+/// order, minus the framing / content-type names and any name/value carrying
+/// a CR/LF/NUL. Built once per L1 entry so a HIT replays it without
+/// re-validating.
+pub(crate) fn header_map(content_type: &str, extra_headers: &[(String, String)]) -> HeaderMap {
+    let mut hm = HeaderMap::new();
+    if let Ok(ct) = HeaderValue::from_str(content_type) {
         hm.insert(http::header::CONTENT_TYPE, ct);
     }
     for (name, value) in extra_headers {
@@ -105,18 +114,27 @@ pub(crate) fn resp(
         {
             continue;
         }
-        if let Some(hm) = builder.headers_mut()
-            && let (Ok(n), Ok(v)) = (
-                HeaderName::from_bytes(name.as_bytes()),
-                HeaderValue::from_str(value),
-            )
-        {
+        if let (Ok(n), Ok(v)) = (
+            HeaderName::from_bytes(name.as_bytes()),
+            HeaderValue::from_str(value),
+        ) {
             hm.append(n, v);
         }
     }
-    builder
-        .body(full_body(body))
-        .unwrap_or_else(|_| canned_500())
+    hm
+}
+
+/// A response from an already-built header map and a shared body (no copy).
+pub(crate) fn resp_with(status: u16, headers: HeaderMap, body: Bytes) -> Response<ResponseBody> {
+    let status = StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let mut r = Response::new(
+        Full::new(body)
+            .map_err(|never: Infallible| match never {})
+            .boxed(),
+    );
+    *r.status_mut() = status;
+    *r.headers_mut() = headers;
+    r
 }
 
 /// HEAD variant of [`resp`]: identical headers, no entity body, but carrying the

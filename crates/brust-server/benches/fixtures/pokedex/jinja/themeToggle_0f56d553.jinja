@@ -1,0 +1,3 @@
+{# brust v2 · themeToggle_0f56d553 · do not edit #}
+{% set mode = mode %}
+<button x-data="themeToggle_0f56d553" x-props='{{ {"mode": mode, "_id0": _id0} | json_attr }}' type="button"{% if _id0 | present %} id="{{ _id0 | attr_str | e }}"{% endif %} aria-label="Toggle theme" data-testid="theme-toggle" x-on-click="_h1" class="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium dark:border-slate-700" x-text="_c1">{{ ("Light" if ((mode == "dark") | truthy) else "Dark") | e }}</button>

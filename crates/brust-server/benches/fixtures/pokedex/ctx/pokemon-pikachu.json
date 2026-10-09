@@ -1,0 +1,189 @@
+{
+  "__children": {
+    "appLayout_069dfa24": {
+      "__navLink_43f6c55a_1": [
+        {
+          "_s1": "inline-flex items-center rounded-lg px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+        },
+        {
+          "_s1": "inline-flex items-center rounded-lg px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+        },
+        {
+          "_s1": "inline-flex items-center rounded-lg px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+        }
+      ],
+      "__themeToggle_0f56d553_1": {
+        "_id0": "brust-r3-appLayout_069dfa24.themeToggle_0f56d553_1-1"
+      }
+    },
+    "detailPage_c04a77c1": {
+      "__typeBadge_5f5390d7_1": [
+        {
+          "_s1": {
+            "background": "#f5c84b"
+          },
+          "_s2": "Electric"
+        }
+      ]
+    }
+  },
+  "__own": {
+    "appLayout_069dfa24": {
+      "_ssr_teamBuilder_a0fc3155": "<div class=\"fixed bottom-5 right-5 z-[200]\"><button type=\"button\" class=\"inline-flex items-center gap-1.5 rounded-full bg-brand-500 px-5 py-2.5 text-sm font-semibold text-white shadow-lg\">My team <span data-testid=\"team-count\" class=\"rounded-full bg-white/25 px-2 py-0.5 text-xs font-extrabold\">2</span></button></div>"
+    },
+    "detailPage_c04a77c1": {
+      "_s1": "0.4 m",
+      "_s2": "6.0 kg"
+    }
+  },
+  "abilities": [
+    {
+      "displayName": "Static",
+      "iconColor": "#f5c84b",
+      "initial": "S"
+    },
+    {
+      "displayName": "Lightning rod",
+      "iconColor": "#f5c84b",
+      "initial": "L"
+    }
+  ],
+  "abilityCount": 2,
+  "artwork": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/25.png",
+  "crumb": "Pikachu",
+  "displayName": "Pikachu",
+  "evolution": [
+    {
+      "artwork": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/172.png",
+      "detailHref": "/pokemon/pichu",
+      "displayName": "Pichu",
+      "id": 172,
+      "isCurrent": false,
+      "isFirst": true,
+      "levelLabel": "",
+      "num": "#0172",
+      "showLevel": false
+    },
+    {
+      "artwork": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/25.png",
+      "detailHref": "/pokemon/pikachu",
+      "displayName": "Pikachu",
+      "id": 25,
+      "isCurrent": true,
+      "isFirst": false,
+      "levelLabel": "",
+      "num": "#0025",
+      "showLevel": false
+    },
+    {
+      "artwork": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/26.png",
+      "detailHref": "/pokemon/raichu",
+      "displayName": "Raichu",
+      "id": 26,
+      "isCurrent": false,
+      "isFirst": false,
+      "levelLabel": "",
+      "num": "#0026",
+      "showLevel": false
+    }
+  ],
+  "flavorText": "When several of these POKéMON gather, their electricity could build and cause lightning storms.",
+  "genus": "Mouse Pokémon",
+  "hasAbilities": true,
+  "hasEvolution": true,
+  "height": 4,
+  "heroBg": "linear-gradient(160deg, #f5c84b33, transparent 70%)",
+  "id": 25,
+  "mode": "dark",
+  "name": "pikachu",
+  "nav": [
+    {
+      "active": false,
+      "href": "/",
+      "label": "Home"
+    },
+    {
+      "active": false,
+      "href": "/pokedex",
+      "label": "Pokédex"
+    },
+    {
+      "active": false,
+      "href": "/type-chart",
+      "label": "Type chart"
+    }
+  ],
+  "notFound": false,
+  "num": "#0025",
+  "params": {
+    "name": "pikachu"
+  },
+  "path": "/pokemon/pikachu",
+  "statTotal": 320,
+  "stats": [
+    {
+      "barColor": "#f59e0b",
+      "barWidth": "18%",
+      "base": 35,
+      "label": "HP"
+    },
+    {
+      "barColor": "#f59e0b",
+      "barWidth": "28%",
+      "base": 55,
+      "label": "Atk"
+    },
+    {
+      "barColor": "#f59e0b",
+      "barWidth": "20%",
+      "base": 40,
+      "label": "Def"
+    },
+    {
+      "barColor": "#f59e0b",
+      "barWidth": "25%",
+      "base": 50,
+      "label": "Sp.Atk"
+    },
+    {
+      "barColor": "#f59e0b",
+      "barWidth": "25%",
+      "base": 50,
+      "label": "Sp.Def"
+    },
+    {
+      "barColor": "#0ea5e9",
+      "barWidth": "45%",
+      "base": 90,
+      "label": "Spd"
+    }
+  ],
+  "teamInitial": [
+    {
+      "artwork": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/1.png",
+      "displayName": "Bulbasaur",
+      "id": 1,
+      "name": "bulbasaur",
+      "num": "#0001",
+      "types": [
+        "grass",
+        "poison"
+      ]
+    },
+    {
+      "artwork": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/4.png",
+      "displayName": "Charmander",
+      "id": 4,
+      "name": "charmander",
+      "num": "#0004",
+      "types": [
+        "fire"
+      ]
+    }
+  ],
+  "title": "Pikachu · PokéDex",
+  "typeNames": [
+    "electric"
+  ],
+  "weight": 60
+}
