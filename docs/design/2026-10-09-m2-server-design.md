@@ -209,7 +209,8 @@ Bun. `use_id_slots` is the number of `useId()` calls in the component (F39).
 **S8 — `Outlet` is a compiler intrinsic.** `import { Outlet } from '@brust/brust/routes'`;
 `<Outlet/>` in a route component lowers to `{{ __outlet | safe }}` in the template and is a
 no-op in the client chunk. A component that renders `<Outlet/>` but is not a route with
-children is a compile `Error` (`outlet-outside-layout`). The server renders the child first and
+children is an `Error` (`outlet-outside-layout`) raised by the build lane (the compiler cannot
+know the route tree; it records `uses_outlet` in the IR). The server renders the child first and
 passes its HTML as `__outlet`. (Compiler change, small: one recognised import, like `cache()`.)
 
 **S9 — Asset injection is a server concern.** Templates contain no `<script>` tags for the
