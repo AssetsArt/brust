@@ -114,3 +114,13 @@ fn loop_bindings_and_whole_props() {
     };
     assert_eq!(deps_of(all, &ir, &[]).prop_paths(), ["*"]);
 }
+
+/// `list.length` reads the whole list: the client is seeded with JSON, which has no `length` key.
+#[test]
+fn trailing_length_reads_the_whole_prop() {
+    let ir = ir(
+        "export default function C(props: any) { const n = props.rows.length + props.cfg.size.length; return <p>{n}</p> }",
+    );
+    let d = deps_of(derived(&ir, "n"), &ir, &[]);
+    assert_eq!(d.props, set(&["cfg.size", "rows"]));
+}

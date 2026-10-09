@@ -5,10 +5,7 @@ import { CATEGORIES, type Expect } from './rows.ts'
 import type { Result } from './run.ts'
 
 /** Rows whose observed tier is accepted to differ from (or whose checks are relaxed against) the spec, by ledger id. Set-equal to the rows carrying `knownGap`. */
-export const KNOWN_GAP_ROWS: Record<string, { ledger: string; observed: Expect }> = {
-  'a-nested-list': { ledger: 'F32', observed: 'static' },
-  'e-if-in-table': { ledger: 'F32', observed: 'native' },
-}
+export const KNOWN_GAP_ROWS: Record<string, { ledger: string; observed: Expect }> = {}
 /** Rows that must produce an `Error` diagnostic and refuse to build. */
 export const ERROR_ROWS = ['e-function-prop-react-child', 'e-server-only-handler', 'e-request-prop', 'e-missing-key'] as const
 export const COMPILE_ERROR_ROWS = ['e-parse-error'] as const
@@ -28,7 +25,7 @@ export const BATTERY_GAPS: { id: string; what: string }[] = [
   { id: 'F40', what: 'the `Array.from(xs, fn)` callback form is not recognised (only `Array.from({ length: N }).map(…)` is, spec §6.2): tier `react` (`jsx-expression`)' },
 ]
 
-export const BROWSER_CASES = ['theme-toggle', 'product-card', 'parent-counter', 'keyed-list', 'keyed-list-child', 'controlled-input', 'nested-list', 'truthiness']
+export const BROWSER_CASES = ['theme-toggle', 'product-card', 'parent-counter', 'keyed-list', 'keyed-list-child', 'controlled-input', 'nested-list', 'truthiness', 'table-rows']
 
 /** Rust-side pins of `crates/brust-compiler/tests/dual_eval.rs`; keep in sync with dual_eval.rs. */
 export const DUAL_EVAL_NO_SAMPLES = ['arrow-default', 'client-only', 'fragment-root', 'import-cycle', 'jsx-shapes', 'lazy-import', 'missing-key', 'react-child', 'react-hook', 'server-leak']
@@ -51,18 +48,19 @@ export function renderExitReport(results: Result[]): string {
   const gapIds = Object.keys(KNOWN_GAP_ROWS)
   const gaps = gapIds.map((id) => `${id} [${KNOWN_GAP_ROWS[id]!.ledger}: ${KNOWN_GAP_ROWS[id]!.observed}]`).join(', ')
   const ledgers = [...new Set(Object.values(KNOWN_GAP_ROWS).map((g) => g.ledger))].join(', ')
+  const gapClause = gapIds.length ? `, **except the pinned known-gap rows** (${gaps}; ledger ${ledgers})` : ' (no known-gap rows)'
   const errRows = results.filter((r) => (ERROR_ROWS as readonly string[]).includes(r.row.id))
   const unrefused = errRows.filter((r) => r.build !== 'refused').map((r) => r.row.id)
   const errSentence = unrefused.length === 0
     ? `${errRows.length} deliberate \`error\` rows, each refused to build`
     : `${errRows.length} deliberate \`error\` rows, NOT refused: ${unrefused.join(', ')}`
-  L.push('', `§12 reading: every row this design says is native/static compiles so, **except the pinned known-gap rows** (${gaps}; ledger ${ledgers}); every other non-native row is \`react\` with a fallback diagnostic, **except** ${errSentence}, and ${COMPILE_ERROR_ROWS.length} unparseable snippet (\`compile error\`, which never aborts the battery). F38 (a dynamic \`import()\` crashed the printer) is fixed. See \`docs/react-coverage.md\` for the rows.`, '')
+  L.push('', `§12 reading: every row this design says is native/static compiles so${gapClause}; every other non-native row is \`react\` with a fallback diagnostic, **except** ${errSentence}, and ${COMPILE_ERROR_ROWS.length} unparseable snippet (\`compile error\`, which never aborts the battery). F38 (a dynamic \`import()\` crashed the printer) is fixed. See \`docs/react-coverage.md\` for the rows.`, '')
   L.push('## Dual evaluation', '', '`cargo test -p brust-compiler --test dual_eval`: for every fixture with sample props, the server paint equals the client initial values, and the number of server-painted `x-for` rows equals the client list length.', '')
   L.push('## Browser harness', '', 'The example components of the design doc, built by `brustc --emit all`, painted by `brustc --render`, mounted with `packages/runtime-dom` (`bun run browser-test`):', '')
   for (const c of BROWSER_CASES) L.push(`- ${c}`)
   L.push('', 'Each case asserts first-paint equality (no `console.warn` / `console.error`, no visible DOM change on mount), its interactions, and that the interactions raised no warning. `harness-self-test` is the harness\'s negative control.', '')
   L.push('## Verification', '', 'What each gate checks (the pinned sets are compared by set equality, so changing one changes a test):', '')
-  L.push(`- Battery (\`scripts/battery/exit.test.ts\`): no row disagrees with its expected tier or job count unless it is in \`KNOWN_GAP_ROWS\` (${gapIds.join(', ')}), each of which must still observe its pinned tier; \`ERROR_ROWS\` (${ERROR_ROWS.join(', ')}) are the only rows expecting \`error\` and each must be refused; \`COMPILE_ERROR_ROWS\` (${COMPILE_ERROR_ROWS.join(', ')}); every row that reaches lowering must not \`fail\`; every \`react\` row carries a fallback diagnostic and no error.`)
+  L.push(`- Battery (\`scripts/battery/exit.test.ts\`): no row disagrees with its expected tier or job count unless it is in \`KNOWN_GAP_ROWS\` (${gapIds.join(', ') || 'empty'}), each of which must still observe its pinned tier${gapIds.length ? '' : ' (none today)'}; \`ERROR_ROWS\` (${ERROR_ROWS.join(', ')}) are the only rows expecting \`error\` and each must be refused; \`COMPILE_ERROR_ROWS\` (${COMPILE_ERROR_ROWS.join(', ')}); every row that reaches lowering must not \`fail\`; every \`react\` row carries a fallback diagnostic and no error.`)
   L.push(`- Dual evaluation (\`dual_eval.rs\`): fails without \`bun\` (\`BRUST_DUAL_EVAL_SKIP=1\` is local-only); fixtures without samples are pinned in \`NO_SAMPLES\` (${DUAL_EVAL_NO_SAMPLES.join(', ')}); sampled fixtures with nothing to compare are pinned in \`NO_DIRECTIVES\` (${DUAL_EVAL_NO_DIRECTIVES.join(', ')}); every other sampled fixture contributes at least one check.`)
   L.push(`- Browser (\`tests/browser\`, happy-dom): ${BROWSER_CASES.length} example cases plus the harness self-test, run as separate files by the exit test.`)
   L.push('', '## Known gaps', '', '| Id | Gap | Owner |', '|---|---|---|')

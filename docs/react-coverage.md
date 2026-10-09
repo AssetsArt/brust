@@ -27,7 +27,7 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | a-ternary | ternary on a prop | static | static | 0 | ok | — | spec §6.2 ternary |
 | a-fragment | fragment root | static | static | 0 | ok | warning:fragment-root | warning fragment-root: wrapped in <brust-host> |
 | a-list-keys | keyed list from a prop | static | static | 0 | ok | — | spec §6.2 keyed list |
-| a-nested-list | nested keyed lists | static | static | 0 | ok | — | table rows; known gap: F32: `<brust-row>` wrappers inside <table> are foster-parented by the HTML parser (M2) |
+| a-nested-list | nested keyed lists | static | static | 0 | ok | — | table rows |
 | a-cond-attribute | conditional attribute via ternary | static | static | 0 | ok | — | spec §6.2 conditional attribute |
 | a-array-from | Array.from range list | static | static | precompute | ok | — | spec §6.2: the Array.from(xs, fn) callback form is a keyed list like .map (F40) |
 | a-array-from-length | Array.from({ length: N }).map range list | static | static | 0 | ok | — | spec §6.2: N literal ≤ 1024 |
@@ -98,5 +98,5 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | e-missing-key | list without key | error | error | 0 | refused | error:list-key |  |
 | e-use-client | 'use client' leftover | static | static | 0 | ok | warning:use-client-leftover | spec §8.1 use-client-leftover (F41) |
 | e-fragment-root | fragment root with state | native | native | 0 | ok | warning:fragment-root | warning fragment-root |
-| e-if-in-table | state-driven row inside a table | native | native | 0 | ok | — | spec §7.1 x-if; known gap: F32: the `<brust-if>` wrapper inside <tbody> is foster-parented by the HTML parser (M2) |
+| e-if-in-table | state-driven row inside a table | native | native | 0 | ok | — | spec §7.1 x-if |
 | e-parse-error | snippet that does not parse | compile-error | compile-error | 0 | — | — | compile error: Syntax Error (input.tsx:1:43); reported as a row, never aborts the battery |

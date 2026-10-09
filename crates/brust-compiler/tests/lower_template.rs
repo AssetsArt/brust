@@ -413,3 +413,25 @@ fn inlined_child_with_a_job_inside_a_list_is_recorded_as_a_per_row_instance() {
     let json = serde_json::to_value(&ir).unwrap();
     assert_eq!(json["instances"][0]["k"], 1);
 }
+
+/// F32: a single-element row/branch carries `x-for` / `x-if` itself, so `<table>` children stay `<tr>`.
+#[test]
+fn single_root_row_and_branch_carry_the_directive_without_a_wrapper() {
+    let jinja = lowered_jinja("table-rows");
+    assert!(jinja.contains("<tr x-if=\""), "x-if on the tr: {jinja}");
+    assert!(
+        !jinja.contains("<brust-row") && !jinja.contains("<brust-if"),
+        "no wrapper for a single-root row or branch: {jinja}"
+    );
+}
+
+/// F32: an inlined child whose template is one element carries the row's `x-for` itself.
+#[test]
+fn single_component_row_carries_x_for_on_the_child_root() {
+    let jinja = lowered_jinja("keyed-list-child");
+    assert!(
+        jinja.contains("<li x-data=\"row_") && jinja.contains(" x-for=\"t in _l1 by _k1\""),
+        "{jinja}"
+    );
+    assert!(!jinja.contains("<brust-row"), "{jinja}");
+}

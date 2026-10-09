@@ -401,7 +401,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             }
             (Node::If { .. }, Node::If { .. }) => self.if_node(n, s),
             (Node::For { .. }, Node::For { .. }) => self.for_node(n, s),
-            (Node::Component { .. }, Node::Component { .. }) => self.component(n, s),
+            (Node::Component { .. }, Node::Component { .. }) => self.component(n, s, None),
             (Node::Fragment(cs), Node::Fragment(ss)) => self.nodes(cs, ss),
             _ => self.diagnostics.push(Diagnostic::error(
                 "lower-shape",
@@ -947,6 +947,12 @@ impl<'a, 'c> Printer<'a, 'c> {
         } else {
             match (ns, ss) {
                 ([n @ Node::Element { .. }], [s]) => self.element(n, s, false, Some(&attr)),
+                // F32: a single inlined component whose template is one element carries `x-for`
+                // itself (the runtime lets an `x-for` element also be a host, `directives/index.ts`).
+                // `x-if` cannot: a host root with `x-if` is skipped by the parent's walk.
+                ([n @ Node::Component { .. }], [s]) if self.inline_root_is_element(n) => {
+                    self.component(n, s, Some(&attr))
+                }
                 _ => {
                     self.out
                         .push_str(&format!("<brust-row style=\"display:contents\"{attr}>"));
@@ -959,7 +965,24 @@ impl<'a, 'c> Printer<'a, 'c> {
         saved
     }
 
-    fn component(&mut self, n: &Node, s: &Node) {
+    /// An inlined (native/static) component whose compiled template is a single element:
+    /// that element can carry a row directive itself, so no wrapper is needed.
+    fn inline_root_is_element(&self, n: &Node) -> bool {
+        let Node::Component { name, tier, .. } = n else {
+            return false;
+        };
+        if matches!(tier, Tier::React { .. }) {
+            return false;
+        }
+        let Some(child) = self.f.ir.children.iter().find(|c| &c.name == name) else {
+            return false;
+        };
+        let id = child.id.clone().unwrap_or_else(|| name.clone());
+        (self.ctx.resolve)(&id).is_some_and(|c| matches!(c.template, Node::Element { .. }))
+    }
+
+    /// `extra`: attributes for the child's root element (a list-row directive).
+    fn component(&mut self, n: &Node, s: &Node, extra: Option<&str>) {
         let (
             Node::Component {
                 name,
@@ -1077,7 +1100,10 @@ impl<'a, 'c> Printer<'a, 'c> {
         p.inline_host = Some((child_ir.id.clone(), bind));
         p.preamble();
         let (ct, cs) = (&child_ir.template, &p.f.structural.template);
-        p.node(ct, cs, true);
+        match extra {
+            Some(x) => p.element(ct, cs, true, Some(x)),
+            None => p.node(ct, cs, true),
+        }
         self.out.push_str(&p.out);
         self.diagnostics.append(&mut p.diagnostics);
     }
