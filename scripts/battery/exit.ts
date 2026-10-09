@@ -30,7 +30,7 @@ export const BATTERY_GAPS: { id: string; what: string }[] = [
   { id: 'F40', what: 'the `Array.from(xs, fn)` callback form is not recognised (only `Array.from({ length: N }).map(…)` is, spec §6.2): tier `react` (`jsx-expression`)' },
 ]
 
-export const BROWSER_CASES = ['theme-toggle', 'product-card', 'parent-counter', 'keyed-list', 'controlled-input', 'nested-list', 'truthiness']
+export const BROWSER_CASES = ['theme-toggle', 'product-card', 'parent-counter', 'keyed-list', 'keyed-list-child', 'controlled-input', 'nested-list', 'truthiness']
 
 export function renderExitReport(results: Result[]): string {
   const n = (f: (r: Result) => boolean) => results.filter(f).length
