@@ -14,8 +14,11 @@ use minijinja::{Environment, Error, ErrorKind};
 /// Registers every brust filter on `env` (and the builtins they build on).
 pub fn register(env: &mut Environment<'_>) {
     env.set_auto_escape_callback(|_| minijinja::AutoEscape::None);
+    // `a.b` on a missing value is undefined (paints empty), never an error.
+    env.set_undefined_behavior(minijinja::UndefinedBehavior::Chainable);
     env.add_filter("e", |v: Value| escape_text(&paint(&v)));
     env.add_filter("js_str", |v: Value| paint(&v));
+    env.add_filter("js_string", |v: Value| js_string(&v));
     env.add_filter("attr_str", |v: Value| attr_string(&v));
     env.add_filter("present", |v: Value| present(&v));
     env.add_filter("json_attr", json_attr);
@@ -42,6 +45,29 @@ pub fn paint(v: &Value) -> String {
             .try_iter()
             .map(|it| it.map(|x| paint(&x)).collect::<String>())
             .unwrap_or_default(),
+        _ => v.to_string(),
+    }
+}
+
+/// JS `String(v)`: what a template literal or `+` with a string produces.
+pub fn js_string(v: &Value) -> String {
+    match v.kind() {
+        ValueKind::Undefined => "undefined".into(),
+        ValueKind::None => "null".into(),
+        ValueKind::Bool => v.is_true().to_string(),
+        ValueKind::Number => number_of(v).map(js_number).unwrap_or_default(),
+        ValueKind::Seq | ValueKind::Iterable => v
+            .try_iter()
+            .map(|it| {
+                it.map(|x| match x.kind() {
+                    ValueKind::Undefined | ValueKind::None => String::new(),
+                    _ => js_string(&x),
+                })
+                .collect::<Vec<_>>()
+                .join(",")
+            })
+            .unwrap_or_default(),
+        ValueKind::Map => "[object Object]".into(),
         _ => v.to_string(),
     }
 }
