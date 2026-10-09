@@ -1,15 +1,7 @@
 import { expect, test } from 'bun:test'
 import { resolve } from 'node:path'
 import { beginDrain, cacheInvalidate, cacheStats, localAddr, registerWorker, startServer, untilReady } from '../native/index.js'
-
-// Task 4 moves this into `src/worker.ts` (`writeSlot`); inline until then.
-function writeSlot(view: Uint8Array, slot: number, slots: number, json: string): number {
-  const sub = Math.floor(view.byteLength / Math.max(1, slots))
-  let bytes = new TextEncoder().encode(json)
-  if (bytes.byteLength > sub) bytes = new TextEncoder().encode(JSON.stringify({ error: `response too large: ${bytes.byteLength} > ${sub}` }))
-  view.set(bytes, slot * sub)
-  return bytes.byteLength
-}
+import { writeSlot } from '../src/worker'
 
 const dist = resolve(import.meta.dir, '../../../crates/brust-server/tests/fixtures/dist')
 
