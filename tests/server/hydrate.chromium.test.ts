@@ -1,5 +1,5 @@
 // tests/server/hydrate.chromium.test.ts — real Chromium: the react child's server HTML hydrates without a React
-// mismatch (console.error) and is interactive. Run alone: `bun test --timeout 120000 tests/server/hydrate.chromium.test.ts`.
+// mismatch (React 19 reports it as a pageerror, e.g. #418, and/or console.error) and is interactive. Run alone: `bun test --timeout 120000 tests/server/hydrate.chromium.test.ts`.
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'

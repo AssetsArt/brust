@@ -23,7 +23,7 @@ export default function DetailPage({
   evolution,
 }: DetailData) {
   // Computed outside the notFound branch so the build job is unguarded: a guarded slot makes the job
-  // return `undefined` for the 404 payload and the server rejects it (ledger F66).
+  // return `undefined` for the 404 payload and the server rejects it (ledger F67).
   const heightLabel = fmtHeight(height)
   const weightLabel = fmtWeight(weight)
   return (

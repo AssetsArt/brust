@@ -18,16 +18,20 @@ function setVersion(text: string, v: string): { text: string; old: string | null
   return m ? { text: text.replace(re, `$1${v}$3`), old: m[2]! } : { text, old: null }
 }
 const changes: string[] = []
-for (const f of FILES) {
-  const abs = resolve(ROOT, f); const r = setVersion(readFileSync(abs, 'utf8'), NEW)
+// Validate every file first so a failure writes nothing.
+const staged = FILES.map((f) => {
+  const r = setVersion(readFileSync(resolve(ROOT, f), 'utf8'), NEW)
   if (r.old === null) { console.error(`✗ ${f}: no "version" — aborting, nothing written`); process.exit(1) }
-  writeFileSync(abs, r.text); if (r.old !== NEW) changes.push(`  ${f}: ${r.old} → ${NEW}`)
-}
+  return { f, r }
+})
+for (const { f, r } of staged) { writeFileSync(resolve(ROOT, f), r.text); if (r.old !== NEW) changes.push(`  ${f}: ${r.old} → ${NEW}`) }
 let verified = 0; const problems: string[] = []
 for (const f of FILES) { const j = JSON.parse(readFileSync(resolve(ROOT, f), 'utf8')); if (j.version === NEW) verified++; else problems.push(`  ${f}: ${j.version}`) }
 const brust = JSON.parse(readFileSync(resolve(ROOT, 'packages/brust/package.json'), 'utf8'))
 for (const [k, v] of Object.entries({ ...brust.dependencies, ...brust.optionalDependencies }) as [string, string][])
   if (k.startsWith('@brust/') && v !== 'workspace:*') problems.push(`  packages/brust ${k} is "${v}", must be workspace:* (bun publish rewrites it)`)
+const want = PLATS.map((p) => `@brust/native-${p}`).sort().join(',')
+if (Object.keys(brust.optionalDependencies ?? {}).sort().join(',') !== want) problems.push('  packages/brust optionalDependencies are not exactly the six @brust/native-* packages')
 if (brust.private || JSON.parse(readFileSync(resolve(ROOT, 'packages/runtime-dom/package.json'), 'utf8')).private) problems.push('  a package is still "private": true')
 if (problems.length || verified !== EXPECTED) { console.error(`✗ verification FAILED (${verified}/${EXPECTED})`); for (const p of problems) console.error(p); process.exit(1) }
 console.log(`✓ bumped ${verified}/${EXPECTED} refs to ${NEW}`); for (const c of changes) console.log(c)
