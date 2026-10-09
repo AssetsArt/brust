@@ -4,6 +4,7 @@
 mod compile;
 mod dispatch;
 mod server;
+mod stubs;
 
 pub use compile::*;
 pub use server::*;
