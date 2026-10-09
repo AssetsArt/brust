@@ -47,3 +47,48 @@ test('verdicts keep the 0.1.x wire shape', () => {
   expect(() => httpError(302, '')).toThrow(/400-599/)
   expect(Outlet()).toBeNull()
 })
+
+test("'*' only at the root (M2): a nested catch-all throws, a second one is duplicate-catch-all", () => {
+  expect(() => defineRoutes([{ path: '/docs', children: [{ path: '*', Component: N }] }])).toThrow(
+    "'*' is only supported at the root in M2 (M3)",
+  )
+  expect(() => defineRoutes([{ path: '/docs', Component: L, children: [{ path: '/a', children: [{ path: '*', Component: N }] }] }])).toThrow(
+    "'*' is only supported at the root in M2 (M3)",
+  )
+  // Pathless and `/` layouts keep the root prefix: still the site-wide catch-all, pattern `*`.
+  const ok = defineRoutes([{ path: '/', Component: L, children: [{ path: '*', Component: N }] }])
+  expect(flattenRoutes(ok).leaves.map((l) => l.pattern)).toEqual(['*'])
+  expect(() => defineRoutes([{ Component: L, children: [{ path: '*', Component: N }] }, { path: '*', Component: N }])).toThrow(
+    /duplicate-catch-all|more than one/,
+  )
+  try {
+    defineRoutes([{ path: '/docs', children: [{ path: '*', Component: N }] }])
+  } catch (e) {
+    expect(e).toMatchObject({ rule: 'nested-catch-all' })
+  }
+  try {
+    defineRoutes([{ path: '*', Component: N }, { path: '*', Component: H }])
+  } catch (e) {
+    expect(e).toMatchObject({ rule: 'duplicate-catch-all' })
+  }
+})
+
+test('route cache: ttl_seconds a non-negative integer, tags string[], prefix string, bypass true|string', () => {
+  const r = (cache: unknown) => () => defineRoutes([{ path: '/', Component: H, cache } as any])
+  expect(r({ ttl_seconds: 1.5 })).toThrow('cache.ttl_seconds must be a non-negative integer')
+  expect(r({ ttl_seconds: -1 })).toThrow('cache.ttl_seconds must be a non-negative integer')
+  expect(r({ ttl_seconds: Number.MAX_SAFE_INTEGER + 2 })).toThrow('cache.ttl_seconds must be a non-negative integer')
+  expect(r({ ttl_seconds: 60, tags: 'a' })).toThrow('cache.tags must be an array of strings')
+  expect(r({ ttl_seconds: 60, tags: ['a', 1] })).toThrow('cache.tags must be an array of strings')
+  expect(r({ ttl_seconds: 60, prefix: 1 })).toThrow('cache.prefix must be a string')
+  expect(r({ ttl_seconds: 60, bypass: false })).toThrow("cache.bypass must be true or a string")
+  expect(r({ ttl_seconds: 60, bypass: 1 })).toThrow("cache.bypass must be true or a string")
+  expect(r({ ttl_seconds: 0, tags: ['a'], prefix: 'p', bypass: true })).not.toThrow()
+  expect(r({ ttl_seconds: 60, bypass: 'nocache' })).not.toThrow()
+})
+
+test('cache on a layout route (has children) is rejected in M2', () => {
+  expect(() => defineRoutes([{ path: '/', Component: L, cache: { ttl_seconds: 60 }, children: [{ path: '/a', Component: H }] }])).toThrow(
+    'cache on a layout route is not supported in M2 (M3)',
+  )
+})

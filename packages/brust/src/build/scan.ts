@@ -14,7 +14,7 @@ export async function scanRoutes(entryFile: string): Promise<{ routes: Route[]; 
     mod = await import(entryFile)
   } catch (e) {
     // defineRoutes validation (unsupported field, bad cache, …) throws at import time.
-    if (e instanceof BrustRouteError) throw new BuildError('route-config', e.message)
+    if (e instanceof BrustRouteError) throw new BuildError(e.rule, e.message)
     throw e
   }
   const routes = mod.routes ?? mod.default

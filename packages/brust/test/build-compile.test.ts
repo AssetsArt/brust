@@ -1,5 +1,8 @@
 import { expect, test } from 'bun:test'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { runBuild } from '../src/build'
 import { compileApp } from '../src/build/compile'
 import { scanRoutes } from '../src/build/scan'
 import { flattenRoutes } from '../src/routes'
@@ -52,3 +55,20 @@ test('outlet-outside-layout, unresolvable Component and lowering Error are build
   await expect(buildFixture(join(bad, 'inline-component'))).rejects.toMatchObject({ rule: 'component-source' })
   await expect(buildFixture(join(bad, 'nested-instance'))).rejects.toMatchObject({ rule: 'nested-instance' })
 })
+
+test('runBuild refuses nested and duplicate catch-alls (defineRoutes or a plain array)', async () => {
+  const bad = join(import.meta.dir, 'fixtures/bad')
+  const out = mkdtempSync(join(tmpdir(), 'brust-catchall-'))
+  try {
+    for (const [dir, rule] of [
+      ['nested-catch-all', 'nested-catch-all'],
+      ['duplicate-catch-all', 'duplicate-catch-all'],
+    ] as const) {
+      const d = join(bad, dir)
+      await expect(runBuild({ appRoot: d, entry: 'routes.tsx', outDir: out, log: () => {} })).rejects.toMatchObject({ rule })
+      expect(existsSync(join(out, 'manifest.json'))).toBe(false)
+    }
+  } finally {
+    rmSync(out, { recursive: true, force: true })
+  }
+}, 60_000)

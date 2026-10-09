@@ -2,9 +2,10 @@
 // `dist/` is always regenerated from scratch; nothing in it is edited by hand.
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
-import { flattenRoutes } from '../routes'
+import { BrustRouteError, checkCatchAlls, flattenRoutes } from '../routes'
 import { buildClientChunks, buildJobs, buildReactChunks, buildRuntime } from './bundle'
 import { compileApp } from './compile'
+import { BuildError } from './errors'
 import { writeManifest } from './manifest'
 import { scanRoutes } from './scan'
 
@@ -24,6 +25,12 @@ export async function runBuild(opts: { appRoot: string; entry: string; outDir: s
   const runtime = await buildRuntime(dist)
   const { routes, componentFile } = await scanRoutes(entry)
   const { leaves } = flattenRoutes(routes)
+  try {
+    checkCatchAlls(leaves)
+  } catch (e) {
+    if (e instanceof BrustRouteError) throw new BuildError(e.rule, e.message)
+    throw e
+  }
   const { compiled, routeComponent } = compileApp({
     appRoot,
     leaves,

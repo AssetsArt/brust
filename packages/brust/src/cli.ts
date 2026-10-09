@@ -10,8 +10,9 @@ const USAGE = `usage:
   brust start [--port N] [--workers N] [--dist-dir dist] [--entry routes.tsx]
 
 Config precedence for start: env (BRUST_ADDR, BRUST_PORT, BRUST_WORKERS, BRUST_RENDER_SLOTS,
-BRUST_DRAIN_TIMEOUT_MS, BRUST_DIST_DIR) > flags > brust.toml ([server] address/port,
-[workers] count) > defaults (localhost:1337, one worker per CPU).
+BRUST_DRAIN_TIMEOUT_MS, BRUST_BOOT_TIMEOUT_MS, BRUST_DIST_DIR, BRUST_APP_ENTRY) > flags
+(--port, --workers, --dist-dir, --entry) > brust.toml ([server] address/port, [workers] count)
+> defaults (localhost:1337, one worker per CPU, 30 s boot timeout).
 `
 
 function usage(msg: string): never {

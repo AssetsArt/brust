@@ -43,6 +43,13 @@ const M3_CACHE_FIELDS = ['key', 'key_ttl_seconds'] as const
 
 export class BrustRouteError extends Error {
   override name = 'BrustRouteError'
+  /** The `brust build` error rule (`error <rule> …`); `route-config` unless more specific. */
+  constructor(
+    message: string,
+    public readonly rule: string = 'route-config',
+  ) {
+    super(message)
+  }
 }
 
 const m3 = (field: string, where: string) => new BrustRouteError(`${field} is not supported in M2 (M3) — route ${where}`)
@@ -61,9 +68,17 @@ function validate(node: Route, where: string): void {
       if (!(ALLOWED_CACHE_FIELDS as readonly string[]).includes(k))
         throw new BrustRouteError(`route ${where}: unknown cache field cache.${k} (allowed: ${ALLOWED_CACHE_FIELDS.join(', ')})`)
     }
-    const ttl = node.cache.ttl_seconds
-    if (typeof ttl !== 'number' || !Number.isFinite(ttl) || ttl < 0)
-      throw new BrustRouteError(`route ${where}: cache.ttl_seconds must be a non-negative number`)
+    const { ttl_seconds: ttl, tags, prefix, bypass } = node.cache
+    // The server parses it as u64: a fraction would pass the build and fail only at `brust start`.
+    if (typeof ttl !== 'number' || !Number.isSafeInteger(ttl) || ttl < 0)
+      throw new BrustRouteError(`route ${where}: cache.ttl_seconds must be a non-negative integer (got ${JSON.stringify(ttl)})`)
+    if (tags !== undefined && (!Array.isArray(tags) || tags.some((t) => typeof t !== 'string')))
+      throw new BrustRouteError(`route ${where}: cache.tags must be an array of strings`)
+    if (prefix !== undefined && typeof prefix !== 'string') throw new BrustRouteError(`route ${where}: cache.prefix must be a string`)
+    if (bypass !== undefined && bypass !== true && typeof bypass !== 'string')
+      throw new BrustRouteError(`route ${where}: cache.bypass must be true or a string`)
+    // The manifest carries the leaf's cache only; a layout's would be silently dropped.
+    if (node.children !== undefined) throw new BrustRouteError(`route ${where}: cache on a layout route is not supported in M2 (M3)`)
   }
   if (node.children !== undefined) {
     if (!Array.isArray(node.children)) throw new BrustRouteError(`route ${where}: children must be an array`)
@@ -79,7 +94,20 @@ function validate(node: Route, where: string): void {
 export function defineRoutes(routes: Route<any, any>[]): Route[] {
   if (!Array.isArray(routes)) throw new BrustRouteError('defineRoutes expects an array of routes')
   routes.forEach((r, i) => validate(r, r?.path ?? `[${i}]`))
+  checkCatchAlls(flattenRoutes(routes).leaves)
   return routes
+}
+
+/** M2 server installs every catch-all at prefix "" (routing/routes.rs `from_manifest`): a nested
+ * `'*'` would silently become the site-wide 404 page, and a second one would shadow the first.
+ * Called by `defineRoutes` and again by `brust build` (a plain exported array skips the former). */
+export function checkCatchAlls(leaves: FlatRoute[]): void {
+  const all = leaves.filter((l) => l.catchAll)
+  for (const l of all)
+    if (l.pattern !== '*')
+      throw new BrustRouteError(`'*' is only supported at the root in M2 (M3) — route ${l.pattern}`, 'nested-catch-all')
+  if (all.length > 1)
+    throw new BrustRouteError(`more than one '*' route (${all.map((l) => l.id).join(', ')}): M2 allows one root catch-all`, 'duplicate-catch-all')
 }
 
 /** Placeholder for the child route slot inside a layout. The compiler replaces `<Outlet/>`

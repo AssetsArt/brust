@@ -45,8 +45,10 @@ generated files resolve against the component's source dir, bare imports against
 Prints `[brust] listening on <addr>` then `[brust] ready (N workers)`. `--port 0` picks a free port.
 SIGINT/SIGTERM drains gracefully (`BRUST_DRAIN_TIMEOUT_MS`); a second signal exits at once.
 Config precedence: env (`BRUST_ADDR`, `BRUST_PORT`, `BRUST_WORKERS`, `BRUST_RENDER_SLOTS`,
-`BRUST_DRAIN_TIMEOUT_MS`, `BRUST_DIST_DIR`) > flags > `brust.toml` (`[server] address/port`,
-`[workers] count`) > defaults (`localhost:1337`, one worker per CPU, 1 slot, 10 s drain).
+`BRUST_DRAIN_TIMEOUT_MS`, `BRUST_BOOT_TIMEOUT_MS`, `BRUST_DIST_DIR`, `BRUST_APP_ENTRY`) > flags
+(`--port`, `--workers`, `--dist-dir`, `--entry`) > `brust.toml` (`[server] address/port`,
+`[workers] count`) > defaults (`localhost:1337`, one worker per CPU, 1 slot, 10 s drain, 30 s
+worker boot timeout).
 `GET /_brust/cache/stats` reports L1/job cache counters plus `loader_calls` / `job_calls`.
 
 ## Worker wire (contract 7, `crates/brust-server/src/protocol.rs`)

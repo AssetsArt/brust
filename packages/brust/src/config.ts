@@ -1,8 +1,10 @@
 // Runtime configuration (spec §8). Precedence, high → low:
-//   env (BRUST_ADDR / BRUST_PORT / BRUST_WORKERS / BRUST_RENDER_SLOTS / BRUST_DRAIN_TIMEOUT_MS)
+//   env (BRUST_ADDR / BRUST_PORT / BRUST_WORKERS / BRUST_RENDER_SLOTS / BRUST_DRAIN_TIMEOUT_MS /
+//        BRUST_BOOT_TIMEOUT_MS)
 //   > CLI flags (`brust start --port/--workers`)
 //   > brust.toml ([server] address / port, [workers] count)
-//   > defaults (localhost, 1337, availableParallelism(), 1, 10000).
+//   > defaults (localhost, 1337, availableParallelism(), 1, 10000, 30000).
+// `brust start`'s BRUST_DIST_DIR / BRUST_APP_ENTRY follow the same env > flag rule (run.ts).
 // A missing brust.toml is fine; a present one with the wrong shape is an error. Messages follow
 // 0.1.x `runtime/config.ts`.
 import { availableParallelism } from 'node:os'
@@ -14,6 +16,8 @@ export interface BrustConfig {
   workers: number
   renderSlots: number
   drainTimeoutMs: number
+  /** How long `brust start` waits for every worker to register. */
+  bootTimeoutMs: number
 }
 
 export class BrustConfigError extends Error {
@@ -26,7 +30,7 @@ export class BrustConfigError extends Error {
   }
 }
 
-const DEFAULTS = { host: 'localhost', port: 1337, renderSlots: 1, drainTimeoutMs: 10_000 }
+const DEFAULTS = { host: 'localhost', port: 1337, renderSlots: 1, drainTimeoutMs: 10_000, bootTimeoutMs: 30_000 }
 
 export async function loadConfig(cwd: string = process.cwd(), cli: Partial<BrustConfig> = {}): Promise<BrustConfig> {
   const tomlPath = join(cwd, 'brust.toml')
@@ -49,6 +53,7 @@ export async function loadConfig(cwd: string = process.cwd(), cli: Partial<Brust
     workers: env.workers ?? cli.workers ?? fromToml.workers ?? availableParallelism(),
     renderSlots: env.renderSlots ?? cli.renderSlots ?? DEFAULTS.renderSlots,
     drainTimeoutMs: env.drainTimeoutMs ?? cli.drainTimeoutMs ?? DEFAULTS.drainTimeoutMs,
+    bootTimeoutMs: env.bootTimeoutMs ?? cli.bootTimeoutMs ?? DEFAULTS.bootTimeoutMs,
   }
 }
 
@@ -105,5 +110,6 @@ function fromEnv(): Partial<BrustConfig> {
   out.workers = envInt('BRUST_WORKERS', 1, Number.MAX_SAFE_INTEGER, 'a positive integer')
   out.renderSlots = envInt('BRUST_RENDER_SLOTS', 1, Number.MAX_SAFE_INTEGER, 'a positive integer')
   out.drainTimeoutMs = envInt('BRUST_DRAIN_TIMEOUT_MS', 0, Number.MAX_SAFE_INTEGER, 'a non-negative integer')
+  out.bootTimeoutMs = envInt('BRUST_BOOT_TIMEOUT_MS', 1, Number.MAX_SAFE_INTEGER, 'a positive integer')
   return out
 }

@@ -28,6 +28,30 @@ test('brust build on a broken app exits 1 with `error <rule>` and writes no mani
   }
 })
 
+test('brust build with a nested catch-all exits 1 with `error nested-catch-all`', () => {
+  const out = mkdtempSync(join(tmpdir(), 'brust-cli-'))
+  try {
+    const r = run(['build', 'routes.tsx', '--out-dir', out], join(bad, 'nested-catch-all'))
+    expect(r.code).toBe(1)
+    expect(r.err).toContain('error nested-catch-all')
+    expect(r.err).toContain("'*' is only supported at the root in M2 (M3)")
+    expect(existsSync(join(out, 'manifest.json'))).toBe(false)
+  } finally {
+    rmSync(out, { recursive: true, force: true })
+  }
+})
+
+test('dist-dir: BRUST_DIST_DIR beats --dist-dir (env > flags, as config.ts)', () => {
+  const p = Bun.spawnSync([bin, 'start', '--dist-dir', '/nonexistent-flag'], {
+    cwd: import.meta.dir,
+    stdout: 'pipe',
+    stderr: 'pipe',
+    env: { ...process.env, BRUST_PORT: '', BRUST_DIST_DIR: '/nonexistent-env' },
+  })
+  expect(p.exitCode).toBe(1)
+  expect(p.stderr.toString()).toContain('/nonexistent-env/manifest.json')
+})
+
 test('usage: --help exits 0, an unknown command exits 2', () => {
   const h = run(['--help'])
   expect(h.code).toBe(0)

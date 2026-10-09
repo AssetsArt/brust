@@ -12,10 +12,8 @@ export interface RunOptions {
   distDir?: string
   /** The routes module the workers import (`export const routes` or default). */
   entry?: string
-  /** Overrides below env (CLI flags): see config.ts. */
+  /** Overrides below env (CLI flags): see config.ts (incl. `bootTimeoutMs`, default 30000). */
   config?: Partial<BrustConfig>
-  /** How long to wait for every worker to register. Default 5000. */
-  bootTimeoutMs?: number
 }
 
 function fail(msg: string): never {
@@ -24,10 +22,11 @@ function fail(msg: string): never {
 }
 
 export async function run(opts: RunOptions = {}): Promise<void> {
-  const distDir = resolve(opts.distDir ?? process.env.BRUST_DIST_DIR ?? 'dist')
+  // env > flags, as every other setting (config.ts); an empty env var counts as unset.
+  const distDir = resolve(process.env.BRUST_DIST_DIR || opts.distDir || 'dist')
   const manifest = join(distDir, 'manifest.json')
   if (!existsSync(manifest)) fail(`run brust build first (${manifest} not found)`)
-  const entry = resolve(opts.entry ?? process.env.BRUST_APP_ENTRY ?? 'routes.tsx')
+  const entry = resolve(process.env.BRUST_APP_ENTRY || opts.entry || 'routes.tsx')
   if (!existsSync(entry)) fail(`routes entry ${entry} not found`)
 
   let cfg: BrustConfig
@@ -71,9 +70,9 @@ export async function run(opts: RunOptions = {}): Promise<void> {
   process.on('SIGTERM', () => onSignal(143))
 
   try {
-    await untilReady(opts.bootTimeoutMs ?? 5000)
+    await untilReady(cfg.bootTimeoutMs)
   } catch (e) {
-    fail(`workers not ready: ${String((e as Error).message ?? e)}`)
+    fail(`workers not ready: ${String((e as Error).message ?? e)} (BRUST_BOOT_TIMEOUT_MS=${cfg.bootTimeoutMs})`)
   }
   console.log(`[brust] ready (${cfg.workers} worker${cfg.workers === 1 ? '' : 's'})`)
   await new Promise<never>(() => {})
