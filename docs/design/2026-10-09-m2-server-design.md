@@ -198,6 +198,13 @@ and never asks Bun what a route is:
   `children[]` additionally carries `{ "id": <childId>, "instances": "static", "props": {} }` so
   the server's asset injection links the chunk (the child has no jobs, so the entry drives nothing
   else). Ruled on Mellow's challenge 01d6722a; no server change.
+- A child ssr job record also carries `"literals": { "<prop>": <json> }` for props passed as JSON
+  literals (IR `JobDecl.literals`, lane `m2a3-ssr-literals`); `props` holds only paths, and `null`
+  only for computed values (build error `ssr-prop-not-a-path`, ledger F60). The SERVER ignores
+  `literals` (the key is path-derived; literals are constant per job); the WORKER merges them over
+  the server-built inputs for ssr jobs, found by `<componentId>/<jobId>` from `JobCall.id`.
+- A react child under two or more loops (or inside a per-row inlined child) is the compile Error
+  `nested-instance`, like every other nested instance (spot-check 05c677eb).
 - Import specifiers: user code imports `cache` from `@brust/brust` and `Outlet`/`defineRoutes`
   from `@brust/brust/routes`; the compiler also accepts the bare `brust` specifier for `cache`
   (M1 fixtures).
