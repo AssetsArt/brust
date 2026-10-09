@@ -40,11 +40,6 @@ export interface DexCard {
   detailHref: string // "/pokemon/bulbasaur"
 }
 
-export interface TypeBadgeVM {
-  label: string // "Grass"
-  color: string // hex tint — fed into an inline style value
-}
-
 /** One base-stat bar row on the detail page. All formatting precomputed. */
 export interface StatBarVM {
   label: string // "HP" / "Atk" …
@@ -73,19 +68,10 @@ export interface EvoStageVM {
   isCurrent: boolean
 }
 
-/** One "browse by type" tile on the home page. */
-export interface TypeTileVM {
-  name: string // raw type key, used as the .map() key
-  label: string // "Grass"
-  color: string // hex tint — fed into an inline style value
-  href: string // "/pokedex"
-}
-
-/** Home landing page data — curated featured strip + type tiles + chrome. */
+/** Home landing page data — curated featured strip + type names + chrome. */
 export interface HomeData extends ChromeData {
   featured: DexCard[]
   types: string[]
-  typeTiles: TypeTileVM[]
 }
 
 /** Browse (dex grid) page data. `items` feeds BOTH the SSR `{% for %}` and the
@@ -107,11 +93,8 @@ export interface DetailData extends ChromeData {
   artwork: string
   genus: string // "Seed Pokémon"
   flavorText: string
-  heightLabel: string // "0.7 m"
-  weightLabel: string // "6.9 kg"
   abilityCount: number
   heroBg: string // CSS gradient string built in the loader from the type tint
-  types: TypeBadgeVM[]
   stats: StatBarVM[]
   statTotal: number
   abilities: AbilityVM[]

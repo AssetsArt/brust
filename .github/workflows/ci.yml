@@ -114,6 +114,7 @@ jobs:
       - run: cd packages/brust && bun test --timeout 120000 test/e2e.test.ts
       # m2e: the pokedex dogfood (spec §10). Each server-starting file runs alone.
       - run: cd examples/pokedex && bun test
+      - run: cd examples/pokedex && bun run typecheck
       - run: bunx playwright install --with-deps chromium
       - run: bun test --timeout 120000 tests/server/pokedex.test.ts
       - run: bun test --timeout 120000 tests/server/hydrate.chromium.test.ts
