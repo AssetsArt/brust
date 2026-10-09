@@ -32,6 +32,11 @@ export class BrustConfigError extends Error {
 
 const DEFAULTS = { host: 'localhost', port: 1337, renderSlots: 1, drainTimeoutMs: 10_000, bootTimeoutMs: 30_000 }
 
+/** Ceilings: ms values cross napi as `u32` (a larger number would wrap), more than 1024 Bun
+ * workers is a misconfiguration, not a deployment. */
+export const MAX_MS = 0xffff_ffff
+export const MAX_WORKERS = 1024
+
 export async function loadConfig(cwd: string = process.cwd(), cli: Partial<BrustConfig> = {}): Promise<BrustConfig> {
   const tomlPath = join(cwd, 'brust.toml')
   let fromToml: Partial<BrustConfig> = {}
@@ -47,14 +52,28 @@ export async function loadConfig(cwd: string = process.cwd(), cli: Partial<Brust
     fromToml = fromTomlTable(parsed, tomlPath)
   }
   const env = fromEnv()
+  checkCli(cli)
   return {
     host: env.host ?? cli.host ?? fromToml.host ?? DEFAULTS.host,
     port: env.port ?? cli.port ?? fromToml.port ?? DEFAULTS.port,
-    workers: env.workers ?? cli.workers ?? fromToml.workers ?? availableParallelism(),
+    workers: env.workers ?? cli.workers ?? fromToml.workers ?? Math.min(availableParallelism(), MAX_WORKERS),
     renderSlots: env.renderSlots ?? cli.renderSlots ?? DEFAULTS.renderSlots,
     drainTimeoutMs: env.drainTimeoutMs ?? cli.drainTimeoutMs ?? DEFAULTS.drainTimeoutMs,
     bootTimeoutMs: env.bootTimeoutMs ?? cli.bootTimeoutMs ?? DEFAULTS.bootTimeoutMs,
   }
+}
+
+/** CLI / programmatic overrides get the same bounds as env (a CLI `--port 0` = any free port). */
+function checkCli(cli: Partial<BrustConfig>): void {
+  const check = (name: string, v: number | undefined, min: number, max: number) => {
+    if (v !== undefined && (!Number.isInteger(v) || v < min || v > max))
+      throw new BrustConfigError(`${name} must be an integer in ${min}..${max} (got ${JSON.stringify(v)})`, null)
+  }
+  check('--port', cli.port, 0, 65535)
+  check('--workers', cli.workers, 1, MAX_WORKERS)
+  check('renderSlots', cli.renderSlots, 1, Number.MAX_SAFE_INTEGER)
+  check('drainTimeoutMs', cli.drainTimeoutMs, 0, MAX_MS)
+  check('bootTimeoutMs', cli.bootTimeoutMs, 1, MAX_MS)
 }
 
 function table(v: unknown, what: string, file: string): Record<string, unknown> {
@@ -82,8 +101,8 @@ function fromTomlTable(parsed: unknown, file: string): Partial<BrustConfig> {
   if ('workers' in root) {
     const { count } = table(root.workers, '[workers]', file)
     if (count !== undefined) {
-      if (typeof count !== 'number' || !Number.isInteger(count) || count < 1)
-        throw new BrustConfigError(`${file}: workers.count must be a positive integer (got ${JSON.stringify(count)})`, file)
+      if (typeof count !== 'number' || !Number.isInteger(count) || count < 1 || count > MAX_WORKERS)
+        throw new BrustConfigError(`${file}: workers.count must be an integer in 1..${MAX_WORKERS} (got ${JSON.stringify(count)})`, file)
       out.workers = count
     }
   }
@@ -107,9 +126,9 @@ function fromEnv(): Partial<BrustConfig> {
     out.host = addr.trim()
   }
   out.port = envInt('BRUST_PORT', 1, 65535, 'an integer in 1..65535')
-  out.workers = envInt('BRUST_WORKERS', 1, Number.MAX_SAFE_INTEGER, 'a positive integer')
+  out.workers = envInt('BRUST_WORKERS', 1, MAX_WORKERS, `an integer in 1..${MAX_WORKERS}`)
   out.renderSlots = envInt('BRUST_RENDER_SLOTS', 1, Number.MAX_SAFE_INTEGER, 'a positive integer')
-  out.drainTimeoutMs = envInt('BRUST_DRAIN_TIMEOUT_MS', 0, Number.MAX_SAFE_INTEGER, 'a non-negative integer')
-  out.bootTimeoutMs = envInt('BRUST_BOOT_TIMEOUT_MS', 1, Number.MAX_SAFE_INTEGER, 'a positive integer')
+  out.drainTimeoutMs = envInt('BRUST_DRAIN_TIMEOUT_MS', 0, MAX_MS, `an integer in 0..${MAX_MS}`)
+  out.bootTimeoutMs = envInt('BRUST_BOOT_TIMEOUT_MS', 1, MAX_MS, `an integer in 1..${MAX_MS}`)
   return out
 }

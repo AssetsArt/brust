@@ -48,9 +48,9 @@ test('BRUST_BOOT_TIMEOUT_MS: default 30000, env > CLI, validated', async () => {
   process.env.BRUST_BOOT_TIMEOUT_MS = '60000'
   expect((await loadConfig(tmpApp(), { bootTimeoutMs: 1000 })).bootTimeoutMs).toBe(60000)
   process.env.BRUST_BOOT_TIMEOUT_MS = '1.5'
-  await expect(loadConfig(tmpApp())).rejects.toThrow('BRUST_BOOT_TIMEOUT_MS must be a positive integer')
+  await expect(loadConfig(tmpApp())).rejects.toThrow('BRUST_BOOT_TIMEOUT_MS must be an integer in 1..4294967295')
   process.env.BRUST_BOOT_TIMEOUT_MS = '0'
-  await expect(loadConfig(tmpApp())).rejects.toThrow('BRUST_BOOT_TIMEOUT_MS must be a positive integer')
+  await expect(loadConfig(tmpApp())).rejects.toThrow('BRUST_BOOT_TIMEOUT_MS must be an integer in 1..4294967295')
 })
 
 test('validation: messages name the source and the rule', async () => {
@@ -58,9 +58,36 @@ test('validation: messages name the source and the rule', async () => {
   process.env.BRUST_PORT = 'abc'
   await expect(loadConfig(tmpApp())).rejects.toThrow('BRUST_PORT must be an integer in 1..65535')
   delete process.env.BRUST_PORT
-  await expect(loadConfig(tmpApp('[workers]\ncount = 0\n'))).rejects.toThrow('workers.count must be a positive integer')
+  await expect(loadConfig(tmpApp('[workers]\ncount = 0\n'))).rejects.toThrow('workers.count must be an integer in 1..1024')
   await expect(loadConfig(tmpApp('[server]\nport = 70000\n'))).rejects.toThrow('server.port must be an integer in 1..65535')
   await expect(loadConfig(tmpApp('[server\n'))).rejects.toThrow('failed to parse')
   // A CLI `--port 0` asks the OS for a free port (e2e); env/toml must name a real one.
   expect((await loadConfig(tmpApp(), { port: 0 })).port).toBe(0)
+})
+
+test('ms timeouts must fit a u32 (the napi boundary) instead of wrapping', async () => {
+  for (const k of ENV) delete process.env[k]
+  process.env.BRUST_DRAIN_TIMEOUT_MS = '4294967296'
+  await expect(loadConfig(tmpApp())).rejects.toThrow('BRUST_DRAIN_TIMEOUT_MS must be an integer in 0..4294967295')
+  process.env.BRUST_DRAIN_TIMEOUT_MS = '4294967295'
+  expect((await loadConfig(tmpApp())).drainTimeoutMs).toBe(4294967295)
+  delete process.env.BRUST_DRAIN_TIMEOUT_MS
+  process.env.BRUST_BOOT_TIMEOUT_MS = String(2 ** 32 + 5)
+  await expect(loadConfig(tmpApp())).rejects.toThrow('BRUST_BOOT_TIMEOUT_MS must be an integer in 1..4294967295')
+  delete process.env.BRUST_BOOT_TIMEOUT_MS
+  await expect(loadConfig(tmpApp(), { bootTimeoutMs: 2 ** 32 })).rejects.toThrow('bootTimeoutMs must be an integer in 1..4294967295')
+  await expect(loadConfig(tmpApp(), { drainTimeoutMs: -1 })).rejects.toThrow('drainTimeoutMs must be an integer in 0..4294967295')
+})
+
+test('port is 0..65535 and workers 1..1024 from every source (CLI flags included)', async () => {
+  for (const k of ENV) delete process.env[k]
+  await expect(loadConfig(tmpApp(), { port: 70000 })).rejects.toThrow('--port must be an integer in 0..65535 (got 70000)')
+  await expect(loadConfig(tmpApp(), { port: -1 })).rejects.toThrow('--port must be an integer in 0..65535')
+  await expect(loadConfig(tmpApp(), { workers: 0 })).rejects.toThrow('--workers must be an integer in 1..1024 (got 0)')
+  await expect(loadConfig(tmpApp(), { workers: 1025 })).rejects.toThrow('--workers must be an integer in 1..1024')
+  expect((await loadConfig(tmpApp(), { port: 65535, workers: 1024 })).workers).toBe(1024)
+  process.env.BRUST_WORKERS = '2000'
+  await expect(loadConfig(tmpApp())).rejects.toThrow('BRUST_WORKERS must be an integer in 1..1024')
+  delete process.env.BRUST_WORKERS
+  await expect(loadConfig(tmpApp('[workers]\ncount = 5000\n'))).rejects.toThrow('workers.count must be an integer in 1..1024')
 })
