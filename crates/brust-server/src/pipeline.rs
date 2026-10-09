@@ -1317,20 +1317,34 @@ fn parent_slots<'a>(ctx: &'a mut Map<String, Value>, parent: &str) -> &'a mut Ma
     component_map(ctx, CHILDREN_KEY, parent)
 }
 
+/// `map[key]`, inserted from `make` when absent. `Map::entry` takes an owned
+/// key, so it allocates one even when the key is present (every merge after
+/// the first into the same overlay).
+fn entry_or<'a>(
+    map: &'a mut Map<String, Value>,
+    key: &str,
+    make: impl FnOnce() -> Value,
+) -> &'a mut Value {
+    if !map.contains_key(key) {
+        map.insert(key.to_string(), make());
+    }
+    map.get_mut(key).expect("present or just inserted")
+}
+
 /// `ctx[root][<id>]` as an object, created (or reset from a non-object) on demand.
 fn component_map<'a>(
     ctx: &'a mut Map<String, Value>,
     root: &str,
     id: &str,
 ) -> &'a mut Map<String, Value> {
-    let all = ctx.entry(root).or_insert_with(|| Value::Object(Map::new()));
+    let all = entry_or(ctx, root, || Value::Object(Map::new()));
     if !all.is_object() {
         *all = Value::Object(Map::new());
     }
     let Value::Object(all) = all else {
         unreachable!()
     };
-    let own = all.entry(id).or_insert_with(|| Value::Object(Map::new()));
+    let own = entry_or(all, id, || Value::Object(Map::new()));
     if !own.is_object() {
         *own = Value::Object(Map::new());
     }
@@ -1392,7 +1406,7 @@ fn child_cell<'a>(
     slot: &str,
     row: Option<usize>,
 ) -> Option<&'a mut Map<String, Value>> {
-    let slot = parent_slots(ctx, parent).entry(slot).or_insert_with(|| {
+    let slot = entry_or(parent_slots(ctx, parent), slot, || {
         if row.is_some() {
             Value::Array(vec![])
         } else {
