@@ -533,3 +533,28 @@ fn effect_without_deps_array_or_with_all_deps_does_not_warn() {
         rules(&all)
     );
 }
+
+/// F42: a dynamic import() inside a class body inside a component falls back instead of panicking.
+#[test]
+fn dynamic_import_inside_a_class_body_falls_back() {
+    let ir = analyze(
+        "export default function A() {\n  class Loader { async load() { return import('./x') } static { void import('./y') } }\n  return <b onClick={() => new Loader().load()}/>\n}",
+    );
+    assert!(
+        rules(&ir).contains(&(DiagClass::Fallback, "dynamic-import".into())),
+        "{:?}",
+        rules(&ir)
+    );
+}
+
+#[test]
+fn dynamic_import_in_a_class_expression_and_field_initialiser_falls_back() {
+    let ir = analyze(
+        "export default function A() {\n  const L = class { field = () => import('./x') }\n  return <b onClick={() => new L()}/>\n}",
+    );
+    assert!(
+        rules(&ir).contains(&(DiagClass::Fallback, "dynamic-import".into())),
+        "{:?}",
+        rules(&ir)
+    );
+}

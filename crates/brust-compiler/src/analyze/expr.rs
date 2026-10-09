@@ -562,6 +562,30 @@ impl Walk {
         }
     }
 
+    /// F42: a class body is code too (methods, field initialisers, static blocks, `extends`).
+    fn class(&mut self, c: &js_ast::G::Class) {
+        if let Some(name) = &c.class_name {
+            self.declared.push(name.ref_);
+        }
+        if let Some(x) = &c.extends {
+            self.expr(x);
+        }
+        for p in c.properties.iter() {
+            if let Some(k) = &p.key {
+                self.expr(k);
+            }
+            if let Some(v) = &p.value {
+                self.expr(v);
+            }
+            if let Some(i) = &p.initializer {
+                self.expr(i);
+            }
+            if let Some(b) = &p.class_static_block {
+                self.stmts(&b.stmts);
+            }
+        }
+    }
+
     fn func(&mut self, f: &js_ast::G::Fn) {
         if let Some(name) = &f.name {
             self.declared.push(name.ref_);
@@ -607,6 +631,7 @@ impl Walk {
                 }
             }
             S::SFunction(f) => self.func(&f.func),
+            S::SClass(c) => self.class(&c.class),
             S::SFor(f) => {
                 if let Some(init) = &f.init {
                     self.stmt(init);
@@ -697,6 +722,7 @@ impl Walk {
                 self.stmts(a.body.stmts.slice());
             }
             E::EFunction(f) => self.func(&f.func),
+            E::EClass(c) => self.class(c),
             E::EObject(o) => {
                 for p in o.properties.iter() {
                     if let Some(k) = &p.key {
@@ -768,10 +794,29 @@ pub fn print_js(parsed: &Parsed, ast: &js_ast::Ast<'_>, js: Js<'_>) -> String {
     if w.dynamic_import.is_some() {
         return DYNAMIC_IMPORT_SOURCE.to_string();
     }
-    match js {
+    // F42 backstop: the Bun printer asserts on shapes this crate does not foresee; a panic
+    // there must degrade the component to a React island, never abort the process.
+    let printed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match js {
         Js::Expr(e) => print_expr_js(parsed, ast, e),
         Js::Stmt(s) => print_with(parsed, ast, || *s),
+    }));
+    match printed {
+        Ok(text) => text,
+        Err(_) => {
+            PRINTER_PANIC.with(|p| p.set(true));
+            DYNAMIC_IMPORT_SOURCE.to_string()
+        }
     }
+}
+
+thread_local! {
+    /// Set when [`print_js`] caught a printer panic; the reader raises `printer-panic`.
+    static PRINTER_PANIC: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether a printer panic was caught since the last call (and clears the flag).
+pub fn take_printer_panic() -> bool {
+    PRINTER_PANIC.with(|p| p.replace(false))
 }
 
 /// Prints one expression as JavaScript with `bun_js_printer`. There is no public

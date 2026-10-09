@@ -350,6 +350,17 @@ fn read_function(
         ));
     }
     let body = read_body(func, &mut reader);
+    if crate::analyze::expr::take_printer_panic() {
+        ir.diagnostics.push(Diagnostic::fallback(
+            "printer-panic",
+            format!(
+                "the JavaScript printer failed on code in component {}; it renders as a React island",
+                ir.id
+            ),
+            0,
+            "report this compiler bug; simplify the component meanwhile",
+        ));
+    }
     (ir.module_scope, ir.module_decls) = reader.module_scope(ast);
     ir.props = body.props;
     ir.state = body.state;
