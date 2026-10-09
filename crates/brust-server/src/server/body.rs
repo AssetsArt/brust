@@ -42,6 +42,8 @@ pub(crate) fn empty_body() -> ResponseBody {
 
 /// A streaming body fed by an mpsc `Sender<Bytes>`. Each received chunk is
 /// emitted as a data frame; the body completes when the sender drops.
+// kept for parity with body.rs @ d04718f
+#[allow(dead_code)]
 pub(crate) fn channel_body(rx: tokio::sync::mpsc::Receiver<Bytes>) -> ResponseBody {
     StreamBody::new(ReceiverStream::new(rx).map(|b| Ok::<_, io::Error>(Frame::data(b)))).boxed()
 }
@@ -143,6 +145,8 @@ pub(crate) fn resp_head(
 /// <headers>\r\n\r\n<body>`). Parses the status line + headers by hand (no
 /// httparse) and strips the framing headers hyper owns. Used ONLY on a cache
 /// HIT — the stored bytes are always builder-produced, so the format is exact.
+// kept for parity with body.rs @ d04718f
+#[allow(dead_code)]
 pub(crate) fn response_from_framed_bytes(raw: Vec<u8>) -> Response<ResponseBody> {
     // first \r\n\r\n = header/body boundary; build_single_response_bytes always emits headers first
     let Some(sep) = raw.windows(4).position(|w| w == b"\r\n\r\n") else {
@@ -201,6 +205,8 @@ pub(crate) fn response_from_framed_bytes(raw: Vec<u8>) -> Response<ResponseBody>
 
 // ----- canned typed error responses (byte-identical bodies to the old http::error_* builders) -----
 
+// kept for parity with body.rs @ d04718f
+#[allow(dead_code)]
 pub(crate) fn error_400() -> Response<ResponseBody> {
     resp(400, "text/plain", &[], b"bad request".to_vec())
 }
@@ -210,12 +216,18 @@ pub(crate) fn error_404() -> Response<ResponseBody> {
 pub(crate) fn error_405() -> Response<ResponseBody> {
     resp(405, "text/plain", &[], b"method not allowed".to_vec())
 }
+// kept for parity with body.rs @ d04718f
+#[allow(dead_code)]
 pub(crate) fn error_411() -> Response<ResponseBody> {
     resp(411, "text/plain", &[], b"length required".to_vec())
 }
+// kept for parity with body.rs @ d04718f
+#[allow(dead_code)]
 pub(crate) fn error_413() -> Response<ResponseBody> {
     resp(413, "text/plain", &[], b"payload too large".to_vec())
 }
+// kept for parity with body.rs @ d04718f
+#[allow(dead_code)]
 pub(crate) fn error_415() -> Response<ResponseBody> {
     resp(415, "text/plain", &[], b"unsupported media type".to_vec())
 }

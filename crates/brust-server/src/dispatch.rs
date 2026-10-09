@@ -173,40 +173,52 @@ pub async fn claim_or_wait(
 
 /// One round trip: claim (lockfree) → serialize → call → bounds-check len →
 /// from_slice → release claim on every path.
-pub async fn call_worker<Req: Serialize, Resp: DeserializeOwned>(
+///
+/// Cancel-safe: once the claim is taken, the call, the bounds check and the
+/// parse run in a spawned task that OWNS the claim. If the caller's future is
+/// dropped (hyper drops the request future on client disconnect), the task
+/// keeps the slot claimed until the worker's call settles, so the SAB slot is
+/// never handed to another request while JS may still be writing it (the
+/// `RenderClaim` drop invariant in `pool.rs`).
+pub async fn call_worker<Req: Serialize, Resp: DeserializeOwned + Send + 'static>(
     pool: &Arc<WorkerPool>,
     timeout: Duration,
     kind: CallKind,
     req: &Req,
 ) -> Result<Resp, CallError> {
     let claim = claim_or_wait(pool, timeout, || pool.try_claim_render_lockfree()).await?;
-    let entry = Arc::clone(claim.entry());
-    let slot = claim.slot();
     let json = serde_json::to_string(req)
         .map_err(|e| CallError::BadResponse(format!("request serialise: {e}")))?;
-    let len = match entry.dispatch.call(kind, json, slot).await {
-        Ok(n) => n,
-        Err(DispatchError::EnqueueFailed(m)) => {
-            tracing::error!(worker_id = entry.id(), ?kind, error = %m, "enqueue failed — worker dead, removing from pool");
-            pool.remove(entry.id());
-            return Err(CallError::Enqueue(m));
+    let pool = Arc::clone(pool);
+    let task = tokio::spawn(async move {
+        let entry = Arc::clone(claim.entry());
+        let slot = claim.slot();
+        let len = match entry.dispatch.call(kind, json, slot).await {
+            Ok(n) => n,
+            Err(DispatchError::EnqueueFailed(m)) => {
+                tracing::error!(worker_id = entry.id(), ?kind, error = %m, "enqueue failed — worker dead, removing from pool");
+                pool.remove(entry.id());
+                return Err(CallError::Enqueue(m));
+            }
+            Err(DispatchError::PromiseRejected(m)) => return Err(CallError::Rejected(m)),
+        };
+        let (ptr, cap) = entry.dispatch.buf_slot(slot);
+        if len == 0 || len as usize > cap {
+            return Err(CallError::BadResponse(format!(
+                "resp_len {len} outside (0, {cap}]"
+            )));
         }
-        Err(DispatchError::PromiseRejected(m)) => return Err(CallError::Rejected(m)),
-    };
-    let (ptr, cap) = entry.dispatch.buf_slot(slot);
-    if len == 0 || len as usize > cap {
-        return Err(CallError::BadResponse(format!(
-            "resp_len {len} outside (0, {cap}]"
-        )));
-    }
-    // SAFETY: the worker's Promise resolved (happens-before through the dispatch
-    // future), JS is done writing this slot's sub-region; `len` is bounds-checked
-    // above; `claim` is still held so no other request can write the slot.
-    let bytes = unsafe { std::slice::from_raw_parts(ptr, len as usize) };
-    let parsed =
-        serde_json::from_slice::<Resp>(bytes).map_err(|e| CallError::BadResponse(e.to_string()));
-    drop(claim);
-    parsed
+        // SAFETY: the worker's Promise resolved (happens-before through the dispatch
+        // future), JS is done writing this slot's sub-region; `len` is bounds-checked
+        // above; `claim` is still held so no other request can write the slot.
+        let bytes = unsafe { std::slice::from_raw_parts(ptr, len as usize) };
+        let parsed = serde_json::from_slice::<Resp>(bytes)
+            .map_err(|e| CallError::BadResponse(e.to_string()));
+        drop(claim);
+        parsed
+    });
+    task.await
+        .map_err(|e| CallError::BadResponse(format!("worker call task: {e}")))?
 }
 
 /// In-process mock for pool/dispatch unit tests: a leaked 256 KiB buffer (no
@@ -455,5 +467,68 @@ mod tests {
             "woke by timeout, not by release"
         );
         releaser.await.unwrap();
+    }
+
+    /// Resolves its call only when the test fires the oneshot; the reply is
+    /// written into the slot up front.
+    struct GatedDispatch {
+        inner: MockDispatch,
+        gate: parking_lot::Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+    }
+
+    impl RenderDispatch for GatedDispatch {
+        fn call(
+            &self,
+            kind: CallKind,
+            request_json: String,
+            slot: u32,
+        ) -> Pin<Box<dyn Future<Output = Result<u32, DispatchError>> + Send>> {
+            let reply = self.inner.call(kind, request_json, slot);
+            let gate = self.gate.lock().take().expect("one call");
+            Box::pin(async move {
+                let _ = gate.await;
+                reply.await
+            })
+        }
+        fn buf(&self) -> (*mut u8, usize) {
+            self.inner.buf()
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn call_worker_keeps_slot_claimed_after_caller_drops() {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let pool = Arc::new(WorkerPool::new());
+        pool.register(Box::new(GatedDispatch {
+            inner: MockDispatch::replying(br#"{"ok":true}"#),
+            gate: parking_lot::Mutex::new(Some(rx)),
+        }));
+        // The caller gives up mid-call (hyper dropping the request future).
+        let r = tokio::time::timeout(
+            Duration::from_millis(20),
+            call_worker::<_, serde_json::Value>(
+                &pool,
+                Duration::from_millis(100),
+                CallKind::Loader,
+                &serde_json::json!({}),
+            ),
+        )
+        .await;
+        assert!(r.is_err(), "the call must still be pending");
+        // The worker has not settled: the slot must stay claimed.
+        assert!(matches!(
+            pool.try_claim_render_lockfree(),
+            ClaimResult::AllBusy
+        ));
+        tx.send(()).unwrap();
+        // Once the worker settles, the spawned task releases the slot.
+        let t0 = std::time::Instant::now();
+        loop {
+            if let ClaimResult::Claimed(_) = pool.try_claim_render_lockfree() {
+                break;
+            }
+            assert!(t0.elapsed() < Duration::from_secs(2), "slot never released");
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
     }
 }

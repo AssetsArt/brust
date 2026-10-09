@@ -1,5 +1,31 @@
-//! Server configuration. Task 1 carries only `CorsConfig` (verbatim from
-//! brust-core `config.rs:27-78` @ d04718f); the full `Config` arrives later.
+//! Server configuration and the shared server state.
+//!
+//! `CorsConfig` is verbatim from brust-core `config.rs:27-78` @ d04718f.
+//! [`Server`] is the 0.1.x `AppState` (`config.rs:82-300`) stripped to what the
+//! v2 request path needs (no island/page/action/dev/islands_dir/css_dir/public
+//! state, no runtime setters: everything is fixed at `start`), plus the
+//! manifest, renderer and the two caches.
+
+use std::net::SocketAddr;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
+use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
+use tokio::sync::Notify;
+
+use crate::cache::job_cache::{JobCache, JobKey};
+pub use crate::cache::l1::CacheStats;
+use crate::cache::l1::L1Cache;
+use crate::dispatch::RenderDispatch;
+use crate::manifest::Manifest;
+use crate::pool::WorkerPool;
+use crate::render::Renderer;
+use crate::routing::RouteTable;
+use crate::server::Tuning;
+use crate::server::cors::ResolvedCors;
+pub use crate::server::tls::TlsConfig;
 
 /// Global CORS policy, set once at boot (via `ServeOptions.cors` in the napi
 /// binding). `None` (the default) = CORS disabled, byte-identical behavior.
@@ -51,5 +77,177 @@ impl CorsConfig {
             );
         }
         Ok(())
+    }
+}
+
+/// Everything `start` needs. Fixed for the server's lifetime.
+#[derive(Clone, Debug)]
+pub struct Config {
+    pub addr: SocketAddr,
+    /// The build output: `manifest.json`, `jinja/`, `client/`, `public/`.
+    pub dist_dir: PathBuf,
+    /// Workers to wait for before accepting; `0` = serve immediately.
+    pub expected_workers: u32,
+    pub tuning: Tuning,
+    pub l1_capacity: u64,
+    pub job_cache_capacity: u64,
+    pub tls: Option<TlsConfig>,
+    pub cors: Option<CorsConfig>,
+    /// `X-Powered-By` value; `None` = header not stamped.
+    pub generator: Option<String>,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            addr: SocketAddr::from(([127, 0, 0, 1], 1337)),
+            dist_dir: PathBuf::from("dist"),
+            expected_workers: 0,
+            tuning: Tuning::default(),
+            l1_capacity: 1000,
+            job_cache_capacity: 1000,
+            tls: None,
+            cors: None,
+            generator: None,
+        }
+    }
+}
+
+/// `cache.invalidate({ key?, tags?, path?, method? })` (spec §5).
+#[derive(Debug, Default, Deserialize)]
+pub struct InvalidateArgs {
+    #[serde(default)]
+    pub key: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub method: Option<String>,
+}
+
+#[derive(Debug, Default, Serialize, PartialEq, Eq)]
+pub struct InvalidateResult {
+    pub l1_removed: usize,
+    pub job_removed: usize,
+}
+
+/// `/_brust/cache/stats` (spec §7).
+#[derive(Debug, Serialize)]
+pub struct Stats {
+    pub l1: CacheStats,
+    pub job: CacheStats,
+    pub loader_calls: u64,
+    pub job_calls: u64,
+}
+
+/// Shared server state (the stripped 0.1.x `AppState`), one per `start`.
+pub struct Server {
+    pub(crate) pool: Arc<WorkerPool>,
+    pub(crate) routes: RouteTable,
+    pub(crate) manifest: Manifest,
+    pub(crate) renderer: Renderer,
+    pub(crate) l1: L1Cache,
+    pub(crate) jobs: JobCache,
+    pub(crate) dist_dir: PathBuf,
+    pub(crate) loader_calls: AtomicU64,
+    pub(crate) job_calls: AtomicU64,
+    /// Worker-registration barrier: the accept loop waits on it.
+    pub(crate) ready: Arc<Notify>,
+    pub(crate) expected_workers: AtomicU32,
+    /// Graceful-drain start signal (`request_drain` → accept loop).
+    pub(crate) drain_start: Arc<Notify>,
+    /// Graceful-drain completion signal (accept loop → `wait_drain_done`).
+    pub(crate) drain_done: Arc<Notify>,
+    pub(crate) drain_timeout_ms: AtomicU64,
+    pub(crate) local_addr: OnceLock<SocketAddr>,
+    pub(crate) tls: Option<TlsConfig>,
+    pub(crate) cors: Option<CorsConfig>,
+    /// `cors` resolved into prebuilt header values once at `start` (per server,
+    /// not a process global: several servers may live in one process).
+    pub(crate) cors_resolved: Option<ResolvedCors>,
+    pub(crate) generator: Option<String>,
+    pub(crate) claim_timeout: Duration,
+}
+
+impl Server {
+    /// Register a worker; once `expected_workers` have registered the accept
+    /// loop starts serving.
+    pub fn register_worker(&self, d: Box<dyn RenderDispatch>) -> u32 {
+        let id = self.pool.register(d);
+        if self.pool.registered_count() >= self.expected_workers.load(Ordering::SeqCst) as usize {
+            self.ready.notify_one();
+        }
+        id
+    }
+
+    /// The bound address (port 0 resolves here).
+    pub fn local_addr(&self) -> SocketAddr {
+        *self.local_addr.get().expect("local_addr is set by start")
+    }
+
+    /// `key` → the job entry `"k:"+key`; `tags` → both caches; `path` (+
+    /// `method`, default `GET`) → L1 entries for that path, any query/prefix.
+    pub fn invalidate(&self, args: InvalidateArgs) -> InvalidateResult {
+        let mut r = InvalidateResult::default();
+        if let Some(k) = &args.key
+            && self.jobs.invalidate_key(&JobKey(format!("k:{k}")))
+        {
+            r.job_removed += 1;
+        }
+        if !args.tags.is_empty() {
+            r.l1_removed += self.l1.invalidate_tags(&args.tags);
+            r.job_removed += self.jobs.invalidate_tags(&args.tags);
+        }
+        if let Some(p) = &args.path {
+            let m = args.method.as_deref().unwrap_or("GET");
+            r.l1_removed += self.l1.invalidate_path(m, p);
+        }
+        r
+    }
+
+    /// The configured TLS settings, if any. `None` = plaintext.
+    pub fn tls(&self) -> Option<&TlsConfig> {
+        self.tls.as_ref()
+    }
+
+    /// The configured CORS policy, if any. `None` = disabled.
+    pub fn cors(&self) -> Option<&CorsConfig> {
+        self.cors.as_ref()
+    }
+
+    pub fn stats(&self) -> Stats {
+        Stats {
+            l1: self.l1.stats(),
+            job: self.jobs.stats(),
+            loader_calls: self.loader_calls.load(Ordering::Relaxed),
+            job_calls: self.job_calls.load(Ordering::Relaxed),
+        }
+    }
+
+    // ----- graceful drain (config.rs:269-300) -----
+
+    /// Request a graceful drain with a `timeout_ms` deadline, then fire the
+    /// `drain_start` signal the accept loop is parked on.
+    pub fn request_drain(&self, timeout_ms: u64) {
+        self.drain_timeout_ms
+            .store(timeout_ms.max(1), Ordering::Relaxed);
+        self.drain_start.notify_one();
+    }
+
+    /// Resolves when the accept loop reports the drain finished.
+    pub async fn wait_drain_done(&self) {
+        self.drain_done.notified().await;
+    }
+
+    /// The drain deadline (ms) set by the last `request_drain`.
+    pub(crate) fn drain_timeout_ms(&self) -> u64 {
+        self.drain_timeout_ms.load(Ordering::Relaxed)
+    }
+
+    /// Fired by the accept loop once every in-flight connection has drained (or
+    /// the deadline elapsed).
+    pub(crate) fn signal_drain_done(&self) {
+        self.drain_done.notify_one();
     }
 }

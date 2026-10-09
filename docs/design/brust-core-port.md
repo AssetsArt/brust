@@ -2,7 +2,7 @@
 Source: github.com/AssetsArt/brust `main` @ d04718f, `crates/brust-core/src/`. Copied once (2026-10-09), owned by v2; `main` fixes are NOT auto-merged — re-port by hand and bump the SHA column.
 | v2 module | source | treatment | tests (src → v2) |
 |---|---|---|---|
-| server/body.rs | server/body.rs | carry verbatim | 7 → 7 |
+| server/body.rs | server/body.rs | carry verbatim (+ item-level `#[allow(dead_code)]` "kept for parity" on `channel_body`, `response_from_framed_bytes`, `error_400/411/413/415`, unused by v2) | 7 → 7 |
 | server/tls.rs | server/tls.rs | carry verbatim | 4 → 4 |
 | server/test_data/{cert,key}.pem | server/test_data/{cert,key}.pem | carry verbatim (tls test fixtures, `include_str!`) | — |
 | server/cors.rs | server/cors.rs | carry verbatim | 20 → 20 |
@@ -14,11 +14,13 @@ Source: github.com/AssetsArt/brust `main` @ d04718f, `crates/brust-core/src/`. C
 | cache/l1.rs | cache/response_cache.rs + server/mod.rs:1787-1798,1817-1824 (`build_cache_key`, `sort_query`) | adapt: value = JSON ctx; `invalidate_tags` returns count; tag index generation-guarded (a replace/evict of an old value no longer un-indexes the newer one) | 10 → 12 (+`build_cache_key_sorts_query_and_applies_prefix` moved from server/mod.rs:1888-1894, +`reinsert_keeps_newer_entry_tag_indexed`) |
 | cache/job_cache.rs | cache/page_cache.rs | adapt: typed key, Expiry, stats; JSON value; generation-guarded tag index shared with l1 | 9 → 12 (+`ttl_none_survives_until_invalidated`, `stats_count_hits_and_misses`, `reinsert_keeps_newer_entry_tag_indexed`) |
 | pool.rs | render/pool.rs | carry verbatim (`use` path → `crate::dispatch`; + `WorkerEntry::id()`) | 14 → 14 |
-| dispatch.rs | render/dispatch.rs + server/mod.rs:1262-1371 | adapt: CallKind, JSON response, claim_or_wait(timeout), `call_worker` (framed decode :1373-1404 and `process::exit` on last worker not carried); module doc :1-21 verbatim | 3 → 7 (+`call_worker_round_trips_json`, `call_worker_returns_bad_response_on_len_over_capacity`, `claim_or_wait_times_out_when_all_busy`, `claim_or_wait_wakes_when_claim_released`) |
+| dispatch.rs | render/dispatch.rs + server/mod.rs:1262-1371 | adapt: CallKind, JSON response, claim_or_wait(timeout), `call_worker` (framed decode :1373-1404 and `process::exit` on last worker not carried); module doc :1-21 verbatim | 3 → 8 (+`call_worker_round_trips_json`, `call_worker_returns_bad_response_on_len_over_capacity`, `claim_or_wait_times_out_when_all_busy`, `claim_or_wait_wakes_when_claim_released`, `call_worker_keeps_slot_claimed_after_caller_drops`) |
 | protocol.rs | — (spec §1 S1 call table) | new: Loader/Jobs request+response structs | 0 → 9 |
 | tests/common/fake_bun.rs | render/dispatch.rs:107-165 (`MockDispatch` pattern) | new: `FakeBun` + `FakeBunHandle` test double (records last request per kind) | proven by tests/fake_bun.rs (2) |
 | render.rs | template/jinja.rs | adapt: owned env from manifest, no globals, no dynamic tier | 4 → 1 (+9 integration) |
-| (filled by Tasks 7–8: config, server/mod) |
+| server/mod.rs | server/mod.rs:33-442 | carry: start/Tuning/serve_io/drain; handle_request replaced by pipeline.rs (`Tuning` minus `max_action_body_bytes`; `TUNING`/`CORS` process statics dropped — tuning and resolved CORS live on `Server`, so several servers can share a process; `start(Config) -> Arc<Server>`, boot sends the bound addr) | 3 → 1 (+19 integration in tests/server.rs) |
+| config.rs Server | config.rs:82-300 | adapt: stripped AppState (pool, routes, ready, drain_*, expected_workers, generator, tls, cors + manifest, renderer, L1, job cache, call counters); no runtime setters | 6 → 0 (covered by tests/server.rs) |
+| pipeline.rs | server/mod.rs:447-833 (L1 decision :710-808 as `l1_decision`, CORS preflight :484-501, meta_cacheable :1809-1815 as the store rule) | new: S7 request order; `call_worker` made cancel-safe (claim owned by a spawned task) | 0 → 8 |
 Not carried (spec S2): cache/island_cache.rs, render/stream.rs, realtime/*, routing/action.rs, `/_brust/islands`, `/_brust/page`, MCP, SSE/WS, AI, `handle_action`, `dispatch_streaming`, `spawn_chunk_pump`.
 
 ## routes.rs: dropped tests (16)
