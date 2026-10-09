@@ -103,6 +103,7 @@
             "loc": 172,
             "name": "Counter",
             "source": "./Counter",
+            "imported": "default",
             "props": [
               [
                 "n",

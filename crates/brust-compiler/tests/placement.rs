@@ -119,7 +119,9 @@ fn unreached_derived_and_refs_are_client_only() {
     );
     assert_eq!(
         derived(&ir, "next"),
-        &Expr::ClientOnly { js: "n + a".into() }
+        &Expr::ClientOnly {
+            js: "n() + props().a".into()
+        }
     );
     assert!(matches!(ir.refs[0].init, Expr::ClientOnly { .. }));
 }

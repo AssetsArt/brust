@@ -27,6 +27,7 @@ enum Tag {
     Component {
         name: String,
         source: Option<String>,
+        imported: Option<String>,
     },
     Member,
 }
@@ -40,11 +41,15 @@ fn tag_of(r: &Reader<'_, '_>, tag: &js_ast::Expr) -> Tag {
                 return Tag::Fragment;
             }
             let (name, kind) = r.names.kind_of(*ref_);
-            let source = match kind {
-                IdentKind::Import { source, .. } => Some(source),
-                _ => None,
+            let (source, imported) = match kind {
+                IdentKind::Import { source, imported } => (Some(source), Some(imported)),
+                _ => (None, None),
             };
-            Tag::Component { name, source }
+            Tag::Component {
+                name,
+                source,
+                imported,
+            }
         }
         _ => Tag::Member,
     }
@@ -145,10 +150,15 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
             ref_name,
         },
         Tag::Fragment => Node::Fragment(children),
-        Tag::Component { name, source } => Node::Component {
+        Tag::Component {
+            name,
+            source,
+            imported,
+        } => Node::Component {
             loc,
             name,
             source,
+            imported,
             props: props_out,
             children,
             link: None,
@@ -158,6 +168,7 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
             loc,
             name: "<member>".into(),
             source: None,
+            imported: None,
             props: props_out,
             children,
             link: None,

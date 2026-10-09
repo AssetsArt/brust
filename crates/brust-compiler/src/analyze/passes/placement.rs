@@ -89,12 +89,16 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState) {
             Some(Place::Server) => Expr::Server(crate::ir::ServerExpr(r)),
             Some(Place::Slot) => p.slot(&r),
             Some(Place::Code) if p.st.cx.deps(&r, &[]).browser => Expr::Raw(r),
-            _ => Expr::ClientOnly { js: r.to_js() },
+            _ => Expr::ClientOnly {
+                js: r.to_js_in(crate::ir::JsCtx::Client),
+            },
         };
     }
     for r in &mut ir.refs {
         if let Expr::Raw(raw) = &r.init {
-            r.init = Expr::ClientOnly { js: raw.to_js() };
+            r.init = Expr::ClientOnly {
+                js: raw.to_js_in(crate::ir::JsCtx::Client),
+            };
         }
     }
     ir.diagnostics.append(&mut p.diagnostics);
@@ -253,6 +257,9 @@ impl Placer<'_> {
             return Some(Place::Code);
         }
         self.visiting.push(name.into());
+        if contains_jsx(&raw) {
+            self.st.jsx_code.push((raw.loc, "a local function"));
+        }
         let place = if matches!(raw.kind, RawKind::Arrow { .. })
             || self.st.cx.deps(&raw, &[]).browser
             || contains_jsx(&raw)
@@ -363,12 +370,19 @@ impl Placer<'_> {
             _ => false,
         };
         if is_fn {
+            if contains_jsx(r) {
+                self.st
+                    .jsx_code
+                    .push((r.loc, "a function passed to a child"));
+            }
             self.st.client_uses.push(super::ClientUse {
                 loc: r.loc,
                 deps: self.st.cx.deps(r, &self.loop_scope),
                 what: "a function passed to a child",
             });
-            Expr::ClientOnly { js: r.to_js() }
+            Expr::ClientOnly {
+                js: r.to_js_in(crate::ir::JsCtx::Client),
+            }
         } else {
             self.painted(r)
         }

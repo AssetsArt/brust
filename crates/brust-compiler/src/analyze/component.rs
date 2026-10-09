@@ -4,7 +4,7 @@ use crate::analyze::hooks::{mark_state_bindings, read_body};
 use crate::analyze::names::NameTable;
 use crate::ir::{
     Attr, BinOp, ComponentIR, Diagnostic, Expr, Literal, Node, RawExpr, RawKind, component_id,
-    line_col,
+    line_col, named_component_id,
 };
 use crate::parse::Parsed;
 use bun_ast as js_ast;
@@ -54,28 +54,7 @@ pub fn analyze_component(parsed: &Parsed) -> Result<ComponentIR, Diagnostic> {
                 "export the component with `export default function`",
             ));
         };
-        let mut names = NameTable::new(ast, func);
-        mark_state_bindings(func, &mut names);
-        let print = |js: Js<'_>| print_js(parsed, ast, js);
-        let mut reader = Reader::new(&mut names, &print);
-        let body = read_body(func, &mut reader);
-        ir.props = body.props;
-        ir.state = body.state;
-        ir.derived = body.derived;
-        ir.effects = body.effects;
-        ir.handlers = body.handlers;
-        ir.refs = body.refs;
-        ir.id_bindings = body.id_bindings;
-        ir.diagnostics = body.diagnostics;
-        let root_loc = match &body.return_expr {
-            Some(Expr::Raw(r)) => r.loc,
-            _ => 0,
-        };
-        let root = body
-            .return_expr
-            .map(root_node)
-            .unwrap_or(Node::Fragment(vec![]));
-        ir.template = host_root(root, root_loc, &mut ir.diagnostics);
+        read_function(parsed, ast, func, &mut ir);
         Ok(())
     })?;
     let text = parsed.text();
@@ -94,38 +73,115 @@ pub struct AnalyzeOptions {
     pub root: std::path::PathBuf,
 }
 
-/// Parses `source` as the module at `path` and runs the full analysis. Call it
+/// Parses `source` as the module at `path` and runs the full analysis,
+/// compiling child components it imports (read from `opts.root`). Call it
 /// inside [`crate::parse::run_on_compiler_thread`].
 pub fn analyze_source(
     path: &str,
     source: Vec<u8>,
     opts: &AnalyzeOptions,
 ) -> Result<ComponentIR, Diagnostic> {
-    let parsed = crate::parse::parse_tsx(path, source).map_err(|e| {
-        Diagnostic::error(
-            "parse",
-            format!("{} at {}:{}", e.message, e.line, e.column),
+    let modules = std::cell::RefCell::new(crate::analyze::modules::ModuleCache::default());
+    analyze_with(path, Some(source), opts, &modules)
+}
+
+/// [`analyze_source`] for the file `opts.root / path`.
+pub fn analyze_file(path: &str, opts: &AnalyzeOptions) -> Result<ComponentIR, Diagnostic> {
+    let modules = std::cell::RefCell::new(crate::analyze::modules::ModuleCache::default());
+    analyze_with(path, None, opts, &modules)
+}
+
+/// The full analysis through a caller-owned module cache, so the caller can
+/// read every child component compiled on the way (M1c lowers them all).
+pub fn analyze_with(
+    path: &str,
+    source: Option<Vec<u8>>,
+    opts: &AnalyzeOptions,
+    modules: &std::cell::RefCell<crate::analyze::modules::ModuleCache>,
+) -> Result<ComponentIR, Diagnostic> {
+    use crate::analyze::modules::{Export, Lookup, compile};
+    match compile(path, &Export::Default, source, opts, modules) {
+        Lookup::Compiled(ir) => Ok((*ir).clone()),
+        Lookup::Failed(d) => Err(d),
+        Lookup::Cycle => Err(Diagnostic::error(
+            "import-cycle",
+            format!("{path} is already being compiled"),
             0,
-            "fix the syntax error",
-        )
-    })?;
-    let mut ir = analyze_component(&parsed)?;
-    let ctx = crate::analyze::passes::PassCtx {
-        text: parsed.text(),
-        opts,
-    };
-    crate::analyze::passes::run_passes(&mut ir, &ctx);
-    finish_diagnostics(&mut ir, parsed.text());
-    Ok(ir)
+            "break the import cycle",
+        )),
+    }
 }
 
 /// Fills line/col and sorts by (class severity, line, col).
-fn finish_diagnostics(ir: &mut ComponentIR, text: &[u8]) {
+pub(crate) fn finish_diagnostics(ir: &mut ComponentIR, text: &[u8]) {
     for d in &mut ir.diagnostics {
         (d.line, d.col) = line_col(text, d.loc);
     }
     ir.diagnostics
         .sort_by_key(|d| (d.class.severity_rank(), d.line, d.col));
+}
+
+/// Reads one component function into `ir` (structural).
+fn read_function(
+    parsed: &Parsed,
+    ast: &js_ast::Ast<'_>,
+    func: &js_ast::G::Fn,
+    ir: &mut ComponentIR,
+) {
+    let mut names = NameTable::new(ast, func);
+    mark_state_bindings(func, &mut names);
+    let print = |js: Js<'_>| print_js(parsed, ast, js);
+    let mut reader = Reader::new(&mut names, &print);
+    let body = read_body(func, &mut reader);
+    ir.props = body.props;
+    ir.state = body.state;
+    ir.derived = body.derived;
+    ir.effects = body.effects;
+    ir.handlers = body.handlers;
+    ir.refs = body.refs;
+    ir.id_bindings = body.id_bindings;
+    ir.diagnostics.extend(body.diagnostics);
+    let root_loc = match &body.return_expr {
+        Some(Expr::Raw(r)) => r.loc,
+        _ => 0,
+    };
+    let root = body
+        .return_expr
+        .map(root_node)
+        .unwrap_or(Node::Fragment(vec![]));
+    ir.template = host_root(root, root_loc, &mut ir.diagnostics);
+}
+
+/// The module-level `function <name>` (exported or not).
+fn module_fn<'x>(ast: &'x js_ast::Ast<'_>, name: &str) -> Option<&'x js_ast::G::Fn> {
+    let symbols = ast.symbols.as_slice();
+    for part in ast.parts.iter() {
+        for stmt in part.stmts.slice() {
+            if let S::SFunction(sf) = &stmt.data
+                && let Some(n) = &sf.func.name
+                && symbols
+                    .get(n.ref_.inner_index() as usize)
+                    .is_some_and(|s| s.original_name.slice() == name.as_bytes())
+            {
+                return Some(&sf.func);
+            }
+        }
+    }
+    None
+}
+
+/// Reads the module-level function `name` (a named export or a component local
+/// to the module) into a structural `ComponentIR`; `None` when there is no
+/// function declaration of that name.
+pub fn analyze_named_component(parsed: &Parsed, name: &str) -> Option<ComponentIR> {
+    let path = parsed.path();
+    let mut ir = ComponentIR::new(named_component_id(&path, name), path);
+    let found = parsed.with_ast(|ast| {
+        let func = module_fn(ast, name)?;
+        read_function(parsed, ast, func, &mut ir);
+        Some(())
+    });
+    found.map(|_| ir)
 }
 
 fn has_default_export(ast: &js_ast::Ast<'_>) -> bool {

@@ -3,9 +3,11 @@
 //! children → cache → tier. Pure functions of the IR, except `children`, which
 //! compiles child modules through the [`crate::analyze::modules`] cache.
 pub mod captures;
+pub mod children;
 pub mod deps;
 pub mod placement;
 pub mod server_expr;
+pub mod tier;
 
 use deps::DepsCx;
 use placement::{Painted, SlotInfo};
@@ -27,6 +29,8 @@ pub struct PassState {
     pub handler_names: BTreeSet<String>,
     /// Values the client chunk evaluates, beyond handlers/effects/state inits.
     pub client_uses: Vec<ClientUse>,
+    /// Code outside the template that builds JSX: (loc, what).
+    pub jsx_code: Vec<(u32, &'static str)>,
 }
 
 /// Something the client chunk runs, with what it reads.
@@ -43,6 +47,11 @@ pub struct PassCtx<'a> {
     /// Source text of the module, for line numbers in messages.
     pub text: &'a [u8],
     pub opts: &'a crate::analyze::component::AnalyzeOptions,
+    /// Path of the module (relative to `opts.root`).
+    pub path: &'a str,
+    pub modules: &'a std::cell::RefCell<crate::analyze::modules::ModuleCache>,
+    /// Reads a function declared in this module as a structural component.
+    pub local: &'a dyn Fn(&str) -> Option<ComponentIR>,
 }
 
 impl PassCtx<'_> {
@@ -66,5 +75,7 @@ pub fn run_passes(ir: &mut ComponentIR, ctx: &PassCtx<'_>) -> PassState {
     let mut st = PassState::new(ir);
     placement::place(ir, &mut st);
     captures::captures(ir, &mut st, ctx);
+    children::children(ir, &mut st, ctx);
+    tier::tier(ir, &mut st, ctx);
     st
 }

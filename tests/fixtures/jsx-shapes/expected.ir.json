@@ -180,6 +180,7 @@
                   "loc": 328,
                   "name": "Badge",
                   "source": "./Badge",
+                  "imported": "default",
                   "props": [
                     [
                       "tone",
@@ -275,6 +276,7 @@
             "loc": 410,
             "name": "<member>",
             "source": null,
+            "imported": null,
             "props": [],
             "children": [],
             "link": null,

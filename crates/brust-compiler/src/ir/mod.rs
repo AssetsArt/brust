@@ -152,12 +152,30 @@ pub fn component_id(path: &str) -> String {
             name.extend(chars);
         }
     }
+    format!("{name}_{:08x}", fnv32(path))
+}
+
+/// Id of the function `name` of module `path` that is not its default export:
+/// lower-camel `name`, `_`, and the hash of `path#name`.
+pub fn named_component_id(path: &str, name: &str) -> String {
+    let mut chars = name.chars();
+    let lead: String = chars
+        .next()
+        .map(|c| c.to_ascii_lowercase())
+        .into_iter()
+        .chain(chars)
+        .collect();
+    format!("{lead}_{:08x}", fnv32(&format!("{path}#{name}")))
+}
+
+/// High 32 bits of the 64-bit FNV-1a hash.
+fn fnv32(s: &str) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for &b in path.as_bytes() {
+    for &b in s.as_bytes() {
         hash ^= u64::from(b);
         hash = hash.wrapping_mul(0x0100_0000_01b3);
     }
-    format!("{name}_{:08x}", hash >> 32)
+    hash >> 32
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

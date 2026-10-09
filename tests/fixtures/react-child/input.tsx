@@ -1,7 +1,10 @@
-import { useContext } from 'react'
-import { ThemeContext } from './theme'
+import Reviews from './Reviews'
 
-export default function Themed({ label }: { label: string }) {
-  const theme = useContext(ThemeContext)
-  return <span className={theme}>{label}</span>
+export default function ProductPage({ productId, title }: { productId: string; title: string }) {
+  return (
+    <main>
+      <h1>{title}</h1>
+      <Reviews productId={productId} />
+    </main>
+  )
 }

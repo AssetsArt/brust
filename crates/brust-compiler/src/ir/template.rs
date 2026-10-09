@@ -32,6 +32,9 @@ pub enum Node {
         name: String,
         /// Import path of the component, `None` when it is declared in this file.
         source: Option<String>,
+        /// The imported export name (`default` for a default import); `None`
+        /// when declared in this file.
+        imported: Option<String>,
         props: Vec<(String, Expr)>,
         children: Vec<Node>,
         link: Option<u32>,
