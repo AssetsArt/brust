@@ -60,7 +60,7 @@ fn if_branches_that_are_not_one_element_are_wrapped() {
         "{STATE}export default function T() {{ const [open, setOpen] = useState(false); return <div onClick={{() => setOpen(!open)}}>{{open && <>a<b/></>}}</div> }}"
     ));
     assert!(
-        j.contains("{% if open %}<brust-if style=\"display:contents\" x-if=\"_c1\">a<b></b></brust-if>{% else %}<!--x-if--><brust-if style=\"display:contents\" x-if=\"_c1\" hidden>a<b></b></brust-if>{% endif %}"),
+        j.contains("{% if (open) | truthy %}<brust-if style=\"display:contents\" x-if=\"_c1\">a<b></b></brust-if>{% else %}<!--x-if--><brust-if style=\"display:contents\" x-if=\"_c1\" hidden>a<b></b></brust-if>{% endif %}"),
         "{j}"
     );
     // Renders as valid jinja either way.
@@ -73,7 +73,10 @@ fn boolean_attribute_from_a_server_expression() {
     let (j, _) = lower(
         "export default function T({ ok }: any) { return <button disabled={!ok}>x</button> }",
     );
-    assert!(j.contains("{% if (not ok) %} disabled{% endif %}"), "{j}");
+    assert!(
+        j.contains("{% if ((not (ok | truthy))) | truthy %} disabled{% endif %}"),
+        "{j}"
+    );
     assert!(!j.contains("disabled=\""), "{j}");
     assert_eq!(
         render(&j, serde_json::json!({ "ok": false }))
