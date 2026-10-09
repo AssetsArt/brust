@@ -6,9 +6,9 @@ owner: 22499151-e133-4508-b358-d7fa4d2851c3 (Detoro) · authority: in-loop · ba
 
 **Goal:** `examples/pokedex` is the M2 dogfood (spec S13): five routes served by `brust build && brust start` from a committed offline dataset, every component an ordinary React function with hooks; `tests/server/` proves spec §10 from the outside (fetch) plus ONE real-Chromium hydration test; `bench/` measures the three probes on v2 and on the 0.1.x pokedex and writes the comparison; `release.yml` builds the six-target addon and dry-runs the npm publish; `docs/plans/m2-exit-report.md` is generated from pinned sets and diffed in CI.
 
-**Architecture:** the app is plain files under `examples/pokedex/` (`routes.tsx` with `defineRoutes` from `@brust/brust/routes`, `lib/` loaders over a JSON snapshot, `pages/` + `components/` as React functions); the build/serve path is entirely the m2c package (`packages/brust/bin/brust`), untouched here. Tests spawn that CLI exactly as `packages/brust/test/e2e.test.ts` does. The bench is one Bun script (`bench/run.ts`) driving `oha` against two spawned servers. The exit report is a pure function `renderExitReport(inputs)` over pinned sets + a fresh `dist/manifest.json` + the committed `bench/RESULTS.json` + the ledger file; `scripts/m2-exit/run.ts` writes it, `exit.test.ts` asserts the committed file equals a fresh render and that the exit criteria hold.
+**Architecture:** the app is plain files under `examples/pokedex/` (`routes.tsx` with `defineRoutes` from `@brust/core/routes`, `lib/` loaders over a JSON snapshot, `pages/` + `components/` as React functions); the build/serve path is entirely the m2c package (`packages/brust/bin/brust`), untouched here. Tests spawn that CLI exactly as `packages/brust/test/e2e.test.ts` does. The bench is one Bun script (`bench/run.ts`) driving `oha` against two spawned servers. The exit report is a pure function `renderExitReport(inputs)` over pinned sets + a fresh `dist/manifest.json` + the committed `bench/RESULTS.json` + the ledger file; `scripts/m2-exit/run.ts` writes it, `exit.test.ts` asserts the committed file equals a fresh render and that the exit criteria hold.
 
-**Tech Stack:** Bun 1.4.2 (`bun test`, `Bun.spawn`), React 19 (`react`/`react-dom` from the workspace), `@brust/brust` (m2c), `playwright` (library API only, Chromium; the ONLY new dependency), `oha` 1.11 on PATH for the bench (manual), `@tailwindcss/cli` v4 run ONCE by hand (output committed), `@napi-rs/cli` 3 (already a devDependency of `packages/brust`), `cargo-zigbuild` + zig 0.13.0 in CI cross legs.
+**Tech Stack:** Bun 1.4.2 (`bun test`, `Bun.spawn`), React 19 (`react`/`react-dom` from the workspace), `@brust/core` (m2c), `playwright` (library API only, Chromium; the ONLY new dependency), `oha` 1.11 on PATH for the bench (manual), `@tailwindcss/cli` v4 run ONCE by hand (output committed), `@napi-rs/cli` 3 (already a devDependency of `packages/brust`), `cargo-zigbuild` + zig 0.13.0 in CI cross legs.
 
 **Spec:** `docs/design/2026-10-09-m2-server-design.md` §8 (CLI/config), §9 (S13), §10 (S14), S6 amendments block (lines 156–211), S7/S9; map `docs/plans/2026-10-09-m2-map.md` "Decisions for wave 3" (binding) and contracts 1–9.
 
@@ -22,13 +22,13 @@ owner: 22499151-e133-4508-b358-d7fa4d2851c3 (Detoro) · authority: in-loop · ba
 - **D4 jobs the app exercises on purpose:** `DetailPage` calls two module helpers (`fmtHeight`, `fmtWeight`) → its own precompute job (`detailPage` "has jobs", the bench's "loader + 1 job" probe); `TypeBadge` (helper `tint`/`label` from `lib/format.ts`) is rendered per row of a `types: string[]` prop on BOTH `HomePage` ("browse by type", all 18) and `DetailPage` (the Pokémon's 1–2 types) → the per-instance child job (`__typeBadge_<k>` array, F34) AND a job-cache HIT across two routes with the same component + inputs (`{type:'electric'}` on `/pokemon/pikachu` after `/`); `TeamBuilder` sits in `AppLayout` with a constant `teamInitial` seed, so its ssr job is a HIT on every page after the first. `DexCard` has NO job (its list is a state-derived value, not a props path — a per-row child job there would be the build error `instance-list-path`).
 - **D5 Chromium:** one test file, `playwright` library API (no `@playwright/test` runner), `chromium` only, `bunx playwright install --with-deps chromium` in the CI `server` job. External artwork hosts are stubbed in-page (a 1×1 PNG) so an airgapped CI never logs resource errors.
 - **D6 bench:** `bench/run.ts` ports `scripts/benchmark.ts` (oha JSON, `BENCH_CONN`/`BENCH_DUR`/`BENCH_WARMUP`); probes A `/type-chart` (L1 HIT after warm-up on v2; a full render on 0.1.x, which has no cache there — reported as is), B `/pokemon/<name>?nocache=1` with `--rand-regex-url` over the 151 names (L1 bypassed: loader every request, jobs from the job cache after warm-up; 0.1.x: same regex, no `nocache`, it has no L1), C `/` (renders `TeamBuilder` on both). Bar: v2 `rps` ≥ 0.1.x `rps` on every probe. The bench is manual; CI only syntax-checks the script.
-- **D7 release:** `release.yml` = the 0.1.x matrix (3 native + 3 zig cross legs) building `crates/brust-napi` through `packages/brust`'s napi script; a `dry-run` job on `workflow_dispatch` assembles `npm/<plat>` and runs `bun publish --dry-run` for `@brust/brust`, `@brust/runtime-dom` and the six `@brust/native-<plat>`; the tag-gated `publish` job is kept and stays a human action. `bun publish` (not `npm publish`) because `@brust/brust` depends on `@brust/runtime-dom` and the six platform packages through `workspace:*` (so `bun install --frozen-lockfile` never asks the registry for unpublished names — the D5 404 trap of m2c) and only `bun publish` rewrites `workspace:*` to the real version. `scripts/release-bump.ts` bumps the 8 `version` fields atomically and verifies no `@brust/*` dependency is pinned to a literal version.
+- **D7 release:** `release.yml` = the 0.1.x matrix (3 native + 3 zig cross legs) building `crates/brust-napi` through `packages/brust`'s napi script; a `dry-run` job on `workflow_dispatch` assembles `npm/<plat>` and runs `bun publish --dry-run` for `@brust/core`, `@brust/runtime-dom` and the six `@brust/native-<plat>`; the tag-gated `publish` job is kept and stays a human action. `bun publish` (not `npm publish`) because `@brust/core` depends on `@brust/runtime-dom` and the six platform packages through `workspace:*` (so `bun install --frozen-lockfile` never asks the registry for unpublished names — the D5 404 trap of m2c) and only `bun publish` rewrites `workspace:*` to the real version. `scripts/release-bump.ts` bumps the 8 `version` fields atomically and verifies no `@brust/*` dependency is pinned to a literal version.
 - **D8 exit report** generated by `scripts/m2-exit/run.ts` from pinned sets (`ROUTES`, `PROBES`, `LEDGER_ROWS`), a fresh `brust build` manifest, `bench/RESULTS.json` and the ledger's owner column; `exit.test.ts` pins the sets and checks the criteria; CI diffs the committed file.
 
 ## Global Constraints
 
 - **Offline dataset.** Nothing under `examples/pokedex/{lib,pages,components}` performs network I/O; the only `fetch` lives in `scripts/snapshot.ts`, which is never imported by the app. `tests/server/*` and `bench/run.ts` must pass with the network off (the Chromium test stubs the artwork host).
-- **No 0.1.x APIs.** No `brustjs*` import, no `native: true`, no `BrustPage`/`Island`/`isr`/`behavior`/`x-*` attributes, no `brustjs/store`/`navigation`, no `lucide-react` (an external component import would push a page to the react tier). Imports are `react`, `@brust/brust`, `@brust/brust/routes` and local files only.
+- **No 0.1.x APIs.** No `brustjs*` import, no `native: true`, no `BrustPage`/`Island`/`isr`/`behavior`/`x-*` attributes, no `brustjs/store`/`navigation`, no `lucide-react` (an external component import would push a page to the react tier). Imports are `react`, `@brust/core`, `@brust/core/routes` and local files only.
 - **React-free runtime.** Native/static pages ship only `runtime-<hex>.js` + their own chunks; React reaches the browser only through `react-teamBuilder_<id>-<hex>.js` and the shared react chunk the build emits. The e2e asserts the static catch-all ships NO script tag at all.
 - **Generated files are never hand-edited:** `examples/pokedex/data/pokedex.json` (snapshot script), `examples/pokedex/public/app.css` (Tailwind CLI, command recorded in the file header comment and in `examples/pokedex/README.md`), `npm/*/package.json` (`napi create-npm-dirs`, then bumped only by `release-bump.ts`), `bench/RESULTS.{md,json}` (`bun run bench`), `docs/plans/m2-exit-report.md` (`bun scripts/m2-exit/run.ts`). CI diffs the exit report; a diff means a stale commit.
 - **Bench bar:** v2 not slower than 0.1.x on any of the three probes (`rps`), measured fresh on one host in one run, deltas reported, host + Bun version + addon build mode recorded (perf memory: the bench lied 3×; macOS ≠ Linux). A run with `BRUST_01X_DIR` unset writes v2-only numbers and marks the bar `not measured`, never `met`.
@@ -42,7 +42,7 @@ owner: 22499151-e133-4508-b358-d7fa4d2851c3 (Detoro) · authority: in-loop · ba
 2. **Job cache key too coarse or too fine** — the shared `TypeBadge` job must HIT across `/` → `/pokemon/pikachu` (`job.hits` +≥2: the badge and the layout's ssr) while `detailPage` j0 MISSes exactly once per Pokémon (`job.misses` +1). Pinned by T3 "job cache HIT across two routes". A regression that hashes the whole context (never hits) or ignores inputs (wrong badge colour on bulbasaur) fails it.
 3. **Per-row values painted in the wrong row** — bulbasaur's badges must read grass `#63bb5b` then poison `#ab6ac8` in document order; the browse grid must paint `#0001 Bulbasaur` … `#0151 Mew` in order. Pinned by T3 "per-row child values".
 4. **Server HTML ≠ client first paint for the react child** — only Chromium sees a hydration mismatch (F45): the test fails on any `console.error` (React logs mismatches there) and on a missing `data-hydrated="1"`. Pinned by T3 `hydrate.chromium.test.ts`. The dataset stub makes the test deterministic; a test that passes only with network is a bug.
-5. **A bench or release that reports green without doing the work** — `bench/run.ts` refuses to run without `oha` and without a release addon (`packages/brust/native/brust.*.node` built with `bun run build`, not `build:debug`), and prints `bar: not measured` without `BRUST_01X_DIR`; `release.yml`'s dry-run job fails if the packed `@brust/brust` tarball still contains the string `workspace:`; `release-bump.ts` fails unless exactly 8 refs verify. Pinned by T4 step 4, T6 steps 3 and 5, and the `exit.test.ts` bar check (which reads the committed JSON and refuses `met` when any probe lacks a 0.1.x number).
+5. **A bench or release that reports green without doing the work** — `bench/run.ts` refuses to run without `oha` and without a release addon (`packages/brust/native/brust.*.node` built with `bun run build`, not `build:debug`), and prints `bar: not measured` without `BRUST_01X_DIR`; `release.yml`'s dry-run job fails if the packed `@brust/core` tarball still contains the string `workspace:`; `release-bump.ts` fails unless exactly 8 refs verify. Pinned by T4 step 4, T6 steps 3 and 5, and the `exit.test.ts` bar check (which reads the committed JSON and refuses `met` when any probe lacks a 0.1.x number).
 
 ---
 
@@ -68,7 +68,7 @@ Root `package.json` → `"workspaces": ["packages/*", "examples/*", "npm/*"]` (t
   "private": true,
   "type": "module",
   "scripts": { "build": "brust build routes.tsx", "start": "brust start", "snapshot": "bun scripts/snapshot.ts", "test": "bun test" },
-  "dependencies": { "@brust/brust": "workspace:*", "react": "^19.2.0", "react-dom": "^19.2.0" },
+  "dependencies": { "@brust/core": "workspace:*", "react": "^19.2.0", "react-dom": "^19.2.0" },
   "devDependencies": { "@types/bun": "^1.4.0", "@types/react": "^19.2.0", "playwright": "<pin: output of `bunx playwright --version` at lane start, e.g. 1.58.0>", "typescript": "^5.9.0" }
 }
 ```
@@ -226,7 +226,7 @@ git commit -m "feat(pokedex): offline PokeAPI snapshot (151 + 18 type relations)
 - No `index.ts`: `brust start` is the entry (spec §8); `dist/index.js` is generated by the build.
 
 **Interfaces:**
-- Consumes: `defineRoutes`, `Outlet`, `notFound`, `LoaderCtx`, `LoaderReq`, `Verdict` from `@brust/brust/routes` (`packages/brust/src/routes.ts:26-38,113-117,178-180`); `brust build` (`cli.ts:61-74`), manifest shape `ManifestJson` (`build/manifest.ts:53-59`); config precedence (`config.ts:1-9`).
+- Consumes: `defineRoutes`, `Outlet`, `notFound`, `LoaderCtx`, `LoaderReq`, `Verdict` from `@brust/core/routes` (`packages/brust/src/routes.ts:26-38,113-117,178-180`); `brust build` (`cli.ts:61-74`), manifest shape `ManifestJson` (`build/manifest.ts:53-59`); config precedence (`config.ts:1-9`).
 - Produces: the five-route app; the loader context keys every template reads (below); `dist/manifest.json` with routes `r1..r4` under `r0` (AppLayout) and `r5` (`*`), components `appLayout_*` (native or static — the layout has no hooks itself; the tier is whatever the compiler decides for a parent of hook-bearing inlined children, and the e2e asserts behaviour, not the tier), `detailPage_*` (native, `jobs: [j0 precompute inputs ["height","weight"]]` + a child record `typeBadge_* per-row:typeNames` + the layout-owned island), `teamBuilder_*` (react, `client: client/react-teamBuilder_*-<hex>.js`), `notFoundPage_*` (static, `client: null`).
 
 - [ ] **Step 1: Write the failing build smoke test**
@@ -269,7 +269,7 @@ Run: `cd packages/brust && bun run build:debug && cd ../../examples/pokedex && b
 
 ```tsx
 // examples/pokedex/routes.tsx
-import { defineRoutes } from '@brust/brust/routes'
+import { defineRoutes } from '@brust/core/routes'
 import AppLayout from './components/AppLayout'
 import { browseLoader, detailLoader, homeLoader, typeChartLoader } from './lib/loaders'
 import BrowsePage from './pages/BrowsePage'
@@ -295,11 +295,11 @@ export const routes = defineRoutes([
 ```
 `brust.toml`: `[server]\naddress = "127.0.0.1"\nport = 1337\n` (tests override with `--port 0`; `BRUST_PORT` env wins over both, `config.ts:51-52`).
 
-- [ ] **Step 3: Loaders** (port of 0.1.x `lib/loaders.ts`; `brustjs/routes` → `@brust/brust/routes`; `chrome()` gains `path`)
+- [ ] **Step 3: Loaders** (port of 0.1.x `lib/loaders.ts`; `brustjs/routes` → `@brust/core/routes`; `chrome()` gains `path`)
 
 ```ts
 // examples/pokedex/lib/loaders.ts
-import { type LoaderCtx, type LoaderReq, notFound, type Verdict } from '@brust/brust/routes'
+import { type LoaderCtx, type LoaderReq, notFound, type Verdict } from '@brust/core/routes'
 import { ALL_TYPES, artwork, cap, fetchEvolution, fetchList, fetchPokemon, fetchSpecies, fetchTypeRelations, pad, STAT_LABEL, statBucket, TYPE_COLOR } from './pokeapi'
 import type { BrowseData, DetailData, HomeData, TeamMember, TypeChartCellVM, TypeChartData, TypeChartRowVM } from './types'
 
@@ -384,7 +384,7 @@ export function filterSort(items: DexCard[], q: string, az: boolean): DexCard[] 
 
 ```tsx
 // components/AppLayout.tsx — the document (S9): plain <html>, <Outlet/> for the leaf, TeamBuilder as a react child.
-import { Outlet } from '@brust/brust/routes'
+import { Outlet } from '@brust/core/routes'
 import type { NavItem, TeamMember } from '../lib/types'
 import NavLink from './NavLink'
 import TeamBuilder from './TeamBuilder'
@@ -1042,7 +1042,7 @@ export function renderExitReport(i: ExitInputs): string {
   for (const p of i.bench.probes) L.push(`| ${p.id} | \`${p.path}\` | ${Math.round(p.v2.rps).toLocaleString()} | ${p.x01 ? Math.round(p.x01.rps).toLocaleString() : '—'} | ${p.deltaRpsPct === null ? 'not measured' : `${p.deltaRpsPct}%`} |`)
   L.push('', '## Ledger F32–F49', '', `${i.ledger.filter((r) => r.state === 'closed').length} closed, ${i.ledger.filter((r) => r.state === 'open').length} re-filed (owner column of \`docs/plans/m1a-followups.md\`).`, '', '| Id | State | Owner / reason |', '|---|---|---|')
   for (const r of i.ledger) L.push(`| ${r.id} | ${r.state} | ${r.owner} |`)
-  L.push('', '## Publish', '', `\`release.yml\` builds six targets and dry-runs \`bun publish\` for \`@brust/brust\`, ${i.runtimeDomPublishable ? '`@brust/runtime-dom`' : '(`@brust/runtime-dom` still private: dry run skipped)'} and six \`@brust/native-<plat>\` on \`workflow_dispatch\`; publishing stays tag-gated and human.`, '')
+  L.push('', '## Publish', '', `\`release.yml\` builds six targets and dry-runs \`bun publish\` for \`@brust/core\`, ${i.runtimeDomPublishable ? '`@brust/runtime-dom`' : '(`@brust/runtime-dom` still private: dry run skipped)'} and six \`@brust/native-<plat>\` on \`workflow_dispatch\`; publishing stays tag-gated and human.`, '')
   return L.join('\n')
 }
 ```
@@ -1160,7 +1160,7 @@ Run: `bun scripts/release-bump.ts 0.0.1-test && git diff --stat` → `8 files ch
 ```yaml
 name: release
 # Builds the @brust/native addon for 6 targets (zig for every Linux cross leg: aws-lc-sys needs a per-target C
-# compiler — 0.1.x release.yml:53-61) and, on workflow_dispatch, DRY-RUNS the npm publish of @brust/brust,
+# compiler — 0.1.x release.yml:53-61) and, on workflow_dispatch, DRY-RUNS the npm publish of @brust/core,
 # @brust/runtime-dom and the six @brust/native-<plat>. The real publish job is gated to `v*` tags: a human pushes
 # the tag (scripts/release-bump.ts --release). Secret for the real publish: BRUST_NPM_TOKEN (memory npm-org-brust).
 on:
@@ -1225,7 +1225,7 @@ jobs:
           set -e
           for d in packages/runtime-dom packages/brust npm/*; do (cd "$d" && bun publish --dry-run --access public); done
           cd packages/brust && bun pm pack --destination /tmp/pack && tar -xOf /tmp/pack/*.tgz package/package.json > /tmp/packed.json
-          ! grep -q 'workspace:' /tmp/packed.json || { echo 'packed @brust/brust still contains workspace: deps'; exit 1; }
+          ! grep -q 'workspace:' /tmp/packed.json || { echo 'packed @brust/core still contains workspace: deps'; exit 1; }
           grep -c '"@brust/native-' /tmp/packed.json | grep -qx 6
   publish:
     name: publish to npm (tag only — a human action)
@@ -1249,10 +1249,10 @@ jobs:
           VERSION=$(bun -e "console.log(require('./packages/brust/package.json').version)")
           if [[ "$VERSION" == *-* ]]; then TAG=alpha; else TAG=latest; fi
           for d in packages/runtime-dom packages/brust npm/*; do (cd "$d" && bun publish --access public --tag "$TAG"); done
-          if [[ "$VERSION" == *-* ]]; then for p in @brust/runtime-dom @brust/brust $(ls npm | sed 's/^/@brust\/native-/'); do npm dist-tag add "$p@$VERSION" latest; done; fi
+          if [[ "$VERSION" == *-* ]]; then for p in @brust/runtime-dom @brust/core $(ls npm | sed 's/^/@brust\/native-/'); do npm dist-tag add "$p@$VERSION" latest; done; fi
         env: { NPM_CONFIG_TOKEN: "${{ secrets.BRUST_NPM_TOKEN }}", NODE_AUTH_TOKEN: "${{ secrets.BRUST_NPM_TOKEN }}" }
 ```
-Note the order: `@brust/brust` depends on `@brust/runtime-dom`, so runtime-dom publishes first (0.1.x published the main name first to secure it; `brust` the org already exists, memory `npm-org-brust`).
+Note the order: `@brust/core` depends on `@brust/runtime-dom`, so runtime-dom publishes first (0.1.x published the main name first to secure it; `brust` the org already exists, memory `npm-org-brust`).
 
 - [ ] **Step 4: Local dry run of the dry-run steps**
 

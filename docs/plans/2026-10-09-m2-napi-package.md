@@ -1,10 +1,10 @@
-# M2c — napi addon + `@brust/brust` package Implementation Plan
+# M2c — napi addon + `@brust/core` package Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 owner: 22499151-e133-4508-b358-d7fa4d2851c3 (Detoro) · authority: in-loop · base: `v2` after `m2b-server-port` (PR #122) merges (m2a @61af3c0 and m2d are already in; S6 amended @47e5c5c)
 
-**Goal:** `crates/brust-napi` binds `brust-server` and `brust-compiler` for Bun; `packages/brust` (npm `@brust/brust`) gives an app `defineRoutes`/`cache`/verdicts/`Outlet`, `brust build` (routes → compiler → `dist/` + `manifest.json` in the shape `brust_server::manifest::Manifest::load` accepts) and `brust start` (Rust serves, N Bun workers answer `loader`/`jobs`). An end-to-end bun test builds a fixture app with the CLI, starts it and proves every S7 behaviour from the outside.
+**Goal:** `crates/brust-napi` binds `brust-server` and `brust-compiler` for Bun; `packages/brust` (npm `@brust/core`) gives an app `defineRoutes`/`cache`/verdicts/`Outlet`, `brust build` (routes → compiler → `dist/` + `manifest.json` in the shape `brust_server::manifest::Manifest::load` accepts) and `brust start` (Rust serves, N Bun workers answer `loader`/`jobs`). An end-to-end bun test builds a fixture app with the CLI, starts it and proves every S7 behaviour from the outside.
 
 **Architecture:** one cdylib (`crates/brust-napi`) with two modules: `server.rs` (process-global `Arc<brust_server::Server>`, the `TsfnDispatch` impl of `RenderDispatch`, ready/drain/invalidate/stats) and `compile.rs` (`compileTree` = `pipeline::compile_tree` inside `run_on_compiler_thread`, IR as JSON). `packages/brust/src` is plain TS run by Bun (no bundling of the package itself, like `runtime-dom`): `routes.ts` (tree + ids + verdicts), `worker.ts` (SAB slot writer + the two handlers), `build/` (scan → compile → emit → bundle → manifest), `run.ts` (boot), `cli.ts`. The manifest is the only build→server contract (S6 + amendments); the Bun call shapes are `protocol.rs`.
 
@@ -17,7 +17,7 @@ owner: 22499151-e133-4508-b358-d7fa4d2851c3 (Detoro) · authority: in-loop · ba
 - **D1** `crates/brust-napi` binds BOTH crates (S3): `startServer`, `registerWorker` (kind FIRST tsfn arg; response = plain JSON in the slot, length returned, no meta framing — `dispatch.rs:23-26`), `untilReady`, `beginDrain`, `cacheInvalidate`, `cacheStats`; `compileTree` through lowering (contract 9).
 - **D2** `packages/brust`: `routes.ts` (ONLY `path/Component/loader/cache/children`, else "<field> is not supported in M2 (M3)"), `cache.ts`, `run.ts`, `worker.ts`, `build/`, `cli.ts`, `index.ts`, `bin/brust`.
 - **D3** build steps (1)–(7) of the lead's brief with the S6 amendment folded in. **D4** e2e bun test on a fixture app + CI `server` job.
-- **D5** workspace member `packages/brust` = `@brust/brust` 0.0.0 private; napi block `brust` / `@brust/native` / six targets; loader generated into `native/`. No `optionalDependencies` yet (m2e; the `--frozen-lockfile` 404 trap, `brust/.github/workflows/ci.yml:59-62`).
+- **D5** workspace member `packages/brust` = `@brust/core` 0.0.0 private; napi block `brust` / `@brust/native` / six targets; loader generated into `native/`. No `optionalDependencies` yet (m2e; the `--frozen-lockfile` 404 trap, `brust/.github/workflows/ci.yml:59-62`).
 - **D6 (coordinator amendment, S6 @47e5c5c)** every manifest `jobs[]` record carries `"outputs": [...]` verbatim from `JobDecl.outputs`; a react-tier CHILD is NOT a `children[]` record — its `ssr` job sits in the PARENT's `jobs[]` as the IR emits it (parent-scope inputs, `outputs ["_ssr_<childId>"]`, `per_instance` = the list context path when `per_item` is set); `ssr` records also carry `"target": "<react component id>"`, which the server passes through as `JobCall.target` and the worker uses as `jobs[target].ssr(inputs)`; `"*"` inputs are copied as-is; `children[]` come ONLY from IR `instances[]`; every compiled component gets a record (a react component's own record has tier `react`, the island-host template and its own ssr job `inputs ["*"]`, `target` = itself).
 
 > **Base update (lead, 2026-10-09, v2 @dba91da):** this plan was drafted against the m2b lane
@@ -35,7 +35,7 @@ owner: 22499151-e133-4508-b358-d7fa4d2851c3 (Detoro) · authority: in-loop · ba
 - **D6 contract note for m2b:** the server passes `job.target` through in `JobCall` as `target` (S6 @47e5c5c). The worker calls `jobs[call.target ?? call.componentId].ssr(call.inputs)`. The SERVER remaps prop names: an ssr job record for a react child carries `"props": { childProp: parentPath|null }` copied verbatim from the IR `JobDecl.props` (lane `m2a2-ssr-props`, S6 amendment); a `null` path is `BuildError('ssr-prop-not-a-path', '<component> job j<n>: prop <name> is not a props path')`. The server evaluates the map and sends the child's props object as `JobCall.inputs`; the WORKER then merges the job's `literals` (manifest `components[componentId].jobs[<jobId>].literals`, looked up from the `<componentId>/<jobId>` prefix of `JobCall.id`) over `call.inputs` before `jobs[target].ssr(props)` — T4 adds that merge with a unit test (`limit: 3` present in the rendered props; a path prop wins over a same-named literal never happens because the compiler puts a prop in exactly one of the two maps). The fixture app may therefore pass renamed/nested props (`<Card item={it}/>`).
 - No React in `runtime-dom`; React enters only through the react shims (client) and the jobs bundle (server). Every `Bun.build` of emitted artifacts resolves relative imports against the component's SOURCE directory (both `.client.js` and `.server.ts` emit `import { x } from "./helper"` — `lower/client.rs:242`, `lower/server.rs:97`) through one plugin; nothing is copied next to generated files.
 - No hand-edited generated files: `native/index.js`/`index.d.ts` come from `napi build`; `dist/` is always regenerated; the pinned manifest in T6 is regenerated by the build and reviewed, never typed.
-- Resolved before this lane starts: the compiler accepts `cache` from `'@brust/brust'` as well as `'brust'` (lane `m2a2-ssr-props`, merged into the base of this lane). The fixture app uses route-level `cache` only; `cache(Comp, opts)` identity + `cache.invalidate` ship regardless (T3).
+- Resolved before this lane starts: the compiler accepts `cache` from `'@brust/core'` as well as `'brust'` (lane `m2a2-ssr-props`, merged into the base of this lane). The fixture app uses route-level `cache` only; `cache(Comp, opts)` identity + `cache.invalidate` ship regardless (T3).
 - Component ids hash the path string passed to the compiler (`ir/mod.rs:133-156`): the build always passes app-root-relative paths with `root` = the app dir, so ids are stable across machines.
 - Gates: `cargo fmt --all -- --check`, `cargo clippy -p brust-napi --no-deps -- -D warnings`, `cd packages/brust && bun run typecheck && bun test`. Commit per task; one PR from `lane/m2c-napi-package` to `v2`.
 
@@ -169,7 +169,7 @@ Run: `cargo test -p brust-napi` → `2 passed`. Then `cargo clippy -p brust-napi
 
 `packages/brust/package.json`:
 ```json
-{ "name": "@brust/brust", "version": "0.0.0", "private": true, "type": "module",
+{ "name": "@brust/core", "version": "0.0.0", "private": true, "type": "module",
   "bin": { "brust": "./bin/brust" },
   "exports": { ".": "./src/index.ts", "./routes": "./src/routes.ts", "./server": "./src/server.ts", "./native": "./native/index.js" },
   "scripts": {
@@ -213,7 +213,7 @@ Run: `cd packages/brust && bun test test/napi-compile.test.ts` → `1 pass`. (Th
 
 ```bash
 git add Cargo.toml Cargo.lock crates/brust-napi packages/brust/package.json packages/brust/tsconfig.json packages/brust/native/.gitignore packages/brust/test/napi-compile.test.ts bun.lock
-git commit -m "feat(napi): brust-napi cdylib with compileTree through lowering; @brust/brust package skeleton"
+git commit -m "feat(napi): brust-napi cdylib with compileTree through lowering; @brust/core package skeleton"
 ```
 
 ---
@@ -368,7 +368,7 @@ git commit -m "feat(napi): startServer/registerWorker/untilReady/beginDrain/cach
 
 ---
 
-### Task 3: `@brust/brust` routes, verdicts, cache
+### Task 3: `@brust/core` routes, verdicts, cache
 
 **Files:**
 - Create: `packages/brust/src/routes.ts`, `packages/brust/src/cache.ts`, `packages/brust/src/index.ts`, `packages/brust/src/server.ts` (re-exports `cache`, verdicts for server code)
@@ -381,7 +381,7 @@ git commit -m "feat(napi): startServer/registerWorker/untilReady/beginDrain/cach
   - `export interface Route<P = Record<string,string>, D = unknown> { path?: string; Component?: ComponentType<any>; loader?: (ctx: LoaderCtx<P>) => Promise<D> | D; cache?: RouteCacheConfig; children?: Route[] }`
   - `export interface LoaderCtx<P> { params: P; path: string; req: { method: string; url: string; headers: Record<string,string>; cookies: Record<string,string>; search: Record<string,string> } }` (= `RequestEnvelope`, `routing/routes.rs:32-41`)
   - `export function defineRoutes(routes: Route[]): Route[]` — validates every node: unknown field → `throw new BrustRouteError('<field> is not supported in M2 (M3)')`; `cache.key`/`cache.key_ttl_seconds` → same message; a leaf without `Component` or without `path` → error; `path: '*'` must be a leaf.
-  - `export function Outlet(): null` — a React component rendering `null` (the compiler replaces `<Outlet/>` imported from `@brust/brust/routes`, `analyze/jsx.rs:45`).
+  - `export function Outlet(): null` — a React component rendering `null` (the compiler replaces `<Outlet/>` imported from `@brust/core/routes`, `analyze/jsx.rs:45`).
   - `export const ALLOWED_ROUTE_FIELDS = ['path','Component','loader','cache','children'] as const`
   - `export interface FlatRoute { id: string; pattern: string; chain: Route[]; chainIds: string[]; catchAll: boolean }`
   - `export function flattenRoutes(routes: Route[]): { nodes: Map<Route, string>; leaves: FlatRoute[] }` — DFS pre-order ids `r0, r1, …` for EVERY node; a leaf is a node without `children`; `pattern` = join of ancestor `path`s (`'/'`-normalised, `'*'` → `'*'` or `'<prefix>/*'`).
@@ -592,7 +592,7 @@ git commit -m "feat(brust): worker handlers — chain loaders with verdicts, job
 
 ```tsx
 // routes.tsx
-import { defineRoutes } from '@brust/brust/routes'
+import { defineRoutes } from '@brust/core/routes'
 import AppLayout from './AppLayout'
 import HomePage from './HomePage'
 import ItemPage from './ItemPage'
@@ -603,7 +603,7 @@ export const routes = defineRoutes([{ Component: AppLayout, children: [
 ]}])
 // AppLayout.tsx — document root (contract 6) + useState ⇒ native tier ⇒ runtime + chunk tags on every page
 import { useState } from 'react'
-import { Outlet } from '@brust/brust/routes'
+import { Outlet } from '@brust/core/routes'
 export default function AppLayout() {
   const [dark, setDark] = useState(false)
   return (<html lang="en"><head><title>fixture</title><link rel="stylesheet" href="/public/app.css" /></head>
@@ -612,7 +612,7 @@ export default function AppLayout() {
 // HomePage.tsx
 export default function HomePage() { return <section><h1>Home</h1></section> }
 // loaders.ts
-import { notFound } from '@brust/brust/routes'
+import { notFound } from '@brust/core/routes'
 export async function itemLoader({ params }: { params: { id: string } }) {
   if (params.id === 'nothing') return notFound({ item: { id: 'nothing', name: 'missing', price: 0, rows: [] }, unit: '', team: [] })
   return { item: { id: params.id, name: `Item ${params.id}`, price: 12.5, rows: [{ id: 'a', price: 1 }, { id: 'b', price: 2.25 }] }, unit: '€', team: ['ann', 'bob'] }
@@ -761,7 +761,7 @@ import * as j_<id> from './jobs/<id>.server'           // one per component with
 import C_<id> from '<abs source path>'                 // one per react-tier, non client_only component
 export default { '<id>': { precompute: j_<id>.precompute }, '<reactId>': { ssr: (props) => renderToString(createElement(C_<reactId>, props)) } }
 ```
-`dist/index.js` = the 0.1.x banner (`brust/runtime/cli/build.ts:238-244`: `BRUST_PREBUILT='1'`, `BRUST_DIST_DIR=import.meta.dir`) + `process.env.BRUST_APP_ENTRY = new URL('<dist-relative path to routes.tsx>', import.meta.url).pathname` + `const { run } = await import('@brust/brust'); await run()`.
+`dist/index.js` = the 0.1.x banner (`brust/runtime/cli/build.ts:238-244`: `BRUST_PREBUILT='1'`, `BRUST_DIST_DIR=import.meta.dir`) + `process.env.BRUST_APP_ENTRY = new URL('<dist-relative path to routes.tsx>', import.meta.url).pathname` + `const { run } = await import('@brust/core'); await run()`.
 First run of Step 1 writes `dist/manifest.json`; copy it to `test/fixtures/app.expected-manifest.json` ONLY after checking every rule above against it by hand (lane report pastes it). The pinned file changes whenever the compiler output changes — regenerate and re-review, never edit.
 
 - [ ] **Step 3: Run → `2 pass`; `bun run typecheck`; commit**

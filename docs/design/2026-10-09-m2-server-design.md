@@ -79,12 +79,12 @@ and the no-Bun hit path).
 `brustc`). `brustc` (M1 CLI) stays as the debug/battery tool.
 
 **Packages (npm org `brust`):**
-- `@brust/brust` — `packages/brust`: `defineRoutes`, `cache`, `notFound/redirect/httpError`,
+- `@brust/core` — `packages/brust`: `defineRoutes`, `cache`, `notFound/redirect/httpError`,
   `Outlet`, `run`, the worker entry (loader + job runner), CLI `brust build|start`. Subpath
-  exports `@brust/brust/routes`, `@brust/brust/server`. Depends on `@brust/runtime-dom`.
+  exports `@brust/core/routes`, `@brust/core/server`. Depends on `@brust/runtime-dom`.
 - `@brust/runtime-dom` — `packages/runtime-dom` (M1, unchanged API).
 - `@brust/native-{darwin-arm64,darwin-x64,linux-x64-gnu,linux-arm64-gnu,linux-x64-musl,linux-arm64-musl}`
-  — the addon per platform, `optionalDependencies` of `@brust/brust` pinned to the same version,
+  — the addon per platform, `optionalDependencies` of `@brust/core` pinned to the same version,
   located by the napi-rs generated loader (`NAPI_RS_NATIVE_LIBRARY_PATH` → sibling `.node` →
   `require('@brust/native-<plat>')`), exactly the 0.1.x mechanism (`runtime/index.js`).
 - `create-brust` is M3.
@@ -94,7 +94,7 @@ and the no-Bun hit path).
 **S4 — Routes are declared with `defineRoutes` in the 0.1.x shape, minus `native`:**
 
 ```ts
-import { defineRoutes } from '@brust/brust/routes'
+import { defineRoutes } from '@brust/core/routes'
 export const routes = defineRoutes([
   { Component: AppLayout, children: [
     { path: '/', Component: HomePage, loader: homeLoader },
@@ -205,9 +205,10 @@ and never asks Bun what a route is:
   the server-built inputs for ssr jobs, found by `<componentId>/<jobId>` from `JobCall.id`.
 - A react child under two or more loops (or inside a per-row inlined child) is the compile Error
   `nested-instance`, like every other nested instance (spot-check 05c677eb).
-- Import specifiers: user code imports `cache` from `@brust/brust` and `Outlet`/`defineRoutes`
-  from `@brust/brust/routes`; the compiler also accepts the bare `brust` specifier for `cache`
-  (M1 fixtures).
+- Import specifiers (renamed 2026-10-09 by the human, lane `m2c2-rename-core`; the package was
+  `@brust/brust` until then, never published): user code imports `cache` from `@brust/core` and
+  `Outlet`/`defineRoutes` from `@brust/core/routes`; the compiler also accepts the bare `brust`
+  specifier for `cache` (M1 fixtures, dropped at M3). The directory stays `packages/brust`.
 - `"*"` in `inputs` means ALL of the component's props: for a chain entry the loader context,
   for a child instance its `child_props`. The job key hashes that whole object.
 - Every component's precompute/ssr results and `_props` (= the component's props object) live in
@@ -259,7 +260,7 @@ Bun. `use_id_slots` is the number of `useId()` calls in the component (F39).
    compress, respond. Store the merged context in L1 if the route has `cache`, status is 200
    and no `Set-Cookie` was produced (0.1.x storage rules).
 
-**S8 — `Outlet` is a compiler intrinsic.** `import { Outlet } from '@brust/brust/routes'`;
+**S8 — `Outlet` is a compiler intrinsic.** `import { Outlet } from '@brust/core/routes'`;
 `<Outlet/>` in a route component lowers to `{{ __outlet | safe }}` in the template and is a
 no-op in the client chunk. A component that renders `<Outlet/>` but is not a route with
 children is a build `Error` (`outlet-outside-layout`, raised by the build lane from `uses_outlet`); a
