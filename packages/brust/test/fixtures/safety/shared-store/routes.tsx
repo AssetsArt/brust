@@ -1,4 +1,4 @@
-import { defineRoutes } from '@brust/brust/routes'
+import { defineRoutes } from '@brust/core/routes'
 import A from './A'
 import B from './B'
 

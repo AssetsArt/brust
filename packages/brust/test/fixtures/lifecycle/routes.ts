@@ -1,7 +1,7 @@
 // Alternate worker entry for test/lifecycle.test.ts: the fixture app's route tree (same shape →
 // same route ids as its manifest), with an item loader that can kill its worker or report the
 // worker's environment.
-import { defineRoutes } from '@brust/brust/routes'
+import { defineRoutes } from '@brust/core/routes'
 import AppLayout from '../app/AppLayout'
 import HomePage from '../app/HomePage'
 import ItemPage from '../app/ItemPage'

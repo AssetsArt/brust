@@ -1,4 +1,4 @@
-import { cache } from '@brust/brust'
+import { cache } from '@brust/core'
 import Badge from './Badge'
 import Clock from './Clock'
 

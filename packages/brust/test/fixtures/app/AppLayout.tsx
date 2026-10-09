@@ -1,5 +1,5 @@
 // Document root (contract 6) + useState ⇒ native tier ⇒ runtime + chunk tags on every page.
-import { Outlet } from '@brust/brust/routes'
+import { Outlet } from '@brust/core/routes'
 import { useState } from 'react'
 
 export default function AppLayout() {

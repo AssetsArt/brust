@@ -78,7 +78,8 @@ fn plain_function_export_has_no_cache() {
 fn cache_from_the_brust_package_is_recognised_and_others_are_not() {
     for (spec, ok) in [
         ("brust", true),
-        ("@brust/brust", true),
+        ("@brust/core", true),
+        ("@brust/brust", false),
         ("./cache", false),
         ("react", false),
     ] {

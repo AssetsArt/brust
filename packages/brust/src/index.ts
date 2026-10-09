@@ -1,4 +1,4 @@
-// `@brust/brust`: the app-facing API.
+// `@brust/core`: the app-facing API.
 export { cache } from './cache'
 export { type BrustConfig, BrustConfigError, loadConfig } from './config'
 export { type RunOptions, run } from './run'

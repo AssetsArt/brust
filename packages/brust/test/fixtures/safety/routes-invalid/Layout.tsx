@@ -1,4 +1,4 @@
-import { Outlet } from '@brust/brust/routes'
+import { Outlet } from '@brust/core/routes'
 
 export default function Layout() {
   return (

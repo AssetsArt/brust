@@ -116,9 +116,9 @@ test('an installed npm package named like a builtin unlocks only allowlisted bro
   expect(ev.code).toBe(0)
 }, 60_000)
 
-// ---- 2. browser-safe `@brust/brust` ----
+// ---- 2. browser-safe `@brust/core` ----
 
-test('a react island importing { cache } from @brust/brust builds, with no addon in its chunks', async () => {
+test('a react island importing { cache } from @brust/core builds, with no addon in its chunks', async () => {
   const out = tmpOut()
   await build(join(safety, 'react-cache'), out)
   const m = JSON.parse(readFileSync(join(out, 'manifest.json'), 'utf8'))

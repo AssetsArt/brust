@@ -1,4 +1,4 @@
-import { defineRoutes } from '@brust/brust/routes'
+import { defineRoutes } from '@brust/core/routes'
 import AppLayout from './AppLayout'
 import HomePage from './HomePage'
 import ItemPage from './ItemPage'

@@ -1,4 +1,4 @@
-import { defineRoutes } from '@brust/brust/routes'
+import { defineRoutes } from '@brust/core/routes'
 import { pageLoader } from './loaders.server'
 import Page from './Page'
 

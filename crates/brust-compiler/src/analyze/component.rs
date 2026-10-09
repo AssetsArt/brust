@@ -191,7 +191,7 @@ fn read_cache_export(
     let is_cache = |names: &NameTable<'_>| {
         matches!(
             names.import_of(callee),
-            Some(("brust" | "@brust/brust", "cache"))
+            Some(("brust" | "@brust/core", "cache"))
         )
     };
     match (func, probe) {
