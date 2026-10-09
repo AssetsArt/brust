@@ -24,7 +24,7 @@ jobs:
       # Invariant: the vendored path crate shadows the git one (only root lines are checked; bun_js_parser legitimately depends on it).
       - run: cargo tree -p brust-compiler -i bun_react_compiler | tee tree.txt && grep -q "^bun_react_compiler .*vendor/bun_react_compiler" tree.txt && ! grep -q "^bun_react_compiler .*github.com" tree.txt
       # --no-deps: the vendored Bun crate is not held to our lints (261 findings otherwise).
-      - run: cargo clippy -p brust-compiler -p brust-compiler-cli -p brust-jinja --no-deps -- -D warnings
+      - run: cargo clippy -p brust-compiler -p brust-compiler-cli -p brust-jinja -p brust-server -p brust-napi --no-deps -- -D warnings
       # The dual-evaluation harness (tests/dual_eval.rs) runs generated jobs and
       # chunks under bun against packages/runtime-dom and happy-dom.
       - run: bun install --frozen-lockfile
@@ -82,3 +82,33 @@ jobs:
           restore-keys: cargo-${{ runner.os }}-
       - run: bun install --frozen-lockfile
       - run: bun run browser-test
+  # @brust/brust: the napi addon (built with `napi build` on this runner), the package's unit
+  # tests and the end-to-end run of the real CLI (build the fixture app, start it, assert from the
+  # outside). A cold addon build compiles the Bun crates (~10+ min): the cargo cache is shared.
+  server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with: { toolchain: nightly-2026-09-15, components: "rust-src, clippy" }
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: "1.4.2" }
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/registry
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: cargo-${{ runner.os }}-
+      - run: bun install --frozen-lockfile
+      - run: cargo clippy -p brust-napi --no-deps -- -D warnings && cargo test -p brust-napi
+      - run: cd packages/brust && bun run build:debug
+      - run: cd packages/brust && bun run typecheck
+      # Unit files together; each server-starting file on its own (port/process hygiene).
+      - run: cd packages/brust && bun test test/routes.test.ts test/cache.test.ts test/worker.test.ts test/config.test.ts test/napi-compile.test.ts test/build-compile.test.ts
+      - run: cd packages/brust && bun test test/napi-server.test.ts
+      - run: cd packages/brust && bun test test/build-manifest.test.ts
+      - run: cd packages/brust && bun test test/cli.test.ts
+      - run: cd packages/brust && bun test --timeout 120000 test/e2e.test.ts

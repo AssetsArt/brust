@@ -4,5 +4,6 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"], "strict": true, "noUncheckedIndexedAccess": true,
     "noEmit": true, "types": ["bun"], "skipLibCheck": true, "jsx": "react-jsx"
   },
-  "include": ["src", "test", "bin"]
+  "include": ["src", "test", "bin"],
+  "exclude": ["**/dist"]
 }

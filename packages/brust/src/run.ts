@@ -75,5 +75,6 @@ export async function run(opts: RunOptions = {}): Promise<void> {
   } catch (e) {
     fail(`workers not ready: ${String((e as Error).message ?? e)}`)
   }
+  console.log(`[brust] ready (${cfg.workers} worker${cfg.workers === 1 ? '' : 's'})`)
   await new Promise<never>(() => {})
 }
