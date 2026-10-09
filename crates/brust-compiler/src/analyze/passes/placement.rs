@@ -76,6 +76,9 @@ struct Placer<'s> {
     /// `useId()` bindings: server-seeded values (`_idN`, S7 step 6). Template-only:
     /// a job cannot read them, so a non-template expression reading one falls back.
     ids: BTreeSet<String>,
+    /// Prop paths read by the conditions of the enclosing `If`s (F33): a slot under
+    /// a guard varies with the guard's value, so the job key must include it.
+    guards: Vec<BTreeSet<String>>,
     flagged: BTreeSet<&'static str>,
     loop_scope: Vec<String>,
     diagnostics: Vec<Diagnostic>,
@@ -105,6 +108,7 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState) {
             .map(|r| (r.name.clone(), "ref-in-render"))
             .collect(),
         ids: ir.id_bindings.iter().cloned().collect(),
+        guards: Vec::new(),
         flagged: BTreeSet::new(),
         loop_scope: Vec::new(),
         diagnostics: Vec::new(),
@@ -378,6 +382,7 @@ impl Placer<'_> {
             self.lists.last().map(|l| l.item.clone())
         };
         let mut inputs: Vec<String> = deps.props.iter().cloned().collect();
+        inputs.extend(self.guards.iter().flatten().cloned());
         let mut state_dependent = !deps.state.is_empty();
         if per_item.is_some() {
             for l in &self.lists {
@@ -557,9 +562,15 @@ impl Placer<'_> {
             Node::Text(_) | Node::Outlet => {}
             Node::Slot(e) => self.expr(e),
             Node::If { cond, then, else_ } => {
+                let guard = match &*cond {
+                    Expr::Raw(r) => self.st.cx.deps(r, &self.loop_scope).props,
+                    _ => BTreeSet::new(),
+                };
                 self.expr(cond);
+                self.guards.push(guard);
                 then.iter_mut().for_each(|c| self.node(c));
                 else_.iter_mut().for_each(|c| self.node(c));
+                self.guards.pop();
             }
             Node::For {
                 source,
