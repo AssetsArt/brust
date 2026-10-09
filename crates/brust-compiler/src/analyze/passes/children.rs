@@ -42,8 +42,9 @@ struct Walker<'s, 'c> {
     jobs: Vec<JobDecl>,
     diagnostics: Vec<Diagnostic>,
     loop_scope: Vec<String>,
-    /// Prop paths of the enclosing `For` sources.
-    lists: Vec<Vec<String>>,
+    /// Prop paths of the enclosing `For` sources, and whether the source
+    /// reads state.
+    lists: Vec<(Vec<String>, bool)>,
     ssr_outputs: HashMap<String, u32>,
 }
 
@@ -78,7 +79,10 @@ impl Walker<'_, '_> {
                 body,
                 ..
             } => {
-                let src = self.paths_of(source);
+                let src = (
+                    self.paths_of(source),
+                    !self.deps_of(source).state.is_empty(),
+                );
                 let n = self.loop_scope.len();
                 self.loop_scope.push(item.clone());
                 self.loop_scope.extend(index.iter().cloned());
@@ -224,6 +228,15 @@ impl Walker<'_, '_> {
                 ));
                 react("import cycle")
             }
+            Lookup::Failed(d) if d.class == crate::ir::DiagClass::Fallback => {
+                self.diagnostics.push(Diagnostic::fallback(
+                    "child-component",
+                    format!("<{name}> renders as a React island: {}", d.message),
+                    loc,
+                    "declare the child as `export function Name(props) { … }`",
+                ));
+                react("child is not a function declaration")
+            }
             Lookup::Failed(d) => {
                 self.diagnostics.push(Diagnostic::error(
                     "child-component",
@@ -251,8 +264,8 @@ impl Walker<'_, '_> {
         else {
             return;
         };
-        children.iter_mut().for_each(|c| self.node(c));
         if name == "<member>" {
+            children.iter_mut().for_each(|c| self.node(c));
             return;
         }
         let child = self.resolve_child(name, source.as_deref(), imported.as_deref(), *loc);
@@ -302,8 +315,17 @@ impl Walker<'_, '_> {
                         "render the children inside the island component",
                     ));
                 }
+                if ok && self.lists.iter().any(|(_, stateful)| *stateful) {
+                    ok = false;
+                    self.diagnostics.push(Diagnostic::error(
+                        "island-prop",
+                        format!("the React island <{name}> sits in a list that changes with state"),
+                        *loc,
+                        "render the list inside a React component, or key it on props only",
+                    ));
+                }
                 if ok {
-                    for src in &self.lists {
+                    for (src, _) in &self.lists {
                         inputs.extend(src.iter().cloned());
                     }
                     let count = self.ssr_outputs.entry(child_id.clone()).or_insert(0);
@@ -333,6 +355,23 @@ impl Walker<'_, '_> {
                 });
                 if needs_link {
                     let id = self.links.len() as u32 + 1;
+                    for (_, v) in props.iter() {
+                        // The parent chunk computes `_pN`: every prop is a client read.
+                        let deps = self.deps_of(v);
+                        let raw = match v {
+                            Expr::Server(ServerExpr(r)) => Some(r.clone()),
+                            Expr::Precomputed { slot, .. } => {
+                                self.st.slots.get(slot).map(|i| i.raw.clone())
+                            }
+                            _ => None,
+                        };
+                        self.st.client_uses.push(super::ClientUse {
+                            loc: *loc,
+                            deps,
+                            what: "a prop of a linked child",
+                            raw: raw.map(|r| (r, self.loop_scope.clone())),
+                        });
+                    }
                     let link_props = props
                         .iter()
                         .map(|(k, v)| (k.clone(), self.link_prop(v)))
@@ -348,6 +387,8 @@ impl Walker<'_, '_> {
                 }
             }
         }
+        // After this node's own link id: `_pN` follow document order.
+        children.iter_mut().for_each(|c| self.node(c));
     }
 
     /// The parent chunk's expression for one linked prop.

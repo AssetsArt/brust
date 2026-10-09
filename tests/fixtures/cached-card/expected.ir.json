@@ -66,6 +66,7 @@
                   "Precomputed": {
                     "slot": "_s1",
                     "js": "formatPrice(item.price)",
+                    "client_js": null,
                     "inputs": [
                       "item.price"
                     ],

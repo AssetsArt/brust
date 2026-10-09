@@ -35,9 +35,29 @@ pub struct Painted {
 #[derive(Debug, Clone)]
 pub struct SlotInfo {
     pub raw: RawExpr,
+    /// Loop bindings in scope where the slot sits.
+    pub scope: Vec<String>,
     pub deps: Deps,
     pub state_dependent: bool,
 }
+
+/// One enclosing `For`.
+struct List {
+    item: String,
+    /// Prop paths the source reads.
+    paths: Vec<String>,
+    /// The source reads state, so the list changes on the client.
+    stateful: bool,
+}
+
+/// `why` of an `Opaque` the reader made from a function.
+const FUNCTION_WHYS: &[&str] = &[
+    "async arrow",
+    "arrow parameter pattern",
+    "function parameter pattern",
+    "EFunction",
+    "contains-jsx",
+];
 
 struct Placer<'s> {
     st: &'s mut PassState,
@@ -45,8 +65,16 @@ struct Placer<'s> {
     places: HashMap<String, Place>,
     visiting: Vec<String>,
     next_slot: u32,
-    /// (loop binding, list source paths) of the enclosing `For`s.
-    lists: Vec<(String, Vec<String>)>,
+    /// The enclosing `For`s, outermost first.
+    lists: Vec<List>,
+    /// Bumped by anything in the template the client re-evaluates (a value
+    /// that reads state, an event, a function prop): a `For` whose body bumps
+    /// it is rebuilt by the client, so its source is client-read.
+    reactive: u32,
+    /// Body locals that are not values the template can bind: refs and
+    /// `useId` results (`name`, rule).
+    unplaceable: HashMap<String, &'static str>,
+    flagged: BTreeSet<&'static str>,
     loop_scope: Vec<String>,
     diagnostics: Vec<Diagnostic>,
     jsx_flagged: bool,
@@ -68,6 +96,18 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState) {
         visiting: Vec::new(),
         next_slot: 0,
         lists: Vec::new(),
+        reactive: 0,
+        unplaceable: ir
+            .refs
+            .iter()
+            .map(|r| (r.name.clone(), "ref-in-render"))
+            .chain(
+                ir.id_bindings
+                    .iter()
+                    .map(|i| (i.clone(), "use-id-in-render")),
+            )
+            .collect(),
+        flagged: BTreeSet::new(),
         loop_scope: Vec::new(),
         diagnostics: Vec::new(),
         jsx_flagged: false,
@@ -293,22 +333,26 @@ impl Placer<'_> {
         let deps = self.st.cx.deps(r, &self.loop_scope);
         self.next_slot += 1;
         let slot = format!("_s{}", self.next_slot);
+        // `per_item` is the innermost enclosing loop binding: the job returns
+        // one value per item of every enclosing list (nested arrays).
         let per_item = if deps.loop_bindings.is_empty() {
             None
         } else {
-            self.lists.last().map(|(item, _)| item.clone())
+            self.lists.last().map(|l| l.item.clone())
         };
         let mut inputs: Vec<String> = deps.props.iter().cloned().collect();
+        let mut state_dependent = !deps.state.is_empty();
         if per_item.is_some() {
-            for (_, src) in &self.lists {
-                inputs.extend(src.iter().cloned());
+            for l in &self.lists {
+                inputs.extend(l.paths.iter().cloned());
+                state_dependent |= l.stateful;
             }
         }
-        let state_dependent = !deps.state.is_empty();
         self.st.slots.insert(
             slot.clone(),
             SlotInfo {
                 raw: r.clone(),
+                scope: self.loop_scope.clone(),
                 deps,
                 state_dependent,
             },
@@ -316,6 +360,7 @@ impl Placer<'_> {
         Expr::Precomputed {
             slot,
             js: r.to_js(),
+            client_js: state_dependent.then(|| r.to_js_in(crate::ir::JsCtx::Client)),
             inputs: minimal_paths(inputs),
             state_dependent,
             per_item,
@@ -329,6 +374,33 @@ impl Placer<'_> {
             loc: r.loc,
             deps: deps.clone(),
         });
+        if !deps.state.is_empty() {
+            // The client re-evaluates it (§3.2 rule 3: its props are seeds).
+            self.reactive += 1;
+            self.st.client_uses.push(super::ClientUse {
+                loc: r.loc,
+                deps: deps.clone(),
+                what: "a state-dependent value",
+                raw: Some((r.clone(), self.loop_scope.clone())),
+            });
+        }
+        let mut locals = BTreeSet::new();
+        direct_locals(r, &mut locals);
+        if let Some(rule) = locals.iter().find_map(|l| self.unplaceable.get(l).copied()) {
+            if self.flagged.insert(rule) {
+                self.diagnostics.push(Diagnostic::fallback(
+                    rule,
+                    if rule == "ref-in-render" {
+                        "a ref is read during render"
+                    } else {
+                        "a useId value is read during render (not supported natively yet)"
+                    },
+                    r.loc,
+                    "read refs in effects and handlers; for ids use a prop",
+                ));
+            }
+            return Expr::Raw(r.clone());
+        }
         if deps.browser {
             let global = deps
                 .globals
@@ -360,22 +432,8 @@ impl Placer<'_> {
 
     /// A prop passed to a child: functions are client-only, values are painted.
     fn child_prop(&mut self, r: &RawExpr) -> Expr {
-        let is_fn = match &r.kind {
-            RawKind::Arrow { .. } => true,
-            RawKind::Opaque { why, .. } => why == "contains-jsx",
-            RawKind::Ident {
-                name,
-                kind: IdentKind::Local,
-            } => {
-                self.st.handler_names.contains(name)
-                    || matches!(
-                        self.derived_raw.get(name).map(|d| &d.kind),
-                        Some(RawKind::Arrow { .. })
-                    )
-            }
-            _ => false,
-        };
-        if is_fn {
+        if self.is_function(r, 0) {
+            self.reactive += 1;
             if contains_jsx(r) {
                 self.st
                     .jsx_code
@@ -385,12 +443,38 @@ impl Placer<'_> {
                 loc: r.loc,
                 deps: self.st.cx.deps(r, &self.loop_scope),
                 what: "a function passed to a child",
+                raw: Some((r.clone(), self.loop_scope.clone())),
             });
             Expr::ClientOnly {
                 js: r.to_js_in(crate::ir::JsCtx::Client),
             }
         } else {
             self.painted(r)
+        }
+    }
+
+    /// `r` evaluates to a function: an arrow, a function the reader kept
+    /// opaque, a setter, or a local bound to one of those.
+    fn is_function(&self, r: &RawExpr, depth: u8) -> bool {
+        match &r.kind {
+            RawKind::Arrow { .. } => true,
+            RawKind::Opaque { why, .. } => FUNCTION_WHYS.contains(&why.as_str()),
+            RawKind::Ident {
+                kind: IdentKind::Setter,
+                ..
+            } => true,
+            RawKind::Ident {
+                name,
+                kind: IdentKind::Local,
+            } => {
+                self.st.handler_names.contains(name)
+                    || (depth < 8
+                        && self
+                            .derived_raw
+                            .get(name)
+                            .is_some_and(|d| self.is_function(d, depth + 1)))
+            }
+            _ => false,
         }
     }
 
@@ -407,8 +491,10 @@ impl Placer<'_> {
                 attrs, children, ..
             } => {
                 for a in attrs.iter_mut() {
-                    if let Attr::Dynamic { value, .. } | Attr::Spread(value) = a {
-                        self.expr(value);
+                    match a {
+                        Attr::Dynamic { value, .. } | Attr::Spread(value) => self.expr(value),
+                        Attr::Event { .. } => self.reactive += 1,
+                        Attr::Static { .. } | Attr::Ref { .. } => {}
                     }
                 }
                 children.iter_mut().for_each(|c| self.node(c));
@@ -427,19 +513,44 @@ impl Placer<'_> {
                 key,
                 body,
             } => {
+                let src_raw = match source {
+                    Expr::Raw(r) => Some(r.clone()),
+                    _ => None,
+                };
+                let reactive_before = self.reactive;
                 self.expr(source);
-                let src_paths = match source {
-                    Expr::Precomputed { inputs, .. } => inputs.clone(),
-                    other => self.st.cx.deps_expr(other, &self.loop_scope).prop_paths(),
+                let src_deps = match (&src_raw, &*source) {
+                    (_, Expr::Precomputed { slot, .. }) => self
+                        .st
+                        .slots
+                        .get(slot)
+                        .map(|i| i.deps.clone())
+                        .unwrap_or_default(),
+                    (Some(r), _) => self.st.cx.deps(r, &self.loop_scope),
+                    (None, other) => self.st.cx.deps_expr(other, &self.loop_scope),
                 };
                 let n = self.loop_scope.len();
                 self.loop_scope.push(item.clone());
                 self.loop_scope.extend(index.iter().cloned());
-                self.lists.push((item.clone(), src_paths));
+                self.lists.push(List {
+                    item: item.clone(),
+                    paths: src_deps.prop_paths(),
+                    stateful: !src_deps.state.is_empty()
+                        || self.lists.last().is_some_and(|l| l.stateful),
+                });
                 self.expr(key);
                 body.iter_mut().for_each(|c| self.node(c));
                 self.lists.pop();
                 self.loop_scope.truncate(n);
+                if self.reactive > reactive_before {
+                    // The client rebuilds this list: it reads the source.
+                    self.st.client_uses.push(super::ClientUse {
+                        loc: src_raw.as_ref().map_or(0, |r| r.loc),
+                        deps: src_deps,
+                        what: "a list the client updates",
+                        raw: src_raw.map(|r| (r, self.loop_scope.clone())),
+                    });
+                }
             }
             Node::Component {
                 props, children, ..

@@ -78,6 +78,8 @@ pub fn compile(
     opts: &AnalyzeOptions,
     modules: &RefCell<ModuleCache>,
 ) -> Lookup {
+    // One spelling per module, so a cycle back to the root is seen at once.
+    let path = &normalize(path);
     let key = cache_key(path, export);
     match modules.borrow().get(&key) {
         Some(Entry::InProgress) => return Lookup::Cycle,
@@ -128,8 +130,8 @@ fn compile_uncached(
     let mut ir = match export {
         Export::Default => analyze_component(&parsed)?,
         Export::Named(name) => analyze_named_component(&parsed, name).ok_or_else(|| {
-            Diagnostic::error(
-                "unresolved-import",
+            Diagnostic::fallback(
+                "export-shape",
                 format!("{path} has no function declaration `{name}`"),
                 0,
                 "export the component as `export function Name(props) { … }`",
@@ -177,7 +179,7 @@ pub fn resolve(parent: &str, rel: &str, opts: &AnalyzeOptions) -> Option<String>
 
 /// Resolves `.` and `..` segments of a `/`-separated path; an absolute path
 /// stays absolute.
-fn normalize(p: &str) -> String {
+pub fn normalize(p: &str) -> String {
     let absolute = p.starts_with('/');
     let mut out: Vec<&str> = Vec::new();
     for seg in p.split('/') {

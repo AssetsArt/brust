@@ -49,6 +49,7 @@ fn product_card_places_server_and_precomputed() {
         &Expr::Precomputed {
             slot: "_s1".into(),
             js: "formatPrice(item.price)".into(),
+            client_js: None,
             inputs: vec!["item.price".into()],
             state_dependent: false,
             per_item: None,
@@ -59,6 +60,7 @@ fn product_card_places_server_and_precomputed() {
         &Expr::Precomputed {
             slot: "_s2".into(),
             js: "formatPrice(item.price * qty)".into(),
+            client_js: Some("formatPrice(props().item.price * qty())".into()),
             inputs: vec!["item.price".into()],
             state_dependent: true,
             per_item: None,
@@ -103,6 +105,7 @@ fn list_slots_are_per_item() {
         [Expr::Precomputed {
             slot: "_s1".into(),
             js: "fmt(i.price)".into(),
+            client_js: None,
             inputs: vec!["items".into()],
             state_dependent: false,
             per_item: Some("i".into()),

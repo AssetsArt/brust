@@ -87,9 +87,14 @@ impl<'r, 'a> Reader<'r, 'a> {
                     RawKind::Member {
                         target: Box::new(self.expr(&d.target)),
                         name,
-                        optional: d.optional_chain.is_some(),
+                        // Only the link that starts the chain is `?.`; a
+                        // continuation is short-circuited by it.
+                        optional: matches!(d.optional_chain, Some(js_ast::OptionalChain::Start)),
                     }
                 }
+            }
+            E::EIndex(ix) if matches!(ix.optional_chain, Some(js_ast::OptionalChain::Start)) => {
+                return self.opaque(e, "optional index");
             }
             E::EIndex(ix) => RawKind::Index {
                 target: Box::new(self.expr(&ix.target)),

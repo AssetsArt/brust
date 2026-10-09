@@ -33,6 +33,7 @@
               "Precomputed": {
                 "slot": "_s1",
                 "js": "theme",
+                "client_js": null,
                 "inputs": [],
                 "state_dependent": false,
                 "per_item": null

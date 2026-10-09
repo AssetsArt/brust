@@ -139,6 +139,9 @@ pub enum Expr {
     Precomputed {
         slot: String,
         js: String,
+        /// The same value printed for the client chunk (`props().x`, `n()`);
+        /// `Some` iff `state_dependent` (the client recomputes it).
+        client_js: Option<String>,
         inputs: Vec<String>,
         state_dependent: bool,
         per_item: Option<String>,

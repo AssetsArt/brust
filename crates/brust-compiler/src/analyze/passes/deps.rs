@@ -123,6 +123,29 @@ impl DepsCx {
         DepsCx { locals }
     }
 
+    /// This table with every props-only precomputed derived value replaced by
+    /// its inputs (after placement): the client receives it, never runs it.
+    pub fn client_view(&self, ir: &ComponentIR) -> DepsCx {
+        let mut locals = self.locals.clone();
+        for d in &ir.derived {
+            if let Expr::Precomputed {
+                inputs,
+                state_dependent: false,
+                ..
+            } = &d.expr
+            {
+                locals.insert(
+                    d.name.clone(),
+                    LocalDef::Placed(Deps {
+                        props: inputs.iter().cloned().collect(),
+                        ..Default::default()
+                    }),
+                );
+            }
+        }
+        DepsCx { locals }
+    }
+
     /// `name` is declared in the component body.
     pub fn is_body_local(&self, name: &str) -> bool {
         self.locals.contains_key(name)

@@ -40,39 +40,67 @@ pub fn is_server_only(source: &str, extra: &[String]) -> bool {
             .any(|p| !p.is_empty() && source.starts_with(p.as_str()))
 }
 
+/// `source` (as written in the module at `ctx.path`) is server-only; a
+/// relative specifier is also matched against `serverOnly` as a path from the
+/// root (`../server/db` from `src/app/x.tsx` is `src/server/db`).
+fn server_only_import(source: &str, ctx: &PassCtx<'_>) -> bool {
+    if is_server_only(source, &ctx.opts.server_only) {
+        return true;
+    }
+    if !(source.starts_with("./") || source.starts_with("../")) {
+        return false;
+    }
+    let dir = ctx.path.rfind('/').map_or("", |i| &ctx.path[..i]);
+    let resolved = crate::analyze::modules::normalize(&if dir.is_empty() {
+        source.to_string()
+    } else {
+        format!("{dir}/{source}")
+    });
+    ctx.opts
+        .server_only
+        .iter()
+        .any(|p| !p.is_empty() && resolved.starts_with(p.trim_start_matches("./")))
+}
+
 pub fn captures(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
+    // Locals as the client sees them: a props-only slot is a value computed
+    // by the job, not code the chunk runs (its imports stay on the server).
+    let cx = st.cx.client_view(ir);
     let mut uses: Vec<ClientUse> = Vec::new();
     for h in &ir.handlers {
         uses.push(ClientUse {
             loc: h.body.loc,
-            deps: st.cx.deps(&h.body, &h.item_scoped),
+            deps: cx.deps(&h.body, &h.item_scoped),
             what: "a handler",
+            raw: None,
         });
     }
     for e in &ir.effects {
-        let mut deps = st.cx.deps(&e.body, &[]);
+        let mut deps = cx.deps(&e.body, &[]);
         for d in e.deps.iter().flatten() {
-            deps.union(&st.cx.deps(d, &[]));
+            deps.union(&cx.deps(d, &[]));
         }
         uses.push(ClientUse {
             loc: e.body.loc,
             deps,
             what: "an effect",
+            raw: None,
         });
     }
     for s in &ir.state {
         let (loc, deps) = match &s.init {
             Expr::Precomputed { slot, .. } => match st.slots.get(slot) {
-                Some(i) => (i.raw.loc, i.deps.clone()),
+                Some(i) => (i.raw.loc, cx.deps(&i.raw, &[])),
                 None => continue,
             },
-            Expr::Server(crate::ir::ServerExpr(r)) | Expr::Raw(r) => (r.loc, st.cx.deps(r, &[])),
+            Expr::Server(crate::ir::ServerExpr(r)) | Expr::Raw(r) => (r.loc, cx.deps(r, &[])),
             Expr::ClientOnly { .. } => continue,
         };
         uses.push(ClientUse {
             loc,
             deps,
             what: "a state initializer",
+            raw: None,
         });
     }
     let mut slots: Vec<_> = st.slots.iter().filter(|(_, i)| i.state_dependent).collect();
@@ -80,11 +108,17 @@ pub fn captures(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
     for (_, i) in slots {
         uses.push(ClientUse {
             loc: i.raw.loc,
-            deps: i.deps.clone(),
+            deps: cx.deps(&i.raw, &i.scope),
             what: "a state-dependent value",
+            raw: None,
         });
     }
-    uses.extend(st.client_uses.iter().cloned());
+    uses.extend(st.client_uses.iter().cloned().map(|mut u| {
+        if let Some((r, scope)) = &u.raw {
+            u.deps = cx.deps(r, scope);
+        }
+        u
+    }));
 
     let mut props = BTreeSet::new();
     let mut imports = BTreeSet::new();
@@ -97,7 +131,7 @@ pub fn captures(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
 
     // §3.2 rule 2: a server-only module reached from client code.
     for (source, imported) in &imports {
-        if !is_server_only(source, &ctx.opts.server_only) {
+        if !server_only_import(source, ctx) {
             continue;
         }
         let Some(u) = uses

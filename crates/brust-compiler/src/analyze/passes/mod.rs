@@ -1,6 +1,6 @@
 //! M1b-2 passes over the structural IR, run in a fixed order by
-//! [`run_passes`]: deps → placement (uses `server_expr`) → captures →
-//! children → cache → tier. Pure functions of the IR, except `children`, which
+//! [`run_passes`]: deps → placement (uses `server_expr`) → children →
+//! captures → tier (`cache()` is read with the component, in `component.rs`). Pure functions of the IR, except `children`, which
 //! compiles child modules through the [`crate::analyze::modules`] cache.
 pub mod captures;
 pub mod children;
@@ -40,6 +40,9 @@ pub struct ClientUse {
     pub deps: deps::Deps,
     /// For messages: `a handler`, `an effect`, ….
     pub what: &'static str,
+    /// The expression and its loop scope, so captures can recompute `deps`
+    /// once placement is known (a props-only slot is not client code).
+    pub raw: Option<(crate::ir::RawExpr, Vec<String>)>,
 }
 
 /// Inputs every pass may read.
@@ -74,8 +77,9 @@ impl PassState {
 pub fn run_passes(ir: &mut ComponentIR, ctx: &PassCtx<'_>) -> PassState {
     let mut st = PassState::new(ir);
     placement::place(ir, &mut st);
-    captures::captures(ir, &mut st, ctx);
+    // Children before captures: linked props are client reads of the parent.
     children::children(ir, &mut st, ctx);
+    captures::captures(ir, &mut st, ctx);
     tier::tier(ir, &mut st, ctx);
     st
 }

@@ -4,7 +4,7 @@ use super::{PassCtx, PassState};
 use crate::ir::{Attr, ComponentIR, DiagClass, Diagnostic, Expr, Node, Tier};
 
 /// Fallback rules that do not make *this* component React (they concern a child).
-const CHILD_ONLY: &[&str] = &["external-component"];
+const CHILD_ONLY: &[&str] = &["external-component", "child-component"];
 
 pub fn tier(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
     check_refs(ir);

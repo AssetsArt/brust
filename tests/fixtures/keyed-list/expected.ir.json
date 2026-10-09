@@ -337,7 +337,9 @@
   },
   "jobs": [],
   "child_links": [],
-  "client_props": [],
+  "client_props": [
+    "todos"
+  ],
   "client_imports": [],
   "needs_worker": false,
   "cache": null,

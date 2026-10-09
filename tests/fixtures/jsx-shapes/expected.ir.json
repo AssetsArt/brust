@@ -117,6 +117,7 @@
             "Precomputed": {
               "slot": "_s1",
               "js": "rest",
+              "client_js": null,
               "inputs": [
                 "rest"
               ],
