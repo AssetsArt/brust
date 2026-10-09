@@ -163,7 +163,7 @@ pub fn job(ir: &ComponentIR) -> Option<String> {
             if conds.is_empty() {
                 js
             } else {
-                format!("({} ? {js} : undefined)", conds.join(" && "))
+                format!("({} ? {js} : null)", conds.join(" && "))
             }
         };
         let mut js = guard(server_js(&s.raw, &f), s.lists.len());

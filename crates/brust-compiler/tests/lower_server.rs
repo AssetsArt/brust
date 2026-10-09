@@ -74,3 +74,62 @@ fn jobs_are_pure() {
     }
     assert!(checked >= 2);
 }
+
+/// F67: every declared output slot is present in the job result, `null` under a false guard.
+#[test]
+fn every_output_slot_is_present_even_when_its_guard_is_false() {
+    let root = lower_common::repo();
+    let (_, a) = fixture_artifacts()
+        .into_iter()
+        .find(|(_, a)| {
+            a.server_ts
+                .as_deref()
+                .is_some_and(|s| s.contains("_s4:") && s.contains("(a && b)"))
+        })
+        .expect("guarded-slot job");
+    let dir = std::env::temp_dir().join(format!("brustc-guarded-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::copy(
+        root.join("tests/fixtures/guarded-slot/money.ts"),
+        dir.join("money.ts"),
+    )
+    .unwrap();
+    std::fs::write(dir.join("job.server.ts"), a.server_ts.unwrap()).unwrap();
+    let out = std::process::Command::new("bun")
+        .arg(root.join("crates/brust-compiler/tests/harness/eval.ts"))
+        .args(["slots"])
+        .arg(dir.join("job.server.ts"))
+        .arg(root.join("tests/fixtures/guarded-slot/sample-props.json"))
+        .output()
+        .expect("bun");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let result: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let ir: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join("tests/fixtures/guarded-slot/expected.ir.json"))
+            .unwrap(),
+    )
+    .unwrap();
+    let outputs: Vec<String> = ir["jobs"][0]["outputs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect();
+    assert!(outputs.len() >= 4, "{outputs:?}");
+    for slot in &outputs {
+        assert!(result.get(slot).is_some(), "slot {slot} missing: {result}");
+    }
+    let o = |i: usize| &result[&outputs[i]];
+    assert!(o(0).is_null(), "prop guard false -> null: {result}");
+    let rows = o(2).as_array().expect("per-row slot is an array");
+    assert_eq!(rows.len(), 2);
+    assert!(rows[0].is_null() && !rows[1].is_null(), "{rows:?}");
+    assert!(
+        o(1).is_null() && o(3).is_null(),
+        "state guard / nested guard false -> null: {result}"
+    );
+}

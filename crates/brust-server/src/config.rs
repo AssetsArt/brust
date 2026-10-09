@@ -141,6 +141,9 @@ pub struct Stats {
     pub job_calls: u64,
     /// Worker calls answered 504 by the call deadline.
     pub timed_out_calls: u64,
+    /// Distinct (component, slot) pairs whose job result lacked a declared output (an older
+    /// `dist/jobs.js`); the slot renders empty and is warned once.
+    pub missing_slots: u64,
 }
 
 /// Shared server state (the stripped 0.1.x `AppState`), one per `start`.
@@ -155,6 +158,8 @@ pub struct Server {
     pub(crate) loader_calls: AtomicU64,
     pub(crate) job_calls: AtomicU64,
     pub(crate) timed_out_calls: AtomicU64,
+    /// (component, slot) pairs already warned about as missing from a job result.
+    pub(crate) missing_slots: std::sync::Mutex<std::collections::HashSet<(String, String)>>,
     /// Worker-registration barrier: the accept loop waits on it.
     pub(crate) ready: Arc<Notify>,
     pub(crate) expected_workers: AtomicU32,
@@ -228,6 +233,7 @@ impl Server {
             loader_calls: self.loader_calls.load(Ordering::Relaxed),
             job_calls: self.job_calls.load(Ordering::Relaxed),
             timed_out_calls: self.timed_out_calls.load(Ordering::Relaxed),
+            missing_slots: self.missing_slots.lock().map_or(0, |m| m.len() as u64),
         }
     }
 

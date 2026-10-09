@@ -1,0 +1,429 @@
+{
+  "id": "input_f3d26057",
+  "source": "tests/fixtures/guarded-slot/input.tsx",
+  "tier": "Native",
+  "props": [
+    {
+      "name": "props",
+      "local": "props",
+      "ts_type": null,
+      "default": null
+    }
+  ],
+  "state": [
+    {
+      "name": "open",
+      "setter": "setOpen",
+      "init": {
+        "Server": {
+          "loc": 246,
+          "kind": {
+            "Lit": {
+              "Bool": false
+            }
+          }
+        }
+      }
+    }
+  ],
+  "derived": [],
+  "effects": [],
+  "handlers": [
+    {
+      "name": "_h1",
+      "body": {
+        "loc": 355,
+        "kind": {
+          "Arrow": {
+            "params": [],
+            "body": {
+              "Expr": {
+                "loc": 361,
+                "kind": {
+                  "Call": {
+                    "callee": {
+                      "loc": 361,
+                      "kind": {
+                        "Ident": {
+                          "name": "setOpen",
+                          "kind": "Setter"
+                        }
+                      }
+                    },
+                    "args": [
+                      {
+                        "loc": 369,
+                        "kind": {
+                          "Unary": {
+                            "op": "Not",
+                            "value": {
+                              "loc": 370,
+                              "kind": {
+                                "Ident": {
+                                  "name": "open",
+                                  "kind": "State"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "captures": [
+              [
+                "setOpen",
+                "Setter"
+              ],
+              [
+                "open",
+                "State"
+              ]
+            ]
+          }
+        }
+      },
+      "item_scoped": []
+    }
+  ],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 268,
+      "tag": "div",
+      "attrs": [],
+      "children": [
+        {
+          "If": {
+            "cond": {
+              "Server": {
+                "loc": 281,
+                "kind": {
+                  "Ident": {
+                    "name": "show",
+                    "kind": "Prop"
+                  }
+                }
+              }
+            },
+            "then": [
+              {
+                "Element": {
+                  "loc": 295,
+                  "tag": "b",
+                  "attrs": [
+                    {
+                      "Static": {
+                        "name": "className",
+                        "value": "p"
+                      }
+                    }
+                  ],
+                  "children": [
+                    {
+                      "Slot": {
+                        "Precomputed": {
+                          "slot": "_s1",
+                          "js": "fmt(n)",
+                          "client_js": null,
+                          "inputs": [
+                            "n",
+                            "show"
+                          ],
+                          "state_dependent": false,
+                          "per_item": null
+                        }
+                      }
+                    }
+                  ],
+                  "host": false,
+                  "ref_name": null
+                }
+              }
+            ],
+            "else_": []
+          }
+        },
+        {
+          "Element": {
+            "loc": 338,
+            "tag": "button",
+            "attrs": [
+              {
+                "Event": {
+                  "event": "click",
+                  "handler": "_h1"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Text": "toggle"
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "If": {
+            "cond": {
+              "Server": {
+                "loc": 400,
+                "kind": {
+                  "Ident": {
+                    "name": "open",
+                    "kind": "State"
+                  }
+                }
+              }
+            },
+            "then": [
+              {
+                "Element": {
+                  "loc": 408,
+                  "tag": "i",
+                  "attrs": [
+                    {
+                      "Static": {
+                        "name": "className",
+                        "value": "s"
+                      }
+                    }
+                  ],
+                  "children": [
+                    {
+                      "Slot": {
+                        "Precomputed": {
+                          "slot": "_s2",
+                          "js": "fmt(n * 2)",
+                          "client_js": null,
+                          "inputs": [
+                            "n"
+                          ],
+                          "state_dependent": false,
+                          "per_item": null
+                        }
+                      }
+                    }
+                  ],
+                  "host": false,
+                  "ref_name": null
+                }
+              }
+            ],
+            "else_": []
+          }
+        },
+        {
+          "Element": {
+            "loc": 455,
+            "tag": "ul",
+            "attrs": [],
+            "children": [
+              {
+                "For": {
+                  "source": {
+                    "Server": {
+                      "loc": 460,
+                      "kind": {
+                        "Ident": {
+                          "name": "items",
+                          "kind": "Prop"
+                        }
+                      }
+                    }
+                  },
+                  "item": "it",
+                  "index": null,
+                  "key": {
+                    "Server": {
+                      "loc": 493,
+                      "kind": {
+                        "Member": {
+                          "target": {
+                            "loc": 493,
+                            "kind": {
+                              "Ident": {
+                                "name": "it",
+                                "kind": "LoopBinding"
+                              }
+                            }
+                          },
+                          "name": "id",
+                          "optional": false
+                        }
+                      }
+                    }
+                  },
+                  "body": [
+                    {
+                      "Element": {
+                        "loc": 484,
+                        "tag": "li",
+                        "attrs": [],
+                        "children": [
+                          {
+                            "If": {
+                              "cond": {
+                                "Server": {
+                                  "loc": 501,
+                                  "kind": {
+                                    "Member": {
+                                      "target": {
+                                        "loc": 501,
+                                        "kind": {
+                                          "Ident": {
+                                            "name": "it",
+                                            "kind": "LoopBinding"
+                                          }
+                                        }
+                                      },
+                                      "name": "sale",
+                                      "optional": false
+                                    }
+                                  }
+                                }
+                              },
+                              "then": [
+                                {
+                                  "Element": {
+                                    "loc": 512,
+                                    "tag": "em",
+                                    "attrs": [],
+                                    "children": [
+                                      {
+                                        "Slot": {
+                                          "Precomputed": {
+                                            "slot": "_s3",
+                                            "js": "fmt(it.price)",
+                                            "client_js": null,
+                                            "inputs": [
+                                              "items"
+                                            ],
+                                            "state_dependent": false,
+                                            "per_item": "it"
+                                          }
+                                        }
+                                      }
+                                    ],
+                                    "host": false,
+                                    "ref_name": null
+                                  }
+                                }
+                              ],
+                              "else_": []
+                            }
+                          }
+                        ],
+                        "host": false,
+                        "ref_name": null
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "If": {
+            "cond": {
+              "Server": {
+                "loc": 557,
+                "kind": {
+                  "Binary": {
+                    "op": "And",
+                    "left": {
+                      "loc": 557,
+                      "kind": {
+                        "Ident": {
+                          "name": "a",
+                          "kind": "Prop"
+                        }
+                      }
+                    },
+                    "right": {
+                      "loc": 568,
+                      "kind": {
+                        "Ident": {
+                          "name": "b",
+                          "kind": "Prop"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "then": [
+              {
+                "Element": {
+                  "loc": 579,
+                  "tag": "u",
+                  "attrs": [],
+                  "children": [
+                    {
+                      "Slot": {
+                        "Precomputed": {
+                          "slot": "_s4",
+                          "js": "fmt(n + 1)",
+                          "client_js": null,
+                          "inputs": [
+                            "a",
+                            "b",
+                            "n"
+                          ],
+                          "state_dependent": false,
+                          "per_item": null
+                        }
+                      }
+                    }
+                  ],
+                  "host": false,
+                  "ref_name": null
+                }
+              }
+            ],
+            "else_": []
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [
+    {
+      "kind": "Precompute",
+      "inputs": [
+        "a",
+        "b",
+        "items",
+        "n",
+        "show"
+      ],
+      "outputs": [
+        "_s1",
+        "_s2",
+        "_s3",
+        "_s4"
+      ],
+      "per_item": null
+    }
+  ],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": true,
+  "cache": null,
+  "children": [],
+  "diagnostics": []
+}
