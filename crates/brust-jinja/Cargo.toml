@@ -1,0 +1,13 @@
+[package]
+name = "brust-jinja"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The minijinja environment brust templates are rendered with: filters, attribute names, escapers"
+
+[dependencies]
+minijinja.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
