@@ -88,6 +88,8 @@ pub struct Printer<'a, 'c> {
     /// Printing the zero-row `x-for` template: it is cloned and re-bound by
     /// the runtime, so no value is evaluated (there is no item).
     blank: bool,
+    /// Printing the children of `<script>` / `<style>`: static text goes out verbatim.
+    raw_text: bool,
 }
 
 impl<'a, 'c> Printer<'a, 'c> {
@@ -115,6 +117,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             instances: HashMap::new(),
             ssr: HashMap::new(),
             blank: false,
+            raw_text: false,
         })
     }
 
@@ -180,6 +183,14 @@ impl<'a, 'c> Printer<'a, 'c> {
         }
     }
 
+    /// The server-seeded `useId` value `k` of this component instance.
+    fn id_ref(&self, k: usize) -> String {
+        if self.blank {
+            return UNDEFINED.into();
+        }
+        self.slot_ref(&format!("_id{k}"), false)
+    }
+
     fn derived_var(&self, name: &str) -> String {
         let i = self
             .f
@@ -221,6 +232,9 @@ impl<'a, 'c> Printer<'a, 'c> {
             }
             IdentKind::Local => Some(if self.f.derived.contains_key(name) {
                 self.derived_var(name)
+            } else if let Some(k) = self.f.ir.id_bindings.iter().position(|i| i == name) {
+                // Read the server-seeded value directly: no template variable to shadow a prop.
+                self.id_ref(k)
             } else {
                 UNDEFINED.into()
             }),
@@ -377,13 +391,15 @@ impl<'a, 'c> Printer<'a, 'c> {
     fn node(&mut self, n: &Node, s: &Node, root: bool) {
         match (n, s) {
             (Node::Element { .. }, Node::Element { .. }) => self.element(n, s, root, None),
+            (Node::Text(t), _) if self.raw_text => self.out.push_str(&raw_text(t)),
             (Node::Text(t), _) => self.out.push_str(&text(t)),
+            (Node::Outlet, Node::Outlet) => self.out.push_str("{{ __outlet | safe }}"),
             (Node::Slot(e), Node::Slot(_)) => {
                 self.slot(e, Some(s), false);
             }
             (Node::If { .. }, Node::If { .. }) => self.if_node(n, s),
             (Node::For { .. }, Node::For { .. }) => self.for_node(n, s),
-            (Node::Component { .. }, Node::Component { .. }) => self.component(n, s),
+            (Node::Component { .. }, Node::Component { .. }) => self.component(n, s, None),
             (Node::Fragment(cs), Node::Fragment(ss)) => self.nodes(cs, ss),
             _ => self.diagnostics.push(Diagnostic::error(
                 "lower-shape",
@@ -406,6 +422,13 @@ impl<'a, 'c> Printer<'a, 'c> {
             Some(Node::Slot(s)) => raw_of(e, Some(s)),
             _ => None,
         };
+        // Static text in <script>/<style>: browsers do not decode entities there.
+        if self.raw_text
+            && let Some(s) = static_text(e)
+        {
+            self.out.push_str(&raw_text(&s));
+            return None;
+        }
         // An inlined child's `{children}`: the parent's markup.
         if let (
             Some(i),
@@ -478,6 +501,8 @@ impl<'a, 'c> Printer<'a, 'c> {
         let mut body = String::new();
         std::mem::swap(&mut body, &mut self.out);
         let mut text_directive = None;
+        let raw_before = self.raw_text;
+        self.raw_text = tag.eq_ignore_ascii_case("script") || tag.eq_ignore_ascii_case("style");
         if lone {
             if let (Node::Slot(e), Some(se)) = (&children[0], schildren.first()) {
                 text_directive = self.slot(e, Some(se), true);
@@ -485,6 +510,7 @@ impl<'a, 'c> Printer<'a, 'c> {
         } else {
             self.nodes(children, schildren);
         }
+        self.raw_text = raw_before;
         std::mem::swap(&mut body, &mut self.out);
         if let Some(d) = text_directive {
             open.push_str(&format!(" x-text=\"{d}\""));
@@ -541,6 +567,19 @@ impl<'a, 'c> Printer<'a, 'c> {
                 })
                 .collect()
         };
+        // The client reads its `useId` values from props (`_id{k}`).
+        let ids: Vec<String> = (0..ir.id_bindings.len())
+            .map(|k| format!("\"_id{k}\": {}", self.id_ref(k)))
+            .collect();
+        if seed.contains("*") && !ids.is_empty() {
+            self.diagnostics.push(Diagnostic::error(
+                "lower-shape",
+                "a component that reads its whole props object cannot also seed useId values",
+                0,
+                "destructure the props",
+            ));
+        }
+        let dict: Vec<String> = dict.into_iter().chain(ids).collect();
         if seed.contains("*") {
             let all = match &self.inline {
                 None => "_props".to_string(),
@@ -916,6 +955,12 @@ impl<'a, 'c> Printer<'a, 'c> {
         } else {
             match (ns, ss) {
                 ([n @ Node::Element { .. }], [s]) => self.element(n, s, false, Some(&attr)),
+                // F32: a single inlined component whose template is one element carries `x-for`
+                // itself (the runtime lets an `x-for` element also be a host, `directives/index.ts`).
+                // `x-if` cannot: a host root with `x-if` is skipped by the parent's walk.
+                ([n @ Node::Component { .. }], [s]) if self.inline_root_is_element(n) => {
+                    self.component(n, s, Some(&attr))
+                }
                 _ => {
                     self.out
                         .push_str(&format!("<brust-row style=\"display:contents\"{attr}>"));
@@ -928,7 +973,49 @@ impl<'a, 'c> Printer<'a, 'c> {
         saved
     }
 
-    fn component(&mut self, n: &Node, s: &Node) {
+    /// An inlined (native/static) component whose compiled template is a single element:
+    /// that element can carry a row directive itself, so no wrapper is needed.
+    fn inline_root_is_element(&self, n: &Node) -> bool {
+        let Node::Component {
+            name, tier, link, ..
+        } = n
+        else {
+            return false;
+        };
+        // Only a static, unlinked child (no `x-data` host): a host root that carries `x-for`
+        // breaks when the child's chunk registers before the parent's (its own instance would
+        // bind the row directive), so a host row keeps the `<brust-row>` wrapper.
+        if !matches!(tier, Tier::Static) || link.is_some() {
+            return false;
+        }
+        let Some(child) = self.f.ir.children.iter().find(|c| &c.name == name) else {
+            return false;
+        };
+        let id = child.id.clone().unwrap_or_else(|| name.clone());
+        (self.ctx.resolve)(&id).is_some_and(|c| matches!(c.template, Node::Element { .. }))
+    }
+
+    /// Whether `n` (or anything below it) is an inlined component with a job or `useId` values.
+    fn has_fed(&self, n: &Node) -> bool {
+        if let Node::Component { name, .. } = n
+            && let Some(c) = self.f.ir.children.iter().find(|c| &c.name == name)
+            && let Some(ir) = (self.ctx.resolve)(&c.id.clone().unwrap_or_else(|| name.clone()))
+            && is_fed(ir)
+        {
+            return true;
+        }
+        match n {
+            Node::Element { children, .. }
+            | Node::Component { children, .. }
+            | Node::Fragment(children) => children.iter().any(|c| self.has_fed(c)),
+            Node::If { then, else_, .. } => then.iter().chain(else_).any(|c| self.has_fed(c)),
+            Node::For { body, .. } => body.iter().any(|c| self.has_fed(c)),
+            Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
+        }
+    }
+
+    /// `extra`: attributes for the child's root element (a list-row directive).
+    fn component(&mut self, n: &Node, s: &Node, extra: Option<&str>) {
         let (
             Node::Component {
                 name,
@@ -956,9 +1043,8 @@ impl<'a, 'c> Printer<'a, 'c> {
         if let Tier::React { client_only, .. } = tier {
             if *client_only {
                 let dict = self.props_dict(props, sprops);
-                self.out.push_str(&format!(
-                    "<brust-island data-brust-island=\"{id}\" data-props='{{{{ {dict} | json_attr }}}}'></brust-island>"
-                ));
+                self.out
+                    .push_str(&crate::lower::island_host(&id, &dict, ""));
                 return;
             }
             let k = self.ssr.entry(id.clone()).or_insert(0);
@@ -974,7 +1060,12 @@ impl<'a, 'c> Printer<'a, 'c> {
                     && j.per_item.is_some()
             });
             let idx = if per_item { loops.as_str() } else { "" };
-            self.out.push_str(&format!("{{{{ {out}{idx} | safe }}}}"));
+            let dict = self.props_dict(props, sprops);
+            self.out.push_str(&crate::lower::island_host(
+                &id,
+                &dict,
+                &format!("{{{{ {out}{idx} | safe }}}}"),
+            ));
             return;
         }
         // Native / static child: inline its template.
@@ -987,6 +1078,40 @@ impl<'a, 'c> Printer<'a, 'c> {
             ));
             return;
         };
+        if self.inline.is_some() && is_fed(child_ir) {
+            // The slot key is built from this printer's own counters and frames, which restart
+            // inside an inlined child: instances of such a grandchild would collide.
+            self.diagnostics.push(Diagnostic::error(
+                "nested-instance",
+                format!("<{name}> has a job or useId and is used inside another inlined component"),
+                0,
+                "use it directly in the route component (ledger F53)",
+            ));
+            return;
+        }
+        if self.frames.len() > 1 && is_fed(child_ir) {
+            // S6 hands the server one array per instance, indexed by ONE list.
+            self.diagnostics.push(Diagnostic::error(
+                "nested-instance",
+                format!("<{name}> has a job or useId and sits inside nested lists"),
+                0,
+                "flatten the lists or render the child per row in its own component (ledger F53)",
+            ));
+            return;
+        }
+        if !children.is_empty()
+            && contains_node(&child_ir.template, &|n| matches!(n, Node::For { .. }))
+            && children.iter().any(|c| self.has_fed(c))
+        {
+            // Slot content is printed once and pasted per row: its ids/jobs would repeat.
+            self.diagnostics.push(Diagnostic::error(
+                "nested-instance",
+                format!("children with a job or useId are passed to <{name}>, which repeats them in a list"),
+                0,
+                "render the child inside the repeating component (ledger F53)",
+            ));
+            return;
+        }
         let k = {
             let k = self.instances.entry(id.clone()).or_insert(0);
             *k += 1;
@@ -1037,11 +1162,15 @@ impl<'a, 'c> Printer<'a, 'c> {
         let Some(mut p) = Printer::new(child_ir, self.ctx, Some(inline), self.loop_var) else {
             return;
         };
+        p.blank = self.blank;
         p.native = !matches!(child_ir.tier, Tier::Static) || bind.is_some();
         p.inline_host = Some((child_ir.id.clone(), bind));
         p.preamble();
         let (ct, cs) = (&child_ir.template, &p.f.structural.template);
-        p.node(ct, cs, true);
+        match extra {
+            Some(x) => p.element(ct, cs, true, Some(x)),
+            None => p.node(ct, cs, true),
+        }
         self.out.push_str(&p.out);
         self.diagnostics.append(&mut p.diagnostics);
     }
@@ -1077,6 +1206,14 @@ impl SeedNode {
                 "{{{}}}",
                 f.iter()
                     .map(|(k, n)| {
+                        // `list.length` is not a key of the seeded JSON: seed the count only,
+                        // never the list (its items may be data the page does not show).
+                        if k == "length" && matches!(n, SeedNode::Whole) {
+                            return format!(
+                                "{}: (({base} | length) if {base} is defined and {base} is not none else none)",
+                                jinja_string(k)
+                            );
+                        }
                         let at = format!("({base})[{}]", jinja_string(k));
                         format!("{}: {}", jinja_string(k), n.jinja(&at))
                     })
@@ -1249,7 +1386,7 @@ fn needs_directives(n: &Node, f: &Facts<'_>) -> bool {
             link.is_some() || children.iter().any(|c| needs_directives(c, f))
         }
         Node::Fragment(cs) => cs.iter().any(|c| needs_directives(c, f)),
-        Node::Text(_) => false,
+        Node::Text(_) | Node::Outlet => false,
     }
 }
 
@@ -1270,5 +1407,46 @@ impl Expr {
             Expr::Raw(r) | Expr::Server(ServerExpr(r)) => Some(r.loc),
             _ => None,
         }
+    }
+}
+
+/// A component whose instances the server must feed (a precompute job or `useId` values).
+fn is_fed(ir: &ComponentIR) -> bool {
+    ir.use_id_slots > 0
+        || ir
+            .jobs
+            .iter()
+            .any(|j| matches!(j.kind, JobKind::Precompute))
+}
+
+/// Whether `f` holds for `n` or any node below it.
+fn contains_node(n: &Node, f: &dyn Fn(&Node) -> bool) -> bool {
+    if f(n) {
+        return true;
+    }
+    match n {
+        Node::Element { children, .. }
+        | Node::Component { children, .. }
+        | Node::Fragment(children) => children.iter().any(|c| contains_node(c, f)),
+        Node::If { then, else_, .. } => then.iter().chain(else_).any(|c| contains_node(c, f)),
+        Node::For { body, .. } => body.iter().any(|c| contains_node(c, f)),
+        Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
+    }
+}
+
+/// Text for a raw-text element (`<script>`, `<style>`): printed as a jinja string, unescaped.
+fn raw_text(s: &str) -> String {
+    format!("{{{{ {} | safe }}}}", jinja_string(s))
+}
+
+/// The text of a literal string or substitution-free template.
+fn static_text(e: &Expr) -> Option<String> {
+    match e {
+        Expr::Raw(r) => match &r.kind {
+            RawKind::Lit(crate::ir::Literal::Str(s)) => Some(s.clone()),
+            RawKind::Template { head, parts } if parts.is_empty() => Some(head.clone()),
+            _ => None,
+        },
+        _ => None,
     }
 }

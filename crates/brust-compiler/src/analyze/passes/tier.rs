@@ -77,6 +77,15 @@ pub fn tier(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
     }
     // §3.3: a React component's one job is its SSR render over its props;
     // precompute slots and child islands are React's business then.
+    if matches!(ir.tier, Tier::React { .. }) && ir.uses_outlet {
+        // A React-tier page renders as one island: its template has no `__outlet` slot.
+        ir.diagnostics.push(crate::ir::Diagnostic::error(
+            "outlet-in-react",
+            "<Outlet/> is used in a component that renders as a React island",
+            0,
+            "keep layouts native: remove the construct that forces the React tier",
+        ));
+    }
     if let Tier::React { client_only, .. } = &ir.tier {
         ir.jobs = vec![crate::ir::JobDecl {
             kind: crate::ir::JobKind::Ssr {
@@ -139,7 +148,7 @@ fn visit_exprs(n: &Node, f: &mut impl FnMut(&Expr)) {
             children.iter().for_each(|c| visit_exprs(c, f));
         }
         Node::Fragment(cs) => cs.iter().for_each(|c| visit_exprs(c, f)),
-        Node::Text(_) => {}
+        Node::Text(_) | Node::Outlet => {}
     }
 }
 
@@ -171,7 +180,7 @@ fn check_refs(ir: &mut ComponentIR) {
             Node::Component { children, .. } | Node::Fragment(children) => {
                 children.iter().for_each(|c| walk(c, refs, bad))
             }
-            Node::Text(_) | Node::Slot(_) => {}
+            Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
         }
     }
     walk(&ir.template, &refs, &mut bad);

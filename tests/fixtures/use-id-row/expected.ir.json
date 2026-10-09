@@ -1,0 +1,169 @@
+{
+  "id": "input_04b8b787",
+  "source": "tests/fixtures/use-id-row/input.tsx",
+  "tier": "Native",
+  "props": [
+    {
+      "name": "props",
+      "local": "props",
+      "ts_type": null,
+      "default": null
+    }
+  ],
+  "state": [],
+  "derived": [],
+  "effects": [],
+  "handlers": [],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 127,
+      "tag": "form",
+      "attrs": [],
+      "children": [
+        {
+          "For": {
+            "source": {
+              "Server": {
+                "loc": 141,
+                "kind": {
+                  "Ident": {
+                    "name": "fields",
+                    "kind": "Prop"
+                  }
+                }
+              }
+            },
+            "item": "f",
+            "index": null,
+            "key": {
+              "Server": {
+                "loc": 187,
+                "kind": {
+                  "Member": {
+                    "target": {
+                      "loc": 187,
+                      "kind": {
+                        "Ident": {
+                          "name": "f",
+                          "kind": "LoopBinding"
+                        }
+                      }
+                    },
+                    "name": "key",
+                    "optional": false
+                  }
+                }
+              }
+            },
+            "body": [
+              {
+                "Component": {
+                  "loc": 175,
+                  "name": "Field",
+                  "source": "./Field",
+                  "imported": "default",
+                  "props": [
+                    [
+                      "label",
+                      {
+                        "Server": {
+                          "loc": 201,
+                          "kind": {
+                            "Member": {
+                              "target": {
+                                "loc": 201,
+                                "kind": {
+                                  "Ident": {
+                                    "name": "f",
+                                    "kind": "LoopBinding"
+                                  }
+                                }
+                              },
+                              "name": "label",
+                              "optional": false
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  ],
+                  "children": [],
+                  "link": 1,
+                  "tier": "Native"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [],
+  "child_links": [
+    {
+      "id": 1,
+      "child": "field_603ad356",
+      "props_member": "_p1",
+      "item_scoped": [
+        "f"
+      ],
+      "props": [
+        [
+          "label",
+          {
+            "Server": {
+              "loc": 201,
+              "kind": {
+                "Member": {
+                  "target": {
+                    "loc": 201,
+                    "kind": {
+                      "Ident": {
+                        "name": "f",
+                        "kind": "LoopBinding"
+                      }
+                    }
+                  },
+                  "name": "label",
+                  "optional": false
+                }
+              }
+            }
+          }
+        ]
+      ]
+    }
+  ],
+  "instances": [
+    {
+      "child_id": "field_603ad356",
+      "k": 1,
+      "loops": [
+        "fields"
+      ],
+      "props": {
+        "label": "fields[idx].label"
+      }
+    }
+  ],
+  "client_props": [
+    "fields"
+  ],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": false,
+  "cache": null,
+  "children": [
+    {
+      "name": "Field",
+      "id": "field_603ad356",
+      "path": "tests/fixtures/use-id-row/Field.tsx",
+      "tier": "Native"
+    }
+  ],
+  "diagnostics": []
+}

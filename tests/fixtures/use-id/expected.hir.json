@@ -1,0 +1,65 @@
+{
+  "function": "Field",
+  "params": 1,
+  "scopes": [
+    {
+      "id": 2,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "id",
+          "reactive": true
+        },
+        {
+          "name": "props",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t0"
+      ]
+    },
+    {
+      "id": 3,
+      "pruned": false,
+      "deps": [],
+      "decls": [
+        "t1"
+      ]
+    },
+    {
+      "id": 4,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "id",
+          "reactive": true
+        },
+        {
+          "name": "v",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t2"
+      ]
+    },
+    {
+      "id": 5,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "t0",
+          "reactive": true
+        },
+        {
+          "name": "t2",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t3"
+      ]
+    }
+  ]
+}

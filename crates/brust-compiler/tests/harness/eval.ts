@@ -32,7 +32,9 @@ const BOOLEAN = new Set(['disabled', 'checked', 'selected', 'readonly', 'require
 for (const f of readdirSync(a!).sort()) if (f.endsWith('.client.js')) await import(join(resolve(a!), f))
 const win = new Window()
 const doc = win.document
-doc.body.innerHTML = await Bun.file(b!).text()
+// A document root (`<html>` host, S9) survives only a whole-document parse; a fragment parse would drop it.
+doc.write(await Bun.file(b!).text())
+doc.close()
 
 const instances = new Map<unknown, Members>()
 const listsChecked = new WeakMap<Element, Set<string>>()
@@ -61,6 +63,8 @@ function scopeOf(el: Element, host: Element | null, members: Members): Record<st
   // Rows from the outermost in: an inner source may read an outer binding.
   const rows: Element[] = []
   for (let e: Element | null = el; e && e !== host?.parentElement; e = e.parentElement) {
+    // A host that is itself a list row (`<li x-data x-for>`): its `x-for` is the parent's, not part of its own scope.
+    if (e === host) break
     if (e.hasAttribute('x-for')) rows.unshift(e)
   }
   const scope: Record<string, unknown> = {}
@@ -106,8 +110,10 @@ for (const host of Array.from(doc.querySelectorAll('[x-data]')) as Element[]) {
   }
   const members = (factory({ el: host, props: signal(props), effect: () => () => {}, onCleanup() {}, ref: () => ({ current: null }) }) ?? {}) as Members
   instances.set(host, members)
+  // The `x-for` lists this host owns. A row that is itself a host (`<li x-data x-for>`) is listed by its parent.
   for (const el of [host, ...(Array.from(host.querySelectorAll('*')) as Element[])]) {
-    if (hostOf(el) !== host) continue
+    const owner = el.hasAttribute('x-for') && isHost(el) ? hostOf(el.parentElement) : hostOf(el)
+    if (owner !== host) continue
     // One check per x-for source: the server-painted rows (not the hidden template) must number what the client list holds.
     const forRaw = el.getAttribute('x-for')
     const parent = el.parentElement
@@ -120,6 +126,9 @@ for (const host of Array.from(doc.querySelectorAll('[x-data]')) as Element[]) {
       if (!Array.isArray(list)) mismatches.push(`${name} <${el.tagName.toLowerCase()} x-for="${forRaw}">: client source is not a list`)
       else if (list.length !== painted) mismatches.push(`${name} <${el.tagName.toLowerCase()} x-for="${forRaw}">: server painted ${painted} rows, client list has ${list.length}`)
     }
+  }
+  for (const el of [host, ...(Array.from(host.querySelectorAll('*')) as Element[])]) {
+    if (hostOf(el) !== host) continue
     if (hidden(el, host)) {
       // The template of an x-if the server rendered false: the client agrees.
       const raw = el.getAttribute('x-if')

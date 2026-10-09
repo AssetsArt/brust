@@ -178,6 +178,10 @@ fn fnv32(s: &str) -> u64 {
     hash >> 32
 }
 
+fn is_zero(n: &usize) -> bool {
+    *n == 0
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ComponentIR {
     pub id: String,
@@ -191,9 +195,18 @@ pub struct ComponentIR {
     pub refs: Vec<RefDecl>,
     /// Locals bound to `useId()` (server generates, client reads from the DOM).
     pub id_bindings: Vec<String>,
+    /// Number of `useId()` calls: the server seeds `_id0.._idN-1` per instance (S7 step 6).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub use_id_slots: usize,
     pub template: Node,
+    /// The template contains an `<Outlet />` (S8); the build lane checks the route tree.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub uses_outlet: bool,
     pub jobs: Vec<JobDecl>,
     pub child_links: Vec<ChildLink>,
+    /// Inlined child instances with a precompute job or `useId` values (S6 `children[].instances`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub instances: Vec<InstanceRecord>,
     pub client_props: Vec<String>,
     /// `(source, imported)` pairs the client chunk bundles, sorted.
     pub client_imports: Vec<(String, String)>,
@@ -252,9 +265,12 @@ impl ComponentIR {
             handlers: vec![],
             refs: vec![],
             id_bindings: vec![],
+            use_id_slots: 0,
             template: Node::Fragment(vec![]),
+            uses_outlet: false,
             jobs: vec![],
             child_links: vec![],
+            instances: vec![],
             client_props: vec![],
             client_imports: vec![],
             client_module_locals: vec![],

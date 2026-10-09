@@ -78,6 +78,13 @@ pub enum MemberDef {
     },
 }
 
+/// The react island host (S12): the runtime hydrates it from `x-props`; the SSR HTML sits inside.
+pub(crate) fn island_host(id: &str, props: &str, inner: &str) -> String {
+    format!(
+        "<brust-island data-id=\"{id}\" x-props='{{{{ {props} | json_attr }}}}'>{inner}</brust-island>"
+    )
+}
+
 pub fn lower(ir: &ComponentIR, ctx: &LowerCtx<'_>) -> Result<Artifacts, Diagnostic> {
     // An IR with an Error (server-only code reached from the chunk, request
     // state in render, …) never becomes artifacts.
@@ -91,12 +98,13 @@ pub fn lower(ir: &ComponentIR, ctx: &LowerCtx<'_>) -> Result<Artifacts, Diagnost
     if let Tier::React { client_only, .. } = &ir.tier {
         // The react backend (later spec) renders it; the template holds its slot.
         let jinja = if *client_only {
-            format!(
-                "<brust-island data-brust-island=\"{}\" data-props='{{{{ _props | json_attr }}}}'></brust-island>",
-                ir.id
-            )
+            island_host(&ir.id, "_props", "")
         } else {
-            format!("{{{{ _ssr_{} | safe }}}}", ir.id)
+            island_host(
+                &ir.id,
+                "_props",
+                &format!("{{{{ _ssr_{} | safe }}}}", ir.id),
+            )
         };
         return Ok(Artifacts {
             jinja,

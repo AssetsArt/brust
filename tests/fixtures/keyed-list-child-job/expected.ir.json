@@ -1,0 +1,181 @@
+{
+  "id": "input_7833a2e1",
+  "source": "tests/fixtures/keyed-list-child-job/input.tsx",
+  "tier": "Native",
+  "props": [
+    {
+      "name": "props",
+      "local": "props",
+      "ts_type": null,
+      "default": null
+    }
+  ],
+  "state": [],
+  "derived": [],
+  "effects": [],
+  "handlers": [],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 147,
+      "tag": "ul",
+      "attrs": [],
+      "children": [
+        {
+          "For": {
+            "source": {
+              "Server": {
+                "loc": 159,
+                "kind": {
+                  "Ident": {
+                    "name": "items",
+                    "kind": "Prop"
+                  }
+                }
+              }
+            },
+            "item": "it",
+            "index": null,
+            "key": {
+              "Server": {
+                "loc": 208,
+                "kind": {
+                  "Member": {
+                    "target": {
+                      "loc": 208,
+                      "kind": {
+                        "Ident": {
+                          "name": "it",
+                          "kind": "LoopBinding"
+                        }
+                      }
+                    },
+                    "name": "id",
+                    "optional": false
+                  }
+                }
+              }
+            },
+            "body": [
+              {
+                "Component": {
+                  "loc": 193,
+                  "name": "PriceRow",
+                  "source": "./PriceRow",
+                  "imported": "default",
+                  "props": [
+                    [
+                      "item",
+                      {
+                        "Server": {
+                          "loc": 221,
+                          "kind": {
+                            "Ident": {
+                              "name": "it",
+                              "kind": "LoopBinding"
+                            }
+                          }
+                        }
+                      }
+                    ],
+                    [
+                      "unit",
+                      {
+                        "Server": {
+                          "loc": 231,
+                          "kind": {
+                            "Ident": {
+                              "name": "unit",
+                              "kind": "Prop"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  ],
+                  "children": [],
+                  "link": 1,
+                  "tier": "Static"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [],
+  "child_links": [
+    {
+      "id": 1,
+      "child": "priceRow_845bcd56",
+      "props_member": "_p1",
+      "item_scoped": [
+        "it"
+      ],
+      "props": [
+        [
+          "item",
+          {
+            "Server": {
+              "loc": 221,
+              "kind": {
+                "Ident": {
+                  "name": "it",
+                  "kind": "LoopBinding"
+                }
+              }
+            }
+          }
+        ],
+        [
+          "unit",
+          {
+            "Server": {
+              "loc": 231,
+              "kind": {
+                "Ident": {
+                  "name": "unit",
+                  "kind": "Prop"
+                }
+              }
+            }
+          }
+        ]
+      ]
+    }
+  ],
+  "instances": [
+    {
+      "child_id": "priceRow_845bcd56",
+      "k": 1,
+      "loops": [
+        "items"
+      ],
+      "props": {
+        "item": "items[idx]",
+        "unit": "unit"
+      }
+    }
+  ],
+  "client_props": [
+    "items",
+    "unit"
+  ],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": false,
+  "cache": null,
+  "children": [
+    {
+      "name": "PriceRow",
+      "id": "priceRow_845bcd56",
+      "path": "tests/fixtures/keyed-list-child-job/PriceRow.tsx",
+      "tier": "Static"
+    }
+  ],
+  "diagnostics": []
+}

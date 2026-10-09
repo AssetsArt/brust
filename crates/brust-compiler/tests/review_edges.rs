@@ -101,18 +101,24 @@ fn slots_in_a_stateful_list_are_state_dependent() {
     assert_eq!(ir.client_props, ["initial"]);
 }
 
-/// Finding 5: refs and useId values read during render are not job code.
+/// F39: useId is a server-seeded value, not a fallback.
 #[test]
-fn ref_and_use_id_in_render_fall_back() {
+fn use_id_is_seeded_from_the_server_context() {
     let ir = analyze(
-        "import { useId } from 'react'\nexport default function P() { const id = useId(); return <label htmlFor={id}>x</label> }",
+        "import { useId, useState } from 'react'\nexport default function Field(props: { label: string }) { const id = useId(); const [v, setV] = useState(''); return <div><label htmlFor={id}>{props.label}</label><input id={id} value={v} onChange={e => setV(e.target.value)} /></div> }",
     );
-    assert!(rules(&ir).contains(&(DiagClass::Fallback, "use-id-in-render".into())));
+    assert_eq!(ir.use_id_slots, 1);
     assert!(
-        ir.jobs
-            .iter()
-            .all(|j| !matches!(j.kind, JobKind::Precompute))
+        !rules(&ir).iter().any(|(_, r)| r == "use-id-in-render"),
+        "{:?}",
+        rules(&ir)
     );
+    assert!(matches!(ir.tier, Tier::Native { .. }), "{:?}", ir.tier);
+}
+
+/// Finding 5: refs read during render are not job code.
+#[test]
+fn ref_in_render_falls_back() {
     let ir = analyze(
         "import { useRef } from 'react'\nexport default function P() { const r = useRef(1); return <p ref={r}>{r.current}</p> }",
     );
@@ -402,4 +408,284 @@ fn dynamic_import_falls_back_instead_of_panicking() {
         ir.diagnostics
     );
     assert!(matches!(ir.tier, Tier::React { .. }), "{:?}", ir.tier);
+}
+
+/// S8: <Outlet/> imported from @brust/brust/routes is an intrinsic node, not a child component.
+#[test]
+fn outlet_from_brust_routes_is_an_intrinsic() {
+    let ir = analyze(
+        "import { Outlet } from '@brust/brust/routes'\nexport default function Layout() { return <div><Outlet/></div> }",
+    );
+    assert!(ir.uses_outlet);
+    assert!(
+        ir.children.is_empty(),
+        "Outlet must not be recorded as a child: {:?}",
+        ir.children
+    );
+    let json = serde_json::to_value(&ir).unwrap();
+    assert_eq!(json["uses_outlet"], true);
+}
+
+/// An Outlet that is not the brust one is an ordinary (unresolvable) child → external-component fallback.
+#[test]
+fn outlet_from_elsewhere_is_a_normal_component() {
+    let ir = analyze(
+        "import { Outlet } from 'react-router'\nexport default function Layout() { return <div><Outlet/></div> }",
+    );
+    assert!(!ir.uses_outlet);
+    assert!(
+        rules(&ir).iter().any(|(_, r)| r == "external-component"),
+        "{:?}",
+        rules(&ir)
+    );
+}
+
+/// F37: a plain memo() wrapper is unwrapped (spec §3).
+#[test]
+fn memo_default_export_is_unwrapped() {
+    let ir = analyze(
+        "import { memo, useState } from 'react'\nfunction Inner(props: { n: number }) { const [c, setC] = useState(props.n); return <button onClick={() => setC(c + 1)}>{c}</button> }\nexport default memo(Inner)",
+    );
+    assert!(
+        matches!(ir.tier, Tier::Native { .. }),
+        "{:?} {:?}",
+        ir.tier,
+        rules(&ir)
+    );
+}
+
+#[test]
+fn memo_with_comparator_is_unwrapped_and_forward_ref_is_not() {
+    let a = analyze(
+        "import { memo } from 'react'\nfunction I() { return <b/> }\nexport default memo(I, (x: any, y: any) => x.n === y.n)",
+    );
+    assert!(
+        matches!(a.tier, Tier::Static | Tier::Native { .. }),
+        "{:?}",
+        rules(&a)
+    );
+    let b = analyze(
+        "import { memo, forwardRef } from 'react'\nconst I = forwardRef((p: any, r: any) => <b ref={r}/>)\nexport default memo(I)",
+    );
+    assert!(
+        rules(&b).contains(&(DiagClass::Fallback, "default-export-shape".into())),
+        "{:?}",
+        rules(&b)
+    );
+    let d = b
+        .diagnostics
+        .iter()
+        .find(|d| d.rule == "default-export-shape")
+        .unwrap();
+    assert!(d.message.contains("memo() wraps"), "{}", d.message);
+}
+
+/// F41 (§8.1): a leftover directive and an incomplete effect dependency array are warnings.
+#[test]
+fn use_client_directive_is_a_warning() {
+    let ir = analyze("'use client'\nexport default function A() { return <b/> }");
+    assert!(
+        rules(&ir).contains(&(DiagClass::Warning, "use-client-leftover".into())),
+        "{:?}",
+        rules(&ir)
+    );
+    assert!(
+        matches!(ir.tier, Tier::Static),
+        "warning only: {:?}",
+        ir.tier
+    );
+}
+
+#[test]
+fn effect_missing_dep_is_a_warning_with_the_name() {
+    let ir = analyze(
+        "import { useState, useEffect } from 'react'\nexport default function A(props: { n: number }) { const [c] = useState(0); useEffect(() => { document.title = String(props.n + c) }, [c]); return <b/> }",
+    );
+    let d = ir
+        .diagnostics
+        .iter()
+        .find(|d| d.rule == "effect-deps")
+        .expect("effect-deps");
+    assert_eq!(d.class, DiagClass::Warning);
+    assert!(
+        d.message.contains("`props`") && !d.message.contains("`c`"),
+        "{}",
+        d.message
+    );
+}
+
+#[test]
+fn effect_without_deps_array_or_with_all_deps_does_not_warn() {
+    let none = analyze(
+        "import { useEffect } from 'react'\nexport default function A(props: { n: number }) { useEffect(() => { document.title = String(props.n) }); return <b/> }",
+    );
+    assert!(
+        !rules(&none).iter().any(|(_, r)| r == "effect-deps"),
+        "{:?}",
+        rules(&none)
+    );
+    let all = analyze(
+        "import { useState, useEffect } from 'react'\nexport default function A(props: { n: number }) { const [c] = useState(0); useEffect(() => { document.title = String(props.n + c) }, [props.n, c]); return <b/> }",
+    );
+    assert!(
+        !rules(&all).iter().any(|(_, r)| r == "effect-deps"),
+        "{:?}",
+        rules(&all)
+    );
+}
+
+/// F42: a dynamic import() inside a class body inside a component falls back instead of panicking.
+#[test]
+fn dynamic_import_inside_a_class_body_falls_back() {
+    let ir = analyze(
+        "export default function A() {\n  class Loader { async load() { return import('./x') } static { void import('./y') } }\n  return <b onClick={() => new Loader().load()}/>\n}",
+    );
+    assert!(
+        rules(&ir).contains(&(DiagClass::Fallback, "dynamic-import".into())),
+        "{:?}",
+        rules(&ir)
+    );
+}
+
+#[test]
+fn dynamic_import_in_a_class_expression_and_field_initialiser_falls_back() {
+    let ir = analyze(
+        "export default function A() {\n  const L = class { field = () => import('./x') }\n  return <b onClick={() => new L()}/>\n}",
+    );
+    assert!(
+        rules(&ir).contains(&(DiagClass::Fallback, "dynamic-import".into())),
+        "{:?}",
+        rules(&ir)
+    );
+}
+
+/// F35: a dynamic child of <script>/<style> falls back; literal text stays native.
+#[test]
+fn dynamic_child_of_script_or_style_falls_back() {
+    let a = analyze(
+        "export default function A(props: { js: string }) { return <div><script>{props.js}</script></div> }",
+    );
+    assert!(
+        rules(&a).contains(&(DiagClass::Fallback, "raw-text-child".into())),
+        "{:?}",
+        rules(&a)
+    );
+    let b = analyze(
+        "export default function B() { return <div><style>{`.a{color:red}`}</style></div> }",
+    );
+    assert!(
+        !rules(&b).iter().any(|(_, r)| r == "raw-text-child"),
+        "static text is fine: {:?}",
+        rules(&b)
+    );
+    let c = analyze(
+        "export default function C() { return <div><style>{'.a{color:red}'}</style><script>var x = 1</script></div> }",
+    );
+    assert!(
+        !rules(&c).iter().any(|(_, r)| r == "raw-text-child"),
+        "{:?}",
+        rules(&c)
+    );
+}
+
+/// Pre-READY review: a useId local named like a prop must not shadow it.
+#[test]
+fn use_id_named_like_a_prop_does_not_shadow_it() {
+    let ir = analyze(
+        "import { useId } from 'react'\nexport default function F(props: { id: string }) { const id = useId(); return <label htmlFor={id}>{props.id}</label> }",
+    );
+    assert!(
+        !rules(&ir).iter().any(|(_, r)| r == "use-id-in-render"),
+        "{:?}",
+        rules(&ir)
+    );
+}
+
+#[test]
+fn only_a_closing_tag_in_static_script_text_falls_back() {
+    for src in [
+        "export default function A() { return <div><script>{'a </script> b'}</script></div> }",
+        "export default function A() { return <div><style>{'x </STYLE> y'}</style></div> }",
+    ] {
+        let ir = analyze(src);
+        assert!(
+            rules(&ir).contains(&(DiagClass::Fallback, "raw-text-child".into())),
+            "{src}: {:?}",
+            rules(&ir)
+        );
+    }
+}
+
+#[test]
+fn outlet_inside_a_condition_falls_back() {
+    let ir = analyze(
+        "import { Outlet } from '@brust/brust/routes'\nimport { useState } from 'react'\nexport default function L() { const [o, setO] = useState(false); return <div onClick={() => setO(!o)}>{o && <aside><Outlet/></aside>}</div> }",
+    );
+    assert!(
+        rules(&ir).contains(&(DiagClass::Fallback, "outlet-in-branch".into())),
+        "{:?}",
+        rules(&ir)
+    );
+}
+
+// ---- Mellow round 1 ----
+
+#[test]
+fn array_from_over_an_iterable_or_a_shadowed_array_is_not_a_list() {
+    for src in [
+        "export default function L(props: any) { return <ul>{Array.from(new Set(props.xs), (x: any) => <li key={x}>{x}</li>)}</ul> }",
+        "const Array = { from: (a: any, f: any) => [f(a[0], 0)] }\nexport default function L(props: any) { return <ul>{Array.from(props.xs, (x: any) => <li key={x}>{x}</li>)}</ul> }",
+        "import { useState } from 'react'\nexport default function L(props: any) { const [s] = useState(() => new Set(props.xs)); return <ul>{Array.from(s, (x: any) => <li key={x}>{x}</li>)}</ul> }",
+        "export default function L(props: any) { const s = new Set(props.xs); return <ul>{Array.from(s, (x: any) => <li key={x}>{x}</li>)}</ul> }",
+        "export default function L(props: any) { const Array = { from: (a: any, f: any) => [f(a[0], 0)] }; return <ul>{Array.from(props.xs, (x: any) => <li key={x}>{x}</li>)}</ul> }",
+    ] {
+        let ir = analyze(src);
+        assert!(
+            rules(&ir).contains(&(DiagClass::Fallback, "jsx-expression".into())),
+            "{src}: {:?}",
+            rules(&ir)
+        );
+    }
+}
+
+#[test]
+fn a_printer_panic_in_module_scope_is_a_fallback_not_a_silent_sentinel() {
+    let ir = analyze(
+        "const m = require('./x')\nexport default function A() { return <b onClick={() => m.go()}/> }",
+    );
+    // `require` itself prints; this pins that no sentinel survives without a diagnostic.
+    let sentinel = format!("{:?}", ir.module_decls).contains("dynamic import");
+    assert!(
+        !sentinel
+            || rules(&ir)
+                .iter()
+                .any(|(_, r)| r == "printer-panic" || r == "dynamic-import"),
+        "{:?}",
+        rules(&ir)
+    );
+}
+
+#[test]
+fn job_inputs_name_the_list_not_its_length() {
+    let ir = analyze(
+        "import { fmt } from './money'\nexport default function C(props: { items: number[] }) { return <p>{fmt(props.items.length, 'x')}</p> }",
+    );
+    let job = ir
+        .jobs
+        .iter()
+        .find(|j| matches!(j.kind, JobKind::Precompute))
+        .unwrap();
+    assert_eq!(job.inputs, vec!["items".to_string()]);
+}
+
+#[test]
+fn outlet_in_a_react_tier_component_is_an_error() {
+    let ir = analyze(
+        "import { Outlet } from '@brust/brust/routes'\nimport { useReducer } from 'react'\nexport default function L() { const [s] = useReducer((a: number) => a, 0); return <div>{s}<Outlet/></div> }",
+    );
+    assert!(
+        rules(&ir).contains(&(DiagClass::Error, "outlet-in-react".into())),
+        "{:?}",
+        rules(&ir)
+    );
 }

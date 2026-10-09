@@ -1,0 +1,309 @@
+{
+  "id": "input_82339f83",
+  "source": "tests/fixtures/table-rows/input.tsx",
+  "tier": "Native",
+  "props": [
+    {
+      "name": "props",
+      "local": "props",
+      "ts_type": null,
+      "default": null
+    }
+  ],
+  "state": [
+    {
+      "name": "showTotal",
+      "setter": "setShowTotal",
+      "init": {
+        "Server": {
+          "loc": 159,
+          "kind": {
+            "Lit": {
+              "Bool": false
+            }
+          }
+        }
+      }
+    }
+  ],
+  "derived": [],
+  "effects": [],
+  "handlers": [
+    {
+      "name": "_h1",
+      "body": {
+        "loc": 210,
+        "kind": {
+          "Arrow": {
+            "params": [],
+            "body": {
+              "Expr": {
+                "loc": 216,
+                "kind": {
+                  "Call": {
+                    "callee": {
+                      "loc": 216,
+                      "kind": {
+                        "Ident": {
+                          "name": "setShowTotal",
+                          "kind": "Setter"
+                        }
+                      }
+                    },
+                    "args": [
+                      {
+                        "loc": 229,
+                        "kind": {
+                          "Unary": {
+                            "op": "Not",
+                            "value": {
+                              "loc": 230,
+                              "kind": {
+                                "Ident": {
+                                  "name": "showTotal",
+                                  "kind": "State"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "captures": [
+              [
+                "setShowTotal",
+                "Setter"
+              ],
+              [
+                "showTotal",
+                "State"
+              ]
+            ]
+          }
+        }
+      },
+      "item_scoped": []
+    }
+  ],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 181,
+      "tag": "div",
+      "attrs": [],
+      "children": [
+        {
+          "Element": {
+            "loc": 193,
+            "tag": "button",
+            "attrs": [
+              {
+                "Event": {
+                  "event": "click",
+                  "handler": "_h1"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Text": "total"
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 263,
+            "tag": "table",
+            "attrs": [],
+            "children": [
+              {
+                "Element": {
+                  "loc": 270,
+                  "tag": "tbody",
+                  "attrs": [],
+                  "children": [
+                    {
+                      "For": {
+                        "source": {
+                          "Server": {
+                            "loc": 287,
+                            "kind": {
+                              "Ident": {
+                                "name": "rows",
+                                "kind": "Prop"
+                              }
+                            }
+                          }
+                        },
+                        "item": "r",
+                        "index": null,
+                        "key": {
+                          "Server": {
+                            "loc": 318,
+                            "kind": {
+                              "Member": {
+                                "target": {
+                                  "loc": 318,
+                                  "kind": {
+                                    "Ident": {
+                                      "name": "r",
+                                      "kind": "LoopBinding"
+                                    }
+                                  }
+                                },
+                                "name": "id",
+                                "optional": false
+                              }
+                            }
+                          }
+                        },
+                        "body": [
+                          {
+                            "Element": {
+                              "loc": 309,
+                              "tag": "tr",
+                              "attrs": [],
+                              "children": [
+                                {
+                                  "Element": {
+                                    "loc": 324,
+                                    "tag": "td",
+                                    "attrs": [],
+                                    "children": [
+                                      {
+                                        "Slot": {
+                                          "Server": {
+                                            "loc": 329,
+                                            "kind": {
+                                              "Member": {
+                                                "target": {
+                                                  "loc": 329,
+                                                  "kind": {
+                                                    "Ident": {
+                                                      "name": "r",
+                                                      "kind": "LoopBinding"
+                                                    }
+                                                  }
+                                                },
+                                                "name": "name",
+                                                "optional": false
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    ],
+                                    "host": false,
+                                    "ref_name": null
+                                  }
+                                }
+                              ],
+                              "host": false,
+                              "ref_name": null
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "If": {
+                        "cond": {
+                          "Server": {
+                            "loc": 358,
+                            "kind": {
+                              "Ident": {
+                                "name": "showTotal",
+                                "kind": "State"
+                              }
+                            }
+                          }
+                        },
+                        "then": [
+                          {
+                            "Element": {
+                              "loc": 371,
+                              "tag": "tr",
+                              "attrs": [
+                                {
+                                  "Static": {
+                                    "name": "className",
+                                    "value": "total"
+                                  }
+                                }
+                              ],
+                              "children": [
+                                {
+                                  "Element": {
+                                    "loc": 393,
+                                    "tag": "td",
+                                    "attrs": [],
+                                    "children": [
+                                      {
+                                        "Slot": {
+                                          "Server": {
+                                            "loc": 398,
+                                            "kind": {
+                                              "Member": {
+                                                "target": {
+                                                  "loc": 398,
+                                                  "kind": {
+                                                    "Ident": {
+                                                      "name": "rows",
+                                                      "kind": "Prop"
+                                                    }
+                                                  }
+                                                },
+                                                "name": "length",
+                                                "optional": false
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    ],
+                                    "host": false,
+                                    "ref_name": null
+                                  }
+                                }
+                              ],
+                              "host": false,
+                              "ref_name": null
+                            }
+                          }
+                        ],
+                        "else_": []
+                      }
+                    }
+                  ],
+                  "host": false,
+                  "ref_name": null
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": false,
+  "cache": null,
+  "children": [],
+  "diagnostics": []
+}

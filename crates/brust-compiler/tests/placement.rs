@@ -158,3 +158,18 @@ fn jsx_in_an_expression_falls_back() {
     );
     assert!(ir.diagnostics.iter().any(|d| d.rule == "jsx-expression"));
 }
+
+/// F33: `user && fmt(user.balance)` must put `user` itself in the job inputs so null and {} differ.
+#[test]
+fn truthiness_guard_contributes_the_prop_root_to_job_inputs() {
+    let ir = analyze(
+        "T.tsx",
+        "import { fmt } from './money'\nexport default function Card(props: { user: { balance: number } | null }) { return <div>{props.user && <b>{fmt(props.user.balance)}</b>}</div> }",
+    );
+    let job = ir
+        .jobs
+        .iter()
+        .find(|j| matches!(j.kind, JobKind::Precompute))
+        .expect("precompute job");
+    assert_eq!(job.inputs, vec!["user".to_string()], "{:?}", job.inputs);
+}

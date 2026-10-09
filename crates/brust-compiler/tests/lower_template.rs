@@ -244,3 +244,243 @@ fn undefined_style_omits_the_attribute() {
     let on = render(&j, serde_json::json!({ "c": true }));
     assert!(on.contains("style=\"color:red"), "{on}");
 }
+
+/// Lowers the root of fixture `name` (`tests/fixtures/<name>/input.tsx`); returns its jinja.
+fn lowered_jinja(name: &str) -> String {
+    let file = format!("tests/fixtures/{name}/input.tsx");
+    run_on_compiler_thread(move || {
+        let tree = compile_tree(
+            &file,
+            None,
+            &AnalyzeOptions {
+                root: repo(),
+                ..Default::default()
+            },
+            DEFAULT_RUNTIME_IMPORT,
+        )
+        .unwrap();
+        tree[0].artifacts.jinja.clone()
+    })
+}
+
+/// S9: the document is ordinary JSX; the title is an escaped text binding and the host is the root.
+#[test]
+fn document_root_is_a_plain_host_with_escaped_title() {
+    let jinja = lowered_jinja("document-root");
+    assert!(
+        jinja.contains("\n<html x-data=\"input_"),
+        "root element is the host: {jinja}"
+    );
+    assert!(
+        jinja.contains("<title x-text=\"") && jinja.contains(" | e }}</title>"),
+        "title is an escaped text binding: {jinja}"
+    );
+    assert!(
+        !jinja.contains("<script"),
+        "the compiler never injects scripts (S9): {jinja}"
+    );
+}
+
+#[test]
+fn outlet_lowers_to_the_outlet_slot() {
+    let jinja = lowered_jinja("outlet-layout");
+    assert!(
+        jinja.contains("<main>{{ __outlet | safe }}</main>"),
+        "{jinja}"
+    );
+}
+
+/// S12: a react child is wrapped in the island host the runtime hydrates; SSR HTML goes inside it.
+#[test]
+fn react_child_gets_the_island_host() {
+    let jinja = lowered_jinja("react-child");
+    assert!(
+        jinja.contains("<brust-island data-id=\"reviews_"),
+        "{jinja}"
+    );
+    assert!(
+        jinja.contains("x-props='{{ {"),
+        "props JSON on the host: {jinja}"
+    );
+    assert!(
+        jinja.contains("| json_attr }}'>{{ _ssr_reviews_"),
+        "ssr slot inside the host: {jinja}"
+    );
+    assert!(jinja.contains("| safe }}</brust-island>"), "{jinja}");
+    assert!(
+        !jinja.contains("data-brust-island"),
+        "old attribute name must be gone: {jinja}"
+    );
+}
+
+#[test]
+fn client_only_page_gets_an_empty_island_host() {
+    let jinja = lowered_jinja("client-only");
+    assert!(
+        jinja.contains("<brust-island data-id=\"input_")
+            && jinja.contains("x-props='{{ _props | json_attr }}'></brust-island>"),
+        "empty host: {jinja}"
+    );
+}
+
+#[test]
+fn react_page_gets_the_island_host_around_its_ssr_slot() {
+    let jinja = lowered_jinja("react-hook");
+    assert!(
+        jinja.contains("x-props='{{ _props | json_attr }}'>{{ _ssr_input_")
+            && jinja.ends_with("| safe }}</brust-island>"),
+        "{jinja}"
+    );
+}
+
+/// F39: `useId()` reads the server-seeded `_id0`; the client gets it through props.
+#[test]
+fn use_id_is_seeded_in_the_template_and_the_client_props() {
+    let (jinja, client) = lower(
+        "import { useId, useState } from 'react'\nexport default function Field(props: { label: string }) { const id = useId(); const [v, setV] = useState(''); return <div><label htmlFor={id}>{props.label}</label><input id={id} value={v} onChange={e => setV(e.target.value)} /></div> }",
+    );
+    assert!(
+        !jinja.contains("{% set id"),
+        "no shadowing variable: {jinja}"
+    );
+    assert!(
+        jinja.contains("for=\"{{ _id0 | attr_str | e }}\"")
+            || jinja.contains("for=\"{{ (_id0) | attr_str | e }}\""),
+        "{jinja}"
+    );
+    assert!(
+        jinja.contains("\"_id0\": _id0"),
+        "x-props carries the id: {jinja}"
+    );
+    assert!(client.contains("._id0"), "{client}");
+    let html = render(
+        &jinja,
+        serde_json::json!({ "label": "L", "_id0": "brust-r-0-0" }),
+    );
+    assert!(
+        html.contains("for=\"brust-r-0-0\"") && html.contains("id=\"brust-r-0-0\""),
+        "{html}"
+    );
+}
+
+/// F39: a child with `useId` inside a keyed row gets one id per row, read from the instance's
+/// per-row slot object (`__<child>_<k>[row]["_id0"]`), so ids differ per row and the server owns them.
+#[test]
+fn use_id_in_a_keyed_row_is_indexed_by_the_loop_path() {
+    let jinja = lowered_jinja("use-id-row");
+    assert!(jinja.contains("[_i1][\"_id0\"]"), "{jinja}");
+    let html = render(
+        &jinja,
+        serde_json::json!({
+            "fields": [{ "key": "a", "label": "A" }, { "key": "b", "label": "B" }],
+            "__field_603ad356_1": [{ "_id0": "id-a" }, { "_id0": "id-b" }],
+        }),
+    );
+    assert!(
+        html.contains("for=\"id-a\"") && html.contains("for=\"id-b\""),
+        "{html}"
+    );
+}
+
+/// F34 (compiler half): an inlined child with its own job inside a list is recorded as a
+/// per-row instance, and the printed slot key comes from the same ordinal.
+#[test]
+fn inlined_child_with_a_job_inside_a_list_is_recorded_as_a_per_row_instance() {
+    let file = "tests/fixtures/keyed-list-child-job/input.tsx".to_string();
+    let ir = run_on_compiler_thread(move || {
+        brust_compiler::analyze::component::analyze_file(
+            &file,
+            &AnalyzeOptions {
+                root: repo(),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+    });
+    let inst = ir
+        .instances
+        .iter()
+        .find(|i| i.child_id.starts_with("priceRow_"))
+        .expect("instance");
+    assert_eq!(inst.loops, vec![Some("items".to_string())]);
+    assert_eq!(inst.props["item"].as_deref(), Some("items[idx]"));
+    assert_eq!(inst.props["unit"].as_deref(), Some("unit"));
+    let jinja = lowered_jinja("keyed-list-child-job");
+    assert!(
+        jinja.contains(&format!("__{}_{}[", inst.child_id, inst.k)),
+        "{jinja}"
+    );
+    let json = serde_json::to_value(&ir).unwrap();
+    assert_eq!(json["instances"][0]["k"], 1);
+}
+
+/// F32: a single-element row/branch carries `x-for` / `x-if` itself, so `<table>` children stay `<tr>`.
+#[test]
+fn single_root_row_and_branch_carry_the_directive_without_a_wrapper() {
+    let jinja = lowered_jinja("table-rows");
+    assert!(jinja.contains("<tr x-if=\""), "x-if on the tr: {jinja}");
+    assert!(
+        !jinja.contains("<brust-row") && !jinja.contains("<brust-if"),
+        "no wrapper for a single-root row or branch: {jinja}"
+    );
+}
+
+/// A row whose root is an inlined host keeps its `<brust-row>` wrapper: a host carrying `x-for`
+/// is bound by the child's own instance when its chunk registers before the parent's.
+#[test]
+fn a_host_row_keeps_the_wrapper() {
+    let jinja = lowered_jinja("keyed-list-child");
+    assert!(jinja.contains("<brust-row"), "{jinja}");
+    assert!(
+        !jinja.contains("<li x-data=\"row_8f35bb06\" x-props")
+            || jinja.contains("<brust-row style=\"display:contents\" x-for"),
+        "{jinja}"
+    );
+}
+
+/// Static text in <style>/<script> is printed verbatim (browsers do not decode entities there).
+#[test]
+fn static_raw_text_is_not_entity_escaped() {
+    let (j, _) = lower(
+        "export default function T() { return <div><style>{`.a > b{color:red}`}</style><script>{\"if (a && b) { go('x') }\"}</script></div> }",
+    );
+    let html = render(&j, serde_json::json!({}));
+    assert!(html.contains("<style>.a > b{color:red}</style>"), "{html}");
+    assert!(
+        html.contains("<script>if (a && b) { go('x') }</script>"),
+        "{html}"
+    );
+}
+
+/// A prop read only as `list.length` seeds the count, not the list (its items stay on the server).
+#[test]
+fn list_length_seeds_the_count_and_not_the_items() {
+    let jinja = lowered_jinja("table-rows");
+    let html = render(
+        &jinja,
+        serde_json::json!({ "rows": [{ "id": "a", "name": "secret-a" }, { "id": "b", "name": "B" }] }),
+    );
+    let props = html
+        .split("x-props='")
+        .nth(1)
+        .unwrap()
+        .split('\'')
+        .next()
+        .unwrap();
+    assert_eq!(
+        props.replace("&quot;", "\""),
+        r#"{"rows":{"length":2}}"#,
+        "{html}"
+    );
+    assert!(
+        !html
+            .split("x-props='")
+            .nth(1)
+            .unwrap()
+            .split('\'')
+            .next()
+            .unwrap()
+            .contains("secret"),
+        "{html}"
+    );
+}

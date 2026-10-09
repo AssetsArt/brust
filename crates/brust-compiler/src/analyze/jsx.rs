@@ -30,6 +30,8 @@ enum Tag {
         imported: Option<String>,
     },
     Member,
+    /// `Outlet` imported from `@brust/brust/routes` (S8).
+    Outlet,
 }
 
 fn tag_of(r: &Reader<'_, '_>, tag: &js_ast::Expr) -> Tag {
@@ -39,6 +41,9 @@ fn tag_of(r: &Reader<'_, '_>, tag: &js_ast::Expr) -> Tag {
         | E::EImportIdentifier(js_ast::E::ImportIdentifier { ref_ }) => {
             if r.names.is_fragment(*ref_) {
                 return Tag::Fragment;
+            }
+            if r.names.import_of(*ref_) == Some(("@brust/brust/routes", "Outlet")) {
+                return Tag::Outlet;
             }
             let (name, kind) = r.names.kind_of(*ref_);
             let (source, imported) = match kind {
@@ -78,6 +83,9 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
         ));
     }
     let tag = tag_of(r, tag);
+    if matches!(tag, Tag::Outlet) {
+        return Node::Outlet;
+    }
     if matches!(tag, Tag::Member) {
         r.diagnostics.push(Diagnostic::fallback(
             "member-tag",
@@ -150,6 +158,7 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
             ref_name,
         },
         Tag::Fragment => Node::Fragment(children),
+        Tag::Outlet => Node::Outlet,
         Tag::Component {
             name,
             source,
@@ -335,16 +344,44 @@ fn read_child(r: &mut Reader<'_, '_>, e: &js_ast::Expr, out: &mut Vec<Node>) {
     }
 }
 
-/// `source.map((item, index?) => <jsx key={…}/>)` → `For`. `None` when the call
-/// is not that shape (it is then read as a plain slot).
+/// A path rooted at a props binding (JSON props are arrays or plain values) or an object literal
+/// (the `{ length: n }` range). A state, derived, local or module root may hold a Set or Map.
+fn array_source_ok(r: &Reader<'_, '_>, e: &js_ast::Expr) -> bool {
+    match &e.data {
+        E::EIdentifier(id) => matches!(r.names.kind_of(id.ref_).1, IdentKind::Prop),
+        E::EImportIdentifier(id) => matches!(r.names.kind_of(id.ref_).1, IdentKind::Prop),
+        E::EObject(_) => true,
+        E::EDot(d) => d.optional_chain.is_none() && array_source_ok(r, &d.target),
+        _ => false,
+    }
+}
+
+/// `source.map((item, index?) => <jsx key={…}/>)` and `Array.from(source, (item, index?) => <jsx key={…}/>)`
+/// → `For`. `None` when the call is not that shape (it is then read as a plain slot).
 fn read_list(r: &mut Reader<'_, '_>, call: &js_ast::E::Call) -> Option<Node> {
     let E::EDot(dot) = &call.target.data else {
         return None;
     };
-    if dot.name.slice() != b"map" || call.args.len() != 1 || dot.optional_chain.is_some() {
+    if dot.optional_chain.is_some() {
         return None;
     }
-    let E::EArrow(arrow) = &call.args[0].data else {
+    // (the source expression, `Array.from` callee when that form, the callback)
+    let (src_expr, from_callee, arrow) = if dot.name.slice() == b"map" && call.args.len() == 1 {
+        let E::EArrow(arrow) = &call.args[0].data else {
+            return None;
+        };
+        (&dot.target, None, arrow)
+    } else if dot.name.slice() == b"from"
+        && call.args.len() == 2
+        && matches!(&dot.target.data, E::EIdentifier(id) if r.names.name(id.ref_) == "Array" && matches!(r.names.kind_of(id.ref_).1, IdentKind::Global))
+    {
+        // F40: `Array.from(xs, fn)` is the same list as `xs.map(fn)`; the `{ length: n }`
+        // range keeps the `Array.from({ length: n })` source the template subset knows.
+        let E::EArrow(arrow) = &call.args[1].data else {
+            return None;
+        };
+        (&call.args[0], Some(&call.target), arrow)
+    } else {
         return None;
     };
     let params = arrow.args.slice();
@@ -367,7 +404,22 @@ fn read_list(r: &mut Reader<'_, '_>, call: &js_ast::E::Call) -> Option<Node> {
     let body_expr = ret.value?;
     let body_call = jsx_call(&body_expr)?;
 
-    let source = Expr::Raw(r.expr(&dot.target));
+    // `Array.from` iterates any iterable (Set, string, generator); only a props/local path or a
+    // `{ length: n }` range is known to be an array the template can iterate.
+    if from_callee.is_some() && !array_source_ok(r, src_expr) {
+        return None;
+    }
+    let first = r.expr(src_expr);
+    let source = Expr::Raw(match (from_callee, &first.kind) {
+        (Some(callee), RawKind::Object(_)) => RawExpr {
+            loc: first.loc,
+            kind: RawKind::Call {
+                callee: Box::new(r.expr(callee)),
+                args: vec![first],
+            },
+        },
+        _ => first,
+    });
     let item = r.names.name(bindings[0]);
     let index = bindings.get(1).map(|b| r.names.name(*b));
     for b in &bindings {

@@ -76,6 +76,41 @@ pub fn captures(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
         });
     }
     for e in &ir.effects {
+        // F41 (§8.1): names the effect reads that its declared dependency array lacks.
+        if let Some(declared) = &e.deps {
+            let body = st.cx.deps(&e.body, &[]);
+            let mut covered = super::deps::Deps::default();
+            for d in declared {
+                covered.union(&st.cx.deps(d, &[]));
+            }
+            let covered_props = covered.prop_roots();
+            // A whole-props read (`*`, e.g. through an opaque function body) cannot name
+            // the prop: it is missing only when nothing from props is declared.
+            let mut missing: Vec<String> = body
+                .prop_roots()
+                .into_iter()
+                .filter(|p| {
+                    if p == "*" {
+                        covered.props.is_empty()
+                    } else {
+                        !covered_props.contains(p) && !covered.props.contains("*")
+                    }
+                })
+                .map(|p| if p == "*" { "props".to_string() } else { p })
+                .collect();
+            missing.extend(body.state.difference(&covered.state).cloned());
+            if !missing.is_empty() {
+                ir.diagnostics.push(Diagnostic::warning(
+                    "effect-deps",
+                    format!(
+                        "the effect reads `{}` but its dependency array does not list it",
+                        missing.join("`, `")
+                    ),
+                    e.body.loc,
+                    "add the missing names to the dependency array",
+                ));
+            }
+        }
         let mut deps = cx.deps(&e.body, &[]);
         for d in e.deps.iter().flatten() {
             deps.union(&cx.deps(d, &[]));

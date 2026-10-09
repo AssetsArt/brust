@@ -87,5 +87,15 @@ pub fn run_passes(ir: &mut ComponentIR, ctx: &PassCtx<'_>) -> PassState {
     children::children(ir, &mut st, ctx);
     captures::captures(ir, &mut st, ctx);
     tier::tier(ir, &mut st, ctx);
+    // Job cache keys are computed from the inputs by a path evaluator that cannot read `.length`
+    // of a sequence: a job reading `rows.length` is keyed by `rows`. (The client seed keeps the
+    // count-only narrowing; see `SeedNode`.)
+    for j in &mut ir.jobs {
+        j.inputs = deps::minimal_paths(
+            j.inputs
+                .iter()
+                .map(|p| p.strip_suffix(".length").unwrap_or(p).to_string()),
+        );
+    }
     st
 }

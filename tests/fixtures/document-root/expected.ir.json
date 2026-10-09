@@ -1,0 +1,320 @@
+{
+  "id": "input_23089a0b",
+  "source": "tests/fixtures/document-root/input.tsx",
+  "tier": "Native",
+  "props": [
+    {
+      "name": "props",
+      "local": "props",
+      "ts_type": null,
+      "default": null
+    }
+  ],
+  "state": [
+    {
+      "name": "open",
+      "setter": "setOpen",
+      "init": {
+        "Server": {
+          "loc": 141,
+          "kind": {
+            "Lit": {
+              "Bool": false
+            }
+          }
+        }
+      }
+    }
+  ],
+  "derived": [],
+  "effects": [],
+  "handlers": [
+    {
+      "name": "_h1",
+      "body": {
+        "loc": 420,
+        "kind": {
+          "Arrow": {
+            "params": [],
+            "body": {
+              "Expr": {
+                "loc": 426,
+                "kind": {
+                  "Call": {
+                    "callee": {
+                      "loc": 426,
+                      "kind": {
+                        "Ident": {
+                          "name": "setOpen",
+                          "kind": "Setter"
+                        }
+                      }
+                    },
+                    "args": [
+                      {
+                        "loc": 434,
+                        "kind": {
+                          "Unary": {
+                            "op": "Not",
+                            "value": {
+                              "loc": 435,
+                              "kind": {
+                                "Ident": {
+                                  "name": "open",
+                                  "kind": "State"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "captures": [
+              [
+                "setOpen",
+                "Setter"
+              ],
+              [
+                "open",
+                "State"
+              ]
+            ]
+          }
+        }
+      },
+      "item_scoped": []
+    }
+  ],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 163,
+      "tag": "html",
+      "attrs": [
+        {
+          "Dynamic": {
+            "name": "lang",
+            "value": {
+              "Server": {
+                "loc": 175,
+                "kind": {
+                  "Ident": {
+                    "name": "lang",
+                    "kind": "Prop"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "children": [
+        {
+          "Element": {
+            "loc": 194,
+            "tag": "head",
+            "attrs": [],
+            "children": [
+              {
+                "Element": {
+                  "loc": 209,
+                  "tag": "meta",
+                  "attrs": [
+                    {
+                      "Static": {
+                        "name": "charSet",
+                        "value": "utf-8"
+                      }
+                    }
+                  ],
+                  "children": [],
+                  "host": false,
+                  "ref_name": null
+                }
+              },
+              {
+                "Element": {
+                  "loc": 242,
+                  "tag": "title",
+                  "attrs": [],
+                  "children": [
+                    {
+                      "Slot": {
+                        "Server": {
+                          "loc": 250,
+                          "kind": {
+                            "Ident": {
+                              "name": "title",
+                              "kind": "Prop"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ],
+                  "host": false,
+                  "ref_name": null
+                }
+              },
+              {
+                "Element": {
+                  "loc": 279,
+                  "tag": "link",
+                  "attrs": [
+                    {
+                      "Static": {
+                        "name": "rel",
+                        "value": "stylesheet"
+                      }
+                    },
+                    {
+                      "Static": {
+                        "name": "href",
+                        "value": "/public/app.css"
+                      }
+                    }
+                  ],
+                  "children": [],
+                  "host": false,
+                  "ref_name": null
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 348,
+            "tag": "body",
+            "attrs": [
+              {
+                "Dynamic": {
+                  "name": "data-open",
+                  "value": {
+                    "Server": {
+                      "loc": 365,
+                      "kind": {
+                        "Cond": {
+                          "test": {
+                            "loc": 365,
+                            "kind": {
+                              "Ident": {
+                                "name": "open",
+                                "kind": "State"
+                              }
+                            }
+                          },
+                          "yes": {
+                            "loc": 372,
+                            "kind": {
+                              "Lit": {
+                                "Str": "yes"
+                              }
+                            }
+                          },
+                          "no": {
+                            "loc": 380,
+                            "kind": {
+                              "Lit": {
+                                "Str": "no"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "children": [
+              {
+                "Element": {
+                  "loc": 395,
+                  "tag": "header",
+                  "attrs": [],
+                  "children": [
+                    {
+                      "Element": {
+                        "loc": 403,
+                        "tag": "button",
+                        "attrs": [
+                          {
+                            "Event": {
+                              "event": "click",
+                              "handler": "_h1"
+                            }
+                          }
+                        ],
+                        "children": [
+                          {
+                            "Text": "menu"
+                          }
+                        ],
+                        "host": false,
+                        "ref_name": null
+                      }
+                    }
+                  ],
+                  "host": false,
+                  "ref_name": null
+                }
+              },
+              {
+                "Element": {
+                  "loc": 473,
+                  "tag": "main",
+                  "attrs": [
+                    {
+                      "Static": {
+                        "name": "id",
+                        "value": "content"
+                      }
+                    }
+                  ],
+                  "children": [
+                    {
+                      "Slot": {
+                        "Server": {
+                          "loc": 493,
+                          "kind": {
+                            "Ident": {
+                              "name": "title",
+                              "kind": "Prop"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ],
+                  "host": false,
+                  "ref_name": null
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": false,
+  "cache": null,
+  "children": [],
+  "diagnostics": []
+}

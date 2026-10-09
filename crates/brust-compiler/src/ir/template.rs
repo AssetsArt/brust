@@ -42,6 +42,8 @@ pub enum Node {
         tier: crate::ir::Tier,
     },
     Fragment(Vec<Node>),
+    /// `<Outlet />` from `@brust/brust/routes` (S8): the server's child slot, printed as `{{ __outlet | safe }}`.
+    Outlet,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

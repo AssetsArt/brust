@@ -7,12 +7,12 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
-| A JSX basics | 18 | 13 | 3 | 2 | 0 | 0 | 0 | 0 |
-| B Composition | 11 | 4 | 2 | 5 | 0 | 0 | 0 | 0 |
-| C Hooks | 14 | 0 | 7 | 7 | 0 | 0 | 0 | 0 |
+| A JSX basics | 18 | 14 | 3 | 1 | 0 | 0 | 0 | 0 |
+| B Composition | 11 | 4 | 3 | 4 | 0 | 0 | 0 | 0 |
+| C Hooks | 15 | 1 | 8 | 6 | 0 | 0 | 0 | 0 |
 | D API surface | 5 | 1 | 0 | 4 | 0 | 0 | 0 | 0 |
-| E v2 specifics | 13 | 3 | 4 | 1 | 4 | 1 | 0 | 0 |
-| **Total** | 61 | 21 | 16 | 19 | 4 | 1 | 0 | 0 |
+| E v2 specifics | 14 | 3 | 4 | 2 | 4 | 1 | 0 | 0 |
+| **Total** | 63 | 23 | 18 | 17 | 4 | 1 | 0 | 0 |
 
 ## A. JSX basics
 
@@ -27,9 +27,9 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | a-ternary | ternary on a prop | static | static | 0 | ok | — | spec §6.2 ternary |
 | a-fragment | fragment root | static | static | 0 | ok | warning:fragment-root | warning fragment-root: wrapped in <brust-host> |
 | a-list-keys | keyed list from a prop | static | static | 0 | ok | — | spec §6.2 keyed list |
-| a-nested-list | nested keyed lists | static | static | 0 | ok | — | table rows; known gap: F32: `<brust-row>` wrappers inside <table> are foster-parented by the HTML parser (M2) |
+| a-nested-list | nested keyed lists | static | static | 0 | ok | — | table rows |
 | a-cond-attribute | conditional attribute via ternary | static | static | 0 | ok | — | spec §6.2 conditional attribute |
-| a-array-from | Array.from range list | react | react | ssr | ok | fallback:jsx-expression, warning:key-outside-list | F40: the Array.from(xs, fn) callback form is not recognised; only Array.from({ length: N }).map(…) is (spec §6.2) — falls back (jsx-expression) |
+| a-array-from | Array.from range list | static | static | precompute | ok | — | spec §6.2: the Array.from(xs, fn) callback form is a keyed list like .map (F40) |
 | a-array-from-length | Array.from({ length: N }).map range list | static | static | 0 | ok | — | spec §6.2: N literal ≤ 1024 |
 | a-state-text | state text with a click handler | native | native | 0 | ok | — | spec §4.3 useState |
 | a-state-cond | state-driven conditional | native | native | 0 | ok | — | spec §4.3 useState; §7.1 x-if |
@@ -48,7 +48,7 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | b-function-prop | function prop to a native child | native | native | 0 | ok | — | spec §7.4 function prop between native components |
 | b-react-child-island | react child inside a native parent (island) | static | static | ssr | ok | — | the parent stays static; its one job is the child island SSR render |
 | b-component-map | component map dispatch | react | react | ssr | ok | fallback:local-component, warning:fragment-root |  |
-| b-memo | memo() wrapper around a plain component | native | react | ssr | ok | fallback:default-export-shape | spec §3 memo(); known gap: M1 does not unwrap memo(): default-export-shape falls back to react (F37) |
+| b-memo | memo() wrapper around a plain component | native | native | 0 | ok | — | spec §3 memo() |
 | b-forwardref | forwardRef component | react | react | ssr | ok | fallback:default-export-shape |  |
 | b-hoc | higher-order component | react | react | ssr | ok | fallback:default-export-shape |  |
 | b-spread-child | spread props onto a component (F31) | react | react | ssr | ok | fallback:spread-props, warning:fragment-root |  |
@@ -58,11 +58,12 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Pattern | Authoring | Expected | Observed tier | Jobs | Build | Diagnostics | Note |
 |---|---|---|---|---|---|---|---|
 | c-usestate | useState | native | native | 0 | ok | — | spec §4.3 useState |
-| c-useeffect-cleanup | useEffect with cleanup | native | native | 0 | ok | — | no effect-deps warning in M1 (ledger F41) |
+| c-useeffect-cleanup | useEffect with cleanup | native | native | 0 | ok | — | spec §8.1 effect-deps: the deps array is complete, so no warning (F41) |
+| c-useeffect-missing-dep | useEffect missing a dependency | native | native | 0 | ok | warning:effect-deps | spec §8.1 effect-deps: warns, never changes the tier (F41) |
 | c-usememo | useMemo derived from state | native | native | 0 | ok | — | spec §4.3 useMemo |
 | c-usecallback | useCallback handler | native | native | 0 | ok | — | spec §4.3 useCallback |
 | c-useref | useRef bound with ref= | native | native | 0 | ok | — | spec §4.3 useRef |
-| c-useid | useId read in render | native | react | ssr | ok | fallback:use-id-in-render | §4.3 says server generates, client reads it from the DOM; known gap: F39: M1 decision (finding 5): a useId value read in render falls back (use-id-in-render); server-generated ids need the M2 server (spec §13 (a); docs/plans/2026-10-08-m1b2-placement-tier.md:206) |
+| c-useid | useId read in render | static | static | 0 | ok | — | spec §4.3 useId: the server seeds _id0 (F39); no state or handler, so the tier is static |
 | c-uselayouteffect | useLayoutEffect | native | native | 0 | ok | — | spec §4.3 useLayoutEffect |
 | c-usereducer | useReducer | react | react | ssr | ok | fallback:hook-unsupported |  |
 | c-usecontext | useContext | react | react | ssr | ok | fallback:hook-unsupported |  |
@@ -95,7 +96,8 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | e-browser-global | browser global read during render | react | react | ssr | ok | fallback:browser-global | client-only React island |
 | e-request-prop | request state read in render | error | error | precompute | refused | error:request-state-in-render |  |
 | e-missing-key | list without key | error | error | 0 | refused | error:list-key |  |
-| e-use-client | 'use client' leftover | static | static | 0 | ok | — | no use-client-leftover warning in M1 (ledger F41) |
+| e-use-client | 'use client' leftover | static | static | 0 | ok | warning:use-client-leftover | spec §8.1 use-client-leftover (F41) |
 | e-fragment-root | fragment root with state | native | native | 0 | ok | warning:fragment-root | warning fragment-root |
-| e-if-in-table | state-driven row inside a table | native | native | 0 | ok | — | spec §7.1 x-if; known gap: F32: the `<brust-if>` wrapper inside <tbody> is foster-parented by the HTML parser (M2) |
+| e-if-in-table | state-driven row inside a table | native | native | 0 | ok | — | spec §7.1 x-if |
+| e-raw-text-child | dynamic child of <script> | react | react | ssr | ok | fallback:raw-text-child | raw-text-child: the template would HTML-escape a dynamic value inside raw text (F35) |
 | e-parse-error | snippet that does not parse | compile-error | compile-error | 0 | — | — | compile error: Syntax Error (input.tsx:1:43); reported as a row, never aborts the battery |

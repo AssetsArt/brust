@@ -83,6 +83,22 @@ pub struct ChildLink {
     pub props: Vec<(String, Expr)>,
 }
 
+/// One inlined child instance that the server must feed (F34, compiler half): it has its
+/// own precompute job or `useId` values, stored under `__{child_id}_{k}` (an array indexed
+/// like the enclosing loops when `loops` is not empty).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct InstanceRecord {
+    pub child_id: String,
+    /// 1-based ordinal of this child id in template order (the `{k}` of the slot key).
+    pub k: u32,
+    /// The enclosing lists, outermost first, as paths relative to this component's props
+    /// (`items`); `None` when the list is not a plain props path. Empty = a static instance.
+    pub loops: Vec<Option<String>>,
+    /// Each child prop → the parent props path it is bound to, `[idx]` standing for the
+    /// current row of the innermost list; `None` for anything not a plain path.
+    pub props: std::collections::BTreeMap<String, Option<String>>,
+}
+
 /// One child component used by the template (deduplicated by name).
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ChildRef {

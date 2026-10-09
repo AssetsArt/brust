@@ -1,0 +1,3 @@
+{# brust v2 · input_82339f83 · do not edit #}
+{% set showTotal = false %}
+<div x-data="input_82339f83" x-props='{{ {"rows": {"length": ((rows | length) if rows is defined and rows is not none else none)}} | json_attr }}'><button x-on-click="_h1">total</button><table><tbody>{% for r in rows %}{% set _i1 = loop.index0 %}<tr><td>{{ r["name"] | e }}</td></tr>{% endfor %}{% if (showTotal) | truthy %}<tr x-if="_c1" class="total"><td x-text="_c2">{{ (rows | length) | e }}</td></tr>{% else %}<!--x-if--><tr x-if="_c1" hidden class="total"><td x-text="_c2">{{ (rows | length) | e }}</td></tr>{% endif %}</tbody></table></div>

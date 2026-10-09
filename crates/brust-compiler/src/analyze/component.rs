@@ -41,10 +41,17 @@ pub fn analyze_component(parsed: &Parsed) -> Result<ComponentIR, Diagnostic> {
             if let Some(done) = read_cache_export(parsed, ast, &mut ir) {
                 return done;
             }
+            if let Some(done) = read_memo_export(parsed, ast, &mut ir) {
+                return done;
+            }
             if has_default_export(ast) {
                 ir.diagnostics.push(Diagnostic::fallback(
                     "default-export-shape",
-                    "the default export is not a function declaration",
+                    if default_export_is_memo(ast) {
+                        "memo() wraps something that is not a module function declaration"
+                    } else {
+                        "the default export is not a function declaration"
+                    },
                     0,
                     "write `export default function Name(props) { … }`",
                 ));
@@ -228,6 +235,7 @@ fn read_cache_export(
                 )),
             }
             ir.cache = Some(decl);
+            check_printer_panic(ir);
             Some(Ok(()))
         }
         (None, Some(other)) => {
@@ -247,6 +255,60 @@ fn read_cache_export(
     }
 }
 
+/// F37 (spec §3): `export default memo(Inner)` / `memo(Inner, cmp)` with `memo`
+/// imported from `react` and `Inner` a function declared in this module is
+/// analysed as `Inner` (the comparator is ignored natively). `None` for any
+/// other shape, which keeps the `default-export-shape` fallback.
+fn read_memo_export(
+    parsed: &Parsed,
+    ast: &js_ast::Ast<'_>,
+    ir: &mut ComponentIR,
+) -> Option<Result<(), Diagnostic>> {
+    let e = default_export_expr(ast)?;
+    let E::ECall(call) = &e.data else {
+        return None;
+    };
+    let callee = match &call.target.data {
+        E::EImportIdentifier(id) => id.ref_,
+        E::EIdentifier(id) => id.ref_,
+        _ => return None,
+    };
+    let E::EIdentifier(inner) = &call.args.first()?.data else {
+        return None;
+    };
+    let name = ast
+        .symbols
+        .as_slice()
+        .get(inner.ref_.inner_index() as usize)
+        .map(|s| String::from_utf8_lossy(s.original_name.slice()).into_owned())?;
+    let func = module_fn(ast, &name)?;
+    let names = NameTable::new(ast, func);
+    if names.import_of(callee) != Some(("react", "memo")) {
+        return None;
+    }
+    read_function(parsed, ast, func, ir);
+    Some(Ok(()))
+}
+
+/// `export default memo(…)` (by the callee's name, for the diagnostic wording only).
+fn default_export_is_memo(ast: &js_ast::Ast<'_>) -> bool {
+    let Some(e) = default_export_expr(ast) else {
+        return false;
+    };
+    let E::ECall(call) = &e.data else {
+        return false;
+    };
+    let (E::EImportIdentifier(js_ast::E::ImportIdentifier { ref_ })
+    | E::EIdentifier(js_ast::E::Identifier { ref_ })) = &call.target.data
+    else {
+        return false;
+    };
+    ast.symbols
+        .as_slice()
+        .get(ref_.inner_index() as usize)
+        .is_some_and(|s| s.original_name.slice() == b"memo")
+}
+
 /// Reads one component function into `ir` (structural).
 fn read_function(
     parsed: &Parsed,
@@ -254,10 +316,26 @@ fn read_function(
     func: &js_ast::G::Fn,
     ir: &mut ComponentIR,
 ) {
+    crate::analyze::expr::take_printer_panic(); // a flag left by an earlier component is not ours
     let mut names = NameTable::new(ast, func);
     mark_state_bindings(func, &mut names);
     let print = |js: Js<'_>| print_js(parsed, ast, js);
     let mut reader = Reader::new(&mut names, &print);
+    // F41 (§8.1): a leftover `'use client'` directive means nothing in brust.
+    for part in ast.parts.iter() {
+        for stmt in part.stmts.slice() {
+            if let S::SDirective(d) = &stmt.data
+                && d.value.slice() == b"use client"
+            {
+                ir.diagnostics.push(Diagnostic::warning(
+                    "use-client-leftover",
+                    "'use client' has no effect: brust decides what runs on the client",
+                    stmt.loc.start.max(0) as u32,
+                    "remove the directive",
+                ));
+            }
+        }
+    }
     // F38: any dynamic `import()` in the module (`lazy(() => import(…))`) makes
     // the component a React island.
     let mut w = crate::analyze::expr::Walk::default();
@@ -275,12 +353,14 @@ fn read_function(
     }
     let body = read_body(func, &mut reader);
     (ir.module_scope, ir.module_decls) = reader.module_scope(ast);
+    check_printer_panic(ir);
     ir.props = body.props;
     ir.state = body.state;
     ir.derived = body.derived;
     ir.effects = body.effects;
     ir.handlers = body.handlers;
     ir.refs = body.refs;
+    ir.use_id_slots = body.id_bindings.len();
     ir.id_bindings = body.id_bindings;
     ir.diagnostics.extend(body.diagnostics);
     let root_loc = match &body.return_expr {
@@ -292,6 +372,35 @@ fn read_function(
         .map(root_node)
         .unwrap_or(Node::Fragment(vec![]));
     ir.template = host_root(root, root_loc, &mut ir.diagnostics);
+    ir.uses_outlet = has_outlet(&ir.template);
+    check_printer_panic(ir);
+}
+
+/// F42 backstop: raise `printer-panic` when `print_js` caught a printer panic since the last check.
+fn check_printer_panic(ir: &mut ComponentIR) {
+    if crate::analyze::expr::take_printer_panic() {
+        ir.diagnostics.push(Diagnostic::fallback(
+            "printer-panic",
+            format!(
+                "the JavaScript printer failed on code in component {}; it renders as a React island",
+                ir.id
+            ),
+            0,
+            "report this compiler bug; simplify the component meanwhile",
+        ));
+    }
+}
+
+fn has_outlet(n: &Node) -> bool {
+    match n {
+        Node::Outlet => true,
+        Node::Element { children, .. }
+        | Node::Component { children, .. }
+        | Node::Fragment(children) => children.iter().any(has_outlet),
+        Node::If { then, else_, .. } => then.iter().chain(else_).any(has_outlet),
+        Node::For { body, .. } => body.iter().any(has_outlet),
+        Node::Text(_) | Node::Slot(_) => false,
+    }
 }
 
 /// The module-level `function <name>` (exported or not).

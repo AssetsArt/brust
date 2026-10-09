@@ -71,9 +71,14 @@ struct Placer<'s> {
     /// that reads state, an event, a function prop): a `For` whose body bumps
     /// it is rebuilt by the client, so its source is client-read.
     reactive: u32,
-    /// Body locals that are not values the template can bind: refs and
-    /// `useId` results (`name`, rule).
+    /// Body locals that are not values the template can bind: refs (`name`, rule).
     unplaceable: HashMap<String, &'static str>,
+    /// `useId()` bindings: server-seeded values (`_idN`, S7 step 6). Template-only:
+    /// a job cannot read them, so a non-template expression reading one falls back.
+    ids: BTreeSet<String>,
+    /// Prop paths read by the conditions of the enclosing `If`s (F33): a slot under
+    /// a guard varies with the guard's value, so the job key must include it.
+    guards: Vec<BTreeSet<String>>,
     flagged: BTreeSet<&'static str>,
     loop_scope: Vec<String>,
     diagnostics: Vec<Diagnostic>,
@@ -101,12 +106,9 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState) {
             .refs
             .iter()
             .map(|r| (r.name.clone(), "ref-in-render"))
-            .chain(
-                ir.id_bindings
-                    .iter()
-                    .map(|i| (i.clone(), "use-id-in-render")),
-            )
             .collect(),
+        ids: ir.id_bindings.iter().cloned().collect(),
+        guards: Vec::new(),
         flagged: BTreeSet::new(),
         loop_scope: Vec::new(),
         diagnostics: Vec::new(),
@@ -248,7 +250,7 @@ fn collect_slots(ir: &ComponentIR, f: &mut impl FnMut(&str, &[String], bool)) {
                 children.iter().for_each(|c| node(c, f));
             }
             Node::Fragment(cs) => cs.iter().for_each(|c| node(c, f)),
-            Node::Text(_) => {}
+            Node::Text(_) | Node::Outlet => {}
         }
     }
     node(&ir.template, f);
@@ -295,6 +297,26 @@ fn direct_locals(e: &RawExpr, out: &mut BTreeSet<String>) {
     }
 }
 
+/// Text that would end or confuse a raw-text element (`</script`, `</style`, `<!--`); anything else is printed verbatim.
+fn needs_raw_escape(t: &str) -> bool {
+    let t = t.to_ascii_lowercase();
+    t.contains("</script") || t.contains("</style") || t.contains("<!--")
+}
+
+/// A child that is not literal text (`F35`): an expression, a condition, a list or a component.
+fn dynamic_child(n: &Node) -> bool {
+    match n {
+        Node::Text(t) => needs_raw_escape(t),
+        Node::Slot(Expr::Raw(r)) => match &r.kind {
+            RawKind::Lit(crate::ir::Literal::Str(s)) => needs_raw_escape(s),
+            RawKind::Lit(_) => false,
+            RawKind::Template { head, parts } => !parts.is_empty() || needs_raw_escape(head),
+            _ => true,
+        },
+        _ => true,
+    }
+}
+
 /// JSX inside a value that is printed as code (not a template node).
 pub fn contains_jsx(e: &RawExpr) -> bool {
     match &e.kind {
@@ -324,6 +346,9 @@ impl Placer<'_> {
         if let Some(p) = self.places.get(name) {
             return Some(p.clone());
         }
+        if self.ids.contains(name) {
+            return Some(Place::Server);
+        }
         let raw = self.derived_raw.get(name)?.clone();
         if self.visiting.iter().any(|v| v == name) {
             return Some(Place::Code);
@@ -339,6 +364,10 @@ impl Placer<'_> {
             Place::Code
         } else if try_server(&raw).is_ok() && self.locals_placed(&raw) {
             Place::Server
+        } else if self.reads_id(&raw) {
+            // A job cannot read a `useId` value.
+            self.flag_use_id(raw.loc);
+            Place::Code
         } else {
             // Placing it reaches its locals too, so they are slots or template
             // variables the job and the template can bind.
@@ -373,6 +402,7 @@ impl Placer<'_> {
             self.lists.last().map(|l| l.item.clone())
         };
         let mut inputs: Vec<String> = deps.props.iter().cloned().collect();
+        inputs.extend(self.guards.iter().flatten().cloned());
         let mut state_dependent = !deps.state.is_empty();
         if per_item.is_some() {
             for l in &self.lists {
@@ -422,13 +452,9 @@ impl Placer<'_> {
             if self.flagged.insert(rule) {
                 self.diagnostics.push(Diagnostic::fallback(
                     rule,
-                    if rule == "ref-in-render" {
-                        "a ref is read during render"
-                    } else {
-                        "a useId value is read during render (not supported natively yet)"
-                    },
+                    "a ref is read during render",
                     r.loc,
-                    "read refs in effects and handlers; for ids use a prop",
+                    "read refs in effects and handlers",
                 ));
             }
             return Expr::Raw(r.clone());
@@ -458,8 +484,30 @@ impl Placer<'_> {
         if try_server(r).is_ok() && self.locals_placed(r) {
             return Expr::Server(crate::ir::ServerExpr(r.clone()));
         }
+        if self.reads_id(r) {
+            self.flag_use_id(r.loc);
+            return Expr::Raw(r.clone());
+        }
         self.locals_placed(r);
         self.slot(r)
+    }
+
+    /// `e` reads a `useId` binding directly.
+    fn reads_id(&self, e: &RawExpr) -> bool {
+        let mut names = BTreeSet::new();
+        direct_locals(e, &mut names);
+        names.iter().any(|n| self.ids.contains(n))
+    }
+
+    fn flag_use_id(&mut self, loc: u32) {
+        if self.flagged.insert("use-id-in-render") {
+            self.diagnostics.push(Diagnostic::fallback(
+                "use-id-in-render",
+                "a useId value is read by an expression the template cannot evaluate on its own",
+                loc,
+                "use the id only as an attribute value or text, or pass it as a prop",
+            ));
+        }
     }
 
     /// A prop passed to a child: functions are client-only, values are painted.
@@ -520,8 +568,24 @@ impl Placer<'_> {
     fn node(&mut self, n: &mut Node) {
         match n {
             Node::Element {
-                attrs, children, ..
+                tag,
+                loc,
+                attrs,
+                children,
+                ..
             } => {
+                // F35: raw-text elements are not HTML-escaped by browsers, but the template
+                // escapes every value, so a dynamic child would change silently.
+                if (tag.eq_ignore_ascii_case("script") || tag.eq_ignore_ascii_case("style"))
+                    && children.iter().any(dynamic_child)
+                {
+                    self.diagnostics.push(Diagnostic::fallback(
+                        "raw-text-child",
+                        format!("a dynamic child of <{tag}> would be HTML-escaped inside raw text"),
+                        *loc,
+                        "move the value into a data attribute or a JSON `<script type=\"application/json\">` rendered by a job",
+                    ));
+                }
                 for a in attrs.iter_mut() {
                     match a {
                         Attr::Dynamic { value, .. } | Attr::Spread(value) => self.expr(value),
@@ -531,12 +595,28 @@ impl Placer<'_> {
                 }
                 children.iter_mut().for_each(|c| self.node(c));
             }
+            Node::Outlet => {
+                if !self.guards.is_empty() || !self.lists.is_empty() {
+                    self.diagnostics.push(Diagnostic::fallback(
+                        "outlet-in-branch",
+                        "<Outlet/> inside a condition or a list would be duplicated in the hidden copy",
+                        0,
+                        "render <Outlet/> unconditionally in the layout",
+                    ));
+                }
+            }
             Node::Text(_) => {}
             Node::Slot(e) => self.expr(e),
             Node::If { cond, then, else_ } => {
+                let guard = match &*cond {
+                    Expr::Raw(r) => self.st.cx.deps(r, &self.loop_scope).props,
+                    _ => BTreeSet::new(),
+                };
                 self.expr(cond);
+                self.guards.push(guard);
                 then.iter_mut().for_each(|c| self.node(c));
                 else_.iter_mut().for_each(|c| self.node(c));
+                self.guards.pop();
             }
             Node::For {
                 source,

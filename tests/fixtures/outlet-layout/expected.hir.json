@@ -1,0 +1,40 @@
+{
+  "function": "AppLayout",
+  "params": 1,
+  "scopes": [
+    {
+      "id": 0,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "props",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t0"
+      ]
+    },
+    {
+      "id": 2,
+      "pruned": false,
+      "deps": [],
+      "decls": [
+        "t1"
+      ]
+    },
+    {
+      "id": 7,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "t0",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t2"
+      ]
+    }
+  ]
+}

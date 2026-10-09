@@ -260,6 +260,9 @@ Backends consume only the IR. They never see `bun_ast`.
 - **react backend** → the original module untouched plus an `ssr` job descriptor
   (component id, props schema, client-only flag).
 
+*Amended 2026-10-09 (M2a, S9):* a document root (`<html>`) is a host like any other; the
+runtime mounts from `document.documentElement`.
+
 ---
 
 ## 5. The IR
