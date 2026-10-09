@@ -5,7 +5,7 @@
   "type": "module",
   "bin": { "brust": "./bin/brust" },
   "exports": {
-    ".": "./src/index.ts",
+    ".": { "browser": "./src/browser.ts", "default": "./src/index.ts" },
     "./routes": "./src/routes.ts",
     "./server": "./src/server.ts",
     "./native": "./native/index.js"

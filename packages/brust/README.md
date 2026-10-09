@@ -35,7 +35,27 @@ dist/public/              copied from ./public          dist/index.js   `bun dis
 ```
 
 A diagnostic (`nested-instance`, `outlet-in-react`, `outlet-outside-layout`, unsupported route
-field, unresolvable Component) prints `error <rule> <message>` and exits 1. Relative imports of
+field, unresolvable Component) prints `error <rule> <message>` and exits 1. The route tree is
+validated whether or not the entry used `defineRoutes` (`route-config`, `duplicate-route` for two
+patterns the router cannot hold together, e.g. `/a` and `/a/`).
+
+Server-only code never reaches a browser bundle (`error server-only-in-client <importer> imports
+<spec>`, at any import depth, react islands included): `node:*` / `bun:*` / bare Node builtins
+(unless an npm package of that name is installed), `@brust/brust/server|native`, any
+`*.server.*` file, and the paths/prefixes listed in `brust.toml`:
+
+```toml
+[build]
+server_only = ["lib/server", "@acme/db"]   # import prefixes, or paths relative to the app root
+```
+
+Loaders and precompute jobs may use all of it (they run in Bun). In the browser `@brust/brust`
+resolves to a side-effect-free entry (`cache`, route helpers, verdicts; `cache.invalidate` throws).
+
+The out dir is rebuilt in a sibling temp dir and swapped in only on success (a failed build leaves
+the previous one untouched); an out dir that is the filesystem root, the home dir, the app root or
+an ancestor of it, or that holds the entry / a route Component / `public/`, is refused
+(`out-dir-unsafe`). Relative imports of
 generated files resolve against the component's source dir, bare imports against the app root, so
 `--out-dir` may point anywhere; at run time `dist/` must still resolve `react` and `@brust/brust`
 (keep it inside the app, or next to a `node_modules` that has them).

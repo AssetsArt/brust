@@ -1,20 +1,10 @@
 // Component-level cache declaration (S4 / §5). The compiler reads `cache(Comp, opts)` statically;
 // at runtime it is identity. `cache.invalidate` drops L1 pages and job-cache entries in the
 // running server (napi `cacheInvalidate`).
+import { cacheComponent } from './cache-core'
 import { type InvalidateArgs, type InvalidateResult, cacheInvalidate } from './native'
 
-export interface ComponentCacheOptions {
-  key?: (props: any) => unknown
-  tags?: (props: any) => string[]
-  revalidate?: number
-}
-
-function cacheComponent<C>(Comp: C, opts: ComponentCacheOptions): C {
-  // Debugging aid only: the compiler, not this property, decides caching.
-  if ((typeof Comp === 'function' || (typeof Comp === 'object' && Comp !== null)) && Object.isExtensible(Comp))
-    Object.assign(Comp as object, { __brustCache: opts })
-  return Comp
-}
+export type { ComponentCacheOptions } from './cache-core'
 
 const NO_SERVER = 'cache.invalidate needs a running server (call it inside `brust start`)'
 
@@ -32,5 +22,8 @@ function invalidate(args: InvalidateArgs): InvalidateResult {
   return { l1Removed: r.l1Removed, jobRemoved: r.jobRemoved }
 }
 
-export const cache: typeof cacheComponent & { invalidate: typeof invalidate } = Object.assign(cacheComponent, { invalidate })
+export const cache: typeof cacheComponent & { invalidate: typeof invalidate } = Object.assign(
+  <C>(Comp: C, opts: Parameters<typeof cacheComponent>[1]): C => cacheComponent(Comp, opts),
+  { invalidate },
+)
 export type { InvalidateArgs, InvalidateResult }

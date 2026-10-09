@@ -93,14 +93,40 @@ function validate(node: Route, where: string): void {
 /** Validates the tree and returns it unchanged. */
 export function defineRoutes(routes: Route<any, any>[]): Route[] {
   if (!Array.isArray(routes)) throw new BrustRouteError('defineRoutes expects an array of routes')
-  routes.forEach((r, i) => validate(r, r?.path ?? `[${i}]`))
-  checkCatchAlls(flattenRoutes(routes).leaves)
+  validateRoutes(routes)
   return routes
+}
+
+/** The whole-tree check behind `defineRoutes`; `brust build` runs it again on whatever the route
+ * entry exports (a plain array never went through `defineRoutes`). */
+export function validateRoutes(routes: Route<any, any>[]): FlatRoute[] {
+  routes.forEach((r, i) => validate(r, r?.path ?? `[${i}]`))
+  const { leaves } = flattenRoutes(routes)
+  checkCatchAlls(leaves)
+  checkDuplicates(leaves)
+  return leaves
+}
+
+/** Two leaves the server's router (matchit) would refuse to hold together: the same pattern once
+ * a trailing `/` is gone (`flattenRoutes` strips it) and parameter names are ignored
+ * (`/a/{id}` and `/a/{slug}` conflict). */
+export function checkDuplicates(leaves: FlatRoute[]): void {
+  const seen = new Map<string, FlatRoute>()
+  for (const l of leaves) {
+    const norm = l.pattern.replace(/\{(\*?)[^}]*\}/g, '{$1}')
+    const prev = seen.get(norm)
+    if (prev)
+      throw new BrustRouteError(
+        `routes ${prev.id} (${prev.pattern}) and ${l.id} (${l.pattern}) match the same paths`,
+        'duplicate-route',
+      )
+    seen.set(norm, l)
+  }
 }
 
 /** M2 server installs every catch-all at prefix "" (routing/routes.rs `from_manifest`): a nested
  * `'*'` would silently become the site-wide 404 page, and a second one would shadow the first.
- * Called by `defineRoutes` and again by `brust build` (a plain exported array skips the former). */
+ * Part of `validateRoutes`. */
 export function checkCatchAlls(leaves: FlatRoute[]): void {
   const all = leaves.filter((l) => l.catchAll)
   for (const l of all)
