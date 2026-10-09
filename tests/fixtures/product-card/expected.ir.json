@@ -295,6 +295,7 @@
       "formatPrice"
     ]
   ],
+  "client_module_locals": [],
   "needs_worker": true,
   "cache": null,
   "children": [],

@@ -128,6 +128,11 @@ pub fn captures(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
     }
     ir.client_props = props.into_iter().collect();
     ir.client_imports = imports.iter().cloned().collect();
+    let mut module = std::collections::BTreeSet::new();
+    for u in &uses {
+        module.extend(u.deps.module_locals.iter().cloned());
+    }
+    ir.client_module_locals = module.into_iter().collect();
 
     // §3.2 rule 2: a server-only module reached from client code.
     for (source, imported) in &imports {

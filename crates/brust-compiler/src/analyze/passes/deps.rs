@@ -95,6 +95,8 @@ enum LocalDef {
 #[derive(Debug, Clone, Default)]
 pub struct DepsCx {
     locals: HashMap<String, LocalDef>,
+    /// Module-level declarations → what they read.
+    module: HashMap<String, Vec<(String, IdentKind)>>,
 }
 
 impl DepsCx {
@@ -120,7 +122,10 @@ impl DepsCx {
         for id in &ir.id_bindings {
             locals.insert(id.clone(), LocalDef::Placed(Deps::default()));
         }
-        DepsCx { locals }
+        DepsCx {
+            locals,
+            module: ir.module_scope.iter().cloned().collect(),
+        }
     }
 
     /// This table with every props-only precomputed derived value replaced by
@@ -143,7 +148,10 @@ impl DepsCx {
                 );
             }
         }
-        DepsCx { locals }
+        DepsCx {
+            locals,
+            module: self.module.clone(),
+        }
     }
 
     /// `name` is declared in the component body.
@@ -354,6 +362,19 @@ impl Walker<'_> {
         }
         let Some(def) = self.cx.locals.get(name) else {
             out.module_locals.insert(name.into());
+            // A module helper reads what its body reads (transitively).
+            if let Some(captures) = self.cx.module.get(name) {
+                self.visiting.push(name.into());
+                let saved = std::mem::take(&mut self.loop_scope);
+                let mut d = Deps::default();
+                for (n, k) in captures.clone() {
+                    self.ident(&n, &k, &mut d);
+                }
+                self.loop_scope = saved;
+                self.visiting.pop();
+                self.memo.insert(name.into(), d.clone());
+                out.union(&d);
+            }
             return;
         };
         let mut d = Deps::default();

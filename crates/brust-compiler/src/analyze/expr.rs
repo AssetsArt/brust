@@ -310,6 +310,37 @@ impl<'r, 'a> Reader<'r, 'a> {
         (out, jsx)
     }
 
+    /// Module-level declarations and their captures: `function f` and each
+    /// identifier-bound `const`/`let`/`var` (exported or not).
+    pub fn module_scope(&self, ast: &js_ast::Ast<'_>) -> Vec<(String, Vec<(String, IdentKind)>)> {
+        let mut out = Vec::new();
+        for part in ast.parts.iter() {
+            for stmt in part.stmts.slice() {
+                match &stmt.data {
+                    S::SFunction(f) => {
+                        if let Some(n) = &f.func.name {
+                            let (captures, _) =
+                                self.captures_of(f.func.args.slice(), f.func.body.stmts.slice());
+                            out.push((self.names.name(n.ref_), captures));
+                        }
+                    }
+                    S::SLocal(l) => {
+                        for d in l.decls.iter() {
+                            if let (B::BIdentifier(id), Some(v)) = (d.binding.data, &d.value) {
+                                let mut w = Walk::default();
+                                w.expr(v);
+                                let (captures, _) = self.captured(w);
+                                out.push((self.names.name(id.r#ref), captures));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        out
+    }
+
     /// A `function name(…) {…}` declaration in the component body, read as the
     /// arrow it is equivalent to for the IR (body kept as printed source).
     pub fn function_decl(&self, stmt: &js_ast::Stmt, f: &js_ast::G::Fn) -> RawExpr {

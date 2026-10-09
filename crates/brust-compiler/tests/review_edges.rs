@@ -264,3 +264,59 @@ fn cycle_is_seen_whatever_the_root_spelling() {
     assert_eq!(keys, ["A.tsx", "input.tsx"]);
     assert!(a_rules.contains(&"import-cycle".to_string()));
 }
+
+/// Review round 1 B1 (probe r1): a lazy initializer seeds with its result.
+#[test]
+fn lazy_use_state_initializer_is_placed_by_its_result() {
+    let ir = analyze(
+        "import { useState } from 'react'\nexport default function R(props) {\n  const [n, setN] = useState(() => props.start * 2)\n  return <button onClick={() => setN(n + 1)}>{n}</button>\n}",
+    );
+    let Expr::Server(ServerExpr(init)) = &ir.state[0].init else {
+        panic!("{:?}", ir.state[0].init)
+    };
+    assert_eq!(init.to_js(), "start * 2");
+    let ir = analyze(
+        "import { useState } from 'react'\nimport { load } from './load'\nexport default function R() {\n  const [n, setN] = useState(() => { const v = load(); return v })\n  return <button onClick={() => setN(1)}>{n}</button>\n}",
+    );
+    let Expr::Precomputed { js, .. } = &ir.state[0].init else {
+        panic!("{:?}", ir.state[0].init)
+    };
+    assert!(js.starts_with("(() => {") && js.ends_with("})()"), "{js}");
+}
+
+/// Review round 1 B2 (probe r2): a module-level helper reached from a
+/// handler carries its imports into the client and the server-only check.
+#[test]
+fn module_helpers_are_followed_transitively() {
+    let ir = analyze(
+        "import { useState } from 'react'\nimport { readFileSync } from 'node:fs'\nfunction load() { return readFileSync('/x', 'utf8') }\nfunction outer() { return load() }\nexport default function R() {\n  const [n, setN] = useState(0)\n  return <button onClick={() => setN(outer().length)}>{n}</button>\n}",
+    );
+    assert!(
+        rules(&ir).contains(&(DiagClass::Error, "server-only-in-client".into())),
+        "{:?}",
+        ir.diagnostics
+    );
+    assert_eq!(
+        ir.client_imports,
+        [("node:fs".to_string(), "readFileSync".to_string())]
+    );
+    assert_eq!(ir.client_module_locals, ["load", "outer"]);
+}
+
+/// Review round 1 N1 (probe r3): only the parser's own runtime symbols are
+/// hidden from captures, not user names spelled like them.
+#[test]
+fn user_names_spelled_like_the_jsx_runtime_are_captures() {
+    let ir = analyze(
+        "import { useState } from 'react'\nlet jsxLabel = 'hi'\nexport default function R() {\n  const [n, setN] = useState(0)\n  const FragmentName = 'x'\n  return <button onClick={() => setN(jsxLabel.length + FragmentName.length)}>{n}</button>\n}",
+    );
+    let RawKind::Arrow { captures, .. } = &ir.handlers[0].body.kind else {
+        panic!()
+    };
+    let names: Vec<_> = captures.iter().map(|(n, _)| n.as_str()).collect();
+    assert!(
+        names.contains(&"jsxLabel") && names.contains(&"FragmentName"),
+        "{names:?}"
+    );
+    assert_eq!(ir.client_module_locals, ["jsxLabel"]);
+}

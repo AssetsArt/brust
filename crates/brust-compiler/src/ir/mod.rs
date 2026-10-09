@@ -197,11 +197,18 @@ pub struct ComponentIR {
     pub client_props: Vec<String>,
     /// `(source, imported)` pairs the client chunk bundles, sorted.
     pub client_imports: Vec<(String, String)>,
+    /// Module-level declarations (helpers, constants) the client chunk needs,
+    /// transitively, sorted.
+    pub client_module_locals: Vec<String>,
     pub needs_worker: bool,
     pub cache: Option<CacheDecl>,
     /// Child components used by the template, in document order.
     pub children: Vec<ChildRef>,
     pub diagnostics: Vec<Diagnostic>,
+    /// Module-level declarations and what each reads (its captures), for the
+    /// passes to follow helpers; not part of the serialized IR.
+    #[serde(skip)]
+    pub module_scope: Vec<(String, Vec<(String, IdentKind)>)>,
 }
 
 impl ComponentIR {
@@ -222,10 +229,12 @@ impl ComponentIR {
             child_links: vec![],
             client_props: vec![],
             client_imports: vec![],
+            client_module_locals: vec![],
             needs_worker: false,
             cache: None,
             children: vec![],
             diagnostics: vec![],
+            module_scope: vec![],
         }
     }
 }

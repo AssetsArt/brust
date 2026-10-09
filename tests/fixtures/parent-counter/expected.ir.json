@@ -200,6 +200,7 @@
   ],
   "client_props": [],
   "client_imports": [],
+  "client_module_locals": [],
   "needs_worker": false,
   "cache": null,
   "children": [
