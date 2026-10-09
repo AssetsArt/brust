@@ -65,3 +65,10 @@ Owner plan `M1b-2` means the item lands in the `m1b2-placement-tier` lane becaus
 | F26 | `analyze/passes/placement.rs` `lazy_init` | `useState(load)` where `load` is a module-level `function` declaration seeds the function itself (same silent-wrong class as m1b2 B1, which was scoped to arrows). | When the init is an `Ident` naming a module-level or body `function` declaration, place its call `load()`; an imported binding stays a value. One placement test. | M1e lane (same crate, small) |
 | F27 | `analyze/passes/deps.rs` module branch | A module helper's `Local` capture is resolved by name with body locals first, so a helper reading module `cfg` inside a component that declares `const cfg` follows the wrong one. | Look module-helper captures up in the module table before body locals. | M2 |
 | F28 | `analyze/modules.rs` `module_scope` | Skips `class` declarations and destructured module consts (`const { a } = x`), so their reads are not followed. | Read both shapes into the module table. | M2 |
+
+## From Dew's challenge on `m1c-lowering` (ef664d23, 2026-10-09) — runtime gaps found while lowering
+
+| # | Where | Finding | Proposed fix | Owner plan |
+|---|---|---|---|---|
+| F29 | `packages/runtime-dom/src/directives/for.ts:8` `SYNTAX` | `x-for`'s source is a bare member path, so an inner list whose source reads the outer loop binding (`row.cells`) cannot be reactive; every other directive already takes `path(":" bindings)?`. | Accept `path(":" bindings)?` as the source and resolve it with the row scope; compiler emits `x-for="c in _l2:row by _k2"`. | `m1d-runtime-fixes` lane (knock2), now |
+| F30 | `packages/runtime-dom/src/directives/if.ts:9` | The `x-if` template clone keeps the server-paint `hidden` attribute, so toggling true inserts an invisible element (`for.ts` strips it, `if.ts` does not). | `template.removeAttribute('hidden')`. | `m1d-runtime-fixes` lane (knock2), now |
