@@ -16,7 +16,7 @@ use http::{HeaderMap, Request, Response};
 use hyper::body::Incoming;
 use serde_json::{Map, Value};
 
-use crate::cache::job_cache::JobKey;
+use crate::cache::job_cache::{JobCache, JobKey};
 use crate::cache::key_expr::EvalCtx;
 use crate::cache::l1::{CacheKey, RenderedBody, build_cache_key};
 use crate::config::Server;
@@ -407,38 +407,13 @@ async fn page(
             return body::error_500();
         }
     };
-    let mut values: Vec<Option<Arc<Value>>> = plans.iter().map(|p| s.jobs.get(&p.key)).collect();
-    // Plans sharing a JobKey (e.g. two identical rows) are one computation:
-    // `owner[i]` is the first missing plan with plan i's key; only owners are
-    // sent to the worker, and each value is fanned out to every plan sharing it.
-    let mut owner: Vec<usize> = (0..plans.len()).collect();
-    let mut misses: Vec<usize> = Vec::new();
-    {
-        let mut first: HashMap<&JobKey, usize> = HashMap::new();
-        for i in (0..plans.len()).filter(|&i| values[i].is_none()) {
-            match first.get(&plans[i].key) {
-                Some(&o) => owner[i] = o,
-                None => {
-                    first.insert(&plans[i].key, i);
-                    misses.push(i);
-                }
-            }
-        }
-    }
+    let Lookup {
+        mut values,
+        owner,
+        misses,
+    } = lookup_jobs(&s.jobs, &plans);
     if !misses.is_empty() {
-        let req = JobsRequest {
-            jobs: misses
-                .iter()
-                .map(|&i| JobCall {
-                    id: plans[i].call_id.clone(),
-                    component_id: plans[i].component_id.clone(),
-                    kind: plans[i].kind,
-                    inputs: plans[i].inputs.clone(),
-                    target: plans[i].target.clone(),
-                    row: plans[i].instance_row(),
-                })
-                .collect(),
-        };
+        let req = jobs_request(&plans, &misses);
         let r = call_worker::<_, JobsResponse>(
             &s.pool,
             s.claim_timeout,
@@ -523,13 +498,7 @@ async fn page(
         tracing::error!(route = %route.id, error = %e, "child slot seeding failed");
         return body::error_500();
     }
-    if let Value::Object(map) = &mut ctx {
-        for (p, v) in plans.iter().zip(&values) {
-            if let Some(v) = v {
-                merge_result(map, p, v);
-            }
-        }
-    }
+    merge_values(&mut ctx, &plans, &values);
 
     // ----- (7) render, assets, L1 store -----
     let ctx = Arc::new(ctx);
@@ -1075,6 +1044,67 @@ fn plan_one(
     Ok(())
 }
 
+/// Job-cache state of a request's plans.
+pub(crate) struct Lookup {
+    /// The cached value per plan (`None` = a miss).
+    pub values: Vec<Option<Arc<Value>>>,
+    /// Plans sharing a JobKey (e.g. two identical rows) are one computation:
+    /// `owner[i]` is the first missing plan with plan i's key; only owners are
+    /// sent to the worker, and each value is fanned out to every plan sharing it.
+    pub owner: Vec<usize>,
+    /// The owners, in plan order.
+    pub misses: Vec<usize>,
+}
+
+pub(crate) fn lookup_jobs(cache: &JobCache, plans: &[JobPlan]) -> Lookup {
+    let values: Vec<Option<Arc<Value>>> = plans.iter().map(|p| cache.get(&p.key)).collect();
+    let mut owner: Vec<usize> = (0..plans.len()).collect();
+    let mut misses: Vec<usize> = Vec::new();
+    let mut first: HashMap<&JobKey, usize> = HashMap::new();
+    for i in (0..plans.len()).filter(|&i| values[i].is_none()) {
+        match first.get(&plans[i].key) {
+            Some(&o) => owner[i] = o,
+            None => {
+                first.insert(&plans[i].key, i);
+                misses.push(i);
+            }
+        }
+    }
+    Lookup {
+        values,
+        owner,
+        misses,
+    }
+}
+
+/// The one batched `jobs` call for the owners in `misses`.
+pub(crate) fn jobs_request(plans: &[JobPlan], misses: &[usize]) -> JobsRequest {
+    JobsRequest {
+        jobs: misses
+            .iter()
+            .map(|&i| JobCall {
+                id: plans[i].call_id.clone(),
+                component_id: plans[i].component_id.clone(),
+                kind: plans[i].kind,
+                inputs: plans[i].inputs.clone(),
+                target: plans[i].target.clone(),
+                row: plans[i].instance_row(),
+            })
+            .collect(),
+    }
+}
+
+/// Every known job value into the overlay its plan names (after the child slots are seeded).
+pub(crate) fn merge_values(ctx: &mut Value, plans: &[JobPlan], values: &[Option<Arc<Value>>]) {
+    if let Value::Object(map) = ctx {
+        for (p, v) in plans.iter().zip(values) {
+            if let Some(v) = v {
+                merge_result(map, p, v);
+            }
+        }
+    }
+}
+
 /// Rows of a `per-row:<list>` instance group in `ctx`.
 fn row_count(list: &str, ctx: &Value) -> Result<usize, String> {
     Ok(Path::parse(list)?
@@ -1391,6 +1421,135 @@ fn merge_legacy(ctx: &mut Map<String, Value>, plan: &JobPlan, value: &Value) {
     }
 }
 
+/// The job-planning stage of `page` for the micro-bench and the golden test:
+/// `collect_jobs` → job-cache lookups → child slots + useIds → merge. Not an API.
+pub mod plan_stage {
+    use super::*;
+
+    /// Boot-time planning state for one manifest.
+    pub struct Planner<'m> {
+        m: &'m Manifest,
+    }
+
+    /// One request's plans.
+    pub struct Planned(pub(crate) Vec<JobPlan>);
+
+    impl<'m> Planner<'m> {
+        pub fn new(m: &'m Manifest) -> Result<Self, String> {
+            Ok(Self { m })
+        }
+
+        /// `collect_jobs` for `chain` over the loader context.
+        pub fn plan(&self, chain: &[String], ctx: &Value) -> Result<Planned, String> {
+            collect_jobs(self.m, chain, ctx).map(Planned)
+        }
+
+        /// `seed_child_slots`.
+        pub fn seed(
+            &self,
+            route_id: &str,
+            chain: &[String],
+            ctx: &mut Value,
+        ) -> Result<(), String> {
+            seed_child_slots(self.m, route_id, chain, ctx)
+        }
+    }
+
+    impl Planned {
+        pub fn len(&self) -> usize {
+            self.0.len()
+        }
+
+        pub fn is_empty(&self) -> bool {
+            self.0.is_empty()
+        }
+
+        /// The job-cache lookups (values, owners, misses), as `page` does them.
+        pub fn lookup(&self, cache: &JobCache) -> Vec<Option<Arc<Value>>> {
+            lookup_jobs(cache, &self.0).values
+        }
+
+        /// `merge_values` into a seeded context.
+        pub fn merge(&self, ctx: &mut Value, values: &[Option<Arc<Value>>]) {
+            merge_values(ctx, &self.0, values)
+        }
+
+        /// Store every plan's value as found in `merged` (a context `page`
+        /// finished with: each value read back from the cell its plan fills).
+        pub fn warm(&self, cache: &JobCache, merged: &Value) {
+            for p in &self.0 {
+                let v = value_in(merged, p);
+                cache.insert(
+                    p.key.clone(),
+                    Arc::new(v),
+                    p.ttl,
+                    &p.tags,
+                    p.user_key.as_deref(),
+                );
+            }
+        }
+
+        /// The `JobsRequest` JSON an all-miss request sends.
+        pub fn request_json(&self) -> String {
+            let all: Vec<usize> = (0..self.0.len()).collect();
+            serde_json::to_string(&jobs_request(&self.0, &all)).expect("serialises")
+        }
+
+        /// Every plan's identity (call id, key, user key, ids, row, ttl, tags,
+        /// outputs, target, inputs) as JSON, for the golden test.
+        pub fn describe(&self) -> Value {
+            Value::Array(
+                self.0
+                    .iter()
+                    .map(|p| {
+                        serde_json::json!({
+                            "call_id": p.call_id,
+                            "key": p.key.0,
+                            "user_key": p.user_key,
+                            "component_id": p.component_id,
+                            "job_id": p.job_id,
+                            "kind": p.kind,
+                            "dest": format!("{:?}", p.dest),
+                            "ttl": p.ttl.map(|d| d.as_secs()),
+                            "tags": p.tags,
+                            "outputs": p.outputs,
+                            "target": p.target,
+                            "inputs": p.inputs,
+                        })
+                    })
+                    .collect(),
+            )
+        }
+    }
+
+    /// The value plan `p` merged into `merged` (outputs set: a precompute
+    /// object of its outputs, an ssr string).
+    fn value_in(merged: &Value, p: &JobPlan) -> Value {
+        let (cell, row) = match &p.dest {
+            Dest::Chain { component, row } => (&merged[OWN_KEY][component.as_str()], *row),
+            Dest::Child {
+                parent,
+                component,
+                k,
+                row,
+            } => {
+                let slot = &merged[CHILDREN_KEY][parent.as_str()][format!("__{component}_{k}")];
+                (row.map_or(slot, |r| &slot[r]), None)
+            }
+        };
+        let at = |name: &str| match row {
+            Some(r) => cell[name][r].clone(),
+            None => cell[name].clone(),
+        };
+        match p.kind {
+            JobKind::Ssr => at(&p.outputs[0]),
+            JobKind::Precompute => {
+                Value::Object(p.outputs.iter().map(|o| (o.clone(), at(o))).collect())
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1465,6 +1624,57 @@ mod tests {
     fn pikachu() -> Value {
         json!({"pokemon": {"name": "pikachu", "stats": {"hp": 35},
                 "moves": [{"name": "tackle"}, {"name": "growl"}]}})
+    }
+
+    /// The pokedex fixture (bench `benches/fixtures/pokedex/`): every plan's
+    /// call id, job key, user key and inputs, and the all-miss `JobsRequest`
+    /// JSON, equal the golden computed before the m2p plan-template work
+    /// (`BRUST_WRITE_PLAN_GOLDEN=1` rewrites it); and seeding + merging each
+    /// plan's value rebuilds the captured merged context exactly.
+    #[test]
+    fn pokedex_plans_match_the_golden() {
+        use plan_stage::Planner;
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("benches/fixtures/pokedex");
+        let m: Manifest =
+            serde_json::from_slice(&std::fs::read(dir.join("manifest.json")).unwrap()).unwrap();
+        let planner = Planner::new(&m).unwrap();
+        let mut got = Map::new();
+        for (pattern, file) in [
+            ("/pokemon/{name}", "pokemon-pikachu.json"),
+            ("/", "home.json"),
+            ("/type-chart", "type-chart.json"),
+        ] {
+            let route = m.routes.iter().find(|r| r.pattern == pattern).unwrap();
+            let merged: Value =
+                serde_json::from_slice(&std::fs::read(dir.join("ctx").join(file)).unwrap())
+                    .unwrap();
+            let mut ctx = merged.clone();
+            for k in [OWN_KEY, CHILDREN_KEY] {
+                ctx.as_object_mut().unwrap().remove(k);
+            }
+            let plans = planner.plan(&route.chain, &ctx).unwrap();
+            got.insert(
+                file.into(),
+                json!({"plans": plans.describe(), "request": plans.request_json()}),
+            );
+            let cache = JobCache::new(1024);
+            plans.warm(&cache, &merged);
+            let values = plans.lookup(&cache);
+            assert!(
+                values.iter().all(Option::is_some),
+                "{file}: every plan hits"
+            );
+            planner.seed(&route.id, &route.chain, &mut ctx).unwrap();
+            plans.merge(&mut ctx, &values);
+            assert_eq!(ctx, merged, "{file}: seed + merge rebuild the captured ctx");
+        }
+        let got = Value::Object(got);
+        let golden = dir.join("plan-golden.json");
+        if std::env::var_os("BRUST_WRITE_PLAN_GOLDEN").is_some() {
+            std::fs::write(&golden, serde_json::to_string_pretty(&got).unwrap() + "\n").unwrap();
+        }
+        let want: Value = serde_json::from_slice(&std::fs::read(&golden).unwrap()).unwrap();
+        assert_eq!(got, want);
     }
 
     #[test]

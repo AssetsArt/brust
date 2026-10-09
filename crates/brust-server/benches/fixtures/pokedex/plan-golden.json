@@ -1,0 +1,680 @@
+{
+  "home.json": {
+    "plans": [
+      {
+        "call_id": "appLayout_069dfa24/j0",
+        "component_id": "appLayout_069dfa24",
+        "dest": "Chain { component: \"appLayout_069dfa24\", row: None }",
+        "inputs": {
+          "teamInitial": [
+            {
+              "artwork": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/1.png",
+              "displayName": "Bulbasaur",
+              "id": 1,
+              "name": "bulbasaur",
+              "num": "#0001",
+              "types": [
+                "grass",
+                "poison"
+              ]
+            },
+            {
+              "artwork": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/4.png",
+              "displayName": "Charmander",
+              "id": 4,
+              "name": "charmander",
+              "num": "#0004",
+              "types": [
+                "fire"
+              ]
+            }
+          ]
+        },
+        "job_id": "j0",
+        "key": "3b88150b3d7add501861f36c7115b5b4bffd06e6b052c2d14f07bb7be9324fde",
+        "kind": "ssr",
+        "outputs": [
+          "_ssr_teamBuilder_a0fc3155"
+        ],
+        "tags": [],
+        "target": "teamBuilder_a0fc3155",
+        "ttl": null,
+        "user_key": null
+      },
+      {
+        "call_id": "appLayout_069dfa24/navLink_43f6c55a_1/j0/0",
+        "component_id": "navLink_43f6c55a",
+        "dest": "Child { parent: \"appLayout_069dfa24\", component: \"navLink_43f6c55a\", k: 1, row: Some(0) }",
+        "inputs": {
+          "active": true
+        },
+        "job_id": "j0",
+        "key": "7a8dd2100447260b16355267ec94485d59ec26cfea18cfd6451a936c999c29f9",
+        "kind": "precompute",
+        "outputs": [
+          "_s1"
+        ],
+        "tags": [],
+        "target": null,
+        "ttl": null,
+        "user_key": null
+      },
+      {
+        "call_id": "appLayout_069dfa24/navLink_43f6c55a_1/j0/1",
+        "component_id": "navLink_43f6c55a",
+        "dest": "Child { parent: \"appLayout_069dfa24\", component: \"navLink_43f6c55a\", k: 1, row: Some(1) }",
+        "inputs": {
+          "active": false
+        },
+        "job_id": "j0",
+        "key": "b013a68ceaa06b7febdc5158abcfe302010c224373b77d1639a7591d4fbfbcf5",
+        "kind": "precompute",
+        "outputs": [
+          "_s1"
+        ],
+        "tags": [],
+        "target": null,
+        "ttl": null,
+        "user_key": null
+      },
+      {
+        "call_id": "appLayout_069dfa24/navLink_43f6c55a_1/j0/2",
+        "component_id": "navLink_43f6c55a",
+        "dest": "Child { parent: \"appLayout_069dfa24\", component: \"navLink_43f6c55a\", k: 1, row: Some(2) }",
+        "inputs": {
+          "active": false
+        },
+        "job_id": "j0",
+        "key": "b013a68ceaa06b7febdc5158abcfe302010c224373b77d1639a7591d4fbfbcf5",
+        "kind": "precompute",
+        "outputs": [
+          "_s1"
+        ],
+        "tags": [],
+        "target": null,
+        "ttl": null,
+        "user_key": null
+      },
+      {
+        "call_id": "homePage_76d6b8d1/typeBadge_5f5390d7_1/j0/0",
+        "component_id": "typeBadge_5f5390d7",
+        "dest": "Child { parent: \"homePage_76d6b8d1\", component: \"typeBadge_5f5390d7\", k: 1, row: Some(0) }",
+        "inputs": {
+          "type": "normal"
+        },
+        "job_id": "j0",
+        "key": "6f9080bfcb124c61f6e482600724a24186d9db41045b1d7ea2a81709fe672d0e",
+        "kind": "precompute",
+        "outputs": [
+          "_s1",
+          "_s2"
+        ],
+        "tags": [],
+        "target": null,
+        "ttl": null,
+        "user_key": null
+      },
+      {
+        "call_id": "homePage_76d6b8d1/typeBadge_5f5390d7_1/j0/1",
+        "component_id": "typeBadge_5f5390d7",
+        "dest": "Child { parent: \"homePage_76d6b8d1\", component: \"typeBadge_5f5390d7\", k: 1, row: Some(1) }",
+        "inputs": {
+          "type": "fire"
+        },
+        "job_id": "j0",
+        "key": "36493e7567dfbd144f15b6d7b55035139ebdfab7f6f510f476ec8a96952ee10d",
+        "kind": "precompute",
+        "outputs": [
+          "_s1",
+          "_s2"
+        ],
+        "tags": [],
+        "target": null,
+        "ttl": null,
+        "user_key": null
+      },
+      {
+        "call_id": "homePage_76d6b8d1/typeBadge_5f5390d7_1/j0/2",
+        "component_id": "typeBadge_5f5390d7",
+        "dest": "Child { parent: \"homePage_76d6b8d1\", component: \"typeBadge_5f5390d7\", k: 1, row: Some(2) }",
+        "inputs": {
+          "type": "water"
+        },
+        "job_id": "j0",
+        "key": "3f7235a00ef653bfc9c20c5155a0344149f85fcf0bfafc188a920b049c6b3e2f",
+        "kind": "precompute",
+        "outputs": [
+          "_s1",
+          "_s2"
+        ],
+        "tags": [],
+        "target": null,
+        "ttl": null,
+        "user_key": null
+      },
+      {
+        "call_id": "homePage_76d6b8d1/typeBadge_5f5390d7_1/j0/3",
+        "component_id": "typeBadge_5f5390d7",
+        "dest": "Child { parent: \"homePage_76d6b8d1\", component: \"typeBadge_5f5390d7\", k: 1, row: Some(3) }",
+        "inputs": {
+          "type": "electric"
+        },
+        "job_id": "j0",
+        "key": "bf13eeaab49ab673f0fd2d209efca17b772fba55f45fad7a4d1c4f780707095f",
+        "kind": "precompute",
+        "outputs": [
+          "_s1",
+          "_s2"
+        ],
+        "tags": [],
+        "target": null,
+        "ttl": null,
+        "user_key": null
+      },
+      {
+        "call_id": "homePage_76d6b8d1/typeBadge_5f5390d7_1/j0/4",
+        "component_id": "typeBadge_5f5390d7",
+        "dest": "Child { parent: \"homePage_76d6b8d1\", component: \"typeBadge_5f5390d7\", k: 1, row: Some(4) }",
+        "inputs": {
+          "type": "grass"
+        },
+        "job_id": "j0",
+        "key": "9a0063f4ce17e3351ee5bf74e060bc9fe42ad7f421c01f6dda1301a8f8294fe4",
+        "kind": "precompute",
+        "outputs": [
+          "_s1",
+          "_s2"
+        ],
+        "tags": [],
+        "target": null,
+        "ttl": null,
+        "user_key": null
+      },
+      {
+        "call_id": "homePage_76d6b8d1/typeBadge_5f5390d7_1/j0/5",
+        "component_id": "typeBadge_5f5390d7",
+        "dest": "Child { parent: \"homePage_76d6b8d1\", component: \"typeBadge_5f5390d7\", k: 1, row: Some(5) }",
+        "inputs": {
+          "type": "ice"
+        },
+        "job_id": "j0",
+        "key": "20cd649d3eb3386d165343d2b58b4d5569ce57cc1f36579bf4f0819c04acdf3a",
+        "kind": "precompute",
+        "outputs": [
+          "_s1",
+          "_s2"
+        ],
+        "tags": [],
+        "target": null,
+        "ttl": null,
+        "user_key": null
+      },
+      {
+        "call_id": "homePage_76d6b8d1/typeBadge_5f5390d7_1/j0/6",
+        "component_id": "typeBadge_5f5390d7",
+        "dest": "Child { parent: \"homePage_76d6b8d1\", component: \"typeBadge_5f5390d7\", k: 1, row: Some(6) }",
+        "inputs": {
+          "type": "fighting"
+        },
+        "job_id": "j0",
+        "key": "fd5c9e0b90ceb13ffa63688b54a485a7af4307e7292f77781dca8f8ebff6491f",
+        "kind": "precompute",
+        "outputs": [
+          "_s1",
+          "_s2"
+        ],
+        "tags": [],
+        "target": null,
+        "ttl": null,
+        "user_key": null
+      },
+      {
+        "call_id": "homePage_76d6b8d1/typeBadge_5f5390d7_1/j0/7",
+        "component_id": "typeBadge_5f5390d7",
+        "dest": "Child { parent: \"homePage_76d6b8d1\", component: \"typeBadge_5f5390d7\", k: 1, row: Some(7) }",
+        "inputs": {
+          "type": "poison"
+        },
+        "job_id": "j0",
+        "key": "d5d52fabfaa4086292a1b0d91f1b544a40bb486f77672f59b4dfb8e1dce8efd4",
+        "kind": "precompute",
+        "outputs": [
+          "_s1",
+          "_s2"
+        ],
+        "tags": [],
+        "target": null,
+        "ttl": null,
+        "user_key": null
+      },
+      {
+        "call_id": "homePage_76d6b8d1/typeBadge_5f5390d7_1/j0/8",
+        "component_id": "typeBadge_5f5390d7",
+        "dest": "Child { parent: \"homePage_76d6b8d1\", component: \"typeBadge_5f5390d7\", k: 1, row: Some(8) }",
+        "inputs": {
+          "type": "ground"
+        },
+        "job_id": "j0",
+        "key": "ba7b7eded4c5d6c09fb6cb2f18a825c357a18516725b8c8d4f404e6894945073",
+        "kind": "precompute",
+        "outputs": [
+          "_s1",
+          "_s2"
+        ],
+        "tags": [],
+        "target": null,
+        "ttl": null,
+        "user_key": null
+      },
+      {
+        "call_id": "homePage_76d6b8d1/typeBadge_5f5390d7_1/j0/9",
+        "component_id": "typeBadge_5f5390d7",
+        "dest": "Child { parent: \"homePage_76d6b8d1\", component: \"typeBadge_5f5390d7\", k: 1, row: Some(9) }",
+        "inputs": {
+          "type": "flying"
+        },
+        "job_id": "j0",
+        "key": "f3c391a630f2d91ce1e75af9417c388e3212b7952d3e5a1bed8c86ff715028d0",
+        "kind": "precompute",
+        "outputs": [
+          "_s1",
+          "_s2"
+        ],
+        "tags": [],
+        "target": null,
+        "ttl": null,
+        "user_key": null
+      },
+      {
+        "call_id": "homePage_76d6b8d1/typeBadge_5f5390d7_1/j0/10",
+        "component_id": "typeBadge_5f5390d7",
+        "dest": "Child { parent: \"homePage_76d6b8d1\", component: \"typeBadge_5f5390d7\", k: 1, row: Some(10) }",
+        "inputs": {
+          "type": "psychic"
+        },
+        "job_id": "j0",
+        "key": "c85587e1721ddec718eb3e6bcc780dd3e038e8866a0e504cb61898b4e1b0397f",
+        "kind": "precompute",
+        "outputs": [
+          "_s1",
+          "_s2"
+        ],
+        "tags": [],
+        "target": null,
+        "ttl": null,
+        "user_key": null
+      },
+      {
+        "call_id": "homePage_76d6b8d1/typeBadge_5f5390d7_1/j0/11",
+        "component_id": "typeBadge_5f5390d7",
+        "dest": "Child { parent: \"homePage_76d6b8d1\", component: \"typeBadge_5f5390d7\", k: 1, row: Some(11) }",
+        "inputs": {
+          "type": "bug"
+        },
+        "job_id": "j0",
+        "key": "0b2b345db6f35615386549c4673c0275268aeee92ee94e33bd66b40bbd149c02",
+        "kind": "precompute",
+        "outputs": [
+          "_s1",
+          "_s2"
+        ],
+        "tags": [],
+        "target": null,
+        "ttl": null,
+        "user_key": null
+      },
+      {
+        "call_id": "homePage_76d6b8d1/typeBadge_5f5390d7_1/j0/12",
+        "component_id": "typeBadge_5f5390d7",
+        "dest": "Child { parent: \"homePage_76d6b8d1\", component: \"typeBadge_5f5390d7\", k: 1, row: Some(12) }",
+        "inputs": {
+          "type": "rock"
+        },
+        "job_id": "j0",
+        "key": "0d3b8dfc0df1d558c9f38cb3f02060674e55a4387725c21bd238840ed58b14cd",
+        "kind": "precompute",
+        "outputs": [
+          "_s1",
+          "_s2"
+        ],
+        "tags": [],
+        "target": null,
+        "ttl": null,
+        "user_key": null
+      },
+      {
+        "call_id": "homePage_76d6b8d1/typeBadge_5f5390d7_1/j0/13",
+        "component_id": "typeBadge_5f5390d7",
+        "dest": "Child { parent: \"homePage_76d6b8d1\", component: \"typeBadge_5f5390d7\", k: 1, row: Some(13) }",
+        "inputs": {
+          "type": "ghost"
+        },
+        "job_id": "j0",
+        "key": "12d7166ac759f5ca24a7b6451492ea5e0aa8c4a741d8fae7f2e6016d2f1d1315",
+        "kind": "precompute",
+        "outputs": [
+          "_s1",
+          "_s2"
+        ],
+        "tags": [],
+        "target": null,
+        "ttl": null,
+        "user_key": null
+      },
+      {
+        "call_id": "homePage_76d6b8d1/typeBadge_5f5390d7_1/j0/14",
+        "component_id": "typeBadge_5f5390d7",
+        "dest": "Child { parent: \"homePage_76d6b8d1\", component: \"typeBadge_5f5390d7\", k: 1, row: Some(14) }",
+        "inputs": {
+          "type": "dragon"
+        },
+        "job_id": "j0",
+        "key": "35eb3b25fd5ed26fa0738c4f524450b45d97873d86e51ce5139ad94b7fe49ee7",
+        "kind": "precompute",
+        "outputs": [
+          "_s1",
+          "_s2"
+        ],
+        "tags": [],
+        "target": null,
+        "ttl": null,
+        "user_key": null
+      },
+      {
+        "call_id": "homePage_76d6b8d1/typeBadge_5f5390d7_1/j0/15",
+        "component_id": "typeBadge_5f5390d7",
+        "dest": "Child { parent: \"homePage_76d6b8d1\", component: \"typeBadge_5f5390d7\", k: 1, row: Some(15) }",
+        "inputs": {
+          "type": "dark"
+        },
+        "job_id": "j0",
+        "key": "299b0ce31076ae3d5bd8b4e88cec0bb4757b0c82c14fa5dfc8d58c3f9402cc71",
+        "kind": "precompute",
+        "outputs": [
+          "_s1",
+          "_s2"
+        ],
+        "tags": [],
+        "target": null,
+        "ttl": null,
+        "user_key": null
+      },
+      {
+        "call_id": "homePage_76d6b8d1/typeBadge_5f5390d7_1/j0/16",
+        "component_id": "typeBadge_5f5390d7",
+        "dest": "Child { parent: \"homePage_76d6b8d1\", component: \"typeBadge_5f5390d7\", k: 1, row: Some(16) }",
+        "inputs": {
+          "type": "steel"
+        },
+        "job_id": "j0",
+        "key": "02e562d547cbffc83dbe4faa2e82980aab1330cea01a061c15c72e09c02a5346",
+        "kind": "precompute",
+        "outputs": [
+          "_s1",
+          "_s2"
+        ],
+        "tags": [],
+        "target": null,
+        "ttl": null,
+        "user_key": null
+      },
+      {
+        "call_id": "homePage_76d6b8d1/typeBadge_5f5390d7_1/j0/17",
+        "component_id": "typeBadge_5f5390d7",
+        "dest": "Child { parent: \"homePage_76d6b8d1\", component: \"typeBadge_5f5390d7\", k: 1, row: Some(17) }",
+        "inputs": {
+          "type": "fairy"
+        },
+        "job_id": "j0",
+        "key": "c0b47fe8066309a09663c57273909d5a31e0a4f40fc69093ecd1a2f335c9c8b8",
+        "kind": "precompute",
+        "outputs": [
+          "_s1",
+          "_s2"
+        ],
+        "tags": [],
+        "target": null,
+        "ttl": null,
+        "user_key": null
+      }
+    ],
+    "request": "{\"jobs\":[{\"id\":\"appLayout_069dfa24/j0\",\"componentId\":\"appLayout_069dfa24\",\"kind\":\"ssr\",\"inputs\":{\"teamInitial\":[{\"artwork\":\"https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/1.png\",\"displayName\":\"Bulbasaur\",\"id\":1,\"name\":\"bulbasaur\",\"num\":\"#0001\",\"types\":[\"grass\",\"poison\"]},{\"artwork\":\"https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/4.png\",\"displayName\":\"Charmander\",\"id\":4,\"name\":\"charmander\",\"num\":\"#0004\",\"types\":[\"fire\"]}]},\"target\":\"teamBuilder_a0fc3155\"},{\"id\":\"appLayout_069dfa24/navLink_43f6c55a_1/j0/0\",\"componentId\":\"navLink_43f6c55a\",\"kind\":\"precompute\",\"inputs\":{\"active\":true}},{\"id\":\"appLayout_069dfa24/navLink_43f6c55a_1/j0/1\",\"componentId\":\"navLink_43f6c55a\",\"kind\":\"precompute\",\"inputs\":{\"active\":false}},{\"id\":\"appLayout_069dfa24/navLink_43f6c55a_1/j0/2\",\"componentId\":\"navLink_43f6c55a\",\"kind\":\"precompute\",\"inputs\":{\"active\":false}},{\"id\":\"homePage_76d6b8d1/typeBadge_5f5390d7_1/j0/0\",\"componentId\":\"typeBadge_5f5390d7\",\"kind\":\"precompute\",\"inputs\":{\"type\":\"normal\"}},{\"id\":\"homePage_76d6b8d1/typeBadge_5f5390d7_1/j0/1\",\"componentId\":\"typeBadge_5f5390d7\",\"kind\":\"precompute\",\"inputs\":{\"type\":\"fire\"}},{\"id\":\"homePage_76d6b8d1/typeBadge_5f5390d7_1/j0/2\",\"componentId\":\"typeBadge_5f5390d7\",\"kind\":\"precompute\",\"inputs\":{\"type\":\"water\"}},{\"id\":\"homePage_76d6b8d1/typeBadge_5f5390d7_1/j0/3\",\"componentId\":\"typeBadge_5f5390d7\",\"kind\":\"precompute\",\"inputs\":{\"type\":\"electric\"}},{\"id\":\"homePage_76d6b8d1/typeBadge_5f5390d7_1/j0/4\",\"componentId\":\"typeBadge_5f5390d7\",\"kind\":\"precompute\",\"inputs\":{\"type\":\"grass\"}},{\"id\":\"homePage_76d6b8d1/typeBadge_5f5390d7_1/j0/5\",\"componentId\":\"typeBadge_5f5390d7\",\"kind\":\"precompute\",\"inputs\":{\"type\":\"ice\"}},{\"id\":\"homePage_76d6b8d1/typeBadge_5f5390d7_1/j0/6\",\"componentId\":\"typeBadge_5f5390d7\",\"kind\":\"precompute\",\"inputs\":{\"type\":\"fighting\"}},{\"id\":\"homePage_76d6b8d1/typeBadge_5f5390d7_1/j0/7\",\"componentId\":\"typeBadge_5f5390d7\",\"kind\":\"precompute\",\"inputs\":{\"type\":\"poison\"}},{\"id\":\"homePage_76d6b8d1/typeBadge_5f5390d7_1/j0/8\",\"componentId\":\"typeBadge_5f5390d7\",\"kind\":\"precompute\",\"inputs\":{\"type\":\"ground\"}},{\"id\":\"homePage_76d6b8d1/typeBadge_5f5390d7_1/j0/9\",\"componentId\":\"typeBadge_5f5390d7\",\"kind\":\"precompute\",\"inputs\":{\"type\":\"flying\"}},{\"id\":\"homePage_76d6b8d1/typeBadge_5f5390d7_1/j0/10\",\"componentId\":\"typeBadge_5f5390d7\",\"kind\":\"precompute\",\"inputs\":{\"type\":\"psychic\"}},{\"id\":\"homePage_76d6b8d1/typeBadge_5f5390d7_1/j0/11\",\"componentId\":\"typeBadge_5f5390d7\",\"kind\":\"precompute\",\"inputs\":{\"type\":\"bug\"}},{\"id\":\"homePage_76d6b8d1/typeBadge_5f5390d7_1/j0/12\",\"componentId\":\"typeBadge_5f5390d7\",\"kind\":\"precompute\",\"inputs\":{\"type\":\"rock\"}},{\"id\":\"homePage_76d6b8d1/typeBadge_5f5390d7_1/j0/13\",\"componentId\":\"typeBadge_5f5390d7\",\"kind\":\"precompute\",\"inputs\":{\"type\":\"ghost\"}},{\"id\":\"homePage_76d6b8d1/typeBadge_5f5390d7_1/j0/14\",\"componentId\":\"typeBadge_5f5390d7\",\"kind\":\"precompute\",\"inputs\":{\"type\":\"dragon\"}},{\"id\":\"homePage_76d6b8d1/typeBadge_5f5390d7_1/j0/15\",\"componentId\":\"typeBadge_5f5390d7\",\"kind\":\"precompute\",\"inputs\":{\"type\":\"dark\"}},{\"id\":\"homePage_76d6b8d1/typeBadge_5f5390d7_1/j0/16\",\"componentId\":\"typeBadge_5f5390d7\",\"kind\":\"precompute\",\"inputs\":{\"type\":\"steel\"}},{\"id\":\"homePage_76d6b8d1/typeBadge_5f5390d7_1/j0/17\",\"componentId\":\"typeBadge_5f5390d7\",\"kind\":\"precompute\",\"inputs\":{\"type\":\"fairy\"}}]}"
+  },
+  "pokemon-pikachu.json": {
+    "plans": [
+      {
+        "call_id": "appLayout_069dfa24/j0",
+        "component_id": "appLayout_069dfa24",
+        "dest": "Chain { component: \"appLayout_069dfa24\", row: None }",
+        "inputs": {
+          "teamInitial": [
+            {
+              "artwork": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/1.png",
+              "displayName": "Bulbasaur",
+              "id": 1,
+              "name": "bulbasaur",
+              "num": "#0001",
+              "types": [
+                "grass",
+                "poison"
+              ]
+            },
+            {
+              "artwork": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/4.png",
+              "displayName": "Charmander",
+              "id": 4,
+              "name": "charmander",
+              "num": "#0004",
+              "types": [
+                "fire"
+              ]
+            }
+          ]
+        },
+        "job_id": "j0",
+        "key": "3b88150b3d7add501861f36c7115b5b4bffd06e6b052c2d14f07bb7be9324fde",
+        "kind": "ssr",
+        "outputs": [
+          "_ssr_teamBuilder_a0fc3155"
+        ],
+        "tags": [],
+        "target": "teamBuilder_a0fc3155",
+        "ttl": null,
+        "user_key": null
+      },
+      {
+        "call_id": "appLayout_069dfa24/navLink_43f6c55a_1/j0/0",
+        "component_id": "navLink_43f6c55a",
+        "dest": "Child { parent: \"appLayout_069dfa24\", component: \"navLink_43f6c55a\", k: 1, row: Some(0) }",
+        "inputs": {
+          "active": false
+        },
+        "job_id": "j0",
+        "key": "b013a68ceaa06b7febdc5158abcfe302010c224373b77d1639a7591d4fbfbcf5",
+        "kind": "precompute",
+        "outputs": [
+          "_s1"
+        ],
+        "tags": [],
+        "target": null,
+        "ttl": null,
+        "user_key": null
+      },
+      {
+        "call_id": "appLayout_069dfa24/navLink_43f6c55a_1/j0/1",
+        "component_id": "navLink_43f6c55a",
+        "dest": "Child { parent: \"appLayout_069dfa24\", component: \"navLink_43f6c55a\", k: 1, row: Some(1) }",
+        "inputs": {
+          "active": false
+        },
+        "job_id": "j0",
+        "key": "b013a68ceaa06b7febdc5158abcfe302010c224373b77d1639a7591d4fbfbcf5",
+        "kind": "precompute",
+        "outputs": [
+          "_s1"
+        ],
+        "tags": [],
+        "target": null,
+        "ttl": null,
+        "user_key": null
+      },
+      {
+        "call_id": "appLayout_069dfa24/navLink_43f6c55a_1/j0/2",
+        "component_id": "navLink_43f6c55a",
+        "dest": "Child { parent: \"appLayout_069dfa24\", component: \"navLink_43f6c55a\", k: 1, row: Some(2) }",
+        "inputs": {
+          "active": false
+        },
+        "job_id": "j0",
+        "key": "b013a68ceaa06b7febdc5158abcfe302010c224373b77d1639a7591d4fbfbcf5",
+        "kind": "precompute",
+        "outputs": [
+          "_s1"
+        ],
+        "tags": [],
+        "target": null,
+        "ttl": null,
+        "user_key": null
+      },
+      {
+        "call_id": "detailPage_c04a77c1/j0",
+        "component_id": "detailPage_c04a77c1",
+        "dest": "Chain { component: \"detailPage_c04a77c1\", row: None }",
+        "inputs": {
+          "height": 4,
+          "weight": 60
+        },
+        "job_id": "j0",
+        "key": "c19909961b24e2659d77caa23a7b61b3729bb41a428a6854da8fcb2c6ab1be88",
+        "kind": "precompute",
+        "outputs": [
+          "_s1",
+          "_s2"
+        ],
+        "tags": [],
+        "target": null,
+        "ttl": null,
+        "user_key": null
+      },
+      {
+        "call_id": "detailPage_c04a77c1/typeBadge_5f5390d7_1/j0/0",
+        "component_id": "typeBadge_5f5390d7",
+        "dest": "Child { parent: \"detailPage_c04a77c1\", component: \"typeBadge_5f5390d7\", k: 1, row: Some(0) }",
+        "inputs": {
+          "type": "electric"
+        },
+        "job_id": "j0",
+        "key": "bf13eeaab49ab673f0fd2d209efca17b772fba55f45fad7a4d1c4f780707095f",
+        "kind": "precompute",
+        "outputs": [
+          "_s1",
+          "_s2"
+        ],
+        "tags": [],
+        "target": null,
+        "ttl": null,
+        "user_key": null
+      }
+    ],
+    "request": "{\"jobs\":[{\"id\":\"appLayout_069dfa24/j0\",\"componentId\":\"appLayout_069dfa24\",\"kind\":\"ssr\",\"inputs\":{\"teamInitial\":[{\"artwork\":\"https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/1.png\",\"displayName\":\"Bulbasaur\",\"id\":1,\"name\":\"bulbasaur\",\"num\":\"#0001\",\"types\":[\"grass\",\"poison\"]},{\"artwork\":\"https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/4.png\",\"displayName\":\"Charmander\",\"id\":4,\"name\":\"charmander\",\"num\":\"#0004\",\"types\":[\"fire\"]}]},\"target\":\"teamBuilder_a0fc3155\"},{\"id\":\"appLayout_069dfa24/navLink_43f6c55a_1/j0/0\",\"componentId\":\"navLink_43f6c55a\",\"kind\":\"precompute\",\"inputs\":{\"active\":false}},{\"id\":\"appLayout_069dfa24/navLink_43f6c55a_1/j0/1\",\"componentId\":\"navLink_43f6c55a\",\"kind\":\"precompute\",\"inputs\":{\"active\":false}},{\"id\":\"appLayout_069dfa24/navLink_43f6c55a_1/j0/2\",\"componentId\":\"navLink_43f6c55a\",\"kind\":\"precompute\",\"inputs\":{\"active\":false}},{\"id\":\"detailPage_c04a77c1/j0\",\"componentId\":\"detailPage_c04a77c1\",\"kind\":\"precompute\",\"inputs\":{\"height\":4,\"weight\":60}},{\"id\":\"detailPage_c04a77c1/typeBadge_5f5390d7_1/j0/0\",\"componentId\":\"typeBadge_5f5390d7\",\"kind\":\"precompute\",\"inputs\":{\"type\":\"electric\"}}]}"
+  },
+  "type-chart.json": {
+    "plans": [
+      {
+        "call_id": "appLayout_069dfa24/j0",
+        "component_id": "appLayout_069dfa24",
+        "dest": "Chain { component: \"appLayout_069dfa24\", row: None }",
+        "inputs": {
+          "teamInitial": [
+            {
+              "artwork": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/1.png",
+              "displayName": "Bulbasaur",
+              "id": 1,
+              "name": "bulbasaur",
+              "num": "#0001",
+              "types": [
+                "grass",
+                "poison"
+              ]
+            },
+            {
+              "artwork": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/4.png",
+              "displayName": "Charmander",
+              "id": 4,
+              "name": "charmander",
+              "num": "#0004",
+              "types": [
+                "fire"
+              ]
+            }
+          ]
+        },
+        "job_id": "j0",
+        "key": "3b88150b3d7add501861f36c7115b5b4bffd06e6b052c2d14f07bb7be9324fde",
+        "kind": "ssr",
+        "outputs": [
+          "_ssr_teamBuilder_a0fc3155"
+        ],
+        "tags": [],
+        "target": "teamBuilder_a0fc3155",
+        "ttl": null,
+        "user_key": null
+      },
+      {
+        "call_id": "appLayout_069dfa24/navLink_43f6c55a_1/j0/0",
+        "component_id": "navLink_43f6c55a",
+        "dest": "Child { parent: \"appLayout_069dfa24\", component: \"navLink_43f6c55a\", k: 1, row: Some(0) }",
+        "inputs": {
+          "active": false
+        },
+        "job_id": "j0",
+        "key": "b013a68ceaa06b7febdc5158abcfe302010c224373b77d1639a7591d4fbfbcf5",
+        "kind": "precompute",
+        "outputs": [
+          "_s1"
+        ],
+        "tags": [],
+        "target": null,
+        "ttl": null,
+        "user_key": null
+      },
+      {
+        "call_id": "appLayout_069dfa24/navLink_43f6c55a_1/j0/1",
+        "component_id": "navLink_43f6c55a",
+        "dest": "Child { parent: \"appLayout_069dfa24\", component: \"navLink_43f6c55a\", k: 1, row: Some(1) }",
+        "inputs": {
+          "active": false
+        },
+        "job_id": "j0",
+        "key": "b013a68ceaa06b7febdc5158abcfe302010c224373b77d1639a7591d4fbfbcf5",
+        "kind": "precompute",
+        "outputs": [
+          "_s1"
+        ],
+        "tags": [],
+        "target": null,
+        "ttl": null,
+        "user_key": null
+      },
+      {
+        "call_id": "appLayout_069dfa24/navLink_43f6c55a_1/j0/2",
+        "component_id": "navLink_43f6c55a",
+        "dest": "Child { parent: \"appLayout_069dfa24\", component: \"navLink_43f6c55a\", k: 1, row: Some(2) }",
+        "inputs": {
+          "active": true
+        },
+        "job_id": "j0",
+        "key": "7a8dd2100447260b16355267ec94485d59ec26cfea18cfd6451a936c999c29f9",
+        "kind": "precompute",
+        "outputs": [
+          "_s1"
+        ],
+        "tags": [],
+        "target": null,
+        "ttl": null,
+        "user_key": null
+      }
+    ],
+    "request": "{\"jobs\":[{\"id\":\"appLayout_069dfa24/j0\",\"componentId\":\"appLayout_069dfa24\",\"kind\":\"ssr\",\"inputs\":{\"teamInitial\":[{\"artwork\":\"https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/1.png\",\"displayName\":\"Bulbasaur\",\"id\":1,\"name\":\"bulbasaur\",\"num\":\"#0001\",\"types\":[\"grass\",\"poison\"]},{\"artwork\":\"https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/4.png\",\"displayName\":\"Charmander\",\"id\":4,\"name\":\"charmander\",\"num\":\"#0004\",\"types\":[\"fire\"]}]},\"target\":\"teamBuilder_a0fc3155\"},{\"id\":\"appLayout_069dfa24/navLink_43f6c55a_1/j0/0\",\"componentId\":\"navLink_43f6c55a\",\"kind\":\"precompute\",\"inputs\":{\"active\":false}},{\"id\":\"appLayout_069dfa24/navLink_43f6c55a_1/j0/1\",\"componentId\":\"navLink_43f6c55a\",\"kind\":\"precompute\",\"inputs\":{\"active\":false}},{\"id\":\"appLayout_069dfa24/navLink_43f6c55a_1/j0/2\",\"componentId\":\"navLink_43f6c55a\",\"kind\":\"precompute\",\"inputs\":{\"active\":true}}]}"
+  }
+}

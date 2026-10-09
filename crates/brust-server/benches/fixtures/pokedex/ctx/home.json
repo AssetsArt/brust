@@ -1,0 +1,271 @@
+{
+  "__children": {
+    "appLayout_069dfa24": {
+      "__navLink_43f6c55a_1": [
+        {
+          "_s1": "inline-flex items-center rounded-lg px-3 py-1.5 text-sm font-semibold text-brand-600 bg-brand-50 dark:text-brand-50 dark:bg-brand-600/20"
+        },
+        {
+          "_s1": "inline-flex items-center rounded-lg px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+        },
+        {
+          "_s1": "inline-flex items-center rounded-lg px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+        }
+      ],
+      "__themeToggle_0f56d553_1": {
+        "_id0": "brust-r1-appLayout_069dfa24.themeToggle_0f56d553_1-1"
+      }
+    },
+    "homePage_76d6b8d1": {
+      "__heroSearch_56f6fbd9_1": {
+        "_id0": "brust-r1-homePage_76d6b8d1.heroSearch_56f6fbd9_1-1"
+      },
+      "__typeBadge_5f5390d7_1": [
+        {
+          "_s1": {
+            "background": "#9099a1"
+          },
+          "_s2": "Normal"
+        },
+        {
+          "_s1": {
+            "background": "#ef7444"
+          },
+          "_s2": "Fire"
+        },
+        {
+          "_s1": {
+            "background": "#4d90d5"
+          },
+          "_s2": "Water"
+        },
+        {
+          "_s1": {
+            "background": "#f5c84b"
+          },
+          "_s2": "Electric"
+        },
+        {
+          "_s1": {
+            "background": "#63bb5b"
+          },
+          "_s2": "Grass"
+        },
+        {
+          "_s1": {
+            "background": "#74cec0"
+          },
+          "_s2": "Ice"
+        },
+        {
+          "_s1": {
+            "background": "#ce4069"
+          },
+          "_s2": "Fighting"
+        },
+        {
+          "_s1": {
+            "background": "#ab6ac8"
+          },
+          "_s2": "Poison"
+        },
+        {
+          "_s1": {
+            "background": "#d97746"
+          },
+          "_s2": "Ground"
+        },
+        {
+          "_s1": {
+            "background": "#8fa8dd"
+          },
+          "_s2": "Flying"
+        },
+        {
+          "_s1": {
+            "background": "#f06fa0"
+          },
+          "_s2": "Psychic"
+        },
+        {
+          "_s1": {
+            "background": "#90c12c"
+          },
+          "_s2": "Bug"
+        },
+        {
+          "_s1": {
+            "background": "#c7b78b"
+          },
+          "_s2": "Rock"
+        },
+        {
+          "_s1": {
+            "background": "#5269ac"
+          },
+          "_s2": "Ghost"
+        },
+        {
+          "_s1": {
+            "background": "#0a6dc4"
+          },
+          "_s2": "Dragon"
+        },
+        {
+          "_s1": {
+            "background": "#5a5366"
+          },
+          "_s2": "Dark"
+        },
+        {
+          "_s1": {
+            "background": "#5a8ea1"
+          },
+          "_s2": "Steel"
+        },
+        {
+          "_s1": {
+            "background": "#ec8fe6"
+          },
+          "_s2": "Fairy"
+        }
+      ]
+    }
+  },
+  "__own": {
+    "appLayout_069dfa24": {
+      "_ssr_teamBuilder_a0fc3155": "<div class=\"fixed bottom-5 right-5 z-[200]\"><button type=\"button\" class=\"inline-flex items-center gap-1.5 rounded-full bg-brand-500 px-5 py-2.5 text-sm font-semibold text-white shadow-lg\">My team <span data-testid=\"team-count\" class=\"rounded-full bg-white/25 px-2 py-0.5 text-xs font-extrabold\">2</span></button></div>"
+    }
+  },
+  "crumb": "Home",
+  "featured": [
+    {
+      "artwork": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/1.png",
+      "detailHref": "/pokemon/bulbasaur",
+      "displayName": "Bulbasaur",
+      "id": 1,
+      "name": "bulbasaur",
+      "num": "#0001"
+    },
+    {
+      "artwork": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/4.png",
+      "detailHref": "/pokemon/charmander",
+      "displayName": "Charmander",
+      "id": 4,
+      "name": "charmander",
+      "num": "#0004"
+    },
+    {
+      "artwork": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/7.png",
+      "detailHref": "/pokemon/squirtle",
+      "displayName": "Squirtle",
+      "id": 7,
+      "name": "squirtle",
+      "num": "#0007"
+    },
+    {
+      "artwork": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/25.png",
+      "detailHref": "/pokemon/pikachu",
+      "displayName": "Pikachu",
+      "id": 25,
+      "name": "pikachu",
+      "num": "#0025"
+    },
+    {
+      "artwork": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/39.png",
+      "detailHref": "/pokemon/jigglypuff",
+      "displayName": "Jigglypuff",
+      "id": 39,
+      "name": "jigglypuff",
+      "num": "#0039"
+    },
+    {
+      "artwork": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/94.png",
+      "detailHref": "/pokemon/gengar",
+      "displayName": "Gengar",
+      "id": 94,
+      "name": "gengar",
+      "num": "#0094"
+    },
+    {
+      "artwork": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/143.png",
+      "detailHref": "/pokemon/snorlax",
+      "displayName": "Snorlax",
+      "id": 143,
+      "name": "snorlax",
+      "num": "#0143"
+    },
+    {
+      "artwork": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/150.png",
+      "detailHref": "/pokemon/mewtwo",
+      "displayName": "Mewtwo",
+      "id": 150,
+      "name": "mewtwo",
+      "num": "#0150"
+    }
+  ],
+  "mode": "dark",
+  "nav": [
+    {
+      "active": true,
+      "href": "/",
+      "label": "Home"
+    },
+    {
+      "active": false,
+      "href": "/pokedex",
+      "label": "Pokédex"
+    },
+    {
+      "active": false,
+      "href": "/type-chart",
+      "label": "Type chart"
+    }
+  ],
+  "params": {},
+  "path": "/",
+  "teamInitial": [
+    {
+      "artwork": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/1.png",
+      "displayName": "Bulbasaur",
+      "id": 1,
+      "name": "bulbasaur",
+      "num": "#0001",
+      "types": [
+        "grass",
+        "poison"
+      ]
+    },
+    {
+      "artwork": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/4.png",
+      "displayName": "Charmander",
+      "id": 4,
+      "name": "charmander",
+      "num": "#0004",
+      "types": [
+        "fire"
+      ]
+    }
+  ],
+  "title": "PokéDex · built with brust",
+  "types": [
+    "normal",
+    "fire",
+    "water",
+    "electric",
+    "grass",
+    "ice",
+    "fighting",
+    "poison",
+    "ground",
+    "flying",
+    "psychic",
+    "bug",
+    "rock",
+    "ghost",
+    "dragon",
+    "dark",
+    "steel",
+    "fairy"
+  ]
+}

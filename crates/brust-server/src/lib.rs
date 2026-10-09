@@ -16,6 +16,7 @@ pub mod server;
 /// Internals timed by `benches/render.rs`; not an API.
 #[doc(hidden)]
 pub mod bench {
+    pub use crate::pipeline::plan_stage::{Planned, Planner};
     pub use crate::pipeline::{cached_body, props_view, render_chain_html};
 }
 

@@ -28,6 +28,10 @@
 //! - `finish_identity` / `finish_gzip`: render + inject (+ the page gzip
 //!   policy: level 1 at >= 16 KiB; Task 1 measured level 6 at >= 1 KiB), i.e.
 //!   the body a MISS / uncached request builds;
+//! - `plan_B` / `plan_C` (`/pokemon/pikachu`, `/` = probe C): the job-planning stage, see
+//!   `bench_plan`. C's context (`ctx/home.json`) was captured the same way on v2 @40283bc (one
+//!   identity GET of `/`, debug addon); `plan-golden.json` pins every plan's call id, job key and
+//!   inputs and the all-miss `JobsRequest` JSON (`pipeline` test `pokedex_plans_match_the_golden`).
 //! - `l1_hit_identity` / `l1_hit_gzip`: a HIT = `L1Cache::get` + the stored
 //!   rendered body (identity, or its once-made gzip) + its header map. Before
 //!   the S10 amendment (m2p Task 2) a HIT re-rendered: `l1_hit_gzip` was
@@ -249,9 +253,75 @@ fn bench_loader_parse(c: &mut Criterion) {
     g.finish();
 }
 
+/// The job-planning stage of a request (m2p plan-perf): `collect_jobs` (input projection, child
+/// props, job keys, call ids) over the loader context, the job-cache lookups (every plan a hit:
+/// the cache is warmed with the values read back from the captured merged ctx), `seed_child_slots`
+/// (child cells + useIds) and the merge of every value. `stage` is all four, as `page` runs them
+/// on a request whose jobs are all cached.
+fn bench_plan(c: &mut Criterion, m: &Manifest, label: &str, pattern: &str, ctx_file: &str) {
+    use brust_server::bench::Planner;
+    use brust_server::cache::job_cache::JobCache;
+    let route = m.routes.iter().find(|x| x.pattern == pattern).unwrap();
+    let merged = ctx(ctx_file);
+    let mut loader = merged.clone();
+    for k in ["__own", "__children"] {
+        loader.as_object_mut().unwrap().remove(k);
+    }
+    let planner = Planner::new(m).unwrap();
+    let plans = planner.plan(&route.chain, &loader).unwrap();
+    let cache = JobCache::new(10_000);
+    plans.warm(&cache, &merged);
+    let values = plans.lookup(&cache);
+    let mut seeded = loader.clone();
+    planner.seed(&route.id, &route.chain, &mut seeded).unwrap();
+    eprintln!("[{label}] {} plans", plans.len());
+
+    let mut g = c.benchmark_group(label);
+    g.bench_function("collect_jobs", |b| {
+        b.iter(|| planner.plan(&route.chain, black_box(&loader)).unwrap())
+    });
+    g.bench_function("lookups", |b| b.iter(|| plans.lookup(black_box(&cache))));
+    g.bench_function("seed", |b| {
+        b.iter_batched(
+            || loader.clone(),
+            |mut x| {
+                planner.seed(&route.id, &route.chain, &mut x).unwrap();
+                x
+            },
+            criterion::BatchSize::SmallInput,
+        )
+    });
+    g.bench_function("merge", |b| {
+        b.iter_batched(
+            || seeded.clone(),
+            |mut x| {
+                plans.merge(&mut x, &values);
+                x
+            },
+            criterion::BatchSize::SmallInput,
+        )
+    });
+    g.bench_function("stage", |b| {
+        b.iter_batched(
+            || loader.clone(),
+            |mut x| {
+                let p = planner.plan(&route.chain, &x).unwrap();
+                let v = p.lookup(&cache);
+                planner.seed(&route.id, &route.chain, &mut x).unwrap();
+                p.merge(&mut x, &v);
+                x
+            },
+            criterion::BatchSize::SmallInput,
+        )
+    });
+    g.finish();
+}
+
 fn benches(c: &mut Criterion) {
     bench_loader_parse(c);
     let (m, r) = load();
+    bench_plan(c, &m, "plan_B", "/pokemon/{name}", "pokemon-pikachu.json");
+    bench_plan(c, &m, "plan_C", "/", "home.json");
     bench_route(
         c,
         &m,
