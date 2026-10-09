@@ -38,3 +38,21 @@ vendor diff is exactly `BRUST-PATCH.md` items 1–7.
 | F11 | `packages/runtime-dom/src/directives/bind.ts:8` | The new URL-scheme allowlist (added by the lane as hardening) refuses `data:image/*` and `blob:` on `img/video src/poster`; file-input previews and canvas blobs are legitimate. | Allow `blob:` everywhere and `data:image/(png\|jpeg\|gif\|webp\|avif)` (not svg) on `src`/`poster`; document the refusal in the README meanwhile. | M2 |
 | F12 | `packages/runtime-dom/src/props-bind.ts:17-20` | If the nearest ancestor host's factory throws, its `x-props-bind` children wait forever with no warning. | On init failure, `warnOnce` for each waiting direct child. | M2 |
 | F13 | `packages/runtime-dom/src/mount.ts:31` | Late-link scan visits every `[x-data]` descendant on every host mount — quadratic for deep host chains; fine at M1 sizes. | Index children by nearest host during the scan. | M2 |
+
+## From Mellow's review of `m1b1-ir-readers` @ebd5a52 → @da67391 (PR #113)
+
+Owner plan `M1b-2` means the item lands in the `m1b2-placement-tier` lane because its passes consume the field; `M1c` means the lowering lane; `M2` means after M1.
+
+| # | Where | Finding | Proposed fix | Owner plan |
+|---|---|---|---|---|
+| F14 | `crates/brust-compiler/src/analyze/expr.rs:250` | Arrow captures include the generated JSX runtime symbol (`jsx_w77yafs4`) as a `Local` — a phantom capture with no declaration. | Exclude generated runtime refs the way `is_fragment` recognises them. | M1b-2 (deps_of must skip it anyway) |
+| F15 | `analyze/jsx.rs` (`read_element` via `jsx_expr`, `in_list_body=false`) | `key-outside-list` fires falsely for `.map(x => <li key/>)` that is not a direct child: root return, prop value, wrapped call like `cond(xs.map(...))`. | Carry `in_list_body` through `jsx_expr` for map bodies in any position. | M1b-2 |
+| F16 | `analyze/jsx.rs:221` `event_name` | Only lowercases: `onDoubleClick`→`doubleclick` (DOM: `dblclick`), `onClickCapture`→`clickcapture` (should be `click` + capture flag), `onFocus`/`onBlur` bubble in React but not in the DOM. | Table-driven map React event → DOM event + capture flag; M1c's `x-on-<event>` reads it. | M1c (before emitting `x-on`) |
+| F17 | `analyze/hooks.rs` | `const [, setB] = useState(1)` gives `StateDecl.name == ""`; M1b-2/M1c need a signal name. | Synthesise `_sN`. | M1b-2 |
+| F18 | `crates/brust-compiler-cli` `--emit ir` | `to_string_pretty` is quadratic in depth: 20000-deep JSX printed 13.2 GB; 50000-deep was SIGKILLed. Analysis itself is fine (`diag`/`hir` exit 0 in 0.07 s). | Compact JSON above a size threshold, or stream with `to_writer`. | M2 (debug command only) |
+| F19 | `analyze/expr.rs:667` `print_with` | Copies the whole symbol table and allocates into the module arena per `Opaque`/`Block` print: O(symbols × prints). | Build the printer symbol copy once per component. | M2 (perf) |
+| F20 | `analyze/names.rs` | A bare `props` identifier (`{props}`, `<C {...props}/>`) is `Local`, not `Prop`, so deps would miss that the whole props object is read. | Treat the props parameter binding as `Prop` root `*`; deps_of marks all props. | M1b-2 |
+| F21 | `analyze/jsx.rs` `read_attr` | `ref={x}` is `Attr::Ref` for any identifier, even one not bound to `useRef`. | Cross-check against `ir.refs`; otherwise Fallback. | M1b-2 |
+| F22 | `analyze/component.rs` | `export { C as default }` returns `Err(no-default-export)` instead of the default-export-shape fallback. | Resolve the export clause to the local declaration. | M2 |
+| F23 | `ir/decls.rs` `PropDecl.local` | A renamed prop reads as `Ident{name: title, kind: Prop}` in structured exprs, but printed `Block`/`Opaque` sources keep the local name `heading`. | M1c's chunk printer must bind `PropDecl.local` (e.g. `const heading = props.title`) before the sources run. | M1c |
+| F24 | `analyze/hooks.rs` hook walk | A method named `useX` (e.g. `obj.useThing()`) is treated as a hook → `hook-unsupported` (fail-closed). | Only bare identifiers and `React.useX` count; member calls on non-React objects are not hooks. | M2 |
