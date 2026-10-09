@@ -23,9 +23,11 @@
 //! - `render_page` / `render_layout` / `render_chain`: the leaf alone, the
 //!   layout alone (no `__outlet`), and the whole chain with every overlay;
 //! - `inject_assets` on the rendered document;
-//! - `gzip_l1` / `gzip_l6` of the injected document (today: level 6);
-//! - `finish_identity` / `finish_gzip`: render + inject (+ gzip L6), i.e. the
-//!   body `finish` builds;
+//! - `gzip_l1` / `gzip_l6` of the injected document (pages: level 1 since
+//!   m2p Task 3, level 6 before);
+//! - `finish_identity` / `finish_gzip`: render + inject (+ the page gzip
+//!   policy: level 1 at >= 16 KiB; Task 1 measured level 6 at >= 1 KiB), i.e.
+//!   the body a MISS / uncached request builds;
 //! - `l1_hit_identity` / `l1_hit_gzip`: a HIT = `L1Cache::get` + the stored
 //!   rendered body (identity, or its once-made gzip) + its header map. Before
 //!   the S10 amendment (m2p Task 2) a HIT re-rendered: `l1_hit_gzip` was
@@ -186,7 +188,12 @@ fn bench_route(
     let finish = |gz: bool| {
         let html = render_chain_html(m, r, &route.id, chain, &ctx).unwrap();
         let bytes = inject_assets(html, chain, m).into_bytes();
-        if gz { gzip(&bytes, 6) } else { bytes }
+        // The page policy (m2p Task 3): gzip level 1, only at >= 16 KiB.
+        if gz && bytes.len() >= 16 * 1024 {
+            gzip(&bytes, 1)
+        } else {
+            bytes
+        }
     };
     g.bench_function("finish_identity", |b| b.iter(|| finish(false)));
     g.bench_function("finish_gzip", |b| b.iter(|| finish(true)));

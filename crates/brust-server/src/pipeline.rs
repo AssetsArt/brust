@@ -577,9 +577,13 @@ fn render_failed(route: &RouteRecord, e: &RenderError) -> Response<ResponseBody>
 
 const HTML: &str = "text/html; charset=utf-8";
 
-/// Page gzip policy: a document at least this long is gzip-eligible (it
-/// carries `Vary: Accept-Encoding`, and is gzipped for a client accepting it).
-const PAGE_GZIP_MIN: usize = 1024;
+/// Page gzip policy (S10 amendment): a document at least this long is
+/// gzip-eligible (it carries `Vary: Accept-Encoding`, and is gzipped for a
+/// client accepting it); below it the CPU outweighs the saving.
+const PAGE_GZIP_MIN: usize = 16 * 1024;
+/// Page gzip level: 1 — a dynamic page is compressed per request (a cached
+/// one once per entry), and level 6 costs ~4x the time for ~25 % fewer bytes.
+const PAGE_GZIP_LEVEL: u32 = 1;
 
 /// Leaf-first render of the route's chain (each component under its overlay)
 /// plus asset tags: the identity document. Shared by every path that renders,
@@ -597,9 +601,9 @@ fn render_document(s: &Server, route: &RouteRecord, ctx: &Value) -> Result<Bytes
 /// `pub` (via `brust_server::bench`) so the micro-bench times the real HIT.
 pub fn cached_body(body: &RenderedBody, accepts_gzip: bool) -> (Bytes, bool) {
     if accepts_gzip && body.html.len() >= PAGE_GZIP_MIN {
-        let gz = body
-            .gzip
-            .get_or_init(|| crate::http::compress::gzip(&body.html).map(Bytes::from));
+        let gz = body.gzip.get_or_init(|| {
+            crate::http::compress::gzip(&body.html, PAGE_GZIP_LEVEL).map(Bytes::from)
+        });
         if let Some(gz) = gz {
             return (gz.clone(), true);
         }
