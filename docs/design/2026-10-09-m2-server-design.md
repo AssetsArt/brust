@@ -170,6 +170,23 @@ and never asks Bun what a route is:
 - M2 supports ONE level of per-row child instances: a child that has a job or `useId` and sits
   inside nested loops (or is passed as slot content into a receiver's loop) is a compile `Error`
   `nested-instance` (ledger row for M3: n-dimensional instance arrays).
+- **React-tier SSR wire form (ruled 2026-10-09 on Mellow's challenge f4649e5d; the compiler is the
+  source of truth):** a react CHILD is NOT a child record. Its `ssr` job lives in the PARENT's
+  `jobs[]` exactly as the IR emits it (parent-scope `inputs`, `outputs` = the slot names the
+  template reads: `_ssr_<childId>` for the first use, `_ssr_<childId>_<k>` after, `per_instance`
+  = the list context path when the IR job has `per_item`). Every manifest `jobs[]` record carries
+  `"outputs": [..]` copied from the IR; the server writes result k to `outputs[k]` in that
+  component's overlay, and for `per_instance` jobs an array indexed by row at `outputs[0]`.
+  `children[]` records exist only for inlined native/static children with their own jobs
+  (IR `instances`). A react-tier component's OWN record (tier `react`, island-host template,
+  own `ssr` job with `inputs: ["*"]`) is used only when it is a route chain entry (a react page).
+- `"*"` in `inputs` means ALL of the component's props: for a chain entry the loader context,
+  for a child instance its `child_props`. The job key hashes that whole object.
+- Every component's precompute/ssr results and `_props` (= the component's props object) live in
+  a per-component overlay, never spread into one shared context: two chain components both
+  numbering slots from `_s1` must not collide (S7 step 5 clarification).
+- `cache({ key })` job keys are scoped: the cache entry key is `(componentId, jobId, keyValue)`;
+  `cache.invalidate({ key })` removes every entry with that user key through an index.
 - The `loader` response may carry `headers` (e.g. `Set-Cookie`); a response with `Set-Cookie`
   is never stored in L1.
 - `/public/<rel>` is served from `dist/public`; hashed file names (`-<hex6+>` suffix) get
