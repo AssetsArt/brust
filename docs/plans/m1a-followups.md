@@ -72,3 +72,12 @@ Owner plan `M1b-2` means the item lands in the `m1b2-placement-tier` lane becaus
 |---|---|---|---|---|
 | F29 | `packages/runtime-dom/src/directives/for.ts:8` `SYNTAX` | `x-for`'s source is a bare member path, so an inner list whose source reads the outer loop binding (`row.cells`) cannot be reactive; every other directive already takes `path(":" bindings)?`. | Accept `path(":" bindings)?` as the source and resolve it with the row scope; compiler emits `x-for="c in _l2:row by _k2"`. | DONE — `m1d-runtime-fixes` @37cac41 (PR #116) |
 | F30 | `packages/runtime-dom/src/directives/if.ts:9` | The `x-if` template clone keeps the server-paint `hidden` attribute, so toggling true inserts an invisible element (`for.ts` strips it, `if.ts` does not). | `template.removeAttribute('hidden')`. | DONE — `m1d-runtime-fixes` @37cac41 (PR #116) |
+
+## From Dew's READY note on `m1c-lowering` @259d873 (PR #115) — gaps declared by the implementer
+
+| # | Where | Finding | Proposed fix | Owner plan |
+|---|---|---|---|---|
+| F31 | `analyze/passes/tier.rs` + `lower/template` | Spread props: a spread on a host prints nothing, a spread on a component leaves the child's props undefined; analysis only warns, so the page is silently incomplete. | Make `Attr::Spread` a Fallback (`spread-props`) → tier `react` until the template backend can expand a spread whose object shape is known. | M1e lane (small; battery row E covers it) |
+| F32 | `lower/template` wrappers | `<brust-if>` / `<brust-row>` wrappers inside `<table>`, `<select>`, `<ul>` are foster-parented by the HTML parser, so the DOM differs from the jinja text and the mismatch tripwire fires. | Put the directive on the single root element when the branch/row has one (no wrapper), and use comment anchors otherwise. | M2 (document as a known gap in the M1 exit report; battery marks table rows) |
+| F33 | `analyze/passes/deps.rs` | A guard that reads a prop for truthiness (`user && fmt(user.balance)`) contributes only `user.balance` to the job inputs, so `user = null` and `user = {}` share a cache key with different output. | When a prop root is read as a value (not only through a member chain), add the root to the inputs. | M2 |
+| F34 | server (M2) | An inlined child instance with its own precompute job reads `__<childId>_<k>[parent loop idx]`; no server runs per-instance child jobs into that key yet and no fixture exercises it. | M2 server spec: run child jobs per instance and merge under that key; add a fixture. | M2 |
