@@ -1,26 +1,28 @@
 # brust-core → brust-server port table
 Source: github.com/AssetsArt/brust `main` @ d04718f, `crates/brust-core/src/`. Copied once (2026-10-09), owned by v2; `main` fixes are NOT auto-merged — re-port by hand and bump the SHA column.
-| v2 module | source | treatment | tests (src → v2) |
-|---|---|---|---|
-| server/body.rs | server/body.rs | carry verbatim (+ item-level `#[allow(dead_code)]` "kept for parity" on `channel_body`, `response_from_framed_bytes`, `error_400/411/413/415`, unused by v2) | 7 → 7 |
-| server/tls.rs | server/tls.rs | carry verbatim | 4 → 4 |
-| server/test_data/{cert,key}.pem | server/test_data/{cert,key}.pem | carry verbatim (tls test fixtures, `include_str!`) | — |
-| server/cors.rs | server/cors.rs | carry verbatim | 20 → 20 |
-| server/static_assets.rs | server/static_assets.rs | carry verbatim | 18 → 18 |
-| http/compress.rs | http/compress.rs | carry verbatim | 5 → 5 |
-| cache/key_expr.rs | cache/key_expr.rs | carry verbatim | 22 → 22 |
-| config.rs CorsConfig | config.rs:27-78 | carry verbatim | 0 |
-| routing/routes.rs | routing/routes.rs:1-631 | adapt: RouteConfig from manifest (`RouteTable::from_manifest`, `route_index`), `cache` typed as `manifest::RouteCache`, envelopes reduced to one `RouteEnvelope` (no `kind`/`nativeTemplate`/`bypassed`) whose `req` is the loader's | 45 → 30 (16 dropped with action/mcp/sse/ws/native-template/rewrite, 1 added) |
-| cache/l1.rs | cache/response_cache.rs + server/mod.rs:1787-1798,1817-1824 (`build_cache_key`, `sort_query`) | adapt: value = JSON ctx; `invalidate_tags` returns count; tag index generation-guarded (a replace/evict of an old value no longer un-indexes the newer one) | 10 → 12 (+`build_cache_key_sorts_query_and_applies_prefix` moved from server/mod.rs:1888-1894, +`reinsert_keeps_newer_entry_tag_indexed`) |
-| cache/job_cache.rs | cache/page_cache.rs | adapt: typed key, Expiry, stats; JSON value; generation-guarded tag index shared with l1 | 9 → 12 (+`ttl_none_survives_until_invalidated`, `stats_count_hits_and_misses`, `reinsert_keeps_newer_entry_tag_indexed`) |
-| pool.rs | render/pool.rs | carry verbatim (`use` path → `crate::dispatch`; + `WorkerEntry::id()`) | 14 → 14 |
-| dispatch.rs | render/dispatch.rs + server/mod.rs:1262-1371 | adapt: CallKind, JSON response, claim_or_wait(timeout), `call_worker` (framed decode :1373-1404 and `process::exit` on last worker not carried); module doc :1-21 verbatim | 3 → 8 (+`call_worker_round_trips_json`, `call_worker_returns_bad_response_on_len_over_capacity`, `claim_or_wait_times_out_when_all_busy`, `claim_or_wait_wakes_when_claim_released`, `call_worker_keeps_slot_claimed_after_caller_drops`) |
-| protocol.rs | — (spec §1 S1 call table) | new: Loader/Jobs request+response structs | 0 → 9 |
-| tests/common/fake_bun.rs | render/dispatch.rs:107-165 (`MockDispatch` pattern) | new: `FakeBun` + `FakeBunHandle` test double (records last request per kind) | proven by tests/fake_bun.rs (2) |
-| render.rs | template/jinja.rs | adapt: owned env from manifest, no globals, no dynamic tier | 4 → 1 (+9 integration) |
-| server/mod.rs | server/mod.rs:33-442 | carry: start/Tuning/serve_io/drain; handle_request replaced by pipeline.rs (`Tuning` minus `max_action_body_bytes`; `TUNING`/`CORS` process statics dropped — tuning and resolved CORS live on `Server`, so several servers can share a process; `start(Config) -> Arc<Server>`, boot sends the bound addr) | 3 → 1 (+19 integration in tests/server.rs) |
-| config.rs Server | config.rs:82-300 | adapt: stripped AppState (pool, routes, ready, drain_*, expected_workers, generator, tls, cors + manifest, renderer, L1, job cache, call counters); no runtime setters | 6 → 0 (covered by tests/server.rs) |
-| pipeline.rs | server/mod.rs:447-833 (L1 decision :710-808 as `l1_decision`, CORS preflight :484-501, meta_cacheable :1809-1815 as the store rule) | new: S7 request order; `call_worker` made cancel-safe (claim owned by a spawned task) | 0 → 8 |
+| v2 module | source | source sha | treatment | tests (src → v2) |
+|---|---|---|---|---|
+| server/body.rs | server/body.rs | d04718f | carry verbatim (+ item-level `#[allow(dead_code)]` "kept for parity" on `channel_body`, `response_from_framed_bytes`, `error_400/411/413/415`, unused by v2) | 7 → 7 |
+| server/tls.rs | server/tls.rs | d04718f | carry verbatim | 4 → 4 |
+| server/test_data/{cert,key}.pem | server/test_data/{cert,key}.pem | d04718f | carry verbatim (tls test fixtures, `include_str!`) | — |
+| server/cors.rs | server/cors.rs | d04718f | carry verbatim | 20 → 20 |
+| server/static_assets.rs | server/static_assets.rs | d04718f | carry verbatim | 18 → 18 |
+| http/compress.rs | http/compress.rs | d04718f | carry verbatim | 5 → 5 |
+| cache/key_expr.rs | cache/key_expr.rs | d04718f | carry verbatim | 22 → 22 |
+| config.rs CorsConfig | config.rs:27-78 | d04718f | carry verbatim | 0 |
+| routing/routes.rs | routing/routes.rs:1-631 | d04718f | adapt: RouteConfig from manifest (`RouteTable::from_manifest`, `route_index`), `cache` typed as `manifest::RouteCache`, envelopes reduced to one `RouteEnvelope` (no `kind`/`nativeTemplate`/`bypassed`) whose `req` is the loader's | 45 → 30 (16 dropped with action/mcp/sse/ws/native-template/rewrite, 1 added) |
+| cache/l1.rs | cache/response_cache.rs + server/mod.rs:1787-1798,1817-1824 (`build_cache_key`, `sort_query`) | d04718f | adapt: value = JSON ctx; `invalidate_tags` returns count; tag index generation-guarded (a replace/evict of an old value no longer un-indexes the newer one) | 10 → 12 (+`build_cache_key_sorts_query_and_applies_prefix` moved from server/mod.rs:1888-1894, +`reinsert_keeps_newer_entry_tag_indexed`) |
+| cache/job_cache.rs | cache/page_cache.rs | d04718f | adapt: typed key, Expiry, stats; JSON value; generation-guarded tag index shared with l1 | 9 → 12 (+`ttl_none_survives_until_invalidated`, `stats_count_hits_and_misses`, `reinsert_keeps_newer_entry_tag_indexed`) |
+| pool.rs | render/pool.rs | d04718f | carry verbatim (`use` path → `crate::dispatch`; + `WorkerEntry::id()`) | 14 → 14 |
+| dispatch.rs | render/dispatch.rs + server/mod.rs:1262-1371 | d04718f | adapt: CallKind, JSON response, claim_or_wait(timeout), `call_worker` (framed decode :1373-1404 and `process::exit` on last worker not carried); module doc :1-21 verbatim | 3 → 8 (+`call_worker_round_trips_json`, `call_worker_returns_bad_response_on_len_over_capacity`, `claim_or_wait_times_out_when_all_busy`, `claim_or_wait_wakes_when_claim_released`, `call_worker_keeps_slot_claimed_after_caller_drops`) |
+| protocol.rs | — (spec §1 S1 call table) | — (new; spec @ v2) | new: Loader/Jobs request+response structs | 0 → 9 |
+| tests/common/fake_bun.rs | render/dispatch.rs:107-165 (`MockDispatch` pattern) | d04718f | new: `FakeBun` + `FakeBunHandle` test double (records last request per kind) | proven by tests/fake_bun.rs (2) |
+| render.rs | template/jinja.rs | d04718f | adapt: owned env from manifest, no globals, no dynamic tier | 4 → 1 (+9 integration) |
+| server/mod.rs | server/mod.rs:33-442 | d04718f | carry: start/Tuning/serve_io/drain; handle_request replaced by pipeline.rs (`Tuning` minus `max_action_body_bytes`; `TUNING`/`CORS` process statics dropped — tuning and resolved CORS live on `Server`, so several servers can share a process; `start(Config) -> Arc<Server>`, boot sends the bound addr) | 3 → 1 (+19 integration in tests/server.rs) |
+| config.rs Server | config.rs:82-300 | d04718f | adapt: stripped AppState (pool, routes, ready, drain_*, expected_workers, generator, tls, cors + manifest, renderer, L1, job cache, call counters); no runtime setters | 6 → 0 (covered by tests/server.rs) |
+| pipeline.rs | server/mod.rs:447-833 (L1 decision :710-808 as `l1_decision`, CORS preflight :484-501, meta_cacheable :1809-1815 as the store rule) | d04718f | new: S7 request order; `call_worker` made cancel-safe (claim owned by a spawned task); one `brust::request` info line per page request (route, status, cache, bun_calls, dur_ms), `debug` for ping/stats/static | 0 → 8 (+1 tests/logging.rs, +2 tests/busy.rs) |
+| manifest.rs | — (spec §3 S6) | — (new; spec @ v2) | new: serde model of `dist/manifest.json`, fail-closed boot checks (version, unknown chain id, missing template/chunk, `UncoveredInput`, `BadPath`) | 0 (+6 tests/manifest.rs) |
+| inputs.rs | — (spec §5 S10) | — (new; spec @ v2) | new: dotted-path/`[idx]` evaluation, projection, blake3 canonical job keys (F33) | 0 → 7 (+7 tests/inputs.rs) |
 Not carried (spec S2): cache/island_cache.rs, render/stream.rs, realtime/*, routing/action.rs, `/_brust/islands`, `/_brust/page`, MCP, SSE/WS, AI, `handle_action`, `dispatch_streaming`, `spawn_chunk_pump`.
 
 ## routes.rs: dropped tests (16)
@@ -33,3 +35,15 @@ Adapted: `render_envelope_has_kind_discriminant` → `route_envelope_serializes_
 2. `children[].props` maps each child prop name → a parent-context path, with the literal `[idx]` standing for the current row of the `per-row` list (`"move": "pokemon.moves[idx]"`). It must cover the root segment of every `inputs` entry of the child's jobs; boot fails with `ManifestError::UncoveredInput` otherwise.
 3. `jobs[].inputs` are relative to the component's props (`"item.price"`, as the M1 IR emits); a leading `props.` segment (spec §3 example) is accepted and stripped.
 4. `k` in `__<childId>_<k>` is the 1-based ordinal of that child id within `children` (template order).
+
+`children[].instances` (ruling 24e8bf17): the wire form is the STRING only — `"static"` or `"per-row:<list path>"`. The withdrawn object form `{k, per_instance}` is rejected at boot (`manifest.rs` `Instances` deserializer). `k` is never on the wire; the server derives it as in note 4.
+
+## v2 decisions beyond the plan
+- **Generation-stamped tag index** (`cache/l1.rs`, `cache/job_cache.rs`): each insert stamps a fresh generation; moka's eviction listener prunes a tag-index slot only if its generation matches the evicted value, so replacing a key no longer un-indexes the newer entry (0.1.x pruned unconditionally).
+- **Cancel-safe `call_worker`** (`dispatch.rs`): once claimed, the call, bounds check and parse run in a spawned task that owns the `RenderClaim`; a dropped request future cannot free a SAB slot JS may still be writing.
+- **L1 `EvalCtx` last-wins + BYPASS rules** (`pipeline.rs` `l1_decision`): header/cookie/query lists collapse to the last value per name; a case-insensitive name collision in any of them, or a query name repeated after decoding, bypasses L1 (read and write), so the key never diverges from what the loader reads.
+- **Reserved loader keys dropped** (`pipeline.rs` `merge_loader_data`): loader `data` keys starting `__` or `_ssr_` (server slots: `__outlet`, `__<id>_<k>`, `_ssr_<id>`) are dropped with a `warn`; other keys override the context.
+- **`cache.key` formatting** (`pipeline.rs` `plan_key`): `cache.key` is a props path; a string value keys as `"k:"+raw`, any other non-null value as `"k:"+canonical JSON`; null/unset falls back to the hashed inputs key.
+- **`BadPath` boot validation** (`manifest.rs` `check_paths`): every job `inputs`, `cache.key`, `per_instance`, child `instances` list path and child `props` path is parsed at load; a malformed one (or `[idx]` outside a per-row child's props) fails boot with `ManifestError::BadPath` instead of 500-ing every request.
+- **`/_brust/` limited** (`pipeline.rs` `safe_rel`): `/_brust/<rel>` serves only `client/<file>` where `<file>` passes `is_safe_island_filename` (.js) or `is_safe_css_filename` (.css); `manifest.json`, `jobs.js` and `jinja/` in `dist/` are never served. `/public/<rel>` serves `dist/public` with per-segment checks.
+- **Static child ssr at top level** (`pipeline.rs` `merge_result`): a static (non-per-row) child's `ssr` job value is written both into its `__<id>_<k>` cell and at the top-level `_ssr_<id>` the parent template's island host prints.

@@ -90,17 +90,30 @@ pub(crate) async fn handle(req: Request<Incoming>, s: Arc<Server>) -> Response<R
         return body::error_405();
     }
     if path_only == "/ping" {
+        tracing::debug!(target: "brust::request", path = path_only, status = 200u16, "ping");
         return body::resp(200, "text/plain", &[], b"pong\n".to_vec());
     }
     if path_only == "/_brust/cache/stats" {
+        tracing::debug!(target: "brust::request", path = path_only, status = 200u16, "stats");
         let json = serde_json::to_vec(&s.stats()).unwrap_or_else(|_| b"{}".to_vec());
         return body::resp(200, "application/json", &[], json);
     }
-    if let Some(rel) = path_only.strip_prefix("/_brust/") {
-        return static_file(&s, StaticRoot::Brust, rel, headers, head).await;
-    }
-    if let Some(rel) = path_only.strip_prefix("/public/") {
-        return static_file(&s, StaticRoot::Public, rel, headers, head).await;
+    let static_root = if let Some(rel) = path_only.strip_prefix("/_brust/") {
+        Some((StaticRoot::Brust, rel))
+    } else {
+        path_only
+            .strip_prefix("/public/")
+            .map(|rel| (StaticRoot::Public, rel))
+    };
+    if let Some((root, rel)) = static_root {
+        let resp = static_file(&s, root, rel, headers, head).await;
+        tracing::debug!(
+            target: "brust::request",
+            path = path_only,
+            status = resp.status().as_u16(),
+            "static"
+        );
+        return resp;
     }
 
     let t0 = std::time::Instant::now();
