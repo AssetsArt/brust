@@ -194,16 +194,21 @@ pub fn js_number(n: f64) -> String {
 /// Escapes text content: `& < > " '`.
 pub fn escape_text(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&#39;"),
-            c => out.push(c),
-        }
+    let mut last = 0;
+    for (i, b) in s.bytes().enumerate() {
+        let rep = match b {
+            b'&' => "&amp;",
+            b'<' => "&lt;",
+            b'>' => "&gt;",
+            b'"' => "&quot;",
+            b'\'' => "&#39;",
+            _ => continue,
+        };
+        out.push_str(&s[last..i]);
+        out.push_str(rep);
+        last = i + 1;
     }
+    out.push_str(&s[last..]);
     out
 }
 
@@ -634,6 +639,22 @@ mod tests {
             escape_text("a\"b</script>&'"),
             "a&quot;b&lt;/script&gt;&amp;&#39;"
         );
+        // Byte scan == the char-by-char table: multi-byte text, runs at both
+        // ends, adjacent specials, empty.
+        for s in ["", "&", "plain", "ไทย<é>😀&'\"", "<<>>", "x&y", "é"] {
+            let want: String = s
+                .chars()
+                .map(|c| match c {
+                    '&' => "&amp;".to_string(),
+                    '<' => "&lt;".to_string(),
+                    '>' => "&gt;".to_string(),
+                    '"' => "&quot;".to_string(),
+                    '\'' => "&#39;".to_string(),
+                    c => c.to_string(),
+                })
+                .collect();
+            assert_eq!(escape_text(s), want, "{s:?}");
+        }
         assert_eq!(
             render("{{ x | e }}", minijinja::context! { x => "a\"b</script>" }),
             "a&quot;b&lt;/script&gt;"
