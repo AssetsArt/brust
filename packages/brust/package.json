@@ -24,7 +24,7 @@
     "build": "napi build --platform --release --js index.js --dts index.d.ts --manifest-path ../../crates/brust-napi/Cargo.toml --output-dir native",
     "build:debug": "napi build --platform --js index.js --dts index.d.ts --manifest-path ../../crates/brust-napi/Cargo.toml --output-dir native",
     "test": "bun test",
-    "typecheck": "tsc --noEmit -p .",
+    "typecheck": "bun check",
     "build:target": "napi build --platform --release --js index.js --dts index.d.ts --manifest-path ../../crates/brust-napi/Cargo.toml --output-dir native"
   },
   "napi": {

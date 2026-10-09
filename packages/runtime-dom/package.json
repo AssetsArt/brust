@@ -10,7 +10,7 @@
   },
   "scripts": {
     "test": "bun test",
-    "typecheck": "tsc --noEmit -p .",
+    "typecheck": "bun check",
     "build": "bun scripts/build.ts"
   },
   "dependencies": {},

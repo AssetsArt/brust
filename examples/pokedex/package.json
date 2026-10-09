@@ -8,7 +8,7 @@
     "start": "brust start",
     "snapshot": "bun scripts/snapshot.ts",
     "test": "bun test",
-    "typecheck": "tsc --noEmit -p ."
+    "typecheck": "bun check"
   },
   "dependencies": {
     "@brust/core": "workspace:*",

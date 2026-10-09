@@ -28,7 +28,7 @@ jobs:
         with: { toolchain: nightly-2026-09-15, components: "rust-src", targets: "${{ matrix.target }}" }
       - uses: Swatinem/rust-cache@v2
       - uses: oven-sh/setup-bun@v2
-        with: { bun-version: "1.4.2" }
+        with: { bun-version: "canary" }
       - run: bun install --frozen-lockfile
       - name: Setup zig (cross legs; plain tarball, no node20 action — 0.1.x release.yml:95-106)
         if: matrix.setup_zig
@@ -52,7 +52,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with: { toolchain: nightly-2026-09-15, components: "rust-src" }
       - uses: oven-sh/setup-bun@v2
-        with: { bun-version: "1.4.2" }
+        with: { bun-version: "canary" }
       - run: bun install --frozen-lockfile
       - name: Generate the loader (index.js + index.d.ts) on the host
         run: cd packages/brust && bun run build:debug
@@ -89,7 +89,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with: { toolchain: nightly-2026-09-15, components: "rust-src" }
       - uses: oven-sh/setup-bun@v2
-        with: { bun-version: "1.4.2" }
+        with: { bun-version: "canary" }
       - run: bun install --frozen-lockfile
       - run: cd packages/brust && bun run build:debug
       - uses: actions/download-artifact@v4
