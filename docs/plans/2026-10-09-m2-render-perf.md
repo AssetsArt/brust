@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-owner: 22499151-e133-4508-b358-d7fa4d2851c3 (Detoro) · authority: in-loop · base: `v2` after `m2e-pokedex-exit` merges (the lead fills the sha in the dispatch note)
+owner: 22499151-e133-4508-b358-d7fa4d2851c3 (Detoro) · authority: in-loop · base: `v2` @5adf780 (m2e merged)
 
 **Goal:** Meet the M2 bench bar — v2 not slower than 0.1.x on probes A (static hit), B (native miss) and C (react child), measured with `Accept-Encoding: identity` on both sides — by removing the render-path costs knock2's A/B exposed (bench/RESULTS.md on the m2e lane: A −48.9 %, B −71.7 %, C −78 %; identity vs gzip alone doubles rps), without changing any rendered byte.
 
