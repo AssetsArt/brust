@@ -435,3 +435,36 @@ fn single_component_row_carries_x_for_on_the_child_root() {
     );
     assert!(!jinja.contains("<brust-row"), "{jinja}");
 }
+
+/// A prop read only as `list.length` seeds the count, not the list (its items stay on the server).
+#[test]
+fn list_length_seeds_the_count_and_not_the_items() {
+    let jinja = lowered_jinja("table-rows");
+    let html = render(
+        &jinja,
+        serde_json::json!({ "rows": [{ "id": "a", "name": "secret-a" }, { "id": "b", "name": "B" }] }),
+    );
+    let props = html
+        .split("x-props='")
+        .nth(1)
+        .unwrap()
+        .split('\'')
+        .next()
+        .unwrap();
+    assert_eq!(
+        props.replace("&quot;", "\""),
+        r#"{"rows":{"length":2}}"#,
+        "{html}"
+    );
+    assert!(
+        !html
+            .split("x-props='")
+            .nth(1)
+            .unwrap()
+            .split('\'')
+            .next()
+            .unwrap()
+            .contains("secret"),
+        "{html}"
+    );
+}

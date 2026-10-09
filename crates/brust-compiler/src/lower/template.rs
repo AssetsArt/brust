@@ -1139,6 +1139,14 @@ impl SeedNode {
                 "{{{}}}",
                 f.iter()
                     .map(|(k, n)| {
+                        // `list.length` is not a key of the seeded JSON: seed the count only,
+                        // never the list (its items may be data the page does not show).
+                        if k == "length" && matches!(n, SeedNode::Whole) {
+                            return format!(
+                                "{}: (({base} | length) if {base} is defined and {base} is not none else none)",
+                                jinja_string(k)
+                            );
+                        }
                         let at = format!("({base})[{}]", jinja_string(k));
                         format!("{}: {}", jinja_string(k), n.jinja(&at))
                     })

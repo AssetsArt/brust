@@ -251,9 +251,6 @@ impl Walker<'_> {
             RawKind::Ident { name, kind } => self.ident(name, kind, out),
             RawKind::Member { target, .. } => match prop_path(e) {
                 Some(p) => {
-                    // `list.length` is not a field of the JSON the client is seeded with (nor of
-                    // the job inputs): it reads the whole value.
-                    let p = p.strip_suffix(".length").map_or(p.clone(), str::to_string);
                     out.props.insert(p);
                 }
                 None => self.raw(target, out),
