@@ -1,0 +1,215 @@
+{
+  "id": "input_135770e2",
+  "source": "tests/fixtures/use-id/input.tsx",
+  "tier": "Native",
+  "props": [
+    {
+      "name": "props",
+      "local": "props",
+      "ts_type": null,
+      "default": null
+    }
+  ],
+  "state": [
+    {
+      "name": "v",
+      "setter": "setV",
+      "init": {
+        "Server": {
+          "loc": 148,
+          "kind": {
+            "Lit": {
+              "Str": ""
+            }
+          }
+        }
+      }
+    }
+  ],
+  "derived": [],
+  "effects": [],
+  "handlers": [
+    {
+      "name": "_h1",
+      "body": {
+        "loc": 262,
+        "kind": {
+          "Arrow": {
+            "params": [
+              "e"
+            ],
+            "body": {
+              "Expr": {
+                "loc": 269,
+                "kind": {
+                  "Call": {
+                    "callee": {
+                      "loc": 269,
+                      "kind": {
+                        "Ident": {
+                          "name": "setV",
+                          "kind": "Setter"
+                        }
+                      }
+                    },
+                    "args": [
+                      {
+                        "loc": 274,
+                        "kind": {
+                          "Member": {
+                            "target": {
+                              "loc": 274,
+                              "kind": {
+                                "Member": {
+                                  "target": {
+                                    "loc": 274,
+                                    "kind": {
+                                      "Ident": {
+                                        "name": "e",
+                                        "kind": "Local"
+                                      }
+                                    }
+                                  },
+                                  "name": "target",
+                                  "optional": false
+                                }
+                              }
+                            },
+                            "name": "value",
+                            "optional": false
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "captures": [
+              [
+                "setV",
+                "Setter"
+              ]
+            ]
+          }
+        }
+      },
+      "item_scoped": []
+    }
+  ],
+  "refs": [],
+  "id_bindings": [
+    "id"
+  ],
+  "use_id_slots": 1,
+  "template": {
+    "Element": {
+      "loc": 167,
+      "tag": "div",
+      "attrs": [],
+      "children": [
+        {
+          "Element": {
+            "loc": 179,
+            "tag": "label",
+            "attrs": [
+              {
+                "Dynamic": {
+                  "name": "htmlFor",
+                  "value": {
+                    "Server": {
+                      "loc": 195,
+                      "kind": {
+                        "Ident": {
+                          "name": "id",
+                          "kind": "Local"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "children": [
+              {
+                "Slot": {
+                  "Server": {
+                    "loc": 200,
+                    "kind": {
+                      "Ident": {
+                        "name": "label",
+                        "kind": "Prop"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 227,
+            "tag": "input",
+            "attrs": [
+              {
+                "Dynamic": {
+                  "name": "id",
+                  "value": {
+                    "Server": {
+                      "loc": 238,
+                      "kind": {
+                        "Ident": {
+                          "name": "id",
+                          "kind": "Local"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "Dynamic": {
+                  "name": "value",
+                  "value": {
+                    "Server": {
+                      "loc": 249,
+                      "kind": {
+                        "Ident": {
+                          "name": "v",
+                          "kind": "State"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "Event": {
+                  "event": "change",
+                  "handler": "_h1"
+                }
+              }
+            ],
+            "children": [],
+            "host": false,
+            "ref_name": null
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": false,
+  "cache": null,
+  "children": [],
+  "diagnostics": []
+}

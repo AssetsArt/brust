@@ -56,6 +56,14 @@ pub fn chunk(ir: &ComponentIR, members: &[Member], runtime_import: &str) -> (Str
     let mut decls: Vec<(u32, String)> = Vec::new();
     let mut uses_signal = false;
     let mut uses_computed = false;
+    // `useId` values arrive from the server in the host's `x-props` (`_id{k}`, S7 step 6). They are
+    // read from the attribute once, not from `props()`: an `x-props-bind` link replaces the props.
+    for (k, name) in ir.id_bindings.iter().enumerate() {
+        decls.push((
+            0,
+            format!("const {name} = JSON.parse(__el.getAttribute(\"x-props\") ?? \"{{}}\")._id{k}"),
+        ));
+    }
     for (i, s) in ir.state.iter().enumerate() {
         let init = inits[i]
             .as_ref()

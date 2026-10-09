@@ -281,6 +281,7 @@ fn read_function(
     ir.effects = body.effects;
     ir.handlers = body.handlers;
     ir.refs = body.refs;
+    ir.use_id_slots = body.id_bindings.len();
     ir.id_bindings = body.id_bindings;
     ir.diagnostics.extend(body.diagnostics);
     let root_loc = match &body.return_expr {

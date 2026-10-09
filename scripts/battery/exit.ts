@@ -9,7 +9,6 @@ export const KNOWN_GAP_ROWS: Record<string, { ledger: string; observed: Expect }
   'a-nested-list': { ledger: 'F32', observed: 'static' },
   'e-if-in-table': { ledger: 'F32', observed: 'native' },
   'b-memo': { ledger: 'F37', observed: 'react' },
-  'c-useid': { ledger: 'F39', observed: 'react' },
 }
 /** Rows that must produce an `Error` diagnostic and refuse to build. */
 export const ERROR_ROWS = ['e-function-prop-react-child', 'e-server-only-handler', 'e-request-prop', 'e-missing-key'] as const

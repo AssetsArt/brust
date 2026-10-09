@@ -71,9 +71,11 @@ struct Placer<'s> {
     /// that reads state, an event, a function prop): a `For` whose body bumps
     /// it is rebuilt by the client, so its source is client-read.
     reactive: u32,
-    /// Body locals that are not values the template can bind: refs and
-    /// `useId` results (`name`, rule).
+    /// Body locals that are not values the template can bind: refs (`name`, rule).
     unplaceable: HashMap<String, &'static str>,
+    /// `useId()` bindings: server-seeded values (`_idN`, S7 step 6). Template-only:
+    /// a job cannot read them, so a non-template expression reading one falls back.
+    ids: BTreeSet<String>,
     flagged: BTreeSet<&'static str>,
     loop_scope: Vec<String>,
     diagnostics: Vec<Diagnostic>,
@@ -101,12 +103,8 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState) {
             .refs
             .iter()
             .map(|r| (r.name.clone(), "ref-in-render"))
-            .chain(
-                ir.id_bindings
-                    .iter()
-                    .map(|i| (i.clone(), "use-id-in-render")),
-            )
             .collect(),
+        ids: ir.id_bindings.iter().cloned().collect(),
         flagged: BTreeSet::new(),
         loop_scope: Vec::new(),
         diagnostics: Vec::new(),
@@ -324,6 +322,9 @@ impl Placer<'_> {
         if let Some(p) = self.places.get(name) {
             return Some(p.clone());
         }
+        if self.ids.contains(name) {
+            return Some(Place::Server);
+        }
         let raw = self.derived_raw.get(name)?.clone();
         if self.visiting.iter().any(|v| v == name) {
             return Some(Place::Code);
@@ -339,6 +340,10 @@ impl Placer<'_> {
             Place::Code
         } else if try_server(&raw).is_ok() && self.locals_placed(&raw) {
             Place::Server
+        } else if self.reads_id(&raw) {
+            // A job cannot read a `useId` value.
+            self.flag_use_id(raw.loc);
+            Place::Code
         } else {
             // Placing it reaches its locals too, so they are slots or template
             // variables the job and the template can bind.
@@ -422,13 +427,9 @@ impl Placer<'_> {
             if self.flagged.insert(rule) {
                 self.diagnostics.push(Diagnostic::fallback(
                     rule,
-                    if rule == "ref-in-render" {
-                        "a ref is read during render"
-                    } else {
-                        "a useId value is read during render (not supported natively yet)"
-                    },
+                    "a ref is read during render",
                     r.loc,
-                    "read refs in effects and handlers; for ids use a prop",
+                    "read refs in effects and handlers",
                 ));
             }
             return Expr::Raw(r.clone());
@@ -458,8 +459,30 @@ impl Placer<'_> {
         if try_server(r).is_ok() && self.locals_placed(r) {
             return Expr::Server(crate::ir::ServerExpr(r.clone()));
         }
+        if self.reads_id(r) {
+            self.flag_use_id(r.loc);
+            return Expr::Raw(r.clone());
+        }
         self.locals_placed(r);
         self.slot(r)
+    }
+
+    /// `e` reads a `useId` binding directly.
+    fn reads_id(&self, e: &RawExpr) -> bool {
+        let mut names = BTreeSet::new();
+        direct_locals(e, &mut names);
+        names.iter().any(|n| self.ids.contains(n))
+    }
+
+    fn flag_use_id(&mut self, loc: u32) {
+        if self.flagged.insert("use-id-in-render") {
+            self.diagnostics.push(Diagnostic::fallback(
+                "use-id-in-render",
+                "a useId value is read by an expression the template cannot evaluate on its own",
+                loc,
+                "use the id only as an attribute value or text, or pass it as a prop",
+            ));
+        }
     }
 
     /// A prop passed to a child: functions are client-only, values are painted.

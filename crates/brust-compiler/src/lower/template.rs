@@ -148,6 +148,13 @@ impl<'a, 'c> Printer<'a, 'c> {
     fn preamble(&mut self) {
         let ir = self.f.ir;
         let mut decls: Vec<(u32, String)> = Vec::new();
+        // `useId` values: seeded by the server (`_id{k}`), before anything that reads them.
+        for (k, name) in ir.id_bindings.iter().enumerate() {
+            decls.push((
+                0,
+                format!("{{% set {name}{} = {} %}}", self.suffix(), self.id_ref(k)),
+            ));
+        }
         for (i, s) in ir.state.iter().enumerate() {
             let loc = self.f.structural.state[i]
                 .init
@@ -178,6 +185,14 @@ impl<'a, 'c> Printer<'a, 'c> {
             self.out.push_str(&line);
             self.out.push('\n');
         }
+    }
+
+    /// The server-seeded `useId` value `k` of this component instance.
+    fn id_ref(&self, k: usize) -> String {
+        if self.blank {
+            return UNDEFINED.into();
+        }
+        self.slot_ref(&format!("_id{k}"), false)
     }
 
     fn derived_var(&self, name: &str) -> String {
@@ -221,6 +236,8 @@ impl<'a, 'c> Printer<'a, 'c> {
             }
             IdentKind::Local => Some(if self.f.derived.contains_key(name) {
                 self.derived_var(name)
+            } else if self.f.ir.id_bindings.iter().any(|i| i == name) {
+                format!("{name}{}", self.suffix())
             } else {
                 UNDEFINED.into()
             }),
@@ -542,6 +559,19 @@ impl<'a, 'c> Printer<'a, 'c> {
                 })
                 .collect()
         };
+        // The client reads its `useId` values from props (`_id{k}`).
+        let ids: Vec<String> = (0..ir.id_bindings.len())
+            .map(|k| format!("\"_id{k}\": {}", self.id_ref(k)))
+            .collect();
+        if seed.contains("*") && !ids.is_empty() {
+            self.diagnostics.push(Diagnostic::error(
+                "lower-shape",
+                "a component that reads its whole props object cannot also seed useId values",
+                0,
+                "destructure the props",
+            ));
+        }
+        let dict: Vec<String> = dict.into_iter().chain(ids).collect();
         if seed.contains("*") {
             let all = match &self.inline {
                 None => "_props".to_string(),
@@ -1042,6 +1072,7 @@ impl<'a, 'c> Printer<'a, 'c> {
         let Some(mut p) = Printer::new(child_ir, self.ctx, Some(inline), self.loop_var) else {
             return;
         };
+        p.blank = self.blank;
         p.native = !matches!(child_ir.tier, Tier::Static) || bind.is_some();
         p.inline_host = Some((child_ir.id.clone(), bind));
         p.preamble();

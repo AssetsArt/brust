@@ -101,18 +101,24 @@ fn slots_in_a_stateful_list_are_state_dependent() {
     assert_eq!(ir.client_props, ["initial"]);
 }
 
-/// Finding 5: refs and useId values read during render are not job code.
+/// F39: useId is a server-seeded value, not a fallback.
 #[test]
-fn ref_and_use_id_in_render_fall_back() {
+fn use_id_is_seeded_from_the_server_context() {
     let ir = analyze(
-        "import { useId } from 'react'\nexport default function P() { const id = useId(); return <label htmlFor={id}>x</label> }",
+        "import { useId, useState } from 'react'\nexport default function Field(props: { label: string }) { const id = useId(); const [v, setV] = useState(''); return <div><label htmlFor={id}>{props.label}</label><input id={id} value={v} onChange={e => setV(e.target.value)} /></div> }",
     );
-    assert!(rules(&ir).contains(&(DiagClass::Fallback, "use-id-in-render".into())));
+    assert_eq!(ir.use_id_slots, 1);
     assert!(
-        ir.jobs
-            .iter()
-            .all(|j| !matches!(j.kind, JobKind::Precompute))
+        !rules(&ir).iter().any(|(_, r)| r == "use-id-in-render"),
+        "{:?}",
+        rules(&ir)
     );
+    assert!(matches!(ir.tier, Tier::Native { .. }), "{:?}", ir.tier);
+}
+
+/// Finding 5: refs read during render are not job code.
+#[test]
+fn ref_in_render_falls_back() {
     let ir = analyze(
         "import { useRef } from 'react'\nexport default function P() { const r = useRef(1); return <p ref={r}>{r.current}</p> }",
     );

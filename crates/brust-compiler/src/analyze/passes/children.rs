@@ -24,6 +24,7 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
         loop_scope: Vec::new(),
         lists: Vec::new(),
         items: Vec::new(),
+        list_uses: Vec::new(),
         ssr_outputs: HashMap::new(),
     };
     let mut template = std::mem::replace(&mut ir.template, Node::Fragment(vec![]));
@@ -48,6 +49,8 @@ struct Walker<'s, 'c> {
     lists: Vec<(Vec<String>, bool)>,
     /// Item bindings of the enclosing `For`s, innermost last.
     items: Vec<String>,
+    /// The enclosing `For` sources as client reads, used when a linked child sits in the row.
+    list_uses: Vec<super::ClientUse>,
     ssr_outputs: HashMap<String, u32>,
 }
 
@@ -89,10 +92,25 @@ impl Walker<'_, '_> {
                 let n = self.loop_scope.len();
                 self.loop_scope.push(item.clone());
                 self.loop_scope.extend(index.iter().cloned());
+                let raw = match &*source {
+                    Expr::Server(ServerExpr(r)) => Some(r.clone()),
+                    Expr::Precomputed { slot, .. } => {
+                        self.st.slots.get(slot).map(|i| i.raw.clone())
+                    }
+                    _ => None,
+                };
+                let use_ = super::ClientUse {
+                    loc: raw.as_ref().map_or(0, |r| r.loc),
+                    deps: self.deps_of(source),
+                    what: "a list the client updates",
+                    raw: raw.map(|r| (r, self.loop_scope[..n].to_vec())),
+                };
                 self.lists.push(src);
+                self.list_uses.push(use_);
                 self.items.push(item.clone());
                 body.iter_mut().for_each(|c| self.node(c));
                 self.items.pop();
+                self.list_uses.pop();
                 self.lists.pop();
                 self.loop_scope.truncate(n);
             }
@@ -360,6 +378,8 @@ impl Walker<'_, '_> {
                         || !d.loop_bindings.is_empty()
                 });
                 if needs_link {
+                    // The parent chunk rebuilds the row's `_pN` from the list: it reads the source.
+                    self.st.client_uses.extend(self.list_uses.iter().cloned());
                     let id = self.links.len() as u32 + 1;
                     for (_, v) in props.iter() {
                         // The parent chunk computes `_pN`: every prop is a client read.

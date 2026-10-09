@@ -9,10 +9,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 18 | 13 | 3 | 2 | 0 | 0 | 0 | 0 |
 | B Composition | 11 | 4 | 2 | 5 | 0 | 0 | 0 | 0 |
-| C Hooks | 14 | 0 | 7 | 7 | 0 | 0 | 0 | 0 |
+| C Hooks | 14 | 1 | 7 | 6 | 0 | 0 | 0 | 0 |
 | D API surface | 5 | 1 | 0 | 4 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 13 | 3 | 4 | 1 | 4 | 1 | 0 | 0 |
-| **Total** | 61 | 21 | 16 | 19 | 4 | 1 | 0 | 0 |
+| **Total** | 61 | 22 | 16 | 18 | 4 | 1 | 0 | 0 |
 
 ## A. JSX basics
 
@@ -62,7 +62,7 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | c-usememo | useMemo derived from state | native | native | 0 | ok | — | spec §4.3 useMemo |
 | c-usecallback | useCallback handler | native | native | 0 | ok | — | spec §4.3 useCallback |
 | c-useref | useRef bound with ref= | native | native | 0 | ok | — | spec §4.3 useRef |
-| c-useid | useId read in render | native | react | ssr | ok | fallback:use-id-in-render | §4.3 says server generates, client reads it from the DOM; known gap: F39: M1 decision (finding 5): a useId value read in render falls back (use-id-in-render); server-generated ids need the M2 server (spec §13 (a); docs/plans/2026-10-08-m1b2-placement-tier.md:206) |
+| c-useid | useId read in render | static | static | 0 | ok | — | spec §4.3 useId: the server seeds _id0 (F39); no state or handler, so the tier is static |
 | c-uselayouteffect | useLayoutEffect | native | native | 0 | ok | — | spec §4.3 useLayoutEffect |
 | c-usereducer | useReducer | react | react | ssr | ok | fallback:hook-unsupported |  |
 | c-usecontext | useContext | react | react | ssr | ok | fallback:hook-unsupported |  |

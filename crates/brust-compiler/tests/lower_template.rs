@@ -332,3 +332,52 @@ fn react_page_gets_the_island_host_around_its_ssr_slot() {
         "{jinja}"
     );
 }
+
+/// F39: `useId()` reads the server-seeded `_id0`; the client gets it through props.
+#[test]
+fn use_id_is_seeded_in_the_template_and_the_client_props() {
+    let (jinja, client) = lower(
+        "import { useId, useState } from 'react'\nexport default function Field(props: { label: string }) { const id = useId(); const [v, setV] = useState(''); return <div><label htmlFor={id}>{props.label}</label><input id={id} value={v} onChange={e => setV(e.target.value)} /></div> }",
+    );
+    assert!(jinja.contains("{% set id = _id0 %}"), "{jinja}");
+    assert!(
+        jinja.contains("for=\"{{ id | attr_str | e }}\"")
+            || jinja.contains("for=\"{{ (id) | attr_str | e }}\""),
+        "{jinja}"
+    );
+    assert!(
+        jinja.contains("\"_id0\": _id0"),
+        "x-props carries the id: {jinja}"
+    );
+    assert!(client.contains("._id0"), "{client}");
+    let html = render(
+        &jinja,
+        serde_json::json!({ "label": "L", "_id0": "brust-r-0-0" }),
+    );
+    assert!(
+        html.contains("for=\"brust-r-0-0\"") && html.contains("id=\"brust-r-0-0\""),
+        "{html}"
+    );
+}
+
+/// F39: a child with `useId` inside a keyed row gets one id per row, read from the instance's
+/// per-row slot object (`__<child>_<k>[row]["_id0"]`), so ids differ per row and the server owns them.
+#[test]
+fn use_id_in_a_keyed_row_is_indexed_by_the_loop_path() {
+    let jinja = lowered_jinja("use-id-row");
+    assert!(
+        jinja.contains("{% set id_") && jinja.contains("[_i1][\"_id0\"]"),
+        "{jinja}"
+    );
+    let html = render(
+        &jinja,
+        serde_json::json!({
+            "fields": [{ "key": "a", "label": "A" }, { "key": "b", "label": "B" }],
+            "__field_603ad356_1": [{ "_id0": "id-a" }, { "_id0": "id-b" }],
+        }),
+    );
+    assert!(
+        html.contains("for=\"id-a\"") && html.contains("for=\"id-b\""),
+        "{html}"
+    );
+}
