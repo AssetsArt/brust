@@ -319,6 +319,16 @@ of a native page):
   its chain entry has a one-element template `{{ _ssr_<id> | safe }}` plus the host wrapper;
   no streaming.
 
+**S12 amendments (2026-10-09, rulings on Mellow's m2c review):** (a) `useId` inside react
+islands: both `renderToString` and `hydrateRoot` receive `identifierPrefix` = the island's
+component id, so ids never collide between DIFFERENT islands on a page; collisions between
+instances of the SAME component (rows) remain in M2 (ledger F63, M3: per-instance prefix carried
+through the job call and the host). (b) A `client_only` island's chunk uses
+`createRoot(host).render(...)`, never `hydrateRoot` (its host is painted empty by design).
+(c) Process policy for `brust start`: a worker that exits, and any unhandled rejection or
+uncaught exception on the main thread, is fatal — log, begin drain, exit non-zero (no respawn in
+M2; the supervisor restarts). Worker handlers themselves never reject (verified).
+
 Function props to a react child remain an `Error` (spec §3.2); the battery row
 `e-function-prop-react-child` already pins it.
 
