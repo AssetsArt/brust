@@ -319,14 +319,16 @@ pub const URL_ATTRS: &[&str] = &[
     "ping",
 ];
 
+/// Case-insensitive: HTML attribute names are (`HREF` is `href`).
 pub fn is_url_attr(html_name: &str) -> bool {
-    URL_ATTRS.contains(&html_name)
+    URL_ATTRS.contains(&html_name.to_ascii_lowercase().as_str())
 }
 
 /// Attributes never rendered from component code: inline event handlers and
 /// `srcdoc` (the runtime refuses to bind them too).
 pub fn is_refused_attr(html_name: &str) -> bool {
-    html_name.starts_with("on") || html_name == "srcdoc"
+    let n = html_name.to_ascii_lowercase();
+    n.starts_with("on") || n == "srcdoc"
 }
 
 /// The runtime's URL rule: the scheme of `new URL(v, base)` is http(s),
@@ -426,7 +428,7 @@ pub const BOOLEAN_ATTRS: &[&str] = &[
 ];
 
 pub fn is_boolean_attr(html_name: &str) -> bool {
-    BOOLEAN_ATTRS.contains(&html_name)
+    BOOLEAN_ATTRS.contains(&html_name.to_ascii_lowercase().as_str())
 }
 
 /// React style properties whose numbers are unitless.
@@ -661,6 +663,17 @@ mod tests {
         assert!(
             is_refused_attr("onclick") && is_refused_attr("srcdoc") && !is_refused_attr("title")
         );
+    }
+
+    /// HTML attribute names are case-insensitive: so are the guards.
+    #[test]
+    fn attribute_guards_ignore_case() {
+        assert!(
+            is_refused_attr("ONCLICK")
+                && is_refused_attr("srcDoc")
+                && is_refused_attr("onMouseOver")
+        );
+        assert!(is_url_attr("HREF") && is_url_attr("Src") && is_boolean_attr("DISABLED"));
     }
 
     #[test]

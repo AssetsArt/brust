@@ -215,3 +215,17 @@ fn an_ir_with_errors_is_not_lowered() {
     });
     assert_eq!(r.unwrap_err().rule, "server-only-in-client");
 }
+
+/// Security review: the attribute guards ignore case (`ONCLICK`, `HREF`).
+#[test]
+fn attribute_guards_ignore_case() {
+    let (j, _) = lower(
+        "export default function T({ u }: any) { return <a ONCLICK=\"alert(1)\" HREF={u} SRC=\"javascript:x\">x</a> }",
+    );
+    assert!(
+        !j.to_ascii_lowercase().contains("onclick=") && !j.contains("javascript"),
+        "{j}"
+    );
+    let html = render(&j, serde_json::json!({ "u": "javascript:alert(1)" }));
+    assert!(!html.to_ascii_lowercase().contains(" href="), "{html}");
+}
