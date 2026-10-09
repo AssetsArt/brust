@@ -70,6 +70,52 @@ test('server-only code used only by a loader and a precompute job still builds; 
   expect(jobs[page].precompute({ name: 'x' })).toEqual({ _s1: 'x:fs' })
 }, 60_000)
 
+test('server-only checks apply to the RESOLVED file: tsconfig paths aliases cannot bypass them', async () => {
+  const dir = join(safety, 'so-alias')
+  for (const [entry, spec] of [
+    ['routes-db.tsx', '@db'], // alias of lib/server/db.ts ([build] server_only "lib/server")
+    ['routes-sec.tsx', '@sec'], // alias of lib/secret.server.ts (*.server.*)
+  ] as const) {
+    const out = tmpOut()
+    const r = cli(['build', entry, '--out-dir', out], dir)
+    expect(r.code).toBe(1)
+    expect(r.err).toContain('error server-only-in-client')
+    expect(r.err).toContain(`Island.tsx imports ${spec}`)
+    expect(existsSync(join(out, 'manifest.json'))).toBe(false)
+  }
+  // An alias to a browser-safe module still builds.
+  const out = tmpOut()
+  await build(dir, out, 'routes-ok.tsx')
+  expect(clientFiles(out).some((f) => readFileSync(f, 'utf8').includes('hello'))).toBe(true)
+}, 60_000)
+
+/** A throwaway react app inside the package importing `spec`, with a stub npm package `pkg`. */
+function polyfillApp(pkg: string, spec: string, use: string): string {
+  const dir = mkdtempSync(join(import.meta.dir, '.tmp-poly-'))
+  outs.push(dir)
+  mkdirSync(join(dir, 'node_modules', pkg), { recursive: true })
+  writeFileSync(join(dir, 'node_modules', pkg, 'package.json'), JSON.stringify({ name: pkg, version: '1.0.0', main: 'index.js' }))
+  writeFileSync(join(dir, 'node_modules', pkg, 'index.js'), 'export const readFileSync = () => "", EventEmitter = class {}\n')
+  writeFileSync(
+    join(dir, 'Island.tsx'),
+    `import { ${use} } from '${spec}'\nimport { useReducer } from 'react'\nexport default function Island() {\n  const [n, bump] = useReducer((x: number) => x + 1, 0)\n  return <b onClick={bump} title={String(${use})}>{n}</b>\n}\n`,
+  )
+  writeFileSync(join(dir, 'routes.tsx'), "import Island from './Island'\nexport const routes = [{ path: '/', Component: Island }]\n")
+  return dir
+}
+
+test('an installed npm package named like a builtin unlocks only allowlisted browser polyfills', async () => {
+  // A placeholder `fs` package must not let `import { readFileSync } from 'fs'` into the browser.
+  const fs = cli(['build', 'routes.tsx', '--out-dir', tmpOut()], polyfillApp('fs', 'fs', 'readFileSync'))
+  expect(fs.code).toBe(1)
+  expect(fs.err).toContain('error server-only-in-client')
+  expect(fs.err).toContain('Island.tsx imports fs')
+  // `events` is a real browser polyfill: installed, it builds.
+  const ev = cli(['build', 'routes.tsx', '--out-dir', tmpOut()], polyfillApp('events', 'events', 'EventEmitter'))
+  expect(ev.err).toBe('')
+  expect(ev.code).toBe(0)
+}, 60_000)
+
 // ---- 2. browser-safe `@brust/brust` ----
 
 test('a react island importing { cache } from @brust/brust builds, with no addon in its chunks', async () => {
@@ -142,6 +188,38 @@ test('--out-dir that is or contains the app is refused (out-dir-unsafe), sources
   const ok = cli(['build', 'routes.tsx'], dir)
   expect(ok.code).toBe(0)
   expect(existsSync(join(dir, 'dist/manifest.json'))).toBe(true)
+}, 60_000)
+
+test('a non-empty out dir that is not a previous brust dist is refused unless --force', () => {
+  const dir = throwawayApp()
+  // A helper dir (no route Component in it) and a .git-like dir.
+  mkdirSync(join(dir, 'lib'))
+  writeFileSync(join(dir, 'lib', 'helper.ts'), 'export const x = 1\n')
+  mkdirSync(join(dir, '.git'))
+  writeFileSync(join(dir, '.git', 'HEAD'), 'ref: refs/heads/main\n')
+  for (const o of ['lib', '.git']) {
+    const r = cli(['build', 'routes.tsx', '--out-dir', o], dir)
+    expect(r.code).toBe(1)
+    expect(r.err).toContain('error out-dir-unsafe')
+    expect(r.err).toContain('--force')
+  }
+  expect(readFileSync(join(dir, 'lib', 'helper.ts'), 'utf8')).toBe('export const x = 1\n')
+  expect(readFileSync(join(dir, '.git', 'HEAD'), 'utf8')).toBe('ref: refs/heads/main\n')
+  // A nonexistent dir builds and gets the marker; a previous (marked) dist is replaced.
+  expect(cli(['build', 'routes.tsx', '--out-dir', 'out'], dir).code).toBe(0)
+  expect(existsSync(join(dir, 'out', '.brust'))).toBe(true)
+  writeFileSync(join(dir, 'out', 'stale.txt'), 'x')
+  expect(cli(['build', 'routes.tsx', '--out-dir', 'out'], dir).code).toBe(0)
+  expect(existsSync(join(dir, 'out', 'stale.txt'))).toBe(false)
+  // An empty dir builds.
+  mkdirSync(join(dir, 'empty'))
+  expect(cli(['build', 'routes.tsx', '--out-dir', 'empty'], dir).code).toBe(0)
+  // --force replaces an unmarked dir.
+  const forced = cli(['build', 'routes.tsx', '--out-dir', 'lib', '--force'], dir)
+  expect(forced.err).toBe('')
+  expect(forced.code).toBe(0)
+  expect(existsSync(join(dir, 'lib', 'helper.ts'))).toBe(false)
+  expect(existsSync(join(dir, 'lib', 'manifest.json'))).toBe(true)
 }, 60_000)
 
 test('a failing build leaves the previous dist untouched', async () => {

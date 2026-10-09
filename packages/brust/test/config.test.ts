@@ -91,3 +91,16 @@ test('port is 0..65535 and workers 1..1024 from every source (CLI flags included
   delete process.env.BRUST_WORKERS
   await expect(loadConfig(tmpApp('[workers]\ncount = 5000\n'))).rejects.toThrow('workers.count must be an integer in 1..1024')
 })
+
+test('renderSlots is 1..64 from every source (a huge value is a config error, not an OOM)', async () => {
+  for (const k of ENV) delete process.env[k]
+  process.env.BRUST_RENDER_SLOTS = '100000'
+  await expect(loadConfig(tmpApp())).rejects.toThrow('BRUST_RENDER_SLOTS must be an integer in 1..64 (got "100000")')
+  process.env.BRUST_RENDER_SLOTS = '0'
+  await expect(loadConfig(tmpApp())).rejects.toThrow('BRUST_RENDER_SLOTS must be an integer in 1..64')
+  process.env.BRUST_RENDER_SLOTS = '64'
+  expect((await loadConfig(tmpApp())).renderSlots).toBe(64)
+  delete process.env.BRUST_RENDER_SLOTS
+  await expect(loadConfig(tmpApp(), { renderSlots: 65 })).rejects.toThrow('renderSlots must be an integer in 1..64 (got 65)')
+  await expect(loadConfig(tmpApp(), { renderSlots: 100000 })).rejects.toMatchObject({ name: 'BrustConfigError' })
+})

@@ -69,31 +69,50 @@ function installed(name: string, from: string, appRoot: string): boolean {
   return false
 }
 
+/** Builtin names whose npm package of the same name is a real browser polyfill (the browserify
+ * set: `events`, `buffer`, `util`, …). Only these are let through when the app installed them; an
+ * npm package named `fs`, `child_process`, `net`, `tls`, `dns`, `crypto`, `http(s)`, `os`,
+ * `worker_threads`, `cluster`, `module`, `vm`, `v8`, … never unlocks the builtin. */
+const BROWSER_POLYFILLS = new Set([
+  'assert',
+  'buffer',
+  'events',
+  'path',
+  'process',
+  'punycode',
+  'querystring',
+  'stream',
+  'string_decoder',
+  'timers',
+  'url',
+  'util',
+])
+
 /** `spec` (imported by `importer`) may not enter a browser bundle. Server-only (spec §8.2 +
  * m2c): a Node/Bun builtin (`node:*`, `bun:*`, `bun`, a bare builtin name such as `fs` or
- * `fs/promises` that is not an installed npm package), the server parts of this package, a
- * `*.server.*` file, or a prefix / app-root relative path listed in `[build] server_only`
- * (matched like the compiler: on the specifier, and on the resolved path of a relative one). */
+ * `fs/promises` — unless it is an allowlisted browser polyfill the app installed), the server
+ * parts of this package, a `*.server.*` file, or a prefix / app-root relative path listed in
+ * `[build] server_only`. A bare specifier is matched against `server_only` as written (an entry
+ * can name a package), and EVERY specifier is also checked by the file it resolves to (Bun's
+ * resolver honours tsconfig `paths`, so an alias cannot bypass the `*.server.*` / path rules). */
 function isServerOnly(spec: string, importer: string, ctx: BrowserCtx): boolean {
   if (spec.startsWith('node:') || spec.startsWith('bun:') || spec === 'bun') return true
+  const from = dirname(ctx.sourceOf.get(importer) ?? importer)
   const bare = spec.split('/')[0]!
-  // A bare builtin name, unless the app installed the npm package of that name (the browser
-  // polyfills `events`, `buffer`, `util`, … are real packages; `fs` / `child_process` never are).
-  if ((BUILTINS.has(spec) || BUILTINS.has(bare)) && !installed(bare, dirname(ctx.sourceOf.get(importer) ?? importer), ctx.appRoot))
-    return true
+  if ((BUILTINS.has(spec) || BUILTINS.has(bare)) && !(BROWSER_POLYFILLS.has(bare) && installed(bare, from, ctx.appRoot))) return true
   if (/^@brust\/brust\/(server|native)(\/|$)/.test(spec)) return true
   if (/\.server(\.[^/]*)?$/.test(spec)) return true
-  const isRelative = spec.startsWith('./') || spec.startsWith('../')
-  if (!isRelative && !isAbsolute(spec)) return ctx.serverOnly.some((p) => spec.startsWith(p))
+  const isPath = spec.startsWith('./') || spec.startsWith('../') || isAbsolute(spec)
+  if (!isPath && ctx.serverOnly.some((p) => spec.startsWith(p))) return true
   let file: string
   try {
-    file = isAbsolute(spec) ? spec : Bun.resolveSync(spec, dirname(ctx.sourceOf.get(importer) ?? importer))
+    file = isAbsolute(spec) ? spec : Bun.resolveSync(spec, from)
   } catch {
     return false // unresolvable: Bun reports it
   }
   if (/\.server\.[^/]*$/.test(basename(file))) return true
   const rel = relative(ctx.appRoot, file)
-  return !rel.startsWith('..') && ctx.serverOnly.some((p) => rel.startsWith(p))
+  return !rel.startsWith('..') && !isAbsolute(rel) && ctx.serverOnly.some((p) => rel.startsWith(p))
 }
 
 /** Fails a browser build that would include server-only code at any depth (a client chunk, an
@@ -256,7 +275,12 @@ export async function buildReactChunks(dist: string, compiled: Map<string, Compi
   return new Map([...out].map(([stem, path]) => [stem.slice('react-'.length), path]))
 }
 
-/** `dist/jobs.js` (`target: 'bun'`, React external — one React at runtime): default export
+/** Left to the worker at runtime by `dist/jobs.js`: one React, and the worker's own `@brust/brust`
+ * (bundling the server package would load a second copy whose worker auto-start runs inside the
+ * worker and exits it). */
+const JOBS_EXTERNALS = [...REACT_EXTERNALS, '@brust/brust', '@brust/brust/*']
+
+/** `dist/jobs.js` (`target: 'bun'`, React and `@brust/brust` external): default export
  * `{ [componentId]: { precompute?, ssr? } }`; `ssr` only for react-tier, non-client_only components. */
 export async function buildJobs(dist: string, compiled: Map<string, Compiled>, sourceOf: SourceOf, appRoot: string): Promise<void> {
   const imports: string[] = ["import { createElement } from 'react'", "import { renderToString } from 'react-dom/server'"]
@@ -287,8 +311,8 @@ export async function buildJobs(dist: string, compiled: Map<string, Compiled>, s
     target: 'bun',
     format: 'esm',
     define: PRODUCTION,
-    external: REACT_EXTERNALS,
-    plugins: [sourceDirPlugin(sourceOf, appRoot, REACT_EXTERNALS)],
+    external: JOBS_EXTERNALS,
+    plugins: [sourceDirPlugin(sourceOf, appRoot, JOBS_EXTERNALS)],
   })
   if (!res.success) throw new BuildError('bundle', `jobs: ${res.logs.map(String).join('\n')}`)
   write(join(dist, 'jobs.js'), await res.outputs[0]!.text())

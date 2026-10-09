@@ -1,4 +1,4 @@
-// `brust build [entry=routes.tsx] [--out-dir dist]` and
+// `brust build [entry=routes.tsx] [--out-dir dist] [--force]` and
 // `brust start [--port N] [--workers N] [--dist-dir dist] [--entry routes.tsx]`.
 // Exit codes: 0 ok, 1 build/boot error (`error <rule> <message>` / `[brust] …`), 2 usage.
 import { parseArgs } from 'node:util'
@@ -6,7 +6,7 @@ import { BuildError, runBuild } from './build'
 import { run } from './run'
 
 const USAGE = `usage:
-  brust build [entry=routes.tsx] [--out-dir dist]
+  brust build [entry=routes.tsx] [--out-dir dist] [--force]
   brust start [--port N] [--workers N] [--dist-dir dist] [--entry routes.tsx]
 
 Config precedence for start: env (BRUST_ADDR, BRUST_PORT, BRUST_WORKERS, BRUST_RENDER_SLOTS,
@@ -45,6 +45,7 @@ export async function main(argv: string[]): Promise<void> {
         entry: { type: 'string' },
         port: { type: 'string' },
         workers: { type: 'string' },
+        force: { type: 'boolean' },
         help: { type: 'boolean', short: 'h' },
       },
     })
@@ -62,7 +63,13 @@ export async function main(argv: string[]): Promise<void> {
     if (positionals.length > 1) usage(`build takes one entry (got ${positionals.join(' ')})`)
     const t0 = performance.now()
     try {
-      await runBuild({ appRoot: process.cwd(), entry: positionals[0] ?? 'routes.tsx', outDir: str('out-dir') ?? 'dist', log: (s) => console.log(s) })
+      await runBuild({
+        appRoot: process.cwd(),
+        entry: positionals[0] ?? 'routes.tsx',
+        outDir: str('out-dir') ?? 'dist',
+        force: values.force === true,
+        log: (s) => console.log(s),
+      })
     } catch (e) {
       if (e instanceof BuildError) console.error(`error ${e.rule} ${e.message}`)
       else if (e instanceof AggregateError) console.error(`error build ${e.message}\n${e.errors.map(String).join('\n')}`)
