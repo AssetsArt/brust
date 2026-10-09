@@ -20,6 +20,14 @@ owner: 22499151-e133-4508-b358-d7fa4d2851c3 (Detoro) · authority: in-loop · ba
 - **D5** workspace member `packages/brust` = `@brust/brust` 0.0.0 private; napi block `brust` / `@brust/native` / six targets; loader generated into `native/`. No `optionalDependencies` yet (m2e; the `--frozen-lockfile` 404 trap, `brust/.github/workflows/ci.yml:59-62`).
 - **D6 (coordinator amendment, S6 @47e5c5c)** every manifest `jobs[]` record carries `"outputs": [...]` verbatim from `JobDecl.outputs`; a react-tier CHILD is NOT a `children[]` record — its `ssr` job sits in the PARENT's `jobs[]` as the IR emits it (parent-scope inputs, `outputs ["_ssr_<childId>"]`, `per_instance` = the list context path when `per_item` is set); `ssr` records also carry `"target": "<react component id>"`, which the server passes through as `JobCall.target` and the worker uses as `jobs[target].ssr(inputs)`; `"*"` inputs are copied as-is; `children[]` come ONLY from IR `instances[]`; every compiled component gets a record (a react component's own record has tier `react`, the island-host template and its own ssr job `inputs ["*"]`, `target` = itself).
 
+> **Base update (lead, 2026-10-09, v2 @dba91da):** this plan was drafted against the m2b lane
+> before its fix round. All `crates/brust-server/...` citations now refer to the merged crate on
+> `v2`; line numbers may have shifted — locate symbols by name. The REFERENCE manifest is the live
+> fixture `crates/brust-server/tests/fixtures/dist/manifest.json` on `v2` (ssr jobs sit on the
+> parent with `outputs`/`target`/`props`; `children[]` only for inlined children with jobs, plus the
+> `client_only` static entry), NOT the copy pasted into Task 6 below — if they differ, the fixture
+> wins and Task 6's expected JSON follows it. The S6 amendments block in the spec is binding.
+
 ## Global Constraints
 
 - Contract 1 (manifest): written from the IR exactly as S6 + amendments say; if the IR and S6 disagree, `task challenge` — never patch around in this lane. Contract 2: the island host is emitted by the compiler (`lower/mod.rs:82-86`), untouched here. Contract 3: the react shim pushes `[id, hydrate]` onto `globalThis.__brustIslands` then calls `__brustIslandReady?.()` (`packages/runtime-dom/README.md:65-78`). Contract 4: `useId` is server-allocated (`render.rs:159-168`); the build only copies `use_id_slots`. Contract 5: `outlet-outside-layout` is raised HERE from `uses_outlet` + the route tree. Contract 6: the client bootstrap mounts `document.documentElement`. Contract 7: Bun call shapes are `protocol.rs:13-98` (request inline JSON, response in the SAB slot). Contract 8: the napi surface wraps `brust_server::{start, Server::{register_worker, invalidate, stats, request_drain, wait_drain_done}}` (`config.rs:176-241`). Contract 9: a build compiles every component through lowering (`pipeline.rs:20-25`); `Err(Diagnostic)` from `compile_tree` is a build error; an IR-only pass is never a build.
