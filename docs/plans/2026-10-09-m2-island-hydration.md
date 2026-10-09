@@ -18,6 +18,7 @@ owner: 22499151-e133-4508-b358-d7fa4d2851c3 (Detoro) · authority: in-loop · ba
 - One strategy only: idle (`requestIdleCallback`, fallback `setTimeout(fn, 1)`). No `load`/`visible`, no per-component override (M3).
 - A host is hydrated at most once (`data-hydrated` guard), and never after it left the document.
 - Load order independence: chunk before runtime, runtime before chunk, and chunk arriving after `mount()` must all hydrate. The queue protocol is the only coupling.
+- Size budget: `test/build.test.ts` guards bundle bloat; the island module adds ~1.4 KB, so the budget is raised from 13 KB to 14 KB (14336 B) in its own commit whose body states the before/after bytes (lead ruling on Tiësto's challenge 33ea30d7, 2026-10-09). No lazy-chunk split.
 - `bun run ci`-style gates for this package: `cd packages/runtime-dom && bun test` and `bun run typecheck` green; `bun check` is not available on Bun 1.4.2 (ledger F8).
 - Commit per task with the message given; one PR from `lane/m2d-island-hydration` to `v2`.
 
