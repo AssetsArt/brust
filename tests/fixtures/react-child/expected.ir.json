@@ -1,11 +1,17 @@
 {
   "id": "input_3c18dc49",
   "source": "tests/fixtures/react-child/input.tsx",
-  "tier": "Pending",
+  "tier": "Static",
   "props": [
     {
-      "name": "label",
-      "local": "label",
+      "name": "productId",
+      "local": "productId",
+      "ts_type": null,
+      "default": null
+    },
+    {
+      "name": "title",
+      "local": "title",
       "ts_type": null,
       "default": null
     }
@@ -18,36 +24,62 @@
   "id_bindings": [],
   "template": {
     "Element": {
-      "loc": 188,
-      "tag": "span",
-      "attrs": [
+      "loc": 146,
+      "tag": "main",
+      "attrs": [],
+      "children": [
         {
-          "Dynamic": {
-            "name": "className",
-            "value": {
-              "Raw": {
-                "loc": 205,
-                "kind": {
-                  "Ident": {
-                    "name": "theme",
-                    "kind": "Local"
+          "Element": {
+            "loc": 159,
+            "tag": "h1",
+            "attrs": [],
+            "children": [
+              {
+                "Slot": {
+                  "Server": {
+                    "loc": 164,
+                    "kind": {
+                      "Ident": {
+                        "name": "title",
+                        "kind": "Prop"
+                      }
+                    }
                   }
                 }
               }
-            }
+            ],
+            "host": false,
+            "ref_name": null
           }
-        }
-      ],
-      "children": [
+        },
         {
-          "Slot": {
-            "Raw": {
-              "loc": 213,
-              "kind": {
-                "Ident": {
-                  "name": "label",
-                  "kind": "Prop"
+          "Component": {
+            "loc": 182,
+            "name": "Reviews",
+            "source": "./Reviews",
+            "imported": "default",
+            "props": [
+              [
+                "productId",
+                {
+                  "Server": {
+                    "loc": 202,
+                    "kind": {
+                      "Ident": {
+                        "name": "productId",
+                        "kind": "Prop"
+                      }
+                    }
+                  }
                 }
+              ]
+            ],
+            "children": [],
+            "link": null,
+            "tier": {
+              "React": {
+                "reason": "hook useContext is not supported",
+                "client_only": false
               }
             }
           }
@@ -57,21 +89,39 @@
       "ref_name": null
     }
   },
-  "jobs": [],
+  "jobs": [
+    {
+      "kind": {
+        "Ssr": {
+          "client_only": false
+        }
+      },
+      "inputs": [
+        "productId"
+      ],
+      "outputs": [
+        "_ssr_reviews_ec5de4c5"
+      ]
+    }
+  ],
   "child_links": [],
   "client_props": [],
   "client_imports": [],
-  "needs_worker": false,
+  "client_module_locals": [],
+  "needs_worker": true,
   "cache": null,
-  "diagnostics": [
+  "children": [
     {
-      "class": "Fallback",
-      "rule": "hook-unsupported",
-      "message": "hook useContext is not supported",
-      "loc": 154,
-      "line": 5,
-      "col": 17,
-      "remediation": "move this component to React, or replace the hook with useState/useEffect"
+      "name": "Reviews",
+      "id": "reviews_ec5de4c5",
+      "path": "tests/fixtures/react-child/Reviews.tsx",
+      "tier": {
+        "React": {
+          "reason": "hook useContext is not supported",
+          "client_only": false
+        }
+      }
     }
-  ]
+  ],
+  "diagnostics": []
 }

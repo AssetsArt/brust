@@ -381,7 +381,10 @@ fn read_decl(r: &mut Reader<'_, '_>, out: &mut BodyDecls, decl: &js_ast::G::Decl
                     );
                     return;
                 }
-                let (name, setter) = (name_at(0).unwrap_or_default(), name_at(1));
+                // An elided value slot still needs a signal name (F17); `_st` keeps
+                // it apart from the precompute slots `_sN`.
+                let name = name_at(0).unwrap_or_else(|| format!("_st{}", out.state.len() + 1));
+                let setter = name_at(1);
                 let init = match args.first() {
                     Some(a) => r.expr(a),
                     None => undefined_at(vloc),

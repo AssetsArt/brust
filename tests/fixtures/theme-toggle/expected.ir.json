@@ -1,7 +1,7 @@
 {
   "id": "input_7a17a8db",
   "source": "tests/fixtures/theme-toggle/input.tsx",
-  "tier": "Pending",
+  "tier": "Native",
   "props": [
     {
       "name": "themeLabel",
@@ -15,7 +15,7 @@
       "name": "mode",
       "setter": "setMode",
       "init": {
-        "Raw": {
+        "Server": {
           "loc": 158,
           "kind": {
             "Lit": {
@@ -30,7 +30,7 @@
     {
       "name": "label",
       "expr": {
-        "Raw": {
+        "Server": {
           "loc": 182,
           "kind": {
             "Cond": {
@@ -239,7 +239,7 @@
           "Dynamic": {
             "name": "aria-label",
             "value": {
-              "Raw": {
+              "Server": {
                 "loc": 350,
                 "kind": {
                   "Ident": {
@@ -261,7 +261,7 @@
       "children": [
         {
           "Slot": {
-            "Raw": {
+            "Server": {
               "loc": 436,
               "kind": {
                 "Ident": {
@@ -281,7 +281,9 @@
   "child_links": [],
   "client_props": [],
   "client_imports": [],
+  "client_module_locals": [],
   "needs_worker": false,
   "cache": null,
+  "children": [],
   "diagnostics": []
 }

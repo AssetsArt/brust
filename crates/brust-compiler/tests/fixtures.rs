@@ -8,7 +8,10 @@
 //! |------|---------|---------|
 //! | hir  | expected.hir.json | expected.error.txt |
 //! | ir   | expected.ir.json + expected.diag.txt | expected.diag.txt only |
-use brust_compiler::analyze::component::analyze_component;
+//!
+//! `ir` is the full analysis (M1b-2 passes included); child components
+//! resolve from the repo root, so `parent-counter/Counter.tsx` is compiled too.
+use brust_compiler::analyze::component::{AnalyzeOptions, analyze_file};
 use brust_compiler::analyze::hir::analyze_hir;
 use brust_compiler::ir::render_diagnostics;
 use brust_compiler::parse::{parse_tsx, run_on_compiler_thread};
@@ -105,8 +108,11 @@ fn golden_ir_and_diag() {
     for case in cases() {
         run_on_compiler_thread(|| {
             let file = display_path(&case);
-            let parsed = parse_tsx(&file, std::fs::read(case.join("input.tsx")).unwrap()).unwrap();
-            match analyze_component(&parsed) {
+            let opts = AnalyzeOptions {
+                root: fixtures_dir().join("../.."),
+                ..Default::default()
+            };
+            match analyze_file(&file, &opts) {
                 Ok(ir) => {
                     check(
                         &case.join("expected.ir.json"),

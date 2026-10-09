@@ -27,6 +27,7 @@ enum Tag {
     Component {
         name: String,
         source: Option<String>,
+        imported: Option<String>,
     },
     Member,
 }
@@ -40,11 +41,15 @@ fn tag_of(r: &Reader<'_, '_>, tag: &js_ast::Expr) -> Tag {
                 return Tag::Fragment;
             }
             let (name, kind) = r.names.kind_of(*ref_);
-            let source = match kind {
-                IdentKind::Import { source, .. } => Some(source),
-                _ => None,
+            let (source, imported) = match kind {
+                IdentKind::Import { source, imported } => (Some(source), Some(imported)),
+                _ => (None, None),
             };
-            Tag::Component { name, source }
+            Tag::Component {
+                name,
+                source,
+                imported,
+            }
         }
         _ => Tag::Member,
     }
@@ -145,21 +150,29 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
             ref_name,
         },
         Tag::Fragment => Node::Fragment(children),
-        Tag::Component { name, source } => Node::Component {
+        Tag::Component {
+            name,
+            source,
+            imported,
+        } => Node::Component {
             loc,
             name,
             source,
+            imported,
             props: props_out,
             children,
             link: None,
+            tier: crate::ir::Tier::Pending,
         },
         Tag::Member => Node::Component {
             loc,
             name: "<member>".into(),
             source: None,
+            imported: None,
             props: props_out,
             children,
             link: None,
+            tier: crate::ir::Tier::Pending,
         },
     }
 }
@@ -258,7 +271,13 @@ fn read_children(r: &mut Reader<'_, '_>, value: &js_ast::Expr, many: bool) -> Ve
     out
 }
 
-fn is_jsx(e: &js_ast::Expr) -> bool {
+/// Reads the JSX body of a `.map` callback in any position (not only as a
+/// direct child), where a `key` belongs.
+pub fn read_list_body(r: &mut Reader<'_, '_>, e: &js_ast::Expr) -> Node {
+    read_element(r, e, true)
+}
+
+pub fn is_jsx(e: &js_ast::Expr) -> bool {
     jsx_call(e).is_some()
 }
 

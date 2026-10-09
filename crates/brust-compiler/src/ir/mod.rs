@@ -24,6 +24,7 @@ pub enum DiagClass {
     Fallback,
     Error,
     Warning,
+    Info,
 }
 
 /// One finding about a component (spec §8.1). `line`/`col` are 1-based and
@@ -59,6 +60,13 @@ impl Diagnostic {
         }
     }
 
+    pub fn info(rule: &str, message: impl Into<String>, loc: u32, remediation: &str) -> Self {
+        Self {
+            class: DiagClass::Info,
+            ..Self::fallback(rule, message, loc, remediation)
+        }
+    }
+
     pub fn warning(rule: &str, message: impl Into<String>, loc: u32, remediation: &str) -> Self {
         Self {
             class: DiagClass::Warning,
@@ -73,6 +81,17 @@ impl DiagClass {
             DiagClass::Fallback => "fallback",
             DiagClass::Error => "error",
             DiagClass::Warning => "warning",
+            DiagClass::Info => "info",
+        }
+    }
+
+    /// Sort rank: errors first, then fallbacks, warnings, info.
+    pub fn severity_rank(self) -> u8 {
+        match self {
+            DiagClass::Error => 0,
+            DiagClass::Fallback => 1,
+            DiagClass::Warning => 2,
+            DiagClass::Info => 3,
         }
     }
 }
@@ -133,12 +152,30 @@ pub fn component_id(path: &str) -> String {
             name.extend(chars);
         }
     }
+    format!("{name}_{:08x}", fnv32(path))
+}
+
+/// Id of the function `name` of module `path` that is not its default export:
+/// lower-camel `name`, `_`, and the hash of `path#name`.
+pub fn named_component_id(path: &str, name: &str) -> String {
+    let mut chars = name.chars();
+    let lead: String = chars
+        .next()
+        .map(|c| c.to_ascii_lowercase())
+        .into_iter()
+        .chain(chars)
+        .collect();
+    format!("{lead}_{:08x}", fnv32(&format!("{path}#{name}")))
+}
+
+/// High 32 bits of the 64-bit FNV-1a hash.
+fn fnv32(s: &str) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for &b in path.as_bytes() {
+    for &b in s.as_bytes() {
         hash ^= u64::from(b);
         hash = hash.wrapping_mul(0x0100_0000_01b3);
     }
-    format!("{name}_{:08x}", hash >> 32)
+    hash >> 32
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -158,10 +195,20 @@ pub struct ComponentIR {
     pub jobs: Vec<JobDecl>,
     pub child_links: Vec<ChildLink>,
     pub client_props: Vec<String>,
-    pub client_imports: Vec<String>,
+    /// `(source, imported)` pairs the client chunk bundles, sorted.
+    pub client_imports: Vec<(String, String)>,
+    /// Module-level declarations (helpers, constants) the client chunk needs,
+    /// transitively, sorted.
+    pub client_module_locals: Vec<String>,
     pub needs_worker: bool,
     pub cache: Option<CacheDecl>,
+    /// Child components used by the template, in document order.
+    pub children: Vec<ChildRef>,
     pub diagnostics: Vec<Diagnostic>,
+    /// Module-level declarations and what each reads (its captures), for the
+    /// passes to follow helpers; not part of the serialized IR.
+    #[serde(skip)]
+    pub module_scope: Vec<(String, Vec<(String, IdentKind)>)>,
 }
 
 impl ComponentIR {
@@ -182,9 +229,12 @@ impl ComponentIR {
             child_links: vec![],
             client_props: vec![],
             client_imports: vec![],
+            client_module_locals: vec![],
             needs_worker: false,
             cache: None,
+            children: vec![],
             diagnostics: vec![],
+            module_scope: vec![],
         }
     }
 }

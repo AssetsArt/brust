@@ -1,7 +1,7 @@
 {
   "id": "input_302a1f92",
   "source": "tests/fixtures/missing-key/input.tsx",
-  "tier": "Pending",
+  "tier": "Static",
   "props": [
     {
       "name": "names",
@@ -25,7 +25,7 @@
         {
           "For": {
             "source": {
-              "Raw": {
+              "Server": {
                 "loc": 91,
                 "kind": {
                   "Ident": {
@@ -38,7 +38,7 @@
             "item": "name",
             "index": null,
             "key": {
-              "Raw": {
+              "Server": {
                 "loc": 121,
                 "kind": {
                   "Lit": "Undefined"
@@ -54,7 +54,7 @@
                   "children": [
                     {
                       "Slot": {
-                        "Raw": {
+                        "Server": {
                           "loc": 126,
                           "kind": {
                             "Ident": {
@@ -82,8 +82,10 @@
   "child_links": [],
   "client_props": [],
   "client_imports": [],
+  "client_module_locals": [],
   "needs_worker": false,
   "cache": null,
+  "children": [],
   "diagnostics": [
     {
       "class": "Error",

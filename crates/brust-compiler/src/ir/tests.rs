@@ -104,6 +104,7 @@ fn every_raw_kind_round_trips() {
         RawKind::Opaque {
             source: "new Date()".into(),
             why: "ENew".into(),
+            captures: vec![("Date".into(), IdentKind::Global)],
         },
     ];
     for kind in kinds {

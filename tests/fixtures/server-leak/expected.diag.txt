@@ -1,0 +1,1 @@
+error server-only-in-client tests/fixtures/server-leak/input.tsx:8:38 readFileSync from node:fs is server-only but is used by a handler at line 8 — move the computation into the loader or make the module browser-safe

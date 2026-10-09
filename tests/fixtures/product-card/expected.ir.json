@@ -1,7 +1,7 @@
 {
   "id": "input_6af673af",
   "source": "tests/fixtures/product-card/input.tsx",
-  "tier": "Pending",
+  "tier": "Native",
   "props": [
     {
       "name": "item",
@@ -15,7 +15,7 @@
       "name": "qty",
       "setter": "setQty",
       "init": {
-        "Raw": {
+        "Server": {
           "loc": 196,
           "kind": {
             "Lit": {
@@ -30,109 +30,30 @@
     {
       "name": "unit",
       "expr": {
-        "Raw": {
-          "loc": 214,
-          "kind": {
-            "Call": {
-              "callee": {
-                "loc": 214,
-                "kind": {
-                  "Ident": {
-                    "name": "formatPrice",
-                    "kind": {
-                      "Import": {
-                        "source": "./money",
-                        "imported": "formatPrice"
-                      }
-                    }
-                  }
-                }
-              },
-              "args": [
-                {
-                  "loc": 226,
-                  "kind": {
-                    "Member": {
-                      "target": {
-                        "loc": 226,
-                        "kind": {
-                          "Ident": {
-                            "name": "item",
-                            "kind": "Prop"
-                          }
-                        }
-                      },
-                      "name": "price",
-                      "optional": false
-                    }
-                  }
-                }
-              ]
-            }
-          }
+        "Precomputed": {
+          "slot": "_s1",
+          "js": "formatPrice(item.price)",
+          "client_js": null,
+          "inputs": [
+            "item.price"
+          ],
+          "state_dependent": false,
+          "per_item": null
         }
       }
     },
     {
       "name": "total",
       "expr": {
-        "Raw": {
-          "loc": 254,
-          "kind": {
-            "Call": {
-              "callee": {
-                "loc": 254,
-                "kind": {
-                  "Ident": {
-                    "name": "formatPrice",
-                    "kind": {
-                      "Import": {
-                        "source": "./money",
-                        "imported": "formatPrice"
-                      }
-                    }
-                  }
-                }
-              },
-              "args": [
-                {
-                  "loc": 266,
-                  "kind": {
-                    "Binary": {
-                      "op": "Mul",
-                      "left": {
-                        "loc": 266,
-                        "kind": {
-                          "Member": {
-                            "target": {
-                              "loc": 266,
-                              "kind": {
-                                "Ident": {
-                                  "name": "item",
-                                  "kind": "Prop"
-                                }
-                              }
-                            },
-                            "name": "price",
-                            "optional": false
-                          }
-                        }
-                      },
-                      "right": {
-                        "loc": 279,
-                        "kind": {
-                          "Ident": {
-                            "name": "qty",
-                            "kind": "State"
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              ]
-            }
-          }
+        "Precomputed": {
+          "slot": "_s2",
+          "js": "formatPrice(item.price * qty)",
+          "client_js": "formatPrice(props().item.price * qty())",
+          "inputs": [
+            "item.price"
+          ],
+          "state_dependent": true,
+          "per_item": null
         }
       }
     }
@@ -230,7 +151,7 @@
             "children": [
               {
                 "Slot": {
-                  "Raw": {
+                  "Server": {
                     "loc": 338,
                     "kind": {
                       "Member": {
@@ -270,7 +191,7 @@
             "children": [
               {
                 "Slot": {
-                  "Raw": {
+                  "Server": {
                     "loc": 381,
                     "kind": {
                       "Ident": {
@@ -331,7 +252,7 @@
               },
               {
                 "Slot": {
-                  "Raw": {
+                  "Server": {
                     "loc": 519,
                     "kind": {
                       "Ident": {
@@ -352,11 +273,31 @@
       "ref_name": null
     }
   },
-  "jobs": [],
+  "jobs": [
+    {
+      "kind": "Precompute",
+      "inputs": [
+        "item.price"
+      ],
+      "outputs": [
+        "_s1",
+        "_s2"
+      ]
+    }
+  ],
   "child_links": [],
-  "client_props": [],
-  "client_imports": [],
-  "needs_worker": false,
+  "client_props": [
+    "item"
+  ],
+  "client_imports": [
+    [
+      "./money",
+      "formatPrice"
+    ]
+  ],
+  "client_module_locals": [],
+  "needs_worker": true,
   "cache": null,
+  "children": [],
   "diagnostics": []
 }

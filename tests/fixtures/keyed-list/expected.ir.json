@@ -1,7 +1,7 @@
 {
   "id": "input_d4c7015a",
   "source": "tests/fixtures/keyed-list/input.tsx",
-  "tier": "Pending",
+  "tier": "Native",
   "props": [
     {
       "name": "todos",
@@ -15,7 +15,7 @@
       "name": "selected",
       "setter": "setSelected",
       "init": {
-        "Raw": {
+        "Server": {
           "loc": 215,
           "kind": {
             "Lit": "Null"
@@ -109,7 +109,7 @@
         {
           "For": {
             "source": {
-              "Raw": {
+              "Server": {
                 "loc": 266,
                 "kind": {
                   "Ident": {
@@ -122,7 +122,7 @@
             "item": "todo",
             "index": "i",
             "key": {
-              "Raw": {
+              "Server": {
                 "loc": 308,
                 "kind": {
                   "Member": {
@@ -151,7 +151,7 @@
                       "Dynamic": {
                         "name": "className",
                         "value": {
-                          "Raw": {
+                          "Server": {
                             "loc": 328,
                             "kind": {
                               "Cond": {
@@ -222,7 +222,7 @@
                   "children": [
                     {
                       "Slot": {
-                        "Raw": {
+                        "Server": {
                           "loc": 417,
                           "kind": {
                             "Binary": {
@@ -254,7 +254,7 @@
                     },
                     {
                       "Slot": {
-                        "Raw": {
+                        "Server": {
                           "loc": 426,
                           "kind": {
                             "Member": {
@@ -277,7 +277,7 @@
                     {
                       "If": {
                         "cond": {
-                          "Raw": {
+                          "Server": {
                             "loc": 449,
                             "kind": {
                               "Member": {
@@ -337,9 +337,13 @@
   },
   "jobs": [],
   "child_links": [],
-  "client_props": [],
+  "client_props": [
+    "todos"
+  ],
   "client_imports": [],
+  "client_module_locals": [],
   "needs_worker": false,
   "cache": null,
+  "children": [],
   "diagnostics": []
 }

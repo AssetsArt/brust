@@ -19,6 +19,9 @@ pub struct NameTable<'a> {
     state: HashSet<u32>,
     setters: HashSet<u32>,
     loop_bindings: HashSet<u32>,
+    /// The exact symbols the parser generated for the JSX runtime: callees of
+    /// lowered JSX calls and the generated `Fragment` tag (never by spelling).
+    jsx_runtime: HashSet<u32>,
 }
 
 impl<'a> NameTable<'a> {
@@ -60,7 +63,9 @@ impl<'a> NameTable<'a> {
             state: HashSet::new(),
             setters: HashSet::new(),
             loop_bindings: HashSet::new(),
+            jsx_runtime: HashSet::new(),
         };
+        table.jsx_runtime = table.collect_jsx_runtime(ast);
         if let Some(arg) = component.args.slice().first() {
             match arg.binding.data {
                 B::BIdentifier(id) => table.props_ident = Some(table.key(id.r#ref)),
@@ -85,6 +90,50 @@ impl<'a> NameTable<'a> {
             }
         }
         table
+    }
+
+    fn collect_jsx_runtime(&self, ast: &js_ast::Ast<'_>) -> HashSet<u32> {
+        use js_ast::expr::Data as E;
+        let mut w = crate::analyze::expr::Walk::default();
+        for part in ast.parts.iter() {
+            for stmt in part.stmts.slice() {
+                match &stmt.data {
+                    js_ast::stmt::Data::SExportDefault(ed) => match &ed.value {
+                        js_ast::StmtOrExpr::Stmt(s) => w.stmt(s),
+                        js_ast::StmtOrExpr::Expr(e) => w.expr(e),
+                    },
+                    _ => w.stmt(stmt),
+                }
+            }
+        }
+        let ref_of = |e: &js_ast::Expr| match &e.data {
+            E::EIdentifier(id) => Some(id.ref_),
+            E::EImportIdentifier(id) => Some(id.ref_),
+            _ => None,
+        };
+        let mut out = HashSet::new();
+        for c in &w.calls {
+            let E::ECall(call) = &c.data else { continue };
+            if !call.was_jsx_element {
+                continue;
+            }
+            if let Some(r) = ref_of(&call.target) {
+                out.insert(self.key(r));
+            }
+            // The generated `Fragment` tag (a user component tag is not Other).
+            if let Some(r) = call.args.first().and_then(ref_of) {
+                let k = self.key(r);
+                if !self.imports.contains_key(&k)
+                    && self
+                        .symbols
+                        .get(k as usize)
+                        .is_some_and(|s| s.kind == js_ast::symbol::Kind::Other)
+                {
+                    out.insert(k);
+                }
+            }
+        }
+        out
     }
 
     /// Symbol index of `r` after following links (merged declarations).
@@ -117,6 +166,10 @@ impl<'a> NameTable<'a> {
         let k = self.key(r);
         if let Some(prop) = self.props.get(&k) {
             return (prop.clone(), IdentKind::Prop);
+        }
+        // The whole (non-destructured) props object: the root `*` (F20).
+        if self.props_ident == Some(k) {
+            return ("*".into(), IdentKind::Prop);
         }
         let name = self.name(r);
         let kind = if self.state.contains(&k) {
@@ -178,10 +231,18 @@ impl<'a> NameTable<'a> {
         if let Some((source, imported)) = self.import_of(r) {
             return imported == "Fragment" && source.starts_with("react");
         }
-        self.symbols.get(self.key(r) as usize).is_some_and(|s| {
-            s.kind == js_ast::symbol::Kind::Other
-                && s.original_name.slice().starts_with(b"Fragment")
-        })
+        let k = self.key(r);
+        self.jsx_runtime.contains(&k)
+            && self
+                .symbols
+                .get(k as usize)
+                .is_some_and(|s| s.original_name.slice().starts_with(b"Fragment"))
+    }
+
+    /// `r` is a binding the parser generated for the JSX runtime (`jsx_*`,
+    /// `jsxs_*`, `Fragment_*`): never a capture or a dependency.
+    pub fn is_jsx_runtime(&self, r: js_ast::Ref) -> bool {
+        self.jsx_runtime.contains(&self.key(r))
     }
 
     /// Same symbol, links followed.

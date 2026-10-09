@@ -1,0 +1,97 @@
+{
+  "id": "input_d2ab59e4",
+  "source": "tests/fixtures/react-hook/input.tsx",
+  "tier": {
+    "React": {
+      "reason": "hook useContext is not supported",
+      "client_only": false
+    }
+  },
+  "props": [
+    {
+      "name": "label",
+      "local": "label",
+      "ts_type": null,
+      "default": null
+    }
+  ],
+  "state": [],
+  "derived": [],
+  "effects": [],
+  "handlers": [],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 188,
+      "tag": "span",
+      "attrs": [
+        {
+          "Dynamic": {
+            "name": "className",
+            "value": {
+              "Precomputed": {
+                "slot": "_s1",
+                "js": "theme",
+                "client_js": null,
+                "inputs": [],
+                "state_dependent": false,
+                "per_item": null
+              }
+            }
+          }
+        }
+      ],
+      "children": [
+        {
+          "Slot": {
+            "Server": {
+              "loc": 213,
+              "kind": {
+                "Ident": {
+                  "name": "label",
+                  "kind": "Prop"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [
+    {
+      "kind": {
+        "Ssr": {
+          "client_only": false
+        }
+      },
+      "inputs": [
+        "*"
+      ],
+      "outputs": [
+        "_ssr_input_d2ab59e4"
+      ]
+    }
+  ],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": true,
+  "cache": null,
+  "children": [],
+  "diagnostics": [
+    {
+      "class": "Fallback",
+      "rule": "hook-unsupported",
+      "message": "hook useContext is not supported",
+      "loc": 154,
+      "line": 5,
+      "col": 17,
+      "remediation": "move this component to React, or replace the hook with useState/useEffect"
+    }
+  ]
+}

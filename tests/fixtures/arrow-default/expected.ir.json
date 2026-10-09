@@ -1,7 +1,12 @@
 {
   "id": "input_92ff5102",
   "source": "tests/fixtures/arrow-default/input.tsx",
-  "tier": "Pending",
+  "tier": {
+    "React": {
+      "reason": "the default export is not a function declaration",
+      "client_only": false
+    }
+  },
   "props": [],
   "state": [],
   "derived": [],
@@ -12,12 +17,28 @@
   "template": {
     "Fragment": []
   },
-  "jobs": [],
+  "jobs": [
+    {
+      "kind": {
+        "Ssr": {
+          "client_only": false
+        }
+      },
+      "inputs": [
+        "*"
+      ],
+      "outputs": [
+        "_ssr_input_92ff5102"
+      ]
+    }
+  ],
   "child_links": [],
   "client_props": [],
   "client_imports": [],
-  "needs_worker": false,
+  "client_module_locals": [],
+  "needs_worker": true,
   "cache": null,
+  "children": [],
   "diagnostics": [
     {
       "class": "Fallback",

@@ -1,0 +1,19 @@
+{
+  "function": "Tree",
+  "params": 1,
+  "scopes": [
+    {
+      "id": 0,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "depth",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t1"
+      ]
+    }
+  ]
+}

@@ -82,7 +82,7 @@ fn calls_and_opaque() {
         k => panic!("{k:?}"),
     }
     match slot("new Date(a)").kind {
-        RawKind::Opaque { source, why } => {
+        RawKind::Opaque { source, why, .. } => {
             assert!(source.contains("Date"), "{source}");
             assert!(!why.is_empty())
         }
@@ -162,7 +162,7 @@ fn operators_outside_the_grammar_are_opaque() {
         match (src, &e.kind) {
             ("-a", RawKind::Unary { op: UnOp::Neg, .. }) => {}
             ("!a", RawKind::Unary { op: UnOp::Not, .. }) => {}
-            (_, RawKind::Opaque { why, source }) if !src.starts_with(['-', '!']) => {
+            (_, RawKind::Opaque { why, source, .. }) if !src.starts_with(['-', '!']) => {
                 assert!(
                     !why.is_empty() && !source.is_empty(),
                     "{src}: {why} {source}"
@@ -171,4 +171,44 @@ fn operators_outside_the_grammar_are_opaque() {
             (_, k) => panic!("{src}: {k:?}"),
         }
     }
+}
+
+/// M1b-2 ruling R6: an Opaque carries what it reads, like an arrow.
+#[test]
+fn opaque_carries_captures() {
+    let RawKind::Opaque { captures, .. } = slot("new Intl.NumberFormat(a, n)").kind else {
+        panic!()
+    };
+    let names: Vec<_> = captures.iter().map(|(n, _)| n.as_str()).collect();
+    assert_eq!(names, ["Intl", "a", "n"]);
+    assert!(captures.contains(&("a".into(), IdentKind::Prop)));
+    assert!(captures.contains(&("n".into(), IdentKind::State)));
+}
+
+/// F14: the generated JSX runtime binding is not a capture; ruling 1: a block
+/// body that builds JSX is an Opaque marked `contains-jsx`.
+#[test]
+fn jsx_runtime_is_not_captured_and_block_jsx_is_marked() {
+    let RawKind::Arrow { captures, .. } = slot("() => <b>{a}</b>").kind else {
+        panic!()
+    };
+    assert_eq!(captures, [("a".to_string(), IdentKind::Prop)]);
+    let RawKind::Opaque { why, captures, .. } =
+        slot("() => { const y = a; return <b>{y}</b> }").kind
+    else {
+        panic!()
+    };
+    assert_eq!(why, "contains-jsx");
+    assert_eq!(captures, [("a".to_string(), IdentKind::Prop)]);
+}
+
+/// F20: the whole non-destructured props object is the prop root `*`.
+#[test]
+fn bare_props_object_is_prop_root() {
+    let src = "export default function C(props: any) { return <p>{props}</p> }\n";
+    let e = run_on_compiler_thread(move || {
+        let parsed = parse_tsx("C.tsx", src.as_bytes().to_vec()).unwrap();
+        debug_first_slot(&parsed).expect("slot")
+    });
+    assert_eq!(ident(&e), ("*", &IdentKind::Prop));
 }

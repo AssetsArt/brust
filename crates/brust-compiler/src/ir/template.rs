@@ -32,9 +32,14 @@ pub enum Node {
         name: String,
         /// Import path of the component, `None` when it is declared in this file.
         source: Option<String>,
+        /// The imported export name (`default` for a default import); `None`
+        /// when declared in this file.
+        imported: Option<String>,
         props: Vec<(String, Expr)>,
         children: Vec<Node>,
         link: Option<u32>,
+        /// The child's tier (M1b-2 children pass); `Pending` until resolved.
+        tier: crate::ir::Tier,
     },
     Fragment(Vec<Node>),
 }

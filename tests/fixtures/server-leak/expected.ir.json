@@ -1,7 +1,7 @@
 {
   "id": "input_8803b8a9",
   "source": "tests/fixtures/server-leak/input.tsx",
-  "tier": "Pending",
+  "tier": "Native",
   "props": [
     {
       "name": "path",
@@ -15,7 +15,7 @@
       "name": "text",
       "setter": "setText",
       "init": {
-        "Raw": {
+        "Server": {
           "loc": 167,
           "kind": {
             "Lit": {
@@ -164,7 +164,7 @@
             "children": [
               {
                 "Slot": {
-                  "Raw": {
+                  "Server": {
                     "loc": 314,
                     "kind": {
                       "Ident": {
@@ -187,9 +187,28 @@
   },
   "jobs": [],
   "child_links": [],
-  "client_props": [],
-  "client_imports": [],
+  "client_props": [
+    "path"
+  ],
+  "client_imports": [
+    [
+      "node:fs",
+      "readFileSync"
+    ]
+  ],
+  "client_module_locals": [],
   "needs_worker": false,
   "cache": null,
-  "diagnostics": []
+  "children": [],
+  "diagnostics": [
+    {
+      "class": "Error",
+      "rule": "server-only-in-client",
+      "message": "readFileSync from node:fs is server-only but is used by a handler at line 8",
+      "loc": 229,
+      "line": 8,
+      "col": 38,
+      "remediation": "move the computation into the loader or make the module browser-safe"
+    }
+  ]
 }

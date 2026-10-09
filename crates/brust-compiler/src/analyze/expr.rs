@@ -22,6 +22,9 @@ pub struct Reader<'r, 'a> {
     pub pending_handlers: Vec<HandlerDecl>,
     /// Loop bindings in scope at the point being read (innermost last).
     pub loop_scope: Vec<String>,
+    /// Set while reading the callback of a `.map(…)` call: its JSX body is a
+    /// list item body, where `key` belongs.
+    map_callback: bool,
 }
 
 impl<'r, 'a> Reader<'r, 'a> {
@@ -32,6 +35,7 @@ impl<'r, 'a> Reader<'r, 'a> {
             diagnostics: Vec::new(),
             pending_handlers: Vec::new(),
             loop_scope: Vec::new(),
+            map_callback: false,
         }
     }
 
@@ -43,12 +47,18 @@ impl<'r, 'a> Reader<'r, 'a> {
         (self.print)(Js::Stmt(s))
     }
 
+    /// `e` as printed JS. Its captures come from the same walk as an arrow's;
+    /// JSX anywhere inside overrides `why` with `contains-jsx`.
     pub fn opaque(&self, e: &js_ast::Expr, why: &str) -> RawExpr {
+        let mut w = Walk::default();
+        w.expr(e);
+        let (captures, jsx) = self.captured(w);
         RawExpr {
             loc: loc_of(e),
             kind: RawKind::Opaque {
                 source: self.print(e),
-                why: why.to_string(),
+                why: if jsx { "contains-jsx" } else { why }.to_string(),
+                captures,
             },
         }
     }
@@ -77,9 +87,14 @@ impl<'r, 'a> Reader<'r, 'a> {
                     RawKind::Member {
                         target: Box::new(self.expr(&d.target)),
                         name,
-                        optional: d.optional_chain.is_some(),
+                        // Only the link that starts the chain is `?.`; a
+                        // continuation is short-circuited by it.
+                        optional: matches!(d.optional_chain, Some(js_ast::OptionalChain::Start)),
                     }
                 }
+            }
+            E::EIndex(ix) if matches!(ix.optional_chain, Some(js_ast::OptionalChain::Start)) => {
+                return self.opaque(e, "optional index");
             }
             E::EIndex(ix) => RawKind::Index {
                 target: Box::new(self.expr(&ix.target)),
@@ -91,12 +106,17 @@ impl<'r, 'a> Reader<'r, 'a> {
                     if c.optional_chain.is_none() =>
                 {
                     let callee = self.expr(&c.target);
+                    let is_map = matches!(&c.target.data,
+                        E::EDot(d) if d.name.slice() == b"map")
+                        && c.args.len() == 1;
                     let mut args = Vec::with_capacity(c.args.len());
                     for a in c.args.iter() {
                         if matches!(a.data, E::ESpread(_)) {
                             return self.opaque(e, "spread argument");
                         }
+                        self.map_callback = is_map && matches!(a.data, E::EArrow(_));
                         args.push(self.expr(a));
+                        self.map_callback = false;
                     }
                     RawKind::Call {
                         callee: Box::new(callee),
@@ -182,6 +202,7 @@ impl<'r, 'a> Reader<'r, 'a> {
     }
 
     fn arrow(&mut self, e: &js_ast::Expr, a: &js_ast::E::Arrow) -> RawExpr {
+        let list_body = std::mem::take(&mut self.map_callback);
         let mut params = Vec::new();
         for arg in a.args.slice() {
             match arg.binding.data {
@@ -198,6 +219,13 @@ impl<'r, 'a> Reader<'r, 'a> {
         let body = match stmts {
             [only] if a.prefer_expr => match &only.data {
                 S::SReturn(r) => match &r.value {
+                    Some(v) if list_body && crate::analyze::jsx::is_jsx(v) => {
+                        let node = crate::analyze::jsx::read_list_body(self, v);
+                        ArrowBody::Expr(Box::new(RawExpr {
+                            loc: loc_of(v),
+                            kind: RawKind::Jsx(Box::new(node)),
+                        }))
+                    }
                     Some(v) => ArrowBody::Expr(Box::new(self.expr(v))),
                     None => ArrowBody::Block {
                         source: self.print(e),
@@ -214,7 +242,18 @@ impl<'r, 'a> Reader<'r, 'a> {
                 captures_only: false,
             },
         };
-        let captures = self.captures(a);
+        let (captures, jsx) = self.captures(a);
+        if jsx && matches!(body, ArrowBody::Block { .. }) {
+            // Ruling 1 (M1b-2 plan): JSX built in a block body is marked on an Opaque.
+            return RawExpr {
+                loc: loc_of(e),
+                kind: RawKind::Opaque {
+                    source: self.print(e),
+                    why: "contains-jsx".into(),
+                    captures,
+                },
+            };
+        }
         RawExpr {
             loc: loc_of(e),
             kind: RawKind::Arrow {
@@ -227,7 +266,8 @@ impl<'r, 'a> Reader<'r, 'a> {
 
     /// Identifiers the arrow reads that it does not declare itself, first
     /// occurrence order, deduplicated by symbol.
-    fn captures(&self, a: &js_ast::E::Arrow) -> Vec<(String, IdentKind)> {
+    /// And whether the arrow builds JSX anywhere inside.
+    fn captures(&self, a: &js_ast::E::Arrow) -> (Vec<(String, IdentKind)>, bool) {
         self.captures_of(a.args.slice(), a.body.stmts.slice())
     }
 
@@ -235,7 +275,7 @@ impl<'r, 'a> Reader<'r, 'a> {
         &self,
         args: &[js_ast::G::Arg],
         body: &[js_ast::Stmt],
-    ) -> Vec<(String, IdentKind)> {
+    ) -> (Vec<(String, IdentKind)>, bool) {
         let mut w = Walk::default();
         for arg in args {
             w.declare_binding(&arg.binding);
@@ -244,17 +284,59 @@ impl<'r, 'a> Reader<'r, 'a> {
             }
         }
         w.stmts(body);
-        let declared: Vec<js_ast::Ref> = w.declared;
+        self.captured(w)
+    }
+
+    /// The walked identifiers that are read but not declared inside, first
+    /// occurrence order, deduplicated by symbol; the generated JSX runtime
+    /// bindings are not captures. Second: whether a JSX call was reached.
+    fn captured(&self, w: Walk) -> (Vec<(String, IdentKind)>, bool) {
+        let jsx = w
+            .calls
+            .iter()
+            .any(|c| matches!(&c.data, E::ECall(call) if call.was_jsx_element));
         let mut seen: Vec<js_ast::Ref> = Vec::new();
         let mut out = Vec::new();
         for r in w.used {
-            if declared.iter().any(|d| self.names.same(*d, r))
+            if self.names.is_jsx_runtime(r)
+                || w.declared.iter().any(|d| self.names.same(*d, r))
                 || seen.iter().any(|s| self.names.same(*s, r))
             {
                 continue;
             }
             seen.push(r);
             out.push(self.names.kind_of(r));
+        }
+        (out, jsx)
+    }
+
+    /// Module-level declarations and their captures: `function f` and each
+    /// identifier-bound `const`/`let`/`var` (exported or not).
+    pub fn module_scope(&self, ast: &js_ast::Ast<'_>) -> Vec<(String, Vec<(String, IdentKind)>)> {
+        let mut out = Vec::new();
+        for part in ast.parts.iter() {
+            for stmt in part.stmts.slice() {
+                match &stmt.data {
+                    S::SFunction(f) => {
+                        if let Some(n) = &f.func.name {
+                            let (captures, _) =
+                                self.captures_of(f.func.args.slice(), f.func.body.stmts.slice());
+                            out.push((self.names.name(n.ref_), captures));
+                        }
+                    }
+                    S::SLocal(l) => {
+                        for d in l.decls.iter() {
+                            if let (B::BIdentifier(id), Some(v)) = (d.binding.data, &d.value) {
+                                let mut w = Walk::default();
+                                w.expr(v);
+                                let (captures, _) = self.captured(w);
+                                out.push((self.names.name(id.r#ref), captures));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
         }
         out
     }
@@ -270,15 +352,26 @@ impl<'r, 'a> Reader<'r, 'a> {
                     params.push(self.names.name(id.r#ref))
                 }
                 _ => {
-                    return RawExpr {
-                        loc,
-                        kind: RawKind::Opaque {
-                            source: self.print_stmt(stmt),
-                            why: "function parameter pattern".into(),
-                        },
-                    };
+                    params.clear();
+                    break;
                 }
             }
+        }
+        let (captures, jsx) = self.captures_of(f.args.slice(), f.body.stmts.slice());
+        if jsx || params.len() != f.args.len() {
+            return RawExpr {
+                loc,
+                kind: RawKind::Opaque {
+                    source: self.print_stmt(stmt),
+                    why: if jsx {
+                        "contains-jsx"
+                    } else {
+                        "function parameter pattern"
+                    }
+                    .into(),
+                    captures,
+                },
+            };
         }
         RawExpr {
             loc,
@@ -288,7 +381,7 @@ impl<'r, 'a> Reader<'r, 'a> {
                     source: self.print_stmt(stmt),
                     captures_only: false,
                 },
-                captures: self.captures_of(f.args.slice(), f.body.stmts.slice()),
+                captures,
             },
         }
     }
