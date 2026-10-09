@@ -335,6 +335,7 @@ impl Walker<'_, '_> {
             Tier::React { client_only, .. } => {
                 let mut inputs = Vec::new();
                 let mut prop_map = std::collections::BTreeMap::new();
+                let mut literals = std::collections::BTreeMap::new();
                 let mut ok = true;
                 for (k, v) in props.iter() {
                     let d = self.deps_of(v);
@@ -359,7 +360,18 @@ impl Walker<'_, '_> {
                         continue;
                     }
                     inputs.extend(self.paths_of(v));
-                    prop_map.insert(k.clone(), self.prop_path(v));
+                    let lit = match v {
+                        Expr::Raw(r) | Expr::Server(ServerExpr(r)) => r.json_literal(),
+                        _ => None,
+                    };
+                    match lit {
+                        Some(j) => {
+                            literals.insert(k.clone(), j);
+                        }
+                        None => {
+                            prop_map.insert(k.clone(), self.prop_path(v));
+                        }
+                    }
                 }
                 if !children.is_empty() {
                     self.diagnostics.push(Diagnostic::fallback(
@@ -397,6 +409,7 @@ impl Walker<'_, '_> {
                         outputs: vec![output],
                         per_item: self.items.last().cloned(),
                         props: Some(prop_map),
+                        literals,
                     });
                 }
             }

@@ -115,6 +115,7 @@ fn react_child_is_an_island_with_an_ssr_job() {
             outputs: vec![format!("_ssr_{id}")],
             per_item: None,
             props: Some([("productId".to_string(), Some("productId".to_string()))].into()),
+            literals: Default::default(),
         }]
     );
     assert_eq!(ir.tier, Tier::Static);
@@ -199,7 +200,7 @@ fn react_child_ssr_job_carries_the_prop_map() {
 }
 
 #[test]
-fn react_child_in_a_row_maps_with_idx_and_literals_are_null() {
+fn react_child_in_a_row_maps_with_idx_and_literals_go_to_literals() {
     let ir = fixture("react-child-row");
     let jobs: Vec<_> = ir
         .jobs
@@ -213,11 +214,11 @@ fn react_child_in_a_row_maps_with_idx_and_literals_are_null() {
         Some(&Some("items[idx]".to_string())),
         "{props:?}"
     );
-    assert_eq!(
-        props.get("limit"),
-        Some(&None),
-        "a literal prop is null: {props:?}"
+    assert!(
+        !props.contains_key("limit"),
+        "a literal prop is not in props: {props:?}"
     );
+    assert_eq!(jobs[0].literals.get("limit"), Some(&serde_json::json!(3)));
     assert_eq!(jobs[0].per_item.as_deref(), Some("it"));
 }
 
@@ -273,4 +274,50 @@ fn analyze_in(dir: &str, src: &str) -> ComponentIR {
         )
         .unwrap()
     })
+}
+
+#[test]
+fn literal_react_child_props_go_to_literals_not_props() {
+    let ir = analyze_in(
+        "react-child",
+        r#"
+import Reviews from './Reviews'
+export default function P(props: { a: { id: string } }) { return <Reviews item={props.a} limit={3} title="x" on={true} meta={{ a: 1, b: ['x'] }} n={props.a.id.length + 1} /> }
+"#,
+    );
+    let job = ir
+        .jobs
+        .iter()
+        .find(|j| matches!(j.kind, JobKind::Ssr { .. }))
+        .unwrap();
+    let props = job.props.as_ref().unwrap();
+    assert_eq!(props.get("item"), Some(&Some("a".into())));
+    assert_eq!(
+        props.get("n"),
+        Some(&None),
+        "computed values stay null paths: {props:?}"
+    );
+    assert!(
+        !props.contains_key("limit") && !props.contains_key("title"),
+        "literals are not in props: {props:?}"
+    );
+    assert_eq!(job.literals.get("limit"), Some(&serde_json::json!(3)));
+    assert_eq!(job.literals.get("title"), Some(&serde_json::json!("x")));
+    assert_eq!(job.literals.get("on"), Some(&serde_json::json!(true)));
+    assert_eq!(
+        job.literals.get("meta"),
+        Some(&serde_json::json!({"a": 1, "b": ["x"]}))
+    );
+    assert!(job.literals.keys().all(|k| !props.contains_key(k)));
+}
+
+#[test]
+fn react_page_self_job_has_no_literals() {
+    let ir = fixture("react-hook");
+    let job = ir
+        .jobs
+        .iter()
+        .find(|j| matches!(j.kind, JobKind::Ssr { .. }))
+        .unwrap();
+    assert!(job.literals.is_empty() && job.props.is_none());
 }

@@ -185,8 +185,10 @@
       ],
       "per_item": "it",
       "props": {
-        "item": "groups[idx].items[idx]",
-        "limit": null
+        "item": "groups[idx].items[idx]"
+      },
+      "literals": {
+        "limit": 3
       }
     }
   ],

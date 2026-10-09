@@ -72,6 +72,10 @@ pub struct JobDecl {
     /// enclosing row), `None` when the value is not a plain path. Absent on other jobs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub props: Option<std::collections::BTreeMap<String, Option<String>>>,
+    /// `Ssr` job for a react child: props passed as JSON literals (`limit={3}`), constant per
+    /// job. Disjoint from `props`. Empty (and omitted) on other jobs.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub literals: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 /// Filled by M1b-2.
