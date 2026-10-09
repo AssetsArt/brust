@@ -212,3 +212,33 @@ fn render_paints_the_template_from_props_and_slots() {
     let (code, _, _) = run(&["--emit", "ir", "--slots", props.to_str().unwrap()]);
     assert_eq!(code, Some(2));
 }
+
+/// M2a: `--emit ir` carries every field the build lane writes into the manifest.
+#[test]
+fn emit_ir_carries_the_m2_manifest_fields() {
+    let repo = format!("{}/../..", env!("CARGO_MANIFEST_DIR"));
+    let ir = |case: &str| -> serde_json::Value {
+        let out = brustc()
+            .current_dir(&repo)
+            .arg(format!("tests/fixtures/{case}/input.tsx"))
+            .args(["--emit", "ir"])
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{case}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        serde_json::from_slice(&out.stdout).unwrap()
+    };
+    assert_eq!(ir("outlet-layout")["uses_outlet"], true);
+    assert_eq!(ir("use-id")["use_id_slots"], 1);
+    let inst = &ir("keyed-list-child-job")["instances"][0];
+    assert_eq!(inst["k"], 1);
+    assert_eq!(inst["loops"], serde_json::json!(["items"]));
+    assert_eq!(inst["props"]["item"], "items[idx]");
+    let job = &ir("keyed-list-child-job")["jobs"];
+    assert!(job.is_array());
+    // Fields at their default are left out, so existing goldens do not churn.
+    assert!(ir("theme-toggle").get("uses_outlet").is_none());
+}

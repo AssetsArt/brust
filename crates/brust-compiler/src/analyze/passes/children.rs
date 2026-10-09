@@ -7,8 +7,8 @@ use super::{PassCtx, PassState, run_passes};
 use crate::analyze::component::finish_diagnostics;
 use crate::analyze::modules::{Entry, Export, Lookup, cache_key, compile, resolve};
 use crate::ir::{
-    ChildLink, ChildRef, ComponentIR, Diagnostic, Expr, JobDecl, JobKind, JsCtx, Node, ServerExpr,
-    Tier, component_id, named_component_id,
+    ChildLink, ChildRef, ComponentIR, Diagnostic, Expr, IdentKind, InstanceRecord, JobDecl,
+    JobKind, JsCtx, Node, RawExpr, RawKind, ServerExpr, Tier, component_id, named_component_id,
 };
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -25,12 +25,16 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
         lists: Vec::new(),
         items: Vec::new(),
         list_uses: Vec::new(),
+        loop_sources: Vec::new(),
+        instance_counts: HashMap::new(),
+        instances: Vec::new(),
         ssr_outputs: HashMap::new(),
     };
     let mut template = std::mem::replace(&mut ir.template, Node::Fragment(vec![]));
     w.node(&mut template);
     ir.template = template;
     ir.child_links.extend(w.links);
+    ir.instances.extend(w.instances);
     ir.children.extend(w.refs);
     ir.jobs.extend(w.jobs);
     ir.diagnostics.extend(w.diagnostics);
@@ -51,6 +55,10 @@ struct Walker<'s, 'c> {
     items: Vec<String>,
     /// The enclosing `For` sources as client reads, used when a linked child sits in the row.
     list_uses: Vec<super::ClientUse>,
+    /// The enclosing `For` sources as props paths (`None` = not a plain path).
+    loop_sources: Vec<Option<String>>,
+    instance_counts: HashMap<String, u32>,
+    instances: Vec<InstanceRecord>,
     ssr_outputs: HashMap<String, u32>,
 }
 
@@ -59,6 +67,8 @@ struct Child {
     id: Option<String>,
     path: Option<String>,
     tier: Tier,
+    /// The compiled child has a precompute job or `useId` values the server must feed per instance.
+    fed: bool,
 }
 
 fn react(reason: &str) -> Tier {
@@ -105,11 +115,14 @@ impl Walker<'_, '_> {
                     what: "a list the client updates",
                     raw: raw.map(|r| (r, self.loop_scope[..n].to_vec())),
                 };
+                let list_path = self.list_path(source);
+                self.loop_sources.push(list_path);
                 self.lists.push(src);
                 self.list_uses.push(use_);
                 self.items.push(item.clone());
                 body.iter_mut().for_each(|c| self.node(c));
                 self.items.pop();
+                self.loop_sources.pop();
                 self.list_uses.pop();
                 self.lists.pop();
                 self.loop_scope.truncate(n);
@@ -167,6 +180,7 @@ impl Walker<'_, '_> {
                     id: None,
                     path: None,
                     tier: react("unresolved import"),
+                    fed: false,
                 };
             }
             self.diagnostics.push(Diagnostic::fallback(
@@ -179,6 +193,7 @@ impl Walker<'_, '_> {
                 id: None,
                 path: None,
                 tier: react("external component"),
+                fed: false,
             };
         };
         let export = match imported {
@@ -215,6 +230,7 @@ impl Walker<'_, '_> {
                         id: None,
                         path: Some(ctx.path.into()),
                         tier: react("local component"),
+                        fed: false,
                     };
                 };
                 ctx.modules
@@ -240,8 +256,16 @@ impl Walker<'_, '_> {
         lookup: Lookup,
         loc: u32,
     ) -> Child {
+        let mut fed = false;
         let tier = match lookup {
-            Lookup::Compiled(ir) => ir.tier.clone(),
+            Lookup::Compiled(ir) => {
+                fed = ir.use_id_slots > 0
+                    || ir
+                        .jobs
+                        .iter()
+                        .any(|j| matches!(j.kind, JobKind::Precompute));
+                ir.tier.clone()
+            }
             Lookup::Cycle => {
                 self.diagnostics.push(Diagnostic::fallback(
                     "import-cycle",
@@ -270,7 +294,12 @@ impl Walker<'_, '_> {
                 react("child failed to compile")
             }
         };
-        Child { id, path, tier }
+        Child {
+            id,
+            path,
+            tier,
+            fed,
+        }
     }
 
     fn component(&mut self, n: &mut Node) {
@@ -369,6 +398,23 @@ impl Walker<'_, '_> {
                 }
             }
             _ => {
+                // The template backend numbers every inlined instance of a child id.
+                let k = self.instance_counts.entry(child_id.clone()).or_insert(0);
+                *k += 1;
+                let k = *k;
+                if child.fed {
+                    let record = InstanceRecord {
+                        child_id: child_id.clone(),
+                        k,
+                        loops: self.loop_sources.clone(),
+                        props: props
+                            .iter()
+                            .filter(|(_, v)| !matches!(v, Expr::ClientOnly { .. }))
+                            .map(|(name, v)| (name.clone(), self.prop_path(v)))
+                            .collect(),
+                    };
+                    self.instances.push(record);
+                }
                 // Native / static child: link when any prop changes after first
                 // paint or is a function (§7.4).
                 let needs_link = props.iter().any(|(_, v)| {
@@ -417,6 +463,39 @@ impl Walker<'_, '_> {
         children.iter_mut().for_each(|c| self.node(c));
     }
 
+    /// A plain props path of `e` (`item.price`), `[idx]` standing for the current row of
+    /// the innermost list; `None` for anything else.
+    fn prop_path(&self, e: &Expr) -> Option<String> {
+        let r = match e {
+            Expr::Raw(r) | Expr::Server(ServerExpr(r)) => r,
+            _ => return None,
+        };
+        match plain_path(r, self.items.last().map(String::as_str))? {
+            PlainPath::Props(p) => Some(p),
+            PlainPath::Row(rest) => Some(format!(
+                "{}[idx]{rest}",
+                self.loop_sources.last()?.as_ref()?
+            )),
+        }
+    }
+
+    /// The path of a `For` source relative to props, when it is a plain path of the
+    /// props or of the enclosing row.
+    fn list_path(&self, source: &Expr) -> Option<String> {
+        let r = match source {
+            Expr::Raw(r) | Expr::Server(ServerExpr(r)) => r,
+            _ => return None,
+        };
+        let outer = self.items.last().map(String::as_str);
+        match plain_path(r, outer)? {
+            PlainPath::Props(p) => Some(p),
+            PlainPath::Row(rest) => Some(format!(
+                "{}[idx]{rest}",
+                self.loop_sources.last()?.as_ref()?
+            )),
+        }
+    }
+
     /// The parent chunk's expression for one linked prop.
     fn link_prop(&self, v: &Expr) -> Expr {
         match v {
@@ -434,5 +513,34 @@ impl Walker<'_, '_> {
                 js: r.to_js_in(JsCtx::Client),
             },
         }
+    }
+}
+
+/// A value read as a path: from the props, or from the innermost row's item.
+enum PlainPath {
+    Props(String),
+    /// `""` for the item itself, `.title` for a member of it.
+    Row(String),
+}
+
+fn plain_path(r: &RawExpr, item: Option<&str>) -> Option<PlainPath> {
+    match &r.kind {
+        RawKind::Ident {
+            name,
+            kind: IdentKind::Prop,
+        } if name != "*" => Some(PlainPath::Props(name.clone())),
+        RawKind::Ident {
+            name,
+            kind: IdentKind::LoopBinding,
+        } if Some(name.as_str()) == item => Some(PlainPath::Row(String::new())),
+        RawKind::Member {
+            target,
+            name,
+            optional: false,
+        } => match plain_path(target, item)? {
+            PlainPath::Props(p) => Some(PlainPath::Props(format!("{p}.{name}"))),
+            PlainPath::Row(rest) => Some(PlainPath::Row(format!("{rest}.{name}"))),
+        },
+        _ => None,
     }
 }

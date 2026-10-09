@@ -381,3 +381,35 @@ fn use_id_in_a_keyed_row_is_indexed_by_the_loop_path() {
         "{html}"
     );
 }
+
+/// F34 (compiler half): an inlined child with its own job inside a list is recorded as a
+/// per-row instance, and the printed slot key comes from the same ordinal.
+#[test]
+fn inlined_child_with_a_job_inside_a_list_is_recorded_as_a_per_row_instance() {
+    let file = "tests/fixtures/keyed-list-child-job/input.tsx".to_string();
+    let ir = run_on_compiler_thread(move || {
+        brust_compiler::analyze::component::analyze_file(
+            &file,
+            &AnalyzeOptions {
+                root: repo(),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+    });
+    let inst = ir
+        .instances
+        .iter()
+        .find(|i| i.child_id.starts_with("priceRow_"))
+        .expect("instance");
+    assert_eq!(inst.loops, vec![Some("items".to_string())]);
+    assert_eq!(inst.props["item"].as_deref(), Some("items[idx]"));
+    assert_eq!(inst.props["unit"].as_deref(), Some("unit"));
+    let jinja = lowered_jinja("keyed-list-child-job");
+    assert!(
+        jinja.contains(&format!("__{}_{}[", inst.child_id, inst.k)),
+        "{jinja}"
+    );
+    let json = serde_json::to_value(&ir).unwrap();
+    assert_eq!(json["instances"][0]["k"], 1);
+}

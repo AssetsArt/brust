@@ -1,0 +1,49 @@
+{
+  "function": "Prices",
+  "params": 1,
+  "scopes": [
+    {
+      "id": 1,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "props",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t1"
+      ]
+    },
+    {
+      "id": 2,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "props",
+          "reactive": true
+        },
+        {
+          "name": "props",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t0"
+      ]
+    },
+    {
+      "id": 3,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "t0",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t1"
+      ]
+    }
+  ]
+}

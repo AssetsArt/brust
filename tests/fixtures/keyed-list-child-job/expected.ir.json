@@ -1,6 +1,6 @@
 {
-  "id": "input_04b8b787",
-  "source": "tests/fixtures/use-id-row/input.tsx",
+  "id": "input_7833a2e1",
+  "source": "tests/fixtures/keyed-list-child-job/input.tsx",
   "tier": "Native",
   "props": [
     {
@@ -18,40 +18,40 @@
   "id_bindings": [],
   "template": {
     "Element": {
-      "loc": 127,
-      "tag": "form",
+      "loc": 147,
+      "tag": "ul",
       "attrs": [],
       "children": [
         {
           "For": {
             "source": {
               "Server": {
-                "loc": 141,
+                "loc": 159,
                 "kind": {
                   "Ident": {
-                    "name": "fields",
+                    "name": "items",
                     "kind": "Prop"
                   }
                 }
               }
             },
-            "item": "f",
+            "item": "it",
             "index": null,
             "key": {
               "Server": {
-                "loc": 187,
+                "loc": 208,
                 "kind": {
                   "Member": {
                     "target": {
-                      "loc": 187,
+                      "loc": 208,
                       "kind": {
                         "Ident": {
-                          "name": "f",
+                          "name": "it",
                           "kind": "LoopBinding"
                         }
                       }
                     },
-                    "name": "key",
+                    "name": "id",
                     "optional": false
                   }
                 }
@@ -60,29 +60,34 @@
             "body": [
               {
                 "Component": {
-                  "loc": 175,
-                  "name": "Field",
-                  "source": "./Field",
+                  "loc": 193,
+                  "name": "PriceRow",
+                  "source": "./PriceRow",
                   "imported": "default",
                   "props": [
                     [
-                      "label",
+                      "item",
                       {
                         "Server": {
-                          "loc": 201,
+                          "loc": 221,
                           "kind": {
-                            "Member": {
-                              "target": {
-                                "loc": 201,
-                                "kind": {
-                                  "Ident": {
-                                    "name": "f",
-                                    "kind": "LoopBinding"
-                                  }
-                                }
-                              },
-                              "name": "label",
-                              "optional": false
+                            "Ident": {
+                              "name": "it",
+                              "kind": "LoopBinding"
+                            }
+                          }
+                        }
+                      }
+                    ],
+                    [
+                      "unit",
+                      {
+                        "Server": {
+                          "loc": 231,
+                          "kind": {
+                            "Ident": {
+                              "name": "unit",
+                              "kind": "Prop"
                             }
                           }
                         }
@@ -91,7 +96,7 @@
                   ],
                   "children": [],
                   "link": 1,
-                  "tier": "Native"
+                  "tier": "Static"
                 }
               }
             ]
@@ -106,30 +111,35 @@
   "child_links": [
     {
       "id": 1,
-      "child": "field_603ad356",
+      "child": "priceRow_845bcd56",
       "props_member": "_p1",
       "item_scoped": [
-        "f"
+        "it"
       ],
       "props": [
         [
-          "label",
+          "item",
           {
             "Server": {
-              "loc": 201,
+              "loc": 221,
               "kind": {
-                "Member": {
-                  "target": {
-                    "loc": 201,
-                    "kind": {
-                      "Ident": {
-                        "name": "f",
-                        "kind": "LoopBinding"
-                      }
-                    }
-                  },
-                  "name": "label",
-                  "optional": false
+                "Ident": {
+                  "name": "it",
+                  "kind": "LoopBinding"
+                }
+              }
+            }
+          }
+        ],
+        [
+          "unit",
+          {
+            "Server": {
+              "loc": 231,
+              "kind": {
+                "Ident": {
+                  "name": "unit",
+                  "kind": "Prop"
                 }
               }
             }
@@ -140,18 +150,20 @@
   ],
   "instances": [
     {
-      "child_id": "field_603ad356",
+      "child_id": "priceRow_845bcd56",
       "k": 1,
       "loops": [
-        "fields"
+        "items"
       ],
       "props": {
-        "label": "fields[idx].label"
+        "item": "items[idx]",
+        "unit": "unit"
       }
     }
   ],
   "client_props": [
-    "fields"
+    "items",
+    "unit"
   ],
   "client_imports": [],
   "client_module_locals": [],
@@ -159,10 +171,10 @@
   "cache": null,
   "children": [
     {
-      "name": "Field",
-      "id": "field_603ad356",
-      "path": "tests/fixtures/use-id-row/Field.tsx",
-      "tier": "Native"
+      "name": "PriceRow",
+      "id": "priceRow_845bcd56",
+      "path": "tests/fixtures/keyed-list-child-job/PriceRow.tsx",
+      "tier": "Static"
     }
   ],
   "diagnostics": []

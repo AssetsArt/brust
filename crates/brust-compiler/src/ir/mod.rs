@@ -204,6 +204,9 @@ pub struct ComponentIR {
     pub uses_outlet: bool,
     pub jobs: Vec<JobDecl>,
     pub child_links: Vec<ChildLink>,
+    /// Inlined child instances with a precompute job or `useId` values (S6 `children[].instances`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub instances: Vec<InstanceRecord>,
     pub client_props: Vec<String>,
     /// `(source, imported)` pairs the client chunk bundles, sorted.
     pub client_imports: Vec<(String, String)>,
@@ -267,6 +270,7 @@ impl ComponentIR {
             uses_outlet: false,
             jobs: vec![],
             child_links: vec![],
+            instances: vec![],
             client_props: vec![],
             client_imports: vec![],
             client_module_locals: vec![],

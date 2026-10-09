@@ -1,0 +1,2 @@
+{# brust v2 · input_7833a2e1 · do not edit #}
+<ul x-data="input_7833a2e1" x-props='{{ {"items": items, "unit": unit} | json_attr }}'>{% for it in items %}{% set _i1 = loop.index0 %}<brust-row style="display:contents" x-for="it in _l1 by _k1"><li x-data="priceRow_845bcd56" x-props-bind="_p1:it">{{ __priceRow_845bcd56_1[_i1]["_s1"] | e }}</li></brust-row>{% else %}<!--x-for--><brust-row style="display:contents" x-for="it in _l1 by _k1" hidden><li x-data="priceRow_845bcd56" x-props-bind="_p1:it">{{ __undefined | e }}</li></brust-row>{% endfor %}</ul>
