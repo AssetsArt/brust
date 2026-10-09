@@ -1,11 +1,21 @@
 {
   "name": "@brust/core",
   "version": "0.0.0",
-  "private": true,
+  "description": "brust v2 \u2014 React components compiled to Rust-rendered templates",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AssetsArt/brust.git"
+  },
   "type": "module",
-  "bin": { "brust": "./bin/brust" },
+  "bin": {
+    "brust": "./bin/brust"
+  },
   "exports": {
-    ".": { "browser": "./src/browser.ts", "default": "./src/index.ts" },
+    ".": {
+      "browser": "./src/browser.ts",
+      "default": "./src/index.ts"
+    },
     "./routes": "./src/routes.ts",
     "./server": "./src/server.ts",
     "./native": "./native/index.js"
@@ -14,7 +24,8 @@
     "build": "napi build --platform --release --js index.js --dts index.d.ts --manifest-path ../../crates/brust-napi/Cargo.toml --output-dir native",
     "build:debug": "napi build --platform --js index.js --dts index.d.ts --manifest-path ../../crates/brust-napi/Cargo.toml --output-dir native",
     "test": "bun test",
-    "typecheck": "bunx tsc --noEmit -p ."
+    "typecheck": "bunx tsc --noEmit -p .",
+    "build:target": "napi build --platform --release --js index.js --dts index.d.ts --manifest-path ../../crates/brust-napi/Cargo.toml --output-dir native"
   },
   "napi": {
     "binaryName": "brust",
@@ -28,8 +39,13 @@
       "aarch64-unknown-linux-musl"
     ]
   },
-  "dependencies": { "@brust/runtime-dom": "workspace:*" },
-  "peerDependencies": { "react": "^19.0.0", "react-dom": "^19.0.0" },
+  "dependencies": {
+    "@brust/runtime-dom": "workspace:*"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
   "devDependencies": {
     "@napi-rs/cli": "^3.0.0",
     "@types/bun": "^1.4.0",
@@ -37,5 +53,23 @@
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "typescript": "^5.9.0"
+  },
+  "files": [
+    "src",
+    "bin",
+    "native/index.js",
+    "native/index.d.ts",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "optionalDependencies": {
+    "@brust/native-darwin-x64": "workspace:*",
+    "@brust/native-darwin-arm64": "workspace:*",
+    "@brust/native-linux-x64-gnu": "workspace:*",
+    "@brust/native-linux-arm64-gnu": "workspace:*",
+    "@brust/native-linux-x64-musl": "workspace:*",
+    "@brust/native-linux-arm64-musl": "workspace:*"
   }
 }

@@ -19,6 +19,30 @@
         "typescript": "^5.9.0",
       },
     },
+    "npm/darwin-arm64": {
+      "name": "@brust/native-darwin-arm64",
+      "version": "0.0.0",
+    },
+    "npm/darwin-x64": {
+      "name": "@brust/native-darwin-x64",
+      "version": "0.0.0",
+    },
+    "npm/linux-arm64-gnu": {
+      "name": "@brust/native-linux-arm64-gnu",
+      "version": "0.0.0",
+    },
+    "npm/linux-arm64-musl": {
+      "name": "@brust/native-linux-arm64-musl",
+      "version": "0.0.0",
+    },
+    "npm/linux-x64-gnu": {
+      "name": "@brust/native-linux-x64-gnu",
+      "version": "0.0.0",
+    },
+    "npm/linux-x64-musl": {
+      "name": "@brust/native-linux-x64-musl",
+      "version": "0.0.0",
+    },
     "packages/brust": {
       "name": "@brust/core",
       "version": "0.0.0",
@@ -35,6 +59,14 @@
         "react": "^19.2.0",
         "react-dom": "^19.2.0",
         "typescript": "^5.9.0",
+      },
+      "optionalDependencies": {
+        "@brust/native-darwin-arm64": "workspace:*",
+        "@brust/native-darwin-x64": "workspace:*",
+        "@brust/native-linux-arm64-gnu": "workspace:*",
+        "@brust/native-linux-arm64-musl": "workspace:*",
+        "@brust/native-linux-x64-gnu": "workspace:*",
+        "@brust/native-linux-x64-musl": "workspace:*",
       },
       "peerDependencies": {
         "react": "^19.0.0",
@@ -63,6 +95,18 @@
     "@brust/core": ["@brust/core@workspace:packages/brust"],
 
     "@brust/example-pokedex": ["@brust/example-pokedex@workspace:examples/pokedex"],
+
+    "@brust/native-darwin-arm64": ["@brust/native-darwin-arm64@workspace:npm/darwin-arm64"],
+
+    "@brust/native-darwin-x64": ["@brust/native-darwin-x64@workspace:npm/darwin-x64"],
+
+    "@brust/native-linux-arm64-gnu": ["@brust/native-linux-arm64-gnu@workspace:npm/linux-arm64-gnu"],
+
+    "@brust/native-linux-arm64-musl": ["@brust/native-linux-arm64-musl@workspace:npm/linux-arm64-musl"],
+
+    "@brust/native-linux-x64-gnu": ["@brust/native-linux-x64-gnu@workspace:npm/linux-x64-gnu"],
+
+    "@brust/native-linux-x64-musl": ["@brust/native-linux-x64-musl@workspace:npm/linux-x64-musl"],
 
     "@brust/runtime-dom": ["@brust/runtime-dom@workspace:packages/runtime-dom"],
 

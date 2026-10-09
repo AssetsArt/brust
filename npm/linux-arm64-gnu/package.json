@@ -1,0 +1,26 @@
+{
+  "name": "@brust/native-linux-arm64-gnu",
+  "version": "0.0.0",
+  "cpu": [
+    "arm64"
+  ],
+  "main": "brust.linux-arm64-gnu.node",
+  "files": [
+    "brust.linux-arm64-gnu.node"
+  ],
+  "description": "brust v2 — React components compiled to Rust-rendered templates",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AssetsArt/brust.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "os": [
+    "linux"
+  ],
+  "libc": [
+    "glibc"
+  ]
+}
