@@ -1,0 +1,3 @@
+/dex?nocache=1 144226
+/team?nocache=1 781
+/types 8512
