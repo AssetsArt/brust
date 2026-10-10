@@ -10,7 +10,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use napi::bindgen_prelude::{FnArgs, Promise};
+use napi::bindgen_prelude::{FnArgs, Promise, ToNapiValue};
 use napi::threadsafe_function::ThreadsafeFunction;
 
 use brust_server::{CallKind, DispatchError, RenderDispatch};
@@ -21,14 +21,37 @@ use brust_server::{CallKind, DispatchError, RenderDispatch};
 /// sub-region `[slot*sub, slot*sub+sub)` with `sub = floor(len / slots)` and
 /// resolves with the byte length (> 0, ≤ sub). `FnArgs` spreads the tuple as
 /// positional JS arguments; CalleeHandled = false matches
-/// `Function::build_threadsafe_function().build()`.
+/// `Function::build_threadsafe_function::<T>().build_callback(|ctx| Ok(ctx.value))`
+/// (what `.build()` does, with the data type decoupled from the declared
+/// args). `kind` is a `&'static str` on the Rust side (no per-call allocation;
+/// napi copies it into a JS string on the worker thread), wrapped in
+/// [`KindArg`].
 pub type WorkerTsfn = ThreadsafeFunction<
-    FnArgs<(String, String, u32)>,
+    FnArgs<(KindArg, String, u32)>,
     Promise<u32>,
-    FnArgs<(String, String, u32)>,
+    FnArgs<(KindArg, String, u32)>,
     napi::Status,
     false,
 >;
+
+/// The call kind as the tsfn's first argument: a `&'static str` behind a
+/// lifetime-free newtype. A bare `&'static str` inside the tsfn type does not
+/// compile here: the dispatch future holds the tsfn across an `.await`, the
+/// compiler erases that `'static` in the generator witness, and the tsfn's
+/// `Send`/`Sync` impls (which demand `T: 'static`) then cannot be proven
+/// ("higher-ranked lifetime error"). The newtype has no lifetime parameter to
+/// erase.
+pub struct KindArg(pub &'static str);
+
+impl ToNapiValue for KindArg {
+    unsafe fn to_napi_value(
+        env: napi::sys::napi_env,
+        val: Self,
+    ) -> napi::Result<napi::sys::napi_value> {
+        // SAFETY: forwarded verbatim; the caller upholds `env`'s validity.
+        unsafe { <&str as ToNapiValue>::to_napi_value(env, val.0) }
+    }
+}
 
 /// The JS-facing name of a call kind (the tsfn's first argument).
 pub fn kind_str(k: CallKind) -> &'static str {
@@ -88,7 +111,7 @@ impl RenderDispatch for TsfnDispatch {
         let tsfn = Arc::clone(&self.tsfn);
         Box::pin(async move {
             match tsfn
-                .call_async((kind_str(kind).to_string(), request_json, slot).into())
+                .call_async((KindArg(kind_str(kind)), request_json, slot).into())
                 .await
             {
                 // Bridge enqueue failed → worker dead.

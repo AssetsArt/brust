@@ -40,6 +40,7 @@ pub struct RenderedBody {
     pub status: u16,
     /// `Content-Type` + the loader's headers, validated once (no
     /// `x-brust-cache` / `Content-Encoding` / `Vary`: those are per request).
+    /// Empty for a body that is not stored (nothing reads it then).
     pub headers: http::HeaderMap,
     /// The identity document.
     pub html: Bytes,
