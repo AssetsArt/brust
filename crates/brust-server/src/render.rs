@@ -74,6 +74,10 @@ fn render_into(
     // SAFETY: minijinja writes whole `&str`s (`Output` → `WriteWrapper::write_str`
     // → `write_all(s.as_bytes())`) and a `Vec<u8>` never fails a write, so `buf`
     // is a concatenation of valid UTF-8 strings at every point, error or not.
+    debug_assert!(
+        std::str::from_utf8(&buf).is_ok(),
+        "minijinja wrote invalid UTF-8"
+    );
     *out = unsafe { String::from_utf8_unchecked(buf) };
     r
 }
@@ -207,7 +211,10 @@ pub struct Overlay {
 /// component. Lookup order is what `context!{ ..from_pairs(overlay), ..base }`
 /// gave (a later pair overwrote an earlier one): `__outlet`, `_props`, the maps
 /// last-first (own, children), the pairs last-first (ids), the base. An
-/// undefined hit falls through, as `MergeDict` skips it. Root lookups reach
+/// undefined hit falls through, as `MergeDict` skips it — the one difference
+/// from the old shape: an UNDEFINED value in a map layer (an own key) used to
+/// shadow the layers below it; here it falls through. `Node` never holds
+/// undefined, so production overlays cannot hit it. Root lookups reach
 /// `get_value_by_str` directly (no key `Value`).
 #[derive(Debug)]
 struct Scope {

@@ -612,7 +612,18 @@ fn render_document(
     )?;
     inject_assets_into(&mut out, &route.chain, &s.manifest);
     s.render_hints[ri].store(next_hint(out.len()), Ordering::Relaxed);
+    trim_to_hint(&mut out);
     Ok(Bytes::from(out.into_bytes()))
+}
+
+/// Give back capacity beyond `next_hint(len)`: the Bytes made from `out` keeps
+/// its whole capacity and may sit in L1 (bounded by entry count, not bytes), so
+/// a small document after a large one must not pin the large buffer. Reallocates
+/// only on a size drop; within the hint's slack it is a no-op.
+fn trim_to_hint(out: &mut String) {
+    if out.capacity() > next_hint(out.len()) {
+        out.shrink_to_fit();
+    }
 }
 
 /// The bytes to send for `body` and whether they are gzip: the identity
@@ -2414,5 +2425,27 @@ mod tests {
         assert!(next_hint(0) >= 1024);
         assert!(next_hint(144_000) >= 144_000);
         assert!(next_hint(144_000) < 2 * 144_000);
+    }
+
+    #[test]
+    fn a_small_document_after_a_large_one_does_not_keep_the_large_capacity() {
+        // The buffer is sized from the route's previous document; the Bytes made
+        // from it (stored in L1, which is bounded by entry count, not bytes) keeps
+        // the whole capacity. A size drop must give the slack back.
+        let mut out = String::with_capacity(next_hint(5 * 1024 * 1024));
+        out.push_str(&"x".repeat(2_000));
+        trim_to_hint(&mut out);
+        assert_eq!(out.len(), 2_000);
+        assert!(
+            out.capacity() <= next_hint(out.len()),
+            "cap {}",
+            out.capacity()
+        );
+        // Within the hint's slack nothing is reallocated.
+        let mut out = String::with_capacity(next_hint(2_000));
+        out.push_str(&"x".repeat(2_000));
+        let (ptr, cap) = (out.as_ptr(), out.capacity());
+        trim_to_hint(&mut out);
+        assert_eq!((out.as_ptr(), out.capacity()), (ptr, cap));
     }
 }
