@@ -332,6 +332,7 @@ async fn page(
             params,
             path: path_only,
             req: envelope.req,
+            plan: false,
         };
         let r = call_worker::<_, LoaderResponse>(
             &s.pool,
@@ -397,6 +398,10 @@ async fn page(
             }
             Ok(LoaderResponse::Error { error }) => {
                 tracing::error!(route = %route.id, %error, "loader threw");
+                return body::error_500();
+            }
+            Ok(LoaderResponse::Planned { .. }) => {
+                tracing::error!(route = %route.id, "planned loader response without a plan offer");
                 return body::error_500();
             }
             Err(e @ (CallError::NoWorkers | CallError::Timeout)) => {

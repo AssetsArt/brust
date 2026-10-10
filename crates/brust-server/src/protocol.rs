@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::manifest::JobKind;
 use crate::routing::routes::RequestEnvelope;
 
-/// `loader` call request: `{ routeId, params, path, req }`.
+/// `loader` call request: `{ routeId, params, path, req, plan? }`.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LoaderRequest<'a> {
@@ -18,13 +18,19 @@ pub struct LoaderRequest<'a> {
     pub params: BTreeMap<String, String>,
     pub path: &'a str,
     pub req: RequestEnvelope<'a>,
+    /// M3-P P6: the chain has jobs — the worker may plan them inside this call
+    /// (`planJobs`) and answer `{ planned, results }`; it may also ignore this.
+    /// Serialised only when true.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub plan: bool,
 }
 
-/// `loader` call response: `{ ok: true, data, headers? } | { verdict, … } | { error }`.
+/// `loader` call response: `{ planned: true, results? } | { ok: true, data, headers? } |
+/// { verdict, … } | { error }`.
 /// Parsed in ONE pass straight into the render tree (M3-P P2): a `#[serde(untagged)]`
 /// enum buffers the whole response into serde's `Content` tree first — that was the
-/// intermediate tree. Variant precedence is the untagged one: `Ok` needs `ok` AND
-/// `data`; else `Verdict` needs a valid `verdict` tag (+ its required fields); else
+/// intermediate tree. Variant precedence: `Planned` needs `planned: true`; else `Ok`
+/// needs `ok` AND `data`; else `Verdict` needs a valid `verdict` tag (+ its required fields); else
 /// `Error` needs `error`; anything else is an error. Fields are typed as the variant
 /// declares (a wrong-typed field is a parse error, where untagged would have tried the
 /// next variant — the worker never emits such shapes; `packages/brust/src/worker.ts`).
@@ -36,6 +42,12 @@ pub enum LoaderResponse {
         /// Response headers the loader set (e.g. `set-cookie`), copied onto the
         /// HTTP response; a `set-cookie` key makes the page uncacheable.
         headers: BTreeMap<String, String>,
+    },
+    /// The worker took the plan offer: the loader data went to `plan_in_call` (it is
+    /// in the slot's plan cell), `results` answer the misses `planJobs` returned
+    /// (empty when every job hit).
+    Planned {
+        results: Vec<JobResult>,
     },
     Verdict(Verdict),
     Error {
@@ -64,6 +76,7 @@ impl<'de> serde::de::Visitor<'de> for LoaderVisitor {
             (None::<bool>, None::<Node>, None::<BTreeMap<String, String>>);
         let (mut verdict, mut location, mut status) = (None::<String>, None::<String>, None::<u16>);
         let (mut body, mut error) = (None::<String>, None::<String>);
+        let (mut planned, mut results) = (None::<bool>, None::<Vec<JobResult>>);
         while let Some(k) = m.next_key::<std::borrow::Cow<'de, str>>()? {
             match &*k {
                 "ok" => ok = Some(m.next_value()?),
@@ -74,10 +87,17 @@ impl<'de> serde::de::Visitor<'de> for LoaderVisitor {
                 "status" => status = Some(m.next_value()?),
                 "body" => body = Some(m.next_value()?),
                 "error" => error = Some(m.next_value()?),
+                "planned" => planned = Some(m.next_value()?),
+                "results" => results = Some(m.next_value()?),
                 _ => {
                     m.next_value::<serde::de::IgnoredAny>()?;
                 }
             }
+        }
+        if planned == Some(true) {
+            return Ok(LoaderResponse::Planned {
+                results: results.unwrap_or_default(),
+            });
         }
         if let Some(ok) = ok
             && let Some(data) = data.take()
@@ -183,7 +203,7 @@ pub struct JobsResponse {
     pub results: Vec<JobResult>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct JobResult {
     pub id: String,
     #[serde(default)]
@@ -342,5 +362,56 @@ mod tests {
         assert_eq!(r.results[0].error, None);
         assert_eq!(r.results[1].value, None);
         assert_eq!(r.results[1].error.as_deref(), Some("bad"));
+    }
+
+    #[test]
+    fn plan_offer_is_omitted_when_false() {
+        let env = || RequestEnvelope {
+            method: "GET",
+            url: "/",
+            headers: vec![],
+            cookies: vec![],
+            search: vec![],
+        };
+        let mut r = LoaderRequest {
+            route_id: "r2",
+            params: BTreeMap::new(),
+            path: "/",
+            req: env(),
+            plan: false,
+        };
+        assert!(!serde_json::to_string(&r).unwrap().contains("plan"));
+        r.plan = true;
+        assert!(
+            serde_json::to_string(&r)
+                .unwrap()
+                .contains(r#""plan":true"#)
+        );
+    }
+
+    #[test]
+    fn planned_response_parses_with_and_without_results() {
+        assert_eq!(
+            loader(json!({"planned": true})),
+            LoaderResponse::Planned { results: vec![] }
+        );
+        let LoaderResponse::Planned { results } =
+            loader(json!({"planned": true, "results": [{"id": "c/j0", "value": {"_s1": 1}}]}))
+        else {
+            panic!()
+        };
+        assert_eq!((results.len(), results[0].id.as_str()), (1, "c/j0"));
+    }
+
+    #[test]
+    fn planned_wins_over_every_other_shape_and_false_is_ignored() {
+        assert!(matches!(
+            loader(json!({"planned": true, "ok": true, "data": {}})),
+            LoaderResponse::Planned { .. }
+        ));
+        assert!(matches!(
+            loader(json!({"planned": false, "ok": true, "data": {}})),
+            LoaderResponse::Ok { .. }
+        ));
     }
 }
