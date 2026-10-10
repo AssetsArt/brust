@@ -82,7 +82,7 @@ const next: AppSpec = {
   },
   startCmd: () => ({ cmd: ['node', nextServerJs(join(ROOT, 'bench/apps/next'))], env: { PORT: String(P(3)), HOSTNAME: '127.0.0.1', NODE_ENV: 'production' } }),
   ready: /Ready in|Local:\s+http:\/\/\S+/,
-  version: async () => (await Bun.file(join(ROOT, 'node_modules/next/package.json')).json()).version,
+  version: async () => (await Bun.file(join(ROOT, 'bench/apps/next/node_modules/next/package.json')).json()).version,
 }
 
 const brust01x: AppSpec = {

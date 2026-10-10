@@ -80,6 +80,11 @@ for (const p of probeIds) {
   say(`parity ${p}: ${html[p].map((x) => x.app).join(' = ')} ✓`)
 }
 
+// Versions are read before the load phase: a failure here must never cost a finished run.
+const versions: Record<string, string> = { bun: Bun.version, oha: Bun.spawnSync(['oha', '--version']).stdout.toString().trim().replace(/^oha /, '') }
+const nodeV = Bun.spawnSync(['node', '--version']); if (nodeV.exitCode === 0) versions.node = nodeV.stdout.toString().trim()
+for (const a of apps) versions[a.id] = await a.version().catch((e: Error) => `? (${e.message})`)
+
 // Host lock (lead rule bench-host-lock): only the load itself is serialised, builds and parity are not.
 const releaseLock = await acquireHostLock(say)
 
@@ -107,9 +112,6 @@ for (const { a, p } of pairs) {
 releaseLock()
 
 // 5. Report (spec §1.5): numbers only.
-const versions: Record<string, string> = { bun: Bun.version, oha: Bun.spawnSync(['oha', '--version']).stdout.toString().trim().replace(/^oha /, '') }
-const nodeV = Bun.spawnSync(['node', '--version']); if (nodeV.exitCode === 0) versions.node = nodeV.stdout.toString().trim()
-for (const a of apps) versions[a.id] = await a.version()
 const results: Results = {
   header: { date: new Date().toISOString().slice(0, 10), host: `${process.platform}/${process.arch} ${hostname()}`, cores, loadavg: load, seed, conn, dur: f.dur!, warmup: f.warmup!, settleMs, workers: workersN, versions, apps: apps.map((a) => a.id), skipped, order },
   measurements,
