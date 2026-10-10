@@ -38,12 +38,13 @@ async fn fake_bun_round_trips_loader_and_jobs_through_call_worker() {
     };
     assert_eq!(data, json!({"route": "r2"}));
 
+    let inputs = json!({});
     let req = JobsRequest {
         jobs: vec![JobCall {
             id: "detailPage_c3/j0".into(),
-            component_id: "detailPage_c3".into(),
+            component_id: "detailPage_c3",
             kind: serde_json::from_value(json!("precompute")).unwrap(),
-            inputs: json!({}),
+            inputs: &inputs,
             target: None,
             row: None,
         }],

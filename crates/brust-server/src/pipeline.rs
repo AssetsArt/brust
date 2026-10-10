@@ -1330,7 +1330,7 @@ enum JobResultError {
 /// repeated id keeps its last value, an error wins over a missing result —
 /// exactly the former two-map behaviour.
 fn results_in_request_order(
-    req: &JobsRequest,
+    req: &JobsRequest<'_>,
     results: Vec<JobResult>,
 ) -> Result<Vec<Value>, JobResultError> {
     let pos: HashMap<&str, usize> = req
@@ -1364,17 +1364,18 @@ fn results_in_request_order(
         .collect()
 }
 
-/// The one batched `jobs` call for the owners in `misses`.
-pub(crate) fn jobs_request(plans: &[JobPlan], misses: &[usize]) -> JobsRequest {
+/// The one batched `jobs` call for the owners in `misses`: borrows each plan's
+/// `inputs` (serialised in place — no deep clone per miss, M3-P P1).
+pub(crate) fn jobs_request<'a>(plans: &'a [JobPlan<'a>], misses: &[usize]) -> JobsRequest<'a> {
     JobsRequest {
         jobs: misses
             .iter()
             .map(|&i| JobCall {
                 id: plans[i].call_id(),
-                component_id: plans[i].component_id.to_string(),
+                component_id: plans[i].component_id,
                 kind: plans[i].kind,
-                inputs: plans[i].inputs.clone(),
-                target: plans[i].target.map(String::from),
+                inputs: &plans[i].inputs,
+                target: plans[i].target,
                 row: plans[i].instance_row(),
             })
             .collect(),
@@ -1786,15 +1787,16 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn req_of(ids: &[&str]) -> JobsRequest {
+    static NULL: Value = Value::Null;
+    fn req_of(ids: &[&str]) -> JobsRequest<'static> {
         JobsRequest {
             jobs: ids
                 .iter()
                 .map(|id| JobCall {
                     id: id.to_string(),
-                    component_id: "c".into(),
+                    component_id: "c",
                     kind: JobKind::Precompute,
-                    inputs: Value::Null,
+                    inputs: &NULL,
                     target: None,
                     row: None,
                 })

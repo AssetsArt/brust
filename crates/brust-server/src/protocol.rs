@@ -63,27 +63,29 @@ pub enum Verdict {
     },
 }
 
-/// `jobs` call request: `{ jobs: [{ id, componentId, kind, inputs }] }`.
+/// `jobs` call request: `{ jobs: [{ id, componentId, kind, inputs }] }`. Borrows
+/// the plans it is built from (M3-P P1): `inputs` is serialised in place, never
+/// cloned per miss.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct JobsRequest {
-    pub jobs: Vec<JobCall>,
+pub struct JobsRequest<'a> {
+    pub jobs: Vec<JobCall<'a>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct JobCall {
+pub struct JobCall<'a> {
     /// Chain job `"<componentId>/<jobId>"`; child instance job
     /// `"<parentId>/<childId>_<k>/<jobId>[/<row>]"`. Unique per request; the
     /// worker treats it as opaque and echoes it in its result.
     pub id: String,
-    pub component_id: String,
+    pub component_id: &'a str,
     pub kind: JobKind,
-    pub inputs: Value,
+    pub inputs: &'a Value,
     /// `ssr`: the react component to render (`jobs[target].ssr(inputs)`),
     /// copied from the manifest job record; absent when the record has none.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub target: Option<String>,
+    pub target: Option<&'a str>,
     /// `per_instance` jobs: the 0-based row of the list this call renders.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub row: Option<usize>,
@@ -211,12 +213,13 @@ mod tests {
 
     #[test]
     fn jobs_request_is_camel_case() {
+        let inputs = json!({"move": {"name": "growl"}});
         let r = JobsRequest {
             jobs: vec![JobCall {
                 id: "moveCard_d4/j0/1".into(),
-                component_id: "moveCard_d4".into(),
+                component_id: "moveCard_d4",
                 kind: JobKind::Precompute,
-                inputs: json!({"move": {"name": "growl"}}),
+                inputs: &inputs,
                 target: None,
                 row: None,
             }],
@@ -225,13 +228,14 @@ mod tests {
             serde_json::to_value(&r).unwrap(),
             json!({"jobs": [{"id": "moveCard_d4/j0/1", "componentId": "moveCard_d4", "kind": "precompute", "inputs": {"move": {"name": "growl"}}}]})
         );
+        let inputs = json!({"productId": "p2"});
         let r = JobsRequest {
             jobs: vec![JobCall {
                 id: "rowReact_6/j0/1".into(),
-                component_id: "rowReact_6".into(),
+                component_id: "rowReact_6",
                 kind: JobKind::Ssr,
-                inputs: json!({"productId": "p2"}),
-                target: Some("reviews_7".into()),
+                inputs: &inputs,
+                target: Some("reviews_7"),
                 row: Some(1),
             }],
         };
