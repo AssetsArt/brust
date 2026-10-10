@@ -48,8 +48,21 @@ export async function waitForLine(stdout: ReadableStream<Uint8Array>, re: RegExp
   return { match, log }
 }
 
+/** True when something already accepts connections on 127.0.0.1:port. We only ever report it: a listener we did not spawn is never killed. */
+export async function portInUse(port: number): Promise<boolean> {
+  try {
+    const l = Bun.listen({ hostname: '127.0.0.1', port, socket: { data() {} } })
+    l.stop(true)
+    return false
+  } catch {
+    return true
+  }
+}
+
 export async function startApp(spec: Pick<AppSpec, 'id' | 'port' | 'startCmd' | 'ready' | 'cwd'>, opts: { timeoutMs?: number } = {}): Promise<RunningApp> {
   killAllOnExit()
+  if (spec.port > 0 && (await portInUse(spec.port)))
+    throw new Error(`[${spec.id}] port ${spec.port} is already in use by another process — not starting, and not killing it (find the owner with: lsof -ti tcp:${spec.port})`)
   const { cmd, env, cwd } = spec.startCmd()
   const proc = Bun.spawn(cmd, { cwd: cwd ?? spec.cwd, env: { ...process.env, ...env }, stdout: 'pipe', stderr: 'inherit' })
   CHILDREN.add(proc)

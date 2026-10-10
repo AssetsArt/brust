@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { join } from 'node:path'
-import { startApp } from './app'
+import { portInUse, startApp } from './app'
 import { mulberry32, shuffle } from './random'
 
 const fixtures = join(import.meta.dir, 'fixtures')
@@ -38,4 +38,16 @@ test('seeded shuffle is deterministic and a permutation', () => {
   expect(a).toEqual(b)
   expect([...a].sort()).toEqual([1, 2, 3, 4, 5, 6])
   expect(shuffle([1, 2, 3, 4, 5, 6], mulberry32(7))).not.toEqual(a)
+})
+
+test('a busy port is refused by name and the foreign listener is left alone', async () => {
+  const foreign = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('still here') })
+  try {
+    expect(await portInUse(foreign.port!)).toBe(true)
+    await expect(startApp({ ...fake('fake-server.ts'), port: foreign.port! })).rejects.toThrow(/already in use by another process[\s\S]*not killing it/)
+    expect(await (await fetch(`http://127.0.0.1:${foreign.port}/`)).text()).toBe('still here')
+  } finally {
+    foreign.stop(true)
+  }
+  expect(await portInUse(foreign.port!)).toBe(false)
 })

@@ -1,10 +1,10 @@
 import TypeBadge from '../components/TypeBadge'
 import type { DexRow } from '../lib/data'
-export default function DexPage({ rows, count }: { rows: DexRow[]; count: number }) {
+export default function DexPage({ rows, summary }: { rows: DexRow[]; summary: string }) {
   return (
     <>
       <h1>Pokédex</h1>
-      <p>{count} Pokémon</p>
+      <p>{summary}</p>
       <table>
         <thead><tr><th>#</th><th>Name</th><th>Types</th></tr></thead>
         <tbody>
