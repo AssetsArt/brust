@@ -23,7 +23,9 @@ use crate::config::Server;
 use crate::dispatch::{CallError, CallKind, call_worker};
 use crate::inputs::{self, Path};
 use crate::manifest::{ALL_PROPS, Instances, JobKind, JobRecord, Manifest, RouteRecord};
-use crate::protocol::{JobCall, JobsRequest, JobsResponse, LoaderRequest, LoaderResponse, Verdict};
+use crate::protocol::{
+    JobCall, JobResult, JobsRequest, JobsResponse, LoaderRequest, LoaderResponse, Verdict,
+};
 use crate::render::{RenderError, Renderer, inject_assets, use_ids};
 use crate::routing::{MatchResult, RouteEnvelope};
 use crate::server::body::{self, ResponseBody, empty_body};
@@ -292,7 +294,14 @@ async fn page(
         // S10 amendment: the body the MISS rendered, no re-render.
         let gz = crate::http::compress::accepts_gzip(accept_enc);
         let (bytes, encoded) = cached_body(&hit.body, gz);
-        return page_response(&hit.body, bytes, encoded, Some("HIT"));
+        return page_response(
+            hit.body.status,
+            hit.body.headers.clone(),
+            hit.body.html.len(),
+            bytes,
+            encoded,
+            Some("HIT"),
+        );
     }
 
     // ----- (4) loader -----
@@ -441,44 +450,43 @@ async fn page(
             }
         };
         // Validate every result before inserting any: one bad job fails the
-        // request and nothing is cached. Log fields come from the plan the id
-        // names (ids are opaque `<…>/<jobId>[/<row>]` strings, never parsed).
-        let plan_of: HashMap<&str, &JobPlan> = req
-            .jobs
-            .iter()
-            .zip(&misses)
-            .map(|(call, &i)| (call.id.as_str(), &plans[i]))
-            .collect();
-        let mut by_id: HashMap<String, Value> = HashMap::new();
-        for res in resp.results {
-            let (component_id, job_id) = plan_of
-                .get(res.id.as_str())
-                .map_or(("?", "?"), |p| (p.component_id, p.job_id));
-            if let Some(error) = res.error {
-                tracing::error!(route = %route.id, component_id, job_id, call_id = %res.id, %error, "job threw");
+        // request and nothing is cached. One index (call id → request position),
+        // one pass; `k` indexes `req.jobs` and `misses` alike. Log fields come
+        // from the plan the id names (ids are opaque, never parsed).
+        let labels = |k: Option<usize>| {
+            k.map_or(("?", "?"), |k| {
+                let p = &plans[misses[k]];
+                (p.component_id, p.job_id)
+            })
+        };
+        let fresh = match results_in_request_order(&req, resp.results) {
+            Ok(v) => v,
+            Err(JobResultError::Threw { id, k, error }) => {
+                let (component_id, job_id) = labels(k);
+                tracing::error!(route = %route.id, component_id, job_id, call_id = %id, %error, "job threw");
                 return body::error_500();
             }
-            let Some(value) = res.value else {
-                tracing::error!(route = %route.id, component_id, job_id, call_id = %res.id, "job result has neither value nor error");
-                return body::error_500();
-            };
-            by_id.insert(res.id, value);
-        }
-        let mut fresh = Vec::with_capacity(misses.len());
-        for (call, &i) in req.jobs.iter().zip(&misses) {
-            let Some(v) = by_id.remove(&call.id) else {
-                tracing::error!(route = %route.id, component_id = %plans[i].component_id, job_id = %plans[i].job_id, "jobs response has no result for {}", call.id);
-                return body::error_500();
-            };
-            if let Err(e) = check_value(&plans[i], &v) {
-                tracing::error!(route = %route.id, component_id = %plans[i].component_id, job_id = %plans[i].job_id, call_id = %call.id, error = %e, "job result does not fit its outputs");
+            Err(JobResultError::NoValue { id, k }) => {
+                let (component_id, job_id) = labels(k);
+                tracing::error!(route = %route.id, component_id, job_id, call_id = %id, "job result has neither value nor error");
                 return body::error_500();
             }
-            note_missing_slots(s, &plans[i], &v);
-            fresh.push((i, Arc::new(v)));
+            Err(JobResultError::Missing { k }) => {
+                let p = &plans[misses[k]];
+                tracing::error!(route = %route.id, component_id = %p.component_id, job_id = %p.job_id, "jobs response has no result for {}", req.jobs[k].id);
+                return body::error_500();
+            }
+        };
+        for (k, (v, &i)) in fresh.iter().zip(&misses).enumerate() {
+            if let Err(e) = check_value(&plans[i], v) {
+                tracing::error!(route = %route.id, component_id = %plans[i].component_id, job_id = %plans[i].job_id, call_id = %req.jobs[k].id, error = %e, "job result does not fit its outputs");
+                return body::error_500();
+            }
+            note_missing_slots(s, &plans[i], v);
         }
-        for (i, v) in fresh {
+        for (v, &i) in fresh.into_iter().zip(&misses) {
             let p = &plans[i];
+            let v = Arc::new(v);
             s.jobs.insert(
                 p.key.clone(),
                 Arc::clone(&v),
@@ -509,22 +517,35 @@ async fn page(
         CacheOutcome::Bypass => Some("BYPASS"),
         _ => None,
     };
-    let headers: Arc<[(String, String)]> = extra.into();
     let html = match render_document(s, route, &ctx) {
         Ok(h) => h,
         Err(e) => return render_failed(route, &e),
     };
+    // One header map per request. Only a render that is stored needs a second
+    // copy (the L1 entry's); a BYPASS or an uncached route sends the only one.
+    let store = cache_key.is_some() && status == 200 && cacheable && route.cache.is_some();
+    let response_headers = body::header_map(HTML, &extra);
     let body = Arc::new(RenderedBody {
         status,
-        headers: body::header_map(HTML, &headers),
+        headers: if store {
+            response_headers.clone()
+        } else {
+            HeaderMap::new()
+        },
         html,
         gzip: std::sync::OnceLock::new(),
     });
     let (bytes, encoded) = cached_body(&body, crate::http::compress::accepts_gzip(accept_enc));
-    let resp = page_response(&body, bytes, encoded, hdr);
-    if let Some(k) = cache_key
-        && status == 200
-        && cacheable
+    let resp = page_response(
+        status,
+        response_headers,
+        body.html.len(),
+        bytes,
+        encoded,
+        hdr,
+    );
+    if store
+        && let Some(k) = cache_key
         && let Some(c) = &route.cache
     {
         // The loader's headers ride with the ctx (and the rendered body, with
@@ -533,7 +554,7 @@ async fn page(
             k,
             ctx,
             body,
-            headers,
+            extra.into(),
             Duration::from_secs(c.ttl_seconds),
             &c.tags,
         );
@@ -582,16 +603,18 @@ pub fn cached_body(body: &RenderedBody, accepts_gzip: bool) -> (Bytes, bool) {
     (body.html.clone(), false)
 }
 
-/// The page response: the body's stored headers, then `x-brust-cache`,
-/// `Content-Encoding` and `Vary` (on every gzip-eligible document, identity
-/// or not, so a shared cache keys on `Accept-Encoding`).
+/// The page response: `headers` (the body's stored map — a HIT clones the
+/// shared entry's, a fresh render moves the map it just built), then
+/// `x-brust-cache`, `Content-Encoding` and `Vary` (on every gzip-eligible
+/// document, identity or not, so a shared cache keys on `Accept-Encoding`).
 fn page_response(
-    body: &RenderedBody,
+    status: u16,
+    mut h: HeaderMap,
+    html_len: usize,
     bytes: Bytes,
     gzipped: bool,
     cache_hdr: Option<&'static str>,
 ) -> Response<ResponseBody> {
-    let mut h = body.headers.clone();
     if let Some(v) = cache_hdr {
         h.append("x-brust-cache", http::HeaderValue::from_static(v));
     }
@@ -601,13 +624,13 @@ fn page_response(
             http::HeaderValue::from_static("gzip"),
         );
     }
-    if body.html.len() >= PAGE_GZIP_MIN {
+    if html_len >= PAGE_GZIP_MIN {
         h.append(
             http::header::VARY,
             http::HeaderValue::from_static("Accept-Encoding"),
         );
     }
-    body::resp_with(body.status, h, bytes)
+    body::resp_with(status, h, bytes)
 }
 
 /// The leaf-first render of `chain` for `ctx`, each component under its
@@ -1284,6 +1307,63 @@ pub(crate) fn lookup_jobs(cache: &JobCache, plans: &[JobPlan]) -> Lookup {
     }
 }
 
+/// Why a worker's `results` cannot be used; `k` is the request position
+/// (`req.jobs[k]`, = `misses[k]`), `None` for an id the request never sent.
+#[derive(Debug)]
+enum JobResultError {
+    Threw {
+        id: String,
+        k: Option<usize>,
+        error: String,
+    },
+    NoValue {
+        id: String,
+        k: Option<usize>,
+    },
+    Missing {
+        k: usize,
+    },
+}
+
+/// The worker's results in request order (`out[k]` answers `req.jobs[k]`):
+/// one `id → k` index, one pass. An id the request never sent is ignored, a
+/// repeated id keeps its last value, an error wins over a missing result —
+/// exactly the former two-map behaviour.
+fn results_in_request_order(
+    req: &JobsRequest,
+    results: Vec<JobResult>,
+) -> Result<Vec<Value>, JobResultError> {
+    let pos: HashMap<&str, usize> = req
+        .jobs
+        .iter()
+        .enumerate()
+        .map(|(k, c)| (c.id.as_str(), k))
+        .collect();
+    let mut out: Vec<Option<Value>> = std::iter::repeat_with(|| None)
+        .take(req.jobs.len())
+        .collect();
+    for res in results {
+        let k = pos.get(res.id.as_str()).copied();
+        if let Some(error) = res.error {
+            return Err(JobResultError::Threw {
+                id: res.id,
+                k,
+                error,
+            });
+        }
+        let Some(value) = res.value else {
+            return Err(JobResultError::NoValue { id: res.id, k });
+        };
+        if let Some(k) = k {
+            out[k] = Some(value);
+        }
+    }
+    out.into_iter()
+        .enumerate()
+        .map(|(k, v)| v.ok_or(JobResultError::Missing { k }))
+        .collect()
+}
+
 /// The one batched `jobs` call for the owners in `misses`.
 pub(crate) fn jobs_request(plans: &[JobPlan], misses: &[usize]) -> JobsRequest {
     JobsRequest {
@@ -1705,6 +1785,118 @@ pub mod plan_stage {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn req_of(ids: &[&str]) -> JobsRequest {
+        JobsRequest {
+            jobs: ids
+                .iter()
+                .map(|id| JobCall {
+                    id: id.to_string(),
+                    component_id: "c".into(),
+                    kind: JobKind::Precompute,
+                    inputs: Value::Null,
+                    target: None,
+                    row: None,
+                })
+                .collect(),
+        }
+    }
+    fn res(id: &str, v: Option<Value>, e: Option<&str>) -> JobResult {
+        JobResult {
+            id: id.into(),
+            value: v,
+            error: e.map(String::from),
+        }
+    }
+
+    #[test]
+    fn results_in_request_order_reorders_by_call_id() {
+        let req = req_of(&["p/j/0", "p/j/1", "p/j/2"]);
+        let out = results_in_request_order(
+            &req,
+            vec![
+                res("p/j/2", Some(json!(2)), None),
+                res("p/j/0", Some(json!(0)), None),
+                res("p/j/1", Some(json!(1)), None),
+            ],
+        )
+        .unwrap();
+        assert_eq!(out, vec![json!(0), json!(1), json!(2)]);
+    }
+
+    #[test]
+    fn results_in_request_order_ignores_unknown_ids_and_keeps_the_last_duplicate() {
+        let req = req_of(&["a", "b"]);
+        let out = results_in_request_order(
+            &req,
+            vec![
+                res("zzz", Some(json!(9)), None),
+                res("a", Some(json!(1)), None),
+                res("b", Some(json!(2)), None),
+                res("a", Some(json!(3)), None),
+            ],
+        )
+        .unwrap();
+        assert_eq!(out, vec![json!(3), json!(2)]);
+    }
+
+    #[test]
+    fn results_in_request_order_reports_missing_error_and_no_value_with_positions() {
+        let req = req_of(&["a", "b"]);
+        assert!(matches!(
+            results_in_request_order(&req, vec![res("a", Some(json!(1)), None)]),
+            Err(JobResultError::Missing { k: 1 })
+        ));
+        assert!(matches!(
+            results_in_request_order(
+                &req,
+                vec![res("b", None, Some("boom")), res("a", Some(json!(1)), None)]
+            ),
+            Err(JobResultError::Threw { k: Some(1), .. })
+        ));
+        assert!(matches!(
+            results_in_request_order(&req, vec![res("nope", None, Some("boom"))]),
+            Err(JobResultError::Threw { k: None, .. })
+        ));
+        assert!(matches!(
+            results_in_request_order(
+                &req,
+                vec![res("a", None, None), res("b", Some(json!(1)), None)]
+            ),
+            Err(JobResultError::NoValue { k: Some(0), .. })
+        ));
+    }
+
+    #[test]
+    fn page_response_appends_cache_encoding_and_vary_in_order() {
+        let mut h = HeaderMap::new();
+        h.insert(
+            http::header::CONTENT_TYPE,
+            http::HeaderValue::from_static(HTML),
+        );
+        let r = page_response(
+            200,
+            h,
+            PAGE_GZIP_MIN,
+            Bytes::from_static(b"x"),
+            true,
+            Some("MISS"),
+        );
+        let names: Vec<&str> = r.headers().iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(
+            names,
+            ["content-type", "x-brust-cache", "content-encoding", "vary"]
+        );
+        let r = page_response(
+            200,
+            HeaderMap::new(),
+            PAGE_GZIP_MIN - 1,
+            Bytes::new(),
+            false,
+            None,
+        );
+        assert!(r.headers().is_empty());
+    }
 
     fn rendered(len: usize) -> RenderedBody {
         RenderedBody {
