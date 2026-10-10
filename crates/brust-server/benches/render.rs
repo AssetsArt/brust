@@ -416,10 +416,10 @@ fn bench_hit_path(c: &mut Criterion, m: &Manifest) {
         );
     }
     let l1 = L1Cache::new();
-    let mut base = http::HeaderMap::new(); // as body::header_map builds it (from_str)
+    let mut base = http::HeaderMap::new(); // as body::header_map builds it (from_static)
     base.insert(
         http::header::CONTENT_TYPE,
-        http::HeaderValue::from_str("text/html; charset=utf-8").unwrap(),
+        http::HeaderValue::from_static("text/html; charset=utf-8"),
     );
     l1.insert(
         build_cache_key("GET", path, String::new()),
