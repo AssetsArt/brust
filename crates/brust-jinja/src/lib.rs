@@ -11,6 +11,8 @@
 use minijinja::value::{Kwargs, Value, ValueKind};
 use minijinja::{Environment, Error, ErrorKind};
 
+pub mod ctx;
+
 #[path = "filters/project.rs"]
 mod project;
 
@@ -252,6 +254,20 @@ fn json_attr_err(e: serde_json::Error) -> Error {
 }
 
 fn write_json_attr(out: &mut String, v: &Value) -> Result<(), Bail> {
+    // The render tree writes itself (M3-P P2): sorted string keys, no undefined
+    // members, serde_json's own number text — never a bail-out.
+    if let Some(m) = v.downcast_object_ref::<ctx::CtxMap>() {
+        ctx::write_map(out, &m.0, &[]);
+        return Ok(());
+    }
+    if let Some(a) = v.downcast_object_ref::<ctx::CtxArr>() {
+        ctx::write_arr(out, a);
+        return Ok(());
+    }
+    if let Some(p) = v.downcast_object_ref::<ctx::MapView>() {
+        ctx::write_map(out, &p.map.0, p.hidden);
+        return Ok(());
+    }
     match v.kind() {
         ValueKind::Undefined | ValueKind::None => out.push_str("null"),
         ValueKind::Bool => out.push_str(if v.is_true() { "true" } else { "false" }),
@@ -326,7 +342,7 @@ fn key_str(k: &Value) -> std::borrow::Cow<'_, str> {
 
 /// A JSON string literal (serde_json's escapes) with the attribute escape
 /// applied on top, in one byte scan; unescaped runs are copied whole.
-fn write_json_attr_str(out: &mut String, s: &str) {
+pub(crate) fn write_json_attr_str(out: &mut String, s: &str) {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     out.reserve(s.len() + 12);
     out.push_str("&quot;");
@@ -731,6 +747,7 @@ pub fn style_obj_to_css(pairs: &[(String, Value)]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tests_support::{FLOATS, Rng, gen_string, unescape};
 
     fn render(src: &str, ctx: Value) -> String {
         let mut env = Environment::new();
@@ -768,15 +785,6 @@ mod tests {
             render("{{ ['a','b','c'][7 | js_mod(2)] }}", Value::from(())),
             "b"
         );
-    }
-
-    /// The 5-line attribute unquote a browser would apply.
-    fn unescape(s: &str) -> String {
-        s.replace("&quot;", "\"")
-            .replace("&#39;", "'")
-            .replace("&lt;", "<")
-            .replace("&gt;", ">")
-            .replace("&amp;", "&")
     }
 
     #[test]
@@ -876,75 +884,7 @@ mod tests {
         }
     }
 
-    /// xorshift64*: a deterministic generator for the equivalence sweep.
-    struct Rng(u64);
-    impl Rng {
-        fn next(&mut self) -> u64 {
-            self.0 ^= self.0 >> 12;
-            self.0 ^= self.0 << 25;
-            self.0 ^= self.0 >> 27;
-            self.0.wrapping_mul(0x2545_F491_4F6C_DD1D)
-        }
-        fn below(&mut self, n: u64) -> u64 {
-            self.next() % n
-        }
-    }
-
-    fn gen_string(r: &mut Rng) -> String {
-        const PIECES: &[&str] = &[
-            "a",
-            "Z",
-            "0",
-            " ",
-            "&",
-            "<",
-            ">",
-            "\"",
-            "'",
-            "\\",
-            "/",
-            "\u{7f}",
-            "é",
-            "ไทย",
-            "😀",
-            "\u{2028}",
-            "\u{feff}",
-            "&amp;",
-            "</script>",
-            "{}",
-            "[],:",
-            "plain text",
-        ];
-        let mut s = String::new();
-        for _ in 0..r.below(12) {
-            if r.below(4) == 0 {
-                // Every C0 control: the short escapes and the \u00XX ones.
-                s.push(char::from(r.below(0x20) as u8));
-            } else {
-                s.push_str(PIECES[r.below(PIECES.len() as u64) as usize]);
-            }
-        }
-        s
-    }
-
     fn gen_number(r: &mut Rng) -> Value {
-        const FLOATS: &[f64] = &[
-            0.0,
-            -0.0,
-            1.0,
-            -1.5,
-            0.1,
-            0.30000000000000004,
-            1e21,
-            1e-7,
-            123456789012.0,
-            f64::MAX,
-            f64::MIN_POSITIVE,
-            5e-324,
-            f64::NAN,
-            f64::INFINITY,
-            f64::NEG_INFINITY,
-        ];
         match r.below(8) {
             0 => Value::from(FLOATS[r.below(FLOATS.len() as u64) as usize]),
             1 => Value::from(f64::from_bits(r.next())),
@@ -1190,5 +1130,123 @@ mod tests {
             css,
             "background-color:red;font-size:12px;z-index:2;margin:0"
         );
+    }
+}
+
+/// Generators shared by the test modules (`lib.rs`, `ctx.rs`).
+#[cfg(test)]
+pub(crate) mod tests_support {
+    /// The 5-line attribute unquote a browser would apply.
+    pub(crate) fn unescape(s: &str) -> String {
+        s.replace("&quot;", "\"")
+            .replace("&#39;", "'")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&amp;", "&")
+    }
+
+    /// xorshift64*: a deterministic generator for the equivalence sweep.
+    pub(crate) struct Rng(pub(crate) u64);
+    impl Rng {
+        pub(crate) fn next(&mut self) -> u64 {
+            self.0 ^= self.0 >> 12;
+            self.0 ^= self.0 << 25;
+            self.0 ^= self.0 >> 27;
+            self.0.wrapping_mul(0x2545_F491_4F6C_DD1D)
+        }
+        pub(crate) fn below(&mut self, n: u64) -> u64 {
+            self.next() % n
+        }
+    }
+
+    pub(crate) fn gen_string(r: &mut Rng) -> String {
+        const PIECES: &[&str] = &[
+            "a",
+            "Z",
+            "0",
+            " ",
+            "&",
+            "<",
+            ">",
+            "\"",
+            "'",
+            "\\",
+            "/",
+            "\u{7f}",
+            "é",
+            "ไทย",
+            "😀",
+            "\u{2028}",
+            "\u{feff}",
+            "&amp;",
+            "</script>",
+            "{}",
+            "[],:",
+            "plain text",
+        ];
+        let mut s = String::new();
+        for _ in 0..r.below(12) {
+            if r.below(4) == 0 {
+                // Every C0 control: the short escapes and the \u00XX ones.
+                s.push(char::from(r.below(0x20) as u8));
+            } else {
+                s.push_str(PIECES[r.below(PIECES.len() as u64) as usize]);
+            }
+        }
+        s
+    }
+
+    pub(crate) const FLOATS: &[f64] = &[
+        0.0,
+        -0.0,
+        1.0,
+        -1.5,
+        0.1,
+        0.30000000000000004,
+        1e21,
+        1e-7,
+        123456789012.0,
+        f64::MAX,
+        f64::MIN_POSITIVE,
+        5e-324,
+        f64::NAN,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+    ];
+
+    /// A JSON number from the same corpus as `gen_number` (non-finite floats
+    /// have no JSON form and are skipped by `Number::from_f64`).
+    pub(crate) fn gen_number_json(r: &mut Rng) -> serde_json::Value {
+        let f = |x: f64| {
+            serde_json::Number::from_f64(x)
+                .map_or(serde_json::Value::Null, serde_json::Value::Number)
+        };
+        match r.below(6) {
+            0 => f(FLOATS[r.below(FLOATS.len() as u64) as usize]),
+            1 => f(f64::from_bits(r.next())),
+            2 => serde_json::Value::from(r.next() as i64),
+            3 => serde_json::Value::from(r.next()),
+            4 => serde_json::Value::from([i64::MIN, i64::MAX, 0, -1][r.below(4) as usize]),
+            _ => f(r.below(1000) as f64 / 8.0),
+        }
+    }
+
+    /// Random JSON: unsorted keys (generated in random order), nested
+    /// arrays/objects, every number form, the `gen_string` corpus.
+    pub(crate) fn gen_json(r: &mut Rng, depth: u32) -> serde_json::Value {
+        use serde_json::Value as J;
+        let leaf = depth == 0 || r.below(3) == 0;
+        match if leaf { r.below(5) } else { 5 + r.below(2) } {
+            0 => J::Null,
+            1 => J::Bool(r.below(2) == 0),
+            2 | 3 => gen_number_json(r),
+            4 => J::String(gen_string(r)),
+            5 => J::Array((0..r.below(5)).map(|_| gen_json(r, depth - 1)).collect()),
+            _ => J::Object(
+                (0..r.below(6))
+                    .map(|_| (gen_string(r), gen_json(r, depth - 1)))
+                    .collect(),
+            ),
+        }
     }
 }
