@@ -53,7 +53,7 @@
       "use_id_slots": 0
     },
     "itemPage_b7278c7c": {
-      "tier": "native",
+      "tier": "static",
       "template": "jinja/itemPage_b7278c7c.jinja",
       "jobs": [
         {
@@ -107,7 +107,7 @@
           }
         }
       ],
-      "client": "client/itemPage_b7278c7c-<hash>.js",
+      "client": null,
       "needs_worker": true,
       "use_id_slots": 1
     },
@@ -134,7 +134,7 @@
         }
       ],
       "children": [],
-      "client": "client/priceRow_042dcbca-<hash>.js",
+      "client": null,
       "needs_worker": true,
       "use_id_slots": 0
     },

@@ -1,0 +1,288 @@
+{
+  "id": "input_e25c1d06",
+  "source": "tests/fixtures/linked-list-child-rows/input.tsx",
+  "tier": "Native",
+  "props": [],
+  "state": [
+    {
+      "name": "items",
+      "setter": "setItems",
+      "init": {
+        "Server": {
+          "loc": 310,
+          "kind": {
+            "Array": [
+              {
+                "loc": 311,
+                "kind": {
+                  "Object": [
+                    [
+                      "id",
+                      {
+                        "loc": 317,
+                        "kind": {
+                          "Lit": {
+                            "Str": "a"
+                          }
+                        }
+                      }
+                    ],
+                    [
+                      "name",
+                      {
+                        "loc": 328,
+                        "kind": {
+                          "Lit": {
+                            "Str": "Ada"
+                          }
+                        }
+                      }
+                    ]
+                  ]
+                }
+              },
+              {
+                "loc": 337,
+                "kind": {
+                  "Object": [
+                    [
+                      "id",
+                      {
+                        "loc": 343,
+                        "kind": {
+                          "Lit": {
+                            "Str": "b"
+                          }
+                        }
+                      }
+                    ],
+                    [
+                      "name",
+                      {
+                        "loc": 354,
+                        "kind": {
+                          "Lit": {
+                            "Str": "Bob"
+                          }
+                        }
+                      }
+                    ]
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "derived": [],
+  "effects": [],
+  "handlers": [
+    {
+      "name": "_h1",
+      "body": {
+        "loc": 408,
+        "kind": {
+          "Arrow": {
+            "params": [],
+            "body": {
+              "Expr": {
+                "loc": 414,
+                "kind": {
+                  "Call": {
+                    "callee": {
+                      "loc": 414,
+                      "kind": {
+                        "Ident": {
+                          "name": "setItems",
+                          "kind": "Setter"
+                        }
+                      }
+                    },
+                    "args": [
+                      {
+                        "loc": 423,
+                        "kind": {
+                          "Call": {
+                            "callee": {
+                              "loc": 423,
+                              "kind": {
+                                "Member": {
+                                  "target": {
+                                    "loc": 423,
+                                    "kind": {
+                                      "Ident": {
+                                        "name": "items",
+                                        "kind": "State"
+                                      }
+                                    }
+                                  },
+                                  "name": "concat",
+                                  "optional": false
+                                }
+                              }
+                            },
+                            "args": [
+                              {
+                                "loc": 436,
+                                "kind": {
+                                  "Array": [
+                                    {
+                                      "loc": 437,
+                                      "kind": {
+                                        "Object": [
+                                          [
+                                            "id",
+                                            {
+                                              "loc": 443,
+                                              "kind": {
+                                                "Lit": {
+                                                  "Str": "z"
+                                                }
+                                              }
+                                            }
+                                          ],
+                                          [
+                                            "name",
+                                            {
+                                              "loc": 454,
+                                              "kind": {
+                                                "Lit": {
+                                                  "Str": "Zed"
+                                                }
+                                              }
+                                            }
+                                          ]
+                                        ]
+                                      }
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "captures": [
+              [
+                "setItems",
+                "Setter"
+              ],
+              [
+                "items",
+                "State"
+              ]
+            ]
+          }
+        }
+      },
+      "item_scoped": []
+    }
+  ],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 379,
+      "tag": "div",
+      "attrs": [],
+      "children": [
+        {
+          "Element": {
+            "loc": 391,
+            "tag": "button",
+            "attrs": [
+              {
+                "Event": {
+                  "event": "click",
+                  "handler": "_h1"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Text": "add"
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Component": {
+            "loc": 485,
+            "name": "List",
+            "source": "./List",
+            "imported": "default",
+            "props": [
+              [
+                "rows",
+                {
+                  "Server": {
+                    "loc": 497,
+                    "kind": {
+                      "Ident": {
+                        "name": "items",
+                        "kind": "State"
+                      }
+                    }
+                  }
+                }
+              ]
+            ],
+            "children": [],
+            "link": 1,
+            "tier": "Native"
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [],
+  "child_links": [
+    {
+      "id": 1,
+      "child": "list_4d8da56b",
+      "props_member": "_p1",
+      "item_scoped": [],
+      "props": [
+        [
+          "rows",
+          {
+            "Server": {
+              "loc": 497,
+              "kind": {
+                "Ident": {
+                  "name": "items",
+                  "kind": "State"
+                }
+              }
+            }
+          }
+        ]
+      ]
+    }
+  ],
+  "client_props": [],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": false,
+  "cache": null,
+  "children": [
+    {
+      "name": "List",
+      "id": "list_4d8da56b",
+      "path": "tests/fixtures/linked-list-child-rows/List.tsx",
+      "tier": "Native"
+    }
+  ],
+  "diagnostics": []
+}

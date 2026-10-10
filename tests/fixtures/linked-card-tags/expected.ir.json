@@ -1,0 +1,463 @@
+{
+  "id": "input_dcfff534",
+  "source": "tests/fixtures/linked-card-tags/input.tsx",
+  "tier": "Native",
+  "props": [],
+  "state": [
+    {
+      "name": "items",
+      "setter": "setItems",
+      "init": {
+        "Server": {
+          "loc": 318,
+          "kind": {
+            "Array": [
+              {
+                "loc": 319,
+                "kind": {
+                  "Object": [
+                    [
+                      "id",
+                      {
+                        "loc": 325,
+                        "kind": {
+                          "Lit": {
+                            "Str": "a"
+                          }
+                        }
+                      }
+                    ],
+                    [
+                      "name",
+                      {
+                        "loc": 336,
+                        "kind": {
+                          "Lit": {
+                            "Str": "Ada"
+                          }
+                        }
+                      }
+                    ],
+                    [
+                      "tags",
+                      {
+                        "loc": 349,
+                        "kind": {
+                          "Array": [
+                            {
+                              "loc": 350,
+                              "kind": {
+                                "Lit": {
+                                  "Str": "x"
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  ]
+                }
+              },
+              {
+                "loc": 358,
+                "kind": {
+                  "Object": [
+                    [
+                      "id",
+                      {
+                        "loc": 364,
+                        "kind": {
+                          "Lit": {
+                            "Str": "b"
+                          }
+                        }
+                      }
+                    ],
+                    [
+                      "name",
+                      {
+                        "loc": 375,
+                        "kind": {
+                          "Lit": {
+                            "Str": "Bob"
+                          }
+                        }
+                      }
+                    ],
+                    [
+                      "tags",
+                      {
+                        "loc": 388,
+                        "kind": {
+                          "Array": [
+                            {
+                              "loc": 389,
+                              "kind": {
+                                "Lit": {
+                                  "Str": "y"
+                                }
+                              }
+                            },
+                            {
+                              "loc": 394,
+                              "kind": {
+                                "Lit": {
+                                  "Str": "z"
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "derived": [],
+  "effects": [],
+  "handlers": [
+    {
+      "name": "_h1",
+      "body": {
+        "loc": 447,
+        "kind": {
+          "Arrow": {
+            "params": [],
+            "body": {
+              "Expr": {
+                "loc": 453,
+                "kind": {
+                  "Call": {
+                    "callee": {
+                      "loc": 453,
+                      "kind": {
+                        "Ident": {
+                          "name": "setItems",
+                          "kind": "Setter"
+                        }
+                      }
+                    },
+                    "args": [
+                      {
+                        "loc": 462,
+                        "kind": {
+                          "Call": {
+                            "callee": {
+                              "loc": 462,
+                              "kind": {
+                                "Member": {
+                                  "target": {
+                                    "loc": 462,
+                                    "kind": {
+                                      "Ident": {
+                                        "name": "items",
+                                        "kind": "State"
+                                      }
+                                    }
+                                  },
+                                  "name": "concat",
+                                  "optional": false
+                                }
+                              }
+                            },
+                            "args": [
+                              {
+                                "loc": 475,
+                                "kind": {
+                                  "Array": [
+                                    {
+                                      "loc": 476,
+                                      "kind": {
+                                        "Object": [
+                                          [
+                                            "id",
+                                            {
+                                              "loc": 482,
+                                              "kind": {
+                                                "Lit": {
+                                                  "Str": "z"
+                                                }
+                                              }
+                                            }
+                                          ],
+                                          [
+                                            "name",
+                                            {
+                                              "loc": 493,
+                                              "kind": {
+                                                "Lit": {
+                                                  "Str": "Zed"
+                                                }
+                                              }
+                                            }
+                                          ],
+                                          [
+                                            "tags",
+                                            {
+                                              "loc": 506,
+                                              "kind": {
+                                                "Array": [
+                                                  {
+                                                    "loc": 507,
+                                                    "kind": {
+                                                      "Lit": {
+                                                        "Str": "p"
+                                                      }
+                                                    }
+                                                  },
+                                                  {
+                                                    "loc": 512,
+                                                    "kind": {
+                                                      "Lit": {
+                                                        "Str": "q"
+                                                      }
+                                                    }
+                                                  }
+                                                ]
+                                              }
+                                            }
+                                          ]
+                                        ]
+                                      }
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "captures": [
+              [
+                "setItems",
+                "Setter"
+              ],
+              [
+                "items",
+                "State"
+              ]
+            ]
+          }
+        }
+      },
+      "item_scoped": []
+    }
+  ],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 418,
+      "tag": "div",
+      "attrs": [],
+      "children": [
+        {
+          "Element": {
+            "loc": 430,
+            "tag": "button",
+            "attrs": [
+              {
+                "Event": {
+                  "event": "click",
+                  "handler": "_h1"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Text": "add"
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "For": {
+            "source": {
+              "Server": {
+                "loc": 543,
+                "kind": {
+                  "Ident": {
+                    "name": "items",
+                    "kind": "State"
+                  }
+                }
+              }
+            },
+            "item": "r",
+            "index": null,
+            "key": {
+              "Server": {
+                "loc": 571,
+                "kind": {
+                  "Member": {
+                    "target": {
+                      "loc": 571,
+                      "kind": {
+                        "Ident": {
+                          "name": "r",
+                          "kind": "LoopBinding"
+                        }
+                      }
+                    },
+                    "name": "id",
+                    "optional": false
+                  }
+                }
+              }
+            },
+            "body": [
+              {
+                "Component": {
+                  "loc": 560,
+                  "name": "Card",
+                  "source": "./Card",
+                  "imported": "default",
+                  "props": [
+                    [
+                      "name",
+                      {
+                        "Server": {
+                          "loc": 583,
+                          "kind": {
+                            "Member": {
+                              "target": {
+                                "loc": 583,
+                                "kind": {
+                                  "Ident": {
+                                    "name": "r",
+                                    "kind": "LoopBinding"
+                                  }
+                                }
+                              },
+                              "name": "name",
+                              "optional": false
+                            }
+                          }
+                        }
+                      }
+                    ],
+                    [
+                      "tags",
+                      {
+                        "Server": {
+                          "loc": 597,
+                          "kind": {
+                            "Member": {
+                              "target": {
+                                "loc": 597,
+                                "kind": {
+                                  "Ident": {
+                                    "name": "r",
+                                    "kind": "LoopBinding"
+                                  }
+                                }
+                              },
+                              "name": "tags",
+                              "optional": false
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  ],
+                  "children": [],
+                  "link": 1,
+                  "tier": "Native"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [],
+  "child_links": [
+    {
+      "id": 1,
+      "child": "card_eb22a07c",
+      "props_member": "_p1",
+      "item_scoped": [
+        "r"
+      ],
+      "props": [
+        [
+          "name",
+          {
+            "Server": {
+              "loc": 583,
+              "kind": {
+                "Member": {
+                  "target": {
+                    "loc": 583,
+                    "kind": {
+                      "Ident": {
+                        "name": "r",
+                        "kind": "LoopBinding"
+                      }
+                    }
+                  },
+                  "name": "name",
+                  "optional": false
+                }
+              }
+            }
+          }
+        ],
+        [
+          "tags",
+          {
+            "Server": {
+              "loc": 597,
+              "kind": {
+                "Member": {
+                  "target": {
+                    "loc": 597,
+                    "kind": {
+                      "Ident": {
+                        "name": "r",
+                        "kind": "LoopBinding"
+                      }
+                    }
+                  },
+                  "name": "tags",
+                  "optional": false
+                }
+              }
+            }
+          }
+        ]
+      ]
+    }
+  ],
+  "client_props": [],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": false,
+  "cache": null,
+  "children": [
+    {
+      "name": "Card",
+      "id": "card_eb22a07c",
+      "path": "tests/fixtures/linked-card-tags/Card.tsx",
+      "tier": "Native"
+    }
+  ],
+  "diagnostics": []
+}

@@ -272,6 +272,12 @@
     "rows",
     "unit"
   ],
+  "client_prop_projections": {
+    "rows": [
+      "cells",
+      "id"
+    ]
+  },
   "client_imports": [
     [
       "./money",

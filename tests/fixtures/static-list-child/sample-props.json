@@ -1,0 +1,36 @@
+{
+ "rows": [
+  {
+   "id": 1,
+   "name": "bulbasaur",
+   "displayName": "Bulbasaur",
+   "num": "#0001",
+   "badges": [
+    {
+     "type": "grass",
+     "label": "Grass",
+     "color": "#63bb5b"
+    },
+    {
+     "type": "poison",
+     "label": "Poison",
+     "color": "#ab6ac8"
+    }
+   ]
+  },
+  {
+   "id": 4,
+   "name": "charmander",
+   "displayName": "Charmander",
+   "num": "#0004",
+   "badges": [
+    {
+     "type": "fire",
+     "label": "Fire",
+     "color": "#ff9d55"
+    }
+   ]
+  }
+ ],
+ "summary": "2 Pokémon"
+}
