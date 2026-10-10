@@ -71,6 +71,11 @@ once per app (each framework has its own file conventions) but must produce the 
 - Workers: brust `--workers = cores`; Next.js single Node process by default (its production
   default) with an optional `NEXT_CLUSTER=n` row that runs `n` instances behind a port-sharing
   proxy is NOT in scope — report Next.js as shipped. State this in README.
+- **Equal CPU budget for the ceiling (amendment 2026-10-10, Mellow's challenge d89baa2f):** bun-serve runs
+  N = brust workers processes on one port (`Bun.serve({ reusePort: true })`). The runner verifies the
+  kernel actually balances: each bun-serve process serves `GET /_count`; after warm-up every process must
+  have ≥ 5% of requests, otherwise the run prints `bun-serve: 1-proc (reusePort did not balance)` and the
+  ceiling line is labelled `1-proc`. The RESULTS header prints the process budget per app.
 - `oha -c 120 -z 10s --no-tui --output-format json`, identity encoding is the bar; gzip a second
   column. 1 s settle + discarded 3 s warm-up per (app, probe). Server restarted per (app, probe).
 - App order and probe order are shuffled per run (seeded; seed printed in RESULTS).
@@ -93,7 +98,7 @@ computed from the numbers:
 ```
 bar F68  : v2 vs 0.1.x  D +x.x%  I +y.y%   → MET / NOT MET
 sanity   : v2 vs next   S ×a  D ×b  I ×c   → MET / NOT MET (≥ 2×)
-ceiling  : v2 / bun-serve  D p%  I q%        (target D ≥ 80%)
+ceiling  : v2 / bun-serve[N-proc]  D p%  I q%   (target D ≥ 80%, equal process budget)
 ```
 
 No hand-written prose in the generated file. `bench/README.md` carries the method text.
