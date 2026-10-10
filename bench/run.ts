@@ -11,7 +11,8 @@ import { type AppId, type AppSpec, killAllOnExit, startApp } from './lib/app'
 import { APP_ORDER, APPS, ROOT } from './lib/apps'
 import { evaluateGuards, probeHost } from './lib/guard'
 import { acquireHostLock } from './lib/lock'
-import { type Encoding, runOha } from './lib/oha'
+import { type Encoding, runOha, validateRun } from './lib/oha'
+import { checkBalance } from './lib/balance'
 import { checkParity } from './lib/parity'
 import { probe as probeOf, PROBES, type ProbeId } from './lib/probes'
 import { mulberry32, shuffle } from './lib/random'
@@ -38,6 +39,7 @@ const conn = Number.parseInt(f.conn!, 10)
 const settleMs = Number.parseInt(f.settle!, 10)
 const timeoutMs = Number.parseInt(f.timeout!, 10)
 const seed = f.seed !== undefined ? Number.parseInt(f.seed, 10) : Date.now() % 1_000_000_000
+if (!Number.isInteger(seed) || !Number.isInteger(conn) || conn < 1 || !Number.isInteger(settleMs) || !Number.isInteger(timeoutMs)) die(1, `--seed/--conn/--settle/--timeout must be integers (got seed ${f.seed}, conn ${f.conn})`)
 if (f.workers) process.env.BENCH_WORKERS = f.workers
 const cores = cpus().length
 const workersN = Number.parseInt(process.env.BENCH_WORKERS ?? String(cores), 10)
@@ -80,6 +82,10 @@ for (const p of probeIds) {
   say(`parity ${p}: ${html[p].map((x) => x.app).join(' = ')} ✓`)
 }
 
+// Builds loaded the host: re-check the guards right before the load phase (1- and 5-minute averages).
+const g2 = evaluateGuards(probeHost({ needNode: apps.some((a) => a.id === 'next'), needBrustAddon: apps.some((a) => a.id === 'brust') }))
+if (!g2.ok) die(g2.code, `after builds: ${g2.reason}`)
+
 // Versions are read before the load phase: a failure here must never cost a finished run.
 const versions: Record<string, string> = { bun: Bun.version, oha: Bun.spawnSync(['oha', '--version']).stdout.toString().trim().replace(/^oha /, '') }
 const nodeV = Bun.spawnSync(['node', '--version']); if (nodeV.exitCode === 0) versions.node = nodeV.stdout.toString().trim()
@@ -90,10 +96,12 @@ const releaseLock = await acquireHostLock(say)
 
 // 4. Shuffled measure loop (spec §1.3): app order and probe order from the seed; server restarted per pair.
 const rnd = mulberry32(seed)
-const pairs = shuffle(apps, rnd).flatMap((a) => shuffle(probeIds, rnd).map((p) => ({ a, p })))
+// Interleaved: probes in seeded order, apps shuffled within each probe, so host drift lands across apps, not on one.
+const pairs = shuffle(probeIds, rnd).flatMap((p) => shuffle(apps, rnd).map((a) => ({ a, p })))
 const order = pairs.map(({ a, p }) => `${a.id}:${p}`)
 say(`order ${order.join(' ')}`)
 const measurements: Measurement[] = []
+let bunServeBalanced: boolean | null = null
 for (const { a, p } of pairs) {
   const run = await startApp(a, { timeoutMs }).catch((e) => die(1, (e as Error).message))
   try {
@@ -103,8 +111,14 @@ for (const { a, p } of pairs) {
     for (const enc of encs) {
       await runOha(url, { conn, dur: f.warmup!, enc })                       // discarded JIT warm-up
       const { raw, ...nums } = await runOha(url, { conn, dur: f.dur!, enc })
+      try { validateRun(nums, `${a.id} ${p} ${enc}`) } catch (e) { die(1, (e as Error).message) }
       measurements.push({ app: a.id, probe: p, enc, nums, raw })
       console.log(`  ${a.id.padEnd(10)} ${p} ${enc.padEnd(8)} ${nums.rps.toFixed(0).padStart(7)} rps  p50 ${nums.p50.toFixed(2)} ms  p99 ${nums.p99.toFixed(2)} ms  errors ${nums.errors}`)
+    }
+    if (a.distribution) {
+      const b = checkBalance(await a.distribution().catch(() => []))
+      bunServeBalanced = (bunServeBalanced ?? true) && b.ok
+      say(`${a.id} ${p}: per-process requests ${b.counts.join('/')} (min share ${(b.minShare * 100).toFixed(1)}%) ${b.ok ? 'balanced' : '— 1-proc (reusePort did not balance)'}`)
     }
   } finally { await run.stop() }
 }
@@ -112,8 +126,9 @@ for (const { a, p } of pairs) {
 releaseLock()
 
 // 5. Report (spec §1.5): numbers only.
+const budgets: Record<string, string> = Object.fromEntries(apps.map((a) => [a.id, a.id === 'next' ? 'procs=1 (as shipped)' : a.id === 'bun-serve' ? `procs=${workersN}` : `workers=${workersN}`]))
 const results: Results = {
-  header: { date: new Date().toISOString().slice(0, 10), host: `${process.platform}/${process.arch} ${hostname()}`, cores, loadavg: load, seed, conn, dur: f.dur!, warmup: f.warmup!, settleMs, workers: workersN, versions, apps: apps.map((a) => a.id), skipped, order },
+  header: { date: new Date().toISOString().slice(0, 10), host: `${process.platform}/${process.arch} ${hostname()}`, cores, loadavg: load, seed, conn, dur: f.dur!, warmup: f.warmup!, settleMs, workers: workersN, versions, apps: apps.map((a) => a.id), skipped, order, budgets, bunServeBalanced },
   measurements,
 }
 const outDir = join(ROOT, f.out!)

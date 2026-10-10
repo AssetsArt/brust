@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path'
 
 export interface GuardInput {
   loadavg1: number
+  loadavg5: number
   cores: number
   ohaOnPath: boolean
   /** BRUST_RELEASE_ADDON=1: the operator asserts the addon was built with `bun run build`, not build:debug (the runner cannot tell). */
@@ -21,7 +22,8 @@ export const MIN_NODE_MAJOR = 22
 const major = (v: string | null): number => (v ? Number.parseInt(v.replace(/^v/, ''), 10) : Number.NaN)
 
 export function evaluateGuards(i: GuardInput): GuardVerdict {
-  if (i.loadavg1 > i.cores) return { ok: false, code: 2, reason: `host busy: load average ${i.loadavg1} > ${i.cores} cores — refusing to measure` }
+  if (i.loadavg1 > i.cores || i.loadavg5 > i.cores)
+    return { ok: false, code: 2, reason: `host busy: load average ${i.loadavg1} (1 min) / ${i.loadavg5} (5 min) > ${i.cores} cores — refusing to measure` }
   if (!i.ohaOnPath) return { ok: false, code: 1, reason: 'oha not on PATH (cargo install oha)' }
   if (!i.addonPresent) return { ok: false, code: 1, reason: 'no addon: cd packages/brust && bun run build (RELEASE)' }
   if (!i.releaseAddonDeclared) return { ok: false, code: 1, reason: 'set BRUST_RELEASE_ADDON=1 to assert the addon was built with `bun run build`, not build:debug' }
@@ -45,6 +47,7 @@ export function probeHost(opts: { needNode: boolean; needBrustAddon: boolean }):
   const addonPresent = !opts.needBrustAddon || (existsSync(native) && readdirSync(native).some((f) => f.endsWith('.node')))
   return {
     loadavg1: Math.round((loadavg()[0] ?? 0) * 100) / 100,
+    loadavg5: Math.round((loadavg()[1] ?? 0) * 100) / 100,
     cores: cpus().length,
     ohaOnPath: version(['oha', '--version']) !== null,
     releaseAddonDeclared: !opts.needBrustAddon || process.env.BRUST_RELEASE_ADDON === '1',

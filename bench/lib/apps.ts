@@ -66,9 +66,14 @@ const bunServe: AppSpec = {
   id: 'bun-serve', label: 'Bun.serve + renderToString', cwd: join(ROOT, 'bench/apps/bun-serve'), port: P(2),
   available: () => ({ ok: true }),
   build: async () => {},
-  startCmd: () => ({ cmd: ['bun', 'index.ts'], env: { BENCH_PORT: String(P(2)), NODE_ENV: 'production' } }),
-  ready: /\[bun-serve\] listening on http:\/\/127\.0\.0\.1:(\d+)/,
+  // N copies on one port (reusePort) = brust's worker budget; cluster.ts prints the ready line once all listen.
+  startCmd: () => ({ cmd: ['bun', 'cluster.ts'], env: { BENCH_PORT: String(P(2)), BENCH_PROCS: workers(), BENCH_CTRL_BASE: String(P(20)), NODE_ENV: 'production' } }),
+  ready: /\[bun-serve\] listening on http:\/\/127\.0\.0\.1:(\d+) procs=/,
   version: async () => Bun.version,
+  distribution: async () => {
+    const n = Number.parseInt(workers(), 10)
+    return Promise.all(Array.from({ length: n }, async (_, i) => ((await (await fetch(`http://127.0.0.1:${P(20) + i}/_count`)).json()) as { count: number }).count))
+  },
 }
 
 const next: AppSpec = {

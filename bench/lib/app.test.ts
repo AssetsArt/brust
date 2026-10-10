@@ -51,3 +51,21 @@ test('a busy port is refused by name and the foreign listener is left alone', as
   }
   expect(await portInUse(foreign.port!)).toBe(false)
 })
+
+const alive = (pid: number): boolean => { try { process.kill(pid, 0); return true } catch { return false } }
+
+test('stop() signals only the spawned process group: a foreign process survives, the grandchild does not', async () => {
+  const foreign = Bun.spawn(['sleep', '300'], { stdout: 'ignore', stderr: 'ignore' })
+  try {
+    const app = await startApp(fake('spawns-grandchild.ts'))
+    const gc = Number(/grandchild (\d+)/.exec(app.log())![1])
+    expect(alive(gc)).toBe(true)
+    await app.stop()
+    await Bun.sleep(200)
+    expect(alive(gc)).toBe(false)
+    expect(alive(app.proc.pid)).toBe(false)
+    expect(alive(foreign.pid)).toBe(true)
+  } finally {
+    foreign.kill('SIGKILL')
+  }
+})

@@ -15,16 +15,23 @@ export interface AppSpec {
   ready: RegExp
   version(): Promise<string>
   sanity?(base: string, probe: ProbeId): Promise<void>
+  /** bun-serve only: per-process request counts (to verify reusePort balanced the load). */
+  distribution?(): Promise<number[]>
 }
 export interface RunningApp { base: string; proc: Subprocess; log(): string; stop(): Promise<void> }
 
 const CHILDREN = new Set<Subprocess>()
+/** Signal the process group we created for `proc` (pgid = its pid). Never anything else: the pid comes from our own spawn. */
+function signalGroup(proc: Subprocess, sig: NodeJS.Signals): void {
+  try { process.kill(-proc.pid, sig) } catch { /* group already gone */ }
+}
 let hooked = false
 export function killAllOnExit(): void {
   if (hooked) return
   hooked = true
-  process.on('exit', () => { for (const c of CHILDREN) c.kill('SIGKILL') })
-  for (const sig of ['SIGINT', 'SIGTERM'] as const) process.on(sig, () => process.exit(130))
+  process.on('exit', () => { for (const c of CHILDREN) signalGroup(c, 'SIGKILL') })
+  process.on('SIGINT', () => process.exit(130))
+  process.on('SIGTERM', () => process.exit(143))
 }
 
 export async function waitForLine(stdout: ReadableStream<Uint8Array>, re: RegExp, timeoutMs: number, onExit: Promise<number>): Promise<{ match: RegExpExecArray; log: () => string }> {
@@ -48,15 +55,16 @@ export async function waitForLine(stdout: ReadableStream<Uint8Array>, re: RegExp
   return { match, log }
 }
 
-/** True when something already accepts connections on 127.0.0.1:port. We only ever report it: a listener we did not spawn is never killed. */
+/** True when something already listens on `port` (any interface). We only ever report it: a listener we did not spawn is never killed. */
 export async function portInUse(port: number): Promise<boolean> {
-  try {
-    const l = Bun.listen({ hostname: '127.0.0.1', port, socket: { data() {} } })
-    l.stop(true)
-    return false
-  } catch {
-    return true
+  for (const hostname of ['127.0.0.1', '0.0.0.0']) {
+    try {
+      Bun.listen({ hostname, port, socket: { data() {} } }).stop(true)
+    } catch {
+      return true
+    }
   }
+  return false
 }
 
 export async function startApp(spec: Pick<AppSpec, 'id' | 'port' | 'startCmd' | 'ready' | 'cwd'>, opts: { timeoutMs?: number } = {}): Promise<RunningApp> {
@@ -64,14 +72,15 @@ export async function startApp(spec: Pick<AppSpec, 'id' | 'port' | 'startCmd' | 
   if (spec.port > 0 && (await portInUse(spec.port)))
     throw new Error(`[${spec.id}] port ${spec.port} is already in use by another process — not starting, and not killing it (find the owner with: lsof -ti tcp:${spec.port})`)
   const { cmd, env, cwd } = spec.startCmd()
-  const proc = Bun.spawn(cmd, { cwd: cwd ?? spec.cwd, env: { ...process.env, ...env }, stdout: 'pipe', stderr: 'inherit' })
+  // detached = own process group, so stop() can end the child AND anything it spawned (and nothing else).
+  const proc = Bun.spawn(cmd, { cwd: cwd ?? spec.cwd, env: { ...process.env, ...env }, stdout: 'pipe', stderr: 'inherit', detached: true })
   CHILDREN.add(proc)
   const stop = async () => {
     CHILDREN.delete(proc)
-    if (proc.exitCode !== null) return
-    proc.kill('SIGINT')
+    signalGroup(proc, 'SIGINT')
     const r = await Promise.race([proc.exited, Bun.sleep(5000).then(() => 'timeout' as const)])
-    if (r === 'timeout') { proc.kill('SIGKILL'); await proc.exited }
+    if (r === 'timeout') { signalGroup(proc, 'SIGKILL'); await proc.exited }
+    signalGroup(proc, 'SIGKILL') // grandchildren that outlived the leader
   }
   let match: RegExpExecArray
   let log: () => string

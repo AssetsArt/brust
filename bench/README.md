@@ -42,11 +42,16 @@ for 0.1.x its release addon (`cd $BRUST_01X_DIR/runtime && bun run build`).
 
 ## Host lock and ports
 
-Measurements on the shared host are serialised (lead rule `bench-host-lock`): with `BENCH_LOCK_WS=<workspace id>` and
-`BENCH_LOCK_ID='<slug> <agent>'` set, the runner waits for the blackboard key `bench:host-lock` to be free, sets it to
-`'<slug> <agent> <ISO time>'` around the load phase only, and deletes it afterwards (a lock older than 20 min is stale).
+Measurements on the shared host are serialised (lead rule `bench-host-lock`), in two layers, always on for `bun run bench`:
+an exclusive lock file `/tmp/brust-bench.lock` (O_EXCL, holder pid inside; a dead holder or one older than 20 min is
+stale) and, with `BENCH_LOCK_WS=<workspace id>` + `BENCH_LOCK_ID='<slug> <agent>'`, the blackboard key `bench:host-lock`
+(`'<slug> <agent> <ISO time>'`; read fail-closed — an unreadable key refuses the run —, set-then-verified, deleted only
+if still ours). Only the load phase is under the lock; the holder aborts itself after 20 min. The guards run twice
+(before the builds and again right before the load): 1- and 5-minute load average must not exceed the core count.
+Every row must be a clean measurement: a non-200 status or any transport error fails the run (exit 1).
 Ports are `BENCH_PORT_BASE` (default 38300) + 1 brust, 2 bun-serve, 3 next, 4 brust-01x; the old M2 runner owns
-38201-38204. `startApp` refuses a busy port by name and never kills a process it did not spawn.
+38201-38204. Apps are spawned in their own process group and `stop()` signals only that group; `startApp` refuses a busy
+port by name and never kills a process it did not spawn. Probe order is seeded, apps are interleaved within each probe.
 
 ## What differs from the pokedex
 
@@ -54,6 +59,15 @@ brust v2 builds `TypeBadge` as a static child fed by loader-precomputed `{type,l
 nested dex list is the build error `nested-instance`) and passes the "151 Pokémon" line as one text slot (`{count} Pokémon`
 compiles to a `<span x-text>`); parity unwraps the compiler's `<brust-host>` / `<brust-row>` hosts. Native pages carry
 their rows in `x-props` for client reconcile, so brust D responses are larger than the plain-HTML apps'.
+
+## Known artefacts of the comparison
+
+- The gzip columns are not like-for-like: Next.js compresses every response, brust only dynamic pages of 16 KiB or more
+  (an L1 HIT of `/types` is served identity), Bun.serve and 0.1.x never compress. The bar is the identity column.
+- `bytes/resp` is what oha received. brust's D page is ~144 KB against ~22 KB for Bun.serve / 0.1.x: the native page
+  carries all 151 rows in `x-props` (including fields the markup does not render) and every `TypeBadge` instance gets
+  `x-data`/`x-props`/`x-bind-*` attributes although the manifest lists it as static. So F68 on D mixes payload with CPU.
+- Next.js is one Node process as shipped; brust runs `--workers <cores>` and bun-serve runs the same number of copies on one port (`reusePort`). macOS does not balance `SO_REUSEPORT` (the last binder takes the traffic), so the runner reads each copy's `/_count` and, when any copy served under 5% of the requests, labels the ceiling line `1-proc` instead of silently comparing budgets.
 
 ## Reading RESULTS.md
 

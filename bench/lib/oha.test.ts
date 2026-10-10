@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import fixture from './fixtures/oha.json'
-import { ohaArgs, parseOha } from './oha'
+import { ohaArgs, parseOha, validateRun } from './oha'
 
 describe('parseOha', () => {
   test('rps and latencies (seconds → ms) from the oha 1.x shape', () => {
@@ -22,6 +22,23 @@ describe('parseOha', () => {
   })
   test('a non-object input throws with the offending shape', () => {
     expect(() => parseOha('nope')).toThrow(/oha json/)
+  })
+})
+
+describe('validateRun', () => {
+  test('all-200 with no errors passes; bytes and status are read', () => {
+    const r = parseOha(fixture)
+    expect(r.bytes).toBe(49)
+    expect(r.status).toEqual({ '200': 62218 })
+    expect(() => validateRun(r, 'x')).not.toThrow()
+  })
+  test('a 500 response is not throughput', () => {
+    const r = parseOha({ ...fixture, statusCodeDistribution: { '500': 62218 } })
+    expect(() => validateRun(r, 'brust D')).toThrow(/brust D: not a valid measurement[\s\S]*"500":62218/)
+  })
+  test('connection errors fail it even with zero responses', () => {
+    const r = parseOha({ ...fixture, statusCodeDistribution: {}, errorDistribution: { 'connection refused': 62218 } })
+    expect(() => validateRun(r, 'x')).toThrow(/62218 transport errors/)
   })
 })
 

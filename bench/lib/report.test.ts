@@ -40,6 +40,10 @@ describe('renderVerdict', () => {
       ['bar F68  : v2 vs 0.1.x  D +11.1%  I -4.8%   → NOT MET', 'sanity   : v2 vs next   S ×9.2  D ×3.3  I ×3.3   → MET (≥ 2×)', 'ceiling  : v2 / bun-serve  D 83.3%  I 61.5%        (target D ≥ 80%)'].join('\n'),
     )
   })
+  test('an unbalanced reusePort labels the ceiling 1-proc instead of comparing budgets silently', () => {
+    const line = renderVerdict(computeVerdict({ ...r, header: { ...r.header, bunServeBalanced: false } })).split('\n')[2]
+    expect(line).toBe('ceiling  : v2 / bun-serve (1-proc: reusePort did not balance)  D 83.3%  I 61.5%        (target D ≥ 80%)')
+  })
   test('missing 0.1.x → NOT MEASURED, dashes instead of numbers', () => {
     expect(renderVerdict(computeVerdict(without01x)).split('\n')[0]).toBe('bar F68  : v2 vs 0.1.x  D —  I —   → NOT MEASURED')
   })
@@ -52,9 +56,10 @@ describe('renderMarkdown', () => {
     expect(md).toContain('seed 12345')
     expect(md).toContain('load 3.1 4.2 4.0 (10 cores)')
     expect(md).toContain('next 16.4.0')
+    expect(md).toContain('budgets brust workers=10, bun-serve procs=10, next procs=1 (as shipped), brust-01x workers=10')
     expect(md).toContain('## S — `/types`')
-    expect(md).toContain('| brust | 50,000 | 2.30 | 4.00 | 5.10 | 0 | 48,000 | 2.40 | 5.30 |')   // D row: identity then gzip
-    expect(md).toContain('| next | 12,000 | 9.90 | 14.00 | 18.00 | 2 | — | — | — |')            // I row: no gzip pass
+    expect(md).toContain('| brust | 50,000 | 2.30 | 4.00 | 5.10 | 0 | 21,000 | 48,000 | 2.40 | 5.30 | 21,000 |')   // D row: identity then gzip
+    expect(md).toContain('| next | 12,000 | 9.90 | 14.00 | 18.00 | 2 | 21,000 | — | — | — | — |')            // I row: no gzip pass
     expect(md).toContain('bar F68  : v2 vs 0.1.x  D +11.1%  I -4.8%   → NOT MET')
     expect(md).not.toMatch(/The gzip columns are|not slower|Bar \(/)                              // no hand-written sentences
     expect(renderMarkdown(without01x)).toContain('skipped: brust-01x (BRUST_01X_DIR unset)')
