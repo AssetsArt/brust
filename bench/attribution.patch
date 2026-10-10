@@ -1,8 +1,8 @@
 diff --git a/Cargo.lock b/Cargo.lock
-index 08314fa..4eee812 100644
+index 9b35281..47a044b 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
-@@ -171,6 +171,7 @@ dependencies = [
+@@ -172,6 +172,7 @@ dependencies = [
   "http-body-util",
   "hyper",
   "hyper-util",
@@ -121,7 +121,7 @@ index 74d2e91..c48e750 100644
  
  /// In-process mock for pool/dispatch unit tests: a leaked 256 KiB buffer (no
 diff --git a/crates/brust-server/src/lib.rs b/crates/brust-server/src/lib.rs
-index 4d7b3b5..14fec3b 100644
+index 6718bea..d130142 100644
 --- a/crates/brust-server/src/lib.rs
 +++ b/crates/brust-server/src/lib.rs
 @@ -7,6 +7,7 @@ pub mod http;
@@ -237,7 +237,7 @@ index 0000000..91fde9c
 +    serde_json::to_vec(&m).unwrap()
 +}
 diff --git a/crates/brust-server/src/pipeline.rs b/crates/brust-server/src/pipeline.rs
-index 7d35324..69f1a5f 100644
+index dfbeeac..2ebd56b 100644
 --- a/crates/brust-server/src/pipeline.rs
 +++ b/crates/brust-server/src/pipeline.rs
 @@ -95,6 +95,9 @@ pub(crate) async fn handle(req: Request<Incoming>, s: Arc<Server>) -> Response<R
@@ -255,7 +255,7 @@ index 7d35324..69f1a5f 100644
      };
      let resp = page(&s, full, headers, &mut meta).await;
 +    crate::perf::rec(crate::perf::PAGE_TOTAL, t0);
-     tracing::info!(
+     tracing::debug!(
          target: "brust::request",
          route = %meta.route,
 @@ -144,6 +148,7 @@ pub(crate) async fn handle(req: Request<Incoming>, s: Arc<Server>) -> Response<R
@@ -324,32 +324,30 @@ index 7d35324..69f1a5f 100644
  
      // ----- (5) jobs -----
 +    let t = std::time::Instant::now();
-     let plans = match collect_jobs(&s.manifest, &route.chain, &ctx) {
+     let plans = match collect_jobs(&s.plans, &route.chain, &ctx) {
          Ok(p) => p,
          Err(e) => {
-@@ -407,6 +428,8 @@ async fn page(
+@@ -407,12 +428,19 @@ async fn page(
              return body::error_500();
          }
      };
 +    perf::rec(perf::COLLECT_JOBS, t);
 +    let t = std::time::Instant::now();
-     let mut values: Vec<Option<Arc<Value>>> = plans.iter().map(|p| s.jobs.get(&p.key)).collect();
-     // Plans sharing a JobKey (e.g. two identical rows) are one computation:
-     // `owner[i]` is the first missing plan with plan i's key; only owners are
-@@ -425,7 +448,12 @@ async fn page(
-             }
-         }
-     }
+     let Lookup {
+         mut values,
+         owner,
+         misses,
+     } = lookup_jobs(&s.jobs, &plans);
 +    perf::rec(perf::JOB_LOOKUP, t);
 +    let mut c2 = 0;
      if !misses.is_empty() {
 +        if cpu { c2 = perf::thread_cpu() - c1; }
 +        let t = std::time::Instant::now();
 +        let _g = Rec(perf::JOBS_CALL, t);
-         let req = JobsRequest {
-             jobs: misses
-                 .iter()
-@@ -518,11 +546,16 @@ async fn page(
+         let req = jobs_request(&plans, &misses);
+         let r = call_worker::<_, JobsResponse>(
+             &s.pool,
+@@ -495,12 +523,18 @@ async fn page(
          }
      }
  
@@ -357,24 +355,18 @@ index 7d35324..69f1a5f 100644
 +    if cpu && misses.is_empty() { c2 = c3 - c1; }
 +    let t = std::time::Instant::now();
      // ----- (6) child slots + useId, then merge job values -----
-     if let Err(e) = seed_child_slots(&s.manifest, &route.id, &route.chain, &mut ctx) {
+     if let Err(e) = seed_child_slots(&s.plans, &route.id, &route.chain, &mut ctx) {
          tracing::error!(route = %route.id, error = %e, "child slot seeding failed");
          return body::error_500();
      }
 +    perf::rec(perf::SEED, t);
 +    let t = std::time::Instant::now();
-     if let Value::Object(map) = &mut ctx {
-         for (p, v) in plans.iter().zip(&values) {
-             if let Some(v) = v {
-@@ -530,6 +563,7 @@ async fn page(
-             }
-         }
-     }
+     merge_values(&mut ctx, &plans, &values);
 +    perf::rec(perf::MERGE_RESULTS, t);
  
      // ----- (7) render, assets, L1 store -----
      let ctx = Arc::new(ctx);
-@@ -543,6 +577,7 @@ async fn page(
+@@ -514,6 +548,7 @@ async fn page(
          Ok(h) => h,
          Err(e) => return render_failed(route, &e),
      };
@@ -382,7 +374,7 @@ index 7d35324..69f1a5f 100644
      let body = Arc::new(RenderedBody {
          status,
          headers: body::header_map(HTML, &headers),
-@@ -551,6 +586,8 @@ async fn page(
+@@ -522,6 +557,8 @@ async fn page(
      });
      let (bytes, encoded) = cached_body(&body, crate::http::compress::accepts_gzip(accept_enc));
      let resp = page_response(&body, bytes, encoded, hdr);
@@ -391,7 +383,7 @@ index 7d35324..69f1a5f 100644
      if let Some(k) = cache_key
          && status == 200
          && cacheable
-@@ -566,10 +603,19 @@ async fn page(
+@@ -537,10 +574,19 @@ async fn page(
              Duration::from_secs(c.ttl_seconds),
              &c.tags,
          );
@@ -411,7 +403,7 @@ index 7d35324..69f1a5f 100644
  fn render_failed(route: &RouteRecord, e: &RenderError) -> Response<ResponseBody> {
      tracing::error!(route = %route.id, error = %e, "render failed");
      body::error_500()
-@@ -589,10 +635,18 @@ const PAGE_GZIP_LEVEL: u32 = 1;
+@@ -560,10 +606,18 @@ const PAGE_GZIP_LEVEL: u32 = 1;
  /// plus asset tags: the identity document. Shared by every path that renders,
  /// so the body a HIT serves is the bytes a fresh render produces.
  fn render_document(s: &Server, route: &RouteRecord, ctx: &Value) -> Result<Bytes, RenderError> {
@@ -432,7 +424,7 @@ index 7d35324..69f1a5f 100644
  }
  
  /// The bytes to send for `body` and whether they are gzip: the identity
-@@ -654,12 +708,15 @@ pub fn render_chain_html(
+@@ -625,12 +679,15 @@ pub fn render_chain_html(
      let children = ctx.get(CHILDREN_KEY);
      let own_all = ctx.get(OWN_KEY);
      // The merged context, converted once for the whole chain.
@@ -448,7 +440,7 @@ index 7d35324..69f1a5f 100644
          let slots = manifest.components.get(id).map_or(0, |c| c.use_id_slots);
          let mut out: Vec<(String, minijinja::Value)> = use_ids(route_id, id, slots)
              .into_iter()
-@@ -1045,7 +1102,9 @@ fn plan_one(
+@@ -1169,15 +1226,26 @@ fn plan_one<'a>(
          Dest::Chain { row, .. } => row,
          Dest::Child { .. } => None,
      };
@@ -458,16 +450,25 @@ index 7d35324..69f1a5f 100644
      // With a `props` map each row's inputs are that row's props (content-keyed:
      // equal rows share an entry); otherwise every row projects the same
      // parent-scope inputs, so the row is part of the key.
-@@ -1053,7 +1112,9 @@ fn plan_one(
-         Some(r) if j.props.is_none() || j.cache.key.is_some() => format!("{}#{r}", j.id),
-         _ => j.id.clone(),
+     let (key, user_key) = match per_instance {
+         Some(r) if !j.has_props || j.cache_key.is_some() => {
+-            plan_key(cid, &format!("{}#{r}", j.id), j, props, &projected)
++            let key_job = format!("{}#{r}", j.id);
++            let t = std::time::Instant::now();
++            let k = plan_key(cid, &key_job, j, props, &projected);
++            crate::perf::rec(crate::perf::CJ_KEY, t);
++            k
++        }
++        _ => {
++            let t = std::time::Instant::now();
++            let k = plan_key(cid, &j.id, j, props, &projected);
++            crate::perf::rec(crate::perf::CJ_KEY, t);
++            k
+         }
+-        _ => plan_key(cid, &j.id, j, props, &projected),
      };
-+    let t = std::time::Instant::now();
-     let (key, user_key) = plan_key(cid, &key_job, j, props, &projected)?;
-+    crate::perf::rec(crate::perf::CJ_KEY, t);
-     let call_id = match row {
-         Some(r) => format!("{instance}/{}/{r}", j.id),
-         None => format!("{instance}/{}", j.id),
+     out.push(JobPlan {
+         key,
 diff --git a/crates/brust-server/src/render.rs b/crates/brust-server/src/render.rs
 index 8ab74d7..e382c80 100644
 --- a/crates/brust-server/src/render.rs
@@ -495,10 +496,10 @@ index 8ab74d7..e382c80 100644
          Ok(outlet.unwrap_or_default())
      }
 diff --git a/crates/brust-server/src/server/mod.rs b/crates/brust-server/src/server/mod.rs
-index 464551d..bd057c8 100644
+index 1497c3b..6ec08f6 100644
 --- a/crates/brust-server/src/server/mod.rs
 +++ b/crates/brust-server/src/server/mod.rs
-@@ -273,6 +273,7 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
+@@ -276,6 +276,7 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
                          let state = Arc::clone(&state);
                          let powered_by = powered_by.clone();
                          async move {
@@ -506,7 +507,7 @@ index 464551d..bd057c8 100644
                              // CORS stamping happens HERE and ONLY here — the single
                              // chokepoint that sees every response path (static
                              // assets, error helpers, L1 HITs, rendered pages). Clone
-@@ -291,6 +292,7 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
+@@ -294,6 +295,7 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
                              if let Some(c) = &state.cors_resolved {
                                  c.stamp_response(resp.headers_mut(), origin.as_ref());
                              }
