@@ -183,3 +183,12 @@ runs gates; the lead merges and reruns the bench on this host before `task state
 - P6 is unconditional and last among the planned levers; key computation moves to the worker.
 - Rejected: port pokedex to Next.js (days of work, bench coupled to an example); run Next.js on Bun
   (fairness disputes); bench in CI (noise).
+
+## 7. Integration branch (human decision 2026-10-10)
+
+"สร้าง branch ใหม่ ทำกันในนั้นไม่ต้อง PR ได้ code ที่ดีที่สุด ค่อยเปิด PR เข้า v2": all M3-P lanes
+branch from and merge into `m3p` (worktree `~/code/brust-m3p`), merged by the lead after gates +
+review, with NO per-lane PR. CI does not run on `m3p` pushes (ci.yml is PR-only); the gate runner's
+local run is the gate, and the lead may trigger `workflow_dispatch` on `m3p` at wave boundaries.
+When §5 acceptance is MET, ONE PR `m3p → v2` carries the whole result. Docs on `m3p` are committed
+directly, as on v2.
