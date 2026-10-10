@@ -1,7 +1,17 @@
 name: ci
+# PR runs only (human decision 2026-10-10): the pull_request run already tests the PR merged into the
+# current v2, so a second run on the merge commit was pure duplication (5 wasted runs on 2026-10-10).
+# Docs-only changes commit straight to v2 and never need CI; a PR that touches docs AND code still runs.
+# workflow_dispatch is the manual escape hatch to run the whole suite on v2 (or any ref) on demand.
 on:
-  push: { branches: [v2] }
-  pull_request: { branches: [v2] }
+  pull_request:
+    branches: [v2]
+    paths-ignore: ["docs/**", "**.md"]
+  workflow_dispatch:
+# A new push to the same PR cancels the run it supersedes.
+concurrency:
+  group: ci-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
 jobs:
   rust:
     runs-on: ubuntu-latest
