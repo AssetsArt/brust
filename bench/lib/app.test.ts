@@ -1,0 +1,41 @@
+import { expect, test } from 'bun:test'
+import { join } from 'node:path'
+import { startApp } from './app'
+import { mulberry32, shuffle } from './random'
+
+const fixtures = join(import.meta.dir, 'fixtures')
+const fake = (file: string, env: Record<string, string> = {}) => ({
+  id: 'bun-serve' as const,
+  port: 0,
+  cwd: fixtures,
+  startCmd: () => ({ cmd: ['bun', join(fixtures, file)], env }),
+  ready: /listening on http:\/\/127\.0\.0\.1:(\d+)/,
+})
+
+test('startApp scrapes the port from stdout, the server answers, stop() ends the child', async () => {
+  const app = await startApp(fake('fake-server.ts'))
+  expect(app.base).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/)
+  const r = await fetch(`${app.base}/types`)
+  expect(await r.text()).toContain('<main>')
+  await app.stop()
+  expect(app.proc.exitCode ?? 0).toBeGreaterThanOrEqual(0)
+  expect(app.log()).toContain('[fake] listening')
+})
+
+test('startApp rejects when the ready line never comes and the child is killed', async () => {
+  const t0 = Date.now()
+  await expect(startApp(fake('never-ready.ts'), { timeoutMs: 800 })).rejects.toThrow(/not ready after 800 ms[\s\S]*no listening line/)
+  expect(Date.now() - t0).toBeLessThan(5000)
+})
+
+test('startApp rejects with the log when the child exits before ready', async () => {
+  await expect(startApp({ ...fake('fake-server.ts'), startCmd: () => ({ cmd: ['bun', '-e', 'console.log("boom"); process.exit(3)'], env: {} }) })).rejects.toThrow(/exited \(3\) before ready[\s\S]*boom/)
+})
+
+test('seeded shuffle is deterministic and a permutation', () => {
+  const a = shuffle([1, 2, 3, 4, 5, 6], mulberry32(42))
+  const b = shuffle([1, 2, 3, 4, 5, 6], mulberry32(42))
+  expect(a).toEqual(b)
+  expect([...a].sort()).toEqual([1, 2, 3, 4, 5, 6])
+  expect(shuffle([1, 2, 3, 4, 5, 6], mulberry32(7))).not.toEqual(a)
+})
