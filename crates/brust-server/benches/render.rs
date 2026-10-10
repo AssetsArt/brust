@@ -95,6 +95,23 @@ fn ctx(name: &str) -> Node {
     Node::from(ctx_json(name))
 }
 
+/// `f` from 8 threads at once; per-iteration time = wall / iterations per thread (1x = no contention).
+fn par8<F: Fn() + Sync>(b: &mut criterion::Bencher, f: F) {
+    b.iter_custom(|iters| {
+        let t = std::time::Instant::now();
+        std::thread::scope(|sc| {
+            for _ in 0..8 {
+                sc.spawn(|| {
+                    for _ in 0..iters {
+                        f()
+                    }
+                });
+            }
+        });
+        t.elapsed()
+    })
+}
+
 fn gzip(bytes: &[u8], level: u32) -> Vec<u8> {
     let mut enc = GzEncoder::new(
         Vec::with_capacity(bytes.len() / 2 + 32),
@@ -258,18 +275,8 @@ fn bench_route(
     // `L1Cache::get` of the one hot key from 8 threads at once (wall time /
     // iterations per thread; 1x = no contention), as `lookups_x8`.
     g.bench_function("l1_get_x8", |b| {
-        b.iter_custom(|iters| {
-            let t = std::time::Instant::now();
-            std::thread::scope(|sc| {
-                for _ in 0..8 {
-                    sc.spawn(|| {
-                        for _ in 0..iters {
-                            black_box(l1.get(&key));
-                        }
-                    });
-                }
-            });
-            t.elapsed()
+        par8(b, || {
+            black_box(l1.get(&key));
         })
     });
     g.bench_function("l1_hit_gzip", |b| b.iter(|| hit(true)));
@@ -387,9 +394,87 @@ fn bench_plan(c: &mut Criterion, m: &Manifest, label: &str, pattern: &str, ctx_f
     g.finish();
 }
 
+/// The L1 HIT prelude `pipeline::page` runs for probe S (a cached route, no prefix/bypass): route match,
+/// accept-encoding, the compiled-cache read `l1_decision` does, the key, the get and the HIT response pieces
+/// (header map clone + body). Mirrors `page` :276-306 at m3p 42db1d1 (`l1_decision` is private). `*_x8`: 8 threads.
+fn bench_hit_path(c: &mut Criterion, m: &Manifest) {
+    use brust_server::routing::{MatchResult, RouteTable};
+    let routes = RouteTable::from_manifest(m).expect("routes");
+    let path = "/type-chart";
+    let mut h = http::HeaderMap::new();
+    for (k, v) in [
+        ("host", "127.0.0.1:38301"),
+        ("user-agent", "oha/1.11.0"),
+        ("accept", "*/*"),
+        ("accept-encoding", "identity"),
+    ] {
+        h.insert(
+            http::header::HeaderName::from_static(k),
+            http::HeaderValue::from_static(v),
+        );
+    }
+    let l1 = L1Cache::new();
+    let mut base = http::HeaderMap::new(); // as body::header_map builds it (from_str)
+    base.insert(
+        http::header::CONTENT_TYPE,
+        http::HeaderValue::from_str("text/html; charset=utf-8").unwrap(),
+    );
+    l1.insert(
+        build_cache_key("GET", path, String::new()),
+        Arc::new(Node::from(serde_json::json!({}))),
+        Arc::new(RenderedBody {
+            status: 200,
+            headers: base,
+            html: bytes::Bytes::from(vec![b'x'; 1703]),
+            gzip: OnceLock::new(),
+        }),
+        Vec::new().into(),
+        Duration::from_secs(3600),
+        &["types".to_string()],
+    );
+    let matched = || {
+        matches!(
+            routes.match_path("GET", black_box(path), &h),
+            MatchResult::Matched { .. }
+        )
+    };
+    let prelude = || {
+        let MatchResult::Matched { route_id, envelope } =
+            routes.match_path("GET", black_box(path), &h)
+        else {
+            unreachable!()
+        };
+        let ae = h
+            .get("accept-encoding")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.trim().to_string());
+        let cc = routes.compiled_cache_for(route_id);
+        let key = build_cache_key("GET", path, String::new());
+        let hit = l1.get(&key).expect("hit");
+        black_box((
+            envelope.req.headers.len(),
+            ae,
+            cc,
+            hit.body.headers.clone(),
+            cached_body(&hit.body, false),
+        ));
+    };
+    let mut g = c.benchmark_group("hit_path");
+    g.bench_function("match", |b| b.iter(matched));
+    g.bench_function("match_x8", |b| {
+        par8(b, || {
+            black_box(matched());
+        })
+    });
+    g.bench_function("prelude", |b| b.iter(prelude));
+    g.bench_function("prelude_x8", |b| par8(b, prelude));
+    g.finish();
+}
+
 fn benches(c: &mut Criterion) {
     bench_loader_parse(c);
     let (m, r) = load();
+    bench_hit_path(c, &m);
     bench_plan(c, &m, "plan_B", "/pokemon/{name}", "pokemon-pikachu.json");
     bench_plan(c, &m, "plan_C", "/", "home.json");
     bench_route(
