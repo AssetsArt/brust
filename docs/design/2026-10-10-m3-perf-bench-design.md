@@ -53,8 +53,8 @@ deleted (its two-sided pokedex compare becomes the `brust-01x` app + probe set).
 
 | probe | path | what it exercises | brust v2 behaviour | Next.js behaviour |
 |---|---|---|---|---|
-| S | `/types` | cacheable page: 18 type tiles, no per-request data | L1 HIT after first request (`cache: { l1: '1h' }`) | static (prerendered at build) |
-| D | `/dex?nocache=1` | dynamic SSR: loader reads `data.json`, renders 151 rows, one `TypeBadge` component per row | loader every request, `?nocache` bypasses L1, jobs from job cache | `export const dynamic = 'force-dynamic'`, server component maps rows |
+| S | `/types` | cacheable page: 18 type tiles, no per-request data | L1 HIT after first request (`cache: { ttl_seconds: 3600 }`) | static (prerendered at build) |
+| D | `/dex?nocache=1` | dynamic SSR: loader reads `data.json`, renders 151 rows, one `TypeBadge` component per row | loader every request, `cache: { ttl_seconds: 60, bypass: 'query(nocache)' }` so `?nocache` bypasses L1, jobs from job cache | `export const dynamic = 'force-dynamic'`, server component maps rows |
 | I | `/team?nocache=1` | page with ONE interactive island (`Counter`, `useReducer`), SSR + hydration script tags | react-tier child: `ssr` job + idle hydration | `'use client'` component inside a dynamic page |
 
 Shared data: `_shared/data.json`. Shared markup contract: `_shared/pages.md`. Components are written
@@ -79,8 +79,9 @@ once per app (each framework has its own file conventions) but must produce the 
 ### 1.4 Parity check
 
 For each (app, probe): fetch once, strip `<script>`/`<link>`/`<style>` elements, framework
-attributes (`data-*`, `x-*`, `id` that match a hash pattern), collapse whitespace, then compare the
-text content and the element-tag sequence of `<main>` across apps. Mismatch = the run aborts with a
+ALL attributes and HTML comments (framework wrappers differ by design), collapse whitespace, then compare
+the text content and the element-tag sequence of `<main>` across apps (amended 2026-10-10 at planning: attribute-level
+parity is not a goal; tags + text are). Mismatch = the run aborts with a
 diff. This is what makes "same page" a checked claim instead of a sentence.
 
 ### 1.5 Report
