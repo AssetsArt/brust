@@ -1,12 +1,12 @@
-# M2 bench — 2026-10-09
+# M2 bench — 2026-10-10
 
-**Conditions:** `oha -c 120 -z 10s` (identity runs; gzip extra) · warm-up 3s discarded · Bun 1.4.2 · host darwin/arm64 · release addon · workers 6 · load average 6.73 7.96 7.56 at start (10 cores)
+**Conditions:** `oha -c 120 -z 10s` (identity runs; gzip extra) · warm-up 3s discarded · Bun 1.4.3 · host darwin/arm64 · release addon · workers 6 · load average 5.57 11.19 13.45 at start (10 cores)
 
 | Probe | Path | v2 rps | v2 p50 | v2 p99 | 0.1.x rps | 0.1.x p50 | 0.1.x p99 | Δ rps | v2 gzip rps | 0.1.x gzip rps |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| A-static-hit | `/type-chart` | 46,865 | 2.53 | 2.94 | 5,113 | 23.42 | 40.21 | 816.6% | 110,206 | 4,969 |
-| B-native-miss | `/pokemon/{name}` | 41,086 | 2.80 | 6.48 | 53,087 | 1.97 | 6.54 | -22.6% | 40,948 | 52,489 |
-| C-react-child | `/` | 33,737 | 3.39 | 7.93 | 51,449 | 2.04 | 6.63 | -34.4% | 27,934 | 51,369 |
+| A-static-hit | `/type-chart` | 43,685 | 2.67 | 3.57 | 5,160 | 22.77 | 44.43 | 746.6% | 105,887 | 4,861 |
+| B-native-miss | `/pokemon/{name}` | 46,305 | 2.44 | 6.23 | 49,798 | 1.95 | 8.41 | -7% | 46,245 | 50,130 |
+| C-react-child | `/` | 41,607 | 2.75 | 6.54 | 53,191 | 1.95 | 6.56 | -21.8% | 33,156 | 54,495 |
 
 **Bar (v2 not slower on any probe, `Accept-Encoding: identity` on both sides): not met.** The gzip columns are an extra (v2 gzips dynamic pages of 16 KiB or more at level 1 and serves the cached gzip on an L1 HIT; 0.1.x does not compress dynamic responses). A = L1 HIT on v2 / full render on 0.1.x (no cache there); B = L1 bypassed on v2 (`?nocache=1`), loader every request, jobs from the job cache; C = page with the TeamBuilder react child on both.
 

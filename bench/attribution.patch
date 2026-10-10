@@ -1,8 +1,28 @@
+bench/attribution.patch: temporary stage timers for bench/attribution.ts. Apply with
+`git apply bench/attribution.patch`, rebuild the release addon, run attribution.ts,
+then `git checkout -- Cargo.lock crates/ packages/brust/src/worker.ts` and
+`rm crates/brust-server/src/perf.rs`. Never commit the applied patch.
+
+Refreshed after M3-P P5 (lane m3p-a-alloc-bridge): call_worker now awaits the
+dispatch future inline inside a `Detach` wrapper (no per-call tokio::spawn, no
+JoinHandle). Stage changes vs the previous patch:
+  - CW_SPAWN_SCHED (63/83) and CW_JOIN (67/87) are no longer recorded: there is no
+    spawn to schedule and no join to wait on. The ids stay in perf.rs; attribution.ts
+    skips a stage with zero calls.
+  - CW_CLAIM, CW_SER, CW_REQ_BYTES, CW_DISPATCH, CW_RESP_BYTES, the worker perf tail
+    (CW_RUST_TO_JS .. CW_JS_TO_RUST), CW_READ_PARSE and CW_TOTAL keep their ids and
+    meaning; the timers for DISPATCH..READ_PARSE live inside the Detach'd future.
+    CW_TOTAL now also covers the Box::pin + Detach poll overhead.
+  - pipeline.rs: BODY_RESP spans the single response_headers build, the RenderedBody
+    Arc and page_response(status, HeaderMap, ..); L1 is recorded after the HIT branch
+    whose page_response now takes (status, headers, len, ..). JOBS_CALL unchanged
+    (Rec guard first in `if !misses.is_empty() {`).
+
 diff --git a/Cargo.lock b/Cargo.lock
-index 9b35281..47a044b 100644
+index d2b2c97..9c7d259 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
-@@ -172,6 +172,7 @@ dependencies = [
+@@ -174,6 +174,7 @@ dependencies = [
   "http-body-util",
   "hyper",
   "hyper-util",
@@ -23,10 +43,10 @@ index b407985..39026fe 100644
  tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "sync", "time", "fs"] }
  tokio-stream = "0.1"
 diff --git a/crates/brust-server/src/dispatch.rs b/crates/brust-server/src/dispatch.rs
-index 74d2e91..c48e750 100644
+index 05927f9..2294aa4 100644
 --- a/crates/brust-server/src/dispatch.rs
 +++ b/crates/brust-server/src/dispatch.rs
-@@ -191,46 +191,83 @@ pub async fn call_worker<Req: Serialize, Resp: DeserializeOwned + Send + 'static
+@@ -191,9 +191,16 @@ pub async fn call_worker<Req: Serialize, Resp: DeserializeOwned + Send + 'static
      kind: CallKind,
      req: &Req,
  ) -> Result<Resp, CallError> {
@@ -41,77 +61,65 @@ index 74d2e91..c48e750 100644
 +    perf::rec(perf::CW_SER + o, t);
 +    perf::add(perf::CW_REQ_BYTES + o, json.len() as u64);
      let pool = Arc::clone(pool);
-+    let t_spawn = std::time::Instant::now();
-     let task = tokio::spawn(async move {
-+        perf::rec(perf::CW_SPAWN_SCHED + o, t_spawn);
-         let entry = Arc::clone(claim.entry());
-         let slot = claim.slot();
-+        let t_disp = std::time::Instant::now();
-+        let call_epoch = perf::epoch_ms();
-         let len = match entry.dispatch.call(kind, json, slot).await {
-             Ok(n) => n,
-             Err(DispatchError::EnqueueFailed(m)) => {
-                 tracing::error!(worker_id = entry.id(), ?kind, error = %m, "enqueue failed — worker dead, removing from pool");
-                 pool.remove(entry.id());
--                return Err(CallError::Enqueue(m));
-+                return (Err(CallError::Enqueue(m)), std::time::Instant::now());
+     // The body is identical to the former spawned task. It is polled INLINE on
+     // the request's task (no spawn, no scheduling hop); `Detach` makes the two
+@@ -205,6 +212,8 @@ pub async fn call_worker<Req: Serialize, Resp: DeserializeOwned + Send + 'static
+         async move {
+             let entry = Arc::clone(claim.entry());
+             let slot = claim.slot();
++            let t_disp = std::time::Instant::now();
++            let call_epoch = perf::epoch_ms();
+             let len = match entry.dispatch.call(kind, json, slot).await {
+                 Ok(n) => n,
+                 Err(DispatchError::EnqueueFailed(m)) => {
+@@ -214,23 +223,43 @@ pub async fn call_worker<Req: Serialize, Resp: DeserializeOwned + Send + 'static
+                 }
+                 Err(DispatchError::PromiseRejected(m)) => return Err(CallError::Rejected(m)),
+             };
++            let back_epoch = perf::epoch_ms();
++            perf::rec(perf::CW_DISPATCH + o, t_disp);
+             let (ptr, cap) = entry.dispatch.buf_slot(slot);
+             if len == 0 || len as usize > cap {
+                 return Err(CallError::BadResponse(format!(
+                     "resp_len {len} outside (0, {cap}]"
+                 )));
              }
--            Err(DispatchError::PromiseRejected(m)) => return Err(CallError::Rejected(m)),
-+            Err(DispatchError::PromiseRejected(m)) => return (Err(CallError::Rejected(m)), std::time::Instant::now()),
-         };
-+        let back_epoch = perf::epoch_ms();
-+        perf::rec(perf::CW_DISPATCH + o, t_disp);
-         let (ptr, cap) = entry.dispatch.buf_slot(slot);
-         if len == 0 || len as usize > cap {
--            return Err(CallError::BadResponse(format!(
-+            return (Err(CallError::BadResponse(format!(
-                 "resp_len {len} outside (0, {cap}]"
--            )));
-+            ))), std::time::Instant::now());
-+        }
-+        perf::add(perf::CW_RESP_BYTES + o, len as u64);
-+        // perf tail: 8 f64 at the end of the slot written by worker.ts (magic 7.5).
-+        if cap >= 64 {
-+            let mut f = [0f64; 8];
-+            unsafe { std::ptr::copy_nonoverlapping(ptr.add(cap - 64) as *const f64, f.as_mut_ptr(), 8) };
-+            if f[0] == 7.5 {
-+                let us = |ms: f64| (ms.max(0.0) * 1e6) as u64;
-+                perf::add(perf::CW_RUST_TO_JS + o, us(f[1] - call_epoch));
-+                perf::add(perf::CW_JS_PARSE + o, us(f[2]));
-+                perf::add(perf::CW_JS_HANDLER + o, us(f[3]));
-+                perf::add(perf::CW_JS_STRINGIFY + o, us(f[4]));
-+                perf::add(perf::CW_JS_WRITE + o, us(f[5]));
-+                perf::add(perf::CW_JS_TOTAL + o, us(f[6]));
-+                perf::add(perf::CW_JS_TO_RUST + o, us(back_epoch - f[7]));
++            perf::add(perf::CW_RESP_BYTES + o, len as u64);
++            // perf tail: 8 f64 at the end of the slot written by worker.ts (magic 7.5).
++            if cap >= 64 {
++                let mut f = [0f64; 8];
++                unsafe { std::ptr::copy_nonoverlapping(ptr.add(cap - 64) as *const f64, f.as_mut_ptr(), 8) };
++                if f[0] == 7.5 {
++                    let us = |ms: f64| (ms.max(0.0) * 1e6) as u64;
++                    perf::add(perf::CW_RUST_TO_JS + o, us(f[1] - call_epoch));
++                    perf::add(perf::CW_JS_PARSE + o, us(f[2]));
++                    perf::add(perf::CW_JS_HANDLER + o, us(f[3]));
++                    perf::add(perf::CW_JS_STRINGIFY + o, us(f[4]));
++                    perf::add(perf::CW_JS_WRITE + o, us(f[5]));
++                    perf::add(perf::CW_JS_TOTAL + o, us(f[6]));
++                    perf::add(perf::CW_JS_TO_RUST + o, us(back_epoch - f[7]));
++                }
 +            }
-         }
-         // SAFETY: the worker's Promise resolved (happens-before through the dispatch
-         // future), JS is done writing this slot's sub-region; `len` is bounds-checked
-         // above; `claim` is still held so no other request can write the slot.
-+        let t = std::time::Instant::now();
-         let bytes = unsafe { std::slice::from_raw_parts(ptr, len as usize) };
-         let parsed = serde_json::from_slice::<Resp>(bytes)
-             .map_err(|e| CallError::BadResponse(e.to_string()));
-+        perf::rec(perf::CW_READ_PARSE + o, t);
-         drop(claim);
--        parsed
-+        (parsed, std::time::Instant::now())
-     });
--    match tokio::time::timeout(call_timeout, task).await {
--        Ok(joined) => {
--            joined.map_err(|e| CallError::BadResponse(format!("worker call task: {e}")))?
--        }
-+    let r = match tokio::time::timeout(call_timeout, task).await {
-+        Ok(joined) => match joined {
-+            Ok((parsed, t_end)) => {
-+                perf::rec(perf::CW_JOIN + o, t_end);
-+                parsed
-+            }
-+            Err(e) => Err(CallError::BadResponse(format!("worker call task: {e}"))),
-+        },
-         // The task keeps running and keeps the claim until JS settles (the
-         // `RenderClaim` drop rule in `pool.rs`); its late result is dropped
-         // with the JoinHandle, so nothing from this call reaches a cache.
+             // SAFETY: the worker's Promise resolved (happens-before through the dispatch
+             // future), JS is done writing this slot's sub-region; `len` is bounds-checked
+             // above; `claim` is still held so no other request can write the slot.
++            let t = std::time::Instant::now();
+             let bytes = unsafe { std::slice::from_raw_parts(ptr, len as usize) };
+             let parsed = serde_json::from_slice::<Resp>(bytes)
+                 .map_err(|e| CallError::BadResponse(e.to_string()));
++            perf::rec(perf::CW_READ_PARSE + o, t);
+             drop(claim);
+             parsed
+         },
+     );
+-    match tokio::time::timeout(call_timeout, Detach(Some(call))).await {
++    let r = match tokio::time::timeout(call_timeout, Detach(Some(call))).await {
+         Ok(Ok(result)) => result,
+         Ok(Err(payload)) => Err(CallError::BadResponse(format!(
+             "worker call panicked: {}",
+@@ -241,7 +270,9 @@ pub async fn call_worker<Req: Serialize, Resp: DeserializeOwned + Send + 'static
+         // in `pool.rs`); its late result is dropped, so nothing from this call
+         // reaches a cache.
          Err(_elapsed) => Err(CallError::Deadline),
 -    }
 +    };
@@ -119,7 +127,7 @@ index 74d2e91..c48e750 100644
 +    r
  }
  
- /// In-process mock for pool/dispatch unit tests: a leaked 256 KiB buffer (no
+ /// A boxed call future polled inline. Dropped before completion → the remainder
 diff --git a/crates/brust-server/src/lib.rs b/crates/brust-server/src/lib.rs
 index 6718bea..d130142 100644
 --- a/crates/brust-server/src/lib.rs
@@ -237,10 +245,10 @@ index 0000000..91fde9c
 +    serde_json::to_vec(&m).unwrap()
 +}
 diff --git a/crates/brust-server/src/pipeline.rs b/crates/brust-server/src/pipeline.rs
-index dfbeeac..2ebd56b 100644
+index 9904d01..9e26dd2 100644
 --- a/crates/brust-server/src/pipeline.rs
 +++ b/crates/brust-server/src/pipeline.rs
-@@ -95,6 +95,9 @@ pub(crate) async fn handle(req: Request<Incoming>, s: Arc<Server>) -> Response<R
+@@ -97,6 +97,9 @@ pub(crate) async fn handle(req: Request<Incoming>, s: Arc<Server>) -> Response<R
          tracing::debug!(target: "brust::request", path = path_only, status = 200u16, "ping");
          return body::resp(200, "text/plain", &[], b"pong\n".to_vec());
      }
@@ -250,7 +258,7 @@ index dfbeeac..2ebd56b 100644
      if path_only == "/_brust/cache/stats" {
          tracing::debug!(target: "brust::request", path = path_only, status = 200u16, "stats");
          let json = serde_json::to_vec(&s.stats()).unwrap_or_else(|_| b"{}".to_vec());
-@@ -125,6 +128,7 @@ pub(crate) async fn handle(req: Request<Incoming>, s: Arc<Server>) -> Response<R
+@@ -127,6 +130,7 @@ pub(crate) async fn handle(req: Request<Incoming>, s: Arc<Server>) -> Response<R
          bun_calls: 0,
      };
      let resp = page(&s, full, headers, &mut meta).await;
@@ -258,7 +266,7 @@ index dfbeeac..2ebd56b 100644
      tracing::debug!(
          target: "brust::request",
          route = %meta.route,
-@@ -144,6 +148,7 @@ pub(crate) async fn handle(req: Request<Incoming>, s: Arc<Server>) -> Response<R
+@@ -146,6 +150,7 @@ pub(crate) async fn handle(req: Request<Incoming>, s: Arc<Server>) -> Response<R
          }
          return Response::from_parts(p, empty_body());
      }
@@ -266,7 +274,7 @@ index dfbeeac..2ebd56b 100644
      resp
  }
  
-@@ -271,6 +276,10 @@ async fn page(
+@@ -273,6 +278,10 @@ async fn page(
      headers: &HeaderMap,
      meta: &mut PageMeta,
  ) -> Response<ResponseBody> {
@@ -277,7 +285,7 @@ index dfbeeac..2ebd56b 100644
      // Pages are GET; a HEAD runs the same path (and shares its L1 entries).
      let (route_id, envelope, status) = match s.routes.match_path("GET", full, headers) {
          MatchResult::Matched { route_id, envelope } => (route_id, envelope, 200u16),
-@@ -281,6 +290,8 @@ async fn page(
+@@ -283,6 +292,8 @@ async fn page(
      meta.route = route.id.clone();
      let accept_enc = header_str(headers, "accept-encoding");
      let accept_enc = accept_enc.as_deref();
@@ -286,8 +294,8 @@ index dfbeeac..2ebd56b 100644
  
      // ----- (3) L1 -----
      let (cache_key, outcome) = l1_decision(s, route_id, route, full, headers, &envelope);
-@@ -295,6 +306,8 @@ async fn page(
-         return page_response(&hit.body, bytes, encoded, Some("HIT"));
+@@ -304,6 +315,8 @@ async fn page(
+         );
      }
  
 +    perf::rec(perf::L1, t);
@@ -295,7 +303,7 @@ index dfbeeac..2ebd56b 100644
      // ----- (4) loader -----
      let path_only = full.split('?').next().unwrap_or(full);
      let params: BTreeMap<String, String> = envelope
-@@ -311,6 +324,9 @@ async fn page(
+@@ -320,6 +333,9 @@ async fn page(
      let mut status = status;
      let mut cacheable = true;
      let mut extra: Vec<(String, String)> = Vec::new();
@@ -305,7 +313,7 @@ index dfbeeac..2ebd56b 100644
      if !route.loaders.is_empty() {
          let req = LoaderRequest {
              route_id: &route.id,
-@@ -330,6 +346,9 @@ async fn page(
+@@ -339,6 +355,9 @@ async fn page(
              s.loader_calls.fetch_add(1, Ordering::Relaxed);
              meta.bun_calls += 1;
          }
@@ -315,7 +323,7 @@ index dfbeeac..2ebd56b 100644
          match r {
              Ok(LoaderResponse::Ok {
                  ok: true,
-@@ -397,9 +416,11 @@ async fn page(
+@@ -406,9 +425,11 @@ async fn page(
              }
          }
      }
@@ -327,7 +335,7 @@ index dfbeeac..2ebd56b 100644
      let plans = match collect_jobs(&s.plans, &route.chain, &ctx) {
          Ok(p) => p,
          Err(e) => {
-@@ -407,12 +428,19 @@ async fn page(
+@@ -416,12 +437,19 @@ async fn page(
              return body::error_500();
          }
      };
@@ -347,7 +355,7 @@ index dfbeeac..2ebd56b 100644
          let req = jobs_request(&plans, &misses);
          let r = call_worker::<_, JobsResponse>(
              &s.pool,
-@@ -495,12 +523,18 @@ async fn page(
+@@ -503,12 +531,18 @@ async fn page(
          }
      }
  
@@ -366,24 +374,24 @@ index dfbeeac..2ebd56b 100644
  
      // ----- (7) render, assets, L1 store -----
      let ctx = Arc::new(ctx);
-@@ -514,6 +548,7 @@ async fn page(
+@@ -521,6 +555,7 @@ async fn page(
          Ok(h) => h,
          Err(e) => return render_failed(route, &e),
      };
 +    let t = std::time::Instant::now();
-     let body = Arc::new(RenderedBody {
-         status,
-         headers: body::header_map(HTML, &headers),
-@@ -522,6 +557,8 @@ async fn page(
-     });
-     let (bytes, encoded) = cached_body(&body, crate::http::compress::accepts_gzip(accept_enc));
-     let resp = page_response(&body, bytes, encoded, hdr);
+     // One header map per request. Only a render that is stored needs a second
+     // copy (the L1 entry's); a BYPASS or an uncached route sends the only one.
+     let store = cache_key.is_some() && status == 200 && cacheable && route.cache.is_some();
+@@ -544,6 +579,8 @@ async fn page(
+         encoded,
+         hdr,
+     );
 +    perf::rec(perf::BODY_RESP, t);
 +    let t = std::time::Instant::now();
-     if let Some(k) = cache_key
-         && status == 200
-         && cacheable
-@@ -537,10 +574,19 @@ async fn page(
+     if store
+         && let Some(k) = cache_key
+         && let Some(c) = &route.cache
+@@ -558,10 +595,19 @@ async fn page(
              Duration::from_secs(c.ttl_seconds),
              &c.tags,
          );
@@ -403,7 +411,7 @@ index dfbeeac..2ebd56b 100644
  fn render_failed(route: &RouteRecord, e: &RenderError) -> Response<ResponseBody> {
      tracing::error!(route = %route.id, error = %e, "render failed");
      body::error_500()
-@@ -560,10 +606,18 @@ const PAGE_GZIP_LEVEL: u32 = 1;
+@@ -581,10 +627,18 @@ const PAGE_GZIP_LEVEL: u32 = 1;
  /// plus asset tags: the identity document. Shared by every path that renders,
  /// so the body a HIT serves is the bytes a fresh render produces.
  fn render_document(s: &Server, route: &RouteRecord, ctx: &Value) -> Result<Bytes, RenderError> {
@@ -424,7 +432,7 @@ index dfbeeac..2ebd56b 100644
  }
  
  /// The bytes to send for `body` and whether they are gzip: the identity
-@@ -625,12 +679,15 @@ pub fn render_chain_html(
+@@ -648,12 +702,15 @@ pub fn render_chain_html(
      let children = ctx.get(CHILDREN_KEY);
      let own_all = ctx.get(OWN_KEY);
      // The merged context, converted once for the whole chain.
@@ -440,7 +448,7 @@ index dfbeeac..2ebd56b 100644
          let slots = manifest.components.get(id).map_or(0, |c| c.use_id_slots);
          let mut out: Vec<(String, minijinja::Value)> = use_ids(route_id, id, slots)
              .into_iter()
-@@ -1169,15 +1226,26 @@ fn plan_one<'a>(
+@@ -1192,15 +1249,26 @@ fn plan_one<'a>(
          Dest::Chain { row, .. } => row,
          Dest::Child { .. } => None,
      };
