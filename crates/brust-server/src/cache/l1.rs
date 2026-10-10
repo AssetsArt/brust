@@ -19,10 +19,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
+use brust_jinja::ctx::Node;
 use bytes::Bytes;
 use parking_lot::Mutex;
 use serde::Serialize;
-use serde_json::Value;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CacheKey {
@@ -51,7 +51,7 @@ pub struct RenderedBody {
 
 #[derive(Clone)]
 pub struct CachedEntry {
-    pub ctx: Arc<Value>,
+    pub ctx: Arc<Node>,
     pub body: Arc<RenderedBody>,
     /// The loader's response headers (never `Set-Cookie`: such a response is
     /// not cached), replayed on a HIT. `Arc`: cloned on every `get`.
@@ -256,7 +256,7 @@ impl L1Cache {
     pub fn insert(
         &self,
         key: CacheKey,
-        ctx: Arc<Value>,
+        ctx: Arc<Node>,
         body: Arc<RenderedBody>,
         headers: Arc<[(String, String)]>,
         ttl: Duration,
@@ -463,7 +463,7 @@ mod tests {
         let c = L1Cache::new();
         c.insert(
             key("GET", "/t", ""),
-            Arc::new(json!("t")),
+            Arc::new(Node::from(json!("t"))),
             rb(),
             Arc::from([]),
             Duration::from_secs(60),
@@ -485,7 +485,7 @@ mod tests {
         let c = L1Cache::new();
         c.insert(
             key("GET", "/p", "x=1"),
-            Arc::new(json!("1")),
+            Arc::new(Node::from(json!("1"))),
             rb(),
             Arc::from([]),
             Duration::from_secs(60),
@@ -493,7 +493,7 @@ mod tests {
         );
         c.insert(
             key("GET", "/p", "x=2"),
-            Arc::new(json!("2")),
+            Arc::new(Node::from(json!("2"))),
             rb(),
             Arc::from([]),
             Duration::from_secs(60),
@@ -515,7 +515,7 @@ mod tests {
         let c = L1Cache::new();
         c.insert(
             key("GET", "/w", ""),
-            Arc::new(json!("w")),
+            Arc::new(Node::from(json!("w"))),
             rb(),
             Arc::from([]),
             Duration::from_secs(60),
@@ -532,7 +532,7 @@ mod tests {
         let c = L1Cache::new();
         c.insert(
             key("GET", "/a", ""),
-            Arc::new(json!("a")),
+            Arc::new(Node::from(json!("a"))),
             rb(),
             Arc::from([]),
             Duration::from_secs(60),
@@ -540,7 +540,7 @@ mod tests {
         );
         c.insert(
             key("GET", "/a", "x=1"),
-            Arc::new(json!("a-x")),
+            Arc::new(Node::from(json!("a-x"))),
             rb(),
             Arc::from([]),
             Duration::from_secs(60),
@@ -548,7 +548,7 @@ mod tests {
         );
         c.insert(
             key("GET", "/b", ""),
-            Arc::new(json!("b")),
+            Arc::new(Node::from(json!("b"))),
             rb(),
             Arc::from([]),
             Duration::from_secs(60),
@@ -563,7 +563,7 @@ mod tests {
         assert!(c.get(&key("GET", "/a", "x=1")).map(|e| e.ctx).is_none());
         assert_eq!(
             c.get(&key("GET", "/b", "")).map(|e| e.ctx),
-            Some(Arc::new(json!("b")))
+            Some(Arc::new(Node::from(json!("b"))))
         );
     }
 
@@ -572,7 +572,7 @@ mod tests {
         let c = L1Cache::new();
         c.insert(
             key("GET", "/a", ""),
-            Arc::new(json!("a")),
+            Arc::new(Node::from(json!("a"))),
             rb(),
             Arc::from([]),
             Duration::from_secs(60),
@@ -590,7 +590,7 @@ mod tests {
         let c = L1Cache::new();
         c.insert(
             key("GET", "/a", ""),
-            Arc::new(json!("a")),
+            Arc::new(Node::from(json!("a"))),
             rb(),
             Arc::from([]),
             Duration::from_secs(60),
@@ -598,7 +598,7 @@ mod tests {
         );
         c.insert(
             key("GET", "/a", "x=1"),
-            Arc::new(json!("a-x")),
+            Arc::new(Node::from(json!("a-x"))),
             rb(),
             Arc::from([]),
             Duration::from_secs(60),
@@ -606,7 +606,7 @@ mod tests {
         );
         c.insert(
             key("GET", "/b", ""),
-            Arc::new(json!("b")),
+            Arc::new(Node::from(json!("b"))),
             rb(),
             Arc::from([]),
             Duration::from_secs(60),
@@ -620,7 +620,7 @@ mod tests {
         assert!(c.get(&key("GET", "/a", "x=1")).map(|e| e.ctx).is_none());
         assert_eq!(
             c.get(&key("GET", "/b", "")).map(|e| e.ctx),
-            Some(Arc::new(json!("b"))),
+            Some(Arc::new(Node::from(json!("b")))),
             "untagged group survives"
         );
     }
@@ -630,7 +630,7 @@ mod tests {
         let c = L1Cache::new();
         c.insert(
             key("GET", "/a", ""),
-            Arc::new(json!("a")),
+            Arc::new(Node::from(json!("a"))),
             rb(),
             Arc::from([]),
             Duration::from_secs(60),
@@ -641,7 +641,7 @@ mod tests {
         c.run_pending();
         assert_eq!(
             c.get(&key("GET", "/a", "")).map(|e| e.ctx),
-            Some(Arc::new(json!("a")))
+            Some(Arc::new(Node::from(json!("a"))))
         );
     }
 
@@ -650,7 +650,7 @@ mod tests {
         let c = L1Cache::new();
         c.insert(
             key("GET", "/a", ""),
-            Arc::new(json!("a")),
+            Arc::new(Node::from(json!("a"))),
             rb(),
             Arc::from([]),
             Duration::from_secs(60),
@@ -658,7 +658,7 @@ mod tests {
         );
         c.insert(
             key("GET", "/b", ""),
-            Arc::new(json!("b")),
+            Arc::new(Node::from(json!("b"))),
             rb(),
             Arc::from([]),
             Duration::from_secs(60),
@@ -666,7 +666,7 @@ mod tests {
         );
         c.insert(
             key("GET", "/c", ""),
-            Arc::new(json!("c")),
+            Arc::new(Node::from(json!("c"))),
             rb(),
             Arc::from([]),
             Duration::from_secs(60),
@@ -684,7 +684,7 @@ mod tests {
         let c = L1Cache::new();
         c.insert(
             key("GET", "/a", ""),
-            Arc::new(json!("a")),
+            Arc::new(Node::from(json!("a"))),
             rb(),
             Arc::from([]),
             Duration::from_secs(60),
@@ -722,7 +722,7 @@ mod tests {
         let k = key("GET", "/r", "");
         c.insert(
             k.clone(),
-            Arc::new(json!(1)),
+            Arc::new(Node::from(json!(1))),
             rb(),
             Arc::from([]),
             Duration::from_millis(1),
@@ -731,7 +731,7 @@ mod tests {
         std::thread::sleep(Duration::from_millis(5));
         c.insert(
             k.clone(),
-            Arc::new(json!(2)),
+            Arc::new(Node::from(json!(2))),
             rb(),
             Arc::from([]),
             Duration::from_secs(60),
@@ -765,7 +765,7 @@ mod tests {
         let ins = std::thread::spawn(move || {
             c2.insert(
                 k2,
-                Arc::new(json!(1)),
+                Arc::new(Node::from(json!(1))),
                 rb(),
                 Arc::from([]),
                 Duration::from_secs(60),

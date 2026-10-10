@@ -16,10 +16,12 @@
 //!
 //! Per route it times the pieces `pipeline::finish` does on every request
 //! (MISS, BYPASS and — today — HIT alike):
-//! - `ctx_to_value`: `serde_json::Value` → `minijinja::Value` of the merged ctx
-//!   (`render_chain` does it once per request);
+//! - `ctx_parse` / `ctx_parse_serde_json`: the merged ctx's JSON parsed straight
+//!   into the render tree (`ctx::Node`, M3-P P2: `to_value` is then an `Arc`
+//!   bump) vs the former path, a `serde_json::Value` parse + the `value_of`
+//!   walk `render_chain_html` did once per request (formerly `ctx_to_value`);
 //! - `props_to_value`: `_props` = ctx minus `__children`/`__own`, as a view
-//!   over the converted ctx (once per request, in `render_chain_html`);
+//!   over the tree (once per request, in `render_chain_html`);
 //! - `render_page` / `render_layout` / `render_chain`: the leaf alone, the
 //!   layout alone (no `__outlet`), and the whole chain with every overlay;
 //! - `inject_assets` on the rendered document;
@@ -43,6 +45,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
+use brust_jinja::ctx::Node;
 use brust_server::bench::{cached_body, props_view, render_chain_html};
 use brust_server::cache::l1::{L1Cache, RenderedBody, build_cache_key};
 use brust_server::manifest::Manifest;
@@ -76,9 +79,16 @@ fn load() -> (Manifest, Renderer) {
     (m, r)
 }
 
-fn ctx(name: &str) -> Value {
-    let raw = std::fs::read(fixtures().join("ctx").join(name)).expect("fixture ctx");
-    serde_json::from_slice(&raw).expect("ctx parses")
+fn ctx_raw(name: &str) -> Vec<u8> {
+    std::fs::read(fixtures().join("ctx").join(name)).expect("fixture ctx")
+}
+
+fn ctx_json(name: &str) -> Value {
+    serde_json::from_slice(&ctx_raw(name)).expect("ctx parses")
+}
+
+fn ctx(name: &str) -> Node {
+    Node::from(ctx_json(name))
 }
 
 fn gzip(bytes: &[u8], level: u32) -> Vec<u8> {
@@ -134,16 +144,20 @@ fn bench_route(
     );
 
     let mut g = c.benchmark_group(label);
-    g.bench_function("ctx_to_value", |b| {
-        b.iter(|| brust_jinja::value_of(black_box(&ctx)))
+    let raw = ctx_raw(ctx_file);
+    g.bench_function("ctx_parse", |b| {
+        b.iter(|| serde_json::from_slice::<Node>(black_box(&raw)).unwrap())
     });
-    // `_props` given the converted ctx: an O(1) view since m2p Task 4 (it was
-    // a deep clone of ctx minus `__children`/`__own` + a second conversion:
-    // A 190 µs, B 11.0 µs on the Task 1 host).
-    let base = brust_jinja::value_of(&ctx);
-    g.bench_function("props_to_value", |b| {
-        b.iter(|| props_view(black_box(&base)))
+    g.bench_function("ctx_parse_serde_json", |b| {
+        b.iter(|| {
+            let v = serde_json::from_slice::<Value>(black_box(&raw)).unwrap();
+            brust_jinja::value_of(&v)
+        })
     });
+    // `_props`: an O(1) view since m2p Task 4 (it was a deep clone of ctx minus
+    // `__children`/`__own` + a second conversion: A 190 µs, B 11.0 µs on the
+    // Task 1 host); a `MapView` over the tree since M3-P P2.
+    g.bench_function("props_to_value", |b| b.iter(|| props_view(black_box(&ctx))));
     g.bench_function("render_page", |b| {
         b.iter(|| {
             render_chain_html(
@@ -245,11 +259,13 @@ fn bench_route(
 
 /// The loader response the worker writes for route B (per-stage attribution, m2p ruling 7d164bb6):
 /// `{"ok":true,"data":<B ctx minus the server's params/path/__own/__children>}` (~2.4 KB, the
-/// size the server reads per request). Times the SAB-read parse `call_worker` does — into the
-/// `#[serde(untagged)]` `LoaderResponse` — against a plain `serde_json::Value` parse of the same
-/// bytes (the untagged enum buffers into serde's `Content` and re-walks it per variant).
+/// size the server reads per request). Times the SAB-read parse `call_worker` does — into
+/// `LoaderResponse` — against a plain `serde_json::Value` parse of the same bytes. The id
+/// `untagged_LoaderResponse` is kept for baseline continuity: until M3-P P2 the enum was
+/// `#[serde(untagged)]` (buffered into serde's `Content`, re-walked per variant); it is now a
+/// hand-written one-pass visitor straight into `ctx::Node`.
 fn bench_loader_parse(c: &mut Criterion) {
-    let mut data = ctx("pokemon-pikachu.json");
+    let mut data = ctx_json("pokemon-pikachu.json");
     if let Value::Object(o) = &mut data {
         for k in ["params", "path", "__own", "__children"] {
             o.remove(k);
@@ -282,7 +298,7 @@ fn bench_plan(c: &mut Criterion, m: &Manifest, label: &str, pattern: &str, ctx_f
     let merged = ctx(ctx_file);
     let mut loader = merged.clone();
     for k in ["__own", "__children"] {
-        loader.as_object_mut().unwrap().remove(k);
+        loader.map_mut().unwrap().remove(k);
     }
     let planner = Planner::new(m).unwrap();
     let plans = planner.plan(&route.chain, &loader).unwrap();

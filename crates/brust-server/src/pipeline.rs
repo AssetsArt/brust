@@ -11,10 +11,10 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+use brust_jinja::ctx::{MapInner, Node};
 use bytes::Bytes;
 use http::{HeaderMap, Request, Response};
 use hyper::body::Incoming;
-use serde_json::{Map, Value};
 
 use crate::cache::job_cache::{JobCache, JobKey};
 use crate::cache::key_expr::EvalCtx;
@@ -311,12 +311,17 @@ async fn page(
         .iter()
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect();
-    let mut ctx = Map::new();
+    let mut ctx = MapInner::new();
     ctx.insert(
         "params".into(),
-        serde_json::to_value(&params).unwrap_or_default(),
+        Node::map(
+            params
+                .iter()
+                .map(|(k, v)| (Arc::from(k.as_str()), Node::str(v)))
+                .collect(),
+        ),
     );
-    ctx.insert("path".into(), Value::String(path_only.to_string()));
+    ctx.insert("path".into(), Node::str(path_only));
     let mut status = status;
     let mut cacheable = true;
     let mut extra: Vec<(String, String)> = Vec::new();
@@ -406,7 +411,7 @@ async fn page(
             }
         }
     }
-    let mut ctx = Value::Object(ctx);
+    let mut ctx = Node::map(ctx);
 
     // ----- (5) jobs -----
     let plans = match collect_jobs(&s.plans, &route.chain, &ctx) {
@@ -580,7 +585,7 @@ const PAGE_GZIP_LEVEL: u32 = 1;
 /// Leaf-first render of the route's chain (each component under its overlay)
 /// plus asset tags: the identity document. Shared by every path that renders,
 /// so the body a HIT serves is the bytes a fresh render produces.
-fn render_document(s: &Server, route: &RouteRecord, ctx: &Value) -> Result<Bytes, RenderError> {
+fn render_document(s: &Server, route: &RouteRecord, ctx: &Node) -> Result<Bytes, RenderError> {
     let html = render_chain_html(&s.manifest, &s.renderer, &route.id, &route.chain, ctx)?;
     Ok(Bytes::from(
         inject_assets(html, &route.chain, &s.manifest).into_bytes(),
@@ -643,16 +648,16 @@ pub fn render_chain_html(
     renderer: &Renderer,
     route_id: &str,
     chain: &[String],
-    ctx: &Value,
+    ctx: &Node,
 ) -> Result<String, RenderError> {
     let children = ctx.get(CHILDREN_KEY);
     let own_all = ctx.get(OWN_KEY);
-    // The merged context, converted once for the whole chain.
-    let base = brust_jinja::value_of(ctx);
+    // The merged context as a value: an Arc bump (M3-P P2), shared by the chain.
+    let base = ctx.to_value();
     // `_props` (the island host's `x-props`): the merged loader context — params,
     // path, loader data — without the server's per-component maps. A view over
-    // `base` (no copy), shared by every chain component.
-    let props = props_view(&base);
+    // the tree (no copy), shared by every chain component.
+    let props = props_view(ctx);
     let overlay = |id: &str| {
         let slots = manifest.components.get(id).map_or(0, |c| c.use_id_slots);
         let mut out: Vec<(String, minijinja::Value)> = use_ids(route_id, id, slots)
@@ -660,9 +665,9 @@ pub fn render_chain_html(
             .map(|(k, v)| (k, minijinja::Value::from(v)))
             .collect();
         for map in [children, own_all] {
-            if let Some(Value::Object(own)) = map.and_then(|c| c.get(id)) {
-                for (k, v) in own {
-                    out.push((k.clone(), brust_jinja::value_of(v)));
+            if let Some(Node::Map(own)) = map.and_then(|c| c.get(id)) {
+                for (k, v) in &own.0 {
+                    out.push((k.to_string(), v.to_value()));
                 }
             }
         }
@@ -672,47 +677,20 @@ pub fn render_chain_html(
     renderer.render_chain_value(chain, &base, &overlay)
 }
 
-/// `_props` as a `minijinja::Value`: the converted merged context minus the
-/// server's per-component maps (`__children`, `__own`) — what
-/// `value_of(all_props(ctx))` is, as an O(1) view instead of a deep clone and
-/// a second conversion. A non-map context is itself (as `all_props`). `pub`
-/// (via `brust_server::bench`) only so the micro-bench can time it.
-pub fn props_view(base: &minijinja::Value) -> minijinja::Value {
-    if base.kind() == minijinja::value::ValueKind::Map {
-        minijinja::Value::from_object(PropsView(base.clone()))
-    } else {
-        base.clone()
+/// `_props`: the merged context minus the server's per-component maps
+/// (`__children`, `__own`) — what `all_props(ctx)` is, as an O(1) view
+/// (`MapView`) instead of a deep clone and a second conversion. A non-map
+/// context is itself (as `all_props`). `pub` (via `brust_server::bench`) only
+/// so the micro-bench can time it.
+pub fn props_view(ctx: &Node) -> minijinja::Value {
+    match ctx {
+        Node::Map(m) => Node::view(m, PROPS_HIDDEN),
+        other => other.to_value(),
     }
 }
 
-fn is_props_hidden(k: &minijinja::Value) -> bool {
-    matches!(k.as_str(), Some(CHILDREN_KEY | OWN_KEY))
-}
-
-#[derive(Debug)]
-struct PropsView(minijinja::Value);
-
-impl minijinja::value::Object for PropsView {
-    fn repr(self: &Arc<Self>) -> minijinja::value::ObjectRepr {
-        minijinja::value::ObjectRepr::Map
-    }
-
-    fn get_value(self: &Arc<Self>, key: &minijinja::Value) -> Option<minijinja::Value> {
-        if is_props_hidden(key) {
-            return None;
-        }
-        self.0.as_object()?.get_value(key)
-    }
-
-    fn enumerate(self: &Arc<Self>) -> minijinja::value::Enumerator {
-        let keys = self
-            .0
-            .try_iter()
-            .map(|it| it.filter(|k| !is_props_hidden(k)).collect())
-            .unwrap_or_default();
-        minijinja::value::Enumerator::Values(keys)
-    }
-}
+/// The top-level keys `_props` hides.
+const PROPS_HIDDEN: &[&str] = &[CHILDREN_KEY, OWN_KEY];
 
 /// Reserved ctx key holding child-instance slots per parent component:
 /// `ctx["__children"][<parentId>]` = `{ "__<childId>_<k>": cell(s),
@@ -770,9 +748,12 @@ fn location_header(location: &str) -> Option<String> {
 }
 
 /// Merge loader `data` keys over `ctx` (data wins), dropping server slots.
-fn merge_loader_data(ctx: &mut Map<String, Value>, data: Value, route: &str) {
-    let Value::Object(o) = data else { return };
-    for (k, v) in o {
+fn merge_loader_data(ctx: &mut MapInner, data: Node, route: &str) {
+    let Node::Map(o) = data else { return };
+    // The response was parsed for this request alone: the Arc is unique and
+    // its entries move (no clone); a shared map (never, today) would be copied.
+    let o = Arc::try_unwrap(o).unwrap_or_else(|a| (*a).clone());
+    for (k, v) in o.0 {
         if is_server_slot(&k) {
             tracing::warn!(route, key = %k, "loader data key collides with a server slot; dropped");
             continue;
@@ -949,7 +930,7 @@ pub(crate) struct JobPlan<'a> {
     pub component_id: &'a str,
     pub job_id: &'a str,
     pub kind: JobKind,
-    pub inputs: Value,
+    pub inputs: Node,
     pub ttl: Option<Duration>,
     pub tags: &'a [String],
     /// The evaluated `cache({key})` value (string raw, else canonical JSON):
@@ -1132,12 +1113,13 @@ fn job_tpl(j: &JobRecord) -> Result<JobTpl, String> {
 
 /// `"*"` (all props): the props object without the server's per-component
 /// maps — for a chain entry the merged loader context, i.e. exactly `_props`.
-fn all_props(props: &Value) -> Value {
+fn all_props(props: &Node) -> Node {
     match props {
-        Value::Object(o) => Value::Object(
-            o.iter()
-                .filter(|(k, _)| k.as_str() != CHILDREN_KEY && k.as_str() != OWN_KEY)
-                .map(|(k, v)| (k.clone(), v.clone()))
+        // An Arc bump per entry, not a deep copy.
+        Node::Map(o) => Node::map(
+            o.0.iter()
+                .filter(|(k, _)| !PROPS_HIDDEN.contains(&&***k))
+                .map(|(k, v)| (Arc::clone(k), v.clone()))
                 .collect(),
         ),
         v => v.clone(),
@@ -1145,7 +1127,7 @@ fn all_props(props: &Value) -> Value {
 }
 
 /// The job's `inputs` value (see [`JobInputs`]).
-fn job_inputs(j: &JobTpl, props: &Value, row: Option<usize>) -> Result<Value, String> {
+fn job_inputs(j: &JobTpl, props: &Node, row: Option<usize>) -> Result<Node, String> {
     match &j.inputs {
         JobInputs::Props(map) => map.eval(props, row),
         JobInputs::All => Ok(all_props(props)),
@@ -1163,13 +1145,13 @@ fn plan_key(
     cid: &str,
     key_job: &str,
     j: &JobTpl,
-    props: &Value,
-    projected: &Value,
+    props: &Node,
+    projected: &Node,
 ) -> (JobKey, Option<String>) {
     if let Some(expr) = &j.cache_key {
         let user = match expr.get(props, None) {
-            Value::Null => None,
-            Value::String(s) => Some(s.clone()),
+            Node::Null => None,
+            Node::Str(s) => Some(s.to_string()),
             v => Some(String::from_utf8(inputs::canonical(v)).expect("JSON is UTF-8")),
         };
         if let Some(u) = user {
@@ -1184,7 +1166,7 @@ fn plan_one<'a>(
     cid: &'a str,
     call_prefix: &'a str,
     j: &'a JobTpl,
-    props: &Value,
+    props: &Node,
     dest: Dest<'a>,
     row: Option<usize>,
 ) -> Result<(), String> {
@@ -1221,8 +1203,8 @@ fn plan_one<'a>(
 }
 
 /// Rows of a `per-row:<list>` instance group (or a `per_instance` list) in `ctx`.
-fn row_count(list: &Path, ctx: &Value) -> usize {
-    list.get(ctx, None).as_array().map_or(0, |a| a.len())
+fn row_count(list: &Path, ctx: &Node) -> usize {
+    list.get(ctx, None).as_arr().map_or(0, |a| a.0.len())
 }
 
 /// Every job of the chain in template order: each chain component's own jobs
@@ -1231,7 +1213,7 @@ fn row_count(list: &Path, ctx: &Value) -> usize {
 pub(crate) fn collect_jobs<'a>(
     idx: &'a PlanIndex,
     chain: &[String],
-    ctx: &Value,
+    ctx: &Node,
 ) -> Result<Vec<JobPlan<'a>>, String> {
     let mut out = Vec::new();
     for id in chain {
@@ -1277,7 +1259,7 @@ pub(crate) fn collect_jobs<'a>(
 /// Job-cache state of a request's plans.
 pub(crate) struct Lookup {
     /// The cached value per plan (`None` = a miss).
-    pub values: Vec<Option<Arc<Value>>>,
+    pub values: Vec<Option<Arc<Node>>>,
     /// Plans sharing a JobKey (e.g. two identical rows) are one computation:
     /// `owner[i]` is the first missing plan with plan i's key; only owners are
     /// sent to the worker, and each value is fanned out to every plan sharing it.
@@ -1287,7 +1269,7 @@ pub(crate) struct Lookup {
 }
 
 pub(crate) fn lookup_jobs(cache: &JobCache, plans: &[JobPlan]) -> Lookup {
-    let values: Vec<Option<Arc<Value>>> = plans.iter().map(|p| cache.get(&p.key)).collect();
+    let values: Vec<Option<Arc<Node>>> = plans.iter().map(|p| cache.get(&p.key)).collect();
     let mut owner: Vec<usize> = (0..plans.len()).collect();
     let mut misses: Vec<usize> = Vec::new();
     let mut first: HashMap<&JobKey, usize> = HashMap::new();
@@ -1332,14 +1314,14 @@ enum JobResultError {
 fn results_in_request_order(
     req: &JobsRequest<'_>,
     results: Vec<JobResult>,
-) -> Result<Vec<Value>, JobResultError> {
+) -> Result<Vec<Node>, JobResultError> {
     let pos: HashMap<&str, usize> = req
         .jobs
         .iter()
         .enumerate()
         .map(|(k, c)| (c.id.as_str(), k))
         .collect();
-    let mut out: Vec<Option<Value>> = std::iter::repeat_with(|| None)
+    let mut out: Vec<Option<Node>> = std::iter::repeat_with(|| None)
         .take(req.jobs.len())
         .collect();
     for res in results {
@@ -1383,8 +1365,8 @@ pub(crate) fn jobs_request<'a>(plans: &'a [JobPlan<'a>], misses: &[usize]) -> Jo
 }
 
 /// Every known job value into the overlay its plan names (after the child slots are seeded).
-pub(crate) fn merge_values(ctx: &mut Value, plans: &[JobPlan], values: &[Option<Arc<Value>>]) {
-    if let Value::Object(map) = ctx {
+pub(crate) fn merge_values(ctx: &mut Node, plans: &[JobPlan], values: &[Option<Arc<Node>>]) {
+    if let Some(map) = ctx.map_mut() {
         for (p, v) in plans.iter().zip(values) {
             if let Some(v) = v {
                 merge_result(map, p, v);
@@ -1394,45 +1376,32 @@ pub(crate) fn merge_values(ctx: &mut Value, plans: &[JobPlan], values: &[Option<
 }
 
 /// The parent's child-slot map `ctx["__children"][<parent>]`, created on demand.
-fn parent_slots<'a>(ctx: &'a mut Map<String, Value>, parent: &str) -> &'a mut Map<String, Value> {
+fn parent_slots<'a>(ctx: &'a mut MapInner, parent: &str) -> &'a mut MapInner {
     component_map(ctx, CHILDREN_KEY, parent)
 }
 
-/// `map[key]`, inserted from `make` when absent. `Map::entry` takes an owned
-/// key, so it allocates one even when the key is present (every merge after
-/// the first into the same overlay).
-fn entry_or<'a>(
-    map: &'a mut Map<String, Value>,
-    key: &str,
-    make: impl FnOnce() -> Value,
-) -> &'a mut Value {
+/// `map[key]`, inserted from `make` when absent (one key allocation, on insert
+/// only — `entry` would take an owned key even when the key is present).
+fn entry_or<'a>(map: &'a mut MapInner, key: &str, make: impl FnOnce() -> Node) -> &'a mut Node {
     if !map.contains_key(key) {
-        map.insert(key.to_string(), make());
+        map.insert(Arc::from(key), make());
     }
     map.get_mut(key).expect("present or just inserted")
 }
 
-/// `ctx[root][<id>]` as an object, created (or reset from a non-object) on demand.
-fn component_map<'a>(
-    ctx: &'a mut Map<String, Value>,
-    root: &str,
-    id: &str,
-) -> &'a mut Map<String, Value> {
-    let all = entry_or(ctx, root, || Value::Object(Map::new()));
-    if !all.is_object() {
-        *all = Value::Object(Map::new());
+/// `ctx[root][<id>]` as a map, created (or reset from a non-map) on demand;
+/// every level is made unique on the way (copy-on-write when shared).
+fn component_map<'a>(ctx: &'a mut MapInner, root: &str, id: &str) -> &'a mut MapInner {
+    let all = entry_or(ctx, root, || Node::map(MapInner::new()));
+    if !all.is_map() {
+        *all = Node::map(MapInner::new());
     }
-    let Value::Object(all) = all else {
-        unreachable!()
-    };
-    let own = entry_or(all, id, || Value::Object(Map::new()));
-    if !own.is_object() {
-        *own = Value::Object(Map::new());
+    let all = all.map_mut().expect("map");
+    let own = entry_or(all, id, || Node::map(MapInner::new()));
+    if !own.is_map() {
+        *own = Node::map(MapInner::new());
     }
-    let Value::Object(own) = own else {
-        unreachable!()
-    };
-    own
+    own.map_mut().expect("map")
 }
 
 /// S7 step 6 for children: `ctx["__children"][<parent>]["__<id>_<k>"]` = `{}`
@@ -1444,25 +1413,25 @@ pub(crate) fn seed_child_slots(
     idx: &PlanIndex,
     route_id: &str,
     chain: &[String],
-    ctx: &mut Value,
+    ctx: &mut Node,
 ) -> Result<(), String> {
     let cell = |instance: &dyn Fn() -> String, slots: u32| {
-        let mut o = Map::new();
+        let mut o = MapInner::new();
         if slots > 0 {
             for (k, v) in use_ids(route_id, &instance(), slots) {
-                o.insert(k, Value::String(v));
+                o.insert(Arc::from(k.as_str()), Node::str(&v));
             }
         }
-        Value::Object(o)
+        Node::map(o)
     };
-    let mut seeds: Vec<(&str, &str, Value)> = Vec::new();
+    let mut seeds: Vec<(&str, &str, Node)> = Vec::new();
     for id in chain {
         let c = idx.comp(id)?;
         for ch in &c.children {
             let slots = idx.comps[ch.child].use_id_slots;
             let slot = match &ch.rows {
                 None => cell(&|| ch.use_id_instance.clone(), slots),
-                Some(list) => Value::Array(
+                Some(list) => Node::arr(
                     (0..row_count(list, ctx))
                         .map(|r| cell(&|| format!("{}-{r}", ch.use_id_instance), slots))
                         .collect(),
@@ -1471,9 +1440,9 @@ pub(crate) fn seed_child_slots(
             seeds.push((&c.id, &ch.slot, slot));
         }
     }
-    if let Value::Object(map) = ctx {
+    if let Some(map) = ctx.map_mut() {
         for (parent, key, slot) in seeds {
-            parent_slots(map, parent).insert(key.to_string(), slot);
+            parent_slots(map, parent).insert(Arc::from(key), slot);
         }
     }
     Ok(())
@@ -1482,40 +1451,40 @@ pub(crate) fn seed_child_slots(
 /// The cell of one child instance (`ctx["__children"][<parent>][<slot>]`,
 /// or its `row` entry), created on demand.
 fn child_cell<'a>(
-    ctx: &'a mut Map<String, Value>,
+    ctx: &'a mut MapInner,
     parent: &str,
     slot: &str,
     row: Option<usize>,
-) -> Option<&'a mut Map<String, Value>> {
+) -> Option<&'a mut MapInner> {
     let slot = entry_or(parent_slots(ctx, parent), slot, || {
         if row.is_some() {
-            Value::Array(vec![])
+            Node::arr(vec![])
         } else {
-            Value::Object(Map::new())
+            Node::map(MapInner::new())
         }
     });
     let cell = match row {
         Some(r) => {
-            let a = slot.as_array_mut()?;
+            let a = slot.arr_mut()?;
             while a.len() <= r {
-                a.push(Value::Object(Map::new()));
+                a.push(Node::map(MapInner::new()));
             }
             &mut a[r]
         }
         None => slot,
     };
-    cell.as_object_mut()
+    cell.map_mut()
 }
 
 /// A precompute result that lacks a declared output (a `dist/jobs.js` built before the
 /// generated `precompute` returned every slot) renders that slot empty; warn once per
 /// (component, slot) per process and count it in the stats.
-fn note_missing_slots(s: &Server, p: &JobPlan, v: &Value) {
+fn note_missing_slots(s: &Server, p: &JobPlan, v: &Node) {
     if !matches!(p.kind, JobKind::Precompute) {
         return;
     }
-    let Some(o) = v.as_object() else { return };
-    for n in p.outputs.iter().filter(|n| !o.contains_key(n.as_str())) {
+    let Some(o) = v.as_map() else { return };
+    for n in p.outputs.iter().filter(|n| !o.0.contains_key(n.as_str())) {
         let first = s
             .missing_slots
             .lock()
@@ -1529,16 +1498,16 @@ fn note_missing_slots(s: &Server, p: &JobPlan, v: &Value) {
 /// A value has the shape its `outputs` need: a precompute result is an object
 /// (a declared output it lacks renders empty, see [`note_missing_slots`]); an ssr
 /// result is an HTML string. Legacy plans (no `outputs`) are not checked.
-fn check_value(p: &JobPlan, v: &Value) -> Result<(), String> {
+fn check_value(p: &JobPlan, v: &Node) -> Result<(), String> {
     if p.outputs.is_empty() {
         return Ok(());
     }
     match p.kind {
         JobKind::Precompute => {
-            v.as_object().ok_or("precompute result is not an object")?;
+            v.as_map().ok_or("precompute result is not an object")?;
             Ok(())
         }
-        JobKind::Ssr if v.is_string() => Ok(()),
+        JobKind::Ssr if v.is_str() => Ok(()),
         JobKind::Ssr => Err("ssr result is not a string".into()),
     }
 }
@@ -1550,7 +1519,7 @@ fn check_value(p: &JobPlan, v: &Value) -> Result<(), String> {
 /// `per_instance` job, `outputs[0]` is an array indexed by row (the template
 /// reads `{{ _ssr_<id>[_i1] | safe }}`). Without `outputs` (older manifests)
 /// see [`merge_legacy`].
-pub(crate) fn merge_result(ctx: &mut Map<String, Value>, plan: &JobPlan, value: &Value) {
+pub(crate) fn merge_result(ctx: &mut MapInner, plan: &JobPlan, value: &Node) {
     if plan.outputs.is_empty() {
         return merge_legacy(ctx, plan, value);
     }
@@ -1566,26 +1535,23 @@ pub(crate) fn merge_result(ctx: &mut Map<String, Value>, plan: &JobPlan, value: 
     };
     for (i, name) in plan.outputs.iter().enumerate() {
         let v = match plan.kind {
-            JobKind::Precompute => value.get(name).cloned().unwrap_or(Value::Null),
+            // An Arc bump: the cached value is shared with the context, never copied.
+            JobKind::Precompute => value.get(name).cloned().unwrap_or(Node::Null),
             JobKind::Ssr if i == 0 => value.clone(),
             JobKind::Ssr => continue,
         };
         match row {
             None => {
-                obj.insert(name.clone(), v);
+                obj.insert(Arc::from(name.as_str()), v);
             }
             Some(r) => {
-                let slot = obj
-                    .entry(name.clone())
-                    .or_insert_with(|| Value::Array(vec![]));
-                if !slot.is_array() {
-                    *slot = Value::Array(vec![]);
+                let slot = entry_or(obj, name, || Node::arr(vec![]));
+                if !matches!(slot, Node::Arr(_)) {
+                    *slot = Node::arr(vec![]);
                 }
-                let Value::Array(a) = slot else {
-                    unreachable!()
-                };
+                let a = slot.arr_mut().expect("array");
                 while a.len() <= r {
-                    a.push(Value::Null);
+                    a.push(Node::Null);
                 }
                 a[r] = v;
             }
@@ -1597,11 +1563,11 @@ pub(crate) fn merge_result(ctx: &mut Map<String, Value>, plan: &JobPlan, value: 
 /// overlay; a chain ssr result lands at `_ssr_<componentId>`; a child's ssr
 /// result in its cell and (static instance) at `_ssr_<childId>` in the
 /// parent's map.
-fn merge_legacy(ctx: &mut Map<String, Value>, plan: &JobPlan, value: &Value) {
-    fn spread(obj: &mut Map<String, Value>, value: &Value) {
-        if let Some(o) = value.as_object() {
-            for (k, v) in o {
-                obj.insert(k.clone(), v.clone());
+fn merge_legacy(ctx: &mut MapInner, plan: &JobPlan, value: &Node) {
+    fn spread(obj: &mut MapInner, value: &Node) {
+        if let Some(o) = value.as_map() {
+            for (k, v) in &o.0 {
+                obj.insert(Arc::clone(k), v.clone());
             }
         }
     }
@@ -1611,7 +1577,7 @@ fn merge_legacy(ctx: &mut Map<String, Value>, plan: &JobPlan, value: &Value) {
             match plan.kind {
                 JobKind::Precompute => spread(own, value),
                 JobKind::Ssr => {
-                    own.insert(format!("_ssr_{component}"), value.clone());
+                    own.insert(format!("_ssr_{component}").into(), value.clone());
                 }
             }
         }
@@ -1622,7 +1588,7 @@ fn merge_legacy(ctx: &mut Map<String, Value>, plan: &JobPlan, value: &Value) {
             row,
         } => {
             if plan.kind == JobKind::Ssr && row.is_none() {
-                parent_slots(ctx, parent).insert(format!("_ssr_{component}"), value.clone());
+                parent_slots(ctx, parent).insert(format!("_ssr_{component}").into(), value.clone());
             }
             let Some(obj) = child_cell(ctx, parent, slot, *row) else {
                 return;
@@ -1630,7 +1596,7 @@ fn merge_legacy(ctx: &mut Map<String, Value>, plan: &JobPlan, value: &Value) {
             match plan.kind {
                 JobKind::Precompute => spread(obj, value),
                 JobKind::Ssr => {
-                    obj.insert(format!("_ssr_{component}"), value.clone());
+                    obj.insert(format!("_ssr_{component}").into(), value.clone());
                 }
             }
         }
@@ -1654,17 +1620,12 @@ pub mod plan_stage {
         }
 
         /// `collect_jobs` for `chain` over the loader context.
-        pub fn plan(&self, chain: &[String], ctx: &Value) -> Result<Planned<'_>, String> {
+        pub fn plan(&self, chain: &[String], ctx: &Node) -> Result<Planned<'_>, String> {
             collect_jobs(&self.0, chain, ctx).map(Planned)
         }
 
         /// `seed_child_slots`.
-        pub fn seed(
-            &self,
-            route_id: &str,
-            chain: &[String],
-            ctx: &mut Value,
-        ) -> Result<(), String> {
+        pub fn seed(&self, route_id: &str, chain: &[String], ctx: &mut Node) -> Result<(), String> {
             seed_child_slots(&self.0, route_id, chain, ctx)
         }
     }
@@ -1679,18 +1640,18 @@ pub mod plan_stage {
         }
 
         /// The job-cache lookups (values, owners, misses), as `page` does them.
-        pub fn lookup(&self, cache: &JobCache) -> Vec<Option<Arc<Value>>> {
+        pub fn lookup(&self, cache: &JobCache) -> Vec<Option<Arc<Node>>> {
             lookup_jobs(cache, &self.0).values
         }
 
         /// `merge_values` into a seeded context.
-        pub fn merge(&self, ctx: &mut Value, values: &[Option<Arc<Value>>]) {
+        pub fn merge(&self, ctx: &mut Node, values: &[Option<Arc<Node>>]) {
             merge_values(ctx, &self.0, values)
         }
 
         /// Store every plan's value as found in `merged` (a context `page`
         /// finished with: each value read back from the cell its plan fills).
-        pub fn warm(&self, cache: &JobCache, merged: &Value) {
+        pub fn warm(&self, cache: &JobCache, merged: &Node) {
             for p in &self.0 {
                 let v = value_in(merged, p);
                 cache.insert(
@@ -1711,12 +1672,12 @@ pub mod plan_stage {
 
         /// Every plan's identity (call id, key, user key, ids, row, ttl, tags,
         /// outputs, target, inputs) as JSON, for the golden test.
-        pub fn describe(&self) -> Value {
-            Value::Array(
+        pub fn describe(&self) -> Node {
+            Node::arr(
                 self.0
                     .iter()
                     .map(|p| {
-                        serde_json::json!({
+                        Node::from(serde_json::json!({
                             "call_id": p.call_id(),
                             "key": p.key.0,
                             "user_key": p.user_key,
@@ -1729,7 +1690,7 @@ pub mod plan_stage {
                             "outputs": p.outputs,
                             "target": p.target,
                             "inputs": p.inputs,
-                        })
+                        }))
                     })
                     .collect(),
             )
@@ -1759,25 +1720,32 @@ pub mod plan_stage {
 
     /// The value plan `p` merged into `merged` (outputs set: a precompute
     /// object of its outputs, an ssr string).
-    fn value_in(merged: &Value, p: &JobPlan) -> Value {
+    fn value_in(merged: &Node, p: &JobPlan) -> Node {
+        static NULL: Node = Node::Null;
+        fn at<'n>(n: &'n Node, k: &str) -> &'n Node {
+            n.get(k).unwrap_or(&NULL)
+        }
         let (cell, row) = match &p.dest {
-            Dest::Chain { component, row } => (&merged[OWN_KEY][*component], *row),
+            Dest::Chain { component, row } => (at(at(merged, OWN_KEY), component), *row),
             Dest::Child {
                 parent, slot, row, ..
             } => {
-                let slot = &merged[CHILDREN_KEY][*parent][*slot];
-                (row.map_or(slot, |r| &slot[r]), None)
+                let slot = at(at(at(merged, CHILDREN_KEY), parent), slot);
+                (row.map_or(slot, |r| slot.index(r).unwrap_or(&NULL)), None)
             }
         };
-        let at = |name: &str| match row {
-            Some(r) => cell[name][r].clone(),
-            None => cell[name].clone(),
+        let pick = |name: &str| match row {
+            Some(r) => at(cell, name).index(r).cloned().unwrap_or(Node::Null),
+            None => at(cell, name).clone(),
         };
         match p.kind {
-            JobKind::Ssr => at(&p.outputs[0]),
-            JobKind::Precompute => {
-                Value::Object(p.outputs.iter().map(|o| (o.clone(), at(o))).collect())
-            }
+            JobKind::Ssr => pick(&p.outputs[0]),
+            JobKind::Precompute => Node::map(
+                p.outputs
+                    .iter()
+                    .map(|o| (Arc::from(o.as_str()), pick(o)))
+                    .collect(),
+            ),
         }
     }
 }
@@ -1785,9 +1753,22 @@ pub mod plan_stage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use serde_json::{Value, json};
 
-    static NULL: Value = Value::Null;
+    static NULL: Node = Node::Null;
+
+    fn n(v: Value) -> Node {
+        Node::from(v)
+    }
+
+    fn j(n: &Node) -> Value {
+        Value::from(n)
+    }
+
+    /// `n[path[0]][path[1]]…` (map keys), `Null` when absent.
+    fn at<'a>(n: &'a Node, path: &[&str]) -> &'a Node {
+        path.iter().fold(n, |cur, k| cur.get(k).unwrap_or(&NULL))
+    }
     fn req_of(ids: &[&str]) -> JobsRequest<'static> {
         JobsRequest {
             jobs: ids
@@ -1806,7 +1787,7 @@ mod tests {
     fn res(id: &str, v: Option<Value>, e: Option<&str>) -> JobResult {
         JobResult {
             id: id.into(),
-            value: v,
+            value: v.map(Node::from),
             error: e.map(String::from),
         }
     }
@@ -1823,7 +1804,7 @@ mod tests {
             ],
         )
         .unwrap();
-        assert_eq!(out, vec![json!(0), json!(1), json!(2)]);
+        assert_eq!(out, vec![n(json!(0)), n(json!(1)), n(json!(2))]);
     }
 
     #[test]
@@ -1839,7 +1820,7 @@ mod tests {
             ],
         )
         .unwrap();
-        assert_eq!(out, vec![json!(3), json!(2)]);
+        assert_eq!(out, vec![n(json!(3)), n(json!(2))]);
     }
 
     #[test]
@@ -1928,16 +1909,17 @@ mod tests {
             json!({"__own": {}}),
             json!({}),
         ];
-        for ctx in &ctxs {
+        for json_ctx in &ctxs {
+            let ctx = n(json_ctx.clone());
             let paint = |props: minijinja::Value| {
-                r.render_chain_value(&["T".into()], &brust_jinja::value_of(ctx), &|_| {
+                r.render_chain_value(&["T".into()], &ctx.to_value(), &|_| {
                     vec![(PROPS_KEY.into(), props.clone())]
                 })
                 .unwrap()
             };
-            let cloned = paint(brust_jinja::value_of(all_props(ctx)));
-            let view = paint(props_view(&brust_jinja::value_of(ctx)));
-            assert_eq!(view, cloned, "ctx {ctx}");
+            let cloned = paint(all_props(&ctx).to_value());
+            let view = paint(props_view(&ctx));
+            assert_eq!(view, cloned, "ctx {json_ctx}");
         }
     }
 
@@ -1966,9 +1948,9 @@ mod tests {
         ids.iter().map(|s| s.to_string()).collect()
     }
 
-    fn pikachu() -> Value {
-        json!({"pokemon": {"name": "pikachu", "stats": {"hp": 35},
-                "moves": [{"name": "tackle"}, {"name": "growl"}]}})
+    fn pikachu() -> Node {
+        n(json!({"pokemon": {"name": "pikachu", "stats": {"hp": 35},
+                "moves": [{"name": "tackle"}, {"name": "growl"}]}}))
     }
 
     /// The pokedex fixture (bench `benches/fixtures/pokedex/`): every plan's
@@ -1983,7 +1965,7 @@ mod tests {
         let m: Manifest =
             serde_json::from_slice(&std::fs::read(dir.join("manifest.json")).unwrap()).unwrap();
         let planner = Planner::new(&m).unwrap();
-        let mut got = Map::new();
+        let mut got = serde_json::Map::new();
         for (pattern, file) in [
             ("/pokemon/{name}", "pokemon-pikachu.json"),
             ("/", "home.json"),
@@ -1993,9 +1975,10 @@ mod tests {
             let merged: Value =
                 serde_json::from_slice(&std::fs::read(dir.join("ctx").join(file)).unwrap())
                     .unwrap();
+            let merged = Node::from(merged);
             let mut ctx = merged.clone();
             for k in [OWN_KEY, CHILDREN_KEY] {
-                ctx.as_object_mut().unwrap().remove(k);
+                ctx.map_mut().unwrap().remove(k);
             }
             let plans = planner.plan(&route.chain, &ctx).unwrap();
             got.insert(
@@ -2037,7 +2020,10 @@ mod tests {
                 "detailPage_c3/moveCard_d4_1/j0/1"
             ]
         );
-        assert_eq!(plans[0].inputs, json!({"pokemon": {"stats": {"hp": 35}}}));
+        assert_eq!(
+            j(&plans[0].inputs),
+            json!({"pokemon": {"stats": {"hp": 35}}})
+        );
         assert_eq!(
             plans[0].dest,
             Dest::Chain {
@@ -2045,7 +2031,7 @@ mod tests {
                 row: None
             }
         );
-        assert_eq!(plans[2].inputs, json!({"move": {"name": "growl"}}));
+        assert_eq!(j(&plans[2].inputs), json!({"move": {"name": "growl"}}));
         assert_eq!(
             plans[2].dest,
             Dest::Child {
@@ -2061,7 +2047,7 @@ mod tests {
         assert_ne!(plans[1].key, plans[2].key);
         assert_eq!(
             plans[1].key.0,
-            inputs::job_key("moveCard_d4", "j0", &json!({"move": {"name": "tackle"}}))
+            inputs::job_key("moveCard_d4", "j0", &n(json!({"move": {"name": "tackle"}})))
         );
     }
 
@@ -2105,8 +2091,8 @@ mod tests {
         assert_eq!(
             key_of(&m),
             [
-                inputs::job_key("moveCard_d4", "j0", &json!({"move": {"name": "tackle"}})),
-                inputs::job_key("moveCard_d4", "j0", &json!({"move": {"name": "growl"}})),
+                inputs::job_key("moveCard_d4", "j0", &n(json!({"move": {"name": "tackle"}}))),
+                inputs::job_key("moveCard_d4", "j0", &n(json!({"move": {"name": "growl"}}))),
             ]
         );
     }
@@ -2124,7 +2110,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            ctx["__children"]["detailPage_c3"]["__moveCard_d4_1"],
+            j(at(
+                &ctx,
+                &["__children", "detailPage_c3", "__moveCard_d4_1"]
+            )),
             json!([{"_id0": "brust-r2-detailPage_c3.moveCard_d4_1-0-1"},
                    {"_id0": "brust-r2-detailPage_c3.moveCard_d4_1-1-1"}])
         );
@@ -2132,12 +2121,14 @@ mod tests {
         // A job value merges into the seeded cell without losing its id.
         let ix = PlanIndex::new(&m).unwrap();
         let plans = collect_jobs(&ix, &chain(&["detailPage_c3"]), &ctx).unwrap();
-        let Value::Object(map) = &mut ctx else {
-            unreachable!()
-        };
-        merge_result(map, &plans[2], &json!({"_s1": "MOVE growl"}));
+        let map = ctx.map_mut().unwrap();
+        merge_result(map, &plans[2], &n(json!({"_s1": "MOVE growl"})));
         assert_eq!(
-            ctx["__children"]["detailPage_c3"]["__moveCard_d4_1"][1],
+            j(
+                at(&ctx, &["__children", "detailPage_c3", "__moveCard_d4_1"])
+                    .index(1)
+                    .unwrap()
+            ),
             json!({"_id0": "brust-r2-detailPage_c3.moveCard_d4_1-1-1", "_s1": "MOVE growl"})
         );
     }
@@ -2145,17 +2136,18 @@ mod tests {
     #[test]
     fn react_child_ssr_job_fills_parent_overlay_output() {
         let m = manifest();
-        let ctx = json!({"team": ["a"]});
+        let ctx = n(json!({"team": ["a"]}));
         let ix = PlanIndex::new(&m).unwrap();
         let plans = collect_jobs(&ix, &chain(&["teamPage_g7"]), &ctx).unwrap();
         assert_eq!(plans.len(), 1);
         assert_eq!(plans[0].call_id(), "teamPage_g7/j0");
         assert_eq!(plans[0].target, Some("teamBuilder_h8"));
-        assert_eq!(plans[0].inputs, json!({"team": ["a"]}));
-        let mut map = Map::new();
-        merge_result(&mut map, &plans[0], &json!("<ul></ul>"));
+        assert_eq!(j(&plans[0].inputs), json!({"team": ["a"]}));
+        let mut map = MapInner::new();
+        merge_result(&mut map, &plans[0], &n(json!("<ul></ul>")));
+        let map = Node::map(map);
         assert_eq!(
-            map["__own"]["teamPage_g7"],
+            j(at(&map, &["__own", "teamPage_g7"])),
             json!({"_ssr_teamBuilder_h8": "<ul></ul>"})
         );
         assert!(
@@ -2184,21 +2176,25 @@ mod tests {
         assert_eq!(plans[0].inputs, plans[1].inputs);
         assert_ne!(plans[0].key, plans[1].key);
         assert_eq!(plans[1].instance_row(), Some(1));
-        let mut map = Map::new();
-        merge_result(&mut map, &plans[1], &json!("B"));
-        merge_result(&mut map, &plans[0], &json!("A"));
-        assert_eq!(map["__own"]["detailPage_c3"]["_ssr_x"], json!(["A", "B"]));
+        let mut map = MapInner::new();
+        merge_result(&mut map, &plans[1], &n(json!("B")));
+        merge_result(&mut map, &plans[0], &n(json!("A")));
+        let map = Node::map(map);
+        assert_eq!(
+            j(at(&map, &["__own", "detailPage_c3", "_ssr_x"])),
+            json!(["A", "B"])
+        );
 
         // With a `props` map each row sends its own props, content-keyed.
         m.components.get_mut("detailPage_c3").unwrap().jobs[0].props =
             Some([("mv".to_string(), "pokemon.moves[idx].name".to_string())].into());
         let ix = PlanIndex::new(&m).unwrap();
         let plans = collect_jobs(&ix, &chain(&["detailPage_c3"]), &pikachu()).unwrap();
-        assert_eq!(plans[0].inputs, json!({"mv": "tackle"}));
-        assert_eq!(plans[1].inputs, json!({"mv": "growl"}));
+        assert_eq!(j(&plans[0].inputs), json!({"mv": "tackle"}));
+        assert_eq!(j(&plans[1].inputs), json!({"mv": "growl"}));
         assert_eq!(
             plans[0].key.0,
-            inputs::job_key("detailPage_c3", "j0", &json!({"mv": "tackle"}))
+            inputs::job_key("detailPage_c3", "j0", &n(json!({"mv": "tackle"})))
         );
     }
 
@@ -2207,7 +2203,9 @@ mod tests {
         let mut m = manifest();
         m.components.get_mut("detailPage_c3").unwrap().jobs[0].inputs = vec!["*".into()];
         let mut ctx = pikachu();
-        ctx["__own"] = json!({"x": 1});
+        ctx.map_mut()
+            .unwrap()
+            .insert(OWN_KEY.into(), n(json!({"x": 1})));
         let ix = PlanIndex::new(&m).unwrap();
         let plans = collect_jobs(&ix, &chain(&["detailPage_c3"]), &ctx).unwrap();
         assert_eq!(plans[0].inputs, pikachu());
@@ -2218,23 +2216,32 @@ mod tests {
         let m = manifest();
         let ix = PlanIndex::new(&m).unwrap();
         let plans = collect_jobs(&ix, &chain(&["detailPage_c3"]), &pikachu()).unwrap();
-        let mut map = Map::new();
-        merge_result(&mut map, &plans[0], &json!({"_s1": "HP", "_s9": "extra"}));
-        assert_eq!(map["__own"]["detailPage_c3"], json!({"_s1": "HP"}));
+        let mut map = MapInner::new();
+        merge_result(
+            &mut map,
+            &plans[0],
+            &n(json!({"_s1": "HP", "_s9": "extra"})),
+        );
+        let map = Node::map(map);
+        assert_eq!(
+            j(at(&map, &["__own", "detailPage_c3"])),
+            json!({"_s1": "HP"})
+        );
         assert!(
-            check_value(&plans[0], &json!({"_s2": "x"})).is_ok(),
+            check_value(&plans[0], &n(json!({"_s2": "x"}))).is_ok(),
             "a missing slot is tolerated"
         );
-        assert!(check_value(&plans[0], &json!("x")).is_err());
+        assert!(check_value(&plans[0], &n(json!("x"))).is_err());
         let mut legacy = plans[0].clone();
         legacy.outputs = &[];
-        let mut map = Map::new();
-        merge_result(&mut map, &legacy, &json!({"_s1": "HP", "_s9": "extra"}));
+        let mut map = MapInner::new();
+        merge_result(&mut map, &legacy, &n(json!({"_s1": "HP", "_s9": "extra"})));
+        let map = Node::map(map);
         assert_eq!(
-            map["__own"]["detailPage_c3"],
+            j(at(&map, &["__own", "detailPage_c3"])),
             json!({"_s1": "HP", "_s9": "extra"})
         );
-        assert!(check_value(&legacy, &json!("x")).is_ok());
+        assert!(check_value(&legacy, &n(json!("x"))).is_ok());
     }
 
     #[test]
@@ -2244,19 +2251,48 @@ mod tests {
         // (`_id`, `_session`, `_s`, `__typename`, `__a_1`) is loader data.
         // Child slots live under `__children` and win over a same-named
         // top-level key in the overlay.
-        let mut ctx = Map::new();
+        let mut ctx = MapInner::new();
         merge_loader_data(
             &mut ctx,
-            json!({"__outlet": "x", "_ssr_a": "x", "__a_1": {}, "__children": {}, "__own": {},
+            n(
+                json!({"__outlet": "x", "_ssr_a": "x", "__a_1": {}, "__children": {}, "__own": {},
                    "_props": {}, "__typename": "Pokemon", "_id": 7, "_s1": "x", "_s12": "x",
                    "_id0": "x", "_id3": "x", "_session": "s", "_s": 1, "_s1a": 2, "_idx": 3,
                    "who": "w"}),
+            ),
             "r1",
         );
         assert_eq!(
-            Value::Object(ctx),
+            j(&Node::map(ctx)),
             json!({"__a_1": {}, "__typename": "Pokemon", "_id": 7, "_session": "s", "_s": 1,
                    "_s1a": 2, "_idx": 3, "who": "w"})
+        );
+    }
+
+    #[test]
+    fn merging_a_cached_value_never_mutates_the_cache_entry() {
+        let m = manifest();
+        let ix = PlanIndex::new(&m).unwrap();
+        let plans = collect_jobs(&ix, &chain(&["detailPage_c3"]), &pikachu()).unwrap();
+        // The value as the job cache holds it (Arc-shared with the context after the merge).
+        let cached = Arc::new(n(json!({"_s1": {"deep": [1]}})));
+        let mut map = MapInner::new();
+        merge_result(&mut map, &plans[0], &cached);
+        let mut ctx = Node::map(map);
+        let Node::Map(s) = at(&ctx, &["__own", "detailPage_c3", "_s1"]) else {
+            unreachable!()
+        };
+        assert_eq!(Arc::strong_count(s), 2, "merged by sharing, not by copying");
+        // Writing into the merged cell copies that level; the cache's node is untouched.
+        ctx.get_mut_path(&["__own", "detailPage_c3", "_s1"])
+            .unwrap()
+            .map_mut()
+            .unwrap()
+            .insert("x".into(), Node::Null);
+        assert_eq!(j(&cached), json!({"_s1": {"deep": [1]}}));
+        assert_eq!(
+            j(at(&ctx, &["__own", "detailPage_c3", "_s1"])),
+            json!({"deep": [1], "x": null})
         );
     }
 
@@ -2276,10 +2312,14 @@ mod tests {
         let m = manifest();
         let ix = PlanIndex::new(&m).unwrap();
         let plans = collect_jobs(&ix, &chain(&["detailPage_c3"]), &pikachu()).unwrap();
-        let mut map = Map::new();
-        merge_result(&mut map, &plans[0], &json!({"_s1": "HP 35"}));
-        assert_eq!(map["__own"]["detailPage_c3"], json!({"_s1": "HP 35"}));
+        let mut map = MapInner::new();
+        merge_result(&mut map, &plans[0], &n(json!({"_s1": "HP 35"})));
         assert!(map.get("_s1").is_none(), "never top-level");
+        let map = Node::map(map);
+        assert_eq!(
+            j(at(&map, &["__own", "detailPage_c3"])),
+            json!({"_s1": "HP 35"})
+        );
     }
 
     #[test]
