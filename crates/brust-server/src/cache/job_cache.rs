@@ -18,9 +18,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
+use brust_jinja::ctx::Node;
 use moka::sync::Cache;
 use parking_lot::{Mutex, RwLock};
-use serde_json::Value;
 
 use super::l1::{CacheStats, TagIndex, index_tags, prune_tags, take_tagged};
 
@@ -74,7 +74,7 @@ impl moka::Expiry<JobKey, CachedJob> for JobExpiry {
 /// read, so a ttl is exact without moka on the read path) and the generation
 /// tying it to the moka entry that owns its lifetime.
 struct FrontEntry {
-    value: Arc<Value>,
+    value: Arc<Node>,
     expires_at: Option<Instant>,
     generation: u64,
     /// Millis since `JobCache::epoch` of the last read forwarded to moka.
@@ -214,7 +214,7 @@ impl JobCache {
         }
     }
 
-    pub fn get(&self, k: &JobKey) -> Option<Arc<Value>> {
+    pub fn get(&self, k: &JobKey) -> Option<Arc<Node>> {
         let shard = shard_of(&self.hasher, k);
         let now = Instant::now();
         let (hit, touch) = {
@@ -252,7 +252,7 @@ impl JobCache {
     pub fn insert(
         &self,
         k: JobKey,
-        value: Arc<Value>,
+        value: Arc<Node>,
         ttl: Option<Duration>,
         tags: &[String],
         user_key: Option<&str>,
@@ -412,8 +412,17 @@ mod tests {
     #[test]
     fn set_then_get_returns_payload() {
         let s = store();
-        s.insert(k("k1"), Arc::new(json!("PAYLOAD")), None, &[], None);
-        assert_eq!(s.get(&k("k1")), Some(Arc::new(json!("PAYLOAD"))));
+        s.insert(
+            k("k1"),
+            Arc::new(Node::from(json!("PAYLOAD"))),
+            None,
+            &[],
+            None,
+        );
+        assert_eq!(
+            s.get(&k("k1")),
+            Some(Arc::new(Node::from(json!("PAYLOAD"))))
+        );
     }
     #[test]
     fn missing_is_none() {
@@ -429,7 +438,7 @@ mod tests {
         let s = store();
         s.insert(
             k("k"),
-            Arc::new(json!("x")),
+            Arc::new(Node::from(json!("x"))),
             Some(Duration::ZERO),
             &[],
             None,
@@ -442,7 +451,7 @@ mod tests {
         let s = store();
         s.insert(
             k("k"),
-            Arc::new(json!("x")),
+            Arc::new(Node::from(json!("x"))),
             Some(Duration::from_secs(60)),
             &[],
             None,
@@ -452,8 +461,8 @@ mod tests {
     #[test]
     fn invalidate_key_removes_one() {
         let s = store();
-        s.insert(k("a"), Arc::new(json!("a")), None, &[], None);
-        s.insert(k("b"), Arc::new(json!("b")), None, &[], None);
+        s.insert(k("a"), Arc::new(Node::from(json!("a"))), None, &[], None);
+        s.insert(k("b"), Arc::new(Node::from(json!("b"))), None, &[], None);
         assert!(s.invalidate_key(&k("a")));
         assert!(
             !s.invalidate_key(&k("a")),
@@ -466,9 +475,27 @@ mod tests {
     #[test]
     fn invalidate_tags_removes_group() {
         let s = store();
-        s.insert(k("a"), Arc::new(json!("a")), None, &["user:1".into()], None);
-        s.insert(k("b"), Arc::new(json!("b")), None, &["user:1".into()], None);
-        s.insert(k("c"), Arc::new(json!("c")), None, &["user:2".into()], None);
+        s.insert(
+            k("a"),
+            Arc::new(Node::from(json!("a"))),
+            None,
+            &["user:1".into()],
+            None,
+        );
+        s.insert(
+            k("b"),
+            Arc::new(Node::from(json!("b"))),
+            None,
+            &["user:1".into()],
+            None,
+        );
+        s.insert(
+            k("c"),
+            Arc::new(Node::from(json!("c"))),
+            None,
+            &["user:2".into()],
+            None,
+        );
         assert_eq!(s.invalidate_tags(&["user:1".into()]), 2);
         sync(&s);
         assert!(s.get(&k("a")).is_none());
@@ -480,7 +507,7 @@ mod tests {
         let s = store();
         s.insert(
             k("k"),
-            Arc::new(json!("x")),
+            Arc::new(Node::from(json!("x"))),
             None,
             &["a".into(), "b".into()],
             None,
@@ -495,7 +522,13 @@ mod tests {
     #[test]
     fn clear_wipes_tag_index() {
         let s = store();
-        s.insert(k("k"), Arc::new(json!("x")), None, &["t".into()], None);
+        s.insert(
+            k("k"),
+            Arc::new(Node::from(json!("x"))),
+            None,
+            &["t".into()],
+            None,
+        );
         sync(&s);
         assert_eq!(s.tag_index_size(), 1);
         s.clear();
@@ -505,7 +538,13 @@ mod tests {
     #[test]
     fn clear_empties() {
         let s = store();
-        s.insert(k("a"), Arc::new(json!("a")), None, &["t".into()], None);
+        s.insert(
+            k("a"),
+            Arc::new(Node::from(json!("a"))),
+            None,
+            &["t".into()],
+            None,
+        );
         s.clear();
         assert!(s.get(&k("a")).is_none());
     }
@@ -513,10 +552,16 @@ mod tests {
     #[test]
     fn ttl_none_survives_until_invalidated() {
         let s = store();
-        s.insert(k("n"), Arc::new(json!("x")), None, &["t".into()], None);
+        s.insert(
+            k("n"),
+            Arc::new(Node::from(json!("x"))),
+            None,
+            &["t".into()],
+            None,
+        );
         s.insert(
             k("short"),
-            Arc::new(json!("y")),
+            Arc::new(Node::from(json!("y"))),
             Some(Duration::from_millis(1)),
             &[],
             None,
@@ -526,18 +571,24 @@ mod tests {
         assert!(s.get(&k("short")).is_none(), "ttl'd neighbour expired");
         assert_eq!(
             s.get(&k("n")),
-            Some(Arc::new(json!("x"))),
+            Some(Arc::new(Node::from(json!("x")))),
             "None never expires"
         );
         // A re-insert with `None` over a ttl'd entry clears the expiry too.
         s.insert(
             k("short"),
-            Arc::new(json!("z")),
+            Arc::new(Node::from(json!("z"))),
             Some(Duration::from_secs(60)),
             &[],
             None,
         );
-        s.insert(k("short"), Arc::new(json!("z")), None, &[], None);
+        s.insert(
+            k("short"),
+            Arc::new(Node::from(json!("z"))),
+            None,
+            &[],
+            None,
+        );
         assert!(s.get(&k("short")).is_some());
         assert_eq!(s.invalidate_tags(&["t".into()]), 1);
         sync(&s);
@@ -547,7 +598,7 @@ mod tests {
     #[test]
     fn stats_count_hits_and_misses() {
         let s = JobCache::new(7);
-        s.insert(k("a"), Arc::new(json!(1)), None, &[], None);
+        s.insert(k("a"), Arc::new(Node::from(json!(1))), None, &[], None);
         let _ = s.get(&k("a"));
         let _ = s.get(&k("a"));
         let _ = s.get(&k("missing"));
@@ -567,8 +618,20 @@ mod tests {
         // v2 regression (see l1.rs module docs): the Replaced notification for
         // the old value must not un-index the new value.
         let s = store();
-        s.insert(k("r"), Arc::new(json!(1)), None, &["t".into()], None);
-        s.insert(k("r"), Arc::new(json!(2)), None, &["t".into()], None);
+        s.insert(
+            k("r"),
+            Arc::new(Node::from(json!(1))),
+            None,
+            &["t".into()],
+            None,
+        );
+        s.insert(
+            k("r"),
+            Arc::new(Node::from(json!(2))),
+            None,
+            &["t".into()],
+            None,
+        );
         sync(&s);
         assert_eq!(s.tag_index_size(), 1, "new entry stays indexed");
         assert_eq!(s.invalidate_tags(&["t".into()]), 1);
@@ -582,9 +645,27 @@ mod tests {
     #[test]
     fn user_key_invalidates_every_namespaced_entry() {
         let s = store();
-        s.insert(k("k:a/j0/5"), Arc::new(json!(1)), None, &[], Some("5"));
-        s.insert(k("k:b/j0/5"), Arc::new(json!(2)), None, &[], Some("5"));
-        s.insert(k("k:b/j0/6"), Arc::new(json!(3)), None, &[], Some("6"));
+        s.insert(
+            k("k:a/j0/5"),
+            Arc::new(Node::from(json!(1))),
+            None,
+            &[],
+            Some("5"),
+        );
+        s.insert(
+            k("k:b/j0/5"),
+            Arc::new(Node::from(json!(2))),
+            None,
+            &[],
+            Some("5"),
+        );
+        s.insert(
+            k("k:b/j0/6"),
+            Arc::new(Node::from(json!(3))),
+            None,
+            &[],
+            Some("6"),
+        );
         assert_eq!(s.key_index_size(), 3);
         assert_eq!(s.invalidate_user_key("5"), 2);
         sync(&s);
@@ -594,13 +675,25 @@ mod tests {
         assert_eq!(s.invalidate_user_key("5"), 0);
         // The index is pruned when moka drops an entry (generation-guarded: a
         // re-insert keeps the newer entry indexed).
-        s.insert(k("k:b/j0/6"), Arc::new(json!(4)), None, &[], Some("6"));
+        s.insert(
+            k("k:b/j0/6"),
+            Arc::new(Node::from(json!(4))),
+            None,
+            &[],
+            Some("6"),
+        );
         sync(&s);
         assert_eq!(s.key_index_size(), 1);
         assert!(s.invalidate_key(&k("k:b/j0/6")));
         sync(&s);
         assert_eq!(s.key_index_size(), 0);
-        s.insert(k("k:c/j0/7"), Arc::new(json!(5)), None, &[], Some("7"));
+        s.insert(
+            k("k:c/j0/7"),
+            Arc::new(Node::from(json!(5))),
+            None,
+            &[],
+            Some("7"),
+        );
         s.clear();
         assert_eq!(s.key_index_size(), 0);
     }
@@ -611,7 +704,13 @@ mod tests {
         // evictions/admission rejects drop it via the listener.
         let s = JobCache::new(10);
         for i in 0..200 {
-            s.insert(k(&format!("e{i}")), Arc::new(json!(i)), None, &[], None);
+            s.insert(
+                k(&format!("e{i}")),
+                Arc::new(Node::from(json!(i))),
+                None,
+                &[],
+                None,
+            );
         }
         let len = s.stats().len;
         assert!(len <= 10, "moka bounded: {len}");
@@ -621,7 +720,7 @@ mod tests {
         let s = store();
         s.insert(
             k("t"),
-            Arc::new(json!(1)),
+            Arc::new(Node::from(json!(1))),
             Some(Duration::from_millis(1)),
             &[],
             None,
@@ -643,7 +742,7 @@ mod tests {
                     for i in 0..200 {
                         c.insert(
                             k("r"),
-                            Arc::new(json!(t * 1000 + i)),
+                            Arc::new(Node::from(json!(t * 1000 + i))),
                             None,
                             &["t".into()],
                             None,
@@ -674,7 +773,13 @@ mod tests {
             }));
             let c2 = Arc::clone(&c);
             let ins = std::thread::spawn(move || {
-                c2.insert(k("r"), Arc::new(json!(1)), None, &["t".into()], Some("u"))
+                c2.insert(
+                    k("r"),
+                    Arc::new(Node::from(json!(1))),
+                    None,
+                    &["t".into()],
+                    Some("u"),
+                )
             });
             rx.recv().unwrap();
             if by_key {

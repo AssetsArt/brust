@@ -6,6 +6,7 @@ mod common;
 use std::sync::Arc;
 use std::time::Duration;
 
+use brust_jinja::ctx::Node;
 use brust_server::dispatch::{CallError, CallKind, call_worker};
 use brust_server::pool::WorkerPool;
 use brust_server::protocol::{JobCall, JobsRequest, JobsResponse, LoaderResponse};
@@ -36,14 +37,15 @@ async fn fake_bun_round_trips_loader_and_jobs_through_call_worker() {
     let LoaderResponse::Ok { data, .. } = r else {
         panic!("expected Ok, got {r:?}")
     };
-    assert_eq!(data, json!({"route": "r2"}));
+    assert_eq!(data, Node::from(json!({"route": "r2"})));
 
+    let inputs = Node::from(json!({}));
     let req = JobsRequest {
         jobs: vec![JobCall {
             id: "detailPage_c3/j0".into(),
-            component_id: "detailPage_c3".into(),
+            component_id: "detailPage_c3",
             kind: serde_json::from_value(json!("precompute")).unwrap(),
-            inputs: json!({}),
+            inputs: &inputs,
             target: None,
             row: None,
         }],

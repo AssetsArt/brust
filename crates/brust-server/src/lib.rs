@@ -17,7 +17,9 @@ pub mod server;
 #[doc(hidden)]
 pub mod bench {
     pub use crate::pipeline::plan_stage::{Planned, Planner};
-    pub use crate::pipeline::{cached_body, props_view, render_chain_html};
+    pub use crate::pipeline::{
+        cached_body, next_hint, props_view, render_chain_html, render_chain_into,
+    };
 }
 
 pub use config::{Config, CorsConfig, InvalidateArgs, InvalidateResult, Server, Stats};

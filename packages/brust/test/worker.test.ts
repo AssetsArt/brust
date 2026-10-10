@@ -218,3 +218,56 @@ test('startWorker registers the SharedArrayBuffer it is given (main-thread owned
     rmSync(d, { recursive: true, force: true })
   }
 })
+
+test('writeSlot: multi-byte overflow reports UTF-8 bytes, exact fit succeeds, tiny slot truncates like before', () => {
+  const view = new Uint8Array(new SharedArrayBuffer(128))
+  view.fill(0x41)
+  // 'é' is 2 bytes: 40 chars = 80 bytes > 64 → the exact BYTE count is reported, slot 1 untouched.
+  const n = writeSlot(view, 0, 2, JSON.stringify({ s: 'é'.repeat(40) }))
+  expect(JSON.parse(new TextDecoder().decode(view.subarray(0, n)))).toEqual({ error: `response too large: ${Buffer.byteLength(JSON.stringify({ s: 'é'.repeat(40) }))} > 64` })
+  expect(view[64]).toBe(0x41)
+  // Exactly sub bytes fit (64 = {"s":" + 56 + "}).
+  const fit = JSON.stringify({ s: 'x'.repeat(56) })
+  expect(Buffer.byteLength(fit)).toBe(64)
+  expect(writeSlot(view, 1, 2, fit)).toBe(64)
+  expect(new TextDecoder().decode(view.subarray(64, 128))).toBe(fit)
+  // A slot too small even for the error message: the first `sub` bytes of {"error":"too large"}, as before.
+  const tiny = new Uint8Array(new SharedArrayBuffer(16))
+  const t = writeSlot(tiny, 0, 1, JSON.stringify({ s: 'x'.repeat(100) }))
+  expect(t).toBe(16)
+  expect(new TextDecoder().decode(tiny.subarray(0, t))).toBe('{"error":"too la')
+})
+
+test('writeSlot encodes into a SharedArrayBuffer view with one copy (no detached intermediate)', () => {
+  // encodeInto accepts [AllowShared] Uint8Array: the production view IS over a SAB (run.ts allocates it).
+  const sab = new SharedArrayBuffer(SLOT_BYTES)
+  const view = new Uint8Array(sab)
+  const json = JSON.stringify({ ok: true, data: { name: 'ピカチュウ', n: [1, 2, 3] } })
+  const n = writeSlot(view, 0, 1, json)
+  expect(n).toBe(Buffer.byteLength(json))
+  expect(new TextDecoder().decode(new Uint8Array(sab, 0, n))).toBe(json)
+})
+
+test('loader: the merge never mutates an object a loader returned (shared module constants stay intact)', async () => {
+  const shared = Object.freeze({ a: 1, b: 'parent' })
+  const h = makeHandlers({
+    leaves: leaves({ parent: async () => shared, child: async () => ({ b: 'child', c: 3 }) }),
+    jobs: {},
+  })
+  expect(await h.loader(ctx('r1'))).toEqual({ ok: true, data: { a: 1, b: 'child', c: 3 } })
+  expect(shared).toEqual({ a: 1, b: 'parent' })
+  // Key order is first-seen: a's keys, then new keys — what {...a, ...b} produced.
+  expect(Object.keys((await h.loader(ctx('r1')) as { data: object }).data)).toEqual(['a', 'b', 'c'])
+})
+
+test('loader: an own "__proto__" key in loader data is kept as data, like the spread merge did', async () => {
+  // JSON.parse makes "__proto__" an own data key. `{...a, ...r}` copied it as a key; a [[Set]]-based
+  // merge (Object.assign into a plain object) would invoke the prototype setter and drop it.
+  const h = makeHandlers({
+    leaves: leaves({ parent: async () => JSON.parse('{"__proto__":{"x":1},"a":1}'), child: async () => ({ b: 2 }) }),
+    jobs: {},
+  })
+  const r = (await h.loader(ctx('r1'))) as { data: Record<string, unknown> }
+  expect(JSON.stringify(r)).toBe('{"ok":true,"data":{"__proto__":{"x":1},"a":1,"b":2}}')
+  expect((r.data as { x?: unknown }).x).toBeUndefined()
+})

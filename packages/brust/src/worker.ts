@@ -62,18 +62,21 @@ export interface ManifestLike {
 const enc = new TextEncoder()
 
 /** Writes `json` as UTF-8 at the start of `slot`'s sub-region `[slot*sub, slot*sub+sub)`,
- * `sub = floor(view.byteLength / slots)`; returns the byte length (> 0, ≤ sub). A response that
- * does not fit is replaced by a small `{"error":"response too large: <n> > <sub>"}`, so the
- * neighbouring slot is never touched. */
+ * `sub = floor(view.byteLength / slots)`; returns the byte length (> 0, ≤ sub). ONE copy: the
+ * encoder writes straight into the slot (M3-P P1); it stops at the last whole code point that
+ * fits, so `read < json.length` means "did not fit" and the neighbouring slot is never touched.
+ * A response that does not fit is replaced by a small `{"error":"response too large: <n> > <sub>"}`
+ * (`n` = its exact UTF-8 length, computed only on this path). */
 export function writeSlot(view: Uint8Array, slot: number, slots: number, json: string): number {
   const sub = Math.floor(view.byteLength / Math.max(1, slots))
-  let bytes = enc.encode(json)
-  if (bytes.byteLength > sub) {
-    bytes = enc.encode(JSON.stringify({ error: `response too large: ${bytes.byteLength} > ${sub}` }))
-    if (bytes.byteLength > sub) bytes = enc.encode('{"error":"too large"}').subarray(0, sub)
-  }
-  view.set(bytes, slot * sub)
-  return bytes.byteLength
+  const dst = view.subarray(slot * sub, slot * sub + sub)
+  const r = enc.encodeInto(json, dst)
+  if (r.read === json.length) return r.written
+  const err = JSON.stringify({ error: `response too large: ${Buffer.byteLength(json)} > ${sub}` })
+  const e = enc.encodeInto(err, dst)
+  if (e.read === err.length) return e.written
+  // Not even the message fits: the first `sub` bytes of a fixed one (ASCII, so byte = char).
+  return enc.encodeInto('{"error":"too large"}', dst).written
 }
 
 // ---- literals (S6 amendment: the worker merges an ssr job's `literals` over `call.inputs`) ----
@@ -141,7 +144,12 @@ export function makeHandlers(opts: { leaves: FlatRoute[]; jobs: JobsModule; mani
     async loader(req) {
       const leaf = byId.get(req.routeId)
       if (!leaf) return { error: `unknown routeId ${req.routeId}` }
-      let merged: Record<string, unknown> = {}
+      // One object for the whole chain: each level's keys are assigned INTO it (later keys win,
+      // first-seen key order — what `{...merged, ...r}` produced) instead of re-spreading every
+      // key once per level (M3-P P1). `merged` is fresh per call; a loader's own object is never
+      // written to. Null prototype: with no `__proto__` setter to hit, an own "__proto__" key in a
+      // loader's data is assigned as data, as the spread copied it.
+      const merged: Record<string, unknown> = Object.create(null)
       try {
         for (const node of leaf.chain) {
           if (!node.loader) continue
@@ -153,7 +161,7 @@ export function makeHandlers(opts: { leaves: FlatRoute[]; jobs: JobsModule; mani
             throw e
           }
           if (isVerdict(r)) return verdictJson(r, merged)
-          if (r && typeof r === 'object') merged = { ...merged, ...(r as Record<string, unknown>) }
+          if (r && typeof r === 'object') Object.assign(merged, r)
         }
         return { ok: true, data: merged }
       } catch (e) {
