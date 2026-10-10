@@ -6,6 +6,7 @@
 //! goes through [`brust_jinja::register`] — autoescape None, the template writes
 //! `| e` itself; no second escaper is ever added here.
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use minijinja::Environment;
 use serde_json::Value;
@@ -81,10 +82,35 @@ impl Renderer {
     }
 
     /// S7 step 7 / S8: leaf-first; each result becomes the parent's `__outlet`.
-    /// `ctx` is the merged context; `overlay(id)` returns the keys only that
-    /// component sees (its `_idN`, its own child-instance slots). The overlay
-    /// wins over `ctx`; `ctx` is converted once for the whole chain and shared
-    /// (minijinja `Value`s are `Arc`-backed), never cloned per step.
+    /// `base` is the merged context (converted once per request and shared —
+    /// minijinja `Value`s are `Arc`-backed); `overlay(id)` returns the layers
+    /// only that component sees (its `_idN`, its own child-instance slots and
+    /// job results, `_props`). Each component renders under one [`Scope`]
+    /// object over `base` (M3-P P3): no per-component map is built.
+    pub fn render_chain_overlay(
+        &self,
+        chain: &[String],
+        base: &minijinja::Value,
+        overlay: &dyn Fn(&str) -> Overlay,
+    ) -> Result<String, RenderError> {
+        let mut outlet: Option<String> = None;
+        for id in chain.iter().rev() {
+            let scope = minijinja::Value::from_object(Scope {
+                outlet: outlet.take().map(minijinja::Value::from_safe_string),
+                overlay: overlay(id),
+                base: base.clone(),
+            });
+            let tmpl = self
+                .env
+                .get_template(id)
+                .map_err(|_| RenderError::Unknown(id.clone()))?;
+            outlet = Some(tmpl.render(scope).map_err(|e| render_err(id, &e))?);
+        }
+        Ok(outlet.unwrap_or_default())
+    }
+
+    /// [`Self::render_chain_value`] over a JSON context. Only tests use it;
+    /// the pipeline calls [`Self::render_chain_overlay`].
     pub fn render_chain(
         &self,
         chain: &[String],
@@ -94,35 +120,104 @@ impl Renderer {
         self.render_chain_value(chain, &brust_jinja::value_of(ctx), overlay)
     }
 
-    /// [`Self::render_chain`] over an already-converted base context, so a
-    /// caller that also needs the `minijinja::Value` (to build overlays from
-    /// it) converts the merged context once per request.
+    /// [`Self::render_chain_overlay`] with only ad-hoc `(key, value)` pairs per
+    /// component (a later pair wins over an earlier one). Only tests use it.
     pub fn render_chain_value(
         &self,
         chain: &[String],
         base: &minijinja::Value,
         overlay: &dyn Fn(&str) -> Vec<(String, minijinja::Value)>,
     ) -> Result<String, RenderError> {
-        let mut outlet: Option<String> = None;
-        for id in chain.iter().rev() {
-            let mut overlay = overlay(id);
-            if let Some(o) = outlet.take() {
-                overlay.push(("__outlet".into(), minijinja::Value::from_safe_string(o)));
-            }
-            // `context!{ ..a, ..b }` builds a MergeDict: the first spread wins
-            // per key, a key missing from both is undefined (Chainable).
-            let scope = if overlay.is_empty() {
-                base.clone()
-            } else {
-                minijinja::context! { ..minijinja::Value::from_pairs(overlay), ..base.clone() }
-            };
-            let tmpl = self
-                .env
-                .get_template(id)
-                .map_err(|_| RenderError::Unknown(id.clone()))?;
-            outlet = Some(tmpl.render(scope).map_err(|e| render_err(id, &e))?);
+        self.render_chain_overlay(chain, base, &|id| Overlay {
+            pairs: overlay(id),
+            ..Default::default()
+        })
+    }
+}
+
+/// What one chain component sees over the base context.
+#[derive(Debug, Default)]
+pub struct Overlay {
+    /// Looked up after `maps`, last pair first (`_idN` useId slots; a test's ad-hoc pairs).
+    pub pairs: Vec<(String, minijinja::Value)>,
+    /// Map-valued layers (`ctx["__children"][id]`, `ctx["__own"][id]`), looked up LAST ONE FIRST.
+    pub maps: Vec<minijinja::Value>,
+    /// `_props` — beats everything but `__outlet`.
+    pub props: Option<minijinja::Value>,
+}
+
+/// One chain component's scope: the overlay layers over the base context,
+/// as ONE object (M3-P P3) — no `from_pairs` map and no `MergeDict` per
+/// component. Lookup order is what `context!{ ..from_pairs(overlay), ..base }`
+/// gave (a later pair overwrote an earlier one): `__outlet`, `_props`, the maps
+/// last-first (own, children), the pairs last-first (ids), the base. An
+/// undefined hit falls through, as `MergeDict` skips it. Root lookups reach
+/// `get_value_by_str` directly (no key `Value`).
+#[derive(Debug)]
+struct Scope {
+    outlet: Option<minijinja::Value>,
+    overlay: Overlay,
+    base: minijinja::Value,
+}
+
+fn defined(v: Result<minijinja::Value, minijinja::Error>) -> Option<minijinja::Value> {
+    v.ok().filter(|v| !v.is_undefined())
+}
+
+impl minijinja::value::Object for Scope {
+    fn get_value(self: &Arc<Self>, key: &minijinja::Value) -> Option<minijinja::Value> {
+        self.get_value_by_str(key.as_str()?)
+    }
+
+    fn get_value_by_str(self: &Arc<Self>, key: &str) -> Option<minijinja::Value> {
+        if key == "__outlet"
+            && let Some(o) = &self.outlet
+        {
+            return Some(o.clone());
         }
-        Ok(outlet.unwrap_or_default())
+        if key == "_props"
+            && let Some(p) = &self.overlay.props
+        {
+            return Some(p.clone());
+        }
+        for m in self.overlay.maps.iter().rev() {
+            if let Some(v) = defined(m.get_attr(key)) {
+                return Some(v);
+            }
+        }
+        // The pairs were one map before P3: the last pair for `key` is the
+        // entry; an undefined entry falls through to the base, as before.
+        if let Some((_, v)) = self.overlay.pairs.iter().rev().find(|(k, _)| k == key)
+            && !v.is_undefined()
+        {
+            return Some(v.clone());
+        }
+        defined(self.base.get_attr(key))
+    }
+
+    fn enumerate(self: &Arc<Self>) -> minijinja::value::Enumerator {
+        // The union of the layers' keys, sorted (MergeDict: map-kind layers only).
+        let mut keys = std::collections::BTreeSet::new();
+        for m in self.overlay.maps.iter().chain(std::iter::once(&self.base)) {
+            if m.kind() == minijinja::value::ValueKind::Map
+                && let Ok(it) = m.try_iter()
+            {
+                keys.extend(it);
+            }
+        }
+        keys.extend(
+            self.overlay
+                .pairs
+                .iter()
+                .map(|(k, _)| minijinja::Value::from(k.as_str())),
+        );
+        if self.overlay.props.is_some() {
+            keys.insert(minijinja::Value::from("_props"));
+        }
+        if self.outlet.is_some() {
+            keys.insert(minijinja::Value::from("__outlet"));
+        }
+        minijinja::value::Enumerator::Iter(Box::new(keys.into_iter()))
     }
 }
 
@@ -307,5 +402,101 @@ mod tests {
             .unwrap();
         assert_eq!(out, "<base:<n>:False>");
         assert_eq!(r.render_chain(&[], &ctx, &|_| Vec::new()).unwrap(), "");
+    }
+
+    /// The Scope answers exactly what `context!{ ..from_pairs(overlay), ..base }` answered:
+    /// __outlet > _props > own > children > ids > base, undefined skipped, union enumerated.
+    #[test]
+    fn scope_lookup_order_matches_the_merge_dict() {
+        let r = Renderer::from_templates(&templates(&[(
+            "T",
+            "{{ __outlet | safe }}|{{ _props.x }}|{{ k }}|{{ _id0 }}|{{ only_base }}|{{ gone is defined }}|{% for n in self %}{{ n }},{% endfor %}",
+        )]))
+        .unwrap();
+        let base = minijinja::context! { k => "base", _id0 => "base-id", only_base => "ob", _props => "base-props", x => 1 };
+        let children = minijinja::context! { k => "children", gone => minijinja::Value::UNDEFINED };
+        let own = minijinja::context! { k => "own" };
+        let overlay = Overlay {
+            pairs: vec![
+                ("_id0".into(), minijinja::Value::from("id")),
+                ("k".into(), minijinja::Value::from("ids")),
+            ],
+            maps: vec![children.clone(), own.clone()],
+            props: Some(minijinja::context! { x => 2 }),
+        };
+        let got = r
+            .render_chain_overlay(&["T".into()], &base, &|_| Overlay {
+                pairs: overlay.pairs.clone(),
+                maps: overlay.maps.clone(),
+                props: overlay.props.clone(),
+            })
+            .unwrap();
+        // Reference: the former shape, built the way render_chain_value built it.
+        let mut pairs = overlay.pairs.clone();
+        for m in [&children, &own] {
+            for k in m.try_iter().unwrap() {
+                pairs.push((k.to_string(), m.get_item(&k).unwrap()));
+            }
+        }
+        pairs.push(("_props".into(), overlay.props.clone().unwrap()));
+        let pairs_ref = pairs.clone();
+        let want = minijinja::context! { ..minijinja::Value::from_pairs(pairs), ..base.clone() };
+        let want = r.env.get_template("T").unwrap().render(want).unwrap();
+        assert_eq!(got, want);
+        // minijinja paints a bare bool as `False`; `self` is not the root scope
+        // in minijinja 3.0 (the loop paints nothing), so enumeration is pinned
+        // below through `try_iter` on the scope object itself.
+        assert_eq!(got, "|2|own|id|ob|False|");
+        let scope = minijinja::Value::from_object(Scope {
+            outlet: Some(minijinja::Value::from_safe_string("o".into())),
+            overlay: Overlay {
+                pairs: overlay.pairs.clone(),
+                maps: overlay.maps.clone(),
+                props: overlay.props.clone(),
+            },
+            base: base.clone(),
+        });
+        let mut pairs = pairs_ref.clone();
+        pairs.push((
+            "__outlet".into(),
+            minijinja::Value::from_safe_string("o".into()),
+        ));
+        let merged = minijinja::context! { ..minijinja::Value::from_pairs(pairs), ..base.clone() };
+        let keys = |v: &minijinja::Value| {
+            v.try_iter()
+                .unwrap()
+                .map(|k| k.to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(keys(&scope), keys(&merged));
+        assert_eq!(
+            keys(&scope),
+            ["__outlet", "_id0", "_props", "gone", "k", "only_base", "x"]
+        );
+    }
+
+    /// A scope sees the context as it was when the scope was built: a later
+    /// make_mut write to the Node tree copies, it does not reach the view.
+    #[test]
+    fn scope_sees_the_context_as_rendered_not_as_later_mutated() {
+        use brust_jinja::ctx::Node;
+        let r = Renderer::from_templates(&templates(&[("T", "{{ a.b }}")])).unwrap();
+        let mut ctx: Node = serde_json::from_str(r#"{"a":{"b":1}}"#).unwrap();
+        let base = ctx.to_value();
+        ctx.get_mut_path(&["a"])
+            .unwrap()
+            .map_mut()
+            .unwrap()
+            .insert("b".into(), Node::Num(2.into()));
+        assert_eq!(
+            r.render_chain_overlay(&["T".into()], &base, &|_| Overlay::default())
+                .unwrap(),
+            "1"
+        );
+        assert_eq!(
+            r.render_chain_overlay(&["T".into()], &ctx.to_value(), &|_| Overlay::default())
+                .unwrap(),
+            "2"
+        );
     }
 }

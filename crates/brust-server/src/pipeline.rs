@@ -26,7 +26,7 @@ use crate::manifest::{ALL_PROPS, Instances, JobKind, JobRecord, Manifest, RouteR
 use crate::protocol::{
     JobCall, JobResult, JobsRequest, JobsResponse, LoaderRequest, LoaderResponse, Verdict,
 };
-use crate::render::{RenderError, Renderer, inject_assets, use_ids};
+use crate::render::{Overlay, RenderError, Renderer, inject_assets, use_ids};
 use crate::routing::{MatchResult, RouteEnvelope};
 use crate::server::body::{self, ResponseBody, empty_body};
 use crate::server::header_str;
@@ -658,23 +658,26 @@ pub fn render_chain_html(
     // path, loader data — without the server's per-component maps. A view over
     // the tree (no copy), shared by every chain component.
     let props = props_view(ctx);
+    // Per component: Arc views of its child-slot and own-job maps (no copy),
+    // looked up own first, then children, then its `_idN`, then the base.
     let overlay = |id: &str| {
         let slots = manifest.components.get(id).map_or(0, |c| c.use_id_slots);
-        let mut out: Vec<(String, minijinja::Value)> = use_ids(route_id, id, slots)
-            .into_iter()
-            .map(|(k, v)| (k, minijinja::Value::from(v)))
-            .collect();
-        for map in [children, own_all] {
-            if let Some(Node::Map(own)) = map.and_then(|c| c.get(id)) {
-                for (k, v) in &own.0 {
-                    out.push((k.to_string(), v.to_value()));
-                }
+        let mut maps = Vec::with_capacity(2);
+        for all in [children, own_all] {
+            if let Some(m @ Node::Map(_)) = all.and_then(|c| c.get(id)) {
+                maps.push(m.to_value());
             }
         }
-        out.push((PROPS_KEY.into(), props.clone()));
-        out
+        Overlay {
+            pairs: use_ids(route_id, id, slots)
+                .into_iter()
+                .map(|(k, v)| (k, minijinja::Value::from(v)))
+                .collect(),
+            maps,
+            props: Some(props.clone()),
+        }
     };
-    renderer.render_chain_value(chain, &base, &overlay)
+    renderer.render_chain_overlay(chain, &base, &overlay)
 }
 
 /// `_props`: the merged context minus the server's per-component maps
