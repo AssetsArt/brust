@@ -563,7 +563,19 @@ impl<'a, 'c> Printer<'a, 'c> {
                 .into_iter()
                 .map(|(root, node)| {
                     let base = value_of(&root);
-                    format!("{}: {}", jinja_string(&root), node.jinja(&base))
+                    // F71: a root the client reads only as a list source seeds the row fields it reads.
+                    let value = match (&node, ir.client_prop_projections.get(&root)) {
+                        (SeedNode::Whole, Some(paths)) => format!(
+                            "(({base}) | project({}))",
+                            paths
+                                .iter()
+                                .map(|p| jinja_string(p))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ),
+                        _ => node.jinja(&base),
+                    };
+                    format!("{}: {value}", jinja_string(&root))
                 })
                 .collect()
         };
