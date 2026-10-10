@@ -75,7 +75,7 @@ test('brust build writes the S6 manifest (pinned) and every file it names', asyn
   for (const f of readdirSync(join(dist, 'client'))) expect(f).toMatch(/^[A-Za-z0-9_][A-Za-z0-9_.-]*-[0-9a-f]{10}\.js$/) // pipeline.rs safe_rel + is_hashed
   expect(existsSync(join(dist, '.stage'))).toBe(false)
   // Client chunks import the runtime by the URL the manifest names; the runtime mounts the document.
-  expect(readFileSync(join(dist, item.client), 'utf8')).toContain(`"/_brust/${m.assets.runtime}"`)
+  expect(readFileSync(join(dist, m.components[m.routes[0].chain[0]].client), 'utf8')).toContain(`"/_brust/${m.assets.runtime}"`)
   expect(readFileSync(join(dist, m.assets.runtime), 'utf8')).toContain('document.documentElement')
   const jobs = (await import(join(dist, 'jobs.js'))).default
   expect(jobs[item.children[0].id].precompute({ item: { price: 2.25 }, unit: '€' })).toEqual({ _s1: '2.3€' })
@@ -101,7 +101,7 @@ test('the generated dist passes Manifest::load and renders through the real hand
   expect(html).toContain('<h1 id="brust-r2-itemPage_b7278c7c-1"')
   expect(html).toContain('<p class="total">12.5€</p>') // page precompute j0 → _s1
   // Per-row child precompute: each row painted with ITS value (Review Focus 1).
-  expect(html.match(/<li x-data="priceRow_042dcbca"[^>]*>([^<]*)<\/li>/g)?.map((s) => s.replace(/<[^>]+>/g, ''))).toEqual(['1.0€', '2.3€'])
+  expect(html.match(/<li>([^<]*)<\/li>/g)?.map((s) => s.replace(/<[^>]+>/g, ''))).toEqual(['1.0€', '2.3€'])
   // React child ssr job on the parent (D6 outputs/target/props).
   expect(html).toContain('<brust-island data-id="team_db295766"')
   expect(html).toMatch(/<span>ann<\/span><span>bob<\/span>/)
@@ -109,7 +109,7 @@ test('the generated dist passes Manifest::load and renders through the real hand
   expect(html).toContain('<h3>crew</h3>')
   expect(html).toContain('/_brust/client/runtime-')
   expect(html).toContain('/_brust/client/react-team_db295766-')
-  const chunk = /\/_brust\/(client\/itemPage_[^"]+\.js)/.exec(html)![1]!
+  const chunk = /\/_brust\/(client\/react-team_[^"]+\.js)/.exec(html)![1]! // ItemPage is static (F70): the island's chunk is the page's one client file
   const js = await fetch(`${base}/_brust/${chunk}`)
   expect(js.status).toBe(200)
   expect(js.headers.get('cache-control')).toContain('immutable')

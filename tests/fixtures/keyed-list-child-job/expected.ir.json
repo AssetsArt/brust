@@ -1,7 +1,7 @@
 {
   "id": "input_7833a2e1",
   "source": "tests/fixtures/keyed-list-child-job/input.tsx",
-  "tier": "Native",
+  "tier": "Static",
   "props": [
     {
       "name": "props",
@@ -95,7 +95,7 @@
                     ]
                   ],
                   "children": [],
-                  "link": 1,
+                  "link": null,
                   "tier": "Static"
                 }
               }
@@ -108,46 +108,7 @@
     }
   },
   "jobs": [],
-  "child_links": [
-    {
-      "id": 1,
-      "child": "priceRow_845bcd56",
-      "props_member": "_p1",
-      "item_scoped": [
-        "it"
-      ],
-      "props": [
-        [
-          "item",
-          {
-            "Server": {
-              "loc": 221,
-              "kind": {
-                "Ident": {
-                  "name": "it",
-                  "kind": "LoopBinding"
-                }
-              }
-            }
-          }
-        ],
-        [
-          "unit",
-          {
-            "Server": {
-              "loc": 231,
-              "kind": {
-                "Ident": {
-                  "name": "unit",
-                  "kind": "Prop"
-                }
-              }
-            }
-          }
-        ]
-      ]
-    }
-  ],
+  "child_links": [],
   "instances": [
     {
       "child_id": "priceRow_845bcd56",
@@ -161,10 +122,7 @@
       }
     }
   ],
-  "client_props": [
-    "items",
-    "unit"
-  ],
+  "client_props": [],
   "client_imports": [],
   "client_module_locals": [],
   "needs_worker": false,

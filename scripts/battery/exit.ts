@@ -19,11 +19,11 @@ export const DECLARED_GAPS: { id: string; what: string; owner: string }[] = [
 /** Gaps the battery itself found: none open (F37, F39, F40 closed by `m2a-compiler`; F38 by `m1-hotfix-dynamic-import`). */
 export const BATTERY_GAPS: { id: string; what: string }[] = []
 
-export const BROWSER_CASES = ['theme-toggle', 'product-card', 'parent-counter', 'keyed-list', 'keyed-list-child', 'controlled-input', 'nested-list', 'truthiness', 'table-rows', 'guarded-slot']
+export const BROWSER_CASES = ['theme-toggle', 'product-card', 'parent-counter', 'keyed-list', 'keyed-list-child', 'controlled-input', 'nested-list', 'truthiness', 'table-rows', 'guarded-slot', 'reactive-list-rows', 'linked-list-child-rows', 'linked-card-tags']
 
 /** Rust-side pins of `crates/brust-compiler/tests/dual_eval.rs`; keep in sync with dual_eval.rs. */
 export const DUAL_EVAL_NO_SAMPLES = ['arrow-default', 'client-only', 'fragment-root', 'import-cycle', 'jsx-shapes', 'lazy-import', 'missing-key', 'react-child', 'react-hook', 'server-leak']
-export const DUAL_EVAL_NO_DIRECTIVES = ['static-text', 'cached-card', 'outlet-layout']
+export const DUAL_EVAL_NO_DIRECTIVES = ['static-text', 'cached-card', 'outlet-layout', 'keyed-list-child-job', 'static-list-child']
 
 export function renderExitReport(results: Result[]): string {
   const n = (f: (r: Result) => boolean) => results.filter(f).length

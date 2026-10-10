@@ -1,0 +1,267 @@
+{
+  "id": "input_ba5f4ec9",
+  "source": "tests/fixtures/reactive-list-rows/input.tsx",
+  "tier": "Native",
+  "props": [
+    {
+      "name": "props",
+      "local": "props",
+      "ts_type": null,
+      "default": null
+    }
+  ],
+  "state": [
+    {
+      "name": "picked",
+      "setter": "setPicked",
+      "init": {
+        "Server": {
+          "loc": 407,
+          "kind": {
+            "Lit": "Null"
+          }
+        }
+      }
+    }
+  ],
+  "derived": [],
+  "effects": [],
+  "handlers": [
+    {
+      "name": "_h1",
+      "body": {
+        "loc": 536,
+        "kind": {
+          "Arrow": {
+            "params": [],
+            "body": {
+              "Expr": {
+                "loc": 542,
+                "kind": {
+                  "Call": {
+                    "callee": {
+                      "loc": 542,
+                      "kind": {
+                        "Ident": {
+                          "name": "setPicked",
+                          "kind": "Setter"
+                        }
+                      }
+                    },
+                    "args": [
+                      {
+                        "loc": 552,
+                        "kind": {
+                          "Member": {
+                            "target": {
+                              "loc": 552,
+                              "kind": {
+                                "Ident": {
+                                  "name": "r",
+                                  "kind": "LoopBinding"
+                                }
+                              }
+                            },
+                            "name": "id",
+                            "optional": false
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "captures": [
+              [
+                "setPicked",
+                "Setter"
+              ],
+              [
+                "r",
+                "LoopBinding"
+              ]
+            ]
+          }
+        }
+      },
+      "item_scoped": [
+        "r"
+      ]
+    }
+  ],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 428,
+      "tag": "ul",
+      "attrs": [],
+      "children": [
+        {
+          "For": {
+            "source": {
+              "Server": {
+                "loc": 440,
+                "kind": {
+                  "Ident": {
+                    "name": "rows",
+                    "kind": "Prop"
+                  }
+                }
+              }
+            },
+            "item": "r",
+            "index": null,
+            "key": {
+              "Server": {
+                "loc": 481,
+                "kind": {
+                  "Member": {
+                    "target": {
+                      "loc": 481,
+                      "kind": {
+                        "Ident": {
+                          "name": "r",
+                          "kind": "LoopBinding"
+                        }
+                      }
+                    },
+                    "name": "id",
+                    "optional": false
+                  }
+                }
+              }
+            },
+            "body": [
+              {
+                "Element": {
+                  "loc": 472,
+                  "tag": "li",
+                  "attrs": [
+                    {
+                      "Dynamic": {
+                        "name": "className",
+                        "value": {
+                          "Server": {
+                            "loc": 498,
+                            "kind": {
+                              "Cond": {
+                                "test": {
+                                  "loc": 498,
+                                  "kind": {
+                                    "Binary": {
+                                      "op": "StrictEq",
+                                      "left": {
+                                        "loc": 498,
+                                        "kind": {
+                                          "Member": {
+                                            "target": {
+                                              "loc": 498,
+                                              "kind": {
+                                                "Ident": {
+                                                  "name": "r",
+                                                  "kind": "LoopBinding"
+                                                }
+                                              }
+                                            },
+                                            "name": "id",
+                                            "optional": false
+                                          }
+                                        }
+                                      },
+                                      "right": {
+                                        "loc": 507,
+                                        "kind": {
+                                          "Ident": {
+                                            "name": "picked",
+                                            "kind": "State"
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                },
+                                "yes": {
+                                  "loc": 516,
+                                  "kind": {
+                                    "Lit": {
+                                      "Str": "on"
+                                    }
+                                  }
+                                },
+                                "no": {
+                                  "loc": 523,
+                                  "kind": {
+                                    "Lit": {
+                                      "Str": ""
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "Event": {
+                        "event": "click",
+                        "handler": "_h1"
+                      }
+                    }
+                  ],
+                  "children": [
+                    {
+                      "Slot": {
+                        "Server": {
+                          "loc": 560,
+                          "kind": {
+                            "Member": {
+                              "target": {
+                                "loc": 560,
+                                "kind": {
+                                  "Ident": {
+                                    "name": "r",
+                                    "kind": "LoopBinding"
+                                  }
+                                }
+                              },
+                              "name": "name",
+                              "optional": false
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ],
+                  "host": false,
+                  "ref_name": null
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [],
+  "child_links": [],
+  "client_props": [
+    "rows"
+  ],
+  "client_prop_projections": {
+    "rows": [
+      "id",
+      "name"
+    ]
+  },
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": false,
+  "cache": null,
+  "children": [],
+  "diagnostics": []
+}

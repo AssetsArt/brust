@@ -510,3 +510,52 @@ fn react_child_in_nested_lists_is_a_nested_instance_error() {
     let jinja = lowered_jinja("react-child-row");
     assert!(jinja.contains("_ssr_reviews_"), "{jinja}");
 }
+
+/// F71: the list host seeds only the row fields the client reads; the key field is always one of them.
+#[test]
+fn projected_x_props_drops_unread_row_fields_and_keeps_the_key() {
+    let jinja = lowered_jinja("reactive-list-rows");
+    assert!(jinja.contains("project(\"id\", \"name\")"), "{jinja}");
+    let html = render(
+        &jinja,
+        serde_json::json!({ "rows": [{ "id": "a", "name": "Ada", "secret": "s3cr3t" }] }),
+    );
+    let props = html
+        .split("x-props='")
+        .nth(1)
+        .unwrap()
+        .split('\'')
+        .next()
+        .unwrap()
+        .replace("&quot;", "\"");
+    assert_eq!(props, r#"{"rows":[{"id":"a","name":"Ada"}]}"#, "{html}");
+    assert!(!html.contains("s3cr3t"), "{html}");
+}
+
+/// F71 fallback: a row read through a helper keeps the full list in x-props.
+#[test]
+fn helper_read_keeps_the_full_row() {
+    let jinja = lowered_jinja("reactive-list-child");
+    assert!(
+        jinja.contains("x-props='{{ {\"rows\": rows} | json_attr }}'"),
+        "{jinja}"
+    );
+    assert!(!jinja.contains("project("), "{jinja}");
+}
+
+/// F70 + F71 together: the bench D page is plain HTML with no seed at all.
+#[test]
+fn static_list_page_has_no_directives_and_no_seed() {
+    let jinja = lowered_jinja("static-list-child");
+    assert!(!jinja.contains("x-"), "{jinja}");
+    let sample = repo().join("tests/fixtures/static-list-child/sample-props.json");
+    let html = render(
+        &jinja,
+        serde_json::from_str(&std::fs::read_to_string(sample).unwrap()).unwrap(),
+    );
+    assert!(
+        html.contains("<span data-type=\"grass\" style=\"background:#63bb5b\">Grass</span>"),
+        "{html}"
+    );
+    assert!(!html.contains("bulbasaur"), "unread field leaked: {html}");
+}

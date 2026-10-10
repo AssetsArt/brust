@@ -86,7 +86,7 @@ test('per-row child values painted per row: bulbasaur = grass then poison (F34 _
 test('/pokemon/nothing: loader notFound renders the route template at 404, never cached', async () => {
   const { r, html } = await get('/pokemon/nothing')
   expect(r.status).toBe(404)
-  expect(html).toMatch(/No Pokémon named “<span[^>]*>Nothing<\/span>”/)
+  expect(html).toMatch(/No Pokémon named “Nothing”/) // F70: DetailPage is static, no x-text wrapper
   expect(html).toMatch(/<title[^>]*>Nothing · PokéDex<\/title>/)
   const again = await get('/pokemon/nothing')
   expect(again.r.status).toBe(404); expect(again.r.headers.get('x-brust-cache')).toBe('MISS')

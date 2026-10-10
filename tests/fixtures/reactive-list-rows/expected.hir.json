@@ -1,0 +1,49 @@
+{
+  "function": "Picker",
+  "params": 1,
+  "scopes": [
+    {
+      "id": 3,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "picked",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t1"
+      ]
+    },
+    {
+      "id": 4,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "picked",
+          "reactive": true
+        },
+        {
+          "name": "props",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t0"
+      ]
+    },
+    {
+      "id": 5,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "t0",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t1"
+      ]
+    }
+  ]
+}

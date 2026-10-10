@@ -1,0 +1,67 @@
+{
+  "function": "Dex",
+  "params": 1,
+  "scopes": [
+    {
+      "id": 5,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "props",
+          "reactive": true
+        },
+        {
+          "name": "n",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t0",
+        "t1"
+      ]
+    },
+    {
+      "id": 6,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "n",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t1"
+      ]
+    },
+    {
+      "id": 9,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "t0",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t2"
+      ]
+    },
+    {
+      "id": 10,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "t1",
+          "reactive": true
+        },
+        {
+          "name": "t2",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t3"
+      ]
+    }
+  ]
+}

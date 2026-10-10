@@ -72,7 +72,7 @@ pub fn captures(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
             loc: h.body.loc,
             deps: cx.deps(&h.body, &h.item_scoped),
             what: "a handler",
-            raw: None,
+            raw: Some((h.body.clone(), h.item_scoped.clone())),
         });
     }
     for e in &ir.effects {
@@ -145,7 +145,7 @@ pub fn captures(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
             loc: i.raw.loc,
             deps: cx.deps(&i.raw, &i.scope),
             what: "a state-dependent value",
-            raw: None,
+            raw: Some((i.raw.clone(), i.scope.clone())),
         });
     }
     uses.extend(st.client_uses.iter().cloned().map(|mut u| {
@@ -155,6 +155,7 @@ pub fn captures(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
         u
     }));
 
+    st.all_uses = uses.clone();
     let mut props = BTreeSet::new();
     let mut imports = BTreeSet::new();
     for u in &uses {
