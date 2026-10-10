@@ -17,7 +17,7 @@ use parking_lot::RwLock;
 
 use brust_server::{Config, InvalidateArgs, Server, Tuning, start};
 
-use crate::dispatch::{BufPtr, TsfnDispatch, WorkerTsfn};
+use crate::dispatch::{BufPtr, KindArg, TsfnDispatch, WorkerTsfn};
 
 static SERVER: RwLock<Option<Arc<Server>>> = RwLock::new(None);
 /// Workers the current server waits for (`StartOptions.workers`).
@@ -124,7 +124,11 @@ pub fn register_worker(
         let sl = buf.as_mut();
         (BufPtr(sl.as_mut_ptr()), sl.len())
     };
-    let tsfn: WorkerTsfn = f.build_threadsafe_function().build()?;
+    // The JS-facing declaration keeps `kind: string`; the tsfn's data type is
+    // the allocation-free `KindArg` (see `dispatch::KindArg`).
+    let tsfn: WorkerTsfn = f
+        .build_threadsafe_function::<FnArgs<(KindArg, String, u32)>>()
+        .build_callback(|ctx| Ok(ctx.value))?;
     let id = s.register_worker(Box::new(TsfnDispatch {
         tsfn: Arc::new(tsfn),
         buf_ptr,
