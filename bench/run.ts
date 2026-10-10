@@ -1,98 +1,138 @@
-// bench/run.ts — three probes on v2 examples/pokedex and on the 0.1.x example/pokedex (BRUST_01X_DIR). Manual.
-//   bun run bench                                   # v2 only → bar: not measured
-//   BRUST_01X_DIR=/Users/detoro/code/brust bun run bench
-// Requires: oha on PATH; a RELEASE addon in packages/brust/native (cd packages/brust && bun run build); for the
-// 0.1.x side: its release addon (cd $BRUST_01X_DIR/runtime && bun run build) and its pokedex built
-// (bun run runtime/cli/index.ts build example/pokedex/index.ts). The 0.1.x loaders hit PokeAPI on the first
-// request per name: the warm-up GETs every name once on BOTH apps before measuring (network needed for 0.1.x only).
-import { existsSync, readdirSync, writeFileSync } from 'node:fs'
-import { cpus, loadavg } from 'node:os'
-import { join, resolve } from 'node:path'
-import snap from '../examples/pokedex/data/pokedex.json'
+// bench/run.ts — M3 bench suite (spec §1). Manual, load-guarded, never in CI.
+//   BRUST_RELEASE_ADDON=1 bun run bench                                      # brust, bun-serve, next (01x skipped)
+//   BRUST_RELEASE_ADDON=1 BRUST_01X_DIR=/path/to/0.1.x bun run bench         # + 0.1.x → F68 line measured
+//   bun bench/run.ts --apps brust,next --probes D --dur 3s --enc identity --seed 7
+// Flow: guards → build every app → parity (abort on mismatch) → shuffled (app, probe) loop, server restarted per
+// pair, 1 s settle + discarded warm-up, identity then gzip → RESULTS.json + RESULTS.md. Exit 0 ok, 1 failure, 2 busy.
+import { cpus, hostname, loadavg } from 'node:os'
+import { join } from 'node:path'
+import { parseArgs } from 'node:util'
+import { type AppId, type AppSpec, killAllOnExit, startApp } from './lib/app'
+import { APP_ORDER, APPS, ROOT } from './lib/apps'
+import { evaluateGuards, probeHost } from './lib/guard'
+import { acquireHostLock } from './lib/lock'
+import { type Encoding, runOha, validateRun } from './lib/oha'
+import { checkBalance } from './lib/balance'
+import { checkParity } from './lib/parity'
+import { probe as probeOf, PROBES, type ProbeId } from './lib/probes'
+import { mulberry32, shuffle } from './lib/random'
+import { type Measurement, type Results, renderVerdict, computeVerdict, writeResults } from './lib/report'
 
-const ROOT = resolve(import.meta.dir, '..')
-const CONN = Number.parseInt(process.env.BENCH_CONN ?? '120', 10)
-const DUR = process.env.BENCH_DUR ?? '10s'
-const WARMUP = process.env.BENCH_WARMUP ?? '3s'
-const NAMES = snap.pokemon.map((p) => p.name)
-type Nums = { rps: number; p50: number; p95: number; p99: number; total: number }
-type Probe = { id: string; path: string; regex?: (base: string, nocache: boolean) => string }
-const PROBES: Probe[] = [
-  { id: 'A-static-hit', path: '/type-chart' },
-  { id: 'B-native-miss', path: '/pokemon/{name}', regex: (base, nocache) => `${base}/pokemon/(${NAMES.join('|')})${nocache ? '\\?nocache=1' : ''}` },
-  { id: 'C-react-child', path: '/' },
-]
+const { values: f } = parseArgs({
+  args: process.argv.slice(2),
+  options: {
+    apps: { type: 'string', default: APP_ORDER.join(',') }, probes: { type: 'string', default: 'S,D,I' },
+    conn: { type: 'string', default: '120' }, dur: { type: 'string', default: '10s' }, warmup: { type: 'string', default: '3s' },
+    settle: { type: 'string', default: '1000' }, enc: { type: 'string', default: 'both' }, seed: { type: 'string' },
+    out: { type: 'string', default: 'bench' }, workers: { type: 'string' }, timeout: { type: 'string', default: '60000' },
+  },
+})
+const say = (s: string) => console.log(`[bench] ${s}`)
+const die = (code: 1 | 2, s: string): never => { console.error(`[bench] ${s}`); process.exit(code) }
 
-function need(cond: boolean, msg: string): void { if (!cond) { console.error(`[bench] ${msg}`); process.exit(1) } }
-// A busy host makes both sides lie: refuse (exit 2) when the 1-min load average exceeds the core count.
-const LOAD = loadavg().map((l) => Math.round(l * 100) / 100); const CORES = cpus().length
-if (LOAD[0]! > CORES) { console.error(`[bench] host busy: load average ${LOAD.join(' ')} > ${CORES} cores — refusing to measure`); process.exit(2) }
-console.log(`[bench] load average ${LOAD.join(' ')} (${CORES} cores)`)
-need(Bun.spawnSync(['oha', '--version']).exitCode === 0, 'oha not on PATH (cargo install oha)')
-const native = join(ROOT, 'packages/brust/native')
-need(existsSync(native) && readdirSync(native).some((f) => f.endsWith('.node')), 'no addon: cd packages/brust && bun run build (RELEASE)')
-need(process.env.BRUST_RELEASE_ADDON === '1', 'set BRUST_RELEASE_ADDON=1 to assert you built with `bun run build`, not build:debug (the bench cannot tell)')
+const appIds = f.apps!.split(',').map((s) => s.trim()).filter(Boolean) as AppId[]
+for (const a of appIds) if (!(a in APPS)) die(1, `unknown app ${a} (choose from ${APP_ORDER.join(', ')})`)
+const probeIds = f.probes!.split(',').map((s) => s.trim()).filter(Boolean) as ProbeId[]
+for (const p of probeIds) probeOf(p)
+const encs: Encoding[] = f.enc === 'both' ? ['identity', 'gzip'] : f.enc === 'identity' || f.enc === 'gzip' ? [f.enc] : die(1, `--enc must be identity|gzip|both`)
+const conn = Number.parseInt(f.conn!, 10)
+const settleMs = Number.parseInt(f.settle!, 10)
+const timeoutMs = Number.parseInt(f.timeout!, 10)
+const seed = f.seed !== undefined ? Number.parseInt(f.seed, 10) : Date.now() % 1_000_000_000
+if (!Number.isInteger(seed) || !Number.isInteger(conn) || conn < 1 || !Number.isInteger(settleMs) || !Number.isInteger(timeoutMs)) die(1, `--seed/--conn/--settle/--timeout must be integers (got seed ${f.seed}, conn ${f.conn})`)
+if (f.workers) process.env.BENCH_WORKERS = f.workers
+const cores = cpus().length
+const workersN = Number.parseInt(process.env.BENCH_WORKERS ?? String(cores), 10)
 
-// Servers started so far: killed on any exit, so a failed 0.1.x start never orphans the v2 server on :38201.
-const CHILDREN: ReturnType<typeof Bun.spawn>[] = []
-process.on('exit', () => { for (const c of CHILDREN) c.kill('SIGINT') })
-async function waitFor(proc: ReturnType<typeof Bun.spawn>, re: RegExp): Promise<string> {
-  const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader(); const dec = new TextDecoder(); let out = ''
-  for (;;) { const { done, value } = await reader.read(); if (done) throw new Error(`exited:\n${out}`); out += dec.decode(value, { stream: true }); const m = re.exec(out); if (m) { void (async () => { for (;;) { const r = await reader.read(); if (r.done) return } })(); return m[1]! } }
+// 1. Guards (spec §1.3): busy host → 2; missing tool/declaration → 1. No flag skips them.
+const skipped: { app: AppId; reason: string }[] = []
+const apps: AppSpec[] = []
+for (const id of appIds) {
+  const av = APPS[id].available()
+  if (av.ok) apps.push(APPS[id])
+  else { skipped.push({ app: id, reason: av.reason }); say(`${id}: skipped (${av.reason})`) }
 }
-async function startV2(): Promise<{ base: string; stop: () => void }> {
-  const app = join(ROOT, 'examples/pokedex'); const bin = join(ROOT, 'packages/brust/bin/brust')
-  need(Bun.spawnSync([bin, 'build', 'routes.tsx'], { cwd: app }).exitCode === 0, 'v2 build failed')
-  const p = Bun.spawn([bin, 'start', '--port', '38201', '--workers', process.env.BRUST_WORKERS ?? '6'], { cwd: app, env: { ...process.env, BRUST_PORT: '', RUST_LOG: 'warn' }, stdout: 'pipe', stderr: 'inherit' }); CHILDREN.push(p)
-  await waitFor(p, /\[brust\] ready/)
-  return { base: 'http://127.0.0.1:38201', stop: () => p.kill('SIGINT') }
-}
-async function start01x(dir: string): Promise<{ base: string; stop: () => void }> {
-  need(readdirSync(join(dir, 'runtime')).some((f) => f.endsWith('.node')), `0.1.x addon missing in ${dir}/runtime (cd runtime && bun run build)`)
-  const p = Bun.spawn(['bun', 'run', 'example/pokedex/index.ts'], { cwd: dir, env: { ...process.env, BRUST_PORT: '38202', BRUST_WORKERS: process.env.BRUST_WORKERS ?? '6', RUST_LOG: 'brust=warn' }, stdout: 'pipe', stderr: 'inherit' }); CHILDREN.push(p)
-  const port = await waitFor(p, /listening on 127\.0\.0\.1:(\d+)/)
-  return { base: `http://127.0.0.1:${port}`, stop: () => p.kill('SIGINT') }
-}
-async function warm(base: string): Promise<void> {        // every name once (0.1.x fetches PokeAPI here), then the fixed paths
-  for (const n of NAMES) await fetch(`${base}/pokemon/${n}`)
-  for (const p of ['/', '/type-chart']) for (let i = 0; i < 3; i++) await fetch(`${base}${p}`)
-}
-async function oha(args: string[]): Promise<Nums> {
-  const p = Bun.spawn(['oha', '-c', String(CONN), '--no-tui', '--output-format', 'json', '-m', 'GET', ...args], { stdout: 'pipe', stderr: 'pipe' })
-  const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()])
-  need((await p.exited) === 0, `oha failed: ${err}`)
-  const j = JSON.parse(out)
-  return { rps: j.summary.requestsPerSec, p50: j.latencyPercentiles.p50 * 1000, p95: j.latencyPercentiles.p95 * 1000, p99: j.latencyPercentiles.p99 * 1000, total: j.summary.total }
-}
-async function measure(base: string, probe: Probe, nocache: boolean, enc: 'identity' | 'gzip'): Promise<Nums> {
-  const target = probe.regex ? ['--rand-regex-url', probe.regex(base, nocache)] : [`${base}${probe.path}`]
-  const hdr = ['-H', `accept-encoding: ${enc}`]
-  await oha(['-z', WARMUP, ...hdr, ...target])                // discarded JIT warm-up (0.1.x rule)
-  return oha(['-z', DUR, ...hdr, ...target])
+const g = evaluateGuards(probeHost({ needNode: apps.some((a) => a.id === 'next'), needBrustAddon: apps.some((a) => a.id === 'brust') }))
+if (!g.ok) die(g.code, g.reason)
+const load = loadavg().map((l) => Math.round(l * 100) / 100)
+say(`load average ${load.join(' ')} (${cores} cores) · seed ${seed} · apps ${apps.map((a) => a.id).join(',')} · probes ${probeIds.join(',')} · enc ${encs.join('+')}`)
+killAllOnExit()
+
+// 2. Build every app (production mode, spec §1.3).
+for (const a of apps) {
+  say(`build ${a.id} …`)
+  try { await a.build((s) => { if (s) console.log(s.split('\n').map((l) => `  ${l}`).join('\n')) }) } catch (e) { die(1, `build ${a.id} failed: ${(e as Error).message}`) }
 }
 
-const v2 = await startV2(); await warm(v2.base)
-const dir01 = process.env.BRUST_01X_DIR
-const x01 = dir01 ? await start01x(dir01) : null; if (x01) await warm(x01.base)
-const probes = []
-for (const pr of PROBES) {
-  // The bar is measured with Accept-Encoding: identity on both sides (lead ruling on challenge 7ad720e5: 0.1.x never
-  // gzips dynamic responses); the gzip runs are reported as an extra column.
-  const a = await measure(v2.base, pr, true, 'identity')
-  const b = x01 ? await measure(x01.base, pr, false, 'identity') : null
-  const agz = await measure(v2.base, pr, true, 'gzip')
-  const bgz = x01 ? await measure(x01.base, pr, false, 'gzip') : null
-  probes.push({ id: pr.id, path: pr.path, v2: a, x01: b, v2Gzip: agz, x01Gzip: bgz, deltaRpsPct: b ? Math.round(((a.rps - b.rps) / b.rps) * 1000) / 10 : null })
-  console.log(`${pr.id.padEnd(16)} identity: v2 ${a.rps.toFixed(0).padStart(7)} rps${b ? `   0.1.x ${b.rps.toFixed(0).padStart(7)} rps   Δ ${probes.at(-1)!.deltaRpsPct}%` : ''}   gzip: v2 ${agz.rps.toFixed(0)}${bgz ? ` 0.1.x ${bgz.rps.toFixed(0)}` : ''}`)
+// 3. Parity before any load (spec §1.4): one server per app, three GETs, normalized <main> must match app #1.
+const html: Record<ProbeId, { app: string; html: string }[]> = { S: [], D: [], I: [] }
+for (const a of apps) {
+  const run = await startApp(a, { timeoutMs }).catch((e) => die(1, (e as Error).message))
+  try {
+    await Bun.sleep(settleMs)
+    for (const p of probeIds) {
+      const r = await fetch(`${run.base}${probeOf(p).path}`)
+      if (r.status !== 200) die(1, `${a.id} ${probeOf(p).path} → HTTP ${r.status}`)
+      html[p].push({ app: a.id, html: await r.text() })
+    }
+  } finally { await run.stop() }
 }
-v2.stop(); x01?.stop()
-const bar = !x01 ? 'not measured' : probes.every((p) => p.v2.rps >= p.x01!.rps) ? 'met' : 'not met'
-const result = { date: new Date().toISOString().slice(0, 10), host: `${process.platform}/${process.arch}`, bun: Bun.version, conn: CONN, dur: DUR, warmup: WARMUP, addon: 'release', loadavg: LOAD, cores: CORES, bar, probes }
-writeFileSync(join(ROOT, 'bench/RESULTS.json'), `${JSON.stringify(result, null, 2)}\n`)
-const f = (n: number) => n.toFixed(2)
-const md = [`# M2 bench — ${result.date}`, '', `**Conditions:** \`oha -c ${CONN} -z ${DUR}\` (identity runs; gzip extra) · warm-up ${WARMUP} discarded · Bun ${Bun.version} · host ${result.host} · release addon · workers ${process.env.BRUST_WORKERS ?? '6'} · load average ${LOAD.join(' ')} at start (${CORES} cores)`, '',
-  '| Probe | Path | v2 rps | v2 p50 | v2 p99 | 0.1.x rps | 0.1.x p50 | 0.1.x p99 | Δ rps | v2 gzip rps | 0.1.x gzip rps |', '|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|',
-  ...probes.map((p) => `| ${p.id} | \`${p.path}\` | ${Math.round(p.v2.rps).toLocaleString()} | ${f(p.v2.p50)} | ${f(p.v2.p99)} | ${p.x01 ? Math.round(p.x01.rps).toLocaleString() : '—'} | ${p.x01 ? f(p.x01.p50) : '—'} | ${p.x01 ? f(p.x01.p99) : '—'} | ${p.deltaRpsPct === null ? '—' : `${p.deltaRpsPct}%`} | ${Math.round(p.v2Gzip.rps).toLocaleString()} | ${p.x01Gzip ? Math.round(p.x01Gzip.rps).toLocaleString() : '—'} |`),
-  '', `**Bar (v2 not slower on any probe, \`Accept-Encoding: identity\` on both sides): ${bar}.** The gzip columns are an extra (v2 gzips dynamic pages of 16 KiB or more at level 1 and serves the cached gzip on an L1 HIT; 0.1.x does not compress dynamic responses). A = L1 HIT on v2 / full render on 0.1.x (no cache there); B = L1 bypassed on v2 (\`?nocache=1\`), loader every request, jobs from the job cache; C = page with the TeamBuilder react child on both.`, '', 'Generated by `bun run bench` — see `bench/run.ts`. macOS numbers are not Linux numbers.', '']
-writeFileSync(join(ROOT, 'bench/RESULTS.md'), md.join('\n'))
-console.log(`bar: ${bar} — wrote bench/RESULTS.{md,json}`)
+for (const p of probeIds) {
+  try { await checkParity(html[p], p) } catch (e) { die(1, (e as Error).message) }
+  say(`parity ${p}: ${html[p].map((x) => x.app).join(' = ')} ✓`)
+}
+
+// Builds loaded the host: re-check the guards right before the load phase (1- and 5-minute averages).
+const g2 = evaluateGuards(probeHost({ needNode: apps.some((a) => a.id === 'next'), needBrustAddon: apps.some((a) => a.id === 'brust') }))
+if (!g2.ok) die(g2.code, `after builds: ${g2.reason}`)
+
+// Versions are read before the load phase: a failure here must never cost a finished run.
+const versions: Record<string, string> = { bun: Bun.version, oha: Bun.spawnSync(['oha', '--version']).stdout.toString().trim().replace(/^oha /, '') }
+const nodeV = Bun.spawnSync(['node', '--version']); if (nodeV.exitCode === 0) versions.node = nodeV.stdout.toString().trim()
+for (const a of apps) versions[a.id] = await a.version().catch((e: Error) => `? (${e.message})`)
+
+// Host lock (lead rule bench-host-lock): only the load itself is serialised, builds and parity are not.
+const releaseLock = await acquireHostLock(say)
+
+// 4. Shuffled measure loop (spec §1.3): app order and probe order from the seed; server restarted per pair.
+const rnd = mulberry32(seed)
+// Interleaved: probes in seeded order, apps shuffled within each probe, so host drift lands across apps, not on one.
+const pairs = shuffle(probeIds, rnd).flatMap((p) => shuffle(apps, rnd).map((a) => ({ a, p })))
+const order = pairs.map(({ a, p }) => `${a.id}:${p}`)
+say(`order ${order.join(' ')}`)
+const measurements: Measurement[] = []
+let bunServeBalanced: boolean | null = null
+for (const { a, p } of pairs) {
+  const run = await startApp(a, { timeoutMs }).catch((e) => die(1, (e as Error).message))
+  try {
+    await Bun.sleep(settleMs)
+    if (a.sanity) await a.sanity(run.base, p).catch((e) => die(1, (e as Error).message))
+    const url = `${run.base}${probeOf(p).path}`
+    for (const enc of encs) {
+      await runOha(url, { conn, dur: f.warmup!, enc })                       // discarded JIT warm-up
+      const { raw, ...nums } = await runOha(url, { conn, dur: f.dur!, enc })
+      try { validateRun(nums, `${a.id} ${p} ${enc}`) } catch (e) { die(1, (e as Error).message) }
+      measurements.push({ app: a.id, probe: p, enc, nums, raw })
+      console.log(`  ${a.id.padEnd(10)} ${p} ${enc.padEnd(8)} ${nums.rps.toFixed(0).padStart(7)} rps  p50 ${nums.p50.toFixed(2)} ms  p99 ${nums.p99.toFixed(2)} ms  errors ${nums.errors}`)
+    }
+    if (a.distribution) {
+      const b = checkBalance(await a.distribution().catch(() => []))
+      bunServeBalanced = (bunServeBalanced ?? true) && b.ok
+      say(`${a.id} ${p}: per-process requests ${b.counts.join('/')} (min share ${(b.minShare * 100).toFixed(1)}%) ${b.ok ? 'balanced' : '— 1-proc (reusePort did not balance)'}`)
+    }
+  } finally { await run.stop() }
+}
+
+releaseLock()
+
+// 5. Report (spec §1.5): numbers only.
+const budgets: Record<string, string> = Object.fromEntries(apps.map((a) => [a.id, a.id === 'next' ? 'procs=1 (as shipped)' : a.id === 'bun-serve' ? `procs=${workersN}` : `workers=${workersN}`]))
+const results: Results = {
+  header: { date: new Date().toISOString().slice(0, 10), host: `${process.platform}/${process.arch} ${hostname()}`, cores, loadavg: load, seed, conn, dur: f.dur!, warmup: f.warmup!, settleMs, workers: workersN, versions, apps: apps.map((a) => a.id), skipped, order, budgets, bunServeBalanced },
+  measurements,
+}
+const outDir = join(ROOT, f.out!)
+await writeResults(outDir, results)
+console.log(`\n${renderVerdict(computeVerdict(results))}\n`)
+say(`wrote ${join(outDir, 'RESULTS.md')} and RESULTS.json`)
+process.exit(0)
