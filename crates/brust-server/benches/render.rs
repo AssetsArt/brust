@@ -439,20 +439,17 @@ fn bench_hit_path(c: &mut Criterion, m: &Manifest) {
         )
     };
     let prelude = || {
-        let MatchResult::Matched { route_id, envelope } =
-            routes.match_path("GET", black_box(path), &h)
-        else {
-            unreachable!()
-        };
+        let rm = routes.match_route(black_box(path)).expect("match");
+        let route_id = rm.route_id;
         let ae = h
             .get("accept-encoding")
             .and_then(|v| v.to_str().ok())
-            .map(|s| s.trim().to_string());
+            .map(str::trim);
         let cc = routes.compiled_cache_for(route_id);
         let key = build_cache_key("GET", path, String::new());
         let hit = l1.get(&key).expect("hit");
         black_box((
-            envelope.req.headers.len(),
+            rm.params.len(),
             ae,
             cc,
             hit.body.headers.clone(),
