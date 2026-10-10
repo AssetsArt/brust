@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "target": "ES2022", "module": "ESNext", "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"], "jsx": "react-jsx",
+    "strict": true, "noUncheckedIndexedAccess": true, "noEmit": true,
+    "types": ["bun"], "skipLibCheck": true, "resolveJsonModule": true,
+    "allowImportingTsExtensions": true, "verbatimModuleSyntax": true
+  },
+  "include": ["run.ts", "lib", "apps/_shared", "apps/bun-serve", "apps/brust"],
+  "exclude": ["attribution.ts", "apps/next", "apps/brust-01x", "**/node_modules", "**/dist", "**/.next"]
+}
