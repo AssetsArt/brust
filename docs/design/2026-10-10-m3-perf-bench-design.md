@@ -71,6 +71,11 @@ once per app (each framework has its own file conventions) but must produce the 
 - Workers: brust `--workers = cores`; Next.js single Node process by default (its production
   default) with an optional `NEXT_CLUSTER=n` row that runs `n` instances behind a port-sharing
   proxy is NOT in scope — report Next.js as shipped. State this in README.
+- **Equal CPU budget for the ceiling (amendment 2026-10-10, Mellow's challenge d89baa2f):** bun-serve runs
+  N = brust workers processes on one port (`Bun.serve({ reusePort: true })`). The runner verifies the
+  kernel actually balances: each bun-serve process serves `GET /_count`; after warm-up every process must
+  have ≥ 5% of requests, otherwise the run prints `bun-serve: 1-proc (reusePort did not balance)` and the
+  ceiling line is labelled `1-proc`. The RESULTS header prints the process budget per app.
 - `oha -c 120 -z 10s --no-tui --output-format json`, identity encoding is the bar; gzip a second
   column. 1 s settle + discarded 3 s warm-up per (app, probe). Server restarted per (app, probe).
 - App order and probe order are shuffled per run (seeded; seed printed in RESULTS).
@@ -93,7 +98,7 @@ computed from the numbers:
 ```
 bar F68  : v2 vs 0.1.x  D +x.x%  I +y.y%   → MET / NOT MET
 sanity   : v2 vs next   S ×a  D ×b  I ×c   → MET / NOT MET (≥ 2×)
-ceiling  : v2 / bun-serve  D p%  I q%        (target D ≥ 80%)
+ceiling  : v2 / bun-serve[N-proc]  D p%  I q%   (target D ≥ 80%, equal process budget)
 ```
 
 No hand-written prose in the generated file. `bench/README.md` carries the method text.
@@ -117,6 +122,7 @@ probe D and I before/after + `attribution.ts` stage diff in the task note, `RESU
 | P3 | string-keyed map object (`Object` impl keyed by `Arc<str>`) instead of `BTreeMap<Value,Value>`; overlays as views (no per-component map clone); render chain writes into ONE `String`/`BytesMut` through `inject_assets` (no intermediate String per template) | brust-jinja, brust-server/src/render.rs:100-133, pipeline.rs:633-648 | render −5–11% + fewer allocs per level |
 | P4 | sharded read front over L1 (same as job cache); build the request envelope (headers/cookies/query) lazily — only after `l1_decision` says MISS | brust-server/src/cache/l1.rs:241, routing/routes.rs:239,300-346, pipeline.rs:275-296 | L1 get 2.7 µs → ~150 ns under contention; HIT path = match + get |
 | P6 | single round trip per request (§3) | protocol.rs, pipeline.rs, worker.ts, native.ts, brust-napi | −45–50 µs on D/I; `bun_calls` 2 → 1 |
+| P8 | **payload** (F70, F71; amendment 2026-10-10 from Mellow's m3b review): static child instances emitted as plain HTML; list-host `x-props` projected to the read set or omitted when nothing on the client consumes it. Bench D is 144 KB vs 22 KB for the same markup — on D this outweighs every server-side lever. Runs in parallel with the server lanes (compiler/manifest boundary). | crates/brust-compiler/src/lower/template.rs:598,988,1180, lower/mod.rs:134, packages/brust/src/build/manifest.ts:263 | D bytes/resp → within 10% of 0.1.x; rps on D scales with bytes |
 | P7 | tail, chosen from the post-P6 attribution: `simd-json` for the SAB parse, body as `Bytes` without copy, accept/keep-alive tuning — planned when P6's numbers exist | named in the m3p-e plan once P6 numbers exist | — |
 
 Already landed in m2p (do not redo): cached rendered body on L1 HIT, lazy gzip, gzip level 1 ≥ 16 KiB,
@@ -160,6 +166,7 @@ key parity (single implementation, plus a pinned fixture of 20 keys committed an
 | 2 | `m3p-b-value-path` | P1 + P2 + P3 | Dew | complex / complex (Mellow) |
 | 3 | `m3p-c-l1-shard` | P4 | knock2 | standard / standard (Afrojack) |
 | 3 | `m3p-d-single-roundtrip` | P6 (after the lead's S6/S7 amendment) | Dew | complex / complex (Mellow) |
+| 2 | `m3p-f-payload` | P8 (F70 + F71), parallel with `m3p-b` (disjoint boundary) | knock2 | standard / complex (Mellow) |
 | 4 | `m3p-e-tail` | P7, planned from attribution after P6 | by result | by result |
 
 Wave 1 runs in parallel (disjoint files). Perf lanes after that are serial (pipeline.rs / render.rs /
