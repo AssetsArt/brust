@@ -46,7 +46,9 @@ test('compileApp compiles each file once, through lowering, with children', asyn
   expect(item.ir.instances[0]!.loops).toEqual(['item.rows'])
   expect(item.ir.use_id_slots).toBe(1)
   expect(compiled.get(routeComponent.get('r0')!)!.ir.uses_outlet).toBe(true)
-  expect(item.clientJs).toContain('from "/_brust/client/runtime-test.js"')
+  expect(item.clientJs).toBeFalsy() // F70: ItemPage is static, no client chunk
+  const layout = [...compiled.entries()].find(([id]) => id.startsWith('appLayout_'))![1]
+  expect(layout.clientJs).toContain('from "/_brust/client/runtime-test.js"')
 })
 
 test('outlet-outside-layout, unresolvable Component and lowering Error are build errors (run, not read)', async () => {
