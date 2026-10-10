@@ -1,6 +1,3 @@
-use std::sync::Arc;
-
-use parking_lot::RwLock;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -84,19 +81,22 @@ pub struct RouteConfig {
     pub not_found_prefix: String,
 }
 
+/// Immutable after `from_manifest` (M3-P P4): request-path reads take no lock.
+/// `install_with_config` is `&mut self` and is called by `from_manifest` and
+/// tests only.
 #[derive(Default)]
 pub struct RouteTable {
-    inner: RwLock<matchit::Router<u32>>,
-    cache_configs: RwLock<Vec<Option<RouteCache>>>,
+    router: matchit::Router<u32>,
+    cache_configs: Vec<Option<RouteCache>>,
     /// Compiled L1 prefix/bypass expressions, parallel to `cache_configs`.
     /// Index = route_id. Parsed once at install; evaluated per request.
-    compiled_caches: RwLock<Vec<Arc<CompiledCache>>>,
+    compiled_caches: Vec<CompiledCache>,
     /// Post-router fallback tier: catch-all routes sorted by prefix length
     /// descending (longest first). On matchit NoMatch, `select_not_found`
     /// scans this table for the best segment-boundary prefix match and returns
     /// the catch-all's `route_id`. Empty when the app declares no catch-alls
     /// (feature is purely additive).
-    not_found_table: RwLock<Vec<(String, u32)>>,
+    not_found_table: Vec<(String, u32)>,
 }
 
 impl RouteTable {
@@ -119,7 +119,7 @@ impl RouteTable {
                 not_found_prefix: String::new(),
             })
             .collect();
-        let table = Self::new();
+        let mut table = Self::new();
         table.install_with_config(&configs)?;
         Ok(table)
     }
@@ -132,10 +132,13 @@ impl RouteTable {
 
     /// Replace the route set + per-route cache configs. Patterns are inserted
     /// in array order; index = route_id.
-    pub fn install_with_config(&self, configs: &[RouteConfig]) -> Result<u32, RouteInstallError> {
+    pub fn install_with_config(
+        &mut self,
+        configs: &[RouteConfig],
+    ) -> Result<u32, RouteInstallError> {
         let mut router = matchit::Router::new();
         let mut caches: Vec<Option<RouteCache>> = Vec::with_capacity(configs.len());
-        let mut compiled: Vec<Arc<CompiledCache>> = Vec::with_capacity(configs.len());
+        let mut compiled: Vec<CompiledCache> = Vec::with_capacity(configs.len());
         let mut nf_table: Vec<(String, u32)> = Vec::new();
         for (idx, c) in configs.iter().enumerate() {
             // Catch-all routes (notFound: true) are NOT inserted into matchit.
@@ -147,7 +150,7 @@ impl RouteTable {
                 nf_table.push((c.not_found_prefix.clone(), idx as u32));
                 // Still push to the parallel Vecs to keep indices aligned.
                 caches.push(c.cache.clone());
-                compiled.push(Arc::new(CompiledCache::default()));
+                compiled.push(CompiledCache::default());
                 continue;
             }
             router
@@ -188,34 +191,32 @@ impl RouteTable {
                 None => CompiledCache::default(),
             };
             caches.push(c.cache.clone());
-            compiled.push(Arc::new(compiled_cache));
+            compiled.push(compiled_cache);
         }
         // No sort needed: select_not_found uses max_by_key, which finds the
         // longest matching prefix regardless of table order.
-        *self.inner.write() = router;
-        *self.cache_configs.write() = caches;
-        *self.compiled_caches.write() = compiled;
-        *self.not_found_table.write() = nf_table;
+        self.router = router;
+        self.cache_configs = caches;
+        self.compiled_caches = compiled;
+        self.not_found_table = nf_table;
         Ok(configs.len() as u32)
     }
 
     /// Compiled L1 prefix/bypass directives for a route, parallel to
     /// `cache_for`. `None` when the route_id is out of range.
-    pub fn compiled_cache_for(&self, route_id: u32) -> Option<Arc<CompiledCache>> {
-        // Returns an Arc clone (refcount bump), NOT a deep clone of the Expr
-        // trees — this is the per-request cache hot path.
-        self.compiled_caches.read().get(route_id as usize).cloned()
+    pub fn compiled_cache_for(&self, route_id: u32) -> Option<&CompiledCache> {
+        // A borrow: no lock, no refcount (per-request cache hot path).
+        self.compiled_caches.get(route_id as usize)
     }
 
     pub fn cache_for(&self, route_id: u32) -> Option<RouteCache> {
         self.cache_configs
-            .read()
             .get(route_id as usize)
             .and_then(|c| c.clone())
     }
 
     pub fn match_path<'a>(
-        &self,
+        &'a self,
         method: &'a str,
         full_path: &'a str,
         headers: &'a http::HeaderMap,
@@ -224,8 +225,7 @@ impl RouteTable {
             Some((p, q)) => (p, q),
             None => (full_path, ""),
         };
-        let router = self.inner.read();
-        match router.at(path_only) {
+        match self.router.at(path_only) {
             Ok(matched) => {
                 let route_id = *matched.value;
                 let mut params = Vec::new();
@@ -234,7 +234,7 @@ impl RouteTable {
                     // L1 param() key expressions, x-props, native ctx, and
                     // treaty all consume THIS vec (directly or serialized),
                     // so one decode keeps every consumer consistent.
-                    params.push((std::borrow::Cow::Owned(k.to_string()), decode_path_param(v)));
+                    params.push((std::borrow::Cow::Borrowed(k), decode_path_param(v)));
                 }
                 let req = build_request_envelope(method, full_path, query, headers);
                 let envelope = RouteEnvelope {
@@ -246,12 +246,7 @@ impl RouteTable {
                 MatchResult::Matched { route_id, envelope }
             }
             Err(_) => {
-                // Release the not-found-table lock before building the
-                // envelope (scoped read, as in 0.1.x).
-                let nf_id = {
-                    let nf_table = self.not_found_table.read();
-                    select_not_found(&nf_table, path_only)
-                };
+                let nf_id = select_not_found(&self.not_found_table, path_only);
                 match nf_id {
                     Some(id) => {
                         let req = build_request_envelope(method, full_path, query, headers);
@@ -516,7 +511,7 @@ mod tests {
 
     #[test]
     fn match_path_params_arrive_decoded_incl_catch_all() {
-        let table = RouteTable::new();
+        let mut table = RouteTable::new();
         table
             .install_with_config(&[
                 RouteConfig {
@@ -705,7 +700,7 @@ mod tests {
 
     #[test]
     fn route_envelope_serializes_route_id_and_path() {
-        let table = RouteTable::new();
+        let mut table = RouteTable::new();
         let cfg = RouteConfig {
             path: "/foo".into(),
             cache: None,
@@ -759,7 +754,7 @@ mod tests {
 
     #[test]
     fn match_path_returns_not_found_when_catchall_registered() {
-        let table = RouteTable::new();
+        let mut table = RouteTable::new();
         table
             .install_with_config(&[
                 RouteConfig {
@@ -788,7 +783,7 @@ mod tests {
 
     #[test]
     fn match_path_returns_no_match_when_table_empty() {
-        let table = RouteTable::new();
+        let mut table = RouteTable::new();
         table
             .install_with_config(&[RouteConfig {
                 path: "/home".into(),
@@ -807,7 +802,7 @@ mod tests {
 
     #[test]
     fn match_path_real_route_still_matches_when_catchall_installed() {
-        let table = RouteTable::new();
+        let mut table = RouteTable::new();
         table
             .install_with_config(&[
                 RouteConfig {
@@ -846,7 +841,7 @@ mod tests {
         assert!(configs[1].not_found, "not_found should be true");
         assert_eq!(configs[1].not_found_prefix, "");
 
-        let table = RouteTable::new();
+        let mut table = RouteTable::new();
         table.install_with_config(&configs).unwrap();
 
         // Catch-all must NOT be in matchit — /home should not match /
@@ -874,7 +869,7 @@ mod tests {
     #[test]
     fn install_nested_catchall_prefix_selection() {
         // /docs catch-all (route_id 2) should win over root (route_id 3) for /docs/missing
-        let table = RouteTable::new();
+        let mut table = RouteTable::new();
         table
             .install_with_config(&[
                 RouteConfig {
@@ -923,7 +918,7 @@ mod tests {
 
     #[test]
     fn install_rejects_bad_prefix_expr() {
-        let table = RouteTable::new();
+        let mut table = RouteTable::new();
         let cfgs = vec![RouteConfig {
             path: "/bad".into(),
             cache: Some(crate::manifest::RouteCache {
@@ -949,7 +944,7 @@ mod tests {
 
     #[test]
     fn install_rejects_bad_bypass_expr() {
-        let table = RouteTable::new();
+        let mut table = RouteTable::new();
         let cfgs = vec![RouteConfig {
             path: "/bad".into(),
             cache: Some(crate::manifest::RouteCache {
@@ -975,7 +970,7 @@ mod tests {
 
     #[test]
     fn compiled_cache_for_parses_prefix_and_bypass() {
-        let table = RouteTable::new();
+        let mut table = RouteTable::new();
         let cfgs = vec![RouteConfig {
             path: "/p".into(),
             cache: Some(crate::manifest::RouteCache {
