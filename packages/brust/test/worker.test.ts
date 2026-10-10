@@ -4,7 +4,17 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setNative } from '../src/native'
 import { defineRoutes, flattenRoutes, httpError, notFound, redirect } from '../src/routes'
-import { jobIdOf, literalsIndex, makeDispatch, makeHandlers, SLOT_BYTES, startWorker, writeSlot } from '../src/worker'
+import {
+  type JobsModule,
+  jobIdOf,
+  literalsIndex,
+  makeDispatch,
+  makeHandlers,
+  PLAN_DECLINED,
+  SLOT_BYTES,
+  startWorker,
+  writeSlot,
+} from '../src/worker'
 
 const C = () => null
 const ctx = (routeId: string) => ({
@@ -270,4 +280,91 @@ test('loader: an own "__proto__" key in loader data is kept as data, like the sp
   const r = (await h.loader(ctx('r1'))) as { data: Record<string, unknown> }
   expect(JSON.stringify(r)).toBe('{"ok":true,"data":{"__proto__":{"x":1},"a":1,"b":2}}')
   expect((r.data as { x?: unknown }).x).toBeUndefined()
+})
+
+// ---- M3-P P6: the plan offer ----
+
+const dec = (v: Uint8Array, n: number) => JSON.parse(new TextDecoder().decode(v.subarray(0, n)))
+const planned = (jobs: JobsModule) => makeHandlers({ leaves: leaves({ child: async () => ({ team: ['a'] }) }), jobs })
+
+test('dispatch: a planned loader call hands the ctx to planJobs and answers the misses in the same call', async () => {
+  const view = new Uint8Array(new SharedArrayBuffer(4096))
+  const seen: unknown[] = []
+  const plan = (slot: number, len: number) => {
+    seen.push(dec(view.subarray(slot * 4096), len)) // the ctx is in the slot when planJobs runs
+    return JSON.stringify({ jobs: [{ id: 'c/j0', componentId: 'c', kind: 'precompute', inputs: { team: ['a'] } }] })
+  }
+  const d = makeDispatch(planned({ c: { precompute: (p: { team: string[] }) => ({ _s1: p.team.length }) } }), view, 1, plan)
+  const n = await d('loader', JSON.stringify({ ...ctx('r1'), plan: true }), 0)
+  expect(seen).toEqual([{ ok: true, data: { team: ['a'] } }])
+  expect(dec(view, n)).toEqual({ planned: true, results: [{ id: 'c/j0', value: { _s1: 1 } }] })
+})
+
+test('dispatch: planJobs "" (every job hit) answers {planned:true}', async () => {
+  const view = new Uint8Array(new SharedArrayBuffer(4096))
+  let calls = 0
+  const plan = () => {
+    calls++
+    return ''
+  }
+  const d = makeDispatch(planned({}), view, 1, plan)
+  const n = await d('loader', JSON.stringify({ ...ctx('r1'), plan: true }), 0)
+  expect(calls).toBe(1)
+  expect(dec(view, n)).toEqual({ planned: true })
+})
+
+test('dispatch: planJobs "!" leaves the loader response in the slot', async () => {
+  const view = new Uint8Array(new SharedArrayBuffer(4096))
+  const d = makeDispatch(planned({}), view, 1, () => PLAN_DECLINED)
+  const n = await d('loader', JSON.stringify({ ...ctx('r1'), plan: true }), 0)
+  expect(dec(view, n)).toEqual({ ok: true, data: { team: ['a'] } })
+})
+
+test('dispatch: verdicts, errors and plan:false never call planJobs', async () => {
+  const view = new Uint8Array(new SharedArrayBuffer(4096))
+  const plan = (): string => {
+    throw new Error('planJobs must not be called')
+  }
+  const nf = makeDispatch(makeHandlers({ leaves: leaves({ child: async () => notFound({ why: 'x' }) }), jobs: {} }), view, 1, plan)
+  const a = await nf('loader', JSON.stringify({ ...ctx('r1'), plan: true }), 0)
+  expect(dec(view, a)).toEqual({ verdict: 'notFound', data: { why: 'x' } })
+  const boom = makeDispatch(
+    makeHandlers({
+      leaves: leaves({
+        child: async () => {
+          throw new Error('boom')
+        },
+      }),
+      jobs: {},
+    }),
+    view,
+    1,
+    plan,
+  )
+  const b = await boom('loader', JSON.stringify({ ...ctx('r1'), plan: true }), 0)
+  expect(dec(view, b)).toEqual({ error: 'Error: boom' })
+  const c = await makeDispatch(planned({}), view, 1, plan)('loader', JSON.stringify(ctx('r1')), 0)
+  expect(dec(view, c)).toEqual({ ok: true, data: { team: ['a'] } })
+})
+
+test('planJobs on a thread that registered no worker declines', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'brust-planjobs-'))
+  try {
+    const entry = join(dir, 'unbound.ts')
+    const addon = join(import.meta.dir, '..', 'native', 'index.js')
+    writeFileSync(
+      entry,
+      `import { parentPort } from 'node:worker_threads'\nconst { planJobs } = require(${JSON.stringify(addon)})\nparentPort.postMessage(planJobs(0, 10))\n`,
+    )
+    const w = new Worker(entry)
+    const got = await new Promise<string>((res) => {
+      w.addEventListener('message', (e) => res(String((e as MessageEvent).data)))
+      w.addEventListener('error', (e) => res(`error: ${(e as ErrorEvent).message}`))
+      setTimeout(() => res('timeout'), 5000)
+    })
+    w.terminate()
+    expect(got).toBe('!')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })

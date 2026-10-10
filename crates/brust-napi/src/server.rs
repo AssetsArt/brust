@@ -1,5 +1,5 @@
 //! Server bindings: `startServer`, `registerWorker`, `untilReady`, `beginDrain`,
-//! `cacheInvalidate`, `cacheStats`, `localAddr` over `brust_server`.
+//! `cacheInvalidate`, `cacheStats`, `localAddr`, `planJobs` over `brust_server`.
 //!
 //! The CURRENT server lives in a `RwLock<Option<Arc<Server>>>` rather than a
 //! `OnceCell`: `bun test` runs every file in one process and several files
@@ -25,6 +25,14 @@ static EXPECTED: AtomicU32 = AtomicU32::new(0);
 /// Workers registered with the current server. `brust-server` has no
 /// until-ready API (its pool is `pub(crate)`), so the binding counts.
 static REGISTERED: AtomicU32 = AtomicU32::new(0);
+
+thread_local! {
+    /// The server and worker id registered from THIS thread (`register_worker`): a worker's
+    /// `planJobs` runs on its own JS thread, so this is that worker's binding. The last
+    /// registration on a thread wins (tests register several on the main thread); a stale or
+    /// absent binding makes `plan_jobs` decline, which degrades to the two-call path.
+    static BOUND: std::cell::RefCell<Option<(std::sync::Weak<Server>, u32)>> = const { std::cell::RefCell::new(None) };
+}
 
 fn current() -> napi::Result<Arc<Server>> {
     SERVER
@@ -135,8 +143,21 @@ pub fn register_worker(
         buf_len,
         slots: slots.max(1) as usize,
     }));
+    BOUND.with_borrow_mut(|b| *b = Some((Arc::downgrade(&s), id)));
     REGISTERED.fetch_add(1, Ordering::SeqCst);
     Ok(id)
+}
+
+/// M3-P P6: plan the calling worker's in-flight loader call for `slot` from the `len` bytes it
+/// just wrote there. Returns the misses' `JobsRequest` JSON, `""` when every job hit, or `"!"`
+/// (declined: answer with the loader response already in the slot). Sync, on the worker's JS
+/// thread; never throws (a napi Error return is unreliable under Bun).
+#[napi]
+pub fn plan_jobs(slot: u32, len: u32) -> String {
+    match BOUND.with_borrow(|b| b.as_ref().and_then(|(w, id)| w.upgrade().map(|s| (s, *id)))) {
+        Some((s, id)) => brust_server::plan_in_call(&s, id, slot, len),
+        None => brust_server::PLAN_DECLINED.to_string(),
+    }
 }
 
 /// Resolves once `workers` workers registered with the current server;

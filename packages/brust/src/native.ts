@@ -37,6 +37,8 @@ export interface NativeBinding {
   cacheInvalidate(args: InvalidateArgs): InvalidateResult
   cacheStats(): string
   localAddr(): string
+  /** M3-P P6 — see crates/brust-napi/src/server.rs `plan_jobs`. Never throws. */
+  planJobs(slot: number, len: number): string
 }
 
 let binding: NativeBinding | null = null
@@ -62,3 +64,4 @@ export const beginDrain = (timeoutMs: number): Promise<void> => native().beginDr
 export const cacheInvalidate = (args: InvalidateArgs): InvalidateResult => native().cacheInvalidate(args)
 export const cacheStats = (): string => native().cacheStats()
 export const localAddr = (): string => native().localAddr()
+export const planJobs = (slot: number, len: number): string => native().planJobs(slot, len)
