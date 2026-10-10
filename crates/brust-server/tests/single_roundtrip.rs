@@ -7,6 +7,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock, Weak, mpsc};
+use std::time::{Duration, Instant};
 
 use brust_server::dispatch::{CallKind, DispatchError, RenderDispatch};
 use brust_server::{Config, InvalidateArgs, Server, Tuning, start};
@@ -286,6 +287,11 @@ fn stress_jobs(req: &Value) -> Value {
 
 impl ThreadWorker {
     fn spawn(bound: Binding) -> Self {
+        Self::spawn_with(bound, Duration::ZERO, Duration::ZERO)
+    }
+
+    /// `loader_delay` before the loader answers; `jobs_delay` before a planned call's misses run.
+    fn spawn_with(bound: Binding, loader_delay: Duration, jobs_delay: Duration) -> Self {
         let ptr = Box::leak(vec![0u8; STRESS_SLOT * STRESS_SLOTS].into_boxed_slice()).as_mut_ptr();
         let (tx, rx) = mpsc::channel::<Reply>();
         let base = SendPtr(ptr);
@@ -307,6 +313,7 @@ impl ThreadWorker {
                 let bytes = match kind {
                     CallKind::Jobs => serde_json::to_vec(&stress_jobs(&req)).unwrap(),
                     CallKind::Loader => {
+                        std::thread::sleep(loader_delay);
                         let first = serde_json::to_vec(&stress_loader(&req)).unwrap();
                         let (s, id) = bound
                             .get()
@@ -325,6 +332,7 @@ impl ThreadWorker {
                                     json!([])
                                 } else {
                                     let jr: Value = serde_json::from_str(&misses).unwrap();
+                                    std::thread::sleep(jobs_delay);
                                     stress_jobs(&jr)["results"].clone()
                                 };
                                 serde_json::to_vec(&json!({"planned": true, "results": results}))
@@ -497,4 +505,53 @@ fn eight_workers_plan_while_tokio_inserts_and_invalidates() {
         "{st}"
     );
     assert_eq!(s.plan_cells_in_use(), 0);
+}
+
+/// One planned call keeps the old per-phase deadlines: the loader phase gets `call_timeout`, the
+/// jobs phase `call_timeout` from when `planJobs` handed out the misses (lead ruling on
+/// challenge 23e71e74). Two calls of 0.6 T each used to succeed and still do; a phase over T is
+/// a 504 near the end of THAT phase's budget.
+#[test]
+fn a_planned_call_times_the_loader_and_the_jobs_phase_separately() {
+    const T: u64 = 400;
+    let cases = [
+        (240, 240, 200, (T, 2 * T)),
+        (440, 0, 504, (T, T + T / 2)),
+        (0, 440, 504, (T, T + T / 2)),
+    ];
+    for (i, (loader_ms, jobs_ms, want, (lo, hi))) in cases.into_iter().enumerate() {
+        let mut cfg = config(&fx());
+        cfg.tuning = Tuning {
+            call_timeout_ms: T,
+            ..cfg.tuning
+        };
+        let s = start(cfg).unwrap();
+        let bound: Binding = Default::default();
+        let w = ThreadWorker::spawn_with(
+            bound.clone(),
+            Duration::from_millis(loader_ms),
+            Duration::from_millis(jobs_ms),
+        );
+        let id = s.register_worker(Box::new(w));
+        bound.set((Arc::downgrade(&s), id)).unwrap();
+        let t0 = Instant::now();
+        let (st, _, body) = get(&s, &format!("/pokemon/n{i}?q=t"), &[]);
+        let ms = t0.elapsed().as_millis() as u64;
+        assert_eq!(
+            st, want,
+            "loader {loader_ms} ms + jobs {jobs_ms} ms: {body}"
+        );
+        if want == 200 {
+            assert!(
+                body.contains(&format!("<p>HP {}</p>", stress_hp(i))),
+                "{body}"
+            );
+            assert!(ms < hi, "{ms} ms");
+        } else {
+            assert!(
+                (lo..hi).contains(&ms),
+                "504 after {ms} ms, want [{lo}, {hi})"
+            );
+        }
+    }
 }

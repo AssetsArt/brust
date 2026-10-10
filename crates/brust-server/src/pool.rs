@@ -58,6 +58,10 @@ pub struct Slot {
     /// `RenderClaim::take_plan` after the Promise resolved. ALWAYS cleared by
     /// `RenderClaim::drop`: no plan outlives its claim (deadline, disconnect, panic).
     pub(crate) plan: parking_lot::Mutex<Option<PlanBox>>,
+    /// M3-P P6: when `plan_in_call` handed this claim's call its job misses — the start of
+    /// the jobs phase inside a planned call, which `call_worker_planned` times like the old
+    /// separate jobs call. Cleared with the plan by `RenderClaim::drop`.
+    jobs_since: parking_lot::Mutex<Option<std::time::Instant>>,
 }
 
 impl Slot {
@@ -119,6 +123,20 @@ impl WorkerEntry {
     }
 
     /// `slot`'s plan cell while that slot is claimed; `None` when out of range or idle.
+    /// Stamp the start of a planned call's jobs phase on a CLAIMED slot (no-op otherwise).
+    pub fn stamp_jobs_phase(&self, slot: u32) {
+        if let Some(s) = self.slots.get(slot as usize).filter(|s| !s.is_idle()) {
+            *s.jobs_since.lock() = Some(std::time::Instant::now());
+        }
+    }
+
+    /// The jobs-phase stamp of `slot`, if its current claim's call made one.
+    pub(crate) fn jobs_phase_since(&self, slot: u32) -> Option<std::time::Instant> {
+        self.slots
+            .get(slot as usize)
+            .and_then(|s| *s.jobs_since.lock())
+    }
+
     pub fn claimed_plan_cell(&self, slot: u32) -> Option<&parking_lot::Mutex<Option<PlanBox>>> {
         self.slots
             .get(slot as usize)
@@ -206,6 +224,7 @@ impl Drop for RenderClaim {
         // M3-P P6: no plan outlives its claim. The Box is dropped outside the lock.
         let stale = slot.plan.lock().take();
         drop(stale);
+        slot.jobs_since.lock().take();
         if !self.lockfree {
             slot.render_slot.lock().take();
         }
@@ -253,6 +272,7 @@ impl WorkerPool {
                 idle: AtomicBool::new(true),
                 render_slot: parking_lot::Mutex::new(None),
                 plan: parking_lot::Mutex::new(None),
+                jobs_since: parking_lot::Mutex::new(None),
             })
             .collect();
         let entry = Arc::new(WorkerEntry {

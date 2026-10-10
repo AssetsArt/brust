@@ -1749,6 +1749,7 @@ pub fn plan_in_call(s: &Server, worker: u32, slot: u32, len: u32) -> String {
     match planned {
         Ok(Some((plan, misses))) => {
             *cell.lock() = Some(Box::new(PlanCell::Planned(plan)));
+            entry.stamp_jobs_phase(slot);
             misses
         }
         _ => declined(),

@@ -218,6 +218,7 @@ pub async fn call_worker_planned<Req: Serialize, Resp: DeserializeOwned + Send +
     let json = serde_json::to_string(req)
         .map_err(|e| CallError::BadResponse(format!("request serialise: {e}")))?;
     let pool = Arc::clone(pool);
+    let (stamped, stamped_slot) = (Arc::clone(claim.entry()), claim.slot());
     // The body is identical to the former spawned task. It is polled INLINE on
     // the request's task (no spawn, no scheduling hop); `Detach` makes the two
     // cases the spawn used to cover explicit: dropped before completion
@@ -252,7 +253,24 @@ pub async fn call_worker_planned<Req: Serialize, Resp: DeserializeOwned + Send +
         drop(claim);
         parsed.map(|r| (r, plan))
     });
-    match tokio::time::timeout(call_timeout, Detach(Some(call))).await {
+    // Deadline: `call_timeout` from the call's start; if the worker planned (M3-P P6), the jobs
+    // phase gets `call_timeout` from its own start, as the old separate jobs call did. The claim
+    // is still held by `call` while it is pending, so the stamp is this request's.
+    let mut fut = Detach(Some(call));
+    let mut deadline = tokio::time::Instant::now() + call_timeout;
+    let r = loop {
+        match tokio::time::timeout_at(deadline, &mut fut).await {
+            Ok(r) => break Ok(r),
+            Err(e) => match stamped.jobs_phase_since(stamped_slot) {
+                Some(t) if tokio::time::Instant::from_std(t) + call_timeout > deadline => {
+                    deadline = tokio::time::Instant::from_std(t) + call_timeout;
+                }
+                _ => break Err(e),
+            },
+        }
+    };
+    drop(fut);
+    match r {
         Ok(Ok(result)) => result,
         Ok(Err(payload)) => Err(CallError::BadResponse(format!(
             "worker call panicked: {}",
