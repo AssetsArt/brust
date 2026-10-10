@@ -167,7 +167,13 @@ impl FakeBun {
                 let jr: Value = serde_json::from_str(&misses).expect("misses are JSON");
                 self.job_calls.fetch_add(1, Ordering::SeqCst);
                 *self.last_jobs.lock().unwrap() = Some(jr.clone());
-                (self.jobs)(jr)["results"].clone()
+                let r = (self.jobs)(jr);
+                if r.get("error").is_some() {
+                    // The real worker's catch: the batch failed as a whole, the slot gets {error}.
+                    return serde_json::to_vec(&json!({"error": r["error"]}))
+                        .expect("FakeBun: response serialises");
+                }
+                r["results"].clone()
             };
             if let Some(f) = &self.after_plan {
                 f();

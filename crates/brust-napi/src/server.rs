@@ -28,10 +28,39 @@ static REGISTERED: AtomicU32 = AtomicU32::new(0);
 
 thread_local! {
     /// The server and worker id registered from THIS thread (`register_worker`): a worker's
-    /// `planJobs` runs on its own JS thread, so this is that worker's binding. The last
-    /// registration on a thread wins (tests register several on the main thread); a stale or
-    /// absent binding makes `plan_jobs` decline, which degrades to the two-call path.
-    static BOUND: std::cell::RefCell<Option<(std::sync::Weak<Server>, u32)>> = const { std::cell::RefCell::new(None) };
+    /// `planJobs` runs on its own JS thread, so this is that worker's binding. A stale or absent
+    /// binding makes `plan_jobs` decline, which degrades to the two-call path.
+    static BOUND: std::cell::RefCell<Option<Binding<Server>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// One thread's registration: the server, the worker id, and whether a SECOND worker of the
+/// same live server registered on this thread too (tests can; `run.ts` never does — one Bun
+/// Worker thread per worker). `planJobs` carries no worker id, so with two live workers on one
+/// thread it could plan against the wrong one's slot: it declines instead.
+struct Binding<T> {
+    server: std::sync::Weak<T>,
+    id: u32,
+    ambiguous: bool,
+}
+
+/// Record `s`/`id` as this thread's registration (see [`Binding`]).
+fn bind<T>(cur: &mut Option<Binding<T>>, s: &Arc<T>, id: u32) {
+    let same_live = cur
+        .as_ref()
+        .and_then(|b| b.server.upgrade())
+        .is_some_and(|prev| Arc::ptr_eq(&prev, s));
+    *cur = Some(Binding {
+        server: Arc::downgrade(s),
+        id,
+        ambiguous: same_live,
+    });
+}
+
+/// The server and worker id `planJobs` may plan for, or `None` (decline): no registration on
+/// this thread, the server is gone, or the binding is ambiguous.
+fn bound<T>(cur: &Option<Binding<T>>) -> Option<(Arc<T>, u32)> {
+    let b = cur.as_ref().filter(|b| !b.ambiguous)?;
+    Some((b.server.upgrade()?, b.id))
 }
 
 fn current() -> napi::Result<Arc<Server>> {
@@ -143,7 +172,7 @@ pub fn register_worker(
         buf_len,
         slots: slots.max(1) as usize,
     }));
-    BOUND.with_borrow_mut(|b| *b = Some((Arc::downgrade(&s), id)));
+    BOUND.with_borrow_mut(|b| bind(b, &s, id));
     REGISTERED.fetch_add(1, Ordering::SeqCst);
     Ok(id)
 }
@@ -154,7 +183,7 @@ pub fn register_worker(
 /// thread; never throws (a napi Error return is unreliable under Bun).
 #[napi]
 pub fn plan_jobs(slot: u32, len: u32) -> String {
-    match BOUND.with_borrow(|b| b.as_ref().and_then(|(w, id)| w.upgrade().map(|s| (s, *id)))) {
+    match BOUND.with_borrow(bound) {
         Some((s, id)) => brust_server::plan_in_call(&s, id, slot, len),
         None => brust_server::PLAN_DECLINED.to_string(),
     }
@@ -231,6 +260,29 @@ pub fn local_addr() -> napi::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_second_live_registration_on_one_thread_for_the_same_server_makes_the_binding_ambiguous() {
+        let a = Arc::new(1u8);
+        let mut b: Option<Binding<u8>> = None;
+        bind(&mut b, &a, 0);
+        assert_eq!(bound(&b).map(|(_, id)| id), Some(0));
+        // Two live workers of one server on one thread: planJobs cannot tell which call it is in.
+        bind(&mut b, &a, 1);
+        assert!(bound(&b).is_none(), "ambiguous binding must decline");
+        bind(&mut b, &a, 2);
+        assert!(bound(&b).is_none(), "stays ambiguous for that server");
+        // A new server (the old one replaced) rebinds cleanly.
+        let c = Arc::new(2u8);
+        bind(&mut b, &c, 0);
+        assert_eq!(bound(&b).map(|(_, id)| id), Some(0));
+        // A dropped server is stale: the next registration rebinds, the stale one declines.
+        drop(c);
+        assert!(bound(&b).is_none());
+        let d = Arc::new(3u8);
+        bind(&mut b, &d, 5);
+        assert_eq!(bound(&b).map(|(_, id)| id), Some(5));
+    }
 
     #[test]
     fn resolve_bind_addr_prefers_ipv4() {

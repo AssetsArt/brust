@@ -39,6 +39,30 @@ fn a_loader_page_with_job_misses_is_one_worker_call() {
     assert_eq!(s.plan_cells_in_use(), 0);
 }
 
+/// A job batch that fails as a whole (the worker's `{error}` reply: a throw or a slot overflow)
+/// inside a planned call is a 500 that still counts as a job batch, as on the two-call path.
+#[test]
+fn a_failed_job_batch_inside_a_planned_call_counts_like_the_two_call_path() {
+    let failing = |_req: Value| json!({"error": "boom"});
+    for planned in [true, false] {
+        let f = FakeBun::new(default_loader, failing);
+        let s = if planned {
+            boot(f.clone())
+        } else {
+            boot_declining(f.clone())
+        };
+        let (st, _, _) = get(&s, "/pokemon/pikachu", &[]);
+        assert_eq!(st, 500, "planned={planned}");
+        let st = stats(&s);
+        assert_eq!(
+            (st["loader_calls"].as_u64(), st["job_calls"].as_u64()),
+            (Some(1), Some(1)),
+            "planned={planned}"
+        );
+        assert_eq!(s.plan_cells_in_use(), 0);
+    }
+}
+
 /// An unbound fake: registered by hand, so it ignores the plan offer (the two-call path).
 fn boot_declining(f: Arc<FakeBun>) -> Arc<Server> {
     let s = start(config(&fx())).unwrap();

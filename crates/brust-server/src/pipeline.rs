@@ -422,7 +422,18 @@ async fn page(
                 return body::resp(status, "text/plain", &[], body.into_bytes());
             }
             Ok(LoaderResponse::Error { error }) => {
-                tracing::error!(route = %route.id, %error, "loader threw");
+                // A plan in the cell means the loader succeeded and the worker's job batch failed
+                // as a whole inside the same call: report and count it as the jobs call would.
+                let planned = cell
+                    .as_ref()
+                    .and_then(|b| b.downcast_ref::<PlanCell>())
+                    .is_some_and(|c| matches!(c, PlanCell::Planned(_)));
+                if planned {
+                    s.job_calls.fetch_add(1, Ordering::Relaxed);
+                    tracing::error!(route = %route.id, %error, "jobs call failed (planned loader call)");
+                } else {
+                    tracing::error!(route = %route.id, %error, "loader threw");
+                }
                 return body::error_500();
             }
             Err(e @ (CallError::NoWorkers | CallError::Timeout)) => {
