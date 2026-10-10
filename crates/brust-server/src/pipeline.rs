@@ -292,21 +292,22 @@ async fn page(
     // ----- (3) L1 -----
     let (cache_key, outcome, search) = l1_decision(s, route_id, route, full, headers, &rm.params);
     meta.cache = outcome;
-    if let Some(k) = &cache_key
-        && let Some(hit) = s.l1.get(k)
-    {
-        meta.cache = CacheOutcome::Hit;
-        // S10 amendment: the body the MISS rendered, no re-render.
+    if let Some(k) = &cache_key {
+        // S10: the body the MISS rendered, no re-render. Built under the shard's read guard (no Arc
+        // clone); the first gzip of an eligible body is made outside it, so writers never wait on a
+        // compression.
         let gz = crate::http::compress::accepts_gzip(accept_enc);
-        let (bytes, encoded) = cached_body(&hit.body, gz);
-        return page_response(
-            hit.body.status,
-            hit.body.headers.clone(),
-            hit.body.html.len(),
-            bytes,
-            encoded,
-            Some("HIT"),
-        );
+        let hit = s.l1.get_with(k, |b| {
+            if gz && needs_first_gzip(b) {
+                Err(Arc::clone(b))
+            } else {
+                Ok(hit_response(b, gz))
+            }
+        });
+        if let Some(r) = hit {
+            meta.cache = CacheOutcome::Hit;
+            return r.unwrap_or_else(|b| hit_response(&b, gz));
+        }
     }
 
     let envelope = rm.into_envelope("GET", full, headers, search);
@@ -676,6 +677,24 @@ fn page_response(
         );
     }
     body::resp_with(status, h, bytes)
+}
+
+/// An L1 HIT's response: the stored body (or its once-made gzip) with the stored header map.
+fn hit_response(b: &RenderedBody, gz: bool) -> Response<ResponseBody> {
+    let (bytes, encoded) = cached_body(b, gz);
+    page_response(
+        b.status,
+        b.headers.clone(),
+        b.html.len(),
+        bytes,
+        encoded,
+        Some("HIT"),
+    )
+}
+
+/// A gzip-accepting request would make this body's gzip now (`cached_body`'s first call).
+fn needs_first_gzip(b: &RenderedBody) -> bool {
+    b.html.len() >= PAGE_GZIP_MIN && b.gzip.get().is_none()
 }
 
 /// The leaf-first render of `chain` for `ctx`, each component under its

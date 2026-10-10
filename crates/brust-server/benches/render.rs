@@ -36,8 +36,8 @@
 //!   `bench_plan`. C's context (`ctx/home.json`) was captured the same way on v2 @40283bc (one
 //!   identity GET of `/`, debug addon); `plan-golden.json` pins every plan's call id, job key and
 //!   inputs and the all-miss `JobsRequest` JSON (`pipeline` test `pokedex_plans_match_the_golden`).
-//! - `l1_hit_identity` / `l1_hit_gzip`: a HIT = `L1Cache::get` + the stored
-//!   rendered body (identity, or its once-made gzip) + its header map. Before
+//! - `l1_hit_identity` / `l1_hit_gzip`: a HIT = `L1Cache::get_with` (the sharded
+//!   read front, M3-P P4) + the stored rendered body (identity, or its once-made gzip) + its header map. Before
 //!   the S10 amendment (m2p Task 2) a HIT re-rendered: `l1_hit_gzip` was
 //!   `finish_gzip` + the get (A 1.413 ms, B 205.4 µs on the Task 1 host).
 use std::collections::BTreeMap;
@@ -267,16 +267,18 @@ fn bench_route(
     // A HIT (S10 amendment): `L1Cache::get` + the stored body (its gzip made
     // by the first gzip-accepting HIT, here the warm-up) + the header map.
     let hit = |gz: bool| {
-        let hit = l1.get(black_box(&key)).expect("hit");
-        let _h = hit.body.headers.clone();
-        cached_body(&hit.body, gz)
+        l1.get_with(black_box(&key), |b| {
+            let _h = b.headers.clone();
+            cached_body(b, gz)
+        })
+        .expect("hit")
     };
     g.bench_function("l1_hit_identity", |b| b.iter(|| hit(false)));
     // `L1Cache::get` of the one hot key from 8 threads at once (wall time /
     // iterations per thread; 1x = no contention), as `lookups_x8`.
     g.bench_function("l1_get_x8", |b| {
         par8(b, || {
-            black_box(l1.get(&key));
+            black_box(l1.get_with(&key, |b| b.html.len()));
         })
     });
     g.bench_function("l1_hit_gzip", |b| b.iter(|| hit(true)));
@@ -447,14 +449,10 @@ fn bench_hit_path(c: &mut Criterion, m: &Manifest) {
             .map(str::trim);
         let cc = routes.compiled_cache_for(route_id);
         let key = build_cache_key("GET", path, String::new());
-        let hit = l1.get(&key).expect("hit");
-        black_box((
-            rm.params.len(),
-            ae,
-            cc,
-            hit.body.headers.clone(),
-            cached_body(&hit.body, false),
-        ));
+        let hit = l1
+            .get_with(&key, |b| (b.headers.clone(), cached_body(b, false)))
+            .expect("hit");
+        black_box((rm.params.len(), ae, cc, hit));
     };
     let mut g = c.benchmark_group("hit_path");
     g.bench_function("match", |b| b.iter(matched));
