@@ -66,9 +66,7 @@ ceiling  : v2 / bun-serve  D p%  I q%        (target D ≥ 80%)      raw Bun.ser
 ```
 
 `errors` excludes oha's "aborted due to deadline" (requests cut by `-z`, not failures); the raw oha JSON is in
-`RESULTS.json`. macOS numbers are not Linux numbers. **Until the first run of this runner on the lead's host, the
-committed `RESULTS.md`/`RESULTS.json` are from the previous runner (v2 pokedex vs 0.1.x pokedex, probes A/B/C) and
-do not have this format.**
+`RESULTS.json`. macOS numbers are not Linux numbers.
 
 ## Per-stage attribution (`attribution.ts`)
 
