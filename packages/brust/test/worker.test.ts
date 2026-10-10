@@ -259,3 +259,15 @@ test('loader: the merge never mutates an object a loader returned (shared module
   // Key order is first-seen: a's keys, then new keys — what {...a, ...b} produced.
   expect(Object.keys((await h.loader(ctx('r1')) as { data: object }).data)).toEqual(['a', 'b', 'c'])
 })
+
+test('loader: an own "__proto__" key in loader data is kept as data, like the spread merge did', async () => {
+  // JSON.parse makes "__proto__" an own data key. `{...a, ...r}` copied it as a key; a [[Set]]-based
+  // merge (Object.assign into a plain object) would invoke the prototype setter and drop it.
+  const h = makeHandlers({
+    leaves: leaves({ parent: async () => JSON.parse('{"__proto__":{"x":1},"a":1}'), child: async () => ({ b: 2 }) }),
+    jobs: {},
+  })
+  const r = (await h.loader(ctx('r1'))) as { data: Record<string, unknown> }
+  expect(JSON.stringify(r)).toBe('{"ok":true,"data":{"__proto__":{"x":1},"a":1,"b":2}}')
+  expect((r.data as { x?: unknown }).x).toBeUndefined()
+})

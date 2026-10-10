@@ -147,8 +147,9 @@ export function makeHandlers(opts: { leaves: FlatRoute[]; jobs: JobsModule; mani
       // One object for the whole chain: each level's keys are assigned INTO it (later keys win,
       // first-seen key order — what `{...merged, ...r}` produced) instead of re-spreading every
       // key once per level (M3-P P1). `merged` is fresh per call; a loader's own object is never
-      // written to.
-      const merged: Record<string, unknown> = {}
+      // written to. Null prototype: with no `__proto__` setter to hit, an own "__proto__" key in a
+      // loader's data is assigned as data, as the spread copied it.
+      const merged: Record<string, unknown> = Object.create(null)
       try {
         for (const node of leaf.chain) {
           if (!node.loader) continue
