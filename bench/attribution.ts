@@ -23,15 +23,18 @@ const SIDES = (process.env.ATTR_SIDES ?? 'v2,01x').split(',')
 const NAMES = snap.pokemon.map((p) => p.name)
 const CORES = cpus().length
 const MAXLOAD = Number(process.env.ATTR_MAXLOAD ?? CORES)
-// ATTR_APP=bench: the M3 bench app (bench/apps/brust, probes D = /dex?nocache=1, I = /team?nocache=1) instead of the
+// ATTR_APP=bench: the M3 bench app (bench/apps/brust, probes D = /dex?nocache=1, I = /team?nocache=1,
+// M = /team?nocache=1&start=<random>: one job miss per request) instead of the
 // pokedex (probes B, C). The 0.1.x side is pokedex-only and is skipped for the bench app.
 const APP = process.env.ATTR_APP === 'bench' ? 'bench' : 'pokedex'
 const APP_DIR = APP === 'bench' ? 'bench/apps/brust' : 'examples/pokedex'
 /** One URL per probe (D/I: the bench pages; C: the pokedex home); B is a regex over every name. */
 const urlOf = (side: string, probe: string): string =>
-  probe === 'D' ? '/dex?nocache=1' : probe === 'I' ? '/team?nocache=1' : probe === 'B' ? `/pokemon/pikachu${side === 'v2' ? '?nocache=1' : ''}` : '/'
+  probe === 'M' ? '/team?nocache=1&start=7' : probe === 'D' ? '/dex?nocache=1' : probe === 'I' ? '/team?nocache=1' : probe === 'B' ? `/pokemon/pikachu${side === 'v2' ? '?nocache=1' : ''}` : '/'
 const target = (side: string, base: string, probe: string) =>
-  probe === 'B' ? ['--rand-regex-url', `${base}/pokemon/(${NAMES.join('|')})${side === 'v2' ? '\\?nocache=1' : ''}`] : [`${base}${urlOf(side, probe)}`]
+  probe === 'B' ? ['--rand-regex-url', `${base}/pokemon/(${NAMES.join('|')})${side === 'v2' ? '\\?nocache=1' : ''}`]
+  : probe === 'M' ? ['--rand-regex-url', `${base}/team\\?nocache=1&start=[1-9][0-9]{6}`]   // 9·10^6 values ≫ job cache 1000: a miss per request
+  : [`${base}${urlOf(side, probe)}`]
 
 function need(cond: boolean, msg: string): void { if (!cond) { console.error(`[attr] ${msg}`); process.exit(1) } }
 need(Bun.spawnSync(['oha', '--version']).exitCode === 0, 'oha not on PATH')

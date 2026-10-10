@@ -225,7 +225,7 @@ index 0000000..91fde9c
 +    serde_json::to_vec(&m).unwrap()
 +}
 diff --git a/crates/brust-server/src/pipeline.rs b/crates/brust-server/src/pipeline.rs
-index 57fc3b3..3268e9b 100644
+index d8760b4..46dc099 100644
 --- a/crates/brust-server/src/pipeline.rs
 +++ b/crates/brust-server/src/pipeline.rs
 @@ -97,6 +97,9 @@ pub(crate) async fn handle(req: Request<Incoming>, s: Arc<Server>) -> Response<R
@@ -411,9 +411,9 @@ index 57fc3b3..3268e9b 100644
      inject_assets_into(&mut out, &route.chain, &s.manifest);
 +    crate::perf::rec(crate::perf::INJECT, t);
      s.render_hints[ri].store(next_hint(out.len()), Ordering::Relaxed);
+     trim_to_hint(&mut out);
      Ok(Bytes::from(out.into_bytes()))
- }
-@@ -677,7 +730,9 @@ pub fn render_chain_into(
+@@ -688,7 +741,9 @@ pub fn render_chain_into(
      let children = ctx.get(CHILDREN_KEY);
      let own_all = ctx.get(OWN_KEY);
      // The merged context as a value: an Arc bump (M3-P P2), shared by the chain.
@@ -423,7 +423,7 @@ index 57fc3b3..3268e9b 100644
      // `_props` (the island host's `x-props`): the merged loader context — params,
      // path, loader data — without the server's per-component maps. A view over
      // the tree (no copy), shared by every chain component.
-@@ -685,6 +740,7 @@ pub fn render_chain_into(
+@@ -696,6 +751,7 @@ pub fn render_chain_into(
      // Per component: Arc views of its child-slot and own-job maps (no copy),
      // looked up own first, then children, then its `_idN`, then the base.
      let overlay = |id: &str| {
@@ -431,7 +431,7 @@ index 57fc3b3..3268e9b 100644
          let slots = manifest.components.get(id).map_or(0, |c| c.use_id_slots);
          let mut maps = Vec::with_capacity(2);
          for all in [children, own_all] {
-@@ -1215,15 +1271,26 @@ fn plan_one<'a>(
+@@ -1226,15 +1282,26 @@ fn plan_one<'a>(
          Dest::Chain { row, .. } => row,
          Dest::Child { .. } => None,
      };
@@ -461,10 +461,10 @@ index 57fc3b3..3268e9b 100644
      out.push(JobPlan {
          key,
 diff --git a/crates/brust-server/src/render.rs b/crates/brust-server/src/render.rs
-index e83f5da..dafa1d8 100644
+index aa59e03..7b2eebf 100644
 --- a/crates/brust-server/src/render.rs
 +++ b/crates/brust-server/src/render.rs
-@@ -130,6 +130,8 @@ impl Renderer {
+@@ -134,6 +134,8 @@ impl Renderer {
          let cap = out.capacity();
          let mut outlet: Option<String> = None;
          for (pos, id) in chain.iter().enumerate().rev() {
@@ -473,7 +473,7 @@ index e83f5da..dafa1d8 100644
              let scope = minijinja::Value::from_object(Scope {
                  outlet: outlet.take().map(minijinja::Value::from_safe_string),
                  overlay: overlay(id),
-@@ -139,14 +141,18 @@ impl Renderer {
+@@ -143,14 +145,18 @@ impl Renderer {
                  .env
                  .get_template(id)
                  .map_err(|_| RenderError::Unknown(id.clone()))?;
@@ -513,10 +513,10 @@ index 83018fe..caa14b5 100644
                          }
                      });
 diff --git a/packages/brust/src/worker.ts b/packages/brust/src/worker.ts
-index 19dc72e..ffbfa0b 100644
+index 3103e78..a558915 100644
 --- a/packages/brust/src/worker.ts
 +++ b/packages/brust/src/worker.ts
-@@ -177,13 +177,23 @@ export function makeHandlers(opts: { leaves: FlatRoute[]; jobs: JobsModule; mani
+@@ -178,13 +178,23 @@ export function makeHandlers(opts: { leaves: FlatRoute[]; jobs: JobsModule; mani
  /** The tsfn callback for `registerWorker`. Never rejects: a parse error, an unknown kind or a
   * throwing handler is written to the slot as `{error}`. */
  export function makeDispatch(h: Handlers, view: Uint8Array, slots: number) {
@@ -540,7 +540,7 @@ index 19dc72e..ffbfa0b 100644
      } catch (e) {
        out = { error: String(e) }
      }
-@@ -193,7 +203,19 @@ export function makeDispatch(h: Handlers, view: Uint8Array, slots: number) {
+@@ -194,7 +204,19 @@ export function makeDispatch(h: Handlers, view: Uint8Array, slots: number) {
      } catch (e) {
        json = JSON.stringify({ error: `response not serialisable: ${String(e)}` })
      }
