@@ -8,3 +8,5 @@
 )]
 pub(super) mod extra;
 pub(super) mod native;
+#[cfg(bun_sema_mimalloc)]
+pub(super) mod real_mimalloc;

@@ -9,6 +9,11 @@ default = ["bun-stubs"]
 # Provides the native symbols Bun's C/C++ normally supplies. Disable only when linking
 # into a host that already provides them.
 bun-stubs = []
+# Link the real mimalloc (crate `mimalloc` → libmimalloc-sys) instead of the fake,
+# libc-backed `mi_*` in src/parse/stubs/native.rs. build.rs turns this into
+# `--cfg bun_sema_mimalloc`, the switch that verbatim Bun file already honours.
+# The addon (brust-napi) enables it and makes mimalloc its #[global_allocator].
+real-mimalloc = ["dep:mimalloc"]
 
 [dependencies]
 bun_js_parser.workspace = true
@@ -25,6 +30,7 @@ serde_json.workspace = true
 brust-jinja.workspace = true
 minijinja.workspace = true
 thiserror.workspace = true
+mimalloc = { version = "0.1", optional = true }
 
 [dev-dependencies]
 brust-jinja.workspace = true
