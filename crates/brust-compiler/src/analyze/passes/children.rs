@@ -30,6 +30,14 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
         instances: Vec::new(),
         ssr_outputs: HashMap::new(),
         row_only: HashMap::new(),
+        // Props can change on the client unless nothing can reach this component: a child may be
+        // linked by its parent (x-props-bind), a component with state of its own is a host whose
+        // props are settable. Only a stateless root (a route component) has fixed props.
+        props_reactive: !ctx.is_root
+            || !ir.state.is_empty()
+            || !ir.effects.is_empty()
+            || !ir.handlers.is_empty()
+            || !ir.refs.is_empty(),
     };
     let mut template = std::mem::replace(&mut ir.template, Node::Fragment(vec![]));
     w.node(&mut template);
@@ -68,6 +76,8 @@ struct Walker<'s, 'c> {
     ssr_outputs: HashMap<String, u32>,
     /// `RowOnly` links by id with the client reads they imply, resolved after the walk.
     row_only: HashMap<u32, Vec<super::ClientUse>>,
+    /// Whether this component's own props can change after first paint (see `children`).
+    props_reactive: bool,
 }
 
 /// A resolved child.
@@ -244,7 +254,15 @@ impl Walker<'_, '_> {
                 ctx.modules
                     .borrow_mut()
                     .insert(key.clone(), Entry::InProgress);
-                run_passes(&mut child, ctx);
+                let child_ctx = PassCtx {
+                    text: ctx.text,
+                    opts: ctx.opts,
+                    path: ctx.path,
+                    modules: ctx.modules,
+                    local: ctx.local,
+                    is_root: false,
+                };
+                run_passes(&mut child, &child_ctx);
                 finish_diagnostics(&mut child, ctx.text);
                 let child = Rc::new(child);
                 ctx.modules
@@ -320,10 +338,16 @@ impl Walker<'_, '_> {
         }
     }
 
+    /// A list source the client re-evaluates: it reads state, or it reads props that can change.
+    fn source_reactive(&self, e: &Expr) -> bool {
+        self.reads_state(e) || (self.props_reactive && !self.deps_of(e).props.is_empty())
+    }
+
     /// Whether the client can re-create the rows of this list: an enclosing list can, its
-    /// source changes with state, or its body carries a directive of its own.
+    /// source changes (state, or props of a component whose props can change), or its body
+    /// carries a directive of its own.
     fn row_reactive(&self, source: &Expr, body: &[Node], enclosing: bool) -> bool {
-        enclosing || self.reads_state(source) || body.iter().any(|n| self.body_directive(n))
+        enclosing || self.source_reactive(source) || body.iter().any(|n| self.body_directive(n))
     }
 
     /// `lower::template::needs_directives` without the row-only links this pass decides:
@@ -344,7 +368,7 @@ impl Walker<'_, '_> {
                 self.reads_state(cond) || then.iter().chain(else_).any(|c| self.body_directive(c))
             }
             Node::For { source, body, .. } => {
-                self.reads_state(source) || body.iter().any(|c| self.body_directive(c))
+                self.source_reactive(source) || body.iter().any(|c| self.body_directive(c))
             }
             Node::Component { link, children, .. } => {
                 link.is_some_and(|id| !self.row_only.contains_key(&id))

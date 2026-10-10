@@ -1,0 +1,2 @@
+{# brust v2 · list_4d8da56b · do not edit #}
+<ul x-data="list_4d8da56b" x-props='{{ {"rows": ((rows) | project("id", "name"))} | json_attr }}'>{% for r in rows %}{% set _i1 = loop.index0 %}<li x-for="r in _l1 by _k1"><b x-data="badge_4ab66d34" x-props='{{ {"label": r["name"]} | json_attr }}' x-props-bind="_p1:r" x-text="_c1">{{ (r["name"]) | e }}</b></li>{% else %}<!--x-for--><li x-for="r in _l1 by _k1" hidden><b x-data="badge_4ab66d34" x-props='{{ {"label": __undefined} | json_attr }}' x-props-bind="_p1:r" x-text="_c1">{{ __undefined | e }}</b></li>{% endfor %}</ul>

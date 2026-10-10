@@ -58,6 +58,9 @@ pub struct PassCtx<'a> {
     pub modules: &'a std::cell::RefCell<crate::analyze::modules::ModuleCache>,
     /// Reads a function declared in this module as a structural component.
     pub local: &'a dyn Fn(&str) -> Option<ComponentIR>,
+    /// The component the caller asked for (a route component), not a child compiled on the way. Only a
+    /// root can be sure nothing links it, so only a root may treat its own props as fixed (ledger F70).
+    pub is_root: bool,
 }
 
 impl PassCtx<'_> {

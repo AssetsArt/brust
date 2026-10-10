@@ -346,9 +346,9 @@ fn static_child_link_decisions() {
             Tier::Native,
         ),
         (
-            "prop list, state elsewhere only",
+            "prop list, state elsewhere (state makes the props settable: stays linked)",
             "export default function P({ rows }: any) { const [k, setK] = useState(0); return <div><button onClick={() => setK(k + 1)}>{k}</button><ul>{rows.map((r: any) => <li key={r.id}><Badge type={r.t} label={r.l} color={r.c} /></li>)}</ul></div> }",
-            0,
+            1,
             Tier::Native,
         ),
         (
@@ -381,7 +381,7 @@ fn static_child_link_decisions() {
 fn row_only_links_keep_their_ids() {
     let ir = analyze_in(
         "static-list-child",
-        "import { useState } from 'react'\nimport Badge from './Badge'\nexport default function P({ rows }: any) { const [k, setK] = useState(''); return <div><ul>{rows.map((r: any) => <li key={r.id}><Badge type={r.t} label={r.l} color={r.c} /></li>)}</ul><Badge type={k} label=\"x\" color=\"#000\" /></div> }",
+        "import Badge from './Badge'\nexport default function P({ rows }: any) { return <div><ul>{rows.map((r: any) => <li key={r.id}><Badge type={r.t} label={r.l} color={r.c} /></li>)}</ul><Badge type=\"t\" label=\"x\" color=\"#000\" onPick={() => 1} /></div> }",
     );
     assert_eq!(ir.child_links.len(), 1, "{:?}", ir.child_links);
     assert_eq!(
