@@ -153,6 +153,17 @@ computes keys (`plan_key`, pipeline.rs:1139), looks up the job cache, and sends 
 to Rust"; S7 "request flow: one worker call carrying loader + plan; `jobLookup` export"; §7 the
 `bun_calls` field meaning. Done as amendment blocks like M2's, committed to v2 (docs rule).
 
+**Amendment (2026-10-10, lead, from the m3p-d plan evidence):** the design above is superseded by
+"planned loader call" (Variant R): keys stay in Rust (`inputs::job_key`, blake3), the worker calls a sync
+`planJobs(slot, len)` that plans and pins hits on the worker thread, runs only the misses, and answers in
+the same call; a declined/ignored offer falls back to two calls. Reasons: no lookup→read gap (hits are
+pinned), one key implementation (Bun has no blake3; a 64-bit hash would allow cache poisoning), no extra
+JS CPU on worker threads, routes without a loader stay at 0 calls. Evidence E1 also showed D and I are
+ALREADY one call in steady state (their jobs hit), so P6 is measured on attribution probe `M`
+(`/team?nocache=1&start=<random>`, every job misses) and must be neutral on D/I. Kept because real pages
+with per-request job inputs miss on every request ("ขอดีที่สุด"); it counts as ~0 on D/I for the §5
+stop rule. Server-spec blocks: `docs/design/2026-10-09-m2-server-design.md` S1/S6/S7/§7 amendments.
+
 **Risks.** Key format change (no persisted cache, so no migration); concurrent `jobLookup` from worker
 threads while tokio inserts (moka is concurrent; a stress test with 8 workers × 1000 pages proves it);
 key parity (single implementation, plus a pinned fixture of 20 keys committed and asserted).

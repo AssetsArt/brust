@@ -48,6 +48,29 @@ is spec §2 lines 129-133, which 0.1.x never achieved because it rendered jinja 
 thread (`crates/brust/src/lib.rs:1063 napi_render_jinja`). In v2 the minijinja `Environment`
 lives in Rust and `render` runs on tokio.
 
+**S1 amendment (2026-10-10, M3-P P6, lane `m3p-d-single-roundtrip`; ruled by the lead Detoro: Variant R, keys stay in Rust; plan docs/plans/2026-10-10-m3p-d-single-roundtrip.md):**
+the `loader` call carries a **plan offer**. Its request gains `"plan": true` (omitted when false)
+when the route's chain has at least one job (a chain component's own job or an inlined child's).
+A worker that takes the offer, after an `ok` chain, writes the loader response into its SAB slot
+and calls the sync addon export `planJobs(slot, len)` from its own JS thread; the answer is the
+`JobsRequest` JSON of the jobs that missed the job cache, `""` when every job hit, or `"!"`
+(declined). It then runs only those jobs and answers `{ planned: true, results: [{ id, value | error }] }`
+in the same slot — one round trip for the page. On `"!"` it returns the loader response already in
+the slot, and Rust plans after the call exactly as before (the `jobs` call stays, as the fallback
+and for routes without a loader). Taking the offer is optional: a worker that ignores `plan` gets
+the two-call flow. The call table becomes:
+
+| call | when | request (inline JSON string) | response (worker SAB slot) |
+|---|---|---|---|
+| `loader` | the leaf route chain has at least one loader and L1 missed | `{ routeId, params, path, req, plan? }` | `{ ok: true, data, headers? } \| { verdict: … } \| { error } \| { planned: true, results }` |
+| `jobs` | a route without a loader has a job miss, or the worker declined / ignored the plan offer and a job missed | `{ jobs: [{ id, componentId, kind, inputs, target?, row? }] }` | `{ results: [{ id, value \| error }] }` |
+
+`planJobs` runs Rust on the Bun worker thread: it reads the slot bytes the worker just wrote on that
+same thread (the response direction — the SAB still never carries a request), parses them into the
+context, runs the same planning and job-cache lookup as S7 step 5, pins the hit values, and leaves
+the result in the claimed slot's plan cell, which the request takes after the call and which the
+claim's release always clears. It never throws; every failure declines.
+
 **Rejected:** a Rust binary with a Bun sidecar over a socket (new IPC layer, cross-process
 latency, loses the proven bridge); `Bun.serve` with Rust as a render library (contradicts D4
 and the no-Bun hit path).
@@ -233,6 +256,14 @@ evaluates them against the loader context with the same evaluator minijinja uses
 `brust_jinja::eval_path` helper over the context `Value`), so the cache key is computed without
 Bun. `use_id_slots` is the number of `useId()` calls in the component (F39).
 
+**S6 amendment (2026-10-10, M3-P P6; ruled by the lead Detoro: Variant R, keys stay in Rust; plan docs/plans/2026-10-10-m3p-d-single-roundtrip.md):** the job key is
+unchanged — `(componentId, jobId, blake3(canonical JSON of inputs))` computed by
+`brust-server`'s `inputs::job_key`, or the namespaced `cache({key})` user key — and stays the only
+implementation. Since P6 it is also computed on a Bun worker thread (inside `planJobs`, same Rust
+function, same job cache), never in JavaScript. A committed fixture of 20 keys
+(`crates/brust-server/tests/fixtures/job-keys-20.json`) pins the key bytes; changing them needs an
+amendment here (no cache is persisted, so a change needs no migration, only the ruling).
+
 ## 4. Request flow (S7, S8)
 
 **S7 — `handle_request` order** (replaces `brust-core/src/server/mod.rs:447-833`):
@@ -266,6 +297,19 @@ Bun. `use_id_slots` is the number of `useId()` calls in the component (F39).
    the document. Append the asset tags (S9), set `Content-Type: text/html; charset=utf-8`,
    compress, respond. Store the merged context in L1 if the route has `cache`, status is 200
    and no `Set-Cookie` was produced (0.1.x storage rules).
+
+**S7 amendment (2026-10-10, M3-P P6; ruled by the lead Detoro: Variant R, keys stay in Rust; plan docs/plans/2026-10-10-m3p-d-single-roundtrip.md):** steps 4 and 5 run in
+ONE worker call when the route has a loader and jobs and the worker takes the plan offer (S1
+amendment): the worker runs the loaders; Rust, on the worker's thread, merges the data into the
+context, evaluates every job's inputs and key, looks up the job cache and pins the hits (step 5's
+rules unchanged: template order, per-row instances, in-page dedupe of identical keys, no
+cross-request coalescing); the worker runs the misses; after the call Rust validates the results,
+stores them with their ttl, tags and user key (so `cache.invalidate` by tag, key or path keeps
+working), fans them out to plans sharing a key, then continues with step 6 unchanged. A value pinned
+at planning time renders even if an invalidation lands before the render, exactly as a hit pinned
+before the M2 `jobs` call did; the next request sees the invalidation. A verdict, an error, a
+declined or ignored offer, and a route without a loader follow steps 4-5 as written. The rendered
+document is identical on both paths.
 
 **S8 — `Outlet` is a compiler intrinsic.** `import { Outlet } from '@brust/core/routes'`;
 `<Outlet/>` in a route component lowers to `{{ __outlet | safe }}` in the template and is a
@@ -365,6 +409,16 @@ Function props to a react child remain an `Error` (spec §3.2); the battery row
   hit".
 - Logs: `RUST_LOG` (tracing) as in 0.1.x; one line per request at `info` with route id, cache
   outcome (`HIT`/`MISS`/`BYPASS`), Bun calls made (0/1/2), and duration.
+
+**§7 amendment (2026-10-10, M3-P P6; ruled by the lead Detoro: Variant R, keys stay in Rust; plan docs/plans/2026-10-10-m3p-d-single-roundtrip.md):** `bun_calls` in the
+request log is the number of worker **round trips** the request made: 0 for an L1 HIT or a page
+without a loader whose jobs all hit; 1 for a page whose loader returned data (its jobs ran in the
+same call), and for a page without a loader that had a job miss; 2 only when the worker declined or
+ignored the plan offer and a job missed, or when a `notFound` verdict renders a template with a job
+miss. `/_brust/cache/stats`: `loader_calls` counts calls that ran the loader chain (unchanged);
+`job_calls` counts job **batches** the worker ran — a `jobs` call, or the misses run inside a
+planned `loader` call (every M2 count stays numerically the same); new `worker_calls` counts round
+trips (the sum of `bun_calls`).
 
 ## 8. Configuration and CLI
 
