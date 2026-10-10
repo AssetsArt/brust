@@ -252,6 +252,12 @@
   "client_props": [
     "rows"
   ],
+  "client_prop_projections": {
+    "rows": [
+      "id",
+      "name"
+    ]
+  },
   "client_imports": [],
   "client_module_locals": [],
   "needs_worker": false,

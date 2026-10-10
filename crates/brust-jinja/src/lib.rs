@@ -11,6 +11,9 @@
 use minijinja::value::{Kwargs, Value, ValueKind};
 use minijinja::{Environment, Error, ErrorKind};
 
+#[path = "filters/project.rs"]
+mod project;
+
 /// Registers every brust filter on `env` (and the builtins they build on).
 /// The one way brust converts serde data into a template value (minijinja 3:
 /// `value::Serde`). Takes the data by value; pass a reference to borrow.
@@ -51,6 +54,7 @@ pub fn register(env: &mut Environment<'_>) {
     env.add_filter("join", join);
     env.add_filter("keys", keys);
     env.add_filter("entries", entries);
+    env.add_filter("project", project::project); // F71, filters/project.rs
     env.add_filter("css_val", |v: Value, prop: String| css_value(&prop, &v));
     env.add_filter("style_css", |v: Value| {
         // Only a style object has declarations (React throws on a string).

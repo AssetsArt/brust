@@ -6,6 +6,7 @@ pub mod captures;
 pub mod children;
 pub mod deps;
 pub mod placement;
+pub mod projection;
 pub mod server_expr;
 pub mod tier;
 
@@ -31,6 +32,8 @@ pub struct PassState {
     pub client_uses: Vec<ClientUse>,
     /// Code outside the template that builds JSX: (loc, what).
     pub jsx_code: Vec<(u32, &'static str)>,
+    /// Every client read, with its raw expression where it has one (`captures` leaves the final list here).
+    pub all_uses: Vec<ClientUse>,
 }
 
 /// Something the client chunk runs, with what it reads.
@@ -86,6 +89,7 @@ pub fn run_passes(ir: &mut ComponentIR, ctx: &PassCtx<'_>) -> PassState {
     // Children before captures: linked props are client reads of the parent.
     children::children(ir, &mut st, ctx);
     captures::captures(ir, &mut st, ctx);
+    projection::projection(ir, &st);
     tier::tier(ir, &mut st, ctx);
     // Job cache keys are computed from the inputs by a path evaluator that cannot read `.length`
     // of a sequence: a job reading `rows.length` is keyed by `rows`. (The client seed keeps the

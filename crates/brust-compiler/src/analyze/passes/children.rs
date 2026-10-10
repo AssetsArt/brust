@@ -659,13 +659,14 @@ pub fn instance_needs_link(tier: &Tier, props: impl IntoIterator<Item = (bool, D
 }
 
 /// A value read as a path: from the props, or from the innermost row's item.
-enum PlainPath {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum PlainPath {
     Props(String),
     /// `""` for the item itself, `.title` for a member of it.
     Row(String),
 }
 
-fn plain_path(r: &RawExpr, item: Option<&str>) -> Option<PlainPath> {
+pub(super) fn plain_path(r: &RawExpr, item: Option<&str>) -> Option<PlainPath> {
     match &r.kind {
         RawKind::Ident {
             name,
