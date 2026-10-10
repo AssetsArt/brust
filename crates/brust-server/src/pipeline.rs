@@ -125,7 +125,7 @@ pub(crate) async fn handle(req: Request<Incoming>, s: Arc<Server>) -> Response<R
         bun_calls: 0,
     };
     let resp = page(&s, full, headers, &mut meta).await;
-    tracing::info!(
+    tracing::debug!(
         target: "brust::request",
         route = %meta.route,
         status = resp.status().as_u16(),
