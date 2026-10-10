@@ -1,7 +1,7 @@
 {
   "id": "input_c1c07ee9",
   "source": "tests/fixtures/static-list-child/input.tsx",
-  "tier": "Native",
+  "tier": "Static",
   "props": [
     {
       "name": "props",
@@ -295,7 +295,7 @@
                                                   ]
                                                 ],
                                                 "children": [],
-                                                "link": 1,
+                                                "link": null,
                                                 "tier": "Static"
                                               }
                                             }
@@ -331,91 +331,8 @@
     }
   },
   "jobs": [],
-  "child_links": [
-    {
-      "id": 1,
-      "child": "badge_4df5cf25",
-      "props_member": "_p1",
-      "item_scoped": [
-        "p",
-        "b"
-      ],
-      "props": [
-        [
-          "type",
-          {
-            "Server": {
-              "loc": 651,
-              "kind": {
-                "Member": {
-                  "target": {
-                    "loc": 651,
-                    "kind": {
-                      "Ident": {
-                        "name": "b",
-                        "kind": "LoopBinding"
-                      }
-                    }
-                  },
-                  "name": "type",
-                  "optional": false
-                }
-              }
-            }
-          }
-        ],
-        [
-          "label",
-          {
-            "Server": {
-              "loc": 666,
-              "kind": {
-                "Member": {
-                  "target": {
-                    "loc": 666,
-                    "kind": {
-                      "Ident": {
-                        "name": "b",
-                        "kind": "LoopBinding"
-                      }
-                    }
-                  },
-                  "name": "label",
-                  "optional": false
-                }
-              }
-            }
-          }
-        ],
-        [
-          "color",
-          {
-            "Server": {
-              "loc": 682,
-              "kind": {
-                "Member": {
-                  "target": {
-                    "loc": 682,
-                    "kind": {
-                      "Ident": {
-                        "name": "b",
-                        "kind": "LoopBinding"
-                      }
-                    }
-                  },
-                  "name": "color",
-                  "optional": false
-                }
-              }
-            }
-          }
-        ]
-      ]
-    }
-  ],
-  "client_props": [
-    "rows"
-  ],
+  "child_links": [],
+  "client_props": [],
   "client_imports": [],
   "client_module_locals": [],
   "needs_worker": false,

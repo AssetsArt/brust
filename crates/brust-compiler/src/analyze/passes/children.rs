@@ -7,7 +7,7 @@ use super::{PassCtx, PassState, run_passes};
 use crate::analyze::component::finish_diagnostics;
 use crate::analyze::modules::{Entry, Export, Lookup, cache_key, compile, resolve};
 use crate::ir::{
-    ChildLink, ChildRef, ComponentIR, Diagnostic, Expr, IdentKind, InstanceRecord, JobDecl,
+    Attr, ChildLink, ChildRef, ComponentIR, Diagnostic, Expr, IdentKind, InstanceRecord, JobDecl,
     JobKind, JsCtx, Node, RawExpr, RawKind, ServerExpr, Tier, component_id, named_component_id,
 };
 use std::collections::HashMap;
@@ -29,9 +29,15 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
         instance_counts: HashMap::new(),
         instances: Vec::new(),
         ssr_outputs: HashMap::new(),
+        row_only: HashMap::new(),
     };
     let mut template = std::mem::replace(&mut ir.template, Node::Fragment(vec![]));
     w.node(&mut template);
+    w.resolve_row_only(std::slice::from_mut(&mut template), false);
+    debug_assert!(
+        w.row_only.is_empty(),
+        "every RowOnly link is visited by resolve_row_only"
+    );
     ir.template = template;
     ir.child_links.extend(w.links);
     ir.instances.extend(w.instances);
@@ -60,6 +66,8 @@ struct Walker<'s, 'c> {
     instance_counts: HashMap<String, u32>,
     instances: Vec<InstanceRecord>,
     ssr_outputs: HashMap<String, u32>,
+    /// `RowOnly` links by id with the client reads they imply, resolved after the walk.
+    row_only: HashMap<u32, Vec<super::ClientUse>>,
 }
 
 /// A resolved child.
@@ -302,6 +310,87 @@ impl Walker<'_, '_> {
         }
     }
 
+    /// Mirrors `lower::template::expr_reactive`.
+    fn reads_state(&self, e: &Expr) -> bool {
+        match e {
+            Expr::Precomputed {
+                state_dependent, ..
+            } => *state_dependent,
+            other => !self.deps_of(other).state.is_empty(),
+        }
+    }
+
+    /// Whether the client can re-create the rows of this list: an enclosing list can, its
+    /// source changes with state, or its body carries a directive of its own.
+    fn row_reactive(&self, source: &Expr, body: &[Node], enclosing: bool) -> bool {
+        enclosing || self.reads_state(source) || body.iter().any(|n| self.body_directive(n))
+    }
+
+    /// `lower::template::needs_directives` without the row-only links this pass decides:
+    /// a component counts only through an `Always` link (or its slot children).
+    fn body_directive(&self, n: &Node) -> bool {
+        match n {
+            Node::Element {
+                attrs, children, ..
+            } => {
+                attrs.iter().any(|a| match a {
+                    Attr::Event { .. } | Attr::Ref { .. } => true,
+                    Attr::Dynamic { value, .. } => self.reads_state(value),
+                    _ => false,
+                }) || children.iter().any(|c| self.body_directive(c))
+            }
+            Node::Slot(e) => self.reads_state(e),
+            Node::If { cond, then, else_ } => {
+                self.reads_state(cond) || then.iter().chain(else_).any(|c| self.body_directive(c))
+            }
+            Node::For { source, body, .. } => {
+                self.reads_state(source) || body.iter().any(|c| self.body_directive(c))
+            }
+            Node::Component { link, children, .. } => {
+                link.is_some_and(|id| !self.row_only.contains_key(&id))
+                    || children.iter().any(|c| self.body_directive(c))
+            }
+            Node::Fragment(cs) => cs.iter().any(|c| self.body_directive(c)),
+            Node::Text(_) | Node::Outlet => false,
+        }
+    }
+
+    /// Second pass (ledger F70): a `RowOnly` link survives only inside a row the client can
+    /// re-create; elsewhere the instance is plain HTML, so the link, its `_pN` member and the
+    /// client reads it implied are dropped. Surviving ids keep their numbers (`_pN` is a
+    /// name, not an index: a dropped link leaves a gap).
+    fn resolve_row_only(&mut self, nodes: &mut [Node], reactive: bool) {
+        for n in nodes {
+            match n {
+                Node::For { source, body, .. } => {
+                    let r = self.row_reactive(source, body, reactive);
+                    self.resolve_row_only(body, r);
+                }
+                Node::Component { link, children, .. } => {
+                    if let Some(id) = *link
+                        && let Some(uses) = self.row_only.remove(&id)
+                    {
+                        if reactive {
+                            self.st.client_uses.extend(uses);
+                        } else {
+                            *link = None;
+                            self.links.retain(|l| l.id != id);
+                        }
+                    }
+                    self.resolve_row_only(children, reactive);
+                }
+                Node::Element { children, .. } | Node::Fragment(children) => {
+                    self.resolve_row_only(children, reactive)
+                }
+                Node::If { then, else_, .. } => {
+                    self.resolve_row_only(then, reactive);
+                    self.resolve_row_only(else_, reactive);
+                }
+                Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+            }
+        }
+    }
+
     fn component(&mut self, n: &mut Node) {
         let Node::Component {
             loc,
@@ -431,20 +520,20 @@ impl Walker<'_, '_> {
                     };
                     self.instances.push(record);
                 }
-                // Native / static child: link when any prop changes after first
-                // paint or is a function (§7.4).
-                let needs_link = props.iter().any(|(_, v)| {
-                    let d = self.deps_of(v);
-                    matches!(v, Expr::ClientOnly { .. })
-                        || !d.state.is_empty()
-                        || !d.loop_bindings.is_empty()
-                });
-                if needs_link {
-                    // The parent chunk rebuilds the row's `_pN` from the list: it reads the source.
-                    self.st.client_uses.extend(self.list_uses.iter().cloned());
+                // Native / static child (§7.4, F70): see `instance_needs_link`.
+                let need = instance_needs_link(
+                    &child.tier,
+                    props
+                        .iter()
+                        .map(|(_, v)| (matches!(v, Expr::ClientOnly { .. }), self.deps_of(v))),
+                );
+                if need != LinkNeed::None {
+                    // The parent chunk rebuilds the row's `_pN` from the list: it reads the source,
+                    // and every prop is a client read. For a `RowOnly` link these reads are
+                    // committed only if the link survives `resolve_row_only`.
+                    let mut uses: Vec<super::ClientUse> = self.list_uses.clone();
                     let id = self.links.len() as u32 + 1;
                     for (_, v) in props.iter() {
-                        // The parent chunk computes `_pN`: every prop is a client read.
                         let deps = self.deps_of(v);
                         let raw = match v {
                             Expr::Server(ServerExpr(r)) => Some(r.clone()),
@@ -453,7 +542,7 @@ impl Walker<'_, '_> {
                             }
                             _ => None,
                         };
-                        self.st.client_uses.push(super::ClientUse {
+                        uses.push(super::ClientUse {
                             loc: *loc,
                             deps,
                             what: "a prop of a linked child",
@@ -472,6 +561,13 @@ impl Walker<'_, '_> {
                         props: link_props,
                     });
                     *link = Some(id);
+                    match need {
+                        LinkNeed::Always => self.st.client_uses.extend(uses),
+                        LinkNeed::RowOnly => {
+                            self.row_only.insert(id, uses);
+                        }
+                        LinkNeed::None => unreachable!(),
+                    }
                 }
             }
         }
@@ -532,6 +628,36 @@ impl Walker<'_, '_> {
     }
 }
 
+/// Why a native/static child instance gets a runtime link (`x-props-bind`, spec §7.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkNeed {
+    /// Every prop is a constant or a plain prop path: the instance paints once, no link.
+    None,
+    /// A prop is a function or reads state, or the child has a behaviour of its own and
+    /// reads the row: linked wherever it sits.
+    Always,
+    /// A static child reads only the row's loop bindings: linked only inside a row the
+    /// client can re-create, plain HTML everywhere else (ledger F70).
+    RowOnly,
+}
+
+/// The link decision for one `<Child …/>` from the child's tier and what each prop reads
+/// (`function` = the prop is `Expr::ClientOnly`).
+pub fn instance_needs_link(tier: &Tier, props: impl IntoIterator<Item = (bool, Deps)>) -> LinkNeed {
+    let mut loop_only = false;
+    for (function, d) in props {
+        if function || !d.state.is_empty() {
+            return LinkNeed::Always;
+        }
+        loop_only |= !d.loop_bindings.is_empty();
+    }
+    match (loop_only, tier) {
+        (false, _) => LinkNeed::None,
+        (true, Tier::Static) => LinkNeed::RowOnly,
+        (true, _) => LinkNeed::Always,
+    }
+}
+
 /// A value read as a path: from the props, or from the innermost row's item.
 enum PlainPath {
     Props(String),
@@ -558,5 +684,52 @@ fn plain_path(r: &RawExpr, item: Option<&str>) -> Option<PlainPath> {
             PlainPath::Row(rest) => Some(PlainPath::Row(format!("{rest}.{name}"))),
         },
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn d(state: &[&str], loops: &[&str]) -> Deps {
+        let mut d = Deps::default();
+        d.state.extend(state.iter().map(|s| s.to_string()));
+        d.loop_bindings.extend(loops.iter().map(|s| s.to_string()));
+        d
+    }
+
+    #[test]
+    fn link_decisions() {
+        let s = Tier::Static;
+        let n = Tier::Native;
+        for (tier, props, want) in [
+            (&s, vec![], LinkNeed::None),
+            (&s, vec![(false, d(&[], &[]))], LinkNeed::None),
+            (&s, vec![(false, d(&[], &["b"]))], LinkNeed::RowOnly),
+            (
+                &s,
+                vec![(false, d(&[], &["b"])), (false, d(&["q"], &[]))],
+                LinkNeed::Always,
+            ),
+            (&s, vec![(true, d(&[], &[]))], LinkNeed::Always),
+            (
+                &s,
+                vec![(false, d(&["selected"], &["t"]))],
+                LinkNeed::Always,
+            ),
+            (&n, vec![(false, d(&[], &["it"]))], LinkNeed::Always),
+            (&n, vec![(false, d(&[], &[]))], LinkNeed::None),
+            (
+                &Tier::Pending,
+                vec![(false, d(&[], &["x"]))],
+                LinkNeed::Always,
+            ),
+        ] {
+            assert_eq!(
+                instance_needs_link(tier, props.clone()),
+                want,
+                "{tier:?} {props:?}"
+            );
+        }
     }
 }

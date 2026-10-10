@@ -23,7 +23,7 @@ export const BROWSER_CASES = ['theme-toggle', 'product-card', 'parent-counter', 
 
 /** Rust-side pins of `crates/brust-compiler/tests/dual_eval.rs`; keep in sync with dual_eval.rs. */
 export const DUAL_EVAL_NO_SAMPLES = ['arrow-default', 'client-only', 'fragment-root', 'import-cycle', 'jsx-shapes', 'lazy-import', 'missing-key', 'react-child', 'react-hook', 'server-leak']
-export const DUAL_EVAL_NO_DIRECTIVES = ['static-text', 'cached-card', 'outlet-layout']
+export const DUAL_EVAL_NO_DIRECTIVES = ['static-text', 'cached-card', 'outlet-layout', 'keyed-list-child-job', 'static-list-child']
 
 export function renderExitReport(results: Result[]): string {
   const n = (f: (r: Result) => boolean) => results.filter(f).length

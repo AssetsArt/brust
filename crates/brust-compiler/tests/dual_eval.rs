@@ -45,6 +45,9 @@ const NO_DIRECTIVES: &[&str] = &[
     "cached-card",
     "outlet-layout",
     "react-child-row",
+    // F70: a static child in a row the client cannot re-create has no directives.
+    "keyed-list-child-job",
+    "static-list-child",
 ];
 
 fn fixture_dirs() -> Vec<PathBuf> {

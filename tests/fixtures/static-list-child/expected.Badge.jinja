@@ -1,2 +1,2 @@
 {# brust v2 · badge_4df5cf25 · do not edit #}
-<span x-data="badge_4df5cf25" x-props='{{ {"color": color, "label": label, "type": type} | json_attr }}'{% if type | present %} data-type="{{ type | attr_str | e }}"{% endif %} x-bind-data-type="_c1" style="{{ {"background": color} | style_css | e }}" x-bind-style="_c2" x-text="_c3">{{ label | e }}</span>
+<span{% if type | present %} data-type="{{ type | attr_str | e }}"{% endif %} style="{{ {"background": color} | style_css | e }}">{{ label | e }}</span>
