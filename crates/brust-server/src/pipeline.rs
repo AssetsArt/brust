@@ -470,7 +470,8 @@ async fn page(
                 (p.component_id, p.job_id)
             })
         };
-        let fresh = match results_in_request_order(&req, resp.results) {
+        let ids: Vec<&str> = req.jobs.iter().map(|c| c.id.as_str()).collect();
+        let fresh = match results_in_request_order(&ids, resp.results) {
             Ok(v) => v,
             Err(JobResultError::Threw { id, k, error }) => {
                 let (component_id, job_id) = labels(k);
@@ -977,6 +978,18 @@ pub(crate) enum Dest<'a> {
     },
 }
 
+/// Where a plan's template lives in the [`PlanIndex`] (M3-P P6: a plan stored across the
+/// worker call is owned — [`PlanRow`] — and re-borrowed with [`rehydrate`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PlanSrc {
+    /// The job's component in `PlanIndex::comps` (the child component for a child instance).
+    comp: u32,
+    /// The job in that component's `jobs`.
+    job: u32,
+    /// Child instance: (parent component, child record in the parent's `children`).
+    via: Option<(u32, u32)>,
+}
+
 /// One job of one request. Borrows its strings from the [`PlanIndex`].
 #[derive(Debug, Clone)]
 pub(crate) struct JobPlan<'a> {
@@ -998,9 +1011,33 @@ pub(crate) struct JobPlan<'a> {
     pub outputs: &'a [String],
     /// The manifest record's `target`, passed through as `JobCall.target`.
     pub target: Option<&'a str>,
+    /// The template this plan was built from.
+    pub(crate) src: PlanSrc,
+}
+
+/// What survives the worker call of a plan: its template indices and its per-request strings.
+#[derive(Debug, Clone)]
+pub(crate) struct PlanRow {
+    src: PlanSrc,
+    row: Option<usize>,
+    key: JobKey,
+    user_key: Option<String>,
 }
 
 impl JobPlan<'_> {
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "used by plan_response (M3-P P6 Task 5)")
+    )]
+    pub(crate) fn to_row(&self) -> PlanRow {
+        PlanRow {
+            src: self.src,
+            row: self.call_row,
+            key: self.key.clone(),
+            user_key: self.user_key.clone(),
+        }
+    }
+
     /// The `per_instance` row this call renders (`JobCall.row`).
     fn instance_row(&self) -> Option<usize> {
         match self.dest {
@@ -1022,6 +1059,60 @@ impl JobPlan<'_> {
     }
 }
 
+/// The plans `rows` describe, borrowed from `idx` again. `inputs` is `Node::Null`: a rehydrated
+/// plan is used after its call (insert, merge, logs), never to build a request.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "used by page's planned arm (M3-P P6 Task 6)")
+)]
+pub(crate) fn rehydrate(idx: &PlanIndex, rows: Vec<PlanRow>) -> Vec<JobPlan<'_>> {
+    rows.into_iter()
+        .map(|r| {
+            let comp = &idx.comps[r.src.comp as usize];
+            let job = r.src.job as usize;
+            let jt = &comp.jobs[job];
+            let (call_prefix, dest) = match r.src.via {
+                None => (
+                    comp.call_prefixes[job].as_str(),
+                    Dest::Chain {
+                        component: &comp.id,
+                        row: r.row,
+                    },
+                ),
+                Some((parent, rec)) => {
+                    let p = &idx.comps[parent as usize];
+                    let ch = &p.children[rec as usize];
+                    (
+                        ch.call_prefixes[job].as_str(),
+                        Dest::Child {
+                            parent: &p.id,
+                            component: &comp.id,
+                            slot: &ch.slot,
+                            row: r.row,
+                        },
+                    )
+                }
+            };
+            JobPlan {
+                key: r.key,
+                call_prefix,
+                call_row: r.row,
+                component_id: &comp.id,
+                job_id: &jt.id,
+                kind: jt.kind,
+                inputs: Node::Null,
+                ttl: jt.ttl,
+                tags: &jt.tags,
+                user_key: r.user_key,
+                dest,
+                outputs: &jt.outputs,
+                target: jt.target.as_deref(),
+                src: r.src,
+            }
+        })
+        .collect()
+}
+
 /// Every path a request evaluates, parsed, and every per-instance string
 /// (call-id prefixes, child slot names, useId instance names) built, once per
 /// component at boot (m2p plan-perf): `collect_jobs` / `seed_child_slots`
@@ -1040,6 +1131,8 @@ struct CompTpl {
     call_prefixes: Vec<String>,
     children: Vec<ChildTpl>,
     use_id_slots: u32,
+    /// Own jobs non-empty, or some child component's jobs non-empty (`chain_has_jobs`).
+    deep_jobs: bool,
 }
 
 #[derive(Debug)]
@@ -1133,16 +1226,38 @@ impl PlanIndex {
                 jobs,
                 children,
                 use_id_slots: c.use_id_slots,
+                deep_jobs: false,
             });
+        }
+        for i in 0..comps.len() {
+            let c = &comps[i];
+            let deep =
+                !c.jobs.is_empty() || c.children.iter().any(|ch| !comps[ch.child].jobs.is_empty());
+            comps[i].deep_jobs = deep;
         }
         Ok(PlanIndex { comps, by_id })
     }
 
-    fn comp(&self, id: &str) -> Result<&CompTpl, String> {
+    fn comp_ix(&self, id: &str) -> Result<usize, String> {
         self.by_id
             .get(id)
-            .map(|&i| &self.comps[i])
+            .copied()
             .ok_or_else(|| format!("unknown component {id}"))
+    }
+
+    fn comp(&self, id: &str) -> Result<&CompTpl, String> {
+        self.comp_ix(id).map(|i| &self.comps[i])
+    }
+
+    /// Some chain component or one of its children has a job.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "used by page's plan offer (M3-P P6 Task 6)")
+    )]
+    pub(crate) fn chain_has_jobs(&self, chain: &[String]) -> bool {
+        chain
+            .iter()
+            .any(|id| self.by_id.get(id).is_some_and(|&i| self.comps[i].deep_jobs))
     }
 }
 
@@ -1218,6 +1333,7 @@ fn plan_key(
     (JobKey(inputs::job_key(cid, key_job, projected)), None)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn plan_one<'a>(
     out: &mut Vec<JobPlan<'a>>,
     cid: &'a str,
@@ -1226,6 +1342,7 @@ fn plan_one<'a>(
     props: &Node,
     dest: Dest<'a>,
     row: Option<usize>,
+    src: PlanSrc,
 ) -> Result<(), String> {
     let per_instance = match dest {
         Dest::Chain { row, .. } => row,
@@ -1255,6 +1372,7 @@ fn plan_one<'a>(
         dest,
         outputs: &j.outputs,
         target: j.target.as_deref(),
+        src,
     });
     Ok(())
 }
@@ -1274,22 +1392,28 @@ pub(crate) fn collect_jobs<'a>(
 ) -> Result<Vec<JobPlan<'a>>, String> {
     let mut out = Vec::new();
     for id in chain {
-        let c = idx.comp(id)?;
-        for (j, prefix) in c.jobs.iter().zip(&c.call_prefixes) {
+        let ci = idx.comp_ix(id)?;
+        let c = &idx.comps[ci];
+        for (ji, (j, prefix)) in c.jobs.iter().zip(&c.call_prefixes).enumerate() {
             let dest = |row| Dest::Chain {
                 component: &c.id,
                 row,
             };
+            let src = PlanSrc {
+                comp: ci as u32,
+                job: ji as u32,
+                via: None,
+            };
             match &j.per_instance {
-                None => plan_one(&mut out, &c.id, prefix, j, ctx, dest(None), None)?,
+                None => plan_one(&mut out, &c.id, prefix, j, ctx, dest(None), None, src)?,
                 Some(list) => {
                     for r in 0..row_count(list, ctx) {
-                        plan_one(&mut out, &c.id, prefix, j, ctx, dest(Some(r)), Some(r))?;
+                        plan_one(&mut out, &c.id, prefix, j, ctx, dest(Some(r)), Some(r), src)?;
                     }
                 }
             }
         }
-        for ch in &c.children {
+        for (ri, ch) in c.children.iter().enumerate() {
             let child = &idx.comps[ch.child];
             if child.jobs.is_empty() {
                 continue;
@@ -1304,8 +1428,22 @@ pub(crate) fn collect_jobs<'a>(
             for r in rows.map_or(0..1, |n| 0..n) {
                 let row = rows.map(|_| r);
                 let props = ch.props.eval(ctx, row)?;
-                for (j, prefix) in child.jobs.iter().zip(&ch.call_prefixes) {
-                    plan_one(&mut out, &child.id, prefix, j, &props, target(row), row)?;
+                for (ji, (j, prefix)) in child.jobs.iter().zip(&ch.call_prefixes).enumerate() {
+                    let src = PlanSrc {
+                        comp: ch.child as u32,
+                        job: ji as u32,
+                        via: Some((ci as u32, ri as u32)),
+                    };
+                    plan_one(
+                        &mut out,
+                        &child.id,
+                        prefix,
+                        j,
+                        &props,
+                        target(row),
+                        row,
+                        src,
+                    )?;
                 }
             }
         }
@@ -1369,18 +1507,11 @@ enum JobResultError {
 /// repeated id keeps its last value, an error wins over a missing result —
 /// exactly the former two-map behaviour.
 fn results_in_request_order(
-    req: &JobsRequest<'_>,
+    ids: &[&str],
     results: Vec<JobResult>,
 ) -> Result<Vec<Node>, JobResultError> {
-    let pos: HashMap<&str, usize> = req
-        .jobs
-        .iter()
-        .enumerate()
-        .map(|(k, c)| (c.id.as_str(), k))
-        .collect();
-    let mut out: Vec<Option<Node>> = std::iter::repeat_with(|| None)
-        .take(req.jobs.len())
-        .collect();
+    let pos: HashMap<&str, usize> = ids.iter().enumerate().map(|(k, &id)| (id, k)).collect();
+    let mut out: Vec<Option<Node>> = std::iter::repeat_with(|| None).take(ids.len()).collect();
     for res in results {
         let k = pos.get(res.id.as_str()).copied();
         if let Some(error) = res.error {
@@ -1826,21 +1957,6 @@ mod tests {
     fn at<'a>(n: &'a Node, path: &[&str]) -> &'a Node {
         path.iter().fold(n, |cur, k| cur.get(k).unwrap_or(&NULL))
     }
-    fn req_of(ids: &[&str]) -> JobsRequest<'static> {
-        JobsRequest {
-            jobs: ids
-                .iter()
-                .map(|id| JobCall {
-                    id: id.to_string(),
-                    component_id: "c",
-                    kind: JobKind::Precompute,
-                    inputs: &NULL,
-                    target: None,
-                    row: None,
-                })
-                .collect(),
-        }
-    }
     fn res(id: &str, v: Option<Value>, e: Option<&str>) -> JobResult {
         JobResult {
             id: id.into(),
@@ -1851,9 +1967,8 @@ mod tests {
 
     #[test]
     fn results_in_request_order_reorders_by_call_id() {
-        let req = req_of(&["p/j/0", "p/j/1", "p/j/2"]);
         let out = results_in_request_order(
-            &req,
+            &["p/j/0", "p/j/1", "p/j/2"],
             vec![
                 res("p/j/2", Some(json!(2)), None),
                 res("p/j/0", Some(json!(0)), None),
@@ -1866,9 +1981,8 @@ mod tests {
 
     #[test]
     fn results_in_request_order_ignores_unknown_ids_and_keeps_the_last_duplicate() {
-        let req = req_of(&["a", "b"]);
         let out = results_in_request_order(
-            &req,
+            &["a", "b"],
             vec![
                 res("zzz", Some(json!(9)), None),
                 res("a", Some(json!(1)), None),
@@ -1882,25 +1996,25 @@ mod tests {
 
     #[test]
     fn results_in_request_order_reports_missing_error_and_no_value_with_positions() {
-        let req = req_of(&["a", "b"]);
+        let req: &[&str] = &["a", "b"];
         assert!(matches!(
-            results_in_request_order(&req, vec![res("a", Some(json!(1)), None)]),
+            results_in_request_order(req, vec![res("a", Some(json!(1)), None)]),
             Err(JobResultError::Missing { k: 1 })
         ));
         assert!(matches!(
             results_in_request_order(
-                &req,
+                req,
                 vec![res("b", None, Some("boom")), res("a", Some(json!(1)), None)]
             ),
             Err(JobResultError::Threw { k: Some(1), .. })
         ));
         assert!(matches!(
-            results_in_request_order(&req, vec![res("nope", None, Some("boom"))]),
+            results_in_request_order(req, vec![res("nope", None, Some("boom"))]),
             Err(JobResultError::Threw { k: None, .. })
         ));
         assert!(matches!(
             results_in_request_order(
-                &req,
+                req,
                 vec![res("a", None, None), res("b", Some(json!(1)), None)]
             ),
             Err(JobResultError::NoValue { k: Some(0), .. })
@@ -2015,28 +2129,41 @@ mod tests {
     /// JSON, equal the golden computed before the m2p plan-template work
     /// (`BRUST_WRITE_PLAN_GOLDEN=1` rewrites it); and seeding + merging each
     /// plan's value rebuilds the captured merged context exactly.
+    fn golden_dir() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("benches/fixtures/pokedex")
+    }
+
+    /// The pokedex golden's manifest and, for `file`, the captured merged context
+    /// and the loader context `page` plans over (the merged one minus the overlays).
+    fn golden_ctx(file: &str) -> (Manifest, Node, Node) {
+        let dir = golden_dir();
+        let m: Manifest =
+            serde_json::from_slice(&std::fs::read(dir.join("manifest.json")).unwrap()).unwrap();
+        let merged: Value =
+            serde_json::from_slice(&std::fs::read(dir.join("ctx").join(file)).unwrap()).unwrap();
+        let merged = Node::from(merged);
+        let mut ctx = merged.clone();
+        for k in [OWN_KEY, CHILDREN_KEY] {
+            ctx.map_mut().unwrap().remove(k);
+        }
+        (m, ctx, merged)
+    }
+
+    const GOLDEN_CASES: [(&str, &str); 3] = [
+        ("/pokemon/{name}", "pokemon-pikachu.json"),
+        ("/", "home.json"),
+        ("/type-chart", "type-chart.json"),
+    ];
+
     #[test]
     fn pokedex_plans_match_the_golden() {
         use plan_stage::Planner;
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("benches/fixtures/pokedex");
-        let m: Manifest =
-            serde_json::from_slice(&std::fs::read(dir.join("manifest.json")).unwrap()).unwrap();
-        let planner = Planner::new(&m).unwrap();
+        let dir = golden_dir();
         let mut got = serde_json::Map::new();
-        for (pattern, file) in [
-            ("/pokemon/{name}", "pokemon-pikachu.json"),
-            ("/", "home.json"),
-            ("/type-chart", "type-chart.json"),
-        ] {
+        for (pattern, file) in GOLDEN_CASES {
+            let (m, mut ctx, merged) = golden_ctx(file);
+            let planner = Planner::new(&m).unwrap();
             let route = m.routes.iter().find(|r| r.pattern == pattern).unwrap();
-            let merged: Value =
-                serde_json::from_slice(&std::fs::read(dir.join("ctx").join(file)).unwrap())
-                    .unwrap();
-            let merged = Node::from(merged);
-            let mut ctx = merged.clone();
-            for k in [OWN_KEY, CHILDREN_KEY] {
-                ctx.map_mut().unwrap().remove(k);
-            }
             let plans = planner.plan(&route.chain, &ctx).unwrap();
             got.insert(
                 file.into(),
@@ -2060,6 +2187,53 @@ mod tests {
         }
         let want: Value = serde_json::from_slice(&std::fs::read(&golden).unwrap()).unwrap();
         assert_eq!(got, want);
+    }
+
+    #[test]
+    fn rehydrated_plans_describe_like_collected_plans() {
+        // `describe()` with every "inputs" set to null: a rehydrated plan has none.
+        let strip = |d: Node| {
+            let mut v = j(&d);
+            for e in v.as_array_mut().unwrap() {
+                e["inputs"] = Value::Null;
+            }
+            v
+        };
+        for (pattern, file) in GOLDEN_CASES {
+            let (m, ctx, _) = golden_ctx(file);
+            let idx = PlanIndex::new(&m).unwrap();
+            let route = m.routes.iter().find(|r| r.pattern == pattern).unwrap();
+            let plans = collect_jobs(&idx, &route.chain, &ctx).unwrap();
+            assert!(!plans.is_empty(), "{file}");
+            let rows: Vec<PlanRow> = plans.iter().map(JobPlan::to_row).collect();
+            let back = rehydrate(&idx, rows);
+            for (b, p) in back.iter().zip(&plans) {
+                assert_eq!(b.src, p.src, "{file}");
+                assert_eq!(b.inputs, Node::Null, "{file}");
+            }
+            assert_eq!(
+                strip(plan_stage::Planned(back).describe()),
+                strip(plan_stage::Planned(plans).describe()),
+                "{file}"
+            );
+            assert!(idx.chain_has_jobs(&route.chain), "{file}");
+        }
+    }
+
+    #[test]
+    fn chain_has_jobs_sees_child_jobs_only_chains() {
+        let m = manifest();
+        let idx = PlanIndex::new(&m).unwrap();
+        let route = |id: &str| &m.routes.iter().find(|r| r.id == id).unwrap().chain;
+        assert!(!idx.chain_has_jobs(route("r1")));
+        assert!(idx.chain_has_jobs(route("r2")));
+        assert!(idx.chain_has_jobs(route("r5")));
+        assert!(!idx.chain_has_jobs(&chain(&["appLayout_a1", "unknown_zz"])));
+        // detailPage_c3 without its own job: its moveCard child still has one.
+        let mut m2 = manifest();
+        m2.components.get_mut("detailPage_c3").unwrap().jobs.clear();
+        let idx2 = PlanIndex::new(&m2).unwrap();
+        assert!(idx2.chain_has_jobs(route("r2")));
     }
 
     #[test]

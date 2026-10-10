@@ -78,3 +78,91 @@ fn component_and_job_ids_are_length_prefixed() {
 fn canonical_sorts_keys_without_whitespace() {
     assert_eq!(canonical(&n(json!({"b":1,"a":2}))), b"{\"a\":2,\"b\":1}");
 }
+
+/// The 20 `(cid, jid, inputs)` cases of `job_keys_are_pinned`.
+fn job_key_cases() -> Vec<(&'static str, &'static str, Value)> {
+    vec![
+        ("typeBadge_5f5390d7", "j0", json!({"type": "fire"})),
+        ("a", "bc", json!(null)),
+        ("ab", "c", json!(null)),
+        ("", "", json!({})),
+        ("c", "j0#3", json!({"row": 3})),
+        ("c", "j0", json!([1, "é", {"z": 1, "a": [true]}])),
+        (
+            "detailPage_c3",
+            "j0",
+            json!({"pokemon": {"stats": {"hp": 35}}}),
+        ),
+        ("moveCard_d4", "j0", json!({"move": {"name": "tackle"}})),
+        ("teamPage_g7", "j0", json!({"team": ["a"]})),
+        (
+            "teamBuilder_h8",
+            "ssr",
+            json!({"team": ["a", "b"], "who": "anon"}),
+        ),
+        ("n", "j0", json!({"active": true})),
+        ("n", "j0", json!({"active": false})),
+        ("x", "j1", json!({"big": 18446744073709551615u64})),
+        (
+            "x",
+            "j1",
+            json!({"neg": -7, "f": 1.5, "e": 1e21, "t": 1e-7}),
+        ),
+        ("x", "j1", json!({"u": "ピカチュウ", "esc": "a\"b\\c\n"})),
+        ("x", "j1", json!({"b": {"a": 1}, "a": {"b": 2}})),
+        ("x", "j1", json!({"[idx]": {"n": 7}})),
+        ("x", "j1", json!({"a": {"[0]": {"n": 1}, "[1]": {"n": 2}}})),
+        (
+            "counter_4a7ef039",
+            "j0",
+            json!({"label": "clicks", "start": 0}),
+        ),
+        (
+            "counter_4a7ef039",
+            "j0",
+            json!({"label": "clicks", "start": 1234567}),
+        ),
+    ]
+}
+
+/// 20 job keys pinned at 42db1d1: a change of `job_key`'s bytes (field layout, canonical JSON,
+/// number text, key order, hash) fails here before it reaches a cache. Regenerate ONLY with a
+/// spec amendment: `BRUST_WRITE_JOB_KEYS=1 cargo test -p brust-server --test inputs job_keys_are_pinned`.
+#[test]
+fn job_keys_are_pinned() {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/job-keys-20.json"
+    );
+    let cases = job_key_cases();
+    if std::env::var_os("BRUST_WRITE_JOB_KEYS").is_some() {
+        let rows: Vec<Value> = cases
+            .iter()
+            .map(|(cid, jid, inputs)| {
+                let key = job_key(cid, jid, &n(inputs.clone()));
+                json!({"cid": cid, "jid": jid, "inputs": inputs, "key": key})
+            })
+            .collect();
+        let text = serde_json::to_string_pretty(&rows).unwrap() + "\n";
+        std::fs::write(path, text).unwrap();
+    }
+    let rows: Vec<Value> =
+        serde_json::from_str(&std::fs::read_to_string(path).expect("job-keys-20.json")).unwrap();
+    assert_eq!(rows.len(), 20);
+    for (row, (cid, jid, inputs)) in rows.iter().zip(&cases) {
+        assert_eq!(
+            (row["cid"].as_str(), row["jid"].as_str()),
+            (Some(*cid), Some(*jid))
+        );
+        assert_eq!(
+            &row["inputs"], inputs,
+            "{cid}/{jid}: fixture inputs drifted from CASES"
+        );
+        let key = job_key(cid, jid, &n(row["inputs"].clone()));
+        assert_eq!(
+            Some(key.as_str()),
+            row["key"].as_str(),
+            "{cid}/{jid} {inputs}"
+        );
+    }
+}
