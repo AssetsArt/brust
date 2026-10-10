@@ -6,7 +6,11 @@
     "packages/*",
     "examples/*",
     "npm/*",
-    "tests/server"
+    "tests/server",
+    "bench",
+    "bench/apps/brust",
+    "bench/apps/bun-serve",
+    "bench/apps/next"
   ],
   "scripts": {
     "bun-codegen": "bun scripts/bun-codegen.ts",
