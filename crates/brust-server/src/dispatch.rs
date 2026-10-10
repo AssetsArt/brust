@@ -141,7 +141,7 @@ pub enum CallError {
     #[error("worker rejected: {0}")]
     Rejected(String),
     /// A claimed call did not settle within the call deadline — 504. The
-    /// spawned task still holds the claim until the JS promise settles.
+    /// detached remainder still holds the claim until the JS promise settles.
     #[error("call deadline exceeded")]
     Deadline,
     /// Request serialisation, an out-of-bounds length, or unparsable JSON.
@@ -179,11 +179,11 @@ pub async fn claim_or_wait(
 /// from_slice → release claim on every path.
 ///
 /// Cancel-safe: once the claim is taken, the call, the bounds check and the
-/// parse run in a spawned task that OWNS the claim. If the caller's future is
-/// dropped (hyper drops the request future on client disconnect), the task
-/// keeps the slot claimed until the worker's call settles, so the SAB slot is
-/// never handed to another request while JS may still be writing it (the
-/// `RenderClaim` drop invariant in `pool.rs`).
+/// parse run inline inside [`Detach`]: if the caller's future is dropped (hyper
+/// drops the request future on client disconnect; the deadline below), the
+/// remainder is spawned and keeps the slot claimed until the worker's call
+/// settles, so the SAB slot is never handed to another request while JS may
+/// still be writing it (the `RenderClaim` drop invariant in `pool.rs`).
 pub async fn call_worker<Req: Serialize, Resp: DeserializeOwned + Send + 'static>(
     pool: &Arc<WorkerPool>,
     timeout: Duration,
@@ -195,42 +195,113 @@ pub async fn call_worker<Req: Serialize, Resp: DeserializeOwned + Send + 'static
     let json = serde_json::to_string(req)
         .map_err(|e| CallError::BadResponse(format!("request serialise: {e}")))?;
     let pool = Arc::clone(pool);
-    let task = tokio::spawn(async move {
-        let entry = Arc::clone(claim.entry());
-        let slot = claim.slot();
-        let len = match entry.dispatch.call(kind, json, slot).await {
-            Ok(n) => n,
-            Err(DispatchError::EnqueueFailed(m)) => {
-                tracing::error!(worker_id = entry.id(), ?kind, error = %m, "enqueue failed — worker dead, removing from pool");
-                pool.remove(entry.id());
-                return Err(CallError::Enqueue(m));
+    // The body is identical to the former spawned task. It is polled INLINE on
+    // the request's task (no spawn, no scheduling hop); `Detach` makes the two
+    // cases the spawn used to cover explicit: dropped before completion
+    // (deadline, client disconnect) → the remainder is spawned so the claim it
+    // owns is released only when JS settles; a panic → `Err(payload)` to us,
+    // the claim released by the unwinding async block.
+    let call: Pin<Box<dyn Future<Output = Result<Resp, CallError>> + Send>> = Box::pin(
+        async move {
+            let entry = Arc::clone(claim.entry());
+            let slot = claim.slot();
+            let len = match entry.dispatch.call(kind, json, slot).await {
+                Ok(n) => n,
+                Err(DispatchError::EnqueueFailed(m)) => {
+                    tracing::error!(worker_id = entry.id(), ?kind, error = %m, "enqueue failed — worker dead, removing from pool");
+                    pool.remove(entry.id());
+                    return Err(CallError::Enqueue(m));
+                }
+                Err(DispatchError::PromiseRejected(m)) => return Err(CallError::Rejected(m)),
+            };
+            let (ptr, cap) = entry.dispatch.buf_slot(slot);
+            if len == 0 || len as usize > cap {
+                return Err(CallError::BadResponse(format!(
+                    "resp_len {len} outside (0, {cap}]"
+                )));
             }
-            Err(DispatchError::PromiseRejected(m)) => return Err(CallError::Rejected(m)),
-        };
-        let (ptr, cap) = entry.dispatch.buf_slot(slot);
-        if len == 0 || len as usize > cap {
-            return Err(CallError::BadResponse(format!(
-                "resp_len {len} outside (0, {cap}]"
-            )));
-        }
-        // SAFETY: the worker's Promise resolved (happens-before through the dispatch
-        // future), JS is done writing this slot's sub-region; `len` is bounds-checked
-        // above; `claim` is still held so no other request can write the slot.
-        let bytes = unsafe { std::slice::from_raw_parts(ptr, len as usize) };
-        let parsed = serde_json::from_slice::<Resp>(bytes)
-            .map_err(|e| CallError::BadResponse(e.to_string()));
-        drop(claim);
-        parsed
-    });
-    match tokio::time::timeout(call_timeout, task).await {
-        Ok(joined) => {
-            joined.map_err(|e| CallError::BadResponse(format!("worker call task: {e}")))?
-        }
-        // The task keeps running and keeps the claim until JS settles (the
-        // `RenderClaim` drop rule in `pool.rs`); its late result is dropped
-        // with the JoinHandle, so nothing from this call reaches a cache.
+            // SAFETY: the worker's Promise resolved (happens-before through the dispatch
+            // future), JS is done writing this slot's sub-region; `len` is bounds-checked
+            // above; `claim` is still held so no other request can write the slot.
+            let bytes = unsafe { std::slice::from_raw_parts(ptr, len as usize) };
+            let parsed = serde_json::from_slice::<Resp>(bytes)
+                .map_err(|e| CallError::BadResponse(e.to_string()));
+            drop(claim);
+            parsed
+        },
+    );
+    match tokio::time::timeout(call_timeout, Detach(Some(call))).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(payload)) => Err(CallError::BadResponse(format!(
+            "worker call panicked: {}",
+            panic_message(&*payload)
+        ))),
+        // `Detach` was dropped by the timeout: the remainder now runs as its own
+        // task and keeps the claim until JS settles (the `RenderClaim` drop rule
+        // in `pool.rs`); its late result is dropped, so nothing from this call
+        // reaches a cache.
         Err(_elapsed) => Err(CallError::Deadline),
     }
+}
+
+/// A boxed call future polled inline. Dropped before completion → the remainder
+/// is detached onto the runtime (it owns the `RenderClaim`, which must outlive
+/// the worker's write — see the INVARIANT in `pool.rs`). A panic while polling
+/// is caught and returned as `Err(payload)`; the panicked future is dropped
+/// (its locals, the claim included, were already released by the unwind) and
+/// is never polled again.
+///
+/// The inner future is already pinned on the heap, so `Detach` itself is
+/// `Unpin` and `drop` can move the `Pin<Box<_>>` into a new task without ever
+/// unpinning it.
+struct Detach<T: Send + 'static>(Option<Pin<Box<dyn Future<Output = T> + Send>>>);
+
+impl<T: Send + 'static> Future for Detach<T> {
+    type Output = Result<T, Box<dyn std::any::Any + Send>>;
+
+    fn poll(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        use std::task::Poll;
+        let Some(inner) = self.0.as_mut() else {
+            panic!("Detach polled after completion");
+        };
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| inner.as_mut().poll(cx))) {
+            Ok(Poll::Pending) => Poll::Pending,
+            Ok(Poll::Ready(v)) => {
+                self.0 = None;
+                Poll::Ready(Ok(v))
+            }
+            Err(payload) => {
+                self.0 = None;
+                Poll::Ready(Err(payload))
+            }
+        }
+    }
+}
+
+impl<T: Send + 'static> Drop for Detach<T> {
+    fn drop(&mut self) {
+        if let Some(rest) = self.0.take() {
+            match tokio::runtime::Handle::try_current() {
+                Ok(h) => {
+                    h.spawn(rest);
+                }
+                // Only outside a runtime (shutdown): the claim is released with
+                // the future, there is no worker left to protect.
+                Err(_) => tracing::warn!("worker call dropped outside the runtime; claim released"),
+            }
+        }
+    }
+}
+
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> &str {
+    payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("non-string panic payload")
 }
 
 /// In-process mock for pool/dispatch unit tests: a leaked 256 KiB buffer (no
@@ -621,5 +692,57 @@ mod tests {
         assert!(matches!(first, Err(CallError::Deadline)));
         let second = call_with(&pool, 60, 30, CallKind::Loader).await;
         assert!(matches!(second, Err(CallError::Timeout)), "{second:?}");
+    }
+
+    /// `call` panics when polled: the claim must be released by unwinding and
+    /// the caller must get `BadResponse`, not a torn-down task.
+    struct PanickingDispatch(MockDispatch);
+
+    impl RenderDispatch for PanickingDispatch {
+        fn call(
+            &self,
+            _kind: CallKind,
+            _request_json: String,
+            _slot: u32,
+        ) -> Pin<Box<dyn Future<Output = Result<u32, DispatchError>> + Send>> {
+            Box::pin(async { panic!("worker exploded") })
+        }
+        fn buf(&self) -> (*mut u8, usize) {
+            self.0.buf()
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_panicking_dispatch_releases_its_slot_and_is_a_bad_response() {
+        let pool = Arc::new(WorkerPool::new());
+        pool.register(Box::new(PanickingDispatch(MockDispatch::new())));
+        let r = call_with(&pool, 100, 1_000, CallKind::Loader).await;
+        match r {
+            Err(CallError::BadResponse(m)) => assert!(m.contains("worker exploded"), "{m}"),
+            other => panic!("expected BadResponse, got {other:?}"),
+        }
+        assert!(
+            matches!(pool.try_claim_render_lockfree(), ClaimResult::Claimed(_)),
+            "the slot must be free after the panic"
+        );
+    }
+
+    /// The happy path must not spawn: the caller's task is the only one alive
+    /// before and after a round trip (current_thread runtime, nothing else running).
+    #[tokio::test(flavor = "current_thread")]
+    async fn detach_runs_the_remainder_off_the_caller() {
+        // Deadline fires → the remainder is detached and finishes on its own
+        // (the claim is released without anyone awaiting the call again).
+        let (pool, release) = gated_pool();
+        let r = call_with(&pool, 100, 30, CallKind::Loader).await;
+        assert!(matches!(r, Err(CallError::Deadline)));
+        release.send(Ok(())).unwrap();
+        wait_claimable(&pool).await;
+        // And a second, un-gated call on the same (now free) slot round-trips.
+        let pool2 = pool_with(MockDispatch::replying(br#"{"ok":true}"#));
+        let v = call_with(&pool2, 100, 1_000, CallKind::Jobs)
+            .await
+            .expect("round trip");
+        assert_eq!(v, serde_json::json!({"ok": true}));
     }
 }
