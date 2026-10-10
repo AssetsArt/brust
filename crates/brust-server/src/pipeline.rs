@@ -20,9 +20,10 @@ use crate::cache::job_cache::{JobCache, JobKey};
 use crate::cache::key_expr::EvalCtx;
 use crate::cache::l1::{CacheKey, RenderedBody, build_cache_key};
 use crate::config::Server;
-use crate::dispatch::{CallError, CallKind, call_worker};
+use crate::dispatch::{CallError, CallKind, call_worker, call_worker_planned};
 use crate::inputs::{self, Path};
 use crate::manifest::{ALL_PROPS, Instances, JobKind, JobRecord, Manifest, RouteRecord};
+use crate::pool::PlanBox;
 use crate::protocol::{
     JobCall, JobResult, JobsRequest, JobsResponse, LoaderRequest, LoaderResponse, Verdict,
 };
@@ -326,27 +327,51 @@ async fn page(
     let mut status = status;
     let mut cacheable = true;
     let mut extra: Vec<(String, String)> = Vec::new();
+    // M3-P P6: the plan the worker built inside the loader call, with its job results.
+    let mut planned: Option<(PlannedCall, Vec<JobResult>)> = None;
     if !route.loaders.is_empty() {
         let req = LoaderRequest {
             route_id: &route.id,
             params,
             path: path_only,
             req: envelope.req,
-            plan: false,
+            plan: s.plans.chain_has_jobs(&route.chain),
         };
-        let r = call_worker::<_, LoaderResponse>(
+        // The plan offer: the base context (params + path: two entries) the worker plans on.
+        let seed: Option<PlanBox> = req.plan.then(|| -> PlanBox {
+            Box::new(PlanCell::Seed(PlanSeed {
+                route: ri,
+                base: ctx.clone(),
+            }))
+        });
+        let r = call_worker_planned::<_, LoaderResponse>(
             &s.pool,
             s.claim_timeout,
             s.call_timeout,
             CallKind::Loader,
             &req,
+            seed,
         )
         .await;
+        let (r, cell) = match r {
+            Ok((v, c)) => (Ok(v), c),
+            Err(e) => (Err(e), None),
+        };
         if !matches!(r, Err(CallError::NoWorkers | CallError::Timeout)) {
             s.loader_calls.fetch_add(1, Ordering::Relaxed);
+            s.worker_calls.fetch_add(1, Ordering::Relaxed);
             meta.bun_calls += 1;
         }
         match r {
+            Ok(LoaderResponse::Planned { results }) => {
+                let Some(PlanCell::Planned(pc)) =
+                    cell.and_then(|b| b.downcast::<PlanCell>().ok()).map(|b| *b)
+                else {
+                    tracing::error!(route = %route.id, "planned loader response without a plan in the slot");
+                    return body::error_500();
+                };
+                planned = Some((pc, results));
+            }
             Ok(LoaderResponse::Ok {
                 ok: true,
                 data,
@@ -400,10 +425,6 @@ async fn page(
                 tracing::error!(route = %route.id, %error, "loader threw");
                 return body::error_500();
             }
-            Ok(LoaderResponse::Planned { .. }) => {
-                tracing::error!(route = %route.id, "planned loader response without a plan offer");
-                return body::error_500();
-            }
             Err(e @ (CallError::NoWorkers | CallError::Timeout)) => {
                 return body::error_503(&e.to_string());
             }
@@ -417,110 +438,83 @@ async fn page(
             }
         }
     }
-    let mut ctx = Node::map(ctx);
-
     // ----- (5) jobs -----
-    let plans = match collect_jobs(&s.plans, &route.chain, &ctx) {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::error!(route = %route.id, error = %e, "job planning failed");
-            return body::error_500();
+    let (mut ctx, plans, lookup) = match planned {
+        Some((pc, results)) => {
+            // The loader's `Ok` arm (which applies its headers) did not run on this path.
+            for (k, v) in &pc.headers {
+                if k.eq_ignore_ascii_case("set-cookie") {
+                    cacheable = false;
+                }
+                extra.push((k.clone(), v.clone()));
+            }
+            let plans = rehydrate(&s.plans, pc.rows);
+            let mut lookup = pc.lookup;
+            if !lookup.misses.is_empty() {
+                s.job_calls.fetch_add(1, Ordering::Relaxed);
+                let ids: Vec<&str> = pc.call_ids.iter().map(String::as_str).collect();
+                if let Err(resp) = apply_job_results(s, route, &plans, &mut lookup, &ids, results) {
+                    return resp;
+                }
+            }
+            (pc.ctx, plans, lookup)
+        }
+        None => {
+            let ctx = Node::map(ctx);
+            let plans = match collect_jobs(&s.plans, &route.chain, &ctx) {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::error!(route = %route.id, error = %e, "job planning failed");
+                    return body::error_500();
+                }
+            };
+            let mut lookup = lookup_jobs(&s.jobs, &plans);
+            if !lookup.misses.is_empty() {
+                let req = jobs_request(&plans, &lookup.misses);
+                let r = call_worker::<_, JobsResponse>(
+                    &s.pool,
+                    s.claim_timeout,
+                    s.call_timeout,
+                    CallKind::Jobs,
+                    &req,
+                )
+                .await;
+                if !matches!(r, Err(CallError::NoWorkers | CallError::Timeout)) {
+                    s.job_calls.fetch_add(1, Ordering::Relaxed);
+                    s.worker_calls.fetch_add(1, Ordering::Relaxed);
+                    meta.bun_calls += 1;
+                }
+                let resp = match r {
+                    Ok(r) => r,
+                    Err(e @ (CallError::NoWorkers | CallError::Timeout)) => {
+                        return body::error_503(&e.to_string());
+                    }
+                    Err(CallError::Deadline) => {
+                        s.timed_out_calls.fetch_add(1, Ordering::Relaxed);
+                        return body::error_504("call deadline exceeded");
+                    }
+                    Err(e) => {
+                        tracing::error!(route = %route.id, error = %e, "jobs call failed");
+                        return body::error_500();
+                    }
+                };
+                let ids: Vec<&str> = req.jobs.iter().map(|c| c.id.as_str()).collect();
+                if let Err(resp) =
+                    apply_job_results(s, route, &plans, &mut lookup, &ids, resp.results)
+                {
+                    return resp;
+                }
+            }
+            (ctx, plans, lookup)
         }
     };
-    let Lookup {
-        mut values,
-        owner,
-        misses,
-    } = lookup_jobs(&s.jobs, &plans);
-    if !misses.is_empty() {
-        let req = jobs_request(&plans, &misses);
-        let r = call_worker::<_, JobsResponse>(
-            &s.pool,
-            s.claim_timeout,
-            s.call_timeout,
-            CallKind::Jobs,
-            &req,
-        )
-        .await;
-        if !matches!(r, Err(CallError::NoWorkers | CallError::Timeout)) {
-            s.job_calls.fetch_add(1, Ordering::Relaxed);
-            meta.bun_calls += 1;
-        }
-        let resp = match r {
-            Ok(r) => r,
-            Err(e @ (CallError::NoWorkers | CallError::Timeout)) => {
-                return body::error_503(&e.to_string());
-            }
-            Err(CallError::Deadline) => {
-                s.timed_out_calls.fetch_add(1, Ordering::Relaxed);
-                return body::error_504("call deadline exceeded");
-            }
-            Err(e) => {
-                tracing::error!(route = %route.id, error = %e, "jobs call failed");
-                return body::error_500();
-            }
-        };
-        // Validate every result before inserting any: one bad job fails the
-        // request and nothing is cached. One index (call id → request position),
-        // one pass; `k` indexes `req.jobs` and `misses` alike. Log fields come
-        // from the plan the id names (ids are opaque, never parsed).
-        let labels = |k: Option<usize>| {
-            k.map_or(("?", "?"), |k| {
-                let p = &plans[misses[k]];
-                (p.component_id, p.job_id)
-            })
-        };
-        let ids: Vec<&str> = req.jobs.iter().map(|c| c.id.as_str()).collect();
-        let fresh = match results_in_request_order(&ids, resp.results) {
-            Ok(v) => v,
-            Err(JobResultError::Threw { id, k, error }) => {
-                let (component_id, job_id) = labels(k);
-                tracing::error!(route = %route.id, component_id, job_id, call_id = %id, %error, "job threw");
-                return body::error_500();
-            }
-            Err(JobResultError::NoValue { id, k }) => {
-                let (component_id, job_id) = labels(k);
-                tracing::error!(route = %route.id, component_id, job_id, call_id = %id, "job result has neither value nor error");
-                return body::error_500();
-            }
-            Err(JobResultError::Missing { k }) => {
-                let p = &plans[misses[k]];
-                tracing::error!(route = %route.id, component_id = %p.component_id, job_id = %p.job_id, "jobs response has no result for {}", req.jobs[k].id);
-                return body::error_500();
-            }
-        };
-        for (k, (v, &i)) in fresh.iter().zip(&misses).enumerate() {
-            if let Err(e) = check_value(&plans[i], v) {
-                tracing::error!(route = %route.id, component_id = %plans[i].component_id, job_id = %plans[i].job_id, call_id = %req.jobs[k].id, error = %e, "job result does not fit its outputs");
-                return body::error_500();
-            }
-            note_missing_slots(s, &plans[i], v);
-        }
-        for (v, &i) in fresh.into_iter().zip(&misses) {
-            let p = &plans[i];
-            let v = Arc::new(v);
-            s.jobs.insert(
-                p.key.clone(),
-                Arc::clone(&v),
-                p.ttl,
-                p.tags,
-                p.user_key.as_deref(),
-            );
-            values[i] = Some(v);
-        }
-        for i in 0..plans.len() {
-            if values[i].is_none() {
-                values[i] = values[owner[i]].clone();
-            }
-        }
-    }
 
     // ----- (6) child slots + useId, then merge job values -----
     if let Err(e) = seed_child_slots(&s.plans, &route.id, &route.chain, &mut ctx) {
         tracing::error!(route = %route.id, error = %e, "child slot seeding failed");
         return body::error_500();
     }
-    merge_values(&mut ctx, &plans, &values);
+    merge_values(&mut ctx, &plans, &lookup.values);
 
     // ----- (7) render, assets, L1 store -----
     let ctx = Arc::new(ctx);
@@ -572,6 +566,80 @@ async fn page(
         );
     }
     resp
+}
+
+/// Validate, store and fan out the worker's `results` for `lookup.misses` — shared by the jobs
+/// call and the planned loader call. `Err` = the 500 to send, already logged (today's messages).
+#[expect(
+    clippy::result_large_err,
+    reason = "the Err is the cold 500 page() returns as is; boxing it buys nothing"
+)]
+fn apply_job_results(
+    s: &Server,
+    route: &RouteRecord,
+    plans: &[JobPlan],
+    lookup: &mut Lookup,
+    ids: &[&str],
+    results: Vec<JobResult>,
+) -> Result<(), Response<ResponseBody>> {
+    let Lookup {
+        values,
+        owner,
+        misses,
+    } = lookup;
+    // Validate every result before inserting any: one bad job fails the
+    // request and nothing is cached. One index (call id → request position),
+    // one pass; `k` indexes `ids` and `misses` alike. Log fields come
+    // from the plan the id names (ids are opaque, never parsed).
+    let labels = |k: Option<usize>| {
+        k.map_or(("?", "?"), |k| {
+            let p = &plans[misses[k]];
+            (p.component_id, p.job_id)
+        })
+    };
+    let fresh = match results_in_request_order(ids, results) {
+        Ok(v) => v,
+        Err(JobResultError::Threw { id, k, error }) => {
+            let (component_id, job_id) = labels(k);
+            tracing::error!(route = %route.id, component_id, job_id, call_id = %id, %error, "job threw");
+            return Err(body::error_500());
+        }
+        Err(JobResultError::NoValue { id, k }) => {
+            let (component_id, job_id) = labels(k);
+            tracing::error!(route = %route.id, component_id, job_id, call_id = %id, "job result has neither value nor error");
+            return Err(body::error_500());
+        }
+        Err(JobResultError::Missing { k }) => {
+            let p = &plans[misses[k]];
+            tracing::error!(route = %route.id, component_id = %p.component_id, job_id = %p.job_id, "jobs response has no result for {}", ids[k]);
+            return Err(body::error_500());
+        }
+    };
+    for (k, (v, &i)) in fresh.iter().zip(misses.iter()).enumerate() {
+        if let Err(e) = check_value(&plans[i], v) {
+            tracing::error!(route = %route.id, component_id = %plans[i].component_id, job_id = %plans[i].job_id, call_id = %ids[k], error = %e, "job result does not fit its outputs");
+            return Err(body::error_500());
+        }
+        note_missing_slots(s, &plans[i], v);
+    }
+    for (v, &i) in fresh.into_iter().zip(misses.iter()) {
+        let p = &plans[i];
+        let v = Arc::new(v);
+        s.jobs.insert(
+            p.key.clone(),
+            Arc::clone(&v),
+            p.ttl,
+            p.tags,
+            p.user_key.as_deref(),
+        );
+        values[i] = Some(v);
+    }
+    for i in 0..plans.len() {
+        if values[i].is_none() {
+            values[i] = values[owner[i]].clone();
+        }
+    }
+    Ok(())
 }
 
 fn render_failed(route: &RouteRecord, e: &RenderError) -> Response<ResponseBody> {
@@ -1057,10 +1125,6 @@ impl JobPlan<'_> {
 
 /// The plans `rows` describe, borrowed from `idx` again. `inputs` is `Node::Null`: a rehydrated
 /// plan is used after its call (insert, merge, logs), never to build a request.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "used by page's planned arm (M3-P P6 Task 6)")
-)]
 pub(crate) fn rehydrate(idx: &PlanIndex, rows: Vec<PlanRow>) -> Vec<JobPlan<'_>> {
     rows.into_iter()
         .map(|r| {
@@ -1246,10 +1310,6 @@ impl PlanIndex {
     }
 
     /// Some chain component or one of its children has a job.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "used by page's plan offer (M3-P P6 Task 6)")
-    )]
     pub(crate) fn chain_has_jobs(&self, chain: &[String]) -> bool {
         chain
             .iter()
@@ -1576,10 +1636,6 @@ pub(crate) struct PlanSeed {
 }
 
 /// Left in the slot by [`plan_in_call`] (success only) for `page`.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "read by page's planned arm (M3-P P6 Task 6)")
-)]
 pub(crate) struct PlannedCall {
     /// base + loader data (`merge_loader_data`), as `page` builds it.
     pub ctx: Node,
@@ -1594,13 +1650,6 @@ pub(crate) struct PlannedCall {
 }
 
 /// The plan state of a planned loader call, in the claimed slot's cell (`pool::PlanBox`).
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "Seed is put by page's plan offer (M3-P P6 Task 6)"
-    )
-)]
 pub(crate) enum PlanCell {
     Seed(PlanSeed),
     Planned(PlannedCall),

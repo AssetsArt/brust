@@ -265,6 +265,11 @@ impl WorkerPool {
         id
     }
 
+    /// A snapshot of the registered workers.
+    pub(crate) fn entries(&self) -> Vec<Arc<WorkerEntry>> {
+        self.entries.read().clone()
+    }
+
     pub fn registered_count(&self) -> usize {
         self.entries.read().len()
     }
