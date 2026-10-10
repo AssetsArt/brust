@@ -8,7 +8,7 @@
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -179,6 +179,9 @@ pub struct Server {
     pub(crate) generator: Option<String>,
     pub(crate) claim_timeout: Duration,
     pub(crate) call_timeout: Duration,
+    /// Last document length per manifest route (+ slack): the capacity of the
+    /// next render's buffer (M3-P P3). A size, never bytes.
+    pub(crate) render_hints: Vec<AtomicUsize>,
 }
 
 impl Server {

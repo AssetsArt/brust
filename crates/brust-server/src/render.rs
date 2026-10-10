@@ -50,6 +50,34 @@ fn safe_filter(
     Ok(minijinja::Value::from_safe_string(s))
 }
 
+/// Documents at least this long are rendered through minijinja's `io::Write`
+/// path into the caller's hinted buffer; shorter ones through
+/// `Template::render` (its own small buffer beats the Captured cell's box).
+const WRITER_MIN: usize = 16 * 1024;
+
+/// Renders `tmpl` into `out` (cleared first) through minijinja's writer path
+/// when `out`'s capacity says the document is large (the io::Write adapter +
+/// the Captured cell cost a box; a growing String costs log2(n) reallocations
+/// of n bytes), else through `render` into a fresh String.
+fn render_into(
+    tmpl: &minijinja::Template<'_, '_>,
+    scope: minijinja::Value,
+    out: &mut String,
+) -> Result<(), minijinja::Error> {
+    out.clear();
+    if out.capacity() < WRITER_MIN {
+        *out = tmpl.render(scope)?;
+        return Ok(());
+    }
+    let mut buf = std::mem::take(out).into_bytes();
+    let r = tmpl.render_captured_to(scope, &mut buf).map(|_| ());
+    // SAFETY: minijinja writes whole `&str`s (`Output` → `WriteWrapper::write_str`
+    // → `write_all(s.as_bytes())`) and a `Vec<u8>` never fails a write, so `buf`
+    // is a concatenation of valid UTF-8 strings at every point, error or not.
+    *out = unsafe { String::from_utf8_unchecked(buf) };
+    r
+}
+
 pub struct Renderer {
     env: Environment<'static>,
 }
@@ -81,20 +109,27 @@ impl Renderer {
             .map_err(|e| render_err(name, &e))
     }
 
-    /// S7 step 7 / S8: leaf-first; each result becomes the parent's `__outlet`.
-    /// `base` is the merged context (converted once per request and shared —
-    /// minijinja `Value`s are `Arc`-backed); `overlay(id)` returns the layers
-    /// only that component sees (its `_idN`, its own child-instance slots and
-    /// job results, `_props`). Each component renders under one [`Scope`]
-    /// object over `base` (M3-P P3): no per-component map is built.
-    pub fn render_chain_overlay(
+    /// S7 step 7 / S8: leaf-first chain render INTO `out` (cleared first);
+    /// each result becomes the parent's `__outlet`. `base` is the merged
+    /// context (converted once per request and shared — minijinja `Value`s are
+    /// `Arc`-backed); `overlay(id)` returns the layers only that component sees
+    /// (its `_idN`, its own child-instance slots and job results, `_props`).
+    /// Each component renders under one [`Scope`] object over `base` (M3-P P3):
+    /// no per-component map is built. The root template writes straight into
+    /// `out` (sized by the caller, M3-P P3); each inner level into a String of
+    /// the same capacity hint. Capacity never changes a byte. On an error `out`
+    /// may hold a partial render; the caller drops it.
+    pub fn render_chain_into(
         &self,
         chain: &[String],
         base: &minijinja::Value,
         overlay: &dyn Fn(&str) -> Overlay,
-    ) -> Result<String, RenderError> {
+        out: &mut String,
+    ) -> Result<(), RenderError> {
+        out.clear();
+        let cap = out.capacity();
         let mut outlet: Option<String> = None;
-        for id in chain.iter().rev() {
+        for (pos, id) in chain.iter().enumerate().rev() {
             let scope = minijinja::Value::from_object(Scope {
                 outlet: outlet.take().map(minijinja::Value::from_safe_string),
                 overlay: overlay(id),
@@ -104,9 +139,30 @@ impl Renderer {
                 .env
                 .get_template(id)
                 .map_err(|_| RenderError::Unknown(id.clone()))?;
-            outlet = Some(tmpl.render(scope).map_err(|e| render_err(id, &e))?);
+            if pos == 0 {
+                render_into(&tmpl, scope, out).map_err(|e| render_err(id, &e))?;
+            } else {
+                // An inner level: its output becomes the parent's `__outlet`
+                // (an Arc<str> copy inside minijinja — unavoidable); sized like
+                // the document, which bounds it.
+                let mut s = String::with_capacity(cap);
+                render_into(&tmpl, scope, &mut s).map_err(|e| render_err(id, &e))?;
+                outlet = Some(s);
+            }
         }
-        Ok(outlet.unwrap_or_default())
+        Ok(())
+    }
+
+    /// [`Self::render_chain_into`] into a fresh String (tests, bench).
+    pub fn render_chain_overlay(
+        &self,
+        chain: &[String],
+        base: &minijinja::Value,
+        overlay: &dyn Fn(&str) -> Overlay,
+    ) -> Result<String, RenderError> {
+        let mut out = String::new();
+        self.render_chain_into(chain, base, overlay, &mut out)?;
+        Ok(out)
     }
 
     /// [`Self::render_chain_value`] over a JSON context. Only tests use it;
@@ -224,8 +280,8 @@ impl minijinja::value::Object for Scope {
 /// S9: `<script type="module" src="/_brust/<p>">` for runtime, each `client` of
 /// the chain + job targets + inlined children (dedup, chain order), then
 /// `react` + each react chunk. No tags when every component in the chain (and its children) is
-/// `static`. Inserted before the last `</body>`, else appended.
-pub fn inject_assets(mut html: String, chain: &[String], m: &Manifest) -> String {
+/// `static`. Inserted before the last `</body>`, else appended — in place.
+pub fn inject_assets_into(html: &mut String, chain: &[String], m: &Manifest) {
     let mut chunks: Vec<&str> = Vec::new();
     let mut react: Vec<&str> = Vec::new();
     let mut any_dynamic = false;
@@ -260,7 +316,7 @@ pub fn inject_assets(mut html: String, chain: &[String], m: &Manifest) -> String
         }
     }
     if !any_dynamic {
-        return html;
+        return;
     }
     let tag = |p: &str| format!("<script type=\"module\" src=\"/_brust/{p}\"></script>");
     let mut tags = tag(&m.assets.runtime);
@@ -279,6 +335,11 @@ pub fn inject_assets(mut html: String, chain: &[String], m: &Manifest) -> String
         Some(i) => html.insert_str(i, &tags),
         None => html.push_str(&tags),
     }
+}
+
+/// [`inject_assets_into`] over an owned String (tests, bench).
+pub fn inject_assets(mut html: String, chain: &[String], m: &Manifest) -> String {
+    inject_assets_into(&mut html, chain, m);
     html
 }
 
@@ -497,6 +558,73 @@ mod tests {
             r.render_chain_overlay(&["T".into()], &ctx.to_value(), &|_| Overlay::default())
                 .unwrap(),
             "2"
+        );
+    }
+
+    #[test]
+    fn render_chain_into_clears_and_never_depends_on_capacity() {
+        let r = Renderer::from_templates(&templates(&[
+            ("L", "<html><body>{{ __outlet | safe }}</body></html>"),
+            ("P", "{% for i in range(n) %}<p>{{ i }}</p>{% endfor %}"),
+        ]))
+        .unwrap();
+        let chain = ["L".to_string(), "P".to_string()];
+        let big = minijinja::context! { n => 4000 }; // > WRITER_MIN bytes
+        let small = minijinja::context! { n => 3 };
+        let want_big = r
+            .render_chain_overlay(&chain, &big, &|_| Overlay::default())
+            .unwrap();
+        let want_small = r
+            .render_chain_overlay(&chain, &small, &|_| Overlay::default())
+            .unwrap();
+        assert!(want_big.len() > WRITER_MIN && want_small.len() < WRITER_MIN);
+        // A then B into ONE buffer: B exact (no stale tail), whatever the capacity.
+        for cap in [0usize, 100, WRITER_MIN, 1 << 20] {
+            let mut out = String::with_capacity(cap);
+            r.render_chain_into(&chain, &big, &|_| Overlay::default(), &mut out)
+                .unwrap();
+            assert_eq!(out, want_big, "cap {cap}");
+            r.render_chain_into(&chain, &small, &|_| Overlay::default(), &mut out)
+                .unwrap();
+            assert_eq!(out, want_small, "cap {cap}");
+        }
+        // A junk-filled buffer is cleared first.
+        let mut out = "JUNK".repeat(10_000);
+        r.render_chain_into(&chain, &big, &|_| Overlay::default(), &mut out)
+            .unwrap();
+        assert_eq!(out, want_big);
+        // An error leaves nothing of the failed render in the caller's hands.
+        let mut out = String::new();
+        assert!(matches!(
+            r.render_chain_into(&["Nope".into()], &big, &|_| Overlay::default(), &mut out),
+            Err(RenderError::Unknown(_))
+        ));
+    }
+
+    #[test]
+    fn inject_assets_into_equals_inject_assets() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/dist");
+        let m = crate::manifest::Manifest::load(&dir).unwrap().manifest;
+        // routes[0] is all-static (no tags); routes[1] has a native page (tags).
+        for route in &m.routes[..2] {
+            let chain: Vec<String> = route.chain.clone();
+            for html in [
+                "<html><body><p>x</p></body></html>",
+                "<p>no body tag</p>",
+                "<body></body><body></body>",
+                "",
+            ] {
+                let want = inject_assets(html.to_string(), &chain, &m);
+                let mut got = String::with_capacity(4096);
+                got.push_str(html);
+                inject_assets_into(&mut got, &chain, &m);
+                assert_eq!(got, want, "{} {html:?}", route.id);
+            }
+        }
+        assert_ne!(
+            inject_assets(String::new(), &m.routes[1].chain, &m),
+            "",
+            "routes[1] must exercise the tag path"
         );
     }
 }

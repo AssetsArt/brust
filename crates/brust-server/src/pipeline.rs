@@ -26,7 +26,7 @@ use crate::manifest::{ALL_PROPS, Instances, JobKind, JobRecord, Manifest, RouteR
 use crate::protocol::{
     JobCall, JobResult, JobsRequest, JobsResponse, LoaderRequest, LoaderResponse, Verdict,
 };
-use crate::render::{Overlay, RenderError, Renderer, inject_assets, use_ids};
+use crate::render::{Overlay, RenderError, Renderer, inject_assets_into, use_ids};
 use crate::routing::{MatchResult, RouteEnvelope};
 use crate::server::body::{self, ResponseBody, empty_body};
 use crate::server::header_str;
@@ -279,7 +279,8 @@ async fn page(
         MatchResult::NotFound { route_id, envelope } => (route_id, envelope, 404),
         MatchResult::NoMatch => return body::error_404(),
     };
-    let route = &s.manifest.routes[s.routes.route_index(route_id)];
+    let ri = s.routes.route_index(route_id);
+    let route = &s.manifest.routes[ri];
     meta.route = route.id.clone();
     let accept_enc = header_str(headers, "accept-encoding");
     let accept_enc = accept_enc.as_deref();
@@ -522,7 +523,7 @@ async fn page(
         CacheOutcome::Bypass => Some("BYPASS"),
         _ => None,
     };
-    let html = match render_document(s, route, &ctx) {
+    let html = match render_document(s, route, ri, &ctx) {
         Ok(h) => h,
         Err(e) => return render_failed(route, &e),
     };
@@ -582,14 +583,36 @@ const PAGE_GZIP_MIN: usize = 16 * 1024;
 /// one once per entry), and level 6 costs ~4x the time for ~25 % fewer bytes.
 const PAGE_GZIP_LEVEL: u32 = 1;
 
+/// The next render's buffer capacity after a document of `len` bytes: the
+/// length plus 1/16 slack and 1 KiB, so a document a few bytes longer than the
+/// last one does not reallocate (a reallocation doubles — never the hint).
+/// `pub` (via `brust_server::bench`) so the micro-bench sizes like the server.
+pub fn next_hint(len: usize) -> usize {
+    len + len / 16 + 1024
+}
+
 /// Leaf-first render of the route's chain (each component under its overlay)
-/// plus asset tags: the identity document. Shared by every path that renders,
-/// so the body a HIT serves is the bytes a fresh render produces.
-fn render_document(s: &Server, route: &RouteRecord, ctx: &Node) -> Result<Bytes, RenderError> {
-    let html = render_chain_html(&s.manifest, &s.renderer, &route.id, &route.chain, ctx)?;
-    Ok(Bytes::from(
-        inject_assets(html, &route.chain, &s.manifest).into_bytes(),
-    ))
+/// plus asset tags, into ONE buffer sized from this route's last document
+/// (M3-P P3): the identity document. Shared by every path that renders, so
+/// the body a HIT serves is the bytes a fresh render produces.
+fn render_document(
+    s: &Server,
+    route: &RouteRecord,
+    ri: usize,
+    ctx: &Node,
+) -> Result<Bytes, RenderError> {
+    let mut out = String::with_capacity(s.render_hints[ri].load(Ordering::Relaxed));
+    render_chain_into(
+        &s.manifest,
+        &s.renderer,
+        &route.id,
+        &route.chain,
+        ctx,
+        &mut out,
+    )?;
+    inject_assets_into(&mut out, &route.chain, &s.manifest);
+    s.render_hints[ri].store(next_hint(out.len()), Ordering::Relaxed);
+    Ok(Bytes::from(out.into_bytes()))
 }
 
 /// The bytes to send for `body` and whether they are gzip: the identity
@@ -641,15 +664,16 @@ fn page_response(
 /// The leaf-first render of `chain` for `ctx`, each component under its
 /// overlay (its `_idN`, its own child-instance slots from
 /// `ctx["__children"][<id>]`, its own job results from `ctx["__own"][<id>]`,
-/// and `_props`) — `render_document` minus asset tags. `pub` (via
-/// `brust_server::bench`) only so the criterion micro-bench can time it.
-pub fn render_chain_html(
+/// and `_props`) into `out` (cleared first) — `render_document` minus asset
+/// tags and the hint.
+pub fn render_chain_into(
     manifest: &Manifest,
     renderer: &Renderer,
     route_id: &str,
     chain: &[String],
     ctx: &Node,
-) -> Result<String, RenderError> {
+    out: &mut String,
+) -> Result<(), RenderError> {
     let children = ctx.get(CHILDREN_KEY);
     let own_all = ctx.get(OWN_KEY);
     // The merged context as a value: an Arc bump (M3-P P2), shared by the chain.
@@ -677,7 +701,21 @@ pub fn render_chain_html(
             props: Some(props.clone()),
         }
     };
-    renderer.render_chain_overlay(chain, &base, &overlay)
+    renderer.render_chain_into(chain, &base, &overlay, out)
+}
+
+/// [`render_chain_into`] into a fresh String. `pub` (via
+/// `brust_server::bench`) only so the criterion micro-bench can time it.
+pub fn render_chain_html(
+    manifest: &Manifest,
+    renderer: &Renderer,
+    route_id: &str,
+    chain: &[String],
+    ctx: &Node,
+) -> Result<String, RenderError> {
+    let mut out = String::new();
+    render_chain_into(manifest, renderer, route_id, chain, ctx, &mut out)?;
+    Ok(out)
 }
 
 /// `_props`: the merged context minus the server's per-component maps
@@ -2369,5 +2407,12 @@ mod tests {
         for bad in ["../manifest.json", "", "a/", "/a", "a\\b", ".env", "a b"] {
             assert_eq!(safe_rel(bad, p), None, "{bad}");
         }
+    }
+
+    #[test]
+    fn hint_follows_the_last_document_length() {
+        assert!(next_hint(0) >= 1024);
+        assert!(next_hint(144_000) >= 144_000);
+        assert!(next_hint(144_000) < 2 * 144_000);
     }
 }

@@ -27,7 +27,9 @@
 //! - `inject_assets` on the rendered document;
 //! - `gzip_l1` / `gzip_l6` of the injected document (pages: level 1 since
 //!   m2p Task 3, level 6 before);
-//! - `finish_identity` / `finish_gzip`: render + inject (+ the page gzip
+//! - `render_chain_hinted`: `render_chain` into a buffer sized from the last
+//!   document (`next_hint`, the server's steady state since M3-P P3);
+//! - `finish_identity` / `finish_gzip`: hinted render + in-place inject (+ the page gzip
 //!   policy: level 1 at >= 16 KiB; Task 1 measured level 6 at >= 1 KiB), i.e.
 //!   the body a MISS / uncached request builds;
 //! - `plan_B` / `plan_C` (`/pokemon/pikachu`, `/` = probe C): the job-planning stage, see
@@ -46,10 +48,12 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use brust_jinja::ctx::Node;
-use brust_server::bench::{cached_body, props_view, render_chain_html};
+use brust_server::bench::{
+    cached_body, next_hint, props_view, render_chain_html, render_chain_into,
+};
 use brust_server::cache::l1::{L1Cache, RenderedBody, build_cache_key};
 use brust_server::manifest::Manifest;
-use brust_server::render::{Renderer, inject_assets};
+use brust_server::render::{Renderer, inject_assets, inject_assets_into};
 use criterion::{Criterion, criterion_group, criterion_main};
 use flate2::Compression;
 use flate2::write::GzEncoder;
@@ -185,6 +189,17 @@ fn bench_route(
     g.bench_function("render_chain", |b| {
         b.iter(|| render_chain_html(m, r, &route.id, chain, black_box(&ctx)).unwrap())
     });
+    // The chain into a buffer sized like the server's steady state (M3-P P3:
+    // `render_hints` after one request of this route) — the writer path when
+    // the hint is >= 16 KiB.
+    let hint = next_hint(doc.len());
+    g.bench_function("render_chain_hinted", |b| {
+        b.iter(|| {
+            let mut out = String::with_capacity(hint);
+            render_chain_into(m, r, &route.id, chain, black_box(&ctx), &mut out).unwrap();
+            out
+        })
+    });
     g.bench_function("inject_assets", |b| {
         b.iter_batched(
             || html.clone(),
@@ -194,9 +209,13 @@ fn bench_route(
     });
     g.bench_function("gzip_l1", |b| b.iter(|| gzip(black_box(doc.as_bytes()), 1)));
     g.bench_function("gzip_l6", |b| b.iter(|| gzip(black_box(doc.as_bytes()), 6)));
+    // `pipeline::render_document` (M3-P P3): one buffer sized from the last
+    // document, the chain rendered into it, the tags inserted in place.
     let finish = |gz: bool| {
-        let html = render_chain_html(m, r, &route.id, chain, &ctx).unwrap();
-        let bytes = inject_assets(html, chain, m).into_bytes();
+        let mut out = String::with_capacity(hint);
+        render_chain_into(m, r, &route.id, chain, &ctx, &mut out).unwrap();
+        inject_assets_into(&mut out, chain, m);
+        let bytes = out.into_bytes();
         // The page policy (m2p Task 3): gzip level 1, only at >= 16 KiB.
         if gz && bytes.len() >= 16 * 1024 {
             gzip(&bytes, 1)

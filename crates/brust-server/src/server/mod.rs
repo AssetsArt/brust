@@ -2,7 +2,7 @@
 //! d04718f (`Tuning`, `start`, `serve_io`, `header_str`). The 0.1.x
 //! `handle_request` is replaced by [`crate::pipeline::handle`].
 use std::convert::Infallible;
-use std::sync::atomic::{AtomicU32, AtomicU64};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -102,6 +102,9 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
     let state = Arc::new(Server {
         pool: Arc::new(WorkerPool::new()),
         routes,
+        render_hints: (0..loaded.manifest.routes.len())
+            .map(|_| AtomicUsize::new(0))
+            .collect(),
         manifest: loaded.manifest,
         plans,
         renderer,
