@@ -36,6 +36,10 @@ pub struct RenderSlot {
     pub chunk_tx: mpsc::Sender<RenderChunk>,
 }
 
+/// The type-erased in-call plan state a slot carries (M3-P P6): in production a
+/// `pipeline::PlanCell`; boxed as `Any` so the pool stays pipeline-free.
+pub type PlanBox = Box<dyn std::any::Any + Send>;
+
 /// One render slot of a worker. A worker holds `K` of these (K = the
 /// dispatch's `slot_count()`); each slot is an independent in-flight render
 /// reservation backed by a disjoint SAB sub-region (see `RenderDispatch::buf_slot`).
@@ -47,6 +51,13 @@ pub struct Slot {
     /// Per-slot chunk sender, stored on claim for the streaming path; cleared on
     /// drop. (Was the single per-worker render_slot Mutex.)
     render_slot: parking_lot::Mutex<Option<RenderSlot>>,
+    /// M3-P P6: the in-call plan state of the request holding this slot
+    /// (`pipeline::PlanCell`, type-erased so the pool stays pipeline-free). Put by
+    /// `RenderClaim::put_plan` (tokio, after the claim, before the call), swapped by
+    /// `pipeline::plan_in_call` (the worker's JS thread, during the call), taken by
+    /// `RenderClaim::take_plan` after the Promise resolved. ALWAYS cleared by
+    /// `RenderClaim::drop`: no plan outlives its claim (deadline, disconnect, panic).
+    pub(crate) plan: parking_lot::Mutex<Option<PlanBox>>,
 }
 
 impl Slot {
@@ -106,6 +117,14 @@ impl WorkerEntry {
     pub fn render_slot_for(&self, slot: u32) -> Option<&parking_lot::Mutex<Option<RenderSlot>>> {
         self.slots.get(slot as usize).map(|s| &s.render_slot)
     }
+
+    /// `slot`'s plan cell while that slot is claimed; `None` when out of range or idle.
+    pub fn claimed_plan_cell(&self, slot: u32) -> Option<&parking_lot::Mutex<Option<PlanBox>>> {
+        self.slots
+            .get(slot as usize)
+            .filter(|s| !s.is_idle())
+            .map(|s| &s.plan)
+    }
 }
 
 pub struct InFlightGuard(Arc<WorkerEntry>);
@@ -147,6 +166,19 @@ impl RenderClaim {
     pub fn slot(&self) -> u32 {
         self.slot
     }
+
+    /// Put the request's plan state into this claim's slot cell (M3-P P6),
+    /// replacing whatever it held. Called after the claim, before the call.
+    pub fn put_plan(&self, v: PlanBox) {
+        let old = self.entry.slots[self.slot as usize].plan.lock().replace(v);
+        drop(old);
+    }
+
+    /// Take whatever this claim's slot cell holds (M3-P P6). Called after the
+    /// worker's Promise resolved, before the claim is dropped.
+    pub fn take_plan(&self) -> Option<PlanBox> {
+        self.entry.slots[self.slot as usize].plan.lock().take()
+    }
 }
 
 impl Drop for RenderClaim {
@@ -171,6 +203,9 @@ impl Drop for RenderClaim {
         // would let a recycled slot's new request write the SAB sub-region
         // concurrently with the old JS still touching it (data race).
         let slot = &self.entry.slots[self.slot as usize];
+        // M3-P P6: no plan outlives its claim. The Box is dropped outside the lock.
+        let stale = slot.plan.lock().take();
+        drop(stale);
         if !self.lockfree {
             slot.render_slot.lock().take();
         }
@@ -217,6 +252,7 @@ impl WorkerPool {
             .map(|_| Slot {
                 idle: AtomicBool::new(true),
                 render_slot: parking_lot::Mutex::new(None),
+                plan: parking_lot::Mutex::new(None),
             })
             .collect();
         let entry = Arc::new(WorkerEntry {
@@ -353,6 +389,32 @@ mod tests {
     /// Register a worker whose `MockDispatch` has `k` render slots.
     fn register_k_for_test(pool: &WorkerPool, k: usize) -> u32 {
         pool.register(Box::new(MockDispatch::with_slots(k)))
+    }
+
+    #[test]
+    fn put_take_and_drop_clear_the_plan_cell() {
+        let pool = WorkerPool::new();
+        pool.register(Box::new(MockDispatch::with_slots(2)));
+        let ClaimResult::Claimed(c) = pool.try_claim_render_lockfree() else {
+            panic!("claim")
+        };
+        let entry = Arc::clone(c.entry());
+        let slot = c.slot();
+        assert!(
+            entry.claimed_plan_cell(slot).is_some(),
+            "a claimed slot exposes its cell"
+        );
+        assert!(
+            entry.claimed_plan_cell(1 - slot).is_none(),
+            "an idle slot does not"
+        );
+        assert!(entry.claimed_plan_cell(9).is_none(), "out of range");
+        c.put_plan(Box::new(7u32));
+        assert_eq!(*c.take_plan().unwrap().downcast::<u32>().unwrap(), 7);
+        assert!(c.take_plan().is_none());
+        c.put_plan(Box::new(8u32));
+        drop(c); // never taken: the claim's drop clears it
+        assert!(entry.slot(slot as usize).plan.lock().is_none());
     }
 
     #[test]

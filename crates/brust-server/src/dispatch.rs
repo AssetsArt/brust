@@ -33,7 +33,7 @@ use std::time::Duration;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::pool::{ClaimResult, RenderClaim, WorkerPool};
+use crate::pool::{ClaimResult, PlanBox, RenderClaim, WorkerPool};
 
 /// Which worker entry point a [`RenderDispatch::call`] targets (spec §1 S1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -191,7 +191,30 @@ pub async fn call_worker<Req: Serialize, Resp: DeserializeOwned + Send + 'static
     kind: CallKind,
     req: &Req,
 ) -> Result<Resp, CallError> {
+    call_worker_planned(pool, timeout, call_timeout, kind, req, None)
+        .await
+        .map(|(r, _)| r)
+}
+
+/// A planned call's outcome: the response and the slot cell's content after the call.
+type PlannedResult<Resp> = Result<(Resp, Option<PlanBox>), CallError>;
+
+/// [`call_worker`] for a call the worker may plan (M3-P P6): `seed` goes into the
+/// claimed slot's plan cell before the call; whatever the cell holds after the
+/// Promise resolved is returned beside the response — taken under the claim, so
+/// it is never another request's.
+pub async fn call_worker_planned<Req: Serialize, Resp: DeserializeOwned + Send + 'static>(
+    pool: &Arc<WorkerPool>,
+    timeout: Duration,
+    call_timeout: Duration,
+    kind: CallKind,
+    req: &Req,
+    seed: Option<PlanBox>,
+) -> Result<(Resp, Option<PlanBox>), CallError> {
     let claim = claim_or_wait(pool, timeout, || pool.try_claim_render_lockfree()).await?;
+    if let Some(s) = seed {
+        claim.put_plan(s);
+    }
     let json = serde_json::to_string(req)
         .map_err(|e| CallError::BadResponse(format!("request serialise: {e}")))?;
     let pool = Arc::clone(pool);
@@ -201,35 +224,34 @@ pub async fn call_worker<Req: Serialize, Resp: DeserializeOwned + Send + 'static
     // (deadline, client disconnect) → the remainder is spawned so the claim it
     // owns is released only when JS settles; a panic → `Err(payload)` to us,
     // the claim released by the unwinding async block.
-    let call: Pin<Box<dyn Future<Output = Result<Resp, CallError>> + Send>> = Box::pin(
-        async move {
-            let entry = Arc::clone(claim.entry());
-            let slot = claim.slot();
-            let len = match entry.dispatch.call(kind, json, slot).await {
-                Ok(n) => n,
-                Err(DispatchError::EnqueueFailed(m)) => {
-                    tracing::error!(worker_id = entry.id(), ?kind, error = %m, "enqueue failed — worker dead, removing from pool");
-                    pool.remove(entry.id());
-                    return Err(CallError::Enqueue(m));
-                }
-                Err(DispatchError::PromiseRejected(m)) => return Err(CallError::Rejected(m)),
-            };
-            let (ptr, cap) = entry.dispatch.buf_slot(slot);
-            if len == 0 || len as usize > cap {
-                return Err(CallError::BadResponse(format!(
-                    "resp_len {len} outside (0, {cap}]"
-                )));
+    let call: Pin<Box<dyn Future<Output = PlannedResult<Resp>> + Send>> = Box::pin(async move {
+        let entry = Arc::clone(claim.entry());
+        let slot = claim.slot();
+        let len = match entry.dispatch.call(kind, json, slot).await {
+            Ok(n) => n,
+            Err(DispatchError::EnqueueFailed(m)) => {
+                tracing::error!(worker_id = entry.id(), ?kind, error = %m, "enqueue failed — worker dead, removing from pool");
+                pool.remove(entry.id());
+                return Err(CallError::Enqueue(m));
             }
-            // SAFETY: the worker's Promise resolved (happens-before through the dispatch
-            // future), JS is done writing this slot's sub-region; `len` is bounds-checked
-            // above; `claim` is still held so no other request can write the slot.
-            let bytes = unsafe { std::slice::from_raw_parts(ptr, len as usize) };
-            let parsed = serde_json::from_slice::<Resp>(bytes)
-                .map_err(|e| CallError::BadResponse(e.to_string()));
-            drop(claim);
-            parsed
-        },
-    );
+            Err(DispatchError::PromiseRejected(m)) => return Err(CallError::Rejected(m)),
+        };
+        let (ptr, cap) = entry.dispatch.buf_slot(slot);
+        if len == 0 || len as usize > cap {
+            return Err(CallError::BadResponse(format!(
+                "resp_len {len} outside (0, {cap}]"
+            )));
+        }
+        // SAFETY: the worker's Promise resolved (happens-before through the dispatch
+        // future), JS is done writing this slot's sub-region; `len` is bounds-checked
+        // above; `claim` is still held so no other request can write the slot.
+        let bytes = unsafe { std::slice::from_raw_parts(ptr, len as usize) };
+        let parsed = serde_json::from_slice::<Resp>(bytes)
+            .map_err(|e| CallError::BadResponse(e.to_string()));
+        let plan = claim.take_plan();
+        drop(claim);
+        parsed.map(|r| (r, plan))
+    });
     match tokio::time::timeout(call_timeout, Detach(Some(call))).await {
         Ok(Ok(result)) => result,
         Ok(Err(payload)) => Err(CallError::BadResponse(format!(
@@ -692,6 +714,90 @@ mod tests {
         assert!(matches!(first, Err(CallError::Deadline)));
         let second = call_with(&pool, 60, 30, CallKind::Loader).await;
         assert!(matches!(second, Err(CallError::Timeout)), "{second:?}");
+    }
+
+    /// Writes `{"ok":true,"data":{}}` and, during the call, swaps the slot's plan cell content
+    /// (u32 seed → seed + 1) through `claimed_plan_cell`, as `plan_in_call` does from the worker thread.
+    struct Planner(MockDispatch, std::sync::Weak<WorkerPool>);
+
+    impl RenderDispatch for Planner {
+        fn call(
+            &self,
+            kind: CallKind,
+            request_json: String,
+            slot: u32,
+        ) -> Pin<Box<dyn Future<Output = Result<u32, DispatchError>> + Send>> {
+            let pool = self.1.upgrade().expect("pool alive during the call");
+            let entry = pool.entry(0).expect("the planner is worker 0");
+            let cell = entry
+                .claimed_plan_cell(slot)
+                .expect("the slot is claimed during its call");
+            let mut guard = cell.lock();
+            if let Some(seed) = guard.take() {
+                let n = *seed.downcast::<u32>().expect("u32 seed");
+                *guard = Some(Box::new(n + 1));
+            }
+            drop(guard);
+            self.0.call(kind, request_json, slot)
+        }
+        fn buf(&self) -> (*mut u8, usize) {
+            self.0.buf()
+        }
+    }
+
+    fn planner_pool(d: MockDispatch) -> Arc<WorkerPool> {
+        let pool = Arc::new(WorkerPool::new());
+        pool.register(Box::new(Planner(d, Arc::downgrade(&pool))));
+        pool
+    }
+
+    async fn call_planned(
+        pool: &Arc<WorkerPool>,
+        seed: u32,
+    ) -> Result<(serde_json::Value, Option<PlanBox>), CallError> {
+        call_worker_planned(
+            pool,
+            Duration::from_millis(100),
+            Duration::from_secs(5),
+            CallKind::Loader,
+            &serde_json::json!({}),
+            Some(Box::new(seed)),
+        )
+        .await
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn call_worker_planned_returns_what_the_cell_holds_after_the_call() {
+        let pool = planner_pool(MockDispatch::replying(br#"{"ok":true,"data":{}}"#));
+        let (v, plan) = call_planned(&pool, 41).await.expect("round trip");
+        assert_eq!(v, serde_json::json!({"ok": true, "data": {}}));
+        let plan = plan.expect("the cell's content comes back");
+        assert_eq!(*plan.downcast::<u32>().unwrap(), 42);
+        let entry = pool.entry(0).unwrap();
+        assert!(
+            entry.slot(0).plan.lock().is_none(),
+            "the cell is empty after"
+        );
+        assert!(matches!(
+            pool.try_claim_render_lockfree(),
+            ClaimResult::Claimed(_)
+        ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn call_worker_planned_clears_the_cell_on_a_bad_response() {
+        let pool = planner_pool(MockDispatch::reply_len(0));
+        let r = call_planned(&pool, 41).await;
+        assert!(matches!(r, Err(CallError::BadResponse(_))), "{:?}", r.err());
+        let entry = pool.entry(0).unwrap();
+        assert!(
+            entry.slot(0).plan.lock().is_none(),
+            "the cell is empty after"
+        );
+        assert!(matches!(
+            pool.try_claim_render_lockfree(),
+            ClaimResult::Claimed(_)
+        ));
     }
 
     /// `call` panics when polled: the claim must be released by unwinding and
