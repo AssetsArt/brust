@@ -1,0 +1,84 @@
+{
+  "id": "input_3709378f",
+  "source": "tests/fixtures/store-read/input.tsx",
+  "tier": "Native",
+  "props": [],
+  "state": [],
+  "derived": [],
+  "effects": [],
+  "handlers": [],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 150,
+      "tag": "span",
+      "attrs": [
+        {
+          "Static": {
+            "name": "className",
+            "value": "badge"
+          }
+        }
+      ],
+      "children": [
+        {
+          "Slot": {
+            "Server": {
+              "loc": 175,
+              "kind": {
+                "Ident": {
+                  "name": "s.count",
+                  "kind": {
+                    "Store": {
+                      "handle": "cart",
+                      "key": "count"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [
+    [
+      "./cart",
+      "cart"
+    ]
+  ],
+  "client_module_locals": [],
+  "needs_worker": false,
+  "cache": null,
+  "children": [],
+  "stores": [
+    {
+      "handle": "cart",
+      "import": [
+        "cart",
+        "./cart",
+        "cart"
+      ],
+      "view": "s",
+      "fields": [],
+      "loc": 126,
+      "resolved": {
+        "name": "cart",
+        "module": "tests/fixtures/store-read/cart.ts",
+        "signals": [
+          "count"
+        ],
+        "computeds": [],
+        "factory_read": true
+      }
+    }
+  ],
+  "diagnostics": []
+}

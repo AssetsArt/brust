@@ -1,0 +1,107 @@
+{
+  "id": "input_737ce91a",
+  "source": "tests/fixtures/store-unresolved-fallback/input.tsx",
+  "tier": {
+    "React": {
+      "reason": "useStore(cart): the store name passed to defineStore in tests/fixtures/store-unresolved-fallback/dyn.ts is not a string literal; the component renders as a React island",
+      "client_only": false
+    }
+  },
+  "props": [],
+  "state": [],
+  "derived": [],
+  "effects": [],
+  "handlers": [],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 149,
+      "tag": "span",
+      "attrs": [
+        {
+          "Static": {
+            "name": "className",
+            "value": "badge"
+          }
+        }
+      ],
+      "children": [
+        {
+          "Slot": {
+            "Server": {
+              "loc": 174,
+              "kind": {
+                "Ident": {
+                  "name": "s.count",
+                  "kind": {
+                    "Store": {
+                      "handle": "cart",
+                      "key": "count"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [
+    {
+      "kind": {
+        "Ssr": {
+          "client_only": false
+        }
+      },
+      "inputs": [
+        "*",
+        "__store"
+      ],
+      "outputs": [
+        "_ssr_input_737ce91a"
+      ],
+      "per_item": null
+    }
+  ],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [
+    [
+      "./dyn",
+      "cart"
+    ]
+  ],
+  "client_module_locals": [],
+  "needs_worker": true,
+  "cache": null,
+  "children": [],
+  "stores": [
+    {
+      "handle": "cart",
+      "import": [
+        "cart",
+        "./dyn",
+        "cart"
+      ],
+      "view": "s",
+      "fields": [],
+      "loc": 125,
+      "resolved": null
+    }
+  ],
+  "diagnostics": [
+    {
+      "class": "Fallback",
+      "rule": "store-name-unresolved",
+      "message": "useStore(cart): the store name passed to defineStore in tests/fixtures/store-unresolved-fallback/dyn.ts is not a string literal; the component renders as a React island",
+      "loc": 125,
+      "line": 5,
+      "col": 13,
+      "remediation": "import the handle from the module that calls defineStore('<name>', …) with a string-literal name"
+    }
+  ]
+}

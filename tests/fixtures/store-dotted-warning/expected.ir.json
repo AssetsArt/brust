@@ -1,0 +1,156 @@
+{
+  "id": "input_8d528211",
+  "source": "tests/fixtures/store-dotted-warning/input.tsx",
+  "tier": "Native",
+  "props": [
+    {
+      "name": "unit",
+      "local": "unit",
+      "ts_type": null,
+      "default": null
+    }
+  ],
+  "state": [],
+  "derived": [
+    {
+      "name": "total",
+      "expr": {
+        "Precomputed": {
+          "slot": "_s1",
+          "js": "fmt(s.count, unit)",
+          "client_js": "fmt(cart.count(), props().unit)",
+          "inputs": [
+            "__store",
+            "unit"
+          ],
+          "state_dependent": true,
+          "per_item": null
+        }
+      }
+    }
+  ],
+  "effects": [],
+  "handlers": [],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 245,
+      "tag": "p",
+      "attrs": [],
+      "children": [
+        {
+          "Element": {
+            "loc": 255,
+            "tag": "b",
+            "attrs": [],
+            "children": [
+              {
+                "Slot": {
+                  "Server": {
+                    "loc": 259,
+                    "kind": {
+                      "Ident": {
+                        "name": "s.count",
+                        "kind": {
+                          "Store": {
+                            "handle": "cart",
+                            "key": "count"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Text": " "
+        },
+        {
+          "Slot": {
+            "Server": {
+              "loc": 273,
+              "kind": {
+                "Ident": {
+                  "name": "total",
+                  "kind": "Local"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [
+    {
+      "kind": "Precompute",
+      "inputs": [
+        "__store",
+        "unit"
+      ],
+      "outputs": [
+        "_s1"
+      ],
+      "per_item": null
+    }
+  ],
+  "child_links": [],
+  "client_props": [
+    "unit"
+  ],
+  "client_imports": [
+    [
+      "./fmt",
+      "fmt"
+    ],
+    [
+      "./shop",
+      "cart"
+    ]
+  ],
+  "client_module_locals": [],
+  "needs_worker": true,
+  "cache": null,
+  "children": [],
+  "stores": [
+    {
+      "handle": "cart",
+      "import": [
+        "cart",
+        "./shop",
+        "cart"
+      ],
+      "view": "s",
+      "fields": [],
+      "loc": 180,
+      "resolved": {
+        "name": "shop.cart",
+        "module": "tests/fixtures/store-dotted-warning/shop.ts",
+        "signals": [
+          "count"
+        ],
+        "computeds": [],
+        "factory_read": true
+      }
+    }
+  ],
+  "diagnostics": [
+    {
+      "class": "Warning",
+      "rule": "store-name-dotted",
+      "message": "useStore(cart): the store name 'shop.cart' or a key read from it contains '.', '[' or ']'; its job inputs fall back to `__store`, so the job key hashes the whole snapshot",
+      "loc": 180,
+      "line": 6,
+      "col": 13,
+      "remediation": "prefer dot-free store names and keys"
+    }
+  ]
+}

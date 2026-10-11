@@ -1,0 +1,1 @@
+fallback store-name-unresolved tests/fixtures/store-unresolved-fallback/input.tsx:5:13 useStore(cart): the store name passed to defineStore in tests/fixtures/store-unresolved-fallback/dyn.ts is not a string literal; the component renders as a React island — import the handle from the module that calls defineStore('<name>', …) with a string-literal name

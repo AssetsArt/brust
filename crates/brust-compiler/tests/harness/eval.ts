@@ -1,7 +1,7 @@
 // Dual-evaluation harness (spec §6.3), driven by tests/dual_eval.rs.
 //
 //   bun eval.ts slots <job.server.ts> <props.json>   → precompute(props) as JSON
-//   bun eval.ts check <dir> <page.html>              → { checked, mismatches }
+//   bun eval.ts check <dir> <page.html> [props.json] → { checked, mismatches }
 //
 // `check` loads the server-rendered HTML into happy-dom, imports every
 // `*.client.js` in <dir> (they import ./rt.ts, which captures the factories),
@@ -17,7 +17,7 @@ import { signal } from '../../../../packages/runtime-dom/src/index.ts'
 const repo = resolve(import.meta.dir, '../../../..')
 const { Window } = await import(Bun.resolveSync('happy-dom', join(repo, 'packages/runtime-dom')))
 
-const [cmd, a, b] = process.argv.slice(2)
+const [cmd, a, b, c] = process.argv.slice(2)
 
 if (cmd === 'slots') {
   const job = await import(resolve(a!))
@@ -29,6 +29,9 @@ if (cmd === 'slots') {
 type Members = Record<string, unknown>
 const BOOLEAN = new Set(['disabled', 'checked', 'selected', 'readonly', 'required', 'hidden', 'open', 'multiple'])
 
+// The store shim (harness/store.ts) seeds every `defineStore` from the sample's `__store` (C1)
+// when the chunks import the fixture's store modules.
+;(globalThis as any).__BRUST_DUAL_STORE__ = c ? (JSON.parse(await Bun.file(c).text()).__store ?? {}) : {}
 for (const f of readdirSync(a!).sort()) if (f.endsWith('.client.js')) await import(join(resolve(a!), f))
 const win = new Window()
 const doc = win.document

@@ -36,6 +36,8 @@ const NO_SAMPLES: &[&str] = &[
     "react-child-nested",
     "react-hook",
     "server-leak",
+    // Falls back to a React island: no chunk, nothing to compare.
+    "store-unresolved-fallback",
 ];
 
 /// Sampled fixtures with no client directives to compare (every other sampled
@@ -92,6 +94,14 @@ fn run(cmd: &mut Command) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
+/// Points the exact specifier `brust/store` at the harness shim (not `brust/store/react`,
+/// which only the component imports and the compiler consumes as an intrinsic).
+fn with_store_shim(src: &str) -> String {
+    let shim = serde_json::to_string(&harness().join("store.ts").to_string_lossy()).unwrap();
+    src.replace("'brust/store'", &shim)
+        .replace("\"brust/store\"", &shim)
+}
+
 /// Compiles `case`, writes its job(s) and chunk(s) (and the module stubs the
 /// fixture ships) into `dir`; returns (root template, root job file, island outputs).
 fn build(case: &Path, dir: &Path) -> (String, Option<PathBuf>, Vec<String>) {
@@ -124,9 +134,11 @@ fn build(case: &Path, dir: &Path) -> (String, Option<PathBuf>, Vec<String>) {
     for e in std::fs::read_dir(case).unwrap() {
         let p = e.unwrap().path();
         let n = p.file_name().unwrap().to_string_lossy().into_owned();
-        // The modules the fixture imports (`money.ts`), not its expectations.
+        // The modules the fixture imports (`money.ts`, `cart.ts`), not its expectations.
+        // A store module's `brust/store` resolves to the seeded shim (`harness/store.ts`).
         if n.ends_with(".ts") && !n.ends_with(".tsx") && !n.starts_with("expected.") {
-            std::fs::copy(&p, dir.join(&n)).unwrap();
+            let src = std::fs::read_to_string(&p).unwrap();
+            std::fs::write(dir.join(&n), with_store_shim(&src)).unwrap();
         }
     }
     let mut root = None;
@@ -213,7 +225,8 @@ fn server_paint_equals_client_initial_values() {
                 .arg(&eval)
                 .arg("check")
                 .arg(&dir)
-                .arg(&page)))
+                .arg(&page)
+                .arg(&sample)))
             .unwrap();
             let mismatches = report["mismatches"].as_array().unwrap();
             assert!(

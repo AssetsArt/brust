@@ -30,6 +30,17 @@ the job runs under bun, the template renders with minijinja from the sample prop
 job's slots, and every directive's initial client value must equal what was painted. Module
 stubs the fixtures import (`product-card/money.ts`) are copied next to the generated files.
 
+The `store-*` fixtures (M3-F §2.3) read a store through `useStore` (imported from
+`brust/store/react`, the compiler-test form). Their `cart.ts` / `shop.ts` / `dyn.ts` are store
+modules that call `defineStore`, not components: they get no expectation files. Their
+`sample-props.json` carries the request's store snapshot under `__store` (C1,
+`{"__store":{"cart":{"count":3}}}`), which is both the template context and the job's props. When
+the harness copies a store module it points `brust/store` at `crates/brust-compiler/tests/harness/store.ts`,
+a shim on the chunks' reactive core that seeds each `defineStore` from the sample's `__store`, so the
+client's initial `cart.count()` is the value the server painted. `store-unresolved-fallback` falls
+back to a React island and has no sample; `store-dotted-warning` pins the `store-name-dotted`
+warning (a dotted name forces the coarse `__store` job input).
+
 After an intentional change: `BRUSTC_UPDATE=1 cargo test -p brust-compiler --test fixtures`,
 then review the diff in git before committing. An update also deletes the expectation
 of the outcome that no longer happens; without `BRUSTC_UPDATE` such a stale file fails
