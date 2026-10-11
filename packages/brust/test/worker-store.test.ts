@@ -193,3 +193,62 @@ test('an ssr job never sees the loader scope (planned path)', async () => {
   })
   expect(value).toBe(4)
 })
+
+// --- S8: real core (defineStore) through the installed resolver ---
+const realStore = async () => {
+  const core = await import('@brust/core/store')
+  return core
+}
+
+test('defineStore in a loader -> store snapshot', async () => {
+  const { defineStore, signal } = await realStore()
+  const cart = defineStore('cart_loader', () => ({ count: signal(0) }))
+  const h = makeHandlers({
+    leaves: leaves(() => {
+      cart.count.set(3)
+      return {}
+    }),
+    jobs: {},
+  })
+  expect(await h.loader(ctx())).toEqual({ ok: true, data: {}, store: { cart_loader: { count: 3 } } })
+})
+
+test('a manifest-touched real store contributes its defaults', async () => {
+  const { defineStore, signal } = await realStore()
+  const cart = defineStore('cart_default', () => ({ count: signal(5) }))
+  const manifest: ManifestLike = {
+    routes: [{ id: 'r1', chain: ['p'] }],
+    components: { p: { jobs: [], stores: ['s.ts'] } },
+  }
+  const h = makeHandlers({ leaves: leaves(() => ({})), jobs: {}, manifest, stores: { 's.ts': { cart } } })
+  expect(await h.loader(ctx())).toEqual({ ok: true, data: {}, store: { cart_default: { count: 5 } } })
+})
+
+test('an ssr job reads the seeded value through the handle', async () => {
+  const { defineStore, signal } = await realStore()
+  const cart = defineStore('cart_ssr', () => ({ count: signal(0) }))
+  let out = ''
+  const jobs: JobsModule = {
+    t: {
+      ssr: () => {
+        out = String(cart.count())
+        return ''
+      },
+    },
+  }
+  const h = makeHandlers({ leaves: [], jobs })
+  await h.jobs({ jobs: [{ id: 'c/j0', componentId: 'c', kind: 'ssr', target: 't', inputs: { __store: { cart_ssr: { count: 4 } } } }] })
+  expect(out).toBe('4')
+})
+
+test('the worker sees ONE store core', async () => {
+  const a = await import('@brust/core/store')
+  const b = await import('@brust/runtime-dom/store')
+  expect(a.defineStore).toBe(b.defineStore)
+})
+
+test('store access outside a request scope throws', async () => {
+  const { defineStore, signal } = await realStore()
+  const cart = defineStore('cart_out', () => ({ count: signal(0) }))
+  expect(() => cart.count()).toThrow(/outside a request scope/)
+})

@@ -1,6 +1,7 @@
 // packages/brust/src/store/core-adapter.ts — the ONE file that names the store-core lane's API
 // (design §2.1, C7/C8). Until m3f-store-core merges it holds only the shapes this lane expects;
-// S8 adds the import. A mismatch with core is fixed here, in one line.
+// A mismatch with core is fixed here, in one line.
+import { __setServerResolver } from '@brust/runtime-dom/store/internal'
 
 /** C1: `{ [storeName]: { [signalKey]: Json } }`. */
 export type StoreSnapshot = Record<string, Record<string, unknown>>
@@ -23,4 +24,9 @@ export function isStoreHandle(v: unknown): v is (() => object) & { readonly name
     typeof h.name === 'string' &&
     ['subscribe', 'snapshot', 'serialize', 'hydrate'].every((k) => typeof h[k] === 'function')
   )
+}
+
+/** Installs `resolver` as core's server-side instance lookup (design §2.1). Called once at worker boot. */
+export function installServerResolver(resolver: ServerResolver | null): void {
+  __setServerResolver(resolver as unknown as Parameters<typeof __setServerResolver>[0])
 }

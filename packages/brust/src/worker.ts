@@ -4,9 +4,11 @@
 import { join, resolve } from 'node:path'
 import { workerData } from 'node:worker_threads'
 import { planJobs, registerWorker } from './native'
-import type { StoreSnapshot } from './store/core-adapter'
-import { collectSnapshot, runInStoreContext, touchStores } from './store/server-context'
+import { installServerResolver, type StoreSnapshot } from './store/core-adapter'
+import { collectSnapshot, getServerInstance, runInStoreContext, touchStores } from './store/server-context'
 import { type FlatRoute, flattenRoutes, isHttpErrorTrigger, isVerdict, type LoaderReq, type Route, type Verdict } from './routes'
+
+installServerResolver(getServerInstance)
 
 // ---- wire shapes (protocol.rs, camelCase) ----
 

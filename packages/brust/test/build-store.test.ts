@@ -53,6 +53,9 @@ test('island and native chunks import the store core from the runtime URL', asyn
   expect(island.length).toBeGreaterThan(0)
   expect(native.some(({ text }) => ext.test(text))).toBe(true)
   expect(island.some(({ text }) => ext.test(text))).toBe(true)
+  // C7: the reactive-context global is defined in exactly one client file, the runtime
+  const owners = clientTexts(out).filter(({ text }) => text.includes('brust.reactive.ctx'))
+  expect(owners.map(({ f }) => f)).toEqual([runtime])
 }, 60_000)
 
 test('jobs.js has a stores table only when the manifest lists stores', async () => {
