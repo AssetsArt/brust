@@ -8,9 +8,9 @@ import { cpSync, existsSync, mkdirSync, readdirSync, realpathSync, renameSync, r
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, parse, relative, resolve } from 'node:path'
 import { BrustRouteError, validateRoutes } from '../routes'
-import { type BrowserCtx, buildClientChunks, buildJobs, buildReactChunks, buildRuntime, storeModules } from './bundle'
+import { type BrowserCtx, buildActions, buildClientChunks, buildJobs, buildReactChunks, buildRuntime, storeModules } from './bundle'
 import { compileApp } from './compile'
-import { loadBuildConfig } from './config'
+import { type ActionsBuildConfig, loadBuildConfig } from './config'
 import { BuildError } from './errors'
 import { writeManifest } from './manifest'
 import { scanRoutes } from './scan'
@@ -68,6 +68,14 @@ export function assertReplaceable(dist: string, force = false): void {
   )
 }
 
+function statOk(p: string): boolean {
+  try {
+    return statSync(p).isFile()
+  } catch {
+    return false
+  }
+}
+
 export async function runBuild(opts: {
   appRoot: string
   entry: string
@@ -81,7 +89,7 @@ export async function runBuild(opts: {
   const dist = resolve(appRoot, opts.outDir)
   assertSafeOutDir(dist, appRoot, [entry, join(appRoot, 'public')])
   assertReplaceable(dist, opts.force)
-  const { serverOnly } = await loadBuildConfig(appRoot)
+  const { serverOnly, actions } = await loadBuildConfig(appRoot)
 
   // Everything that can fail on the app's own input runs before a byte is written.
   const { routes, componentFile } = await scanRoutes(entry)
@@ -92,7 +100,24 @@ export async function runBuild(opts: {
     if (e instanceof BrustRouteError) throw new BuildError(e.rule, e.message)
     throw e
   }
-  assertSafeOutDir(dist, appRoot, [...componentFile.values()])
+  let actionsEntry: string | null = null
+  if (actions) {
+    actionsEntry = resolve(appRoot, actions.entry)
+    const rel = relative(appRoot, actionsEntry)
+    if (isAbsolute(actions.entry) || rel.startsWith('..') || isAbsolute(rel) || !statOk(actionsEntry)) {
+      throw new BuildError('actions-entry', `actions.entry ${actions.entry} is not a file inside the app`)
+    }
+    // The actions app answers every path under its prefix, so a page there could never be served.
+    for (const l of leaves) {
+      if (l.pattern !== '*' && (l.pattern === actions.prefix || l.pattern.startsWith(`${actions.prefix}/`))) {
+        throw new BuildError(
+          'actions-prefix',
+          `route ${l.id} (${l.pattern}) lies under the actions prefix ${actions.prefix}: the actions app answers every path there`,
+        )
+      }
+    }
+  }
+  assertSafeOutDir(dist, appRoot, [...componentFile.values(), ...(actionsEntry ? [actionsEntry] : [])])
 
   // Sibling of `dist` (same filesystem: the final rename is atomic), fixed name (no random bytes in
   // anything the bundler sees).
@@ -100,7 +125,7 @@ export async function runBuild(opts: {
   rmSync(tmp, { recursive: true, force: true })
   mkdirSync(tmp, { recursive: true })
   try {
-    await buildInto(tmp, { appRoot, entry, dist, leaves, componentFile, serverOnly, log: opts.log })
+    await buildInto(tmp, { appRoot, entry, dist, leaves, componentFile, serverOnly, actions, actionsEntry, log: opts.log })
     rmSync(join(tmp, '.stage'), { recursive: true, force: true })
     if (existsSync(dist)) {
       const old = join(dirname(dist), `.${basename(dist)}.brust-old`)
@@ -125,11 +150,14 @@ async function buildInto(
     leaves: ReturnType<typeof validateRoutes>
     componentFile: Map<Function, string>
     serverOnly: string[]
+    actions: ActionsBuildConfig | null
+    /** Absolute path of the actions entry (null when `[actions]` is off). */
+    actionsEntry: string | null
     log: (s: string) => void
   },
 ): Promise<void> {
   const { appRoot, entry, leaves } = o
-  const ctx: BrowserCtx = { sourceOf: new Map(), appRoot, serverOnly: o.serverOnly }
+  const ctx: BrowserCtx = { sourceOf: new Map(), appRoot, serverOnly: o.serverOnly, serverFiles: o.actionsEntry ? [realpathSync(o.actionsEntry)] : [] }
   // The runtime first: its hashed URL is the `runtimeImport` every client chunk is compiled with.
   const runtime = await buildRuntime(out, ctx)
   const { compiled, routeComponent } = compileApp({
@@ -148,6 +176,10 @@ async function buildInto(
   const chunks = new Map([...(await buildClientChunks(out, compiled, ctx, runtimeUrl)), ...(await buildReactChunks(out, compiled, ctx, runtimeUrl))])
   const manifest = writeManifest({ leaves, routeComponent, compiled, runtime, chunks })
   await buildJobs(out, compiled, ctx.sourceOf, appRoot, storeModules(manifest))
+  manifest.actions =
+    o.actions && o.actionsEntry
+      ? { entry: await buildActions(out, o.actionsEntry), prefix: o.actions.prefix, maxBodyBytes: o.actions.maxBodyBytes }
+      : null
   writeFileSync(join(out, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`)
   writeFileSync(join(out, MARKER), 'generated by `brust build`: this directory is replaced on every build\n')
 

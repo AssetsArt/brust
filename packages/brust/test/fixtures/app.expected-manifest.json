@@ -177,5 +177,6 @@
   "assets": {
     "runtime": "client/runtime-<hash>.js"
   },
-  "jobs_module": "jobs.js"
+  "jobs_module": "jobs.js",
+  "actions": null
 }
