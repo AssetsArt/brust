@@ -70,6 +70,8 @@ pub fn tier(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
         && ir.refs.is_empty()
         && ir.child_links.is_empty()
         && !has_state_dependent(ir)
+        // A resolved store read updates after first paint (M3-F D7).
+        && !ir.stores.iter().any(|s| s.resolved.is_some())
     {
         ir.tier = Tier::Static;
     } else {

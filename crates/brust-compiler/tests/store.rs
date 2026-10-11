@@ -798,3 +798,100 @@ fn store_input_paths() {
         ["__store", "__store.cart.count"]
     );
 }
+
+// --- Task 4: store-view reads are live signal reads in the client chunk. ---
+
+#[test]
+fn store_read_chunk() {
+    let (ir, j, c) = lower_at(
+        "store-read",
+        &component("const s = useStore(cart); return <p>{s.count}</p>"),
+    );
+    assert!(c.contains("import { cart } from \"./cart\""), "{c}");
+    assert!(
+        c.contains("const _c1 = computed(() => __text(cart.count()))"),
+        "{c}"
+    );
+    assert!(j.contains("x-text=\"_c1\""), "{j}");
+    // A store read is the only dynamic value: still not Static.
+    assert_eq!(ir.tier, Tier::Native, "{:?}", ir.diagnostics);
+    assert!(!c.contains("snapshot"), "{c}");
+}
+
+#[test]
+fn store_handler_reads() {
+    let (_, _, c) = lower_at(
+        "store-read",
+        &component(
+            "const s = useStore(cart); return <button onClick={() => cart.count.set(s.count + 1)}>{s.count}</button>",
+        ),
+    );
+    assert!(c.contains("cart.count.set(cart.count() + 1)"), "{c}");
+    assert!(!c.contains("snapshot"), "{c}");
+}
+
+#[test]
+fn store_block_handler_view() {
+    let (_, _, c) = lower_at(
+        "store-read",
+        &component(
+            "const s = useStore(cart); return <button onClick={() => cart.count.set(s.count + 1)} onDoubleClick={() => { const n = s.count * 2; cart.count.set(n) }}>{s.count}</button>",
+        ),
+    );
+    let view = "const s = { get count() { return cart.count() } }";
+    assert_eq!(c.matches(view).count(), 1, "{c}");
+    // The verbatim body reads the chunk's `s`: never re-bound.
+    assert!(!c.contains("((s) =>"), "{c}");
+    assert!(!c.contains("(s, "), "{c}");
+}
+
+#[test]
+fn store_destructured_in_block() {
+    let (_, _, c) = lower_at(
+        "store-read",
+        &component(
+            "const { count } = useStore(cart); return <button onClick={() => { const n = count * 2; cart.count.set(n) }}>{count}</button>",
+        ),
+    );
+    assert!(c.contains("((count) => ("), "{c}");
+    assert!(c.contains("))(cart.count())"), "{c}");
+}
+
+const CART_KEYS: &str = "import { defineStore, signal, computed } from 'brust/store'\nexport const cart = defineStore('cart', () => { const count = signal(0); const dbl = computed(() => count() * 2); return { count, dbl, add: (n: number) => count.set(n) } })\n";
+
+#[test]
+fn store_non_signal_key_in_handler() {
+    let (ir, _, c) = lower_tree(&[
+        ("cart.ts", CART_KEYS),
+        (
+            "C.tsx",
+            "import { useStore } from 'brust/store/react'\nimport { cart } from './cart'\nexport default function C() { const s = useStore(cart); return <button onClick={() => console.log(s.add, s.dbl)}>{s.count}</button> }",
+        ),
+    ]);
+    assert!(
+        ir.stores.iter().all(|u| u.resolved.is_some()),
+        "{:?}",
+        ir.diagnostics
+    );
+    // React-equivalent: a snapshot drops functions.
+    assert!(c.contains("cart.snapshot()[\"add\"]"), "{c}");
+    assert!(c.contains("cart.dbl()"), "{c}");
+}
+
+#[test]
+fn store_namespace_handle() {
+    let (ir, _, c) = lower_tree(&[
+        ("stores.ts", CART),
+        (
+            "C.tsx",
+            "import { useStore } from 'brust/store/react'\nimport * as stores from './stores'\nexport default function C() { const s = useStore(stores.cart); return <p>{s.count}</p> }",
+        ),
+    ]);
+    assert!(
+        ir.stores.iter().all(|u| u.resolved.is_some()),
+        "{:?}",
+        ir.diagnostics
+    );
+    assert!(c.contains("stores.cart.count()"), "{c}");
+    assert!(c.contains("import * as stores from \"./stores\""), "{c}");
+}

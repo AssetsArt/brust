@@ -363,6 +363,24 @@ fn print(e: &RawExpr, ctx: JsCtx, names: JsNames<'_>, out: &mut String) {
                 out.push_str(name);
                 out.push_str("()");
             }
+            // A store read is a live signal read (M3-F D7); lowering overrides it with the
+            // resolved key set (`client_ident`).
+            (IdentKind::Store { handle, key }, JsCtx::Client) => {
+                out.push_str(handle);
+                match key {
+                    Some(k) if is_js_ident(k) => {
+                        out.push('.');
+                        out.push_str(k);
+                    }
+                    Some(k) => {
+                        out.push('[');
+                        out.push_str(&js_string(k));
+                        out.push(']');
+                    }
+                    None => out.push_str(".snapshot"),
+                }
+                out.push_str("()");
+            }
             _ => out.push_str(name),
         },
         RawKind::Member {

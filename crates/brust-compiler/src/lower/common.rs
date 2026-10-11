@@ -222,6 +222,44 @@ pub fn visit_idents(r: &RawExpr, f: &mut dyn FnMut(&str, &IdentKind)) {
     }
 }
 
+/// Calls `f` for every capture of a verbatim body (`Arrow{Block}` / `Opaque`) in `r`: the
+/// names such code reads as written, with no printer in between.
+pub fn visit_verbatim_captures(r: &RawExpr, f: &mut dyn FnMut(&str, &IdentKind)) {
+    let mut go = |e: &RawExpr| visit_verbatim_captures(e, f);
+    match &r.kind {
+        RawKind::Lit(_) | RawKind::Ident { .. } | RawKind::Jsx(_) => {}
+        RawKind::Member { target, .. } => go(target),
+        RawKind::Index { target, index } => {
+            go(target);
+            go(index);
+        }
+        RawKind::Call { callee, args } => {
+            go(callee);
+            args.iter().for_each(&mut go);
+        }
+        RawKind::Binary { left, right, .. } => {
+            go(left);
+            go(right);
+        }
+        RawKind::Unary { value, .. } => go(value),
+        RawKind::Cond { test, yes, no } => {
+            go(test);
+            go(yes);
+            go(no);
+        }
+        RawKind::Template { parts, .. } => parts.iter().for_each(|(p, _)| go(p)),
+        RawKind::Array(items) => items.iter().for_each(&mut go),
+        RawKind::Object(props) => props.iter().for_each(|(_, v)| go(v)),
+        RawKind::Arrow {
+            body: ArrowBody::Expr(b),
+            ..
+        } => go(b),
+        RawKind::Arrow { captures, .. } | RawKind::Opaque { captures, .. } => {
+            captures.iter().for_each(|(n, k)| f(n, k))
+        }
+    }
+}
+
 /// Imports printed code reads: `(local, source, imported)`.
 pub type ImportUse = (String, String, String);
 
@@ -358,7 +396,28 @@ fn client_ident(name: &str, kind: &IdentKind, f: &Facts<'_>) -> Option<String> {
             _ => None,
         },
         IdentKind::Setter => f.setters.get(name).map(|s| format!("{s}.set")),
+        IdentKind::Store { handle, key } => Some(store_client_js(handle, key.as_deref(), f)),
         _ => None,
+    }
+}
+
+/// A store read in the chunk (M3-F D7): a signal or computed key is a live call
+/// (`cart.count()`); any other key, or the whole view, reads the snapshot, which
+/// drops functions as React's `useStore` does (`cart.snapshot()["add"]`).
+pub fn store_client_js(handle: &str, key: Option<&str>, f: &Facts<'_>) -> String {
+    let resolved = f.stores.get(handle).and_then(|u| u.resolved.as_ref());
+    match key {
+        Some(k)
+            if resolved.is_some_and(|r| r.signals.iter().chain(&r.computeds).any(|s| s == k)) =>
+        {
+            if crate::ir::expr::is_js_ident(k) {
+                format!("{handle}.{k}()")
+            } else {
+                format!("{handle}[{}]()", crate::ir::expr::js_string(k))
+            }
+        }
+        Some(k) => format!("{handle}.snapshot()[{}]", crate::ir::expr::js_string(k)),
+        None => format!("{handle}.snapshot()"),
     }
 }
 
@@ -442,6 +501,12 @@ fn wrap_source(
                 Some((_, DerivedShape::Value)) => (name.clone(), format!("{name}()")),
                 _ => continue,
             },
+            // The view `s` is a chunk const of getters (lower/client.rs): in scope as is.
+            IdentKind::Store { key: None, .. } => continue,
+            // A destructured `{ count }` is bound to its current value at call time.
+            IdentKind::Store { handle, key } => {
+                (name.clone(), store_client_js(handle, key.as_deref(), f))
+            }
             _ => continue,
         };
         if !params.contains(&param) {

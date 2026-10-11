@@ -438,13 +438,17 @@ impl Placer<'_> {
             loc: r.loc,
             deps: deps.clone(),
         });
-        if !deps.state.is_empty() {
+        if deps.reactive() {
             // The client re-evaluates it (§3.2 rule 3: its props are seeds).
             self.reactive += 1;
             self.st.client_uses.push(super::ClientUse {
                 loc: r.loc,
                 deps: deps.clone(),
-                what: "a state-dependent value",
+                what: if deps.state.is_empty() {
+                    "a store-dependent value"
+                } else {
+                    "a state-dependent value"
+                },
                 raw: Some((r.clone(), self.loop_scope.clone())),
             });
         }

@@ -113,10 +113,7 @@ impl Walker<'_, '_> {
                 body,
                 ..
             } => {
-                let src = (
-                    self.paths_of(source),
-                    !self.deps_of(source).state.is_empty(),
-                );
+                let src = (self.paths_of(source), self.deps_of(source).reactive());
                 let n = self.loop_scope.len();
                 self.loop_scope.push(item.clone());
                 self.loop_scope.extend(index.iter().cloned());
@@ -334,7 +331,7 @@ impl Walker<'_, '_> {
             Expr::Precomputed {
                 state_dependent, ..
             } => *state_dependent,
-            other => !self.deps_of(other).state.is_empty(),
+            other => self.deps_of(other).reactive(),
         }
     }
 
@@ -458,6 +455,11 @@ impl Walker<'_, '_> {
                         Some(format!(
                             "a reactive value (reads state `{}`)",
                             d.state.iter().cloned().collect::<Vec<_>>().join("`, `")
+                        ))
+                    } else if !d.stores.is_empty() {
+                        Some(format!(
+                            "a reactive value (reads store `{}`)",
+                            d.stores.iter().cloned().collect::<Vec<_>>().join("`, `")
                         ))
                     } else {
                         None
@@ -670,7 +672,7 @@ pub enum LinkNeed {
 pub fn instance_needs_link(tier: &Tier, props: impl IntoIterator<Item = (bool, Deps)>) -> LinkNeed {
     let mut loop_only = false;
     for (function, d) in props {
-        if function || !d.state.is_empty() {
+        if function || d.reactive() {
             return LinkNeed::Always;
         }
         loop_only |= !d.loop_bindings.is_empty();
