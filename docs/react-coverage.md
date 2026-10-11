@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 18 | 14 | 3 | 1 | 0 | 0 | 0 | 0 |
-| B Composition | 11 | 4 | 3 | 4 | 0 | 0 | 0 | 0 |
+| B Composition | 12 | 5 | 3 | 4 | 0 | 0 | 0 | 0 |
 | C Hooks | 15 | 1 | 8 | 6 | 0 | 0 | 0 | 0 |
 | D API surface | 5 | 1 | 0 | 4 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 24 | 4 | 10 | 5 | 4 | 1 | 0 | 0 |
-| **Total** | 73 | 24 | 24 | 20 | 4 | 1 | 0 | 0 |
+| **Total** | 74 | 25 | 24 | 20 | 4 | 1 | 0 | 0 |
 
 ## A. JSX basics
 
@@ -43,6 +43,7 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|
 | b-child-static | static child component | static | static | 0 | ok | — | spec §3.1 inlined child |
 | b-child-props | child with props | static | static | 0 | ok | — | spec §3.1 inlined child with props |
+| b-child-dir-index | child imported from a directory (./widgets → widgets/index.ts) | static | static | 0 | ok | — | spec §3.1 inlined child; Bun resolves <dir>/index.ts; compiler matches (M3-F store lane) |
 | b-children-slot | children passed through a slot | static | static | 0 | ok | warning:fragment-root | spec §3.1 children slot |
 | b-reactive-props | state flows into a native child as a reactive prop | native | native | 0 | ok | — | spec §7.4 reactive props (D8) |
 | b-function-prop | function prop to a native child | native | native | 0 | ok | — | spec §7.4 function prop between native components |
