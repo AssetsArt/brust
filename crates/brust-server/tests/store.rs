@@ -103,3 +103,71 @@ fn not_found_verdict_carries_the_store() {
     assert_eq!(st, 404);
     assert!(body.contains(r#"<b id="c">5</b>"#), "{body}");
 }
+
+/// `default_loader` whose store snapshot is read from `count` at each call.
+fn with_counter(count: Arc<std::sync::atomic::AtomicU32>) -> impl Fn(Value) -> Value + Send + Sync {
+    move |req| {
+        let mut r = default_loader(req);
+        let c = count.load(std::sync::atomic::Ordering::SeqCst);
+        r["store"] = json!({"cart": {"count": c}});
+        r
+    }
+}
+
+#[test]
+fn ssr_job_cache_follows_the_store() {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    let count = Arc::new(AtomicU32::new(3));
+    let dir = store_dist();
+    let f = FakeBun::new(with_counter(count.clone()), default_jobs);
+    let s = boot_in(f.clone(), dir.path());
+    for n in [3, 3, 4] {
+        count.store(n, Ordering::SeqCst);
+        let (st, _, _) = get(&s, "/team", &[]);
+        assert_eq!(st, 200);
+    }
+    assert_eq!(f.counts().1, 2, "3 miss, 3 hit, 4 miss");
+    assert_eq!(
+        f.last_jobs().unwrap()["jobs"][0]["inputs"]["__store"],
+        json!({"cart": {"count": 4}})
+    );
+}
+
+#[test]
+fn precompute_inputs_never_carry_the_store() {
+    let dir = store_dist();
+    let f = counted(json!({"cart": {"count": 3}}));
+    let s = boot_in(f.clone(), dir.path());
+    let (st, _, _) = get(&s, "/pokemon/pikachu", &[]);
+    assert_eq!(st, 200);
+    let jobs = f.last_jobs().expect("jobs were requested");
+    let arr = jobs["jobs"].as_array().unwrap();
+    assert!(!arr.is_empty());
+    for call in arr {
+        assert!(call["inputs"].get("__store").is_none(), "{call}");
+    }
+}
+
+#[test]
+fn island_props_hide_the_store() {
+    let dir = temp_dist(|m| {
+        m["routes"].as_array_mut().unwrap().push(json!({
+            "id": "r7", "pattern": "/island",
+            "chain": ["appLayout_a1", "teamBuilder_h8"],
+            "loaders": ["r7"], "cache": null, "catch_all": false}));
+    });
+    let f = counted(json!({"cart": {"count": 3}}));
+    let s = boot_in(f.clone(), dir.path());
+    let (st, _, body) = get(&s, "/island", &[]);
+    assert_eq!(st, 200, "{body}");
+    assert!(body.contains("x-props="), "{body}");
+    assert!(!body.contains("__store"), "{body}");
+    let jobs = f.last_jobs().expect("ssr job requested");
+    let call = jobs["jobs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["componentId"] == "teamBuilder_h8")
+        .expect("teamBuilder_h8 call");
+    assert_eq!(call["inputs"]["__store"], json!({"cart": {"count": 3}}));
+}

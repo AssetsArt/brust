@@ -1483,12 +1483,25 @@ fn plan_one<'a>(
     dest: Dest<'a>,
     row: Option<usize>,
     src: PlanSrc,
+    snapshot: Option<&Node>,
 ) -> Result<(), String> {
     let per_instance = match dest {
         Dest::Chain { row, .. } => row,
         Dest::Child { .. } => None,
     };
-    let projected = job_inputs(j, props, per_instance)?;
+    let mut projected = job_inputs(j, props, per_instance)?;
+    // M3-F C5/D8: every ssr job renders inside a store scope seeded from `__store`, so the
+    // snapshot is one of its inputs (and of its hashed key). Precompute jobs never see stores.
+    if j.kind == JobKind::Ssr
+        && let Some(st) = snapshot
+    {
+        match projected.map_mut() {
+            Some(m) => {
+                m.insert(Arc::from(STORE_KEY), st.clone());
+            }
+            None => tracing::debug!(job = %j.id, "ssr job inputs are not a map; no __store"),
+        }
+    }
     // With a `props` map each row's inputs are that row's props (content-keyed:
     // equal rows share an entry); otherwise every row projects the same
     // parent-scope inputs, so the row is part of the key.
@@ -1531,6 +1544,7 @@ pub(crate) fn collect_jobs<'a>(
     ctx: &Node,
 ) -> Result<Vec<JobPlan<'a>>, String> {
     let mut out = Vec::new();
+    let snapshot = ctx.get(STORE_KEY);
     for id in chain {
         let ci = idx.comp_ix(id)?;
         let c = &idx.comps[ci];
@@ -1545,10 +1559,30 @@ pub(crate) fn collect_jobs<'a>(
                 via: None,
             };
             match &j.per_instance {
-                None => plan_one(&mut out, &c.id, prefix, j, ctx, dest(None), None, src)?,
+                None => plan_one(
+                    &mut out,
+                    &c.id,
+                    prefix,
+                    j,
+                    ctx,
+                    dest(None),
+                    None,
+                    src,
+                    snapshot,
+                )?,
                 Some(list) => {
                     for r in 0..row_count(list, ctx) {
-                        plan_one(&mut out, &c.id, prefix, j, ctx, dest(Some(r)), Some(r), src)?;
+                        plan_one(
+                            &mut out,
+                            &c.id,
+                            prefix,
+                            j,
+                            ctx,
+                            dest(Some(r)),
+                            Some(r),
+                            src,
+                            snapshot,
+                        )?;
                     }
                 }
             }
@@ -1583,6 +1617,7 @@ pub(crate) fn collect_jobs<'a>(
                         target(row),
                         row,
                         src,
+                        snapshot,
                     )?;
                 }
             }
@@ -2741,6 +2776,48 @@ mod tests {
         let ix = PlanIndex::new(&m).unwrap();
         let plans = collect_jobs(&ix, &chain(&["detailPage_c3"]), &ctx).unwrap();
         assert_eq!(plans[0].inputs, pikachu());
+    }
+
+    #[test]
+    fn ssr_jobs_get_the_store_and_precompute_jobs_do_not() {
+        let mut m = manifest();
+        let mut ctx = pikachu();
+        ctx.map_mut()
+            .unwrap()
+            .insert("team".into(), n(json!(["a"])));
+        let ix = PlanIndex::new(&m).unwrap();
+        let plans = collect_jobs(&ix, &chain(&["teamPage_g7"]), &ctx).unwrap();
+        assert_eq!(
+            j(&plans[0].inputs),
+            json!({"team": ["a"]}),
+            "R1: absent store"
+        );
+        let mut with = ctx.clone();
+        with.map_mut()
+            .unwrap()
+            .insert(STORE_KEY.into(), n(json!({"cart": {"count": 3}})));
+        let plans = collect_jobs(&ix, &chain(&["teamPage_g7"]), &with).unwrap();
+        assert_eq!(
+            j(&plans[0].inputs),
+            json!({"team": ["a"], "__store": {"cart": {"count": 3}}})
+        );
+        let k_with = plans[0].key.clone();
+        let k_without = collect_jobs(&ix, &chain(&["teamPage_g7"]), &ctx).unwrap()[0]
+            .key
+            .clone();
+        assert_ne!(k_with, k_without, "the key covers the store");
+        m.components.get_mut("detailPage_c3").unwrap().jobs[0].inputs = vec!["*".into()];
+        let ix = PlanIndex::new(&m).unwrap();
+        let mut ctx = pikachu();
+        ctx.map_mut()
+            .unwrap()
+            .insert(STORE_KEY.into(), n(json!({"cart": {"count": 3}})));
+        let plans = collect_jobs(&ix, &chain(&["detailPage_c3"]), &ctx).unwrap();
+        assert_eq!(
+            plans[0].inputs,
+            pikachu(),
+            "precompute never sees the store"
+        );
     }
 
     #[test]
