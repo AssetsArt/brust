@@ -30,7 +30,7 @@ const APP = process.env.ATTR_APP === 'bench' ? 'bench' : 'pokedex'
 const APP_DIR = APP === 'bench' ? 'bench/apps/brust' : 'examples/pokedex'
 /** One URL per probe (D/I: the bench pages; C: the pokedex home); B is a regex over every name. */
 const urlOf = (side: string, probe: string): string =>
-  probe === 'M' ? '/team?nocache=1&start=7' : probe === 'D' ? '/dex?nocache=1' : probe === 'I' ? '/team?nocache=1' : probe === 'B' ? `/pokemon/pikachu${side === 'v2' ? '?nocache=1' : ''}` : '/'
+  probe === 'M' ? '/team?nocache=1&start=7' : probe === 'S' ? '/types' : probe === 'D' ? '/dex?nocache=1' : probe === 'I' ? '/team?nocache=1' : probe === 'B' ? `/pokemon/pikachu${side === 'v2' ? '?nocache=1' : ''}` : '/'
 const target = (side: string, base: string, probe: string) =>
   probe === 'B' ? ['--rand-regex-url', `${base}/pokemon/(${NAMES.join('|')})${side === 'v2' ? '\\?nocache=1' : ''}`]
   : probe === 'M' ? ['--rand-regex-url', `${base}/team\\?nocache=1&start=[1-9][0-9]{6}`]   // 9·10^6 values ≫ job cache 1000: a miss per request
@@ -102,6 +102,8 @@ const TREE: [number, string, string][] = [
   [0, 'SVC_TOTAL', 'service fn (handle + header stamping)'],
   [1, 'MATCH', 'route match + accept-encoding'],
   [1, 'L1', 'L1 decision (+ get)'],
+  [1, 'L1_HIT', 'L1 HIT: decision + get + response'],
+  [1, 'ENVELOPE', 'request envelope (MISS/BYPASS; inside MATCH before P4)'],
   [1, 'CTX_INIT', 'params/path ctx'],
   [1, 'CW_TOTAL', 'loader call_worker (wall)'],
   [2, 'CW_CLAIM', 'claim slot (wait)'],

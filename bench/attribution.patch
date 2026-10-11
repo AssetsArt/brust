@@ -1,8 +1,8 @@
 diff --git a/Cargo.lock b/Cargo.lock
-index d2b2c97..9c7d259 100644
+index b4cc268..d1118a5 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
-@@ -174,6 +174,7 @@ dependencies = [
+@@ -175,6 +175,7 @@ dependencies = [
   "http-body-util",
   "hyper",
   "hyper-util",
@@ -11,11 +11,11 @@ index d2b2c97..9c7d259 100644
   "minijinja",
   "moka",
 diff --git a/crates/brust-server/Cargo.toml b/crates/brust-server/Cargo.toml
-index b407985..39026fe 100644
+index bd95ffc..303bd7d 100644
 --- a/crates/brust-server/Cargo.toml
 +++ b/crates/brust-server/Cargo.toml
-@@ -19,6 +19,7 @@ percent-encoding = "2.3"
- moka = { version = "0.12", features = ["sync"] }
+@@ -20,6 +20,7 @@ moka = { version = "0.12", features = ["sync"] }
+ crossbeam-utils = "0.8"
  flate2 = "1"
  blake3 = "1"
 +libc = "0.2"
@@ -23,20 +23,17 @@ index b407985..39026fe 100644
  tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "sync", "time", "fs"] }
  tokio-stream = "0.1"
 diff --git a/crates/brust-server/src/dispatch.rs b/crates/brust-server/src/dispatch.rs
-index d2e0052..8c1a53e 100644
+index 05927f9..2294aa4 100644
 --- a/crates/brust-server/src/dispatch.rs
 +++ b/crates/brust-server/src/dispatch.rs
-@@ -211,12 +211,19 @@ pub async fn call_worker_planned<Req: Serialize, Resp: DeserializeOwned + Send +
+@@ -191,9 +191,16 @@ pub async fn call_worker<Req: Serialize, Resp: DeserializeOwned + Send + 'static
+     kind: CallKind,
      req: &Req,
-     seed: Option<PlanBox>,
- ) -> Result<(Resp, Option<PlanBox>), CallError> {
+ ) -> Result<Resp, CallError> {
 +    use crate::perf;
 +    let o = if kind == CallKind::Loader { 0 } else { 20 };
 +    let t_total = std::time::Instant::now();
      let claim = claim_or_wait(pool, timeout, || pool.try_claim_render_lockfree()).await?;
-     if let Some(s) = seed {
-         claim.put_plan(s);
-     }
 +    perf::rec(perf::CW_CLAIM + o, t_total);
 +    let t = std::time::Instant::now();
      let json = serde_json::to_string(req)
@@ -44,87 +41,75 @@ index d2e0052..8c1a53e 100644
 +    perf::rec(perf::CW_SER + o, t);
 +    perf::add(perf::CW_REQ_BYTES + o, json.len() as u64);
      let pool = Arc::clone(pool);
-     let (stamped, stamped_slot) = (Arc::clone(claim.entry()), claim.slot());
      // The body is identical to the former spawned task. It is polled INLINE on
-@@ -228,6 +235,8 @@ pub async fn call_worker_planned<Req: Serialize, Resp: DeserializeOwned + Send +
-     let call: Pin<Box<dyn Future<Output = PlannedResult<Resp>> + Send>> = Box::pin(async move {
-         let entry = Arc::clone(claim.entry());
-         let slot = claim.slot();
-+        let t_disp = std::time::Instant::now();
-+        let call_epoch = perf::epoch_ms();
-         let len = match entry.dispatch.call(kind, json, slot).await {
-             Ok(n) => n,
-             Err(DispatchError::EnqueueFailed(m)) => {
-@@ -237,18 +246,47 @@ pub async fn call_worker_planned<Req: Serialize, Resp: DeserializeOwned + Send +
+     // the request's task (no spawn, no scheduling hop); `Detach` makes the two
+@@ -205,6 +212,8 @@ pub async fn call_worker<Req: Serialize, Resp: DeserializeOwned + Send + 'static
+         async move {
+             let entry = Arc::clone(claim.entry());
+             let slot = claim.slot();
++            let t_disp = std::time::Instant::now();
++            let call_epoch = perf::epoch_ms();
+             let len = match entry.dispatch.call(kind, json, slot).await {
+                 Ok(n) => n,
+                 Err(DispatchError::EnqueueFailed(m)) => {
+@@ -214,23 +223,43 @@ pub async fn call_worker<Req: Serialize, Resp: DeserializeOwned + Send + 'static
+                 }
+                 Err(DispatchError::PromiseRejected(m)) => return Err(CallError::Rejected(m)),
+             };
++            let back_epoch = perf::epoch_ms();
++            perf::rec(perf::CW_DISPATCH + o, t_disp);
+             let (ptr, cap) = entry.dispatch.buf_slot(slot);
+             if len == 0 || len as usize > cap {
+                 return Err(CallError::BadResponse(format!(
+                     "resp_len {len} outside (0, {cap}]"
+                 )));
              }
-             Err(DispatchError::PromiseRejected(m)) => return Err(CallError::Rejected(m)),
-         };
-+        let back_epoch = perf::epoch_ms();
-+        perf::rec(perf::CW_DISPATCH + o, t_disp);
-         let (ptr, cap) = entry.dispatch.buf_slot(slot);
-         if len == 0 || len as usize > cap {
-             return Err(CallError::BadResponse(format!(
-                 "resp_len {len} outside (0, {cap}]"
-             )));
-         }
-+        perf::add(perf::CW_RESP_BYTES + o, len as u64);
-+        // perf tail: 10 f64 at the end of the slot written by worker.ts (magic 7.5): entry
-+        // epoch ms, parse, handler (loaders only), plan (writeSlot #1 + planJobs), jobs
-+        // (h.jobs on misses), stringify, write, total (ms), exit epoch ms.
-+        if cap >= 80 {
-+            let mut f = [0f64; 10];
-+            unsafe { std::ptr::copy_nonoverlapping(ptr.add(cap - 80) as *const f64, f.as_mut_ptr(), 10) };
-+            if f[0] == 7.5 {
-+                let us = |ms: f64| (ms.max(0.0) * 1e6) as u64;
-+                perf::add(perf::CW_RUST_TO_JS + o, us(f[1] - call_epoch));
-+                perf::add(perf::CW_JS_PARSE + o, us(f[2]));
-+                perf::add(perf::CW_JS_HANDLER + o, us(f[3]));
-+                // Counted only when the call planned / ran missed jobs (D keeps its tree).
-+                if o == 0 && f[4] > 0.0 {
-+                    perf::add(perf::CW_JS_PLAN, us(f[4]));
++            perf::add(perf::CW_RESP_BYTES + o, len as u64);
++            // perf tail: 8 f64 at the end of the slot written by worker.ts (magic 7.5).
++            if cap >= 64 {
++                let mut f = [0f64; 8];
++                unsafe { std::ptr::copy_nonoverlapping(ptr.add(cap - 64) as *const f64, f.as_mut_ptr(), 8) };
++                if f[0] == 7.5 {
++                    let us = |ms: f64| (ms.max(0.0) * 1e6) as u64;
++                    perf::add(perf::CW_RUST_TO_JS + o, us(f[1] - call_epoch));
++                    perf::add(perf::CW_JS_PARSE + o, us(f[2]));
++                    perf::add(perf::CW_JS_HANDLER + o, us(f[3]));
++                    perf::add(perf::CW_JS_STRINGIFY + o, us(f[4]));
++                    perf::add(perf::CW_JS_WRITE + o, us(f[5]));
++                    perf::add(perf::CW_JS_TOTAL + o, us(f[6]));
++                    perf::add(perf::CW_JS_TO_RUST + o, us(back_epoch - f[7]));
 +                }
-+                if o == 0 && f[5] > 0.0 {
-+                    perf::add(perf::CW_JS_JOBS, us(f[5]));
-+                }
-+                perf::add(perf::CW_JS_STRINGIFY + o, us(f[6]));
-+                perf::add(perf::CW_JS_WRITE + o, us(f[7]));
-+                perf::add(perf::CW_JS_TOTAL + o, us(f[8]));
-+                perf::add(perf::CW_JS_TO_RUST + o, us(back_epoch - f[9]));
 +            }
-+        }
-         // SAFETY: the worker's Promise resolved (happens-before through the dispatch
-         // future), JS is done writing this slot's sub-region; `len` is bounds-checked
-         // above; `claim` is still held so no other request can write the slot.
-+        let t = std::time::Instant::now();
-         let bytes = unsafe { std::slice::from_raw_parts(ptr, len as usize) };
-         let parsed = serde_json::from_slice::<Resp>(bytes)
-             .map_err(|e| CallError::BadResponse(e.to_string()));
-+        perf::rec(perf::CW_READ_PARSE + o, t);
-         let plan = claim.take_plan();
-         drop(claim);
-         parsed.map(|r| (r, plan))
-@@ -270,7 +308,7 @@ pub async fn call_worker_planned<Req: Serialize, Resp: DeserializeOwned + Send +
-         }
-     };
-     drop(fut);
--    match r {
-+    let out = match r {
+             // SAFETY: the worker's Promise resolved (happens-before through the dispatch
+             // future), JS is done writing this slot's sub-region; `len` is bounds-checked
+             // above; `claim` is still held so no other request can write the slot.
++            let t = std::time::Instant::now();
+             let bytes = unsafe { std::slice::from_raw_parts(ptr, len as usize) };
+             let parsed = serde_json::from_slice::<Resp>(bytes)
+                 .map_err(|e| CallError::BadResponse(e.to_string()));
++            perf::rec(perf::CW_READ_PARSE + o, t);
+             drop(claim);
+             parsed
+         },
+     );
+-    match tokio::time::timeout(call_timeout, Detach(Some(call))).await {
++    let r = match tokio::time::timeout(call_timeout, Detach(Some(call))).await {
          Ok(Ok(result)) => result,
          Ok(Err(payload)) => Err(CallError::BadResponse(format!(
              "worker call panicked: {}",
-@@ -281,7 +319,9 @@ pub async fn call_worker_planned<Req: Serialize, Resp: DeserializeOwned + Send +
+@@ -241,7 +270,9 @@ pub async fn call_worker<Req: Serialize, Resp: DeserializeOwned + Send + 'static
          // in `pool.rs`); its late result is dropped, so nothing from this call
          // reaches a cache.
          Err(_elapsed) => Err(CallError::Deadline),
 -    }
 +    };
 +    perf::rec(perf::CW_TOTAL + o, t_total);
-+    out
++    r
  }
  
  /// A boxed call future polled inline. Dropped before completion → the remainder
 diff --git a/crates/brust-server/src/lib.rs b/crates/brust-server/src/lib.rs
-index 1c8f198..1bf848b 100644
+index 8794f1b..1a0f32a 100644
 --- a/crates/brust-server/src/lib.rs
 +++ b/crates/brust-server/src/lib.rs
 @@ -7,6 +7,7 @@ pub mod http;
@@ -137,10 +122,10 @@ index 1c8f198..1bf848b 100644
  pub mod render;
 diff --git a/crates/brust-server/src/perf.rs b/crates/brust-server/src/perf.rs
 new file mode 100644
-index 0000000..09b73ca
+index 0000000..e7981ea
 --- /dev/null
 +++ b/crates/brust-server/src/perf.rs
-@@ -0,0 +1,101 @@
+@@ -0,0 +1,99 @@
 +//! TEMPORARY per-stage attribution (m2p ruling 7d164bb6) — local patch, never commit.
 +//! Per-thread accumulators (no cross-thread contention), summed by `/_brust/perf`.
 +use std::sync::Arc;
@@ -157,19 +142,17 @@ index 0000000..09b73ca
 +}
 +stages! {
 +    SVC_TOTAL = 0, HANDLE_TOTAL = 1, PAGE_TOTAL = 2, MATCH = 3, L1 = 4, CTX_INIT = 5,
++    ENVELOPE = 6, L1_HIT = 7,
 +    MERGE_LOADER = 21, COLLECT_JOBS = 22, CJ_INPUTS = 23, CJ_KEY = 24, JOB_LOOKUP = 25,
 +    JOBS_CALL = 26, SEED = 27, MERGE_RESULTS = 28, CTX_VALUE = 29, OVERLAY = 30,
 +    TMPL0 = 31, TMPL1 = 32, TMPL2 = 33, TMPL3 = 34, SCOPE_BUILD = 35, INJECT = 36,
 +    BODY_RESP = 37, L1_INSERT = 38, CPU_PRE = 39, CPU_POST = 40, CPU_RENDER = 41,
 +    RENDER_CHAIN = 42, CPU_SVC = 43,
-+    // planned loader call (M3-P P6): plan_in_call on the worker thread, inside CW_DISPATCH
-+    PLAN_IN_CALL = 44, PIC_COLLECT = 45, PIC_LOOKUP = 46,
 +    // call_worker, per kind: + 0 (loader) / + 20 (jobs)
 +    CW_TOTAL = 60, CW_CLAIM = 61, CW_SER = 62, CW_SPAWN_SCHED = 63, CW_ENQUEUE = 64,
 +    CW_PROMISE = 65, CW_READ_PARSE = 66, CW_JOIN = 67, CW_RUST_TO_JS = 68, CW_JS_PARSE = 69,
 +    CW_JS_HANDLER = 70, CW_JS_STRINGIFY = 71, CW_JS_WRITE = 72, CW_JS_TOTAL = 73,
 +    CW_JS_TO_RUST = 74, CW_DISPATCH = 75, CW_REQ_BYTES = 76, CW_RESP_BYTES = 77,
-+    CW_JS_PLAN = 78, CW_JS_JOBS = 79, // loader kind only
 +    JB_TOTAL = 80, JB_CLAIM = 81, JB_SER = 82, JB_SPAWN_SCHED = 83, JB_ENQUEUE = 84,
 +    JB_PROMISE = 85, JB_READ_PARSE = 86, JB_JOIN = 87, JB_RUST_TO_JS = 88, JB_JS_PARSE = 89,
 +    JB_JS_HANDLER = 90, JB_JS_STRINGIFY = 91, JB_JS_WRITE = 92, JB_JS_TOTAL = 93,
@@ -243,10 +226,10 @@ index 0000000..09b73ca
 +    serde_json::to_vec(&m).unwrap()
 +}
 diff --git a/crates/brust-server/src/pipeline.rs b/crates/brust-server/src/pipeline.rs
-index 391e3fa..4abd1f5 100644
+index 906501b..30d4c4a 100644
 --- a/crates/brust-server/src/pipeline.rs
 +++ b/crates/brust-server/src/pipeline.rs
-@@ -98,6 +98,9 @@ pub(crate) async fn handle(req: Request<Incoming>, s: Arc<Server>) -> Response<R
+@@ -99,6 +99,9 @@ pub(crate) async fn handle(req: Request<Incoming>, s: Arc<Server>) -> Response<R
          tracing::debug!(target: "brust::request", path = path_only, status = 200u16, "ping");
          return body::resp(200, "text/plain", &[], b"pong\n".to_vec());
      }
@@ -256,15 +239,15 @@ index 391e3fa..4abd1f5 100644
      if path_only == "/_brust/cache/stats" {
          tracing::debug!(target: "brust::request", path = path_only, status = 200u16, "stats");
          let json = serde_json::to_vec(&s.stats()).unwrap_or_else(|_| b"{}".to_vec());
-@@ -128,6 +131,7 @@ pub(crate) async fn handle(req: Request<Incoming>, s: Arc<Server>) -> Response<R
+@@ -129,6 +132,7 @@ pub(crate) async fn handle(req: Request<Incoming>, s: Arc<Server>) -> Response<R
          bun_calls: 0,
      };
      let resp = page(&s, full, headers, &mut meta).await;
 +    crate::perf::rec(crate::perf::PAGE_TOTAL, t0);
      tracing::debug!(
          target: "brust::request",
-         route = %meta.route,
-@@ -147,6 +151,7 @@ pub(crate) async fn handle(req: Request<Incoming>, s: Arc<Server>) -> Response<R
+         route = %meta.route.map_or("-", |ri| s.manifest.routes[ri].id.as_str()),
+@@ -148,6 +152,7 @@ pub(crate) async fn handle(req: Request<Incoming>, s: Arc<Server>) -> Response<R
          }
          return Response::from_parts(p, empty_body());
      }
@@ -272,7 +255,7 @@ index 391e3fa..4abd1f5 100644
      resp
  }
  
-@@ -274,6 +279,10 @@ async fn page(
+@@ -275,6 +280,10 @@ async fn page(
      headers: &HeaderMap,
      meta: &mut PageMeta,
  ) -> Response<ResponseBody> {
@@ -281,84 +264,94 @@ index 391e3fa..4abd1f5 100644
 +    let c0 = if cpu { perf::thread_cpu() } else { 0 };
 +    let t = std::time::Instant::now();
      // Pages are GET; a HEAD runs the same path (and shares its L1 entries).
-     let (route_id, envelope, status) = match s.routes.match_path("GET", full, headers) {
-         MatchResult::Matched { route_id, envelope } => (route_id, envelope, 200u16),
-@@ -285,6 +294,8 @@ async fn page(
-     meta.route = route.id.clone();
-     let accept_enc = header_str(headers, "accept-encoding");
-     let accept_enc = accept_enc.as_deref();
+     // M3-P P4: match only — the envelope is built after the L1 decision, on a MISS/BYPASS.
+     let Some(rm) = s.routes.match_route(full) else {
+@@ -288,6 +297,8 @@ async fn page(
+         .get(http::header::ACCEPT_ENCODING)
+         .and_then(|v| v.to_str().ok())
+         .map(str::trim);
 +    perf::rec(perf::MATCH, t);
 +    let t = std::time::Instant::now();
  
      // ----- (3) L1 -----
-     let (cache_key, outcome) = l1_decision(s, route_id, route, full, headers, &envelope);
-@@ -306,6 +317,8 @@ async fn page(
-         );
+     let (cache_key, outcome, search) = l1_decision(s, route_id, route, full, headers, &rm.params);
+@@ -306,11 +317,17 @@ async fn page(
+         });
+         if let Some(r) = hit {
+             meta.cache = CacheOutcome::Hit;
+-            return r.unwrap_or_else(|b| hit_response(&b, gz));
++            let r = r.unwrap_or_else(|b| hit_response(&b, gz));
++            perf::rec(perf::L1_HIT, t);
++            return r;
+         }
      }
  
 +    perf::rec(perf::L1, t);
 +    let t = std::time::Instant::now();
+     let envelope = rm.into_envelope("GET", full, headers, search);
++    perf::rec(perf::ENVELOPE, t);
++    let t = std::time::Instant::now();
+ 
      // ----- (4) loader -----
      let path_only = full.split('?').next().unwrap_or(full);
-     let params: BTreeMap<String, String> = envelope
-@@ -329,6 +342,9 @@ async fn page(
+@@ -333,6 +350,9 @@ async fn page(
+     let mut status = status;
+     let mut cacheable = true;
      let mut extra: Vec<(String, String)> = Vec::new();
-     // M3-P P6: the plan the worker built inside the loader call, with its job results.
-     let mut planned: Option<(PlannedCall, Vec<JobResult>)> = None;
 +    perf::rec(perf::CTX_INIT, t);
 +    if cpu { perf::add(perf::CPU_PRE, perf::thread_cpu() - c0); }
 +    let mut c1 = 0;
      if !route.loaders.is_empty() {
          let req = LoaderRequest {
              route_id: &route.id,
-@@ -362,6 +378,9 @@ async fn page(
-             s.worker_calls.fetch_add(1, Ordering::Relaxed);
+@@ -352,6 +372,9 @@ async fn page(
+             s.loader_calls.fetch_add(1, Ordering::Relaxed);
              meta.bun_calls += 1;
          }
 +        c1 = if cpu { perf::thread_cpu() } else { 0 };
 +        let t = std::time::Instant::now();
 +        let _g = Rec(perf::MERGE_LOADER, t);
          match r {
-             Ok(LoaderResponse::Planned { results }) => {
-                 let Some(PlanCell::Planned(pc)) =
-@@ -449,6 +468,8 @@ async fn page(
+             Ok(LoaderResponse::Ok {
+                 ok: true,
+@@ -419,9 +442,11 @@ async fn page(
              }
          }
      }
 +    if c1 == 0 && cpu { c1 = perf::thread_cpu(); }
-+    let mut c2: Option<u64> = None;
+     let mut ctx = Node::map(ctx);
+ 
      // ----- (5) jobs -----
-     let (mut ctx, plans, lookup) = match planned {
-         Some((pc, results)) => {
-@@ -472,6 +493,7 @@ async fn page(
-         }
-         None => {
-             let ctx = Node::map(ctx);
-+            let t = std::time::Instant::now();
-             let plans = match collect_jobs(&s.plans, &route.chain, &ctx) {
-                 Ok(p) => p,
-                 Err(e) => {
-@@ -479,8 +501,14 @@ async fn page(
-                     return body::error_500();
-                 }
-             };
-+            perf::rec(perf::COLLECT_JOBS, t);
-+            let t = std::time::Instant::now();
-             let mut lookup = lookup_jobs(&s.jobs, &plans);
-+            perf::rec(perf::JOB_LOOKUP, t);
-             if !lookup.misses.is_empty() {
-+                if cpu { c2 = Some(perf::thread_cpu() - c1); }
-+                let t = std::time::Instant::now();
-+                let _g = Rec(perf::JOBS_CALL, t);
-                 let req = jobs_request(&plans, &lookup.misses);
-                 let r = call_worker::<_, JobsResponse>(
-                     &s.pool,
-@@ -520,12 +548,18 @@ async fn page(
++    let t = std::time::Instant::now();
+     let plans = match collect_jobs(&s.plans, &route.chain, &ctx) {
+         Ok(p) => p,
+         Err(e) => {
+@@ -429,12 +454,19 @@ async fn page(
+             return body::error_500();
          }
      };
++    perf::rec(perf::COLLECT_JOBS, t);
++    let t = std::time::Instant::now();
+     let Lookup {
+         mut values,
+         owner,
+         misses,
+     } = lookup_jobs(&s.jobs, &plans);
++    perf::rec(perf::JOB_LOOKUP, t);
++    let mut c2 = 0;
+     if !misses.is_empty() {
++        if cpu { c2 = perf::thread_cpu() - c1; }
++        let t = std::time::Instant::now();
++        let _g = Rec(perf::JOBS_CALL, t);
+         let req = jobs_request(&plans, &misses);
+         let r = call_worker::<_, JobsResponse>(
+             &s.pool,
+@@ -516,12 +548,18 @@ async fn page(
+         }
+     }
  
 +    let c3 = if cpu { perf::thread_cpu() } else { 0 };
-+    let c2 = if cpu { c2.unwrap_or(c3 - c1) } else { 0 };
++    if cpu && misses.is_empty() { c2 = c3 - c1; }
 +    let t = std::time::Instant::now();
      // ----- (6) child slots + useId, then merge job values -----
      if let Err(e) = seed_child_slots(&s.plans, &route.id, &route.chain, &mut ctx) {
@@ -367,12 +360,12 @@ index 391e3fa..4abd1f5 100644
      }
 +    perf::rec(perf::SEED, t);
 +    let t = std::time::Instant::now();
-     merge_values(&mut ctx, &plans, &lookup.values);
+     merge_values(&mut ctx, &plans, &values);
 +    perf::rec(perf::MERGE_RESULTS, t);
  
      // ----- (7) render, assets, L1 store -----
      let ctx = Arc::new(ctx);
-@@ -538,6 +572,7 @@ async fn page(
+@@ -534,6 +572,7 @@ async fn page(
          Ok(h) => h,
          Err(e) => return render_failed(route, &e),
      };
@@ -380,7 +373,7 @@ index 391e3fa..4abd1f5 100644
      // One header map per request. Only a render that is stored needs a second
      // copy (the L1 entry's); a BYPASS or an uncached route sends the only one.
      let store = cache_key.is_some() && status == 200 && cacheable && route.cache.is_some();
-@@ -561,6 +596,8 @@ async fn page(
+@@ -557,6 +596,8 @@ async fn page(
          encoded,
          hdr,
      );
@@ -389,7 +382,7 @@ index 391e3fa..4abd1f5 100644
      if store
          && let Some(k) = cache_key
          && let Some(c) = &route.cache
-@@ -575,10 +612,19 @@ async fn page(
+@@ -571,10 +612,19 @@ async fn page(
              Duration::from_secs(c.ttl_seconds),
              &c.tags,
          );
@@ -406,10 +399,10 @@ index 391e3fa..4abd1f5 100644
 +    }
 +}
 +
- /// Validate, store and fan out the worker's `results` for `lookup.misses` — shared by the jobs
- /// call and the planned loader call. `Err` = the 500 to send, already logged (today's messages).
- #[expect(
-@@ -686,6 +732,9 @@ fn render_document(
+ fn render_failed(route: &RouteRecord, e: &RenderError) -> Response<ResponseBody> {
+     tracing::error!(route = %route.id, error = %e, "render failed");
+     body::error_500()
+@@ -608,6 +658,9 @@ fn render_document(
      ri: usize,
      ctx: &Node,
  ) -> Result<Bytes, RenderError> {
@@ -419,7 +412,7 @@ index 391e3fa..4abd1f5 100644
      let mut out = String::with_capacity(s.render_hints[ri].load(Ordering::Relaxed));
      render_chain_into(
          &s.manifest,
-@@ -695,7 +744,11 @@ fn render_document(
+@@ -617,7 +670,11 @@ fn render_document(
          ctx,
          &mut out,
      )?;
@@ -431,7 +424,7 @@ index 391e3fa..4abd1f5 100644
      s.render_hints[ri].store(next_hint(out.len()), Ordering::Relaxed);
      trim_to_hint(&mut out);
      Ok(Bytes::from(out.into_bytes()))
-@@ -773,7 +826,9 @@ pub fn render_chain_into(
+@@ -713,7 +770,9 @@ pub fn render_chain_into(
      let children = ctx.get(CHILDREN_KEY);
      let own_all = ctx.get(OWN_KEY);
      // The merged context as a value: an Arc bump (M3-P P2), shared by the chain.
@@ -441,7 +434,7 @@ index 391e3fa..4abd1f5 100644
      // `_props` (the island host's `x-props`): the merged loader context — params,
      // path, loader data — without the server's per-component maps. A view over
      // the tree (no copy), shared by every chain component.
-@@ -781,6 +836,7 @@ pub fn render_chain_into(
+@@ -721,6 +780,7 @@ pub fn render_chain_into(
      // Per component: Arc views of its child-slot and own-job maps (no copy),
      // looked up own first, then children, then its `_idN`, then the base.
      let overlay = |id: &str| {
@@ -449,7 +442,7 @@ index 391e3fa..4abd1f5 100644
          let slots = manifest.components.get(id).map_or(0, |c| c.use_id_slots);
          let mut maps = Vec::with_capacity(2);
          for all in [children, own_all] {
-@@ -1415,15 +1471,26 @@ fn plan_one<'a>(
+@@ -1252,15 +1312,26 @@ fn plan_one<'a>(
          Dest::Chain { row, .. } => row,
          Dest::Child { .. } => None,
      };
@@ -478,29 +471,6 @@ index 391e3fa..4abd1f5 100644
      };
      out.push(JobPlan {
          key,
-@@ -1687,10 +1754,14 @@ fn plan_response(
-     };
-     merge_loader_data(&mut base, data, &route.id);
-     let ctx = Node::map(base);
-+    let t = std::time::Instant::now();
-     let plans = collect_jobs(idx, &route.chain, &ctx).ok()?;
-+    crate::perf::rec(crate::perf::PIC_COLLECT, t);
-     // Counts job-cache hits/misses once per plan, as today: the declined path runs it only
-     // when nothing was planned (the cell is empty).
-+    let t = std::time::Instant::now();
-     let lookup = lookup_jobs(cache, &plans);
-+    crate::perf::rec(crate::perf::PIC_LOOKUP, t);
-     let (misses, call_ids) = if lookup.misses.is_empty() {
-         (String::new(), Vec::new())
-     } else {
-@@ -1715,6 +1786,7 @@ fn plan_response(
- /// worker's JS thread, synchronously inside its call for `slot`. Never panics out, never errs:
- /// every failure is [`PLAN_DECLINED`] and leaves no plan behind.
- pub fn plan_in_call(s: &Server, worker: u32, slot: u32, len: u32) -> String {
-+    let _g = Rec(crate::perf::PLAN_IN_CALL, std::time::Instant::now());
-     let declined = || PLAN_DECLINED.to_string();
-     let Some(entry) = s.pool.entry(worker) else {
-         return declined();
 diff --git a/crates/brust-server/src/render.rs b/crates/brust-server/src/render.rs
 index aa59e03..7b2eebf 100644
 --- a/crates/brust-server/src/render.rs
@@ -534,10 +504,10 @@ index aa59e03..7b2eebf 100644
              }
          }
 diff --git a/crates/brust-server/src/server/mod.rs b/crates/brust-server/src/server/mod.rs
-index 113c980..7df6c62 100644
+index 83018fe..caa14b5 100644
 --- a/crates/brust-server/src/server/mod.rs
 +++ b/crates/brust-server/src/server/mod.rs
-@@ -296,6 +296,7 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
+@@ -279,6 +279,7 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
                          let state = Arc::clone(&state);
                          let powered_by = powered_by.clone();
                          async move {
@@ -545,7 +515,7 @@ index 113c980..7df6c62 100644
                              // CORS stamping happens HERE and ONLY here — the single
                              // chokepoint that sees every response path (static
                              // assets, error helpers, L1 HITs, rendered pages). Clone
-@@ -314,6 +315,7 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
+@@ -297,6 +298,7 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
                              if let Some(c) = &state.cors_resolved {
                                  c.stamp_response(resp.headers_mut(), origin.as_ref());
                              }
@@ -554,80 +524,51 @@ index 113c980..7df6c62 100644
                          }
                      });
 diff --git a/packages/brust/src/worker.ts b/packages/brust/src/worker.ts
-index 8964fa1..33cbc22 100644
+index 3103e78..a558915 100644
 --- a/packages/brust/src/worker.ts
 +++ b/packages/brust/src/worker.ts
-@@ -196,27 +196,68 @@ export function makeHandlers(opts: { leaves: FlatRoute[]; jobs: JobsModule; mani
-  * chain answered `ok` is planned in the same call (`plan`, the napi `planJobs` by default — the
-  * addon is touched only then). */
- export function makeDispatch(h: Handlers, view: Uint8Array, slots: number, plan: PlanJobs = planJobs) {
-+  // PERF (temporary, m2p 7d164bb6): 10 f64 at the end of the slot — magic, entry epoch ms, parse,
-+  // handler (loaders only), plan (writeSlot #1 + planJobs), jobs (h.jobs on misses), stringify,
-+  // write, total (ms), exit epoch ms.
+@@ -178,13 +178,23 @@ export function makeHandlers(opts: { leaves: FlatRoute[]; jobs: JobsModule; mani
+ /** The tsfn callback for `registerWorker`. Never rejects: a parse error, an unknown kind or a
+  * throwing handler is written to the slot as `{error}`. */
+ export function makeDispatch(h: Handlers, view: Uint8Array, slots: number) {
++  // PERF (temporary, m2p 7d164bb6): 8 f64 at the end of the slot — magic, entry epoch ms, parse,
++  // handler, stringify, write, total (ms), exit epoch ms.
 +  const T0 = performance.timeOrigin
 +  const sub = Math.floor(view.byteLength / Math.max(1, slots))
 +  const tail = new Float64Array(view.buffer, view.byteOffset, view.byteLength / 8)
    return async (kind: string, requestJson: string, slot: number): Promise<number> => {
 +    const a = performance.now()
+     let out: unknown
 +    let b = a
 +    let c = a
-+    let pl = 0
-+    let jb = 0
-+    const fin = (n: number, st: number, wr: number) => {
-+      const at = (slot * sub + sub - 80) / 8
-+      const z = performance.now()
-+      tail[at] = 7.5
-+      tail[at + 1] = T0 + a
-+      tail[at + 2] = b - a
-+      tail[at + 3] = c - b
-+      tail[at + 4] = pl
-+      tail[at + 5] = jb
-+      tail[at + 6] = st
-+      tail[at + 7] = wr
-+      tail[at + 8] = z - a
-+      tail[at + 9] = T0 + performance.now()
-+      return n
-+    }
-     let out: unknown
      try {
        const req = JSON.parse(requestJson)
 +      b = performance.now()
-       if (kind === 'loader') {
-         out = await h.loader(req)
-+        c = performance.now()
-         if (req.plan === true && (out as { ok?: unknown }).ok === true) {
-           // One round trip (M3-P P6): the ctx goes to Rust through this slot, synchronously, and only
-           // the jobs Rust found missing run here; the final answer replaces it in the same slot.
-+          const p0 = performance.now()
-           const json = toJson(out)
-           const n = writeSlot(view, slot, slots, json)
-           const misses = plan(slot, n)
--          if (misses === PLAN_DECLINED) return n
--          out = misses === '' ? PLANNED : { planned: true, results: (await h.jobs(JSON.parse(misses))).results }
-+          pl = performance.now() - p0
-+          if (misses === PLAN_DECLINED) return fin(n, 0, 0)
-+          if (misses === '') out = PLANNED
-+          else {
-+            const j0 = performance.now()
-+            out = { planned: true, results: (await h.jobs(JSON.parse(misses))).results }
-+            jb = performance.now() - j0
-+          }
-         }
--      } else if (kind === 'jobs') out = await h.jobs(req)
--      else out = { error: `unknown call kind ${kind}` }
-+      } else if (kind === 'jobs') {
-+        out = await h.jobs(req)
-+        c = performance.now()
-+      } else out = { error: `unknown call kind ${kind}` }
+       if (kind === 'loader') out = await h.loader(req)
+       else if (kind === 'jobs') out = await h.jobs(req)
+       else out = { error: `unknown call kind ${kind}` }
++      c = performance.now()
      } catch (e) {
        out = { error: String(e) }
      }
--    return writeSlot(view, slot, slots, toJson(out))
+@@ -194,7 +204,19 @@ export function makeDispatch(h: Handlers, view: Uint8Array, slots: number) {
+     } catch (e) {
+       json = JSON.stringify({ error: `response not serialisable: ${String(e)}` })
+     }
+-    return writeSlot(view, slot, slots, json)
 +    const d = performance.now()
-+    const json = toJson(out)
-+    const d2 = performance.now()
 +    const n = writeSlot(view, slot, slots, json)
-+    return fin(n, d2 - d, performance.now() - d2)
++    const e = performance.now()
++    const at = (slot * sub + sub - 64) / 8
++    tail[at] = 7.5
++    tail[at + 1] = T0 + a
++    tail[at + 2] = b - a
++    tail[at + 3] = c - b
++    tail[at + 4] = d - c
++    tail[at + 5] = e - d
++    tail[at + 6] = e - a
++    tail[at + 7] = T0 + performance.now()
++    return n
    }
  }
  

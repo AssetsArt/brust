@@ -6,6 +6,7 @@
 //! job keys / job cache / one batched `jobs` call → child slots + `useId` →
 //! leaf-first render → asset tags → L1 store of the JSON context and the
 //! rendered body (a HIT serves the body; S10 amendment).
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -28,7 +29,7 @@ use crate::protocol::{
     JobCall, JobResult, JobsRequest, JobsResponse, LoaderRequest, LoaderResponse, Verdict,
 };
 use crate::render::{Overlay, RenderError, Renderer, inject_assets_into, use_ids};
-use crate::routing::{MatchResult, RouteEnvelope};
+use crate::routing::routes::{Search, decode_search};
 use crate::server::body::{self, ResponseBody, empty_body};
 use crate::server::header_str;
 use crate::server::static_assets::{
@@ -59,7 +60,8 @@ impl std::fmt::Display for CacheOutcome {
 
 /// What the per-request log line needs from the page branch.
 pub(crate) struct PageMeta {
-    pub route: String,
+    /// manifest route index (logged as its id; "-" before a match)
+    pub route: Option<usize>,
     pub cache: CacheOutcome,
     pub bun_calls: u8,
 }
@@ -123,14 +125,14 @@ pub(crate) async fn handle(req: Request<Incoming>, s: Arc<Server>) -> Response<R
 
     let t0 = std::time::Instant::now();
     let mut meta = PageMeta {
-        route: "-".into(),
+        route: None,
         cache: CacheOutcome::None,
         bun_calls: 0,
     };
     let resp = page(&s, full, headers, &mut meta).await;
     tracing::debug!(
         target: "brust::request",
-        route = %meta.route,
+        route = %meta.route.map_or("-", |ri| s.manifest.routes[ri].id.as_str()),
         status = resp.status().as_u16(),
         cache = %meta.cache,
         bun_calls = meta.bun_calls,
@@ -275,36 +277,41 @@ async fn page(
     meta: &mut PageMeta,
 ) -> Response<ResponseBody> {
     // Pages are GET; a HEAD runs the same path (and shares its L1 entries).
-    let (route_id, envelope, status) = match s.routes.match_path("GET", full, headers) {
-        MatchResult::Matched { route_id, envelope } => (route_id, envelope, 200u16),
-        MatchResult::NotFound { route_id, envelope } => (route_id, envelope, 404),
-        MatchResult::NoMatch => return body::error_404(),
+    // M3-P P4: match only — the envelope is built after the L1 decision, on a MISS/BYPASS.
+    let Some(rm) = s.routes.match_route(full) else {
+        return body::error_404();
     };
+    let (route_id, status) = (rm.route_id, if rm.not_found { 404u16 } else { 200 });
     let ri = s.routes.route_index(route_id);
     let route = &s.manifest.routes[ri];
-    meta.route = route.id.clone();
-    let accept_enc = header_str(headers, "accept-encoding");
-    let accept_enc = accept_enc.as_deref();
+    meta.route = Some(ri);
+    let accept_enc = headers
+        .get(http::header::ACCEPT_ENCODING)
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim);
 
     // ----- (3) L1 -----
-    let (cache_key, outcome) = l1_decision(s, route_id, route, full, headers, &envelope);
+    let (cache_key, outcome, search) = l1_decision(s, route_id, route, full, headers, &rm.params);
     meta.cache = outcome;
-    if let Some(k) = &cache_key
-        && let Some(hit) = s.l1.get(k)
-    {
-        meta.cache = CacheOutcome::Hit;
-        // S10 amendment: the body the MISS rendered, no re-render.
+    if let Some(k) = &cache_key {
+        // S10: the body the MISS rendered, no re-render. Built under the shard's read guard (no Arc
+        // clone); the first gzip of an eligible body is made outside it, so writers never wait on a
+        // compression.
         let gz = crate::http::compress::accepts_gzip(accept_enc);
-        let (bytes, encoded) = cached_body(&hit.body, gz);
-        return page_response(
-            hit.body.status,
-            hit.body.headers.clone(),
-            hit.body.html.len(),
-            bytes,
-            encoded,
-            Some("HIT"),
-        );
+        let hit = s.l1.get_with(k, |b| {
+            if gz && needs_first_gzip(b) {
+                Err(Arc::clone(b))
+            } else {
+                Ok(hit_response(b, gz))
+            }
+        });
+        if let Some(r) = hit {
+            meta.cache = CacheOutcome::Hit;
+            return r.unwrap_or_else(|b| hit_response(&b, gz));
+        }
     }
+
+    let envelope = rm.into_envelope("GET", full, headers, search);
 
     // ----- (4) loader -----
     let path_only = full.split('?').next().unwrap_or(full);
@@ -757,6 +764,24 @@ fn page_response(
     body::resp_with(status, h, bytes)
 }
 
+/// An L1 HIT's response: the stored body (or its once-made gzip) with the stored header map.
+fn hit_response(b: &RenderedBody, gz: bool) -> Response<ResponseBody> {
+    let (bytes, encoded) = cached_body(b, gz);
+    page_response(
+        b.status,
+        b.headers.clone(),
+        b.html.len(),
+        bytes,
+        encoded,
+        Some("HIT"),
+    )
+}
+
+/// A gzip-accepting request would make this body's gzip now (`cached_body`'s first call).
+fn needs_first_gzip(b: &RenderedBody) -> bool {
+    b.html.len() >= PAGE_GZIP_MIN && b.gzip.get().is_none()
+}
+
 /// The leaf-first render of `chain` for `ctx`, each component under its
 /// overlay (its `_idN`, its own child-instance slots from
 /// `ctx["__children"][<id>]`, its own job results from `ctx["__own"][<id>]`,
@@ -932,26 +957,28 @@ fn ci_collision(pairs: &[(&str, &str)]) -> bool {
 /// value per name; query names/values are the decoded `req.search`; a
 /// case-insensitive name collision, or a query name repeated after decoding
 /// (`sort_query` would merge orders the loader reads differently), bypasses L1.
-fn l1_decision(
+fn l1_decision<'a>(
     s: &Server,
     route_id: u32,
     route: &RouteRecord,
-    full: &str,
+    full: &'a str,
     headers: &HeaderMap,
-    envelope: &RouteEnvelope<'_>,
-) -> (Option<CacheKey>, CacheOutcome) {
+    params: &[(Cow<'_, str>, Cow<'_, str>)],
+) -> (Option<CacheKey>, CacheOutcome, Option<Search<'a>>) {
     if route.cache.is_none() {
-        return (None, CacheOutcome::None);
+        return (None, CacheOutcome::None, None);
     }
     let method = "GET";
-    let mut seen: HashSet<&str> = HashSet::new();
-    if !envelope
-        .req
-        .search
-        .iter()
-        .all(|(k, _)| seen.insert(k.as_ref()))
-    {
-        return (None, CacheOutcome::Bypass);
+    // Decoded once, here, only when there is a query; handed to the envelope on a MISS/BYPASS.
+    let query = full.split_once('?').map_or("", |(_, q)| q);
+    let search = (!query.is_empty()).then(|| decode_search(query));
+    let pairs: &[(Cow<'_, str>, Cow<'_, str>)] = search.as_deref().unwrap_or(&[]);
+    let repeated = {
+        let mut seen: HashSet<&str> = HashSet::new();
+        !pairs.iter().all(|(k, _)| seen.insert(k.as_ref()))
+    };
+    if repeated {
+        return (None, CacheOutcome::Bypass, search);
     }
     let compiled = s.routes.compiled_cache_for(route_id);
     let Some(cc) = compiled.filter(|cc| cc.prefix.is_some() || cc.bypass.is_some()) else {
@@ -959,6 +986,7 @@ fn l1_decision(
         return (
             Some(build_cache_key(method, full, String::new())),
             CacheOutcome::Miss,
+            search,
         );
     };
     // Header pairs (HeaderName is lowercase) + all cookies across every
@@ -984,16 +1012,14 @@ fn l1_decision(
     // list): `?pre%76iew=1` is `preview`, `mode=dr%61ft` is `draft`. Names are
     // unique here (a repeat bypassed above). The CacheKey keeps the raw sorted
     // query: distinct raw spellings only split entries, never merge them.
-    let query_pairs: Vec<(&str, &str)> = envelope
-        .req
-        .search
+    let query_pairs: Vec<(&str, &str)> = pairs
         .iter()
         .map(|(k, v)| (k.as_ref(), v.as_ref()))
         .collect();
     let header_pairs = last_wins(&header_pairs);
     let cookie_pairs = last_wins(&cookie_pairs);
     if ci_collision(&header_pairs) || ci_collision(&cookie_pairs) || ci_collision(&query_pairs) {
-        return (None, CacheOutcome::Bypass);
+        return (None, CacheOutcome::Bypass, search);
     }
     let host = header_pairs
         .iter()
@@ -1003,8 +1029,7 @@ fn l1_decision(
     let bare_path = full.split('?').next().unwrap_or(full);
     // Matched path params come straight off the envelope, so `param(id)` keys
     // an L1 entry per route param (decoded, as the loader sees them).
-    let param_pairs: Vec<(&str, &str)> = envelope
-        .params
+    let param_pairs: Vec<(&str, &str)> = params
         .iter()
         .map(|(k, v)| (k.as_ref(), v.as_ref()))
         .collect();
@@ -1024,12 +1049,13 @@ fn l1_decision(
         Some(Some(expr)) => !expr.eval(&ctx).is_empty(),
     };
     if bypass_hit {
-        return (None, CacheOutcome::Bypass); // skip L1 read AND write
+        return (None, CacheOutcome::Bypass, search); // skip L1 read AND write
     }
     let prefix = cc.prefix.as_ref().map(|e| e.eval(&ctx)).unwrap_or_default();
     (
         Some(build_cache_key(method, full, prefix)),
         CacheOutcome::Miss,
+        search,
     )
 }
 

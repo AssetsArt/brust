@@ -14,10 +14,23 @@
 //! `RemovalCause::Replaced`, also for an entry past its per-entry ttl) or a
 //! maintenance pass evicting the old entry right after the new insert indexed
 //! itself would un-index the NEWER entry, making it immune to tag invalidation.
+//!
+//! Read front (M3-P P4): reads are served from 64 sharded maps in front of moka,
+//! which stays the lifetime policy (capacity, admission, ttl reaping). The design
+//! is the job cache's (`JobCache`: generation-stamped entries with their own
+//! `expires_at`, the eviction listener's generation-guarded removal, per-shard
+//! writer stripes, a 100 ms touch into moka, striped counters) with one
+//! difference: shards are `crossbeam_utils::sync::ShardedLock`, because a page
+//! probe reads ONE key and every reader of one `RwLock` word writes the same
+//! cache line. A `ShardedLock` reader locks only its own sub-lock.
+use std::collections::hash_map::RandomState;
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, OnceLock};
-use std::time::Duration;
+use std::hash::BuildHasher;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, OnceLock, PoisonError};
+use std::time::{Duration, Instant};
+
+use crossbeam_utils::sync::{ShardedLock, ShardedLockReadGuard, ShardedLockWriteGuard};
 
 use brust_jinja::ctx::Node;
 use bytes::Bytes;
@@ -49,27 +62,88 @@ pub struct RenderedBody {
     pub gzip: OnceLock<Option<Bytes>>,
 }
 
-#[derive(Clone)]
-pub struct CachedEntry {
-    pub ctx: Arc<Node>,
-    pub body: Arc<RenderedBody>,
-    /// The loader's response headers (never `Set-Cookie`: such a response is
-    /// not cached), replayed on a HIT. `Arc`: cloned on every `get`.
-    pub headers: Arc<[(String, String)]>,
-    pub ttl: Duration,
-    /// Invalidation tags this entry was inserted under. Carried on the entry so
-    /// the eviction listener can prune `tag_index` when moka removes the entry
-    /// (capacity eviction, TTL expiry, explicit invalidation). `Arc` because the
-    /// entry is cloned on every `get`.
-    pub tags: Arc<[String]>,
-}
-
-/// What moka stores: the public entry plus the insert generation that guards
-/// the tag index (see module docs).
+/// moka's side: policy only (the body lives in the read front).
 #[derive(Clone)]
 struct Slot {
-    entry: CachedEntry,
+    /// Per-entry lifetime, measured from the most recent write.
+    ttl: Duration,
+    /// Invalidation tags this entry was inserted under, carried so the eviction
+    /// listener can prune `tag_index` when moka removes the entry.
+    tags: Arc<[String]>,
+    /// The insert generation that guards the tag index and the front (see module docs).
     generation: u64,
+}
+
+/// A read-front entry, as the job cache's `FrontEntry`: the body, its own expiry deadline (checked
+/// on every read), the generation tying it to the moka entry that owns its lifetime, and
+/// `touched` = millis since `L1Cache::epoch` of the last read forwarded to moka.
+struct FrontEntry {
+    body: Arc<RenderedBody>,
+    expires_at: Option<Instant>,
+    generation: u64,
+    touched: AtomicU64,
+}
+
+type FrontMap = HashMap<CacheKey, FrontEntry>;
+
+/// `ShardedLock`: a reader locks only its own thread's sub-lock, so readers of ONE hot key (probe S)
+/// write no shared cache line; a writer locks every sub-lock (writes = MISS inserts, invalidations,
+/// listener removals).
+#[repr(align(128))]
+struct Shard(ShardedLock<FrontMap>);
+
+impl Shard {
+    fn read(&self) -> ShardedLockReadGuard<'_, FrontMap> {
+        self.0.read().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn write(&self) -> ShardedLockWriteGuard<'_, FrontMap> {
+        self.0.write().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+const SHARDS: usize = 64;
+/// A front hit forwards at most one read per key per this interval to moka.
+const TOUCH_EVERY_MS: u64 = 100;
+
+/// A hit/miss counter striped by thread. Twin of the job cache's (dedupe after m3p-d: follow-up F-2).
+pub(crate) struct StripedCounter([PaddedU64; COUNTER_STRIPES]);
+
+#[repr(align(128))]
+#[derive(Default)]
+struct PaddedU64(AtomicU64);
+
+const COUNTER_STRIPES: usize = 16;
+
+impl StripedCounter {
+    fn new() -> Self {
+        Self(std::array::from_fn(|_| PaddedU64::default()))
+    }
+
+    fn incr(&self) {
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        thread_local! {
+            static SLOT: usize = NEXT.fetch_add(1, Ordering::Relaxed) % COUNTER_STRIPES;
+        }
+        let slot = SLOT.with(|s| *s);
+        self.0[slot].0.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn get(&self) -> u64 {
+        self.0.iter().map(|c| c.0.load(Ordering::Relaxed)).sum()
+    }
+}
+
+fn shard_of(h: &RandomState, k: &CacheKey) -> usize {
+    (h.hash_one(k) as usize) % SHARDS
+}
+
+/// Remove `key` from `front` if it still holds the entry stamped `generation`.
+fn remove_front(front: &[Shard], shard: usize, key: &CacheKey, generation: u64) {
+    let mut m = front[shard].write();
+    if m.get(key).is_some_and(|e| e.generation == generation) {
+        m.remove(key);
+    }
 }
 
 /// Per-entry expiry policy: each entry lives for its own `ttl`, measured from
@@ -88,7 +162,7 @@ impl moka::Expiry<CacheKey, Slot> for ResponseExpiry {
         value: &Slot,
         _created_at: std::time::Instant,
     ) -> Option<Duration> {
-        Some(value.entry.ttl)
+        Some(value.ttl)
     }
 
     fn expire_after_update(
@@ -98,7 +172,7 @@ impl moka::Expiry<CacheKey, Slot> for ResponseExpiry {
         _updated_at: std::time::Instant,
         _duration_until_expiry: Option<Duration>,
     ) -> Option<Duration> {
-        Some(value.entry.ttl)
+        Some(value.ttl)
     }
 }
 
@@ -175,9 +249,28 @@ pub(crate) fn take_tagged<K: Clone + Eq + std::hash::Hash>(
         .collect()
 }
 
+/// L1 = a read-mostly front + moka as the policy (see the module docs).
+///
+/// Reads hit only the front (`SHARDS` `ShardedLock<HashMap>`s): a sub-lock read guard, the entry's
+/// own `expires_at` check, and the caller's closure on the body. moka still owns every entry's
+/// lifetime (capacity eviction, admission, ttl reaping) and its eviction listener drops the front
+/// entry of the same generation (plus the index slots). A front hit forwards a read to moka at most
+/// once per key per `TOUCH_EVERY_MS`; a front miss always does, as moka's TinyLFU counts misses
+/// toward admission.
+///
+/// Invariant: a front entry of generation G exists only while moka holds G (or G's insert is in
+/// flight). Writers of one key (`insert`, `remove`) serialize on that key's `stripes` mutex, hold
+/// it across "stamp generation, index, front write, moka write", and release the front write guard
+/// BEFORE any moka call (moka may run the listener inline). The listener takes the tag-index mutex
+/// and a shard's write lock, each alone, and never a stripe or the gate; it removes only a matching
+/// generation, so it cannot drop a newer entry. Lock order: gate -> stripe -> (index | front).
 pub struct L1Cache {
     inner: moka::sync::Cache<CacheKey, Slot>,
-    /// tag → set of keys carrying that tag. Enables group invalidation, which
+    front: Arc<[Shard]>,
+    stripes: Box<[Mutex<()>]>,
+    hasher: RandomState,
+    epoch: Instant,
+    /// tag -> set of keys carrying that tag. Enables group invalidation, which
     /// moka has no native support for. UNLIKE the job cache (whose keys are
     /// content/developer-derived), L1 keys are REQUEST-derived — the sorted
     /// query string is part of the key — so an unbounded index would be
@@ -188,12 +281,12 @@ pub struct L1Cache {
     /// `Arc` because the listener closure needs its own handle.
     tag_index: Arc<TagIndex<CacheKey>>,
     /// Insert/invalidate gate (see `insert`): inserts hold it shared across
-    /// "index tags, then moka insert"; tag invalidation and `clear` hold it
+    /// "index tags, then front + moka insert"; tag invalidation and `clear` hold it
     /// exclusively. Never held by the eviction listener.
     gate: parking_lot::RwLock<()>,
     next_generation: AtomicU64,
-    hits: AtomicU64,
-    misses: AtomicU64,
+    hits: StripedCounter,
+    misses: StripedCounter,
     capacity: u64,
     #[cfg(test)]
     pub(crate) mid_insert: MidInsertHook,
@@ -209,56 +302,101 @@ impl L1Cache {
     pub fn with_capacity(max_capacity: u64) -> Self {
         let capacity = max_capacity.max(1);
         let tag_index: Arc<TagIndex<CacheKey>> = Arc::new(Mutex::new(HashMap::new()));
-        // Prune the tag index whenever moka drops an entry, whatever the cause
-        // (capacity eviction, TTL expiry, explicit invalidate, rejected insert,
-        // replace). Without this the index would grow without bound under
-        // request-derived keys. The generation check keeps a replace/evict of
-        // an OLD value from un-indexing the NEWER value under the same key. The
-        // listener runs on the thread driving moka maintenance; no caller holds
-        // the tag_index lock across a moka call (see insert / invalidate_tags /
-        // clear), so re-entry cannot deadlock.
+        let front: Arc<[Shard]> = (0..SHARDS)
+            .map(|_| Shard(ShardedLock::new(HashMap::new())))
+            .collect();
+        let hasher = RandomState::new();
+        // Prune the tag index and the front whenever moka drops an entry, whatever the cause
+        // (capacity eviction, TTL expiry, explicit invalidate, rejected insert, replace). Without
+        // this the index would grow without bound under request-derived keys. The generation check
+        // keeps a replace/evict of an OLD value from un-indexing or un-serving the NEWER value under
+        // the same key. The listener runs on the thread driving moka maintenance (or inline in a
+        // moka call); it takes each lock alone, and no caller holds an index or front lock across a
+        // moka call, so re-entry cannot deadlock.
         let listener_index = Arc::clone(&tag_index);
+        let listener_front = Arc::clone(&front);
+        let listener_hasher = hasher.clone();
         let inner = moka::sync::Cache::builder()
             .max_capacity(capacity)
-            .support_invalidation_closures()
             .expire_after(ResponseExpiry)
             .eviction_listener(move |key: Arc<CacheKey>, value: Slot, _cause| {
-                prune_tags(&listener_index, &*key, &value.entry.tags, value.generation);
+                prune_tags(&listener_index, &*key, &value.tags, value.generation);
+                remove_front(
+                    &listener_front,
+                    shard_of(&listener_hasher, &key),
+                    &key,
+                    value.generation,
+                );
             })
             .build();
         Self {
             inner,
+            front,
+            stripes: (0..SHARDS).map(|_| Mutex::new(())).collect(),
+            hasher,
+            epoch: Instant::now(),
             tag_index,
             gate: parking_lot::RwLock::new(()),
             next_generation: AtomicU64::new(0),
-            hits: AtomicU64::new(0),
-            misses: AtomicU64::new(0),
+            hits: StripedCounter::new(),
+            misses: StripedCounter::new(),
             capacity,
             #[cfg(test)]
             mid_insert: Mutex::new(None),
         }
     }
 
-    pub fn get(&self, key: &CacheKey) -> Option<CachedEntry> {
-        // moka enforces TTL expiry internally; an entry returned here is live.
-        match self.inner.get(key) {
-            Some(slot) => {
-                self.hits.fetch_add(1, Ordering::Relaxed);
-                Some(slot.entry)
+    /// Run `f` on the live entry's body under its shard's read guard (no `Arc` clone, no shared
+    /// write). `f` must be short and must not call into this cache. A front miss is forwarded to
+    /// moka (TinyLFU counts misses toward admission); a front hit at most once per key per
+    /// `TOUCH_EVERY_MS`.
+    pub fn get_with<R>(
+        &self,
+        key: &CacheKey,
+        f: impl FnOnce(&Arc<RenderedBody>) -> R,
+    ) -> Option<R> {
+        let shard = shard_of(&self.hasher, key);
+        let now = Instant::now();
+        let (out, touch) = {
+            let m = self.front[shard].read();
+            match m.get(key) {
+                Some(e) if e.expires_at.is_none_or(|t| now < t) => {
+                    let ms = now.saturating_duration_since(self.epoch).as_millis() as u64;
+                    let last = e.touched.load(Ordering::Relaxed);
+                    let touch = ms.saturating_sub(last) >= TOUCH_EVERY_MS
+                        && e.touched
+                            .compare_exchange(last, ms, Ordering::Relaxed, Ordering::Relaxed)
+                            .is_ok();
+                    (Some(f(&e.body)), touch)
+                }
+                // Missing, or past its ttl (moka reaps it; the listener drops it here).
+                _ => (None, true),
             }
-            None => {
-                self.misses.fetch_add(1, Ordering::Relaxed);
-                None
-            }
+        };
+        if touch {
+            let _ = self.inner.get(key);
         }
+        if out.is_some() {
+            self.hits.incr();
+        } else {
+            self.misses.incr();
+        }
+        out
     }
 
+    pub fn get(&self, key: &CacheKey) -> Option<Arc<RenderedBody>> {
+        self.get_with(key, Arc::clone)
+    }
+
+    /// Since S10 a HIT serves `body` (with its headers): nothing reads the render context or the
+    /// loader's headers any more, so `_ctx` and `_headers` are not stored (ruling R-E; the
+    /// parameters go when m3p-d has merged).
     pub fn insert(
         &self,
         key: CacheKey,
-        ctx: Arc<Node>,
+        _ctx: Arc<Node>,
         body: Arc<RenderedBody>,
-        headers: Arc<[(String, String)]>,
+        _headers: Arc<[(String, String)]>,
         ttl: Duration,
         tags: &[String],
     ) {
@@ -268,68 +406,90 @@ impl L1Cache {
         // invalidation that took the index between the two steps found the
         // key but removed nothing, then the insert landed live and un-indexed
         // (immune to every later tag invalidation until ttl/capacity). The
-        // shared `gate` makes the two steps atomic w.r.t. tag invalidation
+        // shared `gate` makes the steps atomic w.r.t. tag invalidation
         // (which holds it exclusively), at no cost between inserts. The
         // eviction listener never takes the gate, so moka running it inline
         // here cannot deadlock.
         let _gate = self.gate.read();
+        // The key's stripe covers generation, index and both stores, so same-key inserts index and
+        // land in generation order (see `JobCache::insert`).
+        let shard = shard_of(&self.hasher, &key);
+        let _stripe = self.stripes[shard].lock();
         let generation = self.next_generation.fetch_add(1, Ordering::Relaxed);
         index_tags(&self.tag_index, &key, tags, generation);
         #[cfg(test)]
         if let Some(h) = &*self.mid_insert.lock() {
             h();
         }
+        let now = Instant::now();
+        // Front first, then moka (whose Replaced notification for the older generation then leaves
+        // this entry alone). The front guard is a temporary dropped at the end of this statement,
+        // BEFORE the moka call: the listener may run inside it.
+        self.front[shard].write().insert(
+            key.clone(),
+            FrontEntry {
+                body,
+                // A ttl past `Instant`'s range never expires.
+                expires_at: now.checked_add(ttl),
+                generation,
+                touched: AtomicU64::new(
+                    now.saturating_duration_since(self.epoch).as_millis() as u64
+                ),
+            },
+        );
         self.inner.insert(
             key,
             Slot {
-                entry: CachedEntry {
-                    ctx,
-                    body,
-                    headers,
-                    ttl,
-                    tags: tags.into(),
-                },
+                ttl,
+                tags: tags.into(),
                 generation,
             },
         );
+    }
+
+    /// Remove `k` from moka and the front, in that key's write order.
+    fn remove(&self, k: &CacheKey) -> bool {
+        let shard = shard_of(&self.hasher, k);
+        let _stripe = self.stripes[shard].lock();
+        let held = self.inner.remove(k).is_some();
+        self.front[shard].write().remove(k);
+        held
     }
 
     pub fn stats(&self) -> CacheStats {
         // moka's `entry_count` is eventually consistent — drive pending tasks so
         // the observability endpoint reflects the current entry count instead of
         // a stale lower bound (otherwise a freshly-inserted entry reads as len=0
-        // right after the insert). hits/misses are atomic and already exact.
+        // right after the insert). hits/misses are striped atomics and exact.
         self.inner.run_pending_tasks();
         CacheStats {
-            hits: self.hits.load(Ordering::Relaxed),
-            misses: self.misses.load(Ordering::Relaxed),
+            hits: self.hits.get(),
+            misses: self.misses.get(),
             len: self.inner.entry_count() as usize,
             capacity: self.capacity as usize,
         }
     }
 
     /// Remove every entry whose key has the given method + path (regardless
-    /// of query string or vary values). Returns the number of matching
+    /// of query string or vary values). Returns the number of live matching
     /// entries at the time of the call. Hits/misses counters are NOT reset.
-    ///
-    /// moka invalidation is eventual: callers wanting the entries gone before
-    /// observing must drive `run_pending_tasks()`.
+    /// The entries are gone from the read front when this returns.
     pub fn invalidate_path(&self, method: &str, path: &str) -> usize {
-        let count = self
-            .inner
-            .iter()
-            .filter(|(k, _)| k.method == method && k.path == path)
-            .count();
-        let method = method.to_string();
-        let path = path.to_string();
-        if let Err(e) = self
-            .inner
-            .invalidate_entries_if(move |k, _| k.method == method && k.path == path)
-        {
-            tracing::warn!("L1Cache::invalidate_path failed: {e}");
+        let now = Instant::now();
+        let (mut keys, mut live) = (Vec::new(), 0);
+        for s in self.front.iter() {
+            for (k, e) in s.read().iter() {
+                if k.method == method && k.path == path {
+                    live += usize::from(e.expires_at.is_none_or(|t| now < t));
+                    keys.push(k.clone());
+                }
+            }
+        }
+        for k in &keys {
+            self.remove(k);
         }
         self.inner.run_pending_tasks();
-        count
+        live
     }
 
     /// Remove every L1 entry carrying any of the given tags; returns the number
@@ -344,7 +504,7 @@ impl L1Cache {
             let keys = take_tagged(&self.tag_index, tags);
             let n = keys.len();
             for k in keys {
-                self.inner.invalidate(&k);
+                self.remove(&k);
             }
             n
         };
@@ -366,6 +526,9 @@ impl L1Cache {
             let _gate = self.gate.write();
             self.tag_index.lock().clear();
             self.inner.invalidate_all();
+            for s in self.front.iter() {
+                s.write().clear();
+            }
         }
         self.inner.run_pending_tasks();
         n
@@ -376,6 +539,12 @@ impl L1Cache {
     #[cfg(test)]
     pub(crate) fn tag_index_size(&self) -> usize {
         self.tag_index.lock().values().map(|s| s.len()).sum()
+    }
+
+    /// Entries in the read front (test hook: it must track moka's).
+    #[cfg(test)]
+    pub(crate) fn front_len(&self) -> usize {
+        self.front.iter().map(|s| s.read().len()).sum()
     }
 
     #[cfg(test)]
@@ -419,13 +588,17 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn rb() -> Arc<RenderedBody> {
+    fn rb_of(s: &str) -> Arc<RenderedBody> {
         Arc::new(RenderedBody {
             status: 200,
             headers: http::HeaderMap::new(),
-            html: Bytes::from_static(b"<p>x</p>"),
+            html: Bytes::from(s.to_string()),
             gzip: OnceLock::new(),
         })
+    }
+
+    fn html(c: &L1Cache, k: &CacheKey) -> Option<Bytes> {
+        c.get_with(k, |b| b.html.clone())
     }
 
     fn key(method: &str, path: &str, query: &str) -> CacheKey {
@@ -464,7 +637,7 @@ mod tests {
         c.insert(
             key("GET", "/t", ""),
             Arc::new(Node::from(json!("t"))),
-            rb(),
+            rb_of("t"),
             Arc::from([]),
             Duration::from_secs(60),
             &["a".to_string(), "b".to_string()],
@@ -486,7 +659,7 @@ mod tests {
         c.insert(
             key("GET", "/p", "x=1"),
             Arc::new(Node::from(json!("1"))),
-            rb(),
+            rb_of("1"),
             Arc::from([]),
             Duration::from_secs(60),
             &["grp".to_string()],
@@ -494,7 +667,7 @@ mod tests {
         c.insert(
             key("GET", "/p", "x=2"),
             Arc::new(Node::from(json!("2"))),
-            rb(),
+            rb_of("2"),
             Arc::from([]),
             Duration::from_secs(60),
             &["grp".to_string()],
@@ -516,7 +689,7 @@ mod tests {
         c.insert(
             key("GET", "/w", ""),
             Arc::new(Node::from(json!("w"))),
-            rb(),
+            rb_of("w"),
             Arc::from([]),
             Duration::from_secs(60),
             &["t".to_string()],
@@ -533,7 +706,7 @@ mod tests {
         c.insert(
             key("GET", "/a", ""),
             Arc::new(Node::from(json!("a"))),
-            rb(),
+            rb_of("a"),
             Arc::from([]),
             Duration::from_secs(60),
             &[],
@@ -541,7 +714,7 @@ mod tests {
         c.insert(
             key("GET", "/a", "x=1"),
             Arc::new(Node::from(json!("a-x"))),
-            rb(),
+            rb_of("a-x"),
             Arc::from([]),
             Duration::from_secs(60),
             &[],
@@ -549,7 +722,7 @@ mod tests {
         c.insert(
             key("GET", "/b", ""),
             Arc::new(Node::from(json!("b"))),
-            rb(),
+            rb_of("b"),
             Arc::from([]),
             Duration::from_secs(60),
             &[],
@@ -559,11 +732,11 @@ mod tests {
         let removed = c.invalidate_path("GET", "/a");
         c.run_pending();
         assert_eq!(removed, 2);
-        assert!(c.get(&key("GET", "/a", "")).map(|e| e.ctx).is_none());
-        assert!(c.get(&key("GET", "/a", "x=1")).map(|e| e.ctx).is_none());
+        assert!(html(&c, &key("GET", "/a", "")).is_none());
+        assert!(html(&c, &key("GET", "/a", "x=1")).is_none());
         assert_eq!(
-            c.get(&key("GET", "/b", "")).map(|e| e.ctx),
-            Some(Arc::new(Node::from(json!("b"))))
+            html(&c, &key("GET", "/b", "")),
+            Some(Bytes::from_static(b"b"))
         );
     }
 
@@ -573,7 +746,7 @@ mod tests {
         c.insert(
             key("GET", "/a", ""),
             Arc::new(Node::from(json!("a"))),
-            rb(),
+            rb_of("a"),
             Arc::from([]),
             Duration::from_secs(60),
             &[],
@@ -591,7 +764,7 @@ mod tests {
         c.insert(
             key("GET", "/a", ""),
             Arc::new(Node::from(json!("a"))),
-            rb(),
+            rb_of("a"),
             Arc::from([]),
             Duration::from_secs(60),
             &["grp".to_string()],
@@ -599,7 +772,7 @@ mod tests {
         c.insert(
             key("GET", "/a", "x=1"),
             Arc::new(Node::from(json!("a-x"))),
-            rb(),
+            rb_of("a-x"),
             Arc::from([]),
             Duration::from_secs(60),
             &["grp".to_string()],
@@ -607,7 +780,7 @@ mod tests {
         c.insert(
             key("GET", "/b", ""),
             Arc::new(Node::from(json!("b"))),
-            rb(),
+            rb_of("b"),
             Arc::from([]),
             Duration::from_secs(60),
             &["other".to_string()],
@@ -616,11 +789,11 @@ mod tests {
 
         c.invalidate_tags(&["grp".to_string()]);
         c.run_pending();
-        assert!(c.get(&key("GET", "/a", "")).map(|e| e.ctx).is_none());
-        assert!(c.get(&key("GET", "/a", "x=1")).map(|e| e.ctx).is_none());
+        assert!(html(&c, &key("GET", "/a", "")).is_none());
+        assert!(html(&c, &key("GET", "/a", "x=1")).is_none());
         assert_eq!(
-            c.get(&key("GET", "/b", "")).map(|e| e.ctx),
-            Some(Arc::new(Node::from(json!("b")))),
+            html(&c, &key("GET", "/b", "")),
+            Some(Bytes::from_static(b"b")),
             "untagged group survives"
         );
     }
@@ -631,7 +804,7 @@ mod tests {
         c.insert(
             key("GET", "/a", ""),
             Arc::new(Node::from(json!("a"))),
-            rb(),
+            rb_of("a"),
             Arc::from([]),
             Duration::from_secs(60),
             &["grp".to_string()],
@@ -640,8 +813,8 @@ mod tests {
         c.invalidate_tags(&["missing".to_string()]);
         c.run_pending();
         assert_eq!(
-            c.get(&key("GET", "/a", "")).map(|e| e.ctx),
-            Some(Arc::new(Node::from(json!("a"))))
+            html(&c, &key("GET", "/a", "")),
+            Some(Bytes::from_static(b"a"))
         );
     }
 
@@ -651,7 +824,7 @@ mod tests {
         c.insert(
             key("GET", "/a", ""),
             Arc::new(Node::from(json!("a"))),
-            rb(),
+            rb_of("a"),
             Arc::from([]),
             Duration::from_secs(60),
             &[],
@@ -659,7 +832,7 @@ mod tests {
         c.insert(
             key("GET", "/b", ""),
             Arc::new(Node::from(json!("b"))),
-            rb(),
+            rb_of("b"),
             Arc::from([]),
             Duration::from_secs(60),
             &[],
@@ -667,7 +840,7 @@ mod tests {
         c.insert(
             key("GET", "/c", ""),
             Arc::new(Node::from(json!("c"))),
-            rb(),
+            rb_of("c"),
             Arc::from([]),
             Duration::from_secs(60),
             &[],
@@ -685,14 +858,14 @@ mod tests {
         c.insert(
             key("GET", "/a", ""),
             Arc::new(Node::from(json!("a"))),
-            rb(),
+            rb_of("a"),
             Arc::from([]),
             Duration::from_secs(60),
             &[],
         );
         c.run_pending();
-        let _ = c.get(&key("GET", "/a", "")).map(|e| e.ctx); // hit
-        let _ = c.get(&key("GET", "/missing", "")).map(|e| e.ctx); // miss
+        let _ = html(&c, &key("GET", "/a", "")); // hit
+        let _ = html(&c, &key("GET", "/missing", "")); // miss
         assert_eq!(c.stats().hits, 1);
         assert_eq!(c.stats().misses, 1);
 
@@ -723,7 +896,7 @@ mod tests {
         c.insert(
             k.clone(),
             Arc::new(Node::from(json!(1))),
-            rb(),
+            rb_of("1"),
             Arc::from([]),
             Duration::from_millis(1),
             &["t".to_string()],
@@ -732,7 +905,7 @@ mod tests {
         c.insert(
             k.clone(),
             Arc::new(Node::from(json!(2))),
-            rb(),
+            rb_of("2"),
             Arc::from([]),
             Duration::from_secs(60),
             &["t".to_string()],
@@ -741,7 +914,7 @@ mod tests {
         assert_eq!(c.tag_index_size(), 1, "new entry stays indexed");
         assert_eq!(c.invalidate_tags(&["t".to_string()]), 1);
         assert!(
-            c.get(&k).map(|e| e.ctx).is_none(),
+            html(&c, &k).is_none(),
             "tag invalidation reaches the new entry"
         );
         assert_eq!(c.tag_index_size(), 0);
@@ -766,7 +939,7 @@ mod tests {
             c2.insert(
                 k2,
                 Arc::new(Node::from(json!(1))),
-                rb(),
+                rb_of("1"),
                 Arc::from([]),
                 Duration::from_secs(60),
                 &["t".to_string()],
@@ -775,8 +948,140 @@ mod tests {
         rx.recv().unwrap();
         c.invalidate_tags(&["t".to_string()]);
         ins.join().unwrap();
-        assert!(c.get(&k).is_none(), "invalidated entry must not survive");
+        assert!(html(&c, &k).is_none(), "invalidated entry must not survive");
         c.run_pending();
         assert_eq!(c.tag_index_size(), 0);
+    }
+
+    fn ins(c: &L1Cache, k: CacheKey, body: &str, ttl: Duration, tags: &[&str]) {
+        let tags: Vec<String> = tags.iter().map(|t| t.to_string()).collect();
+        c.insert(
+            k,
+            Arc::new(Node::from(json!(null))),
+            rb_of(body),
+            Arc::from([]),
+            ttl,
+            &tags,
+        );
+    }
+
+    #[test]
+    fn front_follows_moka_evictions_and_expiry() {
+        let c = L1Cache::with_capacity(10);
+        for i in 0..200 {
+            ins(
+                &c,
+                key("GET", &format!("/p{i}"), ""),
+                "x",
+                Duration::from_secs(60),
+                &[],
+            );
+        }
+        c.run_pending();
+        let len = c.stats().len;
+        assert!(len <= 10, "moka bound the entry count: {len}");
+        assert_eq!(
+            c.front_len(),
+            len,
+            "the listener dropped every evicted front entry"
+        );
+    }
+
+    #[test]
+    fn ttl_is_exact_on_the_read_front() {
+        let c = L1Cache::new();
+        let k = key("GET", "/ttl", "");
+        ins(&c, k.clone(), "t", Duration::from_millis(30), &[]);
+        assert_eq!(html(&c, &k), Some(Bytes::from_static(b"t")));
+        std::thread::sleep(Duration::from_millis(40));
+        // No run_pending: the read itself enforces the deadline.
+        assert!(html(&c, &k).is_none());
+    }
+
+    #[test]
+    fn invalidation_reaches_the_front_without_maintenance() {
+        let c = L1Cache::new();
+        let ttl = Duration::from_secs(60);
+        ins(&c, key("GET", "/a", ""), "a", ttl, &["g"]);
+        ins(&c, key("GET", "/b", "x=1"), "b", ttl, &[]);
+        ins(&c, key("GET", "/d", ""), "d", ttl, &["g"]);
+        assert_eq!(c.invalidate_path("GET", "/b"), 1);
+        assert!(html(&c, &key("GET", "/b", "x=1")).is_none());
+        assert_eq!(c.invalidate_tags(&["g".to_string()]), 2);
+        assert!(html(&c, &key("GET", "/a", "")).is_none());
+        assert!(html(&c, &key("GET", "/d", "")).is_none());
+        ins(&c, key("GET", "/a", ""), "a", ttl, &[]);
+        c.run_pending(); // clear() returns moka's eventually-consistent entry_count
+        assert_eq!(c.clear(), 1);
+        assert!(html(&c, &key("GET", "/a", "")).is_none());
+        c.run_pending();
+        assert_eq!((c.front_len(), c.tag_index_size()), (0, 0));
+    }
+
+    #[test]
+    fn concurrent_reinserts_leave_front_and_moka_agreeing() {
+        let c = L1Cache::new();
+        let k = key("GET", "/hot", "");
+        std::thread::scope(|sc| {
+            for t in 0..8 {
+                let (c, k) = (&c, &k);
+                sc.spawn(move || {
+                    for i in 0..200 {
+                        ins(
+                            c,
+                            k.clone(),
+                            &format!("{t}-{i}"),
+                            Duration::from_secs(60),
+                            &["t"],
+                        );
+                        let _ = html(c, k);
+                    }
+                });
+            }
+        });
+        c.run_pending();
+        assert_eq!(c.front_len(), 1);
+        assert_eq!(c.invalidate_tags(&["t".to_string()]), 1);
+        assert!(html(&c, &k).is_none());
+        assert_eq!(c.front_len(), 0);
+    }
+
+    #[test]
+    fn counters_are_exact_across_threads() {
+        let c = L1Cache::new();
+        let (hit, miss) = (key("GET", "/h", ""), key("GET", "/m", ""));
+        ins(&c, hit.clone(), "h", Duration::from_secs(60), &[]);
+        std::thread::scope(|sc| {
+            for _ in 0..8 {
+                sc.spawn(|| {
+                    for _ in 0..1000 {
+                        assert!(html(&c, &hit).is_some());
+                    }
+                    for _ in 0..10 {
+                        assert!(html(&c, &miss).is_none());
+                    }
+                });
+            }
+        });
+        let st = c.stats();
+        assert_eq!((st.hits, st.misses), (8000, 80));
+    }
+
+    #[test]
+    fn get_with_runs_the_closure_once_and_only_on_a_hit() {
+        let c = L1Cache::new();
+        let k = key("GET", "/g", "");
+        let calls = std::cell::Cell::new(0);
+        let r = c.get_with(&k, |b| {
+            calls.set(calls.get() + 1);
+            b.status
+        });
+        assert_eq!((r, calls.get()), (None, 0));
+        ins(&c, k.clone(), "g", Duration::from_secs(60), &[]);
+        let r = c.get_with(&k, |b| {
+            calls.set(calls.get() + 1);
+            b.status
+        });
+        assert_eq!((r, calls.get()), (Some(200), 1));
     }
 }

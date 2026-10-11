@@ -95,7 +95,13 @@ pub(crate) fn resp(
 /// re-validating.
 pub(crate) fn header_map(content_type: &str, extra_headers: &[(String, String)]) -> HeaderMap {
     let mut hm = HeaderMap::new();
-    if let Ok(ct) = HeaderValue::from_str(content_type) {
+    // The page type is a static value: a HIT clones this map per request, and a static value carries no
+    // refcount (a `from_str` value is shared `Bytes`, one contended RMW pair per HIT).
+    let ct = match content_type {
+        "text/html; charset=utf-8" => Ok(HeaderValue::from_static("text/html; charset=utf-8")),
+        other => HeaderValue::from_str(other),
+    };
+    if let Ok(ct) = ct {
         hm.insert(http::header::CONTENT_TYPE, ct);
     }
     for (name, value) in extra_headers {
