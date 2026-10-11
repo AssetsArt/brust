@@ -85,6 +85,8 @@ impl PassState {
 pub fn run_passes(ir: &mut ComponentIR, ctx: &PassCtx<'_>) -> PassState {
     // First: `DepsCx` reads the resolved stores.
     stores::resolve(ir, ctx);
+    // Before placement: a refused render read never becomes a placed value.
+    stores::check_render(ir, ctx);
     ir.structural = Some(Box::new(crate::ir::Structural {
         template: ir.template.clone(),
         state: ir.state.clone(),

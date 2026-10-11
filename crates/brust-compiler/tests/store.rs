@@ -748,9 +748,12 @@ fn store_name_with_dot() {
         dotted[0]
     );
 
-    // A dotted key falls back the same way.
+    // A dotted key falls back the same way (a signal: other keys are refused in render, R1).
     let (ir, j, _) = lower_tree(&[
-        ("cart.ts", CART),
+        (
+            "cart.ts",
+            "import { defineStore, signal } from 'brust/store'\nexport const cart = defineStore('cart', () => ({ 'a.b': signal(0) }))\n",
+        ),
         (
             "C.tsx",
             "import { useStore } from 'brust/store/react'\nimport { cart } from './cart'\nexport default function C() { const s = useStore(cart); return <p>{s[\"a.b\"]}</p> }",
@@ -1121,4 +1124,267 @@ fn store_dotted_coarse() {
         "{:?}",
         ir.diagnostics
     );
+}
+
+// --- Task 6: store writes, handle reads and non-signal keys in render fall back to React (R1). ---
+
+const UNREAD: &str = "import { defineStore, signal } from 'brust/store'\nfunction makeStore() { return { count: signal(0) } }\nexport const cart = defineStore('cart', () => makeStore())\n";
+
+/// `C.tsx`: `useStore` + `cart` imports, then `head` (module level) and a component `C` with
+/// `body`, every line of `body` on its own source line.
+fn render_case(head: &str, body: &str) -> String {
+    format!(
+        "import {{ useStore }} from 'brust/store/react'\nimport {{ useEffect }} from 'react'\nimport {{ cart }} from './cart'\n{head}\nexport default function C(props: any) {{\n{body}\n}}\n"
+    )
+}
+
+/// 1-based line of the first `needle` in `src`.
+fn line_of(src: &str, needle: &str) -> u32 {
+    let at = src
+        .find(needle)
+        .unwrap_or_else(|| panic!("{needle} in {src}"));
+    src[..at].matches('\n').count() as u32 + 1
+}
+
+/// `body` over the store `cart_ts` → tier React with exactly one `rule` fallback at the line of `needle`.
+fn refused(cart_ts: &str, body: &str, rule: &str, needle: &str) -> Diagnostic {
+    refused_in(cart_ts, "", body, rule, needle)
+}
+
+fn refused_in(cart_ts: &str, head: &str, body: &str, rule: &str, needle: &str) -> Diagnostic {
+    let src = render_case(head, body);
+    let ir = analyze_tree(&[("cart.ts", cart_ts), ("C.tsx", &src)]);
+    assert!(
+        ir.stores.iter().all(|u| u.resolved.is_some()),
+        "{body}: {:?}",
+        ir.diagnostics
+    );
+    let hits: Vec<_> = ir.diagnostics.iter().filter(|d| d.rule == rule).collect();
+    assert_eq!(hits.len(), 1, "{body}: {:?}", ir.diagnostics);
+    assert_eq!(hits[0].class, DiagClass::Fallback, "{body}");
+    assert_eq!(hits[0].line, line_of(&src, needle), "{body}: {:?}", hits[0]);
+    assert!(
+        matches!(ir.tier, Tier::React { .. }),
+        "{body}: {:?}",
+        ir.tier
+    );
+    hits[0].clone()
+}
+
+/// `body` stays native with no store fallback (`head` holds module-level helpers).
+fn allowed(head: &str, body: &str) -> ComponentIR {
+    let ir = analyze_tree(&[("cart.ts", CART), ("C.tsx", &render_case(head, body))]);
+    let store_rules: Vec<_> = rules(&ir)
+        .into_iter()
+        .filter(|r| r.starts_with("store-"))
+        .collect();
+    assert!(store_rules.is_empty(), "{body}: {:?}", ir.diagnostics);
+    ir
+}
+
+#[test]
+fn store_write_in_render() {
+    let d = refused(
+        CART,
+        "const n = cart.count.set(1)\nreturn <p>x</p>",
+        "store-write-in-render",
+        "cart.count.set(1)",
+    );
+    assert!(
+        d.remediation
+            .contains("write stores in event handlers or effects"),
+        "{d:?}"
+    );
+    refused(
+        CART,
+        "const s = useStore(cart)\nreturn <p>\n{s.count.set(2)}</p>",
+        "store-write-in-render",
+        "s.count.set(2)",
+    );
+    // A local function called in render runs in render.
+    refused(
+        CART,
+        "const f = () => cart.count.set(1)\nreturn <p>\n{f()}</p>",
+        "store-write-in-render",
+        "cart.count.set(1)",
+    );
+    // An arrow passed as a call argument runs in render.
+    refused(
+        CART,
+        "return <p>\n{[1].map(() => cart.count.set(1))}</p>",
+        "store-write-in-render",
+        "cart.count.set(1)",
+    );
+    refused(
+        CART,
+        "return <p>\n{[1].forEach(() => cart.count.set(1))}</p>",
+        "store-write-in-render",
+        "cart.count.set(1)",
+    );
+}
+
+#[test]
+fn store_handle_in_render() {
+    let d = refused(
+        CART,
+        "return <p>\n{cart.count()}</p>",
+        "store-handle-in-render",
+        "cart.count()",
+    );
+    assert!(
+        d.remediation
+            .contains("read store values through const s = useStore(handle)"),
+        "{d:?}"
+    );
+    // A module-level helper called in render runs in render.
+    refused_in(
+        CART,
+        "function total() { return cart.count() }",
+        "return <p>\n{total()}</p>",
+        "store-handle-in-render",
+        "{total()}",
+    );
+    // JSX in an expression is render code too.
+    refused(
+        CART,
+        "const s = useStore(cart)\nreturn <p>{s.count > 0 ? <b>\n{cart.count()}</b> : null}</p>",
+        "store-handle-in-render",
+        "cart.count()",
+    );
+}
+
+#[test]
+fn store_key_unsupported() {
+    let d = refused(
+        CART_KEYS,
+        "const s = useStore(cart)\nreturn <p>\n{s.dbl}</p>",
+        "store-key-unsupported",
+        "s.dbl",
+    );
+    assert!(
+        d.remediation
+            .contains("read signals as s.<key> in render; derive other values from them"),
+        "{d:?}"
+    );
+    assert!(d.message.contains("`s.dbl`"), "{d:?}");
+    refused(
+        CART_KEYS,
+        "const s = useStore(cart)\nreturn <p>\n{s.add}</p>",
+        "store-key-unsupported",
+        "s.add",
+    );
+    let d = refused(
+        CART_KEYS,
+        "const s = useStore(cart)\nreturn <p>\n{s}</p>",
+        "store-key-unsupported",
+        "{s}",
+    );
+    assert!(d.message.contains("whole store view `s`"), "{d:?}");
+    refused(
+        CART_KEYS,
+        "const s = useStore(cart)\nreturn <p>\n{JSON.stringify(s)}</p>",
+        "store-key-unsupported",
+        "JSON.stringify(s)",
+    );
+    // A destructured computed.
+    refused(
+        CART_KEYS,
+        "const { dbl } = useStore(cart)\nreturn <p>\n{dbl}</p>",
+        "store-key-unsupported",
+        "{dbl}",
+    );
+    // An unreadable factory: no key is proven a signal.
+    refused(
+        UNREAD,
+        "const s = useStore(cart)\nreturn <p>\n{s.count}</p>",
+        "store-key-unsupported",
+        "s.count",
+    );
+    // A verbatim handler body reads the view of an unreadable factory.
+    refused(
+        UNREAD,
+        "const s = useStore(cart)\nreturn <button onClick={() => {\nconst n = s.count; console.log(n) }}>x</button>",
+        "store-key-unsupported",
+        "() => {",
+    );
+}
+
+#[test]
+fn store_render_checks_allow_client_code() {
+    let paint = "const s = useStore(cart)\n";
+    let native = |head: &str, body: &str| {
+        let ir = allowed(head, &format!("{paint}{body}"));
+        assert_eq!(ir.tier, Tier::Native, "{body}: {:?}", ir.diagnostics);
+    };
+    native(
+        "",
+        "return <button onClick={() => cart.count.set(1)}>{s.count}</button>",
+    );
+    native(
+        "",
+        "const inc = () => cart.count.set(1)\nreturn <button onClick={inc}>{s.count}</button>",
+    );
+    native(
+        "function Child(p: any) { return <button onClick={p.onAdd}>+</button> }",
+        "return <div><Child onAdd={() => cart.count.set(1)} />{s.count}</div>",
+    );
+    native(
+        "",
+        "useEffect(() => { cart.count.set(0) }, [])\nreturn <p>{s.count}</p>",
+    );
+    // A handler inside JSX inside a call argument.
+    native(
+        "",
+        "return <ul>{props.items.map((i: any) => <li key={i} onClick={() => cart.count.set(i)}>{i}</li>)}</ul>",
+    );
+    // A block handler over the view of a readable factory.
+    native(
+        "",
+        "return <button onClick={() => { const n = s.count; cart.count.set(n + 1) }}>{s.count}</button>",
+    );
+    // A write inside JSX built in a handler: `jsx-outside-render` decides the tier, not a store rule.
+    allowed(
+        "",
+        &format!(
+            "{paint}const show = (f: any) => f\nreturn <button onClick={{() => show(<b onClick={{() => cart.count.set(1)}}>x</b>)}}>{{s.count}}</button>"
+        ),
+    );
+}
+
+#[test]
+fn store_key_unsupported_never_lowers_the_key() {
+    let (ir, a) = {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static N: AtomicUsize = AtomicUsize::new(0);
+        let n = N.fetch_add(1, Ordering::SeqCst);
+        let root =
+            std::env::temp_dir().join(format!("brustc-store-key-{}-{n}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("cart.ts"), CART_KEYS).unwrap();
+        let src = "import { useStore } from 'brust/store/react'\nimport { cart } from './cart'\nexport default function C() { const s = useStore(cart); const t = `${s.dbl}!`; return <p title={s.dbl}>{t}{s.dbl}</p> }";
+        let out = lower_artifacts(root.clone(), "C.tsx".into(), src.into());
+        let _ = std::fs::remove_dir_all(&root);
+        out
+    };
+    assert!(matches!(ir.tier, Tier::React { .. }), "{:?}", ir.tier);
+    let outputs = [
+        serde_json::to_string(&ir).unwrap(),
+        a.jinja.clone(),
+        a.server_ts.clone().unwrap_or_default(),
+        a.client_js.clone().unwrap_or_default(),
+    ];
+    for o in &outputs {
+        assert!(!o.contains("__store.cart.dbl"), "{o}");
+    }
+    // The React path: one SSR job over the whole props, the island host template.
+    assert_eq!(ir.jobs.len(), 1, "{:?}", ir.jobs);
+    assert!(
+        matches!(ir.jobs[0].kind, JobKind::Ssr { .. }),
+        "{:?}",
+        ir.jobs
+    );
+    assert!(a.jinja.contains("<brust-island"), "{}", a.jinja);
+    assert!(!a.jinja.contains("dbl"), "{}", a.jinja);
+    assert!(a.server_ts.is_none() && a.client_js.is_none(), "{a:?}");
 }
