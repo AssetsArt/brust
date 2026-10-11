@@ -55,7 +55,7 @@ loader chain (Bun worker, per request)                 Rust pipeline            
 
 - `packages/runtime-dom/src/signal.ts`: tracking state on `globalThis[Symbol.for('brust.reactive.ctx')]`; brands; export `isSignal`, `isComputed`, `untracked` (exists). Behaviour otherwise unchanged (sync flush, `Object.is` guard).
 - `packages/runtime-dom/src/store/define-store.ts`, `serialize.ts`, `registry.ts` (browser registry on `globalThis[Symbol.for('brust.stores')]`; `__setServerResolver` hook; `applyStoreSnapshot` reserved for the SPA wave), `react.ts` (`useStore`; React is a peer import only here).
-- `packages/runtime-dom/src/index.ts` re-exports the store API; `packages/runtime-dom/package.json` adds `"./store"` and `"./store/react"` subpaths.
+- `packages/runtime-dom/src/index.ts` re-exports the store API (not `useStore`); `packages/runtime-dom/package.json` adds `"./store"`, `"./store/react"` and `"./store/internal"` (the `__setServerResolver` / `hydrateRecord` hook the server lane imports) subpaths. The minified runtime bundle grows from 13.9 KB to ~16.4 KB; the `test/build.test.ts` cap moves from 14 KB to 17 KB (ruling R1).
 - `packages/brust/package.json` exports `"./store"` → `@brust/runtime-dom/store` re-export, `"./store/react"` → `@brust/runtime-dom/store/react`. (`@brust/core/store` is the documented import.)
 - `packages/brust/src/store/server-context.ts`: `runInStoreContext`, `getServerInstance`, `collectSnapshot`, `touchStores(modules)`; registers the resolver at worker boot (`worker.ts`), never imported by client code.
 
@@ -89,13 +89,13 @@ loader chain (Bun worker, per request)                 Rust pipeline            
 | C3 manifest | `components[id].stores: string[]` (project-relative paths, sorted, unique); worker derives the per-route union |
 | C4 script tag | `<script type="application/json" data-brust-store="NAME">ESCAPED_JSON</script>`, one per store, sorted by name, placed immediately before the runtime `<script>` |
 | C5 ssr job inputs | existing `"*"` props object gains the key `__store` (C1 object or `null`); `inputs::job_key` hashes it like every input |
-| C6 module specifiers | `@brust/core/store`, `@brust/core/store/react` (and `brust/store`, `brust/store/react` in compiler tests); compiled chunks import the store module by its project path; island + native builds resolve `@brust/runtime-dom*` and `@brust/core/store*` to the runtime URL |
+| C6 module specifiers | `@brust/core/store`, `@brust/core/store/react` (and `brust/store`, `brust/store/react` in compiler tests); compiled chunks import the store module by its project path; island + native builds resolve `@brust/runtime-dom`, `@brust/runtime-dom/store`, `@brust/core/store` to the runtime URL (external `/_brust/*`). **`@brust/core/store/react` (= `@brust/runtime-dom/store/react`) is NOT in the runtime bundle** — the runtime stays React-free (`scripts/build.ts`), so `useStore` is bundled into the islands build; its file has type-only imports toward the core, so it adds no second core (lead ruling R2 on the core plan, 2026-10-11). The server lane's `bundle.ts` encodes this split. |
 | C7 globals | `globalThis[Symbol.for('brust.reactive.ctx')]`, `globalThis[Symbol.for('brust.stores')]`, brands `Symbol.for('brust.signal')` / `Symbol.for('brust.computed')` |
 | C8 reserved handle members | `name subscribe snapshot serialize hydrate then` |
 
 ## 4. Error handling and limits
 
-- Server store access outside a request scope throws `"<name>: used outside a request scope"` (0.1.x text), except through `useStore`, which returns `{}` during SSR outside a scope.
+- Server store access outside a request scope throws the 0.1.x strings verbatim: the resolver throws `store '<name>' accessed outside a request scope`, and a server access with no resolver installed throws `store '<name>' accessed on the server without a request scope` (ruling R3). `useStore` returns `{}` during SSR outside a scope. Resolution order (ruling R4): an installed server resolver takes EVERY access; otherwise the browser registry when `document` exists; otherwise throw — a polyfilled `window` in the worker can never leak a request's store into the page-global registry.
 - `BigInt` / functions / `undefined` in a signal value: `serialize()` drops functions and `undefined`; `BigInt` throws at serialization with the store and key named. `Map`/`Set` serialize to `{}` (documented, D9).
 - A loader returning the key `__store` is dropped with the existing "collides with a server slot" warning.
 - Two `defineStore` calls with the same name and different factories: first wins (0.1.x); the compiler warns `store-name-duplicate` when it sees two literals with one name in one build.
