@@ -9,7 +9,7 @@ use std::time::Duration;
 use http::{Request, Response};
 use hyper::body::Incoming;
 use hyper::service::service_fn;
-use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
+use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto;
 use tokio::sync::Notify;
 use tracing::{debug, error, info, warn};
@@ -23,6 +23,7 @@ use crate::render::Renderer;
 use crate::routing::RouteTable;
 
 pub mod body;
+pub mod coarse_timer;
 pub(crate) mod cors;
 pub mod static_assets;
 pub mod tls;
@@ -121,15 +122,18 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
         render_hints: (0..loaded.manifest.routes.len())
             .map(|_| AtomicUsize::new(0))
             .collect(),
+        plan_offer: (0..loaded.manifest.routes.len())
+            .map(|_| AtomicU32::new(0))
+            .collect(),
         manifest: loaded.manifest,
         plans,
         renderer,
         l1: L1Cache::with_capacity(cfg.l1_capacity),
         jobs: JobCache::new(cfg.job_cache_capacity),
         dist_dir: cfg.dist_dir.clone(),
-        loader_calls: AtomicU64::new(0),
+        loader_calls: crate::cache::l1::StripedCounter::new(),
         job_calls: AtomicU64::new(0),
-        worker_calls: AtomicU64::new(0),
+        worker_calls: crate::cache::l1::StripedCounter::new(),
         timed_out_calls: AtomicU64::new(0),
         missing_slots: Default::default(),
         ready: Arc::new(Notify::new()),
@@ -222,13 +226,22 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
 
             let sem = Arc::new(tokio::sync::Semaphore::new(accept_cap));
 
+            // M3-P P7 (R2): hyper's header-read timeout runs on our coarse sharded timer, not on
+            // tokio's wheel (one global lock per register and per clear, on every request).
+            let header_timer = coarse_timer::CoarseTimer::new(coarse_timer::TICK);
+            let header_ticker = header_timer.spawn_ticker();
+
             // X-Powered-By, stamped on EVERY response at the service layer.
             // insert-if-absent: headers the pipeline set win. L1 holds JSON
             // context, never a response, so stamping a HIT can never duplicate.
+            // M3-P P7: a static HeaderValue (the string leaked once per server), so stamping a
+            // response clones no refcounted `Bytes`.
             let powered_by: Option<http::HeaderValue> =
                 state.generator.as_deref().and_then(|s| {
                     match http::HeaderValue::from_str(s) {
-                        Ok(v) => Some(v),
+                        Ok(_) => Some(http::HeaderValue::from_static(Box::leak(
+                            s.to_owned().into_boxed_str(),
+                        ))),
                         Err(e) => {
                             warn!(value = %s, error = %e, "generator string rejected by HeaderValue — X-Powered-By disabled");
                             None
@@ -286,6 +299,7 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
                 let read_buf_cap = tuning.read_buf_cap;
                 let max_req = tuning.max_request_bytes;
                 let header_timeout = Duration::from_millis(tuning.header_read_timeout_ms.max(1));
+                let header_timer = header_timer.clone();
                 let acceptor = acceptor.clone();
                 let conn_drain = drain_sig_rx.clone();
                 let conn_token = conn_token_tx.clone();
@@ -293,6 +307,8 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
                     let _permit = permit; // released when the connection ends
                     let _conn_token = conn_token; // drain barrier — held for the conn's life
                     let svc = service_fn(move |req| {
+                        // M3-P P7: one `Arc<Server>` clone per request (moved into the pipeline); a
+                        // second only when CORS is configured.
                         let state = Arc::clone(&state);
                         let powered_by = powered_by.clone();
                         async move {
@@ -300,18 +316,19 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
                             // chokepoint that sees every response path (static
                             // assets, error helpers, L1 HITs, rendered pages). Clone
                             // the Origin header BEFORE `req` moves into the pipeline.
-                            let origin = if state.cors_resolved.is_some() {
-                                req.headers().get(http::header::ORIGIN).cloned()
-                            } else {
-                                None
-                            };
-                            let mut resp = crate::pipeline::handle(req, Arc::clone(&state)).await;
+                            let cors = state
+                                .cors_resolved
+                                .is_some()
+                                .then(|| (Arc::clone(&state), req.headers().get(http::header::ORIGIN).cloned()));
+                            let mut resp = crate::pipeline::handle(req, state).await;
                             if let Some(v) = powered_by {
                                 resp.headers_mut()
                                     .entry(http::header::HeaderName::from_static("x-powered-by"))
                                     .or_insert(v);
                             }
-                            if let Some(c) = &state.cors_resolved {
+                            if let Some((state, origin)) = &cors
+                                && let Some(c) = &state.cors_resolved
+                            {
                                 c.stamp_response(resp.headers_mut(), origin.as_ref());
                             }
                             Ok::<_, Infallible>(resp)
@@ -352,6 +369,7 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
                                 max_req,
                                 read_buf_cap,
                                 header_timeout,
+                                header_timer,
                                 conn_drain,
                             )
                             .await;
@@ -363,6 +381,7 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
                                 max_req,
                                 read_buf_cap,
                                 header_timeout,
+                                header_timer,
                                 conn_drain,
                             )
                                 .await;
@@ -384,6 +403,7 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
                 Ok(_) => info!("graceful drain: all in-flight connections finished"),
                 Err(_) => warn!("graceful drain: deadline elapsed; forcing remaining connections"),
             }
+            header_ticker.abort();
             state.signal_drain_done();
         });
     });
@@ -411,6 +431,7 @@ async fn serve_io<I, S, B>(
     max_req: usize,
     read_buf_cap: usize,
     header_timeout: Duration,
+    header_timer: coarse_timer::CoarseTimer,
     mut drain: tokio::sync::watch::Receiver<bool>,
 ) where
     I: hyper::rt::Read + hyper::rt::Write + Unpin + Send + 'static,
@@ -427,7 +448,7 @@ async fn serve_io<I, S, B>(
     builder
         .http1()
         .max_buf_size(max_req.max(read_buf_cap).max(8192))
-        .timer(TokioTimer::new())
+        .timer(header_timer)
         .header_read_timeout(header_timeout);
     // Pin the connection so it can be both polled to completion AND, on drain,
     // told to `graceful_shutdown()` (finish the in-flight request, then close).

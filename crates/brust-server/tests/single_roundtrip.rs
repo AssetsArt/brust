@@ -233,6 +233,8 @@ const STRESS_SLOTS: usize = 2;
 struct ThreadWorker {
     tx: mpsc::Sender<Reply>,
     ptr: *mut u8,
+    /// `jobs` calls received (the two-call path; M3-P P7's adaptive offer, ruling R1).
+    jobs_calls: Arc<AtomicU32>,
 }
 
 // SAFETY: the buffer is leaked; slot `i` is only written by the worker thread while tokio holds
@@ -345,7 +347,11 @@ impl ThreadWorker {
                 let _ = done.send(bytes.len() as u32);
             }
         });
-        Self { tx, ptr }
+        Self {
+            tx,
+            ptr,
+            jobs_calls: Default::default(),
+        }
     }
 }
 
@@ -356,6 +362,9 @@ impl RenderDispatch for ThreadWorker {
         request_json: String,
         slot: u32,
     ) -> Pin<Box<dyn Future<Output = Result<u32, DispatchError>> + Send>> {
+        if kind == CallKind::Jobs {
+            self.jobs_calls.fetch_add(1, Ordering::SeqCst);
+        }
         let (done, rx) = tokio::sync::oneshot::channel();
         let sent = self.tx.send((kind, request_json, slot, done));
         Box::pin(async move {
@@ -426,9 +435,12 @@ fn eight_workers_plan_while_tokio_inserts_and_invalidates() {
         ..cfg.tuning
     };
     let s = start(cfg).unwrap();
+    let mut jobs_calls = Vec::new();
     for _ in 0..WORKERS {
         let bound: Binding = Default::default();
-        let id = s.register_worker(Box::new(ThreadWorker::spawn(bound.clone())));
+        let w = ThreadWorker::spawn(bound.clone());
+        jobs_calls.push(Arc::clone(&w.jobs_calls));
+        let id = s.register_worker(Box::new(w));
         bound.set((Arc::downgrade(&s), id)).unwrap();
     }
     let t0 = std::time::Instant::now();
@@ -495,10 +507,21 @@ fn eight_workers_plan_while_tokio_inserts_and_invalidates() {
         st["job"]
     );
     assert_eq!(st["loader_calls"], (WORKERS * PAGES) as u64);
+    // Every page is one loader round trip, plus one `jobs` round trip only when its route had
+    // stopped offering the plan (64 all-hit planned calls, M3-P P7 ruling R1) and a job missed.
+    let jobs_calls: u64 = jobs_calls
+        .iter()
+        .map(|c| u64::from(c.load(Ordering::SeqCst)))
+        .sum();
+    eprintln!("stress: {jobs_calls} two-call pages (adaptive offer)");
+    assert!(
+        0 < jobs_calls && jobs_calls <= (WORKERS * PAGES) as u64,
+        "the two-call path ran: {jobs_calls}"
+    );
     assert_eq!(
         st["worker_calls"],
-        (WORKERS * PAGES) as u64,
-        "every page is one round trip"
+        (WORKERS * PAGES) as u64 + jobs_calls,
+        "one round trip per page, two only on a miss while not offered"
     );
     assert!(
         st["job"]["hits"].as_u64().unwrap() > 0 && st["job"]["misses"].as_u64().unwrap() > 0,

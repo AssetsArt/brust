@@ -1,5 +1,7 @@
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock, Weak};
+use std::task::Waker;
+use std::time::{Duration, Instant};
 
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
@@ -62,7 +64,27 @@ pub struct Slot {
     /// the jobs phase inside a planned call, which `call_worker_planned` times like the old
     /// separate jobs call. Cleared with the plan by `RenderClaim::drop`.
     jobs_since: parking_lot::Mutex<Option<std::time::Instant>>,
+    /// M3-P P7 (R3): the current claim's call deadline, for the pool's sweeper — ms since
+    /// [`EPOCH`], rounded up; 0 = not armed. Armed by `call_worker_planned` while it holds the
+    /// claim, disarmed by `RenderClaim::drop` before the slot is released.
+    deadline_ms: AtomicU64,
+    /// The waker of the call waiting on that deadline. Per slot and uncontended: only the claim
+    /// holder and the sweeper touch it.
+    deadline_waker: parking_lot::Mutex<Option<Waker>>,
 }
+
+/// The origin of [`Slot`] deadlines (process-wide, so a slot needs no pool back-reference).
+static EPOCH: LazyLock<Instant> = LazyLock::new(Instant::now);
+
+/// `at` as ms since [`EPOCH`], rounded up (so the sweeper never wakes a call early), never 0.
+fn epoch_ms_ceil(at: Instant) -> u64 {
+    let d = at.saturating_duration_since(*EPOCH);
+    (d.as_micros().div_ceil(1000) as u64).max(1)
+}
+
+/// How often the pool's sweeper looks for expired call deadlines (R3: a deadline fires within
+/// one tick after it passed).
+pub const SWEEP_TICK: Duration = Duration::from_millis(10);
 
 impl Slot {
     /// Per-slot exclusivity gate (`true` = free). Exposed for assertions in the
@@ -135,6 +157,25 @@ impl WorkerEntry {
         self.slots
             .get(slot as usize)
             .and_then(|s| *s.jobs_since.lock())
+    }
+
+    /// Arm (or move) `slot`'s call deadline for the sweeper (M3-P P7). Only the claim holder calls it.
+    pub(crate) fn arm_deadline(&self, slot: u32, at: Instant) {
+        if let Some(s) = self.slots.get(slot as usize) {
+            s.deadline_ms.store(epoch_ms_ceil(at), Ordering::Relaxed);
+        }
+    }
+
+    /// Park the waker the sweeper wakes when `slot`'s armed deadline passes (M3-P P7).
+    pub(crate) fn park_deadline_waker(&self, slot: u32, w: &Waker) {
+        if let Some(s) = self.slots.get(slot as usize) {
+            let mut g = s.deadline_waker.lock();
+            if !g.as_ref().is_some_and(|old| old.will_wake(w)) {
+                let old = g.replace(w.clone());
+                drop(g);
+                drop(old);
+            }
+        }
     }
 
     pub fn claimed_plan_cell(&self, slot: u32) -> Option<&parking_lot::Mutex<Option<PlanBox>>> {
@@ -225,6 +266,10 @@ impl Drop for RenderClaim {
         let stale = slot.plan.lock().take();
         drop(stale);
         slot.jobs_since.lock().take();
+        // M3-P P7: disarm the call deadline before the slot can be claimed again.
+        slot.deadline_ms.store(0, Ordering::Relaxed);
+        let parked = slot.deadline_waker.lock().take();
+        drop(parked);
         if !self.lockfree {
             slot.render_slot.lock().take();
         }
@@ -250,6 +295,12 @@ pub enum ClaimResult {
 
 #[derive(Default)]
 pub struct WorkerPool {
+    /// M3-P P7 (R3): the deadline sweeper task is running (see [`WorkerPool::ensure_sweeper`]).
+    sweeper_running: Arc<AtomicBool>,
+    /// Every entry ever registered, as `Weak`: the sweeper walks THIS, not `entries`, so a call
+    /// on a worker that `remove`/`clear` took out of the pool (dead worker, dev reload) still gets
+    /// its deadline while its claim keeps the entry alive. Pruned by the sweeper.
+    swept: parking_lot::Mutex<Vec<Weak<WorkerEntry>>>,
     entries: RwLock<Vec<Arc<WorkerEntry>>>,
     next_id: AtomicU32,
     /// Notified once per worker release (see `RenderClaim::drop`). Dispatchers
@@ -273,6 +324,8 @@ impl WorkerPool {
                 render_slot: parking_lot::Mutex::new(None),
                 plan: parking_lot::Mutex::new(None),
                 jobs_since: parking_lot::Mutex::new(None),
+                deadline_ms: AtomicU64::new(0),
+                deadline_waker: parking_lot::Mutex::new(None),
             })
             .collect();
         let entry = Arc::new(WorkerEntry {
@@ -281,6 +334,7 @@ impl WorkerPool {
             in_flight: AtomicU32::new(0),
             slots,
         });
+        self.swept.lock().push(Arc::downgrade(&entry));
         self.entries.write().push(entry);
         id
     }
@@ -288,6 +342,79 @@ impl WorkerPool {
     /// A snapshot of the registered workers.
     pub(crate) fn entries(&self) -> Vec<Arc<WorkerEntry>> {
         self.entries.read().clone()
+    }
+
+    /// Start the call-deadline sweeper on the current tokio runtime unless it runs (M3-P P7, R3):
+    /// one task wakes every armed slot whose deadline passed, every [`SWEEP_TICK`], instead of a
+    /// tokio timer per call. Started by the first armed call; it ends with the pool, and if its
+    /// runtime drops it, the next armed call starts it again.
+    pub(crate) fn ensure_sweeper(self: &Arc<Self>) {
+        if self.sweeper_running.load(Ordering::Acquire)
+            || self
+                .sweeper_running
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_err()
+        {
+            return;
+        }
+        struct Running(Arc<AtomicBool>);
+        impl Drop for Running {
+            fn drop(&mut self) {
+                self.0.store(false, Ordering::Release);
+            }
+        }
+        let running = Running(Arc::clone(&self.sweeper_running));
+        let pool: Weak<WorkerPool> = Arc::downgrade(self);
+        tokio::spawn(async move {
+            let _running = running;
+            let mut iv = tokio::time::interval(SWEEP_TICK);
+            iv.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            let mut due: Vec<Waker> = Vec::new();
+            loop {
+                iv.tick().await;
+                let Some(pool) = pool.upgrade() else { return };
+                pool.collect_expired(Instant::now(), &mut due);
+                drop(pool);
+                for w in due.drain(..) {
+                    w.wake();
+                }
+            }
+        });
+    }
+
+    /// Take the parked waker of every armed slot whose deadline is at or before `now`. No lock is
+    /// held when the caller wakes them.
+    fn collect_expired(&self, now: Instant, due: &mut Vec<Waker>) {
+        let now_ms = now.saturating_duration_since(*EPOCH).as_millis() as u64;
+        let expired = |s: &Slot| {
+            let d = s.deadline_ms.load(Ordering::Relaxed);
+            d != 0 && d <= now_ms
+        };
+        let live: Vec<Arc<WorkerEntry>> = {
+            let mut swept = self.swept.lock();
+            let mut live = Vec::with_capacity(swept.len());
+            swept.retain(|w| match w.upgrade() {
+                Some(e) => {
+                    live.push(e);
+                    true
+                }
+                None => false,
+            });
+            live
+        };
+        for e in &live {
+            for s in &e.slots {
+                if expired(s) {
+                    let mut g = s.deadline_waker.lock();
+                    // Re-checked under the lock: the slot may have been released and re-armed.
+                    if expired(s)
+                        && let Some(w) = g.take()
+                    {
+                        due.push(w);
+                    }
+                }
+            }
+        }
     }
 
     pub fn registered_count(&self) -> usize {

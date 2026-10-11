@@ -115,11 +115,11 @@ struct PaddedU64(AtomicU64);
 const COUNTER_STRIPES: usize = 16;
 
 impl StripedCounter {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self(std::array::from_fn(|_| PaddedU64::default()))
     }
 
-    fn incr(&self) {
+    pub(crate) fn incr(&self) {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         thread_local! {
             static SLOT: usize = NEXT.fetch_add(1, Ordering::Relaxed) % COUNTER_STRIPES;
@@ -128,7 +128,7 @@ impl StripedCounter {
         self.0[slot].0.fetch_add(1, Ordering::Relaxed);
     }
 
-    fn get(&self) -> u64 {
+    pub(crate) fn get(&self) -> u64 {
         self.0.iter().map(|c| c.0.load(Ordering::Relaxed)).sum()
     }
 }
