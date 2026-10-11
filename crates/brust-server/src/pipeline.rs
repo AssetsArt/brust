@@ -572,16 +572,9 @@ async fn page(
         && let Some(k) = cache_key
         && let Some(c) = &route.cache
     {
-        // The loader's headers ride with the ctx (and the rendered body, with
-        // its gzip if this request made it) so a HIT replays them.
-        s.l1.insert(
-            k,
-            ctx,
-            body,
-            extra.into(),
-            Duration::from_secs(c.ttl_seconds),
-            &c.tags,
-        );
+        // The rendered body carries the loader's headers (and its gzip if this
+        // request made it), so a HIT replays them.
+        s.l1.insert(k, body, Duration::from_secs(c.ttl_seconds), &c.tags);
     }
     resp
 }
