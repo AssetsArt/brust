@@ -482,6 +482,16 @@ fn bench_get_template(c: &mut Criterion, m: &Manifest, r: &Renderer) {
             black_box(render_chain_html(m, r, &route.id, chain, &ctx).unwrap());
         })
     });
+    // The lookup alone (RULED on BLOCKED bc5bbf8b): the renders above are dominated by the
+    // 109 KB document, so only this pair can observe the removed lock.
+    let ids = chain.clone();
+    let lookup = || {
+        for id in &ids {
+            black_box(r.get_template_for_bench(black_box(id)).unwrap());
+        }
+    };
+    g.bench_function("get_template_only_1", |b| b.iter(lookup));
+    g.bench_function("get_template_only_x8", |b| par8(b, lookup));
     g.finish();
 }
 

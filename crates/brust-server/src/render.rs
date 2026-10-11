@@ -108,6 +108,16 @@ impl Renderer {
         Ok(Renderer { env })
     }
 
+    /// `Environment::get_template` for the render benches (a separate crate, so
+    /// `pub(crate)` would not reach them): isolates the lookup from the render.
+    #[doc(hidden)]
+    pub fn get_template_for_bench(
+        &self,
+        id: &str,
+    ) -> Result<minijinja::Template<'_, '_>, minijinja::Error> {
+        self.env.get_template(id)
+    }
+
     pub fn render(&self, name: &str, ctx: &Value) -> Result<String, RenderError> {
         let tmpl = self
             .env
