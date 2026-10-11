@@ -257,6 +257,12 @@
   "client_props": [
     "todos"
   ],
+  "client_prop_projections": {
+    "todos": [
+      "id",
+      "title"
+    ]
+  },
   "client_imports": [],
   "client_module_locals": [],
   "needs_worker": false,

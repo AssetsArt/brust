@@ -2,8 +2,9 @@
 //! projection of the values a job reads, and blake3 canonical job keys.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
-use serde_json::{Map, Value};
+use brust_jinja::ctx::{MapInner, Node};
 
 /// One segment of an input path.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,15 +79,15 @@ impl Path {
     }
 
     /// Read the value at this path. `Null` when absent, or for `[idx]` without a row.
-    pub fn get<'v>(&self, ctx: &'v Value, idx: Option<usize>) -> &'v Value {
-        static NULL: Value = Value::Null;
+    pub fn get<'v>(&self, ctx: &'v Node, idx: Option<usize>) -> &'v Node {
+        static NULL: Node = Node::Null;
         let mut cur = ctx;
         for seg in &self.0 {
             cur = match seg {
                 Seg::Key(k) => cur.get(k).unwrap_or(&NULL),
-                Seg::Index(i) => cur.get(*i).unwrap_or(&NULL),
+                Seg::Index(i) => cur.index(*i).unwrap_or(&NULL),
                 Seg::Idx => match idx {
-                    Some(i) => cur.get(i).unwrap_or(&NULL),
+                    Some(i) => cur.index(i).unwrap_or(&NULL),
                     None => &NULL,
                 },
             };
@@ -119,7 +120,7 @@ fn proj_key(seg: &Seg) -> String {
 /// `item.price`), the shorter one's whole value is kept and the longer one is
 /// redundant — the result is independent of input order. An `[idx]` input
 /// with `idx == None` is an `Err`.
-pub fn project(ctx: &Value, inputs: &[String], idx: Option<usize>) -> Result<Value, String> {
+pub fn project(ctx: &Node, inputs: &[String], idx: Option<usize>) -> Result<Node, String> {
     Projection::new(inputs)?.eval(ctx, idx)
 }
 
@@ -161,7 +162,7 @@ impl Projection {
     }
 
     /// The projection of `ctx` (`idx` = the current row).
-    pub fn eval(&self, ctx: &Value, idx: Option<usize>) -> Result<Value, String> {
+    pub fn eval(&self, ctx: &Node, idx: Option<usize>) -> Result<Node, String> {
         if idx.is_none()
             && let Some(s) = &self.first_idx
         {
@@ -169,24 +170,22 @@ impl Projection {
                 "input path {s:?}: [idx] outside a per-row instance"
             ));
         }
-        let mut out = Map::new();
+        let mut out = MapInner::new();
         for (p, keys) in &self.kept {
             let (last, prefix) = keys.split_last().expect("parsed path is non-empty");
             let mut node = &mut out;
             for k in prefix {
                 // Only intermediate objects we created live at prefix positions:
                 // a leaf here would mean a shorter input covers `p`, dropped in `new`.
-                if !node.contains_key(k) {
-                    node.insert(k.clone(), Value::Object(Map::new()));
-                }
-                node = node
-                    .get_mut(k)
-                    .and_then(Value::as_object_mut)
-                    .expect("projection prefix is an object");
+                let slot = node
+                    .entry(Arc::from(k.as_str()))
+                    .or_insert_with(|| Node::map(MapInner::new()));
+                node = slot.map_mut().expect("projection prefix is an object");
             }
-            node.insert(last.clone(), p.get(ctx, idx).clone());
+            // An Arc bump for a map/array/string: the context's value is shared.
+            node.insert(Arc::from(last.as_str()), p.get(ctx, idx).clone());
         }
-        Ok(Value::Object(out))
+        Ok(Node::map(out))
     }
 }
 
@@ -195,10 +194,10 @@ impl Projection {
 /// Builds `{ childProp: Path(parentPath).get(parent_ctx, idx) }`. A `[idx]`
 /// parent path with `idx == None` is an `Err`.
 pub fn child_props(
-    parent_ctx: &Value,
+    parent_ctx: &Node,
     props: &BTreeMap<String, String>,
     idx: Option<usize>,
-) -> Result<Value, String> {
+) -> Result<Node, String> {
     PropsMap::new(props)?.eval(parent_ctx, idx)
 }
 
@@ -216,23 +215,23 @@ impl PropsMap {
             .map(PropsMap)
     }
 
-    pub fn eval(&self, parent_ctx: &Value, idx: Option<usize>) -> Result<Value, String> {
-        let mut out = Map::new();
+    pub fn eval(&self, parent_ctx: &Node, idx: Option<usize>) -> Result<Node, String> {
+        let mut out = MapInner::new();
         for (name, p, src) in &self.0 {
             if idx.is_none() && p.has_idx() {
                 return Err(format!(
                     "child prop {name:?} = {src:?}: [idx] outside a per-row instance"
                 ));
             }
-            out.insert(name.clone(), p.get(parent_ctx, idx).clone());
+            out.insert(Arc::from(name.as_str()), p.get(parent_ctx, idx).clone());
         }
-        Ok(Value::Object(out))
+        Ok(Node::map(out))
     }
 }
 
 /// Canonical bytes: serde_json with BTreeMap maps (sorted keys), no whitespace.
-pub fn canonical(v: &Value) -> Vec<u8> {
-    serde_json::to_vec(v).expect("Value serialises")
+pub fn canonical(v: &Node) -> Vec<u8> {
+    serde_json::to_vec(v).expect("Node serialises")
 }
 
 /// blake3 hex of canonical(inputs_value); `component_id`/`job_id` are mixed in as length-prefixed fields so (a,bc) != (ab,c).
@@ -241,7 +240,7 @@ pub fn canonical(v: &Value) -> Vec<u8> {
 /// length a `u32` LE), laid out in one reused per-thread buffer and hashed in
 /// one call: a streaming `Hasher::update` per field (or per serde write)
 /// costs more than the copy.
-pub fn job_key(component_id: &str, job_id: &str, inputs_value: &Value) -> String {
+pub fn job_key(component_id: &str, job_id: &str, inputs_value: &Node) -> String {
     thread_local! {
         static BUF: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
     }
@@ -253,7 +252,7 @@ pub fn job_key(component_id: &str, job_id: &str, inputs_value: &Value) -> String
         }
         let at = buf.len();
         buf.extend_from_slice(&[0; 4]);
-        serde_json::to_writer(&mut *buf, inputs_value).expect("Value serialises");
+        serde_json::to_writer(&mut *buf, inputs_value).expect("Node serialises");
         let n = (buf.len() - at - 4) as u32;
         buf[at..at + 4].copy_from_slice(&n.to_le_bytes());
         let key = blake3::hash(buf).to_hex().to_string();
@@ -269,10 +268,14 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    fn n(v: serde_json::Value) -> Node {
+        Node::from(v)
+    }
+
     /// The one-buffer `job_key` hashes exactly the length-prefixed fields.
     #[test]
     fn job_key_hashes_length_prefixed_fields() {
-        let reference = |cid: &str, jid: &str, v: &Value| {
+        let reference = |cid: &str, jid: &str, v: &Node| {
             let mut h = blake3::Hasher::new();
             for field in [cid.as_bytes(), jid.as_bytes(), &canonical(v)] {
                 h.update(&(field.len() as u32).to_le_bytes());
@@ -280,21 +283,50 @@ mod tests {
             }
             h.finalize().to_hex().to_string()
         };
-        let big = json!({"s": "x".repeat(100_000)});
+        let big = n(json!({"s": "x".repeat(100_000)}));
         for (c, j, v) in [
-            ("typeBadge_5f5390d7", "j0", json!({"type": "fire"})),
-            ("a", "bc", json!(null)),
-            ("ab", "c", json!(null)),
-            ("", "", json!({})),
+            ("typeBadge_5f5390d7", "j0", n(json!({"type": "fire"}))),
+            ("a", "bc", Node::Null),
+            ("ab", "c", Node::Null),
+            ("", "", n(json!({}))),
             ("c", "j0#3", big.clone()),
-            ("c", "j0", json!([1, "é", {"z": 1, "a": [true]}])),
+            ("c", "j0", n(json!([1, "é", {"z": 1, "a": [true]}]))),
         ] {
             assert_eq!(job_key(c, j, &v), reference(c, j, &v), "{c} {j}");
         }
         assert_ne!(
-            job_key("a", "bc", &json!(null)),
-            job_key("ab", "c", &json!(null))
+            job_key("a", "bc", &Node::Null),
+            job_key("ab", "c", &Node::Null)
         );
+    }
+
+    /// The key is a function of the JSON text, whichever tree carries it.
+    #[test]
+    fn job_key_over_node_equals_job_key_over_serde_json() {
+        let reference = |cid: &str, jid: &str, v: &serde_json::Value| {
+            let mut h = blake3::Hasher::new();
+            for field in [
+                cid.as_bytes(),
+                jid.as_bytes(),
+                &serde_json::to_vec(v).unwrap(),
+            ] {
+                h.update(&(field.len() as u32).to_le_bytes());
+                h.update(field);
+            }
+            h.finalize().to_hex().to_string()
+        };
+        for v in [
+            json!({"z": 1, "a": [1.5, "é", null, {"y": true, "b": 18446744073709551615u64}]}),
+            json!(null),
+            json!("s"),
+            json!(-7),
+        ] {
+            assert_eq!(
+                job_key("c", "j0", &Node::from(v.clone())),
+                reference("c", "j0", &v),
+                "{v}"
+            );
+        }
     }
 
     #[test]
@@ -327,7 +359,7 @@ mod tests {
 
     #[test]
     fn project_merges_shared_prefix() {
-        let c = json!({"item":{"id":"p1","name":"Mug","price":3},"user":{"n":"x"}});
+        let c = n(json!({"item":{"id":"p1","name":"Mug","price":3},"user":{"n":"x"}}));
         let ins = [
             "item.price".to_string(),
             "item.name".into(),
@@ -335,13 +367,13 @@ mod tests {
         ];
         assert_eq!(
             project(&c, &ins, None).unwrap(),
-            json!({"item":{"price":3,"name":"Mug"},"user":{"n":"x"}})
+            n(json!({"item":{"price":3,"name":"Mug"},"user":{"n":"x"}}))
         );
     }
 
     #[test]
     fn project_prefix_input_wins_regardless_of_order() {
-        let c = json!({"list":[{"n":1},{"n":2}],"item":{"a":1,"b":2}});
+        let c = n(json!({"list":[{"n":1},{"n":2}],"item":{"a":1,"b":2}}));
         let a = project(
             &c,
             &[
@@ -364,23 +396,23 @@ mod tests {
         );
         assert_eq!(
             a.unwrap(),
-            json!({"list":[{"n":1},{"n":2}],"item":{"a":1,"b":2}})
+            n(json!({"list":[{"n":1},{"n":2}],"item":{"a":1,"b":2}}))
         );
         assert_eq!(
             b.unwrap(),
-            json!({"list":[{"n":1},{"n":2}],"item":{"a":1,"b":2}})
+            n(json!({"list":[{"n":1},{"n":2}],"item":{"a":1,"b":2}}))
         );
     }
 
     #[test]
     fn project_indexes_become_bracketed_keys() {
-        let c = json!({"a":[{"n":1},{"n":2}]});
+        let c = n(json!({"a":[{"n":1},{"n":2}]}));
         assert_eq!(
             project(&c, &["a[0].n".into(), "a[1].n".into()], None).unwrap(),
-            json!({"a":{"[0]":{"n":1},"[1]":{"n":2}}})
+            n(json!({"a":{"[0]":{"n":1},"[1]":{"n":2}}}))
         );
         // `[idx]` keys by content, not row position.
-        let r = json!({"a":[{"n":7},{"n":7}]});
+        let r = n(json!({"a":[{"n":7},{"n":7}]}));
         assert_eq!(
             project(&r, &["a[idx].n".into()], Some(0)).unwrap(),
             project(&r, &["a[idx].n".into()], Some(1)).unwrap()
@@ -389,19 +421,19 @@ mod tests {
 
     #[test]
     fn idx_without_row_is_err() {
-        let c = json!({"a":[1]});
+        let c = n(json!({"a":[1]}));
         assert!(project(&c, &["a[idx]".into()], None).is_err());
         let props = [("x".to_string(), "a[idx]".to_string())]
             .into_iter()
             .collect();
         assert!(child_props(&c, &props, None).is_err());
-        assert_eq!(child_props(&c, &props, Some(0)).unwrap(), json!({"x":1}));
+        assert_eq!(child_props(&c, &props, Some(0)).unwrap(), n(json!({"x":1})));
     }
 
     #[test]
     fn project_and_child_props_propagate_parse_errors() {
-        assert!(project(&json!({}), &["a[".into()], None).is_err());
+        assert!(project(&n(json!({})), &["a[".into()], None).is_err());
         let props = [("x".to_string(), "".to_string())].into_iter().collect();
-        assert!(child_props(&json!({}), &props, None).is_err());
+        assert!(child_props(&n(json!({})), &props, None).is_err());
     }
 }

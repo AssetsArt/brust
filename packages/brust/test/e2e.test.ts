@@ -11,7 +11,7 @@ let proc: ReturnType<typeof Bun.spawn> | undefined
 let base = ''
 let stdout = ''
 
-type Stats = { loader_calls: number; job_calls: number }
+type Stats = { loader_calls: number; job_calls: number; worker_calls: number }
 const stats = async (): Promise<Stats> => (await fetch(`${base}/_brust/cache/stats`)).json() as Promise<Stats>
 
 beforeAll(async () => {
@@ -79,10 +79,10 @@ test('loader route: per-row values, useId, island SSR + chunk; second request is
   const h1 = await r1.text()
   expect(r1.status).toBe(200)
   expect(r1.headers.get('x-brust-cache')).toBe('MISS')
-  expect(h1).toContain('<h1 id="brust-r2-itemPage_b7278c7c-1" x-text="_c1">Item 7</h1>') // useId allocated by the server
+  expect(h1).toContain('<h1 id="brust-r2-itemPage_b7278c7c-1">Item 7</h1>') // useId allocated by the server; ItemPage is static (F70)
   expect(h1).toContain('<p class="total">12.5€</p>')
   // Per-row child job values painted per row, in row order (Review Focus 1).
-  expect(h1).toMatch(/<li x-data="priceRow_[0-9a-f]{8}" x-props-bind="_p1:r">1\.0€<\/li>.*<li x-data="priceRow_[0-9a-f]{8}" x-props-bind="_p1:r">2\.3€<\/li>/s)
+  expect(h1).toMatch(/<li>1\.0€<\/li>.*<li>2\.3€<\/li>/s) // plain rows (F70)
   // React island SSR'd by a worker, the literal `title="crew"` merged from the manifest.
   expect(h1).toMatch(
     /<brust-island data-id="team_[0-9a-f]{8}" x-props='[^']*'><div class="team"><h3>crew<\/h3><button>\+<!-- -->0<\/button><span>ann<\/span><span>bob<\/span><\/div><\/brust-island>/,
@@ -91,6 +91,7 @@ test('loader route: per-row values, useId, island SSR + chunk; second request is
   const s1 = await stats()
   expect(s1.loader_calls - before.loader_calls).toBe(1)
   expect(s1.job_calls - before.job_calls).toBe(1)
+  expect(s1.worker_calls - before.worker_calls).toBe(1) // loader + jobs in one round trip (M3-P P6)
 
   const r2 = await fetch(`${base}/items/7`)
   const h2 = await r2.text()
@@ -108,7 +109,7 @@ test('loader route: per-row values, useId, island SSR + chunk; second request is
 test('notFound verdict renders the route template at 404 and is not cached', async () => {
   const r = await fetch(`${base}/items/nothing`)
   expect(r.status).toBe(404)
-  expect(await r.text()).toContain('<h1 id="brust-r2-itemPage_b7278c7c-1" x-text="_c1">missing</h1>')
+  expect(await r.text()).toContain('<h1 id="brust-r2-itemPage_b7278c7c-1">missing</h1>')
   const again = await fetch(`${base}/items/nothing`)
   expect(again.status).toBe(404)
   expect(again.headers.get('x-brust-cache')).toBe('MISS')

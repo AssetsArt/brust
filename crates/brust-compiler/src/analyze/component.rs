@@ -109,7 +109,10 @@ pub fn analyze_with(
     opts: &AnalyzeOptions,
     modules: &std::cell::RefCell<crate::analyze::modules::ModuleCache>,
 ) -> Result<ComponentIR, Diagnostic> {
-    use crate::analyze::modules::{Export, Lookup, compile};
+    use crate::analyze::modules::{Export, Lookup, cache_key, compile, normalize};
+    modules
+        .borrow_mut()
+        .set_root(cache_key(&normalize(path), &Export::Default));
     match compile(path, &Export::Default, source, opts, modules) {
         Lookup::Compiled(ir) => Ok((*ir).clone()),
         Lookup::Failed(d) => Err(d),

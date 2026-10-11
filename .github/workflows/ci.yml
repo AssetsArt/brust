@@ -128,7 +128,11 @@ jobs:
       - run: bunx playwright install --with-deps chromium
       - run: bun test --timeout 120000 tests/server/pokedex.test.ts
       - run: bun test --timeout 120000 tests/server/hydrate.chromium.test.ts
+      # m3b: the bench suite's cheap gates (spec §1.6). The bench itself is manual and load-guarded — never here.
+      - run: bun check -p bench
+      - run: bun check -p bench/apps/next
       - run: bun build --no-bundle bench/run.ts > /dev/null
+      - run: bun test bench/lib
       # The exit report is generated: a diff means the committed one is stale.
       - run: bun run m2-exit && git diff --exit-code docs/plans/m2-exit-report.md
       - run: bun test scripts/m2-exit

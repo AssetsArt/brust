@@ -21,6 +21,8 @@ pub enum Entry {
 #[derive(Debug, Default)]
 pub struct ModuleCache {
     map: HashMap<String, Entry>,
+    /// Cache key of the component the run was started for.
+    root: Option<String>,
 }
 
 impl ModuleCache {
@@ -40,6 +42,15 @@ impl ModuleCache {
             .collect();
         out.sort_by(|a, b| a.0.cmp(&b.0));
         out
+    }
+
+    /// Marks `key` as the component the run was asked for.
+    pub fn set_root(&mut self, key: String) {
+        self.root = Some(key);
+    }
+
+    pub fn is_root(&self, key: &str) -> bool {
+        self.root.as_deref() == Some(key)
     }
 
     pub fn insert(&mut self, key: String, e: Entry) {
@@ -145,6 +156,7 @@ fn compile_uncached(
         path,
         modules,
         local: &local,
+        is_root: modules.borrow().is_root(&cache_key(path, export)),
     };
     run_passes(&mut ir, &ctx);
     finish_diagnostics(&mut ir, parsed.text());

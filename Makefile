@@ -32,7 +32,7 @@ INSTALL_STAMP := node_modules/.brust-install-stamp
 START_FLAGS   := --port $(PORT) $(if $(WORKERS),--workers $(WORKERS),)
 
 PKG_FILES := package.json bun.lock \
-  $(wildcard packages/*/package.json examples/*/package.json npm/*/package.json tests/server/package.json)
+  $(wildcard packages/*/package.json examples/*/package.json npm/*/package.json tests/server/package.json bench/package.json bench/apps/*/package.json)
 RUST_FILES := Cargo.toml Cargo.lock rust-toolchain.toml \
   $(shell find crates vendor -type f \( -name '*.rs' -o -name 'Cargo.toml' \) -not -path '*/target/*')
 

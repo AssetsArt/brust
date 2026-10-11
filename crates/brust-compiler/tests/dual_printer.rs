@@ -25,10 +25,10 @@ const ROWS: &[(&str, &str, &str)] = &[
     ("true", "true", "true"),
     ("a", "a", "a"),
     ("n", "n", "n"),
-    ("o.k", r#"o["k"]"#, "o.k"),
+    ("o.k", "o.k", "o.k"),
     (
         "u?.k",
-        r#"(u["k"] if u is defined and u is not none else __undefined)"#,
+        r#"(u.k if u is defined and u is not none else __undefined)"#,
         "u?.k",
     ),
     ("undefined", "__undefined", "undefined"),

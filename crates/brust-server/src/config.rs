@@ -8,7 +8,7 @@
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -138,7 +138,10 @@ pub struct Stats {
     pub l1: CacheStats,
     pub job: CacheStats,
     pub loader_calls: u64,
+    /// Job batches the worker ran: a `jobs` call, or the misses of a planned loader call (M3-P P6).
     pub job_calls: u64,
+    /// Worker round trips (M3-P P6): the sum of every request's `bun_calls`.
+    pub worker_calls: u64,
     /// Worker calls answered 504 by the call deadline.
     pub timed_out_calls: u64,
     /// Distinct (component, slot) pairs whose job result lacked a declared output (an older
@@ -157,8 +160,11 @@ pub struct Server {
     pub(crate) l1: L1Cache,
     pub(crate) jobs: JobCache,
     pub(crate) dist_dir: PathBuf,
-    pub(crate) loader_calls: AtomicU64,
+    /// M3-P P7: striped (one cache line per stripe) — bumped on every loader page.
+    pub(crate) loader_calls: crate::cache::l1::StripedCounter,
     pub(crate) job_calls: AtomicU64,
+    /// M3-P P7: striped, like `loader_calls`.
+    pub(crate) worker_calls: crate::cache::l1::StripedCounter,
     pub(crate) timed_out_calls: AtomicU64,
     /// (component, slot) pairs already warned about as missing from a job result.
     pub(crate) missing_slots: std::sync::Mutex<std::collections::HashSet<(String, String)>>,
@@ -179,6 +185,12 @@ pub struct Server {
     pub(crate) generator: Option<String>,
     pub(crate) claim_timeout: Duration,
     pub(crate) call_timeout: Duration,
+    /// Last document length per manifest route (+ slack): the capacity of the
+    /// next render's buffer (M3-P P3). A size, never bytes.
+    pub(crate) render_hints: Vec<AtomicUsize>,
+    /// M3-P P7 (R1): per route (manifest index), consecutive planned calls whose jobs all hit;
+    /// at `pipeline::OFFER_STOP` the route stops offering the plan until a miss resets it.
+    pub(crate) plan_offer: Box<[AtomicU32]>,
 }
 
 impl Server {
@@ -232,8 +244,9 @@ impl Server {
         Stats {
             l1: self.l1.stats(),
             job: self.jobs.stats(),
-            loader_calls: self.loader_calls.load(Ordering::Relaxed),
+            loader_calls: self.loader_calls.get(),
             job_calls: self.job_calls.load(Ordering::Relaxed),
+            worker_calls: self.worker_calls.get(),
             timed_out_calls: self.timed_out_calls.load(Ordering::Relaxed),
             missing_slots: self.missing_slots.lock().map_or(0, |m| m.len() as u64),
         }

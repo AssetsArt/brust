@@ -4,13 +4,13 @@
 
 use std::collections::BTreeMap;
 
+use brust_jinja::ctx::Node;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::manifest::JobKind;
 use crate::routing::routes::RequestEnvelope;
 
-/// `loader` call request: `{ routeId, params, path, req }`.
+/// `loader` call request: `{ routeId, params, path, req, plan? }`.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LoaderRequest<'a> {
@@ -18,25 +18,131 @@ pub struct LoaderRequest<'a> {
     pub params: BTreeMap<String, String>,
     pub path: &'a str,
     pub req: RequestEnvelope<'a>,
+    /// M3-P P6: the chain has jobs — the worker may plan them inside this call
+    /// (`planJobs`) and answer `{ planned, results }`; it may also ignore this.
+    /// Serialised only when true.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub plan: bool,
 }
 
-/// `loader` call response: `{ ok: true, data, headers? } | { verdict, … } | { error }`.
-/// Untagged: variants are tried in order, and `Ok` needs both `ok` and `data`.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(untagged)]
+/// `loader` call response: `{ planned: true, results? } | { ok: true, data, headers? } |
+/// { verdict, … } | { error }`.
+/// Parsed in ONE pass straight into the render tree (M3-P P2): a `#[serde(untagged)]`
+/// enum buffers the whole response into serde's `Content` tree first — that was the
+/// intermediate tree. Variant precedence: `Planned` needs `planned: true`; else `Ok`
+/// needs `ok` AND `data`; else `Verdict` needs a valid `verdict` tag (+ its required fields); else
+/// `Error` needs `error`; anything else is an error. Fields are typed as the variant
+/// declares (a wrong-typed field is a parse error, where untagged would have tried the
+/// next variant — the worker never emits such shapes; `packages/brust/src/worker.ts`).
+#[derive(Debug, Clone, PartialEq)]
 pub enum LoaderResponse {
     Ok {
         ok: bool,
-        data: Value,
+        data: Node,
         /// Response headers the loader set (e.g. `set-cookie`), copied onto the
         /// HTTP response; a `set-cookie` key makes the page uncacheable.
-        #[serde(default)]
         headers: BTreeMap<String, String>,
+    },
+    /// The worker took the plan offer: the loader data went to `plan_in_call` (it is
+    /// in the slot's plan cell), `results` answer the misses `planJobs` returned
+    /// (empty when every job hit).
+    Planned {
+        results: Vec<JobResult>,
     },
     Verdict(Verdict),
     Error {
         error: String,
     },
+}
+
+impl<'de> Deserialize<'de> for LoaderResponse {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        d.deserialize_map(LoaderVisitor)
+    }
+}
+
+struct LoaderVisitor;
+
+impl<'de> serde::de::Visitor<'de> for LoaderVisitor {
+    type Value = LoaderResponse;
+
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("a loader response object")
+    }
+
+    fn visit_map<A: serde::de::MapAccess<'de>>(self, mut m: A) -> Result<LoaderResponse, A::Error> {
+        use serde::de::Error as _;
+        let (mut ok, mut data, mut headers) =
+            (None::<bool>, None::<Node>, None::<BTreeMap<String, String>>);
+        let (mut verdict, mut location, mut status) = (None::<String>, None::<String>, None::<u16>);
+        let (mut body, mut error) = (None::<String>, None::<String>);
+        let (mut planned, mut results) = (None::<bool>, None::<Vec<JobResult>>);
+        while let Some(k) = m.next_key::<std::borrow::Cow<'de, str>>()? {
+            match &*k {
+                "ok" => ok = Some(m.next_value()?),
+                "data" => data = Some(m.next_value()?),
+                "headers" => headers = Some(m.next_value()?),
+                "verdict" => verdict = Some(m.next_value()?),
+                "location" => location = Some(m.next_value()?),
+                "status" => status = Some(m.next_value()?),
+                "body" => body = Some(m.next_value()?),
+                "error" => error = Some(m.next_value()?),
+                "planned" => planned = Some(m.next_value()?),
+                "results" => results = Some(m.next_value()?),
+                _ => {
+                    m.next_value::<serde::de::IgnoredAny>()?;
+                }
+            }
+        }
+        if planned == Some(true) {
+            return Ok(LoaderResponse::Planned {
+                results: results.unwrap_or_default(),
+            });
+        }
+        if let Some(ok) = ok
+            && let Some(data) = data.take()
+        {
+            return Ok(LoaderResponse::Ok {
+                ok,
+                data,
+                headers: headers.unwrap_or_default(),
+            });
+        }
+        match verdict.as_deref() {
+            Some("notFound") => {
+                return Ok(LoaderResponse::Verdict(Verdict::NotFound {
+                    data: data.unwrap_or_default(),
+                }));
+            }
+            Some("redirect") => {
+                let location = location.ok_or_else(|| A::Error::missing_field("location"))?;
+                return Ok(LoaderResponse::Verdict(Verdict::Redirect {
+                    location,
+                    status: status.unwrap_or(302),
+                }));
+            }
+            Some("httpError") => {
+                let status = status.ok_or_else(|| A::Error::missing_field("status"))?;
+                return Ok(LoaderResponse::Verdict(Verdict::HttpError {
+                    status,
+                    body: body.unwrap_or_default(),
+                }));
+            }
+            Some(other) => {
+                return Err(A::Error::unknown_variant(
+                    other,
+                    &["notFound", "redirect", "httpError"],
+                ));
+            }
+            None => {}
+        }
+        match error {
+            Some(error) => Ok(LoaderResponse::Error { error }),
+            None => Err(A::Error::custom(
+                "loader response is none of ok/data, verdict, error",
+            )),
+        }
+    }
 }
 
 fn d302() -> u16 {
@@ -49,7 +155,7 @@ fn d302() -> u16 {
 pub enum Verdict {
     NotFound {
         #[serde(default)]
-        data: Value,
+        data: Node,
     },
     Redirect {
         location: String,
@@ -63,27 +169,29 @@ pub enum Verdict {
     },
 }
 
-/// `jobs` call request: `{ jobs: [{ id, componentId, kind, inputs }] }`.
+/// `jobs` call request: `{ jobs: [{ id, componentId, kind, inputs }] }`. Borrows
+/// the plans it is built from (M3-P P1): `inputs` is serialised in place, never
+/// cloned per miss.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct JobsRequest {
-    pub jobs: Vec<JobCall>,
+pub struct JobsRequest<'a> {
+    pub jobs: Vec<JobCall<'a>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct JobCall {
+pub struct JobCall<'a> {
     /// Chain job `"<componentId>/<jobId>"`; child instance job
     /// `"<parentId>/<childId>_<k>/<jobId>[/<row>]"`. Unique per request; the
     /// worker treats it as opaque and echoes it in its result.
     pub id: String,
-    pub component_id: String,
+    pub component_id: &'a str,
     pub kind: JobKind,
-    pub inputs: Value,
+    pub inputs: &'a Node,
     /// `ssr`: the react component to render (`jobs[target].ssr(inputs)`),
     /// copied from the manifest job record; absent when the record has none.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub target: Option<String>,
+    pub target: Option<&'a str>,
     /// `per_instance` jobs: the 0-based row of the list this call renders.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub row: Option<usize>,
@@ -95,11 +203,11 @@ pub struct JobsResponse {
     pub results: Vec<JobResult>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct JobResult {
     pub id: String,
     #[serde(default)]
-    pub value: Option<Value>,
+    pub value: Option<Node>,
     #[serde(default)]
     pub error: Option<String>,
 }
@@ -107,7 +215,7 @@ pub struct JobResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     fn loader(v: Value) -> LoaderResponse {
         serde_json::from_value(v).expect("LoaderResponse")
@@ -119,7 +227,7 @@ mod tests {
             loader(json!({"ok": true, "data": {"x": 1}})),
             LoaderResponse::Ok {
                 ok: true,
-                data: json!({"x": 1}),
+                data: Node::from(json!({"x": 1})),
                 headers: BTreeMap::new()
             }
         );
@@ -139,12 +247,12 @@ mod tests {
         assert_eq!(
             loader(json!({"verdict": "notFound", "data": {"a": 1}})),
             LoaderResponse::Verdict(Verdict::NotFound {
-                data: json!({"a": 1})
+                data: Node::from(json!({"a": 1}))
             })
         );
         assert_eq!(
             loader(json!({"verdict": "notFound"})),
-            LoaderResponse::Verdict(Verdict::NotFound { data: Value::Null })
+            LoaderResponse::Verdict(Verdict::NotFound { data: Node::Null })
         );
     }
 
@@ -211,12 +319,13 @@ mod tests {
 
     #[test]
     fn jobs_request_is_camel_case() {
+        let inputs = Node::from(json!({"move": {"name": "growl"}}));
         let r = JobsRequest {
             jobs: vec![JobCall {
                 id: "moveCard_d4/j0/1".into(),
-                component_id: "moveCard_d4".into(),
+                component_id: "moveCard_d4",
                 kind: JobKind::Precompute,
-                inputs: json!({"move": {"name": "growl"}}),
+                inputs: &inputs,
                 target: None,
                 row: None,
             }],
@@ -225,13 +334,14 @@ mod tests {
             serde_json::to_value(&r).unwrap(),
             json!({"jobs": [{"id": "moveCard_d4/j0/1", "componentId": "moveCard_d4", "kind": "precompute", "inputs": {"move": {"name": "growl"}}}]})
         );
+        let inputs = Node::from(json!({"productId": "p2"}));
         let r = JobsRequest {
             jobs: vec![JobCall {
                 id: "rowReact_6/j0/1".into(),
-                component_id: "rowReact_6".into(),
+                component_id: "rowReact_6",
                 kind: JobKind::Ssr,
-                inputs: json!({"productId": "p2"}),
-                target: Some("reviews_7".into()),
+                inputs: &inputs,
+                target: Some("reviews_7"),
                 row: Some(1),
             }],
         };
@@ -248,9 +358,60 @@ mod tests {
             {"id": "b/j0", "error": "bad"}
         ]}))
         .unwrap();
-        assert_eq!(r.results[0].value, Some(json!({"_s1": "x"})));
+        assert_eq!(r.results[0].value, Some(Node::from(json!({"_s1": "x"}))));
         assert_eq!(r.results[0].error, None);
         assert_eq!(r.results[1].value, None);
         assert_eq!(r.results[1].error.as_deref(), Some("bad"));
+    }
+
+    #[test]
+    fn plan_offer_is_omitted_when_false() {
+        let env = || RequestEnvelope {
+            method: "GET",
+            url: "/",
+            headers: vec![],
+            cookies: vec![],
+            search: vec![],
+        };
+        let mut r = LoaderRequest {
+            route_id: "r2",
+            params: BTreeMap::new(),
+            path: "/",
+            req: env(),
+            plan: false,
+        };
+        assert!(!serde_json::to_string(&r).unwrap().contains("plan"));
+        r.plan = true;
+        assert!(
+            serde_json::to_string(&r)
+                .unwrap()
+                .contains(r#""plan":true"#)
+        );
+    }
+
+    #[test]
+    fn planned_response_parses_with_and_without_results() {
+        assert_eq!(
+            loader(json!({"planned": true})),
+            LoaderResponse::Planned { results: vec![] }
+        );
+        let LoaderResponse::Planned { results } =
+            loader(json!({"planned": true, "results": [{"id": "c/j0", "value": {"_s1": 1}}]}))
+        else {
+            panic!()
+        };
+        assert_eq!((results.len(), results[0].id.as_str()), (1, "c/j0"));
+    }
+
+    #[test]
+    fn planned_wins_over_every_other_shape_and_false_is_ignored() {
+        assert!(matches!(
+            loader(json!({"planned": true, "ok": true, "data": {}})),
+            LoaderResponse::Planned { .. }
+        ));
+        assert!(matches!(
+            loader(json!({"planned": false, "ok": true, "data": {}})),
+            LoaderResponse::Ok { .. }
+        ));
     }
 }

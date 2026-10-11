@@ -53,8 +53,8 @@ deleted (its two-sided pokedex compare becomes the `brust-01x` app + probe set).
 
 | probe | path | what it exercises | brust v2 behaviour | Next.js behaviour |
 |---|---|---|---|---|
-| S | `/types` | cacheable page: 18 type tiles, no per-request data | L1 HIT after first request (`cache: { l1: '1h' }`) | static (prerendered at build) |
-| D | `/dex?nocache=1` | dynamic SSR: loader reads `data.json`, renders 151 rows, one `TypeBadge` component per row | loader every request, `?nocache` bypasses L1, jobs from job cache | `export const dynamic = 'force-dynamic'`, server component maps rows |
+| S | `/types` | cacheable page: 18 type tiles, no per-request data | L1 HIT after first request (`cache: { ttl_seconds: 3600 }`) | static (prerendered at build) |
+| D | `/dex?nocache=1` | dynamic SSR: loader reads `data.json`, renders 151 rows, one `TypeBadge` component per row | loader every request, `cache: { ttl_seconds: 60, bypass: 'query(nocache)' }` so `?nocache` bypasses L1, jobs from job cache | `export const dynamic = 'force-dynamic'`, server component maps rows |
 | I | `/team?nocache=1` | page with ONE interactive island (`Counter`, `useReducer`), SSR + hydration script tags | react-tier child: `ssr` job + idle hydration | `'use client'` component inside a dynamic page |
 
 Shared data: `_shared/data.json`. Shared markup contract: `_shared/pages.md`. Components are written
@@ -71,6 +71,11 @@ once per app (each framework has its own file conventions) but must produce the 
 - Workers: brust `--workers = cores`; Next.js single Node process by default (its production
   default) with an optional `NEXT_CLUSTER=n` row that runs `n` instances behind a port-sharing
   proxy is NOT in scope — report Next.js as shipped. State this in README.
+- **Equal CPU budget for the ceiling (amendment 2026-10-10, Mellow's challenge d89baa2f):** bun-serve runs
+  N = brust workers processes on one port (`Bun.serve({ reusePort: true })`). The runner verifies the
+  kernel actually balances: each bun-serve process serves `GET /_count`; after warm-up every process must
+  have ≥ 5% of requests, otherwise the run prints `bun-serve: 1-proc (reusePort did not balance)` and the
+  ceiling line is labelled `1-proc`. The RESULTS header prints the process budget per app.
 - `oha -c 120 -z 10s --no-tui --output-format json`, identity encoding is the bar; gzip a second
   column. 1 s settle + discarded 3 s warm-up per (app, probe). Server restarted per (app, probe).
 - App order and probe order are shuffled per run (seeded; seed printed in RESULTS).
@@ -79,8 +84,9 @@ once per app (each framework has its own file conventions) but must produce the 
 ### 1.4 Parity check
 
 For each (app, probe): fetch once, strip `<script>`/`<link>`/`<style>` elements, framework
-attributes (`data-*`, `x-*`, `id` that match a hash pattern), collapse whitespace, then compare the
-text content and the element-tag sequence of `<main>` across apps. Mismatch = the run aborts with a
+ALL attributes and HTML comments (framework wrappers differ by design), collapse whitespace, then compare
+the text content and the element-tag sequence of `<main>` across apps (amended 2026-10-10 at planning: attribute-level
+parity is not a goal; tags + text are). Mismatch = the run aborts with a
 diff. This is what makes "same page" a checked claim instead of a sentence.
 
 ### 1.5 Report
@@ -92,7 +98,7 @@ computed from the numbers:
 ```
 bar F68  : v2 vs 0.1.x  D +x.x%  I +y.y%   → MET / NOT MET
 sanity   : v2 vs next   S ×a  D ×b  I ×c   → MET / NOT MET (≥ 2×)
-ceiling  : v2 / bun-serve  D p%  I q%        (target D ≥ 80%)
+ceiling  : v2 / bun-serve[N-proc]  D p%  I q%   (target D ≥ 80%, equal process budget)
 ```
 
 No hand-written prose in the generated file. `bench/README.md` carries the method text.
@@ -116,6 +122,7 @@ probe D and I before/after + `attribution.ts` stage diff in the task note, `RESU
 | P3 | string-keyed map object (`Object` impl keyed by `Arc<str>`) instead of `BTreeMap<Value,Value>`; overlays as views (no per-component map clone); render chain writes into ONE `String`/`BytesMut` through `inject_assets` (no intermediate String per template) | brust-jinja, brust-server/src/render.rs:100-133, pipeline.rs:633-648 | render −5–11% + fewer allocs per level |
 | P4 | sharded read front over L1 (same as job cache); build the request envelope (headers/cookies/query) lazily — only after `l1_decision` says MISS | brust-server/src/cache/l1.rs:241, routing/routes.rs:239,300-346, pipeline.rs:275-296 | L1 get 2.7 µs → ~150 ns under contention; HIT path = match + get |
 | P6 | single round trip per request (§3) | protocol.rs, pipeline.rs, worker.ts, native.ts, brust-napi | −45–50 µs on D/I; `bun_calls` 2 → 1 |
+| P8 | **payload** (F70, F71; amendment 2026-10-10 from Mellow's m3b review): static child instances emitted as plain HTML; list-host `x-props` projected to the read set or omitted when nothing on the client consumes it. Bench D is 144 KB vs 22 KB for the same markup — on D this outweighs every server-side lever. Runs in parallel with the server lanes (compiler/manifest boundary). | crates/brust-compiler/src/lower/template.rs:598,988,1180, lower/mod.rs:134, packages/brust/src/build/manifest.ts:263 | D bytes/resp → within 10% of 0.1.x; rps on D scales with bytes |
 | P7 | tail, chosen from the post-P6 attribution: `simd-json` for the SAB parse, body as `Bytes` without copy, accept/keep-alive tuning — planned when P6's numbers exist | named in the m3p-e plan once P6 numbers exist | — |
 
 Already landed in m2p (do not redo): cached rendered body on L1 HIT, lazy gzip, gzip level 1 ≥ 16 KiB,
@@ -146,6 +153,17 @@ computes keys (`plan_key`, pipeline.rs:1139), looks up the job cache, and sends 
 to Rust"; S7 "request flow: one worker call carrying loader + plan; `jobLookup` export"; §7 the
 `bun_calls` field meaning. Done as amendment blocks like M2's, committed to v2 (docs rule).
 
+**Amendment (2026-10-10, lead, from the m3p-d plan evidence):** the design above is superseded by
+"planned loader call" (Variant R): keys stay in Rust (`inputs::job_key`, blake3), the worker calls a sync
+`planJobs(slot, len)` that plans and pins hits on the worker thread, runs only the misses, and answers in
+the same call; a declined/ignored offer falls back to two calls. Reasons: no lookup→read gap (hits are
+pinned), one key implementation (Bun has no blake3; a 64-bit hash would allow cache poisoning), no extra
+JS CPU on worker threads, routes without a loader stay at 0 calls. Evidence E1 also showed D and I are
+ALREADY one call in steady state (their jobs hit), so P6 is measured on attribution probe `M`
+(`/team?nocache=1&start=<random>`, every job misses) and must be neutral on D/I. Kept because real pages
+with per-request job inputs miss on every request ("ขอดีที่สุด"); it counts as ~0 on D/I for the §5
+stop rule. Server-spec blocks: `docs/design/2026-10-09-m2-server-design.md` S1/S6/S7/§7 amendments.
+
 **Risks.** Key format change (no persisted cache, so no migration); concurrent `jobLookup` from worker
 threads while tokio inserts (moka is concurrent; a stress test with 8 workers × 1000 pages proves it);
 key parity (single implementation, plus a pinned fixture of 20 keys committed and asserted).
@@ -159,6 +177,7 @@ key parity (single implementation, plus a pinned fixture of 20 keys committed an
 | 2 | `m3p-b-value-path` | P1 + P2 + P3 | Dew | complex / complex (Mellow) |
 | 3 | `m3p-c-l1-shard` | P4 | knock2 | standard / standard (Afrojack) |
 | 3 | `m3p-d-single-roundtrip` | P6 (after the lead's S6/S7 amendment) | Dew | complex / complex (Mellow) |
+| 2 | `m3p-f-payload` | P8 (F70 + F71), parallel with `m3p-b` (disjoint boundary) | knock2 | standard / complex (Mellow) |
 | 4 | `m3p-e-tail` | P7, planned from attribution after P6 | by result | by result |
 
 Wave 1 runs in parallel (disjoint files). Perf lanes after that are serial (pipeline.rs / render.rs /
@@ -183,3 +202,12 @@ runs gates; the lead merges and reruns the bench on this host before `task state
 - P6 is unconditional and last among the planned levers; key computation moves to the worker.
 - Rejected: port pokedex to Next.js (days of work, bench coupled to an example); run Next.js on Bun
   (fairness disputes); bench in CI (noise).
+
+## 7. Integration branch (human decision 2026-10-10)
+
+"สร้าง branch ใหม่ ทำกันในนั้นไม่ต้อง PR ได้ code ที่ดีที่สุด ค่อยเปิด PR เข้า v2": all M3-P lanes
+branch from and merge into `m3p` (worktree `~/code/brust-m3p`), merged by the lead after gates +
+review, with NO per-lane PR. CI does not run on `m3p` pushes (ci.yml is PR-only); the gate runner's
+local run is the gate, and the lead may trigger `workflow_dispatch` on `m3p` at wave boundaries.
+When §5 acceptance is MET, ONE PR `m3p → v2` carries the whole result. Docs on `m3p` are committed
+directly, as on v2.

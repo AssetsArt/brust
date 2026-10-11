@@ -1,0 +1,478 @@
+{
+  "id": "input_cabc2a77",
+  "source": "tests/fixtures/reactive-list-child/input.tsx",
+  "tier": "Native",
+  "props": [
+    {
+      "name": "props",
+      "local": "props",
+      "ts_type": null,
+      "default": null
+    }
+  ],
+  "state": [
+    {
+      "name": "n",
+      "setter": "setN",
+      "init": {
+        "Server": {
+          "loc": 545,
+          "kind": {
+            "Lit": {
+              "Num": 1.0
+            }
+          }
+        }
+      }
+    }
+  ],
+  "derived": [
+    {
+      "name": "shown",
+      "expr": {
+        "Precomputed": {
+          "slot": "_s1",
+          "js": "take(rows, n)",
+          "client_js": "take(props().rows, n())",
+          "inputs": [
+            "rows"
+          ],
+          "state_dependent": true,
+          "per_item": null
+        }
+      }
+    }
+  ],
+  "effects": [],
+  "handlers": [
+    {
+      "name": "_h1",
+      "body": {
+        "loc": 632,
+        "kind": {
+          "Arrow": {
+            "params": [],
+            "body": {
+              "Expr": {
+                "loc": 638,
+                "kind": {
+                  "Call": {
+                    "callee": {
+                      "loc": 638,
+                      "kind": {
+                        "Ident": {
+                          "name": "setN",
+                          "kind": "Setter"
+                        }
+                      }
+                    },
+                    "args": [
+                      {
+                        "loc": 643,
+                        "kind": {
+                          "Binary": {
+                            "op": "Add",
+                            "left": {
+                              "loc": 643,
+                              "kind": {
+                                "Ident": {
+                                  "name": "n",
+                                  "kind": "State"
+                                }
+                              }
+                            },
+                            "right": {
+                              "loc": 647,
+                              "kind": {
+                                "Lit": {
+                                  "Num": 1.0
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "captures": [
+              [
+                "setN",
+                "Setter"
+              ],
+              [
+                "n",
+                "State"
+              ]
+            ]
+          }
+        }
+      },
+      "item_scoped": []
+    }
+  ],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 599,
+      "tag": "section",
+      "attrs": [],
+      "children": [
+        {
+          "Element": {
+            "loc": 615,
+            "tag": "button",
+            "attrs": [
+              {
+                "Event": {
+                  "event": "click",
+                  "handler": "_h1"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Text": "more"
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 671,
+            "tag": "ul",
+            "attrs": [],
+            "children": [
+              {
+                "For": {
+                  "source": {
+                    "Server": {
+                      "loc": 676,
+                      "kind": {
+                        "Ident": {
+                          "name": "shown",
+                          "kind": "Local"
+                        }
+                      }
+                    }
+                  },
+                  "item": "p",
+                  "index": null,
+                  "key": {
+                    "Server": {
+                      "loc": 702,
+                      "kind": {
+                        "Member": {
+                          "target": {
+                            "loc": 702,
+                            "kind": {
+                              "Ident": {
+                                "name": "p",
+                                "kind": "LoopBinding"
+                              }
+                            }
+                          },
+                          "name": "id",
+                          "optional": false
+                        }
+                      }
+                    }
+                  },
+                  "body": [
+                    {
+                      "Element": {
+                        "loc": 693,
+                        "tag": "li",
+                        "attrs": [],
+                        "children": [
+                          {
+                            "Slot": {
+                              "Server": {
+                                "loc": 709,
+                                "kind": {
+                                  "Member": {
+                                    "target": {
+                                      "loc": 709,
+                                      "kind": {
+                                        "Ident": {
+                                          "name": "p",
+                                          "kind": "LoopBinding"
+                                        }
+                                      }
+                                    },
+                                    "name": "num",
+                                    "optional": false
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          {
+                            "For": {
+                              "source": {
+                                "Server": {
+                                  "loc": 716,
+                                  "kind": {
+                                    "Member": {
+                                      "target": {
+                                        "loc": 716,
+                                        "kind": {
+                                          "Ident": {
+                                            "name": "p",
+                                            "kind": "LoopBinding"
+                                          }
+                                        }
+                                      },
+                                      "name": "badges",
+                                      "optional": false
+                                    }
+                                  }
+                                }
+                              },
+                              "item": "b",
+                              "index": null,
+                              "key": {
+                                "Server": {
+                                  "loc": 748,
+                                  "kind": {
+                                    "Member": {
+                                      "target": {
+                                        "loc": 748,
+                                        "kind": {
+                                          "Ident": {
+                                            "name": "b",
+                                            "kind": "LoopBinding"
+                                          }
+                                        }
+                                      },
+                                      "name": "type",
+                                      "optional": false
+                                    }
+                                  }
+                                }
+                              },
+                              "body": [
+                                {
+                                  "Component": {
+                                    "loc": 736,
+                                    "name": "Badge",
+                                    "source": "./Badge",
+                                    "imported": "default",
+                                    "props": [
+                                      [
+                                        "type",
+                                        {
+                                          "Server": {
+                                            "loc": 762,
+                                            "kind": {
+                                              "Member": {
+                                                "target": {
+                                                  "loc": 762,
+                                                  "kind": {
+                                                    "Ident": {
+                                                      "name": "b",
+                                                      "kind": "LoopBinding"
+                                                    }
+                                                  }
+                                                },
+                                                "name": "type",
+                                                "optional": false
+                                              }
+                                            }
+                                          }
+                                        }
+                                      ],
+                                      [
+                                        "label",
+                                        {
+                                          "Server": {
+                                            "loc": 777,
+                                            "kind": {
+                                              "Member": {
+                                                "target": {
+                                                  "loc": 777,
+                                                  "kind": {
+                                                    "Ident": {
+                                                      "name": "b",
+                                                      "kind": "LoopBinding"
+                                                    }
+                                                  }
+                                                },
+                                                "name": "label",
+                                                "optional": false
+                                              }
+                                            }
+                                          }
+                                        }
+                                      ],
+                                      [
+                                        "color",
+                                        {
+                                          "Server": {
+                                            "loc": 793,
+                                            "kind": {
+                                              "Member": {
+                                                "target": {
+                                                  "loc": 793,
+                                                  "kind": {
+                                                    "Ident": {
+                                                      "name": "b",
+                                                      "kind": "LoopBinding"
+                                                    }
+                                                  }
+                                                },
+                                                "name": "color",
+                                                "optional": false
+                                              }
+                                            }
+                                          }
+                                        }
+                                      ]
+                                    ],
+                                    "children": [],
+                                    "link": 1,
+                                    "tier": "Static"
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        ],
+                        "host": false,
+                        "ref_name": null
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [
+    {
+      "kind": "Precompute",
+      "inputs": [
+        "rows"
+      ],
+      "outputs": [
+        "_s1"
+      ],
+      "per_item": null
+    }
+  ],
+  "child_links": [
+    {
+      "id": 1,
+      "child": "badge_586b3854",
+      "props_member": "_p1",
+      "item_scoped": [
+        "p",
+        "b"
+      ],
+      "props": [
+        [
+          "type",
+          {
+            "Server": {
+              "loc": 762,
+              "kind": {
+                "Member": {
+                  "target": {
+                    "loc": 762,
+                    "kind": {
+                      "Ident": {
+                        "name": "b",
+                        "kind": "LoopBinding"
+                      }
+                    }
+                  },
+                  "name": "type",
+                  "optional": false
+                }
+              }
+            }
+          }
+        ],
+        [
+          "label",
+          {
+            "Server": {
+              "loc": 777,
+              "kind": {
+                "Member": {
+                  "target": {
+                    "loc": 777,
+                    "kind": {
+                      "Ident": {
+                        "name": "b",
+                        "kind": "LoopBinding"
+                      }
+                    }
+                  },
+                  "name": "label",
+                  "optional": false
+                }
+              }
+            }
+          }
+        ],
+        [
+          "color",
+          {
+            "Server": {
+              "loc": 793,
+              "kind": {
+                "Member": {
+                  "target": {
+                    "loc": 793,
+                    "kind": {
+                      "Ident": {
+                        "name": "b",
+                        "kind": "LoopBinding"
+                      }
+                    }
+                  },
+                  "name": "color",
+                  "optional": false
+                }
+              }
+            }
+          }
+        ]
+      ]
+    }
+  ],
+  "client_props": [
+    "rows"
+  ],
+  "client_imports": [
+    [
+      "./take",
+      "take"
+    ]
+  ],
+  "client_module_locals": [],
+  "needs_worker": true,
+  "cache": null,
+  "children": [
+    {
+      "name": "Badge",
+      "id": "badge_586b3854",
+      "path": "tests/fixtures/reactive-list-child/Badge.tsx",
+      "tier": "Static"
+    }
+  ],
+  "diagnostics": []
+}

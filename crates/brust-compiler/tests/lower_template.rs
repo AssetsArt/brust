@@ -510,3 +510,119 @@ fn react_child_in_nested_lists_is_a_nested_instance_error() {
     let jinja = lowered_jinja("react-child-row");
     assert!(jinja.contains("_ssr_reviews_"), "{jinja}");
 }
+
+/// F71: the list host seeds only the row fields the client reads; the key field is always one of them.
+#[test]
+fn projected_x_props_drops_unread_row_fields_and_keeps_the_key() {
+    let jinja = lowered_jinja("reactive-list-rows");
+    assert!(jinja.contains("project(\"id\", \"name\")"), "{jinja}");
+    let html = render(
+        &jinja,
+        serde_json::json!({ "rows": [{ "id": "a", "name": "Ada", "secret": "s3cr3t" }] }),
+    );
+    let props = html
+        .split("x-props='")
+        .nth(1)
+        .unwrap()
+        .split('\'')
+        .next()
+        .unwrap()
+        .replace("&quot;", "\"");
+    assert_eq!(props, r#"{"rows":[{"id":"a","name":"Ada"}]}"#, "{html}");
+    assert!(!html.contains("s3cr3t"), "{html}");
+}
+
+/// F71 fallback: a row read through a helper keeps the full list in x-props.
+#[test]
+fn helper_read_keeps_the_full_row() {
+    let jinja = lowered_jinja("reactive-list-child");
+    assert!(
+        jinja.contains("x-props='{{ {\"rows\": rows} | json_attr }}'"),
+        "{jinja}"
+    );
+    assert!(!jinja.contains("project("), "{jinja}");
+}
+
+/// F70 + F71 together: the bench D page is plain HTML with no seed at all.
+#[test]
+fn static_list_page_has_no_directives_and_no_seed() {
+    let jinja = lowered_jinja("static-list-child");
+    assert!(!jinja.contains("x-"), "{jinja}");
+    let sample = repo().join("tests/fixtures/static-list-child/sample-props.json");
+    let html = render(
+        &jinja,
+        serde_json::from_str(&std::fs::read_to_string(sample).unwrap()).unwrap(),
+    );
+    assert!(
+        html.contains("<span data-type=\"grass\" style=\"background:#63bb5b\">Grass</span>"),
+        "{html}"
+    );
+    assert!(!html.contains("bulbasaur"), "unread field leaked: {html}");
+}
+
+/// M3-P P7: the loop-index `set` is emitted only when the row reads it.
+#[test]
+fn loop_index_set_only_when_row_reads_it() {
+    let page = |body: &str| {
+        format!(
+            "export default function T({{ rows }}: {{ rows: {{ id: number; name: string }}[] }}) {{ return <table><tbody>{body}</tbody></table> }}"
+        )
+    };
+    let (j, _) = lower(&page(
+        "{rows.map((p) => <tr key={p.id}><td>{p.name}</td></tr>)}",
+    ));
+    assert!(!j.contains("loop.index0"), "{j}");
+    let (j, _) = lower(&page(
+        "{rows.map((p, i) => <tr key={p.id}><td>{i}</td></tr>)}",
+    ));
+    assert!(j.contains("{% set i = loop.index0 %}"), "{j}");
+    assert!(!j.contains("{% set _i1 = loop.index0 %}"), "{j}");
+}
+
+/// Lowers `<p style={{ ... }}/>` with the given object literal body.
+fn style_attr_of(obj: &str) -> String {
+    let (j, _) = lower(&format!(
+        "export default function T({{ x, y }}: any) {{ return <p style={{{{ {obj} }}}}>t</p> }}"
+    ));
+    j
+}
+
+/// M3-P P7: a literal style object is lowered to `css_decls` (pairs sorted by
+/// key bytes, last duplicate wins, CSS-unsafe keys dropped) — no per-element dict.
+#[test]
+fn literal_style_object_lowers_to_css_decls() {
+    // 0 keys: unchanged (a dict through style_css).
+    let j = style_attr_of("");
+    assert!(j.contains("style=\"{{ {} | style_css | e }}\""), "{j}");
+    // 1 key
+    let j = style_attr_of("color: x");
+    assert!(
+        j.contains("style=\"{{ css_decls(\"color\", x) | e }}\""),
+        "{j}"
+    );
+    assert!(!j.contains("style_css"), "{j}");
+    // 3 keys, unsorted source order -> sorted by key bytes
+    let j = style_attr_of("zIndex: x, color: y, backgroundColor: x");
+    assert!(
+        j.contains("css_decls(\"backgroundColor\", x, \"color\", y, \"zIndex\", x)"),
+        "{j}"
+    );
+    // duplicate key keeps the LAST value
+    let j = style_attr_of("color: x, color: y");
+    assert!(j.contains("css_decls(\"color\", y)"), "{j}");
+    assert!(!j.contains("\"color\", x"), "{j}");
+    // a dashed key (custom property) is kept
+    let j = style_attr_of("'--gap': x");
+    assert!(j.contains("css_decls(\"--gap\", x)"), "{j}");
+    // a rejected key is dropped exactly as style_obj_to_css drops it at render
+    let j = style_attr_of("'a b': x, color: y");
+    assert!(j.contains("css_decls(\"color\", y)"), "{j}");
+    assert!(!j.contains("a b"), "{j}");
+    // rendered equality, sorted + duplicate + rejected + unitless
+    let j = style_attr_of("zIndex: x, opacity: y, 'bad;key': x, zIndex: y, fontSize: x");
+    let html = render(&j, serde_json::json!({ "x": 12, "y": 2 }));
+    assert!(
+        html.contains("style=\"font-size:12px;opacity:2;z-index:2\""),
+        "{html}"
+    );
+}

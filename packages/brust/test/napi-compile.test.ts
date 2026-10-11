@@ -11,5 +11,7 @@ test('compileTree lowers a fixture and returns IR JSON + artifacts', () => {
   const ir = JSON.parse(t.components[0]!.ir)
   expect(ir.instances[0]).toEqual({ child_id: 'priceRow_845bcd56', k: 1, loops: ['items'], props: { item: 'items[idx]', unit: 'unit' } })
   expect(t.components[1]!.serverTs).toContain('export function precompute')
-  expect(t.components[0]!.clientJs).toContain('from "brust/runtime-dom"')
+  expect(t.components[0]!.clientJs).toBeFalsy() // F70: a static page has no client chunk
+  const native = compileTree('tests/fixtures/theme-toggle/input.tsx', repo, 'brust/runtime-dom', [])
+  expect(native.components[0]!.clientJs).toContain('from "brust/runtime-dom"')
 })

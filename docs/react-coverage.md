@@ -11,8 +11,8 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | B Composition | 11 | 4 | 3 | 4 | 0 | 0 | 0 | 0 |
 | C Hooks | 15 | 1 | 8 | 6 | 0 | 0 | 0 | 0 |
 | D API surface | 5 | 1 | 0 | 4 | 0 | 0 | 0 | 0 |
-| E v2 specifics | 14 | 3 | 4 | 2 | 4 | 1 | 0 | 0 |
-| **Total** | 63 | 23 | 18 | 17 | 4 | 1 | 0 | 0 |
+| E v2 specifics | 16 | 4 | 5 | 2 | 4 | 1 | 0 | 0 |
+| **Total** | 65 | 24 | 19 | 17 | 4 | 1 | 0 | 0 |
 
 ## A. JSX basics
 
@@ -100,4 +100,6 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | e-fragment-root | fragment root with state | native | native | 0 | ok | warning:fragment-root | warning fragment-root |
 | e-if-in-table | state-driven row inside a table | native | native | 0 | ok | — | spec §7.1 x-if |
 | e-raw-text-child | dynamic child of <script> | react | react | ssr | ok | fallback:raw-text-child | raw-text-child: the template would HTML-escape a dynamic value inside raw text (F35) |
+| e-static-list-child | static child with row-only props in a prop list (F70) | static | static | 0 | ok | — | ledger F70: no link, no chunk, no x-* — the row cannot change on the client |
+| e-reactive-list-child | static child in a state-dependent list keeps its link (F70) | native | native | precompute | ok | — | ledger F70/F71: the client re-creates the rows; the helper reads rows whole, so x-props keeps the full list |
 | e-parse-error | snippet that does not parse | compile-error | compile-error | 0 | — | — | compile error: Syntax Error (input.tsx:1:43); reported as a row, never aborts the battery |

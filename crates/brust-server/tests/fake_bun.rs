@@ -6,6 +6,7 @@ mod common;
 use std::sync::Arc;
 use std::time::Duration;
 
+use brust_jinja::ctx::Node;
 use brust_server::dispatch::{CallError, CallKind, call_worker};
 use brust_server::pool::WorkerPool;
 use brust_server::protocol::{JobCall, JobsRequest, JobsResponse, LoaderResponse};
@@ -36,14 +37,15 @@ async fn fake_bun_round_trips_loader_and_jobs_through_call_worker() {
     let LoaderResponse::Ok { data, .. } = r else {
         panic!("expected Ok, got {r:?}")
     };
-    assert_eq!(data, json!({"route": "r2"}));
+    assert_eq!(data, Node::from(json!({"route": "r2"})));
 
+    let inputs = Node::from(json!({}));
     let req = JobsRequest {
         jobs: vec![JobCall {
             id: "detailPage_c3/j0".into(),
-            component_id: "detailPage_c3".into(),
+            component_id: "detailPage_c3",
             kind: serde_json::from_value(json!("precompute")).unwrap(),
-            inputs: json!({}),
+            inputs: &inputs,
             target: None,
             row: None,
         }],
@@ -92,4 +94,23 @@ async fn never_complete_fake_holds_the_claim_so_the_next_call_times_out() {
     assert!(matches!(r, Err(CallError::Timeout)), "{r:?}");
     assert_eq!(fake.counts(), (1, 0));
     stuck.abort();
+}
+
+/// A bound fake takes the plan offer through the real `call_worker_planned` (a pool reachable
+/// only through a `Server`, so this stays at the `Server` level): r5's one ssr job rides the
+/// loader call.
+#[test]
+fn planned_loader_call_round_trips_through_call_worker_planned() {
+    let fake = common::fake();
+    let s = common::boot(fake.clone());
+    let (st, _, body) = common::get(&s, "/team", &[]);
+    assert_eq!(st, 200, "{body}");
+    assert_eq!(fake.last_loader().unwrap()["plan"], true);
+    assert_eq!(
+        fake.last_jobs().unwrap()["jobs"][0]["target"],
+        "teamBuilder_h8"
+    );
+    assert_eq!(fake.counts(), (1, 1));
+    assert_eq!(common::stats(&s)["worker_calls"].as_u64(), Some(1));
+    assert_eq!(s.plan_cells_in_use(), 0);
 }

@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { resolve } from 'node:path'
-import { beginDrain, cacheInvalidate, cacheStats, localAddr, registerWorker, startServer, untilReady } from '../native/index.js'
+import { beginDrain, cacheInvalidate, cacheStats, localAddr, planJobs, registerWorker, startServer, untilReady } from '../native/index.js'
 import { writeSlot } from '../src/worker'
 
 const dist = resolve(import.meta.dir, '../../../crates/brust-server/tests/fixtures/dist')
@@ -76,4 +76,32 @@ test('startServer + one worker answers pages, HIT skips Bun, invalidate forces M
   expect(() => startServer({ host: '127.0.0.1', port: 0, distDir: '/nonexistent', workers: 0 })).toThrow(/manifest: .*manifest\.json/)
   // A failed start keeps the previous server as the current one.
   expect(JSON.parse(cacheStats()).loader_calls).toBe(3) // pikachu MISS ×2 + /team
+})
+
+test('a worker that takes the plan offer answers a loader page with misses in ONE call', async () => {
+  startServer({ host: '127.0.0.1', port: 0, distDir: dist, workers: 1, claimTimeoutMs: 500 })
+  const view = new Uint8Array(new SharedArrayBuffer(256 * 1024 * SLOTS))
+  const kinds2: string[] = []
+  const planning = async (kind: string, requestJson: string, slot: number) => {
+    kinds2.push(kind)
+    const req = JSON.parse(requestJson)
+    const ctx = { ok: true, data: { pokemon: { name: req.params.name, stats: { hp: 35 }, moves: [{ name: 'tackle' }, { name: 'growl' }] }, team: ['a'], who: 'anon' } }
+    const n = writeSlot(view, slot, SLOTS, JSON.stringify(ctx))
+    expect(req.plan).toBe(true)
+    const misses = planJobs(slot, n) // the real addon, on this (main) thread: registerWorker bound it
+    if (misses === '!') return n
+    const results = misses === '' ? [] : JSON.parse(misses).jobs.map((j: JobCall) => ({ id: j.id, value: jobValue(j) }))
+    return writeSlot(view, slot, SLOTS, JSON.stringify({ planned: true, results }))
+  }
+  registerWorker(view, SLOTS, planning)
+  await untilReady(2000)
+  const base = `http://${localAddr()}`
+  const b1 = await (await fetch(`${base}/pokemon/pikachu`)).text()
+  expect(b1).toContain('<li>tackle: MOVE tackle</li><li>growl: MOVE growl</li>')
+  expect(kinds2).toEqual(['loader'])
+  expect(JSON.parse(cacheStats())).toMatchObject({ loader_calls: 1, job_calls: 1, worker_calls: 1 })
+  await (await fetch(`${base}/pokemon/bulbasaur`)).text() // L1 miss; every job hits → planJobs ""
+  expect(kinds2).toEqual(['loader', 'loader'])
+  expect(JSON.parse(cacheStats())).toMatchObject({ loader_calls: 2, job_calls: 1, worker_calls: 2 })
+  await beginDrain(1000)
 })

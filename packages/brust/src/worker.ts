@@ -3,7 +3,7 @@
 // handler NEVER rejects across the tsfn: every failure becomes `{error}` / `{id, error}`.
 import { join, resolve } from 'node:path'
 import { workerData } from 'node:worker_threads'
-import { registerWorker } from './native'
+import { planJobs, registerWorker } from './native'
 import { type FlatRoute, flattenRoutes, isHttpErrorTrigger, isVerdict, type LoaderReq, type Route, type Verdict } from './routes'
 
 // ---- wire shapes (protocol.rs, camelCase) ----
@@ -13,6 +13,8 @@ export interface LoaderRequest {
   params: Record<string, string>
   path: string
   req: LoaderReq
+  /** M3-P P6: the chain has jobs — plan them in this call (`planJobs`). Optional to honour. */
+  plan?: boolean
 }
 
 export type LoaderResponse =
@@ -62,18 +64,35 @@ export interface ManifestLike {
 const enc = new TextEncoder()
 
 /** Writes `json` as UTF-8 at the start of `slot`'s sub-region `[slot*sub, slot*sub+sub)`,
- * `sub = floor(view.byteLength / slots)`; returns the byte length (> 0, ≤ sub). A response that
- * does not fit is replaced by a small `{"error":"response too large: <n> > <sub>"}`, so the
- * neighbouring slot is never touched. */
+ * `sub = floor(view.byteLength / slots)`; returns the byte length (> 0, ≤ sub). ONE copy: the
+ * encoder writes straight into the slot (M3-P P1); it stops at the last whole code point that
+ * fits, so `read < json.length` means "did not fit" and the neighbouring slot is never touched.
+ * A response that does not fit is replaced by a small `{"error":"response too large: <n> > <sub>"}`
+ * (`n` = its exact UTF-8 length, computed only on this path). */
 export function writeSlot(view: Uint8Array, slot: number, slots: number, json: string): number {
   const sub = Math.floor(view.byteLength / Math.max(1, slots))
-  let bytes = enc.encode(json)
-  if (bytes.byteLength > sub) {
-    bytes = enc.encode(JSON.stringify({ error: `response too large: ${bytes.byteLength} > ${sub}` }))
-    if (bytes.byteLength > sub) bytes = enc.encode('{"error":"too large"}').subarray(0, sub)
+  const dst = view.subarray(slot * sub, slot * sub + sub)
+  const r = enc.encodeInto(json, dst)
+  if (r.read === json.length) return r.written
+  const err = JSON.stringify({ error: `response too large: ${Buffer.byteLength(json)} > ${sub}` })
+  const e = enc.encodeInto(err, dst)
+  if (e.read === err.length) return e.written
+  // Not even the message fits: the first `sub` bytes of a fixed one (ASCII, so byte = char).
+  return enc.encodeInto('{"error":"too large"}', dst).written
+}
+
+/** `planJobs` (napi): the misses' JobsRequest JSON, '' (every job hit) or PLAN_DECLINED. */
+export type PlanJobs = (slot: number, len: number) => string
+/** `planJobs` declined: the loader response already in the slot is the answer (Rust plans after the call). */
+export const PLAN_DECLINED = '!'
+const PLANNED = { planned: true } as const
+
+function toJson(out: unknown): string {
+  try {
+    return JSON.stringify(out)
+  } catch (e) {
+    return JSON.stringify({ error: `response not serialisable: ${String(e)}` })
   }
-  view.set(bytes, slot * sub)
-  return bytes.byteLength
 }
 
 // ---- literals (S6 amendment: the worker merges an ssr job's `literals` over `call.inputs`) ----
@@ -141,7 +160,12 @@ export function makeHandlers(opts: { leaves: FlatRoute[]; jobs: JobsModule; mani
     async loader(req) {
       const leaf = byId.get(req.routeId)
       if (!leaf) return { error: `unknown routeId ${req.routeId}` }
-      let merged: Record<string, unknown> = {}
+      // One object for the whole chain: each level's keys are assigned INTO it (later keys win,
+      // first-seen key order — what `{...merged, ...r}` produced) instead of re-spreading every
+      // key once per level (M3-P P1). `merged` is fresh per call; a loader's own object is never
+      // written to. Null prototype: with no `__proto__` setter to hit, an own "__proto__" key in a
+      // loader's data is assigned as data, as the spread copied it.
+      const merged: Record<string, unknown> = Object.create(null)
       try {
         for (const node of leaf.chain) {
           if (!node.loader) continue
@@ -153,7 +177,7 @@ export function makeHandlers(opts: { leaves: FlatRoute[]; jobs: JobsModule; mani
             throw e
           }
           if (isVerdict(r)) return verdictJson(r, merged)
-          if (r && typeof r === 'object') merged = { ...merged, ...(r as Record<string, unknown>) }
+          if (r && typeof r === 'object') Object.assign(merged, r)
         }
         return { ok: true, data: merged }
       } catch (e) {
@@ -168,25 +192,31 @@ export function makeHandlers(opts: { leaves: FlatRoute[]; jobs: JobsModule; mani
 }
 
 /** The tsfn callback for `registerWorker`. Never rejects: a parse error, an unknown kind or a
- * throwing handler is written to the slot as `{error}`. */
-export function makeDispatch(h: Handlers, view: Uint8Array, slots: number) {
+ * throwing handler is written to the slot as `{error}`. A loader request with `plan: true` whose
+ * chain answered `ok` is planned in the same call (`plan`, the napi `planJobs` by default — the
+ * addon is touched only then). */
+export function makeDispatch(h: Handlers, view: Uint8Array, slots: number, plan: PlanJobs = planJobs) {
   return async (kind: string, requestJson: string, slot: number): Promise<number> => {
     let out: unknown
     try {
       const req = JSON.parse(requestJson)
-      if (kind === 'loader') out = await h.loader(req)
-      else if (kind === 'jobs') out = await h.jobs(req)
+      if (kind === 'loader') {
+        out = await h.loader(req)
+        if (req.plan === true && (out as { ok?: unknown }).ok === true) {
+          // One round trip (M3-P P6): the ctx goes to Rust through this slot, synchronously, and only
+          // the jobs Rust found missing run here; the final answer replaces it in the same slot.
+          const json = toJson(out)
+          const n = writeSlot(view, slot, slots, json)
+          const misses = plan(slot, n)
+          if (misses === PLAN_DECLINED) return n
+          out = misses === '' ? PLANNED : { planned: true, results: (await h.jobs(JSON.parse(misses))).results }
+        }
+      } else if (kind === 'jobs') out = await h.jobs(req)
       else out = { error: `unknown call kind ${kind}` }
     } catch (e) {
       out = { error: String(e) }
     }
-    let json: string
-    try {
-      json = JSON.stringify(out)
-    } catch (e) {
-      json = JSON.stringify({ error: `response not serialisable: ${String(e)}` })
-    }
-    return writeSlot(view, slot, slots, json)
+    return writeSlot(view, slot, slots, toJson(out))
   }
 }
 

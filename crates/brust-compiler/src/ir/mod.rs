@@ -208,6 +208,11 @@ pub struct ComponentIR {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub instances: Vec<InstanceRecord>,
     pub client_props: Vec<String>,
+    /// F71: for a prop the client reads only as the source of keyed lists, the row fields it
+    /// can read (`"id"`, `"badges.color"`); the host's `x-props` seeds `root | project(…)`.
+    /// Absent (full value) whenever a read cannot be proved to be a plain field path.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub client_prop_projections: std::collections::BTreeMap<String, Vec<String>>,
     /// `(source, imported)` pairs the client chunk bundles, sorted.
     pub client_imports: Vec<(String, String)>,
     /// Module-level declarations (helpers, constants) the client chunk needs,
@@ -272,6 +277,7 @@ impl ComponentIR {
             child_links: vec![],
             instances: vec![],
             client_props: vec![],
+            client_prop_projections: Default::default(),
             client_imports: vec![],
             client_module_locals: vec![],
             needs_worker: false,

@@ -23,8 +23,18 @@ const SIDES = (process.env.ATTR_SIDES ?? 'v2,01x').split(',')
 const NAMES = snap.pokemon.map((p) => p.name)
 const CORES = cpus().length
 const MAXLOAD = Number(process.env.ATTR_MAXLOAD ?? CORES)
+// ATTR_APP=bench: the M3 bench app (bench/apps/brust, probes D = /dex?nocache=1, I = /team?nocache=1,
+// M = /team?nocache=1&start=<random>: one job miss per request) instead of the
+// pokedex (probes B, C). The 0.1.x side is pokedex-only and is skipped for the bench app.
+const APP = process.env.ATTR_APP === 'bench' ? 'bench' : 'pokedex'
+const APP_DIR = APP === 'bench' ? 'bench/apps/brust' : 'examples/pokedex'
+/** One URL per probe (D/I: the bench pages; C: the pokedex home); B is a regex over every name. */
+const urlOf = (side: string, probe: string): string =>
+  probe === 'M' ? '/team?nocache=1&start=7' : probe === 'S' ? '/types' : probe === 'D' ? '/dex?nocache=1' : probe === 'I' ? '/team?nocache=1' : probe === 'B' ? `/pokemon/pikachu${side === 'v2' ? '?nocache=1' : ''}` : '/'
 const target = (side: string, base: string, probe: string) =>
-  probe === 'B' ? ['--rand-regex-url', `${base}/pokemon/(${NAMES.join('|')})${side === 'v2' ? '\\?nocache=1' : ''}`] : [`${base}/`]
+  probe === 'B' ? ['--rand-regex-url', `${base}/pokemon/(${NAMES.join('|')})${side === 'v2' ? '\\?nocache=1' : ''}`]
+  : probe === 'M' ? ['--rand-regex-url', `${base}/team\\?nocache=1&start=[1-9][0-9]{6}`]   // 9·10^6 values ≫ job cache 1000: a miss per request
+  : [`${base}${urlOf(side, probe)}`]
 
 function need(cond: boolean, msg: string): void { if (!cond) { console.error(`[attr] ${msg}`); process.exit(1) } }
 need(Bun.spawnSync(['oha', '--version']).exitCode === 0, 'oha not on PATH')
@@ -38,7 +48,7 @@ async function waitFor(proc: ReturnType<typeof Bun.spawn>, re: RegExp): Promise<
 }
 type Srv = { base: string; pid: number; stop: () => void }
 async function startV2(): Promise<Srv> {
-  const app = join(ROOT, 'examples/pokedex'); const bin = join(ROOT, 'packages/brust/bin/brust')
+  const app = join(ROOT, APP_DIR); const bin = join(ROOT, 'packages/brust/bin/brust')
   need(Bun.spawnSync([bin, 'build', 'routes.tsx'], { cwd: app }).exitCode === 0, 'v2 build failed')
   const p = Bun.spawn([bin, 'start', '--port', '38211', '--workers', WORKERS], { cwd: app, env: { ...process.env, BRUST_PORT: '', RUST_LOG: 'warn' }, stdout: 'pipe', stderr: 'inherit' }); CHILDREN.push(p)
   await waitFor(p, /\[brust\] (ready)/)
@@ -51,6 +61,10 @@ async function start01x(dir: string): Promise<Srv> {
   return { base: `http://127.0.0.1:${port}`, pid: p.pid, stop: () => p.kill('SIGINT') }
 }
 async function warm(base: string, side: string): Promise<void> {
+  if (APP === 'bench') {
+    for (const p of ['/dex?nocache=1', '/team?nocache=1', '/types']) for (let i = 0; i < 3; i++) await fetch(`${base}${p}`)
+    return
+  }
   for (const n of NAMES) await fetch(`${base}/pokemon/${n}${side === 'v2' ? '?nocache=1' : ''}`)
   for (let i = 0; i < 3; i++) await fetch(`${base}/`)
 }
@@ -88,6 +102,8 @@ const TREE: [number, string, string][] = [
   [0, 'SVC_TOTAL', 'service fn (handle + header stamping)'],
   [1, 'MATCH', 'route match + accept-encoding'],
   [1, 'L1', 'L1 decision (+ get)'],
+  [1, 'L1_HIT', 'L1 HIT: decision + get + response'],
+  [1, 'ENVELOPE', 'request envelope (MISS/BYPASS; inside MATCH before P4)'],
   [1, 'CTX_INIT', 'params/path ctx'],
   [1, 'CW_TOTAL', 'loader call_worker (wall)'],
   [2, 'CW_CLAIM', 'claim slot (wait)'],
@@ -98,6 +114,11 @@ const TREE: [number, string, string][] = [
   [3, 'CW_JS_TOTAL', 'JS handler (entry → slot written)'],
   [4, 'CW_JS_PARSE', 'JSON.parse'],
   [4, 'CW_JS_HANDLER', 'chain loaders'],
+  [4, 'CW_JS_PLAN', 'planJobs (ctx write + Rust plan on this thread)'],
+  [5, 'PLAN_IN_CALL', 'plan_in_call (Rust)'],
+  [6, 'PIC_COLLECT', 'collect_jobs (worker thread)'],
+  [6, 'PIC_LOOKUP', 'job cache lookups (worker thread)'],
+  [4, 'CW_JS_JOBS', 'missed jobs (same call)'],
   [4, 'CW_JS_STRINGIFY', 'JSON.stringify'],
   [4, 'CW_JS_WRITE', 'TextEncoder + SAB write'],
   [2, 'CW_READ_PARSE', 'SAB read + serde_json parse'],
@@ -127,6 +148,7 @@ const results: unknown[] = []
 for (const side of SIDES) {
   const dir = process.env.BRUST_01X_DIR
   if (side === '01x' && !dir) continue
+  if (side === '01x' && APP === 'bench') continue
   const srv = side === 'v2' ? await startV2() : await start01x(dir!)
   await warm(srv.base, side)
   for (const probe of PROBES) {
@@ -145,7 +167,7 @@ for (const side of SIDES) {
       const loadEnd = host()
       const row: Record<string, unknown> = { side, probe, conn, load, loadEnd, busy: load[0]! > CORES, perThreadUsPerReq: perThread, rps: r.rps, p50: r.p50, p99: r.p99, requests: r.total, cpuSecs: c1 - c0, wall, cpuUsPerReq: ((c1 - c0) / r.total) * 1e6, cores: (c1 - c0) / wall }
       // 0.1.x cache evidence: response headers of one request.
-      const h = await fetch(`${srv.base}${probe === 'B' ? '/pokemon/pikachu' + (side === 'v2' ? '?nocache=1' : '') : '/'}`, { headers: { 'accept-encoding': 'identity' } })
+      const h = await fetch(`${srv.base}${urlOf(side, probe)}`, { headers: { 'accept-encoding': 'identity' } })
       row.headers = Object.fromEntries([...h.headers].filter(([k]) => /cache|age|etag|x-brust|content-length|vary/i.test(k)))
       await h.arrayBuffer()
       if (p0 && p1) {

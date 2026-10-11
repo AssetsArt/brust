@@ -16,7 +16,7 @@ test('brust build: 5 routes; detailPage has a job and a per-row TypeBadge; teamB
   expect(detail.cache).toEqual({ ttl_seconds: 60, prefix: null, bypass: 'query(nocache)', tags: ['pokemon'] })
   const comp = (prefix: string) => Object.entries(m.components).find(([id]) => id.startsWith(`${prefix}_`))![1] as Record<string, unknown>
   const d = comp('detailPage') as { tier: string; jobs: { kind: string; inputs: string[] }[]; children: { id: string; instances: string }[] }
-  expect(d.tier).toBe('native')
+  expect(d.tier).toBe('static') // F70: the page reads only props; TypeBadge (loop-only props) is plain HTML, its job survives
   expect(d.jobs.some((j) => j.kind === 'precompute' && j.inputs.includes('height') && j.inputs.includes('weight'))).toBe(true)
   expect(d.children.some((c) => c.id.startsWith('typeBadge_') && c.instances === 'per-row:typeNames')).toBe(true)
   const layout = comp('appLayout') as { jobs: { kind: string; target?: string }[] }

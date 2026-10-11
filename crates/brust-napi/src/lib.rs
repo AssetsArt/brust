@@ -6,6 +6,12 @@ mod dispatch;
 mod server;
 mod stubs;
 
+/// M3-P P0: mimalloc for every Rust allocation in the addon (render path, JSON
+/// parse, response bodies) and, through `brust-compiler/real-mimalloc`, for the
+/// parser's `bun_alloc` heaps too — one real mimalloc, no libc fake.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 pub use compile::*;
 pub use server::*;
 

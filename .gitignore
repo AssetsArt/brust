@@ -3,3 +3,5 @@ node_modules
 *.node
 .DS_Store
 dist/
+.next/
+next-env.d.ts

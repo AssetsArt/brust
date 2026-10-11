@@ -28,12 +28,13 @@
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::task::Poll;
 use std::time::Duration;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::pool::{ClaimResult, RenderClaim, WorkerPool};
+use crate::pool::{ClaimResult, PlanBox, RenderClaim, WorkerEntry, WorkerPool};
 
 /// Which worker entry point a [`RenderDispatch::call`] targets (spec §1 S1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -141,7 +142,7 @@ pub enum CallError {
     #[error("worker rejected: {0}")]
     Rejected(String),
     /// A claimed call did not settle within the call deadline — 504. The
-    /// spawned task still holds the claim until the JS promise settles.
+    /// detached remainder still holds the claim until the JS promise settles.
     #[error("call deadline exceeded")]
     Deadline,
     /// Request serialisation, an out-of-bounds length, or unparsable JSON.
@@ -156,6 +157,14 @@ pub async fn claim_or_wait(
     timeout: Duration,
     mut try_claim: impl FnMut() -> ClaimResult,
 ) -> Result<RenderClaim, CallError> {
+    // M3-P P7: claim first; register on `idle_notify` only when every slot is busy (its
+    // `poll_notified`/`drop_notified` lock showed up on probe I). A stored permit from a release
+    // nobody waited on is harmless: the loop re-checks `try_claim` after every wake.
+    match try_claim() {
+        ClaimResult::Claimed(c) => return Ok(c),
+        ClaimResult::PoolEmpty => return Err(CallError::NoWorkers),
+        ClaimResult::AllBusy => {}
+    }
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
         let notified = pool.idle_notify().notified();
@@ -179,11 +188,11 @@ pub async fn claim_or_wait(
 /// from_slice → release claim on every path.
 ///
 /// Cancel-safe: once the claim is taken, the call, the bounds check and the
-/// parse run in a spawned task that OWNS the claim. If the caller's future is
-/// dropped (hyper drops the request future on client disconnect), the task
-/// keeps the slot claimed until the worker's call settles, so the SAB slot is
-/// never handed to another request while JS may still be writing it (the
-/// `RenderClaim` drop invariant in `pool.rs`).
+/// parse run inline inside [`Detach`]: if the caller's future is dropped (hyper
+/// drops the request future on client disconnect; the deadline below), the
+/// remainder is spawned and keeps the slot claimed until the worker's call
+/// settles, so the SAB slot is never handed to another request while JS may
+/// still be writing it (the `RenderClaim` drop invariant in `pool.rs`).
 pub async fn call_worker<Req: Serialize, Resp: DeserializeOwned + Send + 'static>(
     pool: &Arc<WorkerPool>,
     timeout: Duration,
@@ -191,11 +200,36 @@ pub async fn call_worker<Req: Serialize, Resp: DeserializeOwned + Send + 'static
     kind: CallKind,
     req: &Req,
 ) -> Result<Resp, CallError> {
+    call_worker_planned(pool, timeout, call_timeout, kind, req, None)
+        .await
+        .map(|(r, _)| r)
+}
+
+/// A planned call's outcome: the response and the slot cell's content after the call.
+type PlannedResult<Resp> = Result<(Resp, Option<PlanBox>), CallError>;
+
+/// [`call_worker`] for a call the worker may plan (M3-P P6): `seed` goes into the
+/// claimed slot's plan cell before the call; whatever the cell holds after the
+/// Promise resolved is returned beside the response — taken under the claim, so
+/// it is never another request's.
+pub async fn call_worker_planned<Req: Serialize, Resp: DeserializeOwned + Send + 'static>(
+    pool: &Arc<WorkerPool>,
+    timeout: Duration,
+    call_timeout: Duration,
+    kind: CallKind,
+    req: &Req,
+    seed: Option<PlanBox>,
+) -> Result<(Resp, Option<PlanBox>), CallError> {
     let claim = claim_or_wait(pool, timeout, || pool.try_claim_render_lockfree()).await?;
+    if let Some(s) = seed {
+        claim.put_plan(s);
+    }
     let json = serde_json::to_string(req)
         .map_err(|e| CallError::BadResponse(format!("request serialise: {e}")))?;
+    pool.ensure_sweeper();
     let pool = Arc::clone(pool);
-    let task = tokio::spawn(async move {
+    let (stamped, stamped_slot) = (Arc::clone(claim.entry()), claim.slot());
+    let call: Pin<Box<dyn Future<Output = PlannedResult<Resp>> + Send>> = Box::pin(async move {
         let entry = Arc::clone(claim.entry());
         let slot = claim.slot();
         let len = match entry.dispatch.call(kind, json, slot).await {
@@ -217,20 +251,144 @@ pub async fn call_worker<Req: Serialize, Resp: DeserializeOwned + Send + 'static
         // future), JS is done writing this slot's sub-region; `len` is bounds-checked
         // above; `claim` is still held so no other request can write the slot.
         let bytes = unsafe { std::slice::from_raw_parts(ptr, len as usize) };
-        let parsed = serde_json::from_slice::<Resp>(bytes)
-            .map_err(|e| CallError::BadResponse(e.to_string()));
+        // M3-P P7: validate UTF-8 once and parse from `str` (serde_json's `from_slice` re-checks
+        // every string it reads; ~8% of the D parse).
+        let parsed = std::str::from_utf8(bytes)
+            .map_err(|e| CallError::BadResponse(format!("response not UTF-8: {e}")))
+            .and_then(|s| {
+                serde_json::from_str::<Resp>(s).map_err(|e| CallError::BadResponse(e.to_string()))
+            });
+        let plan = claim.take_plan();
         drop(claim);
-        parsed
+        parsed.map(|r| (r, plan))
     });
-    match tokio::time::timeout(call_timeout, task).await {
-        Ok(joined) => {
-            joined.map_err(|e| CallError::BadResponse(format!("worker call task: {e}")))?
+    // Deadline: `call_timeout` from the call's start; if the worker planned (M3-P P6), the jobs
+    // phase gets `call_timeout` from its own start, as the old separate jobs call did. The claim
+    // is still held by `call` while it is pending, so the stamp is this request's. M3-P P7 (R3):
+    // the deadline lives in the claimed slot and the pool's sweeper wakes it — no tokio timer per call.
+    let mut fut = Detach(Some(call));
+    let mut deadline = SlotDeadline {
+        at: std::time::Instant::now() + call_timeout,
+        call_timeout,
+        entry: stamped,
+        slot: stamped_slot,
+    };
+    deadline.entry.arm_deadline(deadline.slot, deadline.at);
+    let r = std::future::poll_fn(|cx| {
+        if let Poll::Ready(r) = Pin::new(&mut fut).poll(cx) {
+            return Poll::Ready(Ok(r));
         }
-        // The task keeps running and keeps the claim until JS settles (the
-        // `RenderClaim` drop rule in `pool.rs`); its late result is dropped
-        // with the JoinHandle, so nothing from this call reaches a cache.
-        Err(_elapsed) => Err(CallError::Deadline),
+        deadline.poll(cx).map(Err)
+    })
+    .await;
+    drop(fut);
+    match r {
+        Ok(Ok(result)) => result,
+        Ok(Err(payload)) => Err(CallError::BadResponse(format!(
+            "worker call panicked: {}",
+            panic_message(&*payload)
+        ))),
+        // `Detach` was dropped by the timeout: the remainder now runs as its own
+        // task and keeps the claim until JS settles (the `RenderClaim` drop rule
+        // in `pool.rs`); its late result is dropped, so nothing from this call
+        // reaches a cache.
+        Err(Elapsed) => Err(CallError::Deadline),
     }
+}
+
+/// A claimed call's deadline passed (the `call_worker_planned` deadline arm).
+struct Elapsed;
+
+/// The deadline of one claimed call (M3-P P7, R3). Ready iff now >= `at`, where `at` starts as
+/// `call_timeout` after the call and moves to `call_timeout` after the jobs-phase stamp when that
+/// is later (the S7 per-phase rule, unchanged). Pending parks the waker in the claimed slot, which
+/// the pool's sweeper wakes once the armed deadline passed.
+struct SlotDeadline {
+    at: std::time::Instant,
+    call_timeout: Duration,
+    entry: Arc<WorkerEntry>,
+    slot: u32,
+}
+
+impl SlotDeadline {
+    fn poll(&mut self, cx: &mut std::task::Context<'_>) -> Poll<Elapsed> {
+        let now = std::time::Instant::now();
+        if now >= self.at {
+            match self.entry.jobs_phase_since(self.slot) {
+                Some(t) if t + self.call_timeout > self.at => {
+                    self.at = t + self.call_timeout;
+                    self.entry.arm_deadline(self.slot, self.at);
+                    if now >= self.at {
+                        return Poll::Ready(Elapsed);
+                    }
+                }
+                _ => return Poll::Ready(Elapsed),
+            }
+        }
+        // Parked on every pending poll: the sweeper TAKES the waker when it fires.
+        self.entry.park_deadline_waker(self.slot, cx.waker());
+        Poll::Pending
+    }
+}
+
+/// A boxed call future polled inline. Dropped before completion → the remainder
+/// is detached onto the runtime (it owns the `RenderClaim`, which must outlive
+/// the worker's write — see the INVARIANT in `pool.rs`). A panic while polling
+/// is caught and returned as `Err(payload)`; the panicked future is dropped
+/// (its locals, the claim included, were already released by the unwind) and
+/// is never polled again.
+///
+/// The inner future is already pinned on the heap, so `Detach` itself is
+/// `Unpin` and `drop` can move the `Pin<Box<_>>` into a new task without ever
+/// unpinning it.
+struct Detach<T: Send + 'static>(Option<Pin<Box<dyn Future<Output = T> + Send>>>);
+
+impl<T: Send + 'static> Future for Detach<T> {
+    type Output = Result<T, Box<dyn std::any::Any + Send>>;
+
+    fn poll(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        use std::task::Poll;
+        let Some(inner) = self.0.as_mut() else {
+            panic!("Detach polled after completion");
+        };
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| inner.as_mut().poll(cx))) {
+            Ok(Poll::Pending) => Poll::Pending,
+            Ok(Poll::Ready(v)) => {
+                self.0 = None;
+                Poll::Ready(Ok(v))
+            }
+            Err(payload) => {
+                self.0 = None;
+                Poll::Ready(Err(payload))
+            }
+        }
+    }
+}
+
+impl<T: Send + 'static> Drop for Detach<T> {
+    fn drop(&mut self) {
+        if let Some(rest) = self.0.take() {
+            match tokio::runtime::Handle::try_current() {
+                Ok(h) => {
+                    h.spawn(rest);
+                }
+                // Only outside a runtime (shutdown): the claim is released with
+                // the future, there is no worker left to protect.
+                Err(_) => tracing::warn!("worker call dropped outside the runtime; claim released"),
+            }
+        }
+    }
+}
+
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> &str {
+    payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("non-string panic payload")
 }
 
 /// In-process mock for pool/dispatch unit tests: a leaked 256 KiB buffer (no
@@ -419,6 +577,27 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn call_worker_returns_bad_response_on_a_non_utf8_response() {
+        let pool = pool_with(MockDispatch::replying(b"{\"ok\":true,\"data\":\"\xff\"}"));
+        let r = call_worker::<_, serde_json::Value>(
+            &pool,
+            Duration::from_millis(100),
+            Duration::from_secs(5),
+            CallKind::Loader,
+            &serde_json::json!({"routeId": "r1"}),
+        )
+        .await;
+        match r {
+            Err(CallError::BadResponse(m)) => assert!(m.starts_with("response not UTF-8: "), "{m}"),
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(
+            pool.try_claim_render_lockfree(),
+            ClaimResult::Claimed(_)
+        ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn call_worker_returns_bad_response_on_len_over_capacity() {
         let pool = pool_with(MockDispatch::reply_len(256 * 1024 + 1));
         let r = call_worker::<_, serde_json::Value>(
@@ -589,6 +768,32 @@ mod tests {
         }
     }
 
+    /// M3-P P7: the sweeper walks every registered entry, not the pool's current list, so a
+    /// call on a worker removed mid-call (dead worker, dev reload `clear`) still gets its 504.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_call_on_a_worker_removed_from_the_pool_still_times_out() {
+        for clear in [false, true] {
+            let (pool, _release) = gated_pool();
+            let p2 = Arc::clone(&pool);
+            let call = tokio::spawn(async move { call_with(&p2, 100, 50, CallKind::Loader).await });
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            if clear {
+                pool.clear();
+            } else {
+                pool.remove(0);
+            }
+            assert_eq!(pool.registered_count(), 0);
+            let r = tokio::time::timeout(Duration::from_secs(2), call)
+                .await
+                .expect("deadline never fired")
+                .unwrap();
+            assert!(
+                matches!(r, Err(CallError::Deadline)),
+                "clear={clear}: {r:?}"
+            );
+        }
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn deadline_returns_504_error_and_keeps_the_claim_until_js_settles() {
         let (pool, release) = gated_pool();
@@ -621,5 +826,141 @@ mod tests {
         assert!(matches!(first, Err(CallError::Deadline)));
         let second = call_with(&pool, 60, 30, CallKind::Loader).await;
         assert!(matches!(second, Err(CallError::Timeout)), "{second:?}");
+    }
+
+    /// Writes `{"ok":true,"data":{}}` and, during the call, swaps the slot's plan cell content
+    /// (u32 seed → seed + 1) through `claimed_plan_cell`, as `plan_in_call` does from the worker thread.
+    struct Planner(MockDispatch, std::sync::Weak<WorkerPool>);
+
+    impl RenderDispatch for Planner {
+        fn call(
+            &self,
+            kind: CallKind,
+            request_json: String,
+            slot: u32,
+        ) -> Pin<Box<dyn Future<Output = Result<u32, DispatchError>> + Send>> {
+            let pool = self.1.upgrade().expect("pool alive during the call");
+            let entry = pool.entry(0).expect("the planner is worker 0");
+            let cell = entry
+                .claimed_plan_cell(slot)
+                .expect("the slot is claimed during its call");
+            let mut guard = cell.lock();
+            if let Some(seed) = guard.take() {
+                let n = *seed.downcast::<u32>().expect("u32 seed");
+                *guard = Some(Box::new(n + 1));
+            }
+            drop(guard);
+            self.0.call(kind, request_json, slot)
+        }
+        fn buf(&self) -> (*mut u8, usize) {
+            self.0.buf()
+        }
+    }
+
+    fn planner_pool(d: MockDispatch) -> Arc<WorkerPool> {
+        let pool = Arc::new(WorkerPool::new());
+        pool.register(Box::new(Planner(d, Arc::downgrade(&pool))));
+        pool
+    }
+
+    async fn call_planned(
+        pool: &Arc<WorkerPool>,
+        seed: u32,
+    ) -> Result<(serde_json::Value, Option<PlanBox>), CallError> {
+        call_worker_planned(
+            pool,
+            Duration::from_millis(100),
+            Duration::from_secs(5),
+            CallKind::Loader,
+            &serde_json::json!({}),
+            Some(Box::new(seed)),
+        )
+        .await
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn call_worker_planned_returns_what_the_cell_holds_after_the_call() {
+        let pool = planner_pool(MockDispatch::replying(br#"{"ok":true,"data":{}}"#));
+        let (v, plan) = call_planned(&pool, 41).await.expect("round trip");
+        assert_eq!(v, serde_json::json!({"ok": true, "data": {}}));
+        let plan = plan.expect("the cell's content comes back");
+        assert_eq!(*plan.downcast::<u32>().unwrap(), 42);
+        let entry = pool.entry(0).unwrap();
+        assert!(
+            entry.slot(0).plan.lock().is_none(),
+            "the cell is empty after"
+        );
+        assert!(matches!(
+            pool.try_claim_render_lockfree(),
+            ClaimResult::Claimed(_)
+        ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn call_worker_planned_clears_the_cell_on_a_bad_response() {
+        let pool = planner_pool(MockDispatch::reply_len(0));
+        let r = call_planned(&pool, 41).await;
+        assert!(matches!(r, Err(CallError::BadResponse(_))), "{:?}", r.err());
+        let entry = pool.entry(0).unwrap();
+        assert!(
+            entry.slot(0).plan.lock().is_none(),
+            "the cell is empty after"
+        );
+        assert!(matches!(
+            pool.try_claim_render_lockfree(),
+            ClaimResult::Claimed(_)
+        ));
+    }
+
+    /// `call` panics when polled: the claim must be released by unwinding and
+    /// the caller must get `BadResponse`, not a torn-down task.
+    struct PanickingDispatch(MockDispatch);
+
+    impl RenderDispatch for PanickingDispatch {
+        fn call(
+            &self,
+            _kind: CallKind,
+            _request_json: String,
+            _slot: u32,
+        ) -> Pin<Box<dyn Future<Output = Result<u32, DispatchError>> + Send>> {
+            Box::pin(async { panic!("worker exploded") })
+        }
+        fn buf(&self) -> (*mut u8, usize) {
+            self.0.buf()
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_panicking_dispatch_releases_its_slot_and_is_a_bad_response() {
+        let pool = Arc::new(WorkerPool::new());
+        pool.register(Box::new(PanickingDispatch(MockDispatch::new())));
+        let r = call_with(&pool, 100, 1_000, CallKind::Loader).await;
+        match r {
+            Err(CallError::BadResponse(m)) => assert!(m.contains("worker exploded"), "{m}"),
+            other => panic!("expected BadResponse, got {other:?}"),
+        }
+        assert!(
+            matches!(pool.try_claim_render_lockfree(), ClaimResult::Claimed(_)),
+            "the slot must be free after the panic"
+        );
+    }
+
+    /// The happy path must not spawn: the caller's task is the only one alive
+    /// before and after a round trip (current_thread runtime, nothing else running).
+    #[tokio::test(flavor = "current_thread")]
+    async fn detach_runs_the_remainder_off_the_caller() {
+        // Deadline fires → the remainder is detached and finishes on its own
+        // (the claim is released without anyone awaiting the call again).
+        let (pool, release) = gated_pool();
+        let r = call_with(&pool, 100, 30, CallKind::Loader).await;
+        assert!(matches!(r, Err(CallError::Deadline)));
+        release.send(Ok(())).unwrap();
+        wait_claimable(&pool).await;
+        // And a second, un-gated call on the same (now free) slot round-trips.
+        let pool2 = pool_with(MockDispatch::replying(br#"{"ok":true}"#));
+        let v = call_with(&pool2, 100, 1_000, CallKind::Jobs)
+            .await
+            .expect("round trip");
+        assert_eq!(v, serde_json::json!({"ok": true}));
     }
 }

@@ -1,6 +1,3 @@
-use std::sync::Arc;
-
-use parking_lot::RwLock;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -84,19 +81,22 @@ pub struct RouteConfig {
     pub not_found_prefix: String,
 }
 
+/// Immutable after `from_manifest` (M3-P P4): request-path reads take no lock.
+/// `install_with_config` is `&mut self` and is called by `from_manifest` and
+/// tests only.
 #[derive(Default)]
 pub struct RouteTable {
-    inner: RwLock<matchit::Router<u32>>,
-    cache_configs: RwLock<Vec<Option<RouteCache>>>,
+    router: matchit::Router<u32>,
+    cache_configs: Vec<Option<RouteCache>>,
     /// Compiled L1 prefix/bypass expressions, parallel to `cache_configs`.
     /// Index = route_id. Parsed once at install; evaluated per request.
-    compiled_caches: RwLock<Vec<Arc<CompiledCache>>>,
+    compiled_caches: Vec<CompiledCache>,
     /// Post-router fallback tier: catch-all routes sorted by prefix length
     /// descending (longest first). On matchit NoMatch, `select_not_found`
     /// scans this table for the best segment-boundary prefix match and returns
     /// the catch-all's `route_id`. Empty when the app declares no catch-alls
     /// (feature is purely additive).
-    not_found_table: RwLock<Vec<(String, u32)>>,
+    not_found_table: Vec<(String, u32)>,
 }
 
 impl RouteTable {
@@ -119,7 +119,7 @@ impl RouteTable {
                 not_found_prefix: String::new(),
             })
             .collect();
-        let table = Self::new();
+        let mut table = Self::new();
         table.install_with_config(&configs)?;
         Ok(table)
     }
@@ -132,10 +132,13 @@ impl RouteTable {
 
     /// Replace the route set + per-route cache configs. Patterns are inserted
     /// in array order; index = route_id.
-    pub fn install_with_config(&self, configs: &[RouteConfig]) -> Result<u32, RouteInstallError> {
+    pub fn install_with_config(
+        &mut self,
+        configs: &[RouteConfig],
+    ) -> Result<u32, RouteInstallError> {
         let mut router = matchit::Router::new();
         let mut caches: Vec<Option<RouteCache>> = Vec::with_capacity(configs.len());
-        let mut compiled: Vec<Arc<CompiledCache>> = Vec::with_capacity(configs.len());
+        let mut compiled: Vec<CompiledCache> = Vec::with_capacity(configs.len());
         let mut nf_table: Vec<(String, u32)> = Vec::new();
         for (idx, c) in configs.iter().enumerate() {
             // Catch-all routes (notFound: true) are NOT inserted into matchit.
@@ -147,7 +150,7 @@ impl RouteTable {
                 nf_table.push((c.not_found_prefix.clone(), idx as u32));
                 // Still push to the parallel Vecs to keep indices aligned.
                 caches.push(c.cache.clone());
-                compiled.push(Arc::new(CompiledCache::default()));
+                compiled.push(CompiledCache::default());
                 continue;
             }
             router
@@ -188,87 +191,119 @@ impl RouteTable {
                 None => CompiledCache::default(),
             };
             caches.push(c.cache.clone());
-            compiled.push(Arc::new(compiled_cache));
+            compiled.push(compiled_cache);
         }
         // No sort needed: select_not_found uses max_by_key, which finds the
         // longest matching prefix regardless of table order.
-        *self.inner.write() = router;
-        *self.cache_configs.write() = caches;
-        *self.compiled_caches.write() = compiled;
-        *self.not_found_table.write() = nf_table;
+        self.router = router;
+        self.cache_configs = caches;
+        self.compiled_caches = compiled;
+        self.not_found_table = nf_table;
         Ok(configs.len() as u32)
     }
 
     /// Compiled L1 prefix/bypass directives for a route, parallel to
     /// `cache_for`. `None` when the route_id is out of range.
-    pub fn compiled_cache_for(&self, route_id: u32) -> Option<Arc<CompiledCache>> {
-        // Returns an Arc clone (refcount bump), NOT a deep clone of the Expr
-        // trees — this is the per-request cache hot path.
-        self.compiled_caches.read().get(route_id as usize).cloned()
+    pub fn compiled_cache_for(&self, route_id: u32) -> Option<&CompiledCache> {
+        // A borrow: no lock, no refcount (per-request cache hot path).
+        self.compiled_caches.get(route_id as usize)
     }
 
     pub fn cache_for(&self, route_id: u32) -> Option<RouteCache> {
         self.cache_configs
-            .read()
             .get(route_id as usize)
             .and_then(|c| c.clone())
     }
 
+    /// Match only (M3-P P4): the route id and decoded params, no request parsing. A HIT never goes
+    /// further; a MISS/BYPASS calls [`RouteMatch::into_envelope`].
+    pub fn match_route<'a>(&'a self, full_path: &'a str) -> Option<RouteMatch<'a>> {
+        let path_only = full_path.split_once('?').map_or(full_path, |(p, _)| p);
+        match self.router.at(path_only) {
+            // Decode at the production site: loaders, clientLoader, L1 param() keys, x-props, native
+            // ctx and treaty all consume THIS list, so one decode keeps every consumer consistent.
+            Ok(m) => Some(RouteMatch {
+                route_id: *m.value,
+                not_found: false,
+                params: m
+                    .params
+                    .iter()
+                    .map(|(k, v)| (std::borrow::Cow::Borrowed(k), decode_path_param(v)))
+                    .collect(),
+            }),
+            Err(_) => select_not_found(&self.not_found_table, path_only).map(|id| RouteMatch {
+                route_id: id,
+                not_found: true,
+                params: Vec::new(),
+            }),
+        }
+    }
+
     pub fn match_path<'a>(
-        &self,
+        &'a self,
         method: &'a str,
         full_path: &'a str,
         headers: &'a http::HeaderMap,
     ) -> MatchResult<'a> {
-        let (path_only, query) = match full_path.split_once('?') {
-            Some((p, q)) => (p, q),
-            None => (full_path, ""),
-        };
-        let router = self.inner.read();
-        match router.at(path_only) {
-            Ok(matched) => {
-                let route_id = *matched.value;
-                let mut params = Vec::new();
-                for (k, v) in matched.params.iter() {
-                    // Decode at the production site — loaders, clientLoader,
-                    // L1 param() key expressions, x-props, native ctx, and
-                    // treaty all consume THIS vec (directly or serialized),
-                    // so one decode keeps every consumer consistent.
-                    params.push((std::borrow::Cow::Owned(k.to_string()), decode_path_param(v)));
-                }
-                let req = build_request_envelope(method, full_path, query, headers);
-                let envelope = RouteEnvelope {
-                    route_id,
-                    path: full_path,
-                    params,
-                    req,
-                };
-                MatchResult::Matched { route_id, envelope }
-            }
-            Err(_) => {
-                // Release the not-found-table lock before building the
-                // envelope (scoped read, as in 0.1.x).
-                let nf_id = {
-                    let nf_table = self.not_found_table.read();
-                    select_not_found(&nf_table, path_only)
-                };
-                match nf_id {
-                    Some(id) => {
-                        let req = build_request_envelope(method, full_path, query, headers);
-                        let envelope = RouteEnvelope {
-                            route_id: id,
-                            path: full_path,
-                            params: Vec::new(),
-                            req,
-                        };
-                        MatchResult::NotFound {
-                            route_id: id,
-                            envelope,
-                        }
-                    }
-                    None => MatchResult::NoMatch,
+        match self.match_route(full_path) {
+            Some(m) => {
+                let (route_id, nf) = (m.route_id, m.not_found);
+                let envelope = m.into_envelope(method, full_path, headers, None);
+                if nf {
+                    MatchResult::NotFound { route_id, envelope }
+                } else {
+                    MatchResult::Matched { route_id, envelope }
                 }
             }
+            None => MatchResult::NoMatch,
+        }
+    }
+}
+
+/// Decoded query pairs (`url_decode`, `+` = space), in order, empty pairs skipped: the envelope's
+/// `search` and what `l1_decision` keys and dedupes on — one function so both see the same pairs.
+pub type Search<'a> = Vec<(std::borrow::Cow<'a, str>, std::borrow::Cow<'a, str>)>;
+
+pub fn decode_search(query: &str) -> Search<'_> {
+    let mut search = Vec::new();
+    for pair in query.split('&') {
+        if pair.is_empty() {
+            continue;
+        }
+        match pair.split_once('=') {
+            Some((k, v)) => search.push((url_decode(k), url_decode(v))),
+            None => search.push((url_decode(pair), std::borrow::Cow::Borrowed(""))),
+        }
+    }
+    search
+}
+
+/// A matched route before any request parsing (M3-P P4). The L1 decision needs only this; a
+/// MISS/BYPASS turns it into the envelope, so a HIT never builds headers/cookies/search.
+pub struct RouteMatch<'a> {
+    pub route_id: u32,
+    /// A catch-all answered (the caller renders it at 404).
+    pub not_found: bool,
+    /// Path params, values decoded by `decode_path_param`; names borrow the table.
+    pub params: Search<'a>,
+}
+
+impl<'a> RouteMatch<'a> {
+    /// Exactly the envelope `match_path` returns. `search`: the decoded query when the caller already
+    /// has it (`l1_decision`), else decoded here.
+    pub fn into_envelope(
+        self,
+        method: &'a str,
+        full_path: &'a str,
+        headers: &'a http::HeaderMap,
+        search: Option<Search<'a>>,
+    ) -> RouteEnvelope<'a> {
+        let query = full_path.split_once('?').map_or("", |(_, q)| q);
+        RouteEnvelope {
+            route_id: self.route_id,
+            path: full_path,
+            params: self.params,
+            req: build_request_envelope(method, full_path, query, headers, search),
         }
     }
 }
@@ -290,6 +325,7 @@ fn build_request_envelope<'a>(
     full_path: &'a str,
     query: &'a str,
     request_headers: &'a http::HeaderMap,
+    search: Option<Search<'a>>,
 ) -> RequestEnvelope<'a> {
     // Iterate the hyper HeaderMap directly. The pre-refactor path rebuilt a raw
     // header block from THIS SAME HeaderMap (`reconstruct_raw_headers`) and then
@@ -323,22 +359,7 @@ fn build_request_envelope<'a>(
         ));
     }
 
-    let mut search = Vec::new();
-    if !query.is_empty() {
-        for pair in query.split('&') {
-            if pair.is_empty() {
-                continue;
-            }
-            match pair.split_once('=') {
-                Some((k, v)) => {
-                    search.push((url_decode(k), url_decode(v)));
-                }
-                None => {
-                    search.push((url_decode(pair), std::borrow::Cow::Borrowed("")));
-                }
-            }
-        }
-    }
+    let search = search.unwrap_or_else(|| decode_search(query));
 
     RequestEnvelope {
         method,
@@ -516,7 +537,7 @@ mod tests {
 
     #[test]
     fn match_path_params_arrive_decoded_incl_catch_all() {
-        let table = RouteTable::new();
+        let mut table = RouteTable::new();
         table
             .install_with_config(&[
                 RouteConfig {
@@ -596,7 +617,7 @@ mod tests {
     #[test]
     fn envelope_parses_cookies_from_single_header() {
         let headers = hm(&[("Host", "x"), ("Cookie", "user=alice; sid=xyz")]);
-        let env = build_request_envelope("GET", "/x", "", &headers);
+        let env = build_request_envelope("GET", "/x", "", &headers, None);
         assert_eq!(
             env.cookies
                 .iter()
@@ -618,7 +639,7 @@ mod tests {
         // RFC 6265 S5.4 allows a single Cookie header per request, but
         // some proxies fold/split. Both cookies should appear in the map.
         let headers = hm(&[("Host", "x"), ("Cookie", "a=1"), ("Cookie", "b=2")]);
-        let env = build_request_envelope("GET", "/x", "", &headers);
+        let env = build_request_envelope("GET", "/x", "", &headers, None);
         assert_eq!(
             env.cookies
                 .iter()
@@ -643,6 +664,7 @@ mod tests {
             "/x?name=brust&flag&empty=",
             "name=brust&flag&empty=",
             &headers,
+            None,
         );
         assert_eq!(
             env.search
@@ -675,6 +697,7 @@ mod tests {
             "/x?greet=hello+world&unicode=%E2%9C%93",
             "greet=hello+world&unicode=%E2%9C%93",
             &headers,
+            None,
         );
         assert_eq!(
             env.search
@@ -695,7 +718,7 @@ mod tests {
     #[test]
     fn envelope_empty_request_safe() {
         let headers = http::HeaderMap::new();
-        let env = build_request_envelope("GET", "/x", "", &headers);
+        let env = build_request_envelope("GET", "/x", "", &headers, None);
         assert_eq!(env.method, "GET");
         assert_eq!(env.url, "/x");
         assert!(env.headers.is_empty());
@@ -705,7 +728,7 @@ mod tests {
 
     #[test]
     fn route_envelope_serializes_route_id_and_path() {
-        let table = RouteTable::new();
+        let mut table = RouteTable::new();
         let cfg = RouteConfig {
             path: "/foo".into(),
             cache: None,
@@ -759,7 +782,7 @@ mod tests {
 
     #[test]
     fn match_path_returns_not_found_when_catchall_registered() {
-        let table = RouteTable::new();
+        let mut table = RouteTable::new();
         table
             .install_with_config(&[
                 RouteConfig {
@@ -788,7 +811,7 @@ mod tests {
 
     #[test]
     fn match_path_returns_no_match_when_table_empty() {
-        let table = RouteTable::new();
+        let mut table = RouteTable::new();
         table
             .install_with_config(&[RouteConfig {
                 path: "/home".into(),
@@ -807,7 +830,7 @@ mod tests {
 
     #[test]
     fn match_path_real_route_still_matches_when_catchall_installed() {
-        let table = RouteTable::new();
+        let mut table = RouteTable::new();
         table
             .install_with_config(&[
                 RouteConfig {
@@ -846,7 +869,7 @@ mod tests {
         assert!(configs[1].not_found, "not_found should be true");
         assert_eq!(configs[1].not_found_prefix, "");
 
-        let table = RouteTable::new();
+        let mut table = RouteTable::new();
         table.install_with_config(&configs).unwrap();
 
         // Catch-all must NOT be in matchit — /home should not match /
@@ -874,7 +897,7 @@ mod tests {
     #[test]
     fn install_nested_catchall_prefix_selection() {
         // /docs catch-all (route_id 2) should win over root (route_id 3) for /docs/missing
-        let table = RouteTable::new();
+        let mut table = RouteTable::new();
         table
             .install_with_config(&[
                 RouteConfig {
@@ -923,7 +946,7 @@ mod tests {
 
     #[test]
     fn install_rejects_bad_prefix_expr() {
-        let table = RouteTable::new();
+        let mut table = RouteTable::new();
         let cfgs = vec![RouteConfig {
             path: "/bad".into(),
             cache: Some(crate::manifest::RouteCache {
@@ -949,7 +972,7 @@ mod tests {
 
     #[test]
     fn install_rejects_bad_bypass_expr() {
-        let table = RouteTable::new();
+        let mut table = RouteTable::new();
         let cfgs = vec![RouteConfig {
             path: "/bad".into(),
             cache: Some(crate::manifest::RouteCache {
@@ -975,7 +998,7 @@ mod tests {
 
     #[test]
     fn compiled_cache_for_parses_prefix_and_bypass() {
-        let table = RouteTable::new();
+        let mut table = RouteTable::new();
         let cfgs = vec![RouteConfig {
             path: "/p".into(),
             cache: Some(crate::manifest::RouteCache {
@@ -1019,5 +1042,73 @@ mod tests {
             table.cache_for(1).map(|c| c.tags),
             Some(vec!["pokemon".to_string()])
         );
+    }
+
+    fn cfg(path: &str, not_found: bool) -> RouteConfig {
+        RouteConfig {
+            path: path.into(),
+            cache: None,
+            not_found,
+            not_found_prefix: String::new(),
+        }
+    }
+
+    #[test]
+    fn match_route_into_envelope_equals_match_path() {
+        let mut table = RouteTable::new();
+        table
+            .install_with_config(&[cfg("/post/{slug}", false), cfg("", true)])
+            .unwrap();
+        let headers = hm(&[
+            ("Host", "x"),
+            ("Cookie", "a=1; b=2"),
+            ("Cookie", "c=3"),
+            ("X-Y", "z"),
+        ]);
+        for full in ["/post/sa%20wad?q=%41+b&k", "/nope?x=1", "/post/plain"] {
+            let expected = match table.match_path("GET", full, &headers) {
+                MatchResult::Matched { envelope, .. } | MatchResult::NotFound { envelope, .. } => {
+                    serde_json::to_string(&envelope).unwrap()
+                }
+                MatchResult::NoMatch => panic!("no match for {full}"),
+            };
+            let query = full.split_once('?').map_or("", |(_, q)| q);
+            let lazy = table
+                .match_route(full)
+                .unwrap()
+                .into_envelope("GET", full, &headers, None);
+            assert_eq!(serde_json::to_string(&lazy).unwrap(), expected, "{full}");
+            let handed = table.match_route(full).unwrap().into_envelope(
+                "GET",
+                full,
+                &headers,
+                Some(decode_search(query)),
+            );
+            assert_eq!(serde_json::to_string(&handed).unwrap(), expected, "{full}");
+        }
+    }
+
+    #[test]
+    fn match_route_reports_catch_all_and_no_match() {
+        let mut table = RouteTable::new();
+        table.install_with_config(&[cfg("/a", false)]).unwrap();
+        assert!(table.match_route("/zzz").is_none());
+        let mut table = RouteTable::new();
+        table
+            .install_with_config(&[cfg("/a", false), cfg("", true)])
+            .unwrap();
+        let m = table.match_route("/zzz?x=1").unwrap();
+        assert_eq!((m.route_id, m.not_found, m.params.len()), (1, true, 0));
+        let m = table.match_route("/a").unwrap();
+        assert_eq!((m.route_id, m.not_found), (0, false));
+    }
+
+    #[test]
+    fn decode_search_is_the_envelope_search() {
+        let q = "a=%41&b+c=1&&d";
+        let headers = http::HeaderMap::new();
+        let env = build_request_envelope("GET", "/x?a=%41&b+c=1&&d", q, &headers, None);
+        assert_eq!(decode_search(q), env.search);
+        assert!(decode_search("").is_empty());
     }
 }

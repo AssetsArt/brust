@@ -1,0 +1,9 @@
+{
+  "summary": { "successRate": 1.0, "total": 1.003600583, "slowest": 0.009679042, "fastest": 0.000021625, "average": 0.0000633, "requestsPerSec": 61997.77187654343, "totalData": 3048682, "sizePerRequest": 49, "sizePerSec": 3037744.35 },
+  "responseTimeHistogram": {},
+  "latencyPercentiles": { "p10": 0.000038875, "p25": 0.000047458, "p50": 0.000058958, "p75": 0.000073292, "p90": 0.000091833, "p95": 0.000103583, "p99": 0.000125375, "p99.9": 0.000232917, "p99.99": 0.0011495 },
+  "rps": {},
+  "details": {},
+  "statusCodeDistribution": { "200": 62218 },
+  "errorDistribution": { "aborted due to deadline": 3 }
+}

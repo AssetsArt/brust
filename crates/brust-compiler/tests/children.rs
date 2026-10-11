@@ -321,3 +321,74 @@ fn react_page_self_job_has_no_literals() {
         .unwrap();
     assert!(job.literals.is_empty() && job.props.is_none());
 }
+
+/// F70: a static child reading only the row is linked only where the client can re-create the row.
+#[test]
+fn static_child_link_decisions() {
+    const S: &str = "import { useState } from 'react'\nimport Badge from './Badge'\n";
+    for (name, src, links, tier) in [
+        (
+            "prop list, no state",
+            "export default function P({ rows }: any) { return <ul>{rows.map((r: any) => <li key={r.id}><Badge type={r.t} label={r.l} color={r.c} /></li>)}</ul> }",
+            0,
+            Tier::Static,
+        ),
+        (
+            "state-sourced list",
+            "export default function P() { const [rows, setRows] = useState([] as any[]); return <ul onClick={() => setRows([])}>{rows.map((r: any) => <li key={r.id}><Badge type={r.t} label={r.l} color={r.c} /></li>)}</ul> }",
+            1,
+            Tier::Native,
+        ),
+        (
+            "prop list, handler in the row",
+            "export default function P({ rows }: any) { const [k, setK] = useState(''); return <ul>{rows.map((r: any) => <li key={r.id} onClick={() => setK(r.id)}><Badge type={r.t} label={r.l} color={r.c} /></li>)}</ul> }",
+            1,
+            Tier::Native,
+        ),
+        (
+            "prop list, state elsewhere (state makes the props settable: stays linked)",
+            "export default function P({ rows }: any) { const [k, setK] = useState(0); return <div><button onClick={() => setK(k + 1)}>{k}</button><ul>{rows.map((r: any) => <li key={r.id}><Badge type={r.t} label={r.l} color={r.c} /></li>)}</ul></div> }",
+            1,
+            Tier::Native,
+        ),
+        (
+            "nested prop list under a stateful outer list",
+            "import { take } from '../reactive-list-child/take'\nexport default function P({ rows }: any) { const [n, setN] = useState(1); const shown = take(rows, n); return <ul onClick={() => setN(n + 1)}>{shown.map((r: any) => <li key={r.id}>{r.bs.map((b: any) => <Badge key={b.t} type={b.t} label={b.l} color={b.c} />)}</li>)}</ul> }",
+            1,
+            Tier::Native,
+        ),
+        (
+            "state prop",
+            "export default function P({ rows }: any) { const [k, setK] = useState(''); return <ul>{rows.map((r: any) => <li key={r.id}><Badge type={r.id === k ? 'on' : 'off'} label={r.l} color={r.c} /></li>)}</ul> }",
+            1,
+            Tier::Native,
+        ),
+        (
+            "plain prop, no row",
+            "export default function P({ t }: any) { return <div><Badge type={t} label=\"x\" color=\"#000\" /></div> }",
+            0,
+            Tier::Static,
+        ),
+    ] {
+        let ir = analyze_in("static-list-child", &format!("{S}{src}"));
+        assert_eq!(ir.child_links.len(), links, "{name}: {:?}", ir.diagnostics);
+        assert_eq!(ir.tier, tier, "{name}");
+    }
+}
+
+/// F70: a dropped row-only link does not renumber the links that survive.
+#[test]
+fn row_only_links_keep_their_ids() {
+    let ir = analyze_in(
+        "static-list-child",
+        "import Badge from './Badge'\nexport default function P({ rows }: any) { return <div><ul>{rows.map((r: any) => <li key={r.id}><Badge type={r.t} label={r.l} color={r.c} /></li>)}</ul><Badge type=\"t\" label=\"x\" color=\"#000\" onPick={() => 1} /></div> }",
+    );
+    assert_eq!(ir.child_links.len(), 1, "{:?}", ir.child_links);
+    assert_eq!(
+        (
+            ir.child_links[0].id,
+            ir.child_links[0].props_member.as_str()
+        ),
+        (2, "_p2")
+    );
+}

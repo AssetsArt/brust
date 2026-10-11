@@ -6,6 +6,7 @@ pub mod captures;
 pub mod children;
 pub mod deps;
 pub mod placement;
+pub mod projection;
 pub mod server_expr;
 pub mod tier;
 
@@ -31,6 +32,8 @@ pub struct PassState {
     pub client_uses: Vec<ClientUse>,
     /// Code outside the template that builds JSX: (loc, what).
     pub jsx_code: Vec<(u32, &'static str)>,
+    /// Every client read, with its raw expression where it has one (`captures` leaves the final list here).
+    pub all_uses: Vec<ClientUse>,
 }
 
 /// Something the client chunk runs, with what it reads.
@@ -55,6 +58,9 @@ pub struct PassCtx<'a> {
     pub modules: &'a std::cell::RefCell<crate::analyze::modules::ModuleCache>,
     /// Reads a function declared in this module as a structural component.
     pub local: &'a dyn Fn(&str) -> Option<ComponentIR>,
+    /// The component the caller asked for (a route component), not a child compiled on the way. Only a
+    /// root can be sure nothing links it, so only a root may treat its own props as fixed (ledger F70).
+    pub is_root: bool,
 }
 
 impl PassCtx<'_> {
@@ -86,6 +92,7 @@ pub fn run_passes(ir: &mut ComponentIR, ctx: &PassCtx<'_>) -> PassState {
     // Children before captures: linked props are client reads of the parent.
     children::children(ir, &mut st, ctx);
     captures::captures(ir, &mut st, ctx);
+    projection::projection(ir, &st);
     tier::tier(ir, &mut st, ctx);
     // Job cache keys are computed from the inputs by a path evaluator that cannot read `.length`
     // of a sequence: a job reading `rows.length` is keyed by `rows`. (The client seed keeps the

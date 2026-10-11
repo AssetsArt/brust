@@ -1,8 +1,9 @@
 // Per-file compile (plan T5, contract 9): every route Component goes through
 // `compileTree` (analysis + lowering of its whole tree). `Err` = build error; fallback and
 // warning diagnostics are logged; `outlet-outside-layout` is raised here (contract 5).
+// A component several trees reach keeps one compile, chosen by role, not by route order (F75).
 import { relative } from 'node:path'
-import { type CompiledTree, compileTree } from '../../native/index.js'
+import { type CompiledComponent, type CompiledTree, compileTree } from '../../native/index.js'
 import type { FlatRoute, Route } from '../routes'
 import { BuildError } from './errors'
 
@@ -35,6 +36,41 @@ export interface Compiled {
 type Diag = NonNullable<CompiledTree['error']>
 const where = (file: string, d: Diag) => `${file}:${d.line}:${d.col}`
 
+/** How a tree reached a component (F75). A route root's props are fixed, so after F70 it may drop
+ * the row links a parent elsewhere drives; a child that no parent in its tree links may have no
+ * chunk. A higher role's artifacts are a superset of a lower one's: the build keeps the highest. */
+export const ROLE = { root: 0, child: 1, chunkChild: 2 } as const
+export type Role = (typeof ROLE)[keyof typeof ROLE]
+
+/** One compile of a component: its role, the tree (route-root file, app-relative) that made it. */
+export interface Seen {
+  role: Role
+  tree: string
+  c: CompiledComponent
+}
+
+export const roleOf = (c: CompiledComponent, first: boolean): Role =>
+  first ? ROLE.root : c.clientJs === undefined ? ROLE.child : ROLE.chunkChild
+
+/** Whether `next` (same id, a later tree) replaces `kept`. A child's IR depends only on its own
+ * subtree, so two child compiles must agree on `ir` and `serverTs`, and two of the same role on
+ * everything; anything else is `component-compile-divergent` (a compiler bug, never route order). */
+export function replaces(kept: Seen, next: Seen): boolean {
+  if (kept.role !== ROLE.root && next.role !== ROLE.root) {
+    const [k, n] = [kept.c, next.c]
+    const same =
+      k.ir === n.ir &&
+      k.serverTs === n.serverTs &&
+      (kept.role !== next.role || (k.jinja === n.jinja && k.clientJs === n.clientJs))
+    if (!same)
+      throw new BuildError(
+        'component-compile-divergent',
+        `${n.id} (${n.source}) compiles differently as a child in ${kept.tree} and in ${next.tree}`,
+      )
+  }
+  return next.role > kept.role
+}
+
 export function compileApp(opts: {
   appRoot: string
   leaves: FlatRoute[]
@@ -44,7 +80,7 @@ export function compileApp(opts: {
   log: (s: string) => void
 }): { compiled: Map<string, Compiled>; routeComponent: Map<string, string> } {
   const { appRoot, leaves, componentFile } = opts
-  const compiled = new Map<string, Compiled>()
+  const seen = new Map<string, Seen>()
   const rootIdOfFile = new Map<string, string>()
   const routeComponent = new Map<string, string>()
   // Route nodes with a Component, by id (a layout appears in several chains: once is enough).
@@ -63,30 +99,40 @@ export function compileApp(opts: {
       const rel = relative(appRoot, file)
       const tree = compileTree(rel, appRoot, opts.runtimeImport, opts.serverOnly)
       if (tree.error) throw new BuildError(tree.error.rule, `${where(rel, tree.error)} ${tree.error.message}`)
-      for (const c of tree.components) {
+      for (const [i, c] of tree.components.entries()) {
         // A lowering Error that came back as a diagnostic is a build error too (contract 9).
         const err = c.diagnostics.find((d) => d.class === 'error')
         if (err) throw new BuildError(err.rule, `${where(c.source, err)} ${err.message}`)
-        if (compiled.has(c.id)) continue // a child reached from several trees
-        for (const d of c.diagnostics)
-          if (d.class === 'fallback' || d.class === 'warning') opts.log(`warning ${d.rule} ${where(c.source, d)} ${d.message}`)
-        const ir = JSON.parse(c.ir) as ComponentIR
-        ir.use_id_slots ??= 0
-        ir.uses_outlet ??= false
-        ir.instances ??= []
-        compiled.set(c.id, {
-          id: c.id,
-          file: `${appRoot}/${c.source}`,
-          ir,
-          jinja: c.jinja,
-          serverTs: c.serverTs,
-          clientJs: c.clientJs,
-        })
+        const next: Seen = { role: roleOf(c, i === 0), tree: rel, c }
+        const kept = seen.get(c.id) // a child reached from several trees, or a root another tree reaches
+        if (!kept || replaces(kept, next)) seen.set(c.id, next)
       }
       rootId = tree.components[0]!.id // the root comes first (pipeline.rs)
       rootIdOfFile.set(file, rootId)
     }
     routeComponent.set(routeId, rootId)
+  }
+
+  // Every tree is in: the kept compile is final. Map order = first sight (`set` keeps a key's place).
+  const compiled = new Map<string, Compiled>()
+  for (const { c } of seen.values()) {
+    for (const d of c.diagnostics)
+      if (d.class === 'fallback' || d.class === 'warning') opts.log(`warning ${d.rule} ${where(c.source, d)} ${d.message}`)
+    const ir = JSON.parse(c.ir) as ComponentIR
+    ir.use_id_slots ??= 0
+    ir.uses_outlet ??= false
+    ir.instances ??= []
+    compiled.set(c.id, {
+      id: c.id,
+      file: `${appRoot}/${c.source}`,
+      ir,
+      jinja: c.jinja,
+      serverTs: c.serverTs,
+      clientJs: c.clientJs,
+    })
+  }
+  for (const [routeId, route] of nodes) {
+    const rootId = routeComponent.get(routeId)!
     if (compiled.get(rootId)!.ir.uses_outlet && !route.children)
       throw new BuildError(
         'outlet-outside-layout',
