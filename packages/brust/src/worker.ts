@@ -3,7 +3,6 @@
 // handler NEVER rejects across the tsfn: every failure becomes `{error}` / `{id, error}`.
 import { join, resolve } from 'node:path'
 import { workerData } from 'node:worker_threads'
-import { loadActionsApp } from './actions/load'
 import { runFetch, setActionsApp } from './actions-bridge'
 import { planJobs, registerWorker } from './native'
 import { installServerResolver, type StoreSnapshot } from './store/core-adapter'
@@ -324,7 +323,11 @@ export async function startWorker(opts: StartWorkerOptions = {}): Promise<number
   if (!Array.isArray(routes)) throw new Error(`${entry} exports no routes (export const routes or default)`)
   const jobsMod = await import(join(dist, manifest.jobs_module ?? 'jobs.js'))
   const jobs = (jobsMod.default ?? jobsMod) as JobsModule
-  if (manifest.actions) setActionsApp(await loadActionsApp(join(dist, manifest.actions.entry), manifest.actions.prefix))
+  if (manifest.actions) {
+    // Lazy: elysia is an optional peer, so an app without [actions] must boot without it installed (R7).
+    const { loadActionsApp } = await import('./actions/load')
+    setActionsApp(await loadActionsApp(join(dist, manifest.actions.entry), manifest.actions.prefix))
+  }
   sab = opts.sab ?? new SharedArrayBuffer(SLOT_BYTES * slots)
   view = new Uint8Array(sab)
   const handlers = makeHandlers({
