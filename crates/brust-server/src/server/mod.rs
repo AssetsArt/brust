@@ -122,6 +122,9 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
         render_hints: (0..loaded.manifest.routes.len())
             .map(|_| AtomicUsize::new(0))
             .collect(),
+        plan_offer: (0..loaded.manifest.routes.len())
+            .map(|_| AtomicU32::new(0))
+            .collect(),
         manifest: loaded.manifest,
         plans,
         renderer,

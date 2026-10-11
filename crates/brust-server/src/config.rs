@@ -188,6 +188,9 @@ pub struct Server {
     /// Last document length per manifest route (+ slack): the capacity of the
     /// next render's buffer (M3-P P3). A size, never bytes.
     pub(crate) render_hints: Vec<AtomicUsize>,
+    /// M3-P P7 (R1): per route (manifest index), consecutive planned calls whose jobs all hit;
+    /// at `pipeline::OFFER_STOP` the route stops offering the plan until a miss resets it.
+    pub(crate) plan_offer: Box<[AtomicU32]>,
 }
 
 impl Server {

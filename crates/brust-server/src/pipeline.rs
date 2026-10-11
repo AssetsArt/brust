@@ -342,7 +342,9 @@ async fn page(
             params,
             path: path_only,
             req: envelope.req,
-            plan: s.plans.chain_has_jobs(&route.chain),
+            // M3-P P7 (R1): offered while the route's recent planned calls were not all hits.
+            plan: s.plans.chain_has_jobs(&route.chain)
+                && s.plan_offer[ri].load(Ordering::Relaxed) < OFFER_STOP,
         };
         // The plan offer: the base context (params + path: two entries) the worker plans on.
         let seed: Option<PlanBox> = req.plan.then(|| -> PlanBox {
@@ -468,6 +470,7 @@ async fn page(
             }
             let plans = rehydrate(&s.plans, pc.rows);
             let mut lookup = pc.lookup;
+            note_planned_outcome(&s.plan_offer[ri], lookup.misses.is_empty());
             if !lookup.misses.is_empty() {
                 s.job_calls.fetch_add(1, Ordering::Relaxed);
                 let ids: Vec<&str> = pc.call_ids.iter().map(String::as_str).collect();
@@ -488,6 +491,11 @@ async fn page(
             };
             let mut lookup = lookup_jobs(&s.jobs, &plans);
             if !lookup.misses.is_empty() {
+                // M3-P P7 (R1): a miss planned on tokio turns the route's plan offer back on.
+                let offer = &s.plan_offer[ri];
+                if offer.load(Ordering::Relaxed) != 0 {
+                    offer.store(0, Ordering::Relaxed);
+                }
                 let req = jobs_request(&plans, &lookup.misses);
                 let r = call_worker::<_, JobsResponse>(
                     &s.pool,
@@ -735,6 +743,23 @@ pub fn cached_body(body: &RenderedBody, accepts_gzip: bool) -> (Bytes, bool) {
 /// shared entry's, a fresh render moves the map it just built), then
 /// `x-brust-cache`, `Content-Encoding` and `Vary` (on every gzip-eligible
 /// document, identity or not, so a shared cache keys on `Accept-Encoding`).
+/// M3-P P7 (R1): a route stops offering the plan after this many consecutive planned calls
+/// whose jobs all hit; its pages then plan on tokio (still one worker call when every job hits).
+pub(crate) const OFFER_STOP: u32 = 64;
+
+/// Record a planned call's outcome in its route's all-hit streak. Written only while the streak
+/// is below [`OFFER_STOP`] or on a miss that resets it: no shared write in the steady state.
+fn note_planned_outcome(streak: &std::sync::atomic::AtomicU32, all_hit: bool) {
+    let v = streak.load(Ordering::Relaxed);
+    if all_hit {
+        if v < OFFER_STOP {
+            streak.fetch_add(1, Ordering::Relaxed);
+        }
+    } else if v != 0 {
+        streak.store(0, Ordering::Relaxed);
+    }
+}
+
 fn page_response(
     status: u16,
     mut h: HeaderMap,
