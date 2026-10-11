@@ -1,7 +1,8 @@
 // tests/server/pokedex.test.ts — spec §10 integration assertions against the real CLI. Run alone:
 // `bun test --timeout 120000 tests/server/pokedex.test.ts`.
-import { afterAll, beforeAll, expect, test } from 'bun:test'
-import { rmSync } from 'node:fs'
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { app, startPokedex } from './harness'
 
@@ -27,8 +28,8 @@ test('/: 200, document root, HeroSearch useId stable across two requests, all 18
   expect(chips.length).toBe(18)
   expect(chips[0]).toEqual(['normal', '#9099a1']); expect(chips[3]).toEqual(['electric', '#f5c84b'])
   // React child (S12): SSR HTML inside the host, its chunk linked, the runtime linked.
-  expect(html).toMatch(/<brust-island data-id="teamBuilder_[0-9a-f]{8}" x-props='[^']*'>[\s\S]*My team/)
-  expect(html).toMatch(/data-testid="team-count"[^>]*>2</)
+  expect(html).toMatch(/<brust-island data-id="teamBuilder_[0-9a-f]{8}"(?: x-props='[^']*')?>[\s\S]*My team/)
+  expect(html).toMatch(/data-testid="team-count"[^>]*>0</)
   const s = scripts(html)
   expect(s.some((u) => /\/_brust\/client\/runtime-[0-9a-f]{10}\.js$/.test(u))).toBe(true)
   expect(s.some((u) => /\/_brust\/client\/react-teamBuilder_[0-9a-f]{8}-[0-9a-f]{10}\.js$/.test(u))).toBe(true)
@@ -62,7 +63,7 @@ test('job cache HIT across two routes sharing a component and inputs; /pokemon/{
   const a1 = await srv.stats()
   expect(a1.loader_calls - before.loader_calls).toBe(1)
   expect(a1.job.hits - before.job.hits).toBeGreaterThanOrEqual(2)        // typeBadge{electric} + teamBuilder ssr
-  expect(a1.job.misses - before.job.misses).toBe(1)                      // only detailPage j0 is new
+  expect(a1.job.misses - before.job.misses).toBe(2)                      // detailPage j0 + the AddToTeamButton precompute are new
   const { r: r2, html: h2 } = await get('/pokemon/pikachu')
   expect(r2.headers.get('x-brust-cache')).toBe('HIT')
   expect(h2).toBe(h1)
@@ -122,4 +123,146 @@ test('catch-all is a static document: 404, 0 Bun calls on the first request, no 
 test('cookie mode=light reaches the first paint', async () => {
   const r = await fetch(`${srv.base}/`, { headers: { cookie: 'mode=light' } })
   expect(await r.text()).toMatch(/<html [^>]*lang="en"[^>]*data-mode="light"/)
+})
+
+const storeTags = (html: string) => [...html.matchAll(/<script type="application\/json" data-brust-store="([^"]+)">([^<]*)<\/script>/g)].map((m) => ({ name: m[1]!, json: JSON.parse(m[2]!) as unknown, at: m.index! }))
+
+test('first paint: every layout page carries ONE data-brust-store="team" tag = the DB roster, before the runtime script; the TeamBuilder SSR count equals it', async () => {
+  for (const p of ['/', '/pokedex', '/type-chart', '/pokemon/nothing']) {
+    const { html } = await get(p)
+    const tags = storeTags(html).filter((t) => t.name === 'team')
+    expect(tags, p).toHaveLength(1)
+    expect(tags[0]!.json, p).toEqual({ max: 6, members: [] })
+    expect(tags[0]!.at, p).toBeLessThan(html.search(/<script[^>]*\/_brust\/client\/runtime-/))
+    expect(html, p).toMatch(/data-testid="team-count"[^>]*>0</)
+  }
+  expect(storeTags((await get('/nope')).html)).toHaveLength(0)   // the catch-all sits outside the layout
+})
+
+test('detail page: AddToTeamButton paints the store state on first paint', async () => {
+  const { html } = await get('/pokemon/pikachu?nocache=1')
+  const tag = /<button[^>]*data-testid="add-to-team"[^>]*>[\s\S]*?<\/button>/.exec(html)
+  expect(tag, 'button painted').not.toBeNull()
+  expect(tag![0]).toContain('Add to team')
+  expect(tag![0]).not.toMatch(/\sdisabled[\s=>]/)   // the bare attribute, not the `disabled:` utility class or x-bind-disabled
+  expect(tag![0]).toMatch(/x-data="addToTeamButton_[0-9a-f]{8}" x-props='\{&quot;id&quot;:25\}'/)
+  expect((await get('/pokemon/nothing')).html).not.toContain('add-to-team')
+})
+
+test('/unified?start=5: one unified tag {count:5}; island, native counter and read-only node all paint 5; /unified paints 0; a team tag too', async () => {
+  const { r, html } = await get('/unified?start=5')
+  expect(r.status).toBe(200)
+  const tags = storeTags(html)
+  expect(tags.filter((t) => t.name === 'unified').map((t) => t.json)).toEqual([{ count: 5 }])
+  expect(tags.filter((t) => t.name === 'team')).toHaveLength(1)
+  const text = (h: string, id: string) => new RegExp(`data-testid="unified-${id}-count"[^>]*>\\s*([0-9]+)\\s*<`).exec(h)?.[1]
+  expect(['island', 'native', 'node'].map((id) => text(html, id))).toEqual(['5', '5', '5'])
+  const zero = (await get('/unified')).html
+  expect(['island', 'native', 'node'].map((id) => text(zero, id))).toEqual(['0', '0', '0'])
+  expect(storeTags(zero).find((t) => t.name === 'unified')!.json).toEqual({ count: 0 })
+  expect(storeTags((await get('/unified?start=-9')).html).find((t) => t.name === 'unified')!.json).toEqual({ count: 0 })
+  expect(storeTags((await get('/unified?start=99999999')).html).find((t) => t.name === 'unified')!.json).toEqual({ count: 1000000 })
+})
+
+// ---- team actions through Rust. LAST in the file on purpose: these mutate the DB, the tests above assume it is empty. ----
+type Team = { team: { id: number; name: string; displayName: string; types: string[] }[]; max: number }
+const jpost = (id: unknown, srv2 = srv) => srv2.action('/team', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id }) })
+const roster = async (srv2 = srv) => ((await (await srv2.action('/team')).json()) as Team).team.map((m) => m.id)
+async function reset() { for (const id of await roster()) await srv.action(`/team/${id}`, { method: 'DELETE' }) }
+
+describe('team actions through Rust', () => {
+  test('GET lists, POST adds (member from the snapshot), POST is idempotent', async () => {
+    await reset()
+    const g = await srv.action('/team')
+    expect(g.status).toBe(200)
+    expect(g.headers.get('content-type')).toContain('application/json')
+    expect(await g.json()).toEqual({ team: [], max: 6 })
+    const p = await jpost(25)
+    expect(p.status).toBe(200)
+    const j = (await p.json()) as Team
+    expect(j.team[0]).toMatchObject({ id: 25, name: 'pikachu', displayName: 'Pikachu', types: ['electric'] })
+    expect((await jpost(25)).status).toBe(200)
+    expect(await roster()).toEqual([25])
+  })
+
+  test('409 TeamFull at six: application/problem+json {title, status, max}; a member re-POST is 200; DELETE removes', async () => {
+    await reset()
+    for (const id of [1, 4, 7, 39, 94, 143]) expect((await jpost(id)).status).toBe(200)
+    const full = await jpost(25)
+    expect(full.status).toBe(409)
+    expect(full.headers.get('content-type')).toContain('application/problem+json')
+    expect(await full.json()).toMatchObject({ title: 'TeamFull', status: 409, max: 6 })
+    expect((await jpost(4)).status).toBe(200)
+    const d = await srv.action('/team/4', { method: 'DELETE' })
+    expect(d.status).toBe(200)
+    expect(await roster()).toEqual([1, 7, 39, 94, 143])
+  })
+
+  test("422 for a bad body (production shape: no errors member); 404 problem for an unknown id; PUT /team is Elysia's 404; POST / is still 405", async () => {
+    const bad = await jpost('x')
+    expect(bad.status).toBe(422)
+    expect(bad.headers.get('content-type')).toContain('application/problem+json')
+    expect(await bad.json()).not.toHaveProperty('errors')
+    const unknown = await jpost(999)
+    expect(unknown.status).toBe(404)
+    expect(await unknown.json()).toMatchObject({ title: 'UnknownPokemon' })
+    expect((await srv.action('/team', { method: 'PUT' })).status).toBe(404)
+    expect((await fetch(`${srv.base}/`, { method: 'POST' })).status).toBe(405)
+  })
+
+  test('20 concurrent POSTs of distinct ids across 2 workers add exactly 6', async () => {
+    await reset()
+    const rs = await Promise.all(Array.from({ length: 20 }, (_, i) => jpost(i + 1)))
+    const codes = rs.map((r) => r.status)
+    expect(codes.filter((c) => c === 200)).toHaveLength(6)
+    expect(codes.filter((c) => c === 409)).toHaveLength(14)
+    expect(await roster()).toHaveLength(6)
+  })
+
+  test('L1: a mutation evicts the team tag (pokemon and type-chart), then the page is fresh and cached again', async () => {
+    await reset()
+    await get('/type-chart')
+    const a = await get('/pokemon/snorlax')
+    expect(a.r.headers.get('x-brust-cache')).toBe('MISS')
+    expect((await get('/pokemon/snorlax')).r.headers.get('x-brust-cache')).toBe('HIT')
+    expect((await get('/type-chart')).r.headers.get('x-brust-cache')).toBe('HIT')
+    expect((await jpost(143)).status).toBe(200)
+    const b = await get('/pokemon/snorlax')
+    expect(b.r.headers.get('x-brust-cache')).toBe('MISS')
+    expect(storeTags(b.html).find((t) => t.name === 'team')!.json).toMatchObject({ max: 6, members: [{ id: 143 }] })
+    expect(b.html).toMatch(/data-testid="add-to-team"[^>]*>In your team</)
+    const c = await get('/pokemon/snorlax')
+    expect(c.r.headers.get('x-brust-cache')).toBe('HIT')
+    expect(c.html).toBe(b.html)
+    const t = await get('/type-chart')
+    expect(t.r.headers.get('x-brust-cache')).toBe('MISS')
+    expect(t.html).toMatch(/data-testid="team-count"[^>]*>1</)
+  })
+
+  test('?nocache=1 always reflects the DB', async () => {
+    await jpost(143)
+    expect((await get('/pokemon/snorlax?nocache=1')).html).toMatch(/data-testid="add-to-team"[^>]*>In your team</)
+    await srv.action('/team/143', { method: 'DELETE' })
+    expect((await get('/pokemon/snorlax?nocache=1')).html).toMatch(/data-testid="add-to-team"[^>]*>Add to team</)
+  })
+
+  test('restart keeps the team', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pokedex-restart-'))
+    const db = join(dir, 'team.sqlite')
+    let s1: typeof srv | undefined
+    let s2: typeof srv | undefined
+    try {
+      s1 = await startPokedex({ build: false, db })
+      for (const id of [25, 4]) expect((await jpost(id, s1)).status).toBe(200)
+      await s1.stop()
+      s1 = undefined
+      s2 = await startPokedex({ build: false, db })
+      expect(await roster(s2)).toEqual([25, 4])
+      expect(await (await fetch(`${s2.base}/`)).text()).toMatch(/data-testid="team-count"[^>]*>2</)
+    } finally {
+      await s1?.stop()
+      await s2?.stop()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })

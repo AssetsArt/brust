@@ -1,3 +1,4 @@
+import AddToTeamButton from '../components/AddToTeamButton'
 import Breadcrumb from '../components/Breadcrumb'
 import TypeBadge from '../components/TypeBadge'
 import { fmtHeight, fmtWeight } from '../lib/format'
@@ -5,6 +6,7 @@ import type { DetailData } from '../lib/types'
 
 export default function DetailPage({
   notFound,
+  id,
   hasAbilities,
   hasEvolution,
   displayName,
@@ -73,6 +75,9 @@ export default function DetailPage({
                 {typeNames.map((t) => (
                   <TypeBadge key={t} type={t} />
                 ))}
+              </div>
+              <div className="mt-5 w-full">
+                <AddToTeamButton id={id} />
               </div>
             </div>
 

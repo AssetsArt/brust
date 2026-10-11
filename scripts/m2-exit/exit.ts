@@ -10,10 +10,11 @@ export const f68Met = (n: F68Numbers | null): boolean => n !== null && n.D.v2 >=
 const pct = (p: { v2: number; x01: number }) => { const d = (p.v2 / p.x01 - 1) * 100; return `${d >= 0 ? '+' : ''}${d.toFixed(1)}%` }
 
 export const ROUTES = [
-  { pattern: '/', leafTier: 'static', why: 'HeroSearch (useState + useId); per-row TypeBadge jobs; TeamBuilder island from the layout' },
+  { pattern: '/', leafTier: 'static', why: 'HeroSearch (useState + useId); per-row TypeBadge jobs; TeamBuilder island from the layout; team store seeded by the layout loader' },
   { pattern: '/pokedex', leafTier: 'static', why: 'native DexFilter child (useState) over keyed DexCard rows; loader reads ?q=' },
-  { pattern: '/pokemon/{name}', leafTier: 'static', why: 'own precompute job (fmtHeight/fmtWeight); per-row TypeBadge; notFound verdict; L1 60 s tag pokemon; bypass query(nocache)' },
+  { pattern: '/pokemon/{name}', leafTier: 'static', why: 'own precompute job (fmtHeight/fmtWeight); per-row TypeBadge; notFound verdict; L1 60 s tag pokemon; bypass query(nocache); native AddToTeamButton (useStore) + team tag' },
   { pattern: '/type-chart', leafTier: 'static', why: 'nested .map() grid; L1 3600 s tag types' },
+  { pattern: '/unified', leafTier: 'static', why: 'unified store: island + native counter + native read-only node, first paint seeded' },
   { pattern: '*', leafTier: 'static', why: 'own <html> document outside the layout: 0 Bun calls, no scripts' },
 ] as const
 export const PROBES = [{ id: 'A-static-hit' }, { id: 'B-native-miss' }, { id: 'C-react-child' }] as const
@@ -48,7 +49,7 @@ export function renderExitReport(i: ExitInputs): string {
     const m = i.manifest.routes.find((x) => x.pattern === r.pattern)!
     L.push(`| \`${r.pattern}\` | ${i.manifest.components[m.chain[m.chain.length - 1]!]!.tier} | ${m.chain.join(' → ')} | ${m.cache ? JSON.stringify(m.cache) : '—'} | ${r.why} |`)
   }
-  L.push('', '## Integration (`tests/server/pokedex.test.ts`, `hydrate.chromium.test.ts`)', '', 'Every route 200 with expected text; `notFound` → 404 never cached; L1 HIT with `loader_calls` unchanged; `?nocache=1` bypass; job-cache HIT across `/` → `/pokemon/pikachu` (`job.hits` ≥ 2, `job.misses` = 1); per-row child values in row order; `useId` identical across requests; the catch-all makes 0 Bun calls and ships no script; the react child hydrates in Chromium with no console error and is interactive.', '')
+  L.push('', '## Integration (`tests/server/pokedex.test.ts`, `hydrate.chromium.test.ts`)', '', 'Every route 200 with expected text; `notFound` → 404 never cached; L1 HIT with `loader_calls` unchanged; `?nocache=1` bypass; job-cache HIT across `/` → `/pokemon/pikachu` (`job.hits` ≥ 2, `job.misses` = 2); per-row child values in row order; `useId` identical across requests; the catch-all makes 0 Bun calls and ships no script; the react child hydrates in Chromium with no console error and is interactive.', '')
   L.push('## Bench (`scripts/m2-exit/m2-bench-results.json`)', '', '(frozen M2 input; the M3-P suite lives in `bench/RESULTS.md`, F68 closed there)', '', `Measured ${i.bench.date} on ${i.bench.host}, Bun ${i.bench.bun}, \`oha -c ${i.bench.conn} -z ${i.bench.dur}\`. **Bar (v2 not slower on any probe, \`Accept-Encoding: identity\` on both sides): ${i.bench.bar}.** The gzip columns are an extra.`, '', '| Probe | Path | v2 rps | 0.1.x rps | Δ | v2 gzip rps | 0.1.x gzip rps |', '|---|---|---:|---:|---:|---:|---:|')
   for (const p of i.bench.probes) L.push(`| ${p.id} | \`${p.path}\` | ${Math.round(p.v2.rps).toLocaleString()} | ${p.x01 ? Math.round(p.x01.rps).toLocaleString() : '—'} | ${p.deltaRpsPct === null ? 'not measured' : `${p.deltaRpsPct}%`} | ${Math.round(p.v2Gzip.rps).toLocaleString()} | ${p.x01Gzip ? Math.round(p.x01Gzip.rps).toLocaleString() : '—'} |`)
   if (i.bench.bar !== 'met' && i.ledger68.state === 'closed') L.push('', `The M2 bar was ${i.bench.bar} at M2 exit; ledger F68 closed in M3-P on the suite in \`bench/RESULTS.json\` (identity, v2 vs 0.1.x): D ${i.m3F68 ? pct(i.m3F68.D) : '—'}, I ${i.m3F68 ? pct(i.m3F68.I) : '—'} → ${f68Met(i.m3F68) ? 'met' : 'not met'}.`)
