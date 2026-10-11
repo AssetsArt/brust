@@ -7,7 +7,7 @@
 // renamed to `<stem>-<sha256 hex10>.js` so the server serves them `immutable` (`pipeline.rs`
 // `is_hashed` wants lowercase hex; Bun's `[hash]` is base36).
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { builtinModules } from 'node:module'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import type { BunPlugin } from 'bun'
@@ -299,7 +299,15 @@ export async function buildReactChunks(dist: string, compiled: Map<string, Compi
 /** Left to the worker at runtime by `dist/jobs.js`: one React, and the worker's own `@brust/core`
  * (bundling the server package would load a second copy whose worker auto-start runs inside the
  * worker and exits it). */
-const JOBS_EXTERNALS = [...REACT_EXTERNALS, '@brust/core', '@brust/core/*']
+function isFile(p: string): boolean {
+  try {
+    return statSync(p).isFile()
+  } catch {
+    return false
+  }
+}
+
+const JOBS_EXTERNALS = [...REACT_EXTERNALS, '@brust/core', '@brust/core/*', '@brust/runtime-dom', '@brust/runtime-dom/*']
 
 const storesTable = (paths: string[]): string =>
   paths.length === 0 ? '' : `export const stores = {\n${paths.map((p, i) => `  ${JSON.stringify(p)}: S${i},`).join('\n')}\n}\n`
@@ -319,7 +327,7 @@ export async function buildJobs(dist: string, compiled: Map<string, Compiled>, s
   const entries: string[] = []
   const storePaths = [...new Set(stores)].sort()
   for (const [i, p] of storePaths.entries()) {
-    if (isAbsolute(p) || p.split('/').includes('..') || !existsSync(resolve(appRoot, p))) {
+    if (isAbsolute(p) || p.split('/').includes('..') || !isFile(resolve(appRoot, p))) {
       throw new BuildError('store-module', `store module ${p} is not a file inside the app (${appRoot})`)
     }
     imports.push(`import * as S${i} from ${JSON.stringify(resolve(appRoot, p))}`)

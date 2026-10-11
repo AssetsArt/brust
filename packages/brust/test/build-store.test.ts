@@ -66,6 +66,11 @@ test('jobs.js has a stores table only when the manifest lists stores', async () 
   await buildJobs(b, new Map(), new Map(), app, ['store.ts'])
   const jobs = await import(join(b, 'jobs.js'))
   expect(typeof jobs.stores['store.ts'].hits).toBe('function')
+  // the store module's bare @brust/runtime-dom import stays external: no second reactive core in jobs.js
+  expect(readFileSync(join(b, 'jobs.js'), 'utf8')).toMatch(/from\s*["']@brust\/runtime-dom["']/)
+  for (const p of ['', '.']) {
+    await expect(buildJobs(localOut(), new Map(), new Map(), app, [p])).rejects.toMatchObject({ rule: 'store-module' })
+  }
   // (c) escaping, absolute or missing paths are a store-module BuildError.
   for (const p of ['../x.ts', 'nope.ts', '/abs/store.ts']) {
     await expect(buildJobs(localOut(), new Map(), new Map(), app, [p])).rejects.toMatchObject({ rule: 'store-module' })
