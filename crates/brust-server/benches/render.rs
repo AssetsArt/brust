@@ -306,6 +306,13 @@ fn bench_loader_parse(c: &mut Criterion) {
                 .unwrap()
         })
     });
+    // M3-P P7: what `call_worker_planned` runs now — one UTF-8 validation, then `from_str`.
+    g.bench_function("utf8_from_str_LoaderResponse", |b| {
+        b.iter(|| {
+            let s = std::str::from_utf8(black_box(&bytes)).unwrap();
+            serde_json::from_str::<brust_server::protocol::LoaderResponse>(s).unwrap()
+        })
+    });
     g.bench_function("plain_Value", |b| {
         b.iter(|| serde_json::from_slice::<Value>(black_box(&bytes)).unwrap())
     });

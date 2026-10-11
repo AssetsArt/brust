@@ -251,8 +251,13 @@ pub async fn call_worker_planned<Req: Serialize, Resp: DeserializeOwned + Send +
         // future), JS is done writing this slot's sub-region; `len` is bounds-checked
         // above; `claim` is still held so no other request can write the slot.
         let bytes = unsafe { std::slice::from_raw_parts(ptr, len as usize) };
-        let parsed = serde_json::from_slice::<Resp>(bytes)
-            .map_err(|e| CallError::BadResponse(e.to_string()));
+        // M3-P P7: validate UTF-8 once and parse from `str` (serde_json's `from_slice` re-checks
+        // every string it reads; ~8% of the D parse).
+        let parsed = std::str::from_utf8(bytes)
+            .map_err(|e| CallError::BadResponse(format!("response not UTF-8: {e}")))
+            .and_then(|s| {
+                serde_json::from_str::<Resp>(s).map_err(|e| CallError::BadResponse(e.to_string()))
+            });
         let plan = claim.take_plan();
         drop(claim);
         parsed.map(|r| (r, plan))
@@ -565,6 +570,27 @@ mod tests {
         .expect("round trip");
         assert_eq!(v, serde_json::json!({"ok": true, "data": {"x": 1}}));
         // The claim was released: the only slot is claimable again.
+        assert!(matches!(
+            pool.try_claim_render_lockfree(),
+            ClaimResult::Claimed(_)
+        ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn call_worker_returns_bad_response_on_a_non_utf8_response() {
+        let pool = pool_with(MockDispatch::replying(b"{\"ok\":true,\"data\":\"\xff\"}"));
+        let r = call_worker::<_, serde_json::Value>(
+            &pool,
+            Duration::from_millis(100),
+            Duration::from_secs(5),
+            CallKind::Loader,
+            &serde_json::json!({"routeId": "r1"}),
+        )
+        .await;
+        match r {
+            Err(CallError::BadResponse(m)) => assert!(m.starts_with("response not UTF-8: "), "{m}"),
+            other => panic!("{other:?}"),
+        }
         assert!(matches!(
             pool.try_claim_render_lockfree(),
             ClaimResult::Claimed(_)
