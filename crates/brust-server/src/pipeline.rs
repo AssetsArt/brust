@@ -365,8 +365,8 @@ async fn page(
             Err(e) => (Err(e), None),
         };
         if !matches!(r, Err(CallError::NoWorkers | CallError::Timeout)) {
-            s.loader_calls.fetch_add(1, Ordering::Relaxed);
-            s.worker_calls.fetch_add(1, Ordering::Relaxed);
+            s.loader_calls.incr();
+            s.worker_calls.incr();
             meta.bun_calls += 1;
         }
         match r {
@@ -499,7 +499,7 @@ async fn page(
                 .await;
                 if !matches!(r, Err(CallError::NoWorkers | CallError::Timeout)) {
                     s.job_calls.fetch_add(1, Ordering::Relaxed);
-                    s.worker_calls.fetch_add(1, Ordering::Relaxed);
+                    s.worker_calls.incr();
                     meta.bun_calls += 1;
                 }
                 let resp = match r {
@@ -696,7 +696,11 @@ fn render_document(
         &mut out,
     )?;
     inject_assets_into(&mut out, &route.chain, &s.manifest);
-    s.render_hints[ri].store(next_hint(out.len()), Ordering::Relaxed);
+    // M3-P P7: stored only when it changes — the steady state writes no shared cache line.
+    let hint = next_hint(out.len());
+    if s.render_hints[ri].load(Ordering::Relaxed) != hint {
+        s.render_hints[ri].store(hint, Ordering::Relaxed);
+    }
     trim_to_hint(&mut out);
     Ok(Bytes::from(out.into_bytes()))
 }

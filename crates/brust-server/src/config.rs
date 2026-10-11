@@ -160,9 +160,11 @@ pub struct Server {
     pub(crate) l1: L1Cache,
     pub(crate) jobs: JobCache,
     pub(crate) dist_dir: PathBuf,
-    pub(crate) loader_calls: AtomicU64,
+    /// M3-P P7: striped (one cache line per stripe) — bumped on every loader page.
+    pub(crate) loader_calls: crate::cache::l1::StripedCounter,
     pub(crate) job_calls: AtomicU64,
-    pub(crate) worker_calls: AtomicU64,
+    /// M3-P P7: striped, like `loader_calls`.
+    pub(crate) worker_calls: crate::cache::l1::StripedCounter,
     pub(crate) timed_out_calls: AtomicU64,
     /// (component, slot) pairs already warned about as missing from a job result.
     pub(crate) missing_slots: std::sync::Mutex<std::collections::HashSet<(String, String)>>,
@@ -239,9 +241,9 @@ impl Server {
         Stats {
             l1: self.l1.stats(),
             job: self.jobs.stats(),
-            loader_calls: self.loader_calls.load(Ordering::Relaxed),
+            loader_calls: self.loader_calls.get(),
             job_calls: self.job_calls.load(Ordering::Relaxed),
-            worker_calls: self.worker_calls.load(Ordering::Relaxed),
+            worker_calls: self.worker_calls.get(),
             timed_out_calls: self.timed_out_calls.load(Ordering::Relaxed),
             missing_slots: self.missing_slots.lock().map_or(0, |m| m.len() as u64),
         }

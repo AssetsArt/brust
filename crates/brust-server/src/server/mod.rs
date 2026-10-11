@@ -128,9 +128,9 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
         l1: L1Cache::with_capacity(cfg.l1_capacity),
         jobs: JobCache::new(cfg.job_cache_capacity),
         dist_dir: cfg.dist_dir.clone(),
-        loader_calls: AtomicU64::new(0),
+        loader_calls: crate::cache::l1::StripedCounter::new(),
         job_calls: AtomicU64::new(0),
-        worker_calls: AtomicU64::new(0),
+        worker_calls: crate::cache::l1::StripedCounter::new(),
         timed_out_calls: AtomicU64::new(0),
         missing_slots: Default::default(),
         ready: Arc::new(Notify::new()),
@@ -231,10 +231,14 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
             // X-Powered-By, stamped on EVERY response at the service layer.
             // insert-if-absent: headers the pipeline set win. L1 holds JSON
             // context, never a response, so stamping a HIT can never duplicate.
+            // M3-P P7: a static HeaderValue (the string leaked once per server), so stamping a
+            // response clones no refcounted `Bytes`.
             let powered_by: Option<http::HeaderValue> =
                 state.generator.as_deref().and_then(|s| {
                     match http::HeaderValue::from_str(s) {
-                        Ok(v) => Some(v),
+                        Ok(_) => Some(http::HeaderValue::from_static(Box::leak(
+                            s.to_owned().into_boxed_str(),
+                        ))),
                         Err(e) => {
                             warn!(value = %s, error = %e, "generator string rejected by HeaderValue — X-Powered-By disabled");
                             None
@@ -300,6 +304,8 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
                     let _permit = permit; // released when the connection ends
                     let _conn_token = conn_token; // drain barrier — held for the conn's life
                     let svc = service_fn(move |req| {
+                        // M3-P P7: one `Arc<Server>` clone per request (moved into the pipeline); a
+                        // second only when CORS is configured.
                         let state = Arc::clone(&state);
                         let powered_by = powered_by.clone();
                         async move {
@@ -307,18 +313,19 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
                             // chokepoint that sees every response path (static
                             // assets, error helpers, L1 HITs, rendered pages). Clone
                             // the Origin header BEFORE `req` moves into the pipeline.
-                            let origin = if state.cors_resolved.is_some() {
-                                req.headers().get(http::header::ORIGIN).cloned()
-                            } else {
-                                None
-                            };
-                            let mut resp = crate::pipeline::handle(req, Arc::clone(&state)).await;
+                            let cors = state
+                                .cors_resolved
+                                .is_some()
+                                .then(|| (Arc::clone(&state), req.headers().get(http::header::ORIGIN).cloned()));
+                            let mut resp = crate::pipeline::handle(req, state).await;
                             if let Some(v) = powered_by {
                                 resp.headers_mut()
                                     .entry(http::header::HeaderName::from_static("x-powered-by"))
                                     .or_insert(v);
                             }
-                            if let Some(c) = &state.cors_resolved {
+                            if let Some((state, origin)) = &cors
+                                && let Some(c) = &state.cors_resolved
+                            {
                                 c.stamp_response(resp.headers_mut(), origin.as_ref());
                             }
                             Ok::<_, Infallible>(resp)
