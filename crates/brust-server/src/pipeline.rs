@@ -385,6 +385,7 @@ async fn page(
                 ok: true,
                 data,
                 headers,
+                store: _,
             }) => {
                 merge_loader_data(&mut ctx, data, &route.id);
                 for (k, v) in headers {
@@ -398,7 +399,7 @@ async fn page(
                 tracing::error!(route = %route.id, "loader returned ok: false");
                 return body::error_500();
             }
-            Ok(LoaderResponse::Verdict(Verdict::NotFound { data })) => {
+            Ok(LoaderResponse::Verdict(Verdict::NotFound { data, store: _ })) => {
                 merge_loader_data(&mut ctx, data, &route.id);
                 status = 404;
                 cacheable = false;
@@ -1729,6 +1730,7 @@ fn plan_response(
         ok: true,
         data,
         headers,
+        store: _,
     } = serde_json::from_slice::<LoaderResponse>(bytes).ok()?
     else {
         return None;
