@@ -1,8 +1,11 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use brust_jinja::ctx::Node;
 use brust_server::manifest::{Loaded, Manifest};
-use brust_server::render::{RenderError, Renderer, inject_assets, use_ids};
+use brust_server::render::{
+    RenderError, Renderer, inject_assets, inject_page_assets_into, store_scripts_into, use_ids,
+};
 use serde_json::json;
 
 fn fx() -> PathBuf {
@@ -167,4 +170,92 @@ fn render_error_names_template_and_line() {
         Err(other) => panic!("expected Render error, got {other:?}"),
         Ok(_) => panic!("expected Render error, got Ok"),
     }
+}
+
+fn page_assets(html: &str, ids: &[&str], l: &Loaded, store: Option<&Node>) -> String {
+    let mut out = html.to_string();
+    inject_page_assets_into(&mut out, &chain(ids), &l.manifest, store);
+    out
+}
+
+#[test]
+fn store_tags_sit_immediately_before_the_runtime_tag() {
+    let (l, _r) = load();
+    let st = Node::from(json!({"b": {"v": 1}, "a": {"v": 2}}));
+    let out = page_assets(
+        "<html><body><p>x</p></body></html>",
+        &["appLayout_a1", "detailPage_c3"],
+        &l,
+        Some(&st),
+    );
+    assert!(
+        out.ends_with(
+            "<script type=\"application/json\" data-brust-store=\"a\">{\"v\":2}</script><script type=\"application/json\" data-brust-store=\"b\">{\"v\":1}</script><script type=\"module\" src=\"/_brust/client/runtime-8b1c.js\"></script><script type=\"module\" src=\"/_brust/client/detailPage_c3-1a2b3c.js\"></script></body></html>"
+        ),
+        "{out}"
+    );
+}
+
+#[test]
+fn no_store_is_byte_identical() {
+    let (l, _r) = load();
+    let stores = [None, Some(Node::Null), Some(Node::from(json!({})))];
+    for ids in [
+        &["appLayout_a1", "homePage_b2"][..],
+        &["appLayout_a1", "detailPage_c3"],
+        &["appLayout_a1", "teamPage_g7"],
+        &["appLayout_a1", "idsPage_i9"],
+    ] {
+        for html in ["<html><body><p>x</p></body></html>", "<p>x</p>"] {
+            let want = inject_assets(html.to_string(), &chain(ids), &l.manifest);
+            for st in &stores {
+                assert_eq!(page_assets(html, ids, &l, st.as_ref()), want, "{ids:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn static_chain_ignores_the_store() {
+    let (l, _r) = load();
+    let st = Node::from(json!({"a": {"v": 1}}));
+    let html = "<html><body><p>x</p></body></html>";
+    let out = page_assets(html, &["appLayout_a1", "homePage_b2"], &l, Some(&st));
+    assert_eq!(out, html);
+}
+
+#[test]
+fn store_json_is_script_safe() {
+    let (l, _r) = load();
+    let st = Node::from(json!({"s": {"s": "</script><!--&\u{2028}\u{2029}>"}}));
+    let mut tags = String::new();
+    store_scripts_into(&mut tags, &st);
+    assert!(
+        tags.contains("{\"s\":\"\\u003c/script\\u003e\\u003c!--\\u0026\\u2028\\u2029\\u003e\"}"),
+        "{tags}"
+    );
+    let out = page_assets(
+        "<html><body></body></html>",
+        &["appLayout_a1", "detailPage_c3"],
+        &l,
+        Some(&st),
+    );
+    assert!(!out.contains("</script><!--"), "{out}");
+    assert!(
+        !out.contains('\u{2028}') && !out.contains('\u{2029}'),
+        "{out}"
+    );
+    // 5 script tags: one store tag, runtime, chunk => 3 closes
+    assert_eq!(out.matches("</script>").count(), 3, "{out}");
+}
+
+#[test]
+fn store_names_are_stripped() {
+    let mut tags = String::new();
+    store_scripts_into(&mut tags, &Node::from(json!({"a\"b<c d": {"v": 1}})));
+    assert!(tags.contains("data-brust-store=\"abcd\">"), "{tags}");
+    assert_eq!(tags.matches("data-brust-store").count(), 1, "{tags}");
+    let mut none = String::new();
+    store_scripts_into(&mut none, &Node::from(json!({"\"<>\"": {"v": 1}})));
+    assert_eq!(none, "");
 }

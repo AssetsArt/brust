@@ -171,3 +171,85 @@ fn island_props_hide_the_store() {
         .expect("teamBuilder_h8 call");
     assert_eq!(call["inputs"]["__store"], json!({"cart": {"count": 3}}));
 }
+
+const STORE_TAG: &str = "<script type=\"application/json\" data-brust-store=\"";
+const RUNTIME_TAG: &str = "<script type=\"module\" src=\"/_brust/client/runtime-8b1c.js\">";
+
+#[test]
+fn store_tag_once_per_store_on_the_page() {
+    let dir = store_dist();
+    let s = boot_in(
+        counted(json!({"cart": {"count": 3}, "user": {"name": "ash"}})),
+        dir.path(),
+    );
+    let (st, _, body) = get(&s, "/pokemon/pikachu", &[]);
+    assert_eq!(st, 200);
+    for name in ["cart", "user"] {
+        let tag = format!("{STORE_TAG}{name}\">");
+        assert_eq!(body.matches(&tag).count(), 1, "{body}");
+    }
+    let i = body.find(STORE_TAG).expect("tag");
+    let j = body.find(RUNTIME_TAG).expect("runtime");
+    assert!(i < j, "{body}");
+    let between = &body[i..j];
+    assert!(between.ends_with("</script>"), "{between}");
+    assert_eq!(between.matches(STORE_TAG).count(), 2, "{between}");
+    assert!(!between.contains("src="), "{between}");
+}
+
+#[test]
+fn l1_hit_serves_the_same_store_tag() {
+    let dir = store_dist();
+    let f = counted(json!({"cart": {"count": 3}}));
+    let s = boot_in(f.clone(), dir.path());
+    let (s1, h1, b1) = get(&s, "/pokemon/pikachu", &[]);
+    let (s2, h2, b2) = get(&s, "/pokemon/pikachu", &[]);
+    assert_eq!((s1, s2), (200, 200));
+    assert_eq!(cache_hdr(&h1), Some("MISS"));
+    assert_eq!(cache_hdr(&h2), Some("HIT"));
+    assert!(b1.contains(&format!("{STORE_TAG}cart\">")), "{b1}");
+    assert_eq!(b1, b2);
+    assert_eq!(f.counts().0, 1);
+}
+
+#[test]
+fn no_store_page_has_no_tag_and_same_bytes() {
+    let dir = store_dist();
+    let absent = boot_in(FakeBun::new(default_loader, default_jobs), dir.path());
+    let nulled = boot_in(
+        FakeBun::new(
+            |req| {
+                let mut r = default_loader(req);
+                r["store"] = Value::Null;
+                r
+            },
+            default_jobs,
+        ),
+        dir.path(),
+    );
+    let (s1, _, b1) = get(&absent, "/pokemon/pikachu", &[]);
+    let (s2, _, b2) = get(&nulled, "/pokemon/pikachu", &[]);
+    assert_eq!((s1, s2), (200, 200));
+    assert_eq!(b1, b2);
+    assert!(!b1.contains("data-brust-store"), "{b1}");
+}
+
+#[test]
+fn request_derived_store_value_cannot_break_out() {
+    let dir = store_dist();
+    let f = FakeBun::new(
+        |req| {
+            let mut r = default_loader(req.clone());
+            r["store"] = json!({"cart": {"name": req["params"]["name"]}});
+            r
+        },
+        default_jobs,
+    );
+    let s = boot_in(f, dir.path());
+    let (st, _, body) = get(&s, "/pokemon/%3C%2Fscript%3E", &[]);
+    assert_eq!(st, 200, "{body}");
+    assert!(body.contains(r#"{"name":"\u003c/script\u003e"}"#), "{body}");
+    let i = body.find(STORE_TAG).expect("tag");
+    let tag_end = body[i..].find("</script>").unwrap();
+    assert!(!body[i..i + tag_end].contains("</"), "{body}");
+}
