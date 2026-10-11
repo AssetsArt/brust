@@ -297,6 +297,10 @@ pub enum ClaimResult {
 pub struct WorkerPool {
     /// M3-P P7 (R3): the deadline sweeper task is running (see [`WorkerPool::ensure_sweeper`]).
     sweeper_running: Arc<AtomicBool>,
+    /// Every entry ever registered, as `Weak`: the sweeper walks THIS, not `entries`, so a call
+    /// on a worker that `remove`/`clear` took out of the pool (dead worker, dev reload) still gets
+    /// its deadline while its claim keeps the entry alive. Pruned by the sweeper.
+    swept: parking_lot::Mutex<Vec<Weak<WorkerEntry>>>,
     entries: RwLock<Vec<Arc<WorkerEntry>>>,
     next_id: AtomicU32,
     /// Notified once per worker release (see `RenderClaim::drop`). Dispatchers
@@ -330,6 +334,7 @@ impl WorkerPool {
             in_flight: AtomicU32::new(0),
             slots,
         });
+        self.swept.lock().push(Arc::downgrade(&entry));
         self.entries.write().push(entry);
         id
     }
@@ -385,7 +390,19 @@ impl WorkerPool {
             let d = s.deadline_ms.load(Ordering::Relaxed);
             d != 0 && d <= now_ms
         };
-        for e in self.entries.read().iter() {
+        let live: Vec<Arc<WorkerEntry>> = {
+            let mut swept = self.swept.lock();
+            let mut live = Vec::with_capacity(swept.len());
+            swept.retain(|w| match w.upgrade() {
+                Some(e) => {
+                    live.push(e);
+                    true
+                }
+                None => false,
+            });
+            live
+        };
+        for e in &live {
             for s in &e.slots {
                 if expired(s) {
                     let mut g = s.deadline_waker.lock();

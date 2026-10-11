@@ -768,6 +768,32 @@ mod tests {
         }
     }
 
+    /// M3-P P7: the sweeper walks every registered entry, not the pool's current list, so a
+    /// call on a worker removed mid-call (dead worker, dev reload `clear`) still gets its 504.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_call_on_a_worker_removed_from_the_pool_still_times_out() {
+        for clear in [false, true] {
+            let (pool, _release) = gated_pool();
+            let p2 = Arc::clone(&pool);
+            let call = tokio::spawn(async move { call_with(&p2, 100, 50, CallKind::Loader).await });
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            if clear {
+                pool.clear();
+            } else {
+                pool.remove(0);
+            }
+            assert_eq!(pool.registered_count(), 0);
+            let r = tokio::time::timeout(Duration::from_secs(2), call)
+                .await
+                .expect("deadline never fired")
+                .unwrap();
+            assert!(
+                matches!(r, Err(CallError::Deadline)),
+                "clear={clear}: {r:?}"
+            );
+        }
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn deadline_returns_504_error_and_keeps_the_claim_until_js_settles() {
         let (pool, release) = gated_pool();
