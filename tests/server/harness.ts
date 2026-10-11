@@ -14,7 +14,8 @@ export async function startPokedex(opts: { build?: boolean; db?: string } = {}) 
   }
   const owned = opts.db === undefined ? mkdtempSync(join(tmpdir(), 'pokedex-team-')) : null
   const db = opts.db ?? join(owned as string, 'team.sqlite')
-  const env = { ...process.env, BRUST_PORT: '', BRUST_WORKERS: '', BRUST_ADDR: '', POKEDEX_TEAM_DB: db }
+  // `bun test` sets NODE_ENV=test and workers only default it (run.ts: ??=); a real `brust start` is production (422 bodies, error details).
+  const env = { ...process.env, BRUST_PORT: '', BRUST_WORKERS: '', BRUST_ADDR: '', POKEDEX_TEAM_DB: db, NODE_ENV: 'production' }
   const proc = Bun.spawn([bin, 'start', '--port', '0', '--workers', '2'], { cwd: app, env, stdout: 'pipe', stderr: 'inherit' })
   const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
   const dec = new TextDecoder()

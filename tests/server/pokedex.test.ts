@@ -1,7 +1,8 @@
 // tests/server/pokedex.test.ts — spec §10 integration assertions against the real CLI. Run alone:
 // `bun test --timeout 120000 tests/server/pokedex.test.ts`.
-import { afterAll, beforeAll, expect, test } from 'bun:test'
-import { rmSync } from 'node:fs'
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { app, startPokedex } from './harness'
 
@@ -161,4 +162,107 @@ test('/unified?start=5: one unified tag {count:5}; island, native counter and re
   expect(storeTags(zero).find((t) => t.name === 'unified')!.json).toEqual({ count: 0 })
   expect(storeTags((await get('/unified?start=-9')).html).find((t) => t.name === 'unified')!.json).toEqual({ count: 0 })
   expect(storeTags((await get('/unified?start=99999999')).html).find((t) => t.name === 'unified')!.json).toEqual({ count: 1000000 })
+})
+
+// ---- team actions through Rust. LAST in the file on purpose: these mutate the DB, the tests above assume it is empty. ----
+type Team = { team: { id: number; name: string; displayName: string; types: string[] }[]; max: number }
+const jpost = (id: unknown, srv2 = srv) => srv2.action('/team', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id }) })
+const roster = async (srv2 = srv) => ((await (await srv2.action('/team')).json()) as Team).team.map((m) => m.id)
+async function reset() { for (const id of await roster()) await srv.action(`/team/${id}`, { method: 'DELETE' }) }
+
+describe('team actions through Rust', () => {
+  test('GET lists, POST adds (member from the snapshot), POST is idempotent', async () => {
+    await reset()
+    const g = await srv.action('/team')
+    expect(g.status).toBe(200)
+    expect(g.headers.get('content-type')).toContain('application/json')
+    expect(await g.json()).toEqual({ team: [], max: 6 })
+    const p = await jpost(25)
+    expect(p.status).toBe(200)
+    const j = (await p.json()) as Team
+    expect(j.team[0]).toMatchObject({ id: 25, name: 'pikachu', displayName: 'Pikachu', types: ['electric'] })
+    expect((await jpost(25)).status).toBe(200)
+    expect(await roster()).toEqual([25])
+  })
+
+  test('409 TeamFull at six: application/problem+json {title, status, max}; a member re-POST is 200; DELETE removes', async () => {
+    await reset()
+    for (const id of [1, 4, 7, 39, 94, 143]) expect((await jpost(id)).status).toBe(200)
+    const full = await jpost(25)
+    expect(full.status).toBe(409)
+    expect(full.headers.get('content-type')).toContain('application/problem+json')
+    expect(await full.json()).toMatchObject({ title: 'TeamFull', status: 409, max: 6 })
+    expect((await jpost(4)).status).toBe(200)
+    const d = await srv.action('/team/4', { method: 'DELETE' })
+    expect(d.status).toBe(200)
+    expect(await roster()).toEqual([1, 7, 39, 94, 143])
+  })
+
+  test("422 for a bad body (production shape: no errors member); 404 problem for an unknown id; PUT /team is Elysia's 404; POST / is still 405", async () => {
+    const bad = await jpost('x')
+    expect(bad.status).toBe(422)
+    expect(bad.headers.get('content-type')).toContain('application/problem+json')
+    expect(await bad.json()).not.toHaveProperty('errors')
+    const unknown = await jpost(999)
+    expect(unknown.status).toBe(404)
+    expect(await unknown.json()).toMatchObject({ title: 'UnknownPokemon' })
+    expect((await srv.action('/team', { method: 'PUT' })).status).toBe(404)
+    expect((await fetch(`${srv.base}/`, { method: 'POST' })).status).toBe(405)
+  })
+
+  test('20 concurrent POSTs of distinct ids across 2 workers add exactly 6', async () => {
+    await reset()
+    const rs = await Promise.all(Array.from({ length: 20 }, (_, i) => jpost(i + 1)))
+    const codes = rs.map((r) => r.status)
+    expect(codes.filter((c) => c === 200)).toHaveLength(6)
+    expect(codes.filter((c) => c === 409)).toHaveLength(14)
+    expect(await roster()).toHaveLength(6)
+  })
+
+  test('L1: a mutation evicts the team tag (pokemon and type-chart), then the page is fresh and cached again', async () => {
+    await reset()
+    await get('/type-chart')
+    const a = await get('/pokemon/snorlax')
+    expect(a.r.headers.get('x-brust-cache')).toBe('MISS')
+    expect((await get('/pokemon/snorlax')).r.headers.get('x-brust-cache')).toBe('HIT')
+    expect((await get('/type-chart')).r.headers.get('x-brust-cache')).toBe('HIT')
+    expect((await jpost(143)).status).toBe(200)
+    const b = await get('/pokemon/snorlax')
+    expect(b.r.headers.get('x-brust-cache')).toBe('MISS')
+    expect(storeTags(b.html).find((t) => t.name === 'team')!.json).toMatchObject({ max: 6, members: [{ id: 143 }] })
+    expect(b.html).toMatch(/data-testid="add-to-team"[^>]*>In your team</)
+    const c = await get('/pokemon/snorlax')
+    expect(c.r.headers.get('x-brust-cache')).toBe('HIT')
+    expect(c.html).toBe(b.html)
+    const t = await get('/type-chart')
+    expect(t.r.headers.get('x-brust-cache')).toBe('MISS')
+    expect(t.html).toMatch(/data-testid="team-count"[^>]*>1</)
+  })
+
+  test('?nocache=1 always reflects the DB', async () => {
+    await jpost(143)
+    expect((await get('/pokemon/snorlax?nocache=1')).html).toMatch(/data-testid="add-to-team"[^>]*>In your team</)
+    await srv.action('/team/143', { method: 'DELETE' })
+    expect((await get('/pokemon/snorlax?nocache=1')).html).toMatch(/data-testid="add-to-team"[^>]*>Add to team</)
+  })
+
+  test('restart keeps the team', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pokedex-restart-'))
+    const db = join(dir, 'team.sqlite')
+    let s1: typeof srv | undefined
+    let s2: typeof srv | undefined
+    try {
+      s1 = await startPokedex({ build: false, db })
+      for (const id of [25, 4]) expect((await jpost(id, s1)).status).toBe(200)
+      await s1.stop()
+      s1 = undefined
+      s2 = await startPokedex({ build: false, db })
+      expect(await roster(s2)).toEqual([25, 4])
+      expect(await (await fetch(`${s2.base}/`)).text()).toMatch(/data-testid="team-count"[^>]*>2</)
+    } finally {
+      await s1?.stop()
+      await s2?.stop()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })
