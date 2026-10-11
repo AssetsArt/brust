@@ -1,0 +1,86 @@
+# M3-F wave 2 — Actions as an Elysia 2 app behind Rust HTTP, and `bun create @brust/app`
+
+owner: Detoro (lead, 22499151) · authority: in-loop (human 2026-10-11: "ใช้ bun create @brust/app ได้เลย ขอ 2 template … pokedex add ได้จริงแบบ v0.1.x และทำ Actions ให้เป็น elysia 2 adapter … ใช้ elysia แต่ไม่ใช้ bun ทำ http คือทำ adapter elysia ใช้งาน http ร่วมกับ rust") · base: v2 after M3-F wave 1 (unified store) merges · depends on: `docs/design/2026-10-11-m3f-unified-store-design.md`
+
+## 0. What the human asked, in one paragraph each
+
+**Actions.** In 0.1.x, actions were a brust-specific builder (`defineActions().get/post/…`) routed by Rust (`ActionRouter`, `/_brust/action` prefix) and executed in a Bun worker, with a hand-written typed proxy client. In v2 the actions layer is **Elysia 2**: the developer writes a normal Elysia app, Rust (hyper) still terminates HTTP, applies the prefix, body cap and CORS, and forwards the request to the Bun worker, which drives the Elysia app through a `brust` adapter (web-standard entry) and returns the response to Rust. No `Bun.serve`, no second port. The typed client is Eden Treaty, pre-wired by `@brust/core/client`.
+
+**Scaffold.** `bun create @brust/app my-app` (package `@brust/create-app`, which is what `bun create` resolves a scoped template to — verified: `bun create @brust/app` fetches `@brust/create-app`) with two templates: `blank` and `pokedex`. The pokedex template is the real v2 pokedex, and "add to team" works end to end as in 0.1.x: click → Elysia action → persisted → the unified `team` store updates everywhere (native button, SSR island), seeded on first paint.
+
+Facts this rests on: 0.1.x `crates/brust-core/src/server/mod.rs:447-952` (prefix, preflight, body cap 262144, buffered body, `ActionEnvelope`, `dispatch_single_chunk` with `[u16 meta_len][meta JSON][body]` framing), `runtime/routes.ts:2307-2420` (`dispatchAction`), `runtime/treaty.ts` (prefix order: opts → `/_brust/action` with baseUrl → `__BRUST_ACTION_PREFIX__` → default), `runtime/cli/new.ts:221-294` + `templates.ts:62-138` (scaffold). v2 today: `pipeline.rs:72` drops the body (`_body`), GET/HEAD gate `:95-98`, only `loader`/`jobs` call kinds (`dispatch.rs`, `worker.ts:198-221`), SAB slot 256 KB JSON-only, CORS core exists but is not exposed through napi `StartOptions`. Elysia: `elysia@next` = 2.0.0-beta.30 (branch `next`); every adapter is web-standard-based; the web-standard adapter's `listen` throws "export default Elysia.fetch instead"; `ElysiaAdapter` has `name, listen, stop?, isWebStandard?, handler.{mapResponse,mapEarlyResponse,mapCompactResponse}, composeHandler, composeGeneralHandler, composeError, ws?, beforeCompile?`.
+
+## 1. Decisions
+
+| # | Decision | Why |
+|---|---|---|
+| E1 | **Actions = one Elysia 2 app** (`elysia@next`, pinned to the exact beta the lane verifies; `@elysia/*` plugins only). Entry: `brust.toml` `[actions] entry = "actions.ts"` (default export `new Elysia({ adapter: brust() })`), `prefix = "/_brust/action"` (0.1.x default; configurable), `max_body_bytes = 262144`. `brust build` records `actions.entry`, `prefix` and `max_body_bytes` in the manifest; the worker imports the entry at boot. | The human chose Elysia 2 explicitly; beta risk is accepted and pinned. One app, one place to configure. |
+| E2 | **`brust()` adapter = the web-standard adapter with `name: 'brust'`, `listen` throwing `"brust actions are served by the Rust server — remove app.listen()"`, and `beforeCompile` registering nothing.** The worker drives the app with `app.fetch(request)` (web-standard entry). | Rust owns HTTP; Elysia only needs a `Request` in and a `Response` out, which is what its adapters are built on. Smallest adapter that is still a real adapter (name shows in Elysia errors/devtools). |
+| E3 | **Rust forwards the whole prefix subtree to Elysia** (no Rust-side action router, no index-ordering contract). Rust does: prefix match (segment-safe, before the GET/HEAD gate), preflight 204 + CORS stamping (existing core, now exposed through napi `StartOptions.cors` and `brust.toml [cors]`), body cap → 413, unsupported transfer → 415, then one worker call `CallKind::Fetch`. Elysia answers 404/405/422 itself (RFC 9457 problem details, as Elysia 2 does). | Two routers for one path tree was 0.1.x's weakest contract (same registration order in main + workers). Elysia's router is the product. |
+| E4 | **Wire: `FetchRequest { method, url (path+query), headers, body: { text } \| { b64 } \| none, req: RequestEnvelope }` → worker; `FetchResponse` back as `[u32 LE meta_len][meta JSON {status, headers: [[k,v],…]}][body bytes]` in the SAB slot** (0.1.x framing, u32 instead of u16; `headers` as pairs so multiple `Set-Cookie` survive). Body > slot capacity → 500 `brust: action response exceeds <n> bytes` + log; the limit is F82 (chunked/streamed action bodies) and documented. Requests are buffered (as 0.1.x); streaming is out of scope. | Minimal new protocol surface; the SAB fast lane already exists; honest limit instead of a silent truncation. |
+| E5 | **Worker: the `fetch` call runs inside `runInRequestContext` + the store scope**, builds `new Request(origin + url, { method, headers, body })`, awaits `app.fetch(req)`, serialises `Response` (status, header pairs, `arrayBuffer()`). Cookies set by Elysia ride in the `Set-Cookie` pairs. Stores written by an action are per-request (D4) and are not snapshotted anywhere — an action that mutates shared state uses its own persistence (E7) and the page re-reads it. | One execution model for pages and actions; store semantics stay those of the store spec. |
+| E6 | **Typed client = Eden Treaty**, wrapped: `import { client } from '@brust/core/client'`; `client<App>({ baseUrl?, prefix?, headers?, fetch? })` = `treaty<App>(baseUrl + prefix, …)`. Prefix resolution order as 0.1.x: `opts.prefix` → `/_brust/action` when `baseUrl` is set → `globalThis.__BRUST_ACTION_PREFIX__` → default. A non-default prefix is injected by `render.rs` as `<script>globalThis.__BRUST_ACTION_PREFIX__="…"</script>` next to the store tags (store spec D6 placement). `ActionError` is replaced by Elysia's `.error(MyError, …)` + `problem()`; the client narrows on `error.value` (problem+json). | The 0.1.x treaty was a hand-made Eden; with Elysia, Eden is the real thing and stays typed through `.error()` registrations. |
+| E7 | **Pokedex "add for real": persistence = `bun:sqlite` file `data/team.sqlite`** (table `team(id TEXT PRIMARY KEY, name, types JSON, added_at)`, `MAX_TEAM = 6`), shared by every worker and surviving restarts; the Elysia app in `actions.ts` exposes `GET /team`, `POST /team` (TypeBox body; `TeamFull` error → 409 problem), `DELETE /team/:id`, each returning `{ team, max }`. UI: `AddToTeamButton` native component (`useStore(team)` render read for the label/state; click handler calls `api.team.post(...)`/`.delete()` then `team.members.set(data.team)`), `TeamBuilder` SSR island (`useStore(team)`, delete), `/unified`-style seeding: `DetailPage`/layout loader does `team.members.set(db.list())` so first paint is correct in both. Store name **`team`** (dot-free, store spec R3). | 0.1.x's per-process `Map` diverges across workers; a file DB is the smallest honest "real". The flow is exactly the 0.1.x one on the new substrate. |
+| E8 | **Scaffold = `@brust/create-app`** (bin `create-app`): `bun create @brust/app <name> [--template blank\|pokedex] [--dir] [--yes]`, 0.1.x `runNew` semantics (name regex `^[a-z0-9][a-z0-9_-]*$` ≤ 50, refuse non-empty dir, TTY picker default `blank`, placeholders `__PROJECT_NAME__` / `__BRUST_DEP__`, `*.tmpl` and `_gitignore` rules, prints `cd / bun install / bun run dev`). `blank` = routes.tsx with one page + one native counter + `brust.toml` + `actions.ts` with a hello endpoint (shows the Elysia shape) + tsconfig + README. `pokedex` = `examples/pokedex` copied at package build time (excluding `dist`, `node_modules`, `test/snapshot*`, `data/team.sqlite`) with its own `package.json.tmpl`. `__BRUST_DEP__` = `^<@brust/core version>` from the publishing package, or `workspace:*`/`file:` when run from the monorepo. Scaffold test: create both templates into a temp dir, `bun install`, `brust build`, `brust start` + one HTTP probe each, in CI. | The two templates the human asked for, and a scaffold test so the published tarball is exercised (lesson: dev repo masks published-install bugs). |
+| E9 | **Out of scope (this wave):** streaming request/response bodies (F82), WebSocket (`@elysia/*/websocket`), MCP/SSE of 0.1.x, auth helpers, Node adapter, running the Elysia app without Rust (users who want that `export default app.fetch` themselves). | YAGNI; each is additive. |
+
+Rejected: a Rust-side action router mirroring Elysia routes (two routers, 0.1.x's fragility); Bun.serve for actions on a second port (human: no); porting 0.1.x `defineActions` (Elysia replaces it); per-process `Map` team state (diverges across workers); `@brust/create-init` / unscoped `create-brust` names (scope rule; see the human's choice).
+
+## 2. Architecture
+
+```
+browser ── POST /_brust/action/team ──▶ Rust (hyper): prefix? → preflight/CORS → cap → buffer body
+                                           │  CallKind::Fetch { method,url,headers,body,req }
+                                           ▼
+                                     Bun worker: runInRequestContext + store scope
+                                        new Request(origin+url, …) → app.fetch(req)  (Elysia 2, adapter brust())
+                                        Response → [u32 len][meta{status,headers[]}][body] in the SAB slot
+                                           │
+                                           ▼
+                                     Rust: response_from_meta → CORS stamp → client
+client code: const api = client<App>() ; await api.team.post({ id, name, types })   (Eden Treaty)
+```
+
+### 2.1 Rust (`crates/brust-server`, `crates/brust-napi`) — lane `m3f-actions-bridge`
+- `config.rs`: `actions: Option<ActionsConfig { prefix, max_body_bytes }>` from the manifest/StartOptions; `cors` exposed through napi `StartOptions` + `brust.toml [cors]` (origins, methods, headers, expose_headers, credentials, max_age_seconds; `credentials && '*'` is a boot error, as 0.1.x).
+- `pipeline.rs::handle`: keep the body (`req.into_parts()` → body retained for the actions branch only); order = preflight → **actions branch** (`path_under_action_prefix`, port of 0.1.x `lib.rs:650`) → GET/HEAD gate → ping/stats → static → page. Actions branch: cap (Content-Length and streamed total) → 413; encode body (JSON/urlencoded/text/empty → `text`, multipart/octet-stream → `b64`); `dispatch::call_worker(CallKind::Fetch, …)` with `call_timeout`; decode framing; respond. Never cached, never L1.
+- `protocol.rs`: `FetchRequest`, `FetchMeta`; `dispatch.rs`: `CallKind::Fetch` named `"fetch"`; response decode `[u32 LE len][meta][body]` (only for Fetch; loader/jobs stay JSON).
+- `render.rs`: inject `__BRUST_ACTION_PREFIX__` script when the prefix is non-default (same injection point as the store tags).
+- Tests (`tests/actions.rs`, a FakeBun that answers `fetch`): preflight and CORS headers; every method accepted under the prefix and 405 kept outside it; 413 at the cap; text vs base64 body encoding; framing round trip incl. two `Set-Cookie` pairs; oversize response → 500 with the documented message; a page route under a non-default prefix gets the prefix script; no tag with the default prefix.
+
+### 2.2 Package (`packages/brust`) — lane `m3f-actions-elysia`
+- `@brust/core/elysia`: `brust()` adapter (E2), typed as Elysia's `ElysiaAdapter`.
+- `@brust/core/client`: `client<App>()` over Eden Treaty (E6).
+- `brust.toml` `[actions]` + `[cors]` parsing → manifest `actions` block → napi `StartOptions`.
+- Worker `fetch` branch (E5) in `worker.ts` `makeDispatch`; the app is imported once at worker boot from the manifest entry; a missing default export or a non-Elysia value fails boot with a clear message.
+- Build: the actions entry is bundled for the worker like `jobs.js` (server-only guard applies; `elysia` stays external).
+- `docs/actions.md`: port of the 0.1.x page rewritten for Elysia (routes, validation with TypeBox or Standard Schema, errors via `.error()` + problem details, the client, prefix, CORS, limits F82).
+- Tests: adapter unit (listen throws, name), worker `fetch` round trip with a tiny Elysia app (GET, POST JSON, 422, problem+json, cookies), client URL building for the four prefix cases.
+
+### 2.3 Pokedex (`examples/pokedex`) — lane `m3f-pokedex-team` (absorbs store-spec D10 dogfood)
+- `data/team.sqlite` via `bun:sqlite` (`lib/team-db.ts`), `actions.ts` Elysia app (E7), `stores/team.ts` (`defineStore('team', …)`), `AddToTeamButton.tsx` (native tier, `useStore`), `TeamBuilder.tsx` (island, `useStore`), loader seeding, `/unified` demo page (store spec D10).
+- Tests: `tests/server/pokedex.test.ts` additions (POST adds, 409 at six, DELETE removes, L1 bypass on the detail page after a mutation is the developer's `invalidate` call — the template shows it), Chromium: click adds in the native button and the island updates without reload; first paint equals the DB state.
+
+### 2.4 Scaffold — lane `m3f-create-app`
+- `packages/create-app` (`@brust/create-app`, bin `create-app`): `new.ts` port (E8), `templates/blank/**`, `templates/pokedex` generated by `scripts/sync-template.ts` from `examples/pokedex` at package build; `__BRUST_DEP__` resolution; tests that scaffold both templates into a temp dir and run install → build → start → probe.
+- Release: the package publishes with the core version (release-bump script gains the new refs; publishing itself stays a human call).
+
+## 3. Contracts between lanes (fixed)
+
+| id | value |
+|---|---|
+| A1 call kind | `"fetch"`; `FetchRequest { method, url, headers: [[k,v]…], body: {text} \| {b64} \| null, req }` |
+| A2 response framing | `[u32 LE meta_len][meta JSON {status:number, headers:[[k,v]…]}][body bytes]`; only for `fetch` |
+| A3 manifest | `actions: { entry, prefix, maxBodyBytes } \| null`; `cors` as in `brust.toml` |
+| A4 prefix script | `<script>globalThis.__BRUST_ACTION_PREFIX__="<prefix>"</script>`, only when non-default, placed with the store tags |
+| A5 package subpaths | `@brust/core/elysia` (`brust`), `@brust/core/client` (`client`) |
+| A6 template placeholders | `__PROJECT_NAME__`, `__BRUST_DEP__`; `*.tmpl` → stripped; `_gitignore` → `.gitignore` |
+
+## 4. Acceptance (wave gate)
+1. Rust + package + pokedex tests above green; existing gates unchanged (pages without actions byte-identical; S/D/I bench within −1%).
+2. `bun create @brust/app demo --template pokedex` from the packed tarball → `bun install` → `bun run build` → `bun run start`: `/pokemon/pikachu` renders, POST adds a member, the island shows it, restart keeps it.
+3. `bun create @brust/app demo --template blank` → the hello action answers through the Rust server and the counter works.
+4. Docs: `docs/actions.md`, `docs/create-app.md` (one page), README quick start updated to `bun create @brust/app`.
+
+## 5. Lanes and order
+`m3f-actions-bridge` (complex, Dew) ∥ `m3f-actions-elysia` (standard, knock2) → `m3f-pokedex-team` (standard, Tiësto) → `m3f-create-app` (standard). Wave 2 starts after `m3f-store-server` and `m3f-store-compiler` merge (shared files: `worker.ts`, `protocol.rs`, `pipeline.rs`, `render.rs`). Same global rules as wave 1: lanes from `m3f`, lead merges, one PR `m3f → v2` after wave 2, then beta.
