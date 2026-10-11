@@ -275,3 +275,99 @@ The following files are under `/private/tmp/claude-501/-Users-detoro-code-brust/
 - `csweep.log` — the connection sweep and CPU per request against 0.1.x.
 - `ab-*.log` — the P7 prototype A/Bs.
 - `proto-tree/crates/brust-jinja/examples/dexh.rs` — the parse/render micro-harness.
+
+## After P7
+
+**Tree:** `m3p` @ 78f515e (e6ce36c + lane B @ 6d859d5 + lane C @ f6f7416) merged with lane A @ 1422186. It was measured
+as the local integration branch `m3p-e-integ` @ 97b944a, whose tree is byte-equal to `lane/m3p-e-timers` after that
+lane merged `origin/m3p` (`git diff` is empty). Lead ruling on challenge d1916e8f. Output is byte-identical to 2ca941d:
+`cmp.sh` IDENTICAL ×5 (pokedex `/` and `/pokemon/pikachu`, bench `/dex`, `/team` and `/types`).
+
+**Method.** Same as above, with two differences: `bench/attribution.patch` was regenerated on this tree (A5 moved the
+response parse, so its read/parse hunk was re-anchored), and the clone's port is 38941. Load was higher than in the
+2ca941d run: the 1-min load at the start of each row was 7.4–10.0, with the 5-min load at 12–14. The "2ca941d" column
+below is this lane's own A1 run of the same patch on the same code (ddca084 = 2ca941d + docs). Its 5-min load was 18–27,
+so read its absolute µs with care. The shares and the lane A/B carry the conclusions.
+
+### Lane A/B: merged tree against 2ca941d
+
+Run as an interleaved A/B (`abproto`), 4 rounds with alternating order, `oha -c 120 -z 10s`, identity. The app is
+rebuilt with each variant's addon (lane C changes the compiler): `set _i` appears in `dexPage` once before and zero
+times after. The 1-min load during the rows was 5.8–12.6 and the 5-min load 11.5–12.9 (system daemons, no other bench).
+
+| probe | 2ca941d rps | after P7 rps | Δ paired (r1…r4) | Δ paired median | CPU µs/req before → after |
+|---|---:|---:|---|---:|---|
+| D | 13,590 | 14,162 | +2.9 +5.4 +4.0 +4.4 | **+4.2%** | 579.4 → 550.5 (−28.9) |
+| I | 101,264 | 105,629 | +4.4 +2.8 +4.9 +4.1 | **+4.3%** | 44.65 → 41.10 (−3.55) |
+| S | 112,460 | 113,819 | +0.1 +1.1 +2.4 +0.9 | **+1.0%** | 24.45 → 22.55 (−1.90) |
+
+Every round moves in the same direction on D and I.
+
+### Stages that moved (c=1, µs per request)
+
+| probe / stage | 2ca941d | after P7 | lever |
+|---|---:|---:|---|
+| D c=1 rps · CPU/req | 1,774 · 495.5 | 1,936 · 450.9 | |
+| D render leaf template | 284.9 | 243.3 | C (loop-index `set` only when read, lowered style objects, attribute access) |
+| D SAB read + parse | 88.8 | 81.1 | A5 (`from_utf8` + `from_str`) |
+| D service fn | 454.5 | 408.1 | |
+| I c=1 rps · CPU/req | 13,806 · 48.7 | 14,240 · 46.0 | |
+| I c=120 rps · CPU/req | 102,008 · 47.2 | 104,521 · 42.3 | A2 + A3 + A4 + A6 + B (locks and timers), A7 |
+| I planJobs (JS thread) | 3.29 | 0 | A7 (an all-hit route stops being offered the plan) |
+| I JS handler total | 8.89 | 5.88 | A7 |
+| S c=120 rps · CPU/req | 112,440 · 24.9 | 114,062 · 22.7 | A2 (coarse header-read timer), A6 |
+| M c=120 rps · CPU/req | 89,003 · 59.3 | 89,675 · 56.9 | the offer stays on (every job misses) |
+
+### Inherent shares (c=1 latency basis, same definition as above)
+
+| probe | 2ca941d (table above) | after P7 |
+|---|---:|---:|
+| D | 18.2% | **23.1%** (119.3 / 516.5 µs) |
+| I | 62.7% | **64.1%** (45.0 / 70.2 µs) |
+| M | 61.5% | 60.3% (52.6 / 87.2 µs) |
+| S | — | 96.6% (an L1 HIT; HTTP I/O is nearly all of it) |
+
+D's share rises because render and parse shrink. Template render (243 µs, 47% of the D page) and the loader-response
+parse (81 µs, 16%) are still the largest non-inherent costs. On I, the tsfn bridge round trip (14.6 µs, 21%) is the
+largest.
+
+### Lane C against its +8% target
+
+Ruling on READY 641820b8: +8% is the target and +2% is the merge bar; lane A records any shortfall. Lane C's own A/B
+(knock2, `C-AB-DONE`) measured D rps +2.65% median paired (+2.0% excluding an outlier round 1) and D CPU 597.3 → 578.0
+µs/req (−19, against a −60 target). **That is short of the +8% target and above the +2% merge bar.** The criterion
+`dex_render` gains (C2 −8.3%, C3 −18.9%, C4 −2.4%) shrink end to end because render is about half of the D page at
+c=120, and the host is CPU-saturated with the server and oha together.
+
+### F68 (v2 vs 0.1.x)
+
+`bun bench/run.ts --apps brust,brust-01x --probes D,I --dur 10s --enc identity`, 3 rounds, RESULTS reverted after
+each round:
+
+| round | order | D v2 / 0.1.x | D Δ | I v2 / 0.1.x | I Δ |
+|---|---|---|---:|---|---:|
+| 1 | v2:I 01x:I 01x:D v2:D | 14,168 / 12,995 | +9.0% | 104,365 / 102,617 | +1.7% |
+| 2 | v2:D 01x:D 01x:I v2:I | 14,132 / 13,149 | +7.5% | 105,111 / 102,382 | +2.7% |
+| 3 | 01x:I v2:I 01x:D v2:D | 14,219 / 13,046 | +9.0% | 104,867 / 102,494 | +2.3% |
+
+The full `bun run bench` (committed `bench/RESULTS.*`) measured D +7.9% and I +2.3%. **F68 MET on D and I**, where
+2ca941d had I at −2.4%. v2's p99 on I is now 2.1 ms against 0.1.x's 3.0 ms.
+
+### Stop rule (§5) after P7 — NOT MET
+
+1. **≥ 90% inherent: no.** D 23.1%, I 64.1%.
+2. **Two consecutive levers each < 2% on D and I: no.** P6 was < 2%, but P7 is not: lane A/B D +4.2%, I +4.3%.
+
+The remaining non-inherent costs, in order of size: the D template render (243 µs/req), the D loader-response parse
+into `Node` (81 µs; the E3 follow-up is a lazy or tape `Node`), the tsfn bridge round trip on every worker call
+(~15 µs at c=1), and tokio inject-queue wakes from Bun threads (E4).
+
+### Scratch evidence (not committed)
+
+The following files are under `/private/tmp/claude-501/-Users-detoro-code-brust/84499717-7bab-40dc-be3d-c896c07cf5ce/scratchpad/m3pe-a/`:
+- `a8-ab.log` — the lane A/B.
+- `a8-attr.log` — the attribution after P7.
+- `attr-before.{txt,json}` — this lane's 2ca941d run.
+- `a8-v01-r{1,2,3}.log` — the F68 rounds.
+- `a8-full.log` — the full bench run.
+- `ab-r23.log`, `ab-r67.log`, `ab-rall.log` — the per-task A/Bs (A2/A3, A6/A7, A7).
