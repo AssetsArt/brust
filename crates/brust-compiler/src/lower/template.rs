@@ -24,6 +24,7 @@ use brust_jinja::{
 };
 use std::cell::Cell;
 use std::collections::{BTreeSet, HashMap};
+use std::rc::Rc;
 
 const VOID: &[&str] = &[
     "img", "input", "br", "hr", "meta", "link", "area", "base", "col", "embed", "source", "track",
@@ -46,6 +47,8 @@ pub struct Inline {
     pub bind: Option<String>,
     /// Template variable of this instance's job output (`__<id>_<k>[…]`).
     pub slots: String,
+    /// The parent's open loops whose `_iN` the `slots` text names: printing a slot read marks them.
+    pub slot_loops: Vec<Rc<Cell<bool>>>,
     /// Suffix for this instance's seed and derived variables.
     pub suffix: String,
 }
@@ -61,6 +64,10 @@ struct Frame {
     index: Option<String>,
     /// `{% set _iN = loop.index0 %}` variable of this loop.
     var: String,
+    /// Recorded by the printer: `var` was printed (a per-item slot name).
+    var_used: Rc<Cell<bool>>,
+    /// Recorded by the printer: the user-declared index was resolved or bound.
+    index_used: Cell<bool>,
     /// The row carries `x-for`: loop reads inside it get directives.
     directive: bool,
 }
@@ -227,8 +234,16 @@ impl<'a, 'c> Printer<'a, 'c> {
             // An inlined child's loop variables carry the instance suffix in
             // the template, so a parent expression substituted for a prop
             // (`item.title`) is never captured by the child's own `item`.
-            IdentKind::LoopBinding if self.inline.is_some() => {
-                Some(format!("{name}{}", self.suffix()))
+            IdentKind::LoopBinding => {
+                // Record a read of a loop index (the row needs its `set`).
+                for f in &self.frames {
+                    if f.index.as_deref() == Some(name) {
+                        f.index_used.set(true);
+                    }
+                }
+                self.inline
+                    .is_some()
+                    .then(|| format!("{name}{}", self.suffix()))
             }
             IdentKind::Local => Some(if self.f.derived.contains_key(name) {
                 self.derived_var(name)
@@ -272,13 +287,28 @@ impl<'a, 'c> Printer<'a, 'c> {
     fn slot_ref(&self, slot: &str, per_item: bool) -> String {
         let base = match &self.inline {
             None => slot.to_string(),
-            Some(i) => format!("{}[{}]", i.slots, jinja_string(slot)),
+            Some(i) => {
+                for m in &i.slot_loops {
+                    m.set(true);
+                }
+                format!("{}[{}]", i.slots, jinja_string(slot))
+            }
         };
         if !per_item {
             return base;
         }
-        let idx: String = self.frames.iter().map(|f| format!("[{}]", f.var)).collect();
-        format!("{base}{idx}")
+        format!("{base}{}", self.frame_vars())
+    }
+
+    /// `[_iN]…` for every open loop; records each variable as read.
+    fn frame_vars(&self) -> String {
+        self.frames
+            .iter()
+            .map(|f| {
+                f.var_used.set(true);
+                format!("[{}]", f.var)
+            })
+            .collect()
     }
 
     fn scope(&self) -> Vec<String> {
@@ -662,14 +692,30 @@ impl<'a, 'c> Printer<'a, 'c> {
                     _ => None,
                 };
                 if let Some(props) = style_obj {
-                    let dict: Vec<String> = props
-                        .iter()
-                        .map(|(k, pv)| format!("{}: {}", jinja_string(k), self.jinja(pv)))
-                        .collect();
-                    open.push_str(&format!(
-                        " style=\"{{{{ {{{}}} | style_css | e }}}}\"",
-                        dict.join(", ")
-                    ));
+                    if props.is_empty() {
+                        open.push_str(" style=\"{{ {} | style_css | e }}\"");
+                    } else {
+                        // M3-P P7: lowered at compile time. minijinja's dict
+                        // literal iterated sorted by key and kept the LAST value
+                        // of a duplicate key; do the same here, and drop the
+                        // keys `style_obj_to_css` drops at render (`css_key`),
+                        // so no per-element dict is built. Values are pure
+                        // expressions, so a dropped key loses nothing.
+                        let mut sorted: std::collections::BTreeMap<&str, _> =
+                            std::collections::BTreeMap::new();
+                        for (k, pv) in props.iter() {
+                            sorted.insert(k.as_str(), pv);
+                        }
+                        let args: Vec<String> = sorted
+                            .into_iter()
+                            .filter(|(k, _)| brust_jinja::css_key(k))
+                            .flat_map(|(k, pv)| [jinja_string(k), self.jinja(pv)])
+                            .collect();
+                        open.push_str(&format!(
+                            " style=\"{{{{ css_decls({}) | e }}}}\"",
+                            args.join(", ")
+                        ));
+                    }
                 } else if html == "style" {
                     // A style object held in a variable or prop: the same CSS
                     // rule; an undefined/null style omits the attribute (F36).
@@ -931,12 +977,11 @@ impl<'a, 'c> Printer<'a, 'c> {
             item: item.clone(),
             index: index.clone(),
             var: var.clone(),
+            var_used: Rc::new(Cell::new(false)),
+            // An `x-for` bind names the index in the row's directive.
+            index_used: Cell::new(!x_for.is_empty() && index.is_some()),
             directive: !x_for.is_empty(),
         });
-        let mut sets = format!("{{% set {var} = loop.index0 %}}");
-        if let Some(i) = index {
-            sets.push_str(&format!("{{% set {i}{} = loop.index0 %}}", self.suffix()));
-        }
         let (row, empty) = if x_for.is_empty() {
             (self.row(body, sb, &x_for, false), String::new())
         } else {
@@ -949,7 +994,17 @@ impl<'a, 'c> Printer<'a, 'c> {
             });
             (row, format!("{{% else %}}<!--x-for-->{hidden}"))
         };
-        self.frames.pop();
+        let frame = self.frames.pop();
+        // The row is built first: only a variable it read gets a `set`.
+        let mut sets = String::new();
+        if let Some(f) = &frame {
+            if f.var_used.get() {
+                sets.push_str(&format!("{{% set {var} = loop.index0 %}}"));
+            }
+            if let (Some(i), true) = (index, f.index_used.get()) {
+                sets.push_str(&format!("{{% set {i}{} = loop.index0 %}}", self.suffix()));
+            }
+        }
         self.out.push_str(&format!(
             "{{% for {item}{} in {src} %}}{sets}{row}{empty}{{% endfor %}}",
             self.suffix()
@@ -1052,6 +1107,8 @@ impl<'a, 'c> Printer<'a, 'c> {
         };
         let id = child.id.clone().unwrap_or_else(|| name.clone());
         let loops: String = self.frames.iter().map(|f| format!("[{}]", f.var)).collect();
+        let slot_loops: Vec<Rc<Cell<bool>>> =
+            self.frames.iter().map(|f| f.var_used.clone()).collect();
         if let Tier::React { client_only, .. } = tier {
             if *client_only {
                 let dict = self.props_dict(props, sprops);
@@ -1085,7 +1142,12 @@ impl<'a, 'c> Printer<'a, 'c> {
                 ));
                 return;
             }
-            let idx = if per_item { loops.as_str() } else { "" };
+            let idx = if per_item {
+                self.frames.iter().for_each(|f| f.var_used.set(true));
+                loops.as_str()
+            } else {
+                ""
+            };
             let dict = self.props_dict(props, sprops);
             self.out.push_str(&crate::lower::island_host(
                 &id,
@@ -1183,6 +1245,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             props: bindings,
             bind: bind.clone(),
             slots: format!("__{id}_{k}{loops}"),
+            slot_loops,
             suffix: format!("_{}{k}", short(&id)),
         };
         let Some(mut p) = Printer::new(child_ir, self.ctx, Some(inline), self.loop_var) else {
