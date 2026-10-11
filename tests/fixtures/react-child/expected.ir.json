@@ -97,6 +97,7 @@
         }
       },
       "inputs": [
+        "__store",
         "productId"
       ],
       "outputs": [
@@ -104,6 +105,7 @@
       ],
       "per_item": null,
       "props": {
+        "__store": "__store",
         "productId": "productId"
       }
     }

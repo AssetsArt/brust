@@ -125,7 +125,8 @@
         }
       },
       "inputs": [
-        "*"
+        "*",
+        "__store"
       ],
       "outputs": [
         "_ssr_input_5f98393c"

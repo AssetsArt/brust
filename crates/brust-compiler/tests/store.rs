@@ -1388,3 +1388,99 @@ fn store_key_unsupported_never_lowers_the_key() {
     assert!(!a.jinja.contains("dbl"), "{}", a.jinja);
     assert!(a.server_ts.is_none() && a.client_js.is_none(), "{a:?}");
 }
+
+// --- Task 8 (C5): every ssr job declares `__store`; fed children map it. ---
+
+#[test]
+fn ssr_job_declares_store() {
+    let (ir, _, _) = lower_tree(&[
+        (
+            "theme.ts",
+            "import { createContext } from 'react'\nexport const T = createContext('a')\n",
+        ),
+        (
+            "C.tsx",
+            "import { useContext } from 'react'\nimport { T } from './theme'\nexport default function C() { const t = useContext(T); return <p>{t}</p> }",
+        ),
+    ]);
+    assert!(matches!(ir.tier, Tier::React { .. }), "{:?}", ir.tier);
+    assert_eq!(ir.jobs.len(), 1, "{:?}", ir.jobs);
+    // `minimal_paths` would collapse `["*", "__store"]` to `["*"]`: C5 runs after it.
+    assert_eq!(ir.jobs[0].inputs, ["*", "__store"]);
+    assert_eq!(ir.jobs[0].props, None);
+}
+
+#[test]
+fn island_child_job_maps_store() {
+    let (ir, _, _) = lower_tree(&[
+        (
+            "theme.ts",
+            "import { createContext } from 'react'\nexport const T = createContext('a')\n",
+        ),
+        (
+            "Reviews.tsx",
+            "import { useContext } from 'react'\nimport { T } from './theme'\nexport default function Reviews({ id }: { id: string }) { const t = useContext(T); return <p>{t}{id}</p> }",
+        ),
+        (
+            "C.tsx",
+            "import Reviews from './Reviews'\nexport default function C({ id }: { id: string }) { return <main><Reviews id={id} limit={3} /></main> }",
+        ),
+    ]);
+    let job = ir
+        .jobs
+        .iter()
+        .find(|j| matches!(j.kind, JobKind::Ssr { .. }))
+        .unwrap_or_else(|| panic!("{:?}", ir.jobs));
+    assert_eq!(job.inputs, ["__store", "id"]);
+    let props = job.props.as_ref().expect("island props map");
+    assert_eq!(props.get("__store"), Some(&Some("__store".to_string())));
+    assert_eq!(props.get("id"), Some(&Some("id".to_string())));
+    assert_eq!(props.len(), 2, "{props:?}");
+    assert_eq!(
+        job.literals.iter().collect::<Vec<_>>(),
+        [(&"limit".to_string(), &serde_json::json!(3))]
+    );
+}
+
+const FMT: &str = "export const fmt = (n: number) => `${n}!`\n";
+
+#[test]
+fn fed_child_with_store_maps_store() {
+    let (ir, _, _) = lower_tree(&[
+        ("cart.ts", CART),
+        ("fmt.ts", FMT),
+        (
+            "Badge.tsx",
+            "import { useStore } from 'brust/store/react'\nimport { cart } from './cart'\nimport { fmt } from './fmt'\nexport default function Badge({ label }: { label: string }) { const s = useStore(cart); const t = fmt(s.count); return <span title={label}>{t}</span> }",
+        ),
+        (
+            "C.tsx",
+            "import Badge from './Badge'\nexport default function C({ label }: { label: string }) { return <p><Badge label={label} /></p> }",
+        ),
+    ]);
+    assert_eq!(ir.instances.len(), 1, "{:?}", ir.diagnostics);
+    let props = &ir.instances[0].props;
+    assert_eq!(props.get("__store"), Some(&Some("__store".to_string())));
+    assert_eq!(props.get("label"), Some(&Some("label".to_string())));
+}
+
+#[test]
+fn fed_child_without_store_has_no_store_key() {
+    let (ir, _, _) = lower_tree(&[
+        ("fmt.ts", FMT),
+        (
+            "Badge.tsx",
+            "import { fmt } from './fmt'\nexport default function Badge({ n }: { n: number }) { const t = fmt(n); return <span>{t}</span> }",
+        ),
+        (
+            "C.tsx",
+            "import Badge from './Badge'\nexport default function C({ n }: { n: number }) { return <p><Badge n={n} /></p> }",
+        ),
+    ]);
+    assert_eq!(ir.instances.len(), 1, "{:?}", ir.diagnostics);
+    assert!(
+        !ir.instances[0].props.contains_key("__store"),
+        "{:?}",
+        ir.instances[0]
+    );
+}

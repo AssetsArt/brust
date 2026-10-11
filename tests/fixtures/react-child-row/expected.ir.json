@@ -152,6 +152,7 @@
         }
       },
       "inputs": [
+        "__store",
         "items"
       ],
       "outputs": [
@@ -159,6 +160,7 @@
       ],
       "per_item": "it",
       "props": {
+        "__store": "__store",
         "item": "items[idx]"
       },
       "literals": {

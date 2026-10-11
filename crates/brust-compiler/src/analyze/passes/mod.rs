@@ -16,7 +16,7 @@ use deps::DepsCx;
 use placement::{Painted, SlotInfo};
 use std::collections::{BTreeSet, HashMap};
 
-use crate::ir::ComponentIR;
+use crate::ir::{ComponentIR, JobKind};
 
 /// Facts one pass leaves for the next; never serialized.
 #[derive(Default)]
@@ -109,6 +109,22 @@ pub fn run_passes(ir: &mut ComponentIR, ctx: &PassCtx<'_>) -> PassState {
                 .iter()
                 .map(|p| p.strip_suffix(".length").unwrap_or(p).to_string()),
         );
+    }
+    // C5 (M3-F D8): every ssr job declares the store snapshot; an island's props map carries it
+    // (the server evaluates `props`, not `inputs`, when it is set). After `minimal_paths`, which
+    // collapses `["*", "__store"]` to `["*"]`.
+    for j in ir
+        .jobs
+        .iter_mut()
+        .filter(|j| matches!(j.kind, JobKind::Ssr { .. }))
+    {
+        if !j.inputs.iter().any(|i| i == "__store") {
+            j.inputs.push("__store".into());
+            j.inputs.sort();
+        }
+        if let Some(p) = j.props.as_mut() {
+            p.insert("__store".into(), Some("__store".into()));
+        }
     }
     st
 }

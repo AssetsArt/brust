@@ -79,6 +79,7 @@
           "id": "j1",
           "kind": "ssr",
           "inputs": [
+            "__store",
             "team"
           ],
           "outputs": [
@@ -92,6 +93,7 @@
             "ttl_seconds": null
           },
           "props": {
+            "__store": "__store",
             "team": "team"
           },
           "literals": {
@@ -150,7 +152,8 @@
           "id": "j0",
           "kind": "ssr",
           "inputs": [
-            "*"
+            "*",
+            "__store"
           ],
           "outputs": [
             "_ssr_team_db295766"
