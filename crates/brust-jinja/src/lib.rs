@@ -58,6 +58,25 @@ pub fn register(env: &mut Environment<'_>) {
     env.add_filter("entries", entries);
     env.add_filter("project", project::project); // F71, filters/project.rs
     env.add_filter("css_val", |v: Value, prop: String| css_value(&prop, &v));
+    // M3-P P7: a literal style object lowered at compile time. Arguments are
+    // `key, value` pairs, already in the order minijinja's dict literal would
+    // iterate (sorted by key bytes, last duplicate wins); same CSS as
+    // `style_css` on that dict, with no per-element dict built.
+    env.add_function(
+        "css_decls",
+        |args: minijinja::value::Rest<Value>| -> String {
+            let pairs: Vec<(String, Value)> = args
+                .chunks(2)
+                .map(|kv| {
+                    (
+                        kv[0].as_str().unwrap_or_default().to_string(),
+                        kv.get(1).cloned().unwrap_or(Value::UNDEFINED),
+                    )
+                })
+                .collect();
+            style_obj_to_css(&pairs)
+        },
+    );
     env.add_filter("style_css", |v: Value| {
         // Only a style object has declarations (React throws on a string).
         if v.kind() != ValueKind::Map {
@@ -755,6 +774,105 @@ mod tests {
         env.render_str(src, ctx).unwrap()
     }
 
+    /// C4: `t.name` must read the same key as `t["name"]` for every name the
+    /// compiler may emit it for, including names that are map methods.
+    #[test]
+    fn attribute_access_equals_subscript_for_map_keys() {
+        let names = [
+            "items",
+            "keys",
+            "values",
+            "get",
+            "length",
+            "len",
+            "count",
+            "update",
+            "pop",
+            "title",
+            "upper",
+            "lower",
+            "name",
+            "_x",
+            "a1",
+            "loop",
+            "self",
+            "super",
+            "caller",
+            "varargs",
+            "kwargs",
+            "true",
+            "false",
+            "none",
+            "True",
+            "False",
+            "None",
+            "and",
+            "or",
+            "not",
+            "in",
+            "is",
+            "if",
+            "else",
+            "for",
+            "set",
+            "with",
+            "block",
+            "import",
+            "macro",
+            "filter",
+            "call",
+            "do",
+            "extends",
+            "include",
+            "from",
+            "as",
+            "recursive",
+            "ignore",
+            "missing",
+            "context",
+            "without",
+            "scoped",
+            "elif",
+            "endif",
+            "raw",
+            "test",
+        ];
+        for n in names {
+            let map: serde_json::Value = serde_json::json!({ n: "V" });
+            let ctx = value_of(serde_json::json!({ "t": map }));
+            let bracket = format!("{{{{ t[\"{n}\"] }}}}");
+            let dotted = format!("{{{{ t.{n} }}}}");
+            let mut env = Environment::new();
+            register(&mut env);
+            let b = env.render_str(&bracket, ctx.clone()).unwrap();
+            let d = env.render_str(&dotted, ctx).unwrap();
+            assert_eq!(b, "V", "{n}");
+            assert_eq!(d, b, "{n}");
+        }
+        // Non-map targets and absent keys fail or render identically both ways.
+        for t in [
+            serde_json::json!(null),
+            serde_json::json!("str"),
+            serde_json::json!([1, 2]),
+            serde_json::json!(3),
+            serde_json::json!({}),
+            serde_json::json!({ "a": null }),
+        ] {
+            for n in ["items", "name", "length", "a"] {
+                let ctx = value_of(serde_json::json!({ "t": t }));
+                let mut env = Environment::new();
+                register(&mut env);
+                let b = env.render_str(&format!("{{{{ t[\"{n}\"] }}}}"), ctx.clone());
+                let d = env.render_str(&format!("{{{{ t.{n} }}}}"), ctx);
+                assert_eq!(
+                    b.map_err(|e| e.to_string()),
+                    d.map_err(|e| e.to_string()),
+                    "{t} {n}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn js_mod_and_js_div_follow_javascript() {
         let ctx = || Value::from(());
@@ -1115,6 +1233,54 @@ mod tests {
                 && is_refused_attr("onMouseOver")
         );
         assert!(is_url_attr("HREF") && is_url_attr("Src") && is_boolean_attr("DISABLED"));
+    }
+
+    /// M3-P P7: `css_decls(k1, v1, k2, v2, ...)` (pairs already sorted and
+    /// de-duplicated by the compiler) prints what `style_css` prints for the
+    /// equivalent dict literal. Also proves minijinja's dict literal iterates
+    /// sorted and keeps the last value of a duplicate key.
+    #[test]
+    fn css_decls_equals_style_css_on_the_dict_literal() {
+        let vals = [
+            ("str", Value::from("red")),
+            ("num", Value::from(12)),
+            ("zero", Value::from(0)),
+            ("null", Value::from(())),
+            ("undef", Value::UNDEFINED),
+            ("false", Value::from(false)),
+            ("breaker", Value::from("red; x:y")),
+            ("empty", Value::from("")),
+        ];
+        let keys = ["opacity", "--custom", "fontSize", "color", "bad key", "9x"];
+        for (name, v) in &vals {
+            for k in keys {
+                let ctx = minijinja::context! { x => v.clone(), y => "blue" };
+                let lit = render(
+                    &format!("{{{{ {{\"b\": y, {k:?}: x, \"a\": y}} | style_css }}}}"),
+                    ctx.clone(),
+                );
+                // the compiler's form: sorted by key bytes
+                let mut ks = vec![("b", "y"), ("a", "y"), (k, "x")];
+                ks.sort();
+                let args = ks
+                    .iter()
+                    .map(|(kk, vv)| format!("{kk:?}, {vv}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let got = render(&format!("{{{{ css_decls({args}) }}}}"), ctx);
+                assert_eq!(got, lit, "{name} / {k}");
+            }
+        }
+        // duplicate key: the last value wins in the literal; unsorted source
+        // order iterates sorted.
+        let ctx = minijinja::context! { x => 1, y => 2 };
+        let lit = render(
+            "{{ {\"z\": x, \"a\": y, \"z\": y} | style_css }}",
+            ctx.clone(),
+        );
+        assert_eq!(lit, "a:2px;z:2px");
+        assert_eq!(render("{{ css_decls(\"a\", y, \"z\", y) }}", ctx), lit);
+        assert_eq!(render("{{ css_decls() }}", Value::from(())), "");
     }
 
     #[test]

@@ -19,3 +19,7 @@ criterion = { version = "0.8", default-features = false, features = ["cargo_benc
 [[bench]]
 name = "json_attr"
 harness = false
+
+[[bench]]
+name = "dex_render"
+harness = false
