@@ -588,6 +588,15 @@ fn lower_at(case: &str, src: &str) -> (ComponentIR, String, String) {
 }
 
 fn lower_in(root: PathBuf, path: String, src: String) -> (ComponentIR, String, String) {
+    let (ir, a) = lower_artifacts(root, path, src);
+    (ir, a.jinja, a.client_js.unwrap_or_default())
+}
+
+fn lower_artifacts(
+    root: PathBuf,
+    path: String,
+    src: String,
+) -> (ComponentIR, brust_compiler::lower::Artifacts) {
     use brust_compiler::lower::DEFAULT_RUNTIME_IMPORT;
     use brust_compiler::pipeline::compile_tree;
     run_on_compiler_thread(move || {
@@ -601,12 +610,7 @@ fn lower_in(root: PathBuf, path: String, src: String) -> (ComponentIR, String, S
             DEFAULT_RUNTIME_IMPORT,
         )
         .unwrap();
-        let a = &tree[0].artifacts;
-        (
-            (*tree[0].ir).clone(),
-            a.jinja.clone(),
-            a.client_js.clone().unwrap_or_default(),
-        )
+        ((*tree[0].ir).clone(), tree[0].artifacts.clone())
     })
 }
 
@@ -894,4 +898,227 @@ fn store_namespace_handle() {
     );
     assert!(c.contains("stores.cart.count()"), "{c}");
     assert!(c.contains("import * as stores from \"./stores\""), "{c}");
+}
+
+// --- Task 5: derived values over store reads are precompute slots keyed by `__store` paths. ---
+
+/// The precompute job.
+fn precompute_job(ir: &ComponentIR) -> &JobDecl {
+    ir.jobs
+        .iter()
+        .find(|j| j.kind == JobKind::Precompute)
+        .unwrap_or_else(|| panic!("no precompute job: {:?}", ir.jobs))
+}
+
+/// Every `Precomputed` in the template, in document order.
+fn template_slots(n: &Node, out: &mut Vec<Expr>) {
+    let mut e = |x: &Expr| {
+        if matches!(x, Expr::Precomputed { .. }) {
+            out.push(x.clone())
+        }
+    };
+    match n {
+        Node::Element {
+            attrs, children, ..
+        } => {
+            for a in attrs {
+                if let Attr::Dynamic { value, .. } = a {
+                    e(value);
+                }
+            }
+            children.iter().for_each(|c| template_slots(c, out));
+        }
+        Node::Slot(x) => e(x),
+        Node::If { cond, then, else_ } => {
+            e(cond);
+            then.iter()
+                .chain(else_)
+                .for_each(|c| template_slots(c, out));
+        }
+        Node::For {
+            source, key, body, ..
+        } => {
+            e(source);
+            e(key);
+            body.iter().for_each(|c| template_slots(c, out));
+        }
+        Node::Component {
+            props, children, ..
+        } => {
+            props.iter().for_each(|(_, v)| e(v));
+            children.iter().for_each(|c| template_slots(c, out));
+        }
+        Node::Fragment(cs) => cs.iter().for_each(|c| template_slots(c, out)),
+        Node::Text(_) | Node::Outlet => {}
+    }
+}
+
+fn slot_inputs(ir: &ComponentIR) -> Vec<Vec<String>> {
+    let mut out = vec![];
+    template_slots(&ir.template, &mut out);
+    out.into_iter()
+        .map(|e| match e {
+            Expr::Precomputed { inputs, .. } => inputs,
+            _ => unreachable!(),
+        })
+        .collect()
+}
+
+const DERIVED_PRE: &str = "import { useStore } from 'brust/store/react'\nimport { cart } from './cart'\nimport { fmt } from './fmt'\n";
+
+#[test]
+fn store_derived_slot() {
+    let src = format!(
+        "{DERIVED_PRE}export default function T({{ unit }}: any) {{ const s = useStore(cart); const total = fmt(s.count, unit); return <p>{{total}}</p> }}"
+    );
+    let (ir, a) = lower_artifacts(repo(), "tests/fixtures/store-derived/T.tsx".into(), src);
+    assert!(
+        ir.stores.iter().all(|u| u.resolved.is_some()),
+        "{:?}",
+        ir.diagnostics
+    );
+    let total = ir.derived.iter().find(|d| d.name == "total").unwrap();
+    let Expr::Precomputed {
+        inputs,
+        state_dependent,
+        client_js,
+        ..
+    } = &total.expr
+    else {
+        panic!("{:?}", total.expr)
+    };
+    let want = ["__store.cart.count".to_string(), "unit".to_string()];
+    assert_eq!(inputs, &want);
+    assert!(*state_dependent, "R5");
+    assert!(client_js.is_some());
+    assert_eq!(precompute_job(&ir).inputs, want);
+
+    let job = a.server_ts.as_deref().expect("job text");
+    assert!(
+        job.contains("const total = fmt((props.__store?.[\"cart\"] ?? {}).count, unit)"),
+        "{job}"
+    );
+    assert!(!job.contains("import { cart }"), "{job}");
+
+    let c = a.client_js.as_deref().unwrap_or_default();
+    assert!(
+        c.contains("computed(() => fmt(cart.count(), props().unit))"),
+        "{c}"
+    );
+    assert!(a.jinja.contains("x-text"), "{}", a.jinja);
+}
+
+#[test]
+fn store_guard_in_key() {
+    let (ir, _, _) = lower_tree(&[
+        (
+            "ui.ts",
+            "import { defineStore, signal } from 'brust/store'\nexport const ui = defineStore('ui', () => ({ open: signal(false) }))\n",
+        ),
+        (
+            "fmt.ts",
+            "export const fmt = (n: number, u: string) => `${n} ${u}`\n",
+        ),
+        (
+            "C.tsx",
+            "import { useStore } from 'brust/store/react'\nimport { ui } from './ui'\nimport { fmt } from './fmt'\nexport default function C({ price }: any) { const s = useStore(ui); return <div>{s.open ? <b>{fmt(price, 'x')}</b> : null}</div> }",
+        ),
+    ]);
+    assert!(
+        ir.stores.iter().all(|u| u.resolved.is_some()),
+        "{:?}",
+        ir.diagnostics
+    );
+    let slots = slot_inputs(&ir);
+    assert_eq!(slots.len(), 1, "{:?}", ir.template);
+    // F33: the guard is in the key.
+    assert!(
+        slots[0].contains(&"__store.ui.open".to_string()),
+        "{slots:?}"
+    );
+    assert!(slots[0].contains(&"price".to_string()), "{slots:?}");
+    assert!(
+        precompute_job(&ir)
+            .inputs
+            .contains(&"__store.ui.open".to_string())
+    );
+}
+
+#[test]
+fn store_list_in_key() {
+    let (ir, j, _) = lower_tree(&[
+        (
+            "cart.ts",
+            "import { defineStore, signal } from 'brust/store'\nexport const cart = defineStore('cart', () => ({ items: signal([]) }))\n",
+        ),
+        (
+            "fmt.ts",
+            "export const fmt = (n: number, u: string) => `${n} ${u}`\n",
+        ),
+        (
+            "C.tsx",
+            "import { useStore } from 'brust/store/react'\nimport { cart } from './cart'\nimport { fmt } from './fmt'\nexport default function C() { const s = useStore(cart); return <ul>{s.items.map((i) => <li key={i.id}>{fmt(i.p, 'x')}</li>)}</ul> }",
+        ),
+    ]);
+    assert!(
+        ir.stores.iter().all(|u| u.resolved.is_some()),
+        "{:?}",
+        ir.diagnostics
+    );
+    let mut all = vec![];
+    template_slots(&ir.template, &mut all);
+    let per_item: Vec<_> = all
+        .iter()
+        .filter_map(|e| match e {
+            Expr::Precomputed {
+                inputs,
+                per_item: Some(_),
+                state_dependent,
+                ..
+            } => Some((inputs.clone(), *state_dependent)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(per_item.len(), 1, "{all:?}");
+    assert!(
+        per_item[0].0.contains(&"__store.cart.items".to_string()),
+        "{per_item:?}"
+    );
+    assert!(per_item[0].1, "the list is stateful: {per_item:?}");
+    // The client updates the list.
+    assert!(j.contains("x-for"), "{j}");
+}
+
+#[test]
+fn store_dotted_coarse() {
+    let (ir, _, _) = lower_tree(&[
+        ("team.ts", TEAM),
+        (
+            "fmt.ts",
+            "export const fmt = (n: string, u: string) => `${n} ${u}`\n",
+        ),
+        (
+            "C.tsx",
+            "import { useStore } from 'brust/store/react'\nimport { team } from './team'\nimport { fmt } from './fmt'\nexport default function C({ unit }: any) { const s = useStore(team); const t = fmt(s.members, unit); return <p>{t}</p> }",
+        ),
+    ]);
+    assert!(
+        ir.stores.iter().all(|u| u.resolved.is_some()),
+        "{:?}",
+        ir.diagnostics
+    );
+    let t = ir.derived.iter().find(|d| d.name == "t").unwrap();
+    let Expr::Precomputed { inputs, .. } = &t.expr else {
+        panic!("{:?}", t.expr)
+    };
+    assert_eq!(inputs, &["__store".to_string(), "unit".to_string()]);
+    assert_eq!(
+        precompute_job(&ir).inputs,
+        ["__store".to_string(), "unit".to_string()]
+    );
+    assert!(
+        rules(&ir).contains(&"store-name-dotted"),
+        "{:?}",
+        ir.diagnostics
+    );
 }
