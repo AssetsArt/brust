@@ -559,3 +559,22 @@ fn static_list_page_has_no_directives_and_no_seed() {
     );
     assert!(!html.contains("bulbasaur"), "unread field leaked: {html}");
 }
+
+/// M3-P P7: the loop-index `set` is emitted only when the row reads it.
+#[test]
+fn loop_index_set_only_when_row_reads_it() {
+    let page = |body: &str| {
+        format!(
+            "export default function T({{ rows }}: {{ rows: {{ id: number; name: string }}[] }}) {{ return <table><tbody>{body}</tbody></table> }}"
+        )
+    };
+    let (j, _) = lower(&page(
+        "{rows.map((p) => <tr key={p.id}><td>{p.name}</td></tr>)}",
+    ));
+    assert!(!j.contains("loop.index0"), "{j}");
+    let (j, _) = lower(&page(
+        "{rows.map((p, i) => <tr key={p.id}><td>{i}</td></tr>)}",
+    ));
+    assert!(j.contains("{% set i = loop.index0 %}"), "{j}");
+    assert!(!j.contains("{% set _i1 = loop.index0 %}"), "{j}");
+}
