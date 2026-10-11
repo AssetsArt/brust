@@ -318,6 +318,19 @@ pub fn inject_page_assets_into(
     m: &Manifest,
     store: Option<&Node>,
 ) {
+    inject_document_assets_into(html, chain, m, store, None);
+}
+
+/// M3-F A4: as [`inject_page_assets_into`], with `prefix_tag` (the server's prebuilt
+/// `__BRUST_ACTION_PREFIX__` script, only for a non-default prefix) first:
+/// `[prefix tag][store tags][runtime]…`; nothing for a static chain (R12).
+pub fn inject_document_assets_into(
+    html: &mut String,
+    chain: &[String],
+    m: &Manifest,
+    store: Option<&Node>,
+    prefix_tag: Option<&str>,
+) {
     let mut chunks: Vec<&str> = Vec::new();
     let mut react: Vec<&str> = Vec::new();
     let mut any_dynamic = false;
@@ -356,6 +369,9 @@ pub fn inject_page_assets_into(
     }
     let tag = |p: &str| format!("<script type=\"module\" src=\"/_brust/{p}\"></script>");
     let mut tags = String::new();
+    if let Some(t) = prefix_tag {
+        tags.push_str(t);
+    }
     if let Some(st) = store {
         store_scripts_into(&mut tags, st);
     }

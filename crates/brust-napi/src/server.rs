@@ -15,7 +15,10 @@ use napi::bindgen_prelude::{FnArgs, Function, Promise, Uint8Array};
 use napi_derive::napi;
 use parking_lot::RwLock;
 
-use brust_server::{Config, InvalidateArgs, Server, Tuning, start};
+use brust_server::{
+    ActionsConfig, Config, CorsConfig, DEFAULT_ACTION_PREFIX, DEFAULT_MAX_ACTION_BODY_BYTES,
+    InvalidateArgs, Server, Tuning, start,
+};
 
 use crate::dispatch::{BufPtr, KindArg, TsfnDispatch, WorkerTsfn};
 
@@ -86,6 +89,47 @@ fn resolve_bind_addr(host: &str, port: u16) -> Result<SocketAddr, String> {
         .ok_or_else(|| format!("no address resolved for {host}:{port}"))
 }
 
+/// Global CORS (0.1.x `NapiCorsOptions`, brust/src/lib.rs:79-98); napi camelCases the keys:
+/// `origins, methods, headers, exposeHeaders, credentials, maxAgeSeconds`. Validated by `start` (`cors: …`).
+#[napi(object)]
+pub struct NapiCorsOptions {
+    pub origins: Vec<String>,
+    pub methods: Option<Vec<String>>,
+    pub headers: Option<Vec<String>>,
+    pub expose_headers: Option<Vec<String>>,
+    pub credentials: Option<bool>,
+    pub max_age_seconds: Option<u32>,
+}
+
+/// M3-F A3 consumer `{ prefix?, maxBodyBytes? }` (defaults `/_brust/action`, 262144). Present = actions on.
+#[napi(object)]
+pub struct NapiActionsOptions {
+    pub prefix: Option<String>,
+    pub max_body_bytes: Option<u32>,
+}
+
+/// Field for field; an absent `credentials` is `false`.
+fn cors_config(c: NapiCorsOptions) -> CorsConfig {
+    CorsConfig {
+        origins: c.origins,
+        methods: c.methods,
+        headers: c.headers,
+        expose_headers: c.expose_headers,
+        credentials: c.credentials.unwrap_or(false),
+        max_age_seconds: c.max_age_seconds,
+    }
+}
+
+/// Absent keys take the `brust-server` defaults.
+fn actions_config(a: NapiActionsOptions) -> ActionsConfig {
+    ActionsConfig {
+        prefix: a.prefix.unwrap_or_else(|| DEFAULT_ACTION_PREFIX.into()),
+        max_body_bytes: a
+            .max_body_bytes
+            .map_or(DEFAULT_MAX_ACTION_BODY_BYTES, |n| n as usize),
+    }
+}
+
 #[napi(object)]
 pub struct StartOptions {
     pub host: String,
@@ -104,10 +148,15 @@ pub struct StartOptions {
     pub job_cache_capacity: Option<u32>,
     /// `X-Powered-By` value; absent = header not stamped.
     pub generator: Option<String>,
+    /// Global CORS policy; absent = CORS off.
+    pub cors: Option<NapiCorsOptions>,
+    /// The actions subtree (M3-F); absent = no actions (byte-identical server).
+    pub actions: Option<NapiActionsOptions>,
 }
 
 /// Boot the server (manifest, routes, templates, bind). Throws on any boot
-/// error (`manifest: …`, `routes: …`, `render: …`, `bind failed on …`).
+/// error (`manifest: …`, `routes: …`, `render: …`, `cors: …`, `actions: …`,
+/// `bind failed on …`).
 #[napi]
 pub fn start_server(opts: StartOptions) -> napi::Result<()> {
     crate::init_tracing();
@@ -129,6 +178,8 @@ pub fn start_server(opts: StartOptions) -> napi::Result<()> {
         l1_capacity: opts.l1_capacity.map_or(1000, u64::from),
         job_cache_capacity: opts.job_cache_capacity.map_or(1000, u64::from),
         generator: opts.generator,
+        cors: opts.cors.map(cors_config),
+        actions: opts.actions.map(actions_config),
         ..Config::default()
     };
     let s = start(cfg).map_err(napi::Error::from_reason)?;
@@ -282,6 +333,60 @@ mod tests {
         let d = Arc::new(3u8);
         bind(&mut b, &d, 5);
         assert_eq!(bound(&b).map(|(_, id)| id), Some(5));
+    }
+
+    #[test]
+    fn cors_options_map_onto_cors_config() {
+        let c = cors_config(NapiCorsOptions {
+            origins: vec!["https://a.example".into()],
+            methods: None,
+            headers: Some(vec!["x-token".into()]),
+            expose_headers: Some(vec!["x-id".into()]),
+            credentials: None,
+            max_age_seconds: Some(60),
+        });
+        assert_eq!(
+            c,
+            CorsConfig {
+                origins: vec!["https://a.example".into()],
+                methods: None,
+                headers: Some(vec!["x-token".into()]),
+                expose_headers: Some(vec!["x-id".into()]),
+                credentials: false,
+                max_age_seconds: Some(60),
+            }
+        );
+        let creds = NapiCorsOptions {
+            origins: vec!["https://a.example".into()],
+            methods: Some(vec!["GET".into()]),
+            headers: None,
+            expose_headers: None,
+            credentials: Some(true),
+            max_age_seconds: None,
+        };
+        let c = cors_config(creds);
+        assert!(c.credentials);
+        assert_eq!(c.methods, Some(vec!["GET".to_string()]));
+    }
+
+    #[test]
+    fn actions_options_default() {
+        let none = NapiActionsOptions {
+            prefix: None,
+            max_body_bytes: None,
+        };
+        assert_eq!(actions_config(none), ActionsConfig::default());
+        let set = NapiActionsOptions {
+            prefix: Some("/api".into()),
+            max_body_bytes: Some(1024),
+        };
+        assert_eq!(
+            actions_config(set),
+            ActionsConfig {
+                prefix: "/api".into(),
+                max_body_bytes: 1024,
+            }
+        );
     }
 
     #[test]

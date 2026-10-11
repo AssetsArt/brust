@@ -3,6 +3,7 @@
 // handler NEVER rejects across the tsfn: every failure becomes `{error}` / `{id, error}`.
 import { join, resolve } from 'node:path'
 import { workerData } from 'node:worker_threads'
+import { runFetch } from './actions-bridge'
 import { planJobs, registerWorker } from './native'
 import { installServerResolver, type StoreSnapshot } from './store/core-adapter'
 import { collectSnapshot, getServerInstance, runInStoreContext, touchStores } from './store/server-context'
@@ -264,6 +265,7 @@ export function makeHandlers(opts: {
  * addon is touched only then). */
 export function makeDispatch(h: Handlers, view: Uint8Array, slots: number, plan: PlanJobs = planJobs) {
   return async (kind: string, requestJson: string, slot: number): Promise<number> => {
+    if (kind === 'fetch') return runFetch(requestJson, view, slot, slots)
     let out: unknown
     try {
       const req = JSON.parse(requestJson)
