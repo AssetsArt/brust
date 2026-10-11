@@ -309,7 +309,7 @@ working), fans them out to plans sharing a key, then continues with step 6 uncha
 at planning time renders even if an invalidation lands before the render, exactly as a hit pinned
 before the M2 `jobs` call did; the next request sees the invalidation. A verdict, an error, a
 declined or ignored offer, and a route without a loader follow steps 4-5 as written. The rendered
-document is identical on both paths.
+document is identical on both paths. Timing keeps the two-call semantics per phase (lead ruling on challenge 23e71e74, 2026-10-10): the call's deadline is `call_timeout` from its start; when `planJobs` runs it stamps the claimed slot, and an expiry with a stamp moves the deadline to stamp + `call_timeout` — a loader that exceeds `call_timeout` is a 504 at `call_timeout`, a job phase that exceeds `call_timeout` from its own start is a 504, and a page whose loader and jobs each fit (but not together) still renders.
 
 **S8 — `Outlet` is a compiler intrinsic.** `import { Outlet } from '@brust/core/routes'`;
 `<Outlet/>` in a route component lowers to `{{ __outlet | safe }}` in the template and is a
