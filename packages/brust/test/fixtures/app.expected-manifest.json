@@ -41,7 +41,8 @@
       "children": [],
       "client": "client/appLayout_d491b982-<hash>.js",
       "needs_worker": false,
-      "use_id_slots": 0
+      "use_id_slots": 0,
+      "stores": []
     },
     "homePage_010405bc": {
       "tier": "static",
@@ -50,7 +51,8 @@
       "children": [],
       "client": null,
       "needs_worker": false,
-      "use_id_slots": 0
+      "use_id_slots": 0,
+      "stores": []
     },
     "itemPage_b7278c7c": {
       "tier": "static",
@@ -109,7 +111,8 @@
       ],
       "client": null,
       "needs_worker": true,
-      "use_id_slots": 1
+      "use_id_slots": 1,
+      "stores": []
     },
     "priceRow_042dcbca": {
       "tier": "static",
@@ -136,7 +139,8 @@
       "children": [],
       "client": null,
       "needs_worker": true,
-      "use_id_slots": 0
+      "use_id_slots": 0,
+      "stores": []
     },
     "team_db295766": {
       "tier": "react",
@@ -163,7 +167,8 @@
       "children": [],
       "client": "client/react-team_db295766-<hash>.js",
       "needs_worker": true,
-      "use_id_slots": 0
+      "use_id_slots": 0,
+      "stores": []
     }
   },
   "assets": {
