@@ -30,7 +30,7 @@ Measured 2026-10-09 on darwin/arm64, Bun 1.4.2, `oha -c 120 -z 10s`. **Bar (v2 n
 | B-native-miss | `/pokemon/{name}` | 41,086 | 53,087 | -22.6% | 40,948 | 52,489 |
 | C-react-child | `/` | 33,737 | 51,449 | -34.4% | 27,934 | 51,369 |
 
-The M2 bar was not met at M2 exit; ledger F68 closed in M3-P with the bar measured in `bench/RESULTS.md`: `bar F68 : v2 vs 0.1.x D +7.9% I +2.3% → MET`.
+The M2 bar was not met at M2 exit; ledger F68 closed in M3-P on the suite in `bench/RESULTS.json` (identity, v2 vs 0.1.x): D +7.9%, I +2.3% → met.
 
 ## Ledger F32–F49
 
