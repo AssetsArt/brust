@@ -2,7 +2,7 @@
 import { expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { EXIT_REPORT, gatherInputs } from './run.ts'
-import { LEDGER_RANGE, MAY_BE_REFILED, MUST_BE_CLOSED, PROBES, ROUTES, renderExitReport } from './exit.ts'
+import { f68Met, LEDGER_RANGE, MAY_BE_REFILED, MUST_BE_CLOSED, PROBES, ROUTES, renderExitReport } from './exit.ts'
 
 const inputs = await gatherInputs()   // runs `brust build` on examples/pokedex (≈10 s)
 
@@ -22,15 +22,17 @@ test('bench: every pinned probe is in RESULTS.json and the bar reads from the nu
   const measured = inputs.bench.probes.every((p) => p.x01 !== null)
   const met = measured && inputs.bench.probes.every((p) => p.v2.rps >= p.x01!.rps)
   expect(inputs.bench.bar).toBe(!measured ? 'not measured' : met ? 'met' : 'not met')
-  // The M2 exit criterion itself, with the pinned exemption (lead ruling on challenge 7ad720e5): 'not met' passes
-  // ONLY while ledger F68 is open and names lane m2p-render-perf; closing F68 without 'met' fails here.
+  // The M2 exit criterion itself, with the pinned exemption (lead ruling on challenge 7ad720e5): the frozen M2 'not met'
+  // passes ONLY while ledger F68 is open and names lane m2p-render-perf, or once F68 is closed with the M3-P suite's
+  // bar met (`bench/RESULTS.json` numbers, ruling on challenge dc6f8dee); closing F68 without 'met' fails here.
   const f68 = inputs.ledger68
   if (inputs.bench.bar === 'met') return
   expect(inputs.bench.bar).toBe('not met')
-  expect([f68.state, f68.owner.includes('m2p-render-perf')]).toEqual(['open', true])
+  if (f68.state === 'closed') expect(f68Met(inputs.m3F68)).toBe(true)
+  else expect(f68.owner.includes('m2p-render-perf')).toBe(true)
 })
-test('F68 DONE forces the bench bar to be met (closing the ledger without meeting it fails CI)', () => {
-  if (inputs.ledger68.state === 'closed') expect(inputs.bench.bar).toBe('met')
+test('F68 closed forces the bench bar to be met (closing the ledger without meeting it fails CI)', () => {
+  if (inputs.ledger68.state === 'closed') expect(inputs.bench.bar === 'met' || f68Met(inputs.m3F68)).toBe(true)
 })
 test('ledger F32–F49: every row has a state; the closed set is pinned', () => {
   const ids = LEDGER_RANGE.map((n) => `F${n}`)

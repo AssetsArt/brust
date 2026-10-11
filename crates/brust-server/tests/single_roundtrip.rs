@@ -235,6 +235,8 @@ struct ThreadWorker {
     ptr: *mut u8,
     /// `jobs` calls received (the two-call path; M3-P P7's adaptive offer, ruling R1).
     jobs_calls: Arc<AtomicU32>,
+    /// Loader calls that were not offered the plan (their route had stopped offering).
+    unoffered: Arc<AtomicU32>,
 }
 
 // SAFETY: the buffer is leaked; slot `i` is only written by the worker thread while tokio holds
@@ -297,6 +299,8 @@ impl ThreadWorker {
         let ptr = Box::leak(vec![0u8; STRESS_SLOT * STRESS_SLOTS].into_boxed_slice()).as_mut_ptr();
         let (tx, rx) = mpsc::channel::<Reply>();
         let base = SendPtr(ptr);
+        let unoffered = Arc::new(AtomicU32::new(0));
+        let unoffered_w = Arc::clone(&unoffered);
         std::thread::spawn(move || {
             let base = base;
             let write = |slot: u32, bytes: &[u8]| {
@@ -322,6 +326,7 @@ impl ThreadWorker {
                             .and_then(|(w, id)| w.upgrade().map(|s| (s, *id)))
                             .expect("bound before the first request");
                         if req["plan"] != true {
+                            unoffered_w.fetch_add(1, Ordering::SeqCst);
                             first
                         } else {
                             write(slot, &first);
@@ -351,6 +356,7 @@ impl ThreadWorker {
             tx,
             ptr,
             jobs_calls: Default::default(),
+            unoffered,
         }
     }
 }
@@ -418,7 +424,9 @@ async fn client_run(addr: std::net::SocketAddr, paths: Vec<String>) -> Vec<(Stri
 /// 8 worker threads × 1000 pages: `plan_in_call` reads the job cache from 8 OS threads while
 /// tokio inserts results and a task invalidates the "moves" tag every millisecond. Every page
 /// must render the values of ITS OWN inputs (no torn or crossed entries), no call may fail, and
-/// no plan may be left in a slot.
+/// no plan may be left in a slot. The first half of the pages runs with the invalidator paused,
+/// so the route provably stops offering the plan (R1); the second half starts with an
+/// invalidation, so the two-call path provably runs on any host speed.
 #[test]
 fn eight_workers_plan_while_tokio_inserts_and_invalidates() {
     const WORKERS: usize = 8;
@@ -435,11 +443,12 @@ fn eight_workers_plan_while_tokio_inserts_and_invalidates() {
         ..cfg.tuning
     };
     let s = start(cfg).unwrap();
-    let mut jobs_calls = Vec::new();
+    let (mut jobs_calls, mut unoffered) = (Vec::new(), Vec::new());
     for _ in 0..WORKERS {
         let bound: Binding = Default::default();
         let w = ThreadWorker::spawn(bound.clone());
         jobs_calls.push(Arc::clone(&w.jobs_calls));
+        unoffered.push(Arc::clone(&w.unoffered));
         let id = s.register_worker(Box::new(w));
         bound.set((Arc::downgrade(&s), id)).unwrap();
     }
@@ -449,55 +458,82 @@ fn eight_workers_plan_while_tokio_inserts_and_invalidates() {
         .enable_all()
         .build()
         .unwrap();
+    let sum = |v: &[Arc<AtomicU32>]| -> u64 {
+        v.iter().map(|c| u64::from(c.load(Ordering::SeqCst))).sum()
+    };
+    let invalidate = |s: &Server| {
+        s.invalidate(InvalidateArgs {
+            tags: vec!["moves".into()],
+            ..Default::default()
+        })
+    };
     let invalidations = rt.block_on(async {
-        let stop = Arc::new(AtomicBool::new(false));
+        let (stop, paused) = (
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(true)),
+        );
         let inv = {
-            let (s, stop) = (Arc::clone(&s), stop.clone());
+            let (s, stop, paused) = (Arc::clone(&s), stop.clone(), paused.clone());
             tokio::spawn(async move {
                 let mut n = 0u64;
                 while !stop.load(Ordering::SeqCst) {
-                    s.invalidate(InvalidateArgs {
-                        tags: vec!["moves".into()],
-                        ..Default::default()
-                    });
-                    n += 1;
+                    if !paused.load(Ordering::SeqCst) {
+                        invalidate(&s);
+                        n += 1;
+                    }
                     tokio::time::sleep(std::time::Duration::from_millis(1)).await;
                 }
                 n
             })
         };
         let per = WORKERS * PAGES / CLIENTS;
-        let clients: Vec<_> = (0..CLIENTS)
-            .map(|c| {
-                let paths = (0..per)
-                    .map(|k| {
-                        let r = c * per + k;
-                        format!("/pokemon/n{}?q={r}", r % NAMES)
-                    })
-                    .collect();
-                tokio::spawn(client_run(s.local_addr(), paths))
+        let paths = |c: usize, ks: std::ops::Range<usize>| -> Vec<String> {
+            ks.map(|k| {
+                let r = c * per + k;
+                format!("/pokemon/n{}?q={r}", r % NAMES)
             })
-            .collect();
-        for c in clients {
-            for (path, status, body) in c.await.unwrap() {
-                let i: usize = path["/pokemon/n".len()..path.find('?').unwrap()]
-                    .parse()
-                    .unwrap();
-                assert_eq!(status, 200, "{path}: {body}");
-                assert!(
-                    body.contains(&format!("<p>HP {}</p>", stress_hp(i))),
-                    "{path}: {body}"
-                );
-                assert!(
-                    body.contains(&format!(
-                        "<li>m-n{i}-a: MOVE m-n{i}-a</li><li>m-n{i}-b: MOVE m-n{i}-b</li>"
-                    )),
-                    "{path}: {body}"
-                );
+            .collect()
+        };
+        let run = |ks: std::ops::Range<usize>| {
+            let clients: Vec<_> = (0..CLIENTS)
+                .map(|c| tokio::spawn(client_run(s.local_addr(), paths(c, ks.clone()))))
+                .collect();
+            async move {
+                for c in clients {
+                    for (path, status, body) in c.await.unwrap() {
+                        let i: usize = path["/pokemon/n".len()..path.find('?').unwrap()]
+                            .parse()
+                            .unwrap();
+                        assert_eq!(status, 200, "{path}: {body}");
+                        assert!(
+                            body.contains(&format!("<p>HP {}</p>", stress_hp(i))),
+                            "{path}: {body}"
+                        );
+                        assert!(
+                            body.contains(&format!(
+                                "<li>m-n{i}-a: MOVE m-n{i}-a</li><li>m-n{i}-b: MOVE m-n{i}-b</li>"
+                            )),
+                            "{path}: {body}"
+                        );
+                    }
+                }
             }
-        }
+        };
+        // Phase 1, invalidator paused: each client sees all NAMES within its first NAMES pages,
+        // then only hits, so the route reaches 64 consecutive all-hit planned calls and stops
+        // offering the plan.
+        run(0..per / 2).await;
+        assert!(
+            sum(&unoffered) > 0,
+            "the route stopped offering the plan after the quiet phase"
+        );
+        // Phase 2: invalidate before any page runs, then every millisecond. The first miss lands
+        // on a route that is not offering, so it takes the two-call path.
+        invalidate(&s);
+        paused.store(false, Ordering::SeqCst);
+        run(per / 2..per).await;
         stop.store(true, Ordering::SeqCst);
-        inv.await.unwrap()
+        inv.await.unwrap() + 1
     });
     let wall = t0.elapsed();
     let st = stats(&s);
@@ -509,10 +545,7 @@ fn eight_workers_plan_while_tokio_inserts_and_invalidates() {
     assert_eq!(st["loader_calls"], (WORKERS * PAGES) as u64);
     // Every page is one loader round trip, plus one `jobs` round trip only when its route had
     // stopped offering the plan (64 all-hit planned calls, M3-P P7 ruling R1) and a job missed.
-    let jobs_calls: u64 = jobs_calls
-        .iter()
-        .map(|c| u64::from(c.load(Ordering::SeqCst)))
-        .sum();
+    let jobs_calls = sum(&jobs_calls);
     eprintln!("stress: {jobs_calls} two-call pages (adaptive offer)");
     assert!(
         0 < jobs_calls && jobs_calls <= (WORKERS * PAGES) as u64,
