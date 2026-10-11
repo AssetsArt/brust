@@ -730,3 +730,21 @@ fn api_prefix_routes_actions() {
     assert_eq!(status, 405);
     assert_eq!(fake.fetch_count(), 1);
 }
+
+/// The app's URL parser would resolve these out of (or around) the path Rust admitted: 400, never forwarded.
+#[test]
+fn dot_segments_and_backslashes_are_400() {
+    let (fake, s) = server(echo);
+    for p in [
+        "/_brust/action/%2e%2e/x",
+        "/_brust/action/x/%2E%2e/y",
+        "/_brust/action/a%5Cb",
+    ] {
+        let (status, _, _) = request_body(&s, "POST", p, &[], b"x".to_vec());
+        assert_eq!(status, 400, "{p}");
+    }
+    assert_eq!(fake.fetch_count(), 0);
+    let (status, _, _) = request_body(&s, "POST", "/_brust/action/a.b", &[], b"x".to_vec());
+    assert_eq!(status, 200);
+    assert_eq!(fake.fetch_count(), 1);
+}

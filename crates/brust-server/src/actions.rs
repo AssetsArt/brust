@@ -29,6 +29,11 @@ pub(crate) async fn handle(
     if matches!(method, "CONNECT" | "TRACE" | "TRACK") {
         return body::resp(501, "text/plain", &[], b"not implemented".to_vec());
     }
+    // The worker's URL parser (WHATWG) resolves `..`, `%2e%2e` and `\` that this prefix check matched raw: refuse
+    // them, so the path the app routes on is the path Rust admitted under the prefix.
+    if ambiguous_path(full.split_once('?').map_or(full, |(p, _)| p)) {
+        return body::error_400();
+    }
     // R2: Rust forwards bytes as received; an encoded body is the one shape it refuses.
     let ce = parts
         .headers
@@ -114,6 +119,16 @@ pub(crate) async fn handle(
     } else {
         resp
     }
+}
+
+/// A path a WHATWG URL parser would rewrite: a `.`/`..` segment (also as `%2e`), or a backslash (also `%5c`).
+fn ambiguous_path(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    lower.contains('\\')
+        || lower.contains("%5c")
+        || lower
+            .split('/')
+            .any(|seg| matches!(seg.replace("%2e", ".").as_str(), "." | ".."))
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -280,6 +295,29 @@ mod tests {
             read_capped(chunks(2, 512), 1024, T).await.unwrap().len(),
             1024
         );
+    }
+
+    #[test]
+    fn ambiguous_paths_are_refused() {
+        for p in [
+            "/_brust/action/../x",
+            "/_brust/action/./x",
+            "/_brust/action/%2e%2e/x",
+            "/_brust/action/%2E./x",
+            "/_brust/action/.%2e",
+            "/_brust/action\\x",
+            "/_brust/action/a%5Cb",
+        ] {
+            assert!(ambiguous_path(p), "{p}");
+        }
+        for p in [
+            "/_brust/action",
+            "/_brust/action/a.b/..c",
+            "/_brust/action/x%2ey",
+            "/_brust/action/...",
+        ] {
+            assert!(!ambiguous_path(p), "{p}");
+        }
     }
 
     const T: std::time::Duration = std::time::Duration::from_secs(5);
