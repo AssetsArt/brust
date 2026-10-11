@@ -252,3 +252,12 @@ test('store access outside a request scope throws', async () => {
   const cart = defineStore('cart_out', () => ({ count: signal(0) }))
   expect(() => cart.count()).toThrow(/outside a request scope/)
 })
+
+test('a loader-less route still snapshots its manifest stores (S7b)', async () => {
+  const manifest: ManifestLike = {
+    routes: [{ id: 'r1', chain: ['p'] }],
+    components: { p: { jobs: [], stores: ['s.ts'] } },
+  }
+  const h = makeHandlers({ leaves: leaves(undefined), jobs: {}, manifest, stores: { 's.ts': { A: fakeHandle('a') } } })
+  expect(await h.loader(ctx())).toEqual({ ok: true, data: {}, store: { a: { value: 0 } } })
+})

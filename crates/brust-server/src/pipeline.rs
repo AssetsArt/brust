@@ -336,7 +336,9 @@ async fn page(
     let mut extra: Vec<(String, String)> = Vec::new();
     // M3-P P6: the plan the worker built inside the loader call, with its job results.
     let mut planned: Option<(PlannedCall, Vec<JobResult>)> = None;
-    if !route.loaders.is_empty() {
+    // M3-F S7b: a loader-less route still calls the worker when its chain reads a store, so the
+    // snapshot (defaults included) is seeded and tagged. No loaders and no stores: zero calls.
+    if !route.loaders.is_empty() || s.plans.chain_has_stores(&route.chain) {
         let req = LoaderRequest {
             route_id: &route.id,
             params,
@@ -1277,6 +1279,8 @@ struct CompTpl {
     use_id_slots: u32,
     /// Own jobs non-empty, or some child component's jobs non-empty (`chain_has_jobs`).
     deep_jobs: bool,
+    /// M3-F: this component, a child or an ssr job target reads a store module (transitive).
+    deep_stores: bool,
 }
 
 #[derive(Debug)]
@@ -1371,6 +1375,7 @@ impl PlanIndex {
                 children,
                 use_id_slots: c.use_id_slots,
                 deep_jobs: false,
+                deep_stores: false,
             });
         }
         for i in 0..comps.len() {
@@ -1378,6 +1383,14 @@ impl PlanIndex {
             let deep =
                 !c.jobs.is_empty() || c.children.iter().any(|ch| !comps[ch.child].jobs.is_empty());
             comps[i].deep_jobs = deep;
+        }
+        // M3-F S7b: the same union the worker's routeStoresIndex walks (children and job targets,
+        // transitive, cycle-safe), reduced to "is it non-empty".
+        for id in m.components.keys() {
+            let mut seen = std::collections::HashSet::new();
+            let deep = reads_store(m, id, &mut seen);
+            let i = by_id[id];
+            comps[i].deep_stores = deep;
         }
         Ok(PlanIndex { comps, by_id })
     }
@@ -1393,12 +1406,40 @@ impl PlanIndex {
         self.comp_ix(id).map(|i| &self.comps[i])
     }
 
+    /// Some chain component (or a child / ssr target below it) reads a store module (M3-F S7b).
+    pub(crate) fn chain_has_stores(&self, chain: &[String]) -> bool {
+        chain.iter().any(|id| {
+            self.by_id
+                .get(id)
+                .is_some_and(|&i| self.comps[i].deep_stores)
+        })
+    }
+
     /// Some chain component or one of its children has a job.
     pub(crate) fn chain_has_jobs(&self, chain: &[String]) -> bool {
         chain
             .iter()
             .any(|id| self.by_id.get(id).is_some_and(|&i| self.comps[i].deep_jobs))
     }
+}
+
+fn reads_store<'a>(
+    m: &'a Manifest,
+    id: &'a str,
+    seen: &mut std::collections::HashSet<&'a str>,
+) -> bool {
+    if !seen.insert(id) {
+        return false;
+    }
+    let Some(c) = m.components.get(id) else {
+        return false;
+    };
+    !c.stores.is_empty()
+        || c.children.iter().any(|ch| reads_store(m, &ch.id, seen))
+        || c.jobs
+            .iter()
+            .filter_map(|j| j.target.as_deref())
+            .any(|t| reads_store(m, t, seen))
 }
 
 fn job_tpl(j: &JobRecord) -> Result<JobTpl, String> {

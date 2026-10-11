@@ -253,3 +253,49 @@ fn request_derived_store_value_cannot_break_out() {
     let tag_end = body[i..].find("</script>").unwrap();
     assert!(!body[i..i + tag_end].contains("</"), "{body}");
 }
+
+/// M3-F S7b: `/ll` has no loaders but its chain's component lists a store module.
+fn loaderless_dist(with_stores: bool) -> tempfile::TempDir {
+    let dir = store_dist();
+    let mp = dir.path().join("manifest.json");
+    let mut m: Value = serde_json::from_slice(&std::fs::read(&mp).unwrap()).unwrap();
+    m["routes"].as_array_mut().unwrap().push(json!({
+        "id": "r8", "pattern": "/ll", "chain": ["appLayout_a1", "detailPage_c3"],
+        "loaders": [], "cache": null, "catch_all": false}));
+    if with_stores {
+        m["components"]["detailPage_c3"]["stores"] = json!(["stores/cart.ts"]);
+    }
+    std::fs::write(&mp, serde_json::to_vec(&m).unwrap()).unwrap();
+    dir
+}
+
+#[test]
+fn loaderless_route_with_a_chain_store_calls_the_worker_once() {
+    for bound in [false, true] {
+        let dir = loaderless_dist(true);
+        let f = counted(json!({"cart": {"count": 3}}));
+        let s = if bound {
+            boot_in(f.clone(), dir.path())
+        } else {
+            boot_unbound(f.clone(), dir.path())
+        };
+        let (st, _, body) = get(&s, "/ll", &[]);
+        assert_eq!(st, 200, "{body}");
+        assert!(body.contains(r#"<b id="c">3</b>"#), "{body}");
+        assert!(
+            body.contains(r#"<script type="application/json" data-brust-store="cart">{"count":3}</script><script type="module" src="/_brust/client/runtime-"#),
+            "{body}"
+        );
+        assert_eq!(f.counts().0, 1, "bound={bound}");
+    }
+}
+
+#[test]
+fn loaderless_route_without_stores_makes_zero_worker_calls() {
+    let dir = loaderless_dist(false);
+    let f = counted(json!({"cart": {"count": 3}}));
+    let s = boot_in(f.clone(), dir.path());
+    let (_, _, body) = get(&s, "/", &[]);
+    assert!(!body.contains("data-brust-store"));
+    assert_eq!(f.counts().0, 0);
+}
