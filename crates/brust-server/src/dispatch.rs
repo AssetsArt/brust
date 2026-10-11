@@ -157,6 +157,14 @@ pub async fn claim_or_wait(
     timeout: Duration,
     mut try_claim: impl FnMut() -> ClaimResult,
 ) -> Result<RenderClaim, CallError> {
+    // M3-P P7: claim first; register on `idle_notify` only when every slot is busy (its
+    // `poll_notified`/`drop_notified` lock showed up on probe I). A stored permit from a release
+    // nobody waited on is harmless: the loop re-checks `try_claim` after every wake.
+    match try_claim() {
+        ClaimResult::Claimed(c) => return Ok(c),
+        ClaimResult::PoolEmpty => return Err(CallError::NoWorkers),
+        ClaimResult::AllBusy => {}
+    }
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
         let notified = pool.idle_notify().notified();
