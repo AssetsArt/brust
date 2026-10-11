@@ -1,6 +1,7 @@
 // examples/pokedex/lib/loaders.ts
 import { type LoaderCtx, type LoaderReq, notFound, type Verdict } from '@brust/core/routes'
 import { team } from '../stores/team'
+import { unified } from '../stores/unified'
 import { ALL_TYPES, artwork, cap, fetchEvolution, fetchList, fetchPokemon, fetchSpecies, fetchTypeRelations, pad, STAT_LABEL, statBucket, TYPE_COLOR } from './pokeapi'
 import { MAX_TEAM } from './team'
 import { teamDb } from './team-db'
@@ -12,7 +13,7 @@ export function layoutLoader(): void {
   team.members.set(teamDb().list())
   team.max.set(MAX_TEAM)
 }
-const NAV = [{ href: '/', label: 'Home' }, { href: '/pokedex', label: 'Pokédex' }, { href: '/type-chart', label: 'Type chart' }]
+const NAV = [{ href: '/', label: 'Home' }, { href: '/pokedex', label: 'Pokédex' }, { href: '/type-chart', label: 'Type chart' }, { href: '/unified', label: 'Unified' }]
 const card = (p: { id: number; name: string }) => ({ id: p.id, name: p.name, displayName: cap(p.name), num: pad(p.id), artwork: artwork(p.id), detailHref: `/pokemon/${p.name}` })
 
 /** Chrome every leaf returns: AppLayout reads it from the merged loader context (child keys win). */
@@ -182,4 +183,10 @@ export async function typeChartLoader({ req, path }: LoaderCtx): Promise<TypeCha
   const relations = await Promise.all(ALL_TYPES.map((t) => fetchTypeRelations(t)))
   const rows: TypeChartRowVM[] = buildRows(relations)
   return { ...chrome(req, path, 'PokéDex · type chart', 'Type chart'), rows }
+}
+
+export async function unifiedLoader({ req, path }: LoaderCtx) {
+  const start = Math.max(0, Math.min(1_000_000, Math.trunc(Number(req.search.start) || 0)))
+  unified.count.set(start)
+  return chrome(req, path, 'Unified store · PokéDex', 'Unified')
 }

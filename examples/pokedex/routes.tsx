@@ -1,12 +1,13 @@
 // examples/pokedex/routes.tsx
 import { defineRoutes } from '@brust/core/routes'
 import AppLayout from './components/AppLayout'
-import { browseLoader, detailLoader, homeLoader, layoutLoader, typeChartLoader } from './lib/loaders'
+import { browseLoader, detailLoader, homeLoader, layoutLoader, typeChartLoader, unifiedLoader } from './lib/loaders'
 import BrowsePage from './pages/BrowsePage'
 import DetailPage from './pages/DetailPage'
 import HomePage from './pages/HomePage'
 import NotFoundPage from './pages/NotFoundPage'
 import TypeChart from './pages/TypeChart'
+import UnifiedPage from './pages/UnifiedPage'
 
 export const routes = defineRoutes([
   {
@@ -18,6 +19,7 @@ export const routes = defineRoutes([
       // L1 for 60 s by tag; `?nocache=1` bypasses L1 (bench probe B measures the miss path).
       { path: '/pokemon/{name}', Component: DetailPage, loader: detailLoader, cache: { ttl_seconds: 60, tags: ['pokemon', 'team'], bypass: 'query(nocache)' } },
       { path: '/type-chart', Component: TypeChart, loader: typeChartLoader, cache: { ttl_seconds: 3600, tags: ['types', 'team'] } },
+      { path: '/unified', Component: UnifiedPage, loader: unifiedLoader },
     ],
   },
   // Outside the layout on purpose (D3): a static full document → 0 Bun calls, no scripts.

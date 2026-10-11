@@ -147,3 +147,18 @@ test('detail page: AddToTeamButton paints the store state on first paint', async
   expect(tag![0]).toMatch(/x-data="addToTeamButton_[0-9a-f]{8}" x-props='\{&quot;id&quot;:25\}'/)
   expect((await get('/pokemon/nothing')).html).not.toContain('add-to-team')
 })
+
+test('/unified?start=5: one unified tag {count:5}; island, native counter and read-only node all paint 5; /unified paints 0; a team tag too', async () => {
+  const { r, html } = await get('/unified?start=5')
+  expect(r.status).toBe(200)
+  const tags = storeTags(html)
+  expect(tags.filter((t) => t.name === 'unified').map((t) => t.json)).toEqual([{ count: 5 }])
+  expect(tags.filter((t) => t.name === 'team')).toHaveLength(1)
+  const text = (h: string, id: string) => new RegExp(`data-testid="unified-${id}-count"[^>]*>\\s*([0-9]+)\\s*<`).exec(h)?.[1]
+  expect(['island', 'native', 'node'].map((id) => text(html, id))).toEqual(['5', '5', '5'])
+  const zero = (await get('/unified')).html
+  expect(['island', 'native', 'node'].map((id) => text(zero, id))).toEqual(['0', '0', '0'])
+  expect(storeTags(zero).find((t) => t.name === 'unified')!.json).toEqual({ count: 0 })
+  expect(storeTags((await get('/unified?start=-9')).html).find((t) => t.name === 'unified')!.json).toEqual({ count: 0 })
+  expect(storeTags((await get('/unified?start=99999999')).html).find((t) => t.name === 'unified')!.json).toEqual({ count: 1000000 })
+})
