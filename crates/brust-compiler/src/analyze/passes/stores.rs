@@ -7,10 +7,10 @@
 use super::PassCtx;
 use super::deps::{STORE_INPUT, store_input};
 use crate::analyze::modules::resolve as resolve_module;
-use crate::analyze::stores::read_store_export;
+use crate::analyze::stores::{exports_a_store, read_store_export};
 use crate::ir::{
     ArrowBody, Attr, ComponentIR, Diagnostic, Expr, IdentKind, Node, RawExpr, RawKind, ServerExpr,
-    StoreRef, StoreUse,
+    StoreRef, StoreUse, Tier,
 };
 use crate::lower::common::{is_function_raw, visit_verbatim_captures};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -235,6 +235,51 @@ pub fn check_render(ir: &mut ComponentIR, ctx: &PassCtx<'_>) {
     }
 }
 
+/// The backstop behind [`check_render`] (review F1): whatever path led there, a precompute job
+/// whose module imports a store handle (or a namespace of a module that exports one) would run
+/// it in the worker outside a store scope (D8). Runs after the tier pass, over the job imports
+/// lowering will print; a hit is a `store-handle-in-render` fallback and the component becomes
+/// React (the tier pass's React tail runs again). Ssr jobs print no user imports.
+pub fn check_jobs(ir: &mut ComponentIR, ctx: &PassCtx<'_>) {
+    if matches!(ir.tier, Tier::React { .. }) {
+        return;
+    }
+    let Some(imports) = crate::lower::server::job_imports(ir) else {
+        return;
+    };
+    let Some((local, source)) = imports.iter().find_map(|(local, source, imported)| {
+        let hit = match imported.as_str() {
+            "*" => {
+                is_relative(source)
+                    && resolve_module(ctx.path, source, ctx.opts)
+                        .is_some_and(|p| exports_a_store(&p, ctx.opts, ctx.modules))
+            }
+            export => is_relative(source) && is_store_handle(source, export, ctx),
+        };
+        hit.then_some((local, source))
+    }) else {
+        return;
+    };
+    let message = format!(
+        "the precompute job reads the store handle `{local}` imported from {source}; the component renders as a React island"
+    );
+    ir.diagnostics.push(Diagnostic::fallback(
+        "store-handle-in-render",
+        message.clone(),
+        0,
+        "read store values through const s = useStore(handle)",
+    ));
+    ir.tier = Tier::React {
+        reason: message,
+        client_only: false,
+    };
+    super::tier::react_jobs(ir);
+}
+
+fn is_relative(source: &str) -> bool {
+    source.starts_with("./") || source.starts_with("../")
+}
+
 /// `true` when `(source, export)` names a `defineStore` handle (relative imports only; a
 /// package or alias handle is a known gap).
 fn is_store_handle(source: &str, export: &str, ctx: &PassCtx<'_>) -> bool {
@@ -298,9 +343,10 @@ enum Use<'a> {
 
 /// Walks the code React runs during render, the whole subtree (the reject-guard rule).
 /// Roots: template expressions except event handlers and function-valued component props,
-/// structural derived values that are not functions, state and ref inits. It descends into JSX,
-/// into arrows and opaque functions passed as call arguments, and into local functions (derived
-/// or module-level) when they are called or passed as a call argument.
+/// structural derived values that are not functions, state and ref inits. From there every
+/// function value it meets may run (`o.f()`, `f.call(null)`, `fs[0]()`): it descends into JSX,
+/// arrow and opaque function bodies wherever they sit, and into every local (derived or
+/// module-level) the walked code names, called or not.
 struct Render<'a, 'f> {
     ir: &'a ComponentIR,
     derived: HashMap<&'a str, &'a RawExpr>,
@@ -345,7 +391,7 @@ impl<'a, 'f> Render<'a, 'f> {
             if let Some(r) = raw(&d.expr)
                 && !is_function_raw(r)
             {
-                self.local(r.loc, &d.name, false);
+                self.local(r.loc, &d.name);
             }
         }
     }
@@ -379,7 +425,7 @@ impl<'a, 'f> Render<'a, 'f> {
             } => {
                 for (_, v) in props {
                     // A function prop runs when the child calls it: client code.
-                    if !raw(v).is_some_and(is_function_raw) {
+                    if !raw(v).is_some_and(|r| self.is_function(r)) {
                         self.expr(v);
                     }
                 }
@@ -426,13 +472,6 @@ impl<'a, 'f> Render<'a, 'f> {
                 };
                 if !write {
                     self.raw(callee);
-                    if let RawKind::Ident {
-                        name,
-                        kind: IdentKind::Local,
-                    } = &callee.kind
-                    {
-                        self.local(callee.loc, name, true);
-                    }
                 }
                 args.iter().for_each(|a| self.arg(a));
             }
@@ -449,13 +488,9 @@ impl<'a, 'f> Render<'a, 'f> {
             RawKind::Template { parts, .. } => parts.iter().for_each(|(p, _)| self.raw(p)),
             RawKind::Array(items) => items.iter().for_each(|i| self.raw(i)),
             RawKind::Object(props) => props.iter().for_each(|(_, v)| self.raw(v)),
-            // A function value does not run here; see `arg`.
-            RawKind::Arrow { .. } => {}
-            RawKind::Opaque { captures, .. } => {
-                if !is_function_raw(r) {
-                    self.captures(r.loc, captures);
-                }
-            }
+            // A function value reached from render may run there (`o.f()`, `fs[0]()`).
+            RawKind::Arrow { .. } => self.arg(r),
+            RawKind::Opaque { captures, .. } => self.captures(r.loc, captures),
             RawKind::Jsx(n) => self.node(n),
         }
     }
@@ -468,11 +503,21 @@ impl<'a, 'f> Render<'a, 'f> {
                 ArrowBody::Block { .. } => self.captures(a.loc, captures),
             },
             RawKind::Opaque { captures, .. } => self.captures(a.loc, captures),
+            _ => self.raw(a),
+        }
+    }
+
+    /// A function literal, or a local naming a derived function (`onAdd={inc}`).
+    fn is_function(&self, r: &RawExpr) -> bool {
+        match &r.kind {
             RawKind::Ident {
                 name,
                 kind: IdentKind::Local,
-            } => self.local(a.loc, name, true),
-            _ => self.raw(a),
+            } => self
+                .derived
+                .get(name.as_str())
+                .is_some_and(|d| is_function_raw(d)),
+            _ => is_function_raw(r),
         }
     }
 
@@ -499,33 +544,23 @@ impl<'a, 'f> Render<'a, 'f> {
                     local: name.to_string(),
                 });
             }
-            IdentKind::Local => self.local(loc, name, false),
+            IdentKind::Local => self.local(loc, name),
             _ => {}
         }
     }
 
-    /// A local read (`called`: called or passed as a call argument). A derived value is read
-    /// as computed; a derived or module-level function runs only when called.
-    fn local(&mut self, loc: u32, name: &'a str, called: bool) {
+    /// A local render code names, once: a derived value is read as computed; a derived
+    /// function, wherever it is named (called, passed, a member read like `f.call`), may run;
+    /// a module-level binding (a helper, an object of helpers) runs with whatever it captures.
+    fn local(&mut self, loc: u32, name: &'a str) {
+        if !self.seen.insert(name) {
+            return;
+        }
         if let Some(r) = self.derived.get(name).copied() {
-            if is_function_raw(r) != called || !self.seen.insert(name) {
-                return;
-            }
-            if called {
-                self.arg(r);
-            } else {
-                self.raw(r);
-            }
-        } else if called
-            && let Some(captures) = self.module.get(name).copied()
-            && self.seen.insert(name)
-        {
+            self.arg(r);
+        } else if let Some(captures) = self.module.get(name).copied() {
             for (n, k) in captures {
-                match k {
-                    // A helper's helpers run with it.
-                    IdentKind::Local => self.local(loc, n, true),
-                    _ => self.ident(loc, n, k),
-                }
+                self.ident(loc, n, k);
             }
         }
     }

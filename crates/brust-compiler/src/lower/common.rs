@@ -315,8 +315,12 @@ pub fn module_code(
         let Some(captures) = scope.get(n.as_str()) else {
             continue;
         };
-        if !need.insert(n) {
+        if !need.insert(n.clone()) {
             continue;
+        }
+        // The whole statement is printed (`const a = 1, b = f()`): its other names run too.
+        for d in ir.module_decls.iter().filter(|d| d.names.contains(&n)) {
+            stack.extend(d.names.iter().cloned());
         }
         for (c, k) in captures.iter() {
             match k {

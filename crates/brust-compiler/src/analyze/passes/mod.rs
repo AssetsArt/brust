@@ -100,6 +100,8 @@ pub fn run_passes(ir: &mut ComponentIR, ctx: &PassCtx<'_>) -> PassState {
     captures::captures(ir, &mut st, ctx);
     projection::projection(ir, &st);
     tier::tier(ir, &mut st, ctx);
+    // Backstop: the final precompute job never imports a store handle (D8).
+    stores::check_jobs(ir, ctx);
     // Job cache keys are computed from the inputs by a path evaluator that cannot read `.length`
     // of a sequence: a job reading `rows.length` is keyed by `rows`. (The client seed keeps the
     // count-only narrowing; see `SeedNode`.)

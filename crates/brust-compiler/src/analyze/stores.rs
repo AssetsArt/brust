@@ -43,6 +43,82 @@ pub fn read_store_export(
     r
 }
 
+/// `true` when some export of the module at `path` is a store (`import * as ns` of it reaches
+/// a handle). Export names are listed through `export * from` (depth ≤ 8), then each is read
+/// with [`read_store_export`].
+pub fn exports_a_store(path: &str, opts: &AnalyzeOptions, modules: &RefCell<ModuleCache>) -> bool {
+    let mut names = HashSet::new();
+    export_names(&normalize(path), opts, &mut HashSet::new(), 0, &mut names);
+    names
+        .iter()
+        .any(|n| read_store_export(path, n, opts, modules).is_ok())
+}
+
+fn export_names(
+    path: &str,
+    opts: &AnalyzeOptions,
+    visited: &mut HashSet<String>,
+    depth: usize,
+    out: &mut HashSet<String>,
+) {
+    if depth > MAX_DEPTH || !visited.insert(path.to_string()) {
+        return;
+    }
+    let Ok(bytes) = std::fs::read(opts.root.join(path)) else {
+        return;
+    };
+    let Ok(parsed) = crate::parse::parse_tsx(path, bytes) else {
+        return;
+    };
+    let stars = parsed.with_ast(|ast| {
+        let m = Module::new(ast);
+        let records = ast.import_records.as_slice();
+        let mut stars = Vec::new();
+        for part in ast.parts.iter() {
+            for stmt in part.stmts.slice() {
+                match &stmt.data {
+                    S::SLocal(l) if l.is_export => {
+                        for d in l.decls.iter() {
+                            if let B::BIdentifier(id) = d.binding.data {
+                                out.insert(m.name(id.r#ref));
+                            }
+                        }
+                    }
+                    S::SExportDefault(_) => {
+                        out.insert("default".into());
+                    }
+                    S::SExportClause(c) => out.extend(
+                        c.items
+                            .slice()
+                            .iter()
+                            .map(|i| String::from_utf8_lossy(i.alias.slice()).into_owned()),
+                    ),
+                    S::SExportFrom(f) => out.extend(
+                        f.items
+                            .slice()
+                            .iter()
+                            .map(|i| String::from_utf8_lossy(i.alias.slice()).into_owned()),
+                    ),
+                    S::SExportStar(st) if st.alias.is_none() => stars.extend(
+                        records
+                            .get(st.import_record_index as usize)
+                            .map(|r| String::from_utf8_lossy(r.path.text).into_owned()),
+                    ),
+                    _ => {}
+                }
+            }
+        }
+        stars
+    });
+    for spec in stars {
+        if (spec.starts_with("./") || spec.starts_with("../"))
+            && let Some(p) = resolve(path, &spec, opts)
+        {
+            export_names(&p, opts, visited, depth + 1, out);
+        }
+    }
+}
+
 /// What one module says about an export.
 enum Found {
     Store(StoreRef),

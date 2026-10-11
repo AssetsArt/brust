@@ -1329,6 +1329,15 @@ fn store_render_checks_allow_client_code() {
         "return <div><Child onAdd={() => cart.count.set(1)} />{s.count}</div>",
     );
     native(
+        "function Child(p: any) { return <button onClick={p.onAdd}>+</button> }",
+        "const inc = () => cart.count.set(1)\nreturn <div><Child onAdd={inc} />{s.count}</div>",
+    );
+    // A module-level helper object that only a handler calls.
+    native(
+        "const h = { inc: () => cart.count.set(1) }",
+        "return <button onClick={() => h.inc()}>{s.count}</button>",
+    );
+    native(
         "",
         "useEffect(() => { cart.count.set(0) }, [])\nreturn <p>{s.count}</p>",
     );
@@ -1349,6 +1358,101 @@ fn store_render_checks_allow_client_code() {
             "{paint}const show = (f: any) => f\nreturn <button onClick={{() => show(<b onClick={{() => cart.count.set(1)}}>x</b>)}}>{{s.count}}</button>"
         ),
     );
+}
+
+/// `body` (with module-level `head`) lowered over the store `CART` → exactly one `rule`
+/// fallback, tier React, and no generated job imports the store module.
+fn refused_lowered(head: &str, body: &str, rule: &str) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static N: AtomicUsize = AtomicUsize::new(0);
+    let n = N.fetch_add(1, Ordering::SeqCst);
+    let root = std::env::temp_dir().join(format!("brustc-store-fn-{}-{n}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("cart.ts"), CART).unwrap();
+    let src = render_case(head, body);
+    let (ir, a) = lower_artifacts(root.clone(), "C.tsx".into(), src);
+    let _ = std::fs::remove_dir_all(&root);
+    let hits: Vec<_> = ir.diagnostics.iter().filter(|d| d.rule == rule).collect();
+    assert_eq!(hits.len(), 1, "{body}: {:?}", ir.diagnostics);
+    assert_eq!(hits[0].class, DiagClass::Fallback, "{body}");
+    assert!(
+        matches!(ir.tier, Tier::React { .. }),
+        "{body}: {:?}",
+        ir.tier
+    );
+    assert!(
+        ir.jobs.iter().all(|j| j.kind != JobKind::Precompute),
+        "{body}: {:?}",
+        ir.jobs
+    );
+    let job = a.server_ts.unwrap_or_default();
+    assert!(!job.contains("./cart"), "{body}: {job}");
+}
+
+/// Review F1: a store handle behind a function value that render runs (an object method, a
+/// `.call`, an array element, a conditional, a module-level object) is still render code.
+#[test]
+fn store_render_checks_walk_function_values() {
+    let handle = "store-handle-in-render";
+    refused_lowered(
+        "",
+        "const o = { f() { return cart.count() } }\nreturn <p>{o.f()}</p>",
+        handle,
+    );
+    refused_lowered(
+        "",
+        "const o = { f: () => cart.count.set(2) }\nreturn <p>{String(o.f())}</p>",
+        "store-write-in-render",
+    );
+    refused_lowered(
+        "",
+        "const f = () => cart.count()\nreturn <p>{f.call(null)}</p>",
+        handle,
+    );
+    refused_lowered(
+        "",
+        "const fs = [() => cart.count()]\nreturn <p>{fs[0]()}</p>",
+        handle,
+    );
+    refused_lowered(
+        "",
+        "const f = props.a ? () => cart.count() : () => 0\nreturn <p>{f()}</p>",
+        handle,
+    );
+    refused_lowered(
+        "const h = { f: () => cart.count() }",
+        "return <p>{h.f()}</p>",
+        handle,
+    );
+}
+
+/// The job-import backstop (review F1 (b)): render reads only `a`, but the job prints the whole
+/// statement `const a = 1, b = cart.count()` and imports the handle with it.
+#[test]
+fn store_handle_in_job_imports() {
+    refused_lowered(
+        "const a = 1, b = cart.count()",
+        "return <p>{a}</p>",
+        "store-handle-in-render",
+    );
+    // Through a namespace import of a module that exports a store.
+    let root = std::env::temp_dir().join(format!("brustc-store-ns-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("cart.ts"), CART).unwrap();
+    std::fs::write(root.join("stores.ts"), "export * from './cart'\n").unwrap();
+    let src = "import * as st from './stores'\nconst a = 1, b = st.cart.count()\nexport default function C() { return <p>{a}</p> }\n";
+    let (ir, a) = lower_artifacts(root.clone(), "C.tsx".into(), src.into());
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(
+        rules(&ir),
+        ["store-handle-in-render"],
+        "{:?}",
+        ir.diagnostics
+    );
+    assert!(matches!(ir.tier, Tier::React { .. }), "{:?}", ir.tier);
+    assert!(a.server_ts.is_none(), "{:?}", a.server_ts);
 }
 
 #[test]
