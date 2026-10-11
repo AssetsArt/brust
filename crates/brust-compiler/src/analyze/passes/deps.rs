@@ -348,6 +348,8 @@ impl Walker<'_> {
                 out.loop_bindings.insert(name.into());
             }
             IdentKind::Local => self.local(name, out),
+            // Temporary (M3-F Task 1): store reads become `__store` paths in Task 3.
+            IdentKind::Store { .. } => out.opaque = true,
             IdentKind::Unknown => out.opaque = true,
         }
     }

@@ -10,9 +10,19 @@ pub enum IdentKind {
     Local,
     State,
     Setter,
-    Import { source: String, imported: String },
+    Import {
+        source: String,
+        imported: String,
+    },
     Global,
     LoopBinding,
+    /// A store read through `useStore` (M3-F D7). `handle` is the handle as written in this module
+    /// (`cart`, `stores.cart`: what the chunk calls); `key` is the member read (`s.count`, or a
+    /// destructured `{ count }`), `None` for the whole view `s`.
+    Store {
+        handle: String,
+        key: Option<String>,
+    },
     Unknown,
 }
 

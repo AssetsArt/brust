@@ -5,7 +5,7 @@ use crate::analyze::expr::{Reader, Walk, loc_of};
 use crate::analyze::names::NameTable;
 use crate::ir::{
     DerivedDecl, Diagnostic, EffectDecl, Expr, HandlerDecl, Literal, PropDecl, RawExpr, RawKind,
-    RefDecl, StateDecl,
+    RefDecl, StateDecl, StoreUse,
 };
 use bun_ast as js_ast;
 use js_ast::b::B;
@@ -25,6 +25,8 @@ pub struct BodyDecls {
     pub id_bindings: Vec<String>,
     pub uses_id: bool,
     pub return_expr: Option<Expr>,
+    /// `useStore(handle)` bindings in source order (M3-F D7).
+    pub stores: Vec<StoreUse>,
     pub diagnostics: Vec<Diagnostic>,
     /// The first reason this component needs React, if any.
     pub react_reason: Option<String>,
@@ -88,10 +90,14 @@ fn hook_call<'c>(
     Some((name, call, from_react))
 }
 
-/// The hook a callee names, and whether it is React's own.
+/// The hook a callee names, and whether it is React's own. brust's `useStore` is a hook
+/// under any alias, so an unbound or nested call never reads as a plain value.
 fn hook_target(target: &js_ast::Expr, names: &NameTable<'_>) -> Option<(String, bool)> {
     if let Some(name) = react_hook_target(target, names) {
         return Some((name, true));
+    }
+    if is_use_store(target, names) {
+        return Some(("useStore".into(), false));
     }
     let name = match &target.data {
         E::EIdentifier(id) => names.name(id.ref_),
@@ -104,18 +110,139 @@ fn hook_target(target: &js_ast::Expr, names: &NameTable<'_>) -> Option<(String, 
         .then_some((name, false))
 }
 
+/// Specifiers `useStore` is recognised from (C6; `brust/store/react` is the compiler-test form).
+pub const USE_STORE_SOURCES: &[&str] = &[
+    "@brust/core/store/react",
+    "@brust/runtime-dom/store/react",
+    "brust/store/react",
+];
+
+/// The callee is `useStore` from one of USE_STORE_SOURCES, by import identity (an alias included).
+pub fn is_use_store(target: &js_ast::Expr, names: &NameTable<'_>) -> bool {
+    let r = match &target.data {
+        E::EImportIdentifier(id) => id.ref_,
+        E::EIdentifier(id) => id.ref_,
+        _ => return false,
+    };
+    matches!(names.import_of(r),
+        Some((source, "useStore")) if USE_STORE_SOURCES.contains(&source))
+}
+
+/// The handle argument: an import binding (`cart`), or a member of a namespace import
+/// (`stores.cart`), with (local, source, imported). `None` for anything else.
+pub fn store_handle(
+    arg: &js_ast::Expr,
+    names: &NameTable<'_>,
+) -> Option<(String, (String, String, String))> {
+    let import_ref = |e: &js_ast::Expr| match &e.data {
+        E::EImportIdentifier(id) => Some(id.ref_),
+        E::EIdentifier(id) => Some(id.ref_),
+        _ => None,
+    };
+    match &arg.data {
+        E::EImportIdentifier(_) | E::EIdentifier(_) => {
+            let r = import_ref(arg)?;
+            let (source, imported) = names.import_of(r)?;
+            if imported == "*" {
+                return None;
+            }
+            let local = names.name(r);
+            Some((
+                local.clone(),
+                (local, source.to_string(), imported.to_string()),
+            ))
+        }
+        E::EDot(d) if d.optional_chain.is_none() => {
+            let r = import_ref(&d.target)?;
+            let (source, "*") = names.import_of(r)? else {
+                return None;
+            };
+            let local = names.name(r);
+            let member = String::from_utf8_lossy(d.name.slice()).into_owned();
+            Some((
+                format!("{local}.{member}"),
+                (local, source.to_string(), "*".into()),
+            ))
+        }
+        _ => None,
+    }
+}
+
+/// The two binding shapes `useStore` accepts.
+enum StoreBinding {
+    /// `const s = useStore(h)`.
+    View(js_ast::Ref),
+    /// `const { key, key2: local } = useStore(h)`: (key, local) in source order.
+    Fields(Vec<(String, js_ast::Ref)>),
+}
+
+/// `None` for any other pattern: an array, `...rest`, a default, a computed key, nesting.
+fn store_binding(b: &js_ast::Binding) -> Option<StoreBinding> {
+    match b.data {
+        B::BIdentifier(id) => Some(StoreBinding::View(id.r#ref)),
+        B::BObject(obj) => {
+            let mut fields = Vec::new();
+            for p in obj.properties() {
+                if p.flags.contains(js_ast::flags::Property::IsSpread)
+                    || p.flags.contains(js_ast::flags::Property::IsComputed)
+                    || p.default_value.is_some()
+                {
+                    return None;
+                }
+                let (E::EString(key), B::BIdentifier(id)) = (&p.key.data, p.value.data) else {
+                    return None;
+                };
+                fields.push((crate::analyze::expr::estring(key), id.r#ref));
+            }
+            Some(StoreBinding::Fields(fields))
+        }
+        B::BArray(_) | B::BMissing(_) => None,
+    }
+}
+
+/// A well-formed `useStore(h)` declaration: the handle (with its import) and the binding.
+/// `None` when `read_use_store` reports it instead.
+fn use_store_decl(
+    decl: &js_ast::G::Decl,
+    names: &NameTable<'_>,
+) -> Option<(String, (String, String, String), StoreBinding)> {
+    let E::ECall(call) = &decl.value.as_ref()?.data else {
+        return None;
+    };
+    if !is_use_store(&call.target, names) {
+        return None;
+    }
+    let [arg] = &call.args[..] else {
+        return None;
+    };
+    let (handle, import) = store_handle(arg, names)?;
+    Some((handle, import, store_binding(&decl.binding)?))
+}
+
 fn call_addr(call: &js_ast::E::Call) -> usize {
     call as *const js_ast::E::Call as usize
 }
 
 /// Marks `const [a, setA] = useState(…)` bindings in `names` before any
-/// expression of the body is read, so reads resolve to `State` / `Setter`.
+/// expression of the body is read, so reads resolve to `State` / `Setter`;
+/// and `useStore(h)` bindings, so reads resolve to `Store` (M3-F D7).
 pub fn mark_state_bindings(func: &js_ast::G::Fn, names: &mut NameTable<'_>) {
     for stmt in func.body.stmts.slice() {
         let S::SLocal(local) = &stmt.data else {
             continue;
         };
         for decl in local.decls.iter() {
+            if let Some((handle, _, binding)) = use_store_decl(decl, names) {
+                match binding {
+                    StoreBinding::View(r) => names.mark_store(r, handle, None),
+                    StoreBinding::Fields(fields) => {
+                        for (key, r) in fields {
+                            names.mark_store(r, handle.clone(), Some(key));
+                        }
+                    }
+                }
+                continue;
+            }
             let (Some(value), B::BArray(arr)) = (&decl.value, decl.binding.data) else {
                 continue;
             };
@@ -351,6 +478,9 @@ fn read_decl(r: &mut Reader<'_, '_>, out: &mut BodyDecls, decl: &js_ast::G::Decl
     if let Some((hook, call, from_react)) = hook_call(value, r.names) {
         out.classified_hooks.insert(call_addr(call));
         let args: Vec<js_ast::Expr> = call.args.to_vec();
+        if is_use_store(&call.target, r.names) {
+            return read_use_store(r, out, decl, &args, vloc);
+        }
         match (from_react, hook.as_str()) {
             (true, "useState") => {
                 let B::BArray(arr) = decl.binding.data else {
@@ -475,6 +605,59 @@ fn read_decl(r: &mut Reader<'_, '_>, out: &mut BodyDecls, decl: &js_ast::G::Decl
     });
 }
 
+/// `const s = useStore(h)` / `const { k } = useStore(h)` (M3-F D7). The bindings were
+/// marked by `mark_state_bindings`; this records the use or the reason it is refused.
+fn read_use_store(
+    r: &mut Reader<'_, '_>,
+    out: &mut BodyDecls,
+    decl: &js_ast::G::Decl,
+    args: &[js_ast::Expr],
+    vloc: u32,
+) {
+    let [arg] = args else {
+        return out.fallback(
+            "hook-shape",
+            "useStore takes one store handle".into(),
+            vloc,
+            "write const s = useStore(handle)",
+        );
+    };
+    let Some((handle, import)) = store_handle(arg, r.names) else {
+        return out.fallback(
+            "store-name-unresolved",
+            "useStore(…): the argument is not an imported store handle; the component renders as a React island".into(),
+            vloc,
+            "pass the handle imported from the module that calls defineStore('<name>', …)",
+        );
+    };
+    let (view, fields) = match store_binding(&decl.binding) {
+        Some(StoreBinding::View(id)) => (Some(r.names.name(id)), vec![]),
+        Some(StoreBinding::Fields(fields)) => (
+            None,
+            fields
+                .into_iter()
+                .map(|(key, id)| (key, r.names.name(id)))
+                .collect(),
+        ),
+        None => {
+            return out.fallback(
+                "hook-shape",
+                "useStore result must be bound to a const or destructured one level deep".into(),
+                vloc,
+                "write const s = useStore(handle) or const { key } = useStore(handle)",
+            );
+        }
+    };
+    out.stores.push(StoreUse {
+        handle,
+        import,
+        view,
+        fields,
+        loc: vloc,
+        resolved: None,
+    });
+}
+
 fn hook_binding_shape(out: &mut BodyDecls, hook: &str, loc: u32) {
     out.fallback(
         "hook-shape",
@@ -523,6 +706,12 @@ fn read_expr_stmt(r: &mut Reader<'_, '_>, out: &mut BodyDecls, value: &js_ast::E
                 layout: hook == "useLayoutEffect",
             });
         }
+        Some((_, call, _)) if is_use_store(&call.target, r.names) => out.fallback(
+            "hook-shape",
+            "useStore result must be bound".into(),
+            vloc,
+            "write const s = useStore(handle)",
+        ),
         Some((hook, _, _)) => out.fallback(
             "hook-unsupported",
             format!("hook {hook} is not supported"),

@@ -19,6 +19,9 @@ pub struct NameTable<'a> {
     state: HashSet<u32>,
     setters: HashSet<u32>,
     loop_bindings: HashSet<u32>,
+    /// `useStore` bindings (M3-F D7) → (handle as written, key): the view `s` has key `None`,
+    /// a destructured `{ count }` has `Some("count")`.
+    stores: HashMap<u32, (String, Option<String>)>,
     /// The exact symbols the parser generated for the JSX runtime: callees of
     /// lowered JSX calls and the generated `Fragment` tag (never by spelling).
     jsx_runtime: HashSet<u32>,
@@ -63,6 +66,7 @@ impl<'a> NameTable<'a> {
             state: HashSet::new(),
             setters: HashSet::new(),
             loop_bindings: HashSet::new(),
+            stores: HashMap::new(),
             jsx_runtime: HashSet::new(),
         };
         table.jsx_runtime = table.collect_jsx_runtime(ast);
@@ -176,6 +180,11 @@ impl<'a> NameTable<'a> {
             IdentKind::State
         } else if self.setters.contains(&k) {
             IdentKind::Setter
+        } else if let Some((handle, key)) = self.stores.get(&k) {
+            IdentKind::Store {
+                handle: handle.clone(),
+                key: key.clone(),
+            }
         } else if self.loop_bindings.contains(&k) {
             IdentKind::LoopBinding
         } else if let Some((source, imported)) = self.imports.get(&k) {
@@ -213,6 +222,20 @@ impl<'a> NameTable<'a> {
     pub fn mark_setter(&mut self, r: js_ast::Ref) {
         let k = self.key(r);
         self.setters.insert(k);
+    }
+
+    /// `r` is bound by `useStore(handle)`: the view (`key == None`) or one destructured key.
+    pub fn mark_store(&mut self, r: js_ast::Ref, handle: String, key: Option<String>) {
+        let k = self.key(r);
+        self.stores.insert(k, (handle, key));
+    }
+
+    /// The handle of the store view `r` (`s` of `const s = useStore(h)`), if it is one.
+    pub fn store_view(&self, r: js_ast::Ref) -> Option<&str> {
+        match self.stores.get(&self.key(r)) {
+            Some((handle, None)) => Some(handle.as_str()),
+            _ => None,
+        }
     }
 
     pub fn mark_loop_binding(&mut self, r: js_ast::Ref) {

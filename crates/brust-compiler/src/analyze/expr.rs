@@ -83,6 +83,10 @@ impl<'r, 'a> Reader<'r, 'a> {
                         name,
                         kind: IdentKind::Prop,
                     }
+                } else if let Some(kind) = self.store_read(&d.target, &name) {
+                    // `s.count` / `s?.count` on a `useStore` view: the view is never
+                    // nullish, so the optional link reads the same key (M3-F D7).
+                    kind
                 } else {
                     RawKind::Member {
                         target: Box::new(self.expr(&d.target)),
@@ -95,6 +99,13 @@ impl<'r, 'a> Reader<'r, 'a> {
             }
             E::EIndex(ix) if matches!(ix.optional_chain, Some(js_ast::OptionalChain::Start)) => {
                 return self.opaque(e, "optional index");
+            }
+            // `s["count"]` on a `useStore` view reads key `count`.
+            E::EIndex(ix)
+                if let E::EString(key) = &ix.index.data
+                    && let Some(kind) = self.store_read(&ix.target, &estring(key)) =>
+            {
+                kind
             }
             E::EIndex(ix) => RawKind::Index {
                 target: Box::new(self.expr(&ix.target)),
@@ -194,6 +205,21 @@ impl<'r, 'a> Reader<'r, 'a> {
             other => return self.opaque(e, data_name(other)),
         };
         RawExpr { loc, kind }
+    }
+
+    /// `<view>.<member>` when `target` is a `useStore` view: `Ident { "s.count", Store }`.
+    fn store_read(&self, target: &js_ast::Expr, member: &str) -> Option<RawKind> {
+        let E::EIdentifier(id) = &target.data else {
+            return None;
+        };
+        let handle = self.names.store_view(id.ref_)?;
+        Some(RawKind::Ident {
+            name: format!("{}.{member}", self.names.name(id.ref_)),
+            kind: IdentKind::Store {
+                handle: handle.into(),
+                key: Some(member.into()),
+            },
+        })
     }
 
     fn ident(&self, r: js_ast::Ref) -> RawKind {
