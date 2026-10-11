@@ -303,14 +303,14 @@ The 0.1.x `runtime/treaty.ts` was a hand-made client. This one is Eden's, and it
 
 Unchanged: `headers` may be a function, a `File`/`Blob` in the body switches to multipart, and the prefix order below.
 
-On the server (a loader, a job), pass `baseUrl`:
+On the server (a loader, a job), pass `baseUrl`. A `baseUrl` without `prefix` always means the default `/_brust/action` (the injected global exists only in the browser), so with a custom `[actions] prefix` pass `prefix` as well:
 
 ```ts
 // loader.ts
 import { client } from '@brust/core/client'
 import type { App } from './actions'
 
-const api = client<App>({ baseUrl: 'http://127.0.0.1:3000' })
+const api = client<App>({ baseUrl: 'http://127.0.0.1:3000', prefix: '/_brust/action' }) // your [actions] prefix
 
 export async function loadTeam() {
   const r = await api.team.get()

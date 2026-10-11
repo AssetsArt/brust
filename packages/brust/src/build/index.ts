@@ -104,7 +104,7 @@ export async function runBuild(opts: {
   if (actions) {
     actionsEntry = resolve(appRoot, actions.entry)
     const rel = relative(appRoot, actionsEntry)
-    if (isAbsolute(actions.entry) || rel.startsWith('..') || isAbsolute(rel) || !statOk(actionsEntry)) {
+    if (isAbsolute(actions.entry) || rel === '..' || rel.startsWith('../') || isAbsolute(rel) || !statOk(actionsEntry)) {
       throw new BuildError('actions-entry', `actions.entry ${actions.entry} is not a file inside the app`)
     }
     // The actions app answers every path under its prefix, so a page there could never be served.
