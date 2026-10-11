@@ -124,6 +124,7 @@ jobs:
       - run: cd packages/brust && bun test --timeout 120000 test/e2e.test.ts
       - run: cd packages/brust && bun test test/build-store.test.ts
       - run: cd packages/brust && bun test --timeout 120000 test/e2e-store.test.ts
+      - run: cd packages/brust && bun test --timeout 120000 test/e2e-actions.test.ts
       - run: cd packages/brust && bun test test/build-actions.test.ts
       - run: cd packages/brust && bun test test/actions-napi.test.ts
       # m2e: the pokedex dogfood (spec §10). Each server-starting file runs alone.
