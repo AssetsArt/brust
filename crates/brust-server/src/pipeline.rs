@@ -385,9 +385,9 @@ async fn page(
                 ok: true,
                 data,
                 headers,
-                store: _,
+                store: snapshot,
             }) => {
-                merge_loader_data(&mut ctx, data, &route.id);
+                merge_loader_response(&mut ctx, data, snapshot, &route.id);
                 for (k, v) in headers {
                     if k.eq_ignore_ascii_case("set-cookie") {
                         cacheable = false;
@@ -399,8 +399,11 @@ async fn page(
                 tracing::error!(route = %route.id, "loader returned ok: false");
                 return body::error_500();
             }
-            Ok(LoaderResponse::Verdict(Verdict::NotFound { data, store: _ })) => {
-                merge_loader_data(&mut ctx, data, &route.id);
+            Ok(LoaderResponse::Verdict(Verdict::NotFound {
+                data,
+                store: snapshot,
+            })) => {
+                merge_loader_response(&mut ctx, data, snapshot, &route.id);
                 status = 404;
                 cacheable = false;
             }
@@ -875,7 +878,7 @@ pub fn props_view(ctx: &Node) -> minijinja::Value {
 }
 
 /// The top-level keys `_props` hides.
-const PROPS_HIDDEN: &[&str] = &[CHILDREN_KEY, OWN_KEY];
+const PROPS_HIDDEN: &[&str] = &[CHILDREN_KEY, OWN_KEY, STORE_KEY];
 
 /// Reserved ctx key holding child-instance slots per parent component:
 /// `ctx["__children"][<parentId>]` = `{ "__<childId>_<k>": cell(s),
@@ -890,13 +893,18 @@ const CHILDREN_KEY: &str = "__children";
 /// HTML at `_ssr_<componentId>`. Overlaid only while rendering that component.
 const OWN_KEY: &str = "__own";
 
+/// Reserved ctx key (M3-F C1, D5): the request's store snapshot `{ name: { key: Json } }`, from
+/// `LoaderResponse.store`. Absent when no store was touched (R1). Templates read
+/// `__store.<name>.<key>`; `render_document` turns it into `data-brust-store` tags.
+pub(crate) const STORE_KEY: &str = "__store";
+
 /// Overlay key: the merged loader context, printed by island hosts as
 /// `x-props='{{ _props | json_attr }}'`.
 const PROPS_KEY: &str = "_props";
 
 /// Context names the server owns: templates print them with `| safe`
 /// (`__outlet`, `_ssr_*`), read per-component maps through them
-/// (`__children`, `__own`, `_props`), or read job/useId slots (`_s<digits>`,
+/// (`__children`, `__own`, `_props`), read the store snapshot (`__store`), or read job/useId slots (`_s<digits>`,
 /// `_id<digits>`, exactly). Any other name — `_id`, `_session`,
 /// `__typename` — is the loader's. Overlays already beat the base context;
 /// this is defence in depth.
@@ -905,8 +913,10 @@ fn is_server_slot(k: &str) -> bool {
         k.strip_prefix(p)
             .is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()))
     };
-    matches!(k, "__outlet" | CHILDREN_KEY | OWN_KEY | PROPS_KEY)
-        || k.starts_with("_ssr_")
+    matches!(
+        k,
+        "__outlet" | CHILDREN_KEY | OWN_KEY | PROPS_KEY | STORE_KEY
+    ) || k.starts_with("_ssr_")
         || numbered("_s")
         || numbered("_id")
 }
@@ -930,6 +940,20 @@ fn location_header(location: &str) -> Option<String> {
         }
     }
     http::HeaderValue::from_str(&out).ok().map(|_| out)
+}
+
+/// Loader `data` (server slots dropped, as `merge_loader_data`), then the store snapshot at
+/// [`STORE_KEY`] when it is a non-empty map. One helper for `page()`'s Ok and NotFound arms and
+/// `plan_response`, so the declined and the planned path build the same ctx (F5).
+fn merge_loader_response(ctx: &mut MapInner, data: Node, snapshot: Option<Node>, route: &str) {
+    merge_loader_data(ctx, data, route);
+    match snapshot {
+        Some(Node::Map(m)) if !m.0.is_empty() => {
+            ctx.insert(STORE_KEY.into(), Node::Map(m));
+        }
+        None | Some(Node::Null) | Some(Node::Map(_)) => {}
+        Some(_) => tracing::warn!(route, "loader response store is not an object; dropped"),
+    }
 }
 
 /// Merge loader `data` keys over `ctx` (data wins), dropping server slots.
@@ -1730,12 +1754,12 @@ fn plan_response(
         ok: true,
         data,
         headers,
-        store: _,
+        store: snapshot,
     } = serde_json::from_slice::<LoaderResponse>(bytes).ok()?
     else {
         return None;
     };
-    merge_loader_data(&mut base, data, &route.id);
+    merge_loader_response(&mut base, data, snapshot, &route.id);
     let ctx = Node::map(base);
     let plans = collect_jobs(idx, &route.chain, &ctx).ok()?;
     // Counts job-cache hits/misses once per plan, as today: the declined path runs it only
@@ -2337,6 +2361,40 @@ mod tests {
         }
     }
 
+    #[test]
+    fn merge_loader_response_keeps_only_a_non_empty_map() {
+        let run = |snap: Option<Value>| {
+            let mut ctx = MapInner::new();
+            merge_loader_response(&mut ctx, n(json!({"who": "w"})), snap.map(n), "r1");
+            j(&Node::map(ctx))
+        };
+        let cart = json!({"cart": {"count": 3}});
+        assert_eq!(
+            run(Some(cart.clone())),
+            json!({"who": "w", "__store": cart})
+        );
+        for none in [None, Some(Value::Null), Some(json!({})), Some(json!("x"))] {
+            assert_eq!(run(none), json!({"who": "w"}));
+        }
+    }
+
+    #[test]
+    fn props_view_hides_the_store() {
+        let r = Renderer::from_templates(&BTreeMap::from([(
+            "T".to_string(),
+            "{{ _props | json_attr }}".to_string(),
+        )]))
+        .unwrap();
+        let ctx = n(json!({"who": "w", "__store": {"cart": {"count": 3}}}));
+        let out = r
+            .render_chain_value(&["T".into()], &ctx.to_value(), &|_| {
+                vec![(PROPS_KEY.into(), props_view(&ctx))]
+            })
+            .unwrap();
+        assert!(!out.contains("__store") && out.contains("who"), "{out}");
+        assert_eq!(j(&all_props(&ctx)), json!({"who": "w"}));
+    }
+
     /// S10 amendment: an identity request leaves the gzip unmade; the first
     /// gzip-accepting one makes it, every later one shares those bytes.
     #[test]
@@ -2730,7 +2788,7 @@ mod tests {
             &mut ctx,
             n(
                 json!({"__outlet": "x", "_ssr_a": "x", "__a_1": {}, "__children": {}, "__own": {},
-                   "_props": {}, "__typename": "Pokemon", "_id": 7, "_s1": "x", "_s12": "x",
+                   "_props": {}, "__store": {"x": {}}, "__typename": "Pokemon", "_id": 7, "_s1": "x", "_s12": "x",
                    "_id0": "x", "_id3": "x", "_session": "s", "_s": 1, "_s1a": 2, "_idx": 3,
                    "who": "w"}),
             ),
