@@ -11,6 +11,8 @@ use std::sync::Arc;
 use minijinja::Environment;
 use serde_json::Value;
 
+use brust_jinja::ctx::Node;
+
 use crate::manifest::{Manifest, Tier};
 
 #[derive(Debug, thiserror::Error)]
@@ -298,11 +300,24 @@ impl minijinja::value::Object for Scope {
     }
 }
 
-/// S9: `<script type="module" src="/_brust/<p>">` for runtime, each `client` of
-/// the chain + job targets + inlined children (dedup, chain order), then
-/// `react` + each react chunk. No tags when every component in the chain (and its children) is
-/// `static`. Inserted before the last `</body>`, else appended — in place.
+/// [`inject_page_assets_into`] without a store snapshot: S9 injection, byte for byte.
 pub fn inject_assets_into(html: &mut String, chain: &[String], m: &Manifest) {
+    inject_page_assets_into(html, chain, m, None);
+}
+
+/// S9 + M3-F C4/D6: `<script type="module" src="/_brust/<p>">` for runtime, each `client` of
+/// the chain + job targets + inlined children (dedup, chain order), then
+/// `react` + each react chunk, preceded by one `data-brust-store` tag per store in `store`
+/// (the ctx `__store` map, sorted by name: `MapInner` is a BTreeMap), immediately before the
+/// runtime tag, so the snapshot is in the DOM before `mount()` and before any island hydrates.
+/// No tags at all when every component in the chain (and its children) is `static` (R4).
+/// Inserted before the last `</body>`, else appended — in place.
+pub fn inject_page_assets_into(
+    html: &mut String,
+    chain: &[String],
+    m: &Manifest,
+    store: Option<&Node>,
+) {
     let mut chunks: Vec<&str> = Vec::new();
     let mut react: Vec<&str> = Vec::new();
     let mut any_dynamic = false;
@@ -340,7 +355,11 @@ pub fn inject_assets_into(html: &mut String, chain: &[String], m: &Manifest) {
         return;
     }
     let tag = |p: &str| format!("<script type=\"module\" src=\"/_brust/{p}\"></script>");
-    let mut tags = tag(&m.assets.runtime);
+    let mut tags = String::new();
+    if let Some(st) = store {
+        store_scripts_into(&mut tags, st);
+    }
+    tags.push_str(&tag(&m.assets.runtime));
     for c in &chunks {
         tags.push_str(&tag(c));
     }
@@ -355,6 +374,39 @@ pub fn inject_assets_into(html: &mut String, chain: &[String], m: &Manifest) {
     match html.rfind("</body>") {
         Some(i) => html.insert_str(i, &tags),
         None => html.push_str(&tags),
+    }
+}
+
+/// 0.1.x `storeScriptTag` x each store: `<script type="application/json" data-brust-store="NAME">`
+/// followed by script-safe JSON and `</script>`. NAME keeps `[A-Za-z0-9_.:-]` only (an emptied name is
+/// skipped); the JSON escapes `< > & U+2028 U+2029` as `\uXXXX` (0.1.x `toScriptJson`;
+/// AutoEscape::None and a request-derived value can reach a signal).
+pub fn store_scripts_into(out: &mut String, store: &Node) {
+    let Node::Map(m) = store else { return };
+    for (name, state) in m.0.iter() {
+        let clean: String = name
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | ':' | '-'))
+            .collect();
+        if clean.is_empty() {
+            tracing::warn!(store = %name, "store name has no [A-Za-z0-9_.:-] character; snapshot not injected");
+            continue;
+        }
+        out.push_str("<script type=\"application/json\" data-brust-store=\"");
+        out.push_str(&clean);
+        out.push_str("\">");
+        let json = serde_json::to_string(state).expect("Node serialises");
+        for c in json.chars() {
+            match c {
+                '<' => out.push_str("\\u003c"),
+                '>' => out.push_str("\\u003e"),
+                '&' => out.push_str("\\u0026"),
+                '\u{2028}' => out.push_str("\\u2028"),
+                '\u{2029}' => out.push_str("\\u2029"),
+                c => out.push(c),
+            }
+        }
+        out.push_str("</script>");
     }
 }
 

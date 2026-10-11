@@ -28,7 +28,7 @@ use crate::pool::PlanBox;
 use crate::protocol::{
     JobCall, JobResult, JobsRequest, JobsResponse, LoaderRequest, LoaderResponse, Verdict,
 };
-use crate::render::{Overlay, RenderError, Renderer, inject_assets_into, use_ids};
+use crate::render::{Overlay, RenderError, Renderer, inject_page_assets_into, use_ids};
 use crate::routing::routes::{Search, decode_search};
 use crate::server::body::{self, ResponseBody, empty_body};
 use crate::server::header_str;
@@ -336,7 +336,9 @@ async fn page(
     let mut extra: Vec<(String, String)> = Vec::new();
     // M3-P P6: the plan the worker built inside the loader call, with its job results.
     let mut planned: Option<(PlannedCall, Vec<JobResult>)> = None;
-    if !route.loaders.is_empty() {
+    // M3-F S7b: a loader-less route still calls the worker when its chain reads a store, so the
+    // snapshot (defaults included) is seeded and tagged. No loaders and no stores: zero calls.
+    if !route.loaders.is_empty() || s.plans.chain_has_stores(&route.chain) {
         let req = LoaderRequest {
             route_id: &route.id,
             params,
@@ -385,8 +387,9 @@ async fn page(
                 ok: true,
                 data,
                 headers,
+                store: snapshot,
             }) => {
-                merge_loader_data(&mut ctx, data, &route.id);
+                merge_loader_response(&mut ctx, data, snapshot, &route.id);
                 for (k, v) in headers {
                     if k.eq_ignore_ascii_case("set-cookie") {
                         cacheable = false;
@@ -398,8 +401,11 @@ async fn page(
                 tracing::error!(route = %route.id, "loader returned ok: false");
                 return body::error_500();
             }
-            Ok(LoaderResponse::Verdict(Verdict::NotFound { data })) => {
-                merge_loader_data(&mut ctx, data, &route.id);
+            Ok(LoaderResponse::Verdict(Verdict::NotFound {
+                data,
+                store: snapshot,
+            })) => {
+                merge_loader_response(&mut ctx, data, snapshot, &route.id);
                 status = 404;
                 cacheable = false;
             }
@@ -703,7 +709,7 @@ fn render_document(
         ctx,
         &mut out,
     )?;
-    inject_assets_into(&mut out, &route.chain, &s.manifest);
+    inject_page_assets_into(&mut out, &route.chain, &s.manifest, ctx.get(STORE_KEY));
     // M3-P P7: stored only when it changes — the steady state writes no shared cache line.
     let hint = next_hint(out.len());
     if s.render_hints[ri].load(Ordering::Relaxed) != hint {
@@ -874,7 +880,7 @@ pub fn props_view(ctx: &Node) -> minijinja::Value {
 }
 
 /// The top-level keys `_props` hides.
-const PROPS_HIDDEN: &[&str] = &[CHILDREN_KEY, OWN_KEY];
+const PROPS_HIDDEN: &[&str] = &[CHILDREN_KEY, OWN_KEY, STORE_KEY];
 
 /// Reserved ctx key holding child-instance slots per parent component:
 /// `ctx["__children"][<parentId>]` = `{ "__<childId>_<k>": cell(s),
@@ -889,13 +895,18 @@ const CHILDREN_KEY: &str = "__children";
 /// HTML at `_ssr_<componentId>`. Overlaid only while rendering that component.
 const OWN_KEY: &str = "__own";
 
+/// Reserved ctx key (M3-F C1, D5): the request's store snapshot `{ name: { key: Json } }`, from
+/// `LoaderResponse.store`. Absent when no store was touched (R1). Templates read
+/// `__store.<name>.<key>`; `render_document` turns it into `data-brust-store` tags.
+pub(crate) const STORE_KEY: &str = "__store";
+
 /// Overlay key: the merged loader context, printed by island hosts as
 /// `x-props='{{ _props | json_attr }}'`.
 const PROPS_KEY: &str = "_props";
 
 /// Context names the server owns: templates print them with `| safe`
 /// (`__outlet`, `_ssr_*`), read per-component maps through them
-/// (`__children`, `__own`, `_props`), or read job/useId slots (`_s<digits>`,
+/// (`__children`, `__own`, `_props`), read the store snapshot (`__store`), or read job/useId slots (`_s<digits>`,
 /// `_id<digits>`, exactly). Any other name — `_id`, `_session`,
 /// `__typename` — is the loader's. Overlays already beat the base context;
 /// this is defence in depth.
@@ -904,8 +915,10 @@ fn is_server_slot(k: &str) -> bool {
         k.strip_prefix(p)
             .is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()))
     };
-    matches!(k, "__outlet" | CHILDREN_KEY | OWN_KEY | PROPS_KEY)
-        || k.starts_with("_ssr_")
+    matches!(
+        k,
+        "__outlet" | CHILDREN_KEY | OWN_KEY | PROPS_KEY | STORE_KEY
+    ) || k.starts_with("_ssr_")
         || numbered("_s")
         || numbered("_id")
 }
@@ -929,6 +942,20 @@ fn location_header(location: &str) -> Option<String> {
         }
     }
     http::HeaderValue::from_str(&out).ok().map(|_| out)
+}
+
+/// Loader `data` (server slots dropped, as `merge_loader_data`), then the store snapshot at
+/// [`STORE_KEY`] when it is a non-empty map. One helper for `page()`'s Ok and NotFound arms and
+/// `plan_response`, so the declined and the planned path build the same ctx (F5).
+fn merge_loader_response(ctx: &mut MapInner, data: Node, snapshot: Option<Node>, route: &str) {
+    merge_loader_data(ctx, data, route);
+    match snapshot {
+        Some(Node::Map(m)) if !m.0.is_empty() => {
+            ctx.insert(STORE_KEY.into(), Node::Map(m));
+        }
+        None | Some(Node::Null) | Some(Node::Map(_)) => {}
+        Some(_) => tracing::warn!(route, "loader response store is not an object; dropped"),
+    }
 }
 
 /// Merge loader `data` keys over `ctx` (data wins), dropping server slots.
@@ -1252,6 +1279,8 @@ struct CompTpl {
     use_id_slots: u32,
     /// Own jobs non-empty, or some child component's jobs non-empty (`chain_has_jobs`).
     deep_jobs: bool,
+    /// M3-F: this component, a child or an ssr job target reads a store module (transitive).
+    deep_stores: bool,
 }
 
 #[derive(Debug)]
@@ -1346,6 +1375,7 @@ impl PlanIndex {
                 children,
                 use_id_slots: c.use_id_slots,
                 deep_jobs: false,
+                deep_stores: false,
             });
         }
         for i in 0..comps.len() {
@@ -1353,6 +1383,14 @@ impl PlanIndex {
             let deep =
                 !c.jobs.is_empty() || c.children.iter().any(|ch| !comps[ch.child].jobs.is_empty());
             comps[i].deep_jobs = deep;
+        }
+        // M3-F S7b: the same union the worker's routeStoresIndex walks (children and job targets,
+        // transitive, cycle-safe), reduced to "is it non-empty".
+        for id in m.components.keys() {
+            let mut seen = std::collections::HashSet::new();
+            let deep = reads_store(m, id, &mut seen);
+            let i = by_id[id];
+            comps[i].deep_stores = deep;
         }
         Ok(PlanIndex { comps, by_id })
     }
@@ -1368,12 +1406,40 @@ impl PlanIndex {
         self.comp_ix(id).map(|i| &self.comps[i])
     }
 
+    /// Some chain component (or a child / ssr target below it) reads a store module (M3-F S7b).
+    pub(crate) fn chain_has_stores(&self, chain: &[String]) -> bool {
+        chain.iter().any(|id| {
+            self.by_id
+                .get(id)
+                .is_some_and(|&i| self.comps[i].deep_stores)
+        })
+    }
+
     /// Some chain component or one of its children has a job.
     pub(crate) fn chain_has_jobs(&self, chain: &[String]) -> bool {
         chain
             .iter()
             .any(|id| self.by_id.get(id).is_some_and(|&i| self.comps[i].deep_jobs))
     }
+}
+
+fn reads_store<'a>(
+    m: &'a Manifest,
+    id: &'a str,
+    seen: &mut std::collections::HashSet<&'a str>,
+) -> bool {
+    if !seen.insert(id) {
+        return false;
+    }
+    let Some(c) = m.components.get(id) else {
+        return false;
+    };
+    !c.stores.is_empty()
+        || c.children.iter().any(|ch| reads_store(m, &ch.id, seen))
+        || c.jobs
+            .iter()
+            .filter_map(|j| j.target.as_deref())
+            .any(|t| reads_store(m, t, seen))
 }
 
 fn job_tpl(j: &JobRecord) -> Result<JobTpl, String> {
@@ -1458,12 +1524,25 @@ fn plan_one<'a>(
     dest: Dest<'a>,
     row: Option<usize>,
     src: PlanSrc,
+    snapshot: Option<&Node>,
 ) -> Result<(), String> {
     let per_instance = match dest {
         Dest::Chain { row, .. } => row,
         Dest::Child { .. } => None,
     };
-    let projected = job_inputs(j, props, per_instance)?;
+    let mut projected = job_inputs(j, props, per_instance)?;
+    // M3-F C5/D8: every ssr job renders inside a store scope seeded from `__store`, so the
+    // snapshot is one of its inputs (and of its hashed key). Precompute jobs never see stores.
+    if j.kind == JobKind::Ssr
+        && let Some(st) = snapshot
+    {
+        match projected.map_mut() {
+            Some(m) => {
+                m.insert(Arc::from(STORE_KEY), st.clone());
+            }
+            None => tracing::debug!(job = %j.id, "ssr job inputs are not a map; no __store"),
+        }
+    }
     // With a `props` map each row's inputs are that row's props (content-keyed:
     // equal rows share an entry); otherwise every row projects the same
     // parent-scope inputs, so the row is part of the key.
@@ -1506,6 +1585,7 @@ pub(crate) fn collect_jobs<'a>(
     ctx: &Node,
 ) -> Result<Vec<JobPlan<'a>>, String> {
     let mut out = Vec::new();
+    let snapshot = ctx.get(STORE_KEY);
     for id in chain {
         let ci = idx.comp_ix(id)?;
         let c = &idx.comps[ci];
@@ -1520,10 +1600,30 @@ pub(crate) fn collect_jobs<'a>(
                 via: None,
             };
             match &j.per_instance {
-                None => plan_one(&mut out, &c.id, prefix, j, ctx, dest(None), None, src)?,
+                None => plan_one(
+                    &mut out,
+                    &c.id,
+                    prefix,
+                    j,
+                    ctx,
+                    dest(None),
+                    None,
+                    src,
+                    snapshot,
+                )?,
                 Some(list) => {
                     for r in 0..row_count(list, ctx) {
-                        plan_one(&mut out, &c.id, prefix, j, ctx, dest(Some(r)), Some(r), src)?;
+                        plan_one(
+                            &mut out,
+                            &c.id,
+                            prefix,
+                            j,
+                            ctx,
+                            dest(Some(r)),
+                            Some(r),
+                            src,
+                            snapshot,
+                        )?;
                     }
                 }
             }
@@ -1558,6 +1658,7 @@ pub(crate) fn collect_jobs<'a>(
                         target(row),
                         row,
                         src,
+                        snapshot,
                     )?;
                 }
             }
@@ -1729,11 +1830,12 @@ fn plan_response(
         ok: true,
         data,
         headers,
+        store: snapshot,
     } = serde_json::from_slice::<LoaderResponse>(bytes).ok()?
     else {
         return None;
     };
-    merge_loader_data(&mut base, data, &route.id);
+    merge_loader_response(&mut base, data, snapshot, &route.id);
     let ctx = Node::map(base);
     let plans = collect_jobs(idx, &route.chain, &ctx).ok()?;
     // Counts job-cache hits/misses once per plan, as today: the declined path runs it only
@@ -2335,6 +2437,40 @@ mod tests {
         }
     }
 
+    #[test]
+    fn merge_loader_response_keeps_only_a_non_empty_map() {
+        let run = |snap: Option<Value>| {
+            let mut ctx = MapInner::new();
+            merge_loader_response(&mut ctx, n(json!({"who": "w"})), snap.map(n), "r1");
+            j(&Node::map(ctx))
+        };
+        let cart = json!({"cart": {"count": 3}});
+        assert_eq!(
+            run(Some(cart.clone())),
+            json!({"who": "w", "__store": cart})
+        );
+        for none in [None, Some(Value::Null), Some(json!({})), Some(json!("x"))] {
+            assert_eq!(run(none), json!({"who": "w"}));
+        }
+    }
+
+    #[test]
+    fn props_view_hides_the_store() {
+        let r = Renderer::from_templates(&BTreeMap::from([(
+            "T".to_string(),
+            "{{ _props | json_attr }}".to_string(),
+        )]))
+        .unwrap();
+        let ctx = n(json!({"who": "w", "__store": {"cart": {"count": 3}}}));
+        let out = r
+            .render_chain_value(&["T".into()], &ctx.to_value(), &|_| {
+                vec![(PROPS_KEY.into(), props_view(&ctx))]
+            })
+            .unwrap();
+        assert!(!out.contains("__store") && out.contains("who"), "{out}");
+        assert_eq!(j(&all_props(&ctx)), json!({"who": "w"}));
+    }
+
     /// S10 amendment: an identity request leaves the gzip unmade; the first
     /// gzip-accepting one makes it, every later one shares those bytes.
     #[test]
@@ -2684,6 +2820,48 @@ mod tests {
     }
 
     #[test]
+    fn ssr_jobs_get_the_store_and_precompute_jobs_do_not() {
+        let mut m = manifest();
+        let mut ctx = pikachu();
+        ctx.map_mut()
+            .unwrap()
+            .insert("team".into(), n(json!(["a"])));
+        let ix = PlanIndex::new(&m).unwrap();
+        let plans = collect_jobs(&ix, &chain(&["teamPage_g7"]), &ctx).unwrap();
+        assert_eq!(
+            j(&plans[0].inputs),
+            json!({"team": ["a"]}),
+            "R1: absent store"
+        );
+        let mut with = ctx.clone();
+        with.map_mut()
+            .unwrap()
+            .insert(STORE_KEY.into(), n(json!({"cart": {"count": 3}})));
+        let plans = collect_jobs(&ix, &chain(&["teamPage_g7"]), &with).unwrap();
+        assert_eq!(
+            j(&plans[0].inputs),
+            json!({"team": ["a"], "__store": {"cart": {"count": 3}}})
+        );
+        let k_with = plans[0].key.clone();
+        let k_without = collect_jobs(&ix, &chain(&["teamPage_g7"]), &ctx).unwrap()[0]
+            .key
+            .clone();
+        assert_ne!(k_with, k_without, "the key covers the store");
+        m.components.get_mut("detailPage_c3").unwrap().jobs[0].inputs = vec!["*".into()];
+        let ix = PlanIndex::new(&m).unwrap();
+        let mut ctx = pikachu();
+        ctx.map_mut()
+            .unwrap()
+            .insert(STORE_KEY.into(), n(json!({"cart": {"count": 3}})));
+        let plans = collect_jobs(&ix, &chain(&["detailPage_c3"]), &ctx).unwrap();
+        assert_eq!(
+            plans[0].inputs,
+            pikachu(),
+            "precompute never sees the store"
+        );
+    }
+
+    #[test]
     fn precompute_outputs_pick_keys_and_legacy_spreads() {
         let m = manifest();
         let ix = PlanIndex::new(&m).unwrap();
@@ -2728,7 +2906,7 @@ mod tests {
             &mut ctx,
             n(
                 json!({"__outlet": "x", "_ssr_a": "x", "__a_1": {}, "__children": {}, "__own": {},
-                   "_props": {}, "__typename": "Pokemon", "_id": 7, "_s1": "x", "_s12": "x",
+                   "_props": {}, "__store": {"x": {}}, "__typename": "Pokemon", "_id": 7, "_s1": "x", "_s12": "x",
                    "_id0": "x", "_id3": "x", "_session": "s", "_s": 1, "_s1a": 2, "_idx": 3,
                    "who": "w"}),
             ),

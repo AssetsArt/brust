@@ -4,7 +4,11 @@
 import { join, resolve } from 'node:path'
 import { workerData } from 'node:worker_threads'
 import { planJobs, registerWorker } from './native'
+import { installServerResolver, type StoreSnapshot } from './store/core-adapter'
+import { collectSnapshot, getServerInstance, runInStoreContext, touchStores } from './store/server-context'
 import { type FlatRoute, flattenRoutes, isHttpErrorTrigger, isVerdict, type LoaderReq, type Route, type Verdict } from './routes'
+
+installServerResolver(getServerInstance)
 
 // ---- wire shapes (protocol.rs, camelCase) ----
 
@@ -18,8 +22,8 @@ export interface LoaderRequest {
 }
 
 export type LoaderResponse =
-  | { ok: true; data: Record<string, unknown>; headers?: Record<string, string> }
-  | { verdict: 'notFound'; data: unknown }
+  | { ok: true; data: Record<string, unknown>; headers?: Record<string, string>; store?: StoreSnapshot | null }
+  | { verdict: 'notFound'; data: unknown; store?: StoreSnapshot | null }
   | { verdict: 'redirect'; location: string; status: number }
   | { verdict: 'httpError'; status: number; body: string }
   | { error: string }
@@ -55,7 +59,15 @@ export type JobsModule = Record<string, { precompute?: (props: any) => unknown; 
 
 /** The slice of `manifest.json` the worker reads: ssr job `literals` (S6 amendment). */
 export interface ManifestLike {
-  components: Record<string, { jobs: { id: string; kind?: string; literals?: Record<string, unknown> }[] }>
+  routes?: { id: string; chain: string[] }[]
+  components: Record<
+    string,
+    {
+      jobs: { id: string; kind?: string; target?: string; literals?: Record<string, unknown> }[]
+      children?: { id: string }[]
+      stores?: string[]
+    }
+  >
   jobs_module?: string
 }
 
@@ -113,6 +125,38 @@ export function jobIdOf(call: Pick<JobCall, 'id' | 'componentId'>): string | und
   return parts[0] === call.componentId ? parts[1] : parts[2]
 }
 
+// ---- touched stores (M3-F D4) ----
+
+/** route id -> sorted unique union of `stores` over the route's chain, walking each component's
+ * `children[].id` and `jobs[].target` transitively. Routes with an empty union are absent. */
+export function routeStoresIndex(manifest: ManifestLike | undefined): Map<string, string[]> {
+  const out = new Map<string, string[]>()
+  const comps = manifest?.components ?? {}
+  for (const r of manifest?.routes ?? []) {
+    const acc = new Set<string>()
+    const seen = new Set<string>()
+    const walk = (id: string) => {
+      if (seen.has(id)) return
+      seen.add(id)
+      const c = comps[id]
+      if (!c) return
+      for (const p of c.stores ?? []) acc.add(p)
+      for (const k of c.children ?? []) walk(k.id)
+      for (const j of c.jobs ?? []) if (j.target) walk(j.target)
+    }
+    for (const id of r.chain ?? []) walk(id)
+    if (acc.size > 0) out.set(r.id, [...acc].sort())
+  }
+  return out
+}
+
+/** R1: `store` is assigned only when a store was touched; absent otherwise. */
+function withStore<T extends LoaderResponse>(r: T): T {
+  const s = collectSnapshot()
+  if (s) (r as { store?: StoreSnapshot | null }).store = s
+  return r
+}
+
 // ---- handlers ----
 
 /** `parent`: the data the chain merged before the verdict. A notFound renders the route's
@@ -132,10 +176,18 @@ export interface Handlers {
 
 /** `leaves` from `flattenRoutes` (ids must match the manifest's route ids); `jobs` the jobs
  * module; `manifest` supplies ssr `literals` (omit → no merge). */
-export function makeHandlers(opts: { leaves: FlatRoute[]; jobs: JobsModule; manifest?: ManifestLike }): Handlers {
+export function makeHandlers(opts: {
+  leaves: FlatRoute[]
+  jobs: JobsModule
+  manifest?: ManifestLike
+  /** `jobs.js` `stores` table (R2): C3 path -> module namespace. */
+  stores?: Record<string, object>
+}): Handlers {
   const byId = new Map(opts.leaves.map((l) => [l.id, l]))
   const literals = literalsIndex(opts.manifest)
   const jobs = opts.jobs
+  const storeIdx = routeStoresIndex(opts.manifest)
+  const storeTable = opts.stores ?? {}
 
   async function runJob(call: JobCall): Promise<JobResult> {
     const owner = call.kind === 'ssr' ? (call.target ?? call.componentId) : call.componentId // D6
@@ -147,6 +199,14 @@ export function makeHandlers(opts: { leaves: FlatRoute[]; jobs: JobsModule; mani
         const jid = jobIdOf(call)
         const lit = jid === undefined ? undefined : literals.get(`${call.componentId}/${jid}`)
         if (lit) props = { ...(props ?? {}), ...lit }
+        // Precompute runs outside any scope (D8); ssr runs in a scope seeded from `__store`, which props never see.
+        const seed = (props?.__store ?? null) as StoreSnapshot | null
+        if (props && '__store' in props) {
+          const { __store: _, ...rest } = props
+          props = rest
+        }
+        const p = props
+        return { id: call.id, value: await runInStoreContext(() => fn(p), seed) }
       }
       return { id: call.id, value: await fn(props) }
     } catch (e) {
@@ -165,24 +225,31 @@ export function makeHandlers(opts: { leaves: FlatRoute[]; jobs: JobsModule; mani
       // key once per level (M3-P P1). `merged` is fresh per call; a loader's own object is never
       // written to. Null prototype: with no `__proto__` setter to hit, an own "__proto__" key in a
       // loader's data is assigned as data, as the spread copied it.
-      const merged: Record<string, unknown> = Object.create(null)
-      try {
-        for (const node of leaf.chain) {
-          if (!node.loader) continue
-          let r: unknown
-          try {
-            r = await node.loader({ params: req.params, path: req.path, req: req.req })
-          } catch (e) {
-            if (isHttpErrorTrigger(e)) return { verdict: 'httpError', status: e.status, body: e.body }
-            throw e
+      return runInStoreContext(async () => {
+        const merged: Record<string, unknown> = Object.create(null)
+        try {
+          const touch = storeIdx.get(req.routeId)
+          if (touch) touchStores(touch, storeTable)
+          for (const node of leaf.chain) {
+            if (!node.loader) continue
+            let r: unknown
+            try {
+              r = await node.loader({ params: req.params, path: req.path, req: req.req })
+            } catch (e) {
+              if (isHttpErrorTrigger(e)) return { verdict: 'httpError', status: e.status, body: e.body } as LoaderResponse
+              throw e
+            }
+            if (isVerdict(r)) {
+              const v = verdictJson(r, merged)
+              return 'verdict' in v && v.verdict === 'notFound' ? withStore(v) : v
+            }
+            if (r && typeof r === 'object') Object.assign(merged, r)
           }
-          if (isVerdict(r)) return verdictJson(r, merged)
-          if (r && typeof r === 'object') Object.assign(merged, r)
+          return withStore({ ok: true, data: merged } as LoaderResponse)
+        } catch (e) {
+          return { error: String(e) } as LoaderResponse
         }
-        return { ok: true, data: merged }
-      } catch (e) {
-        return { error: String(e) }
-      }
+      })
     },
     // One request carries every job of the page; a per-job failure keeps the other results.
     async jobs(req) {
@@ -254,7 +321,12 @@ export async function startWorker(opts: StartWorkerOptions = {}): Promise<number
   const jobs = (jobsMod.default ?? jobsMod) as JobsModule
   sab = opts.sab ?? new SharedArrayBuffer(SLOT_BYTES * slots)
   view = new Uint8Array(sab)
-  const handlers = makeHandlers({ leaves: flattenRoutes(routes).leaves, jobs, manifest })
+  const handlers = makeHandlers({
+    leaves: flattenRoutes(routes).leaves,
+    jobs,
+    manifest,
+    stores: (jobsMod.stores ?? {}) as Record<string, object>,
+  })
   return registerWorker(view, slots, makeDispatch(handlers, view, slots))
 }
 

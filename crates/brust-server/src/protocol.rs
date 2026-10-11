@@ -42,6 +42,9 @@ pub enum LoaderResponse {
         /// Response headers the loader set (e.g. `set-cookie`), copied onto the
         /// HTTP response; a `set-cookie` key makes the page uncacheable.
         headers: BTreeMap<String, String>,
+        /// M3-F C2: the request's store snapshot (C1: `{ name: { key: Json } }`). `None` when the
+        /// worker sent no `store` or `null` (R1: absent ≡ null).
+        store: Option<Node>,
     },
     /// The worker took the plan offer: the loader data went to `plan_in_call` (it is
     /// in the slot's plan cell), `results` answer the misses `planJobs` returned
@@ -77,6 +80,7 @@ impl<'de> serde::de::Visitor<'de> for LoaderVisitor {
         let (mut verdict, mut location, mut status) = (None::<String>, None::<String>, None::<u16>);
         let (mut body, mut error) = (None::<String>, None::<String>);
         let (mut planned, mut results) = (None::<bool>, None::<Vec<JobResult>>);
+        let mut store = None::<Node>;
         while let Some(k) = m.next_key::<std::borrow::Cow<'de, str>>()? {
             match &*k {
                 "ok" => ok = Some(m.next_value()?),
@@ -89,6 +93,7 @@ impl<'de> serde::de::Visitor<'de> for LoaderVisitor {
                 "error" => error = Some(m.next_value()?),
                 "planned" => planned = Some(m.next_value()?),
                 "results" => results = Some(m.next_value()?),
+                "store" => store = m.next_value::<Option<Node>>()?,
                 _ => {
                     m.next_value::<serde::de::IgnoredAny>()?;
                 }
@@ -106,12 +111,14 @@ impl<'de> serde::de::Visitor<'de> for LoaderVisitor {
                 ok,
                 data,
                 headers: headers.unwrap_or_default(),
+                store,
             });
         }
         match verdict.as_deref() {
             Some("notFound") => {
                 return Ok(LoaderResponse::Verdict(Verdict::NotFound {
                     data: data.unwrap_or_default(),
+                    store,
                 }));
             }
             Some("redirect") => {
@@ -156,6 +163,8 @@ pub enum Verdict {
     NotFound {
         #[serde(default)]
         data: Node,
+        #[serde(default)]
+        store: Option<Node>,
     },
     Redirect {
         location: String,
@@ -228,8 +237,58 @@ mod tests {
             LoaderResponse::Ok {
                 ok: true,
                 data: Node::from(json!({"x": 1})),
-                headers: BTreeMap::new()
+                headers: BTreeMap::new(),
+                store: None
             }
+        );
+    }
+
+    #[test]
+    fn loader_ok_carries_store_and_absent_or_null_is_none() {
+        assert_eq!(
+            loader(json!({"ok": true, "data": {}, "store": {"cart": {"count": 1}}})),
+            LoaderResponse::Ok {
+                ok: true,
+                data: Node::from(json!({})),
+                headers: BTreeMap::new(),
+                store: Some(Node::from(json!({"cart": {"count": 1}})))
+            }
+        );
+        for v in [
+            json!({"ok": true, "data": {}}),
+            json!({"ok": true, "data": {}, "store": null}),
+        ] {
+            let r = loader(v);
+            let LoaderResponse::Ok { store, .. } = r else {
+                panic!("expected Ok, got {r:?}")
+            };
+            assert_eq!(store, None);
+        }
+    }
+
+    #[test]
+    fn not_found_carries_store() {
+        assert_eq!(
+            loader(json!({"verdict": "notFound", "data": {"a": 1}, "store": {"s": {"k": 2}}})),
+            LoaderResponse::Verdict(Verdict::NotFound {
+                data: Node::from(json!({"a": 1})),
+                store: Some(Node::from(json!({"s": {"k": 2}})))
+            })
+        );
+        assert_eq!(
+            loader(json!({"verdict": "notFound", "data": {"a": 1}})),
+            LoaderResponse::Verdict(Verdict::NotFound {
+                data: Node::from(json!({"a": 1})),
+                store: None
+            })
+        );
+    }
+
+    #[test]
+    fn planned_ignores_store() {
+        assert_eq!(
+            loader(json!({"planned": true, "store": {"s": {}}})),
+            LoaderResponse::Planned { results: vec![] }
         );
     }
 
@@ -247,12 +306,16 @@ mod tests {
         assert_eq!(
             loader(json!({"verdict": "notFound", "data": {"a": 1}})),
             LoaderResponse::Verdict(Verdict::NotFound {
-                data: Node::from(json!({"a": 1}))
+                data: Node::from(json!({"a": 1})),
+                store: None
             })
         );
         assert_eq!(
             loader(json!({"verdict": "notFound"})),
-            LoaderResponse::Verdict(Verdict::NotFound { data: Node::Null })
+            LoaderResponse::Verdict(Verdict::NotFound {
+                data: Node::Null,
+                store: None
+            })
         );
     }
 

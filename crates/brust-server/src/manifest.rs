@@ -66,6 +66,10 @@ pub struct ComponentRecord {
     pub needs_worker: bool,
     #[serde(default)]
     pub use_id_slots: u32,
+    /// M3-F C3: project-relative store modules the component reads at render (sorted, unique).
+    /// The server only asks whether a route's chain has any (the worker touches them).
+    #[serde(default)]
+    pub stores: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
