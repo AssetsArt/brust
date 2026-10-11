@@ -222,3 +222,356 @@ fn use_store_namespace() {
         [("s.count".to_string(), store("stores.cart", Some("count")))]
     );
 }
+
+// --- Task 2: `<name>` from `defineStore('<lit>', …)` through the handle's import. ---
+
+/// A fresh temp root holding `files`, with `C.tsx` analysed there.
+fn analyze_tree(files: &[(&str, &str)]) -> ComponentIR {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static N: AtomicUsize = AtomicUsize::new(0);
+    let n = N.fetch_add(1, Ordering::SeqCst);
+    let root = std::env::temp_dir().join(format!("brustc-store-{}-{n}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    for (path, text) in files {
+        let p = root.join(path);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, text).unwrap();
+    }
+    let src = files
+        .iter()
+        .find(|(p, _)| *p == "C.tsx")
+        .expect("C.tsx")
+        .1
+        .to_string();
+    let r = root.clone();
+    let ir = run_on_compiler_thread(move || {
+        analyze_source(
+            "C.tsx",
+            src.into_bytes(),
+            &AnalyzeOptions {
+                root: r,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+    });
+    let _ = std::fs::remove_dir_all(&root);
+    ir
+}
+
+/// `C.tsx` reading `cart` imported as `import_line`.
+fn reader(import_line: &str) -> String {
+    format!(
+        "import {{ useStore }} from 'brust/store/react'\n{import_line}\nexport default function C() {{ const s = useStore(cart); return <p>{{s.count}}</p> }}"
+    )
+}
+
+const CART: &str = "import { defineStore, signal } from 'brust/store'\nexport const cart = defineStore('cart', () => ({ count: signal(0) }))\n";
+
+fn resolved(ir: &ComponentIR) -> &StoreRef {
+    assert_eq!(ir.stores.len(), 1, "{:?}", ir.diagnostics);
+    ir.stores[0]
+        .resolved
+        .as_ref()
+        .unwrap_or_else(|| panic!("unresolved: {:?}", ir.diagnostics))
+}
+
+fn store_ref(module: &str, signals: &[&str], computeds: &[&str]) -> StoreRef {
+    StoreRef {
+        name: "cart".into(),
+        module: module.into(),
+        signals: signals.iter().map(|s| s.to_string()).collect(),
+        computeds: computeds.iter().map(|s| s.to_string()).collect(),
+        factory_read: true,
+    }
+}
+
+#[test]
+fn store_name_resolves() {
+    let named = reader("import { cart } from './cart'");
+    let cases: Vec<(&str, Vec<(&str, String)>, StoreRef)> = vec![
+        (
+            "export const",
+            vec![("cart.ts", CART.into())],
+            store_ref("cart.ts", &["count"], &[]),
+        ),
+        (
+            "block factory",
+            vec![(
+                "cart.ts",
+                "import { defineStore, signal, computed } from 'brust/store'\nexport const cart = defineStore('cart', () => { const count = signal(0); const dbl = computed(() => count() * 2); return { count, dbl } })\n".into(),
+            )],
+            store_ref("cart.ts", &["count"], &["dbl"]),
+        ),
+        (
+            "export clause alias",
+            vec![(
+                "cart.ts",
+                "import { defineStore, signal } from 'brust/store'\nconst c = defineStore('cart', () => ({ count: signal(0) }))\nexport { c as cart }\n".into(),
+            )],
+            store_ref("cart.ts", &["count"], &[]),
+        ),
+        (
+            "export from",
+            vec![
+                ("stores/index.ts", "export { cart } from './inner'\n".into()),
+                ("stores/inner.ts", CART.into()),
+            ],
+            store_ref("stores/inner.ts", &["count"], &[]),
+        ),
+        (
+            "export star",
+            vec![
+                ("cart.ts", "export * from './inner'\n".into()),
+                ("inner.ts", CART.into()),
+            ],
+            store_ref("inner.ts", &["count"], &[]),
+        ),
+        (
+            "import then export",
+            vec![
+                (
+                    "cart.ts",
+                    "import { cart } from './inner'\nexport { cart }\n".into(),
+                ),
+                ("inner.ts", CART.into()),
+            ],
+            store_ref("inner.ts", &["count"], &[]),
+        ),
+        (
+            "aliased defineStore",
+            vec![(
+                "cart.ts",
+                "import { defineStore as ds, signal as sig } from '@brust/core/store'\nexport const cart = ds('cart', () => ({ count: sig(0) }))\n".into(),
+            )],
+            store_ref("cart.ts", &["count"], &[]),
+        ),
+        (
+            "runtime-dom defineStore",
+            vec![(
+                "cart.ts",
+                "import { defineStore, signal } from '@brust/runtime-dom'\nexport const cart = defineStore('cart', () => ({ count: signal(0) }))\n".into(),
+            )],
+            store_ref("cart.ts", &["count"], &[]),
+        ),
+        (
+            "template literal name",
+            vec![(
+                "cart.ts",
+                "import { defineStore, signal } from 'brust/store'\nexport const cart = defineStore(`cart`, () => ({ count: signal(0) }))\n".into(),
+            )],
+            store_ref("cart.ts", &["count"], &[]),
+        ),
+    ];
+    for (what, files, want) in cases {
+        let c = if what == "export from" {
+            reader("import { cart } from './stores'")
+        } else {
+            named.clone()
+        };
+        let mut all: Vec<(&str, &str)> = files.iter().map(|(p, t)| (*p, t.as_str())).collect();
+        all.push(("C.tsx", &c));
+        let ir = analyze_tree(&all);
+        assert_eq!(resolved(&ir), &want, "{what}");
+        assert!(
+            !rules(&ir).contains(&"store-name-unresolved"),
+            "{what}: {:?}",
+            ir.diagnostics
+        );
+    }
+
+    // `export default defineStore(…)` imported as the default.
+    let ir = analyze_tree(&[
+        (
+            "cart.ts",
+            "import { defineStore, signal } from 'brust/store'\nexport default defineStore('cart', () => ({ count: signal(0) }))\n",
+        ),
+        ("C.tsx", &reader("import cart from './cart'")),
+    ]);
+    assert_eq!(resolved(&ir), &store_ref("cart.ts", &["count"], &[]));
+}
+
+#[test]
+fn store_name_unresolved() {
+    let named = reader("import { cart } from './cart'");
+    let def = |body: &str| format!("import {{ defineStore, signal }} from 'brust/store'\n{body}\n");
+    let cases: Vec<(&str, Vec<(&str, String)>, &str)> = vec![
+        (
+            "concatenated name",
+            vec![(
+                "cart.ts",
+                def("const prefix = 'x'\nexport const cart = defineStore(prefix + 'cart', () => ({ count: signal(0) }))"),
+            )],
+            "is not a string literal",
+        ),
+        (
+            "bad charset (D6)",
+            vec![(
+                "cart.ts",
+                def("export const cart = defineStore('a b', () => ({ count: signal(0) }))"),
+            )],
+            "is not [A-Za-z0-9_.:-]+",
+        ),
+        ("missing module", vec![], "cannot resolve"),
+        (
+            "no such export",
+            vec![("cart.ts", def("export const other = defineStore('cart', () => ({ count: signal(0) }))"))],
+            "no export",
+        ),
+        (
+            "zustand defineStore",
+            vec![(
+                "cart.ts",
+                "import { defineStore } from 'zustand'\nexport const cart = defineStore('cart', () => ({}))\n".into(),
+            )],
+            "is not a defineStore",
+        ),
+        (
+            "re-export cycle",
+            vec![
+                ("cart.ts", "export { cart } from './b'\n".into()),
+                ("b.ts", "export { cart } from './cart'\n".into()),
+            ],
+            "cycle",
+        ),
+        (
+            "star re-export cycle",
+            vec![
+                ("cart.ts", "export * from './b'\n".into()),
+                ("b.ts", "export * from './cart'\n".into()),
+            ],
+            "cycle",
+        ),
+    ];
+    let check = |what: &str, ir: &ComponentIR, reason: &str| {
+        assert!(
+            ir.stores.iter().all(|u| u.resolved.is_none()),
+            "{what}: {:?}",
+            ir.stores
+        );
+        let un: Vec<_> = ir
+            .diagnostics
+            .iter()
+            .filter(|d| d.rule == "store-name-unresolved")
+            .collect();
+        assert_eq!(un.len(), 1, "{what}: {:?}", ir.diagnostics);
+        assert_eq!(un[0].class, DiagClass::Fallback, "{what}");
+        assert!(
+            un[0].message.contains(reason),
+            "{what}: expected {reason:?} in {:?}",
+            un[0].message
+        );
+        assert!(
+            matches!(ir.tier, Tier::React { .. }),
+            "{what}: {:?}",
+            ir.tier
+        );
+        un[0].clone()
+    };
+    for (what, files, reason) in cases {
+        let mut all: Vec<(&str, &str)> = files.iter().map(|(p, t)| (*p, t.as_str())).collect();
+        all.push(("C.tsx", &named));
+        check(what, &analyze_tree(&all), reason);
+    }
+
+    // A package handle.
+    let ir = analyze_tree(&[("C.tsx", &reader("import { cart } from 'shop-stores'"))]);
+    check("package", &ir, "is imported from the package shop-stores");
+
+    // R4: a store defined in the component's own module.
+    let own = format!(
+        "import {{ useStore }} from 'brust/store/react'\nimport {{ defineStore, signal }} from 'brust/store'\nconst cart = defineStore('cart', () => ({{ count: signal(0) }}))\nexport default function C() {{ const s = useStore(cart); return <p>{{s.count}}</p> }}"
+    );
+    let d = check(
+        "same module",
+        &analyze_tree(&[("C.tsx", &own)]),
+        "own module",
+    );
+    assert!(
+        d.remediation.contains("define the store in its own module"),
+        "{d:?}"
+    );
+    // … also when the component imports it back from itself.
+    let own = format!(
+        "import {{ useStore }} from 'brust/store/react'\nimport {{ defineStore, signal }} from 'brust/store'\nimport {{ cart }} from './C'\nexport const cart2 = defineStore('cart', () => ({{ count: signal(0) }}))\nexport default function C() {{ const s = useStore(cart); return <p>{{s.count}}</p> }}"
+    );
+    let d = check(
+        "self import",
+        &analyze_tree(&[("C.tsx", &own)]),
+        "own module",
+    );
+    assert!(
+        d.remediation.contains("define the store in its own module"),
+        "{d:?}"
+    );
+}
+
+#[test]
+fn store_factory_keys() {
+    // An unreadable factory: the name resolves, the keys are unknown.
+    let ir = analyze_tree(&[
+        (
+            "cart.ts",
+            "import { defineStore, signal } from 'brust/store'\nfunction makeStore() { return { count: signal(0) } }\nexport const cart = defineStore('cart', () => makeStore())\n",
+        ),
+        ("C.tsx", &reader("import { cart } from './cart'")),
+    ]);
+    let r = resolved(&ir);
+    assert_eq!(r.name, "cart");
+    assert!(!r.factory_read);
+    assert!(r.signals.is_empty() && r.computeds.is_empty(), "{r:?}");
+
+    // An action is neither a signal nor a computed; keys come out sorted.
+    let ir = analyze_tree(&[
+        (
+            "cart.ts",
+            "import { defineStore, signal, computed } from 'brust/store'\nexport const cart = defineStore('cart', function () { const count = signal(0); return { zeta: signal(1), count, add: (n: number) => count.set(n), dbl: computed(() => count() * 2) } })\n",
+        ),
+        ("C.tsx", &reader("import { cart } from './cart'")),
+    ]);
+    assert_eq!(
+        resolved(&ir),
+        &store_ref("cart.ts", &["count", "zeta"], &["dbl"])
+    );
+}
+
+#[test]
+fn store_name_duplicate() {
+    let ir = analyze_tree(&[
+        ("cart.ts", CART),
+        (
+            "cart2.ts",
+            "import { defineStore, signal } from 'brust/store'\nexport const cart2 = defineStore('cart', () => ({ count: signal(0) }))\n",
+        ),
+        (
+            "C.tsx",
+            "import { useStore } from 'brust/store/react'\nimport { cart } from './cart'\nimport { cart2 } from './cart2'\nexport default function C() { const a = useStore(cart); const b = useStore(cart2); return <p>{a.count}{b.count}</p> }",
+        ),
+    ]);
+    assert!(
+        ir.stores.iter().all(|u| u.resolved.is_some()),
+        "{:?}",
+        ir.diagnostics
+    );
+    let dup: Vec<_> = ir
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule == "store-name-duplicate")
+        .collect();
+    assert_eq!(dup.len(), 1, "{:?}", ir.diagnostics);
+    assert_eq!(dup[0].class, DiagClass::Warning);
+
+    // The same store read twice is not a duplicate.
+    let ir = analyze_tree(&[
+        ("cart.ts", CART),
+        (
+            "C.tsx",
+            "import { useStore } from 'brust/store/react'\nimport { cart } from './cart'\nexport default function C() { const a = useStore(cart); const b = useStore(cart); return <p>{a.count}{b.count}</p> }",
+        ),
+    ]);
+    assert!(
+        !rules(&ir).contains(&"store-name-duplicate"),
+        "{:?}",
+        ir.diagnostics
+    );
+}

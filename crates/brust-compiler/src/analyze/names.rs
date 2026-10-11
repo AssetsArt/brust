@@ -27,37 +27,44 @@ pub struct NameTable<'a> {
     jsx_runtime: HashSet<u32>,
 }
 
-impl<'a> NameTable<'a> {
-    pub fn new(ast: &'a js_ast::Ast<'_>, component: &js_ast::G::Fn) -> Self {
-        let records = ast.import_records.as_slice();
-        let path_of = |i: u32| {
-            records
-                .get(i as usize)
-                .map(|r| String::from_utf8_lossy(r.path.text).into_owned())
-        };
-        // `import` statements are the source of truth: `ast.named_imports` is a
-        // bundler table and leaves out default and namespace imports.
-        let mut imports = HashMap::new();
-        for part in ast.parts.iter() {
-            for stmt in part.stmts.slice() {
-                let js_ast::stmt::Data::SImport(imp) = &stmt.data else {
-                    continue;
-                };
-                let Some(path) = path_of(imp.import_record_index) else {
-                    continue;
-                };
-                if let Some(d) = &imp.default_name {
-                    imports.insert(d.ref_.inner_index(), (path.clone(), "default".into()));
-                }
-                for item in imp.items.slice() {
-                    let imported = String::from_utf8_lossy(item.alias.slice()).into_owned();
-                    imports.insert(item.name.ref_.inner_index(), (path.clone(), imported));
-                }
-                if imp.star_name_loc.start >= 0 {
-                    imports.insert(imp.namespace_ref.inner_index(), (path, "*".into()));
-                }
+/// Every `import` binding of the module: local symbol (`Ref::inner_index`) → (module path,
+/// imported name; `default` or `*` for default and namespace imports). `import` statements are
+/// the source of truth: `ast.named_imports` is a bundler table and leaves out default and
+/// namespace imports.
+pub fn module_imports(ast: &js_ast::Ast<'_>) -> HashMap<u32, (String, String)> {
+    let records = ast.import_records.as_slice();
+    let path_of = |i: u32| {
+        records
+            .get(i as usize)
+            .map(|r| String::from_utf8_lossy(r.path.text).into_owned())
+    };
+    let mut imports = HashMap::new();
+    for part in ast.parts.iter() {
+        for stmt in part.stmts.slice() {
+            let js_ast::stmt::Data::SImport(imp) = &stmt.data else {
+                continue;
+            };
+            let Some(path) = path_of(imp.import_record_index) else {
+                continue;
+            };
+            if let Some(d) = &imp.default_name {
+                imports.insert(d.ref_.inner_index(), (path.clone(), "default".into()));
+            }
+            for item in imp.items.slice() {
+                let imported = String::from_utf8_lossy(item.alias.slice()).into_owned();
+                imports.insert(item.name.ref_.inner_index(), (path.clone(), imported));
+            }
+            if imp.star_name_loc.start >= 0 {
+                imports.insert(imp.namespace_ref.inner_index(), (path, "*".into()));
             }
         }
+    }
+    imports
+}
+
+impl<'a> NameTable<'a> {
+    pub fn new(ast: &'a js_ast::Ast<'_>, component: &js_ast::G::Fn) -> Self {
+        let imports = module_imports(ast);
         let mut table = NameTable {
             symbols: ast.symbols.as_slice(),
             imports,

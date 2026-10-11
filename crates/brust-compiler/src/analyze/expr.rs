@@ -499,7 +499,7 @@ pub fn estring(s: &js_ast::E::EString) -> String {
     out
 }
 
-fn template_text(t: &js_ast::E::TemplateContents) -> String {
+pub(crate) fn template_text(t: &js_ast::E::TemplateContents) -> String {
     match t {
         js_ast::E::TemplateContents::Cooked(s) => estring(s),
         js_ast::E::TemplateContents::Raw(r) => String::from_utf8_lossy(r.slice()).into_owned(),

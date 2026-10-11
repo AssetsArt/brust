@@ -1,13 +1,15 @@
 //! M1b-2 passes over the structural IR, run in a fixed order by
-//! [`run_passes`]: deps → placement (uses `server_expr`) → children →
-//! captures → tier (`cache()` is read with the component, in `component.rs`). Pure functions of the IR, except `children`, which
-//! compiles child modules through the [`crate::analyze::modules`] cache.
+//! [`run_passes`]: stores → deps → placement (uses `server_expr`) → children →
+//! captures → tier (`cache()` is read with the component, in `component.rs`). Pure functions of the IR, except `stores`, which
+//! reads store modules, and `children`, which compiles child modules, both through the
+//! [`crate::analyze::modules`] cache.
 pub mod captures;
 pub mod children;
 pub mod deps;
 pub mod placement;
 pub mod projection;
 pub mod server_expr;
+pub mod stores;
 pub mod tier;
 
 use deps::DepsCx;
@@ -81,6 +83,8 @@ impl PassState {
 
 /// Runs every pass on `ir` (a structural IR from `analyze_component`).
 pub fn run_passes(ir: &mut ComponentIR, ctx: &PassCtx<'_>) -> PassState {
+    // First: `DepsCx` reads the resolved stores.
+    stores::resolve(ir, ctx);
     ir.structural = Some(Box::new(crate::ir::Structural {
         template: ir.template.clone(),
         state: ir.state.clone(),

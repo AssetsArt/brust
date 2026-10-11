@@ -623,6 +623,21 @@ fn read_use_store(
         );
     };
     let Some((handle, import)) = store_handle(arg, r.names) else {
+        // R4: a handle declared in this module (`const cart = defineStore(…)` beside the
+        // component) is never read: the worker would have to load a component module.
+        if let E::EIdentifier(id) = &arg.data
+            && r.names.import_of(id.ref_).is_none()
+        {
+            let name = r.names.name(id.ref_);
+            return out.fallback(
+                "store-name-unresolved",
+                format!(
+                    "useStore({name}): `{name}` is declared in the component's own module, not imported from a store module; the component renders as a React island"
+                ),
+                vloc,
+                "define the store in its own module",
+            );
+        }
         return out.fallback(
             "store-name-unresolved",
             "useStore(…): the argument is not an imported store handle; the component renders as a React island".into(),
