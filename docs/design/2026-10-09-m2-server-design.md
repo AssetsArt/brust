@@ -313,6 +313,8 @@ document is identical on both paths. Timing keeps the two-call semantics per pha
 
 **Amendment (2026-10-11, M3-P P7, ruling R1):** the plan offer is adaptive per route. A route offers (`plan: true`) while its chain has jobs AND fewer than 64 consecutive planned calls came back all-hit. After that it stops offering, and its requests plan on tokio as the declined path does (one call when every job hits, two on a miss). The first tokio-side miss resets the streak and the offer resumes. The counter is written only on a change or while the streak is below 64.
 
+**Amendment (2026-10-11, M3-P P7, rulings R2/R3, recorded at merge on Mellow's review b82ca453):** timeouts fire within one tick, not at the exact instant. The header-read timeout runs on a coarse sharded timer with a 100 ms tick; `call_timeout` and the per-phase deadlines of a planned call are observed by a 10 ms deadline sweeper over the pool's slots, so a 504 arrives within [T, T + 10 ms) of the deadline rather than at T. `claim_or_wait` keeps `sleep_until`. The pool.rs claim invariant is unchanged: the deadline cell is armed only while a `RenderClaim` is held and disarmed in its drop.
+
 **S8 — `Outlet` is a compiler intrinsic.** `import { Outlet } from '@brust/core/routes'`;
 `<Outlet/>` in a route component lowers to `{{ __outlet | safe }}` in the template and is a
 no-op in the client chunk. A component that renders `<Outlet/>` but is not a route with
