@@ -18,6 +18,8 @@
     },
     "./routes": "./src/routes.ts",
     "./server": "./src/server.ts",
+    "./store": "./src/store/index.ts",
+    "./store/react": "./src/store/react.ts",
     "./native": "./native/index.js"
   },
   "scripts": {
