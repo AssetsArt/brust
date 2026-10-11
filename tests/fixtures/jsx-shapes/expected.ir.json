@@ -313,7 +313,8 @@
         }
       },
       "inputs": [
-        "*"
+        "*",
+        "__store"
       ],
       "outputs": [
         "_ssr_input_24dc85ef"

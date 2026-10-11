@@ -2,6 +2,7 @@
 //! the wire. Requests are serialised to an inline JSON string; responses are
 //! read as JSON from the worker's SAB slot (see `crate::dispatch`).
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use brust_jinja::ctx::Node;
@@ -42,6 +43,9 @@ pub enum LoaderResponse {
         /// Response headers the loader set (e.g. `set-cookie`), copied onto the
         /// HTTP response; a `set-cookie` key makes the page uncacheable.
         headers: BTreeMap<String, String>,
+        /// M3-F C2: the request's store snapshot (C1: `{ name: { key: Json } }`). `None` when the
+        /// worker sent no `store` or `null` (R1: absent ≡ null).
+        store: Option<Node>,
     },
     /// The worker took the plan offer: the loader data went to `plan_in_call` (it is
     /// in the slot's plan cell), `results` answer the misses `planJobs` returned
@@ -77,6 +81,7 @@ impl<'de> serde::de::Visitor<'de> for LoaderVisitor {
         let (mut verdict, mut location, mut status) = (None::<String>, None::<String>, None::<u16>);
         let (mut body, mut error) = (None::<String>, None::<String>);
         let (mut planned, mut results) = (None::<bool>, None::<Vec<JobResult>>);
+        let mut store = None::<Node>;
         while let Some(k) = m.next_key::<std::borrow::Cow<'de, str>>()? {
             match &*k {
                 "ok" => ok = Some(m.next_value()?),
@@ -89,6 +94,7 @@ impl<'de> serde::de::Visitor<'de> for LoaderVisitor {
                 "error" => error = Some(m.next_value()?),
                 "planned" => planned = Some(m.next_value()?),
                 "results" => results = Some(m.next_value()?),
+                "store" => store = m.next_value::<Option<Node>>()?,
                 _ => {
                     m.next_value::<serde::de::IgnoredAny>()?;
                 }
@@ -106,12 +112,14 @@ impl<'de> serde::de::Visitor<'de> for LoaderVisitor {
                 ok,
                 data,
                 headers: headers.unwrap_or_default(),
+                store,
             });
         }
         match verdict.as_deref() {
             Some("notFound") => {
                 return Ok(LoaderResponse::Verdict(Verdict::NotFound {
                     data: data.unwrap_or_default(),
+                    store,
                 }));
             }
             Some("redirect") => {
@@ -156,6 +164,8 @@ pub enum Verdict {
     NotFound {
         #[serde(default)]
         data: Node,
+        #[serde(default)]
+        store: Option<Node>,
     },
     Redirect {
         location: String,
@@ -212,6 +222,42 @@ pub struct JobResult {
     pub error: Option<String>,
 }
 
+/// A1 `fetch` request: `{ method, url, headers: [[k,v]…], body: {text}|{b64}|null, req }`. `headers`
+/// are PAIRS (repeated names survive; `req.headers` is an object and collapses them — F5). `url` =
+/// path + query as received.
+#[derive(Serialize)]
+pub struct FetchRequest<'a> {
+    pub method: &'a str,
+    pub url: &'a str,
+    pub headers: Vec<(Cow<'a, str>, Cow<'a, str>)>,
+    pub body: Option<FetchBody>,
+    pub req: RequestEnvelope<'a>,
+}
+
+/// A1 body (R2), externally tagged: `{"text": …}` / `{"b64": …}`.
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FetchBody {
+    Text(String),
+    B64(String),
+}
+
+/// A2 meta `{ status, headers: [[k,v]…] }`; unknown keys ignored.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct FetchMeta {
+    pub status: u16,
+    #[serde(default)]
+    pub headers: Vec<(String, String)>,
+}
+
+/// A decoded `fetch` answer; `body` was copied out of the slot while the claim was held.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FetchResponse {
+    pub status: u16,
+    pub headers: Vec<(String, String)>,
+    pub body: bytes::Bytes,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -228,8 +274,58 @@ mod tests {
             LoaderResponse::Ok {
                 ok: true,
                 data: Node::from(json!({"x": 1})),
-                headers: BTreeMap::new()
+                headers: BTreeMap::new(),
+                store: None
             }
+        );
+    }
+
+    #[test]
+    fn loader_ok_carries_store_and_absent_or_null_is_none() {
+        assert_eq!(
+            loader(json!({"ok": true, "data": {}, "store": {"cart": {"count": 1}}})),
+            LoaderResponse::Ok {
+                ok: true,
+                data: Node::from(json!({})),
+                headers: BTreeMap::new(),
+                store: Some(Node::from(json!({"cart": {"count": 1}})))
+            }
+        );
+        for v in [
+            json!({"ok": true, "data": {}}),
+            json!({"ok": true, "data": {}, "store": null}),
+        ] {
+            let r = loader(v);
+            let LoaderResponse::Ok { store, .. } = r else {
+                panic!("expected Ok, got {r:?}")
+            };
+            assert_eq!(store, None);
+        }
+    }
+
+    #[test]
+    fn not_found_carries_store() {
+        assert_eq!(
+            loader(json!({"verdict": "notFound", "data": {"a": 1}, "store": {"s": {"k": 2}}})),
+            LoaderResponse::Verdict(Verdict::NotFound {
+                data: Node::from(json!({"a": 1})),
+                store: Some(Node::from(json!({"s": {"k": 2}})))
+            })
+        );
+        assert_eq!(
+            loader(json!({"verdict": "notFound", "data": {"a": 1}})),
+            LoaderResponse::Verdict(Verdict::NotFound {
+                data: Node::from(json!({"a": 1})),
+                store: None
+            })
+        );
+    }
+
+    #[test]
+    fn planned_ignores_store() {
+        assert_eq!(
+            loader(json!({"planned": true, "store": {"s": {}}})),
+            LoaderResponse::Planned { results: vec![] }
         );
     }
 
@@ -247,12 +343,16 @@ mod tests {
         assert_eq!(
             loader(json!({"verdict": "notFound", "data": {"a": 1}})),
             LoaderResponse::Verdict(Verdict::NotFound {
-                data: Node::from(json!({"a": 1}))
+                data: Node::from(json!({"a": 1})),
+                store: None
             })
         );
         assert_eq!(
             loader(json!({"verdict": "notFound"})),
-            LoaderResponse::Verdict(Verdict::NotFound { data: Node::Null })
+            LoaderResponse::Verdict(Verdict::NotFound {
+                data: Node::Null,
+                store: None
+            })
         );
     }
 
@@ -413,5 +513,58 @@ mod tests {
             loader(json!({"planned": false, "ok": true, "data": {}})),
             LoaderResponse::Ok { .. }
         ));
+    }
+
+    fn fetch_req(body: Option<FetchBody>) -> FetchRequest<'static> {
+        FetchRequest {
+            method: "POST",
+            url: "/_brust/action/team?x=1",
+            headers: vec![
+                ("content-type".into(), "application/json".into()),
+                ("set-cookie".into(), "a=1".into()),
+                ("set-cookie".into(), "b=2".into()),
+            ],
+            body,
+            req: RequestEnvelope {
+                method: "POST",
+                url: "/_brust/action/team?x=1",
+                headers: vec![("content-type".into(), "application/json".into())],
+                cookies: vec![],
+                search: vec![("x".into(), "1".into())],
+            },
+        }
+    }
+
+    #[test]
+    fn fetch_request_json_is_pinned() {
+        // A1, verbatim: headers are PAIRS (both set-cookie survive), body externally tagged.
+        assert_eq!(
+            serde_json::to_string(&fetch_req(Some(FetchBody::Text(r#"{"id":1}"#.into())))).unwrap(),
+            r#"{"method":"POST","url":"/_brust/action/team?x=1","headers":[["content-type","application/json"],["set-cookie","a=1"],["set-cookie","b=2"]],"body":{"text":"{\"id\":1}"},"req":{"method":"POST","url":"/_brust/action/team?x=1","headers":{"content-type":"application/json"},"cookies":{},"search":{"x":"1"}}}"#
+        );
+        let b64 = serde_json::to_string(&fetch_req(Some(FetchBody::B64("AAE=".into())))).unwrap();
+        assert!(b64.contains(r#""body":{"b64":"AAE="}"#), "{b64}");
+        let none = serde_json::to_string(&fetch_req(None)).unwrap();
+        assert!(none.contains(r#""body":null"#), "{none}");
+    }
+
+    #[test]
+    fn fetch_meta_reads_pairs() {
+        let m: FetchMeta = serde_json::from_str(
+            r#"{"status":201,"headers":[["set-cookie","a=1"],["set-cookie","b=2"]],"extra":1}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            m,
+            FetchMeta {
+                status: 201,
+                headers: vec![
+                    ("set-cookie".into(), "a=1".into()),
+                    ("set-cookie".into(), "b=2".into())
+                ]
+            }
+        );
+        let m: FetchMeta = serde_json::from_str(r#"{"status":204}"#).unwrap();
+        assert!(m.headers.is_empty());
     }
 }

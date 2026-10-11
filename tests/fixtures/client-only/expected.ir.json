@@ -78,7 +78,8 @@
         }
       },
       "inputs": [
-        "*"
+        "*",
+        "__store"
       ],
       "outputs": [
         "_ssr_input_fffbbb03"

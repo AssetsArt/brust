@@ -1,27 +1,35 @@
 // A small push-pull reactive core. Signals push "dirty" to subscribers; computeds pull lazily.
 type Subscriber = { mark(): void; deps: Set<Node> }
 type Node = { subs: Set<Subscriber> }
+type Runnable = { disposed: boolean; run(): void }
+interface ReactiveCtx { currentSub: Subscriber | null; batchDepth: number; pending: Set<Runnable> }
 
-let currentSub: Subscriber | null = null
-let batchDepth = 0
-const pending = new Set<EffectImpl>()
+const CTX = Symbol.for('brust.reactive.ctx')          // M3-F C7
+const SIGNAL = Symbol.for('brust.signal')             // M3-F C7
+const COMPUTED = Symbol.for('brust.computed')         // M3-F C7
+// ONE object per realm. Every copy of this module binds `ctx` once at load; hot paths do one
+// property load on a module-constant object. The shape is fixed: a copy never adds fields, so
+// copies of any version agree.
+const ctx: ReactiveCtx = ((globalThis as { [CTX]?: ReactiveCtx })[CTX] ??= { currentSub: null, batchDepth: 0, pending: new Set() })
 
 function track(node: Node) {
-  if (currentSub) { node.subs.add(currentSub); currentSub.deps.add(node) }
+  const s = ctx.currentSub
+  if (s) { node.subs.add(s); s.deps.add(node) }
 }
 function notify(node: Node) {
   for (const s of Array.from(node.subs)) s.mark()
 }
 function flush() {
-  if (batchDepth > 0) return
+  if (ctx.batchDepth > 0) return
+  const pending = ctx.pending
   while (pending.size) {
     const batch = Array.from(pending); pending.clear()
     for (const e of batch) if (!e.disposed) e.run()
   }
 }
 
-export interface Signal<T> { (): T; set(next: T | ((prev: T) => T)): void; readonly peek: () => T }
-export interface Computed<T> { (): T; readonly peek: () => T }
+export interface Signal<T> { (): T; set(next: T | ((prev: T) => T)): void; readonly peek: () => T; readonly [SIGNAL]: true }
+export interface Computed<T> { (): T; readonly peek: () => T; readonly [COMPUTED]: true }
 export type Dispose = () => void
 
 export function signal<T>(initial: T): Signal<T> {
@@ -36,6 +44,7 @@ export function signal<T>(initial: T): Signal<T> {
     flush()
   }
   ;(read as { peek: () => T }).peek = () => value
+  ;(read as { [SIGNAL]: true })[SIGNAL] = true
   return read
 }
 
@@ -45,31 +54,35 @@ export function computed<T>(fn: () => T): Computed<T> {
   const sub: Subscriber = { deps: new Set(), mark() { if (!dirty) { dirty = true; notify(node) } } }
   const recompute = () => {
     for (const d of sub.deps) d.subs.delete(sub); sub.deps.clear()
-    const prev = currentSub; currentSub = sub
-    try { value = fn() } finally { currentSub = prev }
+    const prev = ctx.currentSub; ctx.currentSub = sub
+    try { value = fn() } finally { ctx.currentSub = prev }
     dirty = false
   }
   const read = (() => { track(node); if (dirty) recompute(); return value }) as Computed<T>
   ;(read as { peek: () => T }).peek = () => { if (dirty) recompute(); return value }
+  ;(read as { [COMPUTED]: true })[COMPUTED] = true
   return read
 }
+
+// Cleanups run untracked: a read inside one must not subscribe whichever effect is running around it.
+function runCleanup(c: () => void) { const prev = ctx.currentSub; ctx.currentSub = null; try { c() } finally { ctx.currentSub = prev } }
 
 class EffectImpl implements Subscriber {
   deps = new Set<Node>(); disposed = false; cleanup: void | (() => void) = undefined
   constructor(private fn: () => void | (() => void)) {}
-  mark() { pending.add(this) }
+  mark() { ctx.pending.add(this) }
   run() {
     if (this.disposed) return
-    if (this.cleanup) { const c = this.cleanup; this.cleanup = undefined; c() }
+    if (this.cleanup) { const c = this.cleanup; this.cleanup = undefined; runCleanup(c) }
     for (const d of this.deps) d.subs.delete(this); this.deps.clear()
-    const prev = currentSub; currentSub = this
-    try { this.cleanup = this.fn() } finally { currentSub = prev }
+    const prev = ctx.currentSub; ctx.currentSub = this
+    try { this.cleanup = this.fn() } finally { ctx.currentSub = prev }
   }
   dispose() {
     if (this.disposed) return
-    this.disposed = true; pending.delete(this)
+    this.disposed = true; ctx.pending.delete(this)
     for (const d of this.deps) d.subs.delete(this); this.deps.clear()
-    if (this.cleanup) { const c = this.cleanup; this.cleanup = undefined; c() }
+    if (this.cleanup) { const c = this.cleanup; this.cleanup = undefined; runCleanup(c) }
   }
 }
 
@@ -80,15 +93,18 @@ export function effect(fn: () => void | (() => void)): Dispose {
 }
 
 export function batch(fn: () => void): void {
-  batchDepth++
-  try { fn() } finally { batchDepth--; flush() }
+  ctx.batchDepth++
+  try { fn() } finally { ctx.batchDepth--; flush() }
 }
 
 export function untracked<T>(fn: () => T): T {
-  const prev = currentSub; currentSub = null
-  try { return fn() } finally { currentSub = prev }
+  const prev = ctx.currentSub; ctx.currentSub = null
+  try { return fn() } finally { ctx.currentSub = prev }
 }
 
-export function isSignal(x: unknown): x is Signal<unknown> | Computed<unknown> {
-  return typeof x === 'function' && 'peek' in (x as object)
+export function isSignal(x: unknown): x is Signal<unknown> { return typeof x === 'function' && (x as { [SIGNAL]?: true })[SIGNAL] === true }
+export function isComputed(x: unknown): x is Computed<unknown> { return typeof x === 'function' && (x as { [COMPUTED]?: true })[COMPUTED] === true }
+/** Signal or computed: what directive paths unwrap. Internal (not in D1). */
+export function isReactive(x: unknown): x is Signal<unknown> | Computed<unknown> {
+  return typeof x === 'function' && ((x as { [SIGNAL]?: true })[SIGNAL] === true || (x as { [COMPUTED]?: true })[COMPUTED] === true)
 }

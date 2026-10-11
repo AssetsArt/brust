@@ -67,6 +67,7 @@
         }
       },
       "inputs": [
+        "__store",
         "depth"
       ],
       "outputs": [
@@ -74,6 +75,7 @@
       ],
       "per_item": null,
       "props": {
+        "__store": "__store",
         "depth": "depth"
       }
     }

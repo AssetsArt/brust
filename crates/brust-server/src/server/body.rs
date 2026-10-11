@@ -229,8 +229,6 @@ pub(crate) fn response_from_framed_bytes(raw: Vec<u8>) -> Response<ResponseBody>
 
 // ----- canned typed error responses (byte-identical bodies to the old http::error_* builders) -----
 
-// kept for parity with body.rs @ d04718f
-#[allow(dead_code)]
 pub(crate) fn error_400() -> Response<ResponseBody> {
     resp(400, "text/plain", &[], b"bad request".to_vec())
 }
@@ -251,13 +249,9 @@ pub(crate) fn error_405() -> Response<ResponseBody> {
 pub(crate) fn error_411() -> Response<ResponseBody> {
     resp(411, "text/plain", &[], b"length required".to_vec())
 }
-// kept for parity with body.rs @ d04718f
-#[allow(dead_code)]
 pub(crate) fn error_413() -> Response<ResponseBody> {
     resp(413, "text/plain", &[], b"payload too large".to_vec())
 }
-// kept for parity with body.rs @ d04718f
-#[allow(dead_code)]
 pub(crate) fn error_415() -> Response<ResponseBody> {
     resp(415, "text/plain", &[], b"unsupported media type".to_vec())
 }

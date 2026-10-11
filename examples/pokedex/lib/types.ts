@@ -26,7 +26,6 @@ export interface ChromeData {
   crumb: string
   mode: 'dark' | 'light'
   nav: NavItem[]
-  teamInitial: TeamMember[]
 }
 
 /** A single dex grid cell — derived from the list endpoint alone (no detail

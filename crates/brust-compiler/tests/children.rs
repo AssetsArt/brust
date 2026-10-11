@@ -111,10 +111,16 @@ fn react_child_is_an_island_with_an_ssr_job() {
         ir.jobs,
         [JobDecl {
             kind: JobKind::Ssr { client_only: false },
-            inputs: vec!["productId".into()],
+            inputs: vec!["__store".into(), "productId".into()],
             outputs: vec![format!("_ssr_{id}")],
             per_item: None,
-            props: Some([("productId".to_string(), Some("productId".to_string()))].into()),
+            props: Some(
+                [
+                    ("__store".to_string(), Some("__store".to_string())),
+                    ("productId".to_string(), Some("productId".to_string())),
+                ]
+                .into()
+            ),
             literals: Default::default(),
         }]
     );
@@ -256,7 +262,7 @@ fn react_page_self_job_has_no_prop_map() {
         .iter()
         .find(|j| matches!(j.kind, JobKind::Ssr { .. }))
         .expect("self ssr job");
-    assert_eq!(job.inputs, vec!["*".to_string()]);
+    assert_eq!(job.inputs, vec!["*".to_string(), "__store".to_string()]);
     assert!(job.props.is_none());
 }
 

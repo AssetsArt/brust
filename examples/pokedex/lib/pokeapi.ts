@@ -1,5 +1,6 @@
 // examples/pokedex/lib/pokeapi.ts — the 0.1.x helper surface, served from data/pokedex.json (no network).
 import snap from '../data/pokedex.json'
+import type { TeamMember } from './types'
 
 export interface RawPokemon { id: number; name: string; types: string[]; stats: { name: string; base: number }[]; height: number; weight: number; abilities: string[]; artwork: string }
 export interface RawSpecies { flavorText: string; genus: string; evolutionUrl: string }
@@ -33,4 +34,10 @@ export async function fetchEvolution(key: string): Promise<RawEvolutionStage[]> 
 }
 export async function fetchTypeRelations(type: string): Promise<Record<string, number>> {
   return (snap.types as Record<string, Record<string, number>>)[type] ?? {}
+}
+
+/** The roster member for a Pokémon id, built from the offline snapshot (so a client cannot forge display data). */
+export function pokemonById(id: number): TeamMember | null {
+  const p = byId.get(id)
+  return p ? { id: p.id, name: p.name, displayName: cap(p.name), num: pad(p.id), types: p.types, artwork: p.artwork } : null
 }

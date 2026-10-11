@@ -39,6 +39,7 @@ export interface ComponentRecord {
   client: string | null
   needs_worker: boolean
   use_id_slots: number
+  stores: string[]
 }
 
 export interface RouteRecord {
@@ -50,12 +51,20 @@ export interface RouteRecord {
   catch_all: boolean
 }
 
+/** `manifest.actions` (A3): `entry` is relative to dist; `maxBodyBytes` is camelCase by contract. */
+export interface ActionsRecord {
+  entry: string
+  prefix: string
+  maxBodyBytes: number
+}
+
 export interface ManifestJson {
   version: 1
   routes: RouteRecord[]
   components: Record<string, ComponentRecord>
   assets: { runtime: string }
   jobs_module: string
+  actions: ActionsRecord | null
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: IR JSON (externally tagged enums)
@@ -211,6 +220,23 @@ export function childRecords(c: Compiled, clientOnly: string[] = []): ChildRecor
   return out
 }
 
+/** C3: root-relative modules of every store this component reads at render — its own and every
+ * descendant's through `ir.children` (inlined children render in this template; an island's SSR
+ * reads its stores too, D8) — sorted, unique. The worker unions it over the chain (D4). */
+export function storesOf(compiled: Map<string, Compiled>, id: string): string[] {
+  const out = new Set<string>()
+  const seen = new Set<string>()
+  const walk = (cid: string) => {
+    const c = compiled.get(cid)
+    if (!c || seen.has(cid)) return
+    seen.add(cid)
+    for (const s of c.ir.stores ?? []) if (s.resolved) out.add(s.resolved.module)
+    for (const ref of c.ir.children ?? []) if (ref.id) walk(ref.id)
+  }
+  walk(id)
+  return [...out].sort()
+}
+
 export function writeManifest(opts: {
   leaves: FlatRoute[]
   routeComponent: Map<string, string>
@@ -218,6 +244,7 @@ export function writeManifest(opts: {
   runtime: string
   /** component id → `client/<file>` (client chunk or react island chunk). */
   chunks: Map<string, string>
+  actions?: ActionsRecord | null
 }): ManifestJson {
   const { compiled } = opts
   const known = (id: string) => compiled.has(id)
@@ -232,6 +259,7 @@ export function writeManifest(opts: {
       client: opts.chunks.get(c.id) ?? null,
       needs_worker: jobs.length > 0,
       use_id_slots: c.ir.use_id_slots ?? 0,
+      stores: storesOf(compiled, c.id),
     }
   }
   const routes: RouteRecord[] = opts.leaves.map((l) => {
@@ -254,7 +282,7 @@ export function writeManifest(opts: {
     }
   })
   linkNativeChunks(routes, compiled, components)
-  return { version: 1, routes, components, assets: { runtime: opts.runtime }, jobs_module: 'jobs.js' }
+  return { version: 1, routes, components, assets: { runtime: opts.runtime }, jobs_module: 'jobs.js', actions: opts.actions ?? null }
 }
 
 /** S6 amendment (F66): the server's asset injection walks only each chain component's direct

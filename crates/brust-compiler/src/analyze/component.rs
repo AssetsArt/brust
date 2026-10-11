@@ -370,6 +370,7 @@ fn read_function(
     ir.refs = body.refs;
     ir.use_id_slots = body.id_bindings.len();
     ir.id_bindings = body.id_bindings;
+    ir.stores = body.stores;
     ir.diagnostics.extend(body.diagnostics);
     let root_loc = match &body.return_expr {
         Some(Expr::Raw(r)) => r.loc,

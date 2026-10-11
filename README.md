@@ -3,6 +3,16 @@
 Write React. Get a native page: HTML rendered by Rust from a compiled template, interactivity
 as a small react-free chunk, React only where the compiler proves it is needed.
 
+## Quick start
+
+```bash
+bun create @brust/app my-app      # blank (default) or --template pokedex
+cd my-app && bun install
+bun run dev                       # http://127.0.0.1:1337
+```
+
+More in [`docs/create-app.md`](docs/create-app.md).
+
 - Design: `docs/design/2026-10-08-react-compiler-design.md`
 - Plans: `docs/plans/`
 - Browser runtime: `packages/runtime-dom` (directive contract in its README; `cd packages/runtime-dom && bun test`)

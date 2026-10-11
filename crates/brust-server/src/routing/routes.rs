@@ -320,7 +320,7 @@ pub enum RouteInstallError {
     },
 }
 
-fn build_request_envelope<'a>(
+pub(crate) fn build_request_envelope<'a>(
     method: &'a str,
     full_path: &'a str,
     query: &'a str,

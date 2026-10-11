@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 18 | 14 | 3 | 1 | 0 | 0 | 0 | 0 |
-| B Composition | 11 | 4 | 3 | 4 | 0 | 0 | 0 | 0 |
+| B Composition | 12 | 5 | 3 | 4 | 0 | 0 | 0 | 0 |
 | C Hooks | 15 | 1 | 8 | 6 | 0 | 0 | 0 | 0 |
 | D API surface | 5 | 1 | 0 | 4 | 0 | 0 | 0 | 0 |
-| E v2 specifics | 16 | 4 | 5 | 2 | 4 | 1 | 0 | 0 |
-| **Total** | 65 | 24 | 19 | 17 | 4 | 1 | 0 | 0 |
+| E v2 specifics | 24 | 4 | 10 | 5 | 4 | 1 | 0 | 0 |
+| **Total** | 74 | 25 | 24 | 20 | 4 | 1 | 0 | 0 |
 
 ## A. JSX basics
 
@@ -43,6 +43,7 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|
 | b-child-static | static child component | static | static | 0 | ok | — | spec §3.1 inlined child |
 | b-child-props | child with props | static | static | 0 | ok | — | spec §3.1 inlined child with props |
+| b-child-dir-index | child imported from a directory (./widgets → widgets/index.ts) | static | static | 0 | ok | — | spec §3.1 inlined child; Bun resolves <dir>/index.ts; compiler matches (M3-F store lane) |
 | b-children-slot | children passed through a slot | static | static | 0 | ok | warning:fragment-root | spec §3.1 children slot |
 | b-reactive-props | state flows into a native child as a reactive prop | native | native | 0 | ok | — | spec §7.4 reactive props (D8) |
 | b-function-prop | function prop to a native child | native | native | 0 | ok | — | spec §7.4 function prop between native components |
@@ -102,4 +103,12 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | e-raw-text-child | dynamic child of <script> | react | react | ssr | ok | fallback:raw-text-child | raw-text-child: the template would HTML-escape a dynamic value inside raw text (F35) |
 | e-static-list-child | static child with row-only props in a prop list (F70) | static | static | 0 | ok | — | ledger F70: no link, no chunk, no x-* — the row cannot change on the client |
 | e-reactive-list-child | static child in a state-dependent list keeps its link (F70) | native | native | precompute | ok | — | ledger F70/F71: the client re-creates the rows; the helper reads rows whole, so x-props keeps the full list |
+| e-store-read | store field read through useStore | native | native | 0 | ok | — | M3-F D7: store-view root → __store.cart.count |
+| e-store-destructure | destructured useStore fields | native | native | 0 | ok | — | M3-F D7 |
+| e-store-derived | helper over a store read | native | native | precompute | ok | — | M3-F D7: precompute slot keyed by __store.cart.count |
+| e-store-handler-write | store write in an event handler | native | native | 0 | ok | — | M3-F D7: writes in handlers are plain calls |
+| e-store-reexport | store handle through a re-export | native | native | 0 | ok | — | M3-F D7: re-exports followed |
+| e-store-unresolved | store handle from a package | react | react | ssr | ok | fallback:store-name-unresolved | M3-F D7: fallback store-name-unresolved |
+| e-store-write-in-render | store write during render | react | react | ssr | ok | fallback:store-write-in-render | M3-F D7: fallback store-write-in-render |
+| e-store-computed-key | store computed key read | react | react | ssr | ok | fallback:store-key-unsupported | M3-F R1: fallback store-key-unsupported |
 | e-parse-error | snippet that does not parse | compile-error | compile-error | 0 | — | — | compile error: Syntax Error (input.tsx:1:43); reported as a row, never aborts the battery |

@@ -1,11 +1,11 @@
 // components/AppLayout.tsx — the document (S9): plain <html>, <Outlet/> for the leaf, TeamBuilder as a react child.
 import { Outlet } from '@brust/core/routes'
-import type { NavItem, TeamMember } from '../lib/types'
+import type { NavItem } from '../lib/types'
 import NavLink from './NavLink'
 import TeamBuilder from './TeamBuilder'
 import ThemeToggle from './ThemeToggle'
 
-export default function AppLayout(props: { title: string; mode: 'dark' | 'light'; nav: NavItem[]; teamInitial: TeamMember[] }) {
+export default function AppLayout(props: { title: string; mode: 'dark' | 'light'; nav: NavItem[] }) {
   return (
     <html lang="en" data-mode={props.mode}>
       <head>
@@ -25,7 +25,7 @@ export default function AppLayout(props: { title: string; mode: 'dark' | 'light'
         </header>
         <main className="mx-auto max-w-6xl px-4 py-8"><Outlet /></main>
         <footer className="border-t border-slate-200 py-6 text-center text-xs text-slate-400 dark:border-slate-800">Built with brust · data: PokeAPI snapshot</footer>
-        <TeamBuilder teamInitial={props.teamInitial} />
+        <TeamBuilder />
       </body>
     </html>
   )

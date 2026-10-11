@@ -2,7 +2,7 @@
 
 React-free browser runtime that binds a compiled client chunk (`defineBehavior`) to server-rendered HTML
 through `x-*` attributes. **This README is the output format the M1c client backend prints against**; every
-behaviour below is pinned by a test in `test/`. Zero dependencies, eval-free, bundle < 13 KB minified
+behaviour below is pinned by a test in `test/`. Zero dependencies, eval-free, bundle < 17 KB minified
 (`bun scripts/build.ts`).
 
 ## Public surface
@@ -76,3 +76,19 @@ The runtime hydrates every host once, when the browser is idle (`requestIdleCall
 script and island chunks does not matter. Bad `x-props` JSON hydrates with `{}` and warns once;
 a hydrate that throws is reported on `console.error` and the server HTML stays. This is the only
 strategy in M2 (spec S12).
+
+## Store
+The 0.1.x `brustjs/store` API on the same reactive core the directives use (one graph, even across module copies:
+tracking state lives on `globalThis[Symbol.for('brust.reactive.ctx')]`).
+
+- `@brust/runtime-dom/store` (also the runtime entry, and `@brust/core/store`): `signal computed effect batch
+  untracked isSignal isComputed defineStore` and the types `Signal Computed Dispose StoreHandle Snapshot`.
+- `defineStore(name, factory)` returns a handle: `store.field`, `store.snapshot()`, `store.serialize()`,
+  `store.hydrate(state)`, `store.subscribe(cb)`. First factory wins per name.
+- The browser keeps one instance per name in `globalThis[Symbol.for('brust.stores')]`. The first access to a
+  name seeds it from `<script type="application/json" data-brust-store="NAME">` (lazy, once).
+- `@brust/runtime-dom/store/react` (also `@brust/core/store/react`): `useStore(store)` via
+  `useSyncExternalStore`. React is an **optional peer**, imported only by this subpath; the runtime bundle stays
+  React-free.
+- `@brust/runtime-dom/store/internal`: the server-resolver hook and serialization helpers the Bun worker uses.
+  Not part of the public surface.

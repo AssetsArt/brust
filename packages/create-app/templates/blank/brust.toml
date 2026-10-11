@@ -1,0 +1,6 @@
+[server]
+address = "127.0.0.1"
+port = 1337
+
+# Elysia actions (docs/actions.md). Defaults: entry = "actions.ts", prefix = "/_brust/action", max_body_bytes = 262144
+[actions]

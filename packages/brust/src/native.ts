@@ -27,8 +27,26 @@ export interface StartOptions {
   l1Capacity?: number
   jobCacheCapacity?: number
   generator?: string
+  /** Global CORS policy; absent = CORS off. Boot error `cors: …` when invalid. */
+  cors?: CorsOptions
+  /** The actions subtree (M3-F A3); absent = no actions. Boot error `actions: …` when invalid. */
+  actions?: ActionsOptions
 }
-export type WorkerFn = (kind: 'loader' | 'jobs', requestJson: string, slot: number) => Promise<number>
+/** napi `NapiCorsOptions` (camelCase keys; snake_case keys are silently dropped). */
+export interface CorsOptions {
+  origins: string[]
+  methods?: string[]
+  headers?: string[]
+  exposeHeaders?: string[]
+  credentials?: boolean
+  maxAgeSeconds?: number
+}
+/** napi `NapiActionsOptions`; defaults `/_brust/action`, 262144. */
+export interface ActionsOptions {
+  prefix?: string
+  maxBodyBytes?: number
+}
+export type WorkerFn = (kind: 'loader' | 'jobs' | 'fetch', requestJson: string, slot: number) => Promise<number>
 export interface NativeBinding {
   startServer(opts: StartOptions): void
   registerWorker(buf: Uint8Array, slots: number, f: WorkerFn): number

@@ -118,6 +118,34 @@ pub struct ChildRef {
     pub tier: crate::ir::Tier,
 }
 
+/// One `useStore(handle)` binding of the component (M3-F D7).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct StoreUse {
+    pub handle: String,
+    /// The import that brings the handle in: (local, source, imported); `*` for a namespace.
+    pub import: (String, String, String),
+    /// `s` of `const s = useStore(h)`; `None` for a destructuring.
+    pub view: Option<String>,
+    /// `(key, local)` of `const { key: local } = useStore(h)`, source order.
+    pub fields: Vec<(String, String)>,
+    pub loc: u32,
+    /// Filled by the stores pass (Task 2); `None` = unresolved (the component falls back).
+    pub resolved: Option<StoreRef>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct StoreRef {
+    /// The `defineStore` literal.
+    pub name: String,
+    /// Root-relative path of the module that CALLS defineStore (C3; after re-exports).
+    pub module: String,
+    /// Top-level keys of the factory's returned object, sorted.
+    pub signals: Vec<String>,
+    pub computeds: Vec<String>,
+    /// The factory's returned object was read (keys above are complete).
+    pub factory_read: bool,
+}
+
 /// Filled by M1b-2.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct CacheDecl {

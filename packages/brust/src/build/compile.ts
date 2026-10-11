@@ -21,6 +21,9 @@ export type ComponentIR = Record<string, any> & {
   use_id_slots: number
   uses_outlet: boolean
   needs_worker: boolean
+  /** `useStore(handle)` bindings (`decls.rs` `StoreUse`); `resolved` = `StoreRef`, `null` when
+   * unresolved (the component falls back). `module` is root-relative (C3). */
+  stores?: { handle: string; resolved: { name: string; module: string } | null }[]
 }
 
 export interface Compiled {
@@ -122,6 +125,7 @@ export function compileApp(opts: {
     ir.use_id_slots ??= 0
     ir.uses_outlet ??= false
     ir.instances ??= []
+    ir.stores ??= []
     compiled.set(c.id, {
       id: c.id,
       file: `${appRoot}/${c.source}`,

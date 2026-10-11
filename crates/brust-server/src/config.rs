@@ -80,6 +80,75 @@ impl CorsConfig {
     }
 }
 
+/// 0.1.x defaults (E1).
+pub const DEFAULT_ACTION_PREFIX: &str = "/_brust/action";
+pub const DEFAULT_MAX_ACTION_BODY_BYTES: usize = 262_144;
+/// Paths the actions prefix may not overlap in either direction (R7).
+const RESERVED: &[&str] = &["/ping", "/public", "/_brust/client", "/_brust/cache"];
+
+/// M3-F E1/E3: the actions subtree. `None` in [`Config`] = no actions (byte-identical server).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ActionsConfig {
+    pub prefix: String,
+    pub max_body_bytes: usize,
+}
+
+impl Default for ActionsConfig {
+    fn default() -> Self {
+        Self {
+            prefix: DEFAULT_ACTION_PREFIX.into(),
+            max_body_bytes: DEFAULT_MAX_ACTION_BODY_BYTES,
+        }
+    }
+}
+
+/// 0.1.x `path_under_action_prefix` (brust-core config.rs:358-363): `path` is `p` or lies under it.
+pub(crate) fn under(path: &str, p: &str) -> bool {
+    path == p || (path.len() > p.len() && path.as_bytes()[p.len()] == b'/' && path.starts_with(p))
+}
+
+impl ActionsConfig {
+    pub fn is_under(&self, path: &str) -> bool {
+        under(path, &self.prefix)
+    }
+
+    pub fn is_default_prefix(&self) -> bool {
+        self.prefix == DEFAULT_ACTION_PREFIX
+    }
+
+    /// R7; `start` prefixes the message with `actions: `.
+    pub fn validate(&self, m: &Manifest) -> Result<(), String> {
+        let p = self.prefix.as_str();
+        let seg_ok = |s: &str| {
+            !s.is_empty()
+                && s != "."
+                && s != ".."
+                && s.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'~' | b'-'))
+        };
+        if !p.starts_with('/') || p.len() < 2 || p.ends_with('/') || !p[1..].split('/').all(seg_ok)
+        {
+            return Err(format!(
+                "prefix must start with '/', must not end with '/', and each segment must be \
+                 [A-Za-z0-9._~-] (not '.' or '..'): {p:?}"
+            ));
+        }
+        if let Some(r) = RESERVED.iter().find(|r| under(p, r) || under(r, p)) {
+            return Err(format!("prefix {p:?} overlaps the reserved path {r:?}"));
+        }
+        if let Some(rt) = m.routes.iter().find(|rt| {
+            let head = rt.pattern.split('{').next().unwrap_or("");
+            under(head.trim_end_matches('/'), p) || under(head, p)
+        }) {
+            return Err(format!("prefix {p:?} shadows route {:?}", rt.pattern));
+        }
+        if self.max_body_bytes == 0 {
+            return Err("maxBodyBytes must be at least 1".into());
+        }
+        Ok(())
+    }
+}
+
 /// Everything `start` needs. Fixed for the server's lifetime.
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -95,6 +164,8 @@ pub struct Config {
     pub cors: Option<CorsConfig>,
     /// `X-Powered-By` value; `None` = header not stamped.
     pub generator: Option<String>,
+    /// M3-F: the actions subtree; `None` = no actions.
+    pub actions: Option<ActionsConfig>,
 }
 
 impl Default for Config {
@@ -109,6 +180,7 @@ impl Default for Config {
             tls: None,
             cors: None,
             generator: None,
+            actions: None,
         }
     }
 }
@@ -183,6 +255,11 @@ pub struct Server {
     /// not a process global: several servers may live in one process).
     pub(crate) cors_resolved: Option<ResolvedCors>,
     pub(crate) generator: Option<String>,
+    /// M3-F: the validated actions subtree; `None` = no actions.
+    pub(crate) actions: Option<ActionsConfig>,
+    /// A4: `<script>globalThis.__BRUST_ACTION_PREFIX__="…"</script>`, prebuilt at `start` for a
+    /// non-default prefix only.
+    pub(crate) action_prefix_tag: Option<Box<str>>,
     pub(crate) claim_timeout: Duration,
     pub(crate) call_timeout: Duration,
     /// Last document length per manifest route (+ slack): the capacity of the
@@ -276,5 +353,83 @@ impl Server {
     /// the deadline elapsed).
     pub(crate) fn signal_drain_done(&self) {
         self.drain_done.notify_one();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture_manifest() -> Manifest {
+        let dist = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/dist");
+        Manifest::load(&dist).expect("fixture manifest").manifest
+    }
+
+    fn with_prefix(p: &str) -> ActionsConfig {
+        ActionsConfig {
+            prefix: p.into(),
+            ..Default::default()
+        }
+    }
+
+    /// 0.1.x brust `lib.rs:645-655`, extended.
+    #[test]
+    fn prefix_match_is_segment_safe() {
+        let a = ActionsConfig::default();
+        for p in [
+            "/_brust/action",
+            "/_brust/action/notes",
+            "/_brust/action/notes/5",
+        ] {
+            assert!(a.is_under(p), "{p} should be under the prefix");
+        }
+        for p in [
+            "/_brust/actionXYZ",
+            "/_brust/act",
+            "/other",
+            "/_brust/action2/x",
+        ] {
+            assert!(!a.is_under(p), "{p} should not be under the prefix");
+        }
+    }
+
+    #[test]
+    fn actions_validation_table() {
+        let m = fixture_manifest();
+        for p in ["/_brust/action", "/api", "/api/v1", "/a.b~c-d_e"] {
+            assert_eq!(with_prefix(p).validate(&m), Ok(()), "{p:?}");
+        }
+        for p in [
+            "", "api", "/", "/api/", "/a//b", "/a/./b", "/a/../b", "/a b", "/a?x", "/a%2Fb",
+        ] {
+            let e = with_prefix(p).validate(&m).expect_err(p);
+            assert!(e.contains(&format!("{p:?}")), "{p:?}: {e}");
+        }
+        for p in [
+            "/ping",
+            "/public",
+            "/public/x",
+            "/_brust",
+            "/_brust/client",
+            "/_brust/client/x",
+            "/_brust/cache",
+            "/_brust/cache/stats",
+        ] {
+            let e = with_prefix(p).validate(&m).expect_err(p);
+            assert!(e.contains("reserved"), "{p:?}: {e}");
+        }
+        let zero = ActionsConfig {
+            max_body_bytes: 0,
+            ..Default::default()
+        };
+        assert!(zero.validate(&m).is_err());
+    }
+
+    #[test]
+    fn actions_prefix_may_not_shadow_a_route() {
+        let m = fixture_manifest();
+        let e = with_prefix("/pokemon").validate(&m).unwrap_err();
+        assert!(e.contains(r#"shadows route "/pokemon/{name}""#), "{e}");
+        assert_eq!(with_prefix("/poke").validate(&m), Ok(()));
     }
 }

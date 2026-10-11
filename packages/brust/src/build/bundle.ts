@@ -7,7 +7,7 @@
 // renamed to `<stem>-<sha256 hex10>.js` so the server serves them `immutable` (`pipeline.rs`
 // `is_hashed` wants lowercase hex; Bun's `[hash]` is base36).
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { builtinModules } from 'node:module'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import type { BunPlugin } from 'bun'
@@ -31,6 +31,8 @@ export interface BrowserCtx {
   appRoot: string
   /** `brust.toml` `[build] server_only`: import prefixes / app-root-relative paths. */
   serverOnly: string[]
+  /** Real paths of server-only files (the actions entry, R8): a browser import of one is refused. */
+  serverFiles?: string[]
 }
 
 /** Resolution for staged artifacts (`importer` = a staged file registered in `sourceOf`): relative
@@ -92,15 +94,18 @@ const BROWSER_POLYFILLS = new Set([
  * m2c): a Node/Bun builtin (`node:*`, `bun:*`, `bun`, a bare builtin name such as `fs` or
  * `fs/promises` — unless it is an allowlisted browser polyfill the app installed), the server
  * parts of this package, a `*.server.*` file, or a prefix / app-root relative path listed in
- * `[build] server_only`. A bare specifier is matched against `server_only` as written (an entry
- * can name a package), and EVERY specifier is also checked by the file it resolves to (Bun's
- * resolver honours tsconfig `paths`, so an alias cannot bypass the `*.server.*` / path rules). */
+ * `[build] server_only`. M3-F R8 adds three: `@brust/core/elysia`, `elysia` (and `elysia/*`), and
+ * the configured actions entry file (`ctx.serverFiles`, compared by real path). A bare specifier is
+ * matched against `server_only` as written (an entry can name a package), and EVERY specifier is
+ * also checked by the file it resolves to (Bun's resolver honours tsconfig `paths`, so an alias
+ * cannot bypass the `*.server.*` / path rules). */
 function isServerOnly(spec: string, importer: string, ctx: BrowserCtx): boolean {
   if (spec.startsWith('node:') || spec.startsWith('bun:') || spec === 'bun') return true
   const from = dirname(ctx.sourceOf.get(importer) ?? importer)
   const bare = spec.split('/')[0]!
   if ((BUILTINS.has(spec) || BUILTINS.has(bare)) && !(BROWSER_POLYFILLS.has(bare) && installed(bare, from, ctx.appRoot))) return true
-  if (/^@brust\/brust\/(server|native)(\/|$)/.test(spec)) return true
+  if (/^@brust\/core\/(server|native|elysia)(\/|$)/.test(spec)) return true
+  if (spec === 'elysia' || spec.startsWith('elysia/')) return true
   if (/\.server(\.[^/]*)?$/.test(spec)) return true
   const isPath = spec.startsWith('./') || spec.startsWith('../') || isAbsolute(spec)
   if (!isPath && ctx.serverOnly.some((p) => spec.startsWith(p))) return true
@@ -111,6 +116,9 @@ function isServerOnly(spec: string, importer: string, ctx: BrowserCtx): boolean 
     return false // unresolvable: Bun reports it
   }
   if (/\.server\.[^/]*$/.test(basename(file))) return true
+  try {
+    if (ctx.serverFiles?.includes(realpathSync(file))) return true
+  } catch {}
   const rel = relative(ctx.appRoot, file)
   return !rel.startsWith('..') && !isAbsolute(rel) && ctx.serverOnly.some((p) => rel.startsWith(p))
 }
@@ -189,6 +197,26 @@ async function browserBuild(
   return entries
 }
 
+/** D3/C6: one runtime instance per page. Island and native client builds resolve the reactive core and
+ * the store API to the runtime bundle URL (external), exactly as the compiler's `runtimeImport`. The
+ * React bridge (`useStore`) is bundled (it holds no module state), but ITS imports of the core are the
+ * runtime too. Registered after `serverOnlyPlugin`, before `sourceDirPlugin` (which would resolve the
+ * bare specifiers to files). */
+export function runtimeAliasPlugin(runtimeUrl: string): BunPlugin {
+  return {
+    name: 'brust-runtime-alias',
+    setup(b) {
+      b.onResolve({ filter: /^@brust\/(runtime-dom(\/store)?|core\/store)$/ }, () => ({ path: runtimeUrl, external: true }))
+      let bridge: string | undefined
+      b.onResolve({ filter: /^@brust\/(runtime-dom|core)\/store\/react$/ }, () => {
+        bridge ??= Bun.resolveSync('@brust/runtime-dom/store/react', import.meta.dir) // core lane file; resolved lazily
+        return { path: bridge }
+      })
+      b.onResolve({ filter: /^\.\.?\// }, (a) => (bridge !== undefined && a.importer === bridge ? { path: runtimeUrl, external: true } : undefined))
+    },
+  }
+}
+
 /** `dist/client/runtime-<hex>.js`: runtime-dom, re-exported (client chunks import `signal`,
  * `defineBehavior`, … from this URL) and mounted on `document.documentElement` (contract 6). */
 export async function buildRuntime(dist: string, ctx: BrowserCtx): Promise<string> {
@@ -214,7 +242,7 @@ export async function buildRuntime(dist: string, ctx: BrowserCtx): Promise<strin
  * import (a store) lands once in a shared `chunk-<hex>.js`, so one page has one instance of it.
  * The runtime import stays the absolute `/_brust/client/runtime-<hex>.js` URL the compiler
  * printed (external: one runtime for every chunk). */
-export async function buildClientChunks(dist: string, compiled: Map<string, Compiled>, ctx: BrowserCtx): Promise<Map<string, string>> {
+export async function buildClientChunks(dist: string, compiled: Map<string, Compiled>, ctx: BrowserCtx, runtimeUrl: string): Promise<Map<string, string>> {
   const entrypoints: string[] = []
   for (const c of compiled.values()) {
     if (c.clientJs === undefined) continue
@@ -228,7 +256,7 @@ export async function buildClientChunks(dist: string, compiled: Map<string, Comp
     entrypoints,
     splitting: true,
     external: ['/_brust/*'],
-    plugins: [sourceDirPlugin(ctx.sourceOf, ctx.appRoot)],
+    plugins: [runtimeAliasPlugin(runtimeUrl), sourceDirPlugin(ctx.sourceOf, ctx.appRoot)],
   })
 }
 
@@ -257,7 +285,7 @@ export function islandShim(c: Compiled): string {
 
 /** One island chunk per react-tier component (`react-<id>-<hex>.js`, contract 3), React split
  * into a shared chunk the island chunks import relatively. */
-export async function buildReactChunks(dist: string, compiled: Map<string, Compiled>, ctx: BrowserCtx): Promise<Map<string, string>> {
+export async function buildReactChunks(dist: string, compiled: Map<string, Compiled>, ctx: BrowserCtx, runtimeUrl: string): Promise<Map<string, string>> {
   const entrypoints: string[] = []
   for (const c of compiled.values()) {
     if (!isReact(c)) continue
@@ -270,7 +298,8 @@ export async function buildReactChunks(dist: string, compiled: Map<string, Compi
   const out = await browserBuild(dist, 'react islands', ctx, {
     entrypoints,
     splitting: true,
-    plugins: [sourceDirPlugin(ctx.sourceOf, ctx.appRoot)],
+    external: ['/_brust/*'],
+    plugins: [runtimeAliasPlugin(runtimeUrl), sourceDirPlugin(ctx.sourceOf, ctx.appRoot)],
   })
   return new Map([...out].map(([stem, path]) => [stem.slice('react-'.length), path]))
 }
@@ -278,13 +307,52 @@ export async function buildReactChunks(dist: string, compiled: Map<string, Compi
 /** Left to the worker at runtime by `dist/jobs.js`: one React, and the worker's own `@brust/core`
  * (bundling the server package would load a second copy whose worker auto-start runs inside the
  * worker and exits it). */
-const JOBS_EXTERNALS = [...REACT_EXTERNALS, '@brust/core', '@brust/core/*']
+function isFile(p: string): boolean {
+  try {
+    return statSync(p).isFile()
+  } catch {
+    return false
+  }
+}
+
+const JOBS_EXTERNALS = [...REACT_EXTERNALS, '@brust/core', '@brust/core/*', '@brust/runtime-dom', '@brust/runtime-dom/*']
+
+const storesTable = (paths: string[]): string =>
+  paths.length === 0 ? '' : `export const stores = {\n${paths.map((p, i) => `  ${JSON.stringify(p)}: S${i},`).join('\n')}\n}\n`
+
+/** F6: in `jobs.js` the store API is the worker's own `@brust/core/store`, never a bundled copy. */
+const workerStorePlugin: BunPlugin = {
+  name: 'brust-worker-store',
+  setup(b) {
+    b.onResolve({ filter: /^@brust\/runtime-dom\/store(\/react)?$/ }, (a) => ({ path: a.path.replace('@brust/runtime-dom', '@brust/core'), external: true }))
+  },
+}
+
+/** dist/actions.js externals: the jobs set plus Elysia, so the app, `@brust/core/elysia` and the
+ * worker's `mountActions` share ONE elysia (instanceof, HTTPError) — ruling R7. */
+const ACTIONS_EXTERNALS = [...JOBS_EXTERNALS, 'elysia', 'elysia/*', '@elysia/*']
+
+/** `dist/actions.js` (M3-F E1): the actions entry for the worker (`target: 'bun'`). No `define`: Elysia
+ * and app code read NODE_ENV at runtime (run.ts sets production). */
+export async function buildActions(dist: string, entry: string): Promise<string> {
+  const res = await Bun.build({ entrypoints: [entry], target: 'bun', format: 'esm', external: ACTIONS_EXTERNALS, plugins: [workerStorePlugin] })
+  if (!res.success) throw new BuildError('bundle', `actions: ${res.logs.map(String).join('\n')}`)
+  write(join(dist, 'actions.js'), await res.outputs[0]!.text())
+  return 'actions.js'
+}
 
 /** `dist/jobs.js` (`target: 'bun'`, React and `@brust/core` external): default export
  * `{ [componentId]: { precompute?, ssr? } }`; `ssr` only for react-tier, non-client_only components. */
-export async function buildJobs(dist: string, compiled: Map<string, Compiled>, sourceOf: SourceOf, appRoot: string): Promise<void> {
+export async function buildJobs(dist: string, compiled: Map<string, Compiled>, sourceOf: SourceOf, appRoot: string, stores: string[] = []): Promise<void> {
   const imports: string[] = ["import { createElement } from 'react'", "import { renderToString } from 'react-dom/server'"]
   const entries: string[] = []
+  const storePaths = [...new Set(stores)].sort()
+  for (const [i, p] of storePaths.entries()) {
+    if (isAbsolute(p) || p.split('/').includes('..') || !isFile(resolve(appRoot, p))) {
+      throw new BuildError('store-module', `store module ${p} is not a file inside the app (${appRoot})`)
+    }
+    imports.push(`import * as S${i} from ${JSON.stringify(resolve(appRoot, p))}`)
+  }
   let n = 0
   for (const c of compiled.values()) {
     const fns: string[] = []
@@ -305,15 +373,23 @@ export async function buildJobs(dist: string, compiled: Map<string, Compiled>, s
     n++
   }
   const entry = join(dist, '.stage', 'jobs.ts')
-  write(entry, `${imports.join('\n')}\nexport default {\n${entries.join('\n')}\n}\n`)
+  write(entry, `${imports.join('\n')}\nexport default {\n${entries.join('\n')}\n}\n${storesTable(storePaths)}`)
   const res = await Bun.build({
     entrypoints: [entry],
     target: 'bun',
     format: 'esm',
     define: PRODUCTION,
     external: JOBS_EXTERNALS,
-    plugins: [sourceDirPlugin(sourceOf, appRoot, JOBS_EXTERNALS)],
+    plugins: [workerStorePlugin, sourceDirPlugin(sourceOf, appRoot, JOBS_EXTERNALS)],
   })
   if (!res.success) throw new BuildError('bundle', `jobs: ${res.logs.map(String).join('\n')}`)
   write(join(dist, 'jobs.js'), await res.outputs[0]!.text())
+}
+
+/** C3: the sorted unique union of every component's `stores` (store module paths, app-root relative).
+ * Tolerant of the field's absence until the compiler lane writes it. */
+export function storeModules(m: { components: Record<string, unknown> }): string[] {
+  const all = new Set<string>()
+  for (const c of Object.values(m.components)) for (const p of (c as { stores?: string[] }).stores ?? []) all.add(p)
+  return [...all].sort()
 }

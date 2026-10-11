@@ -1,20 +1,22 @@
 //! M1b-2 passes over the structural IR, run in a fixed order by
-//! [`run_passes`]: deps → placement (uses `server_expr`) → children →
-//! captures → tier (`cache()` is read with the component, in `component.rs`). Pure functions of the IR, except `children`, which
-//! compiles child modules through the [`crate::analyze::modules`] cache.
+//! [`run_passes`]: stores → deps → placement (uses `server_expr`) → children →
+//! captures → tier (`cache()` is read with the component, in `component.rs`). Pure functions of the IR, except `stores`, which
+//! reads store modules, and `children`, which compiles child modules, both through the
+//! [`crate::analyze::modules`] cache.
 pub mod captures;
 pub mod children;
 pub mod deps;
 pub mod placement;
 pub mod projection;
 pub mod server_expr;
+pub mod stores;
 pub mod tier;
 
 use deps::DepsCx;
 use placement::{Painted, SlotInfo};
 use std::collections::{BTreeSet, HashMap};
 
-use crate::ir::ComponentIR;
+use crate::ir::{ComponentIR, JobKind};
 
 /// Facts one pass leaves for the next; never serialized.
 #[derive(Default)]
@@ -81,6 +83,10 @@ impl PassState {
 
 /// Runs every pass on `ir` (a structural IR from `analyze_component`).
 pub fn run_passes(ir: &mut ComponentIR, ctx: &PassCtx<'_>) -> PassState {
+    // First: `DepsCx` reads the resolved stores.
+    stores::resolve(ir, ctx);
+    // Before placement: a refused render read never becomes a placed value.
+    stores::check_render(ir, ctx);
     ir.structural = Some(Box::new(crate::ir::Structural {
         template: ir.template.clone(),
         state: ir.state.clone(),
@@ -94,6 +100,8 @@ pub fn run_passes(ir: &mut ComponentIR, ctx: &PassCtx<'_>) -> PassState {
     captures::captures(ir, &mut st, ctx);
     projection::projection(ir, &st);
     tier::tier(ir, &mut st, ctx);
+    // Backstop: the final precompute job never imports a store handle (D8).
+    stores::check_jobs(ir, ctx);
     // Job cache keys are computed from the inputs by a path evaluator that cannot read `.length`
     // of a sequence: a job reading `rows.length` is keyed by `rows`. (The client seed keeps the
     // count-only narrowing; see `SeedNode`.)
@@ -103,6 +111,22 @@ pub fn run_passes(ir: &mut ComponentIR, ctx: &PassCtx<'_>) -> PassState {
                 .iter()
                 .map(|p| p.strip_suffix(".length").unwrap_or(p).to_string()),
         );
+    }
+    // C5 (M3-F D8): every ssr job declares the store snapshot; an island's props map carries it
+    // (the server evaluates `props`, not `inputs`, when it is set). After `minimal_paths`, which
+    // collapses `["*", "__store"]` to `["*"]`.
+    for j in ir
+        .jobs
+        .iter_mut()
+        .filter(|j| matches!(j.kind, JobKind::Ssr { .. }))
+    {
+        if !j.inputs.iter().any(|i| i == "__store") {
+            j.inputs.push("__store".into());
+            j.inputs.sort();
+        }
+        if let Some(p) = j.props.as_mut() {
+            p.insert("__store".into(), Some("__store".into()));
+        }
     }
     st
 }

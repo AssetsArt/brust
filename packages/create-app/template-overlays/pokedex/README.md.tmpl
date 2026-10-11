@@ -1,0 +1,44 @@
+# __PROJECT_NAME__
+
+A [brust](https://github.com/AssetsArt/brust) Pokédex: loaders over an offline dataset, L1 page cache, native components,
+React islands, and a persistent team built with Elysia actions + SQLite and one unified store.
+
+## Run
+
+```bash
+bun install
+bun run dev        # brust build routes.tsx && brust start  ->  http://127.0.0.1:1337
+```
+
+Scripts: `dev` (build then start), `build`, `start`, `typecheck`, `snapshot` (needs network; rewrites `data/pokedex.json`).
+
+## The team
+
+The team lives in `data/team.sqlite` (created on first use, gitignored). Delete the file to reset it, or set
+`POKEDEX_TEAM_DB=/path/to/team.sqlite` to put it elsewhere. A fresh database is empty.
+
+The actions are served by Rust under `/_brust/action` (`GET /team`, `POST /team {id}`, `DELETE /team/:id`); the team holds
+at most 6 members and a seventh add answers `409` (`TeamFull`). The team store (`stores/team.ts`) is read by the native
+`AddToTeamButton` and the `TeamBuilder` island, and seeded by the layout loader, so the first paint is already right.
+`/unified` shows the same idea with a counter (`/unified?start=5` seeds it on the server).
+
+## Layout
+
+- `routes.tsx` — `/`, `/pokedex`, `/pokemon/{name}` (L1 60 s, `?nocache` bypass), `/type-chart` (L1 1 h), `/unified`, and a
+  root-level `*` 404 outside the layout. Pages that show the team carry the cache tag `team`.
+- `lib/` — loaders over the snapshot, `team-db.ts` (sqlite, server-only), `team-client.ts` + `api.ts` (the typed actions client).
+- `actions.ts` — the Elysia 2 team app on `brust()`; `stores/` — `team` and `unified` (`defineStore`).
+- `components/`, `pages/` — plain React functions.
+
+## Regenerating the stylesheet (never hand-edit `public/app.css`)
+
+```bash
+bunx @tailwindcss/cli@4 -i styles/app.css -o public/app.css --minify
+```
+
+(Tailwind must resolve from the input's directory: install `tailwindcss` in the project first.)
+
+## Docs
+
+- Actions: https://github.com/AssetsArt/brust/blob/v2/docs/actions.md
+- The unified store: https://github.com/AssetsArt/brust/blob/v2/docs/store.md

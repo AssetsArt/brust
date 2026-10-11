@@ -6,3 +6,4 @@ pub mod jsx;
 pub mod modules;
 pub mod names;
 pub mod passes;
+pub mod stores;

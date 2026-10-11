@@ -87,6 +87,8 @@ struct Child {
     tier: Tier,
     /// The compiled child has a precompute job or `useId` values the server must feed per instance.
     fed: bool,
+    /// The compiled child reads a resolved store at render (its jobs read `__store`, C5).
+    stores: bool,
 }
 
 fn react(reason: &str) -> Tier {
@@ -113,10 +115,7 @@ impl Walker<'_, '_> {
                 body,
                 ..
             } => {
-                let src = (
-                    self.paths_of(source),
-                    !self.deps_of(source).state.is_empty(),
-                );
+                let src = (self.paths_of(source), self.deps_of(source).reactive());
                 let n = self.loop_scope.len();
                 self.loop_scope.push(item.clone());
                 self.loop_scope.extend(index.iter().cloned());
@@ -199,6 +198,7 @@ impl Walker<'_, '_> {
                     path: None,
                     tier: react("unresolved import"),
                     fed: false,
+                    stores: false,
                 };
             }
             self.diagnostics.push(Diagnostic::fallback(
@@ -212,6 +212,7 @@ impl Walker<'_, '_> {
                 path: None,
                 tier: react("external component"),
                 fed: false,
+                stores: false,
             };
         };
         let export = match imported {
@@ -249,6 +250,7 @@ impl Walker<'_, '_> {
                         path: Some(ctx.path.into()),
                         tier: react("local component"),
                         fed: false,
+                        stores: false,
                     };
                 };
                 ctx.modules
@@ -283,8 +285,10 @@ impl Walker<'_, '_> {
         loc: u32,
     ) -> Child {
         let mut fed = false;
+        let mut stores = false;
         let tier = match lookup {
             Lookup::Compiled(ir) => {
+                stores = ir.stores.iter().any(|s| s.resolved.is_some());
                 fed = ir.use_id_slots > 0
                     || ir
                         .jobs
@@ -325,6 +329,7 @@ impl Walker<'_, '_> {
             path,
             tier,
             fed,
+            stores,
         }
     }
 
@@ -334,7 +339,7 @@ impl Walker<'_, '_> {
             Expr::Precomputed {
                 state_dependent, ..
             } => *state_dependent,
-            other => !self.deps_of(other).state.is_empty(),
+            other => self.deps_of(other).reactive(),
         }
     }
 
@@ -459,6 +464,11 @@ impl Walker<'_, '_> {
                             "a reactive value (reads state `{}`)",
                             d.state.iter().cloned().collect::<Vec<_>>().join("`, `")
                         ))
+                    } else if !d.stores.is_empty() {
+                        Some(format!(
+                            "a reactive value (reads store `{}`)",
+                            d.stores.iter().cloned().collect::<Vec<_>>().join("`, `")
+                        ))
                     } else {
                         None
                     };
@@ -532,7 +542,7 @@ impl Walker<'_, '_> {
                 *k += 1;
                 let k = *k;
                 if child.fed {
-                    let record = InstanceRecord {
+                    let mut record = InstanceRecord {
                         child_id: child_id.clone(),
                         k,
                         loops: self.loop_sources.clone(),
@@ -542,6 +552,14 @@ impl Walker<'_, '_> {
                             .map(|(name, v)| (name.clone(), self.prop_path(v)))
                             .collect(),
                     };
+                    // C5: the child's jobs read `__store`; a fed child sits under a chain component
+                    // whose props are the ctx, so the path is `__store` itself (else the manifest
+                    // refuses the child job's input root as uncovered).
+                    if child.stores {
+                        record
+                            .props
+                            .insert("__store".into(), Some("__store".into()));
+                    }
                     self.instances.push(record);
                 }
                 // Native / static child (§7.4, F70): see `instance_needs_link`.
@@ -670,7 +688,7 @@ pub enum LinkNeed {
 pub fn instance_needs_link(tier: &Tier, props: impl IntoIterator<Item = (bool, Deps)>) -> LinkNeed {
     let mut loop_only = false;
     for (function, d) in props {
-        if function || !d.state.is_empty() {
+        if function || d.reactive() {
             return LinkNeed::Always;
         }
         loop_only |= !d.loop_bindings.is_empty();

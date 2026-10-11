@@ -1,0 +1,1 @@
+warning store-name-dotted tests/fixtures/store-dotted-warning/input.tsx:6:13 useStore(cart): the store name 'shop.cart' or a key read from it contains '.', '[' or ']'; its job inputs fall back to `__store`, so the job key hashes the whole snapshot — prefer dot-free store names and keys
