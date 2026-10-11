@@ -1,7 +1,8 @@
 //! `FakeBun`: an in-process [`RenderDispatch`] standing in for the Bun worker.
 //! It parses the inline request JSON, counts calls per [`CallKind`], records the
 //! last request of each kind, and writes the canned JSON response into its SAB
-//! slot exactly as the real worker does. Bound to its server ([`FakeBun::bind`],
+//! slot exactly as the real worker does (a `fetch` responder returns the A2
+//! frame bytes itself, [`super::frame`]). Bound to its server ([`FakeBun::bind`],
 //! done by `boot*`), it takes the plan offer of `loader` requests like the real
 //! worker (M3-P P6). Counts are (loader runs, job batches) — a planned call
 //! counts one of each, as the two-call path did.
@@ -16,6 +17,7 @@ use brust_server::dispatch::{CallKind, DispatchError, RenderDispatch};
 use serde_json::{Value, json};
 
 type Responder = Box<dyn Fn(Value) -> Value + Send + Sync>;
+type FetchResponder = Box<dyn Fn(Value) -> Vec<u8> + Send + Sync>;
 
 pub struct FakeBun {
     /// `loader` request JSON → response JSON.
@@ -28,6 +30,11 @@ pub struct FakeBun {
     pub last_loader: Mutex<Option<Value>>,
     /// The last `jobs` request received (parsed).
     pub last_jobs: Mutex<Option<Value>>,
+    /// `fetch` request JSON → the A2 frame bytes ([`FakeBun::with_fetch`]).
+    pub fetch: Option<FetchResponder>,
+    pub fetch_calls: AtomicU32,
+    /// The last `fetch` request received (parsed).
+    pub last_fetch: Mutex<Option<Value>>,
     /// When set, every call is counted and recorded but its future never resolves.
     pub never_complete: bool,
     /// When set, a call parks until [`Gate::settle_all`], then writes its reply
@@ -71,6 +78,9 @@ impl FakeBun {
             job_calls: AtomicU32::new(0),
             last_loader: Mutex::new(None),
             last_jobs: Mutex::new(None),
+            fetch: None,
+            fetch_calls: AtomicU32::new(0),
+            last_fetch: Mutex::new(None),
             never_complete,
             gate: None,
             bound: OnceLock::new(),
@@ -106,6 +116,25 @@ impl FakeBun {
 
     pub fn last_jobs(&self) -> Option<Value> {
         self.last_jobs.lock().unwrap().clone()
+    }
+
+    /// `fetch` calls received.
+    pub fn fetch_count(&self) -> u32 {
+        self.fetch_calls.load(Ordering::SeqCst)
+    }
+
+    pub fn last_fetch(&self) -> Option<Value> {
+        self.last_fetch.lock().unwrap().clone()
+    }
+
+    /// Answers `fetch` calls with `f(request)` — the A2 frame bytes, written into the slot as is.
+    pub fn with_fetch(
+        self: Arc<Self>,
+        f: impl Fn(Value) -> Vec<u8> + Send + Sync + 'static,
+    ) -> Arc<Self> {
+        let mut b = Arc::into_inner(self).expect("with_fetch before the fake is shared");
+        b.fetch = Some(Box::new(f));
+        Arc::new(b)
     }
 
     /// Take the plan offer of `loader` requests (`plan: true`) like the real worker: write the
@@ -145,6 +174,9 @@ impl FakeBun {
         let respond = match kind {
             CallKind::Loader => &self.loader,
             CallKind::Jobs => &self.jobs,
+            CallKind::Fetch => {
+                return (self.fetch.as_ref().expect("FakeBun: no fetch responder"))(req);
+            }
         };
         let resp = respond(req.clone());
         if kind == CallKind::Loader
@@ -211,6 +243,7 @@ impl RenderDispatch for FakeBunHandle {
         let (counter, last) = match kind {
             CallKind::Loader => (&f.loader_calls, &f.last_loader),
             CallKind::Jobs => (&f.job_calls, &f.last_jobs),
+            CallKind::Fetch => (&f.fetch_calls, &f.last_fetch),
         };
         counter.fetch_add(1, Ordering::SeqCst);
         *last.lock().unwrap() = Some(req.clone());

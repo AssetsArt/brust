@@ -58,6 +58,7 @@ pub fn kind_str(k: CallKind) -> &'static str {
     match k {
         CallKind::Loader => "loader",
         CallKind::Jobs => "jobs",
+        CallKind::Fetch => "fetch",
     }
 }
 
@@ -141,6 +142,7 @@ mod tests {
     fn kind_names_match_the_wire() {
         assert_eq!(kind_str(CallKind::Loader), "loader");
         assert_eq!(kind_str(CallKind::Jobs), "jobs");
+        assert_eq!(kind_str(CallKind::Fetch), "fetch");
         // The same spelling `CallKind` serialises to (protocol + logs).
         assert_eq!(
             serde_json::to_string(&CallKind::Loader).unwrap(),

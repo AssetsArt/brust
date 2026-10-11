@@ -318,6 +318,7 @@ impl ThreadWorker {
                 let req: Value = serde_json::from_str(&json).expect("request is JSON");
                 let bytes = match kind {
                     CallKind::Jobs => serde_json::to_vec(&stress_jobs(&req)).unwrap(),
+                    CallKind::Fetch => unreachable!("no fetch in this test"),
                     CallKind::Loader => {
                         std::thread::sleep(loader_delay);
                         let first = serde_json::to_vec(&stress_loader(&req)).unwrap();

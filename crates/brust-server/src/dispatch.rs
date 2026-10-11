@@ -20,10 +20,10 @@
 //! for the worker's RESPONSE (Rust is the reader there, with atomic semantics
 //! under its own control). Do not try SAB-request a third time.
 //!
-//! v2 (brust-server): the seam carries two call kinds ([`CallKind::Loader`],
-//! [`CallKind::Jobs`]) instead of a render, and the worker's response in the
-//! slot is plain JSON (no `[meta_len][meta][body]` framing). [`call_worker`] is
-//! the only reader of the SAB.
+//! v2 (brust-server): the seam carries three call kinds ([`CallKind::Loader`],
+//! [`CallKind::Jobs`], [`CallKind::Fetch`]) instead of a render. `fetch` answers
+//! are framed (A2, [`decode_fetch_frame`]); loader/jobs stay plain JSON.
+//! `call_worker_decoded` is the only reader of the SAB.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -35,6 +35,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::pool::{ClaimResult, PlanBox, RenderClaim, WorkerEntry, WorkerPool};
+use crate::protocol::{FetchMeta, FetchRequest, FetchResponse};
 
 /// Which worker entry point a [`RenderDispatch::call`] targets (spec §1 S1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -42,6 +43,7 @@ use crate::pool::{ClaimResult, PlanBox, RenderClaim, WorkerEntry, WorkerPool};
 pub enum CallKind {
     Loader,
     Jobs,
+    Fetch,
 }
 
 /// Failure layers from a worker dispatch, mirroring the old
@@ -220,6 +222,75 @@ pub async fn call_worker_planned<Req: Serialize, Resp: DeserializeOwned + Send +
     req: &Req,
     seed: Option<PlanBox>,
 ) -> Result<(Resp, Option<PlanBox>), CallError> {
+    call_worker_decoded(pool, timeout, call_timeout, kind, req, seed, |bytes| {
+        // M3-P P7: validate UTF-8 once and parse from `str` (serde_json's `from_slice` re-checks
+        // every string it reads; ~8% of the D parse).
+        std::str::from_utf8(bytes)
+            .map_err(|e| CallError::BadResponse(format!("response not UTF-8: {e}")))
+            .and_then(|s| {
+                serde_json::from_str::<Resp>(s).map_err(|e| CallError::BadResponse(e.to_string()))
+            })
+    })
+    .await
+}
+
+/// One `fetch` round trip (A1 in, A2 out). Never planned.
+pub async fn call_worker_fetch(
+    pool: &Arc<WorkerPool>,
+    timeout: Duration,
+    call_timeout: Duration,
+    req: &FetchRequest<'_>,
+) -> Result<FetchResponse, CallError> {
+    call_worker_decoded(
+        pool,
+        timeout,
+        call_timeout,
+        CallKind::Fetch,
+        req,
+        None,
+        decode_fetch_frame,
+    )
+    .await
+    .map(|(r, _)| r)
+}
+
+/// A2: `[u32 LE meta_len][meta JSON][body]`; the body is copied (the slot is about to be released).
+pub fn decode_fetch_frame(b: &[u8]) -> Result<FetchResponse, CallError> {
+    let Some(head) = b.get(..4) else {
+        return Err(CallError::BadResponse(
+            "fetch frame shorter than 4 bytes".into(),
+        ));
+    };
+    let n = u32::from_le_bytes(head.try_into().expect("4 bytes")) as usize;
+    let Some(meta) = b.get(4..4usize.saturating_add(n)) else {
+        return Err(CallError::BadResponse(format!(
+            "fetch frame meta_len {n} exceeds {}",
+            b.len() - 4
+        )));
+    };
+    let m: FetchMeta = serde_json::from_slice(meta)
+        .map_err(|e| CallError::BadResponse(format!("fetch frame meta: {e}")))?;
+    Ok(FetchResponse {
+        status: m.status,
+        headers: m.headers,
+        body: bytes::Bytes::copy_from_slice(&b[4 + n..]),
+    })
+}
+
+/// The claimed round trip, the slot bytes decoded by `decode` INSIDE the claim (the slot is
+/// reused once it drops — F3).
+async fn call_worker_decoded<Req: Serialize, R: Send + 'static, D>(
+    pool: &Arc<WorkerPool>,
+    timeout: Duration,
+    call_timeout: Duration,
+    kind: CallKind,
+    req: &Req,
+    seed: Option<PlanBox>,
+    decode: D,
+) -> Result<(R, Option<PlanBox>), CallError>
+where
+    D: FnOnce(&[u8]) -> Result<R, CallError> + Send + 'static,
+{
     let claim = claim_or_wait(pool, timeout, || pool.try_claim_render_lockfree()).await?;
     if let Some(s) = seed {
         claim.put_plan(s);
@@ -229,7 +300,7 @@ pub async fn call_worker_planned<Req: Serialize, Resp: DeserializeOwned + Send +
     pool.ensure_sweeper();
     let pool = Arc::clone(pool);
     let (stamped, stamped_slot) = (Arc::clone(claim.entry()), claim.slot());
-    let call: Pin<Box<dyn Future<Output = PlannedResult<Resp>> + Send>> = Box::pin(async move {
+    let call: Pin<Box<dyn Future<Output = PlannedResult<R>> + Send>> = Box::pin(async move {
         let entry = Arc::clone(claim.entry());
         let slot = claim.slot();
         let len = match entry.dispatch.call(kind, json, slot).await {
@@ -251,13 +322,7 @@ pub async fn call_worker_planned<Req: Serialize, Resp: DeserializeOwned + Send +
         // future), JS is done writing this slot's sub-region; `len` is bounds-checked
         // above; `claim` is still held so no other request can write the slot.
         let bytes = unsafe { std::slice::from_raw_parts(ptr, len as usize) };
-        // M3-P P7: validate UTF-8 once and parse from `str` (serde_json's `from_slice` re-checks
-        // every string it reads; ~8% of the D parse).
-        let parsed = std::str::from_utf8(bytes)
-            .map_err(|e| CallError::BadResponse(format!("response not UTF-8: {e}")))
-            .and_then(|s| {
-                serde_json::from_str::<Resp>(s).map_err(|e| CallError::BadResponse(e.to_string()))
-            });
+        let parsed = decode(bytes);
         let plan = claim.take_plan();
         drop(claim);
         parsed.map(|r| (r, plan))
@@ -296,7 +361,7 @@ pub async fn call_worker_planned<Req: Serialize, Resp: DeserializeOwned + Send +
     }
 }
 
-/// A claimed call's deadline passed (the `call_worker_planned` deadline arm).
+/// A claimed call's deadline passed (the `call_worker_decoded` deadline arm).
 struct Elapsed;
 
 /// The deadline of one claimed call (M3-P P7, R3). Ready iff now >= `at`, where `at` starts as
@@ -610,6 +675,120 @@ mod tests {
         .await;
         assert!(matches!(r, Err(CallError::BadResponse(_))), "{r:?}");
         // Released on the error path too.
+        assert!(matches!(
+            pool.try_claim_render_lockfree(),
+            ClaimResult::Claimed(_)
+        ));
+    }
+
+    /// An A2 frame: `[u32 LE meta_len][meta][body]`.
+    fn frame(meta: &[u8], body: &[u8]) -> Vec<u8> {
+        let mut f = (meta.len() as u32).to_le_bytes().to_vec();
+        f.extend_from_slice(meta);
+        f.extend_from_slice(body);
+        f
+    }
+
+    fn bad(r: Result<FetchResponse, CallError>) -> String {
+        match r {
+            Err(CallError::BadResponse(m)) => m,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn decode_fetch_frame_table() {
+        let body: Vec<u8> = (0u8..=255).collect();
+        assert_eq!(
+            decode_fetch_frame(&frame(br#"{"status":200,"headers":[["x","1"]]}"#, &body)).unwrap(),
+            FetchResponse {
+                status: 200,
+                headers: vec![("x".into(), "1".into())],
+                body: bytes::Bytes::from(body.clone()),
+            }
+        );
+        // Two Set-Cookie pairs survive in order; an empty body is fine.
+        let r = decode_fetch_frame(&frame(
+            br#"{"status":201,"headers":[["set-cookie","a=1"],["set-cookie","b=2"]]}"#,
+            b"",
+        ))
+        .unwrap();
+        assert_eq!(
+            (r.status, r.headers.len(), r.body.len()),
+            (201, 2, 0),
+            "{r:?}"
+        );
+        assert_eq!(
+            bad(decode_fetch_frame(&[1, 0, 0])),
+            "fetch frame shorter than 4 bytes"
+        );
+        // meta_len == len: the meta would run past the frame.
+        let mut f = frame(b"{}", b"");
+        let n = f.len() as u32;
+        f[..4].copy_from_slice(&n.to_le_bytes());
+        assert!(bad(decode_fetch_frame(&f)).contains("meta_len"));
+        assert!(bad(decode_fetch_frame(&frame(b"{", b"x"))).contains("meta"));
+        // A JSON answer (the worker's unknown-kind `{error}`) reads as a huge meta_len.
+        assert!(bad(decode_fetch_frame(br#"{"error":"x"}"#)).contains("meta_len"));
+    }
+
+    #[test]
+    fn fetch_call_kind_serialises_to_fetch() {
+        assert_eq!(
+            serde_json::to_string(&CallKind::Fetch).unwrap(),
+            "\"fetch\""
+        );
+    }
+
+    fn fetch_request() -> FetchRequest<'static> {
+        FetchRequest {
+            method: "POST",
+            url: "/_brust/action/x",
+            headers: vec![],
+            body: None,
+            req: crate::routing::routes::RequestEnvelope {
+                method: "POST",
+                url: "/_brust/action/x",
+                headers: vec![],
+                cookies: vec![],
+                search: vec![],
+            },
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn call_worker_fetch_round_trips_a_frame() {
+        let body: Vec<u8> = (0u8..=255).collect();
+        let f = frame(br#"{"status":202,"headers":[["set-cookie","a=1"]]}"#, &body);
+        let pool = pool_with(MockDispatch::replying(&f));
+        let r = call_worker_fetch(
+            &pool,
+            Duration::from_millis(100),
+            Duration::from_secs(5),
+            &fetch_request(),
+        )
+        .await
+        .expect("round trip");
+        assert_eq!(r.status, 202);
+        assert_eq!(r.headers, vec![("set-cookie".into(), "a=1".into())]);
+        assert_eq!(&r.body[..], &body[..]);
+        assert!(matches!(
+            pool.try_claim_render_lockfree(),
+            ClaimResult::Claimed(_)
+        ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn fetch_len_over_capacity_is_bad_response() {
+        let pool = pool_with(MockDispatch::reply_len(256 * 1024 + 1));
+        let r = call_worker_fetch(
+            &pool,
+            Duration::from_millis(100),
+            Duration::from_secs(5),
+            &fetch_request(),
+        )
+        .await;
+        assert!(bad(r).contains("outside"));
         assert!(matches!(
             pool.try_claim_render_lockfree(),
             ClaimResult::Claimed(_)

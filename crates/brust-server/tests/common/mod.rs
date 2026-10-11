@@ -14,6 +14,16 @@ use serde_json::{Value, json};
 #[allow(unused_imports)]
 pub use fake_bun::{FakeBun, FakeBunHandle, Gate};
 
+/// The A2 frame a `fetch` responder answers: `[u32 LE meta_len][meta JSON {status, headers}][body]`.
+pub fn frame(status: u16, headers: &[(&str, &str)], body: &[u8]) -> Vec<u8> {
+    let meta = serde_json::to_vec(&json!({"status": status, "headers": headers}))
+        .expect("frame meta serialises");
+    let mut f = (meta.len() as u32).to_le_bytes().to_vec();
+    f.extend_from_slice(&meta);
+    f.extend_from_slice(body);
+    f
+}
+
 pub fn fx() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/dist")
 }
