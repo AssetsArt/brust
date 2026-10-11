@@ -21,6 +21,7 @@
     "./store": "./src/store/index.ts",
     "./store/react": "./src/store/react.ts",
     "./elysia": "./src/actions/elysia.ts",
+    "./client": "./src/actions/client.ts",
     "./native": "./native/index.js"
   },
   "scripts": {
