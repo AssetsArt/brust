@@ -774,6 +774,105 @@ mod tests {
         env.render_str(src, ctx).unwrap()
     }
 
+    /// C4: `t.name` must read the same key as `t["name"]` for every name the
+    /// compiler may emit it for, including names that are map methods.
+    #[test]
+    fn attribute_access_equals_subscript_for_map_keys() {
+        let names = [
+            "items",
+            "keys",
+            "values",
+            "get",
+            "length",
+            "len",
+            "count",
+            "update",
+            "pop",
+            "title",
+            "upper",
+            "lower",
+            "name",
+            "_x",
+            "a1",
+            "loop",
+            "self",
+            "super",
+            "caller",
+            "varargs",
+            "kwargs",
+            "true",
+            "false",
+            "none",
+            "True",
+            "False",
+            "None",
+            "and",
+            "or",
+            "not",
+            "in",
+            "is",
+            "if",
+            "else",
+            "for",
+            "set",
+            "with",
+            "block",
+            "import",
+            "macro",
+            "filter",
+            "call",
+            "do",
+            "extends",
+            "include",
+            "from",
+            "as",
+            "recursive",
+            "ignore",
+            "missing",
+            "context",
+            "without",
+            "scoped",
+            "elif",
+            "endif",
+            "raw",
+            "test",
+        ];
+        for n in names {
+            let map: serde_json::Value = serde_json::json!({ n: "V" });
+            let ctx = value_of(serde_json::json!({ "t": map }));
+            let bracket = format!("{{{{ t[\"{n}\"] }}}}");
+            let dotted = format!("{{{{ t.{n} }}}}");
+            let mut env = Environment::new();
+            register(&mut env);
+            let b = env.render_str(&bracket, ctx.clone()).unwrap();
+            let d = env.render_str(&dotted, ctx).unwrap();
+            assert_eq!(b, "V", "{n}");
+            assert_eq!(d, b, "{n}");
+        }
+        // Non-map targets and absent keys fail or render identically both ways.
+        for t in [
+            serde_json::json!(null),
+            serde_json::json!("str"),
+            serde_json::json!([1, 2]),
+            serde_json::json!(3),
+            serde_json::json!({}),
+            serde_json::json!({ "a": null }),
+        ] {
+            for n in ["items", "name", "length", "a"] {
+                let ctx = value_of(serde_json::json!({ "t": t }));
+                let mut env = Environment::new();
+                register(&mut env);
+                let b = env.render_str(&format!("{{{{ t[\"{n}\"] }}}}"), ctx.clone());
+                let d = env.render_str(&format!("{{{{ t.{n} }}}}"), ctx);
+                assert_eq!(
+                    b.map_err(|e| e.to_string()),
+                    d.map_err(|e| e.to_string()),
+                    "{t} {n}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn js_mod_and_js_div_follow_javascript() {
         let ctx = || Value::from(());

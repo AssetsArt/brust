@@ -40,6 +40,25 @@ pub fn to_jinja(e: &ServerExpr, ctx: &JinjaCtx<'_>) -> String {
 pub const UNDEFINED: &str = "__undefined";
 
 /// A string literal in jinja syntax.
+/// `t.name` for a plain identifier key, `t["name"]` otherwise. Jinja words stay
+/// bracketed so the lowered text never depends on how a name lexes after a dot.
+pub(crate) fn member_access(t: &str, name: &str) -> String {
+    const WORDS: &[&str] = &[
+        "true", "false", "none", "True", "False", "None", "and", "or", "not", "in", "is", "if",
+        "else",
+    ];
+    let mut cs = name.chars();
+    let ident = cs
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && cs.all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if ident && !WORDS.contains(&name) {
+        format!("{t}.{name}")
+    } else {
+        format!("{t}[{}]", jinja_string(name))
+    }
+}
+
 pub fn jinja_string(s: &str) -> String {
     let mut out = String::from("\"");
     for c in s.chars() {
@@ -106,7 +125,7 @@ fn raw(e: &RawExpr, ctx: &JinjaCtx<'_>) -> String {
                     format!("({t} | length)")
                 };
             }
-            let access = format!("{t}[{}]", jinja_string(name));
+            let access = member_access(&t, name);
             if *optional {
                 format!("({access} if {t} is defined and {t} is not none else {UNDEFINED})")
             } else {
@@ -222,5 +241,30 @@ fn call(callee: &RawExpr, args: &[RawExpr], ctx: &JinjaCtx<'_>) -> String {
         "includes" => format!("({t} | includes({}))", a.join(", ")),
         "join" => format!("({t} | join({}))", a.join(", ")),
         _ => "none".into(),
+    }
+}
+
+#[cfg(test)]
+mod member_access_tests {
+    use super::member_access;
+
+    #[test]
+    fn identifier_keys_use_attribute_access() {
+        assert_eq!(member_access("p", "name"), "p.name");
+        assert_eq!(member_access("p", "_a1"), "p._a1");
+        assert_eq!(member_access("p", "items"), "p.items");
+    }
+
+    #[test]
+    fn other_keys_stay_bracketed() {
+        for k in [
+            "data-x", "a b", "1a", "", "é", "a.b", "none", "true", "not", "is", "in",
+        ] {
+            assert_eq!(
+                member_access("p", k),
+                format!("p[{}]", super::jinja_string(k)),
+                "{k}"
+            );
+        }
     }
 }
