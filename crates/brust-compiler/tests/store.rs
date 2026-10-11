@@ -535,6 +535,37 @@ fn store_factory_keys() {
     );
 }
 
+/// Review N2: a factory with any return besides its final top-level one has unknown keys.
+#[test]
+fn store_factory_early_return() {
+    let factory = |body: &str| {
+        let cart = format!(
+            "import {{ defineStore, signal }} from 'brust/store'\nexport const cart = defineStore('cart', (x?: boolean) => {{ const count = signal(0); {body} }})\n"
+        );
+        resolved(&analyze_tree(&[
+            ("cart.ts", &cart),
+            ("C.tsx", &reader("import { cart } from './cart'")),
+        ]))
+        .clone()
+    };
+    for body in [
+        "if (x) return { count }\nreturn { count, zeta: signal(1) }",
+        "if (x) { return { count } } else { }\nreturn { count }",
+        "for (const k of [1]) { if (k) return { count } }\nreturn { count }",
+        "switch (1) { case 1: return { count } }\nreturn { count }",
+        "try { return { count } } catch { }\nreturn { count }",
+        "return { count }\nreturn { zeta: count }",
+    ] {
+        let r = factory(body);
+        assert!(!r.factory_read, "{body}: {r:?}");
+        assert!(r.signals.is_empty(), "{body}: {r:?}");
+    }
+    // A return inside a nested function is not the factory's.
+    let r = factory("const f = () => { return 1 }\nfunction g() { return 2 }\nreturn { count }");
+    assert!(r.factory_read, "{r:?}");
+    assert_eq!(r.signals, ["count"]);
+}
+
 #[test]
 fn store_name_duplicate() {
     let ir = analyze_tree(&[

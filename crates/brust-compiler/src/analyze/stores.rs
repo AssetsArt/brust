@@ -411,7 +411,9 @@ impl<'a> Module<'a> {
     }
 
     /// The factory's top-level keys: (signals, computeds, read). `read` is false when the
-    /// returned object is not literally visible (`() => makeStore()`, a spread, a computed key).
+    /// returned object is not literally visible (`() => makeStore()`, a spread, a computed key)
+    /// or when the factory may return something else (any return besides its one top-level
+    /// return: `if (x) return { … }`).
     fn factory_keys(&self, f: &js_ast::Expr) -> (Vec<String>, Vec<String>, bool) {
         let stmts = match &f.data {
             E::EArrow(a) => a.body.stmts.slice(),
@@ -421,6 +423,7 @@ impl<'a> Module<'a> {
         // `const count = signal(0)` locals of the factory body → their API function.
         let mut locals: HashMap<u32, &str> = HashMap::new();
         let mut returned = None;
+        let mut other_return = false;
         for stmt in stmts {
             match &stmt.data {
                 S::SLocal(l) if matches!(l.kind, js_ast::S::Kind::KConst) => {
@@ -432,11 +435,17 @@ impl<'a> Module<'a> {
                         }
                     }
                 }
-                S::SReturn(r) => returned = r.value,
-                _ => {}
+                S::SReturn(r) => {
+                    other_return |= returned.is_some();
+                    returned = Some(r.value);
+                }
+                _ => other_return |= has_return(stmt),
             }
         }
-        let Some(E::EObject(obj)) = returned.map(|e| e.data) else {
+        if other_return {
+            return (vec![], vec![], false);
+        }
+        let Some(E::EObject(obj)) = returned.flatten().map(|e| e.data) else {
             return (vec![], vec![], false);
         };
         let (mut signals, mut computeds, mut read) = (vec![], vec![], true);
@@ -468,5 +477,30 @@ impl<'a> Module<'a> {
         computeds.sort();
         computeds.dedup();
         (signals, computeds, read)
+    }
+}
+
+/// `true` when `stmt` holds a `return` of the enclosing function (nested functions and classes
+/// are not walked: their returns are their own).
+fn has_return(stmt: &js_ast::Stmt) -> bool {
+    let any = |stmts: &[js_ast::Stmt]| stmts.iter().any(has_return);
+    match &stmt.data {
+        S::SReturn(_) => true,
+        S::SBlock(b) => any(b.stmts.slice()),
+        S::SIf(i) => has_return(&i.yes) || i.no.as_ref().is_some_and(has_return),
+        S::SFor(f) => has_return(&f.body),
+        S::SForIn(f) => has_return(&f.body),
+        S::SForOf(f) => has_return(&f.body),
+        S::SWhile(w) => has_return(&w.body),
+        S::SDoWhile(w) => has_return(&w.body),
+        S::SWith(w) => has_return(&w.body),
+        S::SLabel(l) => has_return(&l.stmt),
+        S::STry(t) => {
+            any(t.body.slice())
+                || t.catch.as_ref().is_some_and(|c| any(c.body.slice()))
+                || t.finally.as_ref().is_some_and(|f| any(f.stmts.slice()))
+        }
+        S::SSwitch(sw) => sw.cases.slice().iter().any(|c| any(c.body.slice())),
+        _ => false,
     }
 }
