@@ -1,0 +1,18 @@
+{
+  "name": "@brust/create-app",
+  "version": "0.0.0",
+  "description": "Scaffold a brust v2 app — bun create @brust/app <name>",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/AssetsArt/brust.git", "directory": "packages/create-app" },
+  "type": "module",
+  "bin": { "create-app": "./bin/create-app.ts" },
+  "files": ["bin", "src", "templates", "README.md"],
+  "scripts": {
+    "build": "bun scripts/sync-template.ts",
+    "prepack": "bun scripts/sync-template.ts",
+    "test": "bun test",
+    "typecheck": "bun check"
+  },
+  "devDependencies": { "@types/bun": "^1.4.0", "typescript": "^7.0.2" },
+  "publishConfig": { "access": "public" }
+}

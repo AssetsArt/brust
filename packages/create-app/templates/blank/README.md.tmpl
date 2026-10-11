@@ -1,0 +1,42 @@
+# __PROJECT_NAME__
+
+A [brust](https://github.com/AssetsArt/brust) app: React components compiled ahead of time, served by Rust.
+
+## Run
+
+```bash
+bun install
+bun run dev        # brust build routes.tsx && brust start  ->  http://127.0.0.1:1337
+```
+
+Scripts: `dev` (build then start), `build`, `start`, `typecheck`.
+
+## Layout
+
+- `routes.tsx` — `defineRoutes`: one layout, one page.
+- `components/Layout.tsx` — the document root (`<html>` + `<Outlet/>`).
+- `components/Counter.tsx` — a `useState` counter; the compiler makes it a native component (no React in the browser).
+- `actions.ts` — an Elysia 2 app on `brust()`, served by Rust under `/_brust/action` (enabled by `[actions]` in `brust.toml`).
+- `public/` — static files, served at `/public/...`.
+
+## The hello action
+
+```bash
+curl 'http://127.0.0.1:1337/_brust/action/hello?name=ash'
+# {"message":"Hello, ash!"}
+```
+
+From the browser, use the typed client:
+
+```ts
+import { client } from '@brust/core/client'
+import type { App } from './actions'
+
+const api = client<App>()
+const { data } = await api.hello.get({ query: { name: 'ash' } })
+```
+
+## Docs
+
+- Actions: https://github.com/AssetsArt/brust/blob/v2/docs/actions.md
+- The unified store: https://github.com/AssetsArt/brust/blob/v2/docs/store.md
