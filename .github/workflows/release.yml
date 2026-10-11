@@ -68,9 +68,11 @@ jobs:
           ! grep -q 'workspace:' /tmp/packed.json || { echo 'packed @brust/core still contains workspace: deps'; exit 1; }
           grep -c '"@brust/native-' /tmp/packed.json | grep -qx 6
           # @brust/create-app: the generated pokedex template ships, and no dev leftovers do (prepack runs on pack and publish).
-          (cd "$GITHUB_WORKSPACE/packages/create-app" && bun pm pack --destination /tmp/pack-ca) && tar -tzf /tmp/pack-ca/*.tgz > /tmp/ca.txt
-          grep -qx 'package/templates/pokedex/routes.tsx' /tmp/ca.txt && grep -qx 'package/templates/blank/_gitignore' /tmp/ca.txt
-          ! grep -Eq '/(node_modules|dist|test)/|team\.sqlite' /tmp/ca.txt
+          (cd "$GITHUB_WORKSPACE/packages/create-app" && bun pm pack --destination /tmp/pack-ca)
+          tar -tzf /tmp/pack-ca/*.tgz > /tmp/ca.txt
+          grep -qx 'package/templates/pokedex/routes.tsx' /tmp/ca.txt
+          grep -qx 'package/templates/blank/_gitignore' /tmp/ca.txt
+          ! grep -Eq '/(node_modules|dist|test)/|team\.sqlite' /tmp/ca.txt || { echo 'dev leftovers in the @brust/create-app tarball'; exit 1; }
         env: { NPM_CONFIG_TOKEN: dry-run-no-auth, NODE_AUTH_TOKEN: dry-run-no-auth }   # bun publish --dry-run still demands a token; nothing is sent
   publish:
     name: publish to npm (tag push only, environment-gated — a human action)
@@ -106,9 +108,11 @@ jobs:
           ! grep -q 'workspace:' /tmp/packed.json || { echo 'packed @brust/core still contains workspace: deps'; exit 1; }
           grep -c '"@brust/native-' /tmp/packed.json | grep -qx 6
           # @brust/create-app: the generated pokedex template ships, and no dev leftovers do (prepack runs on pack and publish).
-          (cd "$GITHUB_WORKSPACE/packages/create-app" && bun pm pack --destination /tmp/pack-ca) && tar -tzf /tmp/pack-ca/*.tgz > /tmp/ca.txt
-          grep -qx 'package/templates/pokedex/routes.tsx' /tmp/ca.txt && grep -qx 'package/templates/blank/_gitignore' /tmp/ca.txt
-          ! grep -Eq '/(node_modules|dist|test)/|team\.sqlite' /tmp/ca.txt
+          (cd "$GITHUB_WORKSPACE/packages/create-app" && bun pm pack --destination /tmp/pack-ca)
+          tar -tzf /tmp/pack-ca/*.tgz > /tmp/ca.txt
+          grep -qx 'package/templates/pokedex/routes.tsx' /tmp/ca.txt
+          grep -qx 'package/templates/blank/_gitignore' /tmp/ca.txt
+          ! grep -Eq '/(node_modules|dist|test)/|team\.sqlite' /tmp/ca.txt || { echo 'dev leftovers in the @brust/create-app tarball'; exit 1; }
       - name: Publish (runtime-dom → six natives → core, so core never lands before its optional deps; re-runnable)
         run: |
           set -e
