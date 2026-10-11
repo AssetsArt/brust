@@ -387,4 +387,4 @@ export const api = client<App>({
 
 ## 10. Next
 
-The pokedex example builds a team with these pieces (an Elysia app on a database file, the typed client, a shared store). It lands with the pokedex lane of this milestone.
+The pokedex example builds a team with these pieces: an Elysia app on a database file ([`examples/pokedex/actions.ts`](../examples/pokedex/actions.ts)), the typed client and the shared store ([`examples/pokedex/lib/team-client.ts`](../examples/pokedex/lib/team-client.ts)). The store is explained in [The unified store](./store.md).
