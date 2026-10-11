@@ -514,6 +514,10 @@ fn eight_workers_plan_while_tokio_inserts_and_invalidates() {
         .map(|c| u64::from(c.load(Ordering::SeqCst)))
         .sum();
     eprintln!("stress: {jobs_calls} two-call pages (adaptive offer)");
+    assert!(
+        0 < jobs_calls && jobs_calls <= (WORKERS * PAGES) as u64,
+        "the two-call path ran: {jobs_calls}"
+    );
     assert_eq!(
         st["worker_calls"],
         (WORKERS * PAGES) as u64 + jobs_calls,
