@@ -1,8 +1,8 @@
 diff --git a/Cargo.lock b/Cargo.lock
-index d2b2c97..9c7d259 100644
+index b4cc268..d1118a5 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
-@@ -174,6 +174,7 @@ dependencies = [
+@@ -175,6 +175,7 @@ dependencies = [
   "http-body-util",
   "hyper",
   "hyper-util",
@@ -11,11 +11,11 @@ index d2b2c97..9c7d259 100644
   "minijinja",
   "moka",
 diff --git a/crates/brust-server/Cargo.toml b/crates/brust-server/Cargo.toml
-index b407985..39026fe 100644
+index bd95ffc..303bd7d 100644
 --- a/crates/brust-server/Cargo.toml
 +++ b/crates/brust-server/Cargo.toml
-@@ -19,6 +19,7 @@ percent-encoding = "2.3"
- moka = { version = "0.12", features = ["sync"] }
+@@ -20,6 +20,7 @@ moka = { version = "0.12", features = ["sync"] }
+ crossbeam-utils = "0.8"
  flate2 = "1"
  blake3 = "1"
 +libc = "0.2"
@@ -122,10 +122,10 @@ index 8794f1b..1a0f32a 100644
  pub mod render;
 diff --git a/crates/brust-server/src/perf.rs b/crates/brust-server/src/perf.rs
 new file mode 100644
-index 0000000..91fde9c
+index 0000000..e7981ea
 --- /dev/null
 +++ b/crates/brust-server/src/perf.rs
-@@ -0,0 +1,98 @@
+@@ -0,0 +1,99 @@
 +//! TEMPORARY per-stage attribution (m2p ruling 7d164bb6) — local patch, never commit.
 +//! Per-thread accumulators (no cross-thread contention), summed by `/_brust/perf`.
 +use std::sync::Arc;
@@ -142,6 +142,7 @@ index 0000000..91fde9c
 +}
 +stages! {
 +    SVC_TOTAL = 0, HANDLE_TOTAL = 1, PAGE_TOTAL = 2, MATCH = 3, L1 = 4, CTX_INIT = 5,
++    ENVELOPE = 6, L1_HIT = 7,
 +    MERGE_LOADER = 21, COLLECT_JOBS = 22, CJ_INPUTS = 23, CJ_KEY = 24, JOB_LOOKUP = 25,
 +    JOBS_CALL = 26, SEED = 27, MERGE_RESULTS = 28, CTX_VALUE = 29, OVERLAY = 30,
 +    TMPL0 = 31, TMPL1 = 32, TMPL2 = 33, TMPL3 = 34, SCOPE_BUILD = 35, INJECT = 36,
@@ -225,10 +226,10 @@ index 0000000..91fde9c
 +    serde_json::to_vec(&m).unwrap()
 +}
 diff --git a/crates/brust-server/src/pipeline.rs b/crates/brust-server/src/pipeline.rs
-index 57fc3b3..3268e9b 100644
+index 906501b..30d4c4a 100644
 --- a/crates/brust-server/src/pipeline.rs
 +++ b/crates/brust-server/src/pipeline.rs
-@@ -97,6 +97,9 @@ pub(crate) async fn handle(req: Request<Incoming>, s: Arc<Server>) -> Response<R
+@@ -99,6 +99,9 @@ pub(crate) async fn handle(req: Request<Incoming>, s: Arc<Server>) -> Response<R
          tracing::debug!(target: "brust::request", path = path_only, status = 200u16, "ping");
          return body::resp(200, "text/plain", &[], b"pong\n".to_vec());
      }
@@ -238,15 +239,15 @@ index 57fc3b3..3268e9b 100644
      if path_only == "/_brust/cache/stats" {
          tracing::debug!(target: "brust::request", path = path_only, status = 200u16, "stats");
          let json = serde_json::to_vec(&s.stats()).unwrap_or_else(|_| b"{}".to_vec());
-@@ -127,6 +130,7 @@ pub(crate) async fn handle(req: Request<Incoming>, s: Arc<Server>) -> Response<R
+@@ -129,6 +132,7 @@ pub(crate) async fn handle(req: Request<Incoming>, s: Arc<Server>) -> Response<R
          bun_calls: 0,
      };
      let resp = page(&s, full, headers, &mut meta).await;
 +    crate::perf::rec(crate::perf::PAGE_TOTAL, t0);
      tracing::debug!(
          target: "brust::request",
-         route = %meta.route,
-@@ -146,6 +150,7 @@ pub(crate) async fn handle(req: Request<Incoming>, s: Arc<Server>) -> Response<R
+         route = %meta.route.map_or("-", |ri| s.manifest.routes[ri].id.as_str()),
+@@ -148,6 +152,7 @@ pub(crate) async fn handle(req: Request<Incoming>, s: Arc<Server>) -> Response<R
          }
          return Response::from_parts(p, empty_body());
      }
@@ -254,7 +255,7 @@ index 57fc3b3..3268e9b 100644
      resp
  }
  
-@@ -273,6 +278,10 @@ async fn page(
+@@ -275,6 +280,10 @@ async fn page(
      headers: &HeaderMap,
      meta: &mut PageMeta,
  ) -> Response<ResponseBody> {
@@ -263,27 +264,37 @@ index 57fc3b3..3268e9b 100644
 +    let c0 = if cpu { perf::thread_cpu() } else { 0 };
 +    let t = std::time::Instant::now();
      // Pages are GET; a HEAD runs the same path (and shares its L1 entries).
-     let (route_id, envelope, status) = match s.routes.match_path("GET", full, headers) {
-         MatchResult::Matched { route_id, envelope } => (route_id, envelope, 200u16),
-@@ -284,6 +293,8 @@ async fn page(
-     meta.route = route.id.clone();
-     let accept_enc = header_str(headers, "accept-encoding");
-     let accept_enc = accept_enc.as_deref();
+     // M3-P P4: match only — the envelope is built after the L1 decision, on a MISS/BYPASS.
+     let Some(rm) = s.routes.match_route(full) else {
+@@ -288,6 +297,8 @@ async fn page(
+         .get(http::header::ACCEPT_ENCODING)
+         .and_then(|v| v.to_str().ok())
+         .map(str::trim);
 +    perf::rec(perf::MATCH, t);
 +    let t = std::time::Instant::now();
  
      // ----- (3) L1 -----
-     let (cache_key, outcome) = l1_decision(s, route_id, route, full, headers, &envelope);
-@@ -305,6 +316,8 @@ async fn page(
-         );
+     let (cache_key, outcome, search) = l1_decision(s, route_id, route, full, headers, &rm.params);
+@@ -306,11 +317,17 @@ async fn page(
+         });
+         if let Some(r) = hit {
+             meta.cache = CacheOutcome::Hit;
+-            return r.unwrap_or_else(|b| hit_response(&b, gz));
++            let r = r.unwrap_or_else(|b| hit_response(&b, gz));
++            perf::rec(perf::L1_HIT, t);
++            return r;
+         }
      }
  
 +    perf::rec(perf::L1, t);
 +    let t = std::time::Instant::now();
+     let envelope = rm.into_envelope("GET", full, headers, search);
++    perf::rec(perf::ENVELOPE, t);
++    let t = std::time::Instant::now();
+ 
      // ----- (4) loader -----
      let path_only = full.split('?').next().unwrap_or(full);
-     let params: BTreeMap<String, String> = envelope
-@@ -326,6 +339,9 @@ async fn page(
+@@ -333,6 +350,9 @@ async fn page(
      let mut status = status;
      let mut cacheable = true;
      let mut extra: Vec<(String, String)> = Vec::new();
@@ -293,7 +304,7 @@ index 57fc3b3..3268e9b 100644
      if !route.loaders.is_empty() {
          let req = LoaderRequest {
              route_id: &route.id,
-@@ -345,6 +361,9 @@ async fn page(
+@@ -352,6 +372,9 @@ async fn page(
              s.loader_calls.fetch_add(1, Ordering::Relaxed);
              meta.bun_calls += 1;
          }
@@ -303,7 +314,7 @@ index 57fc3b3..3268e9b 100644
          match r {
              Ok(LoaderResponse::Ok {
                  ok: true,
-@@ -412,9 +431,11 @@ async fn page(
+@@ -419,9 +442,11 @@ async fn page(
              }
          }
      }
@@ -315,7 +326,7 @@ index 57fc3b3..3268e9b 100644
      let plans = match collect_jobs(&s.plans, &route.chain, &ctx) {
          Ok(p) => p,
          Err(e) => {
-@@ -422,12 +443,19 @@ async fn page(
+@@ -429,12 +454,19 @@ async fn page(
              return body::error_500();
          }
      };
@@ -335,7 +346,7 @@ index 57fc3b3..3268e9b 100644
          let req = jobs_request(&plans, &misses);
          let r = call_worker::<_, JobsResponse>(
              &s.pool,
-@@ -509,12 +537,18 @@ async fn page(
+@@ -516,12 +548,18 @@ async fn page(
          }
      }
  
@@ -354,7 +365,7 @@ index 57fc3b3..3268e9b 100644
  
      // ----- (7) render, assets, L1 store -----
      let ctx = Arc::new(ctx);
-@@ -527,6 +561,7 @@ async fn page(
+@@ -534,6 +572,7 @@ async fn page(
          Ok(h) => h,
          Err(e) => return render_failed(route, &e),
      };
@@ -362,7 +373,7 @@ index 57fc3b3..3268e9b 100644
      // One header map per request. Only a render that is stored needs a second
      // copy (the L1 entry's); a BYPASS or an uncached route sends the only one.
      let store = cache_key.is_some() && status == 200 && cacheable && route.cache.is_some();
-@@ -550,6 +585,8 @@ async fn page(
+@@ -557,6 +596,8 @@ async fn page(
          encoded,
          hdr,
      );
@@ -371,7 +382,7 @@ index 57fc3b3..3268e9b 100644
      if store
          && let Some(k) = cache_key
          && let Some(c) = &route.cache
-@@ -564,10 +601,19 @@ async fn page(
+@@ -571,10 +612,19 @@ async fn page(
              Duration::from_secs(c.ttl_seconds),
              &c.tags,
          );
@@ -391,7 +402,7 @@ index 57fc3b3..3268e9b 100644
  fn render_failed(route: &RouteRecord, e: &RenderError) -> Response<ResponseBody> {
      tracing::error!(route = %route.id, error = %e, "render failed");
      body::error_500()
-@@ -601,6 +647,9 @@ fn render_document(
+@@ -608,6 +658,9 @@ fn render_document(
      ri: usize,
      ctx: &Node,
  ) -> Result<Bytes, RenderError> {
@@ -401,7 +412,7 @@ index 57fc3b3..3268e9b 100644
      let mut out = String::with_capacity(s.render_hints[ri].load(Ordering::Relaxed));
      render_chain_into(
          &s.manifest,
-@@ -610,7 +659,11 @@ fn render_document(
+@@ -617,7 +670,11 @@ fn render_document(
          ctx,
          &mut out,
      )?;
@@ -411,9 +422,9 @@ index 57fc3b3..3268e9b 100644
      inject_assets_into(&mut out, &route.chain, &s.manifest);
 +    crate::perf::rec(crate::perf::INJECT, t);
      s.render_hints[ri].store(next_hint(out.len()), Ordering::Relaxed);
+     trim_to_hint(&mut out);
      Ok(Bytes::from(out.into_bytes()))
- }
-@@ -677,7 +730,9 @@ pub fn render_chain_into(
+@@ -713,7 +770,9 @@ pub fn render_chain_into(
      let children = ctx.get(CHILDREN_KEY);
      let own_all = ctx.get(OWN_KEY);
      // The merged context as a value: an Arc bump (M3-P P2), shared by the chain.
@@ -423,7 +434,7 @@ index 57fc3b3..3268e9b 100644
      // `_props` (the island host's `x-props`): the merged loader context — params,
      // path, loader data — without the server's per-component maps. A view over
      // the tree (no copy), shared by every chain component.
-@@ -685,6 +740,7 @@ pub fn render_chain_into(
+@@ -721,6 +780,7 @@ pub fn render_chain_into(
      // Per component: Arc views of its child-slot and own-job maps (no copy),
      // looked up own first, then children, then its `_idN`, then the base.
      let overlay = |id: &str| {
@@ -431,7 +442,7 @@ index 57fc3b3..3268e9b 100644
          let slots = manifest.components.get(id).map_or(0, |c| c.use_id_slots);
          let mut maps = Vec::with_capacity(2);
          for all in [children, own_all] {
-@@ -1215,15 +1271,26 @@ fn plan_one<'a>(
+@@ -1252,15 +1312,26 @@ fn plan_one<'a>(
          Dest::Chain { row, .. } => row,
          Dest::Child { .. } => None,
      };
@@ -461,10 +472,10 @@ index 57fc3b3..3268e9b 100644
      out.push(JobPlan {
          key,
 diff --git a/crates/brust-server/src/render.rs b/crates/brust-server/src/render.rs
-index e83f5da..dafa1d8 100644
+index aa59e03..7b2eebf 100644
 --- a/crates/brust-server/src/render.rs
 +++ b/crates/brust-server/src/render.rs
-@@ -130,6 +130,8 @@ impl Renderer {
+@@ -134,6 +134,8 @@ impl Renderer {
          let cap = out.capacity();
          let mut outlet: Option<String> = None;
          for (pos, id) in chain.iter().enumerate().rev() {
@@ -473,7 +484,7 @@ index e83f5da..dafa1d8 100644
              let scope = minijinja::Value::from_object(Scope {
                  outlet: outlet.take().map(minijinja::Value::from_safe_string),
                  overlay: overlay(id),
-@@ -139,14 +141,18 @@ impl Renderer {
+@@ -143,14 +145,18 @@ impl Renderer {
                  .env
                  .get_template(id)
                  .map_err(|_| RenderError::Unknown(id.clone()))?;
@@ -513,10 +524,10 @@ index 83018fe..caa14b5 100644
                          }
                      });
 diff --git a/packages/brust/src/worker.ts b/packages/brust/src/worker.ts
-index 19dc72e..ffbfa0b 100644
+index 3103e78..a558915 100644
 --- a/packages/brust/src/worker.ts
 +++ b/packages/brust/src/worker.ts
-@@ -177,13 +177,23 @@ export function makeHandlers(opts: { leaves: FlatRoute[]; jobs: JobsModule; mani
+@@ -178,13 +178,23 @@ export function makeHandlers(opts: { leaves: FlatRoute[]; jobs: JobsModule; mani
  /** The tsfn callback for `registerWorker`. Never rejects: a parse error, an unknown kind or a
   * throwing handler is written to the slot as `{error}`. */
  export function makeDispatch(h: Handlers, view: Uint8Array, slots: number) {
@@ -540,7 +551,7 @@ index 19dc72e..ffbfa0b 100644
      } catch (e) {
        out = { error: String(e) }
      }
-@@ -193,7 +203,19 @@ export function makeDispatch(h: Handlers, view: Uint8Array, slots: number) {
+@@ -194,7 +204,19 @@ export function makeDispatch(h: Handlers, view: Uint8Array, slots: number) {
      } catch (e) {
        json = JSON.stringify({ error: `response not serialisable: ${String(e)}` })
      }

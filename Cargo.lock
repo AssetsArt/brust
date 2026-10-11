@@ -168,6 +168,7 @@ dependencies = [
  "brust-jinja",
  "bytes",
  "criterion",
+ "crossbeam-utils",
  "flate2",
  "http",
  "http-body",
