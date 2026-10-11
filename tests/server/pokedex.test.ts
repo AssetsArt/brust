@@ -62,7 +62,7 @@ test('job cache HIT across two routes sharing a component and inputs; /pokemon/{
   const a1 = await srv.stats()
   expect(a1.loader_calls - before.loader_calls).toBe(1)
   expect(a1.job.hits - before.job.hits).toBeGreaterThanOrEqual(2)        // typeBadge{electric} + teamBuilder ssr
-  expect(a1.job.misses - before.job.misses).toBe(1)                      // only detailPage j0 is new
+  expect(a1.job.misses - before.job.misses).toBe(2)                      // detailPage j0 + the AddToTeamButton precompute are new
   const { r: r2, html: h2 } = await get('/pokemon/pikachu')
   expect(r2.headers.get('x-brust-cache')).toBe('HIT')
   expect(h2).toBe(h1)
@@ -136,4 +136,14 @@ test('first paint: every layout page carries ONE data-brust-store="team" tag = t
     expect(html, p).toMatch(/data-testid="team-count"[^>]*>0</)
   }
   expect(storeTags((await get('/nope')).html)).toHaveLength(0)   // the catch-all sits outside the layout
+})
+
+test('detail page: AddToTeamButton paints the store state on first paint', async () => {
+  const { html } = await get('/pokemon/pikachu?nocache=1')
+  const tag = /<button[^>]*data-testid="add-to-team"[^>]*>[\s\S]*?<\/button>/.exec(html)
+  expect(tag, 'button painted').not.toBeNull()
+  expect(tag![0]).toContain('Add to team')
+  expect(tag![0]).not.toMatch(/\sdisabled[\s=>]/)   // the bare attribute, not the `disabled:` utility class or x-bind-disabled
+  expect(tag![0]).toMatch(/x-data="addToTeamButton_[0-9a-f]{8}" x-props='\{&quot;id&quot;:25\}'/)
+  expect((await get('/pokemon/nothing')).html).not.toContain('add-to-team')
 })

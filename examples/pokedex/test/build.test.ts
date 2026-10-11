@@ -13,12 +13,22 @@ test('brust build: 5 routes; detailPage has a job and a per-row TypeBadge; teamB
   const m = await Bun.file(join(app, 'dist-test/manifest.json')).json()
   expect(m.routes.map((r: { pattern: string }) => r.pattern)).toEqual(['/', '/pokedex', '/pokemon/{name}', '/type-chart', '*'])
   const detail = m.routes.find((r: { pattern: string }) => r.pattern === '/pokemon/{name}')
-  expect(detail.cache).toEqual({ ttl_seconds: 60, prefix: null, bypass: 'query(nocache)', tags: ['pokemon'] })
+  expect(detail.cache).toEqual({ ttl_seconds: 60, prefix: null, bypass: 'query(nocache)', tags: ['pokemon', 'team'] })
+  const chart = m.routes.find((r: { pattern: string }) => r.pattern === '/type-chart')
+  expect(chart.cache.tags).toEqual(['types', 'team'])
   const comp = (prefix: string) => Object.entries(m.components).find(([id]) => id.startsWith(`${prefix}_`))![1] as Record<string, unknown>
   const d = comp('detailPage') as { tier: string; jobs: { kind: string; inputs: string[] }[]; children: { id: string; instances: string }[] }
   expect(d.tier).toBe('static') // F70: the page reads only props; TypeBadge (loop-only props) is plain HTML, its job survives
   expect(d.jobs.some((j) => j.kind === 'precompute' && j.inputs.includes('height') && j.inputs.includes('weight'))).toBe(true)
   expect(d.children.some((c) => c.id.startsWith('typeBadge_') && c.instances === 'per-row:typeNames')).toBe(true)
+  expect(d.children.some((c) => c.id.startsWith('addToTeamButton_'))).toBe(true)
+  const add = comp('addToTeamButton') as { tier: string; stores: string[]; jobs: { kind: string; inputs: string[] }[] }
+  expect(add.tier).toBe('native')
+  expect(add.stores).toEqual(['stores/team.ts'])
+  const pre = add.jobs.filter((j) => j.kind === 'precompute')
+  expect(pre).toHaveLength(1)
+  expect(pre[0]!.inputs).toContain('__store.team.members')
+  expect(pre[0]!.inputs).toContain('id')
   const layout = comp('appLayout') as { jobs: { kind: string; target?: string }[] }
   expect(layout.jobs.some((j) => j.kind === 'ssr' && j.target?.startsWith('teamBuilder_'))).toBe(true)
   const team = comp('teamBuilder') as { tier: string; client: string }
