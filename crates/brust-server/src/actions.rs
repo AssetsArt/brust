@@ -40,7 +40,7 @@ pub(crate) async fn handle(
     let fb = if method == "GET" || method == "HEAD" {
         None
     } else {
-        match read_capped(incoming, a.max_body_bytes).await {
+        match read_capped(incoming, a.max_body_bytes, s.call_timeout).await {
             Ok(b) if b.is_empty() => None,
             Ok(b) => Some(encode_body(
                 header_str(&parts.headers, "content-type")
@@ -50,6 +50,9 @@ pub(crate) async fn handle(
             )),
             Err(ReadErr::TooLarge) => return body::error_413(),
             Err(ReadErr::Io) => return body::error_400(),
+            Err(ReadErr::Slow) => {
+                return body::resp(408, "text/plain", &[], b"request timeout".to_vec());
+            }
         }
     };
     let query = full.split_once('?').map_or("", |(_, q)| q);
@@ -119,11 +122,13 @@ enum ReadErr {
     TooLarge,
     /// The client's body failed mid-read.
     Io,
+    /// The body did not arrive within the deadline (a trickled body would hold the connection and up to `cap` bytes).
+    Slow,
 }
 
 /// The whole body, at most `cap` bytes. A declared Content-Length over the cap is refused before any read; a chunked
-/// body is cut off by [`Limited`] the moment it passes the cap.
-async fn read_capped<B>(b: B, cap: usize) -> Result<Bytes, ReadErr>
+/// body is cut off by [`Limited`] the moment it passes the cap; the whole read must finish within `deadline`.
+async fn read_capped<B>(b: B, cap: usize, deadline: std::time::Duration) -> Result<Bytes, ReadErr>
 where
     B: http_body::Body<Data = Bytes>,
     B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
@@ -131,7 +136,10 @@ where
     if b.size_hint().lower() > cap as u64 {
         return Err(ReadErr::TooLarge);
     }
-    match Limited::new(b, cap).collect().await {
+    let Ok(read) = tokio::time::timeout(deadline, Limited::new(b, cap).collect()).await else {
+        return Err(ReadErr::Slow);
+    };
+    match read {
         Ok(c) => Ok(c.to_bytes()),
         Err(e) if e.downcast_ref::<LengthLimitError>().is_some() => Err(ReadErr::TooLarge),
         Err(_) => Err(ReadErr::Io),
@@ -259,13 +267,28 @@ mod tests {
     #[tokio::test]
     async fn read_capped_by_length_and_by_stream() {
         let full = |n: usize| Full::new(Bytes::from(vec![b'a'; n]));
-        assert_eq!(read_capped(full(1025), 1024).await, Err(ReadErr::TooLarge));
-        assert_eq!(read_capped(full(1024), 1024).await.unwrap().len(), 1024);
         assert_eq!(
-            read_capped(chunks(3, 512), 1024).await,
+            read_capped(full(1025), 1024, T).await,
             Err(ReadErr::TooLarge)
         );
-        assert_eq!(read_capped(chunks(2, 512), 1024).await.unwrap().len(), 1024);
+        assert_eq!(read_capped(full(1024), 1024, T).await.unwrap().len(), 1024);
+        assert_eq!(
+            read_capped(chunks(3, 512), 1024, T).await,
+            Err(ReadErr::TooLarge)
+        );
+        assert_eq!(
+            read_capped(chunks(2, 512), 1024, T).await.unwrap().len(),
+            1024
+        );
+    }
+
+    const T: std::time::Duration = std::time::Duration::from_secs(5);
+
+    #[tokio::test]
+    async fn read_capped_gives_up_on_a_trickled_body() {
+        let pending = StreamBody::new(tokio_stream::pending::<Result<Frame<Bytes>, Infallible>>());
+        let d = std::time::Duration::from_millis(50);
+        assert_eq!(read_capped(pending, 1024, d).await, Err(ReadErr::Slow));
     }
 
     #[test]
