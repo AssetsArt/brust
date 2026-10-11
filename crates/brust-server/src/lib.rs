@@ -1,5 +1,6 @@
 //! brust v2 server. No Bun, no napi: the worker is a `RenderDispatch` trait object.
 #![deny(clippy::all)]
+mod actions;
 pub mod cache;
 pub mod config;
 pub mod dispatch;

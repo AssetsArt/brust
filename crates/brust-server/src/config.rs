@@ -256,7 +256,6 @@ pub struct Server {
     pub(crate) cors_resolved: Option<ResolvedCors>,
     pub(crate) generator: Option<String>,
     /// M3-F: the validated actions subtree; `None` = no actions.
-    #[allow(dead_code)] // read by the actions branch (B3)
     pub(crate) actions: Option<ActionsConfig>,
     /// A4: `<script>globalThis.__BRUST_ACTION_PREFIX__="…"</script>`, prebuilt at `start` for a
     /// non-default prefix only.
