@@ -174,7 +174,7 @@ fn content_encoding_is_415() {
 #[test]
 fn body_encoding_text_vs_b64() {
     let (fake, s) = server(echo);
-    let mut body_of = |ct: Option<&str>, b: &[u8]| {
+    let body_of = |ct: Option<&str>, b: &[u8]| {
         let h: Vec<(&str, &str)> = ct.map(|c| ("content-type", c)).into_iter().collect();
         let (status, _, _) = request_body(&s, "POST", URL, &h, b.to_vec());
         assert_eq!(status, 200);
@@ -668,4 +668,65 @@ fn cors_credentials_with_wildcard_is_a_boot_error() {
         msg.starts_with("cors: ") && msg.contains("wildcard"),
         "{msg}"
     );
+}
+
+// ---- M3-F A4: the `__BRUST_ACTION_PREFIX__` script ----
+
+const PREFIX_TAG: &str = "<script>globalThis.__BRUST_ACTION_PREFIX__=\"/api\"</script>";
+
+fn api_server() -> (Arc<FakeBun>, Arc<brust_server::Server>) {
+    let fake = fake().with_fetch(echo);
+    let s = boot_actions(
+        Arc::clone(&fake),
+        &fx(),
+        ActionsConfig {
+            prefix: "/api".into(),
+            ..ActionsConfig::default()
+        },
+        None,
+    );
+    (fake, s)
+}
+
+#[test]
+fn non_default_prefix_page_gets_the_tag() {
+    let (_fake, s) = api_server();
+    let (status, h1, b1) = get(&s, "/pokemon/pikachu", &[]);
+    assert_eq!(status, 200, "{b1}");
+    assert_eq!(cache_hdr(&h1), Some("MISS"));
+    assert_eq!(b1.matches(PREFIX_TAG).count(), 1, "{b1}");
+    assert!(
+        b1.contains(&format!(
+            "{PREFIX_TAG}<script type=\"module\" src=\"/_brust/client/runtime-"
+        )),
+        "{b1}"
+    );
+    let (status, h2, b2) = get(&s, "/pokemon/pikachu", &[]);
+    assert_eq!(status, 200);
+    assert_eq!(cache_hdr(&h2), Some("HIT"));
+    assert_eq!(b1, b2);
+}
+
+#[test]
+fn default_prefix_adds_no_tag() {
+    let with = boot_actions(fake(), &fx(), ActionsConfig::default(), None);
+    let without = boot(fake());
+    for path in ["/pokemon/pikachu?nocache=1", "/?nocache=1"] {
+        let (s1, _, b1) = get(&with, path, &[]);
+        let (s2, _, b2) = get(&without, path, &[]);
+        assert_eq!((s1, s2), (200, 200), "{path}");
+        assert!(!b1.contains("__BRUST_ACTION_PREFIX__"), "{b1}");
+        assert_eq!(b1, b2, "{path}");
+    }
+}
+
+#[test]
+fn api_prefix_routes_actions() {
+    let (fake, s) = api_server();
+    let (status, _, _) = request_body(&s, "POST", "/api/x", &[], b"{}".to_vec());
+    assert_eq!(status, 200);
+    assert_eq!(last(&fake)["url"], "/api/x");
+    let (status, _, _) = request_body(&s, "POST", "/_brust/action/x", &[], b"{}".to_vec());
+    assert_eq!(status, 405);
+    assert_eq!(fake.fetch_count(), 1);
 }

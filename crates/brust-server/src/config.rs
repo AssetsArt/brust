@@ -259,7 +259,6 @@ pub struct Server {
     pub(crate) actions: Option<ActionsConfig>,
     /// A4: `<script>globalThis.__BRUST_ACTION_PREFIX__="…"</script>`, prebuilt at `start` for a
     /// non-default prefix only.
-    #[allow(dead_code)] // read by the document injection (B5)
     pub(crate) action_prefix_tag: Option<Box<str>>,
     pub(crate) claim_timeout: Duration,
     pub(crate) call_timeout: Duration,

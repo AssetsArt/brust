@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 use brust_jinja::ctx::Node;
 use brust_server::manifest::{Loaded, Manifest};
 use brust_server::render::{
-    RenderError, Renderer, inject_assets, inject_page_assets_into, store_scripts_into, use_ids,
+    RenderError, Renderer, inject_assets, inject_document_assets_into, inject_page_assets_into,
+    store_scripts_into, use_ids,
 };
 use serde_json::json;
 
@@ -258,4 +259,74 @@ fn store_names_are_stripped() {
     let mut none = String::new();
     store_scripts_into(&mut none, &Node::from(json!({"\"<>\"": {"v": 1}})));
     assert_eq!(none, "");
+}
+
+const TAG: &str = "<script>globalThis.__BRUST_ACTION_PREFIX__=\"/api\"</script>";
+
+fn document_assets(
+    html: &str,
+    ids: &[&str],
+    l: &Loaded,
+    store: Option<&Node>,
+    prefix_tag: Option<&str>,
+) -> String {
+    let mut out = html.to_string();
+    inject_document_assets_into(&mut out, &chain(ids), &l.manifest, store, prefix_tag);
+    out
+}
+
+#[test]
+fn prefix_tag_sits_before_the_store_tags() {
+    let (l, _r) = load();
+    let html = "<html><body><p>x</p></body></html>";
+    let ids = &["appLayout_a1", "detailPage_c3"];
+    let st = Node::from(json!({"a": {"v": 2}}));
+    let out = document_assets(html, ids, &l, Some(&st), Some(TAG));
+    assert!(
+        out.ends_with(&format!(
+            "{TAG}<script type=\"application/json\" data-brust-store=\"a\">{{\"v\":2}}</script><script type=\"module\" src=\"/_brust/client/runtime-8b1c.js\"></script><script type=\"module\" src=\"/_brust/client/detailPage_c3-1a2b3c.js\"></script></body></html>"
+        )),
+        "{out}"
+    );
+    let out = document_assets(html, ids, &l, None, Some(TAG));
+    assert!(
+        out.contains(&format!(
+            "{TAG}<script type=\"module\" src=\"/_brust/client/runtime-8b1c.js\">"
+        )),
+        "{out}"
+    );
+    assert_eq!(out.matches(TAG).count(), 1, "{out}");
+}
+
+#[test]
+fn static_chain_gets_no_prefix_tag() {
+    let (l, _r) = load();
+    let html = "<html><body><p>x</p></body></html>";
+    let st = Node::from(json!({"a": {"v": 1}}));
+    for store in [None, Some(&st)] {
+        let out = document_assets(html, &["appLayout_a1", "homePage_b2"], &l, store, Some(TAG));
+        assert_eq!(out, html);
+    }
+}
+
+#[test]
+fn none_is_byte_identical() {
+    let (l, _r) = load();
+    let stores = [None, Some(Node::from(json!({"a": {"v": 1}})))];
+    for ids in [
+        &["appLayout_a1", "homePage_b2"][..],
+        &["appLayout_a1", "detailPage_c3"],
+        &["appLayout_a1", "teamPage_g7"],
+        &["appLayout_a1", "idsPage_i9"],
+    ] {
+        for html in ["<html><body><p>x</p></body></html>", "<p>x</p>"] {
+            for st in &stores {
+                assert_eq!(
+                    document_assets(html, ids, &l, st.as_ref(), None),
+                    page_assets(html, ids, &l, st.as_ref()),
+                    "{ids:?}"
+                );
+            }
+        }
+    }
 }

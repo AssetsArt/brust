@@ -28,7 +28,7 @@ use crate::pool::PlanBox;
 use crate::protocol::{
     JobCall, JobResult, JobsRequest, JobsResponse, LoaderRequest, LoaderResponse, Verdict,
 };
-use crate::render::{Overlay, RenderError, Renderer, inject_page_assets_into, use_ids};
+use crate::render::{Overlay, RenderError, Renderer, inject_document_assets_into, use_ids};
 use crate::routing::routes::{Search, decode_search};
 use crate::server::body::{self, ResponseBody, empty_body};
 use crate::server::header_str;
@@ -721,7 +721,13 @@ fn render_document(
         ctx,
         &mut out,
     )?;
-    inject_page_assets_into(&mut out, &route.chain, &s.manifest, ctx.get(STORE_KEY));
+    inject_document_assets_into(
+        &mut out,
+        &route.chain,
+        &s.manifest,
+        ctx.get(STORE_KEY),
+        s.action_prefix_tag.as_deref(),
+    );
     // M3-P P7: stored only when it changes — the steady state writes no shared cache line.
     let hint = next_hint(out.len());
     if s.render_hints[ri].load(Ordering::Relaxed) != hint {
