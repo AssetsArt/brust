@@ -27,8 +27,8 @@ test('/: 200, document root, HeroSearch useId stable across two requests, all 18
   expect(chips.length).toBe(18)
   expect(chips[0]).toEqual(['normal', '#9099a1']); expect(chips[3]).toEqual(['electric', '#f5c84b'])
   // React child (S12): SSR HTML inside the host, its chunk linked, the runtime linked.
-  expect(html).toMatch(/<brust-island data-id="teamBuilder_[0-9a-f]{8}" x-props='[^']*'>[\s\S]*My team/)
-  expect(html).toMatch(/data-testid="team-count"[^>]*>2</)
+  expect(html).toMatch(/<brust-island data-id="teamBuilder_[0-9a-f]{8}"(?: x-props='[^']*')?>[\s\S]*My team/)
+  expect(html).toMatch(/data-testid="team-count"[^>]*>0</)
   const s = scripts(html)
   expect(s.some((u) => /\/_brust\/client\/runtime-[0-9a-f]{10}\.js$/.test(u))).toBe(true)
   expect(s.some((u) => /\/_brust\/client\/react-teamBuilder_[0-9a-f]{8}-[0-9a-f]{10}\.js$/.test(u))).toBe(true)
@@ -122,4 +122,18 @@ test('catch-all is a static document: 404, 0 Bun calls on the first request, no 
 test('cookie mode=light reaches the first paint', async () => {
   const r = await fetch(`${srv.base}/`, { headers: { cookie: 'mode=light' } })
   expect(await r.text()).toMatch(/<html [^>]*lang="en"[^>]*data-mode="light"/)
+})
+
+const storeTags = (html: string) => [...html.matchAll(/<script type="application\/json" data-brust-store="([^"]+)">([^<]*)<\/script>/g)].map((m) => ({ name: m[1]!, json: JSON.parse(m[2]!) as unknown, at: m.index! }))
+
+test('first paint: every layout page carries ONE data-brust-store="team" tag = the DB roster, before the runtime script; the TeamBuilder SSR count equals it', async () => {
+  for (const p of ['/', '/pokedex', '/type-chart', '/pokemon/nothing']) {
+    const { html } = await get(p)
+    const tags = storeTags(html).filter((t) => t.name === 'team')
+    expect(tags, p).toHaveLength(1)
+    expect(tags[0]!.json, p).toEqual({ max: 6, members: [] })
+    expect(tags[0]!.at, p).toBeLessThan(html.search(/<script[^>]*\/_brust\/client\/runtime-/))
+    expect(html, p).toMatch(/data-testid="team-count"[^>]*>0</)
+  }
+  expect(storeTags((await get('/nope')).html)).toHaveLength(0)   // the catch-all sits outside the layout
 })

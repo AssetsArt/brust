@@ -1,7 +1,7 @@
 // examples/pokedex/routes.tsx
 import { defineRoutes } from '@brust/core/routes'
 import AppLayout from './components/AppLayout'
-import { browseLoader, detailLoader, homeLoader, typeChartLoader } from './lib/loaders'
+import { browseLoader, detailLoader, homeLoader, layoutLoader, typeChartLoader } from './lib/loaders'
 import BrowsePage from './pages/BrowsePage'
 import DetailPage from './pages/DetailPage'
 import HomePage from './pages/HomePage'
@@ -11,6 +11,7 @@ import TypeChart from './pages/TypeChart'
 export const routes = defineRoutes([
   {
     Component: AppLayout,
+    loader: layoutLoader,
     children: [
       { path: '/', Component: HomePage, loader: homeLoader },
       { path: '/pokedex', Component: BrowsePage, loader: browseLoader },

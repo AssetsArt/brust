@@ -1,14 +1,17 @@
 // examples/pokedex/lib/loaders.ts
 import { type LoaderCtx, type LoaderReq, notFound, type Verdict } from '@brust/core/routes'
+import { team } from '../stores/team'
 import { ALL_TYPES, artwork, cap, fetchEvolution, fetchList, fetchPokemon, fetchSpecies, fetchTypeRelations, pad, STAT_LABEL, statBucket, TYPE_COLOR } from './pokeapi'
-import type { BrowseData, DetailData, HomeData, TeamMember, TypeChartCellVM, TypeChartData, TypeChartRowVM } from './types'
+import { MAX_TEAM } from './team'
+import { teamDb } from './team-db'
+import type { BrowseData, DetailData, HomeData, TypeChartCellVM, TypeChartData, TypeChartRowVM } from './types'
 
 const FEATURED = [{ id: 1, name: 'bulbasaur' }, { id: 4, name: 'charmander' }, { id: 7, name: 'squirtle' }, { id: 25, name: 'pikachu' }, { id: 39, name: 'jigglypuff' }, { id: 94, name: 'gengar' }, { id: 143, name: 'snorlax' }, { id: 150, name: 'mewtwo' }]
-/** Constant on every page, so the TeamBuilder ssr job is one job-cache entry site-wide (D4). */
-export const TEAM_SEED: TeamMember[] = [
-  { id: 1, name: 'bulbasaur', displayName: 'Bulbasaur', types: ['grass', 'poison'], artwork: artwork(1), num: '#0001' },
-  { id: 4, name: 'charmander', displayName: 'Charmander', types: ['fire'], artwork: artwork(4), num: '#0004' },
-]
+/** Layout loader: seeds the request's store scope, so every layout page paints the DB roster (D4/E7). */
+export function layoutLoader(): void {
+  team.members.set(teamDb().list())
+  team.max.set(MAX_TEAM)
+}
 const NAV = [{ href: '/', label: 'Home' }, { href: '/pokedex', label: 'Pokédex' }, { href: '/type-chart', label: 'Type chart' }]
 const card = (p: { id: number; name: string }) => ({ id: p.id, name: p.name, displayName: cap(p.name), num: pad(p.id), artwork: artwork(p.id), detailHref: `/pokemon/${p.name}` })
 
@@ -17,7 +20,6 @@ const chrome = (req: LoaderReq, path: string, title: string, crumb: string) => (
   title, crumb,
   mode: (req.cookies.mode === 'light' ? 'light' : 'dark') as 'light' | 'dark',
   nav: NAV.map((n) => ({ ...n, active: n.href === path })),
-  teamInitial: TEAM_SEED,
 })
 
 export async function homeLoader({ req, path }: LoaderCtx): Promise<HomeData> {

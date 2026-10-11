@@ -23,6 +23,7 @@ test('brust build: 5 routes; detailPage has a job and a per-row TypeBadge; teamB
   expect(layout.jobs.some((j) => j.kind === 'ssr' && j.target?.startsWith('teamBuilder_'))).toBe(true)
   const team = comp('teamBuilder') as { tier: string; client: string }
   expect(team.tier).toBe('react')
+  expect((team as unknown as { stores: string[] }).stores).toEqual(['stores/team.ts'])
   expect(team.client).toMatch(/^client\/react-teamBuilder_[0-9a-f]{8}-[0-9a-f]{10}\.js$/)
   const nf = comp('notFoundPage') as { tier: string; client: string | null }
   expect(nf).toMatchObject({ tier: 'static', client: null })
