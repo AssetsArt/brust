@@ -692,14 +692,30 @@ impl<'a, 'c> Printer<'a, 'c> {
                     _ => None,
                 };
                 if let Some(props) = style_obj {
-                    let dict: Vec<String> = props
-                        .iter()
-                        .map(|(k, pv)| format!("{}: {}", jinja_string(k), self.jinja(pv)))
-                        .collect();
-                    open.push_str(&format!(
-                        " style=\"{{{{ {{{}}} | style_css | e }}}}\"",
-                        dict.join(", ")
-                    ));
+                    if props.is_empty() {
+                        open.push_str(" style=\"{{ {} | style_css | e }}\"");
+                    } else {
+                        // M3-P P7: lowered at compile time. minijinja's dict
+                        // literal iterated sorted by key and kept the LAST value
+                        // of a duplicate key; do the same here, and drop the
+                        // keys `style_obj_to_css` drops at render (`css_key`),
+                        // so no per-element dict is built. Values are pure
+                        // expressions, so a dropped key loses nothing.
+                        let mut sorted: std::collections::BTreeMap<&str, _> =
+                            std::collections::BTreeMap::new();
+                        for (k, pv) in props.iter() {
+                            sorted.insert(k.as_str(), pv);
+                        }
+                        let args: Vec<String> = sorted
+                            .into_iter()
+                            .filter(|(k, _)| brust_jinja::css_key(k))
+                            .flat_map(|(k, pv)| [jinja_string(k), self.jinja(pv)])
+                            .collect();
+                        open.push_str(&format!(
+                            " style=\"{{{{ css_decls({}) | e }}}}\"",
+                            args.join(", ")
+                        ));
+                    }
                 } else if html == "style" {
                     // A style object held in a variable or prop: the same CSS
                     // rule; an undefined/null style omits the attribute (F36).
