@@ -6,6 +6,18 @@
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./store": {
+      "types": "./src/store/index.ts",
+      "default": "./src/store/index.ts"
+    },
+    "./store/react": {
+      "types": "./src/store/react.ts",
+      "default": "./src/store/react.ts"
+    },
+    "./store/internal": {
+      "types": "./src/store/internal.ts",
+      "default": "./src/store/internal.ts"
     }
   },
   "scripts": {
