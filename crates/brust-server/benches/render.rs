@@ -462,10 +462,44 @@ fn bench_hit_path(c: &mut Criterion, m: &Manifest) {
     g.finish();
 }
 
+/// M3-P P7 lane B: `render_chain` of pokedex route A (2 templates, so 2 `get_template`
+/// per iteration) alone and from 8 threads at once. 1x vs x8 isolates the per-lookup
+/// cost minijinja pays for owned templates (a global Mutex + Arc clone).
+fn bench_get_template(c: &mut Criterion, m: &Manifest, r: &Renderer) {
+    let route = m
+        .routes
+        .iter()
+        .find(|x| x.pattern == "/type-chart")
+        .expect("route A");
+    let ctx = ctx("type-chart.json");
+    let chain = &route.chain;
+    let mut g = c.benchmark_group("get_template");
+    g.bench_function("render_chain_1", |b| {
+        b.iter(|| black_box(render_chain_html(m, r, &route.id, chain, &ctx).unwrap()))
+    });
+    g.bench_function("render_chain_x8", |b| {
+        par8(b, || {
+            black_box(render_chain_html(m, r, &route.id, chain, &ctx).unwrap());
+        })
+    });
+    // The lookup alone (RULED on BLOCKED bc5bbf8b): the renders above are dominated by the
+    // 109 KB document, so only this pair can observe the removed lock.
+    let ids = chain.clone();
+    let lookup = || {
+        for id in &ids {
+            black_box(r.get_template_for_bench(black_box(id)).unwrap());
+        }
+    };
+    g.bench_function("get_template_only_1", |b| b.iter(lookup));
+    g.bench_function("get_template_only_x8", |b| par8(b, lookup));
+    g.finish();
+}
+
 fn benches(c: &mut Criterion) {
     bench_loader_parse(c);
     let (m, r) = load();
     bench_hit_path(c, &m);
+    bench_get_template(c, &m, &r);
     bench_plan(c, &m, "plan_B", "/pokemon/{name}", "pokemon-pikachu.json");
     bench_plan(c, &m, "plan_C", "/", "home.json");
     bench_route(

@@ -98,10 +98,24 @@ impl Renderer {
         brust_jinja::register(&mut env);
         env.add_filter("safe", safe_filter);
         for (id, src) in templates {
-            env.add_template_owned(id.clone(), src.clone())
+            // M3-P P7 (R4): borrowed templates — minijinja 3 reads `borrowed_templates` without a lock;
+            // owned ones go through a global Mutex + Arc clone on every get_template. Leaked once per Renderer.
+            let name: &'static str = Box::leak(id.clone().into_boxed_str());
+            let source: &'static str = Box::leak(src.clone().into_boxed_str());
+            env.add_template(name, source)
                 .map_err(|e| render_err(id, &e))?;
         }
         Ok(Renderer { env })
+    }
+
+    /// `Environment::get_template` for the render benches (a separate crate, so
+    /// `pub(crate)` would not reach them): isolates the lookup from the render.
+    #[doc(hidden)]
+    pub fn get_template_for_bench(
+        &self,
+        id: &str,
+    ) -> Result<minijinja::Template<'_, '_>, minijinja::Error> {
+        self.env.get_template(id)
     }
 
     pub fn render(&self, name: &str, ctx: &Value) -> Result<String, RenderError> {
