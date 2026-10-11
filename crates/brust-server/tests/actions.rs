@@ -449,3 +449,223 @@ fn no_workers_is_503() {
     assert!(t0.elapsed() < Duration::from_secs(1));
     assert_eq!(stats(&s)["worker_calls"], 0);
 }
+
+// ----- CORS parity (0.1.x `tests/cors.integration.test.ts`, F11): the chokepoint in
+// `server/mod.rs` stamps action responses like every other response; `actions.rs` never stamps.
+
+const ALLOWED: &str = "http://allowed.test";
+const EVIL: &str = "http://evil.test";
+const ACTION: &str = "/_brust/action/notes";
+
+fn note(_: Value) -> Vec<u8> {
+    frame(
+        200,
+        &[("content-type", "application/json")],
+        br#"{"id":"n-2"}"#,
+    )
+}
+
+fn cors_policy() -> brust_server::CorsConfig {
+    brust_server::CorsConfig {
+        origins: vec![ALLOWED.into()],
+        methods: None,
+        headers: None,
+        expose_headers: Some(vec!["x-render-ms".into()]),
+        credentials: true,
+        max_age_seconds: None,
+    }
+}
+
+fn cors_server(f: fn(Value) -> Vec<u8>) -> (Arc<FakeBun>, Arc<brust_server::Server>) {
+    let fake = fake().with_fetch(f);
+    let s = boot_actions(
+        Arc::clone(&fake),
+        &fx(),
+        ActionsConfig::default(),
+        Some(cors_policy()),
+    );
+    (fake, s)
+}
+
+/// Case-insensitive Vary tokens, in order (Vary is a comma-joined token list, possibly multi-line).
+fn vary_tokens(h: &http::HeaderMap) -> Vec<String> {
+    h.get_all("vary")
+        .iter()
+        .flat_map(|v| v.to_str().unwrap().split(','))
+        .map(|t| t.trim().to_ascii_lowercase())
+        .filter(|t| !t.is_empty())
+        .collect()
+}
+
+fn post_note(s: &brust_server::Server, origin: &str) -> (u16, http::HeaderMap, Vec<u8>) {
+    request_body(
+        s,
+        "POST",
+        ACTION,
+        &[("origin", origin), ("content-type", "application/json")],
+        br#"{"text":"hi"}"#.to_vec(),
+    )
+}
+
+#[test]
+fn cors_preflight_on_the_action_path_is_204() {
+    let (fake, s) = cors_server(note);
+    let (status, h, body) = request(
+        &s,
+        "OPTIONS",
+        ACTION,
+        &[
+            ("origin", ALLOWED),
+            ("access-control-request-method", "POST"),
+            ("access-control-request-headers", "content-type"),
+        ],
+    );
+    assert_eq!((status, body.as_str()), (204, ""));
+    assert_eq!(hdr(&h, "access-control-allow-origin"), Some(ALLOWED));
+    assert!(
+        hdr(&h, "access-control-allow-methods")
+            .unwrap()
+            .split(',')
+            .any(|m| m == "POST")
+    );
+    assert_eq!(hdr(&h, "access-control-allow-credentials"), Some("true"));
+    // No `headers` configured → the request's Access-Control-Request-Headers is echoed.
+    assert_eq!(
+        hdr(&h, "access-control-allow-headers"),
+        Some("content-type")
+    );
+    assert_eq!(hdr(&h, "access-control-max-age"), Some("600"));
+    assert_eq!(
+        vary_tokens(&h),
+        [
+            "origin",
+            "access-control-request-method",
+            "access-control-request-headers"
+        ]
+    );
+    assert_eq!(
+        fake.fetch_count(),
+        0,
+        "a preflight never reaches the worker"
+    );
+}
+
+#[test]
+fn cors_action_post_is_stamped() {
+    let (fake, s) = cors_server(note);
+    let (status, h, body) = post_note(&s, ALLOWED);
+    assert_eq!((status, body.as_slice()), (200, &br#"{"id":"n-2"}"#[..]));
+    assert_eq!(hdr(&h, "access-control-allow-origin"), Some(ALLOWED));
+    assert_eq!(hdr(&h, "access-control-allow-credentials"), Some("true"));
+    assert_eq!(
+        hdr(&h, "access-control-expose-headers"),
+        Some("x-render-ms")
+    );
+    assert!(vary_tokens(&h).contains(&"origin".to_owned()));
+    assert_eq!(fake.fetch_count(), 1);
+}
+
+#[test]
+fn cors_disallowed_origin_is_processed_without_acao() {
+    // The server is not the enforcement point for a non-preflight request: the browser blocks
+    // the READ when ACAO is missing.
+    let (fake, s) = cors_server(note);
+    let (status, h, _) = post_note(&s, EVIL);
+    assert_eq!(status, 200);
+    assert_eq!(hdr(&h, "access-control-allow-origin"), None);
+    assert_eq!(hdr(&h, "access-control-allow-credentials"), None);
+    assert_eq!(hdr(&h, "access-control-expose-headers"), None);
+    assert!(vary_tokens(&h).contains(&"origin".to_owned()));
+    assert_eq!(fake.fetch_count(), 1);
+}
+
+#[test]
+fn cors_page_get_is_stamped() {
+    let (fake, s) = cors_server(note);
+    let (status, h, _) = get(&s, "/", &[("origin", ALLOWED)]);
+    assert_eq!(status, 200);
+    assert_eq!(hdr(&h, "access-control-allow-origin"), Some(ALLOWED));
+    assert!(vary_tokens(&h).contains(&"origin".to_owned()));
+    assert_eq!(fake.fetch_count(), 0);
+}
+
+#[test]
+fn cors_static_vary_merges() {
+    // `static_asset_response` emits `Vary: Accept-Encoding`; the chokepoint APPENDS Origin.
+    let (_fake, s) = cors_server(note);
+    let (status, h, _) = get(&s, "/_brust/client/runtime-8b1c.js", &[("origin", ALLOWED)]);
+    assert_eq!(status, 200);
+    let tokens = vary_tokens(&h);
+    assert!(tokens.contains(&"accept-encoding".to_owned()), "{tokens:?}");
+    assert!(tokens.contains(&"origin".to_owned()), "{tokens:?}");
+    assert_eq!(hdr(&h, "access-control-allow-origin"), Some(ALLOWED));
+}
+
+#[test]
+fn cors_options_without_preflight_headers() {
+    // R3: under the prefix the subtree is the app's — an OPTIONS that is not a preflight (no
+    // Access-Control-Request-Method) is forwarded (0.1.x answered a Rust 405). On a page path
+    // the 0.1.x 405 stays.
+    let (fake, s) = cors_server(note);
+    let (status, h, _) = request(&s, "OPTIONS", ACTION, &[("origin", ALLOWED)]);
+    assert_eq!(status, 200);
+    assert_eq!(last(&fake)["method"], "OPTIONS");
+    // The forwarded answer is an actual response: stamped like any other.
+    assert_eq!(hdr(&h, "access-control-allow-origin"), Some(ALLOWED));
+    assert_eq!(fake.fetch_count(), 1);
+
+    let (status, h, _) = request(&s, "OPTIONS", "/", &[("origin", ALLOWED)]);
+    assert_eq!(status, 405);
+    assert_eq!(hdr(&h, "allow"), Some("GET, HEAD"));
+    assert_eq!(fake.fetch_count(), 1);
+}
+
+#[test]
+fn cors_disallowed_preflight() {
+    // R3: a preflight from a disallowed origin is not answered in Rust; under the prefix it is
+    // forwarded (no ACAO), on a page path it falls through to the 405 (no ACAO), as in 0.1.x.
+    let (fake, s) = cors_server(note);
+    let pre = [("origin", EVIL), ("access-control-request-method", "POST")];
+    let (status, h, _) = request(&s, "OPTIONS", ACTION, &pre);
+    assert_eq!(status, 200);
+    assert_eq!(hdr(&h, "access-control-allow-origin"), None);
+    assert_eq!(fake.fetch_count(), 1);
+
+    let (status, h, _) = request(&s, "OPTIONS", "/", &pre);
+    assert_eq!(status, 405);
+    assert_eq!(hdr(&h, "access-control-allow-origin"), None);
+    assert_eq!(fake.fetch_count(), 1);
+}
+
+#[test]
+fn cors_worker_acao_wins() {
+    // Insert-if-absent: an ACAO the app set is kept; Vary still gains Origin.
+    let (_fake, s) =
+        cors_server(|_| frame(200, &[("access-control-allow-origin", "https://x")], b"ok"));
+    let (status, h, _) = post_note(&s, ALLOWED);
+    assert_eq!(status, 200);
+    assert_eq!(
+        h.get_all("access-control-allow-origin")
+            .iter()
+            .collect::<Vec<_>>(),
+        ["https://x"]
+    );
+    assert!(vary_tokens(&h).contains(&"origin".to_owned()));
+}
+
+#[test]
+fn cors_credentials_with_wildcard_is_a_boot_error() {
+    let mut cfg = config(&fx());
+    cfg.actions = Some(ActionsConfig::default());
+    cfg.cors = Some(brust_server::CorsConfig {
+        origins: vec!["*".into()],
+        ..cors_policy()
+    });
+    let Err(msg) = start(cfg) else {
+        panic!("start should refuse credentials with a wildcard origin");
+    };
+    assert!(
+        msg.starts_with("cors: ") && msg.contains("wildcard"),
+        "{msg}"
+    );
+}
