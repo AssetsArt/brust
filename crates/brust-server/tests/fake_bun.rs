@@ -95,3 +95,22 @@ async fn never_complete_fake_holds_the_claim_so_the_next_call_times_out() {
     assert_eq!(fake.counts(), (1, 0));
     stuck.abort();
 }
+
+/// A bound fake takes the plan offer through the real `call_worker_planned` (a pool reachable
+/// only through a `Server`, so this stays at the `Server` level): r5's one ssr job rides the
+/// loader call.
+#[test]
+fn planned_loader_call_round_trips_through_call_worker_planned() {
+    let fake = common::fake();
+    let s = common::boot(fake.clone());
+    let (st, _, body) = common::get(&s, "/team", &[]);
+    assert_eq!(st, 200, "{body}");
+    assert_eq!(fake.last_loader().unwrap()["plan"], true);
+    assert_eq!(
+        fake.last_jobs().unwrap()["jobs"][0]["target"],
+        "teamBuilder_h8"
+    );
+    assert_eq!(fake.counts(), (1, 1));
+    assert_eq!(common::stats(&s)["worker_calls"].as_u64(), Some(1));
+    assert_eq!(s.plan_cells_in_use(), 0);
+}

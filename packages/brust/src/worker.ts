@@ -3,7 +3,7 @@
 // handler NEVER rejects across the tsfn: every failure becomes `{error}` / `{id, error}`.
 import { join, resolve } from 'node:path'
 import { workerData } from 'node:worker_threads'
-import { registerWorker } from './native'
+import { planJobs, registerWorker } from './native'
 import { type FlatRoute, flattenRoutes, isHttpErrorTrigger, isVerdict, type LoaderReq, type Route, type Verdict } from './routes'
 
 // ---- wire shapes (protocol.rs, camelCase) ----
@@ -13,6 +13,8 @@ export interface LoaderRequest {
   params: Record<string, string>
   path: string
   req: LoaderReq
+  /** M3-P P6: the chain has jobs — plan them in this call (`planJobs`). Optional to honour. */
+  plan?: boolean
 }
 
 export type LoaderResponse =
@@ -77,6 +79,20 @@ export function writeSlot(view: Uint8Array, slot: number, slots: number, json: s
   if (e.read === err.length) return e.written
   // Not even the message fits: the first `sub` bytes of a fixed one (ASCII, so byte = char).
   return enc.encodeInto('{"error":"too large"}', dst).written
+}
+
+/** `planJobs` (napi): the misses' JobsRequest JSON, '' (every job hit) or PLAN_DECLINED. */
+export type PlanJobs = (slot: number, len: number) => string
+/** `planJobs` declined: the loader response already in the slot is the answer (Rust plans after the call). */
+export const PLAN_DECLINED = '!'
+const PLANNED = { planned: true } as const
+
+function toJson(out: unknown): string {
+  try {
+    return JSON.stringify(out)
+  } catch (e) {
+    return JSON.stringify({ error: `response not serialisable: ${String(e)}` })
+  }
 }
 
 // ---- literals (S6 amendment: the worker merges an ssr job's `literals` over `call.inputs`) ----
@@ -176,25 +192,31 @@ export function makeHandlers(opts: { leaves: FlatRoute[]; jobs: JobsModule; mani
 }
 
 /** The tsfn callback for `registerWorker`. Never rejects: a parse error, an unknown kind or a
- * throwing handler is written to the slot as `{error}`. */
-export function makeDispatch(h: Handlers, view: Uint8Array, slots: number) {
+ * throwing handler is written to the slot as `{error}`. A loader request with `plan: true` whose
+ * chain answered `ok` is planned in the same call (`plan`, the napi `planJobs` by default — the
+ * addon is touched only then). */
+export function makeDispatch(h: Handlers, view: Uint8Array, slots: number, plan: PlanJobs = planJobs) {
   return async (kind: string, requestJson: string, slot: number): Promise<number> => {
     let out: unknown
     try {
       const req = JSON.parse(requestJson)
-      if (kind === 'loader') out = await h.loader(req)
-      else if (kind === 'jobs') out = await h.jobs(req)
+      if (kind === 'loader') {
+        out = await h.loader(req)
+        if (req.plan === true && (out as { ok?: unknown }).ok === true) {
+          // One round trip (M3-P P6): the ctx goes to Rust through this slot, synchronously, and only
+          // the jobs Rust found missing run here; the final answer replaces it in the same slot.
+          const json = toJson(out)
+          const n = writeSlot(view, slot, slots, json)
+          const misses = plan(slot, n)
+          if (misses === PLAN_DECLINED) return n
+          out = misses === '' ? PLANNED : { planned: true, results: (await h.jobs(JSON.parse(misses))).results }
+        }
+      } else if (kind === 'jobs') out = await h.jobs(req)
       else out = { error: `unknown call kind ${kind}` }
     } catch (e) {
       out = { error: String(e) }
     }
-    let json: string
-    try {
-      json = JSON.stringify(out)
-    } catch (e) {
-      json = JSON.stringify({ error: `response not serialisable: ${String(e)}` })
-    }
-    return writeSlot(view, slot, slots, json)
+    return writeSlot(view, slot, slots, toJson(out))
   }
 }
 

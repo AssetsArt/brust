@@ -89,7 +89,8 @@ pub fn config(dist_dir: &Path) -> Config {
     }
 }
 
-/// Boot on port 0 from the fixture `dist/` and register `fake` as the one worker.
+/// Boot on port 0 from the fixture `dist/` and register `fake` as the one worker, bound to
+/// the server so it takes the plan offer (M3-P P6).
 pub fn boot(fake: Arc<FakeBun>) -> Arc<Server> {
     boot_in(fake, &fx())
 }
@@ -99,14 +100,16 @@ pub fn boot_with(fake: Arc<FakeBun>, tweak: impl FnOnce(&mut Tuning)) -> Arc<Ser
     let mut cfg = config(&fx());
     tweak(&mut cfg.tuning);
     let s = start(cfg).expect("start");
-    s.register_worker(Box::new(FakeBunHandle(fake)));
+    let id = s.register_worker(Box::new(FakeBunHandle(Arc::clone(&fake))));
+    fake.bind(&s, id);
     s
 }
 
 /// Like [`boot`] with another `dist/` (see [`temp_dist`]).
 pub fn boot_in(fake: Arc<FakeBun>, dist_dir: &Path) -> Arc<Server> {
     let s = start(config(dist_dir)).expect("start");
-    s.register_worker(Box::new(FakeBunHandle(fake)));
+    let id = s.register_worker(Box::new(FakeBunHandle(Arc::clone(&fake))));
+    fake.bind(&s, id);
     s
 }
 

@@ -50,7 +50,7 @@ fn one_request_line_per_page_with_route_status_cache_calls_duration() {
         .cloned()
         .collect();
     let want = [
-        "route=r2 status=200 cache=MISS bun_calls=2",
+        "route=r2 status=200 cache=MISS bun_calls=1",
         "route=r1 status=200 cache=- bun_calls=0",
         "route=r2 status=200 cache=HIT bun_calls=0",
     ];

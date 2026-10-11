@@ -138,7 +138,10 @@ pub struct Stats {
     pub l1: CacheStats,
     pub job: CacheStats,
     pub loader_calls: u64,
+    /// Job batches the worker ran: a `jobs` call, or the misses of a planned loader call (M3-P P6).
     pub job_calls: u64,
+    /// Worker round trips (M3-P P6): the sum of every request's `bun_calls`.
+    pub worker_calls: u64,
     /// Worker calls answered 504 by the call deadline.
     pub timed_out_calls: u64,
     /// Distinct (component, slot) pairs whose job result lacked a declared output (an older
@@ -159,6 +162,7 @@ pub struct Server {
     pub(crate) dist_dir: PathBuf,
     pub(crate) loader_calls: AtomicU64,
     pub(crate) job_calls: AtomicU64,
+    pub(crate) worker_calls: AtomicU64,
     pub(crate) timed_out_calls: AtomicU64,
     /// (component, slot) pairs already warned about as missing from a job result.
     pub(crate) missing_slots: std::sync::Mutex<std::collections::HashSet<(String, String)>>,
@@ -237,6 +241,7 @@ impl Server {
             job: self.jobs.stats(),
             loader_calls: self.loader_calls.load(Ordering::Relaxed),
             job_calls: self.job_calls.load(Ordering::Relaxed),
+            worker_calls: self.worker_calls.load(Ordering::Relaxed),
             timed_out_calls: self.timed_out_calls.load(Ordering::Relaxed),
             missing_slots: self.missing_slots.lock().map_or(0, |m| m.len() as u64),
         }

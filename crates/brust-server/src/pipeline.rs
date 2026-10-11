@@ -21,9 +21,10 @@ use crate::cache::job_cache::{JobCache, JobKey};
 use crate::cache::key_expr::EvalCtx;
 use crate::cache::l1::{CacheKey, RenderedBody, build_cache_key};
 use crate::config::Server;
-use crate::dispatch::{CallError, CallKind, call_worker};
+use crate::dispatch::{CallError, CallKind, call_worker, call_worker_planned};
 use crate::inputs::{self, Path};
 use crate::manifest::{ALL_PROPS, Instances, JobKind, JobRecord, Manifest, RouteRecord};
+use crate::pool::PlanBox;
 use crate::protocol::{
     JobCall, JobResult, JobsRequest, JobsResponse, LoaderRequest, LoaderResponse, Verdict,
 };
@@ -333,26 +334,51 @@ async fn page(
     let mut status = status;
     let mut cacheable = true;
     let mut extra: Vec<(String, String)> = Vec::new();
+    // M3-P P6: the plan the worker built inside the loader call, with its job results.
+    let mut planned: Option<(PlannedCall, Vec<JobResult>)> = None;
     if !route.loaders.is_empty() {
         let req = LoaderRequest {
             route_id: &route.id,
             params,
             path: path_only,
             req: envelope.req,
+            plan: s.plans.chain_has_jobs(&route.chain),
         };
-        let r = call_worker::<_, LoaderResponse>(
+        // The plan offer: the base context (params + path: two entries) the worker plans on.
+        let seed: Option<PlanBox> = req.plan.then(|| -> PlanBox {
+            Box::new(PlanCell::Seed(PlanSeed {
+                route: ri,
+                base: ctx.clone(),
+            }))
+        });
+        let r = call_worker_planned::<_, LoaderResponse>(
             &s.pool,
             s.claim_timeout,
             s.call_timeout,
             CallKind::Loader,
             &req,
+            seed,
         )
         .await;
+        let (r, cell) = match r {
+            Ok((v, c)) => (Ok(v), c),
+            Err(e) => (Err(e), None),
+        };
         if !matches!(r, Err(CallError::NoWorkers | CallError::Timeout)) {
             s.loader_calls.fetch_add(1, Ordering::Relaxed);
+            s.worker_calls.fetch_add(1, Ordering::Relaxed);
             meta.bun_calls += 1;
         }
         match r {
+            Ok(LoaderResponse::Planned { results }) => {
+                let Some(PlanCell::Planned(pc)) =
+                    cell.and_then(|b| b.downcast::<PlanCell>().ok()).map(|b| *b)
+                else {
+                    tracing::error!(route = %route.id, "planned loader response without a plan in the slot");
+                    return body::error_500();
+                };
+                planned = Some((pc, results));
+            }
             Ok(LoaderResponse::Ok {
                 ok: true,
                 data,
@@ -403,7 +429,18 @@ async fn page(
                 return body::resp(status, "text/plain", &[], body.into_bytes());
             }
             Ok(LoaderResponse::Error { error }) => {
-                tracing::error!(route = %route.id, %error, "loader threw");
+                // A plan in the cell means the loader succeeded and the worker's job batch failed
+                // as a whole inside the same call: report and count it as the jobs call would.
+                let planned = cell
+                    .as_ref()
+                    .and_then(|b| b.downcast_ref::<PlanCell>())
+                    .is_some_and(|c| matches!(c, PlanCell::Planned(_)));
+                if planned {
+                    s.job_calls.fetch_add(1, Ordering::Relaxed);
+                    tracing::error!(route = %route.id, %error, "jobs call failed (planned loader call)");
+                } else {
+                    tracing::error!(route = %route.id, %error, "loader threw");
+                }
                 return body::error_500();
             }
             Err(e @ (CallError::NoWorkers | CallError::Timeout)) => {
@@ -419,109 +456,83 @@ async fn page(
             }
         }
     }
-    let mut ctx = Node::map(ctx);
-
     // ----- (5) jobs -----
-    let plans = match collect_jobs(&s.plans, &route.chain, &ctx) {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::error!(route = %route.id, error = %e, "job planning failed");
-            return body::error_500();
+    let (mut ctx, plans, lookup) = match planned {
+        Some((pc, results)) => {
+            // The loader's `Ok` arm (which applies its headers) did not run on this path.
+            for (k, v) in &pc.headers {
+                if k.eq_ignore_ascii_case("set-cookie") {
+                    cacheable = false;
+                }
+                extra.push((k.clone(), v.clone()));
+            }
+            let plans = rehydrate(&s.plans, pc.rows);
+            let mut lookup = pc.lookup;
+            if !lookup.misses.is_empty() {
+                s.job_calls.fetch_add(1, Ordering::Relaxed);
+                let ids: Vec<&str> = pc.call_ids.iter().map(String::as_str).collect();
+                if let Err(resp) = apply_job_results(s, route, &plans, &mut lookup, &ids, results) {
+                    return resp;
+                }
+            }
+            (pc.ctx, plans, lookup)
+        }
+        None => {
+            let ctx = Node::map(ctx);
+            let plans = match collect_jobs(&s.plans, &route.chain, &ctx) {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::error!(route = %route.id, error = %e, "job planning failed");
+                    return body::error_500();
+                }
+            };
+            let mut lookup = lookup_jobs(&s.jobs, &plans);
+            if !lookup.misses.is_empty() {
+                let req = jobs_request(&plans, &lookup.misses);
+                let r = call_worker::<_, JobsResponse>(
+                    &s.pool,
+                    s.claim_timeout,
+                    s.call_timeout,
+                    CallKind::Jobs,
+                    &req,
+                )
+                .await;
+                if !matches!(r, Err(CallError::NoWorkers | CallError::Timeout)) {
+                    s.job_calls.fetch_add(1, Ordering::Relaxed);
+                    s.worker_calls.fetch_add(1, Ordering::Relaxed);
+                    meta.bun_calls += 1;
+                }
+                let resp = match r {
+                    Ok(r) => r,
+                    Err(e @ (CallError::NoWorkers | CallError::Timeout)) => {
+                        return body::error_503(&e.to_string());
+                    }
+                    Err(CallError::Deadline) => {
+                        s.timed_out_calls.fetch_add(1, Ordering::Relaxed);
+                        return body::error_504("call deadline exceeded");
+                    }
+                    Err(e) => {
+                        tracing::error!(route = %route.id, error = %e, "jobs call failed");
+                        return body::error_500();
+                    }
+                };
+                let ids: Vec<&str> = req.jobs.iter().map(|c| c.id.as_str()).collect();
+                if let Err(resp) =
+                    apply_job_results(s, route, &plans, &mut lookup, &ids, resp.results)
+                {
+                    return resp;
+                }
+            }
+            (ctx, plans, lookup)
         }
     };
-    let Lookup {
-        mut values,
-        owner,
-        misses,
-    } = lookup_jobs(&s.jobs, &plans);
-    if !misses.is_empty() {
-        let req = jobs_request(&plans, &misses);
-        let r = call_worker::<_, JobsResponse>(
-            &s.pool,
-            s.claim_timeout,
-            s.call_timeout,
-            CallKind::Jobs,
-            &req,
-        )
-        .await;
-        if !matches!(r, Err(CallError::NoWorkers | CallError::Timeout)) {
-            s.job_calls.fetch_add(1, Ordering::Relaxed);
-            meta.bun_calls += 1;
-        }
-        let resp = match r {
-            Ok(r) => r,
-            Err(e @ (CallError::NoWorkers | CallError::Timeout)) => {
-                return body::error_503(&e.to_string());
-            }
-            Err(CallError::Deadline) => {
-                s.timed_out_calls.fetch_add(1, Ordering::Relaxed);
-                return body::error_504("call deadline exceeded");
-            }
-            Err(e) => {
-                tracing::error!(route = %route.id, error = %e, "jobs call failed");
-                return body::error_500();
-            }
-        };
-        // Validate every result before inserting any: one bad job fails the
-        // request and nothing is cached. One index (call id → request position),
-        // one pass; `k` indexes `req.jobs` and `misses` alike. Log fields come
-        // from the plan the id names (ids are opaque, never parsed).
-        let labels = |k: Option<usize>| {
-            k.map_or(("?", "?"), |k| {
-                let p = &plans[misses[k]];
-                (p.component_id, p.job_id)
-            })
-        };
-        let fresh = match results_in_request_order(&req, resp.results) {
-            Ok(v) => v,
-            Err(JobResultError::Threw { id, k, error }) => {
-                let (component_id, job_id) = labels(k);
-                tracing::error!(route = %route.id, component_id, job_id, call_id = %id, %error, "job threw");
-                return body::error_500();
-            }
-            Err(JobResultError::NoValue { id, k }) => {
-                let (component_id, job_id) = labels(k);
-                tracing::error!(route = %route.id, component_id, job_id, call_id = %id, "job result has neither value nor error");
-                return body::error_500();
-            }
-            Err(JobResultError::Missing { k }) => {
-                let p = &plans[misses[k]];
-                tracing::error!(route = %route.id, component_id = %p.component_id, job_id = %p.job_id, "jobs response has no result for {}", req.jobs[k].id);
-                return body::error_500();
-            }
-        };
-        for (k, (v, &i)) in fresh.iter().zip(&misses).enumerate() {
-            if let Err(e) = check_value(&plans[i], v) {
-                tracing::error!(route = %route.id, component_id = %plans[i].component_id, job_id = %plans[i].job_id, call_id = %req.jobs[k].id, error = %e, "job result does not fit its outputs");
-                return body::error_500();
-            }
-            note_missing_slots(s, &plans[i], v);
-        }
-        for (v, &i) in fresh.into_iter().zip(&misses) {
-            let p = &plans[i];
-            let v = Arc::new(v);
-            s.jobs.insert(
-                p.key.clone(),
-                Arc::clone(&v),
-                p.ttl,
-                p.tags,
-                p.user_key.as_deref(),
-            );
-            values[i] = Some(v);
-        }
-        for i in 0..plans.len() {
-            if values[i].is_none() {
-                values[i] = values[owner[i]].clone();
-            }
-        }
-    }
 
     // ----- (6) child slots + useId, then merge job values -----
     if let Err(e) = seed_child_slots(&s.plans, &route.id, &route.chain, &mut ctx) {
         tracing::error!(route = %route.id, error = %e, "child slot seeding failed");
         return body::error_500();
     }
-    merge_values(&mut ctx, &plans, &values);
+    merge_values(&mut ctx, &plans, &lookup.values);
 
     // ----- (7) render, assets, L1 store -----
     let ctx = Arc::new(ctx);
@@ -561,18 +572,85 @@ async fn page(
         && let Some(k) = cache_key
         && let Some(c) = &route.cache
     {
-        // The loader's headers ride with the ctx (and the rendered body, with
-        // its gzip if this request made it) so a HIT replays them.
-        s.l1.insert(
-            k,
-            ctx,
-            body,
-            extra.into(),
-            Duration::from_secs(c.ttl_seconds),
-            &c.tags,
-        );
+        // The rendered body carries the loader's headers (and its gzip if this
+        // request made it), so a HIT replays them.
+        s.l1.insert(k, body, Duration::from_secs(c.ttl_seconds), &c.tags);
     }
     resp
+}
+
+/// Validate, store and fan out the worker's `results` for `lookup.misses` — shared by the jobs
+/// call and the planned loader call. `Err` = the 500 to send, already logged (today's messages).
+#[expect(
+    clippy::result_large_err,
+    reason = "the Err is the cold 500 page() returns as is; boxing it buys nothing"
+)]
+fn apply_job_results(
+    s: &Server,
+    route: &RouteRecord,
+    plans: &[JobPlan],
+    lookup: &mut Lookup,
+    ids: &[&str],
+    results: Vec<JobResult>,
+) -> Result<(), Response<ResponseBody>> {
+    let Lookup {
+        values,
+        owner,
+        misses,
+    } = lookup;
+    // Validate every result before inserting any: one bad job fails the
+    // request and nothing is cached. One index (call id → request position),
+    // one pass; `k` indexes `ids` and `misses` alike. Log fields come
+    // from the plan the id names (ids are opaque, never parsed).
+    let labels = |k: Option<usize>| {
+        k.map_or(("?", "?"), |k| {
+            let p = &plans[misses[k]];
+            (p.component_id, p.job_id)
+        })
+    };
+    let fresh = match results_in_request_order(ids, results) {
+        Ok(v) => v,
+        Err(JobResultError::Threw { id, k, error }) => {
+            let (component_id, job_id) = labels(k);
+            tracing::error!(route = %route.id, component_id, job_id, call_id = %id, %error, "job threw");
+            return Err(body::error_500());
+        }
+        Err(JobResultError::NoValue { id, k }) => {
+            let (component_id, job_id) = labels(k);
+            tracing::error!(route = %route.id, component_id, job_id, call_id = %id, "job result has neither value nor error");
+            return Err(body::error_500());
+        }
+        Err(JobResultError::Missing { k }) => {
+            let p = &plans[misses[k]];
+            tracing::error!(route = %route.id, component_id = %p.component_id, job_id = %p.job_id, "jobs response has no result for {}", ids[k]);
+            return Err(body::error_500());
+        }
+    };
+    for (k, (v, &i)) in fresh.iter().zip(misses.iter()).enumerate() {
+        if let Err(e) = check_value(&plans[i], v) {
+            tracing::error!(route = %route.id, component_id = %plans[i].component_id, job_id = %plans[i].job_id, call_id = %ids[k], error = %e, "job result does not fit its outputs");
+            return Err(body::error_500());
+        }
+        note_missing_slots(s, &plans[i], v);
+    }
+    for (v, &i) in fresh.into_iter().zip(misses.iter()) {
+        let p = &plans[i];
+        let v = Arc::new(v);
+        s.jobs.insert(
+            p.key.clone(),
+            Arc::clone(&v),
+            p.ttl,
+            p.tags,
+            p.user_key.as_deref(),
+        );
+        values[i] = Some(v);
+    }
+    for i in 0..plans.len() {
+        if values[i].is_none() {
+            values[i] = values[owner[i]].clone();
+        }
+    }
+    Ok(())
 }
 
 fn render_failed(route: &RouteRecord, e: &RenderError) -> Response<ResponseBody> {
@@ -998,6 +1076,18 @@ pub(crate) enum Dest<'a> {
     },
 }
 
+/// Where a plan's template lives in the [`PlanIndex`] (M3-P P6: a plan stored across the
+/// worker call is owned — [`PlanRow`] — and re-borrowed with [`rehydrate`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PlanSrc {
+    /// The job's component in `PlanIndex::comps` (the child component for a child instance).
+    comp: u32,
+    /// The job in that component's `jobs`.
+    job: u32,
+    /// Child instance: (parent component, child record in the parent's `children`).
+    via: Option<(u32, u32)>,
+}
+
 /// One job of one request. Borrows its strings from the [`PlanIndex`].
 #[derive(Debug, Clone)]
 pub(crate) struct JobPlan<'a> {
@@ -1019,9 +1109,29 @@ pub(crate) struct JobPlan<'a> {
     pub outputs: &'a [String],
     /// The manifest record's `target`, passed through as `JobCall.target`.
     pub target: Option<&'a str>,
+    /// The template this plan was built from.
+    pub(crate) src: PlanSrc,
+}
+
+/// What survives the worker call of a plan: its template indices and its per-request strings.
+#[derive(Debug, Clone)]
+pub(crate) struct PlanRow {
+    src: PlanSrc,
+    row: Option<usize>,
+    key: JobKey,
+    user_key: Option<String>,
 }
 
 impl JobPlan<'_> {
+    pub(crate) fn to_row(&self) -> PlanRow {
+        PlanRow {
+            src: self.src,
+            row: self.call_row,
+            key: self.key.clone(),
+            user_key: self.user_key.clone(),
+        }
+    }
+
     /// The `per_instance` row this call renders (`JobCall.row`).
     fn instance_row(&self) -> Option<usize> {
         match self.dest {
@@ -1043,6 +1153,56 @@ impl JobPlan<'_> {
     }
 }
 
+/// The plans `rows` describe, borrowed from `idx` again. `inputs` is `Node::Null`: a rehydrated
+/// plan is used after its call (insert, merge, logs), never to build a request.
+pub(crate) fn rehydrate(idx: &PlanIndex, rows: Vec<PlanRow>) -> Vec<JobPlan<'_>> {
+    rows.into_iter()
+        .map(|r| {
+            let comp = &idx.comps[r.src.comp as usize];
+            let job = r.src.job as usize;
+            let jt = &comp.jobs[job];
+            let (call_prefix, dest) = match r.src.via {
+                None => (
+                    comp.call_prefixes[job].as_str(),
+                    Dest::Chain {
+                        component: &comp.id,
+                        row: r.row,
+                    },
+                ),
+                Some((parent, rec)) => {
+                    let p = &idx.comps[parent as usize];
+                    let ch = &p.children[rec as usize];
+                    (
+                        ch.call_prefixes[job].as_str(),
+                        Dest::Child {
+                            parent: &p.id,
+                            component: &comp.id,
+                            slot: &ch.slot,
+                            row: r.row,
+                        },
+                    )
+                }
+            };
+            JobPlan {
+                key: r.key,
+                call_prefix,
+                call_row: r.row,
+                component_id: &comp.id,
+                job_id: &jt.id,
+                kind: jt.kind,
+                inputs: Node::Null,
+                ttl: jt.ttl,
+                tags: &jt.tags,
+                user_key: r.user_key,
+                dest,
+                outputs: &jt.outputs,
+                target: jt.target.as_deref(),
+                src: r.src,
+            }
+        })
+        .collect()
+}
+
 /// Every path a request evaluates, parsed, and every per-instance string
 /// (call-id prefixes, child slot names, useId instance names) built, once per
 /// component at boot (m2p plan-perf): `collect_jobs` / `seed_child_slots`
@@ -1061,6 +1221,8 @@ struct CompTpl {
     call_prefixes: Vec<String>,
     children: Vec<ChildTpl>,
     use_id_slots: u32,
+    /// Own jobs non-empty, or some child component's jobs non-empty (`chain_has_jobs`).
+    deep_jobs: bool,
 }
 
 #[derive(Debug)]
@@ -1154,16 +1316,34 @@ impl PlanIndex {
                 jobs,
                 children,
                 use_id_slots: c.use_id_slots,
+                deep_jobs: false,
             });
+        }
+        for i in 0..comps.len() {
+            let c = &comps[i];
+            let deep =
+                !c.jobs.is_empty() || c.children.iter().any(|ch| !comps[ch.child].jobs.is_empty());
+            comps[i].deep_jobs = deep;
         }
         Ok(PlanIndex { comps, by_id })
     }
 
-    fn comp(&self, id: &str) -> Result<&CompTpl, String> {
+    fn comp_ix(&self, id: &str) -> Result<usize, String> {
         self.by_id
             .get(id)
-            .map(|&i| &self.comps[i])
+            .copied()
             .ok_or_else(|| format!("unknown component {id}"))
+    }
+
+    fn comp(&self, id: &str) -> Result<&CompTpl, String> {
+        self.comp_ix(id).map(|i| &self.comps[i])
+    }
+
+    /// Some chain component or one of its children has a job.
+    pub(crate) fn chain_has_jobs(&self, chain: &[String]) -> bool {
+        chain
+            .iter()
+            .any(|id| self.by_id.get(id).is_some_and(|&i| self.comps[i].deep_jobs))
     }
 }
 
@@ -1239,6 +1419,7 @@ fn plan_key(
     (JobKey(inputs::job_key(cid, key_job, projected)), None)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn plan_one<'a>(
     out: &mut Vec<JobPlan<'a>>,
     cid: &'a str,
@@ -1247,6 +1428,7 @@ fn plan_one<'a>(
     props: &Node,
     dest: Dest<'a>,
     row: Option<usize>,
+    src: PlanSrc,
 ) -> Result<(), String> {
     let per_instance = match dest {
         Dest::Chain { row, .. } => row,
@@ -1276,6 +1458,7 @@ fn plan_one<'a>(
         dest,
         outputs: &j.outputs,
         target: j.target.as_deref(),
+        src,
     });
     Ok(())
 }
@@ -1295,22 +1478,28 @@ pub(crate) fn collect_jobs<'a>(
 ) -> Result<Vec<JobPlan<'a>>, String> {
     let mut out = Vec::new();
     for id in chain {
-        let c = idx.comp(id)?;
-        for (j, prefix) in c.jobs.iter().zip(&c.call_prefixes) {
+        let ci = idx.comp_ix(id)?;
+        let c = &idx.comps[ci];
+        for (ji, (j, prefix)) in c.jobs.iter().zip(&c.call_prefixes).enumerate() {
             let dest = |row| Dest::Chain {
                 component: &c.id,
                 row,
             };
+            let src = PlanSrc {
+                comp: ci as u32,
+                job: ji as u32,
+                via: None,
+            };
             match &j.per_instance {
-                None => plan_one(&mut out, &c.id, prefix, j, ctx, dest(None), None)?,
+                None => plan_one(&mut out, &c.id, prefix, j, ctx, dest(None), None, src)?,
                 Some(list) => {
                     for r in 0..row_count(list, ctx) {
-                        plan_one(&mut out, &c.id, prefix, j, ctx, dest(Some(r)), Some(r))?;
+                        plan_one(&mut out, &c.id, prefix, j, ctx, dest(Some(r)), Some(r), src)?;
                     }
                 }
             }
         }
-        for ch in &c.children {
+        for (ri, ch) in c.children.iter().enumerate() {
             let child = &idx.comps[ch.child];
             if child.jobs.is_empty() {
                 continue;
@@ -1325,8 +1514,22 @@ pub(crate) fn collect_jobs<'a>(
             for r in rows.map_or(0..1, |n| 0..n) {
                 let row = rows.map(|_| r);
                 let props = ch.props.eval(ctx, row)?;
-                for (j, prefix) in child.jobs.iter().zip(&ch.call_prefixes) {
-                    plan_one(&mut out, &child.id, prefix, j, &props, target(row), row)?;
+                for (ji, (j, prefix)) in child.jobs.iter().zip(&ch.call_prefixes).enumerate() {
+                    let src = PlanSrc {
+                        comp: ch.child as u32,
+                        job: ji as u32,
+                        via: Some((ci as u32, ri as u32)),
+                    };
+                    plan_one(
+                        &mut out,
+                        &child.id,
+                        prefix,
+                        j,
+                        &props,
+                        target(row),
+                        row,
+                        src,
+                    )?;
                 }
             }
         }
@@ -1390,18 +1593,11 @@ enum JobResultError {
 /// repeated id keeps its last value, an error wins over a missing result —
 /// exactly the former two-map behaviour.
 fn results_in_request_order(
-    req: &JobsRequest<'_>,
+    ids: &[&str],
     results: Vec<JobResult>,
 ) -> Result<Vec<Node>, JobResultError> {
-    let pos: HashMap<&str, usize> = req
-        .jobs
-        .iter()
-        .enumerate()
-        .map(|(k, c)| (c.id.as_str(), k))
-        .collect();
-    let mut out: Vec<Option<Node>> = std::iter::repeat_with(|| None)
-        .take(req.jobs.len())
-        .collect();
+    let pos: HashMap<&str, usize> = ids.iter().enumerate().map(|(k, &id)| (id, k)).collect();
+    let mut out: Vec<Option<Node>> = std::iter::repeat_with(|| None).take(ids.len()).collect();
     for res in results {
         let k = pos.get(res.id.as_str()).copied();
         if let Some(error) = res.error {
@@ -1450,6 +1646,132 @@ pub(crate) fn merge_values(ctx: &mut Node, plans: &[JobPlan], values: &[Option<A
                 merge_result(map, p, v);
             }
         }
+    }
+}
+
+// ----------------------------------------------------------------------------
+// (4+5) the planned loader call (M3-P P6)
+// ----------------------------------------------------------------------------
+
+/// `planJobs` answer: not planned — the worker keeps its loader response in the slot and `page`
+/// plans after the call (the two-call path). Never a valid `JobsRequest` JSON.
+pub const PLAN_DECLINED: &str = "!";
+
+/// Put into the claimed slot by `page` before a planned loader call.
+pub(crate) struct PlanSeed {
+    /// The route's index in `manifest.routes`.
+    pub route: usize,
+    /// `params` + `path`, as `page` builds the context before the loader call.
+    pub base: MapInner,
+}
+
+/// Left in the slot by [`plan_in_call`] (success only) for `page`.
+pub(crate) struct PlannedCall {
+    /// base + loader data (`merge_loader_data`), as `page` builds it.
+    pub ctx: Node,
+    /// The loader's response headers.
+    pub headers: BTreeMap<String, String>,
+    /// `collect_jobs`, owned (re-borrowed with [`rehydrate`] after the call).
+    pub rows: Vec<PlanRow>,
+    /// Hits pinned, owner, misses — exactly `lookup_jobs`'.
+    pub lookup: Lookup,
+    /// The ids of the misses' calls, request order.
+    pub call_ids: Vec<String>,
+}
+
+/// The plan state of a planned loader call, in the claimed slot's cell (`pool::PlanBox`).
+pub(crate) enum PlanCell {
+    Seed(PlanSeed),
+    Planned(PlannedCall),
+}
+
+/// The planning core: `bytes` = the worker's `{ ok: true, data, headers? }`. `None` = decline
+/// (not that shape, `ok: false`, a planning error — `page` will meet the same error after the
+/// call and answer it with today's log + status). `Some((plan, misses))`: `misses` is the
+/// `JobsRequest` JSON of the misses, `""` when every job hit.
+fn plan_response(
+    idx: &PlanIndex,
+    cache: &JobCache,
+    route: &RouteRecord,
+    mut base: MapInner,
+    bytes: &[u8],
+) -> Option<(PlannedCall, String)> {
+    let LoaderResponse::Ok {
+        ok: true,
+        data,
+        headers,
+    } = serde_json::from_slice::<LoaderResponse>(bytes).ok()?
+    else {
+        return None;
+    };
+    merge_loader_data(&mut base, data, &route.id);
+    let ctx = Node::map(base);
+    let plans = collect_jobs(idx, &route.chain, &ctx).ok()?;
+    // Counts job-cache hits/misses once per plan, as today: the declined path runs it only
+    // when nothing was planned (the cell is empty).
+    let lookup = lookup_jobs(cache, &plans);
+    let (misses, call_ids) = if lookup.misses.is_empty() {
+        (String::new(), Vec::new())
+    } else {
+        let req = jobs_request(&plans, &lookup.misses);
+        let ids = req.jobs.iter().map(|c| c.id.clone()).collect();
+        (serde_json::to_string(&req).ok()?, ids)
+    };
+    let rows = plans.iter().map(JobPlan::to_row).collect();
+    Some((
+        PlannedCall {
+            ctx,
+            headers,
+            rows,
+            lookup,
+            call_ids,
+        },
+        misses,
+    ))
+}
+
+/// The worker-thread half of a planned call (napi `planJobs(slot, len)`). Runs on the
+/// worker's JS thread, synchronously inside its call for `slot`. Never panics out, never errs:
+/// every failure is [`PLAN_DECLINED`] and leaves no plan behind.
+pub fn plan_in_call(s: &Server, worker: u32, slot: u32, len: u32) -> String {
+    let declined = || PLAN_DECLINED.to_string();
+    let Some(entry) = s.pool.entry(worker) else {
+        return declined();
+    };
+    let Some(cell) = entry.claimed_plan_cell(slot) else {
+        return declined();
+    };
+    // Take the seed: from here on every decline leaves the cell empty.
+    let taken = cell.lock().take();
+    let seed = match taken.map(|b| b.downcast::<PlanCell>()) {
+        Some(Ok(b)) => match *b {
+            PlanCell::Seed(seed) => seed,
+            PlanCell::Planned(_) => return declined(),
+        },
+        _ => return declined(),
+    };
+    let (ptr, cap) = entry.dispatch.buf_slot(slot);
+    if len == 0 || len as usize > cap {
+        return declined();
+    }
+    // SAFETY: we run on the worker's JS thread, synchronously inside its call for `slot` (the
+    // slot is claimed: `claimed_plan_cell` returned it): the worker wrote these `len` bytes on
+    // this thread just before calling `planJobs`, and nothing else writes a claimed slot. `len`
+    // is bounds-checked against the slot's capacity above.
+    let bytes = unsafe { std::slice::from_raw_parts(ptr, len as usize) };
+    let Some(route) = s.manifest.routes.get(seed.route) else {
+        return declined();
+    };
+    let planned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        plan_response(&s.plans, &s.jobs, route, seed.base, bytes)
+    }));
+    match planned {
+        Ok(Some((plan, misses))) => {
+            *cell.lock() = Some(Box::new(PlanCell::Planned(plan)));
+            entry.stamp_jobs_phase(slot);
+            misses
+        }
+        _ => declined(),
     }
 }
 
@@ -1847,21 +2169,6 @@ mod tests {
     fn at<'a>(n: &'a Node, path: &[&str]) -> &'a Node {
         path.iter().fold(n, |cur, k| cur.get(k).unwrap_or(&NULL))
     }
-    fn req_of(ids: &[&str]) -> JobsRequest<'static> {
-        JobsRequest {
-            jobs: ids
-                .iter()
-                .map(|id| JobCall {
-                    id: id.to_string(),
-                    component_id: "c",
-                    kind: JobKind::Precompute,
-                    inputs: &NULL,
-                    target: None,
-                    row: None,
-                })
-                .collect(),
-        }
-    }
     fn res(id: &str, v: Option<Value>, e: Option<&str>) -> JobResult {
         JobResult {
             id: id.into(),
@@ -1872,9 +2179,8 @@ mod tests {
 
     #[test]
     fn results_in_request_order_reorders_by_call_id() {
-        let req = req_of(&["p/j/0", "p/j/1", "p/j/2"]);
         let out = results_in_request_order(
-            &req,
+            &["p/j/0", "p/j/1", "p/j/2"],
             vec![
                 res("p/j/2", Some(json!(2)), None),
                 res("p/j/0", Some(json!(0)), None),
@@ -1887,9 +2193,8 @@ mod tests {
 
     #[test]
     fn results_in_request_order_ignores_unknown_ids_and_keeps_the_last_duplicate() {
-        let req = req_of(&["a", "b"]);
         let out = results_in_request_order(
-            &req,
+            &["a", "b"],
             vec![
                 res("zzz", Some(json!(9)), None),
                 res("a", Some(json!(1)), None),
@@ -1903,25 +2208,25 @@ mod tests {
 
     #[test]
     fn results_in_request_order_reports_missing_error_and_no_value_with_positions() {
-        let req = req_of(&["a", "b"]);
+        let req: &[&str] = &["a", "b"];
         assert!(matches!(
-            results_in_request_order(&req, vec![res("a", Some(json!(1)), None)]),
+            results_in_request_order(req, vec![res("a", Some(json!(1)), None)]),
             Err(JobResultError::Missing { k: 1 })
         ));
         assert!(matches!(
             results_in_request_order(
-                &req,
+                req,
                 vec![res("b", None, Some("boom")), res("a", Some(json!(1)), None)]
             ),
             Err(JobResultError::Threw { k: Some(1), .. })
         ));
         assert!(matches!(
-            results_in_request_order(&req, vec![res("nope", None, Some("boom"))]),
+            results_in_request_order(req, vec![res("nope", None, Some("boom"))]),
             Err(JobResultError::Threw { k: None, .. })
         ));
         assert!(matches!(
             results_in_request_order(
-                &req,
+                req,
                 vec![res("a", None, None), res("b", Some(json!(1)), None)]
             ),
             Err(JobResultError::NoValue { k: Some(0), .. })
@@ -2036,28 +2341,41 @@ mod tests {
     /// JSON, equal the golden computed before the m2p plan-template work
     /// (`BRUST_WRITE_PLAN_GOLDEN=1` rewrites it); and seeding + merging each
     /// plan's value rebuilds the captured merged context exactly.
+    fn golden_dir() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("benches/fixtures/pokedex")
+    }
+
+    /// The pokedex golden's manifest and, for `file`, the captured merged context
+    /// and the loader context `page` plans over (the merged one minus the overlays).
+    fn golden_ctx(file: &str) -> (Manifest, Node, Node) {
+        let dir = golden_dir();
+        let m: Manifest =
+            serde_json::from_slice(&std::fs::read(dir.join("manifest.json")).unwrap()).unwrap();
+        let merged: Value =
+            serde_json::from_slice(&std::fs::read(dir.join("ctx").join(file)).unwrap()).unwrap();
+        let merged = Node::from(merged);
+        let mut ctx = merged.clone();
+        for k in [OWN_KEY, CHILDREN_KEY] {
+            ctx.map_mut().unwrap().remove(k);
+        }
+        (m, ctx, merged)
+    }
+
+    const GOLDEN_CASES: [(&str, &str); 3] = [
+        ("/pokemon/{name}", "pokemon-pikachu.json"),
+        ("/", "home.json"),
+        ("/type-chart", "type-chart.json"),
+    ];
+
     #[test]
     fn pokedex_plans_match_the_golden() {
         use plan_stage::Planner;
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("benches/fixtures/pokedex");
-        let m: Manifest =
-            serde_json::from_slice(&std::fs::read(dir.join("manifest.json")).unwrap()).unwrap();
-        let planner = Planner::new(&m).unwrap();
+        let dir = golden_dir();
         let mut got = serde_json::Map::new();
-        for (pattern, file) in [
-            ("/pokemon/{name}", "pokemon-pikachu.json"),
-            ("/", "home.json"),
-            ("/type-chart", "type-chart.json"),
-        ] {
+        for (pattern, file) in GOLDEN_CASES {
+            let (m, mut ctx, merged) = golden_ctx(file);
+            let planner = Planner::new(&m).unwrap();
             let route = m.routes.iter().find(|r| r.pattern == pattern).unwrap();
-            let merged: Value =
-                serde_json::from_slice(&std::fs::read(dir.join("ctx").join(file)).unwrap())
-                    .unwrap();
-            let merged = Node::from(merged);
-            let mut ctx = merged.clone();
-            for k in [OWN_KEY, CHILDREN_KEY] {
-                ctx.map_mut().unwrap().remove(k);
-            }
             let plans = planner.plan(&route.chain, &ctx).unwrap();
             got.insert(
                 file.into(),
@@ -2081,6 +2399,53 @@ mod tests {
         }
         let want: Value = serde_json::from_slice(&std::fs::read(&golden).unwrap()).unwrap();
         assert_eq!(got, want);
+    }
+
+    #[test]
+    fn rehydrated_plans_describe_like_collected_plans() {
+        // `describe()` with every "inputs" set to null: a rehydrated plan has none.
+        let strip = |d: Node| {
+            let mut v = j(&d);
+            for e in v.as_array_mut().unwrap() {
+                e["inputs"] = Value::Null;
+            }
+            v
+        };
+        for (pattern, file) in GOLDEN_CASES {
+            let (m, ctx, _) = golden_ctx(file);
+            let idx = PlanIndex::new(&m).unwrap();
+            let route = m.routes.iter().find(|r| r.pattern == pattern).unwrap();
+            let plans = collect_jobs(&idx, &route.chain, &ctx).unwrap();
+            assert!(!plans.is_empty(), "{file}");
+            let rows: Vec<PlanRow> = plans.iter().map(JobPlan::to_row).collect();
+            let back = rehydrate(&idx, rows);
+            for (b, p) in back.iter().zip(&plans) {
+                assert_eq!(b.src, p.src, "{file}");
+                assert_eq!(b.inputs, Node::Null, "{file}");
+            }
+            assert_eq!(
+                strip(plan_stage::Planned(back).describe()),
+                strip(plan_stage::Planned(plans).describe()),
+                "{file}"
+            );
+            assert!(idx.chain_has_jobs(&route.chain), "{file}");
+        }
+    }
+
+    #[test]
+    fn chain_has_jobs_sees_child_jobs_only_chains() {
+        let m = manifest();
+        let idx = PlanIndex::new(&m).unwrap();
+        let route = |id: &str| &m.routes.iter().find(|r| r.id == id).unwrap().chain;
+        assert!(!idx.chain_has_jobs(route("r1")));
+        assert!(idx.chain_has_jobs(route("r2")));
+        assert!(idx.chain_has_jobs(route("r5")));
+        assert!(!idx.chain_has_jobs(&chain(&["appLayout_a1", "unknown_zz"])));
+        // detailPage_c3 without its own job: its moveCard child still has one.
+        let mut m2 = manifest();
+        m2.components.get_mut("detailPage_c3").unwrap().jobs.clear();
+        let idx2 = PlanIndex::new(&m2).unwrap();
+        assert!(idx2.chain_has_jobs(route("r2")));
     }
 
     #[test]
@@ -2473,5 +2838,237 @@ mod tests {
         let (ptr, cap) = (out.as_ptr(), out.capacity());
         trim_to_hint(&mut out);
         assert_eq!((out.as_ptr(), out.capacity()), (ptr, cap));
+    }
+
+    // ----- (4+5) the planned loader call (M3-P P6) -----
+
+    /// The context `page` builds before the loader call for `/pokemon/<name>`.
+    fn base(name: &str) -> MapInner {
+        let mut m = MapInner::new();
+        m.insert(
+            "params".into(),
+            Node::map([(Arc::from("name"), Node::str(name))].into_iter().collect()),
+        );
+        m.insert("path".into(), Node::str(&format!("/pokemon/{name}")));
+        m
+    }
+
+    fn r2(m: &Manifest) -> &RouteRecord {
+        m.routes.iter().find(|r| r.id == "r2").unwrap()
+    }
+
+    const PIKACHU: &[u8] = br#"{"ok":true,"data":{"pokemon":{"name":"pikachu","stats":{"hp":35},"moves":[{"name":"tackle"},{"name":"growl"}]}},"headers":{"x-a":"1"}}"#;
+
+    #[test]
+    fn plan_response_plans_like_page_and_returns_the_misses_request() {
+        let m = manifest();
+        let idx = PlanIndex::new(&m).unwrap();
+        let cache = JobCache::new(64);
+        let (pc, misses) = plan_response(&idx, &cache, r2(&m), base("pikachu"), PIKACHU).unwrap();
+        // Same ctx and plans as the declined path: merge_loader_data + collect_jobs over it.
+        let mut want = base("pikachu");
+        merge_loader_data(&mut want, pikachu(), "r2");
+        let want = Node::map(want);
+        assert_eq!(pc.ctx, want);
+        let plans = collect_jobs(&idx, &r2(&m).chain, &want).unwrap();
+        assert_eq!(
+            misses,
+            serde_json::to_string(&jobs_request(&plans, &[0, 1, 2])).unwrap()
+        );
+        assert_eq!(
+            pc.call_ids,
+            [
+                "detailPage_c3/j0",
+                "detailPage_c3/moveCard_d4_1/j0/0",
+                "detailPage_c3/moveCard_d4_1/j0/1"
+            ]
+        );
+        assert_eq!(pc.lookup.misses, [0, 1, 2]);
+        assert_eq!(pc.lookup.owner, [0, 1, 2]);
+        assert!(pc.lookup.values.iter().all(Option::is_none));
+        assert_eq!(pc.headers.get("x-a").map(String::as_str), Some("1"));
+        // The owned rows rehydrate to the plans the declined path collects.
+        let back = rehydrate(&idx, pc.rows);
+        assert_eq!(back.len(), plans.len());
+        for (b, p) in back.iter().zip(&plans) {
+            assert_eq!((b.src, &b.key, b.call_id()), (p.src, &p.key, p.call_id()));
+        }
+    }
+
+    #[test]
+    fn plan_response_pins_hits_and_answers_empty_when_all_hit() {
+        let m = manifest();
+        let idx = PlanIndex::new(&m).unwrap();
+        let cache = JobCache::new(64);
+        let mut want = base("pikachu");
+        merge_loader_data(&mut want, pikachu(), "r2");
+        let plans = collect_jobs(&idx, &r2(&m).chain, &Node::map(want)).unwrap();
+        for (i, p) in plans.iter().enumerate() {
+            let v = Arc::new(n(json!({ "_s1": i })));
+            cache.insert(p.key.clone(), v, p.ttl, p.tags, p.user_key.as_deref());
+        }
+        let (pc, misses) = plan_response(&idx, &cache, r2(&m), base("pikachu"), PIKACHU).unwrap();
+        assert_eq!(misses, "");
+        assert!(pc.call_ids.is_empty());
+        assert!(pc.lookup.misses.is_empty());
+        assert!(pc.lookup.values.iter().all(Option::is_some));
+        // An invalidation after planning leaves the pinned values in the plan.
+        assert_eq!(cache.invalidate_tags(&["moves".to_string()]), 2);
+        assert!(cache.get(&plans[1].key).is_none());
+        for (i, v) in pc.lookup.values.iter().enumerate() {
+            assert_eq!(j(v.as_ref().unwrap()), json!({ "_s1": i }));
+        }
+    }
+
+    #[test]
+    fn plan_response_dedupes_identical_keys_like_lookup_jobs() {
+        let m = manifest();
+        let idx = PlanIndex::new(&m).unwrap();
+        let cache = JobCache::new(64);
+        let twice = br#"{"ok":true,"data":{"pokemon":{"name":"p","stats":{"hp":1},"moves":[{"name":"tackle"},{"name":"tackle"}]}}}"#;
+        let (pc, misses) = plan_response(&idx, &cache, r2(&m), base("p"), twice).unwrap();
+        assert_eq!(pc.lookup.owner, [0, 1, 1]);
+        assert_eq!(pc.lookup.misses, [0, 1]);
+        assert_eq!(pc.rows.len(), 3);
+        assert_eq!(
+            pc.call_ids,
+            ["detailPage_c3/j0", "detailPage_c3/moveCard_d4_1/j0/0"]
+        );
+        let req: Value = serde_json::from_str(&misses).unwrap();
+        assert_eq!(req["jobs"].as_array().unwrap().len(), 2);
+        assert!(pc.headers.is_empty());
+    }
+
+    #[test]
+    fn plan_response_declines_what_is_not_ok_data() {
+        let m = manifest();
+        let idx = PlanIndex::new(&m).unwrap();
+        let cache = JobCache::new(8);
+        for bad in [
+            &br#"{"verdict":"notFound","data":{}}"#[..],
+            br#"{"verdict":"redirect","location":"/x","status":302}"#,
+            br#"{"error":"x"}"#,
+            br#"{"ok":false,"data":{}}"#,
+            br#"{"planned":true,"results":[]}"#,
+            br#"{"error":"response too large: 300000 > 262144"}"#,
+            b"not json",
+            b"",
+        ] {
+            assert!(
+                plan_response(&idx, &cache, r2(&m), base("p"), bad).is_none(),
+                "{}",
+                String::from_utf8_lossy(bad)
+            );
+        }
+        // A planning error declines too (`page` meets it after the call: 500, "job planning
+        // failed"): a chain naming a component the index does not know.
+        let mut broken = r2(&m).clone();
+        broken.chain.push("unknown_zz".into());
+        assert!(plan_response(&idx, &cache, &broken, base("p"), PIKACHU).is_none());
+    }
+
+    /// A server on the fixture `dist/` with one `MockDispatch` worker of one slot.
+    fn plan_server() -> (Arc<Server>, u32) {
+        let s = crate::server::start(crate::Config {
+            addr: "127.0.0.1:0".parse().unwrap(),
+            dist_dir: std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/dist"),
+            ..Default::default()
+        })
+        .expect("start");
+        let id = s.register_worker(Box::new(crate::dispatch::MockDispatch::with_slots(1)));
+        (s, id)
+    }
+
+    fn claim(s: &Server) -> crate::pool::RenderClaim {
+        match s.pool.try_claim_render_lockfree() {
+            crate::pool::ClaimResult::Claimed(c) => c,
+            _ => panic!("no claim"),
+        }
+    }
+
+    fn seed(s: &Server, name: &str) -> crate::pool::PlanBox {
+        let route = s.manifest.routes.iter().position(|r| r.id == "r2").unwrap();
+        Box::new(PlanCell::Seed(PlanSeed {
+            route,
+            base: base(name),
+        }))
+    }
+
+    /// Copy `bytes` into the claimed slot, as the worker's `writeSlot` does.
+    fn write_slot(c: &crate::pool::RenderClaim, bytes: &[u8]) -> u32 {
+        let (dst, cap) = c.entry().dispatch.buf_slot(c.slot());
+        assert!(bytes.len() <= cap);
+        // SAFETY: the claimed slot's in-bounds sub-region of the mock's leaked buffer.
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), dst, bytes.len()) };
+        bytes.len() as u32
+    }
+
+    #[test]
+    fn plan_in_call_declines_an_idle_slot_a_missing_seed_and_a_len_outside_the_slot() {
+        let (s, id) = plan_server();
+        // Idle slot: nobody holds it, so no plan may be read or written.
+        assert_eq!(plan_in_call(&s, id, 0, PIKACHU.len() as u32), PLAN_DECLINED);
+        let c = claim(&s);
+        let len = write_slot(&c, PIKACHU);
+        // Unknown worker, slot out of range.
+        assert_eq!(plan_in_call(&s, id + 1, 0, len), PLAN_DECLINED);
+        assert_eq!(plan_in_call(&s, id, 1, len), PLAN_DECLINED);
+        // Claimed, but no seed was put (a call `page` did not offer a plan for).
+        assert_eq!(plan_in_call(&s, id, 0, len), PLAN_DECLINED);
+        assert!(c.take_plan().is_none());
+        // A seed, but a length outside the slot (or empty): declined, the seed is gone.
+        let (_, cap) = c.entry().dispatch.buf_slot(0);
+        for bad in [cap as u32 + 1, 0] {
+            c.put_plan(seed(&s, "pikachu"));
+            assert_eq!(plan_in_call(&s, id, 0, bad), PLAN_DECLINED);
+            assert!(c.take_plan().is_none(), "len {bad}");
+        }
+        // A seed and bytes that are not `{ ok: true, data }`: declined, no plan left.
+        c.put_plan(seed(&s, "pikachu"));
+        let len = write_slot(&c, br#"{"verdict":"notFound","data":{}}"#);
+        assert_eq!(plan_in_call(&s, id, 0, len), PLAN_DECLINED);
+        assert!(c.take_plan().is_none());
+        // A second planJobs in the same call finds a plan, not a seed: declined.
+        c.put_plan(seed(&s, "pikachu"));
+        let len = write_slot(&c, PIKACHU);
+        assert_ne!(plan_in_call(&s, id, 0, len), PLAN_DECLINED);
+        assert_eq!(plan_in_call(&s, id, 0, len), PLAN_DECLINED);
+        assert!(c.take_plan().is_none());
+        drop(c);
+        assert_eq!(s.stats().job_calls, 0);
+    }
+
+    #[test]
+    fn plan_in_call_stores_the_plan_and_returns_the_misses() {
+        let (s, id) = plan_server();
+        let c = claim(&s);
+        c.put_plan(seed(&s, "pikachu"));
+        let len = write_slot(&c, PIKACHU);
+        let got = plan_in_call(&s, id, c.slot(), len);
+        let mut want = base("pikachu");
+        merge_loader_data(&mut want, pikachu(), "r2");
+        let plans = collect_jobs(&s.plans, &r2(&s.manifest).chain, &Node::map(want)).unwrap();
+        assert_eq!(
+            got,
+            serde_json::to_string(&jobs_request(&plans, &[0, 1, 2])).unwrap()
+        );
+        let cell = c
+            .take_plan()
+            .expect("a plan")
+            .downcast::<PlanCell>()
+            .unwrap();
+        let PlanCell::Planned(pc) = *cell else {
+            panic!("expected a planned cell")
+        };
+        assert_eq!(pc.rows.len(), 3);
+        assert_eq!(pc.lookup.misses, [0, 1, 2]);
+        assert!(c.take_plan().is_none(), "taken once");
+        // The claim's drop leaves the slot idle and the cell empty.
+        c.put_plan(seed(&s, "pikachu"));
+        drop(c);
+        let e = s.pool.entry(id).unwrap();
+        assert!(e.slot(0).is_idle());
+        assert!(e.claimed_plan_cell(0).is_none());
+        assert!(e.slot(0).plan.lock().is_none());
     }
 }

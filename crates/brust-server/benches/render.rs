@@ -253,14 +253,12 @@ fn bench_route(
     );
     l1.insert(
         key.clone(),
-        Arc::new(ctx.clone()),
         Arc::new(RenderedBody {
             status: 200,
             headers: base,
             html: bytes::Bytes::from(doc.clone().into_bytes()),
             gzip: OnceLock::new(),
         }),
-        headers,
         Duration::from_secs(3600),
         &[],
     );
@@ -423,14 +421,12 @@ fn bench_hit_path(c: &mut Criterion, m: &Manifest) {
     );
     l1.insert(
         build_cache_key("GET", path, String::new()),
-        Arc::new(Node::from(serde_json::json!({}))),
         Arc::new(RenderedBody {
             status: 200,
             headers: base,
             html: bytes::Bytes::from(vec![b'x'; 1703]),
             gzip: OnceLock::new(),
         }),
-        Vec::new().into(),
         Duration::from_secs(3600),
         &["types".to_string()],
     );

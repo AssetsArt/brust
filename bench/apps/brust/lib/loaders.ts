@@ -10,6 +10,9 @@ export async function dexLoader(_ctx: LoaderCtx): Promise<{ title: string; rows:
   // `summary` is one text slot: `{count} Pokémon` (a prop + literal) compiles to <p><span x-text>151</span> Pokémon</p>.
   return { title: 'Pokédex · bench', rows, summary: `${rows.length} Pokémon` }
 }
-export async function teamLoader(_ctx: LoaderCtx): Promise<{ title: string; start: number; label: string }> {
-  return { title: 'Team · bench', start: 0, label: 'clicks' }
+/** `?start=<n>` (attribution probe M only, v2-only): the island's start prop — a distinct job key per value, so
+ * every M request misses the job cache. Absent (probe I and every other app) → 0, the parity page. */
+export async function teamLoader(ctx: LoaderCtx): Promise<{ title: string; start: number; label: string }> {
+  const s = Number.parseInt(ctx.req.search.start ?? '', 10)
+  return { title: 'Team · bench', start: Number.isFinite(s) ? s : 0, label: 'clicks' }
 }

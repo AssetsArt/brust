@@ -24,4 +24,5 @@ pub mod bench {
 
 pub use config::{Config, CorsConfig, InvalidateArgs, InvalidateResult, Server, Stats};
 pub use dispatch::{CallKind, DispatchError, RenderDispatch};
+pub use pipeline::{PLAN_DECLINED, plan_in_call};
 pub use server::{Tuning, start};

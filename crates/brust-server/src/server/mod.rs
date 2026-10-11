@@ -82,6 +82,22 @@ impl Default for Tuning {
     }
 }
 
+impl Server {
+    /// Slots whose plan cell holds something (tests: 0 when idle).
+    #[doc(hidden)]
+    pub fn plan_cells_in_use(&self) -> usize {
+        self.pool
+            .entries()
+            .iter()
+            .map(|e| {
+                (0..e.slot_len())
+                    .filter(|&i| e.slot(i).plan.lock().is_some())
+                    .count()
+            })
+            .sum()
+    }
+}
+
 /// Load the manifest, build the route table and renderer, bind, and run the
 /// accept loop on its own runtime thread. Returns once the bind (and TLS
 /// acceptor build) succeeded; the loop waits for `expected_workers`
@@ -113,6 +129,7 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
         dist_dir: cfg.dist_dir.clone(),
         loader_calls: AtomicU64::new(0),
         job_calls: AtomicU64::new(0),
+        worker_calls: AtomicU64::new(0),
         timed_out_calls: AtomicU64::new(0),
         missing_slots: Default::default(),
         ready: Arc::new(Notify::new()),

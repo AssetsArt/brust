@@ -11,7 +11,7 @@ let proc: ReturnType<typeof Bun.spawn> | undefined
 let base = ''
 let stdout = ''
 
-type Stats = { loader_calls: number; job_calls: number }
+type Stats = { loader_calls: number; job_calls: number; worker_calls: number }
 const stats = async (): Promise<Stats> => (await fetch(`${base}/_brust/cache/stats`)).json() as Promise<Stats>
 
 beforeAll(async () => {
@@ -91,6 +91,7 @@ test('loader route: per-row values, useId, island SSR + chunk; second request is
   const s1 = await stats()
   expect(s1.loader_calls - before.loader_calls).toBe(1)
   expect(s1.job_calls - before.job_calls).toBe(1)
+  expect(s1.worker_calls - before.worker_calls).toBe(1) // loader + jobs in one round trip (M3-P P6)
 
   const r2 = await fetch(`${base}/items/7`)
   const h2 = await r2.text()
