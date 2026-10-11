@@ -20,6 +20,7 @@
     "./server": "./src/server.ts",
     "./store": "./src/store/index.ts",
     "./store/react": "./src/store/react.ts",
+    "./elysia": "./src/actions/elysia.ts",
     "./native": "./native/index.js"
   },
   "scripts": {
@@ -46,12 +47,24 @@
   },
   "peerDependencies": {
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "elysia": "2.0.0-beta.30",
+    "@elysia/eden": "2.0.0-beta.6"
+  },
+  "peerDependenciesMeta": {
+    "elysia": {
+      "optional": true
+    },
+    "@elysia/eden": {
+      "optional": true
+    }
   },
   "devDependencies": {
+    "@elysia/eden": "2.0.0-beta.6",
     "@napi-rs/cli": "^3.0.0",
     "@types/bun": "^1.4.0",
     "@types/react": "^19.2.0",
+    "elysia": "2.0.0-beta.30",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "typescript": "^7.0.2"
