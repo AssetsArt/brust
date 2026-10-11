@@ -1,0 +1,24 @@
+{
+  "name": "__PROJECT_NAME__",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "brust build routes.tsx && brust start",
+    "build": "brust build routes.tsx",
+    "start": "brust start",
+    "typecheck": "bun check"
+  },
+  "dependencies": {
+    "@brust/core": __BRUST_DEP__,
+    "@elysia/eden": "2.0.0-beta.6",
+    "elysia": "2.0.0-beta.30",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.0",
+    "@types/react": "^19.2.0",
+    "typescript": "^7.0.2"
+  }
+}
