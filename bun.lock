@@ -134,6 +134,17 @@
         "elysia",
       ],
     },
+    "packages/create-app": {
+      "name": "@brust/create-app",
+      "version": "0.0.0",
+      "bin": {
+        "create-app": "./bin/create-app.ts",
+      },
+      "devDependencies": {
+        "@types/bun": "^1.4.0",
+        "typescript": "^7.0.2",
+      },
+    },
     "packages/runtime-dom": {
       "name": "@brust/runtime-dom",
       "version": "0.0.0",
@@ -172,6 +183,8 @@
     "@brust/bench-next": ["@brust/bench-next@workspace:bench/apps/next"],
 
     "@brust/core": ["@brust/core@workspace:packages/brust"],
+
+    "@brust/create-app": ["@brust/create-app@workspace:packages/create-app"],
 
     "@brust/example-pokedex": ["@brust/example-pokedex@workspace:examples/pokedex"],
 
